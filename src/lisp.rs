@@ -1,5 +1,7 @@
 #[derive(Clone, Debug, PartialEq)]
 enum Token {
+    Uninitialized,
+    Void,
     LParen,
     RParen,
     LSquared,
@@ -28,28 +30,25 @@ enum ParserLexerState {
     InNumberAfterDot,
 }
 
-enum ParserState {
-    Init,
-    Default,
-    InList,
-}
-
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ParserError {
+    // Lexing
     UnbalancedRParen,
     UnbalancedRSquared,
     UnbalancedRBracket,
     NumberParseError(String),
     NumberInvadidChar(char),
+    // Parsing
+    VoidExp,
+    UnclosedList,
 }
 
 pub struct Parser<'source> {
     source: std::iter::Peekable<std::str::Chars<'source>>,
     token: String,
-    current_token: Option<Token>,
+    current_token: Token,
     parens_stack: Vec<Token>,
     lexer_state: ParserLexerState,
-    parser_state: ParserState,
 }
 
 impl<'source> Parser<'source> {
@@ -57,14 +56,13 @@ impl<'source> Parser<'source> {
         Self {
             source: source.chars().peekable(),
             token: String::new(),
-            current_token: None,
+            current_token: Token::Uninitialized,
             parens_stack: Vec::new(),
             lexer_state: ParserLexerState::Default,
-            parser_state: ParserState::Init,
         }
     }
 
-    fn advance_token(&mut self) -> Result<Option<Token>, ParserError> {
+    fn next_token(&mut self) -> Result<Option<Token>, ParserError> {
         while let Some(c) = self.source.peek() {
             match self.lexer_state {
                 ParserLexerState::Default => {
@@ -232,6 +230,7 @@ impl<'source> Parser<'source> {
             }
             self.source.next();
         }
+
         // handle pending token
         match self.lexer_state {
             ParserLexerState::Default => {
@@ -289,67 +288,57 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn peek_token(&self) -> Option<Token> {
-        self.current_token.clone()
+    fn advance_token(&mut self) -> Result<(), ParserError> {
+        self.current_token = if let Some(token) = self.next_token()? {
+            token
+        } else {
+            Token::Void
+        };
+        Ok(())
     }
 
-    fn next_token(&mut self) -> Result<Option<Token>, ParserError> {
-        self.current_token = self.advance_token()?;
-        Ok(self.current_token.clone())
+    pub fn parse_list(&mut self) -> Result<LispExp, ParserError> {
+        let mut list = vec![];
+        while self.current_token != Token::Void {
+            match self.current_token {
+                Token::RParen => {
+                    self.advance_token()?;
+                    return Ok(LispExp::List(list));
+                }
+                _ => { 
+                    list.push(self.next()?);
+                }
+            }
+        }
+        Err(ParserError::UnclosedList)
     }
 
     pub fn next(&mut self) -> Result<LispExp, ParserError> {
-        eprintln!("Parser enter");
-        match self.parser_state {
-            ParserState::Init => {
-                eprintln!("Parser init");
-                self.next_token()?;
-                self.parser_state = ParserState::Default;
+        match self.current_token.clone() {
+            Token::Symbol(symbol) => {
+                self.advance_token()?;
+                Ok(LispExp::Symbol(symbol))
+            }
+            Token::String(string) => {
+                self.advance_token()?;
+                Ok(LispExp::String(string))
+            }
+            Token::Number(number) => {
+                self.advance_token()?;
+                Ok(LispExp::Number(number))
+            }
+            Token::LParen => {
+                self.advance_token()?;
+                Ok(self.parse_list()?)
+            },
+            Token::Uninitialized => {
+                self.advance_token()?;
                 return self.next();
             }
-            ParserState::Default => {
-                eprintln!("Parser default");
-                if let Some(token) = self.peek_token() {
-                    match token {
-                        Token::Number(number) => {
-                            self.next_token();
-                            return Ok(LispExp::Number(number));
-                        }
-                        Token::Symbol(symbol) => {
-                            self.next_token();
-                            return Ok(LispExp::Symbol(symbol));
-                        }
-                        Token::String(string) => {
-                            self.next_token();
-                            return Ok(LispExp::String(string));
-                        }
-                        Token::LParen => {
-                            self.parser_state = ParserState::InList;
-                            let listexp = self.next();
-                            return listexp;
-                        }
-                        _ => { todo!(); }
-                    }
-                } else {
-                    todo!("Not unreachable?");
-                }
-            }
-            ParserState::InList => {
-                eprintln!("Parser inList");                
-                let mut list = vec![];
-                while let Some(token) = self.next_token()? {
-                    match token {
-                        Token::RParen => {
-                            self.parser_state = ParserState::Default;
-                            return Ok(LispExp::List(list));
-                        }
-                        _ => {
-                            list.push(self.next()?);
-                        }
-                    }
-                }
-                todo!("Not unreachable too?");
-            }
+            Token::Void => {
+                return Err(ParserError::VoidExp);
+            } 
+            _ => todo!("token parse not implemented for {:?}", self.current_token)
         }
     }
 }
@@ -596,11 +585,11 @@ mod tests {
         );
     }
 
-    /*
     #[test]
     fn test_parse_nested_lists() {
         // Equivalent to: (define x (+ 10 20))
-        let ast = parse("(define x (+ 10 20))").unwrap();
+        let mut parser = Parser::new("(define x (+ 10 20))");
+        let ast = parser.next().unwrap();
 
         assert_eq!(
             ast,
@@ -618,7 +607,8 @@ mod tests {
 
     #[test]
     fn test_parse_deeply_nested() {
-        let ast = parse("(((1)))").unwrap();
+        let mut parser = Parser::new("(((1)))");
+        let ast = parser.next().unwrap();
 
         assert_eq!(
             ast,
@@ -634,16 +624,16 @@ mod tests {
 
     #[test]
     fn test_parse_errors() {
+
         // Missing closing parenthesis
-        let err1 = parse("(+ 1 2").unwrap_err();
-        assert!(
-            err1.contains("EOF") ||
-            err1.contains("Unclosed") ||
-            err1.contains("parenthesis"));
+        let mut parser = Parser::new("(+1 2");
+        let err1 = parser.next().unwrap_err();
+        assert_eq!(err1, ParserError::UnclosedList);
 
         // Unexpected closing parenthesis
-        let err2 = parse("(+ 1 2))").unwrap_err();
-        assert!(err2.contains("Unexpected") || err2.contains("parenthesis"));
+        eprintln!("{:?}", Parser::new("(+ 1 2))").next().unwrap_err());
+        let mut parser = Parser::new("(+1 2))");
+        let err2 = parser.next().unwrap_err();
+        assert_eq!(err2, ParserError::UnbalancedRParen);
     }
-    */
 }
