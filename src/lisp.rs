@@ -1,3 +1,7 @@
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 #[derive(Clone, Debug, PartialEq)]
 enum Token {
     Uninitialized,
@@ -17,7 +21,7 @@ enum Token {
 pub enum LispExp {
     List(Vec<LispExp>),
     Vector(Vec<LispExp>),
-    Map(std::collections::HashMap<String, LispExp>),
+    Map(HashMap<String, LispExp>),
     Number(f64),
     Symbol(String),
     String(String),
@@ -58,7 +62,7 @@ pub struct Parser<'source> {
 }
 
 impl<'source> Parser<'source> {
-    fn new(source: &'source str) -> Self {
+    pub fn new(source: &'source str) -> Self {
         Self {
             source: source.chars().peekable(),
             token: String::new(),
@@ -350,7 +354,7 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_map(&mut self) -> Result<LispExp, ParserError> {
-        let mut map = std::collections::HashMap::new();
+        let mut map = HashMap::new();
         let mut is_key = true;
         let mut current_key = String::new();
 
@@ -425,6 +429,37 @@ impl<'source> Parser<'source> {
             } 
             _ => todo!("token parse not implemented for {:?}", self.current_token)
         }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum EvalError {
+    UnboundSymbol(String),
+    TypeMismatch(String),
+    ArityMismatch(String),
+    NotAFunction(String),
+}
+
+pub struct Env {
+    vars: HashMap<String, LispExp>,
+    outer: Option<Rc<RefCell<Env>>>,
+}
+
+impl Env {
+    pub fn new() -> Self {
+        todo!()
+    }
+
+    pub fn new_with_outer(outer: Rc<RefCell<Env>>) -> Self {
+        todo!()
+    }
+
+    pub fn set(&mut self, name: String, value: LispExp) {
+        todo!()
+    }
+
+    pub fn get(&mut self, name: String) -> Option<LispExp> {
+        todo!()
     }
 }
 
