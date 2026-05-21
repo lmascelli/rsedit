@@ -6,7 +6,7 @@ pub struct GapBuffer {
 
 impl GapBuffer {
     const GAPBUFFER_BASE_LEN: usize = 1024;
-    
+
     pub fn new() -> Self {
         Self {
             data: vec![char::default(); GapBuffer::GAPBUFFER_BASE_LEN],
@@ -16,21 +16,19 @@ impl GapBuffer {
     }
 
     pub fn move_gap(&mut self, new_cursor_pos: usize) {
-        if new_cursor_pos > self.data.len() - self.gap_end + self.gap_start { return; }
+        if new_cursor_pos > self.data.len() - self.gap_end + self.gap_start {
+            return;
+        }
         if new_cursor_pos < self.gap_start {
             let range = self.gap_start - new_cursor_pos;
-            self.data.copy_within(
-                new_cursor_pos..self.gap_start,
-                self.gap_end - range,
-            );
+            self.data
+                .copy_within(new_cursor_pos..self.gap_start, self.gap_end - range);
             self.gap_start -= range;
             self.gap_end -= range;
         } else if new_cursor_pos > self.gap_start {
             let range = new_cursor_pos - self.gap_start;
-            self.data.copy_within(
-                self.gap_end..self.gap_end + range,
-                self.gap_start
-            );
+            self.data
+                .copy_within(self.gap_end..self.gap_end + range, self.gap_start);
             self.gap_start += range;
             self.gap_end += range;
         }
@@ -55,25 +53,26 @@ impl GapBuffer {
         let new_data_len = 2 * old_data_len;
         let mut new_data = vec![char::default(); new_data_len];
         new_data[0..self.gap_start].copy_from_slice(&self.data[0..self.gap_start]);
-        new_data[self.gap_end + old_data_len..new_data_len].copy_from_slice(&self.data[self.gap_end..self.data.len()]);
+        new_data[self.gap_end + old_data_len..new_data_len]
+            .copy_from_slice(&self.data[self.gap_end..self.data.len()]);
         _ = core::mem::replace(&mut self.data, new_data);
         self.gap_end += old_data_len;
         // let buffer_data = core::mem::replace(&mut self.data, Vec::new());
         // let mut new_data = vec![char::default(); buffer_data.len() * 2];
         // new_data[0..self.gap_start].copy_from_slice(&buffer_data[0..self.gap_start]);
         // new_data[self.gap_end..self.data.len()].copy_from_slice(&buffer_data[self.gap_end..self.data.len()]);
-        // self.gap_end +=  
+        // self.gap_end +=
         // _ = core::mem::replace(&mut self.data, new_data);
     }
 
     pub fn to_string(&self) -> String {
-        let ret = self.data[0..self.gap_start].iter()
+        let ret = self.data[0..self.gap_start]
+            .iter()
             .chain(self.data[self.gap_end..self.data.len()].iter())
             .collect::<String>();
         ret
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -97,7 +96,7 @@ mod tests {
         buf.insert(' ');
         buf.insert('🦀'); // Unicode Emoji (Multi-byte in UTF-8)
         buf.insert('ℵ'); // Aleph symbol
-        
+
         assert_eq!(buf.to_string(), "Rust 🦀ℵ");
     }
 
@@ -111,11 +110,11 @@ mod tests {
 
         // Move gap to between "Hello" and " World"
         // "Hello" is 5 chars long.
-        buf.move_gap(5); 
-        
+        buf.move_gap(5);
+
         // Insert a comma
         buf.insert(',');
-        
+
         assert_eq!(buf.to_string(), "Hello, World");
     }
 
@@ -125,14 +124,14 @@ mod tests {
         for c in "Logic 💡".chars() {
             buf.insert(c);
         }
-        
+
         // Delete the lightbulb emoji
-        buf.delete(); 
+        buf.delete();
         assert_eq!(buf.to_string(), "Logic ");
 
         // Move to the middle and delete
         buf.move_gap(2); // After "Lo"
-        buf.delete();    // Deletes 'o'
+        buf.delete(); // Deletes 'o'
         assert_eq!(buf.to_string(), "Lgic ");
     }
 
@@ -157,17 +156,17 @@ mod tests {
 
     #[test]
     fn test_buffer_growth() {
-        // Assume your initial gap size is small for this test, 
+        // Assume your initial gap size is small for this test,
         // or just insert many characters to force a resize.
         let mut buf = GapBuffer::new();
         let long_string = "Specialized Unicode: 🚀💎🌈".repeat(50);
-        
+
         for c in long_string.chars() {
             buf.insert(c);
         }
 
         assert_eq!(buf.to_string(), long_string);
-        
+
         // Ensure we can still move the gap and insert after growing
         buf.move_gap(10);
         buf.insert('!');
@@ -181,11 +180,11 @@ mod tests {
         for c in input.chars() {
             buf.insert(c);
         }
-        
+
         // Move gap into the middle of the combining sequence
-        buf.move_gap(2); 
+        buf.move_gap(2);
         buf.insert('X');
-        
+
         // Note: In a real editor, moving by 'char' vs moving by 'grapheme cluster'
         // is different. For now, we are testing that char-level integrity holds.
         let result = buf.to_string();

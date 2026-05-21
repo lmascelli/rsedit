@@ -1,3 +1,3 @@
-mod error;
 mod buffer;
+mod error;
 mod lisp;

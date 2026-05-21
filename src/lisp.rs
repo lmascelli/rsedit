@@ -1,5 +1,3 @@
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,181 +73,166 @@ impl<'source> Parser<'source> {
     fn next_token(&mut self) -> Result<Option<Token>, ParserError> {
         while let Some(c) = self.source.peek() {
             match self.lexer_state {
-                ParserLexerState::Default => {
-                    match c {
-                        '(' => {
-                            self.parens_stack.push(Token::LParen);
+                ParserLexerState::Default => match c {
+                    '(' => {
+                        self.parens_stack.push(Token::LParen);
+                        self.source.next();
+                        return Ok(Some(Token::LParen));
+                    }
+                    ')' => {
+                        if Some(Token::LParen) == self.parens_stack.pop() {
                             self.source.next();
-                            return Ok(Some(Token::LParen));
-                        }
-                        ')' => {
-                            if Some(Token::LParen) == self.parens_stack.pop() {
-                                self.source.next();
-                                return Ok(Some(Token::RParen));
-                            } else {
-                                return Err(ParserError::UnbalancedRParen);
-                            }
-                        }
-                        '[' => {
-                            self.parens_stack.push(Token::LSquared);
-                            self.source.next();
-                            return Ok(Some(Token::LSquared));
-                        }
-                        ']' => {
-                            if Some(Token::LSquared) == self.parens_stack.pop() {
-                                self.source.next();
-                                return Ok(Some(Token::RSquared));
-                            } else {
-                                return Err(ParserError::UnbalancedRSquared);
-                            }
-                        }
-                        '{' => {
-                            self.parens_stack.push(Token::LBracket);
-                            self.source.next();
-                            return Ok(Some(Token::LBracket));
-                        }
-                        '}' => {
-                            if Some(Token::LBracket) == self.parens_stack.pop() {
-                                self.source.next();
-                                return Ok(Some(Token::RBracket));
-                            } else {
-                                return Err(ParserError::UnbalancedRBracket);
-                            }
-                        }
-                        ' ' | '\t' | '\n'  => { }
-                        '"' => {
-                            self.lexer_state = ParserLexerState::InString;
-                        }
-                        '.' | '-' | '0'..='9' => {
-                            self.token.push(*c);
-                            self.lexer_state = ParserLexerState::InNumber;
-                        }
-                        _ => {
-                            self.token.push(*c);
-                            self.lexer_state = ParserLexerState::InSymbol;
+                            return Ok(Some(Token::RParen));
+                        } else {
+                            return Err(ParserError::UnbalancedRParen);
                         }
                     }
-                }
-                ParserLexerState::InSymbol => {
-                    match c {
-                        ' ' | '\t' | '\n' => {
-                            let mut token_string = String::new();
-                            core::mem::swap(&mut token_string, &mut self.token);
+                    '[' => {
+                        self.parens_stack.push(Token::LSquared);
+                        self.source.next();
+                        return Ok(Some(Token::LSquared));
+                    }
+                    ']' => {
+                        if Some(Token::LSquared) == self.parens_stack.pop() {
+                            self.source.next();
+                            return Ok(Some(Token::RSquared));
+                        } else {
+                            return Err(ParserError::UnbalancedRSquared);
+                        }
+                    }
+                    '{' => {
+                        self.parens_stack.push(Token::LBracket);
+                        self.source.next();
+                        return Ok(Some(Token::LBracket));
+                    }
+                    '}' => {
+                        if Some(Token::LBracket) == self.parens_stack.pop() {
+                            self.source.next();
+                            return Ok(Some(Token::RBracket));
+                        } else {
+                            return Err(ParserError::UnbalancedRBracket);
+                        }
+                    }
+                    ' ' | '\t' | '\n' => {}
+                    '"' => {
+                        self.lexer_state = ParserLexerState::InString;
+                    }
+                    '.' | '-' | '0'..='9' => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InNumber;
+                    }
+                    _ => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InSymbol;
+                    }
+                },
+                ParserLexerState::InSymbol => match c {
+                    ' ' | '\t' | '\n' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        self.lexer_state = ParserLexerState::Default;
+                        self.source.next();
+                        return Ok(Some(Token::Symbol(token_string)));
+                    }
+                    '(' | '[' | '{' | ')' | ']' | '}' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        self.lexer_state = ParserLexerState::Default;
+                        return Ok(Some(Token::Symbol(token_string)));
+                    }
+                    _ => {
+                        self.token.push(*c);
+                    }
+                },
+                ParserLexerState::InString => match c {
+                    '"' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        self.lexer_state = ParserLexerState::Default;
+                        self.source.next();
+                        return Ok(Some(Token::String(token_string)));
+                    }
+                    '\\' => {
+                        self.lexer_state = ParserLexerState::InStringSlash;
+                    }
+                    _ => {
+                        self.token.push(*c);
+                    }
+                },
+                ParserLexerState::InStringSlash => match c {
+                    '"' | '\\' => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InString;
+                    }
+                    _ => {
+                        self.token.push('\\');
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InString;
+                    }
+                },
+                ParserLexerState::InNumber => match c {
+                    '0'..='9' => {
+                        self.token.push(*c);
+                    }
+                    '.' => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InNumberAfterDot;
+                    }
+                    '(' | '[' | '{' | ')' | ']' | '}' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        if let Ok(number) = token_string.parse() {
+                            self.lexer_state = ParserLexerState::Default;
+                            return Ok(Some(Token::Number(number)));
+                        } else {
+                            return Err(ParserError::NumberParseError(token_string));
+                        }
+                    }
+                    ' ' | '\t' | '\n' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        if let Ok(number) = token_string.parse() {
                             self.lexer_state = ParserLexerState::Default;
                             self.source.next();
-                            return Ok(Some(Token::Symbol(token_string)));
-                        }
-                        '(' | '[' | '{' |
-                        ')' | ']' | '}' => {
-                            let mut token_string = String::new();
-                            core::mem::swap(&mut token_string, &mut self.token);
-                            self.lexer_state = ParserLexerState::Default;
-                            return Ok(Some(Token::Symbol(token_string)));
-                        }
-                        _ => {
-                            self.token.push(*c);
+                            return Ok(Some(Token::Number(number)));
+                        } else {
+                            return Err(ParserError::NumberParseError(token_string));
                         }
                     }
-                }
-                ParserLexerState::InString => {
-                    match c {
-                        '"' => {
-                            let mut token_string = String::new();
-                            core::mem::swap(&mut token_string, &mut self.token);
+                    _ => {
+                        return Err(ParserError::NumberInvadidChar(*c));
+                    }
+                },
+                ParserLexerState::InNumberAfterDot => match c {
+                    '0'..='9' => {
+                        self.token.push(*c);
+                    }
+                    '(' | '[' | '{' | ')' | ']' | '}' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        if let Ok(number) = token_string.parse() {
+                            self.lexer_state = ParserLexerState::Default;
+                            return Ok(Some(Token::Number(number)));
+                        } else {
+                            return Err(ParserError::NumberParseError(token_string));
+                        }
+                    }
+                    ' ' | '\t' | '\n' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        if let Ok(number) = token_string.parse() {
                             self.lexer_state = ParserLexerState::Default;
                             self.source.next();
-                            return Ok(Some(Token::String(token_string)));
-                        }
-                        '\\' => {
-                            self.lexer_state = ParserLexerState::InStringSlash;
-                        }
-                        _ => {
-                            self.token.push(*c);
+                            return Ok(Some(Token::Number(number)));
+                        } else {
+                            return Err(ParserError::NumberParseError(token_string));
                         }
                     }
-                }
-                ParserLexerState::InStringSlash => {
-                    match c {
-                        '"' | '\\' => {
-                            self.token.push(*c);
-                            self.lexer_state = ParserLexerState::InString;
-                        }
-                        _ => {
-                            self.token.push('\\');
-                            self.token.push(*c);
-                            self.lexer_state = ParserLexerState::InString;
-                        }
+                    _ => {
+                        self.token.push(*c);
+                        return Err(ParserError::NumberParseError(self.token.clone()));
                     }
-                }
-                ParserLexerState::InNumber => {
-                    match c {
-                        '0'..='9' => {
-                            self.token.push(*c);
-                        }
-                        '.' => {
-                            self.token.push(*c);
-                            self.lexer_state = ParserLexerState::InNumberAfterDot;
-                        }
-                        '(' | '[' | '{' |
-                        ')' | ']' | '}' => {
-                            let mut token_string = String::new();
-                            core::mem::swap(&mut token_string, &mut self.token);
-                            if let Ok(number) = token_string.parse() {
-                                self.lexer_state = ParserLexerState::Default;
-                                return Ok(Some(Token::Number(number)));
-                            } else {
-                                return Err(ParserError::NumberParseError(token_string));
-                            }
-                        }
-                        ' ' | '\t' | '\n' => {
-                            let mut token_string = String::new();
-                            core::mem::swap(&mut token_string, &mut self.token);
-                            if let Ok(number) = token_string.parse() {
-                                self.lexer_state = ParserLexerState::Default;
-                                self.source.next();
-                                return Ok(Some(Token::Number(number)));
-                            } else {
-                                return Err(ParserError::NumberParseError(token_string));
-                            }
-                        }
-                        _ => {
-                            return Err(ParserError::NumberInvadidChar(*c));
-                        }
-                    }
-                }
-                ParserLexerState::InNumberAfterDot => {
-                    match c {
-                        '0'..='9' => {
-                            self.token.push(*c);
-                        }
-                        '(' | '[' | '{' |
-                        ')' | ']' | '}' => {
-                            let mut token_string = String::new();
-                            core::mem::swap(&mut token_string, &mut self.token);
-                            if let Ok(number) = token_string.parse() {
-                                self.lexer_state = ParserLexerState::Default;
-                                return Ok(Some(Token::Number(number)));
-                            } else {
-                                return Err(ParserError::NumberParseError(token_string));
-                            }
-                        }                        
-                        ' ' | '\t' | '\n' => {
-                            let mut token_string = String::new();
-                            core::mem::swap(&mut token_string, &mut self.token);
-                            if let Ok(number) = token_string.parse() {
-                                self.lexer_state = ParserLexerState::Default;
-                                self.source.next();
-                                return Ok(Some(Token::Number(number)));
-                            } else {
-                                return Err(ParserError::NumberParseError(token_string));
-                            }
-                        }
-                        _ => {
-                            self.token.push(*c);
-                            return Err(ParserError::NumberParseError(self.token.clone()));
-                        }
-                    }
-                }
+                },
             }
             self.source.next();
         }
@@ -283,10 +266,11 @@ impl<'source> Parser<'source> {
                                 return Err(ParserError::UnbalancedRBracket);
                             }
                         }
-                        _ => {todo!("{:?}", self.token);}
+                        _ => {
+                            todo!("{:?}", self.token);
+                        }
                     }
-                }
-                else {
+                } else {
                     return Ok(None);
                 }
             }
@@ -307,7 +291,9 @@ impl<'source> Parser<'source> {
                     return Err(ParserError::NumberParseError(token_string));
                 }
             }
-            _ => { todo!("Simbolo alla fine non gestito"); }
+            _ => {
+                todo!("Simbolo alla fine non gestito");
+            }
         }
     }
 
@@ -328,7 +314,7 @@ impl<'source> Parser<'source> {
                     self.advance_token()?;
                     return Ok(LispExp::List(list));
                 }
-                _ => { 
+                _ => {
                     list.push(self.next()?);
                 }
             }
@@ -375,7 +361,9 @@ impl<'source> Parser<'source> {
                         current_key = string.clone();
                         self.advance_token()?;
                     }
-                    _ => { return Err(ParserError::InvalidMapKey); }
+                    _ => {
+                        return Err(ParserError::InvalidMapKey);
+                    }
                 }
             } else {
                 match self.current_token {
@@ -411,7 +399,7 @@ impl<'source> Parser<'source> {
             Token::LParen => {
                 self.advance_token()?;
                 Ok(self.parse_list()?)
-            },
+            }
             Token::LSquared => {
                 self.advance_token()?;
                 Ok(self.parse_vector()?)
@@ -424,42 +412,153 @@ impl<'source> Parser<'source> {
                 self.advance_token()?;
                 self.next()
             }
-            Token::Void => {
-                Err(ParserError::VoidExp)
-            } 
-            _ => todo!("token parse not implemented for {:?}", self.current_token)
+            Token::Void => Err(ParserError::VoidExp),
+            _ => todo!("token parse not implemented for {:?}", self.current_token),
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub enum EvalError {
-    UnboundSymbol(String),
-    TypeMismatch(String),
-    ArityMismatch(String),
+    UnboundVariable(String),
+    UndefinedFunction(String),
+    UnvalidFunctionCall,
+    UncorrectFunctionDefinition,
+    WrongNumberOfArguments { expected: usize, got: usize },
     NotAFunction(String),
+    IfNoConditionProvided,
 }
 
 pub struct Env {
-    vars: HashMap<String, LispExp>,
-    outer: Option<Rc<RefCell<Env>>>,
+    pub variables: HashMap<String, LispExp>,
+    pub functions: HashMap<String, LispExp>,
+    pub outer: Option<*mut Env>,
 }
 
 impl Env {
     pub fn new() -> Self {
-        todo!()
+        Self {
+            variables: HashMap::new(),
+            functions: HashMap::new(),
+            outer: None,
+        }
     }
 
-    pub fn new_with_outer(outer: Rc<RefCell<Env>>) -> Self {
-        todo!()
+    pub fn extend(caller: *mut Env) -> Self {
+        Self {
+            variables: HashMap::new(),
+            functions: HashMap::new(),
+            outer: Some(caller),
+        }
     }
 
-    pub fn set(&mut self, name: String, value: LispExp) {
-        todo!()
+    pub fn get_var(&self, name: &str) -> Option<LispExp> {
+        if let Some(val) = self.variables.get(name) {
+            return Some(val.clone());
+        }
+
+        if let Some(outer_ptr) = self.outer {
+            unsafe { return (*outer_ptr).get_var(name); }
+        }
+
+        None
     }
 
-    pub fn get(&mut self, name: String) -> Option<LispExp> {
-        todo!()
+    pub fn get_func(&self, name: &str) -> Option<LispExp> {
+        if let Some(val) = self.functions.get(name) {
+            return Some(val.clone());
+        }
+
+        if let Some(outer_ptr) = self.outer {
+            unsafe { return (*outer_ptr).get_func(name); }
+        }
+
+        None
+    }
+}
+
+pub fn eval(exp: &LispExp, env: &mut Env) -> Result<LispExp, EvalError> {
+    match exp {
+        LispExp::String(_) | LispExp::Number(_) => Ok(exp.clone()),
+
+        LispExp::Symbol(symbol) => {
+            if let Some(var) = env.get_var(symbol) {
+                Ok(var)
+            } else {
+                Err(EvalError::UnboundVariable(symbol.clone()))
+            }
+        }
+
+        LispExp::List(list) => {
+            if list.is_empty() {
+                Ok(LispExp::List(vec![]))
+            } else {
+                let head = &list[0];
+                match head {
+                    LispExp::Symbol(symbol) => eval_special_form_or_call(symbol, &list[1..], env),
+                    _ => { return Err(EvalError::UnvalidFunctionCall); }
+                }
+            }
+        }
+        
+        LispExp::Vector(vec) => {
+            let mut new_vec = Vec::with_capacity(vec.len());
+            for v in vec {
+                new_vec.push(eval(v, env)?);
+            }
+            Ok(LispExp::Vector(new_vec))
+        }
+
+        _ => todo!(),
+    }
+}
+
+fn eval_special_form_or_call(symbol: &str, args: &[LispExp], env: &mut Env) -> Result<LispExp, EvalError> {
+    match symbol {
+        "if" => {
+            if args.len() < 1 {
+                Err(EvalError::IfNoConditionProvided)
+            } else {
+                let condition = &args[0];
+                todo!()
+            }
+        },
+        "setq" => todo!(),
+        "defun" => todo!(),
+        _ => { eval_function_call(symbol, args, env) }
+    }
+}
+
+fn eval_function_call(symbol: &str, args: &[LispExp], env: &mut Env) -> Result<LispExp, EvalError> {
+    let mut evaled_args = Vec::new();
+    for arg in args {
+        evaled_args.push(eval(arg, env)?);
+    }
+
+    if let Some(func) = env.get_func(symbol) {
+        if let LispExp::List(lambda_ast) = func {
+            if lambda_ast.len() != 3 {
+                return Err(EvalError::UncorrectFunctionDefinition);
+            }
+            let params = &lambda_ast[1];
+            let body = &lambda_ast[2];
+
+            let mut call_frame = Env::extend(env as *mut Env);
+
+            if let LispExp::List(param_list) = params {
+                for (i, param) in param_list.iter().enumerate() {
+                    if let LispExp::Symbol(param_name) = param {
+                        call_frame.variables.insert(param_name.clone(), evaled_args[i].clone());
+                    }
+                }
+            }
+            
+            eval(body, &mut call_frame)
+        } else {
+            Err(EvalError::UncorrectFunctionDefinition)
+        }
+    } else {
+        Err(EvalError::UndefinedFunction(symbol.into()))
     }
 }
 
@@ -467,6 +566,9 @@ impl Env {
 mod tests {
     use super::*;
 
+    // ==========================================
+    // LEXER TESTS
+    // ==========================================
     fn tokenize(input: &str) -> Result<Vec<Token>, ParserError> {
         let mut parser = Parser::new(input);
         let mut ret = Vec::new();
@@ -493,35 +595,44 @@ mod tests {
     fn test_basic_parens() {
         let input = "( [ { } ] )";
         let tokens = lex_all(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::LParen,
-            Token::LSquared,
-            Token::LBracket,
-            Token::RBracket,
-            Token::RSquared,
-            Token::RParen,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::LParen,
+                Token::LSquared,
+                Token::LBracket,
+                Token::RBracket,
+                Token::RSquared,
+                Token::RParen,
+            ]
+        );
     }
 
     #[test]
     fn test_symbols_and_spaces() {
         let input = "def  my-var   + ";
         let tokens = lex_all(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::Symbol("def".into()),
-            Token::Symbol("my-var".into()),
-            Token::Symbol("+".into()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Symbol("def".into()),
+                Token::Symbol("my-var".into()),
+                Token::Symbol("+".into()),
+            ]
+        );
     }
 
     #[test]
     fn test_strings() {
         let input = r#""hello world" "escaped \" quote""#;
         let tokens = lex_all(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::String("hello world".into()),
-            Token::String("escaped \" quote".into()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::String("hello world".into()),
+                Token::String("escaped \" quote".into()),
+            ]
+        );
     }
 
     #[test]
@@ -529,11 +640,14 @@ mod tests {
         // Note: these require a trailing space currently based on your logic
         let input = "123 45.67 0.1 ";
         let tokens = lex_all(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::Number(123.0),
-            Token::Number(45.67),
-            Token::Number(0.1),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Number(123.0),
+                Token::Number(45.67),
+                Token::Number(0.1),
+            ]
+        );
     }
 
     #[test]
@@ -580,17 +694,20 @@ mod tests {
         let input = "(factorial 5)(add x y)";
         let tokens = lex_all(input).unwrap();
 
-        assert_eq!(tokens, vec![
-            Token::LParen,
-            Token::Symbol("factorial".into()),
-            Token::Number(5.0),
-            Token::RParen,
-            Token::LParen,
-            Token::Symbol("add".into()),
-            Token::Symbol("x".into()),
-            Token::Symbol("y".into()),
-            Token::RParen,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::LParen,
+                Token::Symbol("factorial".into()),
+                Token::Number(5.0),
+                Token::RParen,
+                Token::LParen,
+                Token::Symbol("add".into()),
+                Token::Symbol("x".into()),
+                Token::Symbol("y".into()),
+                Token::RParen,
+            ]
+        );
     }
 
     #[test]
@@ -598,13 +715,16 @@ mod tests {
         let input = r#" "line1\nline2" "quote: \" " "" "#;
         let tokens = lex_all(input).unwrap();
 
-        assert_eq!(tokens, vec![
-            // Note: Your current InStringSlash logic doesn't handle \n yet,
-            // it just pushes the \ and the n.
-            Token::String("line1\\nline2".into()),
-            Token::String("quote: \" ".into()),
-            Token::String("".into()), // Empty string
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                // Note: Your current InStringSlash logic doesn't handle \n yet,
+                // it just pushes the \ and the n.
+                Token::String("line1\\nline2".into()),
+                Token::String("quote: \" ".into()),
+                Token::String("".into()), // Empty string
+            ]
+        );
     }
 
     #[test]
@@ -613,13 +733,24 @@ mod tests {
         let tokens = lex_all(input).unwrap();
 
         let expected = vec![
-            Token::LParen, Token::Symbol("let".into()),
-            Token::LSquared, Token::Symbol("x".into()),
-            Token::LBracket, Token::Symbol("y".into()), Token::Number(10.0), Token::RBracket,
+            Token::LParen,
+            Token::Symbol("let".into()),
+            Token::LSquared,
+            Token::Symbol("x".into()),
+            Token::LBracket,
+            Token::Symbol("y".into()),
+            Token::Number(10.0),
+            Token::RBracket,
             Token::RSquared,
-            Token::LParen, Token::Symbol("fn".into()),
-            Token::LParen, Token::Symbol("z".into()), Token::RParen,
-            Token::LSquared, Token::Symbol("z".into()), Token::Symbol("x".into()), Token::RSquared,
+            Token::LParen,
+            Token::Symbol("fn".into()),
+            Token::LParen,
+            Token::Symbol("z".into()),
+            Token::RParen,
+            Token::LSquared,
+            Token::Symbol("z".into()),
+            Token::Symbol("x".into()),
+            Token::RSquared,
             Token::RParen,
             Token::RParen,
         ];
@@ -641,7 +772,7 @@ mod tests {
         assert!(matches!(result, Err(ParserError::NumberParseError(_))));
     }
 
-     #[test]
+    #[test]
     fn test_tokenize_basic() {
         let input = "(+ 1 2.5 \"hello\")";
         let tokens = tokenize(input).expect("Failed to tokenize");
@@ -692,7 +823,6 @@ mod tests {
 
     #[test]
     fn test_parse_simple_list() {
-
         let mut parser = Parser::new("(print \"world\")");
         let ast = parser.next().unwrap();
 
@@ -732,19 +862,14 @@ mod tests {
 
         assert_eq!(
             ast,
-            LispExp::List(vec![
-                LispExp::List(vec![
-                    LispExp::List(vec![
-                        LispExp::Number(1.0)
-                    ])
-                ])
-            ])
+            LispExp::List(vec![LispExp::List(vec![LispExp::List(vec![
+                LispExp::Number(1.0)
+            ])])])
         );
     }
 
     #[test]
     fn test_parse_errors() {
-
         // Missing closing parenthesis
         let mut parser = Parser::new("(+1 2");
         let err1 = parser.next().unwrap_err();
@@ -768,7 +893,7 @@ mod tests {
             LispExp::Vector(v) => {
                 assert_eq!(v.len(), 3);
                 assert_eq!(v[0], LispExp::Number(1.0));
-            },
+            }
             _ => panic!("Expected Vector, found {:?}", ast),
         }
     }
@@ -825,7 +950,7 @@ mod tests {
         // This checks your InSymbol state transitions [cite: 17-22]
         let input = "my-func[1 2]{:key val}";
         let mut parser = Parser::new(input);
-        
+
         // Should yield: Symbol, Vector, Map
         assert!(matches!(parser.next().unwrap(), LispExp::Symbol(_)));
         assert!(matches!(parser.next().unwrap(), LispExp::Vector(_)));
@@ -836,7 +961,7 @@ mod tests {
     fn test_edge_negative_numbers() {
         let input = "-42 -3.14";
         let mut parser = Parser::new(input);
-        
+
         assert_eq!(parser.next().unwrap(), LispExp::Number(-42.0));
         assert_eq!(parser.next().unwrap(), LispExp::Number(-3.14));
     }
@@ -885,21 +1010,19 @@ mod tests {
         let mut parser = Parser::new(input);
 
         let ast = parser.next().unwrap();
-        
+
         // Expected: List containing one Vector containing one Map (all empty)
         assert_eq!(
             ast,
-            LispExp::List(vec![
-                LispExp::Vector(vec![
-                    LispExp::Map(std::collections::HashMap::new())
-                ])
-            ])
+            LispExp::List(vec![LispExp::Vector(vec![LispExp::Map(
+                std::collections::HashMap::new()
+            )])])
         );
     }
 
     #[test]
     fn test_complex_whitespace_and_mixed_delimiters() {
-        // Added the string "data" to act as the Map's key, 
+        // Added the string "data" to act as the Map's key,
         // with the Vector acting as the value.
         let input = "{\n\t\"data\"\n\t[ (1\n2\t3) ]\n}";
         let mut parser = Parser::new(input);
@@ -908,30 +1031,30 @@ mod tests {
         // Expected structure: Map { "data" => Vector [ List [1, 2, 3] ] }
         if let LispExp::Map(mut map) = ast {
             let value = map.remove("data").expect("Expected key 'data' in Map");
-            
+
             if let LispExp::Vector(vec) = value {
                 assert_eq!(vec.len(), 1);
-                
+
                 if let LispExp::List(inner) = &vec[0] {
                     assert_eq!(inner.len(), 3);
                     assert_eq!(inner[0], LispExp::Number(1.0));
-                } else { 
-                    panic!("Inner not a list"); 
+                } else {
+                    panic!("Inner not a list");
                 }
-            } else { 
-                panic!("Map value is not a Vector"); 
+            } else {
+                panic!("Map value is not a Vector");
             }
-        } else { 
-            panic!("Outer structure is not a Map"); 
+        } else {
+            panic!("Outer structure is not a Map");
         }
     }
 
     #[test]
     fn test_numeric_boundary_cases() {
         // Updated to test numbers ending exactly at bracket and brace boundaries
-        let input = "[1.5] {\"k\" .5} 5."; 
+        let input = "[1.5] {\"k\" .5} 5.";
         let mut parser = Parser::new(input);
-        
+
         // Test [1.5] - Vector boundary
         let exp1 = parser.next().unwrap();
         assert_eq!(exp1, LispExp::Vector(vec![LispExp::Number(1.5)]));
@@ -956,18 +1079,24 @@ mod tests {
 
         assert_eq!(parser.next().unwrap(), LispExp::String("".into()));
         assert_eq!(parser.next().unwrap(), LispExp::List(vec![]));
-        
+
         // These now expect Vector and Map instead of List
         assert_eq!(parser.next().unwrap(), LispExp::Vector(vec![]));
-        assert_eq!(parser.next().unwrap(), LispExp::Map(std::collections::HashMap::new()));
-        
+        assert_eq!(
+            parser.next().unwrap(),
+            LispExp::Map(std::collections::HashMap::new())
+        );
+
         // Check backslash escaping logic
-        assert_eq!(parser.next().unwrap(), LispExp::String("back\\slash".into()));
+        assert_eq!(
+            parser.next().unwrap(),
+            LispExp::String("back\\slash".into())
+        );
     }
 
     #[test]
     fn test_malformed_input_recovery() {
-        // Unclosed list 
+        // Unclosed list
         let mut p1 = Parser::new("(1 2 3");
         assert_eq!(p1.next().unwrap_err(), ParserError::UnclosedList);
 
@@ -975,9 +1104,12 @@ mod tests {
         let mut p2 = Parser::new("(1 2 3]");
         assert_eq!(p2.next().unwrap_err(), ParserError::UnbalancedRSquared);
 
-        // Multiple decimal points 
+        // Multiple decimal points
         let mut p3 = Parser::new("1.2.3");
-        assert!(matches!(p3.next().unwrap_err(), ParserError::NumberParseError(_)));
+        assert!(matches!(
+            p3.next().unwrap_err(),
+            ParserError::NumberParseError(_)
+        ));
 
         // NEW: Map with missing value
         let mut p4 = Parser::new("{ \"key\" }");
@@ -986,5 +1118,37 @@ mod tests {
         // NEW: Map with invalid key type (number instead of string/symbol)
         let mut p5 = Parser::new("{ 42 \"value\" }");
         assert_eq!(p5.next().unwrap_err(), ParserError::InvalidMapKey);
+    }
+
+    // ==========================================
+    // EVAL TESTS
+    // ==========================================
+
+    #[test]
+    fn test_lisp_2_namespaces() {
+        let mut env = Env::new();
+
+        // Bind the variable 'buffer' to the string "main.txt"
+        // (setq buffer "main.txt")
+        env.variables
+            .insert("buffer".into(), LispExp::String("main.txt".into()));
+
+        // Bind the function 'buffer' to a mock function that returns a number
+        let mock_func = LispExp::List(vec![
+            LispExp::Symbol("lambda".into()),
+            LispExp::List(vec![]),
+            LispExp::Number(42.0),
+        ]);
+        env.functions.insert("buffer".into(), mock_func);
+
+        // Test 1: Evaluating the symbol alone yields the variable slot
+        let var_eval = eval(&LispExp::Symbol("buffer".into()), &mut env).unwrap();
+        assert_eq!(var_eval, LispExp::String("main.txt".into()));
+
+        // Test 2: Evaluating the symbol as a function call executes the function slot
+        // Execution of (buffer)
+        let call_exp = LispExp::List(vec![LispExp::Symbol("buffer".into())]);
+        let func_eval = eval(&call_exp, &mut env).unwrap();
+        assert_eq!(func_eval, LispExp::Number(42.0));
     }
 }
