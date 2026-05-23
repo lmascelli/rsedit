@@ -34,9 +34,15 @@ pub enum EvalError {
     UnvalidFunctionCall,
     UncorrectFunctionDefinition,
     WrongNumberOfArguments { expected: usize, got: usize },
+    WrongArgumentType { expected: String, got: String },
     IfNoConditionProvided,
+    IfNoTrueBrach,
     SetqSymbolRequired,
+    SetqWrongNumberOfArgs(usize),
     DefunNameMustBeASymbol,
+    DefunNotCorrectExpression,
+    DefunParamsAreNotAList,
+    DefunParamIsNotASymbol,
 }
 
 pub struct Env<T> {
@@ -62,6 +68,7 @@ pub enum ParserError {
     UnbalancedRBracket,
     NumberParseError(String),
     NumberInvadidChar(char),
+    UnclosedString,
     // Parsing
     VoidExp,
     UnclosedList,
@@ -311,8 +318,8 @@ impl<'source> Parser<'source> {
                     return Err(ParserError::NumberParseError(token_string));
                 }
             }
-            _ => {
-                todo!("Simbolo alla fine non gestito");
+            ParserLexerState::InString | ParserLexerState::InStringSlash => {
+                return Err(ParserError::UnclosedString);
             }
         }
     }
@@ -530,6 +537,9 @@ where T: Clone + PartialEq {
         "if" => {
             if args.len() < 1 {
                 Err(EvalError::IfNoConditionProvided)
+            }
+            else if args.len() < 2 {
+                Err(EvalError::IfNoTrueBrach)
             } else {
                 let condition = &args[0];
                 if !(*condition == LispExp::List(vec![]) ||
@@ -545,22 +555,46 @@ where T: Clone + PartialEq {
                 }
             }
         },
-        
+
         "setq" => {
-            // TODO(LM) check list len
-            if let LispExp::Symbol(var_name) = &args[0] {
-                let value = eval(&args[1], env, ctx)?;
-                env.variables.insert(var_name.clone(), value.clone());
-                Ok(value)
-            } else {
-                Err(EvalError::SetqSymbolRequired)
+            if args.len() < 2 && args.len() % 2 != 0 {
+                return Err(EvalError::SetqWrongNumberOfArgs(args.len()));
             }
+            let mut is_symbol = true;
+            let mut list_var_name = String::from("unreachable");
+            let mut value = LispExp::Symbol("nil".into());
+            for arg in args {
+                if is_symbol {
+                    if let LispExp::Symbol(var_name) = &args[0] {
+                        list_var_name = var_name.clone();
+                        is_symbol = false;
+                    } else {
+                        return Err(EvalError::SetqSymbolRequired);
+                    }
+                } else {
+                    value = eval(&args[1], env, ctx)?;
+                    env.variables.insert(list_var_name.clone(), value.clone());
+                    is_symbol = true;
+                }
+            }
+            Ok(value)
         },
-        
+
         "defun" => {
-            // TODO(LM) check list len
+            if args.len() < 3 {
+                return Err(EvalError::DefunNotCorrectExpression);
+            }
             if let LispExp::Symbol(func_name) = &args[0] {
-                // TODO(LM) check that params must be a list of symbols
+                if let LispExp::List(params_list) = &args[1] {
+                    for param in params_list {
+                        if let LispExp::Symbol(_) = param {}
+                        else {
+                            return Err(EvalError::DefunParamIsNotASymbol);
+                        }
+                    }
+                } else {
+                    return Err(EvalError::DefunParamsAreNotAList);
+                }
                 let params = args[1].clone();
                 let body = args[2].clone();
 
@@ -570,13 +604,13 @@ where T: Clone + PartialEq {
                     body,
                 ]);
                 env.functions.insert(func_name.clone(), lambda);
-                
+
                 Ok(LispExp::Symbol(func_name.clone()))
             } else {
                 Err(EvalError::DefunNameMustBeASymbol)
             }
         }
-        
+
         _ => { eval_function_call(symbol, args, env, ctx) }
     }
 }
@@ -612,7 +646,7 @@ where T: Clone + PartialEq {
                     }
                 }
             }
-            
+
             eval(body, &mut call_frame, ctx)
         } else {
             Err(EvalError::UncorrectFunctionDefinition)
@@ -873,11 +907,11 @@ mod tests {
     fn setup_env() -> (Env<()>, ()) {
         (Env::new(), ())
     }
-    
+
     #[test]
     fn test_parse_primitives() {
         let mut parser = Parser::new("42");
-        
+
         let ast_num: LispExp<()> = parser.next().unwrap();
         assert_eq!(ast_num, LispExp::Number(42.0));
 
@@ -1185,6 +1219,92 @@ mod tests {
         assert_eq!(p5.next::<()>().unwrap_err(), ParserError::InvalidMapKey);
     }
 
+    #[test]
+    fn test_parser_robustness_mismatched_interleaved_delimiters() {
+        // Tests crossing the streams: lists, vectors, and maps overlapping incorrectly
+        assert_eq!(
+            Parser::new("([)]").next::<()>().unwrap_err(),
+            ParserError::UnbalancedRParen
+        );
+        assert_eq!(
+            Parser::new("{ [ } ]").next::<()>().unwrap_err(),
+            ParserError::InvalidMapKey
+        );
+        assert_eq!(
+            Parser::new("( { ) }").next::<()>().unwrap_err(),
+            ParserError::UnbalancedRParen
+        );
+    }
+
+    #[test]
+    fn test_parser_robustness_abrupt_eof() {
+        // Strings that never close
+        // Note: Currently, your parser might infinite loop or drop this silently depending on EOF handling.
+        // If it hangs here, you know you need to handle EOF during InString state!
+        let mut p1 = Parser::new("\"Unclosed string...");
+        assert!(p1.next::<()>().is_err() || p1.next::<()>().is_ok());
+
+        // Unclosed nested structures hitting EOF
+        assert_eq!(
+            Parser::new("(((1 2)").next::<()>().unwrap_err(),
+            ParserError::UnclosedList
+        );
+        assert_eq!(
+            Parser::new("[1 2").next::<()>().unwrap_err(),
+            ParserError::UnclosedVector
+        );
+        assert_eq!(
+            Parser::new("{ \"key\" \"val\"").next::<()>().unwrap_err(),
+            ParserError::UnclosedMap
+        );
+    }
+
+    #[test]
+    fn test_parser_robustness_invalid_numbers() {
+        // A number with an invalid character immediately following it without a space or delimiter
+        assert_eq!(
+            Parser::new("123a").next::<()>().unwrap_err(),
+            ParserError::NumberInvadidChar('a')
+        );
+
+        // Multiple decimal points in a row
+        assert!(matches!(
+            Parser::new("1..2").next::<()>().unwrap_err(),
+            ParserError::NumberParseError(_)
+        ));
+    }
+
+    #[test]
+    fn test_parser_robustness_malformed_maps() {
+        // Key is missing its value (trailing key)
+        assert_eq!(
+            Parser::new("{ \"key1\" \"val1\" \"key2\" }").next::<()>().unwrap_err(),
+            ParserError::MapKeyMissingValue
+        );
+
+        // Keys MUST be Strings or Symbols. Passing Lists or Vectors should fail.
+        assert_eq!(
+            Parser::new("{ [1 2] \"value\" }").next::<()>().unwrap_err(),
+            ParserError::InvalidMapKey
+        );
+        assert_eq!(
+            Parser::new("{ (func) \"value\" }").next::<()>().unwrap_err(),
+            ParserError::InvalidMapKey
+        );
+    }
+
+    #[test]
+    fn test_parser_robustness_empty_input() {
+        assert_eq!(
+            Parser::new("").next::<()>().unwrap_err(),
+            ParserError::VoidExp
+        );
+        assert_eq!(
+            Parser::new("   \n \t  ").next::<()>().unwrap_err(),
+            ParserError::VoidExp
+        );
+    }
+
     // ==========================================
     // EVAL TESTS
     // ==========================================
@@ -1252,7 +1372,7 @@ mod tests {
         global.functions.insert("add".into(), LispExp::Symbol("built-in-add".into()));
 
         let local = Env::extend(&mut global as _);
-        
+
         // Should find 'add' in the parent's function namespace
         assert_eq!(get_func(&local, "add"), Some(LispExp::Symbol("built-in-add".into())));
     }
@@ -1265,7 +1385,7 @@ mod tests {
 
         // Everything else is true (not nil)
         assert!(!is_nil(&LispExp::<()>::Symbol("t".into())));
-        assert!(!is_nil(&LispExp::<()>::Number(0.0))); 
+        assert!(!is_nil(&LispExp::<()>::Number(0.0)));
         assert!(!is_nil(&LispExp::<()>::String("".into())));
         assert!(!is_nil(&LispExp::<()>::Vector(vec![]))); // Empty vectors are true in Elisp!
     }
@@ -1281,7 +1401,7 @@ mod tests {
         ]);
 
         let result = eval(&setq_exp, &mut env, &mut ctx).unwrap();
-        
+
         assert_eq!(result, LispExp::Number(42.0));
         assert_eq!(env.variables.get("a"), Some(&LispExp::Number(42.0)));
     }
@@ -1289,7 +1409,7 @@ mod tests {
     #[test]
     fn test_eval_defun() {
         let (mut env, mut ctx) = setup_env();
-        
+
         // (defun my-func () "hello")
         let defun_exp = LispExp::List(vec![
             LispExp::Symbol("defun".into()),
@@ -1299,10 +1419,10 @@ mod tests {
         ]);
 
         eval(&defun_exp, &mut env, &mut ctx).unwrap();
-        
+
         // In Elisp, defun binds the symbol's function slot to a lambda representation
         let stored_func = env.functions.get("my-func").expect("Function should be bound");
-        
+
         if let LispExp::List(lambda_data) = stored_func {
             assert_eq!(lambda_data[0], LispExp::Symbol("lambda".into()));
             assert_eq!(lambda_data[1], LispExp::List(vec![]));
@@ -1315,7 +1435,7 @@ mod tests {
     #[test]
     fn test_eval_if() {
         let (mut env, mut ctx) = setup_env();
-        
+
         // (if nil 1.0 2.0) -> should evaluate to 2.0
         let if_false = LispExp::List(vec![
             LispExp::Symbol("if".into()),
@@ -1348,7 +1468,7 @@ mod tests {
 
     #[test]
     fn test_error_void_function() {
-        let (mut env, mut ctx) = setup_env();        
+        let (mut env, mut ctx) = setup_env();
 
         // (missing-func 1 2)
         let exp = LispExp::List(vec![
@@ -1438,5 +1558,146 @@ mod tests {
         // Your evaluator needs bounds checking for `args[0]` to pass this without panicking!
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), EvalError::IfNoConditionProvided);
+    }
+
+    #[test]
+    fn test_eval_robustness_if_missing_branches() {
+        let (mut env, mut ctx) = setup_env();
+
+        // (if t) -> Has condition, but missing the true_branch.
+        // Currently panics at `args[1].clone()`
+        let exp = LispExp::List(vec![
+            LispExp::Symbol("if".into()),
+            LispExp::Symbol("t".into()),
+        ]);
+        let _ = eval(&exp, &mut env, &mut ctx);
+    }
+
+    #[test]
+    fn test_eval_robustness_setq_missing_value() {
+        let (mut env, mut ctx) = setup_env();
+
+        // (setq a) -> Missing the value to set!
+        // Currently panics at `eval(&args[1], env, ctx)?`
+        let exp = LispExp::List(vec![
+            LispExp::Symbol("setq".into()),
+            LispExp::Symbol("a".into()),
+        ]);
+        let _ = eval(&exp, &mut env, &mut ctx);
+    }
+
+    #[test]
+    fn test_eval_robustness_defun_missing_args() {
+        let (mut env, mut ctx) = setup_env();
+
+        // (defun my-func) -> Missing params list and body!
+        // Currently panics at `args[1].clone()`
+        let exp = LispExp::List(vec![
+            LispExp::Symbol("defun".into()),
+            LispExp::Symbol("my-func".into()),
+        ]);
+        let _ = eval(&exp, &mut env, &mut ctx);
+    }
+
+    #[test]
+    fn test_eval_robustness_malformed_lambda_execution() {
+        let (mut env, mut ctx) = setup_env();
+
+        // Register a completely broken lambda: (lambda (x)) -> Missing the body!
+        let bad_lambda = LispExp::List(vec![
+            LispExp::Symbol("lambda".into()),
+            LispExp::List(vec![LispExp::Symbol("x".into())]),
+        ]);
+        env.functions.insert("broken-func".into(), bad_lambda);
+
+        // Execute it: (broken-func 10)
+        let exp = LispExp::List(vec![
+            LispExp::Symbol("broken-func".into()),
+            LispExp::Number(10.0),
+        ]);
+
+        let result = eval(&exp, &mut env, &mut ctx);
+
+        // Your code safely catches this with `if lambda_ast.len() != 3`!
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), EvalError::UncorrectFunctionDefinition);
+    }
+
+    #[test]
+    fn test_eval_robustness_lambda_params_not_a_list() {
+        let (mut env, mut ctx) = setup_env();
+
+        // Register a lambda where the parameters are a String instead of a List
+        // e.g., (lambda "x" (+ 1 2))
+        let bad_lambda = LispExp::List(vec![
+            LispExp::Symbol("lambda".into()),
+            LispExp::String("x".into()),
+            LispExp::Number(3.0),
+        ]);
+        env.functions.insert("weird-func".into(), bad_lambda);
+
+        // Execute it: (weird-func)
+        let exp = LispExp::List(vec![LispExp::Symbol("weird-func".into())]);
+
+        // Since `params` is not a list, your evaluator silently skips binding parameters
+        // and just evaluates the body. We assert that it evaluates to 3.0 safely.
+        // Note: In strict Elisp, defining a lambda without a param list is an error.
+        let result = eval(&exp, &mut env, &mut ctx).unwrap();
+        assert_eq!(result, LispExp::Number(3.0));
+    }
+
+    #[test]
+    fn test_eval_robustness_empty_vector_and_map() {
+        let (mut env, mut ctx) = setup_env();
+
+        // Vector and Map should evaluate their internal items.
+        // Testing that empty ones safely evaluate to themselves.
+        let empty_vec = LispExp::Vector(vec![]);
+        assert_eq!(eval(&empty_vec, &mut env, &mut ctx).unwrap(), LispExp::Vector(vec![]));
+
+        // Maps are currently unimplemented in your `eval` match block (`_ => todo!()`).
+        // If you run this test, it will hit the `todo!()` panic.
+        // let empty_map = LispExp::Map(std::collections::HashMap::new());
+        // eval(&empty_map, &mut env, &mut ctx).unwrap();
+    }
+
+    // ==========================================
+    // WITH GENERIC CTX EVAL TESTS
+    // ==========================================
+
+    // 1. Define a dummy Host Context to test the generic bridge
+    #[derive(Clone, Debug)]
+    struct TestHost {
+        pub state_changes: usize,
+    }
+
+    // 2. A mock native primitive that mutates the host context
+    fn native_increment_state(args: &[LispExp<TestHost>], ctx: &mut TestHost) -> Result<LispExp<TestHost>, EvalError> {
+        ctx.state_changes += 1;
+        Ok(LispExp::Symbol("nil".into()))
+    }
+
+    // 3. A mock native primitive for addition
+    fn native_add(args: &[LispExp<TestHost>], _ctx: &mut TestHost) -> Result<LispExp<TestHost>, EvalError> {
+        let mut sum = 0.0;
+        for arg in args {
+            if let LispExp::Number(n) = arg {
+                sum += n;
+            } else {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "Number".into(),
+                    got: format!("{:?}", arg),
+                });
+            }
+        }
+        Ok(LispExp::Number(sum))
+    }
+
+    // Helper to create a fresh environment with primitives loaded
+    fn setup_env_test() -> Env<TestHost> {
+        let mut env = Env::new();
+        env.functions.insert("+".into(), LispExp::Primitive(native_add));
+        env.functions.insert("inc-state".into(), LispExp::Primitive(native_increment_state));
+        env
     }
 }
