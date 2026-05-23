@@ -1,3 +1,4 @@
+use std::cmp::PartialEq;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -16,13 +17,32 @@ enum Token {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum LispExp {
-    List(Vec<LispExp>),
-    Vector(Vec<LispExp>),
-    Map(HashMap<String, LispExp>),
+pub enum LispExp<T> {
+    List(Vec<LispExp<T>>),
+    Vector(Vec<LispExp<T>>),
+    Map(HashMap<String, LispExp<T>>),
     Number(f64),
     Symbol(String),
     String(String),
+    Primitive(fn(&[LispExp<T>], &mut T) -> Result<LispExp<T>, EvalError>),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum EvalError {
+    UnboundVariable(String),
+    UndefinedFunction(String),
+    UnvalidFunctionCall,
+    UncorrectFunctionDefinition,
+    WrongNumberOfArguments { expected: usize, got: usize },
+    IfNoConditionProvided,
+    SetqSymbolRequired,
+    DefunNameMustBeASymbol,
+}
+
+pub struct Env<T> {
+    pub variables: HashMap<String, LispExp<T>>,
+    pub functions: HashMap<String, LispExp<T>>,
+    pub outer: Option<*mut Env<T>>,
 }
 
 enum ParserLexerState {
@@ -306,7 +326,7 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    fn parse_list(&mut self) -> Result<LispExp, ParserError> {
+    fn parse_list<T>(&mut self) -> Result<LispExp<T>, ParserError> {
         let mut list = vec![];
         while self.current_token != Token::Void {
             match self.current_token {
@@ -322,7 +342,7 @@ impl<'source> Parser<'source> {
         Err(ParserError::UnclosedList)
     }
 
-    fn parse_vector(&mut self) -> Result<LispExp, ParserError> {
+    fn parse_vector<T>(&mut self) -> Result<LispExp<T>, ParserError> {
         let mut vec = vec![];
 
         while self.current_token != Token::Void {
@@ -339,7 +359,7 @@ impl<'source> Parser<'source> {
         Err(ParserError::UnclosedVector)
     }
 
-    fn parse_map(&mut self) -> Result<LispExp, ParserError> {
+    fn parse_map<T>(&mut self) -> Result<LispExp<T>, ParserError> {
         let mut map = HashMap::new();
         let mut is_key = true;
         let mut current_key = String::new();
@@ -381,7 +401,7 @@ impl<'source> Parser<'source> {
         Err(ParserError::UnclosedMap)
     }
 
-    pub fn next(&mut self) -> Result<LispExp, ParserError> {
+    pub fn next<T>(&mut self) -> Result<LispExp<T>, ParserError> {
         eprintln!("{:?}", self.current_token);
         match self.current_token.clone() {
             Token::Symbol(symbol) => {
@@ -418,24 +438,8 @@ impl<'source> Parser<'source> {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum EvalError {
-    UnboundVariable(String),
-    UndefinedFunction(String),
-    UnvalidFunctionCall,
-    UncorrectFunctionDefinition,
-    WrongNumberOfArguments { expected: usize, got: usize },
-    NotAFunction(String),
-    IfNoConditionProvided,
-}
-
-pub struct Env {
-    pub variables: HashMap<String, LispExp>,
-    pub functions: HashMap<String, LispExp>,
-    pub outer: Option<*mut Env>,
-}
-
-impl Env {
+impl<T> Env<T>
+where T: Clone {
     pub fn new() -> Self {
         Self {
             variables: HashMap::new(),
@@ -444,7 +448,7 @@ impl Env {
         }
     }
 
-    pub fn extend(caller: *mut Env) -> Self {
+    pub fn extend(caller: *mut Env<T>) -> Self {
         Self {
             variables: HashMap::new(),
             functions: HashMap::new(),
@@ -452,7 +456,7 @@ impl Env {
         }
     }
 
-    pub fn get_var(&self, name: &str) -> Option<LispExp> {
+    pub fn get_var(&self, name: &str) -> Option<LispExp<T>> {
         if let Some(val) = self.variables.get(name) {
             return Some(val.clone());
         }
@@ -464,7 +468,7 @@ impl Env {
         None
     }
 
-    pub fn get_func(&self, name: &str) -> Option<LispExp> {
+    pub fn get_func(&self, name: &str) -> Option<LispExp<T>> {
         if let Some(val) = self.functions.get(name) {
             return Some(val.clone());
         }
@@ -477,7 +481,9 @@ impl Env {
     }
 }
 
-pub fn eval(exp: &LispExp, env: &mut Env) -> Result<LispExp, EvalError> {
+pub fn eval<T>(exp: &LispExp<T>, env: &mut Env<T>, ctx: &mut T)
+ -> Result<LispExp<T>, EvalError>
+where T: Clone + PartialEq {
     match exp {
         LispExp::String(_) | LispExp::Number(_) => Ok(exp.clone()),
 
@@ -495,16 +501,16 @@ pub fn eval(exp: &LispExp, env: &mut Env) -> Result<LispExp, EvalError> {
             } else {
                 let head = &list[0];
                 match head {
-                    LispExp::Symbol(symbol) => eval_special_form_or_call(symbol, &list[1..], env),
+                    LispExp::Symbol(symbol) => eval_special_form_or_call(symbol, &list[1..], env, ctx),
                     _ => { return Err(EvalError::UnvalidFunctionCall); }
                 }
             }
         }
-        
+
         LispExp::Vector(vec) => {
             let mut new_vec = Vec::with_capacity(vec.len());
             for v in vec {
-                new_vec.push(eval(v, env)?);
+                new_vec.push(eval(v, env, ctx)?);
             }
             Ok(LispExp::Vector(new_vec))
         }
@@ -513,26 +519,78 @@ pub fn eval(exp: &LispExp, env: &mut Env) -> Result<LispExp, EvalError> {
     }
 }
 
-fn eval_special_form_or_call(symbol: &str, args: &[LispExp], env: &mut Env) -> Result<LispExp, EvalError> {
+fn eval_special_form_or_call<T>(
+    symbol: &str,
+    args: &[LispExp<T>],
+    env: &mut Env<T>,
+    ctx: &mut T,
+) -> Result<LispExp<T>, EvalError>
+where T: Clone + PartialEq {
     match symbol {
         "if" => {
             if args.len() < 1 {
                 Err(EvalError::IfNoConditionProvided)
             } else {
                 let condition = &args[0];
-                todo!()
+                if !(*condition == LispExp::List(vec![]) ||
+                    *condition == LispExp::Symbol("nil".into())) {
+                        Ok(args[1].clone())
+                    }
+                else {
+                    if args.len() > 2 {
+                        Ok(args[2].clone())
+                    } else {
+                        Ok(LispExp::Symbol("nil".into()))
+                    }
+                }
             }
         },
-        "setq" => todo!(),
-        "defun" => todo!(),
-        _ => { eval_function_call(symbol, args, env) }
+        
+        "setq" => {
+            // TODO(LM) check list len
+            if let LispExp::Symbol(var_name) = &args[0] {
+                let value = eval(&args[1], env, ctx)?;
+                env.variables.insert(var_name.clone(), value.clone());
+                Ok(value)
+            } else {
+                Err(EvalError::SetqSymbolRequired)
+            }
+        },
+        
+        "defun" => {
+            // TODO(LM) check list len
+            if let LispExp::Symbol(func_name) = &args[0] {
+                // TODO(LM) check that params must be a list of symbols
+                let params = args[1].clone();
+                let body = args[2].clone();
+
+                let lambda = LispExp::List(vec![
+                    LispExp::Symbol("lambda".into()),
+                    params,
+                    body,
+                ]);
+                env.functions.insert(func_name.clone(), lambda);
+                
+                Ok(LispExp::Symbol(func_name.clone()))
+            } else {
+                Err(EvalError::DefunNameMustBeASymbol)
+            }
+        }
+        
+        _ => { eval_function_call(symbol, args, env, ctx) }
     }
 }
 
-fn eval_function_call(symbol: &str, args: &[LispExp], env: &mut Env) -> Result<LispExp, EvalError> {
+fn eval_function_call<T>(
+    symbol: &str,
+    args: &[LispExp<T>],
+    env: &mut Env<T>,
+    ctx: &mut T,
+) -> Result<LispExp<T>, EvalError>
+where T: Clone + PartialEq {
     let mut evaled_args = Vec::new();
     for arg in args {
-        evaled_args.push(eval(arg, env)?);
+        evaled_args.push(eval(arg, env, ctx)?);
     }
 
     if let Some(func) = env.get_func(symbol) {
@@ -543,17 +601,19 @@ fn eval_function_call(symbol: &str, args: &[LispExp], env: &mut Env) -> Result<L
             let params = &lambda_ast[1];
             let body = &lambda_ast[2];
 
-            let mut call_frame = Env::extend(env as *mut Env);
+            let mut call_frame = Env::extend(env as *mut Env<T>);
 
             if let LispExp::List(param_list) = params {
                 for (i, param) in param_list.iter().enumerate() {
                     if let LispExp::Symbol(param_name) = param {
-                        call_frame.variables.insert(param_name.clone(), evaled_args[i].clone());
+                        call_frame
+                            .variables
+                            .insert(param_name.clone(), evaled_args[i].clone());
                     }
                 }
             }
             
-            eval(body, &mut call_frame)
+            eval(body, &mut call_frame, ctx)
         } else {
             Err(EvalError::UncorrectFunctionDefinition)
         }
@@ -809,22 +869,27 @@ mod tests {
     // ==========================================
     // PARSER TESTS
     // ==========================================
+
+    fn setup_env() -> (Env<()>, ()) {
+        (Env::new(), ())
+    }
+    
     #[test]
     fn test_parse_primitives() {
         let mut parser = Parser::new("42");
-
-        let ast_num = parser.next().unwrap();
+        
+        let ast_num: LispExp<()> = parser.next().unwrap();
         assert_eq!(ast_num, LispExp::Number(42.0));
 
         let mut parser = Parser::new("my-symbol");
-        let ast_sym = parser.next().unwrap();
+        let ast_sym: LispExp<()> = parser.next().unwrap();
         assert_eq!(ast_sym, LispExp::Symbol("my-symbol".to_string()));
     }
 
     #[test]
     fn test_parse_simple_list() {
         let mut parser = Parser::new("(print \"world\")");
-        let ast = parser.next().unwrap();
+        let ast: LispExp<()> = parser.next().unwrap();
 
         assert_eq!(
             ast,
@@ -839,7 +904,7 @@ mod tests {
     fn test_parse_nested_lists() {
         // Equivalent to: (define x (+ 10 20))
         let mut parser = Parser::new("(define x (+ 10 20))");
-        let ast = parser.next().unwrap();
+        let ast: LispExp<()> = parser.next().unwrap();
 
         assert_eq!(
             ast,
@@ -858,7 +923,7 @@ mod tests {
     #[test]
     fn test_parse_deeply_nested() {
         let mut parser = Parser::new("(((1)))");
-        let ast = parser.next().unwrap();
+        let ast: LispExp<()> = parser.next().unwrap();
 
         assert_eq!(
             ast,
@@ -872,13 +937,13 @@ mod tests {
     fn test_parse_errors() {
         // Missing closing parenthesis
         let mut parser = Parser::new("(+1 2");
-        let err1 = parser.next().unwrap_err();
+        let err1 = parser.next::<()>().unwrap_err();
         assert_eq!(err1, ParserError::UnclosedList);
 
         // Unexpected closing parenthesis
-        eprintln!("{:?}", Parser::new("(+ 1 2))").next().unwrap_err());
+        eprintln!("{:?}", Parser::new("(+ 1 2))").next::<()>().unwrap_err());
         let mut parser = Parser::new("(+1 2))");
-        let err2 = parser.next().unwrap_err();
+        let err2 = parser.next::<()>().unwrap_err();
         assert_eq!(err2, ParserError::UnbalancedRParen);
     }
 
@@ -887,7 +952,7 @@ mod tests {
         // Testing that [1 2 3] creates a Vector, not a List
         let input = "[1 2 3]";
         let mut parser = Parser::new(input);
-        let ast = parser.next().expect("Should parse vector");
+        let ast: LispExp<()> = parser.next().expect("Should parse vector");
 
         match ast {
             LispExp::Vector(v) => {
@@ -903,7 +968,7 @@ mod tests {
         // Testing { "name" "Gemini" "version" 3 }
         let input = r#"{ "name" "Gemini" "version" 3.0 }"#;
         let mut parser = Parser::new(input);
-        let ast = parser.next().expect("Should parse map");
+        let ast: LispExp<()> = parser.next().expect("Should parse map");
 
         if let LispExp::Map(m) = ast {
             assert_eq!(m.get("name").unwrap(), &LispExp::String("Gemini".into()));
@@ -918,7 +983,7 @@ mod tests {
         // A complex nested structure: (calculate [1 2] { "factor" 10.5 })
         let input = "(calculate [1 2] { \"factor\" 10.5 })";
         let mut parser = Parser::new(input);
-        let ast = parser.next().expect("Should parse complex structure");
+        let ast: LispExp<()> = parser.next().expect("Should parse complex structure");
 
         if let LispExp::List(list) = ast {
             assert_eq!(list[0], LispExp::Symbol("calculate".into()));
@@ -934,13 +999,13 @@ mod tests {
         // Case 1: Odd number of elements in a map
         let input_odd = r#"{ "key1" "val1" "key2" }"#;
         let mut p1 = Parser::new(input_odd);
-        let result = p1.next();
+        let result = p1.next::<()>();
         assert!(matches!(result, Err(ParserError::MapKeyMissingValue)));
 
         // Case 2: Using a non-string/symbol as a key
         let input_bad_key = "{ 42 \"answer\" }";
         let mut p2 = Parser::new(input_bad_key);
-        let result = p2.next();
+        let result = p2.next::<()>();
         assert!(matches!(result, Err(ParserError::InvalidMapKey)));
     }
 
@@ -952,9 +1017,9 @@ mod tests {
         let mut parser = Parser::new(input);
 
         // Should yield: Symbol, Vector, Map
-        assert!(matches!(parser.next().unwrap(), LispExp::Symbol(_)));
-        assert!(matches!(parser.next().unwrap(), LispExp::Vector(_)));
-        assert!(matches!(parser.next().unwrap(), LispExp::Map(_)));
+        assert!(matches!(parser.next::<()>().unwrap(), LispExp::Symbol(_)));
+        assert!(matches!(parser.next::<()>().unwrap(), LispExp::Vector(_)));
+        assert!(matches!(parser.next::<()>().unwrap(), LispExp::Map(_)));
     }
 
     #[test]
@@ -962,8 +1027,8 @@ mod tests {
         let input = "-42 -3.14";
         let mut parser = Parser::new(input);
 
-        assert_eq!(parser.next().unwrap(), LispExp::Number(-42.0));
-        assert_eq!(parser.next().unwrap(), LispExp::Number(-3.14));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::Number(-42.0));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::Number(-3.14));
     }
 
     #[test]
@@ -971,9 +1036,9 @@ mod tests {
         let input = ".5 5. 0.0";
         let mut parser = Parser::new(input);
 
-        assert_eq!(parser.next().unwrap(), LispExp::Number(0.5));
-        assert_eq!(parser.next().unwrap(), LispExp::Number(5.0));
-        assert_eq!(parser.next().unwrap(), LispExp::Number(0.0));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::Number(0.5));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::Number(5.0));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::Number(0.0));
     }
 
     #[test]
@@ -981,7 +1046,7 @@ mod tests {
         let input = r#" "\\\"" "#; // Represents the string: \"
         let mut parser = Parser::new(input);
 
-        let ast = parser.next().unwrap();
+        let ast: LispExp<()> = parser.next().unwrap();
         if let LispExp::String(s) = ast {
             assert_eq!(s, "\\\"");
         } else {
@@ -995,7 +1060,7 @@ mod tests {
         let mut parser = Parser::new(input);
 
         // Should parse as Map containing Key: "key", Value: Vector([1.0])
-        let ast = parser.next().unwrap();
+        let ast: LispExp<()> = parser.next().unwrap();
         if let LispExp::Map(m) = ast {
             let val = m.get("key").expect("Key 'key' not found");
             assert_eq!(val, &LispExp::Vector(vec![LispExp::Number(1.0)]));
@@ -1009,7 +1074,7 @@ mod tests {
         let input = "([{}])";
         let mut parser = Parser::new(input);
 
-        let ast = parser.next().unwrap();
+        let ast: LispExp<()> = parser.next().unwrap();
 
         // Expected: List containing one Vector containing one Map (all empty)
         assert_eq!(
@@ -1026,7 +1091,7 @@ mod tests {
         // with the Vector acting as the value.
         let input = "{\n\t\"data\"\n\t[ (1\n2\t3) ]\n}";
         let mut parser = Parser::new(input);
-        let ast = parser.next().expect("Should parse successfully");
+        let ast: LispExp<()> = parser.next().expect("Should parse successfully");
 
         // Expected structure: Map { "data" => Vector [ List [1, 2, 3] ] }
         if let LispExp::Map(mut map) = ast {
@@ -1056,11 +1121,11 @@ mod tests {
         let mut parser = Parser::new(input);
 
         // Test [1.5] - Vector boundary
-        let exp1 = parser.next().unwrap();
+        let exp1: LispExp<()> = parser.next().unwrap();
         assert_eq!(exp1, LispExp::Vector(vec![LispExp::Number(1.5)]));
 
         // Test {"k" .5} - Map boundary
-        let exp2 = parser.next().unwrap();
+        let exp2: LispExp<()> = parser.next().unwrap();
         if let LispExp::Map(mut m) = exp2 {
             assert_eq!(m.remove("k"), Some(LispExp::Number(0.5)));
         } else {
@@ -1068,7 +1133,7 @@ mod tests {
         }
 
         // Test "5." - EOF/whitespace boundary
-        let exp3 = parser.next();
+        let exp3 = parser.next::<()>();
         println!("Result for 5.: {:?}", exp3);
     }
 
@@ -1077,19 +1142,19 @@ mod tests {
         let input = r#" "" () [] {} "back\\slash" "#;
         let mut parser = Parser::new(input);
 
-        assert_eq!(parser.next().unwrap(), LispExp::String("".into()));
-        assert_eq!(parser.next().unwrap(), LispExp::List(vec![]));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::String("".into()));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::List(vec![]));
 
         // These now expect Vector and Map instead of List
-        assert_eq!(parser.next().unwrap(), LispExp::Vector(vec![]));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::Vector(vec![]));
         assert_eq!(
-            parser.next().unwrap(),
+            parser.next::<()>().unwrap(),
             LispExp::Map(std::collections::HashMap::new())
         );
 
         // Check backslash escaping logic
         assert_eq!(
-            parser.next().unwrap(),
+            parser.next::<()>().unwrap(),
             LispExp::String("back\\slash".into())
         );
     }
@@ -1098,35 +1163,47 @@ mod tests {
     fn test_malformed_input_recovery() {
         // Unclosed list
         let mut p1 = Parser::new("(1 2 3");
-        assert_eq!(p1.next().unwrap_err(), ParserError::UnclosedList);
+        assert_eq!(p1.next::<()>().unwrap_err(), ParserError::UnclosedList);
 
         // Mismatched brackets
         let mut p2 = Parser::new("(1 2 3]");
-        assert_eq!(p2.next().unwrap_err(), ParserError::UnbalancedRSquared);
+        assert_eq!(p2.next::<()>().unwrap_err(), ParserError::UnbalancedRSquared);
 
         // Multiple decimal points
         let mut p3 = Parser::new("1.2.3");
         assert!(matches!(
-            p3.next().unwrap_err(),
+            p3.next::<()>().unwrap_err(),
             ParserError::NumberParseError(_)
         ));
 
         // NEW: Map with missing value
         let mut p4 = Parser::new("{ \"key\" }");
-        assert_eq!(p4.next().unwrap_err(), ParserError::MapKeyMissingValue);
+        assert_eq!(p4.next::<()>().unwrap_err(), ParserError::MapKeyMissingValue);
 
         // NEW: Map with invalid key type (number instead of string/symbol)
         let mut p5 = Parser::new("{ 42 \"value\" }");
-        assert_eq!(p5.next().unwrap_err(), ParserError::InvalidMapKey);
+        assert_eq!(p5.next::<()>().unwrap_err(), ParserError::InvalidMapKey);
     }
 
     // ==========================================
     // EVAL TESTS
     // ==========================================
 
+    fn get_var<T>(env: &Env<T>, name: &str) -> Option<LispExp<T>> where T: Clone {
+        env.get_var(name)
+    }
+
+    fn get_func<T>(env: &Env<T>, name: &str) -> Option<LispExp<T>> where T: Clone {
+        env.get_func(name)
+    }
+
+    fn is_nil<T>(exp: &LispExp<T>) -> bool where T: PartialEq {
+        *exp == LispExp::List(vec![]) || *exp == LispExp::Symbol("nil".into())
+    }
+
     #[test]
     fn test_lisp_2_namespaces() {
-        let mut env = Env::new();
+        let (mut env, mut ctx) = setup_env();
 
         // Bind the variable 'buffer' to the string "main.txt"
         // (setq buffer "main.txt")
@@ -1142,13 +1219,224 @@ mod tests {
         env.functions.insert("buffer".into(), mock_func);
 
         // Test 1: Evaluating the symbol alone yields the variable slot
-        let var_eval = eval(&LispExp::Symbol("buffer".into()), &mut env).unwrap();
+        let var_eval = eval(&LispExp::Symbol("buffer".into()), &mut env, &mut ctx).unwrap();
         assert_eq!(var_eval, LispExp::String("main.txt".into()));
 
         // Test 2: Evaluating the symbol as a function call executes the function slot
         // Execution of (buffer)
         let call_exp = LispExp::List(vec![LispExp::Symbol("buffer".into())]);
-        let func_eval = eval(&call_exp, &mut env).unwrap();
+        let func_eval = eval(&call_exp, &mut env, &mut ctx).unwrap();
         assert_eq!(func_eval, LispExp::Number(42.0));
+    }
+
+    #[test]
+    fn test_dynamic_variable_lookup() {
+        let (mut global, mut ctx) = setup_env();
+        global.variables.insert("x".into(), LispExp::Number(10.0));
+        global.variables.insert("y".into(), LispExp::Number(20.0));
+
+        let mut local = Env::extend(&mut global as _);
+        local.variables.insert("x".into(), LispExp::Number(99.0)); // Shadows global x
+
+        // Local 'x' shadows global 'x'
+        assert_eq!(get_var(&local, "x"), Some(LispExp::Number(99.0)));
+        // Local falls back to global for 'y'
+        assert_eq!(get_var(&local, "y"), Some(LispExp::Number(20.0)));
+        // Unbound variable
+        assert_eq!(get_var(&local, "z"), None);
+    }
+
+    #[test]
+    fn test_dynamic_function_lookup() {
+        let (mut global, mut ctx) = setup_env();
+        global.functions.insert("add".into(), LispExp::Symbol("built-in-add".into()));
+
+        let local = Env::extend(&mut global as _);
+        
+        // Should find 'add' in the parent's function namespace
+        assert_eq!(get_func(&local, "add"), Some(LispExp::Symbol("built-in-add".into())));
+    }
+
+    #[test]
+    fn test_elisp_nil_truthiness() {
+        // In Elisp, the symbol "nil" and the empty list () are false.
+        assert!(is_nil(&LispExp::<()>::Symbol("nil".into())));
+        assert!(is_nil(&LispExp::<()>::List(vec![])));
+
+        // Everything else is true (not nil)
+        assert!(!is_nil(&LispExp::<()>::Symbol("t".into())));
+        assert!(!is_nil(&LispExp::<()>::Number(0.0))); 
+        assert!(!is_nil(&LispExp::<()>::String("".into())));
+        assert!(!is_nil(&LispExp::<()>::Vector(vec![]))); // Empty vectors are true in Elisp!
+    }
+
+    #[test]
+    fn test_eval_setq() {
+        let (mut env, mut ctx) = setup_env();
+        // (setq a 42.0)
+        let setq_exp = LispExp::List(vec![
+            LispExp::Symbol("setq".into()),
+            LispExp::Symbol("a".into()),
+            LispExp::Number(42.0),
+        ]);
+
+        let result = eval(&setq_exp, &mut env, &mut ctx).unwrap();
+        
+        assert_eq!(result, LispExp::Number(42.0));
+        assert_eq!(env.variables.get("a"), Some(&LispExp::Number(42.0)));
+    }
+
+    #[test]
+    fn test_eval_defun() {
+        let (mut env, mut ctx) = setup_env();
+        
+        // (defun my-func () "hello")
+        let defun_exp = LispExp::List(vec![
+            LispExp::Symbol("defun".into()),
+            LispExp::Symbol("my-func".into()),
+            LispExp::List(vec![]),
+            LispExp::String("hello".into()),
+        ]);
+
+        eval(&defun_exp, &mut env, &mut ctx).unwrap();
+        
+        // In Elisp, defun binds the symbol's function slot to a lambda representation
+        let stored_func = env.functions.get("my-func").expect("Function should be bound");
+        
+        if let LispExp::List(lambda_data) = stored_func {
+            assert_eq!(lambda_data[0], LispExp::Symbol("lambda".into()));
+            assert_eq!(lambda_data[1], LispExp::List(vec![]));
+            assert_eq!(lambda_data[2], LispExp::String("hello".into()));
+        } else {
+            panic!("defun did not store a lambda list");
+        }
+    }
+
+    #[test]
+    fn test_eval_if() {
+        let (mut env, mut ctx) = setup_env();
+        
+        // (if nil 1.0 2.0) -> should evaluate to 2.0
+        let if_false = LispExp::List(vec![
+            LispExp::Symbol("if".into()),
+            LispExp::Symbol("nil".into()),
+            LispExp::Number(1.0),
+            LispExp::Number(2.0),
+        ]);
+        assert_eq!(eval(&if_false, &mut env, &mut ctx).unwrap(), LispExp::Number(2.0));
+
+        // (if "truthy" 1.0 2.0) -> should evaluate to 1.0
+        let if_true = LispExp::List(vec![
+            LispExp::Symbol("if".into()),
+            LispExp::String("truthy".into()),
+            LispExp::Number(1.0),
+            LispExp::Number(2.0),
+        ]);
+        assert_eq!(eval(&if_true, &mut env, &mut ctx).unwrap(), LispExp::Number(1.0));
+    }
+
+    #[test]
+    fn test_error_void_variable() {
+        let (mut env, mut ctx) = setup_env();
+
+        let exp = LispExp::Symbol("undefined-var".into());
+        let result = eval(&exp, &mut env, &mut ctx);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), EvalError::UnboundVariable("undefined-var".into()));
+    }
+
+    #[test]
+    fn test_error_void_function() {
+        let (mut env, mut ctx) = setup_env();        
+
+        // (missing-func 1 2)
+        let exp = LispExp::List(vec![
+            LispExp::Symbol("missing-func".into()),
+            LispExp::Number(1.0),
+        ]);
+        let result = eval(&exp, &mut env, &mut ctx);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), EvalError::UndefinedFunction("missing-func".into()));
+    }
+
+    #[test]
+    fn test_error_calling_variable_as_function() {
+        let (mut env, mut ctx) = setup_env();
+
+        // Bind 'x' in the variable namespace only
+        env.variables.insert("x".into(), LispExp::Number(42.0));
+
+        // Try to call it: (x)
+        let exp = LispExp::List(vec![LispExp::Symbol("x".into())]);
+        let result = eval(&exp, &mut env, &mut ctx);
+
+        // It should fail because 'x' is not in the function namespace!
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), EvalError::UndefinedFunction("x".into()));
+    }
+
+    #[test]
+    fn test_error_invalid_function_call() {
+        let (mut env, mut ctx) = setup_env();
+
+        // (42 "hello") -> The first element is not a symbol!
+        let exp = LispExp::List(vec![
+            LispExp::Number(42.0),
+            LispExp::String("hello".into()),
+        ]);
+        let result = eval(&exp, &mut env, &mut ctx);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), EvalError::UnvalidFunctionCall);
+    }
+
+    #[test]
+    fn test_error_setq_non_symbol() {
+        let (mut env, mut ctx) = setup_env();
+
+        // (setq 42 "value") -> 42 is not a valid variable name
+        let exp = LispExp::List(vec![
+            LispExp::Symbol("setq".into()),
+            LispExp::Number(42.0),
+            LispExp::String("value".into()),
+        ]);
+        let result = eval(&exp, &mut env, &mut ctx);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), EvalError::SetqSymbolRequired);
+    }
+
+    #[test]
+    fn test_error_defun_non_symbol() {
+        let (mut env, mut ctx) = setup_env();
+
+        // (defun "my-func" () 1) -> Function name must be a symbol, not a string
+        let exp = LispExp::List(vec![
+            LispExp::Symbol("defun".into()),
+            LispExp::String("my-func".into()),
+            LispExp::List(vec![]),
+            LispExp::Number(1.0),
+        ]);
+        let result = eval(&exp, &mut env, &mut ctx);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), EvalError::DefunNameMustBeASymbol);
+    }
+
+    #[test]
+    fn test_error_if_missing_condition() {
+        let (mut env, mut ctx) = setup_env();
+
+        // (if) -> Missing condition and branches
+        let exp = LispExp::List(vec![
+            LispExp::Symbol("if".into()),
+        ]);
+        let result = eval(&exp, &mut env, &mut ctx);
+
+        // Your evaluator needs bounds checking for `args[0]` to pass this without panicking!
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), EvalError::IfNoConditionProvided);
     }
 }
