@@ -1,33 +1,32 @@
 use crossterm::{cursor, execute, terminal, style::Print};
 use crossterm::event::{read, Event, KeyCode, KeyModifiers};
 use std::io::{stdout, Write};
-use rsedit_core::lisp::Env;
-use rsedit_core::editor::EditorState;
+use rsedit_core::lisp::{Env, eval};
+use rsedit_core::editor::{create_env, EditorState, ELispExp};
 
 pub fn render_screen(state: &EditorState) -> std::io::Result<()> {
     let mut stdout = stdout();
     execute!(stdout, terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 0))?;
-
+    
     stdout.flush()
 }
 
 pub fn tui_main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut state = EditorState::new();
-    let mut env = Env::<()>::new();
-
+    let (mut state, mut env) = create_env();
     terminal::enable_raw_mode()?;
 
     while state.running {
         render_screen(&state);
 
         if let Event::Key(key_event) = read()? {
-            match key_event.code {
+            let command = match key_event.code {
                 KeyCode::Char('q') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                    state.running = false;
+                    ELispExp::List(vec![ELispExp::Symbol("quit".into())])
                 }
 
-                _ => ()
-            }
+                _ => ELispExp::List(vec![])
+            };
+                eval(&command, &mut env, &mut state);
         }
     }
 

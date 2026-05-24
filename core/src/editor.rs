@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use crate::buffer::GapBuffer;
+use crate::lisp::{Env, EvalError, LispExp};
+pub type ELispExp = LispExp<EditorState>;
 
 pub struct Buffer {
     pub name: String,
@@ -26,6 +28,20 @@ pub struct EditorState {
     pub running: bool,
 }
 
+impl Clone for EditorState {
+    fn clone(&self) -> Self {
+        unreachable!()
+    }
+}
+
+impl std::fmt::Debug for EditorState {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> { todo!() }
+}
+
+impl std::cmp::PartialEq for EditorState {
+    fn eq(&self, _: &EditorState) -> bool { todo!() }
+}
+
 impl EditorState {
     pub fn new() -> Self {
         let mut buffers = HashMap::new();
@@ -50,5 +66,39 @@ impl EditorState {
         self.buffers
             .get(&self.current_buffer_name)
             .expect("Corruption in the hashmap of buffers")
+    }
+}
+
+pub fn create_env() -> (EditorState, Env<EditorState>) {
+    let editor_state = EditorState::new();
+    let mut env = Env::new();
+
+    macro_rules! insert_fn {
+        ($name:literal, $func:ident) => {
+            env.functions.insert($name.into(), LispExp::Primitive(primitives::$func));
+        }
+    }
+    insert_fn!("quit", quit);
+    
+    (editor_state, env)
+}
+
+// ---------------------------------------------------------------------------//
+//                                                                            //
+//                                  PRIMITIVES                                //
+//                                                                            //
+// ---------------------------------------------------------------------------//
+
+mod primitives {
+    use crate::lisp::{Env, EvalError, LispExp};
+    use super::{EditorState, ELispExp};
+    
+    macro_rules! nil {
+        () => {ELispExp::Symbol("nil".into())}
+    }
+    
+    pub fn quit(args: &[ELispExp], ctx: &mut EditorState) -> Result<ELispExp, EvalError> {
+        ctx.running = false;
+        Ok(nil!())
     }
 }
