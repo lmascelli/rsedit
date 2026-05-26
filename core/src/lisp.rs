@@ -32,7 +32,7 @@ pub enum LispExp<T> {
 pub enum EvalError {
     UnboundVariable(String),
     UndefinedFunction(String),
-    UnvalidFunctionCall,
+    UnvalidFunctionCall(String),
     UncorrectFunctionDefinition,
     WrongNumberOfArguments { expected: usize, got: usize },
     WrongArgumentType { expected: String, got: String },
@@ -510,7 +510,7 @@ where T: Clone + PartialEq + Debug {
                 let head = &list[0];
                 match head {
                     LispExp::Symbol(symbol) => eval_special_form_or_call(symbol, &list[1..], env, ctx),
-                    _ => { return Err(EvalError::UnvalidFunctionCall); }
+                    _ => { return Err(EvalError::UnvalidFunctionCall(format!("{:?}", list))); }
                 }
             }
         }

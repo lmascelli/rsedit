@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use crate::input::{default_keymaps, KeyCode, KeyEvent};
 use crate::buffer::GapBuffer;
-use crate::lisp::{Env, EvalError, LispExp};
+use crate::lisp::{eval, Env, LispExp};
 pub type ELispExp = LispExp<EditorState>;
 
 pub struct Buffer {
@@ -25,6 +26,7 @@ pub struct EditorState {
     pub buffers: HashMap<String, Buffer>,
     pub current_buffer_name: String,
     pub echo_message: String,
+    pub keymaps: HashMap<KeyEvent, String>,
     pub running: bool,
 }
 
@@ -48,10 +50,13 @@ impl EditorState {
         let scratch_name = "*scratch*".to_string();
         buffers.insert(scratch_name.clone(), Buffer::new(&scratch_name));
 
+        let keymaps = default_keymaps();
+
         Self {
             buffers,
             current_buffer_name: scratch_name,
             echo_message: "Welcome to rsedit".to_string(),
+            keymaps,
             running: true,
         }
     }
@@ -67,9 +72,26 @@ impl EditorState {
             .get(&self.current_buffer_name)
             .expect("Corruption in the hashmap of buffers")
     }
+
+    pub fn handle_key_event(&mut self, event: KeyEvent, env: &mut Env<EditorState>) {
+        if let Some(symbol_name) = self.keymaps.get(&event) {
+            let mut ast = vec![ELispExp::Symbol(symbol_name.clone())];
+            if let KeyCode::Char(c) = event.code {
+                ast.push(ELispExp::String(c.to_string()));
+            }
+            let ast = ELispExp::List(ast);
+            if let Err(e) = eval(&ast, env, self) {
+                self.echo_message = format!("Eval Error: {:?} {:?}", ast, e);
+            } else {
+                self.echo_message.clear();
+            }
+        } else {
+            self.echo_message = format!("Keymap not bound {:?}", event);
+        }
+    }
 }
 
-pub fn create_env() -> (EditorState, Env<EditorState>) {
+pub fn create_global_env() -> (EditorState, Env<EditorState>) {
     let editor_state = EditorState::new();
     let mut env = Env::new();
 
@@ -79,6 +101,7 @@ pub fn create_env() -> (EditorState, Env<EditorState>) {
         }
     }
     insert_fn!("quit", quit);
+    insert_fn!("self-insert", self_insert);
     
     (editor_state, env)
 }
@@ -90,15 +113,31 @@ pub fn create_env() -> (EditorState, Env<EditorState>) {
 // ---------------------------------------------------------------------------//
 
 mod primitives {
-    use crate::lisp::{Env, EvalError, LispExp};
+    use crate::lisp::{EvalError, LispExp};
     use super::{EditorState, ELispExp};
     
     macro_rules! nil {
         () => {ELispExp::Symbol("nil".into())}
     }
     
-    pub fn quit(args: &[ELispExp], ctx: &mut EditorState) -> Result<ELispExp, EvalError> {
+    pub fn quit(_args: &[ELispExp], ctx: &mut EditorState) -> Result<ELispExp, EvalError> {
         ctx.running = false;
         Ok(nil!())
+    }
+
+    pub fn self_insert(args: &[ELispExp], ctx: &mut EditorState) -> Result<ELispExp, EvalError> {
+        if let Some(LispExp::String(s)) = args.first() {
+            if let Some(c) = s.chars().next() {
+                let buf = ctx.current_buffer_mut();
+                buf.text.insert(c);
+                buf.is_modified = true;
+            }
+            Ok(LispExp::Symbol("nil".into()))
+        } else {
+            Err(EvalError::WrongArgumentType {
+                    expected: "String".into(),
+                    got: format!("{:?}", args.first())
+            })
+        }
     }
 }
