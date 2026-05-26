@@ -21,8 +21,13 @@ pub fn render_screen(state: &EditorState) -> std::io::Result<()> {
     stdout.queue(cursor::MoveTo(0, echo_row))?;
     stdout.queue(Print(&state.echo_message))?;
 
-    let cursor_x = text.chars().count() as u16;
-    stdout.queue(cursor::MoveTo(cursor_x, 0))?;
+    // CURSOR CALCULATION
+    let gap_pos = state.current_buffer().text.cursor_pos();
+    let text_before_cursor: String = text.chars().take(gap_pos).collect();
+    let cursor_y = text_before_cursor.matches('\n').count() as u16;
+    let cursor_x = text_before_cursor.lines().last().unwrap_or("").chars().count() as u16;
+
+    stdout.queue(cursor::MoveTo(cursor_x, cursor_y))?;
 
     stdout.flush()
 }

@@ -47,6 +47,34 @@ pub fn default_keymaps() -> HashMap<KeyEvent, String> {
         }
     }, "quit".into());
 
+    maps.insert(KeyEvent {
+        code: KeyCode::Left,
+        modifiers: KeyModifiers {
+            .. Default::default()
+        }
+    }, "backward-char".into());
+
+    maps.insert(KeyEvent {
+        code: KeyCode::Right,
+        modifiers: KeyModifiers {
+            .. Default::default()
+        }
+    }, "forward-char".into());
+
+   maps.insert(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers {
+            .. Default::default()
+        }
+    }, "insert-newline".into());
+
+    maps.insert(KeyEvent {
+        code: KeyCode::Backspace,
+        modifiers: KeyModifiers {
+            .. Default::default()
+        }
+    }, "delete-backward-char".into());
+
     for c in ' '..='~' {
         let event = KeyEvent {
             code: KeyCode::Char(c),

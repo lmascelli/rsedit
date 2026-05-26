@@ -102,6 +102,10 @@ pub fn create_global_env() -> (EditorState, Env<EditorState>) {
     }
     insert_fn!("quit", quit);
     insert_fn!("self-insert", self_insert);
+    insert_fn!("insert-newline", insert_newline);
+    insert_fn!("backward-char", backward_char);
+    insert_fn!("forward-char", forward_char);
+    insert_fn!("delete-backward-char", delete_backward_char);
     
     (editor_state, env)
 }
@@ -115,17 +119,28 @@ pub fn create_global_env() -> (EditorState, Env<EditorState>) {
 mod primitives {
     use crate::lisp::{EvalError, LispExp};
     use super::{EditorState, ELispExp};
+
+    fn is_nil(args: &[ELispExp]) -> bool {
+        args.len() == 0 ||
+        (args.len() == 1 && (
+            args[0] == ELispExp::List(vec![])) ||
+            args[0] == ELispExp::Symbol("nil".into()))
+    }
     
     macro_rules! nil {
         () => {ELispExp::Symbol("nil".into())}
     }
+
+    macro_rules! primitive {
+        ($func_name:ident, $args:ident, $ctx:ident, $body:block) => {
+            pub fn $func_name($args: &[ELispExp], $ctx: &mut EditorState) -> Result<ELispExp, EvalError> { $body } } }
     
-    pub fn quit(_args: &[ELispExp], ctx: &mut EditorState) -> Result<ELispExp, EvalError> {
+    primitive!(quit, args, ctx, {
         ctx.running = false;
         Ok(nil!())
-    }
-
-    pub fn self_insert(args: &[ELispExp], ctx: &mut EditorState) -> Result<ELispExp, EvalError> {
+    });
+    
+    primitive!(self_insert, args, ctx, {
         if let Some(LispExp::String(s)) = args.first() {
             if let Some(c) = s.chars().next() {
                 let buf = ctx.current_buffer_mut();
@@ -139,5 +154,55 @@ mod primitives {
                     got: format!("{:?}", args.first())
             })
         }
-    }
+    });
+
+    primitive!(insert_newline, args, ctx, {
+        let buf = ctx.current_buffer_mut();
+        buf.text.insert('\n');
+        buf.is_modified = true;
+        Ok(LispExp::Symbol("nil".into()))
+    });
+
+    primitive!(forward_char, args, ctx, {
+        let buf = ctx.current_buffer_mut();
+        let current = buf.text.cursor_pos();
+        let step = if is_nil(args) { 1 } else {
+            if let ELispExp::Number(n) = args[0] {
+                n.floor() as usize
+            } else {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "Number".into(),
+                    got: format!("{:?}", args[0])
+                })
+            }
+        };
+        buf.text.move_gap(current + step);
+
+        Ok(nil!())
+    });
+
+    primitive!(backward_char, args, ctx, {
+        let buf = ctx.current_buffer_mut();
+        let current = buf.text.cursor_pos();
+        let step = if is_nil(args) { 1 } else {
+            if let ELispExp::Number(n) = args[0] {
+                n.floor() as usize
+            } else {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "Number".into(),
+                    got: format!("{:?}", args[0])
+                })
+            }
+        };
+        buf.text.move_gap(current - step);
+
+        Ok(nil!())
+    });
+
+    primitive!(delete_backward_char, args, ctx, {
+        let buf = ctx.current_buffer_mut();
+        buf.text.delete();
+        buf.is_modified = true;
+        Ok(nil!())
+    });
 }

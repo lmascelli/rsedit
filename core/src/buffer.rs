@@ -15,6 +15,10 @@ impl GapBuffer {
         }
     }
 
+    pub fn cursor_pos(&self) -> usize {
+        self.gap_start
+    }
+
     pub fn move_gap(&mut self, new_cursor_pos: usize) {
         if new_cursor_pos > self.data.len() - self.gap_end + self.gap_start {
             return;
