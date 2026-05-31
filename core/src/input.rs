@@ -39,41 +39,87 @@ impl KeyEvent {
 pub fn default_keymaps() -> HashMap<KeyEvent, String> {
     let mut maps = HashMap::new();
 
-    maps.insert(KeyEvent {
-        code: KeyCode::Char('q'),
-        modifiers: KeyModifiers {
-            ctrl: true,
-            .. Default::default()
-        }
-    }, "quit".into());
+    maps.insert(
+        KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        },
+        "quit".into(),
+    );
 
-    maps.insert(KeyEvent {
-        code: KeyCode::Left,
-        modifiers: KeyModifiers {
-            .. Default::default()
-        }
-    }, "backward-char".into());
+    maps.insert(
+        KeyEvent {
+            code: KeyCode::Char('s'),
+            modifiers: KeyModifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        },
+        "save-buffer".into(),
+    );
 
-    maps.insert(KeyEvent {
-        code: KeyCode::Right,
-        modifiers: KeyModifiers {
-            .. Default::default()
-        }
-    }, "forward-char".into());
+    maps.insert(
+        KeyEvent {
+            code: KeyCode::Left,
+            modifiers: KeyModifiers {
+                ..Default::default()
+            },
+        },
+        "backward-char".into(),
+    );
 
-   maps.insert(KeyEvent {
-        code: KeyCode::Enter,
-        modifiers: KeyModifiers {
-            .. Default::default()
-        }
-    }, "insert-newline".into());
+    maps.insert(
+        KeyEvent {
+            code: KeyCode::Right,
+            modifiers: KeyModifiers {
+                ..Default::default()
+            },
+        },
+        "forward-char".into(),
+    );
 
-    maps.insert(KeyEvent {
-        code: KeyCode::Backspace,
-        modifiers: KeyModifiers {
-            .. Default::default()
-        }
-    }, "delete-backward-char".into());
+    maps.insert(
+        KeyEvent {
+            code: KeyCode::Up,
+            modifiers: KeyModifiers {
+                ..Default::default()
+            },
+        },
+        "previous-line".into(),
+    );
+
+    maps.insert(
+        KeyEvent {
+            code: KeyCode::Down,
+            modifiers: KeyModifiers {
+                ..Default::default()
+            },
+        },
+        "next-line".into(),
+    );
+
+    maps.insert(
+        KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers {
+                ..Default::default()
+            },
+        },
+        "insert-newline".into(),
+    );
+
+    maps.insert(
+        KeyEvent {
+            code: KeyCode::Backspace,
+            modifiers: KeyModifiers {
+                ..Default::default()
+            },
+        },
+        "delete-backward-char".into(),
+    );
 
     for c in ' '..='~' {
         let event = KeyEvent {
@@ -82,6 +128,6 @@ pub fn default_keymaps() -> HashMap<KeyEvent, String> {
         };
         maps.insert(event, "self-insert".into());
     }
-    
+
     maps
 }

@@ -1,43 +1,75 @@
-use crossterm::{cursor, execute, terminal, style::Print, QueueableCommand};
-use crossterm::event::{read, Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers};
-use std::io::{stdout, Write};
-use rsedit_core::editor::{create_global_env, EditorState};
-use rsedit_core::input::{KeyEvent, KeyCode, KeyModifiers};
+use crossterm::event::{Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers, read};
+use crossterm::{QueueableCommand, cursor, execute, style::Print, terminal};
+use rsedit_core::buffer::BufferTrait;
+use rsedit_core::editor::{ELispExp, EditorState, create_global_env};
+use rsedit_core::gap_buffer::GapBuffer;
+use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
+use rsedit_core::lisp::eval;
+use std::io::{Write, stdout};
 
-pub fn render_screen(state: &EditorState) -> std::io::Result<()> {
+type BufferType = GapBuffer;
+
+pub fn render_screen<B: BufferTrait>(state: &EditorState<B>, cols: u16, rows: u16) -> std::io::Result<()> {
     let mut stdout = stdout();
-    execute!(stdout, terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 0))?;
-    
-    let text = state.current_buffer().text.to_string();
-    let mut line_y = 0;
-    for line in text.lines() {
-        stdout.queue(cursor::MoveTo(0, line_y))?;
-        stdout.queue(Print(line))?;
-        line_y += 1;
+    execute!(
+        stdout,
+        terminal::Clear(terminal::ClearType::All),
+        cursor::MoveTo(0, 0)
+    )?;
+
+    let text_area_rows = if rows > 1 { (rows - 1) as usize } else { 0 };
+    let buf = state.current_buffer();
+    let text = buf.text.to_string();
+    let (cursor_line, cursor_col) = buf.text.cursor_pos();
+
+    for (i, line) in text
+        .split('\n')
+        .skip(buf.scroll_y)
+        .take(text_area_rows)
+        .enumerate()
+    {
+        stdout.queue(cursor::MoveTo(0, i as u16))?;
+
+        let display_line: String = line
+            .chars()
+            .skip(buf.scroll_x)
+            .take(cols as usize)
+            .collect();
+        stdout.queue(Print(display_line))?;
     }
 
-    let (_, rows) = terminal::size()?;
     let echo_row = if rows > 0 { rows - 1 } else { 0 };
     stdout.queue(cursor::MoveTo(0, echo_row))?;
     stdout.queue(Print(&state.echo_message))?;
 
     // CURSOR CALCULATION
-    let gap_pos = state.current_buffer().text.cursor_pos();
-    let text_before_cursor: String = text.chars().take(gap_pos).collect();
-    let cursor_y = text_before_cursor.matches('\n').count() as u16;
-    let cursor_x = text_before_cursor.lines().last().unwrap_or("").chars().count() as u16;
+    let screen_cursor_y = cursor_line.saturating_sub(buf.scroll_y) as u16;
+    let screen_cursor_x = cursor_col.saturating_sub(buf.scroll_x) as u16;
 
-    stdout.queue(cursor::MoveTo(cursor_x, cursor_y))?;
+    stdout.queue(cursor::MoveTo(screen_cursor_x, screen_cursor_y))?;
 
     stdout.flush()
 }
 
-pub fn tui_main() -> Result<(), Box<dyn std::error::Error>> {
-    let (mut state, mut env) = create_global_env();
+pub fn tui_main(file_to_open: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let (mut state, mut env) = create_global_env::<BufferType>();
+
+    if let Some(path) = file_to_open {
+        let ast = ELispExp::List(vec![
+            ELispExp::Symbol("find-file".into()),
+            ELispExp::String(path),
+        ]);
+        if let Err(e) = eval(&ast, &mut env, &mut state) {
+            state.echo_message = format!("Boot Error: {:?}", e);
+        }
+    }
+
     terminal::enable_raw_mode()?;
 
     while state.running {
-        render_screen(&state);
+        let (cols, rows) = terminal::size()?;
+        state.adjust_scroll(cols as usize, rows as usize);
+        render_screen(&state, cols, rows)?;
 
         if let Event::Key(key_event) = read()? {
             let mut event = KeyEvent {
@@ -47,17 +79,19 @@ pub fn tui_main() -> Result<(), Box<dyn std::error::Error>> {
                     alt: key_event.modifiers.contains(CrossModifiers::ALT),
                     shift: key_event.modifiers.contains(CrossModifiers::SHIFT),
                     caps_lock_as_ctrl: false,
-                }
+                },
             };
 
             event.code = match key_event.code {
                 CrossKeyCode::Char(c) if key_event.modifiers.contains(CrossModifiers::SHIFT) => {
                     event.modifiers.shift = false;
                     KeyCode::Char(c.to_ascii_uppercase())
-                },
+                }
                 CrossKeyCode::Char(c) => KeyCode::Char(c),
                 CrossKeyCode::Left => KeyCode::Left,
                 CrossKeyCode::Right => KeyCode::Right,
+                CrossKeyCode::Up => KeyCode::Up,
+                CrossKeyCode::Down => KeyCode::Down,
                 CrossKeyCode::Backspace => KeyCode::Backspace,
                 CrossKeyCode::Enter => KeyCode::Enter,
                 _ => continue,
@@ -66,7 +100,11 @@ pub fn tui_main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    execute!(stdout(), terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 0))?;
+    execute!(
+        stdout(),
+        terminal::Clear(terminal::ClearType::All),
+        cursor::MoveTo(0, 0)
+    )?;
     terminal::disable_raw_mode()?;
     Ok(())
 }
