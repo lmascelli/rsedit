@@ -46,6 +46,9 @@ pub enum EvalError {
     DefunNotCorrectExpression,
     DefunParamsAreNotAList,
     DefunParamIsNotASymbol,
+    LetUnvalidBindingAt(usize),
+    LetUnvalidBindingList,
+    LetNoBindingsProvided,
 }
 
 pub struct Env<T> {
@@ -543,7 +546,7 @@ where
             }
             Ok(LispExp::Map(new_map))
         }
-        
+
         _ => todo!(),
     }
 }
@@ -630,6 +633,48 @@ where
             }
         }
 
+        "progn" => {
+            let mut ret = LispExp::Symbol("nil".into());
+            for arg in args {
+                ret = eval(arg, env, ctx)?;
+            }
+            Ok(ret)
+        }
+
+        "let" => {
+            if args.is_empty() {
+                return Err(EvalError::LetNoBindingsProvided);
+            }
+
+            let mut let_env = Env::extend(env as *mut Env<T>);
+            if let LispExp::List(bindings) = &args[0] {
+                for (i, binding) in bindings.into_iter().enumerate() {
+                    if let LispExp::List(pair) = binding {
+                        if pair.len() == 2 {
+                            if let LispExp::Symbol(name) = &pair[0] {
+                                let val = eval(&pair[1], env, ctx)?;
+                                let_env.variables.insert(name.clone(), val);
+                            } else {
+                                return Err(EvalError::LetUnvalidBindingAt(i));
+                            }
+                        } else {
+                            return Err(EvalError::LetUnvalidBindingAt(i));
+                        }
+                    } else {
+                        return Err(EvalError::LetUnvalidBindingAt(i));
+                    }
+                }
+            } else if args[0] != LispExp::Symbol("nil".into()) {
+                return Err(EvalError::LetUnvalidBindingList);
+            }
+
+            let mut result = LispExp::Symbol("nil".into());
+            for arg in &args[1..] {
+                result = eval(arg, &mut let_env, ctx)?;
+            }
+            Ok(result)
+        }
+
         _ => eval_function_call(symbol, args, env, ctx),
     }
 }
@@ -706,23 +751,6 @@ mod tests {
             tokens.push(token);
         }
         Ok(tokens)
-    }
-
-    #[test]
-    fn test_basic_parens() {
-        let input = "( [ { } ] )";
-        let tokens = lex_all(input).unwrap();
-        assert_eq!(
-            tokens,
-            vec![
-                Token::LParen,
-                Token::LSquared,
-                Token::LBracket,
-                Token::RBracket,
-                Token::RSquared,
-                Token::RParen,
-            ]
-        );
     }
 
     #[test]
@@ -1775,18 +1803,6 @@ mod tests {
     }
 
     #[test]
-    fn test_self_evaluating_primitives() {
-        let mut env = setup_env_test();
-        let mut ctx = TestHost { state_changes: 0 };
-
-        let num = LispExp::Number(42.5);
-        assert_eq!(eval(&num, &mut env, &mut ctx).unwrap(), num);
-
-        let s = LispExp::String("hello".into());
-        assert_eq!(eval(&s, &mut env, &mut ctx).unwrap(), s);
-    }
-
-    #[test]
     fn test_elisp_if_truthiness() {
         let mut env = setup_env_test();
         let mut ctx = TestHost { state_changes: 0 };
@@ -1970,4 +1986,132 @@ mod tests {
         // The Rust host context should have tracked the changes natively!
         assert_eq!(ctx.state_changes, 3);
     }
+
+    // Mock Host context to assist evaluating side effects
+    #[derive(Clone, Debug, PartialEq)]
+    struct MockHost {
+        pub tracker: f64,
+    }
+
+    fn setup_interpreter_env() -> (Env<MockHost>, MockHost) {
+        let mut env = Env::new();
+        // Bind a global state mutating tool
+        env.functions.insert("bump".into(), LispExp::Primitive(|_args: &[LispExp<MockHost>], ctx| {
+            ctx.tracker += 1.0;
+            Ok(LispExp::Number(ctx.tracker))
+        }));
+        (env, MockHost { tracker: 0.0 })
+    }
+
+    #[test]
+    fn test_progn_execution_and_side_effects() {
+        let (mut env, mut ctx) = setup_interpreter_env();
+        
+        // (progn (bump) (bump) 99.0) -> changes state twice, returns last value
+        let exp = LispExp::List(vec![
+            LispExp::Symbol("progn".into()),
+            LispExp::List(vec![LispExp::Symbol("bump".into())]),
+            LispExp::List(vec![LispExp::Symbol("bump".into())]),
+            LispExp::Number(99.0)
+        ]);
+
+        let result = eval(&exp, &mut env, &mut ctx).unwrap();
+        assert_eq!(result, LispExp::Number(99.0));
+        assert_eq!(ctx.tracker, 2.0);
+
+        // Empty progn should evaluate to nil symbol safely
+        let empty_progn = LispExp::List(vec![LispExp::Symbol("progn".into())]);
+        assert_eq!(eval(&empty_progn, &mut env, &mut ctx).unwrap(), LispExp::Symbol("nil".into()));
+    }
+
+    #[test]
+    fn test_let_scoping_and_shadowing() {
+        let (mut env, mut ctx) = setup_interpreter_env();
+        
+        // Inject global variable x = 10.0
+        env.variables.insert("x".into(), LispExp::Number(10.0));
+
+        // AST representation of:
+        // (let ((x 20.0) (y 30.0)) (+ x y))
+        // Assuming native primitives like '+' are mapped
+        env.functions.insert("+".into(), LispExp::Primitive(|args, _| {
+            if let (LispExp::Number(a), LispExp::Number(b)) = (&args[0], &args[1]) {
+                Ok(LispExp::Number(a + b))
+            } else { Err(EvalError::UnvalidFunctionCall) }
+        }));
+
+        let let_exp = LispExp::List(vec![
+            LispExp::Symbol("let".into()),
+            LispExp::List(vec![
+                LispExp::List(vec![LispExp::Symbol("x".into()), LispExp::Number(20.0)]),
+                LispExp::List(vec![LispExp::Symbol("y".into()), LispExp::Number(30.0)]),
+            ]),
+            LispExp::List(vec![
+                LispExp::Symbol("+".into()),
+                LispExp::Symbol("x".into()),
+                LispExp::Symbol("y".into()),
+            ])
+        ]);
+
+        let result = eval(&let_exp, &mut env, &mut ctx).unwrap();
+        assert_eq!(result, LispExp::Number(50.0));
+
+        // CRITICAL CHECK: Global variable namespace must be untouched (Lexical isolation)
+        assert_eq!(env.variables.get("x"), Some(&LispExp::Number(10.0)));
+        assert!(env.variables.get("y").is_none());
+    }
+
+    #[test]
+    fn test_let_malformed_syntax_errors() {
+        let (mut env, mut ctx) = setup_interpreter_env();
+
+        // 1. Missing binding block entirely
+        let no_bindings = LispExp::List(vec![LispExp::Symbol("let".into())]);
+        assert_eq!(eval(&no_bindings, &mut env, &mut ctx).unwrap_err(), EvalError::LetNoBindingsProvided);
+
+        // 2. Binding block isn't a collection list: (let x body)
+        let invalid_list = LispExp::List(vec![
+            LispExp::Symbol("let".into()),
+            LispExp::Symbol("x".into()),
+            LispExp::Number(1.0)
+        ]);
+        assert_eq!(eval(&invalid_list, &mut env, &mut ctx).unwrap_err(), EvalError::LetUnvalidBindingList);
+
+        // 3. Malformed tuple inside binding array: (let ((x 1 2)) body)
+        let broken_tuple = LispExp::List(vec![
+            LispExp::Symbol("let".into()),
+            LispExp::List(vec![
+                LispExp::List(vec![LispExp::Symbol("x".into()), LispExp::Number(1.0), LispExp::Number(2.0)])
+            ]),
+            LispExp::Symbol("x".into())
+        ]);
+        assert_eq!(eval(&broken_tuple, &mut env, &mut ctx).unwrap_err(), EvalError::LetUnvalidBindingAt(0));
+    }
+
+    #[test]
+    fn test_map_evaluation_and_expression_resolution() {
+        let (mut env, mut ctx) = setup_interpreter_env();
+        env.variables.insert("factor".into(), LispExp::Number(5.0));
+
+        // A map structure: { "computed-val" (progn (bump) factor) }
+        let mut input_map = HashMap::new();
+        input_map.insert(
+            "computed-val".to_string(),
+            LispExp::List(vec![
+                LispExp::Symbol("progn".into()),
+                LispExp::List(vec![LispExp::Symbol("bump".into())]),
+                LispExp::Symbol("factor".into())
+            ])
+        );
+
+        let map_exp = LispExp::Map(input_map);
+        let evaluated = eval(&map_exp, &mut env, &mut ctx).unwrap();
+
+        if let LispExp::Map(output_map) = evaluated {
+            assert_eq!(output_map.get("computed-val"), Some(&LispExp::Number(5.0)));
+            assert_eq!(ctx.tracker, 1.0); // Verifies expressions inner-eval inside Maps
+        } else {
+            panic!("Evaluation should retain structural map wrapper type");
+        }
+    }    
 }

@@ -30,7 +30,7 @@ impl<B: BufferTrait> Buffer<B> {
     pub fn from_text(name: &str, text: &str) -> Self {
         Self {
             name: name.to_string(),
-            text: B::from_text(text),
+            text: B::from(text),
             file_path: None,
             is_modified: false,
             scroll_x: 0,
@@ -226,6 +226,36 @@ mod primitives {
         Ok(nil!())
     });
 
+    primitive!(load_file, args, ctx, {
+        if let Some(ELispExp::String(path_str)) = args.first() {
+            match std::fs::read_to_string(path_str) {
+                Ok(content) => {
+                    let wrapped_content = format!("(progn {})", content);
+                    let mut parser = crate::lisp::Parser::new(&wrapped_content);
+                    match parser.next() {
+                        Ok(ast) => {
+                            Ok(ast)
+                        }
+                        Err(e) => {
+                            ctx.echo_message = format!("Parse Error in {}: {:?}",
+                                path_str, e);
+                            Ok(nil!())
+                        }
+                    }
+                }
+                Err(e) => {
+                    ctx.echo_message = format!("Could not load {}: {}", path_str, e);
+                    Ok(nil!())
+                }
+            }
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: format!("{:?}", args.first()),
+            })
+        }
+    });
+    
     //------------------------------------------------------------//
     //                                                            //
     //                          EDIT                              //
@@ -257,7 +287,7 @@ mod primitives {
 
     primitive!(delete_backward_char, _args, ctx, {
         let buf = ctx.current_buffer_mut();
-        buf.text.delete_char();
+        buf.text.delete();
         buf.is_modified = true;
         Ok(nil!())
     });
