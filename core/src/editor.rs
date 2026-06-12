@@ -243,9 +243,12 @@ mod primitives {
                     let wrapped_content = format!("(progn {})", content);
                     let mut parser = crate::lisp::Parser::new(&wrapped_content);
                     match parser.next() {
-                        Ok(ast) => Ok(ast),
+                        Ok(ast) => {
+                            Ok(ast)
+                        }
                         Err(e) => {
-                            ctx.echo_message = format!("Parse Error in {}: {:?}", path_str, e);
+                            ctx.echo_message = format!("Parse Error in {}: {:?}",
+                                path_str, e);
                             Ok(nil!())
                         }
                     }

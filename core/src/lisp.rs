@@ -1996,13 +1996,12 @@ mod tests {
     fn setup_interpreter_env() -> (Env<MockHost>, MockHost) {
         let mut env = Env::new();
         // Bind a global state mutating tool
-        env.functions.insert(
-            "bump".into(),
-            LispExp::Primitive(|_args: &[LispExp<MockHost>], ctx| {
-                ctx.tracker += 1.0;
-                Ok(LispExp::Number(ctx.tracker))
-            }),
-        );
+
+        env.functions.insert("bump".into(), LispExp::Primitive(|_args: &[LispExp<MockHost>], ctx| {
+            ctx.tracker += 1.0;
+            Ok(LispExp::Number(ctx.tracker))
+        }));
+
         (env, MockHost { tracker: 0.0 })
     }
 
@@ -2015,7 +2014,7 @@ mod tests {
             LispExp::Symbol("progn".into()),
             LispExp::List(vec![LispExp::Symbol("bump".into())]),
             LispExp::List(vec![LispExp::Symbol("bump".into())]),
-            LispExp::Number(99.0),
+            LispExp::Number(99.0)
         ]);
 
         let result = eval(&exp, &mut env, &mut ctx).unwrap();
@@ -2024,32 +2023,23 @@ mod tests {
 
         // Empty progn should evaluate to nil symbol safely
         let empty_progn = LispExp::List(vec![LispExp::Symbol("progn".into())]);
-        assert_eq!(
-            eval(&empty_progn, &mut env, &mut ctx).unwrap(),
-            LispExp::Symbol("nil".into())
-        );
+        assert_eq!(eval(&empty_progn, &mut env, &mut ctx).unwrap(), LispExp::Symbol("nil".into()))
     }
 
     #[test]
     fn test_let_scoping_and_shadowing() {
         let (mut env, mut ctx) = setup_interpreter_env();
-
         // Inject global variable x = 10.0
         env.variables.insert("x".into(), LispExp::Number(10.0));
 
         // AST representation of:
         // (let ((x 20.0) (y 30.0)) (+ x y))
         // Assuming native primitives like '+' are mapped
-        env.functions.insert(
-            "+".into(),
-            LispExp::Primitive(|args, _| {
-                if let (LispExp::Number(a), LispExp::Number(b)) = (&args[0], &args[1]) {
-                    Ok(LispExp::Number(a + b))
-                } else {
-                    Err(EvalError::UnvalidFunctionCall)
-                }
-            }),
-        );
+        env.functions.insert("+".into(), LispExp::Primitive(|args, _| {
+            if let (LispExp::Number(a), LispExp::Number(b)) = (&args[0], &args[1]) {
+                Ok(LispExp::Number(a + b))
+            } else { Err(EvalError::UnvalidFunctionCall) }
+        }));
 
         let let_exp = LispExp::List(vec![
             LispExp::Symbol("let".into()),
@@ -2061,7 +2051,7 @@ mod tests {
                 LispExp::Symbol("+".into()),
                 LispExp::Symbol("x".into()),
                 LispExp::Symbol("y".into()),
-            ]),
+            ])
         ]);
 
         let result = eval(&let_exp, &mut env, &mut ctx).unwrap();
@@ -2078,36 +2068,25 @@ mod tests {
 
         // 1. Missing binding block entirely
         let no_bindings = LispExp::List(vec![LispExp::Symbol("let".into())]);
-        assert_eq!(
-            eval(&no_bindings, &mut env, &mut ctx).unwrap_err(),
-            EvalError::LetNoBindingsProvided
-        );
+        assert_eq!(eval(&no_bindings, &mut env, &mut ctx).unwrap_err(), EvalError::LetNoBindingsProvided);
 
         // 2. Binding block isn't a collection list: (let x body)
         let invalid_list = LispExp::List(vec![
             LispExp::Symbol("let".into()),
             LispExp::Symbol("x".into()),
-            LispExp::Number(1.0),
+            LispExp::Number(1.0)
         ]);
-        assert_eq!(
-            eval(&invalid_list, &mut env, &mut ctx).unwrap_err(),
-            EvalError::LetUnvalidBindingList
-        );
+        assert_eq!(eval(&invalid_list, &mut env, &mut ctx).unwrap_err(), EvalError::LetUnvalidBindingList);
 
         // 3. Malformed tuple inside binding array: (let ((x 1 2)) body)
         let broken_tuple = LispExp::List(vec![
             LispExp::Symbol("let".into()),
-            LispExp::List(vec![LispExp::List(vec![
-                LispExp::Symbol("x".into()),
-                LispExp::Number(1.0),
-                LispExp::Number(2.0),
-            ])]),
-            LispExp::Symbol("x".into()),
+            LispExp::List(vec![
+                LispExp::List(vec![LispExp::Symbol("x".into()), LispExp::Number(1.0), LispExp::Number(2.0)])
+            ]),
+            LispExp::Symbol("x".into())
         ]);
-        assert_eq!(
-            eval(&broken_tuple, &mut env, &mut ctx).unwrap_err(),
-            EvalError::LetUnvalidBindingAt(0)
-        );
+        assert_eq!(eval(&broken_tuple, &mut env, &mut ctx).unwrap_err(), EvalError::LetUnvalidBindingAt(0));
     }
 
     #[test]
@@ -2122,8 +2101,8 @@ mod tests {
             LispExp::List(vec![
                 LispExp::Symbol("progn".into()),
                 LispExp::List(vec![LispExp::Symbol("bump".into())]),
-                LispExp::Symbol("factor".into()),
-            ]),
+                LispExp::Symbol("factor".into())
+            ])
         );
 
         let map_exp = LispExp::Map(input_map);
@@ -2135,5 +2114,5 @@ mod tests {
         } else {
             panic!("Evaluation should retain structural map wrapper type");
         }
-    }
+    }    
 }
