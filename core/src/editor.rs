@@ -1,50 +1,23 @@
-use crate::buffer::BufferTrait;
+use crate::buffer::{Buffer, BufferTrait};
 use crate::input::{KeyCode, KeyEvent, default_keymaps};
 use crate::lisp::{Env, LispExp, eval};
+use crate::ui::{
+    FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines,
+};
 use std::collections::HashMap;
 pub type ELispExp<B> = LispExp<EditorState<B>>;
-
-pub struct Buffer<B: BufferTrait> {
-    pub name: String,
-    pub text: B,
-    pub file_path: Option<String>,
-    pub is_modified: bool,
-
-    // viewport
-    pub scroll_x: usize,
-    pub scroll_y: usize,
-}
-
-impl<B: BufferTrait> Buffer<B> {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            text: B::default(),
-            file_path: None,
-            is_modified: false,
-            scroll_x: 0,
-            scroll_y: 0,
-        }
-    }
-
-    pub fn from_text(name: &str, text: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            text: B::from_text(text),
-            file_path: None,
-            is_modified: false,
-            scroll_x: 0,
-            scroll_y: 0,
-        }
-    }
-}
 
 pub struct EditorState<B: BufferTrait> {
     pub buffers: HashMap<String, Buffer<B>>,
     pub current_buffer_name: String,
+    pub tiled_root: LayoutNode,
+    pub floating_windows: Vec<FloatingWindow>,
     pub echo_message: String,
     pub keymaps: HashMap<KeyEvent, String>,
     pub running: bool,
+
+    pub focused_window_id: usize,
+    pub next_window_id: usize,
 }
 
 impl<B: BufferTrait> Clone for EditorState<B> {
@@ -74,9 +47,18 @@ impl<B: BufferTrait> EditorState<B> {
         Self {
             buffers,
             current_buffer_name: scratch_name,
+            tiled_root: LayoutNode::Leaf(Window {
+                id: 0,
+                buffer_name: String::from("*scratch*"),
+                scroll_x: 0,
+                scroll_y: 0,
+            }),
+            floating_windows: Vec::new(),
             echo_message: "Welcome to rsedit".to_string(),
             keymaps,
             running: true,
+            focused_window_id: 0,
+            next_window_id: 1,
         }
     }
 
@@ -87,8 +69,7 @@ impl<B: BufferTrait> EditorState<B> {
                     let mut new_buf = Buffer::from_text(name, &content);
                     new_buf.file_path = Some(file_path.to_string());
 
-                    self.buffers
-                        .insert(name.to_string(), new_buf);
+                    self.buffers.insert(name.to_string(), new_buf);
 
                     self.current_buffer_name = name.to_string();
 
@@ -118,28 +99,6 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Corruption in the hashmap of buffers")
     }
 
-    pub fn adjust_scroll(&mut self, viewport_width: usize, viewport_height: usize) {
-        let text_area_height = if viewport_height > 1 {
-            viewport_height - 1
-        } else {
-            1
-        };
-        let buf = self.current_buffer_mut();
-        let (cursor_line, cursor_col) = buf.text.cursor_pos();
-
-        if cursor_line < buf.scroll_y {
-            buf.scroll_y = cursor_line; // Scroll up
-        } else if cursor_line >= buf.scroll_y + text_area_height {
-            buf.scroll_y = cursor_line - text_area_height + 1; // Scroll down
-        }
-
-        if cursor_col < buf.scroll_x {
-            buf.scroll_x = cursor_col; // Scroll left
-        } else if cursor_col >= buf.scroll_x + viewport_width {
-            buf.scroll_x = cursor_col - viewport_width + 1; // Scroll right
-        }
-    }
-
     pub fn handle_key_event(&mut self, event: KeyEvent, env: &mut Env<EditorState<B>>) {
         if let Some(symbol_name) = self.keymaps.get(&event) {
             let mut ast = vec![ELispExp::Symbol(symbol_name.clone())];
@@ -156,6 +115,56 @@ impl<B: BufferTrait> EditorState<B> {
             self.echo_message = format!("Keymap not bound {:?}", event);
         }
     }
+
+    pub fn compose_layout(
+        &self,
+        screen_width: usize,
+        screen_height: usize,
+    ) -> Vec<RenderableWindowView> {
+        let mut views = Vec::new();
+        let tiled_space = Rect {
+            x: 0,
+            y: 0,
+            width: screen_width,
+            height: screen_height,
+        };
+        self.tiled_root.compute_tiled_views(
+            tiled_space,
+            self.focused_window_id,
+            &self.buffers,
+            &mut views,
+        );
+
+        for float in &self.floating_windows {
+            let lines = extract_buffer_lines(&float.window, &float.rect, &self.buffers);
+            let is_focused = float.window.id == self.focused_window_id;
+
+            let cursor_rel_pos = if is_focused {
+                if let Some(buf) = self.buffers.get(&float.window.buffer_name) {
+                    let (c_line, c_col) = buf.text.cursor_pos();
+                    Some((
+                        c_col.saturating_sub(float.window.scroll_x),
+                        c_line.saturating_sub(float.window.scroll_y),
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            views.push(RenderableWindowView {
+                rect: float.rect.clone(),
+                buffer_name: float.window.buffer_name.clone(),
+                is_focused,
+                cursor_rel_pos,
+                lines,
+                has_border: float.has_border,
+            });
+        }
+
+        views
+    }
 }
 
 pub fn create_global_env<B: BufferTrait>() -> (EditorState<B>, Env<EditorState<B>>) {
@@ -169,6 +178,7 @@ pub fn create_global_env<B: BufferTrait>() -> (EditorState<B>, Env<EditorState<B
         };
     }
     insert_fn!("quit", quit);
+    insert_fn!("load-file", load_file);
     insert_fn!("self-insert", self_insert);
     insert_fn!("insert-newline", insert_newline);
     insert_fn!("delete-backward-char", delete_backward_char);
@@ -226,6 +236,33 @@ mod primitives {
         Ok(nil!())
     });
 
+    primitive!(load_file, args, ctx, {
+        if let Some(ELispExp::String(path_str)) = args.first() {
+            match std::fs::read_to_string(path_str) {
+                Ok(content) => {
+                    let wrapped_content = format!("(progn {})", content);
+                    let mut parser = crate::lisp::Parser::new(&wrapped_content);
+                    match parser.next() {
+                        Ok(ast) => Ok(ast),
+                        Err(e) => {
+                            ctx.echo_message = format!("Parse Error in {}: {:?}", path_str, e);
+                            Ok(nil!())
+                        }
+                    }
+                }
+                Err(e) => {
+                    ctx.echo_message = format!("Could not load {}: {}", path_str, e);
+                    Ok(nil!())
+                }
+            }
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: format!("{:?}", args.first()),
+            })
+        }
+    });
+
     //------------------------------------------------------------//
     //                                                            //
     //                          EDIT                              //
@@ -257,7 +294,7 @@ mod primitives {
 
     primitive!(delete_backward_char, _args, ctx, {
         let buf = ctx.current_buffer_mut();
-        buf.text.delete_char();
+        buf.text.delete();
         buf.is_modified = true;
         Ok(nil!())
     });
@@ -338,11 +375,11 @@ mod primitives {
     primitive!(find_file, args, ctx, {
         if let Some(ELispExp::String(path_str)) = args.first() {
             let path = std::path::Path::new(path_str);
-                    let file_name = path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
+            let file_name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             let buf_name = if file_name.is_empty() {
                 path_str.to_string()
             } else {
@@ -350,7 +387,7 @@ mod primitives {
             };
             match ctx.new_buffer(&buf_name, Some(&path_str)) {
                 Some(buf_name) => Ok(ELispExp::String(buf_name)),
-                None => Ok(nil!())
+                None => Ok(nil!()),
             }
         } else {
             Err(EvalError::WrongArgumentType {
