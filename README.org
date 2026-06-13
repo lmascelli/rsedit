@@ -1,6 +1,6 @@
-* rsedit 🦀✨
+* rsedit
 
-`rsedit` is a highly modular, headless text editor engine built in Rust. Inspired by the legendary architecture of GNU Emacs, `rsedit` separates the text manipulation and layout logic entirely from the graphical frontend. Its behavior, keybindings, and layout are entirely programmable via an embedded, custom Lisp Virtual Machine.
+/rsedit/ is a highly modular, headless text editor engine built in Rust. Inspired by the legendary architecture of GNU Emacs, /rsedit/ separates the text manipulation and layout logic entirely from the graphical frontend. Its behavior, keybindings, and layout are entirely programmable via an embedded, custom Lisp Virtual Machine.
 
 ** 🌟 Core Philosophy
 
