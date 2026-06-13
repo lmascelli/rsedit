@@ -1,27 +1,27 @@
-# rsedit 🦀✨
+* rsedit 🦀✨
 
 `rsedit` is a highly modular, headless text editor engine built in Rust. Inspired by the legendary architecture of GNU Emacs, `rsedit` separates the text manipulation and layout logic entirely from the graphical frontend. Its behavior, keybindings, and layout are entirely programmable via an embedded, custom Lisp Virtual Machine.
 
-## 🌟 Core Philosophy
+** 🌟 Core Philosophy
 
 1. **Total UI Decoupling:** The core (`rsedit_core`) does not know what a terminal or a pixel is. It calculates geometric bounding boxes and text slices, handing them to a "dumb" rendering client. You can swap the provided `crossterm` TUI for a GUI framework (like `wgpu` or `egui`) without rewriting any editing logic.
 2. **Symbol Mapping:** Physical keystrokes do not trigger hardcoded Rust functions. Instead, a keystroke translates to a Lisp symbol (e.g., `Ctrl+S` -> `"save-buffer"`), which is evaluated dynamically by the Lisp VM.
 3. **Everything is a Buffer:** From source code to the interactive Minibuffer, everything is backed by a highly optimized $O(1)$ `GapBuffer`.
 4. **Dual-Layer Compositor:** The layout engine supports both a hierarchical Tiled Window tree and a Floating Popup layer natively.
 
-## 🚀 Getting Started
+** 🚀 Getting Started
 
-### Prerequisites
-* Rust toolchain (Cargo)
+*** Prerequisites
+- Rust toolchain (Cargo)
 
-### Running the Editor
+*** Running the Editor
 Clone the repository and run the TUI frontend. You can pass a file path to open it immediately:
 
-```bash
+#+begin_src shell
 cargo run -- path/to/file.txt
-```
+#+end_src
 
-## Basic Default Keybindings
+** Basic Default Keybindings
 
     Typing: Standard alphanumeric keys self-insert.
 
@@ -31,7 +31,7 @@ cargo run -- path/to/file.txt
 
     Exit: Ctrl+Q to quit.
 
-## 📂 Project Structure
+** 📂 Project Structure
 
     core/ (The Engine):
 
@@ -49,10 +49,8 @@ cargo run -- path/to/file.txt
 
         tui.rs: The crossterm rendering loop. It acts purely as a canvas, painting the RenderableView geometries provided by the core.
 
-## 📖 Documentation
+** 📖 Documentation
 
-    Architecture Deep Dive - How the core pipeline and layout engine work.
+    [[file:ARCHITECTURE.md][Architecture Deep Dive]] - How the core pipeline and layout engine work.
 
-    Lisp Reference Manual - The API for the embedded Lisp VM.
-
----
+    [[file:LISP_REFERENCE.md][Lisp Reference Manual]] - The API for the embedded Lisp VM.
