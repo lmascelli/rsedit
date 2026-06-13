@@ -4,10 +4,10 @@
 
 ** 🌟 Core Philosophy
 
-1. **Total UI Decoupling:** The core (`rsedit_core`) does not know what a terminal or a pixel is. It calculates geometric bounding boxes and text slices, handing them to a "dumb" rendering client. You can swap the provided `crossterm` TUI for a GUI framework (like `wgpu` or `egui`) without rewriting any editing logic.
-2. **Symbol Mapping:** Physical keystrokes do not trigger hardcoded Rust functions. Instead, a keystroke translates to a Lisp symbol (e.g., `Ctrl+S` -> `"save-buffer"`), which is evaluated dynamically by the Lisp VM.
-3. **Everything is a Buffer:** From source code to the interactive Minibuffer, everything is backed by a highly optimized $O(1)$ `GapBuffer`.
-4. **Dual-Layer Compositor:** The layout engine supports both a hierarchical Tiled Window tree and a Floating Popup layer natively.
+1. *Total UI Decoupling:* The core (/rsedit_core/) does not know what a terminal or a pixel is. It calculates geometric bounding boxes and text slices, handing them to a "dumb" rendering client. You can swap the provided /crossterm/ TUI for a GUI framework (like /wgpu/ or /egui/) without rewriting any editing logic.
+2. *Symbol Mapping:* Physical keystrokes do not trigger hardcoded Rust functions. Instead, a keystroke translates to a Lisp symbol (e.g., /Ctrl+S/ -> /"save-buffer"/), which is evaluated dynamically by the Lisp VM.
+3. *Everything is a Buffer:* From source code to the interactive Minibuffer, everything is backed by a highly optimized $O(1)$ /GapBuffer/.
+4. *Dual-Layer Compositor:* The layout engine supports both a hierarchical Tiled Window tree and a Floating Popup layer natively.
 
 ** 🚀 Getting Started
 
@@ -33,21 +33,21 @@ cargo run -- path/to/file.txt
 
 ** 📂 Project Structure
 
-    core/ (The Engine):
+    - core/ (The Engine):
 
-        buffer.rs & gap_buffer.rs: The O(1) text manipulation structures and geometric 1D/2D coordinate mappers.
+        - buffer.rs & gap_buffer.rs: The $O(1)$ text manipulation structures and geometric 1D/2D coordinate mappers.
 
-        lisp.rs: The custom Lisp Lexer, Parser, and AST Evaluator.
+        - lisp.rs: The custom Lisp Lexer, Parser, and AST Evaluator.
 
-        editor.rs: State management, Native Primitives, and Layout compilation.
+        - editor.rs: State management, Native Primitives, and Layout compilation.
 
-        input.rs: UI-agnostic key event definitions and default maps.
+        - input.rs: UI-agnostic key event definitions and default maps.
 
-    src/ (The Client):
+    - src/ (The Client):
 
-        main.rs: The binary bootstrapper.
+        - main.rs: The binary bootstrapper.
 
-        tui.rs: The crossterm rendering loop. It acts purely as a canvas, painting the RenderableView geometries provided by the core.
+        - tui.rs: The crossterm rendering loop. It acts purely as a canvas, painting the RenderableView geometries provided by the core.
 
 ** 📖 Documentation
 
