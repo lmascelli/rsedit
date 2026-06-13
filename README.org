@@ -34,20 +34,29 @@ cargo run -- path/to/file.txt
 ** 📂 Project Structure
 
     - core/ (The Engine):
+      
+      - buffer/ (Buffer Module):
+        - mod.rs: Contains the generic struct of a buffer that encapsulate a specific buffer strategy (i.e. the GapBuffer)
+              
+        - gap_buffer.rs: An $O(1)$ text manipulation structures for inserting new char.
 
-        - buffer.rs & gap_buffer.rs: The $O(1)$ text manipulation structures and geometric 1D/2D coordinate mappers.
+        - buffer_trait.rs: This is an abstraction of the buffer behavior that is the base on which the abstraction of the buffer is made. Implementing this trait for a struct permits to compile the whole editor based on that struct.
 
-        - lisp.rs: The custom Lisp Lexer, Parser, and AST Evaluator.
+      - lisp.rs: The custom Lisp Lexer, Parser, and AST Evaluator.
 
-        - editor.rs: State management, Native Primitives, and Layout compilation.
+      - editor.rs: State management, Native Primitives, and Layout compilation.
 
-        - input.rs: UI-agnostic key event definitions and default maps.
+      - input.rs: UI-agnostic key event definitions and default maps.
+
+      - ui/ (UI Module):
+
+        - mod.rs: Contains the LayoutNode, made of splits and leaf (windows) that compose windows viewed on the screen and the structures necessary to use it.
 
     - src/ (The Client):
 
-        - main.rs: The binary bootstrapper.
+      - main.rs: The binary bootstrapper.
 
-        - tui.rs: The crossterm rendering loop. It acts purely as a canvas, painting the RenderableView geometries provided by the core.
+      - tui.rs: The crossterm rendering loop. It acts purely as a canvas, painting the RenderableView geometries provided by the core.
 
 ** 📖 Documentation
 
