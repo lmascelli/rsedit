@@ -4,7 +4,10 @@ use crate::lisp::{Env, LispExp, eval};
 use crate::ui::{
     FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines,
 };
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::Arc,
+};
 pub type ELispExp<B> = LispExp<EditorState<B>>;
 
 pub struct EditorState<B: BufferTrait> {
@@ -99,14 +102,14 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Corruption in the hashmap of buffers")
     }
 
-    pub fn handle_key_event(&mut self, event: KeyEvent, env: &mut Env<EditorState<B>>) {
+    pub fn handle_key_event(&mut self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
         if let Some(symbol_name) = self.keymaps.get(&event) {
-            let mut ast = vec![ELispExp::Symbol(symbol_name.clone())];
+            let mut ast = vec![ELispExp::symbol(symbol_name.clone())];
             if let KeyCode::Char(c) = event.code {
-                ast.push(ELispExp::String(c.to_string()));
+                ast.push(ELispExp::string(c.to_string()));
             }
-            let ast = ELispExp::List(ast);
-            if let Err(e) = eval(&ast, env, self) {
+            let ast = ELispExp::list(ast);
+            if let Err(e) = eval(&ast, env.clone(), self) {
                 self.echo_message = format!("Eval Error: {:?} {:?}", ast, e);
             } else {
                 self.echo_message.clear();
@@ -167,14 +170,13 @@ impl<B: BufferTrait> EditorState<B> {
     }
 }
 
-pub fn create_global_env<B: BufferTrait>() -> (EditorState<B>, Env<EditorState<B>>) {
+pub fn create_global_env<B: BufferTrait>() -> (EditorState<B>, Arc<Env<EditorState<B>>>) {
     let editor_state = EditorState::new();
-    let mut env = Env::new();
+    let env = Env::new_root();
 
     macro_rules! insert_fn {
         ($name:literal, $func:ident) => {
-            env.functions
-                .insert($name.into(), LispExp::Primitive(primitives::$func));
+            env.set_function($name.into(), LispExp::Primitive(primitives::$func));
         };
     }
     insert_fn!("quit", quit);
@@ -204,13 +206,13 @@ mod primitives {
 
     fn is_nil<B: BufferTrait>(args: &[ELispExp<B>]) -> bool {
         args.len() == 0
-            || (args.len() == 1 && (args[0] == ELispExp::List(vec![]))
-                || args[0] == ELispExp::Symbol("nil".into()))
+            || (args.len() == 1 && (args[0] == ELispExp::list(vec![]))
+                || args[0] == ELispExp::symbol("nil".into()))
     }
 
     macro_rules! nil {
         () => {
-            ELispExp::Symbol("nil".into())
+            ELispExp::symbol("nil".into())
         };
     }
 
@@ -238,17 +240,14 @@ mod primitives {
 
     primitive!(load_file, args, ctx, {
         if let Some(ELispExp::String(path_str)) = args.first() {
-            match std::fs::read_to_string(path_str) {
+            match std::fs::read_to_string(path_str.to_string()) {
                 Ok(content) => {
                     let wrapped_content = format!("(progn {})", content);
                     let mut parser = crate::lisp::Parser::new(&wrapped_content);
                     match parser.next() {
-                        Ok(ast) => {
-                            Ok(ast)
-                        }
+                        Ok(ast) => Ok(ast),
                         Err(e) => {
-                            ctx.echo_message = format!("Parse Error in {}: {:?}",
-                                path_str, e);
+                            ctx.echo_message = format!("Parse Error in {}: {:?}", path_str, e);
                             Ok(nil!())
                         }
                     }
@@ -279,7 +278,7 @@ mod primitives {
                 buf.text.insert(c);
                 buf.is_modified = true;
             }
-            Ok(LispExp::Symbol("nil".into()))
+            Ok(LispExp::symbol("nil".into()))
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "String".into(),
@@ -292,7 +291,7 @@ mod primitives {
         let buf = ctx.current_buffer_mut();
         buf.text.insert('\n');
         buf.is_modified = true;
-        Ok(LispExp::Symbol("nil".into()))
+        Ok(LispExp::symbol("nil".into()))
     });
 
     primitive!(delete_backward_char, _args, ctx, {
@@ -377,7 +376,8 @@ mod primitives {
 
     primitive!(find_file, args, ctx, {
         if let Some(ELispExp::String(path_str)) = args.first() {
-            let path = std::path::Path::new(path_str);
+            let path_str = path_str.to_string();
+            let path = std::path::Path::new(&path_str);
             let file_name = path
                 .file_name()
                 .unwrap_or_default()
@@ -389,7 +389,7 @@ mod primitives {
                 file_name
             };
             match ctx.new_buffer(&buf_name, Some(&path_str)) {
-                Some(buf_name) => Ok(ELispExp::String(buf_name)),
+                Some(buf_name) => Ok(ELispExp::string(buf_name)),
                 None => Ok(nil!()),
             }
         } else {

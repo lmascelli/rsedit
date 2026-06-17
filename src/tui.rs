@@ -4,8 +4,8 @@ use rsedit_core::buffer::BufferTrait;
 use rsedit_core::buffer::gap_buffer::GapBuffer;
 use rsedit_core::editor::{ELispExp, EditorState, create_global_env};
 use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
-use rsedit_core::ui::{Rect};
 use rsedit_core::lisp::eval;
+use rsedit_core::ui::Rect;
 use std::io::{Write, stdout};
 
 type BufferType = GapBuffer;
@@ -32,7 +32,9 @@ pub fn render_screen<B: BufferTrait>(
 
         for (offset_y, line) in view.lines.iter().enumerate() {
             let target_y = view.rect.y + offset_y;
-            if target_y >= rows as usize { break; }
+            if target_y >= rows as usize {
+                break;
+            }
 
             stdout.queue(cursor::MoveTo(view.rect.x as u16, target_y as u16))?;
             stdout.queue(Print(line))?;
@@ -59,14 +61,14 @@ fn draw_window_border(
 }
 
 pub fn tui_main(file_to_open: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut state, mut env) = create_global_env::<BufferType>();
+    let (mut state, env) = create_global_env::<BufferType>();
 
     if let Some(path) = file_to_open {
-        let ast = ELispExp::List(vec![
-            ELispExp::Symbol("find-file".into()),
-            ELispExp::String(path),
+        let ast = ELispExp::list(vec![
+            ELispExp::symbol("find-file".into()),
+            ELispExp::string(path),
         ]);
-        if let Err(e) = eval(&ast, &mut env, &mut state) {
+        if let Err(e) = eval(&ast, env.clone(), &mut state) {
             state.echo_message = format!("Boot Error: {:?}", e);
         }
     }
@@ -102,7 +104,7 @@ pub fn tui_main(file_to_open: Option<String>) -> Result<(), Box<dyn std::error::
                 CrossKeyCode::Enter => KeyCode::Enter,
                 _ => continue,
             };
-            state.handle_key_event(event, &mut env);
+            state.handle_key_event(event, &env);
         }
     }
 
