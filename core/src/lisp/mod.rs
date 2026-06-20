@@ -2,5 +2,5 @@ mod lisp;
 pub use lisp::{Env, EvalError, LispExp, Parser, ParserError, eval};
 
 #[cfg(test)]
-use lisp::Token;
+use lisp::{Lambda, Token};
 mod tests;

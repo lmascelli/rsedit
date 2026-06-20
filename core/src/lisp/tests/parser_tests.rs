@@ -6,8 +6,8 @@ mod test {
 
     use crate::lisp::{Env, LispExp, Parser, ParserError};
 
-    fn setup_env() -> (Env<()>, ()) {
-        (Env::new(), ())
+    fn setup_env() -> (std::sync::Arc<Env<()>>, ()) {
+        (Env::new_root(), ())
     }
 
     #[test]
@@ -19,7 +19,7 @@ mod test {
 
         let mut parser = Parser::new("my-symbol");
         let ast_sym: LispExp<()> = parser.next().unwrap();
-        assert_eq!(ast_sym, LispExp::Symbol("my-symbol".to_string()));
+        assert_eq!(ast_sym, LispExp::symbol("my-symbol".to_string()));
     }
 
     #[test]
@@ -29,9 +29,9 @@ mod test {
 
         assert_eq!(
             ast,
-            LispExp::List(vec![
-                LispExp::Symbol("print".to_string()),
-                LispExp::String("world".to_string()),
+            LispExp::list(vec![
+                LispExp::symbol("print".to_string()),
+                LispExp::string("world".to_string()),
             ])
         );
     }
@@ -44,11 +44,11 @@ mod test {
 
         assert_eq!(
             ast,
-            LispExp::List(vec![
-                LispExp::Symbol("define".to_string()),
-                LispExp::Symbol("x".to_string()),
-                LispExp::List(vec![
-                    LispExp::Symbol("+".to_string()),
+            LispExp::list(vec![
+                LispExp::symbol("define".to_string()),
+                LispExp::symbol("x".to_string()),
+                LispExp::list(vec![
+                    LispExp::symbol("+".to_string()),
                     LispExp::Number(10.0),
                     LispExp::Number(20.0),
                 ])
@@ -63,7 +63,7 @@ mod test {
 
         assert_eq!(
             ast,
-            LispExp::List(vec![LispExp::List(vec![LispExp::List(vec![
+            LispExp::list(vec![LispExp::list(vec![LispExp::list(vec![
                 LispExp::Number(1.0)
             ])])])
         );
@@ -107,7 +107,7 @@ mod test {
         let ast: LispExp<()> = parser.next().expect("Should parse map");
 
         if let LispExp::Map(m) = ast {
-            assert_eq!(m.get("name").unwrap(), &LispExp::String("Gemini".into()));
+            assert_eq!(m.get("name").unwrap(), &LispExp::string("Gemini".into()));
             assert_eq!(m.get("version").unwrap(), &LispExp::Number(3.0));
         } else {
             panic!("Expected Map, found {:?}", ast);
@@ -122,7 +122,7 @@ mod test {
         let ast: LispExp<()> = parser.next().expect("Should parse complex structure");
 
         if let LispExp::List(list) = ast {
-            assert_eq!(list[0], LispExp::Symbol("calculate".into()));
+            assert_eq!(list[0], LispExp::symbol("calculate".into()));
             assert!(matches!(list[1], LispExp::Vector(_)));
             assert!(matches!(list[2], LispExp::Map(_)));
         } else {
@@ -184,7 +184,7 @@ mod test {
 
         let ast: LispExp<()> = parser.next().unwrap();
         if let LispExp::String(s) = ast {
-            assert_eq!(s, "\\\"");
+            assert_eq!(s, std::sync::Arc::new("\\\"".into()));
         } else {
             panic!("Expected String, got {:?}", ast);
         }
@@ -199,7 +199,7 @@ mod test {
         let ast: LispExp<()> = parser.next().unwrap();
         if let LispExp::Map(m) = ast {
             let val = m.get("key").expect("Key 'key' not found");
-            assert_eq!(val, &LispExp::Vector(vec![LispExp::Number(1.0)]));
+            assert_eq!(val, &LispExp::vec(vec![LispExp::Number(1.0)]));
         } else {
             panic!("Expected Map");
         }
@@ -215,7 +215,7 @@ mod test {
         // Expected: List containing one Vector containing one Map (all empty)
         assert_eq!(
             ast,
-            LispExp::List(vec![LispExp::Vector(vec![LispExp::Map(
+            LispExp::list(vec![LispExp::vec(vec![LispExp::map(
                 std::collections::HashMap::new()
             )])])
         );
@@ -230,8 +230,8 @@ mod test {
         let ast: LispExp<()> = parser.next().expect("Should parse successfully");
 
         // Expected structure: Map { "data" => Vector [ List [1, 2, 3] ] }
-        if let LispExp::Map(mut map) = ast {
-            let value = map.remove("data").expect("Expected key 'data' in Map");
+        if let LispExp::Map(map) = ast {
+            let value = map.get("data").expect("Expected key 'data' in Map");
 
             if let LispExp::Vector(vec) = value {
                 assert_eq!(vec.len(), 1);
@@ -258,12 +258,12 @@ mod test {
 
         // Test [1.5] - Vector boundary
         let exp1: LispExp<()> = parser.next().unwrap();
-        assert_eq!(exp1, LispExp::Vector(vec![LispExp::Number(1.5)]));
+        assert_eq!(exp1, LispExp::vec(vec![LispExp::Number(1.5)]));
 
         // Test {"k" .5} - Map boundary
         let exp2: LispExp<()> = parser.next().unwrap();
-        if let LispExp::Map(mut m) = exp2 {
-            assert_eq!(m.remove("k"), Some(LispExp::Number(0.5)));
+        if let LispExp::Map(m) = exp2 {
+            assert_eq!(m.get("k"), Some(&LispExp::Number(0.5)));
         } else {
             panic!("Expected Map for second expression");
         }
@@ -278,20 +278,20 @@ mod test {
         let input = r#" "" () [] {} "back\\slash" "#;
         let mut parser = Parser::new(input);
 
-        assert_eq!(parser.next::<()>().unwrap(), LispExp::String("".into()));
-        assert_eq!(parser.next::<()>().unwrap(), LispExp::List(vec![]));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::string("".into()));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::list(vec![]));
 
         // These now expect Vector and Map instead of List
-        assert_eq!(parser.next::<()>().unwrap(), LispExp::Vector(vec![]));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::vec(vec![]));
         assert_eq!(
             parser.next::<()>().unwrap(),
-            LispExp::Map(std::collections::HashMap::new())
+            LispExp::map(std::collections::HashMap::new())
         );
 
         // Check backslash escaping logic
         assert_eq!(
             parser.next::<()>().unwrap(),
-            LispExp::String("back\\slash".into())
+            LispExp::string("back\\slash".into())
         );
     }
 

@@ -21,6 +21,13 @@ pub(super) enum Token {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(super) struct Lambda<T> {
+    pub params: Vec<String>,
+    pub body: LispExp<T>,
+    pub env: Arc<Env<T>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 // Primitive comparison has no meaning and will probably never done
 #[allow(unpredictable_function_pointer_comparisons)]
 pub enum LispExp<T> {
@@ -30,6 +37,7 @@ pub enum LispExp<T> {
     Number(f64),
     Symbol(Arc<String>),
     String(Arc<String>),
+    Lambda(Arc<Lambda<T>>),
     Primitive(fn(&[LispExp<T>], &mut T) -> Result<LispExp<T>, EvalError>),
 }
 
@@ -54,6 +62,7 @@ pub enum EvalError {
     LetNoBindingsProvided,
 }
 
+#[derive(Debug)]
 pub struct Env<T> {
     pub variables: RwLock<HashMap<String, LispExp<T>>>,
     pub functions: RwLock<HashMap<String, LispExp<T>>>,
@@ -118,6 +127,10 @@ impl<T> LispExp<T> {
 
     pub fn map(value: HashMap<String, LispExp<T>>) -> LispExp<T> {
         LispExp::Map(Arc::new(value))
+    }
+
+    pub fn lambda(value: Lambda<T>) -> LispExp<T> {
+        LispExp::Lambda(Arc::new(value))
     }
 }
 
@@ -444,7 +457,6 @@ impl<'source> Parser<'source> {
     }
 
     pub fn next<T>(&mut self) -> Result<LispExp<T>, ParserError> {
-        eprintln!("{:?}", self.current_token);
         match self.current_token.clone() {
             Token::Symbol(symbol) => {
                 self.advance_token()?;
@@ -500,7 +512,7 @@ where
         })
     }
 
-    pub fn get_var(&self, name: &str) -> Option<LispExp<T>> {
+    pub fn get_variable(&self, name: &str) -> Option<LispExp<T>> {
         if let Some(val) = self
             .variables
             .read()
@@ -511,13 +523,25 @@ where
         }
 
         if let Some(parent) = &self.parent {
-            return parent.get_var(name);
+            return parent.get_variable(name);
         }
 
         None
     }
 
-    pub fn get_func(&self, name: &str) -> Option<LispExp<T>> {
+    pub fn update_variable(&self, name: &str, val: LispExp<T>) -> bool {
+        if self.variables.read().expect("Failed to acquire read lock on env").contains_key(name) {
+            self.variables.write().expect("Failed to acquire write lock on env")
+                .insert(name.to_string(), val);
+            return true;
+        }
+        if let Some(parent) = &self.parent {
+            return parent.update_variable(name, val);
+        }
+        false
+    }
+
+    pub fn get_function(&self, name: &str) -> Option<LispExp<T>> {
         if let Some(val) = self
             .functions
             .read()
@@ -528,7 +552,7 @@ where
         }
 
         if let Some(parent) = &self.parent {
-            return parent.get_func(name);
+            return parent.get_function(name);
         }
 
         None
@@ -551,6 +575,18 @@ where
     }
 }
 
+impl<T> Clone for Env<T> {
+    fn clone(&self) -> Self {
+        unreachable!()
+    }
+}
+
+impl<T> PartialEq for Env<T> {
+    fn eq(&self, _: &Env<T>) -> bool {
+        unreachable!()
+    }
+}
+
 pub fn eval<T>(exp: &LispExp<T>, env: Arc<Env<T>>, ctx: &mut T) -> Result<LispExp<T>, EvalError>
 where
     T: Clone + PartialEq + Debug,
@@ -559,7 +595,7 @@ where
         LispExp::String(_) | LispExp::Number(_) => Ok(exp.clone()),
 
         LispExp::Symbol(symbol) => {
-            if let Some(var) = env.get_var(symbol) {
+            if let Some(var) = env.get_variable(symbol) {
                 Ok(var)
             } else {
                 Err(EvalError::UnboundVariable(symbol.to_string()))
@@ -618,14 +654,14 @@ where
             } else if args.len() < 2 {
                 Err(EvalError::IfNoTrueBrach)
             } else {
-                let condition = &args[0];
-                if !(*condition == LispExp::list(vec![])
-                    || *condition == LispExp::symbol("nil".into()))
+                let condition = eval(&args[0], env.clone(), ctx)?;
+                if !(condition == LispExp::list(vec![])
+                    || condition == LispExp::symbol("nil".into()))
                 {
-                    Ok(args[1].clone())
+                    Ok(eval(&args[1], env.clone(), ctx)?)
                 } else {
                     if args.len() > 2 {
-                        Ok(args[2].clone())
+                        Ok(eval(&args[2], env.clone(), ctx)?)
                     } else {
                         Ok(LispExp::symbol("nil".into()))
                     }
@@ -634,7 +670,7 @@ where
         }
 
         "setq" => {
-            if args.len() < 2 && args.len() % 2 != 0 {
+            if args.len() < 2 || args.len() % 2 != 0 {
                 return Err(EvalError::SetqWrongNumberOfArgs(args.len()));
             }
             let mut is_symbol = true;
@@ -650,7 +686,9 @@ where
                     }
                 } else {
                     value = eval(arg, env.clone(), ctx)?;
-                    env.set_variable(list_var_name.clone(), value.clone());
+                    if !env.update_variable(&list_var_name, value.clone()) {
+                        env.set_variable(list_var_name.clone(), value.clone());
+                    }
                     is_symbol = true;
                 }
             }
@@ -662,9 +700,11 @@ where
                 return Err(EvalError::DefunNotCorrectExpression);
             }
             if let LispExp::Symbol(func_name) = &args[0] {
+                let mut params_vec = vec![];
                 if let LispExp::List(params_list) = &args[1] {
                     for param in params_list.iter() {
-                        if let LispExp::Symbol(_) = param {
+                        if let LispExp::Symbol(param_name) = param {
+                            params_vec.push((**param_name).clone());
                         } else {
                             return Err(EvalError::DefunParamIsNotASymbol);
                         }
@@ -672,11 +712,13 @@ where
                 } else {
                     return Err(EvalError::DefunParamsAreNotAList);
                 }
-                let params = args[1].clone();
-                let body = args[2].clone();
 
-                let lambda = LispExp::list(vec![LispExp::symbol("lambda".into()), params, body]);
-                env.set_function(func_name.to_string(), lambda);
+                let lambda = Lambda {
+                    params: params_vec,
+                    body: args[2].clone(),
+                    env: env.clone(),
+                };
+                env.set_function(func_name.to_string(), LispExp::lambda(lambda));
 
                 Ok(LispExp::symbol(func_name.to_string()))
             } else {
@@ -744,26 +786,23 @@ where
         evaled_args.push(eval(arg, env.clone(), ctx)?);
     }
 
-    if let Some(func) = env.get_func(symbol) {
-        if let LispExp::List(lambda_ast) = func {
-            if lambda_ast.len() != 3 {
-                return Err(EvalError::UncorrectFunctionDefinition);
+    if let Some(func) = env.get_function(symbol) {
+        if let LispExp::Lambda(lambda) = func {
+            if lambda.params.len() != evaled_args.len() {
+                return Err(EvalError::WrongNumberOfArguments { 
+                        expected: lambda.params.len(), 
+                        got: evaled_args.len() 
+                    });
             }
-            let params = &lambda_ast[1];
-            let body = &lambda_ast[2];
+            
+            let call_frame = Env::new_child(&lambda.env);
 
-            let call_frame = Env::new_child(&env);
-
-            if let LispExp::List(param_list) = params {
-                for (i, param) in param_list.iter().enumerate() {
-                    if let LispExp::Symbol(param_name) = param {
-                        call_frame
-                            .set_variable(param_name.to_string(), evaled_args[i].clone());
-                    }
-                }
+            for (i, param_name) in lambda.params.iter().enumerate() {
+                call_frame
+                    .set_variable(param_name.clone(), evaled_args[i].clone());
             }
 
-            eval(body, call_frame, ctx)
+            eval(&lambda.body, call_frame, ctx)
         } else if let LispExp::Primitive(function) = func {
             return Ok(function(&evaled_args[..], ctx)?);
         } else {
