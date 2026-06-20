@@ -104,4 +104,82 @@ mod tests {
         // Root environment should remain unchanged after let block exits
         assert_eq!(root_env.get_variable("a"), Some(LispExp::number(1.0)));
     }
+
+    #[test]
+    fn test_lexical_vs_dynamic_scoping() {
+        let root_env = Env::<DummyCtx>::new_root();
+        let mut ctx = DummyCtx;
+
+        // 1. Define 'x' in the global scope
+        eval_str("(setq x 10)", root_env.clone(), &mut ctx).unwrap();
+        
+        // 2. Define a function that returns 'x'
+        eval_str("(defun get-x () x)", root_env.clone(), &mut ctx).unwrap();
+
+        // 3. Create a local 'let' block that shadows 'x' with 99, 
+        // and call 'get-x' from INSIDE that block.
+        let result = eval_str("(let ((x 99)) (get-x))", root_env.clone(), &mut ctx).unwrap();
+
+        // If the language was dynamically scoped, it would look at the caller's scope and return 99.
+        // Because we successfully implemented lexical scoping, it strictly uses the scope 
+        // where it was DEFINED, returning 10.
+        assert_eq!(result, LispExp::number(10.0));
+    }
+
+    pub fn primitive_funcall<T>(args: &[LispExp<T>], ctx: &mut T) -> Result<LispExp<T>, EvalError>
+where
+    T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
+{
+    if args.is_empty() {
+        return Err(EvalError::WrongNumberOfArguments { expected: 1, got: 0 });
+    }
+    
+    // Because funcall is a normal primitive, its arguments are already evaluated.
+    // args[0] is the Lambda object itself, args[1..] are the arguments passed to it.
+    let func_obj = &args[0];
+    let func_args = &args[1..];
+
+    match func_obj {
+        LispExp::Lambda(lambda) => {
+            if lambda.params.len() != func_args.len() {
+                return Err(EvalError::WrongNumberOfArguments {
+                    expected: lambda.params.len(),
+                    got: func_args.len(),
+                });
+            }
+            let call_frame = Env::new_child(&lambda.env);
+            for (i, param_name) in lambda.params.iter().enumerate() {
+                call_frame.set_variable(param_name.clone(), func_args[i].clone());
+            }
+            eval(&lambda.body, call_frame, ctx)
+        }
+        LispExp::Primitive(func) => func(func_args, ctx),
+        _ => Err(EvalError::UncorrectFunctionDefinition),
+    }
+}
+    
+    #[test]
+    fn test_upward_funarg_closure_capture() {
+        let root_env = Env::<DummyCtx>::new_root();
+        let mut ctx = DummyCtx;
+        root_env.set_function("funcall".into(), LispExp::Primitive(primitive_funcall));
+
+        // 1. Define a factory function that returns an anonymous lambda.
+        // The lambda captures the local 'let' variable "secret".
+        let factory_code = "
+            (defun make-closure () 
+                (let ((secret 42)) 
+                    (lambda () secret)))
+        ";
+        eval_str(factory_code, root_env.clone(), &mut ctx).unwrap();
+
+        // 2. Execute the factory and save the resulting closure to a global variable
+        eval_str("(setq my-closure (make-closure))", root_env.clone(), &mut ctx).unwrap();
+
+        // 3. Execute the closure. The 'let' block has long finished executing,
+        // but the environment must be kept alive by the Arc<Env> inside the Lambda struct!
+        let result = eval_str("(funcall my-closure)", root_env.clone(), &mut ctx).unwrap();
+
+        assert_eq!(result, LispExp::number(42.0));
+    }
 }

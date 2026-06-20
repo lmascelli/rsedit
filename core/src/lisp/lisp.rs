@@ -726,6 +726,34 @@ where
             }
         }
 
+        "lambda" => {
+            if args.len() < 2  {
+                return Err(EvalError::DefunNotCorrectExpression);
+            }
+
+            let mut params_vec = vec![];
+
+            if let LispExp::List(params_list) = &args[0] {
+                for param in params_list.iter() {
+                    if let LispExp::Symbol(p_name) = param {
+                        params_vec.push(p_name.to_string());
+                    } else {
+                        return Err(EvalError::DefunParamIsNotASymbol);
+                    }
+                }
+            } else {
+                return Err(EvalError::DefunParamsAreNotAList);
+            }
+
+            let body = args[1].clone();
+
+            Ok(LispExp::lambda(Lambda {
+                params: params_vec,
+                body,
+                env: env.clone(),
+            }))
+        }
+
         "progn" => {
             let mut ret = LispExp::symbol("nil".into());
             for arg in args {
