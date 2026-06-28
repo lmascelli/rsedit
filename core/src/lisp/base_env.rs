@@ -2,6 +2,8 @@ use crate::lisp::lisp::SharedAtom;
 use crate::lisp::{Env, EvalError, LispExp, eval};
 use std::sync::{Arc, RwLock};
 
+// -------------------------------- CLASSIC LISP -------------------------------
+
 fn primitive_funcall<T>(args: &[LispExp<T>], ctx: &mut T) -> Result<LispExp<T>, EvalError>
 where
     T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
@@ -36,6 +38,8 @@ where
         _ => Err(EvalError::UncorrectFunctionDefinition),
     }
 }
+
+// -------------------------------- MULTI-THREADING ----------------------------
 
 fn primitive_atom<T>(args: &[LispExp<T>], _ctx: &mut T) -> Result<LispExp<T>, EvalError>
 where
@@ -105,6 +109,49 @@ where
     }
 }
 
+// -------------------------------- CONCURRENCY --------------------------------
+
+fn primitive_resume<T>(args: &[LispExp<T>], ctx: &mut T) -> Result<LispExp<T>, EvalError>
+where
+    T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
+{
+    if args.is_empty() {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: 0,
+        });
+    } else {
+        if let LispExp::Fiber(shared_fiber) = &args[0] {
+            let mut fiber = shared_fiber
+                .0
+                .write()
+                .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
+            
+            if fiber.is_done {
+                return Ok(LispExp::symbol("nil".into()));
+            }
+
+            if fiber.body.is_empty() {
+                fiber.is_done = true;
+                return Ok(LispExp::symbol("nil".into()));
+            }
+
+            let next_exp = fiber.body.remove(0);
+
+            if fiber.body.is_empty() {
+                fiber.is_done = true;
+            }
+            eval(&next_exp, fiber.env.clone(), ctx)
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "Fiber".into(),
+                got: format!("{:?}", args[0]),
+            })
+        }
+    }
+}
+
+// -------------------------------- CONSTRUCTOR --------------------------------
 pub fn setup_base_env<T>(env: std::sync::Arc<Env<T>>)
 where
     T: Clone + std::fmt::Debug + PartialEq + Send + Sync + 'static,
@@ -113,4 +160,5 @@ where
     env.set_function("atom".into(), LispExp::Primitive(primitive_atom));
     env.set_function("deref".into(), LispExp::Primitive(primitive_deref));
     env.set_function("reset".into(), LispExp::Primitive(primitive_reset));
+    env.set_function("resume".into(), LispExp::Primitive(primitive_resume));
 }

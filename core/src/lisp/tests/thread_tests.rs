@@ -19,11 +19,7 @@ mod tests {
     }
 
     // Helper to evaluate multiple expressions easily by wrapping them in a progn
-    fn eval_script<T>(
-        script: &str,
-        env: Arc<Env<T>>,
-        ctx: &mut T,
-    ) -> Result<LispExp<T>, EvalError>
+    fn eval_script<T>(script: &str, env: Arc<Env<T>>, ctx: &mut T) -> Result<LispExp<T>, EvalError>
     where
         T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
     {
@@ -35,7 +31,7 @@ mod tests {
 
     fn setup_thread_env() -> (Arc<Env<ThreadCtx>>, ThreadCtx) {
         let env = Env::new_root();
-        
+
         // Load the atom, deref, reset, and funcall primitives
         setup_base_env(env.clone());
 
@@ -85,7 +81,7 @@ mod tests {
     fn test_spawn_async_execution_and_synchronization() {
         let (env, mut ctx) = setup_thread_env();
 
-        // Script: Initialize an atom to 0. 
+        // Script: Initialize an atom to 0.
         // Spawn a background thread that sleeps for 50ms, then updates the atom to 42.
         let script = r#"
             (setq shared-val (atom 0.0))
@@ -110,10 +106,10 @@ mod tests {
             if current_val == LispExp::Number(42.0) {
                 break; // Thread successfully completed!
             }
-            
+
             std::thread::sleep(Duration::from_millis(10));
             timeout += 10;
-            
+
             if timeout > 1000 {
                 panic!("Background thread failed to execute within 1 second!");
             }
@@ -152,7 +148,7 @@ mod tests {
 
         // Read the host counter natively in Rust
         let final_count = *ctx.host_counter.read().unwrap();
-        
+
         // If data-races were possible, this number would be unpredictable.
         // Thanks to Arc<RwLock<T>> and pure lexical environment cloning, it is strictly 10.
         assert_eq!(final_count, 10);

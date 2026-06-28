@@ -36,6 +36,22 @@ impl<T> PartialEq for SharedAtom<T> {
     }
 }
 
+#[derive(Debug)]
+pub struct FiberState<T> {
+    pub body: Vec<LispExp<T>>,
+    pub env: Arc<Env<T>>,
+    pub is_done: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct SharedFiber<T>(pub Arc<RwLock<FiberState<T>>>);
+
+impl<T> PartialEq for SharedFiber<T> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 // Primitive comparison has no meaning and will probably never done
 #[allow(unpredictable_function_pointer_comparisons)]
@@ -49,6 +65,7 @@ pub enum LispExp<T> {
     Lambda(Arc<Lambda<T>>),
     Primitive(fn(&[LispExp<T>], &mut T) -> Result<LispExp<T>, EvalError>),
     Atom(SharedAtom<T>),
+    Fiber(SharedFiber<T>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -141,6 +158,10 @@ impl<T> LispExp<T> {
 
     pub fn lambda(value: Lambda<T>) -> LispExp<T> {
         LispExp::Lambda(Arc::new(value))
+    }
+
+    pub fn fiber(value: FiberState<T>) -> LispExp<T> {
+        LispExp::Fiber(SharedFiber(Arc::new(RwLock::new(value))))
     }
 }
 
@@ -609,7 +630,9 @@ where
     T: Clone + PartialEq + Debug + Send + Sync + 'static,
 {
     match exp {
-        LispExp::String(_) | LispExp::Number(_) | LispExp::Atom(_) => Ok(exp.clone()),
+        LispExp::String(_) | LispExp::Number(_) | LispExp::Atom(_) | LispExp::Fiber(_) => {
+            Ok(exp.clone())
+        }
 
         LispExp::Symbol(symbol) => {
             if let Some(var) = env.get_variable(symbol) {
@@ -711,6 +734,24 @@ where
                     expected: "Lambda".into(),
                     got: format!("{:?}", target_closure),
                 })
+            }
+        }
+
+        "fiber" => {
+            if args.is_empty() {
+                return Ok(LispExp::fiber(FiberState {
+                    body: vec![],
+                    env: env.clone(),
+                    is_done: true,
+                }));
+            } else {
+                let state = FiberState {
+                    body: args.to_vec(),
+                    env: Env::new_child(&env),
+                    is_done: false,
+                };
+
+                Ok(LispExp::fiber(state))
             }
         }
 
