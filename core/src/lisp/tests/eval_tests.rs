@@ -81,8 +81,7 @@ mod test {
     #[test]
     fn test_dynamic_function_lookup() {
         let (mut global, mut _ctx) = setup_env();
-        global
-            .set_function("add".into(), LispExp::symbol("built-in-add".into()));
+        global.set_function("add".into(), LispExp::symbol("built-in-add".into()));
 
         let local = Env::new_child(&mut global as _);
 

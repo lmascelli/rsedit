@@ -4,10 +4,7 @@ use crate::lisp::{Env, LispExp, eval};
 use crate::ui::{
     FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines,
 };
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 pub type ELispExp<B> = LispExp<EditorState<B>>;
 
 pub struct EditorState<B: BufferTrait> {

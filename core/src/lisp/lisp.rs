@@ -21,10 +21,19 @@ pub(super) enum Token {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct Lambda<T> {
+pub struct Lambda<T> {
     pub params: Vec<String>,
     pub body: LispExp<T>,
     pub env: Arc<Env<T>>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SharedAtom<T>(pub Arc<RwLock<LispExp<T>>>);
+
+impl<T> PartialEq for SharedAtom<T> {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +48,7 @@ pub enum LispExp<T> {
     String(Arc<String>),
     Lambda(Arc<Lambda<T>>),
     Primitive(fn(&[LispExp<T>], &mut T) -> Result<LispExp<T>, EvalError>),
+    Atom(SharedAtom<T>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -530,8 +540,15 @@ where
     }
 
     pub fn update_variable(&self, name: &str, val: LispExp<T>) -> bool {
-        if self.variables.read().expect("Failed to acquire read lock on env").contains_key(name) {
-            self.variables.write().expect("Failed to acquire write lock on env")
+        if self
+            .variables
+            .read()
+            .expect("Failed to acquire read lock on env")
+            .contains_key(name)
+        {
+            self.variables
+                .write()
+                .expect("Failed to acquire write lock on env")
                 .insert(name.to_string(), val);
             return true;
         }
@@ -589,10 +606,10 @@ impl<T> PartialEq for Env<T> {
 
 pub fn eval<T>(exp: &LispExp<T>, env: Arc<Env<T>>, ctx: &mut T) -> Result<LispExp<T>, EvalError>
 where
-    T: Clone + PartialEq + Debug,
+    T: Clone + PartialEq + Debug + Send + Sync + 'static,
 {
     match exp {
-        LispExp::String(_) | LispExp::Number(_) => Ok(exp.clone()),
+        LispExp::String(_) | LispExp::Number(_) | LispExp::Atom(_) => Ok(exp.clone()),
 
         LispExp::Symbol(symbol) => {
             if let Some(var) = env.get_variable(symbol) {
@@ -645,7 +662,7 @@ fn eval_special_form_or_call<T>(
     ctx: &mut T,
 ) -> Result<LispExp<T>, EvalError>
 where
-    T: Clone + PartialEq + Debug,
+    T: Clone + PartialEq + Debug + Send + Sync + 'static,
 {
     match symbol {
         "if" => {
@@ -666,6 +683,34 @@ where
                         Ok(LispExp::symbol("nil".into()))
                     }
                 }
+            }
+        }
+
+        "spawn" => {
+            if args.is_empty() {
+                return Err(EvalError::WrongNumberOfArguments {
+                    expected: 1,
+                    got: 0,
+                });
+            }
+
+            let target_closure = eval(&args[0], env.clone(), ctx)?;
+
+            if let LispExp::Lambda(lambda_data) = target_closure {
+                let lambda_clone = lambda_data.clone();
+                let mut thread_ctx = ctx.clone();
+
+                std::thread::spawn(move || {
+                    let thread_frame = Env::new_child(&lambda_clone.env);
+                    let _ = eval(&lambda_clone.body, thread_frame, &mut thread_ctx);
+                });
+
+                Ok(LispExp::list(vec![]))
+            } else {
+                Err(EvalError::WrongArgumentType {
+                    expected: "Lambda".into(),
+                    got: format!("{:?}", target_closure),
+                })
             }
         }
 
@@ -727,7 +772,7 @@ where
         }
 
         "lambda" => {
-            if args.len() < 2  {
+            if args.len() < 2 {
                 return Err(EvalError::DefunNotCorrectExpression);
             }
 
@@ -807,7 +852,7 @@ fn eval_function_call<T>(
     ctx: &mut T,
 ) -> Result<LispExp<T>, EvalError>
 where
-    T: Clone + PartialEq + Debug,
+    T: Clone + PartialEq + Debug + Send + Sync + 'static,
 {
     let mut evaled_args = Vec::new();
     for arg in args {
@@ -817,17 +862,16 @@ where
     if let Some(func) = env.get_function(symbol) {
         if let LispExp::Lambda(lambda) = func {
             if lambda.params.len() != evaled_args.len() {
-                return Err(EvalError::WrongNumberOfArguments { 
-                        expected: lambda.params.len(), 
-                        got: evaled_args.len() 
-                    });
+                return Err(EvalError::WrongNumberOfArguments {
+                    expected: lambda.params.len(),
+                    got: evaled_args.len(),
+                });
             }
-            
+
             let call_frame = Env::new_child(&lambda.env);
 
             for (i, param_name) in lambda.params.iter().enumerate() {
-                call_frame
-                    .set_variable(param_name.clone(), evaled_args[i].clone());
+                call_frame.set_variable(param_name.clone(), evaled_args[i].clone());
             }
 
             eval(&lambda.body, call_frame, ctx)
