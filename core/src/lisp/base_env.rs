@@ -156,9 +156,15 @@ pub fn setup_base_env<T>(env: std::sync::Arc<Env<T>>)
 where
     T: Clone + std::fmt::Debug + PartialEq + Send + Sync + 'static,
 {
+    
+    // Functions
     env.set_function("funcall".into(), LispExp::Primitive(primitive_funcall));
     env.set_function("atom".into(), LispExp::Primitive(primitive_atom));
     env.set_function("deref".into(), LispExp::Primitive(primitive_deref));
     env.set_function("reset".into(), LispExp::Primitive(primitive_reset));
     env.set_function("resume".into(), LispExp::Primitive(primitive_resume));
+
+    // Symbols
+    env.set_variable("nil".into(), LispExp::list(vec![]));
+    env.set_variable("t".into(), LispExp::number(1.0));
 }
