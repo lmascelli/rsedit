@@ -1,22 +1,27 @@
 #[cfg(test)]
 mod tests {
     use crate::lisp::base_env::setup_base_env;
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
     use std::sync::Arc;
 
     // A simple dummy context
     #[derive(Clone, Debug, PartialEq)]
     struct FiberCtx;
 
+    impl LispContext for FiberCtx {
+        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+            Ok(())
+        }
+
+        fn log_diagnostic(&mut self, msg: &str) {}
+    }
+
     // Helper to evaluate multiple expressions easily by wrapping them in a progn
-    fn eval_script<T>(
+    fn eval_script<T: LispContext>(
         script: &str,
         env: Arc<Env<T>>,
         ctx: &mut T,
-    ) -> Result<LispExp<T>, EvalError>
-    where
-        T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
-    {
+    ) -> Result<LispExp<T>, EvalError> {
         let wrapped = format!("(progn {})", script);
         let mut parser = Parser::new(&wrapped);
         let exp = parser.next().unwrap();
@@ -25,7 +30,7 @@ mod tests {
 
     fn setup_fiber_env() -> (Arc<Env<FiberCtx>>, FiberCtx) {
         let env = Env::new_root();
-        
+
         // This loads `resume`, `atom`, `deref`, `reset`, and `funcall`
         setup_base_env(env.clone());
 
@@ -78,15 +83,20 @@ mod tests {
                         (setq counter (+ counter 100)))))
         "#;
 
-        // Note: You need a native `+` function to make this test work if you haven't 
+        // Note: You need a native `+` function to make this test work if you haven't
         // added one to your base_env. Let's mock it just for this test:
-        env.set_function("+".into(), LispExp::Primitive(|args, _| {
-            let mut sum = 0.0;
-            for arg in args {
-                if let LispExp::Number(n) = arg { sum += n; }
-            }
-            Ok(LispExp::Number(sum))
-        }));
+        env.set_function(
+            "+".into(),
+            LispExp::Primitive(|args, _| {
+                let mut sum = 0.0;
+                for arg in args {
+                    if let LispExp::Number(n) = arg {
+                        sum += n;
+                    }
+                }
+                Ok(LispExp::Number(sum))
+            }),
+        );
 
         eval_script(script, env.clone(), &mut ctx).unwrap();
 
@@ -131,7 +141,7 @@ mod tests {
 
         // (fiber) with no arguments should immediately yield nil
         eval_script("(setq empty-task (fiber))", env.clone(), &mut ctx).unwrap();
-        
+
         let res = eval_script("(resume empty-task)", env.clone(), &mut ctx).unwrap();
         assert_eq!(res, LispExp::symbol("nil".into()));
     }

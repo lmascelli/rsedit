@@ -1,13 +1,13 @@
 use crate::lisp::lisp::SharedAtom;
-use crate::lisp::{Env, EvalError, LispExp, eval};
+use crate::lisp::{Env, EvalError, LispContext, LispExp, eval};
 use std::sync::{Arc, RwLock};
 
 // -------------------------------- CLASSIC LISP -------------------------------
 
-fn primitive_funcall<T>(args: &[LispExp<T>], ctx: &mut T) -> Result<LispExp<T>, EvalError>
-where
-    T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
-{
+fn primitive_funcall<T: LispContext>(
+    args: &[LispExp<T>],
+    ctx: &mut T,
+) -> Result<LispExp<T>, EvalError> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -39,12 +39,88 @@ where
     }
 }
 
+fn primitive_sum<T: LispContext>(
+    args: &[LispExp<T>],
+    ctx: &mut T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.len() < 1 {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: 0,
+        })
+    } else {
+        let mut sum = 0.0;
+        for arg in args {
+            if let LispExp::Number(number) = arg {
+                sum += number;
+            } else {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "Number".into(),
+                    got: format!("{:?}", arg),
+                })
+            }
+        }
+        Ok(LispExp::number(sum))
+    }
+}
+
+fn primitive_subtraction<T: LispContext>(
+    args: &[LispExp<T>],
+    ctx: &mut T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.len() < 1 {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: 0,
+        })
+    } else {
+        let mut sum = 0.0;
+        if let LispExp::Number(number) = args[0] {
+            sum = number;
+        } else {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Number".into(),
+                got: format!("{:?}", args[0]),
+            });
+        }
+        for arg in &args[2..] {
+            if let LispExp::Number(number) = arg {
+                sum -= number;
+            } else {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "Number".into(),
+                    got: format!("{:?}", arg),
+                });
+            }
+        }
+        Ok(LispExp::number(sum))
+    }
+}
+
+fn primitive_compare<T: LispContext>(
+    args: &[LispExp<T>],
+    ctx: &mut T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.len() != 2 {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        })
+    } else {
+        if args[0] == args[1] {
+            Ok(LispExp::symbol("t".into()))
+        } else {
+            Ok(LispExp::symbol("nil".into()))
+        }
+    }
+}
+
 // -------------------------------- MULTI-THREADING ----------------------------
 
-fn primitive_atom<T>(args: &[LispExp<T>], _ctx: &mut T) -> Result<LispExp<T>, EvalError>
-where
-    T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
-{
+fn primitive_atom<T: LispContext>(
+    args: &[LispExp<T>],
+    _ctx: &mut T,
+) -> Result<LispExp<T>, EvalError> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -57,10 +133,10 @@ where
     }
 }
 
-fn primitive_deref<T>(args: &[LispExp<T>], _ctx: &mut T) -> Result<LispExp<T>, EvalError>
-where
-    T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
-{
+fn primitive_deref<T: LispContext>(
+    args: &[LispExp<T>],
+    _ctx: &mut T,
+) -> Result<LispExp<T>, EvalError> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -82,10 +158,10 @@ where
     }
 }
 
-fn primitive_reset<T>(args: &[LispExp<T>], _ctx: &mut T) -> Result<LispExp<T>, EvalError>
-where
-    T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
-{
+fn primitive_reset<T: LispContext>(
+    args: &[LispExp<T>],
+    _ctx: &mut T,
+) -> Result<LispExp<T>, EvalError> {
     if args.len() < 2 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -111,10 +187,10 @@ where
 
 // -------------------------------- CONCURRENCY --------------------------------
 
-fn primitive_resume<T>(args: &[LispExp<T>], ctx: &mut T) -> Result<LispExp<T>, EvalError>
-where
-    T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
-{
+fn primitive_resume<T: LispContext>(
+    args: &[LispExp<T>],
+    ctx: &mut T,
+) -> Result<LispExp<T>, EvalError> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -126,7 +202,7 @@ where
                 .0
                 .write()
                 .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
-            
+
             if fiber.is_done {
                 return Ok(LispExp::symbol("nil".into()));
             }
@@ -152,17 +228,16 @@ where
 }
 
 // -------------------------------- CONSTRUCTOR --------------------------------
-pub fn setup_base_env<T>(env: std::sync::Arc<Env<T>>)
-where
-    T: Clone + std::fmt::Debug + PartialEq + Send + Sync + 'static,
-{
-    
+pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     // Functions
     env.set_function("funcall".into(), LispExp::Primitive(primitive_funcall));
     env.set_function("atom".into(), LispExp::Primitive(primitive_atom));
     env.set_function("deref".into(), LispExp::Primitive(primitive_deref));
     env.set_function("reset".into(), LispExp::Primitive(primitive_reset));
     env.set_function("resume".into(), LispExp::Primitive(primitive_resume));
+    env.set_function("+".into(), LispExp::Primitive(primitive_sum));
+    env.set_function("-".into(), LispExp::Primitive(primitive_subtraction));
+    env.set_function("=".into(), LispExp::Primitive(primitive_compare));
 
     // Symbols
     env.set_variable("nil".into(), LispExp::list(vec![]));

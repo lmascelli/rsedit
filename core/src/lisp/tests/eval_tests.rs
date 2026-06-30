@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod test {
-    use crate::lisp::{Env, EvalError, LispExp, eval};
+    use crate::lisp::{Env, EvalError, LispContext, LispExp, eval};
     use std::{collections::HashMap, sync::Arc};
 
     fn setup_env() -> (std::sync::Arc<Env<()>>, ()) {
@@ -13,21 +13,21 @@ mod test {
     // EVAL TESTS
     // ==========================================
 
-    fn get_var<T>(env: &Env<T>, name: &str) -> Option<LispExp<T>>
+    fn get_var<T: LispContext>(env: &Env<T>, name: &str) -> Option<LispExp<T>>
     where
         T: Clone,
     {
         env.get_variable(name)
     }
 
-    fn get_func<T>(env: &Env<T>, name: &str) -> Option<LispExp<T>>
+    fn get_func<T: LispContext>(env: &Env<T>, name: &str) -> Option<LispExp<T>>
     where
         T: Clone,
     {
         env.get_function(name)
     }
 
-    fn is_nil<T>(exp: &LispExp<T>) -> bool
+    fn is_nil<T: LispContext>(exp: &LispExp<T>) -> bool
     where
         T: PartialEq,
     {
@@ -375,6 +375,14 @@ mod test {
         pub state_changes: usize,
     }
 
+    impl LispContext for TestHost {
+        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+            Ok(())
+        }
+
+        fn log_diagnostic(&mut self, msg: &str) {}
+    }
+
     // 2. A mock native primitive that mutates the host context
     fn native_increment_state(
         _args: &[LispExp<TestHost>],
@@ -577,6 +585,14 @@ mod test {
     #[derive(Clone, Debug, PartialEq)]
     struct MockHost {
         pub tracker: f64,
+    }
+
+    impl LispContext for MockHost {
+        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+            Ok(())
+        }
+
+        fn log_diagnostic(&mut self, msg: &str) {}
     }
 
     fn setup_interpreter_env() -> (Arc<Env<MockHost>>, MockHost) {

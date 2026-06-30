@@ -1,11 +1,19 @@
 #[cfg(test)]
 mod tests {
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
     use std::sync::Arc;
 
     // A dummy context to satisfy the generic T in our evaluator
     #[derive(Clone, PartialEq, Debug)]
     struct DummyCtx;
+
+    impl LispContext for DummyCtx {
+        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+            Ok(())
+        }
+
+        fn log_diagnostic(&mut self, msg: &str) {}
+    }
 
     // Helper function to parse and evaluate a simple string expression
     fn eval_str(
@@ -148,10 +156,10 @@ mod tests {
         assert_eq!(result, LispExp::number(10.0));
     }
 
-    pub fn primitive_funcall<T>(args: &[LispExp<T>], ctx: &mut T) -> Result<LispExp<T>, EvalError>
-    where
-        T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
-    {
+    pub fn primitive_funcall<T: LispContext>(
+        args: &[LispExp<T>],
+        ctx: &mut T,
+    ) -> Result<LispExp<T>, EvalError> {
         if args.is_empty() {
             return Err(EvalError::WrongNumberOfArguments {
                 expected: 1,

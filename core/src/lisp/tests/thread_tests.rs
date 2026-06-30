@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::lisp::base_env::setup_base_env;
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
     use std::sync::{Arc, RwLock};
     use std::time::Duration;
 
@@ -9,6 +9,14 @@ mod tests {
     #[derive(Clone, Debug)]
     struct ThreadCtx {
         pub host_counter: Arc<RwLock<usize>>,
+    }
+
+    impl LispContext for ThreadCtx {
+        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+            Ok(())
+        }
+
+        fn log_diagnostic(&mut self, msg: &str) {}
     }
 
     // Required for the generic bound T: PartialEq
@@ -19,10 +27,11 @@ mod tests {
     }
 
     // Helper to evaluate multiple expressions easily by wrapping them in a progn
-    fn eval_script<T>(script: &str, env: Arc<Env<T>>, ctx: &mut T) -> Result<LispExp<T>, EvalError>
-    where
-        T: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static,
-    {
+    fn eval_script<T: LispContext>(
+        script: &str,
+        env: Arc<Env<T>>,
+        ctx: &mut T,
+    ) -> Result<LispExp<T>, EvalError> {
         let wrapped = format!("(progn {})", script);
         let mut parser = Parser::new(&wrapped);
         let exp = parser.next().unwrap();

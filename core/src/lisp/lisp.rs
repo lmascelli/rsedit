@@ -5,6 +5,16 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+pub trait LispContext: Clone + PartialEq + Debug + Send + Sync + 'static {
+    /// Consumes a given amount of execution ticks.
+    /// Returns `Err(EvalError::OutOfFuel)` if the host-defined budget is exhausted.
+    fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError>;
+
+    /// Allows the VM to bubble up non-fatal diagnostic logs, trace statements,
+    /// or debugging notices to the host without knowing how the host presents them.
+    fn log_diagnostic(&mut self, msg: &str);
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Token {
     Uninitialized,
@@ -21,32 +31,32 @@ pub(super) enum Token {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Lambda<T> {
+pub struct Lambda<T: LispContext> {
     pub params: Vec<String>,
     pub body: LispExp<T>,
     pub env: Arc<Env<T>>,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct SharedAtom<T>(pub Arc<RwLock<LispExp<T>>>);
+pub(super) struct SharedAtom<T: LispContext>(pub Arc<RwLock<LispExp<T>>>);
 
-impl<T> PartialEq for SharedAtom<T> {
+impl<T: LispContext> PartialEq for SharedAtom<T> {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
 #[derive(Debug)]
-pub struct FiberState<T> {
+pub struct FiberState<T: LispContext> {
     pub body: Vec<LispExp<T>>,
     pub env: Arc<Env<T>>,
     pub is_done: bool,
 }
 
 #[derive(Clone, Debug)]
-pub struct SharedFiber<T>(pub Arc<RwLock<FiberState<T>>>);
+pub struct SharedFiber<T: LispContext>(pub Arc<RwLock<FiberState<T>>>);
 
-impl<T> PartialEq for SharedFiber<T> {
+impl<T: LispContext> PartialEq for SharedFiber<T> {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
     }
@@ -55,7 +65,7 @@ impl<T> PartialEq for SharedFiber<T> {
 #[derive(Clone, Debug, PartialEq)]
 // Primitive comparison has no meaning and will probably never done
 #[allow(unpredictable_function_pointer_comparisons)]
-pub enum LispExp<T> {
+pub enum LispExp<T: LispContext> {
     List(Arc<Vec<LispExp<T>>>),
     Vector(Arc<Vec<LispExp<T>>>),
     Map(Arc<HashMap<String, LispExp<T>>>),
@@ -87,10 +97,11 @@ pub enum EvalError {
     LetUnvalidBindingAt(usize),
     LetUnvalidBindingList,
     LetNoBindingsProvided,
+    OutOfFuel,
 }
 
 #[derive(Debug)]
-pub struct Env<T> {
+pub struct Env<T: LispContext> {
     pub variables: RwLock<HashMap<String, LispExp<T>>>,
     pub functions: RwLock<HashMap<String, LispExp<T>>>,
     pub parent: Option<Arc<Env<T>>>,
@@ -98,10 +109,12 @@ pub struct Env<T> {
 
 enum ParserLexerState {
     Default,
+    InComment,
     InSymbol,
     InString,
     InStringSlash,
     InNumber,
+    InNumberMinusStart,
     InNumberAfterDot,
 }
 
@@ -131,7 +144,7 @@ pub struct Parser<'source> {
     lexer_state: ParserLexerState,
 }
 
-impl<T> LispExp<T> {
+impl<T: LispContext> LispExp<T> {
     pub fn symbol(value: String) -> LispExp<T> {
         LispExp::Symbol(Arc::new(value))
     }
@@ -180,6 +193,9 @@ impl<'source> Parser<'source> {
         while let Some(c) = self.source.peek() {
             match self.lexer_state {
                 ParserLexerState::Default => match c {
+                    ';' => {
+                        self.lexer_state = ParserLexerState::InComment;
+                    }
                     '(' => {
                         self.parens_stack.push(Token::LParen);
                         self.source.next();
@@ -223,7 +239,11 @@ impl<'source> Parser<'source> {
                     '"' => {
                         self.lexer_state = ParserLexerState::InString;
                     }
-                    '.' | '-' | '0'..='9' => {
+                    '-' => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InNumberMinusStart;
+                    }
+                    '.' | '0'..='9' => {
                         self.token.push(*c);
                         self.lexer_state = ParserLexerState::InNumber;
                     }
@@ -232,7 +252,20 @@ impl<'source> Parser<'source> {
                         self.lexer_state = ParserLexerState::InSymbol;
                     }
                 },
+                ParserLexerState::InComment => match c{
+                    '\n' => {
+                        self.lexer_state = ParserLexerState::Default;
+                    },
+                    _ => {}
+                },
                 ParserLexerState::InSymbol => match c {
+                    ';' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        self.lexer_state = ParserLexerState::InComment;
+                        self.source.next();
+                        return Ok(Some(Token::Symbol(token_string)));                        
+                    }
                     ' ' | '\t' | '\n' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
@@ -277,6 +310,16 @@ impl<'source> Parser<'source> {
                     }
                 },
                 ParserLexerState::InNumber => match c {
+                    ';' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        if let Ok(number) = token_string.parse() {
+                            self.lexer_state = ParserLexerState::InComment;
+                            return Ok(Some(Token::Number(number)));
+                        } else {
+                            return Err(ParserError::NumberParseError(token_string));
+                        }
+                    }
                     '0'..='9' => {
                         self.token.push(*c);
                     }
@@ -309,7 +352,49 @@ impl<'source> Parser<'source> {
                         return Err(ParserError::NumberInvadidChar(*c));
                     }
                 },
+                ParserLexerState::InNumberMinusStart => match c {
+                    ';' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        self.lexer_state = ParserLexerState::InComment;
+                        return Ok(Some(Token::Symbol(token_string)));
+                    }
+                    '0'..='9' => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InNumber;
+                    }
+                    '.' => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InNumberAfterDot;
+                    }
+                    '(' | '[' | '{' | ')' | ']' | '}' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        self.lexer_state = ParserLexerState::Default;
+                        return Ok(Some(Token::Symbol(token_string)));
+                    }
+                    ' ' | '\t' | '\n' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        self.lexer_state = ParserLexerState::Default;
+                        return Ok(Some(Token::Symbol(token_string)));
+                    }
+                    _ => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InSymbol;
+                    }
+                }
                 ParserLexerState::InNumberAfterDot => match c {
+                    ';' => {
+                        let mut token_string = String::new();
+                        core::mem::swap(&mut token_string, &mut self.token);
+                        if let Ok(number) = token_string.parse() {
+                            self.lexer_state = ParserLexerState::InComment;
+                            return Ok(Some(Token::Number(number)));
+                        } else {
+                            return Err(ParserError::NumberParseError(token_string));
+                        }
+                    }
                     '0'..='9' => {
                         self.token.push(*c);
                     }
@@ -380,7 +465,10 @@ impl<'source> Parser<'source> {
                     return Ok(None);
                 }
             }
-            ParserLexerState::InSymbol => {
+            ParserLexerState::InComment => {
+                return Ok(None);
+            }
+            ParserLexerState::InSymbol | ParserLexerState::InNumberMinusStart => {
                 let mut token_string = String::new();
                 core::mem::swap(&mut token_string, &mut self.token);
                 self.source.next();
@@ -412,7 +500,7 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    fn parse_list<T>(&mut self) -> Result<LispExp<T>, ParserError> {
+    fn parse_list<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
         let mut list = vec![];
         while self.current_token != Token::Void {
             match self.current_token {
@@ -428,7 +516,7 @@ impl<'source> Parser<'source> {
         Err(ParserError::UnclosedList)
     }
 
-    fn parse_vector<T>(&mut self) -> Result<LispExp<T>, ParserError> {
+    fn parse_vector<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
         let mut vec = vec![];
 
         while self.current_token != Token::Void {
@@ -445,7 +533,7 @@ impl<'source> Parser<'source> {
         Err(ParserError::UnclosedVector)
     }
 
-    fn parse_map<T>(&mut self) -> Result<LispExp<T>, ParserError> {
+    fn parse_map<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
         let mut map = HashMap::new();
         let mut is_key = true;
         let mut current_key = String::new();
@@ -487,7 +575,7 @@ impl<'source> Parser<'source> {
         Err(ParserError::UnclosedMap)
     }
 
-    pub fn next<T>(&mut self) -> Result<LispExp<T>, ParserError> {
+    pub fn next<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
         match self.current_token.clone() {
             Token::Symbol(symbol) => {
                 self.advance_token()?;
@@ -523,10 +611,7 @@ impl<'source> Parser<'source> {
     }
 }
 
-impl<T> Env<T>
-where
-    T: Clone,
-{
+impl<T: LispContext> Env<T> {
     pub fn new_root() -> Arc<Self> {
         Arc::new(Self {
             variables: RwLock::new(HashMap::new()),
@@ -613,22 +698,24 @@ where
     }
 }
 
-impl<T> Clone for Env<T> {
+impl<T: LispContext> Clone for Env<T> {
     fn clone(&self) -> Self {
         unreachable!()
     }
 }
 
-impl<T> PartialEq for Env<T> {
+impl<T: LispContext> PartialEq for Env<T> {
     fn eq(&self, _: &Env<T>) -> bool {
         unreachable!()
     }
 }
 
-pub fn eval<T>(exp: &LispExp<T>, env: Arc<Env<T>>, ctx: &mut T) -> Result<LispExp<T>, EvalError>
-where
-    T: Clone + PartialEq + Debug + Send + Sync + 'static,
-{
+pub fn eval<T: LispContext>(
+    exp: &LispExp<T>,
+    env: Arc<Env<T>>,
+    ctx: &mut T,
+) -> Result<LispExp<T>, EvalError> {
+    ctx.consume_fuel(1)?;
     match exp {
         LispExp::String(_) | LispExp::Number(_) | LispExp::Atom(_) | LispExp::Fiber(_) => {
             Ok(exp.clone())
@@ -678,15 +765,12 @@ where
     }
 }
 
-fn eval_special_form_or_call<T>(
+fn eval_special_form_or_call<T: LispContext>(
     symbol: &str,
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &mut T,
-) -> Result<LispExp<T>, EvalError>
-where
-    T: Clone + PartialEq + Debug + Send + Sync + 'static,
-{
+) -> Result<LispExp<T>, EvalError> {
     match symbol {
         "if" => {
             if args.len() < 1 {
@@ -707,6 +791,33 @@ where
                     }
                 }
             }
+        }
+
+        "while" => {
+            if args.is_empty() {
+                return Err(EvalError::WrongNumberOfArguments {
+                    expected: 1,
+                    got: 0,
+                });
+            }
+
+            let condition = &args[0];
+            let body = &args[1..];
+
+            let mut last_result = LispExp::symbol("nil".into());
+
+            loop {
+                let cond_val = eval(condition, env.clone(), ctx)?;
+                if cond_val == LispExp::symbol("nil".into()) ||
+                    cond_val == LispExp::list(vec![]) {
+                        break;
+                    }
+                for exp in body {
+                    last_result = eval(exp, env.clone(), ctx)?;
+                }
+            }
+
+            Ok(last_result)
         }
 
         "spawn" => {
@@ -886,15 +997,12 @@ where
     }
 }
 
-fn eval_function_call<T>(
+fn eval_function_call<T: LispContext>(
     symbol: &str,
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &mut T,
-) -> Result<LispExp<T>, EvalError>
-where
-    T: Clone + PartialEq + Debug + Send + Sync + 'static,
-{
+) -> Result<LispExp<T>, EvalError> {
     let mut evaled_args = Vec::new();
     for arg in args {
         evaled_args.push(eval(arg, env.clone(), ctx)?);

@@ -1,6 +1,6 @@
 use crate::buffer::{Buffer, BufferTrait};
 use crate::input::{KeyCode, KeyEvent, default_keymaps};
-use crate::lisp::{Env, LispExp, eval};
+use crate::lisp::{Env, EvalError, LispContext, LispExp, eval};
 use crate::ui::{
     FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines,
 };
@@ -18,6 +18,17 @@ pub struct EditorState<B: BufferTrait> {
 
     pub focused_window_id: usize,
     pub next_window_id: usize,
+}
+
+impl<B: BufferTrait> LispContext for EditorState<B> {
+    fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+        todo!();
+        Ok(())
+    }
+
+    fn log_diagnostic(&mut self, msg: &str) {
+        todo!();
+    }
 }
 
 impl<B: BufferTrait> Clone for EditorState<B> {
