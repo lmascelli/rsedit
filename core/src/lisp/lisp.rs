@@ -25,6 +25,7 @@ pub(super) enum Token {
     RSquared,
     LBracket,
     RBracket,
+    Quote,
     Number(f64),
     String(String),
     Symbol(String),
@@ -86,6 +87,7 @@ pub enum EvalError {
     UncorrectFunctionDefinition,
     WrongNumberOfArguments { expected: usize, got: usize },
     WrongArgumentType { expected: String, got: String },
+    QuoteNotOneArgument,
     IfNoConditionProvided,
     IfNoTrueBrach,
     SetqSymbolRequired,
@@ -195,6 +197,10 @@ impl<'source> Parser<'source> {
                 ParserLexerState::Default => match c {
                     ';' => {
                         self.lexer_state = ParserLexerState::InComment;
+                    }
+                    '\'' => {
+                        self.source.next();
+                        return Ok(Some(Token::Quote));
                     }
                     '(' => {
                         self.parens_stack.push(Token::LParen);
@@ -605,6 +611,10 @@ impl<'source> Parser<'source> {
                 self.advance_token()?;
                 self.next()
             }
+            Token::Quote => {
+                self.advance_token()?;
+                return Ok(LispExp::list(vec![LispExp::symbol("quote".into()), self.next()?]));
+            }
             Token::Void => Err(ParserError::VoidExp),
             _ => unreachable!("token parse not implemented for {:?}", self.current_token),
         }
@@ -772,6 +782,14 @@ fn eval_special_form_or_call<T: LispContext>(
     ctx: &mut T,
 ) -> Result<LispExp<T>, EvalError> {
     match symbol {
+        "quote" => {
+            if args.len() != 1 {
+                Err(EvalError::QuoteNotOneArgument)
+            } else {
+                Ok(args[0].clone())
+            }
+        }
+        
         "if" => {
             if args.len() < 1 {
                 Err(EvalError::IfNoConditionProvided)

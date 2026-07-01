@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod test {
-    use crate::lisp::{Env, EvalError, LispContext, LispExp, eval};
+    use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
     use std::{collections::HashMap, sync::Arc};
 
     fn setup_env() -> (std::sync::Arc<Env<()>>, ()) {
@@ -738,5 +738,93 @@ mod test {
         } else {
             panic!("Evaluation should retain structural map wrapper type");
         }
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct DummyCtx {
+        fuel: u32,
+    }
+
+    impl LispContext for DummyCtx {
+        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+            if self.fuel < amount {
+                Err(EvalError::OutOfFuel)
+            } else {
+                self.fuel -= amount;
+                Ok(())
+            }
+        }
+        fn log_diagnostic(&mut self, _msg: &str) {}
+    }
+
+    fn eval_script(script: &str) -> Result<LispExp<DummyCtx>, EvalError> {
+        let mut ctx = DummyCtx { fuel: 1000 };
+        let env = Env::new_root();
+        
+        // We wrap in a progn just in case the script has multiple top-level expressions,
+        // but for single expressions it just evaluates them sequentially.
+        let wrapped = format!("(progn {})", script);
+        let mut parser = Parser::new(&wrapped);
+        let ast = parser.next().unwrap();
+        
+        eval(&ast, env, &mut ctx)
+    }
+
+    #[test]
+    fn test_eval_quote_symbol() {
+        // Normally, evaluating `unbound-var` throws an UnboundVariable error.
+        // Quoting it should safely return the raw symbol AST.
+        let res = eval_script("'unbound-var").unwrap();
+        assert_eq!(res, LispExp::symbol("unbound-var".into()));
+    }
+
+    #[test]
+    fn test_eval_quote_list() {
+        // Quoting a list of numbers shouldn't try to call `1` as a function
+        let res = eval_script("'(1 2 3)").unwrap();
+        assert_eq!(
+            res,
+            LispExp::list(vec![
+                LispExp::number(1.0),
+                LispExp::number(2.0),
+                LispExp::number(3.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_eval_quote_prevents_function_execution() {
+        // '(+ 1 2) should return the literal list [+, 1, 2], NOT 3.
+        let res = eval_script("'(+ 1 2)").unwrap();
+        assert_eq!(
+            res,
+            LispExp::list(vec![
+                LispExp::symbol("+".into()),
+                LispExp::number(1.0),
+                LispExp::number(2.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_eval_quote_explicit_form() {
+        // Verify (quote x) works exactly the same as 'x
+        let res = eval_script("(quote explicit-symbol)").unwrap();
+        assert_eq!(res, LispExp::symbol("explicit-symbol".into()));
+    }
+
+    #[test]
+    fn test_eval_quote_arity_errors() {
+        // Quote requires exactly one argument
+        let no_args = eval_script("(quote)");
+        assert_eq!(no_args, Err(EvalError::QuoteNotOneArgument));
+
+        let too_many_args = eval_script("(quote a b)");
+        assert_eq!(too_many_args, Err(EvalError::QuoteNotOneArgument));
+        
+        let sugar_too_many_args = eval_script("'(a b c d)");
+        // Note: Sugar syntax naturally groups into a single list argument, 
+        // so this actually succeeds and returns the list! It should NOT error.
+        assert!(sugar_too_many_args.is_ok());
     }
 }

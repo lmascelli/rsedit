@@ -83,7 +83,7 @@ fn primitive_subtraction<T: LispContext>(
                 got: format!("{:?}", args[0]),
             });
         }
-        for arg in &args[2..] {
+        for arg in &args[1..] {
             if let LispExp::Number(number) = arg {
                 sum -= number;
             } else {

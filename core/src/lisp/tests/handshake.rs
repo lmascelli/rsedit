@@ -36,10 +36,7 @@ mod tests {
 
         // If the core code functions flawlessly, bootstrap finishes successfully
         let env_res = bootstrap_vm(&mut ctx);
-        if let Err(err) = env_res {
-            eprintln!("ERROR: {:?}", err);
-        }
-        // assert!(env_res.is_ok());
+        assert!(env_res.is_ok());
         assert!(
             ctx.logs.contains(
                 &"VM Handshake: State verification successful. Core is stable.".to_string()
@@ -57,7 +54,7 @@ mod tests {
         let env = bootstrap_vm(&mut ctx).unwrap();
 
         // A malicious loop script that would normally lock up the thread forever
-        let malicious_script = "(while true (setq x 1))";
+        let malicious_script = "(while t (setq x 1))";
         let mut parser = Parser::new(malicious_script);
         let ast = parser.next().unwrap();
 

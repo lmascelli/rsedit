@@ -10,6 +10,14 @@ mod test {
         (Env::new_root(), ())
     }
 
+    #[derive(Clone, Debug, PartialEq)]
+    struct DummyCtx;
+
+    impl LispContext for DummyCtx {
+        fn consume_fuel(&mut self, _amount: u32) -> Result<(), EvalError> { Ok(()) }
+        fn log_diagnostic(&mut self, _msg: &str) {}
+    }
+
     #[test]
     fn test_parse_primitives() {
         let mut parser = Parser::new("42");
@@ -414,6 +422,145 @@ mod test {
         assert_eq!(
             Parser::new("   \n \t  ").next::<()>().unwrap_err(),
             ParserError::VoidExp
+        );
+    }
+
+    #[test]
+    fn test_parse_quoted_symbol() {
+        let mut parser = Parser::new("'foo");
+        let exp: LispExp<DummyCtx> = parser.next().unwrap();
+
+        // Should expand to: (quote foo)
+        assert_eq!(
+            exp,
+            LispExp::list(vec![
+                LispExp::symbol("quote".into()),
+                LispExp::symbol("foo".into())
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_quoted_list() {
+        let mut parser = Parser::new("'(1 2 a)");
+        let exp: LispExp<DummyCtx> = parser.next().unwrap();
+
+        // Should expand to: (quote (1 2 a))
+        assert_eq!(
+            exp,
+            LispExp::list(vec![
+                LispExp::symbol("quote".into()),
+                LispExp::list(vec![
+                    LispExp::number(1.0),
+                    LispExp::number(2.0),
+                    LispExp::symbol("a".into()),
+                ])
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_nested_quotes() {
+        let mut parser = Parser::new("''foo");
+        let exp: LispExp<DummyCtx> = parser.next().unwrap();
+
+        // Should expand to: (quote (quote foo))
+        assert_eq!(
+            exp,
+            LispExp::list(vec![
+                LispExp::symbol("quote".into()),
+                LispExp::list(vec![
+                    LispExp::symbol("quote".into()),
+                    LispExp::symbol("foo".into())
+                ])
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_quote_inside_list() {
+        let mut parser = Parser::new("(setq x 'y)");
+        let exp: LispExp<DummyCtx> = parser.next().unwrap();
+
+        // Should expand to: (setq x (quote y))
+        assert_eq!(
+            exp,
+            LispExp::list(vec![
+                LispExp::symbol("setq".into()),
+                LispExp::symbol("x".into()),
+                LispExp::list(vec![
+                    LispExp::symbol("quote".into()),
+                    LispExp::symbol("y".into())
+                ])
+            ])
+        );
+    }
+
+    #[test]
+    fn test_quote_at_eof() {
+        // Edge Case 1: A dangling quote at the very end of the file/buffer
+        let mut parser = Parser::new("'");
+        let res: Result<LispExp<DummyCtx>, ParserError> = parser.next();
+
+        // The parser should gracefully report a VoidExp, not crash or loop forever
+        assert_eq!(res, Err(ParserError::VoidExp));
+    }
+
+    #[test]
+    fn test_quote_empty_structures() {
+        // Edge Case 2: Quoting empty lists, vectors, and maps
+        let mut parser_list = Parser::new("'()");
+        assert_eq!(
+            parser_list.next::<DummyCtx>().unwrap(),
+            LispExp::list(vec![
+                LispExp::symbol("quote".into()),
+                LispExp::list(vec![])
+            ])
+        );
+
+        let mut parser_vec = Parser::new("'[]");
+        assert_eq!(
+            parser_vec.next::<DummyCtx>().unwrap(),
+            LispExp::list(vec![
+                LispExp::symbol("quote".into()),
+                LispExp::vec(vec![])
+            ])
+        );
+    }
+
+    #[test]
+    fn test_quote_literals() {
+        // Edge Case 3: Quoting numbers and strings
+        // (Evaluating these is redundant, but the parser MUST handle them structurally)
+        let mut parser_num = Parser::new("'42.5");
+        assert_eq!(
+            parser_num.next::<DummyCtx>().unwrap(),
+            LispExp::list(vec![
+                LispExp::symbol("quote".into()),
+                LispExp::number(42.5)
+            ])
+        );
+
+        let mut parser_str = Parser::new("'\"hello\"");
+        assert_eq!(
+            parser_str.next::<DummyCtx>().unwrap(),
+            LispExp::list(vec![
+                LispExp::symbol("quote".into()),
+                LispExp::string("hello".into())
+            ])
+        );
+    }
+
+    #[test]
+    fn test_quote_split_by_comments() {
+        // Edge Case 4: A comment sitting directly between the quote and the expression
+        let mut parser = Parser::new("' ; this is an evil comment\n target-symbol");
+        assert_eq!(
+            parser.next::<DummyCtx>().unwrap(),
+            LispExp::list(vec![
+                LispExp::symbol("quote".into()),
+                LispExp::symbol("target-symbol".into())
+            ])
         );
     }
 }

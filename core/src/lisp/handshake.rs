@@ -32,7 +32,6 @@ pub fn bootstrap_vm<T: LispContext>(ctx: &mut T) -> Result<Arc<Env<T>>, EvalErro
     // 4. Parse and evaluate the handshake script
     let mut parser = Parser::new(verification_script);
     let ast = parser.next().or_else(|err| {
-        eprintln!("ERROR {:?}", err);
         Err(EvalError::UncorrectFunctionDefinition) // Fallback if parsing fails
     })?;
 
