@@ -760,13 +760,13 @@ mod test {
     fn eval_script(script: &str) -> Result<LispExp<DummyCtx>, EvalError> {
         let mut ctx = DummyCtx { fuel: 1000 };
         let env = Env::new_root();
-        
+
         // We wrap in a progn just in case the script has multiple top-level expressions,
         // but for single expressions it just evaluates them sequentially.
         let wrapped = format!("(progn {})", script);
         let mut parser = Parser::new(&wrapped);
         let ast = parser.next().unwrap();
-        
+
         eval(&ast, env, &mut ctx)
     }
 
@@ -821,9 +821,9 @@ mod test {
 
         let too_many_args = eval_script("(quote a b)");
         assert_eq!(too_many_args, Err(EvalError::QuoteNotOneArgument));
-        
+
         let sugar_too_many_args = eval_script("'(a b c d)");
-        // Note: Sugar syntax naturally groups into a single list argument, 
+        // Note: Sugar syntax naturally groups into a single list argument,
         // so this actually succeeds and returns the list! It should NOT error.
         assert!(sugar_too_many_args.is_ok());
     }

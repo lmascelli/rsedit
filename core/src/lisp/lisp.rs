@@ -258,10 +258,10 @@ impl<'source> Parser<'source> {
                         self.lexer_state = ParserLexerState::InSymbol;
                     }
                 },
-                ParserLexerState::InComment => match c{
+                ParserLexerState::InComment => match c {
                     '\n' => {
                         self.lexer_state = ParserLexerState::Default;
-                    },
+                    }
                     _ => {}
                 },
                 ParserLexerState::InSymbol => match c {
@@ -270,7 +270,7 @@ impl<'source> Parser<'source> {
                         core::mem::swap(&mut token_string, &mut self.token);
                         self.lexer_state = ParserLexerState::InComment;
                         self.source.next();
-                        return Ok(Some(Token::Symbol(token_string)));                        
+                        return Ok(Some(Token::Symbol(token_string)));
                     }
                     ' ' | '\t' | '\n' => {
                         let mut token_string = String::new();
@@ -389,7 +389,7 @@ impl<'source> Parser<'source> {
                         self.token.push(*c);
                         self.lexer_state = ParserLexerState::InSymbol;
                     }
-                }
+                },
                 ParserLexerState::InNumberAfterDot => match c {
                     ';' => {
                         let mut token_string = String::new();
@@ -613,7 +613,10 @@ impl<'source> Parser<'source> {
             }
             Token::Quote => {
                 self.advance_token()?;
-                return Ok(LispExp::list(vec![LispExp::symbol("quote".into()), self.next()?]));
+                return Ok(LispExp::list(vec![
+                    LispExp::symbol("quote".into()),
+                    self.next()?,
+                ]));
             }
             Token::Void => Err(ParserError::VoidExp),
             _ => unreachable!("token parse not implemented for {:?}", self.current_token),
@@ -720,20 +723,44 @@ impl<T: LispContext> PartialEq for Env<T> {
     }
 }
 
+enum EvalStep<T: LispContext> {
+    Done(LispExp<T>),
+    TailCall(LispExp<T>, Arc<Env<T>>),
+}
+
 pub fn eval<T: LispContext>(
     exp: &LispExp<T>,
     env: Arc<Env<T>>,
     ctx: &mut T,
 ) -> Result<LispExp<T>, EvalError> {
+    let mut current_exp = exp.clone();
+    let mut current_env = env;
+
+    loop {
+        match eval_step(&current_exp, current_env.clone(), ctx)? {
+            EvalStep::Done(result) => return Ok(result),
+            EvalStep::TailCall(next_exp, next_env) => {
+                current_exp = next_exp;
+                current_env = next_env;
+            }
+        }
+    }
+}
+
+fn eval_step<T: LispContext>(
+    exp: &LispExp<T>,
+    env: Arc<Env<T>>,
+    ctx: &mut T,
+) -> Result<EvalStep<T>, EvalError> {
     ctx.consume_fuel(1)?;
     match exp {
         LispExp::String(_) | LispExp::Number(_) | LispExp::Atom(_) | LispExp::Fiber(_) => {
-            Ok(exp.clone())
+            Ok(EvalStep::Done(exp.clone()))
         }
 
         LispExp::Symbol(symbol) => {
             if let Some(var) = env.get_variable(symbol) {
-                Ok(var)
+                Ok(EvalStep::Done(var))
             } else {
                 Err(EvalError::UnboundVariable(symbol.to_string()))
             }
@@ -741,12 +768,12 @@ pub fn eval<T: LispContext>(
 
         LispExp::List(list) => {
             if list.is_empty() {
-                Ok(LispExp::list(vec![]))
+                Ok(EvalStep::Done(LispExp::list(vec![])))
             } else {
                 let head = &list[0];
                 match head {
                     LispExp::Symbol(symbol) => {
-                        eval_special_form_or_call(symbol, &list[1..], env.clone(), ctx)
+                        eval_special_form_or_call_step(symbol, &list[1..], env.clone(), ctx)
                     }
                     _ => {
                         return Err(EvalError::UnvalidFunctionCall);
@@ -760,7 +787,7 @@ pub fn eval<T: LispContext>(
             for v in vec.iter() {
                 new_vec.push(eval(v, env.clone(), ctx)?);
             }
-            Ok(LispExp::vec(new_vec))
+            Ok(EvalStep::Done(LispExp::vec(new_vec)))
         }
 
         LispExp::Map(map) => {
@@ -768,28 +795,28 @@ pub fn eval<T: LispContext>(
             for (k, v) in map.iter() {
                 new_map.insert(k.clone(), eval(v, env.clone(), ctx)?);
             }
-            Ok(LispExp::map(new_map))
+            Ok(EvalStep::Done(LispExp::map(new_map)))
         }
 
         _ => todo!(),
     }
 }
 
-fn eval_special_form_or_call<T: LispContext>(
+fn eval_special_form_or_call_step<T: LispContext>(
     symbol: &str,
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &mut T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<EvalStep<T>, EvalError> {
     match symbol {
         "quote" => {
             if args.len() != 1 {
                 Err(EvalError::QuoteNotOneArgument)
             } else {
-                Ok(args[0].clone())
+                Ok(EvalStep::Done(args[0].clone()))
             }
         }
-        
+
         "if" => {
             if args.len() < 1 {
                 Err(EvalError::IfNoConditionProvided)
@@ -800,12 +827,12 @@ fn eval_special_form_or_call<T: LispContext>(
                 if !(condition == LispExp::list(vec![])
                     || condition == LispExp::symbol("nil".into()))
                 {
-                    Ok(eval(&args[1], env.clone(), ctx)?)
+                    Ok(EvalStep::TailCall(args[1].clone(), env.clone()))
                 } else {
                     if args.len() > 2 {
-                        Ok(eval(&args[2], env.clone(), ctx)?)
+                        Ok(EvalStep::TailCall(args[2].clone(), env.clone()))
                     } else {
-                        Ok(LispExp::symbol("nil".into()))
+                        Ok(EvalStep::Done(LispExp::symbol("nil".into())))
                     }
                 }
             }
@@ -826,16 +853,15 @@ fn eval_special_form_or_call<T: LispContext>(
 
             loop {
                 let cond_val = eval(condition, env.clone(), ctx)?;
-                if cond_val == LispExp::symbol("nil".into()) ||
-                    cond_val == LispExp::list(vec![]) {
-                        break;
-                    }
+                if cond_val == LispExp::symbol("nil".into()) || cond_val == LispExp::list(vec![]) {
+                    break;
+                }
                 for exp in body {
                     last_result = eval(exp, env.clone(), ctx)?;
                 }
             }
 
-            Ok(last_result)
+            Ok(EvalStep::Done(last_result))
         }
 
         "spawn" => {
@@ -857,7 +883,7 @@ fn eval_special_form_or_call<T: LispContext>(
                     let _ = eval(&lambda_clone.body, thread_frame, &mut thread_ctx);
                 });
 
-                Ok(LispExp::list(vec![]))
+                Ok(EvalStep::Done(LispExp::list(vec![])))
             } else {
                 Err(EvalError::WrongArgumentType {
                     expected: "Lambda".into(),
@@ -868,19 +894,17 @@ fn eval_special_form_or_call<T: LispContext>(
 
         "fiber" => {
             if args.is_empty() {
-                return Ok(LispExp::fiber(FiberState {
+                return Ok(EvalStep::Done(LispExp::fiber(FiberState {
                     body: vec![],
                     env: env.clone(),
                     is_done: true,
-                }));
+                })));
             } else {
-                let state = FiberState {
+                Ok(EvalStep::Done(LispExp::fiber(FiberState {
                     body: args.to_vec(),
                     env: Env::new_child(&env),
                     is_done: false,
-                };
-
-                Ok(LispExp::fiber(state))
+                })))
             }
         }
 
@@ -907,7 +931,7 @@ fn eval_special_form_or_call<T: LispContext>(
                     is_symbol = true;
                 }
             }
-            Ok(value)
+            Ok(EvalStep::Done(value))
         }
 
         "defun" => {
@@ -935,7 +959,7 @@ fn eval_special_form_or_call<T: LispContext>(
                 };
                 env.set_function(func_name.to_string(), LispExp::lambda(lambda));
 
-                Ok(LispExp::symbol(func_name.to_string()))
+                Ok(EvalStep::Done(LispExp::symbol(func_name.to_string())))
             } else {
                 Err(EvalError::DefunNameMustBeASymbol)
             }
@@ -962,19 +986,25 @@ fn eval_special_form_or_call<T: LispContext>(
 
             let body = args[1].clone();
 
-            Ok(LispExp::lambda(Lambda {
+            Ok(EvalStep::Done(LispExp::lambda(Lambda {
                 params: params_vec,
                 body,
                 env: env.clone(),
-            }))
+            })))
         }
 
         "progn" => {
-            let mut ret = LispExp::symbol("nil".into());
-            for arg in args {
-                ret = eval(arg, env.clone(), ctx)?;
+            if args.is_empty() {
+                return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
             }
-            Ok(ret)
+            for arg in &args[0..args.len() - 1] {
+                eval(arg, env.clone(), ctx)?;
+            }
+            Ok(EvalStep::TailCall(
+                args.last()
+                    .expect("Failed to get the last progn expression").clone(),
+                env.clone(),
+            ))
         }
 
         "let" => {
@@ -1004,23 +1034,31 @@ fn eval_special_form_or_call<T: LispContext>(
                 return Err(EvalError::LetUnvalidBindingList);
             }
 
-            let mut result = LispExp::symbol("nil".into());
-            for arg in &args[1..] {
-                result = eval(arg, let_env.clone(), ctx)?;
+            let body = &args[1..];
+            if body.is_empty() {
+                return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
             }
-            Ok(result)
+            
+            for arg in &args[0..body.len() - 1] {
+                eval(arg, let_env.clone(), ctx)?;
+            }
+            
+            Ok(EvalStep::TailCall(body.last()
+                .expect("Failed to get the last let expression").clone(),
+                let_env,
+            ))
         }
 
-        _ => eval_function_call(symbol, args, env, ctx),
+        _ => eval_function_call_step(symbol, args, env, ctx),
     }
 }
 
-fn eval_function_call<T: LispContext>(
+fn eval_function_call_step<T: LispContext>(
     symbol: &str,
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &mut T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<EvalStep<T>, EvalError> {
     let mut evaled_args = Vec::new();
     for arg in args {
         evaled_args.push(eval(arg, env.clone(), ctx)?);
@@ -1041,9 +1079,9 @@ fn eval_function_call<T: LispContext>(
                 call_frame.set_variable(param_name.clone(), evaled_args[i].clone());
             }
 
-            eval(&lambda.body, call_frame, ctx)
+            Ok(EvalStep::TailCall(lambda.body.clone(), call_frame))
         } else if let LispExp::Primitive(function) = func {
-            return Ok(function(&evaled_args[..], ctx)?);
+            Ok(EvalStep::Done(function(&evaled_args[..], ctx)?))
         } else {
             Err(EvalError::UncorrectFunctionDefinition)
         }

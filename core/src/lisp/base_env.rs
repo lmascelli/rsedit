@@ -57,7 +57,7 @@ fn primitive_sum<T: LispContext>(
                 return Err(EvalError::WrongArgumentType {
                     expected: "Number".into(),
                     got: format!("{:?}", arg),
-                })
+                });
             }
         }
         Ok(LispExp::number(sum))

@@ -246,6 +246,59 @@ impl<'input> BufferTrait for GapBuffer {
             self.gap_start -= 1;
         }
     }
+
+    fn line_count(&self) -> usize {
+        let logical_text = self.data[0..self.gap_start]
+            .iter()
+            .chain(self.data[self.gap_end..].iter());
+
+        let mut count = 1;
+        for &c in logical_text {
+            if c == '\n' {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    fn get_lines(&self, start_line: usize, end_line: usize) -> Vec<String> {
+        let capacity = end_line.saturating_sub(start_line);
+        let mut lines = Vec::with_capacity(capacity);
+        let mut current_line = 0;
+        let mut current_string = String::new();
+
+        let logical_text = self.data[0..self.gap_start]
+            .iter()
+            .chain(self.data[self.gap_end..].iter());
+
+        for &c in logical_text {
+            if current_line >= end_line {
+                break;
+            }
+
+            if c== '\n' {
+                if current_line >= start_line {
+                    lines.push(current_string.clone());
+                    current_string.clear();
+                }
+                current_line += 1;
+            } else if current_line >= start_line {
+                current_string.push(c);
+            }
+        }
+
+        // Catch the very last line if the file doesn't end in a newline
+        if current_line >= start_line && current_line < end_line {
+            lines.push(current_string);
+        }
+
+        // Fill remaining requested space with empty strings (if scrolled past EOF)
+        while lines.len() < capacity {
+            lines.push(String::new());
+        }
+
+        lines
+    }
 }
 
 impl GapBuffer {
@@ -511,5 +564,26 @@ mod tests {
         buf.cursor_move_forward();
         assert_eq!(buf.cursor_pos_1d(), 1);
         assert_eq!(buf.at(buf.cursor_pos_1d()), Some('\n'));
+    }
+
+    #[test]
+    fn test_viewport_line_extraction() {
+        let text = "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5";
+        let buf = setup_test_buffer::<GapBuffer>(text);
+
+        assert_eq!(buf.line_count(), 6);
+
+        // Test extracting a viewport in the middle of the file
+        let viewport = buf.get_lines(2, 4);
+        assert_eq!(viewport.len(), 2);
+        assert_eq!(viewport[0], "Line 2");
+        assert_eq!(viewport[1], "Line 3");
+
+        // Test extracting past the end of the file (should pad with empty strings)
+        let end_viewport = buf.get_lines(4, 7);
+        assert_eq!(end_viewport.len(), 3);
+        assert_eq!(end_viewport[0], "Line 4");
+        assert_eq!(end_viewport[1], "Line 5");
+        assert_eq!(end_viewport[2], ""); // Padded line
     }
 }

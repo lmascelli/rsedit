@@ -14,7 +14,9 @@ mod test {
     struct DummyCtx;
 
     impl LispContext for DummyCtx {
-        fn consume_fuel(&mut self, _amount: u32) -> Result<(), EvalError> { Ok(()) }
+        fn consume_fuel(&mut self, _amount: u32) -> Result<(), EvalError> {
+            Ok(())
+        }
         fn log_diagnostic(&mut self, _msg: &str) {}
     }
 
@@ -512,19 +514,13 @@ mod test {
         let mut parser_list = Parser::new("'()");
         assert_eq!(
             parser_list.next::<DummyCtx>().unwrap(),
-            LispExp::list(vec![
-                LispExp::symbol("quote".into()),
-                LispExp::list(vec![])
-            ])
+            LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::list(vec![])])
         );
 
         let mut parser_vec = Parser::new("'[]");
         assert_eq!(
             parser_vec.next::<DummyCtx>().unwrap(),
-            LispExp::list(vec![
-                LispExp::symbol("quote".into()),
-                LispExp::vec(vec![])
-            ])
+            LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::vec(vec![])])
         );
     }
 
@@ -535,10 +531,7 @@ mod test {
         let mut parser_num = Parser::new("'42.5");
         assert_eq!(
             parser_num.next::<DummyCtx>().unwrap(),
-            LispExp::list(vec![
-                LispExp::symbol("quote".into()),
-                LispExp::number(42.5)
-            ])
+            LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::number(42.5)])
         );
 
         let mut parser_str = Parser::new("'\"hello\"");

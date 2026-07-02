@@ -15,4 +15,6 @@ pub trait BufferTrait:
     fn find_forward(&mut self, c: char) -> Option<usize>;
     fn insert(&mut self, c: char);
     fn delete(&mut self);
+    fn line_count(&self) -> usize;
+    fn get_lines(&self, start_line: usize, end_line: usize) -> Vec<String>;
 }
