@@ -153,14 +153,9 @@ pub fn extract_buffer_lines<B: BufferTrait>(
 ) -> Vec<String> {
     let mut visible_lines = Vec::new();
     if let Some(buf) = buffers.get(&win.buffer_name) {
-        // TODO(LM) do not take the full text but use the BufferTrait
-        // functionalities to extract the useful text (maybe it can
-        // increase the performance for some implementations of
-        // buffers)
-        let full_text = buf.text.to_string();
-        let lines: Vec<&str> = full_text.split('\n').collect();
+        let lines  = buf.text.get_lines(win.scroll_y, win.scroll_y + rect.height);
 
-        for &line in lines.iter().skip(win.scroll_y).take(rect.height) {
+        for line in lines {
             let chopped: String = line.chars().skip(win.scroll_x).take(rect.width).collect();
             visible_lines.push(chopped);
         }

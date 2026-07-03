@@ -18,16 +18,24 @@ pub struct EditorState<B: BufferTrait> {
 
     pub focused_window_id: usize,
     pub next_window_id: usize,
+
+    fuel: u32,
+    logs: Vec<String>,
 }
 
 impl<B: BufferTrait> LispContext for EditorState<B> {
     fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
-        todo!();
-        Ok(())
+        if self.fuel > amount {
+            self.fuel -= amount;
+            Ok(())
+        } else {
+            self.fuel = 0;
+            Err(EvalError::OutOfFuel)
+        }
     }
 
     fn log_diagnostic(&mut self, msg: &str) {
-        todo!();
+        self.logs.push(msg.into());
     }
 }
 
@@ -70,6 +78,8 @@ impl<B: BufferTrait> EditorState<B> {
             running: true,
             focused_window_id: 0,
             next_window_id: 1,
+            fuel: 10000,
+            logs: vec![],
         }
     }
 
