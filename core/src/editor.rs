@@ -7,19 +7,35 @@ use crate::ui::{
 use std::{collections::HashMap, sync::Arc};
 pub type ELispExp<B> = LispExp<EditorState<B>>;
 
+/// This is the container for all the editor informations.
+/// The whole editor memory should live in an instance of this
+/// struct. It is generic behiond the implementation of the
+/// buffer.
+/// It also provides instruction for an UI provider of what to
+/// render and where.
 pub struct EditorState<B: BufferTrait> {
-    pub buffers: HashMap<String, Buffer<B>>,
-    pub current_buffer_name: String,
-    pub tiled_root: LayoutNode,
-    pub floating_windows: Vec<FloatingWindow>,
-    pub echo_message: String,
-    pub keymaps: HashMap<KeyEvent, String>,
     pub running: bool,
 
+    pub buffers: HashMap<String, Buffer<B>>,
+    pub current_buffer_name: String,
+    pub echo_message: String,
+
+    /// A keymap is an association between a KeyEvent and the name of a 
+    /// function that have to be executed (i.e. self-insert)
+    pub keymaps: HashMap<KeyEvent, String>,
+    /// This is the root of the window tree that the UI should visualize
+    pub tiled_root: LayoutNode,
+    /// This is a list of floating window that will be renderered above the
+    /// others
+    pub floating_windows: Vec<FloatingWindow>,
     pub focused_window_id: usize,
+    /// A value only used to fastly create a new window id
     pub next_window_id: usize,
 
+    /// The fuel of the lisp machine, if somehow it will start to use too much
+    /// cpu power, it will run out of fuel
     fuel: u32,
+    /// Here the lisp VM will output its logs
     logs: Vec<String>,
 }
 
@@ -56,7 +72,9 @@ impl<B: BufferTrait> std::cmp::PartialEq for EditorState<B> {
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    pub fn new() -> Self {
+    /// Create a new EditorState environment. Install the default keymaps, 
+    /// provides a default *scratch* buffer in a base window.
+    fn new() -> Self {
         let mut buffers = HashMap::new();
         let scratch_name = "*scratch*".to_string();
         buffers.insert(scratch_name.clone(), Buffer::new(&scratch_name));
@@ -83,7 +101,9 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    pub fn new_buffer(&mut self, name: &str, path: Option<&str>) -> Option<String> {
+    /// Open a new empty buffer or load a file into a new buffer if a path is
+    /// provided.
+    fn new_buffer(&mut self, name: &str, path: Option<&str>) -> Option<String> {
         if let Some(file_path) = path {
             match std::fs::read_to_string(file_path) {
                 Ok(content) => {
@@ -108,18 +128,22 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    pub fn current_buffer_mut(&mut self) -> &mut Buffer<B> {
+    /// Returns a mutable reference to the current buffer
+    fn current_buffer_mut(&mut self) -> &mut Buffer<B> {
         self.buffers
             .get_mut(&self.current_buffer_name)
             .expect("Corruption in the hashmap of buffers")
     }
 
-    pub fn current_buffer(&self) -> &Buffer<B> {
+    /// Returns an immutable reference to the current buffer
+    fn current_buffer(&self) -> &Buffer<B> {
         self.buffers
             .get(&self.current_buffer_name)
             .expect("Corruption in the hashmap of buffers")
     }
 
+    /// Handle a key event. An UI provider is responsible to call this function
+    /// every time it want to make the editor react to an user input.
     pub fn handle_key_event(&mut self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
         if let Some(symbol_name) = self.keymaps.get(&event) {
             let mut ast = vec![ELispExp::symbol(symbol_name.clone())];
@@ -137,8 +161,12 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
+    /// Ask the editor for a list of window to be rendered. Those are composed of a rect that tells
+    /// where the window is placed and its size, the name of the buffer it represents, if it's
+    /// focused, the relative cursor position in it, if it has a border and of course the line
+    /// that it contains and that have to be drawn.
     pub fn compose_layout(
-        &self,
+        &mut self,
         screen_width: usize,
         screen_height: usize,
     ) -> Vec<RenderableWindowView> {
@@ -188,6 +216,9 @@ impl<B: BufferTrait> EditorState<B> {
     }
 }
 
+/// Create a global EditorState environment and a Lisp environment associated to it.
+/// It installs in the lisp environment all the primitive functions to use the editor.
+/// It is mandatory that the lisp environment does not outlive the EditorState struct.
 pub fn create_global_env<B: BufferTrait>() -> (EditorState<B>, Arc<Env<EditorState<B>>>) {
     let editor_state = EditorState::new();
     let env = Env::new_root();

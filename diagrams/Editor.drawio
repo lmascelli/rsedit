@@ -1,0 +1,33 @@
+<mxfile host="Electron">
+  <diagram name="Page-1" id="DSQGAijH2GJ-134ODqrm">
+    <mxGraphModel dx="1414" dy="976" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="nKlh-PCbber1Fz1LTGdS-2" edge="1" parent="1" source="AMfzGunqHsdT8YWeSqPV-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="AMfzGunqHsdT8YWeSqPV-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="nKlh-PCbber1Fz1LTGdS-3" edge="1" parent="1" source="AMfzGunqHsdT8YWeSqPV-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" target="nKlh-PCbber1Fz1LTGdS-1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <UserObject label="Editor" id="AMfzGunqHsdT8YWeSqPV-1">
+          <mxCell parent="1" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1">
+            <mxGeometry height="70" width="200" x="325" y="230" as="geometry" />
+          </mxCell>
+        </UserObject>
+        <mxCell id="AMfzGunqHsdT8YWeSqPV-3" edge="1" parent="1" source="AMfzGunqHsdT8YWeSqPV-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="AMfzGunqHsdT8YWeSqPV-1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="AMfzGunqHsdT8YWeSqPV-2" parent="1" style="shape=actor;whiteSpace=wrap;html=1;" value="" vertex="1">
+          <mxGeometry height="60" width="40" x="405" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="AMfzGunqHsdT8YWeSqPV-5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Local Files&lt;span style=&quot;background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;ystem&lt;/span&gt;" vertex="1">
+          <mxGeometry height="70" width="200" x="205" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="nKlh-PCbber1Fz1LTGdS-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Remote Files&lt;span style=&quot;background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;ystem&lt;/span&gt;" vertex="1">
+          <mxGeometry height="70" width="200" x="425" y="390" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

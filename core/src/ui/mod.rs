@@ -53,7 +53,7 @@ pub struct RenderableWindowView {
 
 impl LayoutNode {
     pub fn compute_tiled_views<B: BufferTrait>(
-        &self,
+        &mut self,
         rect: Rect,
         focused_id: usize,
         buffers: &HashMap<String, Buffer<B>>,
@@ -61,21 +61,33 @@ impl LayoutNode {
     ) {
         match self {
             LayoutNode::Leaf(win) => {
-                let lines = extract_buffer_lines(win, &rect, buffers);
                 let is_focused = win.id == focused_id;
-                let cursor_rel_pos = if is_focused {
+                let mut cursor_rel_pos = None;
+
+                if is_focused {
                     if let Some(buf) = buffers.get(&win.buffer_name) {
                         let (c_line, c_col) = buf.text.cursor_pos();
-                        Some((
-                            c_col.saturating_sub(win.scroll_x),
-                            c_line.saturating_sub(win.scroll_y),
-                        ))
-                    } else {
-                        None
+
+                        if c_line < win.scroll_y {
+                            win.scroll_y = c_line;
+                        } else if c_line >= win.scroll_y + rect.height {
+                            win.scroll_y = c_line - rect.height + 1;
+                        }
+
+                        if c_col < win.scroll_x {
+                            win.scroll_x = c_col;
+                        } else if c_col >= win.scroll_x + rect.width {
+                            win.scroll_x = c_col - rect.width + 1;
+                        }
+
+                        cursor_rel_pos = Some((
+							c_col.saturating_sub(win.scroll_x),
+							c_line.saturating_sub(win.scroll_y),
+                        ));
                     }
-                } else {
-                    None
-                };
+                }
+
+                let lines = extract_buffer_lines(win, &rect, buffers);
 
                 out_views.push(RenderableWindowView {
                     rect,
@@ -94,7 +106,7 @@ impl LayoutNode {
                 right,
             } => match orientation {
                 Orientation::Horizontal => {
-                    let left_height = ((rect.height as f32) * ratio).round() as usize;
+                    let left_height = ((rect.height as f32) * *ratio).round() as usize;
                     let right_height = rect.height.saturating_sub(left_height);
 
                     left.compute_tiled_views(
@@ -118,7 +130,7 @@ impl LayoutNode {
                     );
                 }
                 Orientation::Vertical => {
-                    let left_width = ((rect.width as f32) * ratio).round() as usize;
+                    let left_width = ((rect.width as f32) * *ratio).round() as usize;
                     let right_width = rect.width.saturating_sub(left_width);
 
                     left.compute_tiled_views(

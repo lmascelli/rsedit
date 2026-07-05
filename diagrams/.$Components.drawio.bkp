@@ -1,0 +1,25 @@
+<mxfile host="Electron">
+  <diagram name="Page-1" id="lIklbr3FnnhZn-jn6pwX">
+    <mxGraphModel dx="1414" dy="974" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="QlrHzMjXgMBZkUf3Y6rM-4" edge="1" parent="1" source="QlrHzMjXgMBZkUf3Y6rM-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="QlrHzMjXgMBZkUf3Y6rM-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="QlrHzMjXgMBZkUf3Y6rM-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Lisp VM" vertex="1">
+          <mxGeometry height="80" width="160" x="70" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="QlrHzMjXgMBZkUf3Y6rM-7" edge="1" parent="1" source="QlrHzMjXgMBZkUf3Y6rM-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="QlrHzMjXgMBZkUf3Y6rM-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="QlrHzMjXgMBZkUf3Y6rM-3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Editor Context" vertex="1">
+          <mxGeometry height="80" width="160" x="300" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="QlrHzMjXgMBZkUf3Y6rM-6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="User interface Provider" vertex="1">
+          <mxGeometry height="80" width="160" x="300" y="320" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -11,7 +11,7 @@ use std::io::{Write, stdout};
 type BufferType = GapBuffer;
 
 pub fn render_screen<B: BufferTrait>(
-    state: &EditorState<B>,
+    state: &mut EditorState<B>,
     cols: u16,
     rows: u16,
 ) -> std::io::Result<()> {
@@ -77,7 +77,7 @@ pub fn tui_main(file_to_open: Option<String>) -> Result<(), Box<dyn std::error::
 
     while state.running {
         let (cols, rows) = terminal::size()?;
-        render_screen(&state, cols, rows)?;
+        render_screen(&mut state, cols, rows)?;
 
         if let Event::Key(key_event) = read()? {
             let mut event = KeyEvent {
