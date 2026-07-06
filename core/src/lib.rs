@@ -3,3 +3,5 @@ pub mod editor;
 pub mod input;
 pub mod lisp;
 pub mod ui;
+#[cfg(test)]
+pub mod tests;

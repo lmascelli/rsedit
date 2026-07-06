@@ -12,6 +12,7 @@ pub struct Buffer<B: BufferTrait> {
     pub file_path: Option<String>,
     pub is_modified: bool,
     pub local_keymap: Option<HashMap<KeyEvent, String>>,
+    pub current_mode: String,
 }
 
 impl<B: BufferTrait> Buffer<B> {
@@ -22,6 +23,7 @@ impl<B: BufferTrait> Buffer<B> {
             file_path: None,
             is_modified: false,
             local_keymap: None,
+            current_mode: "fundamental".into(),
         }
     }
 
@@ -32,6 +34,7 @@ impl<B: BufferTrait> Buffer<B> {
             file_path: None,
             is_modified: false,
             local_keymap: None,
+            current_mode: "fundamental".into(),
         }
     }
 }

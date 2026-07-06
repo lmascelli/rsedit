@@ -7,6 +7,14 @@ use crate::ui::{
 use std::{collections::HashMap, sync::Arc};
 pub type ELispExp<B> = LispExp<EditorState<B>>;
 
+#[derive(Clone, Debug)]
+pub struct MajorMode<B: BufferTrait> {
+    pub name: String,
+    pub keymap: HashMap<KeyEvent, ELispExp<B>>,
+    pub syntax_highlighing: (), // TODO! make it a SyntaxRules
+    pub hook_functions: Vec<ELispExp<B>>,
+}
+
 /// This is the container for all the editor informations.
 /// The whole editor memory should live in an instance of this
 /// struct. It is generic behiond the implementation of the
@@ -23,6 +31,7 @@ pub struct EditorState<B: BufferTrait> {
     /// A keymap is an association between a KeyEvent and the name of a 
     /// function that have to be executed (i.e. self-insert)
     pub keymaps: HashMap<KeyEvent, String>,
+    pub mode_registry: HashMap::<String, MajorMode<B>>,
     /// This is the root of the window tree that the UI should visualize
     pub tiled_root: LayoutNode,
     /// This is a list of floating window that will be renderered above the
@@ -96,6 +105,7 @@ impl<B: BufferTrait> EditorState<B> {
             running: true,
             focused_window_id: 0,
             next_window_id: 1,
+            mode_registry: HashMap::new(),
             fuel: 10000,
             logs: vec![],
         }
