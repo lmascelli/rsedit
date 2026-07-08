@@ -1,5 +1,5 @@
 pub trait BufferTrait:
-    Default + ToString + Send + Sync + 'static + for<'input> From<&'input str>
+    Clone + Default + ToString + Send + Sync + 'static + for<'input> From<&'input str>
 {
     fn len(&self) -> usize;
     fn at_line_col(&self, line: usize, col: usize) -> Option<char>;

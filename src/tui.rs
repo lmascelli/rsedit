@@ -53,15 +53,16 @@ pub fn render_screen<B: BufferTrait>(
 }
 
 fn draw_window_border(
-    stdout: &mut std::io::Stdout,
-    rect: &Rect,
-    title: &Option<String>,
+    _stdout: &mut std::io::Stdout,
+    _rect: &Rect,
+    _title: &Option<String>,
 ) -> std::io::Result<()> {
     Ok(())
 }
 
 pub fn tui_main(file_to_open: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut state, env) = create_global_env::<BufferType>();
+    let (mut state, env) =
+        create_global_env::<BufferType>().expect("Failed to create the editor environment");
 
     if let Some(path) = file_to_open {
         let ast = ELispExp::list(vec![
@@ -69,13 +70,13 @@ pub fn tui_main(file_to_open: Option<String>) -> Result<(), Box<dyn std::error::
             ELispExp::string(path),
         ]);
         if let Err(e) = eval(&ast, env.clone(), &mut state) {
-            state.echo_message = format!("Boot Error: {:?}", e);
+            state.set_echo_message(&format!("Boot Error: {:?}", e));
         }
     }
 
     terminal::enable_raw_mode()?;
 
-    while state.running {
+    while state.is_running() {
         let (cols, rows) = terminal::size()?;
         render_screen(&mut state, cols, rows)?;
 

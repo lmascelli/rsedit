@@ -39,7 +39,7 @@ pub struct Lambda<T: LispContext> {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct SharedAtom<T: LispContext>(pub Arc<RwLock<LispExp<T>>>);
+pub struct SharedAtom<T: LispContext>(pub Arc<RwLock<LispExp<T>>>);
 
 impl<T: LispContext> PartialEq for SharedAtom<T> {
     fn eq(&self, other: &Self) -> bool {
@@ -1002,7 +1002,8 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
             Ok(EvalStep::TailCall(
                 args.last()
-                    .expect("Failed to get the last progn expression").clone(),
+                    .expect("Failed to get the last progn expression")
+                    .clone(),
                 env.clone(),
             ))
         }
@@ -1038,13 +1039,15 @@ fn eval_special_form_or_call_step<T: LispContext>(
             if body.is_empty() {
                 return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
             }
-            
+
             for arg in &args[0..body.len() - 1] {
                 eval(arg, let_env.clone(), ctx)?;
             }
-            
-            Ok(EvalStep::TailCall(body.last()
-                .expect("Failed to get the last let expression").clone(),
+
+            Ok(EvalStep::TailCall(
+                body.last()
+                    .expect("Failed to get the last let expression")
+                    .clone(),
                 let_env,
             ))
         }

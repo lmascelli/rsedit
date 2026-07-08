@@ -1,12 +1,23 @@
 use crate::buffer::{Buffer, BufferTrait};
 use crate::input::{KeyCode, KeyEvent, default_keymaps};
-use crate::lisp::{Env, EvalError, LispContext, LispExp, eval};
+use crate::lisp::{Env, EvalError, LispContext, LispExp, bootstrap_vm, eval};
 use crate::ui::{
     FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    },
+};
 pub type ELispExp<B> = LispExp<EditorState<B>>;
 
+/// A major mode is a collection of rules that apply to a specific
+/// kind of buffers like specific programming language, special text
+/// files or special buffers like the minibuffer or the repl buffer.
+/// It provides custom keymap, syntax highlighting rules and hook
+/// that will be called befor or after some events.
 #[derive(Clone, Debug)]
 pub struct MajorMode<B: BufferTrait> {
     pub name: String,
@@ -15,60 +26,71 @@ pub struct MajorMode<B: BufferTrait> {
     pub hook_functions: Vec<ELispExp<B>>,
 }
 
+impl<B: BufferTrait> MajorMode<B> {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            keymap: HashMap::new(),
+            syntax_highlighing: (),
+            hook_functions: vec![],
+        }
+    }
+}
+
 /// This is the container for all the editor informations.
 /// The whole editor memory should live in an instance of this
 /// struct. It is generic behiond the implementation of the
 /// buffer.
 /// It also provides instruction for an UI provider of what to
 /// render and where.
+#[derive(Clone)]
 pub struct EditorState<B: BufferTrait> {
-    pub running: bool,
+    pub running: Arc<AtomicBool>,
 
-    pub buffers: HashMap<String, Buffer<B>>,
-    pub current_buffer_name: String,
-    pub echo_message: String,
+    pub buffers: Arc<RwLock<HashMap<String, Arc<RwLock<Buffer<B>>>>>>,
+    pub echo_message: Arc<RwLock<String>>,
+    pub current_buffer_name: Arc<RwLock<String>>,
 
-    /// A keymap is an association between a KeyEvent and the name of a 
+    /// A keymap is an association between a KeyEvent and the name of a
     /// function that have to be executed (i.e. self-insert)
-    pub keymaps: HashMap<KeyEvent, String>,
-    pub mode_registry: HashMap::<String, MajorMode<B>>,
+    pub keymaps: Arc<RwLock<HashMap<KeyEvent, String>>>,
+    pub mode_registry: Arc<RwLock<HashMap<String, MajorMode<B>>>>,
     /// This is the root of the window tree that the UI should visualize
-    pub tiled_root: LayoutNode,
+    pub layout_root: Arc<RwLock<LayoutNode>>,
     /// This is a list of floating window that will be renderered above the
     /// others
-    pub floating_windows: Vec<FloatingWindow>,
-    pub focused_window_id: usize,
+    pub floating_windows: Arc<RwLock<Vec<FloatingWindow>>>,
+    pub focused_window_id: Arc<RwLock<usize>>,
     /// A value only used to fastly create a new window id
-    pub next_window_id: usize,
+    pub next_window_id: Arc<AtomicUsize>,
 
     /// The fuel of the lisp machine, if somehow it will start to use too much
     /// cpu power, it will run out of fuel
-    fuel: u32,
+    fuel: Arc<AtomicU32>,
     /// Here the lisp VM will output its logs
-    logs: Vec<String>,
+    logs: Arc<RwLock<Vec<String>>>,
 }
 
 impl<B: BufferTrait> LispContext for EditorState<B> {
     fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
-        if self.fuel > amount {
-            self.fuel -= amount;
+        if self.fuel.load(Ordering::Relaxed) > amount {
+            self.fuel.fetch_sub(amount, Ordering::Relaxed);
             Ok(())
         } else {
-            self.fuel = 0;
+            self.fuel.store(0, Ordering::Relaxed);
             Err(EvalError::OutOfFuel)
         }
     }
 
     fn log_diagnostic(&mut self, msg: &str) {
-        self.logs.push(msg.into());
+        let mut lock = self
+            .logs
+            .write()
+            .expect("Failed to get the write lock on logs");
+        lock.push(msg.into());
     }
 }
 
-impl<B: BufferTrait> Clone for EditorState<B> {
-    fn clone(&self) -> Self {
-        unreachable!()
-    }
-}
 impl<B: BufferTrait> std::fmt::Debug for EditorState<B> {
     fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         todo!()
@@ -81,34 +103,46 @@ impl<B: BufferTrait> std::cmp::PartialEq for EditorState<B> {
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Create a new EditorState environment. Install the default keymaps, 
+    /// Create a new EditorState environment. Install the default keymaps,
     /// provides a default *scratch* buffer in a base window.
     fn new() -> Self {
         let mut buffers = HashMap::new();
         let scratch_name = "*scratch*".to_string();
-        buffers.insert(scratch_name.clone(), Buffer::new(&scratch_name));
+        buffers.insert(
+            scratch_name.clone(),
+            Arc::new(RwLock::new(Buffer::new(&scratch_name))),
+        );
 
         let keymaps = default_keymaps();
 
         Self {
-            buffers,
-            current_buffer_name: scratch_name,
-            tiled_root: LayoutNode::Leaf(Window {
+            running: Arc::new(AtomicBool::new(true)),
+            buffers: Arc::new(RwLock::new(buffers)),
+            echo_message: Arc::new(RwLock::new("Welcome to rsedit".to_string())),
+            current_buffer_name: Arc::new(RwLock::new(scratch_name)),
+            keymaps: Arc::new(RwLock::new(keymaps)),
+            mode_registry: Arc::new(RwLock::new(HashMap::new())),
+            layout_root: Arc::new(RwLock::new(LayoutNode::Leaf(Window {
                 id: 0,
                 buffer_name: String::from("*scratch*"),
                 scroll_x: 0,
                 scroll_y: 0,
-            }),
-            floating_windows: Vec::new(),
-            echo_message: "Welcome to rsedit".to_string(),
-            keymaps,
-            running: true,
-            focused_window_id: 0,
-            next_window_id: 1,
-            mode_registry: HashMap::new(),
-            fuel: 10000,
-            logs: vec![],
+            }))),
+            floating_windows: Arc::new(RwLock::new(Vec::new())),
+            focused_window_id: Arc::new(RwLock::new(0)),
+            next_window_id: Arc::new(AtomicUsize::new(1)),
+            fuel: Arc::new(AtomicU32::new(10_000)),
+            logs: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// Quit the editor
+    pub fn quit(&self) {
+        self.running.store(false, Ordering::Relaxed);
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::Relaxed)
     }
 
     /// Open a new empty buffer or load a file into a new buffer if a path is
@@ -120,54 +154,55 @@ impl<B: BufferTrait> EditorState<B> {
                     let mut new_buf = Buffer::from_text(name, &content);
                     new_buf.file_path = Some(file_path.to_string());
 
-                    self.buffers.insert(name.to_string(), new_buf);
+                    let mut buffers_lock = self
+                        .buffers
+                        .write()
+                        .expect("Failed to get write lock on buffers");
+                    buffers_lock.insert(name.to_string(), Arc::new(RwLock::new(new_buf)));
 
-                    self.current_buffer_name = name.to_string();
+                    self.set_current_buffer_name(name);
 
-                    self.echo_message = format!("Loaded {}", file_path);
+                    self.set_echo_message(&format!("Loaded {}", file_path));
                     Some(name.to_string())
                 }
                 Err(e) => {
-                    self.echo_message = format!("Error reading file: {}", e);
+                    self.set_echo_message(&format!("Error reading file: {}", e));
                     None
                 }
             }
         } else {
-            self.buffers.insert(name.to_string(), Buffer::new(name));
+            let mut buffers_lock = self
+                .buffers
+                .write()
+                .expect("Failed to get write lock on buffers");
+            buffers_lock.insert(name.to_string(), Arc::new(RwLock::new(Buffer::new(name))));
             Some(name.to_string())
         }
-    }
-
-    /// Returns a mutable reference to the current buffer
-    fn current_buffer_mut(&mut self) -> &mut Buffer<B> {
-        self.buffers
-            .get_mut(&self.current_buffer_name)
-            .expect("Corruption in the hashmap of buffers")
-    }
-
-    /// Returns an immutable reference to the current buffer
-    fn current_buffer(&self) -> &Buffer<B> {
-        self.buffers
-            .get(&self.current_buffer_name)
-            .expect("Corruption in the hashmap of buffers")
     }
 
     /// Handle a key event. An UI provider is responsible to call this function
     /// every time it want to make the editor react to an user input.
     pub fn handle_key_event(&mut self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
-        if let Some(symbol_name) = self.keymaps.get(&event) {
-            let mut ast = vec![ELispExp::symbol(symbol_name.clone())];
-            if let KeyCode::Char(c) = event.code {
-                ast.push(ELispExp::string(c.to_string()));
-            }
-            let ast = ELispExp::list(ast);
-            if let Err(e) = eval(&ast, env.clone(), self) {
-                self.echo_message = format!("Eval Error: {:?} {:?}", ast, e);
-            } else {
-                self.echo_message.clear();
-            }
+        let symbol_name = if let Some(symbol_name) = self
+            .keymaps
+            .read()
+            .expect("Failed to acquire read lock on keymaps")
+            .get(&event)
+        {
+            symbol_name.to_string()
         } else {
-            self.echo_message = format!("Keymap not bound {:?}", event);
+            self.set_echo_message(&format!("Keymap not bound {:?}", event));
+            return;
+        };
+        let mut ast = vec![ELispExp::symbol(symbol_name)];
+        if let KeyCode::Char(c) = event.code {
+            ast.push(ELispExp::string(c.to_string()));
+        }
+        let ast = ELispExp::list(ast);
+        if let Err(e) = eval(&ast, env.clone(), self) {
+            self.set_echo_message(&format!("Eval Error: {:?} {:?}", ast, e));
+        } else {
+            self.set_echo_message("");
         }
     }
 
@@ -187,20 +222,48 @@ impl<B: BufferTrait> EditorState<B> {
             width: screen_width,
             height: screen_height,
         };
-        self.tiled_root.compute_tiled_views(
-            tiled_space,
-            self.focused_window_id,
-            &self.buffers,
-            &mut views,
-        );
+        self.layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root")
+            .compute_tiled_views(
+                tiled_space,
+                self.get_focused_window_id(),
+                self.buffers
+                    .read()
+                    .as_ref()
+                    .expect("Failed to acquire a read lock on buffers"),
+                &mut views,
+            );
 
-        for float in &self.floating_windows {
-            let lines = extract_buffer_lines(&float.window, &float.rect, &self.buffers);
-            let is_focused = float.window.id == self.focused_window_id;
+        for float in self
+            .floating_windows
+            .as_ref()
+            .read()
+            .expect("Failed to acquire a read lock on floating_windows")
+            .iter()
+        {
+            let lines = extract_buffer_lines(
+                &float.window,
+                &float.rect,
+                self.buffers
+                    .read()
+                    .as_ref()
+                    .expect("Failed to acquire a read lock on buffers"),
+            );
+            let is_focused = float.window.id == self.get_focused_window_id();
 
             let cursor_rel_pos = if is_focused {
-                if let Some(buf) = self.buffers.get(&float.window.buffer_name) {
-                    let (c_line, c_col) = buf.text.cursor_pos();
+                if let Some(buf) = self
+                    .buffers
+                    .read()
+                    .expect("Failed to acquire read lock on buffers")
+                    .get(&float.window.buffer_name)
+                {
+                    let (c_line, c_col) = buf
+                        .read()
+                        .expect("Failed to acquire read lock on buffer")
+                        .text
+                        .cursor_pos();
                     Some((
                         c_col.saturating_sub(float.window.scroll_x),
                         c_line.saturating_sub(float.window.scroll_y),
@@ -224,14 +287,76 @@ impl<B: BufferTrait> EditorState<B> {
 
         views
     }
+
+    //--------------------------------------------------------------------------
+    //                         GETTERS AND SETTERS
+    //--------------------------------------------------------------------------
+
+    /// Return the editor echo string
+    pub fn get_echo_message(&self) -> String {
+        let lock = self
+            .echo_message
+            .read()
+            .expect("Failed to acquire read lock on echo_message");
+        lock.clone()
+    }
+
+    /// Set the echo message to be MSG
+    pub fn set_echo_message(&self, msg: &str) {
+        *self
+            .echo_message
+            .write()
+            .expect("Failed to acquire write lock on echo_message") = msg.to_string();
+    }
+
+    /// Return the next valid ID for a new window
+    pub fn get_next_window_id(&self) -> usize {
+        self.next_window_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Get the ID of the current focused window
+    pub fn get_focused_window_id(&self) -> usize {
+        let lock = self
+            .focused_window_id
+            .read()
+            .expect("Failed to acquire read lock on focused_window_id");
+        lock.clone()
+    }
+
+    /// Get the name of the current buffer
+    pub fn get_current_buffer_name(&self) -> String {
+        self.current_buffer_name
+            .read()
+            .expect("Failed to acquire read lock on current_buffer_name")
+            .to_string()
+    }
+
+    /// Set the name of the current buffer
+    pub fn set_current_buffer_name(&self, name: &str) {
+        *self
+            .current_buffer_name
+            .write()
+            .expect("Failed to acquire write lock on current_buffer_name") = name.to_string();
+    }
+
+    /// Returns an Arc reference to the current buffer
+    fn get_current_buffer(&self) -> Arc<RwLock<Buffer<B>>> {
+        self.buffers
+            .read()
+            .expect("Failed to acquire read lock on buffers")
+            .get(&self.get_current_buffer_name())
+            .expect("Corruption in the hashmap of buffers")
+            .clone()
+    }
 }
 
 /// Create a global EditorState environment and a Lisp environment associated to it.
 /// It installs in the lisp environment all the primitive functions to use the editor.
 /// It is mandatory that the lisp environment does not outlive the EditorState struct.
-pub fn create_global_env<B: BufferTrait>() -> (EditorState<B>, Arc<Env<EditorState<B>>>) {
-    let editor_state = EditorState::new();
-    let env = Env::new_root();
+pub fn create_global_env<B: BufferTrait>()
+-> Result<(EditorState<B>, Arc<Env<EditorState<B>>>), EvalError> {
+    let mut editor_state = EditorState::new();
+    let env = bootstrap_vm(&mut editor_state)?;
 
     macro_rules! insert_fn {
         ($name:literal, $func:ident) => {
@@ -240,6 +365,7 @@ pub fn create_global_env<B: BufferTrait>() -> (EditorState<B>, Arc<Env<EditorSta
     }
     insert_fn!("quit", quit);
     insert_fn!("load-file", load_file);
+    insert_fn!("make-mode", make_mode);
     insert_fn!("self-insert", self_insert);
     insert_fn!("insert-newline", insert_newline);
     insert_fn!("delete-backward-char", delete_backward_char);
@@ -250,7 +376,7 @@ pub fn create_global_env<B: BufferTrait>() -> (EditorState<B>, Arc<Env<EditorSta
     insert_fn!("find-file", find_file);
     insert_fn!("save-buffer", save_buffer);
 
-    (editor_state, env)
+    Ok((editor_state, env))
 }
 
 // ---------------------------------------------------------------------------//
@@ -260,7 +386,7 @@ pub fn create_global_env<B: BufferTrait>() -> (EditorState<B>, Arc<Env<EditorSta
 // ---------------------------------------------------------------------------//
 
 mod primitives {
-    use super::{BufferTrait, ELispExp, EditorState};
+    use super::{BufferTrait, ELispExp, EditorState, MajorMode};
     use crate::lisp::{EvalError, LispExp};
 
     fn is_nil<B: BufferTrait>(args: &[ELispExp<B>]) -> bool {
@@ -293,7 +419,7 @@ mod primitives {
     //------------------------------------------------------------//
 
     primitive!(quit, _args, ctx, {
-        ctx.running = false;
+        ctx.quit();
         Ok(nil!())
     });
 
@@ -306,13 +432,13 @@ mod primitives {
                     match parser.next() {
                         Ok(ast) => Ok(ast),
                         Err(e) => {
-                            ctx.echo_message = format!("Parse Error in {}: {:?}", path_str, e);
+                            ctx.set_echo_message(&format!("Parse Error in {}: {:?}", path_str, e));
                             Ok(nil!())
                         }
                     }
                 }
                 Err(e) => {
-                    ctx.echo_message = format!("Could not load {}: {}", path_str, e);
+                    ctx.set_echo_message(&format!("Could not load {}: {}", path_str, e));
                     Ok(nil!())
                 }
             }
@@ -326,6 +452,34 @@ mod primitives {
 
     //------------------------------------------------------------//
     //                                                            //
+    //                      MAJOR MODES                           //
+    //                                                            //
+    //------------------------------------------------------------//
+
+    primitive!(make_mode, args, ctx, {
+        if args.len() != 1 {
+            Err(EvalError::WrongNumberOfArguments {
+                expected: 1,
+                got: args.len(),
+            })
+        } else {
+            if let Some(LispExp::String(mode_name)) = args.get(0) {
+                ctx.mode_registry
+                    .write()
+                    .expect("Failed to acquire write lock on mode_registry")
+                    .insert(mode_name.to_string(), MajorMode::new(mode_name));
+                Ok(ELispExp::symbol("t".into()))
+            } else {
+                Err(EvalError::WrongArgumentType {
+                    expected: "String".into(),
+                    got: format!("{:?}", args.get(0)),
+                })
+            }
+        }
+    });
+
+    //------------------------------------------------------------//
+    //                                                            //
     //                          EDIT                              //
     //                                                            //
     //------------------------------------------------------------//
@@ -333,7 +487,10 @@ mod primitives {
     primitive!(self_insert, args, ctx, {
         if let Some(LispExp::String(s)) = args.first() {
             if let Some(c) = s.chars().next() {
-                let buf = ctx.current_buffer_mut();
+                let buf = ctx.get_current_buffer();
+                let mut buf = buf
+                    .write()
+                    .expect("Failed to acquire a write lock on buffer");
                 buf.text.insert(c);
                 buf.is_modified = true;
             }
@@ -347,14 +504,20 @@ mod primitives {
     });
 
     primitive!(insert_newline, _args, ctx, {
-        let buf = ctx.current_buffer_mut();
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf
+            .write()
+            .expect("Failed to acquire a write lock on buffer");
         buf.text.insert('\n');
         buf.is_modified = true;
         Ok(LispExp::symbol("nil".into()))
     });
 
     primitive!(delete_backward_char, _args, ctx, {
-        let buf = ctx.current_buffer_mut();
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf
+            .write()
+            .expect("Failed to acquire a write lock on buffer");
         buf.text.delete();
         buf.is_modified = true;
         Ok(nil!())
@@ -367,7 +530,10 @@ mod primitives {
     //------------------------------------------------------------//
 
     primitive!(forward_char, args, ctx, {
-        let buf = ctx.current_buffer_mut();
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf
+            .write()
+            .expect("Failed to acquire a write lock on buffer");
         let step = if is_nil(args) {
             1
         } else {
@@ -387,7 +553,10 @@ mod primitives {
     });
 
     primitive!(backward_char, args, ctx, {
-        let buf = ctx.current_buffer_mut();
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf
+            .write()
+            .expect("Failed to acquire a write lock on buffer");
         let step = if is_nil(args) {
             1
         } else {
@@ -410,7 +579,10 @@ mod primitives {
     });
 
     primitive!(previous_line, _args, ctx, {
-        let buf = ctx.current_buffer_mut();
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf
+            .write()
+            .expect("Failed to acquire a write lock on buffer");
         let (line, col) = buf.text.cursor_pos();
         if line > 0 {
             buf.text.cursor_move(line - 1, col);
@@ -421,7 +593,8 @@ mod primitives {
     });
 
     primitive!(next_line, _args, ctx, {
-        let buf = ctx.current_buffer_mut();
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("Failed to acquire write lock on buffer");
         let (line, col) = buf.text.cursor_pos();
         buf.text.cursor_move(line + 1, col);
         Ok(nil!())
@@ -460,23 +633,25 @@ mod primitives {
     });
 
     primitive!(save_buffer, _args, ctx, {
-        let buf = ctx.current_buffer_mut();
-        if let Some(path) = &buf.file_path {
-            let content = buf.text.to_string();
-            match std::fs::write(path, content) {
-                Ok(_) => {
-                    buf.is_modified = false;
-                    ctx.echo_message = format!("Wrote {}", path);
-                    Ok(nil!())
-                }
-                Err(e) => {
-                    ctx.echo_message = format!("Failed to save: {}", e);
-                    Ok(nil!())
-                }
-            }
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("Failed to acquire write lock on buffer");
+        let path = if let Some(path) = &buf.file_path {
+            path.to_string()
         } else {
-            ctx.echo_message = "No file associated with this buffer".to_string();
-            Ok(nil!())
+            ctx.set_echo_message("No file associated with this buffer");
+            return Ok(nil!());
+        };
+        let content = buf.text.to_string();
+        match std::fs::write(&path, content) {
+            Ok(_) => {
+                buf.is_modified = false;
+                ctx.set_echo_message(&format!("Wrote {}", path));
+                Ok(nil!())
+            }
+            Err(e) => {
+                ctx.set_echo_message(&format!("Failed to save: {}", e));
+                Ok(nil!())
+            }
         }
     });
 }

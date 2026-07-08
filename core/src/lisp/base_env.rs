@@ -41,7 +41,7 @@ fn primitive_funcall<T: LispContext>(
 
 fn primitive_sum<T: LispContext>(
     args: &[LispExp<T>],
-    ctx: &mut T,
+    _ctx: &mut T,
 ) -> Result<LispExp<T>, EvalError> {
     if args.len() < 1 {
         Err(EvalError::WrongNumberOfArguments {
@@ -66,7 +66,7 @@ fn primitive_sum<T: LispContext>(
 
 fn primitive_subtraction<T: LispContext>(
     args: &[LispExp<T>],
-    ctx: &mut T,
+    _ctx: &mut T,
 ) -> Result<LispExp<T>, EvalError> {
     if args.len() < 1 {
         Err(EvalError::WrongNumberOfArguments {
@@ -74,7 +74,7 @@ fn primitive_subtraction<T: LispContext>(
             got: 0,
         })
     } else {
-        let mut sum = 0.0;
+        let mut sum;
         if let LispExp::Number(number) = args[0] {
             sum = number;
         } else {
@@ -99,7 +99,7 @@ fn primitive_subtraction<T: LispContext>(
 
 fn primitive_compare<T: LispContext>(
     args: &[LispExp<T>],
-    ctx: &mut T,
+    _ctx: &mut T,
 ) -> Result<LispExp<T>, EvalError> {
     if args.len() != 2 {
         Err(EvalError::WrongNumberOfArguments {

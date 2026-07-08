@@ -1,5 +1,8 @@
 use crate::buffer::{Buffer, BufferTrait};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Orientation {
@@ -56,7 +59,7 @@ impl LayoutNode {
         &mut self,
         rect: Rect,
         focused_id: usize,
-        buffers: &HashMap<String, Buffer<B>>,
+        buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
         out_views: &mut Vec<RenderableWindowView>,
     ) {
         match self {
@@ -66,7 +69,11 @@ impl LayoutNode {
 
                 if is_focused {
                     if let Some(buf) = buffers.get(&win.buffer_name) {
-                        let (c_line, c_col) = buf.text.cursor_pos();
+                        let (c_line, c_col) = buf
+                            .read()
+                            .expect("Failed to acquire read lock on buffer")
+                            .text
+                            .cursor_pos();
 
                         if c_line < win.scroll_y {
                             win.scroll_y = c_line;
@@ -81,8 +88,8 @@ impl LayoutNode {
                         }
 
                         cursor_rel_pos = Some((
-							c_col.saturating_sub(win.scroll_x),
-							c_line.saturating_sub(win.scroll_y),
+                            c_col.saturating_sub(win.scroll_x),
+                            c_line.saturating_sub(win.scroll_y),
                         ));
                     }
                 }
@@ -161,11 +168,15 @@ impl LayoutNode {
 pub fn extract_buffer_lines<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
-    buffers: &HashMap<String, Buffer<B>>,
+    buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
 ) -> Vec<String> {
     let mut visible_lines = Vec::new();
     if let Some(buf) = buffers.get(&win.buffer_name) {
-        let lines  = buf.text.get_lines(win.scroll_y, win.scroll_y + rect.height);
+        let lines = buf
+            .read()
+            .expect("Failed to acquire read lock for buffer")
+            .text
+            .get_lines(win.scroll_y, win.scroll_y + rect.height);
 
         for line in lines {
             let chopped: String = line.chars().skip(win.scroll_x).take(rect.width).collect();

@@ -276,7 +276,7 @@ impl<'input> BufferTrait for GapBuffer {
                 break;
             }
 
-            if c== '\n' {
+            if c == '\n' {
                 if current_line >= start_line {
                     lines.push(current_string.clone());
                     current_string.clear();
@@ -585,5 +585,11 @@ mod tests {
         assert_eq!(end_viewport[0], "Line 4");
         assert_eq!(end_viewport[1], "Line 5");
         assert_eq!(end_viewport[2], ""); // Padded line
+    }
+}
+
+impl Clone for GapBuffer {
+    fn clone(&self) -> Self {
+        todo!("It is required to implement the Clone trait for GapBuffer");
     }
 }
