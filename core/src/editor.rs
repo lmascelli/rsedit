@@ -1,6 +1,6 @@
 use crate::buffer::{Buffer, BufferTrait};
-use crate::input::{KeyCode, KeyEvent, default_keymaps};
-use crate::lisp::{Env, EvalError, LispContext, LispExp, bootstrap_vm, eval};
+use crate::input::{KeyCode, KeyEvent, fill_self_insert_keymaps};
+use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, bootstrap_vm, eval};
 use crate::ui::{
     FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines,
 };
@@ -72,7 +72,7 @@ pub struct EditorState<B: BufferTrait> {
 }
 
 impl<B: BufferTrait> LispContext for EditorState<B> {
-    fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+    fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
         if self.fuel.load(Ordering::Relaxed) > amount {
             self.fuel.fetch_sub(amount, Ordering::Relaxed);
             Ok(())
@@ -82,7 +82,7 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
         }
     }
 
-    fn log_diagnostic(&mut self, msg: &str) {
+    fn log_diagnostic(&self, msg: &str) {
         let mut lock = self
             .logs
             .write()
@@ -113,7 +113,8 @@ impl<B: BufferTrait> EditorState<B> {
             Arc::new(RwLock::new(Buffer::new(&scratch_name))),
         );
 
-        let keymaps = default_keymaps();
+        let mut keymaps = HashMap::new();
+        fill_self_insert_keymaps(&mut keymaps);
 
         Self {
             running: Arc::new(AtomicBool::new(true)),
@@ -147,7 +148,7 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Open a new empty buffer or load a file into a new buffer if a path is
     /// provided.
-    fn new_buffer(&mut self, name: &str, path: Option<&str>) -> Option<String> {
+    pub fn new_buffer(&self, name: &str, path: Option<&str>) -> Option<String> {
         if let Some(file_path) = path {
             match std::fs::read_to_string(file_path) {
                 Ok(content) => {
@@ -182,7 +183,7 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Handle a key event. An UI provider is responsible to call this function
     /// every time it want to make the editor react to an user input.
-    pub fn handle_key_event(&mut self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
+    pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
         let symbol_name = if let Some(symbol_name) = self
             .keymaps
             .read()
@@ -211,7 +212,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// focused, the relative cursor position in it, if it has a border and of course the line
     /// that it contains and that have to be drawn.
     pub fn compose_layout(
-        &mut self,
+        &self,
         screen_width: usize,
         screen_height: usize,
     ) -> Vec<RenderableWindowView> {
@@ -348,6 +349,26 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Corruption in the hashmap of buffers")
             .clone()
     }
+
+    pub fn get_buffer(&self, name: &str) -> Arc<RwLock<Buffer<B>>> {
+        self.buffers
+            .read()
+            .expect("Failed to acquire read lock on buffers")
+            .get(name)
+            .expect("Corruption in the hashmap of buffers")
+            .clone()
+    }
+
+    /// Apply the operation OP to the buffer BUF
+    pub fn mutate_buffer<F, R>(&self, buffer: Arc<RwLock<Buffer<B>>>, op: F) -> R
+    where
+        F: FnOnce(&mut Buffer<B>) -> R,
+    {
+        let mut guard = buffer
+            .write()
+            .expect("Failed to acquire write lock on current buffer");
+        op(&mut *guard)
+    }
 }
 
 /// Create a global EditorState environment and a Lisp environment associated to it.
@@ -355,16 +376,19 @@ impl<B: BufferTrait> EditorState<B> {
 /// It is mandatory that the lisp environment does not outlive the EditorState struct.
 pub fn create_global_env<B: BufferTrait>()
 -> Result<(EditorState<B>, Arc<Env<EditorState<B>>>), EvalError> {
-    let mut editor_state = EditorState::new();
-    let env = bootstrap_vm(&mut editor_state)?;
+    let editor_state = EditorState::new();
+    let env = bootstrap_vm(&editor_state)?;
 
+    // ---------------------- FILLING PRIMITIVE FUNCTIONS ----------------------
     macro_rules! insert_fn {
         ($name:literal, $func:ident) => {
             env.set_function($name.into(), LispExp::Primitive(primitives::$func));
         };
     }
+    
     insert_fn!("quit", quit);
     insert_fn!("load-file", load_file);
+    insert_fn!("define-key", define_key);
     insert_fn!("make-mode", make_mode);
     insert_fn!("self-insert", self_insert);
     insert_fn!("insert-newline", insert_newline);
@@ -376,6 +400,22 @@ pub fn create_global_env<B: BufferTrait>()
     insert_fn!("find-file", find_file);
     insert_fn!("save-buffer", save_buffer);
 
+    // --------------------- LOADING LISP STDLIB -------------------------------
+
+    let mut stdlib_src = format!("(progn {})", include_str!(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/lisp/stdlib.lisp")
+    ));
+
+    let mut parser = Parser::new(&stdlib_src);
+
+    if let Ok(ast) = parser.next() {
+        if let Err(e) = eval(&ast, env.clone(), &editor_state) {
+            editor_state.log_diagnostic(&format!("Stdlib Eval Error: {:?}", e));
+        }
+    } else {
+        editor_state.log_diagnostic("CRITICAL: Failed to parse the standard library");
+    }
+    
     Ok((editor_state, env))
 }
 
@@ -387,12 +427,57 @@ pub fn create_global_env<B: BufferTrait>()
 
 mod primitives {
     use super::{BufferTrait, ELispExp, EditorState, MajorMode};
-    use crate::lisp::{EvalError, LispExp};
+    use crate::{
+        input::{KeyCode, KeyEvent, KeyModifiers},
+        lisp::{EvalError, LispExp},
+    };
 
     fn is_nil<B: BufferTrait>(args: &[ELispExp<B>]) -> bool {
         args.len() == 0
             || (args.len() == 1 && (args[0] == ELispExp::list(vec![]))
                 || args[0] == ELispExp::symbol("nil".into()))
+    }
+
+    fn parse_key_sequence(seq: &str) -> Option<KeyEvent> {
+        let mut modifiers = KeyModifiers::default();
+        let mut chars = seq.chars().peekable();
+
+        if seq.starts_with("C-") {
+            modifiers.ctrl = true;
+            chars.nth(0);
+            chars.nth(0);
+        } else if seq.starts_with("M-") {
+            modifiers.alt = true;
+            chars.nth(0);
+            chars.nth(0);
+        } else if seq.starts_with("C-M-") {
+            modifiers.ctrl = true;
+            modifiers.alt = true;
+            chars.nth(0);
+            chars.nth(0);
+            chars.nth(0);
+            chars.nth(0);
+        }
+
+        let key_code = match chars.collect::<String>().as_str() {
+            "<ret>" | "<Return>" => KeyCode::Enter,
+            "<backspace>" => KeyCode::Backspace,
+            "<up>" => KeyCode::Up,
+            "<down>" => KeyCode::Down,
+            "<left>" => KeyCode::Left,
+            "<right>" => KeyCode::Right,
+            s if s.len() == 1 => KeyCode::Char(
+                s.chars()
+                    .next()
+                    .expect(&format!("Failed to interpret the sequence {seq}")),
+            ),
+            _ => return None,
+        };
+
+        Some(KeyEvent {
+            code: key_code,
+            modifiers,
+        })
     }
 
     macro_rules! nil {
@@ -405,7 +490,7 @@ mod primitives {
         ($func_name:ident, $args:ident, $ctx:ident, $body:block) => {
             pub fn $func_name<B: BufferTrait>(
                 $args: &[ELispExp<B>],
-                $ctx: &mut EditorState<B>,
+                $ctx: &EditorState<B>,
             ) -> Result<ELispExp<B>, EvalError> {
                 $body
             }
@@ -450,6 +535,34 @@ mod primitives {
         }
     });
 
+    primitive!(define_key, args, ctx, {
+        if args.len() != 2 {
+            Err(EvalError::WrongNumberOfArguments {
+                expected: 2,
+                got: args.len(),
+            })
+        } else {
+            if let (ELispExp::String(key_str), ELispExp::Symbol(func_name)) = (&args[0], &args[1]) {
+                if let Some(key_event) = parse_key_sequence(key_str) {
+                    let mut keymaps = ctx
+                        .keymaps
+                        .write()
+                        .expect("Failed to acquire write lock on keymaps");
+                    keymaps.insert(key_event, func_name.to_string());
+                    Ok(ELispExp::symbol("t".into()))
+                } else {
+                    ctx.set_echo_message(&format!("Invalid key sequence: {}", key_str));
+                    Ok(nil!())
+                }
+            } else {
+                Err(EvalError::WrongArgumentType {
+                    expected: "String, Symbol".into(),
+                    got: format!("{:?}, {:?}", &args[0], &args[1]),
+                })
+            }
+        }
+    });
+
     //------------------------------------------------------------//
     //                                                            //
     //                      MAJOR MODES                           //
@@ -487,12 +600,10 @@ mod primitives {
     primitive!(self_insert, args, ctx, {
         if let Some(LispExp::String(s)) = args.first() {
             if let Some(c) = s.chars().next() {
-                let buf = ctx.get_current_buffer();
-                let mut buf = buf
-                    .write()
-                    .expect("Failed to acquire a write lock on buffer");
-                buf.text.insert(c);
-                buf.is_modified = true;
+                ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+                    buf.text.insert(c);
+                    buf.is_modified = true;
+                });
             }
             Ok(LispExp::symbol("nil".into()))
         } else {
@@ -504,12 +615,10 @@ mod primitives {
     });
 
     primitive!(insert_newline, _args, ctx, {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf
-            .write()
-            .expect("Failed to acquire a write lock on buffer");
-        buf.text.insert('\n');
-        buf.is_modified = true;
+        ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+            buf.text.insert('\n');
+            buf.is_modified = true;
+        });
         Ok(LispExp::symbol("nil".into()))
     });
 

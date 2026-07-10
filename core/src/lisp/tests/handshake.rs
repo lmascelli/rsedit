@@ -3,42 +3,53 @@ mod tests {
     use super::*;
     use crate::lisp::bootstrap_vm;
     use crate::lisp::{EvalError, LispContext, Parser, eval};
+    use std::sync::RwLock;
 
     // Define a dummy agnostic host context that tracks fuel and logs
-    #[derive(Clone, Debug, PartialEq)]
+    #[derive(Debug)]
     struct MockHostContext {
-        pub fuel_remaining: u32,
-        pub logs: Vec<String>,
+        pub fuel_remaining: RwLock<u32>,
+        pub logs: RwLock<Vec<String>>,
+    }
+
+    impl Clone for MockHostContext {
+        fn clone(&self) -> Self { unreachable!() }
+    }
+
+    impl PartialEq for MockHostContext {
+
+        fn eq(&self, other: &Self) -> bool {
+            unreachable!()
+        }
     }
 
     impl LispContext for MockHostContext {
-        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
-            if self.fuel_remaining < amount {
-                self.fuel_remaining = 0;
+        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
+            if *self.fuel_remaining.read().unwrap() < amount {
                 Err(EvalError::OutOfFuel)
             } else {
-                self.fuel_remaining -= amount;
+                *self.fuel_remaining.write().unwrap() -= amount;
                 Ok(())
             }
         }
 
-        fn log_diagnostic(&mut self, msg: &str) {
-            self.logs.push(msg.to_string());
+        fn log_diagnostic(&self, msg: &str) {
+            self.logs.write().unwrap().push(msg.to_string());
         }
     }
 
     #[test]
     fn test_successful_bootstrap_handshake() {
         let mut ctx = MockHostContext {
-            fuel_remaining: 5000,
-            logs: vec![],
+            fuel_remaining: RwLock::new(5000),
+            logs: RwLock::new(vec![]),
         };
 
         // If the core code functions flawlessly, bootstrap finishes successfully
         let env_res = bootstrap_vm(&mut ctx);
         assert!(env_res.is_ok());
         assert!(
-            ctx.logs.contains(
+            ctx.logs.read().unwrap().contains(
                 &"VM Handshake: State verification successful. Core is stable.".to_string()
             )
         );
@@ -47,8 +58,8 @@ mod tests {
     #[test]
     fn test_fuel_system_stops_infinite_loops() {
         let mut ctx = MockHostContext {
-            fuel_remaining: 100, // Explicitly tight budget
-            logs: vec![],
+            fuel_remaining: 100.into(), // Explicitly tight budget
+            logs: vec![].into(),
         };
 
         let env = bootstrap_vm(&mut ctx).unwrap();
@@ -63,7 +74,7 @@ mod tests {
 
         // The stack safely unrolls!
         assert_eq!(res, Err(EvalError::OutOfFuel));
-        assert_eq!(ctx.fuel_remaining, 0);
+        assert_eq!(*ctx.fuel_remaining.read().unwrap(), 0);
         // Thread is alive, control is handed back to host safely!
     }
 }

@@ -14,10 +14,10 @@ mod test {
     struct DummyCtx;
 
     impl LispContext for DummyCtx {
-        fn consume_fuel(&mut self, _amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
-        fn log_diagnostic(&mut self, _msg: &str) {}
+        fn log_diagnostic(&self, _msg: &str) {}
     }
 
     #[test]

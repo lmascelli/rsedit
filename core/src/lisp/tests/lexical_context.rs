@@ -8,11 +8,11 @@ mod tests {
     struct DummyCtx;
 
     impl LispContext for DummyCtx {
-        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&mut self, msg: &str) {}
+        fn log_diagnostic(&self, msg: &str) {}
     }
 
     // Helper function to parse and evaluate a simple string expression
@@ -158,7 +158,7 @@ mod tests {
 
     pub fn primitive_funcall<T: LispContext>(
         args: &[LispExp<T>],
-        ctx: &mut T,
+        ctx: &T,
     ) -> Result<LispExp<T>, EvalError> {
         if args.is_empty() {
             return Err(EvalError::WrongNumberOfArguments {

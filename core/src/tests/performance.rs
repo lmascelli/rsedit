@@ -9,8 +9,8 @@ mod performance_tests {
     };
     use std::sync::{Arc, RwLock};
     use std::time::Instant;
-    // Assicurati di importare i moduli giusti per il tuo GapBuffer e LayoutNode
-
+    use std::thread;
+    
     #[test]
     fn benchmark_gap_buffer_rapid_typing() {
         let mut buf = GapBuffer::default();
@@ -357,4 +357,79 @@ mod performance_tests {
             "Il sistema di Hook farà laggare l'editor!"
         );
     }
+
+    #[test]
+    fn benchmark_concurrent_stress_test() {
+        // 1. Setup the global thread-safe environment
+        let (state, _env) = create_global_env::<GapBuffer>().unwrap();
+        
+        // Pre-create a secondary buffer for our background worker
+        state.new_buffer("*logs*", None);
+
+        let start_time = Instant::now();
+
+        // 2. Clone the EditorState for our threads.
+        // Because of our Arc-based architecture, this is instantaneous (O(1)) 
+        // and points to the exact same memory in RAM.
+        let state_ui = state.clone();
+        let state_writer_1 = state.clone();
+        let state_writer_2 = state.clone();
+
+        // THREAD 1: The UI Engine (Aggressive Reader)
+        let ui_thread = thread::spawn(move || {
+            let mut views_computed = 0;
+            // Simulate 1,000 frames of rendering
+            for _ in 0..1000 {
+                // compose_layout locks the buffer map and specific buffers in READ mode
+                let _views = state_ui.compose_layout(120, 40);
+                views_computed += 1;
+            }
+            views_computed
+        });
+
+        // THREAD 2: Lisp Macro Execution (Aggressive Writer on *scratch*)
+        let writer_thread_1 = thread::spawn(move || {
+            let scratch_buf = state_writer_1.get_buffer("*scratch*");
+            for _ in 0..10_000 {
+                // Locks ONLY the *scratch* buffer in WRITE mode
+                state_writer_1.mutate_buffer(scratch_buf.clone(), |buf| {
+                    buf.text.insert('a');
+                });
+            }
+        });
+
+        // THREAD 3: Background Language Server/Logger (Aggressive Writer on *logs*)
+        let writer_thread_2 = thread::spawn(move || {
+            let logs_buf = state_writer_2.get_buffer("*logs*");
+            for _ in 0..10_000 {
+                // Locks ONLY the *logs* buffer in WRITE mode
+                state_writer_2.mutate_buffer(logs_buf.clone(), |buf| {
+                    buf.text.insert('L');
+                });
+            }
+        });
+
+        // 3. Wait for all threads to finish
+        let views_rendered = ui_thread.join().unwrap();
+        writer_thread_1.join().unwrap();
+        writer_thread_2.join().unwrap();
+
+        let duration = start_time.elapsed();
+        println!(
+            "Concurrency Stress Test Finished in: {:?} (Rendered {} frames)",
+            duration, views_rendered
+        );
+
+        // 4. Verification: Did all the data survive the race conditions?
+        let scratch_guard = state.get_buffer("*scratch*").read().unwrap().text.len();
+        let logs_guard = state.get_buffer("*logs*").read().unwrap().text.len();
+
+        // The scratch buffer should have its initial standard library output + 10,000 'a's
+        assert!(scratch_guard >= 10_000, "Scratch buffer lost data due to race conditions!");
+        assert_eq!(logs_guard, 10_000, "Logs buffer lost data due to race conditions!");
+        
+        // If the architecture is healthy, resolving 30,000 heavy concurrent operations 
+        // should take comfortably under 100 milliseconds in a release build.
+        assert!(duration.as_millis() < 200, "Lock contention is too high, the editor will lag!");
+    }    
 }

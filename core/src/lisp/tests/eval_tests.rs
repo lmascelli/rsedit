@@ -370,32 +370,44 @@ mod test {
     // ==========================================
 
     // 1. Define a dummy Host Context to test the generic bridge
-    #[derive(Clone, Debug, PartialEq)]
+    
+    #[derive(Debug)]
     struct TestHost {
-        pub state_changes: usize,
+        pub state_changes: RwLock<usize>,
+    }
+
+    impl Clone for TestHost {
+        fn clone(&self) -> Self {
+            unreachable!()
+        }
+    }
+    impl PartialEq for TestHost {
+        fn eq(&self, other: &Self) -> bool {
+            unreachable!()
+        }
     }
 
     impl LispContext for TestHost {
-        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&mut self, msg: &str) {}
+        fn log_diagnostic(&self, msg: &str) {}
     }
 
     // 2. A mock native primitive that mutates the host context
     fn native_increment_state(
         _args: &[LispExp<TestHost>],
-        ctx: &mut TestHost,
+        ctx: &TestHost,
     ) -> Result<LispExp<TestHost>, EvalError> {
-        ctx.state_changes += 1;
+        *ctx.state_changes.write().unwrap() += 1;
         Ok(LispExp::symbol("nil".into()))
     }
 
     // 3. A mock native primitive for addition
     fn native_add(
         args: &[LispExp<TestHost>],
-        _ctx: &mut TestHost,
+        _ctx: &TestHost,
     ) -> Result<LispExp<TestHost>, EvalError> {
         let mut sum = 0.0;
         for arg in args {
@@ -427,7 +439,7 @@ mod test {
     #[test]
     fn test_elisp_if_truthiness() {
         let env = setup_env_test();
-        let mut ctx = TestHost { state_changes: 0 };
+        let mut ctx = TestHost { state_changes: RwLock::new(0) };
 
         // Helper macro to generate an `if` AST
         let make_if = |cond: LispExp<TestHost>| -> LispExp<TestHost> {
@@ -468,7 +480,7 @@ mod test {
     #[test]
     fn test_lisp_2_namespace_isolation() {
         let env = setup_env_test();
-        let mut ctx = TestHost { state_changes: 0 };
+        let mut ctx = TestHost { state_changes: RwLock::new(0) };
 
         // AST: (setq log "var-data")
         let setq_exp = LispExp::list(vec![
@@ -503,7 +515,7 @@ mod test {
     #[test]
     fn test_eval_setq_multiple() {
         let env = setup_env_test();
-        let mut ctx = TestHost { state_changes: 0 };
+        let mut ctx = TestHost { state_changes: RwLock::new(0) };
 
         // (setq a 1.0 b (+ 1.0 2.0))
         let setq_exp = LispExp::list(vec![
@@ -529,7 +541,7 @@ mod test {
     #[test]
     fn test_lambda_argument_binding() {
         let env = setup_env_test();
-        let mut ctx = TestHost { state_changes: 0 };
+        let mut ctx = TestHost { state_changes: 0.into() };
 
         // (defun add-custom (x y) (+ x y))
         let defun_exp = LispExp::list(vec![
@@ -567,7 +579,7 @@ mod test {
         let env = setup_env_test();
 
         // Initialize our "Editor State" equivalent
-        let mut ctx = TestHost { state_changes: 0 };
+        let mut ctx = TestHost { state_changes: 0.into() };
 
         // AST: (inc-state)
         let call_mutation = LispExp::list(vec![LispExp::symbol("inc-state".into())]);
@@ -578,21 +590,31 @@ mod test {
         eval(&call_mutation, env.clone(), &mut ctx).unwrap();
 
         // The Rust host context should have tracked the changes natively!
-        assert_eq!(ctx.state_changes, 3);
+        assert_eq!(*ctx.state_changes.read().unwrap(), 3);
     }
 
     // Mock Host context to assist evaluating side effects
-    #[derive(Clone, Debug, PartialEq)]
+    #[derive(Debug)]
     struct MockHost {
-        pub tracker: f64,
+        pub tracker: RwLock<f64>,
+    }
+
+    impl Clone for MockHost {
+        fn clone(&self) -> Self { unreachable!() }
+    }
+
+    impl PartialEq for MockHost {
+        fn eq(&self, other: &Self) -> bool {
+            unreachable!()
+        }
     }
 
     impl LispContext for MockHost {
-        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&mut self, msg: &str) {}
+        fn log_diagnostic(&self, msg: &str) {}
     }
 
     fn setup_interpreter_env() -> (Arc<Env<MockHost>>, MockHost) {
@@ -602,12 +624,12 @@ mod test {
         env.set_function(
             "bump".into(),
             LispExp::Primitive(|_args: &[LispExp<MockHost>], ctx| {
-                ctx.tracker += 1.0;
-                Ok(LispExp::number(ctx.tracker))
+                *ctx.tracker.write().unwrap() += 1.0;
+                Ok(LispExp::number(*ctx.tracker.read().unwrap()))
             }),
         );
 
-        (env, MockHost { tracker: 0.0 })
+        (env, MockHost { tracker: 0.0.into() })
     }
 
     #[test]
@@ -624,7 +646,7 @@ mod test {
 
         let result = eval(&exp, env.clone(), &mut ctx).unwrap();
         assert_eq!(result, LispExp::number(99.0));
-        assert_eq!(ctx.tracker, 2.0);
+        assert_eq!(*ctx.tracker.read().unwrap(), 2.0);
 
         // Empty progn should evaluate to nil symbol safely
         let empty_progn = LispExp::list(vec![LispExp::symbol("progn".into())]);
@@ -734,31 +756,44 @@ mod test {
 
         if let LispExp::Map(output_map) = evaluated {
             assert_eq!(output_map.get("computed-val"), Some(&LispExp::number(5.0)));
-            assert_eq!(ctx.tracker, 1.0); // Verifies expressions inner-eval inside Maps
+            assert_eq!(*ctx.tracker.read().unwrap(), 1.0); // Verifies expressions inner-eval inside Maps
         } else {
             panic!("Evaluation should retain structural map wrapper type");
         }
     }
 
-    #[derive(Clone, Debug, PartialEq)]
+    use std::sync::RwLock;
+    #[derive(Debug)]
     struct DummyCtx {
-        fuel: u32,
+        fuel: RwLock<u32>,
+    }
+
+    impl Clone for DummyCtx {
+        fn clone(&self) -> Self {
+            unreachable!()
+        }
+    }
+
+    impl PartialEq for DummyCtx {
+        fn eq(&self, other: &Self) -> bool {
+            unreachable!()
+        }
     }
 
     impl LispContext for DummyCtx {
-        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
-            if self.fuel < amount {
+        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
+            if *self.fuel.read().unwrap() < amount {
                 Err(EvalError::OutOfFuel)
             } else {
-                self.fuel -= amount;
+                *self.fuel.write().unwrap() -= amount;
                 Ok(())
             }
         }
-        fn log_diagnostic(&mut self, _msg: &str) {}
+        fn log_diagnostic(&self, _msg: &str) {}
     }
 
     fn eval_script(script: &str) -> Result<LispExp<DummyCtx>, EvalError> {
-        let mut ctx = DummyCtx { fuel: 1000 };
+        let mut ctx = DummyCtx { fuel: RwLock::new(1000) };
         let env = Env::new_root();
 
         // We wrap in a progn just in case the script has multiple top-level expressions,

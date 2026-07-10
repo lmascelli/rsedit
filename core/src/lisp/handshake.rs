@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 /// Boots the agnostic Lisp engine, registers standard environments,
 /// and runs an internal diagnostic script to verify VM stability.
-pub fn bootstrap_vm<T: LispContext>(ctx: &mut T) -> Result<Arc<Env<T>>, EvalError> {
+pub fn bootstrap_vm<T: LispContext>(ctx: &T) -> Result<Arc<Env<T>>, EvalError> {
     // 1. Initialize the pristine root environment
     let env = Env::new_root();
 

@@ -8,11 +8,11 @@ use std::{
 pub trait LispContext: Clone + PartialEq + Debug + Send + Sync + 'static {
     /// Consumes a given amount of execution ticks.
     /// Returns `Err(EvalError::OutOfFuel)` if the host-defined budget is exhausted.
-    fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError>;
+    fn consume_fuel(&self, amount: u32) -> Result<(), EvalError>;
 
     /// Allows the VM to bubble up non-fatal diagnostic logs, trace statements,
     /// or debugging notices to the host without knowing how the host presents them.
-    fn log_diagnostic(&mut self, msg: &str);
+    fn log_diagnostic(&self, msg: &str);
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,7 +74,7 @@ pub enum LispExp<T: LispContext> {
     Symbol(Arc<String>),
     String(Arc<String>),
     Lambda(Arc<Lambda<T>>),
-    Primitive(fn(&[LispExp<T>], &mut T) -> Result<LispExp<T>, EvalError>),
+    Primitive(fn(&[LispExp<T>], &T) -> Result<LispExp<T>, EvalError>),
     Atom(SharedAtom<T>),
     Fiber(SharedFiber<T>),
 }
@@ -731,7 +731,7 @@ enum EvalStep<T: LispContext> {
 pub fn eval<T: LispContext>(
     exp: &LispExp<T>,
     env: Arc<Env<T>>,
-    ctx: &mut T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
     let mut current_exp = exp.clone();
     let mut current_env = env;
@@ -750,7 +750,7 @@ pub fn eval<T: LispContext>(
 fn eval_step<T: LispContext>(
     exp: &LispExp<T>,
     env: Arc<Env<T>>,
-    ctx: &mut T,
+    ctx: &T,
 ) -> Result<EvalStep<T>, EvalError> {
     ctx.consume_fuel(1)?;
     match exp {
@@ -806,7 +806,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
     symbol: &str,
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
-    ctx: &mut T,
+    ctx: &T,
 ) -> Result<EvalStep<T>, EvalError> {
     match symbol {
         "quote" => {
@@ -1060,7 +1060,7 @@ fn eval_function_call_step<T: LispContext>(
     symbol: &str,
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
-    ctx: &mut T,
+    ctx: &T,
 ) -> Result<EvalStep<T>, EvalError> {
     let mut evaled_args = Vec::new();
     for arg in args {

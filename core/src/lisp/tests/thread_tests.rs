@@ -12,11 +12,11 @@ mod tests {
     }
 
     impl LispContext for ThreadCtx {
-        fn consume_fuel(&mut self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&mut self, msg: &str) {}
+        fn log_diagnostic(&self, msg: &str) {}
     }
 
     // Required for the generic bound T: PartialEq
@@ -58,7 +58,7 @@ mod tests {
         // Inject a primitive that mutates the Host Context directly
         env.set_function(
             "bump-host!".into(),
-            LispExp::Primitive(|_args, ctx: &mut ThreadCtx| {
+            LispExp::Primitive(|_args, ctx: &ThreadCtx| {
                 let mut lock = ctx.host_counter.write().unwrap();
                 *lock += 1;
                 Ok(LispExp::number(*lock as f64))
