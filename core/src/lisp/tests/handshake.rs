@@ -13,11 +13,12 @@ mod tests {
     }
 
     impl Clone for MockHostContext {
-        fn clone(&self) -> Self { unreachable!() }
+        fn clone(&self) -> Self {
+            unreachable!()
+        }
     }
 
     impl PartialEq for MockHostContext {
-
         fn eq(&self, other: &Self) -> bool {
             unreachable!()
         }

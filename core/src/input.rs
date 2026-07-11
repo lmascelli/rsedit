@@ -38,7 +38,7 @@ impl KeyEvent {
 
 /// Fills a keymaps map with all the ascii char self-insert char so the editor
 /// can handle the typing of letters, digits and most of symbols.
-pub fn fill_self_insert_keymaps(keymaps: &mut HashMap<KeyEvent, String>)  {
+pub fn fill_self_insert_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
     for c in ' '..='~' {
         let event = KeyEvent {
             code: KeyCode::Char(c),

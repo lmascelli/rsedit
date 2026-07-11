@@ -23,7 +23,7 @@ pub struct MajorMode<B: BufferTrait> {
     pub name: String,
     pub keymap: HashMap<KeyEvent, ELispExp<B>>,
     pub syntax_highlighing: (), // TODO! make it a SyntaxRules
-    pub hook_functions: Vec<ELispExp<B>>,
+    pub hooks: HashMap<String, Vec<ELispExp<B>>>,
 }
 
 impl<B: BufferTrait> MajorMode<B> {
@@ -32,7 +32,7 @@ impl<B: BufferTrait> MajorMode<B> {
             name: name.to_string(),
             keymap: HashMap::new(),
             syntax_highlighing: (),
-            hook_functions: vec![],
+            hooks: HashMap::new(),
         }
     }
 }
@@ -195,15 +195,41 @@ impl<B: BufferTrait> EditorState<B> {
             self.set_echo_message(&format!("Keymap not bound {:?}", event));
             return;
         };
+
         let mut ast = vec![ELispExp::symbol(symbol_name)];
         if let KeyCode::Char(c) = event.code {
             ast.push(ELispExp::string(c.to_string()));
         }
         let ast = ELispExp::list(ast);
+
         if let Err(e) = eval(&ast, env.clone(), self) {
             self.set_echo_message(&format!("Eval Error: {:?} {:?}", ast, e));
+            return;
         } else {
             self.set_echo_message("");
+        }
+
+        let current_mode_name = {
+            let buf_arc = self.get_current_buffer();
+            let buf_lock = buf_arc
+                .read()
+                .expect("Failed to acquire read lock on current buffer");
+            buf_lock.current_mode.clone()
+        };
+
+        let registry = self
+            .mode_registry
+            .read()
+            .expect("Failed to acquire read lock on mode registry");
+        if let Some(mode) = registry.get(&current_mode_name) {
+            if let Some(hook_vec) = mode.hooks.get("post-command-hook") {
+                for hook in hook_vec {
+                    let hook_call = ELispExp::list(vec![hook.clone()]);
+                    if let Err(e) = eval(&hook_call, env.clone(), self) {
+                        self.log_diagnostic(&format!("Hook {:?} execution failed: {:?}", hook, e));
+                    }
+                }
+            }
         }
     }
 
@@ -385,11 +411,12 @@ pub fn create_global_env<B: BufferTrait>()
             env.set_function($name.into(), LispExp::Primitive(primitives::$func));
         };
     }
-    
+
     insert_fn!("quit", quit);
     insert_fn!("load-file", load_file);
     insert_fn!("define-key", define_key);
     insert_fn!("make-mode", make_mode);
+    insert_fn!("add-hook", add_hook);
     insert_fn!("self-insert", self_insert);
     insert_fn!("insert-newline", insert_newline);
     insert_fn!("delete-backward-char", delete_backward_char);
@@ -402,9 +429,10 @@ pub fn create_global_env<B: BufferTrait>()
 
     // --------------------- LOADING LISP STDLIB -------------------------------
 
-    let mut stdlib_src = format!("(progn {})", include_str!(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/lisp/stdlib.lisp")
-    ));
+    let mut stdlib_src = format!(
+        "(progn {})",
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/lisp/stdlib.lisp"))
+    );
 
     let mut parser = Parser::new(&stdlib_src);
 
@@ -415,7 +443,7 @@ pub fn create_global_env<B: BufferTrait>()
     } else {
         editor_state.log_diagnostic("CRITICAL: Failed to parse the standard library");
     }
-    
+
     Ok((editor_state, env))
 }
 
@@ -429,7 +457,7 @@ mod primitives {
     use super::{BufferTrait, ELispExp, EditorState, MajorMode};
     use crate::{
         input::{KeyCode, KeyEvent, KeyModifiers},
-        lisp::{EvalError, LispExp},
+        lisp::{Env, EvalError, LispExp},
     };
 
     fn is_nil<B: BufferTrait>(args: &[ELispExp<B>]) -> bool {
@@ -487,9 +515,10 @@ mod primitives {
     }
 
     macro_rules! primitive {
-        ($func_name:ident, $args:ident, $ctx:ident, $body:block) => {
+        ($func_name:ident, $args:ident, $env:ident, $ctx:ident, $body:block) => {
             pub fn $func_name<B: BufferTrait>(
                 $args: &[ELispExp<B>],
+                $env: std::sync::Arc<Env<EditorState<B>>>,
                 $ctx: &EditorState<B>,
             ) -> Result<ELispExp<B>, EvalError> {
                 $body
@@ -503,12 +532,12 @@ mod primitives {
     //                                                            //
     //------------------------------------------------------------//
 
-    primitive!(quit, _args, ctx, {
+    primitive!(quit, _args, _env, ctx, {
         ctx.quit();
         Ok(nil!())
     });
 
-    primitive!(load_file, args, ctx, {
+    primitive!(load_file, args, _env, ctx, {
         if let Some(ELispExp::String(path_str)) = args.first() {
             match std::fs::read_to_string(path_str.to_string()) {
                 Ok(content) => {
@@ -535,7 +564,7 @@ mod primitives {
         }
     });
 
-    primitive!(define_key, args, ctx, {
+    primitive!(define_key, args, _env, ctx, {
         if args.len() != 2 {
             Err(EvalError::WrongNumberOfArguments {
                 expected: 2,
@@ -569,7 +598,7 @@ mod primitives {
     //                                                            //
     //------------------------------------------------------------//
 
-    primitive!(make_mode, args, ctx, {
+    primitive!(make_mode, args, _env, ctx, {
         if args.len() != 1 {
             Err(EvalError::WrongNumberOfArguments {
                 expected: 1,
@@ -591,13 +620,52 @@ mod primitives {
         }
     });
 
+    primitive!(add_hook, args, _env, ctx, {
+        if args.len() != 3 {
+            return Err(EvalError::WrongNumberOfArguments {
+                expected: 3,
+                got: args.len(),
+            });
+        }
+
+        if let (
+            ELispExp::String(mode_name),
+            ELispExp::String(hook_name),
+            ELispExp::Symbol(func_name),
+        ) = (&args[0], &args[1], &args[2])
+        {
+            let mut registry = ctx
+                .mode_registry
+                .write()
+                .expect("Failed to acquire write lock on mode_registry");
+
+            if let Some(mode) = registry.get_mut(mode_name.as_str()) {
+                let hook_list = mode
+                    .hooks
+                    .entry(hook_name.to_string())
+                    .or_insert_with(Vec::new);
+                hook_list.push(ELispExp::symbol(func_name.to_string()));
+
+                Ok(ELispExp::symbol("t".into()))
+            } else {
+                ctx.set_echo_message(&format!("Mode {} does not exist", mode_name));
+                Ok(nil!())
+            }
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "String, String, Symbol".into(),
+                got: "other".into(),
+            })
+        }
+    });
+
     //------------------------------------------------------------//
     //                                                            //
     //                          EDIT                              //
     //                                                            //
     //------------------------------------------------------------//
 
-    primitive!(self_insert, args, ctx, {
+    primitive!(self_insert, args, _env, ctx, {
         if let Some(LispExp::String(s)) = args.first() {
             if let Some(c) = s.chars().next() {
                 ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
@@ -614,7 +682,7 @@ mod primitives {
         }
     });
 
-    primitive!(insert_newline, _args, ctx, {
+    primitive!(insert_newline, _args, _env, ctx, {
         ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
             buf.text.insert('\n');
             buf.is_modified = true;
@@ -622,7 +690,7 @@ mod primitives {
         Ok(LispExp::symbol("nil".into()))
     });
 
-    primitive!(delete_backward_char, _args, ctx, {
+    primitive!(delete_backward_char, _args, _env, ctx, {
         let buf = ctx.get_current_buffer();
         let mut buf = buf
             .write()
@@ -638,7 +706,7 @@ mod primitives {
     //                                                            //
     //------------------------------------------------------------//
 
-    primitive!(forward_char, args, ctx, {
+    primitive!(forward_char, args, _env, ctx, {
         let buf = ctx.get_current_buffer();
         let mut buf = buf
             .write()
@@ -661,7 +729,7 @@ mod primitives {
         Ok(nil!())
     });
 
-    primitive!(backward_char, args, ctx, {
+    primitive!(backward_char, args, _env, ctx, {
         let buf = ctx.get_current_buffer();
         let mut buf = buf
             .write()
@@ -687,7 +755,7 @@ mod primitives {
         Ok(nil!())
     });
 
-    primitive!(previous_line, _args, ctx, {
+    primitive!(previous_line, _args, _env, ctx, {
         let buf = ctx.get_current_buffer();
         let mut buf = buf
             .write()
@@ -701,7 +769,7 @@ mod primitives {
         Ok(nil!())
     });
 
-    primitive!(next_line, _args, ctx, {
+    primitive!(next_line, _args, _env, ctx, {
         let buf = ctx.get_current_buffer();
         let mut buf = buf.write().expect("Failed to acquire write lock on buffer");
         let (line, col) = buf.text.cursor_pos();
@@ -715,7 +783,7 @@ mod primitives {
     //                                                            //
     //------------------------------------------------------------//
 
-    primitive!(find_file, args, ctx, {
+    primitive!(find_file, args, _env, ctx, {
         if let Some(ELispExp::String(path_str)) = args.first() {
             let path_str = path_str.to_string();
             let path = std::path::Path::new(&path_str);
@@ -741,7 +809,7 @@ mod primitives {
         }
     });
 
-    primitive!(save_buffer, _args, ctx, {
+    primitive!(save_buffer, _args, _env, ctx, {
         let buf = ctx.get_current_buffer();
         let mut buf = buf.write().expect("Failed to acquire write lock on buffer");
         let path = if let Some(path) = &buf.file_path {

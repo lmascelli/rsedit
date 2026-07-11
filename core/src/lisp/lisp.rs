@@ -74,7 +74,7 @@ pub enum LispExp<T: LispContext> {
     Symbol(Arc<String>),
     String(Arc<String>),
     Lambda(Arc<Lambda<T>>),
-    Primitive(fn(&[LispExp<T>], &T) -> Result<LispExp<T>, EvalError>),
+    Primitive(fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError>),
     Atom(SharedAtom<T>),
     Fiber(SharedFiber<T>),
 }
@@ -1084,7 +1084,11 @@ fn eval_function_call_step<T: LispContext>(
 
             Ok(EvalStep::TailCall(lambda.body.clone(), call_frame))
         } else if let LispExp::Primitive(function) = func {
-            Ok(EvalStep::Done(function(&evaled_args[..], ctx)?))
+            Ok(EvalStep::Done(function(
+                &evaled_args[..],
+                env.clone(),
+                ctx,
+            )?))
         } else {
             Err(EvalError::UncorrectFunctionDefinition)
         }

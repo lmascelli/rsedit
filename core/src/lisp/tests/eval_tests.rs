@@ -370,7 +370,7 @@ mod test {
     // ==========================================
 
     // 1. Define a dummy Host Context to test the generic bridge
-    
+
     #[derive(Debug)]
     struct TestHost {
         pub state_changes: RwLock<usize>,
@@ -439,7 +439,9 @@ mod test {
     #[test]
     fn test_elisp_if_truthiness() {
         let env = setup_env_test();
-        let mut ctx = TestHost { state_changes: RwLock::new(0) };
+        let mut ctx = TestHost {
+            state_changes: RwLock::new(0),
+        };
 
         // Helper macro to generate an `if` AST
         let make_if = |cond: LispExp<TestHost>| -> LispExp<TestHost> {
@@ -480,7 +482,9 @@ mod test {
     #[test]
     fn test_lisp_2_namespace_isolation() {
         let env = setup_env_test();
-        let mut ctx = TestHost { state_changes: RwLock::new(0) };
+        let mut ctx = TestHost {
+            state_changes: RwLock::new(0),
+        };
 
         // AST: (setq log "var-data")
         let setq_exp = LispExp::list(vec![
@@ -515,7 +519,9 @@ mod test {
     #[test]
     fn test_eval_setq_multiple() {
         let env = setup_env_test();
-        let mut ctx = TestHost { state_changes: RwLock::new(0) };
+        let mut ctx = TestHost {
+            state_changes: RwLock::new(0),
+        };
 
         // (setq a 1.0 b (+ 1.0 2.0))
         let setq_exp = LispExp::list(vec![
@@ -541,7 +547,9 @@ mod test {
     #[test]
     fn test_lambda_argument_binding() {
         let env = setup_env_test();
-        let mut ctx = TestHost { state_changes: 0.into() };
+        let mut ctx = TestHost {
+            state_changes: 0.into(),
+        };
 
         // (defun add-custom (x y) (+ x y))
         let defun_exp = LispExp::list(vec![
@@ -579,7 +587,9 @@ mod test {
         let env = setup_env_test();
 
         // Initialize our "Editor State" equivalent
-        let mut ctx = TestHost { state_changes: 0.into() };
+        let mut ctx = TestHost {
+            state_changes: 0.into(),
+        };
 
         // AST: (inc-state)
         let call_mutation = LispExp::list(vec![LispExp::symbol("inc-state".into())]);
@@ -600,7 +610,9 @@ mod test {
     }
 
     impl Clone for MockHost {
-        fn clone(&self) -> Self { unreachable!() }
+        fn clone(&self) -> Self {
+            unreachable!()
+        }
     }
 
     impl PartialEq for MockHost {
@@ -629,7 +641,12 @@ mod test {
             }),
         );
 
-        (env, MockHost { tracker: 0.0.into() })
+        (
+            env,
+            MockHost {
+                tracker: 0.0.into(),
+            },
+        )
     }
 
     #[test]
@@ -793,7 +810,9 @@ mod test {
     }
 
     fn eval_script(script: &str) -> Result<LispExp<DummyCtx>, EvalError> {
-        let mut ctx = DummyCtx { fuel: RwLock::new(1000) };
+        let mut ctx = DummyCtx {
+            fuel: RwLock::new(1000),
+        };
         let env = Env::new_root();
 
         // We wrap in a progn just in case the script has multiple top-level expressions,

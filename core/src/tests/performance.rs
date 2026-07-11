@@ -8,9 +8,9 @@ mod performance_tests {
         ui::*,
     };
     use std::sync::{Arc, RwLock};
-    use std::time::Instant;
     use std::thread;
-    
+    use std::time::Instant;
+
     #[test]
     fn benchmark_gap_buffer_rapid_typing() {
         let mut buf = GapBuffer::default();
@@ -362,14 +362,14 @@ mod performance_tests {
     fn benchmark_concurrent_stress_test() {
         // 1. Setup the global thread-safe environment
         let (state, _env) = create_global_env::<GapBuffer>().unwrap();
-        
+
         // Pre-create a secondary buffer for our background worker
         state.new_buffer("*logs*", None);
 
         let start_time = Instant::now();
 
         // 2. Clone the EditorState for our threads.
-        // Because of our Arc-based architecture, this is instantaneous (O(1)) 
+        // Because of our Arc-based architecture, this is instantaneous (O(1))
         // and points to the exact same memory in RAM.
         let state_ui = state.clone();
         let state_writer_1 = state.clone();
@@ -425,11 +425,20 @@ mod performance_tests {
         let logs_guard = state.get_buffer("*logs*").read().unwrap().text.len();
 
         // The scratch buffer should have its initial standard library output + 10,000 'a's
-        assert!(scratch_guard >= 10_000, "Scratch buffer lost data due to race conditions!");
-        assert_eq!(logs_guard, 10_000, "Logs buffer lost data due to race conditions!");
-        
-        // If the architecture is healthy, resolving 30,000 heavy concurrent operations 
+        assert!(
+            scratch_guard >= 10_000,
+            "Scratch buffer lost data due to race conditions!"
+        );
+        assert_eq!(
+            logs_guard, 10_000,
+            "Logs buffer lost data due to race conditions!"
+        );
+
+        // If the architecture is healthy, resolving 30,000 heavy concurrent operations
         // should take comfortably under 100 milliseconds in a release build.
-        assert!(duration.as_millis() < 200, "Lock contention is too high, the editor will lag!");
-    }    
+        assert!(
+            duration.as_millis() < 200,
+            "Lock contention is too high, the editor will lag!"
+        );
+    }
 }

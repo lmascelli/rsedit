@@ -6,6 +6,7 @@ use std::sync::{Arc, RwLock};
 
 fn primitive_funcall<T: LispContext>(
     args: &[LispExp<T>],
+    env: Arc<Env<T>>,
     ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
     if args.is_empty() {
@@ -34,12 +35,16 @@ fn primitive_funcall<T: LispContext>(
             }
             eval(&lambda.body, call_frame, ctx)
         }
-        LispExp::Primitive(func) => func(func_args, ctx),
+        LispExp::Primitive(func) => func(func_args, env, ctx),
         _ => Err(EvalError::UncorrectFunctionDefinition),
     }
 }
 
-fn primitive_sum<T: LispContext>(args: &[LispExp<T>], _ctx: &T) -> Result<LispExp<T>, EvalError> {
+fn primitive_sum<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
     if args.len() < 1 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -63,6 +68,7 @@ fn primitive_sum<T: LispContext>(args: &[LispExp<T>], _ctx: &T) -> Result<LispEx
 
 fn primitive_subtraction<T: LispContext>(
     args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
     if args.len() < 1 {
@@ -96,6 +102,7 @@ fn primitive_subtraction<T: LispContext>(
 
 fn primitive_compare<T: LispContext>(
     args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
     if args.len() != 2 {
@@ -114,7 +121,11 @@ fn primitive_compare<T: LispContext>(
 
 // -------------------------------- MULTI-THREADING ----------------------------
 
-fn primitive_atom<T: LispContext>(args: &[LispExp<T>], _ctx: &T) -> Result<LispExp<T>, EvalError> {
+fn primitive_atom<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -127,7 +138,11 @@ fn primitive_atom<T: LispContext>(args: &[LispExp<T>], _ctx: &T) -> Result<LispE
     }
 }
 
-fn primitive_deref<T: LispContext>(args: &[LispExp<T>], _ctx: &T) -> Result<LispExp<T>, EvalError> {
+fn primitive_deref<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -149,7 +164,11 @@ fn primitive_deref<T: LispContext>(args: &[LispExp<T>], _ctx: &T) -> Result<Lisp
     }
 }
 
-fn primitive_reset<T: LispContext>(args: &[LispExp<T>], _ctx: &T) -> Result<LispExp<T>, EvalError> {
+fn primitive_reset<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
     if args.len() < 2 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -175,7 +194,11 @@ fn primitive_reset<T: LispContext>(args: &[LispExp<T>], _ctx: &T) -> Result<Lisp
 
 // -------------------------------- CONCURRENCY --------------------------------
 
-fn primitive_resume<T: LispContext>(args: &[LispExp<T>], ctx: &T) -> Result<LispExp<T>, EvalError> {
+fn primitive_resume<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
