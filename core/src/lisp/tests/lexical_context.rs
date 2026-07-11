@@ -158,6 +158,7 @@ mod tests {
 
     pub fn primitive_funcall<T: LispContext>(
         args: &[LispExp<T>],
+        env: Arc<Env<T>>,
         ctx: &T,
     ) -> Result<LispExp<T>, EvalError> {
         if args.is_empty() {
@@ -186,7 +187,7 @@ mod tests {
                 }
                 eval(&lambda.body, call_frame, ctx)
             }
-            LispExp::Primitive(func) => func(func_args, ctx),
+            LispExp::Primitive(func) => func(func_args, env, ctx),
             _ => Err(EvalError::UncorrectFunctionDefinition),
         }
     }

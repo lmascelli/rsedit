@@ -398,6 +398,7 @@ mod test {
     // 2. A mock native primitive that mutates the host context
     fn native_increment_state(
         _args: &[LispExp<TestHost>],
+        _env: Arc<Env<TestHost>>,
         ctx: &TestHost,
     ) -> Result<LispExp<TestHost>, EvalError> {
         *ctx.state_changes.write().unwrap() += 1;
@@ -407,6 +408,7 @@ mod test {
     // 3. A mock native primitive for addition
     fn native_add(
         args: &[LispExp<TestHost>],
+        _env: Arc<Env<TestHost>>,
         _ctx: &TestHost,
     ) -> Result<LispExp<TestHost>, EvalError> {
         let mut sum = 0.0;
@@ -635,7 +637,7 @@ mod test {
 
         env.set_function(
             "bump".into(),
-            LispExp::Primitive(|_args: &[LispExp<MockHost>], ctx| {
+            LispExp::Primitive(|_args: &[LispExp<MockHost>], _env, ctx| {
                 *ctx.tracker.write().unwrap() += 1.0;
                 Ok(LispExp::number(*ctx.tracker.read().unwrap()))
             }),
@@ -684,7 +686,7 @@ mod test {
         // Assuming native primitives like '+' are mapped
         env.set_function(
             "+".into(),
-            LispExp::Primitive(|args, _| {
+            LispExp::Primitive(|args, _, _| {
                 if let (LispExp::Number(a), LispExp::Number(b)) = (&args[0], &args[1]) {
                     Ok(LispExp::number(a + b))
                 } else {

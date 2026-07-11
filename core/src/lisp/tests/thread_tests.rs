@@ -47,7 +47,7 @@ mod tests {
         // Inject a sleep primitive to safely test async execution delays
         env.set_function(
             "sleep-ms".into(),
-            LispExp::Primitive(|args, _ctx| {
+            LispExp::Primitive(|args, _, _ctx| {
                 if let Some(LispExp::Number(ms)) = args.first() {
                     std::thread::sleep(Duration::from_millis(*ms as u64));
                 }
@@ -58,7 +58,7 @@ mod tests {
         // Inject a primitive that mutates the Host Context directly
         env.set_function(
             "bump-host!".into(),
-            LispExp::Primitive(|_args, ctx: &ThreadCtx| {
+            LispExp::Primitive(|_args, _, ctx: &ThreadCtx| {
                 let mut lock = ctx.host_counter.write().unwrap();
                 *lock += 1;
                 Ok(LispExp::number(*lock as f64))
