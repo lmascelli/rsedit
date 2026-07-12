@@ -1,8 +1,9 @@
 use crossterm::event::{Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers, read};
 use crossterm::{QueueableCommand, cursor, execute, style::Print, terminal};
+use rsedit_core::ELispExp;
 use rsedit_core::buffer::BufferTrait;
 use rsedit_core::buffer::gap_buffer::GapBuffer;
-use rsedit_core::editor::{ELispExp, EditorState, create_global_env};
+use rsedit_core::editor::{EditorState, create_global_env};
 use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
 use rsedit_core::lisp::eval;
 use rsedit_core::ui::Rect;

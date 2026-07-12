@@ -4,11 +4,7 @@ mod test {
     // PARSER TESTS
     // ==========================================
 
-    use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, ParserError};
-
-    fn setup_env() -> (std::sync::Arc<Env<()>>, ()) {
-        (Env::new_root(), ())
-    }
+    use crate::lisp::{EvalError, LispContext, LispExp, Parser, ParserError};
 
     #[derive(Clone, Debug, PartialEq)]
     struct DummyCtx;

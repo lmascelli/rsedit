@@ -1,9 +1,9 @@
 // implementors
-pub mod buffer_trait;
+mod buffer_trait;
+pub use buffer_trait::BufferTrait;
 pub mod gap_buffer;
 
 use crate::input::KeyEvent;
-pub use buffer_trait::BufferTrait;
 use std::collections::HashMap;
 
 pub struct Buffer<B: BufferTrait> {

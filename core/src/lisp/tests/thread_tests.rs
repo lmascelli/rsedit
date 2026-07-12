@@ -12,11 +12,11 @@ mod tests {
     }
 
     impl LispContext for ThreadCtx {
-        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&self, msg: &str) {}
+        fn log_diagnostic(&self, _msg: &str) {}
     }
 
     // Required for the generic bound T: PartialEq

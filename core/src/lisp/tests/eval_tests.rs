@@ -382,17 +382,17 @@ mod test {
         }
     }
     impl PartialEq for TestHost {
-        fn eq(&self, other: &Self) -> bool {
+        fn eq(&self, _other: &Self) -> bool {
             unreachable!()
         }
     }
 
     impl LispContext for TestHost {
-        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&self, msg: &str) {}
+        fn log_diagnostic(&self, _msg: &str) {}
     }
 
     // 2. A mock native primitive that mutates the host context
@@ -618,17 +618,17 @@ mod test {
     }
 
     impl PartialEq for MockHost {
-        fn eq(&self, other: &Self) -> bool {
+        fn eq(&self, _other: &Self) -> bool {
             unreachable!()
         }
     }
 
     impl LispContext for MockHost {
-        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&self, msg: &str) {}
+        fn log_diagnostic(&self, _msg: &str) {}
     }
 
     fn setup_interpreter_env() -> (Arc<Env<MockHost>>, MockHost) {
@@ -794,7 +794,7 @@ mod test {
     }
 
     impl PartialEq for DummyCtx {
-        fn eq(&self, other: &Self) -> bool {
+        fn eq(&self, _other: &Self) -> bool {
             unreachable!()
         }
     }

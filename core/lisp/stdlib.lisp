@@ -1,5 +1,5 @@
-(make-mode "fundamental-mode")
-(make-mode "lisp-interactive-mode")
+(make-mode 'fundamental-mode)
+(make-mode 'lisp-interactive-mode)
 
 (define-key "C-q" 'quit)
 (define-key "C-s" 'save-buffer)

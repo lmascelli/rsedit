@@ -9,11 +9,11 @@ mod tests {
     struct FiberCtx;
 
     impl LispContext for FiberCtx {
-        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&self, msg: &str) {}
+        fn log_diagnostic(&self, _msg: &str) {}
     }
 
     // Helper to evaluate multiple expressions easily by wrapping them in a progn

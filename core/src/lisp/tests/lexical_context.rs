@@ -8,11 +8,11 @@ mod tests {
     struct DummyCtx;
 
     impl LispContext for DummyCtx {
-        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&self, msg: &str) {}
+        fn log_diagnostic(&self, _msg: &str) {}
     }
 
     // Helper function to parse and evaluate a simple string expression

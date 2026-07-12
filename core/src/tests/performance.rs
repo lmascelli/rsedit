@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod performance_tests {
     use crate::{
-        buffer::{Buffer, buffer_trait::BufferTrait, gap_buffer::GapBuffer},
-        editor::{MajorMode, create_global_env},
+        buffer::{Buffer, BufferTrait, gap_buffer::GapBuffer},
+        editor::{create_global_env},
         input::{KeyCode, KeyEvent, KeyModifiers},
         lisp::{LispExp, eval},
+        modes::{MajorMode},
         ui::*,
     };
     use std::sync::{Arc, RwLock};
@@ -35,9 +36,9 @@ mod performance_tests {
     #[test]
     fn benchmark_massive_file_viewport() {
         // 1. Setup: Creiamo una stringa di 1 milione di righe
-        let N = 10_000;
+        const N: usize = 10_000;
         let mut massive_string = String::with_capacity(20_000_000);
-        for i in 0..N {
+        for _i in 0..N {
             massive_string
                 .push_str("Questa è una riga di test abbastanza lunga per fare volume.\n");
         }
@@ -211,7 +212,7 @@ mod performance_tests {
     #[test]
     fn benchmark_native_typing_routing() {
         // Usa la tua funzione per creare l'ambiente pulito
-        let (mut state, env) =
+        let (state, env) =
             create_global_env::<GapBuffer>().expect("Failed to create the global env");
 
         let start = Instant::now();
@@ -236,7 +237,7 @@ mod performance_tests {
 
     #[test]
     fn benchmark_lisp_bound_key_latency() {
-        let (mut state, env) =
+        let (state, env) =
             create_global_env::<GapBuffer>().expect("Failed to create the global env");
 
         // Setup manuale di una Major Mode fittizia per il test

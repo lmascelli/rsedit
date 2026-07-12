@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
     impl crate::lisp::LispContext for () {
-        fn consume_fuel(&self, amount: u32) -> Result<(), crate::lisp::EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), crate::lisp::EvalError> {
             Ok(())
         }
 
-        fn log_diagnostic(&self, msg: &str) {}
+        fn log_diagnostic(&self, _msg: &str) {}
     }
 }
 

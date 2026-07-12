@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::lisp::bootstrap_vm;
     use crate::lisp::{EvalError, LispContext, Parser, eval};
     use std::sync::RwLock;
@@ -19,7 +18,7 @@ mod tests {
     }
 
     impl PartialEq for MockHostContext {
-        fn eq(&self, other: &Self) -> bool {
+        fn eq(&self, _other: &Self) -> bool {
             unreachable!()
         }
     }

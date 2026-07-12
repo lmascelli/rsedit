@@ -1,8 +1,10 @@
-use crate::buffer::{Buffer, BufferTrait};
-use crate::input::{KeyCode, KeyEvent, fill_self_insert_keymaps};
-use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, bootstrap_vm, eval};
-use crate::ui::{
-    FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines,
+use crate::{
+    ELispExp,
+    buffer::{Buffer, BufferTrait},
+    input::{KeyCode, KeyEvent, fill_self_insert_keymaps},
+    lisp::{Env, EvalError, LispContext, LispExp, Parser, bootstrap_vm, eval},
+    modes::MajorMode,
+    ui::{FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines},
 };
 use std::{
     collections::HashMap,
@@ -11,31 +13,6 @@ use std::{
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     },
 };
-pub type ELispExp<B> = LispExp<EditorState<B>>;
-
-/// A major mode is a collection of rules that apply to a specific
-/// kind of buffers like specific programming language, special text
-/// files or special buffers like the minibuffer or the repl buffer.
-/// It provides custom keymap, syntax highlighting rules and hook
-/// that will be called befor or after some events.
-#[derive(Clone, Debug)]
-pub struct MajorMode<B: BufferTrait> {
-    pub name: String,
-    pub keymap: HashMap<KeyEvent, ELispExp<B>>,
-    pub syntax_highlighing: (), // TODO! make it a SyntaxRules
-    pub hooks: HashMap<String, Vec<ELispExp<B>>>,
-}
-
-impl<B: BufferTrait> MajorMode<B> {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            keymap: HashMap::new(),
-            syntax_highlighing: (),
-            hooks: HashMap::new(),
-        }
-    }
-}
 
 /// This is the container for all the editor informations.
 /// The whole editor memory should live in an instance of this
@@ -417,6 +394,7 @@ pub fn create_global_env<B: BufferTrait>()
     insert_fn!("define-key", define_key);
     insert_fn!("make-mode", make_mode);
     insert_fn!("add-hook", add_hook);
+    insert_fn!("add-syntax-rule", add_syntax_rule);
     insert_fn!("self-insert", self_insert);
     insert_fn!("insert-newline", insert_newline);
     insert_fn!("delete-backward-char", delete_backward_char);
@@ -429,7 +407,7 @@ pub fn create_global_env<B: BufferTrait>()
 
     // --------------------- LOADING LISP STDLIB -------------------------------
 
-    let mut stdlib_src = format!(
+    let stdlib_src = format!(
         "(progn {})",
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/lisp/stdlib.lisp"))
     );
@@ -457,7 +435,9 @@ mod primitives {
     use super::{BufferTrait, ELispExp, EditorState, MajorMode};
     use crate::{
         input::{KeyCode, KeyEvent, KeyModifiers},
-        lisp::{Env, EvalError, LispExp},
+        lisp::{Env, EvalError, LispContext, LispExp},
+        modes::{SyntaxRule},
+        ui::Face,
     };
 
     fn is_nil<B: BufferTrait>(args: &[ELispExp<B>]) -> bool {
@@ -512,6 +492,12 @@ mod primitives {
         () => {
             ELispExp::symbol("nil".into())
         };
+    }
+
+    macro_rules! t {
+        () => {
+            ELispExp::symbol("t".into())
+        }
     }
 
     macro_rules! primitive {
@@ -605,7 +591,7 @@ mod primitives {
                 got: args.len(),
             })
         } else {
-            if let Some(LispExp::String(mode_name)) = args.get(0) {
+            if let Some(LispExp::Symbol(mode_name)) = args.get(0) {
                 ctx.mode_registry
                     .write()
                     .expect("Failed to acquire write lock on mode_registry")
@@ -613,7 +599,7 @@ mod primitives {
                 Ok(ELispExp::symbol("t".into()))
             } else {
                 Err(EvalError::WrongArgumentType {
-                    expected: "String".into(),
+                    expected: "Symbol".into(),
                     got: format!("{:?}", args.get(0)),
                 })
             }
@@ -629,7 +615,7 @@ mod primitives {
         }
 
         if let (
-            ELispExp::String(mode_name),
+            ELispExp::Symbol(mode_name),
             ELispExp::String(hook_name),
             ELispExp::Symbol(func_name),
         ) = (&args[0], &args[1], &args[2])
@@ -653,9 +639,60 @@ mod primitives {
             }
         } else {
             Err(EvalError::WrongArgumentType {
-                expected: "String, String, Symbol".into(),
+                expected: "Symbol, String, Symbol".into(),
                 got: "other".into(),
             })
+        }
+    });
+
+    primitive!(add_syntax_rule, args, _env, ctx, {
+        if args.len() != 3 {
+            Err(EvalError::WrongNumberOfArguments {
+                expected: 3,
+                got: args.len(),
+            })
+        } else {
+            if let (
+                ELispExp::Symbol(mode_name),
+                ELispExp::String(regex_str),
+                ELispExp::Symbol(face_sym),
+            ) = (&args[0], &args[1], &args[2])
+            {
+                let face = match face_sym.as_str() {
+                    "keyword" => Face::Keyword,
+                    "type" => Face::Type,
+                    "string" => Face::String,
+                    "comment" => Face::Comment,
+                    "function" => Face::Function,
+                    "builtin" => Face::Builtin,
+                    face_sym_str => {
+                        ctx.log_diagnostic(&format!("Unknown face: {}. Used Face::Default", face_sym_str));
+                        Face::Default
+                    }
+                };
+
+                match regex::Regex::new(regex_str) {
+                    Ok(pattern) => {
+                        let mut registry = ctx.mode_registry.write().expect("Failed to acquire read lock on mode_registry");
+                        if let Some(mode) = registry.get_mut(mode_name.as_str()) {
+                            mode.syntax_rules.push(SyntaxRule { pattern, face });
+
+                            Ok(t!())
+                        } else {
+                            Ok(nil!())
+                        }
+                    }
+                    Err(e) => {
+                        ctx.log_diagnostic(&format!("Invalid Regex {}: {}", regex_str, e));
+                        Ok(nil!())
+                    }
+                }
+            } else {
+                Err(EvalError::WrongArgumentType {
+                    expected: "Symbol, String, Symbol".into(),
+                    got: format!("{:?}", args),
+                })
+            }
         }
     });
 
