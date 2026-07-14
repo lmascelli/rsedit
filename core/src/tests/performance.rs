@@ -2,10 +2,10 @@
 mod performance_tests {
     use crate::{
         buffer::{Buffer, BufferTrait, gap_buffer::GapBuffer},
-        editor::{create_global_env},
+        editor::create_global_env,
         input::{KeyCode, KeyEvent, KeyModifiers},
         lisp::{LispExp, eval},
-        modes::{MajorMode},
+        modes::MajorMode,
         ui::*,
     };
     use std::sync::{Arc, RwLock};

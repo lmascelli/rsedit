@@ -8,6 +8,8 @@ use crate::{
 };
 use std::{
     collections::HashMap,
+    fs::File,
+    io::Write,
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
@@ -46,6 +48,8 @@ pub struct EditorState<B: BufferTrait> {
     fuel: Arc<AtomicU32>,
     /// Here the lisp VM will output its logs
     logs: Arc<RwLock<Vec<String>>>,
+    /// If some, is the file where the logs will be written into
+    log_file: Option<Arc<RwLock<File>>>,
 }
 
 impl<B: BufferTrait> LispContext for EditorState<B> {
@@ -65,6 +69,14 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
             .write()
             .expect("Failed to get the write lock on logs");
         lock.push(msg.into());
+
+        if let Some(log_file) = &self.log_file {
+            log_file
+                .write()
+                .expect("Failed to acquire write lock on log_file")
+                .write_all(&format!("[LOG] {msg}").into_bytes())
+                .expect("Failed to write into log file");
+        }
     }
 }
 
@@ -111,11 +123,18 @@ impl<B: BufferTrait> EditorState<B> {
             next_window_id: Arc::new(AtomicUsize::new(1)),
             fuel: Arc::new(AtomicU32::new(10_000)),
             logs: Arc::new(RwLock::new(Vec::new())),
+            log_file: None,
         }
     }
 
+    pub fn enable_log_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
+        self.log_file
+            .replace(Arc::new(RwLock::new(File::create(path)?)));
+        Ok(())
+    }
+
     /// Quit the editor
-    pub fn quit(&self) {
+    fn quit(&self) {
         self.running.store(false, Ordering::Relaxed);
     }
 
@@ -125,7 +144,7 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Open a new empty buffer or load a file into a new buffer if a path is
     /// provided.
-    pub fn new_buffer(&self, name: &str, path: Option<&str>) -> Option<String> {
+    pub(crate) fn new_buffer(&self, name: &str, path: Option<&str>) -> Option<String> {
         if let Some(file_path) = path {
             match std::fs::read_to_string(file_path) {
                 Ok(content) => {
@@ -314,7 +333,7 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Return the next valid ID for a new window
-    pub fn get_next_window_id(&self) -> usize {
+    fn get_next_window_id(&self) -> usize {
         self.next_window_id.fetch_add(1, Ordering::Relaxed)
     }
 
@@ -328,7 +347,7 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Get the name of the current buffer
-    pub fn get_current_buffer_name(&self) -> String {
+    fn get_current_buffer_name(&self) -> String {
         self.current_buffer_name
             .read()
             .expect("Failed to acquire read lock on current_buffer_name")
@@ -336,7 +355,7 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Set the name of the current buffer
-    pub fn set_current_buffer_name(&self, name: &str) {
+    fn set_current_buffer_name(&self, name: &str) {
         *self
             .current_buffer_name
             .write()
@@ -353,7 +372,7 @@ impl<B: BufferTrait> EditorState<B> {
             .clone()
     }
 
-    pub fn get_buffer(&self, name: &str) -> Arc<RwLock<Buffer<B>>> {
+    fn get_buffer(&self, name: &str) -> Arc<RwLock<Buffer<B>>> {
         self.buffers
             .read()
             .expect("Failed to acquire read lock on buffers")
@@ -436,7 +455,7 @@ mod primitives {
     use crate::{
         input::{KeyCode, KeyEvent, KeyModifiers},
         lisp::{Env, EvalError, LispContext, LispExp},
-        modes::{SyntaxRule},
+        modes::SyntaxRule,
         ui::Face,
     };
 
@@ -497,7 +516,7 @@ mod primitives {
     macro_rules! t {
         () => {
             ELispExp::symbol("t".into())
-        }
+        };
     }
 
     macro_rules! primitive {
@@ -666,14 +685,20 @@ mod primitives {
                     "function" => Face::Function,
                     "builtin" => Face::Builtin,
                     face_sym_str => {
-                        ctx.log_diagnostic(&format!("Unknown face: {}. Used Face::Default", face_sym_str));
+                        ctx.log_diagnostic(&format!(
+                            "Unknown face: {}. Used Face::Default",
+                            face_sym_str
+                        ));
                         Face::Default
                     }
                 };
 
                 match regex::Regex::new(regex_str) {
                     Ok(pattern) => {
-                        let mut registry = ctx.mode_registry.write().expect("Failed to acquire read lock on mode_registry");
+                        let mut registry = ctx
+                            .mode_registry
+                            .write()
+                            .expect("Failed to acquire read lock on mode_registry");
                         if let Some(mode) = registry.get_mut(mode_name.as_str()) {
                             mode.syntax_rules.push(SyntaxRule { pattern, face });
 

@@ -1,15 +1,14 @@
 use crossterm::event::{Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers, read};
 use crossterm::{QueueableCommand, cursor, execute, style::Print, terminal};
-use rsedit_core::ELispExp;
 use rsedit_core::buffer::BufferTrait;
-use rsedit_core::buffer::gap_buffer::GapBuffer;
-use rsedit_core::editor::{EditorState, create_global_env};
+use rsedit_core::editor::EditorState;
 use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
-use rsedit_core::lisp::eval;
+use rsedit_core::lisp::Env;
 use rsedit_core::ui::Rect;
-use std::io::{Write, stdout};
-
-type BufferType = GapBuffer;
+use std::{
+    io::{Write, stdout},
+    sync::Arc,
+};
 
 pub fn render_screen<B: BufferTrait>(
     state: &mut EditorState<B>,
@@ -61,25 +60,15 @@ fn draw_window_border(
     Ok(())
 }
 
-pub fn tui_main(file_to_open: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut state, env) =
-        create_global_env::<BufferType>().expect("Failed to create the editor environment");
-
-    if let Some(path) = file_to_open {
-        let ast = ELispExp::list(vec![
-            ELispExp::symbol("find-file".into()),
-            ELispExp::string(path),
-        ]);
-        if let Err(e) = eval(&ast, env.clone(), &mut state) {
-            state.set_echo_message(&format!("Boot Error: {:?}", e));
-        }
-    }
-
+pub fn tui_main<B: BufferTrait>(
+    state: &mut EditorState<B>,
+    env: Arc<Env<EditorState<B>>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     terminal::enable_raw_mode()?;
 
     while state.is_running() {
         let (cols, rows) = terminal::size()?;
-        render_screen(&mut state, cols, rows)?;
+        render_screen(state, cols, rows)?;
 
         if let Event::Key(key_event) = read()? {
             let mut event = KeyEvent {
