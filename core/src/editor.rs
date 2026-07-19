@@ -4,6 +4,7 @@ use crate::{
     input::{KeyCode, KeyEvent, fill_self_insert_keymaps},
     lisp::{Env, EvalError, LispContext, LispExp, Parser, bootstrap_vm, eval},
     modes::MajorMode,
+    task::{BackgroundScheduler, WorkerMessage},
     ui::{FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines},
 };
 use std::{
@@ -13,6 +14,7 @@ use std::{
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+        mpsc::Sender,
     },
 };
 
@@ -25,6 +27,9 @@ use std::{
 #[derive(Clone)]
 pub struct EditorState<B: BufferTrait> {
     pub running: Arc<AtomicBool>,
+    /// A channel that is used to send work to a worker thread like
+    /// the syntax highlighting computation
+    pub worker_mailbox: Sender<WorkerMessage<B>>,
 
     pub buffers: Arc<RwLock<HashMap<String, Arc<RwLock<Buffer<B>>>>>>,
     pub echo_message: Arc<RwLock<String>>,
@@ -105,8 +110,12 @@ impl<B: BufferTrait> EditorState<B> {
         let mut keymaps = HashMap::new();
         fill_self_insert_keymaps(&mut keymaps);
 
-        Self {
+        // Create a secondary worker thread and the communication channels with it.
+        let (sender, receiver) = std::sync::mpsc::channel();
+
+        let editor_state = Self {
             running: Arc::new(AtomicBool::new(true)),
+            worker_mailbox: sender,
             buffers: Arc::new(RwLock::new(buffers)),
             echo_message: Arc::new(RwLock::new("Welcome to rsedit".to_string())),
             current_buffer_name: Arc::new(RwLock::new(scratch_name)),
@@ -124,12 +133,32 @@ impl<B: BufferTrait> EditorState<B> {
             fuel: Arc::new(AtomicU32::new(10_000)),
             logs: Arc::new(RwLock::new(Vec::new())),
             log_file: None,
-        }
+        };
+
+        BackgroundScheduler::spawn(receiver, editor_state.clone());
+
+        editor_state
     }
 
+    /// Enable writing logs to the specified file.
     pub fn enable_log_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
-        self.log_file
-            .replace(Arc::new(RwLock::new(File::create(path)?)));
+        let mut log_file = File::create(path)?;
+        // TODO(uncertain) maybe this is an unwanted change, i don't know if it's better to be
+        // able to enable the writing of the logs only at specific times and maybe disable it
+        // to get only some logs.
+
+        // Write the previous unwritten log messages
+        for msg in self
+            .logs
+            .read()
+            .expect("Failed to acquire read lock on logs")
+            .iter()
+        {
+            log_file.write_all(&format!("[LOG] {msg}\n").into_bytes())?;
+        }
+        // _TODO
+
+        self.log_file.replace(Arc::new(RwLock::new(log_file)));
         Ok(())
     }
 
@@ -372,7 +401,7 @@ impl<B: BufferTrait> EditorState<B> {
             .clone()
     }
 
-    fn get_buffer(&self, name: &str) -> Arc<RwLock<Buffer<B>>> {
+    pub(crate) fn get_buffer(&self, name: &str) -> Arc<RwLock<Buffer<B>>> {
         self.buffers
             .read()
             .expect("Failed to acquire read lock on buffers")
