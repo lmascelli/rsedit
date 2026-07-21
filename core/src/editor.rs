@@ -1,7 +1,7 @@
 use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
-    input::{KeyCode, KeyEvent, fill_self_insert_keymaps},
+    input::{KeyCode, KeyEvent, fill_default_keymaps},
     lisp::{Env, EvalError, LispContext, LispExp, Parser, bootstrap_vm, eval},
     modes::MajorMode,
     task::{BackgroundScheduler, WorkerMessage},
@@ -111,7 +111,7 @@ impl<B: BufferTrait> EditorState<B> {
         );
 
         let mut keymaps = HashMap::new();
-        fill_self_insert_keymaps(&mut keymaps);
+        fill_default_keymaps(&mut keymaps);
 
         // Create a secondary worker thread and the communication channels with it.
         let (sender, receiver) = std::sync::mpsc::channel();
