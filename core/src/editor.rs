@@ -10,7 +10,7 @@ use crate::{
 use std::{
     collections::HashMap,
     fs::File,
-    io::Write,
+    io::{Read, Write},
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
@@ -47,6 +47,9 @@ pub struct EditorState<B: BufferTrait> {
     pub focused_window_id: Arc<RwLock<usize>>,
     /// A value only used to fastly create a new window id
     pub next_window_id: Arc<AtomicUsize>,
+
+    /// The lisp of paths where to look for lisp files
+    pub lisp_path: Arc<RwLock<Vec<String>>>,
 
     /// The fuel of the lisp machine, if somehow it will start to use too much
     /// cpu power, it will run out of fuel
@@ -113,7 +116,7 @@ impl<B: BufferTrait> EditorState<B> {
         // Create a secondary worker thread and the communication channels with it.
         let (sender, receiver) = std::sync::mpsc::channel();
 
-        let editor_state = Self {
+        let mut editor_state = Self {
             running: Arc::new(AtomicBool::new(true)),
             worker_mailbox: sender,
             buffers: Arc::new(RwLock::new(buffers)),
@@ -130,10 +133,27 @@ impl<B: BufferTrait> EditorState<B> {
             floating_windows: Arc::new(RwLock::new(Vec::new())),
             focused_window_id: Arc::new(RwLock::new(0)),
             next_window_id: Arc::new(AtomicUsize::new(1)),
+            lisp_path: Arc::new(RwLock::new(Vec::new())),
             fuel: Arc::new(AtomicU32::new(10_000)),
             logs: Arc::new(RwLock::new(Vec::new())),
             log_file: None,
         };
+
+        match std::env::current_exe() {
+            Ok(exe_path) => {
+                editor_state
+                    .lisp_path
+                    .write()
+                    .expect("Failed to acquire write lock on stdlib_path")
+                    .push(format!("{}/core/lisp", exe_path.display()));
+            }
+            Err(e) => {
+                editor_state.log_diagnostic(&format!(
+                    "[ERROR] Failed to load the editor stdlib. {:?}",
+                    e
+                ));
+            }
+        }
 
         BackgroundScheduler::spawn(receiver, editor_state.clone());
 
@@ -160,6 +180,68 @@ impl<B: BufferTrait> EditorState<B> {
 
         self.log_file.replace(Arc::new(RwLock::new(log_file)));
         Ok(())
+    }
+
+    /// Eval a lisp file in the editor context. First it look for the file as an
+    /// absolute or relative path and if exists evalues it. If not and if the path
+    /// is instead the name of a file without extension, it looks for
+    /// it in the `lisp_path` paths in order and if it exists evalues it. If the
+    /// file doesn't exists in any of this paths returns nil and simply reports
+    /// it on the logs and doesn't evaluate anything otherwise evaluate it and if
+    /// the evaluation succeeds return a list with the result of the evaluation or
+    /// the error of the evaluation.
+    pub fn eval_file(&self, file: &str, env: Arc<Env<Self>>) -> Result<ELispExp<B>, EvalError> {
+        // first search the file as a relative path
+        let content = match std::fs::read_to_string(file) {
+            Ok(content) => content,
+            Err(err) => {
+                // if file wasn't a path to an existing file
+                if let std::io::ErrorKind::NotFound = err.kind() {
+                    // if file is instead a name of a lisp file without extension
+                    if file.contains('\\') || file.contains('/') || file.contains('.') {
+                        self.log_diagnostic(&format!(
+                            "[ERROR] eval_file {file} is not a valid script name"
+                        ));
+                        return Ok(ELispExp::list(vec![]));
+                    } else {
+                        // search for file.lisp in every lisp-path folder
+                        let mut script_content = None;
+                        for path in self
+                            .lisp_path
+                            .read()
+                            .expect("Failed to acquire read lock on lisp_file")
+                            .iter()
+                        {
+                            if let Ok(content) =
+                                std::fs::read_to_string(&format!("{path}/{file}.lisp"))
+                            {
+                                script_content = Some(content);
+                                break;
+                            }
+                        }
+                        if let Some(content) = script_content {
+                            content
+                        } else {
+                            self.log_diagnostic(&format!(
+                                "[ERROR] eval_file {file}.lisp was not found in lisp_path"
+                            ));
+                            return Ok(ELispExp::list(vec![]));
+                        }
+                    }
+                } else {
+                    self.log_diagnostic(&format!("[ERROR] Failed eval file {file} {:?}", err));
+                    return Ok(ELispExp::list(vec![]));
+                }
+            }
+        };
+
+        let ast = if let Ok(ast) = Parser::new(&content).next() {
+            ast
+        } else {
+            return Ok(ELispExp::list(vec![]));
+        };
+
+        Ok(ELispExp::list(vec![eval(&ast, env.clone(), self)?]))
     }
 
     /// Quit the editor
@@ -375,6 +457,13 @@ impl<B: BufferTrait> EditorState<B> {
         lock.clone()
     }
 
+    pub(crate) fn set_focused_window_id(&self, id: usize) {
+        *self
+            .focused_window_id
+            .write()
+            .expect("Failed to acquire write lock on focused_window_id") = id;
+    }
+
     /// Get the name of the current buffer
     fn get_current_buffer_name(&self) -> String {
         self.current_buffer_name
@@ -438,8 +527,10 @@ pub fn create_global_env<B: BufferTrait>()
     }
 
     insert_fn!("quit", quit);
+    insert_fn!("eval-file", eval_file);
     insert_fn!("load-file", load_file);
     insert_fn!("define-key", define_key);
+    insert_fn!("log", log);
     insert_fn!("make-mode", make_mode);
     insert_fn!("add-hook", add_hook);
     insert_fn!("add-syntax-rule", add_syntax_rule);
@@ -452,6 +543,10 @@ pub fn create_global_env<B: BufferTrait>()
     insert_fn!("next-line", next_line);
     insert_fn!("find-file", find_file);
     insert_fn!("save-buffer", save_buffer);
+    insert_fn!("make-floating-window", make_floating_window);
+    insert_fn!("close-floating-window", close_floating_window);
+    insert_fn!("buffer-string", buffer_string);
+    insert_fn!("clear-buffer", clear_buffer);
 
     // --------------------- LOADING LISP STDLIB -------------------------------
 
@@ -485,7 +580,7 @@ mod primitives {
         input::{KeyCode, KeyEvent, KeyModifiers},
         lisp::{Env, EvalError, LispContext, LispExp},
         modes::SyntaxRule,
-        ui::Face,
+        ui::{Face, FloatingWindow, Rect, Window},
     };
 
     fn is_nil<B: BufferTrait>(args: &[ELispExp<B>]) -> bool {
@@ -517,6 +612,7 @@ mod primitives {
 
         let key_code = match chars.collect::<String>().as_str() {
             "<ret>" | "<Return>" => KeyCode::Enter,
+            "<esc>" | "<Escape>" => KeyCode::Esc,
             "<backspace>" => KeyCode::Backspace,
             "<up>" => KeyCode::Up,
             "<down>" => KeyCode::Down,
@@ -571,6 +667,22 @@ mod primitives {
         Ok(nil!())
     });
 
+    primitive!(eval_file, args, env, ctx, {
+        if args.len() != 1 {
+            Err(EvalError::WrongNumberOfArguments {
+                expected: 1,
+                got: args.len(),
+            })
+        } else if let Some(ELispExp::String(file)) = args.first() {
+            Ok(ctx.eval_file(file, env.clone())?)
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: format!("{:?}", args.first()),
+            })
+        }
+    });
+
     primitive!(load_file, args, _env, ctx, {
         if let Some(ELispExp::String(path_str)) = args.first() {
             match std::fs::read_to_string(path_str.to_string()) {
@@ -621,6 +733,25 @@ mod primitives {
                 Err(EvalError::WrongArgumentType {
                     expected: "String, Symbol".into(),
                     got: format!("{:?}, {:?}", &args[0], &args[1]),
+                })
+            }
+        }
+    });
+
+    primitive!(log, args, _env, ctx, {
+        if args.len() != 1 {
+            Err(EvalError::WrongNumberOfArguments {
+                expected: 1,
+                got: args.len(),
+            })
+        } else {
+            if let LispExp::String(message) = &args[0] {
+                ctx.log_diagnostic(&message);
+                Ok(nil!())
+            } else {
+                Err(EvalError::WrongArgumentType {
+                    expected: "String".into(),
+                    got: format!("{:?}", args.get(0)),
                 })
             }
         }
@@ -921,5 +1052,112 @@ mod primitives {
                 Ok(nil!())
             }
         }
+    });
+
+    //------------------------------------------------------------//
+    //                                                            //
+    //                           UI                               //
+    //                                                            //
+    //------------------------------------------------------------//
+
+    primitive!(make_floating_window, args, _env, ctx, {
+        if args.len() < 5 {
+            Err(EvalError::WrongNumberOfArguments {
+                expected: 5,
+                got: args.len(),
+            })
+        } else {
+            if let (
+                ELispExp::String(buf_name),
+                ELispExp::Number(x),
+                ELispExp::Number(y),
+                ELispExp::Number(w),
+                ELispExp::Number(h),
+            ) = (&args[0], &args[1], &args[2], &args[3], &args[4])
+            {
+                let title = args.get(5).and_then(|exp| {
+                    if let ELispExp::String(t) = exp {
+                        Some(t.to_string())
+                    } else {
+                        None
+                    }
+                });
+
+                ctx.new_buffer(buf_name, None);
+
+                let new_id = ctx.get_next_window_id();
+                let window = Window {
+                    id: new_id,
+                    buffer_name: buf_name.to_string(),
+                    scroll_x: 0,
+                    scroll_y: 0,
+                };
+
+                let rect = Rect {
+                    x: *x as usize,
+                    y: *y as usize,
+                    width: *w as usize,
+                    height: *h as usize,
+                };
+
+                let floating_win = FloatingWindow {
+                    window,
+                    rect,
+                    has_border: true,
+                    title,
+                };
+
+                ctx.floating_windows
+                    .write()
+                    .expect("Failed to acquire write lock on floating_windows")
+                    .push(floating_win);
+
+                ctx.set_focused_window_id(new_id);
+                ctx.set_current_buffer_name(buf_name);
+
+                Ok(t!())
+            } else {
+                Err(EvalError::WrongArgumentType {
+                    expected: "String, Number, Number, Number, Number".into(),
+                    got: format!("{:?}", args),
+                })
+            }
+        }
+    });
+
+    primitive!(close_floating_window, _args, _env, ctx, {
+        // TODO(improve) this is a mess at the moment. It close the last floating opened and close
+        // it not just toggle it so it has to be reopened. It must be improved to get the name of
+        // the buffer or the id of the window to close or toggle. Moreover the last not floating
+        // window id must be stored so when a window is closed the focus can be passed where it was.
+        let mut floats = ctx
+            .floating_windows
+            .write()
+            .expect("Failed to acquire write lock for floating_windows");
+        floats.pop();
+        ctx.set_focused_window_id(0);
+        Ok(nil!())
+    });
+
+    primitive!(buffer_string, _args, _env, ctx, {
+        let buf = ctx.get_current_buffer();
+        let content = buf
+            .read()
+            .expect("Failed to acquire read lock on current buffer")
+            .text
+            .to_string();
+        Ok(ELispExp::string(content))
+    });
+
+    primitive!(clear_buffer, _args, _env, ctx, {
+        // TODO(improve) this is highly inefficent. A clear function of BufferTrait must be added
+        // to clear the buffer.
+        ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+            while buf.text.cursor_pos() != (0, 0) {
+                buf.text.delete();
+            }
+        });
+
+        Ok(nil!())
     });
 }

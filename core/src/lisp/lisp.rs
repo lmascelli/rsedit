@@ -36,6 +36,7 @@ pub struct Lambda<T: LispContext> {
     pub params: Vec<String>,
     pub body: LispExp<T>,
     pub env: Arc<Env<T>>,
+    pub doc: Option<Arc<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -940,6 +941,8 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
             if let LispExp::Symbol(func_name) = &args[0] {
                 let mut params_vec = vec![];
+                let mut body_index = 2;
+                let mut doc = None;
                 if let LispExp::List(params_list) = &args[1] {
                     for param in params_list.iter() {
                         if let LispExp::Symbol(param_name) = param {
@@ -952,10 +955,18 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     return Err(EvalError::DefunParamsAreNotAList);
                 }
 
+                if let LispExp::String(doc_string) = &args[2]
+                    && args.len() > 3
+                {
+                    doc = Some(Arc::new(doc_string.to_string()));
+                    body_index = 3;
+                }
+
                 let lambda = Lambda {
                     params: params_vec,
-                    body: args[2].clone(),
+                    body: args[body_index].clone(),
                     env: env.clone(),
+                    doc,
                 };
                 env.set_function(func_name.to_string(), LispExp::lambda(lambda));
 
@@ -990,6 +1001,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 params: params_vec,
                 body,
                 env: env.clone(),
+                doc: None,
             })))
         }
 

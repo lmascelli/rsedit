@@ -47,6 +47,7 @@ mod test {
             params: vec![], // No parameters
             body: LispExp::number(42.0),
             env: env.clone(), // Capture current environment
+            doc: None,
         }));
         env.set_function("buffer".into(), mock_func);
 
@@ -501,6 +502,7 @@ mod test {
             params: vec![],
             body: LispExp::number(99.0),
             env: env.clone(),
+            doc: None,
         });
         env.set_function("log".into(), mock_lambda);
 

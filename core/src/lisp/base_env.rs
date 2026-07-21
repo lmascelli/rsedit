@@ -2,6 +2,12 @@ use crate::lisp::lisp::SharedAtom;
 use crate::lisp::{Env, EvalError, LispContext, LispExp, eval};
 use std::sync::{Arc, RwLock};
 
+macro_rules! nil {
+    () => {
+        LispExp::list(vec![])
+    };
+}
+
 // -------------------------------- CLASSIC LISP -------------------------------
 
 fn primitive_funcall<T: LispContext>(
@@ -37,6 +43,53 @@ fn primitive_funcall<T: LispContext>(
         }
         LispExp::Primitive(func) => func(func_args, env, ctx),
         _ => Err(EvalError::UncorrectFunctionDefinition),
+    }
+}
+
+fn primitive_function_doc<T: LispContext>(
+    args: &[LispExp<T>],
+    env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.len() != 1 {
+        let err = Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+        ctx.log_diagnostic(&format!("{err:?}"));
+        err
+    } else {
+        if let LispExp::Symbol(func_name) = &args[0] {
+            if let Some(func) = env.get_function(&func_name) {
+                match func {
+                    LispExp::Lambda(lambda) => {
+                        let doc = if let Some(doc) = &lambda.doc {
+                            doc.to_string()
+                        } else {
+                            "Undocumented function".into()
+                        };
+                        Ok(LispExp::string(doc))
+                    }
+                    LispExp::Primitive(primitive) => Ok(LispExp::string(
+                        "Primitive function. Doc not provided at the moment".into(),
+                    )),
+                    _ => unreachable!(),
+                }
+            } else {
+                ctx.log_diagnostic(&format!(
+                    "{} function is not present in the environment",
+                    func_name.as_str()
+                ));
+                Ok(nil!())
+            }
+        } else {
+            let err = Err(EvalError::WrongArgumentType {
+                expected: "Symbol".into(),
+                got: format!("{:?}", args[0]),
+            });
+            ctx.log_diagnostic(&format!("{err:?}"));
+            err
+        }
     }
 }
 
@@ -239,6 +292,10 @@ fn primitive_resume<T: LispContext>(
 pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     // Functions
     env.set_function("funcall".into(), LispExp::Primitive(primitive_funcall));
+    env.set_function(
+        "function-doc".into(),
+        LispExp::Primitive(primitive_function_doc),
+    );
     env.set_function("atom".into(), LispExp::Primitive(primitive_atom));
     env.set_function("deref".into(), LispExp::Primitive(primitive_deref));
     env.set_function("reset".into(), LispExp::Primitive(primitive_reset));

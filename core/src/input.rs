@@ -6,11 +6,12 @@ pub enum KeyCode {
     Char(char),
     Backspace,
     Enter,
+    Esc,
     Left,
     Right,
     Up,
     Down,
-    // Add more as needed (Tab, Esc, F1...)
+    // Add more as needed (Tab, F1...)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
