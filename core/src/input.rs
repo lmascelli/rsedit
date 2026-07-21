@@ -71,18 +71,11 @@ pub fn fill_default_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Enter,
-            modifiers: KeyModifiers::default(), // No modifiers (Ctrl/Alt off)
+            modifiers: KeyModifiers::default(),
         },
         "insert-line".into(),
     );
-    keymaps.insert(
-        KeyEvent {
-            code: KeyCode::Backspace,
-            modifiers: KeyModifiers::default(), // No modifiers (Ctrl/Alt off)
-        },
-        "delete-backward-char".into(),
-    );
-
+    
     for c in ' '..='~' {
         let event = KeyEvent {
             code: KeyCode::Char(c),
