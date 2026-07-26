@@ -40,6 +40,30 @@ impl KeyEvent {
 /// Fills a keymaps map with all the ascii char self-insert char so the editor
 /// can handle the typing of letters, digits and most of symbols.
 pub fn fill_default_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
+    // -------------------------------- EDITOR ---------------------------------
+    keymaps.insert(
+        KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        },
+        "quit".into(),
+    );
+
+    // -------------------------------- BUFFER ---------------------------------
+    keymaps.insert(
+        KeyEvent {
+            code: KeyCode::Char('s'),
+            modifiers: KeyModifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        },
+        "save-buffer".into(),
+    );
+
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Left,
@@ -75,7 +99,7 @@ pub fn fill_default_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
         },
         "insert-line".into(),
     );
-    
+
     for c in ' '..='~' {
         let event = KeyEvent {
             code: KeyCode::Char(c),

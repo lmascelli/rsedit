@@ -10,7 +10,7 @@ use crate::{
 use std::{
     collections::HashMap,
     fs::File,
-    io::{Read, Write},
+    io::Write,
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
@@ -82,7 +82,7 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
             log_file
                 .write()
                 .expect("Failed to acquire write lock on log_file")
-                .write_all(&format!("[LOG] {msg}").into_bytes())
+                .write_all(&format!("[LOG] {msg}\n").into_bytes())
                 .expect("Failed to write into log file");
         }
     }
@@ -116,7 +116,7 @@ impl<B: BufferTrait> EditorState<B> {
         // Create a secondary worker thread and the communication channels with it.
         let (sender, receiver) = std::sync::mpsc::channel();
 
-        let mut editor_state = Self {
+        let editor_state = Self {
             running: Arc::new(AtomicBool::new(true)),
             worker_mailbox: sender,
             buffers: Arc::new(RwLock::new(buffers)),
@@ -192,7 +192,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// the error of the evaluation.
     pub fn eval_file(&self, file: &str, env: Arc<Env<Self>>) -> Result<ELispExp<B>, EvalError> {
         // first search the file as a relative path
-        let content = match std::fs::read_to_string(file) {
+        let content = format!("(progn {})", match std::fs::read_to_string(file) {
             Ok(content) => content,
             Err(err) => {
                 // if file wasn't a path to an existing file
@@ -233,7 +233,7 @@ impl<B: BufferTrait> EditorState<B> {
                     return Ok(ELispExp::list(vec![]));
                 }
             }
-        };
+        });
 
         let ast = if let Ok(ast) = Parser::new(&content).next() {
             ast
@@ -291,15 +291,39 @@ impl<B: BufferTrait> EditorState<B> {
     /// Handle a key event. An UI provider is responsible to call this function
     /// every time it want to make the editor react to an user input.
     pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
-        let symbol_name = if let Some(symbol_name) = self
+        let mut symbol_name = String::new();
+        let mut keymap_found = false;
+        
+        // Look for the keymap in the major mode of the current buffer 
+        if let Some(current_mode) = self
+            .mode_registry
+            .read()
+            .expect("Failed to acquire read lock on mode_registry")
+            .get(&self.get_current_buffer().read().expect("Failed to acquire read lock on current_buffer").current_mode)
+            {
+                if let Some(mode_symbol_name) = 
+                current_mode
+                    .keymaps
+                    .get(&event){
+                        symbol_name = mode_symbol_name.to_string();
+                        keymap_found = true;
+                    }
+            };
+
+        // If no keymap was found in the major mode look for it in the global keymaps
+        if !keymap_found && let Some(global_symbol_name) = self
             .keymaps
             .read()
             .expect("Failed to acquire read lock on keymaps")
             .get(&event)
         {
-            symbol_name.to_string()
-        } else {
-            self.set_echo_message(&format!("Keymap not bound {:?}", event));
+            symbol_name = global_symbol_name.to_string();
+            keymap_found = true;
+        };
+
+        // If no symbol has been found
+        if !keymap_found {
+            self.log_diagnostic(&format!("[INFO] Keymap not bound {:?}", event));
             return;
         };
 
@@ -711,20 +735,63 @@ mod primitives {
     });
 
     primitive!(define_key, args, _env, ctx, {
-        if args.len() != 2 {
+        if args.len() != 3 {
             Err(EvalError::WrongNumberOfArguments {
-                expected: 2,
+                expected: 3,
                 got: args.len(),
             })
         } else {
-            if let (ELispExp::String(key_str), ELispExp::Symbol(func_name)) = (&args[0], &args[1]) {
+            if let (mode, ELispExp::String(key_str), ELispExp::Symbol(func_name)) =
+                (&args[0], &args[1], &args[2])
+            {
+                let mode_name: Option<String> = match mode {
+                    ELispExp::Symbol(mode_name) | ELispExp::String(mode_name) => {
+                        if mode_name.as_str() == "nil" {
+                            None
+                        } else {
+                            Some(mode_name.to_string())
+                        }
+                    }
+                    ELispExp::List(list) => {
+                        if *list == std::sync::Arc::new(vec![]) {
+                            None
+                        } else {
+                            return Err(EvalError::WrongArgumentType {
+                                expected: "Symbol, String, Symbol".into(),
+                                got: format!("{:?}, {:?}, {:?}", &args[0], &args[1], &args[2]),
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(EvalError::WrongArgumentType {
+                            expected: "Symbol, String, Symbol".into(),
+                            got: format!("{:?}, {:?}, {:?}", &args[0], &args[1], &args[2]),
+                        });
+                    }
+                };
                 if let Some(key_event) = parse_key_sequence(key_str) {
-                    let mut keymaps = ctx
-                        .keymaps
-                        .write()
-                        .expect("Failed to acquire write lock on keymaps");
-                    keymaps.insert(key_event, func_name.to_string());
-                    Ok(ELispExp::symbol("t".into()))
+                    if let Some(mode_name) = mode_name {
+                        let mut mode_registry_lock = ctx
+                            .mode_registry
+                            .write()
+                            .expect("Failed to acquire write lock on mode_registry");
+                        if let Some(mode) = mode_registry_lock.get_mut(&mode_name) {
+                            mode.keymaps.insert(key_event, func_name.to_string());
+                            Ok(t!())
+                        } else {
+                            ctx.log_diagnostic(&format!(
+                                "[ERROR]: define-key no mode named {mode_name}"
+                            ));
+                            Ok(nil!())
+                        }
+                    } else {
+                        let mut keymaps = ctx
+                            .keymaps
+                            .write()
+                            .expect("Failed to acquire write lock on keymaps");
+                        keymaps.insert(key_event, func_name.to_string());
+                        Ok(ELispExp::symbol("t".into()))
+                    }
                 } else {
                     ctx.set_echo_message(&format!("Invalid key sequence: {}", key_str));
                     Ok(nil!())
