@@ -1,17 +1,21 @@
 #+author: Leonardo Mascelli
 #+title: rsedit
 
-* DONE [22-07-2026] Add a major-mode arg to define-key function
+* [27-07-2026] Make M-x spawn the floating window of minibuffer
+* [27-07-2026] Move the *lisp-path* variable to a string list in lisp env
+* DONE [27-07-2026] Add the folder "data/lisp" in the same path of the editor executable to the *lisp-path* list
+* DONE [26-07-2026] Make the build.rs script copy the lisp files in the appropriate location in target directory
 
-* DONE [22-07-2026] Make the handle-key-event look first in the current mode keymaps
-
-* DONE [22-07-2026] Create the minibuffer major mode
 * [25-07-2026] Comment what is uncommented
-* [25-07-2026] Handle the load of the base lisp libraries
+* DONE [25-07-2026] Handle the load of the base lisp libraries
 The mandatory setup of the editor lisp environment must be done natively by the editor itself but the
 lisp libraries should be found and loaded as needed. A *lisp-path* variable is present in the editorstate and
 a function *eval-file* that eval a file and returns the result. file can be:
 - a path to a file
 - the name of a file without extension in the folders that are the elements of *lisp-path*
-* [26-07-2026] Make the build.rs script copy the lisp files in the appropriate location in target directory
+* DONE [22-07-2026] Make the handle-key-event look first in the current mode keymaps
+
+* DONE [22-07-2026] Add a major-mode arg to define-key function
+
+* DONE [22-07-2026] Create the minibuffer major mode
 

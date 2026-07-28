@@ -7,5 +7,5 @@
 (defun open-config ()
   (find-file "~/.config/rsedit/init.lisp"))
 
-(eval-file "core/lisp/minibuffer.lisp")
+(eval-file "minibuffer")
 (log "End of the stdlib.lisp")

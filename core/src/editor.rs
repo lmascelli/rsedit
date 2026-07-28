@@ -139,17 +139,18 @@ impl<B: BufferTrait> EditorState<B> {
             log_file: None,
         };
 
+        // Add the rsedit std lisp sources to *lisp-path*
         match std::env::current_exe() {
             Ok(exe_path) => {
                 editor_state
                     .lisp_path
                     .write()
                     .expect("Failed to acquire write lock on stdlib_path")
-                    .push(format!("{}/core/lisp", exe_path.display()));
+                    .push(format!("{}/data/lisp", exe_path.parent().expect("[ERROR] Failed to acquire the parent folder of the rsedit executable").display()));
             }
             Err(e) => {
                 editor_state.log_diagnostic(&format!(
-                    "[ERROR] Failed to load the editor stdlib. {:?}",
+                    "[ERROR] Failed to find the path of rsedit executable. {:?}",
                     e
                 ));
             }
@@ -192,48 +193,51 @@ impl<B: BufferTrait> EditorState<B> {
     /// the error of the evaluation.
     pub fn eval_file(&self, file: &str, env: Arc<Env<Self>>) -> Result<ELispExp<B>, EvalError> {
         // first search the file as a relative path
-        let content = format!("(progn {})", match std::fs::read_to_string(file) {
-            Ok(content) => content,
-            Err(err) => {
-                // if file wasn't a path to an existing file
-                if let std::io::ErrorKind::NotFound = err.kind() {
-                    // if file is instead a name of a lisp file without extension
-                    if file.contains('\\') || file.contains('/') || file.contains('.') {
-                        self.log_diagnostic(&format!(
-                            "[ERROR] eval_file {file} is not a valid script name"
-                        ));
-                        return Ok(ELispExp::list(vec![]));
-                    } else {
-                        // search for file.lisp in every lisp-path folder
-                        let mut script_content = None;
-                        for path in self
-                            .lisp_path
-                            .read()
-                            .expect("Failed to acquire read lock on lisp_file")
-                            .iter()
-                        {
-                            if let Ok(content) =
-                                std::fs::read_to_string(&format!("{path}/{file}.lisp"))
-                            {
-                                script_content = Some(content);
-                                break;
-                            }
-                        }
-                        if let Some(content) = script_content {
-                            content
-                        } else {
+        let content = format!(
+            "(progn {})",
+            match std::fs::read_to_string(file) {
+                Ok(content) => content,
+                Err(err) => {
+                    // if file wasn't a path to an existing file
+                    if let std::io::ErrorKind::NotFound = err.kind() {
+                        // if file is instead a name of a lisp file without extension
+                        if file.contains('\\') || file.contains('/') || file.contains('.') {
                             self.log_diagnostic(&format!(
-                                "[ERROR] eval_file {file}.lisp was not found in lisp_path"
+                                "[ERROR] eval_file {file} is not a valid script name"
                             ));
                             return Ok(ELispExp::list(vec![]));
+                        } else {
+                            // search for file.lisp in every lisp-path folder
+                            let mut script_content = None;
+                            for path in self
+                                .lisp_path
+                                .read()
+                                .expect("Failed to acquire read lock on lisp_file")
+                                .iter()
+                            {
+                                if let Ok(content) =
+                                    std::fs::read_to_string(&format!("{path}/{file}.lisp"))
+                                {
+                                    script_content = Some(content);
+                                    break;
+                                }
+                            }
+                            if let Some(content) = script_content {
+                                content
+                            } else {
+                                self.log_diagnostic(&format!(
+                                    "[ERROR] eval_file {file}.lisp was not found in lisp_path"
+                                ));
+                                return Ok(ELispExp::list(vec![]));
+                            }
                         }
+                    } else {
+                        self.log_diagnostic(&format!("[ERROR] Failed eval file {file} {:?}", err));
+                        return Ok(ELispExp::list(vec![]));
                     }
-                } else {
-                    self.log_diagnostic(&format!("[ERROR] Failed eval file {file} {:?}", err));
-                    return Ok(ELispExp::list(vec![]));
                 }
             }
-        });
+        );
 
         let ast = if let Ok(ast) = Parser::new(&content).next() {
             ast
@@ -293,29 +297,33 @@ impl<B: BufferTrait> EditorState<B> {
     pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
         let mut symbol_name = String::new();
         let mut keymap_found = false;
-        
-        // Look for the keymap in the major mode of the current buffer 
+
+        // Look for the keymap in the major mode of the current buffer
         if let Some(current_mode) = self
             .mode_registry
             .read()
             .expect("Failed to acquire read lock on mode_registry")
-            .get(&self.get_current_buffer().read().expect("Failed to acquire read lock on current_buffer").current_mode)
-            {
-                if let Some(mode_symbol_name) = 
-                current_mode
-                    .keymaps
-                    .get(&event){
-                        symbol_name = mode_symbol_name.to_string();
-                        keymap_found = true;
-                    }
-            };
+            .get(
+                &self
+                    .get_current_buffer()
+                    .read()
+                    .expect("Failed to acquire read lock on current_buffer")
+                    .current_mode,
+            )
+        {
+            if let Some(mode_symbol_name) = current_mode.keymaps.get(&event) {
+                symbol_name = mode_symbol_name.to_string();
+                keymap_found = true;
+            }
+        };
 
         // If no keymap was found in the major mode look for it in the global keymaps
-        if !keymap_found && let Some(global_symbol_name) = self
-            .keymaps
-            .read()
-            .expect("Failed to acquire read lock on keymaps")
-            .get(&event)
+        if !keymap_found
+            && let Some(global_symbol_name) = self
+                .keymaps
+                .read()
+                .expect("Failed to acquire read lock on keymaps")
+                .get(&event)
         {
             symbol_name = global_symbol_name.to_string();
             keymap_found = true;
@@ -533,6 +541,21 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on current buffer");
         op(&mut *guard)
     }
+
+    fn add_lisp_path(&self, path: &str) {
+        self.lisp_path
+            .write()
+            .expect("Failed to acquire write lock on lisp_path")
+            .push(path.to_string());
+    }
+
+    fn get_lisp_path(&self) -> Vec<String> {
+        (*self
+            .lisp_path
+            .read()
+            .expect("Failed to acquire read lock on lisp_path"))
+        .clone()
+    }
 }
 
 /// Create a global EditorState environment and a Lisp environment associated to it.
@@ -573,6 +596,14 @@ pub fn create_global_env<B: BufferTrait>()
     insert_fn!("clear-buffer", clear_buffer);
 
     // --------------------- LOADING LISP STDLIB -------------------------------
+
+    // Set the `rsedit-path' env variable to the path of rsedit
+    let current_exe_path =
+        std::env::current_exe().expect("Failed to locate the path of rsedit executable");
+    env.set_variable(
+        "rsedit-path".into(),
+        ELispExp::string(format!("{}", current_exe_path.display())),
+    );
 
     let stdlib_src = format!(
         "(progn {})",
