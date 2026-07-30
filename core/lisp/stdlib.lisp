@@ -1,7 +1,11 @@
 (make-mode 'fundamental-mode)
 (make-mode 'lisp-interactive-mode)
 
-(define-key nil "C-s" 'save-buffer)
+(defun minibuffer-toggle ()
+  (make-floating-window "*minibuffer*" 1 27 50 3 " ")
+  )
+
+(define-key nil "M-x" 'minibuffer-toggle)
 (define-key nil "<backspace>" 'delete-backward-char)
 
 (defun open-config ()

@@ -97,7 +97,7 @@ pub fn fill_default_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
             code: KeyCode::Enter,
             modifiers: KeyModifiers::default(),
         },
-        "insert-line".into(),
+        "insert-newline".into(),
     );
 
     for c in ' '..='~' {

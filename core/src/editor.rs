@@ -274,11 +274,11 @@ impl<B: BufferTrait> EditorState<B> {
 
                     self.set_current_buffer_name(name);
 
-                    self.set_echo_message(&format!("Loaded {}", file_path));
+                    self.log_diagnostic(&format!("Loaded {}", file_path));
                     Some(name.to_string())
                 }
                 Err(e) => {
-                    self.set_echo_message(&format!("Error reading file: {}", e));
+                    self.log_diagnostic(&format!("Error reading file: {}", e));
                     None
                 }
             }
@@ -335,17 +335,23 @@ impl<B: BufferTrait> EditorState<B> {
             return;
         };
 
-        let mut ast = vec![ELispExp::symbol(symbol_name)];
-        if let KeyCode::Char(c) = event.code {
-            ast.push(ELispExp::string(c.to_string()));
+        let mut ast = vec![ELispExp::symbol(symbol_name.clone())];
+        // TODO(uncertain) 28-07-2026 i'm not sure that hardcode the check for
+        // symbol_name == "self-insert" is the more clean solution to avoid
+        // passing the input to the called function. Maybe i should check
+        // the function first if it need an input and somehow create a lookup
+        // table to verify that that input is the keycode provided and only
+        // in those cases pass the keycode to the ast.
+        if symbol_name == "self-insert" {
+            if let KeyCode::Char(c) = event.code {
+                ast.push(ELispExp::string(c.to_string()));
+            }
         }
         let ast = ELispExp::list(ast);
 
         if let Err(e) = eval(&ast, env.clone(), self) {
-            self.set_echo_message(&format!("Eval Error: {:?} {:?}", ast, e));
+            self.log_diagnostic(&format!("Eval Error: {:?} {:?}", ast, e));
             return;
-        } else {
-            self.set_echo_message("");
         }
 
         let current_mode_name = {
@@ -747,13 +753,13 @@ mod primitives {
                     match parser.next() {
                         Ok(ast) => Ok(ast),
                         Err(e) => {
-                            ctx.set_echo_message(&format!("Parse Error in {}: {:?}", path_str, e));
+                            ctx.log_diagnostic(&format!("Parse Error in {}: {:?}", path_str, e));
                             Ok(nil!())
                         }
                     }
                 }
                 Err(e) => {
-                    ctx.set_echo_message(&format!("Could not load {}: {}", path_str, e));
+                    ctx.log_diagnostic(&format!("Could not load {}: {}", path_str, e));
                     Ok(nil!())
                 }
             }
@@ -824,7 +830,7 @@ mod primitives {
                         Ok(ELispExp::symbol("t".into()))
                     }
                 } else {
-                    ctx.set_echo_message(&format!("Invalid key sequence: {}", key_str));
+                    ctx.log_diagnostic(&format!("Invalid key sequence: {}", key_str));
                     Ok(nil!())
                 }
             } else {
@@ -911,7 +917,7 @@ mod primitives {
 
                 Ok(ELispExp::symbol("t".into()))
             } else {
-                ctx.set_echo_message(&format!("Mode {} does not exist", mode_name));
+                ctx.log_diagnostic(&format!("Mode {} does not exist", mode_name));
                 Ok(nil!())
             }
         } else {
@@ -1135,18 +1141,18 @@ mod primitives {
         let path = if let Some(path) = &buf.file_path {
             path.to_string()
         } else {
-            ctx.set_echo_message("No file associated with this buffer");
+            ctx.log_diagnostic("No file associated with this buffer");
             return Ok(nil!());
         };
         let content = buf.text.to_string();
         match std::fs::write(&path, content) {
             Ok(_) => {
                 buf.is_modified = false;
-                ctx.set_echo_message(&format!("Wrote {}", path));
+                ctx.log_diagnostic(&format!("Wrote {}", path));
                 Ok(nil!())
             }
             Err(e) => {
-                ctx.set_echo_message(&format!("Failed to save: {}", e));
+                ctx.log_diagnostic(&format!("Failed to save: {}", e));
                 Ok(nil!())
             }
         }
