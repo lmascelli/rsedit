@@ -185,7 +185,15 @@ mod tests {
                 for (i, param_name) in lambda.params.iter().enumerate() {
                     call_frame.set_variable(param_name.clone(), func_args[i].clone());
                 }
-                eval(&lambda.body, call_frame, ctx)
+
+                if lambda.body.is_empty() {
+                    return Ok(LispExp::symbol("nil".into()));
+                } else {
+                    for exp in &lambda.body[0..lambda.body.len() - 1] {
+                        eval(exp, call_frame.clone(), ctx)?;
+                    }
+                    eval(lambda.body.last().expect("Failed to get the last expression in the function call"), call_frame, ctx,)
+                }
             }
             LispExp::Primitive(func) => func(func_args, env, ctx),
             _ => Err(EvalError::UncorrectFunctionDefinition),

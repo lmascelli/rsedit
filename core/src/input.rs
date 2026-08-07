@@ -1,8 +1,5 @@
+use crate::{ELispExp, buffer::BufferTrait};
 use std::collections::HashMap;
-use crate::{
-    buffer::{BufferTrait},
-    ELispExp,
-};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum KeyCode {
@@ -109,7 +106,8 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
             code: KeyCode::Char(c),
             modifiers: KeyModifiers::default(), // No modifiers (Ctrl/Alt off)
         };
-        keymaps.insert(event,
+        keymaps.insert(
+            event,
             ELispExp::list(vec![
                 ELispExp::symbol("self-insert".into()),
                 ELispExp::string(c.into()),

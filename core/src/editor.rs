@@ -770,9 +770,7 @@ mod primitives {
                 got: args.len(),
             })
         } else {
-            if let (mode, ELispExp::String(key_str), ast) =
-                (&args[0], &args[1], &args[2])
-            {
+            if let (mode, ELispExp::String(key_str), ast) = (&args[0], &args[1], &args[2]) {
                 let mode_name: Option<String> = match mode {
                     ELispExp::Symbol(mode_name) | ELispExp::String(mode_name) => {
                         if mode_name.as_str() == "nil" {

@@ -1,6 +1,4 @@
-use crate::{
-    buffer::{Buffer, BufferTrait},
-};
+use crate::buffer::{Buffer, BufferTrait};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},

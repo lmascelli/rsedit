@@ -34,7 +34,7 @@ pub(super) enum Token {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lambda<T: LispContext> {
     pub params: Vec<String>,
-    pub body: LispExp<T>,
+    pub body: Vec<LispExp<T>>,
     pub env: Arc<Env<T>>,
     pub doc: Option<Arc<String>>,
 }
@@ -881,7 +881,12 @@ fn eval_special_form_or_call_step<T: LispContext>(
 
                 std::thread::spawn(move || {
                     let thread_frame = Env::new_child(&lambda_clone.env);
-                    let _ = eval(&lambda_clone.body, thread_frame, &mut thread_ctx);
+                    for exp in &lambda_clone.body {
+                        if let Err(err) = eval(exp, thread_frame.clone(), &mut thread_ctx) {
+                            thread_ctx.log_diagnostic(&format!("[LISP thread] {err:?}"));
+                            break;
+                        }
+                    }
                 });
 
                 Ok(EvalStep::Done(LispExp::list(vec![])))
@@ -964,7 +969,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
 
                 let lambda = Lambda {
                     params: params_vec,
-                    body: args[body_index].clone(),
+                    body: args[body_index..].to_vec(),
                     env: env.clone(),
                     doc,
                 };
@@ -977,7 +982,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
         }
 
         "lambda" => {
-            if args.len() < 2 {
+            if args.is_empty() {
                 return Err(EvalError::DefunNotCorrectExpression);
             }
 
@@ -995,7 +1000,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 return Err(EvalError::DefunParamsAreNotAList);
             }
 
-            let body = args[1].clone();
+            let body = args[1..].to_vec();
 
             Ok(EvalStep::Done(LispExp::lambda(Lambda {
                 params: params_vec,
@@ -1093,8 +1098,26 @@ fn eval_function_call_step<T: LispContext>(
             for (i, param_name) in lambda.params.iter().enumerate() {
                 call_frame.set_variable(param_name.clone(), evaled_args[i].clone());
             }
-            
-            Ok(EvalStep::TailCall(lambda.body.clone(), call_frame))
+
+            if lambda.body.is_empty() {
+                return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
+            }
+
+            for arg in &lambda.body[0..lambda.body.len() - 1] {
+                eval(
+                    arg,
+                    call_frame.clone(),
+                    ctx,
+                )?;
+            }
+
+            Ok(EvalStep::TailCall(
+                lambda
+                    .body
+                    .last()
+                    .expect("Failed to get the last expression in the function call")
+                    .clone()
+                , call_frame))
         } else if let LispExp::Primitive(function) = func {
             Ok(EvalStep::Done(function(
                 &evaled_args[..],
