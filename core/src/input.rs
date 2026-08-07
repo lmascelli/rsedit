@@ -1,4 +1,8 @@
 use std::collections::HashMap;
+use crate::{
+    buffer::{BufferTrait},
+    ELispExp,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum KeyCode {
@@ -39,7 +43,7 @@ impl KeyEvent {
 
 /// Fills a keymaps map with all the ascii char self-insert char so the editor
 /// can handle the typing of letters, digits and most of symbols.
-pub fn fill_default_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
+pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELispExp<B>>) {
     // -------------------------------- EDITOR ---------------------------------
     keymaps.insert(
         KeyEvent {
@@ -49,7 +53,7 @@ pub fn fill_default_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
                 ..Default::default()
             },
         },
-        "quit".into(),
+        ELispExp::list(vec![ELispExp::symbol("quit".into())]),
     );
 
     // -------------------------------- BUFFER ---------------------------------
@@ -61,7 +65,7 @@ pub fn fill_default_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
                 ..Default::default()
             },
         },
-        "save-buffer".into(),
+        ELispExp::list(vec![ELispExp::symbol("save-buffer".into())]),
     );
 
     keymaps.insert(
@@ -69,35 +73,35 @@ pub fn fill_default_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
             code: KeyCode::Left,
             modifiers: KeyModifiers::default(),
         },
-        "backward-char".into(),
+        ELispExp::list(vec![ELispExp::symbol("backward-char".into())]),
     );
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Right,
             modifiers: KeyModifiers::default(),
         },
-        "forward-char".into(),
+        ELispExp::list(vec![ELispExp::symbol("forward-char".into())]),
     );
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Up,
             modifiers: KeyModifiers::default(),
         },
-        "previous-line".into(),
+        ELispExp::list(vec![ELispExp::symbol("previous-line".into())]),
     );
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Down,
             modifiers: KeyModifiers::default(),
         },
-        "next-line".into(),
+        ELispExp::list(vec![ELispExp::symbol("next-line".into())]),
     );
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Enter,
             modifiers: KeyModifiers::default(),
         },
-        "insert-newline".into(),
+        ELispExp::list(vec![ELispExp::symbol("insert-newline".into())]),
     );
 
     for c in ' '..='~' {
@@ -105,6 +109,11 @@ pub fn fill_default_keymaps(keymaps: &mut HashMap<KeyEvent, String>) {
             code: KeyCode::Char(c),
             modifiers: KeyModifiers::default(), // No modifiers (Ctrl/Alt off)
         };
-        keymaps.insert(event, "self-insert".into());
+        keymaps.insert(event,
+            ELispExp::list(vec![
+                ELispExp::symbol("self-insert".into()),
+                ELispExp::string(c.into()),
+            ]),
+        );
     }
 }

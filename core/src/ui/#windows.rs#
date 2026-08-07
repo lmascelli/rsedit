@@ -1,5 +1,6 @@
 use crate::{
     buffer::{Buffer, BufferTrait},
+    editor::EditorState,
 };
 use std::{
     collections::HashMap,

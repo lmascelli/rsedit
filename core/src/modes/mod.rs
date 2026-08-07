@@ -12,7 +12,7 @@ pub use syntax::SyntaxRule;
 #[derive(Clone, Debug)]
 pub struct MajorMode<B: BufferTrait> {
     pub name: String,
-    pub keymaps: HashMap<KeyEvent, String>,
+    pub keymaps: HashMap<KeyEvent, ELispExp<B>>,
     pub syntax_rules: Vec<SyntaxRule>,
     pub hooks: HashMap<String, Vec<ELispExp<B>>>,
 }

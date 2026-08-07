@@ -66,7 +66,7 @@ pub struct SyntaxTask {
 }
 
 impl<B: BufferTrait> ImmediateTask<B> for SyntaxTask {
-    fn execute(self: Box<Self>, state: &EditorState<B>) {
+    fn execute(self: Box<Self>, _state: &EditorState<B>) {
         // TODO()
     }
 }

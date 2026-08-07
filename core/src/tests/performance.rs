@@ -256,7 +256,7 @@ mod performance_tests {
         ]);
 
         // Mappiamo Ctrl+T alla nostra dummy action
-        test_mode.keymap.insert(ctrl_event('t'), dummy_action);
+        test_mode.keymaps.insert(ctrl_event('t'), dummy_action);
         state
             .mode_registry
             .write()

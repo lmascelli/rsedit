@@ -70,7 +70,7 @@ fn primitive_function_doc<T: LispContext>(
                         };
                         Ok(LispExp::string(doc))
                     }
-                    LispExp::Primitive(primitive) => Ok(LispExp::string(
+                    LispExp::Primitive(_) => Ok(LispExp::string(
                         "Primitive function. Doc not provided at the moment".into(),
                     )),
                     _ => unreachable!(),

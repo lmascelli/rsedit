@@ -1,7 +1,7 @@
 use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
-    input::{KeyCode, KeyEvent, fill_default_keymaps},
+    input::{KeyEvent, fill_default_keymaps},
     lisp::{Env, EvalError, LispContext, LispExp, Parser, bootstrap_vm, eval},
     modes::MajorMode,
     task::{BackgroundScheduler, WorkerMessage},
@@ -37,7 +37,7 @@ pub struct EditorState<B: BufferTrait> {
 
     /// A keymap is an association between a KeyEvent and the name of a
     /// function that have to be executed (i.e. self-insert)
-    pub keymaps: Arc<RwLock<HashMap<KeyEvent, String>>>,
+    pub keymaps: Arc<RwLock<HashMap<KeyEvent, ELispExp<B>>>>,
     pub mode_registry: Arc<RwLock<HashMap<String, MajorMode<B>>>>,
     /// This is the root of the window tree that the UI should visualize
     pub layout_root: Arc<RwLock<LayoutNode>>,
@@ -295,7 +295,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Handle a key event. An UI provider is responsible to call this function
     /// every time it want to make the editor react to an user input.
     pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
-        let mut symbol_name = String::new();
+        let mut ast = ELispExp::list(vec![]);
         let mut keymap_found = false;
 
         // Look for the keymap in the major mode of the current buffer
@@ -311,21 +311,21 @@ impl<B: BufferTrait> EditorState<B> {
                     .current_mode,
             )
         {
-            if let Some(mode_symbol_name) = current_mode.keymaps.get(&event) {
-                symbol_name = mode_symbol_name.to_string();
+            if let Some(mode_ast) = current_mode.keymaps.get(&event) {
+                ast = mode_ast.clone();
                 keymap_found = true;
             }
         };
 
         // If no keymap was found in the major mode look for it in the global keymaps
         if !keymap_found
-            && let Some(global_symbol_name) = self
+            && let Some(global_ast) = self
                 .keymaps
                 .read()
                 .expect("Failed to acquire read lock on keymaps")
                 .get(&event)
         {
-            symbol_name = global_symbol_name.to_string();
+            ast = global_ast.clone();
             keymap_found = true;
         };
 
@@ -335,20 +335,12 @@ impl<B: BufferTrait> EditorState<B> {
             return;
         };
 
-        let mut ast = vec![ELispExp::symbol(symbol_name.clone())];
         // TODO(uncertain) 28-07-2026 i'm not sure that hardcode the check for
         // symbol_name == "self-insert" is the more clean solution to avoid
         // passing the input to the called function. Maybe i should check
         // the function first if it need an input and somehow create a lookup
         // table to verify that that input is the keycode provided and only
         // in those cases pass the keycode to the ast.
-        if symbol_name == "self-insert" {
-            if let KeyCode::Char(c) = event.code {
-                ast.push(ELispExp::string(c.to_string()));
-            }
-        }
-        let ast = ELispExp::list(ast);
-
         if let Err(e) = eval(&ast, env.clone(), self) {
             self.log_diagnostic(&format!("Eval Error: {:?} {:?}", ast, e));
             return;
@@ -778,7 +770,7 @@ mod primitives {
                 got: args.len(),
             })
         } else {
-            if let (mode, ELispExp::String(key_str), ELispExp::Symbol(func_name)) =
+            if let (mode, ELispExp::String(key_str), ast) =
                 (&args[0], &args[1], &args[2])
             {
                 let mode_name: Option<String> = match mode {
@@ -813,7 +805,7 @@ mod primitives {
                             .write()
                             .expect("Failed to acquire write lock on mode_registry");
                         if let Some(mode) = mode_registry_lock.get_mut(&mode_name) {
-                            mode.keymaps.insert(key_event, func_name.to_string());
+                            mode.keymaps.insert(key_event, ast.clone());
                             Ok(t!())
                         } else {
                             ctx.log_diagnostic(&format!(
@@ -826,7 +818,7 @@ mod primitives {
                             .keymaps
                             .write()
                             .expect("Failed to acquire write lock on keymaps");
-                        keymaps.insert(key_event, func_name.to_string());
+                        keymaps.insert(key_event, ast.clone());
                         Ok(ELispExp::symbol("t".into()))
                     }
                 } else {

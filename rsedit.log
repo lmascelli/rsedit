@@ -2,3 +2,4 @@
 [LOG] VM Handshake: State verification successful. Core is stable.
 [LOG] End of the minibuffer.lisp
 [LOG] End of the stdlib.lisp
+[LOG] Eval Error: Symbol("minibuffer-spawn") UnboundVariable("minibuffer-spawn")

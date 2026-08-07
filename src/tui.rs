@@ -59,20 +59,32 @@ fn draw_window_border(
 ) -> std::io::Result<()> {
     // TODO ensure that the rect.x and rect.y values start from 1
     let top_border = if let Some(title) = title {
-        format!("─{}{}", title, vec!['─'; rect.width - title.len()-1].iter().collect::<String>())
+        format!(
+            "─{}{}",
+            title,
+            vec!['─'; rect.width - title.len() - 1]
+                .iter()
+                .collect::<String>()
+        )
     } else {
-       vec!['─'; rect.width].iter().collect::<String>() 
+        vec!['─'; rect.width].iter().collect::<String>()
     };
     stdout.queue(cursor::MoveTo((rect.x - 1) as u16, (rect.y - 1) as u16))?;
     stdout.queue(Print(format!("┌{}┐", top_border)))?;
-    for r in (rect.y)..=(rect.y+rect.height) {
+    for r in (rect.y)..(rect.y + rect.height) {
         stdout.queue(cursor::MoveTo((rect.x - 1) as u16, r as u16))?;
         stdout.queue(Print('│'))?;
         stdout.queue(cursor::MoveTo((rect.x + rect.width) as u16, r as u16))?;
         stdout.queue(Print('│'))?;
     }
-    stdout.queue(cursor::MoveTo((rect.x - 1) as u16, (rect.y + rect.height + 1) as u16))?;
-    stdout.queue(Print(format!("└{}┘", vec!['─'; rect.width].iter().collect::<String>())))?;
+    stdout.queue(cursor::MoveTo(
+        (rect.x - 1) as u16,
+        (rect.y + rect.height) as u16,
+    ))?;
+    stdout.queue(Print(format!(
+        "└{}┘",
+        vec!['─'; rect.width].iter().collect::<String>()
+    )))?;
     Ok(())
 }
 
