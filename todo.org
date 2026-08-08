@@ -2,7 +2,7 @@
 #+title: rsedit
 
 * [05-07-2026] Add an init.lisp system
-* [05-07-2026] Make lisp functions accept multiple expressions as body
+* DONE [05-07-2026] Make lisp functions accept multiple expressions as body
 - maybe wrap them in a progn
 - maybe eval all expr and return the evaluation of the last one
 
@@ -14,6 +14,8 @@ At the moment i switched the keymaps map to be a dict of KeyEvent-LispExp. This 
 - create a match-list function that given a list of strings and a pattern returns all element of the list containing that pattern
 - create a lisp function that spawn a show the minibuffer. it must be a new buffer with major-mode minibuffer-mode. the ui of the buffer still has to be decided.
 * [27-07-2026] Move the *lisp-path* variable to a string list in lisp env
+- Add an add-to-list and remove-from-list native functions
+- Modify the eval-file function to look for paths in the lisp-path list in the editor environment
 * DONE [27-07-2026] Add the folder "data/lisp" in the same path of the editor executable to the *lisp-path* list
 * DONE [26-07-2026] Make the build.rs script copy the lisp files in the appropriate location in target directory
 

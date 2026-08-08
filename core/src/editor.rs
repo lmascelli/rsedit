@@ -48,9 +48,6 @@ pub struct EditorState<B: BufferTrait> {
     /// A value only used to fastly create a new window id
     pub next_window_id: Arc<AtomicUsize>,
 
-    /// The lisp of paths where to look for lisp files
-    pub lisp_path: Arc<RwLock<Vec<String>>>,
-
     /// The fuel of the lisp machine, if somehow it will start to use too much
     /// cpu power, it will run out of fuel
     fuel: Arc<AtomicU32>,
@@ -133,29 +130,10 @@ impl<B: BufferTrait> EditorState<B> {
             floating_windows: Arc::new(RwLock::new(Vec::new())),
             focused_window_id: Arc::new(RwLock::new(0)),
             next_window_id: Arc::new(AtomicUsize::new(1)),
-            lisp_path: Arc::new(RwLock::new(Vec::new())),
             fuel: Arc::new(AtomicU32::new(10_000)),
             logs: Arc::new(RwLock::new(Vec::new())),
             log_file: None,
         };
-
-        // Add the rsedit std lisp sources to *lisp-path*
-        match std::env::current_exe() {
-            Ok(exe_path) => {
-                editor_state
-                    .lisp_path
-                    .write()
-                    .expect("Failed to acquire write lock on stdlib_path")
-                    .push(format!("{}/data/lisp", exe_path.parent().expect("[ERROR] Failed to acquire the parent folder of the rsedit executable").display()));
-            }
-            Err(e) => {
-                editor_state.log_diagnostic(&format!(
-                    "[ERROR] Failed to find the path of rsedit executable. {:?}",
-                    e
-                ));
-            }
-        }
-
         BackgroundScheduler::spawn(receiver, editor_state.clone());
 
         editor_state
@@ -192,9 +170,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// the evaluation succeeds return a list with the result of the evaluation or
     /// the error of the evaluation.
     pub fn eval_file(&self, file: &str, env: Arc<Env<Self>>) -> Result<ELispExp<B>, EvalError> {
-        // first search the file as a relative path
         let content = format!(
             "(progn {})",
+            // first search the file as a relative path
             match std::fs::read_to_string(file) {
                 Ok(content) => content,
                 Err(err) => {
@@ -208,13 +186,30 @@ impl<B: BufferTrait> EditorState<B> {
                             return Ok(ELispExp::list(vec![]));
                         } else {
                             // search for file.lisp in every lisp-path folder
+                            // 1. get the lisp-path lists, and check it is a list of strings
+                            let mut lisp_path = vec![];
+                            if let Some(lisp_path_list) = env.get_variable("lisp-path") {
+                                if let ELispExp::List(paths) = lisp_path_list {
+                                    for ipath in paths.iter() {
+                                        if let ELispExp::String(path) = ipath {
+                                            lisp_path.push(path.clone());
+                                        } else {
+                                            self.log_diagnostic(&format!(
+                                                "Element in lisp-path is not a path {:?}",
+                                                ipath
+                                            ));
+                                        }
+                                    }
+                                } else {
+                                    self.log_diagnostic(
+                                        "Variable lisp-path is not a list of paths",
+                                    );
+                                    return Ok(ELispExp::symbol("nil".into()));
+                                }
+                            };
+                            // 2. check for each path in lisp-path if there is a file in *path*/*file*.lisp
                             let mut script_content = None;
-                            for path in self
-                                .lisp_path
-                                .read()
-                                .expect("Failed to acquire read lock on lisp_file")
-                                .iter()
-                            {
+                            for path in lisp_path {
                                 if let Ok(content) =
                                     std::fs::read_to_string(&format!("{path}/{file}.lisp"))
                                 {
@@ -539,21 +534,6 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on current buffer");
         op(&mut *guard)
     }
-
-    fn add_lisp_path(&self, path: &str) {
-        self.lisp_path
-            .write()
-            .expect("Failed to acquire write lock on lisp_path")
-            .push(path.to_string());
-    }
-
-    fn get_lisp_path(&self) -> Vec<String> {
-        (*self
-            .lisp_path
-            .read()
-            .expect("Failed to acquire read lock on lisp_path"))
-        .clone()
-    }
 }
 
 /// Create a global EditorState environment and a Lisp environment associated to it.
@@ -563,6 +543,28 @@ pub fn create_global_env<B: BufferTrait>()
 -> Result<(EditorState<B>, Arc<Env<EditorState<B>>>), EvalError> {
     let editor_state = EditorState::new();
     let env = bootstrap_vm(&editor_state)?;
+
+    // Add the rsedit std lisp sources to *lisp-path*
+    match std::env::current_exe() {
+        Ok(exe_path) => {
+            env.set_variable(
+                "lisp-path".into(),
+                ELispExp::list(vec![ELispExp::string(format!(
+                    "{}/data/lisp",
+                    exe_path
+                        .parent()
+                        .expect("Failed to get the parent directory of rsedit")
+                        .display()
+                ))]),
+            );
+        }
+        Err(e) => {
+            editor_state.log_diagnostic(&format!(
+                "[ERROR] Failed to find the path of rsedit executable. {:?}",
+                e
+            ));
+        }
+    }
 
     // ---------------------- FILLING PRIMITIVE FUNCTIONS ----------------------
     macro_rules! insert_fn {

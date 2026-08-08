@@ -101,6 +101,7 @@ pub enum EvalError {
     LetUnvalidBindingList,
     LetNoBindingsProvided,
     OutOfFuel,
+    RuntimeMessage(String),
 }
 
 #[derive(Debug)]

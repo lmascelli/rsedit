@@ -187,6 +187,122 @@ fn primitive_compare<T: LispContext>(
     }
 }
 
+fn primitive_add_to_list<T: LispContext>(
+    args: &[LispExp<T>],
+    env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.len() < 2 {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        })
+    } else {
+        if let LispExp::Symbol(list_name) = &args[0] {
+            if let Some(LispExp::List(list)) = env.get_variable(&list_name) {
+                let mut new_list = (*list).clone();
+                for i in 1..args.len() {
+                    if !list.contains(&args[i]) {
+                        new_list.insert(0, args[i].clone());
+                    }
+                }
+                env.set_variable(list_name.to_string(), LispExp::list(new_list));
+                Ok(args[0].clone())
+            } else {
+                Err(EvalError::RuntimeMessage(format!(
+                    "[ERROR] add-to-list {} is not an existing list",
+                    list_name
+                )))
+            }
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "Symbol".into(),
+                got: format!("{:?}", &args[0]),
+            })
+        }
+    }
+}
+
+fn primitive_append_to_list<T: LispContext>(
+    args: &[LispExp<T>],
+    env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.len() < 2 {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        })
+    } else {
+        if let LispExp::Symbol(list_name) = &args[0] {
+            if let Some(LispExp::List(list)) = env.get_variable(&list_name) {
+                let mut new_list = (*list).clone();
+                for i in 1..args.len() {
+                    if !list.contains(&args[i]) {
+                        new_list.push(args[i].clone());
+                    }
+                }
+                env.set_variable(list_name.to_string(), LispExp::list(new_list));
+                Ok(args[0].clone())
+            } else {
+                Err(EvalError::RuntimeMessage(format!(
+                    "[ERROR] append-to-list {} is not an existing list",
+                    list_name
+                )))
+            }
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "Symbol".into(),
+                got: format!("{:?}", &args[0]),
+            })
+        }
+    }
+}
+
+fn primitive_remove_from_list<T: LispContext>(
+    args: &[LispExp<T>],
+    env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
+
+    if args.len() < 2 {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        })
+    } else {
+        if let LispExp::Symbol(list_name) = &args[0] {
+            if let Some(LispExp::List(list)) = env.get_variable(&list_name) {
+                let mut new_list = vec![];
+                for el in list.iter() {
+                    let mut el_found = false;
+                    for arg in &args[1..] {
+                        if el == arg {
+                            el_found = true;
+                            break;
+                        }
+                    }
+                    if !el_found {
+                        new_list.push(el.clone());
+                    }
+                }
+                env.set_variable(list_name.to_string(), LispExp::list(new_list));
+                Ok(args[0].clone())
+            } else {
+                Err(EvalError::RuntimeMessage(format!(
+                    "[ERROR] add-to-list {} is not an existing list",
+                    list_name
+                )))
+            }
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "Symbol".into(),
+                got: format!("{:?}", &args[0]),
+            })
+        }
+    }
+}
+
 // -------------------------------- MULTI-THREADING ----------------------------
 
 fn primitive_atom<T: LispContext>(
@@ -305,21 +421,39 @@ fn primitive_resume<T: LispContext>(
 
 // -------------------------------- CONSTRUCTOR --------------------------------
 pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
+    // ------------------------------- Functions  ------------------------------
     // Functions
     env.set_function("funcall".into(), LispExp::Primitive(primitive_funcall));
     env.set_function(
         "function-doc".into(),
         LispExp::Primitive(primitive_function_doc),
     );
+    // Multithreading
     env.set_function("atom".into(), LispExp::Primitive(primitive_atom));
     env.set_function("deref".into(), LispExp::Primitive(primitive_deref));
     env.set_function("reset".into(), LispExp::Primitive(primitive_reset));
     env.set_function("resume".into(), LispExp::Primitive(primitive_resume));
+
+    // Base math
     env.set_function("+".into(), LispExp::Primitive(primitive_sum));
     env.set_function("-".into(), LispExp::Primitive(primitive_subtraction));
     env.set_function("=".into(), LispExp::Primitive(primitive_compare));
 
-    // Symbols
+    // List manipulation
+    env.set_function(
+        "add-to-list".into(),
+        LispExp::Primitive(primitive_add_to_list),
+    );
+    env.set_function(
+        "append-to-list".into(),
+        LispExp::Primitive(primitive_append_to_list),
+    );
+    env.set_function(
+        "remove-from-list".into(),
+        LispExp::Primitive(primitive_remove_from_list),
+    );
+
+    // ------------------------------- Symbols ------------------------------
     env.set_variable("nil".into(), LispExp::list(vec![]));
     env.set_variable("t".into(), LispExp::number(1.0));
 }
