@@ -1,5 +1,5 @@
 [LOG] VM Handshake: Initiating verification script...
 [LOG] VM Handshake: State verification successful. Core is stable.
-[LOG] /home/leonardo/projects/xedit_core/target/debug/data/lisp/minibuffer.lisp
 [LOG] End of the minibuffer.lisp
 [LOG] End of the stdlib.lisp
+[LOG] Hello from rsedit init.lisp

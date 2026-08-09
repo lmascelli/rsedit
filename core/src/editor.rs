@@ -9,8 +9,9 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    fs::File,
+    fs::{self, File},
     io::Write,
+    path::PathBuf,
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
@@ -619,6 +620,59 @@ pub fn create_global_env<B: BufferTrait>()
     } else {
         editor_state.log_diagnostic("CRITICAL: Failed to parse the standard library");
     }
+
+    // Look if there is a init.lisp file in
+    // - LINUX: ~/.config/rsedit/init.lisp
+    // - WINDOW: ~/AppData/Roaming/rsedit/init.lisp
+    // and if found not found create it and the path
+    // then evaluate it
+
+    let mut user_config_path = PathBuf::new();
+
+    #[cfg(target_os = "windows")]
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        user_config_path.push(appdata);
+        user_config_path.push("rsedit");
+        user_config_path.push("init.lisp");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    if let Ok(appdata) = std::env::var("HOME") {
+        user_config_path.push(appdata);
+        user_config_path.push(".config");
+        user_config_path.push("rsedit");
+        user_config_path.push("init.lisp");
+    }
+
+    if !user_config_path.as_os_str().is_empty() && !user_config_path.exists() {
+        if let Some(parent_dir) = user_config_path.parent() {
+            if let Err(err) = fs::create_dir_all(parent_dir) {
+                editor_state.log_diagnostic(&format!(
+                    "[ERROR] Failed to create the user configuration dir {}",
+                    err
+                ));
+            } else {
+                if let Err(err) = fs::write(
+                    &user_config_path,
+                    r#";; rsedit init.lisp
+;; Add your configuration here
+"#,
+                ) {
+                    editor_state.log_diagnostic(&format!(
+                        "[ERROR] Failed to write default user configuration {}",
+                        err
+                    ));
+                }
+            }
+        }
+    }
+
+    editor_state.eval_file(
+        user_config_path
+            .to_str()
+            .expect("Failed to retrieve a valid String from user_config_path"),
+        env.clone(),
+    )?;
 
     Ok((editor_state, env))
 }
