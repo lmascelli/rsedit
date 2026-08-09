@@ -1,5 +1,5 @@
 [LOG] VM Handshake: Initiating verification script...
 [LOG] VM Handshake: State verification successful. Core is stable.
+[LOG] End of the common-keymaps.lisp
 [LOG] End of the minibuffer.lisp
-[LOG] End of the stdlib.lisp
 [LOG] Hello from rsedit init.lisp

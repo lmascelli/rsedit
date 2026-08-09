@@ -80,7 +80,7 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
             log_file
                 .write()
                 .expect("Failed to acquire write lock on log_file")
-                .write_all(&format!("[LOG] {msg}\n").into_bytes())
+                .write_all(&format!("{msg}\n").into_bytes())
                 .expect("Failed to write into log file");
         }
     }
@@ -331,12 +331,6 @@ impl<B: BufferTrait> EditorState<B> {
             return;
         };
 
-        // TODO(uncertain) 28-07-2026 i'm not sure that hardcode the check for
-        // symbol_name == "self-insert" is the more clean solution to avoid
-        // passing the input to the called function. Maybe i should check
-        // the function first if it need an input and somehow create a lookup
-        // table to verify that that input is the keycode provided and only
-        // in those cases pass the keycode to the ast.
         if let Err(e) = eval(&ast, env.clone(), self) {
             self.log_diagnostic(&format!("Eval Error: {:?} {:?}", ast, e));
             return;
@@ -448,6 +442,37 @@ impl<B: BufferTrait> EditorState<B> {
         views
     }
 
+    pub fn resize(&self, env: Arc<Env<Self>>, new_screen_width: usize, new_screen_height: usize) {
+        env.set_variable("frame-width".into(), ELispExp::number(new_screen_width as f64));
+        env.set_variable("frame-height".into(), ELispExp::number(new_screen_height as f64));
+        if let Some(ELispExp::List(callback_list)) = env.get_variable("after-resize-hook") {
+            for el in callback_list.iter() {
+                match el {
+                    ELispExp::Lambda(_) | ELispExp::Symbol(_) => {
+                        if let Err(err) = eval(
+                            &ELispExp::list(vec![
+                                el.clone(),
+                                ELispExp::number(new_screen_width as f64),
+                                ELispExp::number(new_screen_height as f64),
+                            ]),
+                            env.clone(),
+                            self,
+                        ) {
+                            self.log_diagnostic(&format!("[ERROR] resize: {:?}", err));
+                        }
+                    }
+                    _ => {
+                        self.log_diagnostic(&format!("[WARNING] not a valid lambda for after-resize-hook {:?}", el));
+                    },
+                }
+            }
+        } else {
+            self.log_diagnostic(
+                "[WARNING] there is not after-resize-hook variable bound or it's not a list",
+            );
+        }
+    }
+
     //--------------------------------------------------------------------------
     //                         GETTERS AND SETTERS
     //--------------------------------------------------------------------------
@@ -545,6 +570,8 @@ pub fn create_global_env<B: BufferTrait>()
     let editor_state = EditorState::new();
     let env = bootstrap_vm(&editor_state)?;
 
+    // ---------------------- EDITOR ENVIRONMENT CONFIGURATION ----------------------
+
     // Add the rsedit std lisp sources to *lisp-path*
     match std::env::current_exe() {
         Ok(exe_path) => {
@@ -566,6 +593,21 @@ pub fn create_global_env<B: BufferTrait>()
             ));
         }
     }
+
+    // Add a list of callbacks that will be called after a resize event.
+    // The list will contain lambdas with arguments (new_width, new_height)
+    env.set_variable("after-resize-hook".into(), ELispExp::list(vec![]));
+
+    // Create the fundamental modes:
+    // - fundamental-mode to edit base files
+    editor_state
+        .mode_registry
+        .write()
+        .expect("Failed to acquire write lock on mode_registry")
+        .insert(
+            "fundamental-mode".into(),
+            MajorMode::new("fundamental-mode".into()),
+        );
 
     // ---------------------- FILLING PRIMITIVE FUNCTIONS ----------------------
     macro_rules! insert_fn {
@@ -596,7 +638,7 @@ pub fn create_global_env<B: BufferTrait>()
     insert_fn!("buffer-string", buffer_string);
     insert_fn!("clear-buffer", clear_buffer);
 
-    // --------------------- LOADING LISP STDLIB -------------------------------
+    // --------------------- LOADING LISP CONFIGURATION -------------------------------
 
     // Set the `rsedit-path' env variable to the path of rsedit
     let current_exe_path =
@@ -605,21 +647,6 @@ pub fn create_global_env<B: BufferTrait>()
         "rsedit-path".into(),
         ELispExp::string(format!("{}", current_exe_path.display())),
     );
-
-    let stdlib_src = format!(
-        "(progn {})",
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/lisp/stdlib.lisp"))
-    );
-
-    let mut parser = Parser::new(&stdlib_src);
-
-    if let Ok(ast) = parser.next() {
-        if let Err(e) = eval(&ast, env.clone(), &editor_state) {
-            editor_state.log_diagnostic(&format!("Stdlib Eval Error: {:?}", e));
-        }
-    } else {
-        editor_state.log_diagnostic("CRITICAL: Failed to parse the standard library");
-    }
 
     // Look if there is a init.lisp file in
     // - LINUX: ~/.config/rsedit/init.lisp
@@ -656,6 +683,10 @@ pub fn create_global_env<B: BufferTrait>()
                     &user_config_path,
                     r#";; rsedit init.lisp
 ;; Add your configuration here
+(eval-file "common-keymaps")
+(eval-file "minibuffer")
+
+
 "#,
                 ) {
                     editor_state.log_diagnostic(&format!(
@@ -819,7 +850,7 @@ mod primitives {
         }
     });
 
-    primitive!(define_key, args, _env, ctx, {
+    primitive!(define_key, args, env, ctx, {
         if args.len() != 3 {
             Err(EvalError::WrongNumberOfArguments {
                 expected: 3,
@@ -852,6 +883,15 @@ mod primitives {
                         });
                     }
                 };
+                let actual_ast = if let ELispExp::Symbol(symbol_name) = ast {
+                    if let Some(_) = env.get_function(symbol_name) {
+                        ELispExp::list(vec![ast.clone()])
+                    } else {
+                        ast.clone()
+                    }
+                } else {
+                    ast.clone()
+                };
                 if let Some(key_event) = parse_key_sequence(key_str) {
                     if let Some(mode_name) = mode_name {
                         let mut mode_registry_lock = ctx
@@ -859,7 +899,7 @@ mod primitives {
                             .write()
                             .expect("Failed to acquire write lock on mode_registry");
                         if let Some(mode) = mode_registry_lock.get_mut(&mode_name) {
-                            mode.keymaps.insert(key_event, ast.clone());
+                            mode.keymaps.insert(key_event, actual_ast);
                             Ok(t!())
                         } else {
                             ctx.log_diagnostic(&format!(
@@ -872,7 +912,7 @@ mod primitives {
                             .keymaps
                             .write()
                             .expect("Failed to acquire write lock on keymaps");
-                        keymaps.insert(key_event, ast.clone());
+                        keymaps.insert(key_event, actual_ast);
                         Ok(ELispExp::symbol("t".into()))
                     }
                 } else {

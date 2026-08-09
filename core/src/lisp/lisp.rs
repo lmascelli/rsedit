@@ -777,6 +777,58 @@ fn eval_step<T: LispContext>(
                     LispExp::Symbol(symbol) => {
                         eval_special_form_or_call_step(symbol, &list[1..], env.clone(), ctx)
                     }
+
+                    LispExp::List(_) => {
+                        let mut new_ast = vec![eval(head, env.clone(), ctx)?];
+                        for arg in &list[1..] {
+                            new_ast.push(arg.clone());
+                        }
+                        return Ok(EvalStep::TailCall(
+                            LispExp::list(new_ast),
+                            env.clone(),
+                        ));
+                    }
+                    
+                    LispExp::Lambda(lambda) => {
+                        // Directly eval the lambda with the arguments
+                        let mut evaled_args = Vec::new();
+                        for arg in &list[1..] {
+                            evaled_args.push(eval(arg, env.clone(), ctx)?);
+                        }
+                        
+                        if lambda.params.len() != evaled_args.len() {
+                            return Err(EvalError::WrongNumberOfArguments {
+                                expected: lambda.params.len(),
+                                got: evaled_args.len(),
+                            });
+                        }
+
+                        let call_frame = Env::new_child(&lambda.env);
+
+                        for (i, param_name) in lambda.params.iter().enumerate() {
+                            call_frame.set_variable(param_name.clone(), evaled_args[i].clone());
+                        }
+
+                        if lambda.body.is_empty() {
+                            return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
+                        }
+
+                        for arg in &lambda.body[0..lambda.body.len() - 1] {
+                            eval(
+                                arg,
+                                call_frame.clone(),
+                                ctx,
+                            )?;
+                        }
+
+                        return Ok(EvalStep::TailCall(
+                            lambda
+                                .body
+                                .last()
+                                .expect("Failed to get the last expression in the function call")
+                                .clone()
+                            , call_frame))
+                    }
                     _ => {
                         return Err(EvalError::UnvalidFunctionCall);
                     }

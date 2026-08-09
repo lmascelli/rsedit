@@ -1,8 +1,5 @@
 (make-mode 'minibuffer-mode)
 
-;; Make M-x spawn the minibuffer
-(define-key nil "M-x" 'minibuffer-spawn)
-
 ;; Global variable storing the lambda/symbol to call when Enter is pressed
 (setq *minibuffer-callback* nil)
 (setq minibuffer-shown nil)

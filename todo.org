@@ -1,13 +1,15 @@
 #+author: Leonardo Mascelli
 #+title: rsedit
 
+* [09-08-2026] Add a lisp format string primitive
 * DONE [05-07-2026] Add an init.lisp system
 * DONE [05-07-2026] Make lisp functions accept multiple expressions as body
 - maybe wrap them in a progn
 - maybe eval all expr and return the evaluation of the last one
 
 At the moment i switched the keymaps map to be a dict of KeyEvent-LispExp. This breaks the handle_key_event function. It must be retinkered to eval an expression when a keymap is pressed.
-* [03-07-2026] The UI interfaces should setup frame-width and frame-height at startup and update them on resize
+* DONE [03-07-2026] The UI interfaces should setup frame-width and frame-height at startup and update them on resize
+Add an after resize list of callbacks that can be registered after a resize event is done
 * [27-07-2026] Make M-x spawn the floating window of minibuffer
 - Remap enter, esc and up and down arrows
 - create a set-text-pos function that insert or replace based on an optional parameter some text in a given buffer position
@@ -32,3 +34,7 @@ a function *eval-file* that eval a file and returns the result. file can be:
 
 * DONE [22-07-2026] Create the minibuffer major mode
 
+* Macro todo
+- [ ] Syntax highlighting
+- [ ] Cursor movement functions
+- [ ] Selection mode
