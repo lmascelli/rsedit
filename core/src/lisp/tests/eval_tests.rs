@@ -329,9 +329,7 @@ mod test {
         let (env, mut ctx) = setup_env();
 
         // Register a completely broken lambda: (lambda (x)) -> Missing the body!
-        let bad_lambda = LispExp::list(vec![
-            LispExp::symbol("lambda".into()),
-        ]);
+        let bad_lambda = LispExp::list(vec![LispExp::symbol("lambda".into())]);
         env.set_function("broken-func".into(), bad_lambda);
 
         // Execute it: (broken-func 10)

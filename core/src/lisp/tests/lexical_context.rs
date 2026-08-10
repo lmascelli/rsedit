@@ -192,7 +192,14 @@ mod tests {
                     for exp in &lambda.body[0..lambda.body.len() - 1] {
                         eval(exp, call_frame.clone(), ctx)?;
                     }
-                    eval(lambda.body.last().expect("Failed to get the last expression in the function call"), call_frame, ctx,)
+                    eval(
+                        lambda
+                            .body
+                            .last()
+                            .expect("Failed to get the last expression in the function call"),
+                        call_frame,
+                        ctx,
+                    )
                 }
             }
             LispExp::Primitive(func) => func(func_args, env, ctx),

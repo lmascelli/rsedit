@@ -8,6 +8,7 @@ pub enum KeyCode {
     Backspace,
     Enter,
     Esc,
+    Tab,
     Left,
     Right,
     Up,

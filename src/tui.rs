@@ -2,7 +2,7 @@ use crossterm::event::{Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModi
 use crossterm::{QueueableCommand, cursor, execute, style::Print, terminal};
 use rsedit_core::ELispExp;
 use rsedit_core::buffer::BufferTrait;
-use rsedit_core::editor::{EditorState};
+use rsedit_core::editor::EditorState;
 use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
 use rsedit_core::lisp::Env;
 use rsedit_core::ui::Rect;
@@ -105,42 +105,44 @@ pub fn tui_main<B: BufferTrait>(
         let (cols, rows) = terminal::size()?;
         render_screen(state, cols, rows)?;
 
-         match read()? {
-             Event::Key(key_event) => {
-                 let mut event = KeyEvent {
-                     code: KeyCode::None,
-                     modifiers: KeyModifiers {
-                         ctrl: key_event.modifiers.contains(CrossModifiers::CONTROL),
-                         alt: key_event.modifiers.contains(CrossModifiers::ALT),
-                         shift: key_event.modifiers.contains(CrossModifiers::SHIFT),
-                         caps_lock_as_ctrl: false,
-                     },
-                 };
+        match read()? {
+            Event::Key(key_event) => {
+                let mut event = KeyEvent {
+                    code: KeyCode::None,
+                    modifiers: KeyModifiers {
+                        ctrl: key_event.modifiers.contains(CrossModifiers::CONTROL),
+                        alt: key_event.modifiers.contains(CrossModifiers::ALT),
+                        shift: key_event.modifiers.contains(CrossModifiers::SHIFT),
+                        caps_lock_as_ctrl: false,
+                    },
+                };
 
-                 event.code = match key_event.code {
-                     CrossKeyCode::Char(c) if key_event.modifiers.contains(CrossModifiers::SHIFT) => {
-                         event.modifiers.shift = false;
-                         KeyCode::Char(c.to_ascii_uppercase())
-                     }
-                     CrossKeyCode::Char(c) => KeyCode::Char(c),
-                     CrossKeyCode::Left => KeyCode::Left,
-                     CrossKeyCode::Right => KeyCode::Right,
-                     CrossKeyCode::Up => KeyCode::Up,
-                     CrossKeyCode::Down => KeyCode::Down,
-                     CrossKeyCode::Backspace => KeyCode::Backspace,
-                     CrossKeyCode::Enter => KeyCode::Enter,
-                     _ => continue,
-                 };
-                 state.handle_key_event(event, &env);
-             }
+                event.code = match key_event.code {
+                    CrossKeyCode::Char(c)
+                        if key_event.modifiers.contains(CrossModifiers::SHIFT) =>
+                    {
+                        event.modifiers.shift = false;
+                        KeyCode::Char(c.to_ascii_uppercase())
+                    }
+                    CrossKeyCode::Char(c) => KeyCode::Char(c),
+                    CrossKeyCode::Left => KeyCode::Left,
+                    CrossKeyCode::Right => KeyCode::Right,
+                    CrossKeyCode::Up => KeyCode::Up,
+                    CrossKeyCode::Down => KeyCode::Down,
+                    CrossKeyCode::Backspace => KeyCode::Backspace,
+                    CrossKeyCode::Enter => KeyCode::Enter,
+                    CrossKeyCode::Tab => KeyCode::Tab,
+                    _ => continue,
+                };
+                state.handle_key_event(event, &env);
+            }
 
-             Event::Resize(width, height) => {
-                 state.resize(env.clone(), width as usize, height as usize);
+            Event::Resize(width, height) => {
+                state.resize(env.clone(), width as usize, height as usize);
+            }
 
-             }
-
-             _ => todo!()
-         }
+            _ => todo!(),
+        }
     }
 
     execute!(

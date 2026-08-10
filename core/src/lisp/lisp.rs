@@ -756,9 +756,11 @@ fn eval_step<T: LispContext>(
 ) -> Result<EvalStep<T>, EvalError> {
     ctx.consume_fuel(1)?;
     match exp {
-        LispExp::String(_) | LispExp::Number(_) | LispExp::Atom(_) | LispExp::Fiber(_) => {
-            Ok(EvalStep::Done(exp.clone()))
-        }
+        LispExp::String(_)
+        | LispExp::Number(_)
+        | LispExp::Atom(_)
+        | LispExp::Fiber(_)
+        | LispExp::Lambda(_) => Ok(EvalStep::Done(exp.clone())),
 
         LispExp::Symbol(symbol) => {
             if let Some(var) = env.get_variable(symbol) {
@@ -783,19 +785,16 @@ fn eval_step<T: LispContext>(
                         for arg in &list[1..] {
                             new_ast.push(arg.clone());
                         }
-                        return Ok(EvalStep::TailCall(
-                            LispExp::list(new_ast),
-                            env.clone(),
-                        ));
+                        return Ok(EvalStep::TailCall(LispExp::list(new_ast), env.clone()));
                     }
-                    
+
                     LispExp::Lambda(lambda) => {
                         // Directly eval the lambda with the arguments
                         let mut evaled_args = Vec::new();
                         for arg in &list[1..] {
                             evaled_args.push(eval(arg, env.clone(), ctx)?);
                         }
-                        
+
                         if lambda.params.len() != evaled_args.len() {
                             return Err(EvalError::WrongNumberOfArguments {
                                 expected: lambda.params.len(),
@@ -814,11 +813,7 @@ fn eval_step<T: LispContext>(
                         }
 
                         for arg in &lambda.body[0..lambda.body.len() - 1] {
-                            eval(
-                                arg,
-                                call_frame.clone(),
-                                ctx,
-                            )?;
+                            eval(arg, call_frame.clone(), ctx)?;
                         }
 
                         return Ok(EvalStep::TailCall(
@@ -826,8 +821,9 @@ fn eval_step<T: LispContext>(
                                 .body
                                 .last()
                                 .expect("Failed to get the last expression in the function call")
-                                .clone()
-                            , call_frame))
+                                .clone(),
+                            call_frame,
+                        ));
                     }
                     _ => {
                         return Err(EvalError::UnvalidFunctionCall);
@@ -1157,11 +1153,7 @@ fn eval_function_call_step<T: LispContext>(
             }
 
             for arg in &lambda.body[0..lambda.body.len() - 1] {
-                eval(
-                    arg,
-                    call_frame.clone(),
-                    ctx,
-                )?;
+                eval(arg, call_frame.clone(), ctx)?;
             }
 
             Ok(EvalStep::TailCall(
@@ -1169,8 +1161,9 @@ fn eval_function_call_step<T: LispContext>(
                     .body
                     .last()
                     .expect("Failed to get the last expression in the function call")
-                    .clone()
-                , call_frame))
+                    .clone(),
+                call_frame,
+            ))
         } else if let LispExp::Primitive(function) = func {
             Ok(EvalStep::Done(function(
                 &evaled_args[..],

@@ -1,47 +1,51 @@
 (make-mode 'minibuffer-mode)
 
-;; Global variable storing the lambda/symbol to call when Enter is pressed
-(setq *minibuffer-callback* nil)
-(setq minibuffer-shown nil)
+(setq *minibuffer-on-confirm* nil)
+(setq *minibuffer-on-change* nil)
+(setq *minibuffer-on-cancel* nil)
+(setq *minibuffer-previous-buffer* nil)
 
-(defun minibuffer-submit ()
-  "Submit the contents of the minibuffer to the registered callback."
-  (let ((input-text (buffer-string)))
-    (close-floating-window)
-    (clear-buffer)
-    ;; If a callback is registered, execute it with the string input
-    (if *minibuffer-callback*
-        (funcall *minibuffer-callback* input-text)
-        (message "No callback bound."))))
+(defun minibuffer-confirm ()
+  "Called when the user presses Enter."
+  (let ((input (buffer-string)))
+    (close-buffer "*minibuffer*")
+    (switch-to-buffer *minibuffer-previous-buffer*)
+    (if *minibuffer-on-confirm*
+        (funcall *minibuffer-on-confirm* input))))
 
 (defun minibuffer-cancel ()
-  "Abort the minibuffer interaction."
-  (close-floating-window)
-  (clear-buffer)
-  (setq minibuffer-shown nil)
-  (setq *minibuffer-callback* nil)
-  (message "Quit"))
+  "Called when the user presses Escape or C-g."
+  (close-buffer *minibuffer*)
+  (switch-to-buffer *minibuffer-previous-buffer*)
+  (if *minibuffer-on-cancel* (funcall *minibuffer-on-cancel*)))
 
-(defun minibuffer-previous-option ()
-  "Move the selection to the previous available minibuffer options."
-  (log "Previous option"))
+(defun minibuffer-complete ()
+  "Called when the user presses Tab."
+  (let ((input (buffer-string)))
+    (if *minibuffer-on-change*) (funcall *minibuffer-on-change* input)))
 
-(defun minibuffer-next-option ()
-  "Move the selection to the next available minibuffer options."
-  (log "Next option"))
+(defun minibuffer-prompt (prompt on-confirm on-change on-cancel)
+  "Open a minibuffer with PROMPT.
+ON-CONFIRM is a lambda/function taking one string argument.
+ON-CHANGE is lambda for Tab-completion."
+                                        ; (setq *minibuffer-previous-buffer* (current-buffer))
+    (progn
+    (setq *minibuffer-on-confirm* on-confirm)
+    (setq *minibuffer-on-change* on-change)
+    (setq *minibuffer-on-cancel* on-cancel)
 
-;; Create the minibuffer key bindings
-(define-key 'minibuffer-mode "<ret>"  'minibuffer-submit)
-(define-key 'minibuffer-mode "<esc>"  'minibuffer-cancel)
-(define-key 'minibuffer-mode "<up>"   'minibuffer-previous-option)
-(define-key 'minibuffer-mode "<down>" 'minibuffer-next-option)
+    (let ((actual-width (- frame-width 2))
+          (actual-height (- frame-height 2)))
+      (make-floating-window prompt 1 1 actual-width actual-height))
+    ))
 
-(defun read-from-minibuffer (prompt callback)
-  "Display the minibuffer with PROMPT and run CALLBACK upon submission."
-  ;; Assuming screen dimensions are available or hardcoded for now:
-  ;; Example opens a 100x3 box at the bottom of a 100x30 terminal
-  (make-floating-window "*minibuffer*" 1 27 50 3 prompt)
-  ;; Ensure we are using the correct hooks/mode if needed
-  )
+(defun command-execute-prompt ()
+  (minibuffer-prompt "Command" nil nil nil))
+
+(define-key 'minibuffer-mode "<Return>" 'minibuffer-confirm)
+(define-key 'minibuffer-mode "<Escape>"   'minibuffer-cancel)
+(define-key 'minibuffer-mode "<Tab>"   'minibuffer-complete)
+(define-key nil "M-x" (lambda ()
+  (minibuffer-prompt "Command" nil nil nil)))
 
 (log "End of the minibuffer.lisp")

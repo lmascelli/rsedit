@@ -325,6 +325,15 @@ impl<B: BufferTrait> EditorState<B> {
             keymap_found = true;
         };
 
+        if let ELispExp::Lambda(ref lambda) = ast {
+            if lambda.params.len() != 0 {
+                self.log_diagnostic(&format!("Keymap {event:?} associated to a lambda with some parameters. Associate it to a lambda with 0 parameters."));
+                return;
+            } else {
+                ast = ELispExp::list(vec![ELispExp::symbol("funcall".into()), ast]);
+            }
+        }
+        
         // If no symbol has been found
         if !keymap_found {
             self.log_diagnostic(&format!("[INFO] Keymap not bound {:?}", event));
@@ -336,6 +345,7 @@ impl<B: BufferTrait> EditorState<B> {
             return;
         }
 
+        // Handle the post command hooks
         let current_mode_name = {
             let buf_arc = self.get_current_buffer();
             let buf_lock = buf_arc
@@ -443,8 +453,14 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     pub fn resize(&self, env: Arc<Env<Self>>, new_screen_width: usize, new_screen_height: usize) {
-        env.set_variable("frame-width".into(), ELispExp::number(new_screen_width as f64));
-        env.set_variable("frame-height".into(), ELispExp::number(new_screen_height as f64));
+        env.set_variable(
+            "frame-width".into(),
+            ELispExp::number(new_screen_width as f64),
+        );
+        env.set_variable(
+            "frame-height".into(),
+            ELispExp::number(new_screen_height as f64),
+        );
         if let Some(ELispExp::List(callback_list)) = env.get_variable("after-resize-hook") {
             for el in callback_list.iter() {
                 match el {
@@ -462,8 +478,11 @@ impl<B: BufferTrait> EditorState<B> {
                         }
                     }
                     _ => {
-                        self.log_diagnostic(&format!("[WARNING] not a valid lambda for after-resize-hook {:?}", el));
-                    },
+                        self.log_diagnostic(&format!(
+                            "[WARNING] not a valid lambda for after-resize-hook {:?}",
+                            el
+                        ));
+                    }
                 }
             }
         } else {
@@ -618,7 +637,6 @@ pub fn create_global_env<B: BufferTrait>()
 
     insert_fn!("quit", quit);
     insert_fn!("eval-file", eval_file);
-    insert_fn!("load-file", load_file);
     insert_fn!("define-key", define_key);
     insert_fn!("log", log);
     insert_fn!("make-mode", make_mode);
@@ -753,6 +771,7 @@ mod primitives {
         let key_code = match chars.collect::<String>().as_str() {
             "<ret>" | "<Return>" => KeyCode::Enter,
             "<esc>" | "<Escape>" => KeyCode::Esc,
+            "tab" | "<Tab>" => KeyCode::Tab,
             "<backspace>" => KeyCode::Backspace,
             "<up>" => KeyCode::Up,
             "<down>" => KeyCode::Down,
@@ -815,33 +834,6 @@ mod primitives {
             })
         } else if let Some(ELispExp::String(file)) = args.first() {
             Ok(ctx.eval_file(file, env.clone())?)
-        } else {
-            Err(EvalError::WrongArgumentType {
-                expected: "String".into(),
-                got: format!("{:?}", args.first()),
-            })
-        }
-    });
-
-    primitive!(load_file, args, _env, ctx, {
-        if let Some(ELispExp::String(path_str)) = args.first() {
-            match std::fs::read_to_string(path_str.to_string()) {
-                Ok(content) => {
-                    let wrapped_content = format!("(progn {})", content);
-                    let mut parser = crate::lisp::Parser::new(&wrapped_content);
-                    match parser.next() {
-                        Ok(ast) => Ok(ast),
-                        Err(e) => {
-                            ctx.log_diagnostic(&format!("Parse Error in {}: {:?}", path_str, e));
-                            Ok(nil!())
-                        }
-                    }
-                }
-                Err(e) => {
-                    ctx.log_diagnostic(&format!("Could not load {}: {}", path_str, e));
-                    Ok(nil!())
-                }
-            }
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "String".into(),

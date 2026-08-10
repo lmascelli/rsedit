@@ -264,7 +264,6 @@ fn primitive_remove_from_list<T: LispContext>(
     env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
-
     if args.len() < 2 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 2,
