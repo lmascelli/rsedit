@@ -3,3 +3,5 @@
 [LOG] End of the common-keymaps.lisp
 [LOG] End of the minibuffer.lisp
 [LOG] Hello from rsedit init.lisp
+open-config call
+Wrote /home/leonardo/.config/rsedit/init.lisp

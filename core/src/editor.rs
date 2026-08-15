@@ -255,11 +255,21 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Open a new empty buffer or load a file into a new buffer if a path is
     /// provided.
-    pub(crate) fn new_buffer(&self, name: &str, path: Option<&str>) -> Option<String> {
+    pub(crate) fn new_buffer(
+        &self,
+        name: &str,
+        path: Option<&str>,
+        start_mode: Option<String>,
+    ) -> Option<String> {
         if let Some(file_path) = path {
             match std::fs::read_to_string(file_path) {
                 Ok(content) => {
                     let mut new_buf = Buffer::from_text(name, &content);
+                    new_buf.current_mode = if let Some(mode_name) = start_mode {
+                        mode_name
+                    } else {
+                        "fundamental".into()
+                    };
                     new_buf.file_path = Some(file_path.to_string());
 
                     let mut buffers_lock = self
@@ -269,8 +279,15 @@ impl<B: BufferTrait> EditorState<B> {
                     buffers_lock.insert(name.to_string(), Arc::new(RwLock::new(new_buf)));
 
                     self.set_current_buffer_name(name);
+                    if let Some(window) = self
+                        .layout_root
+                        .write()
+                        .expect("Failed to acquire write lock on layout_root")
+                        .get_window_by_id(self.get_focused_window_id())
+                    {
+                        window.buffer_name = name.to_string();
+                    }
 
-                    self.log_diagnostic(&format!("Loaded {}", file_path));
                     Some(name.to_string())
                 }
                 Err(e) => {
@@ -333,7 +350,7 @@ impl<B: BufferTrait> EditorState<B> {
                 ast = ELispExp::list(vec![ELispExp::symbol("funcall".into()), ast]);
             }
         }
-        
+
         // If no symbol has been found
         if !keymap_found {
             self.log_diagnostic(&format!("[INFO] Keymap not bound {:?}", event));
@@ -560,13 +577,17 @@ impl<B: BufferTrait> EditorState<B> {
             .clone()
     }
 
-    pub(crate) fn get_buffer(&self, name: &str) -> Arc<RwLock<Buffer<B>>> {
-        self.buffers
+    pub(crate) fn get_buffer(&self, name: &str) -> Option<Arc<RwLock<Buffer<B>>>> {
+        if let Some(buffer_arc) = self
+            .buffers
             .read()
             .expect("Failed to acquire read lock on buffers")
             .get(name)
-            .expect("Corruption in the hashmap of buffers")
-            .clone()
+        {
+            Some(buffer_arc.clone())
+        } else {
+            None
+        }
     }
 
     /// Apply the operation OP to the buffer BUF
@@ -653,6 +674,7 @@ pub fn create_global_env<B: BufferTrait>()
     insert_fn!("save-buffer", save_buffer);
     insert_fn!("make-floating-window", make_floating_window);
     insert_fn!("close-floating-window", close_floating_window);
+    insert_fn!("switch-to-buffer", switch_to_buffer);
     insert_fn!("buffer-string", buffer_string);
     insert_fn!("clear-buffer", clear_buffer);
 
@@ -1201,7 +1223,7 @@ mod primitives {
             } else {
                 file_name
             };
-            match ctx.new_buffer(&buf_name, Some(&path_str)) {
+            match ctx.new_buffer(&buf_name, Some(&path_str), None) {
                 Some(buf_name) => Ok(ELispExp::string(buf_name)),
                 None => Ok(nil!()),
             }
@@ -1265,7 +1287,7 @@ mod primitives {
                     }
                 });
 
-                ctx.new_buffer(buf_name, None);
+                ctx.new_buffer(buf_name, None, None);
 
                 let new_id = ctx.get_next_window_id();
                 let window = Window {
@@ -1320,6 +1342,11 @@ mod primitives {
         ctx.set_focused_window_id(0);
         Ok(nil!())
     });
+    //------------------------------------------------------------//
+    //                                                            //
+    //                        BUFFERS                             //
+    //                                                            //
+    //------------------------------------------------------------//
 
     primitive!(buffer_string, _args, _env, ctx, {
         let buf = ctx.get_current_buffer();
@@ -1341,5 +1368,59 @@ mod primitives {
         });
 
         Ok(nil!())
+    });
+
+    primitive!(switch_to_buffer, args, _env, ctx, {
+        if args.len() != 1 {
+            Err(EvalError::WrongNumberOfArguments {
+                expected: 1,
+                got: args.len(),
+            })
+        } else {
+            match &args[0] {
+                ELispExp::String(buffer_name) => {
+                    if let Some(_) = ctx.get_buffer(buffer_name) {
+                        if let Some(window) = ctx
+                            .layout_root
+                            .write()
+                            .expect("Failed to acquire write lock on layout_root")
+                            .get_window_by_id(ctx.get_focused_window_id())
+                        {
+                            window.buffer_name = buffer_name.to_string();
+                        }
+                        Ok(args[0].clone())
+                    } else {
+                        ctx.log_diagnostic(&format!(
+                            "[LOG] buffer {} does not exist.",
+                            buffer_name
+                        ));
+                        Ok(nil!())
+                    }
+                }
+                ELispExp::Symbol(buffer_name) => {
+                    if let Some(_) = ctx.get_buffer(buffer_name) {
+                        if let Some(window) = ctx
+                            .layout_root
+                            .write()
+                            .expect("Failed to acquire write lock on layout_root")
+                            .get_window_by_id(ctx.get_focused_window_id())
+                        {
+                            window.buffer_name = buffer_name.to_string();
+                        }
+                        Ok(args[0].clone())
+                    } else {
+                        ctx.log_diagnostic(&format!(
+                            "[LOG] buffer {} does not exist.",
+                            buffer_name
+                        ));
+                        Ok(nil!())
+                    }
+                }
+                _ => Err(EvalError::WrongArgumentType {
+                    expected: "String".into(),
+                    got: format!("{:?}", args.get(0)),
+                }),
+            }
+        }
     });
 }

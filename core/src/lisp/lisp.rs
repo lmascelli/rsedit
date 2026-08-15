@@ -26,6 +26,7 @@ pub(super) enum Token {
     LBracket,
     RBracket,
     Quote,
+    Dot,
     Number(f64),
     String(String),
     Symbol(String),
@@ -69,6 +70,7 @@ impl<T: LispContext> PartialEq for SharedFiber<T> {
 #[allow(unpredictable_function_pointer_comparisons)]
 pub enum LispExp<T: LispContext> {
     List(Arc<Vec<LispExp<T>>>),
+    DottedList(Arc<Vec<LispExp<T>>>, Arc<LispExp<T>>),
     Vector(Arc<Vec<LispExp<T>>>),
     Map(Arc<HashMap<String, LispExp<T>>>),
     Number(f64),
@@ -120,6 +122,7 @@ enum ParserLexerState {
     InNumber,
     InNumberMinusStart,
     InNumberAfterDot,
+    InDotStart,
 }
 
 #[derive(Debug, PartialEq)]
@@ -138,6 +141,8 @@ pub enum ParserError {
     UnclosedMap,
     InvalidMapKey,
     MapKeyMissingValue,
+    UnexpectedDot,
+    MalformedDottedList,
 }
 
 pub struct Parser<'source> {
@@ -163,6 +168,10 @@ impl<T: LispContext> LispExp<T> {
 
     pub fn list(value: Vec<LispExp<T>>) -> LispExp<T> {
         LispExp::List(Arc::new(value))
+    }
+
+    pub fn dotted_list(elements: Vec<LispExp<T>>, tail: LispExp<T>) -> LispExp<T> {
+        LispExp::DottedList(Arc::new(elements), Arc::new(tail))
     }
 
     pub fn vec(value: Vec<LispExp<T>>) -> LispExp<T> {
@@ -251,9 +260,13 @@ impl<'source> Parser<'source> {
                         self.token.push(*c);
                         self.lexer_state = ParserLexerState::InNumberMinusStart;
                     }
-                    '.' | '0'..='9' => {
+                    '0'..='9' => {
                         self.token.push(*c);
                         self.lexer_state = ParserLexerState::InNumber;
+                    }
+                    '.' => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InDotStart;
                     }
                     _ => {
                         self.token.push(*c);
@@ -432,6 +445,29 @@ impl<'source> Parser<'source> {
                         return Err(ParserError::NumberParseError(self.token.clone()));
                     }
                 },
+
+                ParserLexerState::InDotStart => match c {
+                    '0'..'9' => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InNumberAfterDot;
+                    }
+                    ';' => {
+                        self.lexer_state = ParserLexerState::InComment;
+                        return Ok(Some(Token::Dot));
+                    }
+                    '(' | '[' | '{' | ')' | ']' | '}' => {
+                        self.lexer_state = ParserLexerState::Default;
+                        return Ok(Some(Token::Dot));
+                    }
+                    ' ' | '\t' | '\n' => {
+                        self.lexer_state = ParserLexerState::Default;
+                        return Ok(Some(Token::Dot));
+                    }
+                    _ => {
+                        self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InSymbol;
+                    }
+                },
             }
             self.source.next();
         }
@@ -493,6 +529,9 @@ impl<'source> Parser<'source> {
                     return Err(ParserError::NumberParseError(token_string));
                 }
             }
+            ParserLexerState::InDotStart => {
+                return Ok(Some(Token::Dot));
+            }
             ParserLexerState::InString | ParserLexerState::InStringSlash => {
                 return Err(ParserError::UnclosedString);
             }
@@ -515,6 +554,21 @@ impl<'source> Parser<'source> {
                 Token::RParen => {
                     self.advance_token()?;
                     return Ok(LispExp::list(list));
+                }
+                Token::Dot => {
+                    if list.is_empty() {
+                        return Err(ParserError::UnexpectedDot);
+                    }
+                    self.advance_token()?;
+                    if self.current_token == Token::RParen || self.current_token == Token::Void {
+                        return Err(ParserError::UnexpectedDot);
+                    }
+                    let tail = self.next()?;
+                    if self.current_token != Token::RParen {
+                        return Err(ParserError::MalformedDottedList);
+                    }
+                    self.advance_token()?;
+                    return Ok(LispExp::dotted_list(list, tail));
                 }
                 _ => {
                     list.push(self.next()?);
@@ -760,7 +814,8 @@ fn eval_step<T: LispContext>(
         | LispExp::Number(_)
         | LispExp::Atom(_)
         | LispExp::Fiber(_)
-        | LispExp::Lambda(_) => Ok(EvalStep::Done(exp.clone())),
+        | LispExp::Lambda(_)
+        | LispExp::Primitive(_) => Ok(EvalStep::Done(exp.clone())),
 
         LispExp::Symbol(symbol) => {
             if let Some(var) = env.get_variable(symbol) {
@@ -769,6 +824,8 @@ fn eval_step<T: LispContext>(
                 Err(EvalError::UnboundVariable(symbol.to_string()))
             }
         }
+
+        LispExp::DottedList(_, _) => Err(EvalError::UnvalidFunctionCall),
 
         LispExp::List(list) => {
             if list.is_empty() {
@@ -847,8 +904,6 @@ fn eval_step<T: LispContext>(
             }
             Ok(EvalStep::Done(LispExp::map(new_map)))
         }
-
-        _ => todo!(),
     }
 }
 

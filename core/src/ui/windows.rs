@@ -55,6 +55,20 @@ pub struct RenderableWindowView {
 }
 
 impl LayoutNode {
+    pub fn get_window_by_id(&mut self, id: usize) -> Option<&mut Window> {
+        match self {
+            LayoutNode::Leaf(window) => Some(window),
+            LayoutNode::Split {
+                orientation: _,
+                ratio: _,
+                left,
+                right,
+            } => left
+                .get_window_by_id(id)
+                .or_else(|| right.get_window_by_id(id)),
+        }
+    }
+
     pub fn compute_tiled_views<B: BufferTrait>(
         &mut self,
         rect: Rect,

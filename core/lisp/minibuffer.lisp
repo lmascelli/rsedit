@@ -5,6 +5,9 @@
 (setq *minibuffer-on-cancel* nil)
 (setq *minibuffer-previous-buffer* nil)
 
+
+(add-to-list 'after-resize-hook (lambda (nw nh) (log "Resize event handled")))
+
 (defun minibuffer-confirm ()
   "Called when the user presses Enter."
   (let ((input (buffer-string)))
@@ -29,15 +32,17 @@
 ON-CONFIRM is a lambda/function taking one string argument.
 ON-CHANGE is lambda for Tab-completion."
                                         ; (setq *minibuffer-previous-buffer* (current-buffer))
-    (progn
     (setq *minibuffer-on-confirm* on-confirm)
     (setq *minibuffer-on-change* on-change)
     (setq *minibuffer-on-cancel* on-cancel)
 
-    (let ((actual-width (- frame-width 2))
-          (actual-height (- frame-height 2)))
-      (make-floating-window prompt 1 1 actual-width actual-height))
-    ))
+    (let (
+                                        ;(actual-width (- (/ frame-width 2) 2))
+                                        ;(actual-height (- (/ frame-height 2) 2))
+          )
+      (make-floating-window prompt 1 1 (- frame-width 2) (- frame-height 2))
+      )
+    )
 
 (defun command-execute-prompt ()
   (minibuffer-prompt "Command" nil nil nil))
