@@ -198,7 +198,7 @@ impl<T: LispContext> LispExp<T> {
     pub fn fiber(value: FiberState<T>) -> LispExp<T> {
         LispExp::Fiber(SharedFiber(Arc::new(RwLock::new(value))))
     }
-    
+
     pub fn nil() -> LispExp<T> {
         LispExp::symbol("nil".into())
     }
@@ -1247,7 +1247,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 Ok(EvalStep::Done(second))
             }
         }
-        
+
         "progn" => {
             if args.is_empty() {
                 return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
@@ -1329,7 +1329,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 }
 
                 Ok(EvalStep::TailCall(
-                    body.last().expect("Failed to get the last let* expression").clone(),
+                    body.last()
+                        .expect("Failed to get the last let* expression")
+                        .clone(),
                     let_env,
                 ))
             }
@@ -1358,7 +1360,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     }
 
                     return Ok(EvalStep::TailCall(
-                        body.last().expect("Failed to get the last cond clause expression").clone(),
+                        body.last()
+                            .expect("Failed to get the last cond clause expression")
+                            .clone(),
                         env.clone(),
                     ));
                 }
@@ -1376,7 +1380,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 }
             }
             Ok(EvalStep::TailCall(
-                args.last().expect("Failed to get the last and expression").clone(),
+                args.last()
+                    .expect("Failed to get the last and expression")
+                    .clone(),
                 env.clone(),
             ))
         }
@@ -1392,7 +1398,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 }
             }
             Ok(EvalStep::TailCall(
-                args.last().expect("Failed to get the last or expression").clone(),
+                args.last()
+                    .expect("Failed to get the last or expression")
+                    .clone(),
                 env.clone(),
             ))
         }
@@ -1415,7 +1423,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                             eval(e, env.clone(), ctx)?;
                         }
                         Ok(EvalStep::TailCall(
-                            body.last().expect("Failed to get the last when expression").clone(),
+                            body.last()
+                                .expect("Failed to get the last when expression")
+                                .clone(),
                             env.clone(),
                         ))
                     }
@@ -1441,7 +1451,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                             eval(e, env.clone(), ctx)?;
                         }
                         Ok(EvalStep::TailCall(
-                            body.last().expect("Failed to get the last unless expression").clone(),
+                            body.last()
+                                .expect("Failed to get the last unless expression")
+                                .clone(),
                             env.clone(),
                         ))
                     }
@@ -1462,7 +1474,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             } else {
                 return Err(EvalError::DolistInvalidBinding);
             };
-            
+
             if spec.len() < 2 || spec.len() > 3 {
                 return Err(EvalError::DolistInvalidBinding);
             }
@@ -1533,7 +1545,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 return Err(EvalError::WrongArgumentType {
                     expected: "Number".into(),
                     got: format!("{:?}", count_val),
-                })
+                });
             };
 
             let loop_env = Env::new_child(&env);
@@ -1663,7 +1675,7 @@ fn parse_let_binding<T: LispContext>(
             } else {
                 Err(EvalError::LetUnvalidBindingAt(index))
             }
-        },
+        }
         LispExp::Symbol(name) => Ok((name.to_string(), None)),
         _ => Err(EvalError::LetUnvalidBindingAt(index)),
     }
@@ -1707,19 +1719,18 @@ fn eval_backquote<T: LispContext>(
                         }
                         continue;
                     }
-                } else {
-                    result.push(eval_backquote(item, env.clone(), ctx)?);
-                }
+                } 
+                result.push(eval_backquote(item, env.clone(), ctx)?);
             }
             Ok(LispExp::list(result))
-        },
+        }
         LispExp::Vector(vec) => {
             let mut result = Vec::with_capacity(vec.len());
             for item in vec.iter() {
                 result.push(eval_backquote(item, env.clone(), ctx)?);
             }
             Ok(LispExp::vec(result))
-        },
+        }
         _ => Ok(exp.clone()),
     }
 }
