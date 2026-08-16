@@ -26,6 +26,9 @@ pub(super) enum Token {
     LBracket,
     RBracket,
     Quote,
+    BackQuote,
+    Comma,
+    CommaAt,
     Dot,
     Number(f64),
     String(String),
@@ -102,6 +105,11 @@ pub enum EvalError {
     LetUnvalidBindingAt(usize),
     LetUnvalidBindingList,
     LetNoBindingsProvided,
+    CondInvalidClause,
+    DolistInvalidBinding,
+    DotimesInvalidBinding,
+    DefvarNameMustBeASymbol,
+    BackquoteNotOneArgument,
     OutOfFuel,
     RuntimeMessage(String),
 }
@@ -110,6 +118,7 @@ pub enum EvalError {
 pub struct Env<T: LispContext> {
     pub variables: RwLock<HashMap<String, LispExp<T>>>,
     pub functions: RwLock<HashMap<String, LispExp<T>>>,
+    pub macros: RwLock<HashMap<String, LispExp<T>>>,
     pub parent: Option<Arc<Env<T>>>,
 }
 
@@ -189,6 +198,30 @@ impl<T: LispContext> LispExp<T> {
     pub fn fiber(value: FiberState<T>) -> LispExp<T> {
         LispExp::Fiber(SharedFiber(Arc::new(RwLock::new(value))))
     }
+    
+    pub fn nil() -> LispExp<T> {
+        LispExp::symbol("nil".into())
+    }
+
+    pub fn t() -> LispExp<T> {
+        LispExp::symbol("t".into())
+    }
+
+    pub fn boolean(value: bool) -> LispExp<T> {
+        if value { Self::t() } else { Self::nil() }
+    }
+
+    pub fn is_nil(&self) -> bool {
+        match self {
+            LispExp::Symbol(s) => s.as_str() == "nil",
+            LispExp::List(l) => l.is_empty(),
+            _ => false,
+        }
+    }
+
+    pub fn is_truthy(&self) -> bool {
+        !self.is_nil()
+    }
 }
 
 impl<'source> Parser<'source> {
@@ -212,6 +245,18 @@ impl<'source> Parser<'source> {
                     '\'' => {
                         self.source.next();
                         return Ok(Some(Token::Quote));
+                    }
+                    '`' => {
+                        self.source.next();
+                        return Ok(Some(Token::BackQuote));
+                    }
+                    ',' => {
+                        self.source.next();
+                        if self.source.peek() == Some(&'@') {
+                            self.source.next();
+                            return Ok(Some(Token::CommaAt));
+                        }
+                        return Ok(Some(Token::Comma));
                     }
                     '(' => {
                         self.parens_stack.push(Token::LParen);
@@ -452,14 +497,17 @@ impl<'source> Parser<'source> {
                         self.lexer_state = ParserLexerState::InNumberAfterDot;
                     }
                     ';' => {
+                        self.token.clear();
                         self.lexer_state = ParserLexerState::InComment;
                         return Ok(Some(Token::Dot));
                     }
                     '(' | '[' | '{' | ')' | ']' | '}' => {
+                        self.token.clear();
                         self.lexer_state = ParserLexerState::Default;
                         return Ok(Some(Token::Dot));
                     }
                     ' ' | '\t' | '\n' => {
+                        self.token.clear();
                         self.lexer_state = ParserLexerState::Default;
                         return Ok(Some(Token::Dot));
                     }
@@ -530,6 +578,7 @@ impl<'source> Parser<'source> {
                 }
             }
             ParserLexerState::InDotStart => {
+                self.token.clear();
                 return Ok(Some(Token::Dot));
             }
             ParserLexerState::InString | ParserLexerState::InStringSlash => {
@@ -674,6 +723,27 @@ impl<'source> Parser<'source> {
                     self.next()?,
                 ]));
             }
+            Token::BackQuote => {
+                self.advance_token()?;
+                return Ok(LispExp::list(vec![
+                    LispExp::symbol("backquote".into()),
+                    self.next()?,
+                ]));
+            }
+            Token::Comma => {
+                self.advance_token()?;
+                return Ok(LispExp::list(vec![
+                    LispExp::symbol("unquote".into()),
+                    self.next()?,
+                ]));
+            }
+            Token::CommaAt => {
+                self.advance_token()?;
+                return Ok(LispExp::list(vec![
+                    LispExp::symbol("unquote-splicing".into()),
+                    self.next()?,
+                ]));
+            }
             Token::Void => Err(ParserError::VoidExp),
             _ => unreachable!("token parse not implemented for {:?}", self.current_token),
         }
@@ -685,6 +755,7 @@ impl<T: LispContext> Env<T> {
         Arc::new(Self {
             variables: RwLock::new(HashMap::new()),
             functions: RwLock::new(HashMap::new()),
+            macros: RwLock::new(HashMap::new()),
             parent: None,
         })
     }
@@ -693,6 +764,7 @@ impl<T: LispContext> Env<T> {
         Arc::new(Self {
             variables: RwLock::new(HashMap::new()),
             functions: RwLock::new(HashMap::new()),
+            macros: RwLock::new(HashMap::new()),
             parent: Some(parent.clone()),
         })
     }
@@ -748,6 +820,31 @@ impl<T: LispContext> Env<T> {
         }
 
         None
+    }
+
+    pub fn get_macro(&self, name: &str) -> Option<LispExp<T>> {
+        if let Some(val) = self
+            .macros
+            .read()
+            .expect("Failed to acquire read lock on env")
+            .get(name)
+        {
+            return Some(val.clone());
+        }
+
+        if let Some(parent) = &self.parent {
+            return parent.get_macro(name);
+        }
+
+        None
+    }
+
+    pub fn set_macro(&self, name: String, val: LispExp<T>) {
+        let mut map = self
+            .macros
+            .write()
+            .expect("Failed to acquire write lock on env");
+        map.insert(name, val);
     }
 
     pub fn set_variable(&self, name: String, val: LispExp<T>) {
@@ -818,6 +915,14 @@ fn eval_step<T: LispContext>(
         | LispExp::Primitive(_) => Ok(EvalStep::Done(exp.clone())),
 
         LispExp::Symbol(symbol) => {
+            // `nil`, `t` and keyword symbols (`:foo`) are
+            // self-evaluating : they always evaluate to themselves
+            // regardless of what is (or isn't) bound in the
+            // environment. The same is valid for constant symbol
+            // (i.e. those starting with :)
+            if symbol.as_str() == "nil" || symbol.as_str() == "t" || symbol.starts_with(':') {
+                return Ok(EvalStep::Done(exp.clone()));
+            }
             if let Some(var) = env.get_variable(symbol) {
                 Ok(EvalStep::Done(var))
             } else {
@@ -929,9 +1034,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 Err(EvalError::IfNoTrueBrach)
             } else {
                 let condition = eval(&args[0], env.clone(), ctx)?;
-                if !(condition == LispExp::list(vec![])
-                    || condition == LispExp::symbol("nil".into()))
-                {
+                if condition.is_truthy() {
                     Ok(EvalStep::TailCall(args[1].clone(), env.clone()))
                 } else {
                     if args.len() > 2 {
@@ -958,7 +1061,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
 
             loop {
                 let cond_val = eval(condition, env.clone(), ctx)?;
-                if cond_val == LispExp::symbol("nil".into()) || cond_val == LispExp::list(vec![]) {
+                if cond_val.is_nil() {
                     break;
                 }
                 for exp in body {
@@ -1114,6 +1217,37 @@ fn eval_special_form_or_call_step<T: LispContext>(
             })))
         }
 
+        "prog1" => {
+            if args.is_empty() {
+                Err(EvalError::WrongNumberOfArguments {
+                    expected: 1,
+                    got: 0,
+                })
+            } else {
+                let first = eval(&args[0], env.clone(), ctx)?;
+                for e in &args[1..] {
+                    eval(e, env.clone(), ctx)?;
+                }
+                Ok(EvalStep::Done(first))
+            }
+        }
+
+        "prog2" => {
+            if args.len() < 2 {
+                Err(EvalError::WrongNumberOfArguments {
+                    expected: 2,
+                    got: args.len(),
+                })
+            } else {
+                eval(&args[0], env.clone(), ctx)?;
+                let second = eval(&args[1], env.clone(), ctx)?;
+                for e in &args[2..] {
+                    eval(e, env.clone(), ctx)?;
+                }
+                Ok(EvalStep::Done(second))
+            }
+        }
+        
         "progn" => {
             if args.is_empty() {
                 return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
@@ -1137,31 +1271,23 @@ fn eval_special_form_or_call_step<T: LispContext>(
             let let_env = Env::new_child(&env);
             if let LispExp::List(bindings) = &args[0] {
                 for (i, binding) in bindings.iter().enumerate() {
-                    if let LispExp::List(pair) = binding {
-                        if pair.len() == 2 {
-                            if let LispExp::Symbol(name) = &pair[0] {
-                                let val = eval(&pair[1], env.clone(), ctx)?;
-                                let_env.set_variable(name.to_string(), val);
-                            } else {
-                                return Err(EvalError::LetUnvalidBindingAt(i));
-                            }
-                        } else {
-                            return Err(EvalError::LetUnvalidBindingAt(i));
-                        }
-                    } else {
-                        return Err(EvalError::LetUnvalidBindingAt(i));
-                    }
+                    let (name, value_form) = parse_let_binding(binding, i)?;
+                    let val = match value_form {
+                        Some(value_form) => eval(&value_form, env.clone(), ctx)?,
+                        None => LispExp::nil(),
+                    };
+                    let_env.set_variable(name, val);
                 }
-            } else if args[0] != LispExp::symbol("nil".into()) {
+            } else if !args[0].is_nil() {
                 return Err(EvalError::LetUnvalidBindingList);
             }
 
             let body = &args[1..];
             if body.is_empty() {
-                return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
+                return Ok(EvalStep::Done(LispExp::nil()));
             }
 
-            for arg in &args[0..body.len() - 1] {
+            for arg in &body[0..body.len() - 1] {
                 eval(arg, let_env.clone(), ctx)?;
             }
 
@@ -1173,7 +1299,462 @@ fn eval_special_form_or_call_step<T: LispContext>(
             ))
         }
 
-        _ => eval_function_call_step(symbol, args, env, ctx),
+        // Like `let`, but each binding is evaluated (and immediately visible
+        // to subsequent bindings) in sequence rather than in parallel.
+        "let*" => {
+            if args.is_empty() {
+                Err(EvalError::LetNoBindingsProvided)
+            } else {
+                let let_env = Env::new_child(&env);
+                if let LispExp::List(bindings) = &args[0] {
+                    for (i, binding) in bindings.iter().enumerate() {
+                        let (name, value_form) = parse_let_binding(binding, i)?;
+                        let val = match value_form {
+                            Some(value_form) => eval(&value_form, let_env.clone(), ctx)?,
+                            None => LispExp::nil(),
+                        };
+                        let_env.set_variable(name, val);
+                    }
+                } else if !args[0].is_nil() {
+                    return Err(EvalError::LetUnvalidBindingList);
+                }
+
+                let body = &args[1..];
+                if body.is_empty() {
+                    return Ok(EvalStep::Done(LispExp::nil()));
+                }
+
+                for arg in &body[0..body.len() - 1] {
+                    eval(arg, let_env.clone(), ctx)?;
+                }
+
+                Ok(EvalStep::TailCall(
+                    body.last().expect("Failed to get the last let* expression").clone(),
+                    let_env,
+                ))
+            }
+        }
+
+        "cond" => {
+            for clause in args {
+                let clause_list = if let LispExp::List(clause_list) = clause {
+                    clause_list
+                } else {
+                    return Err(EvalError::CondInvalidClause);
+                };
+                if clause_list.is_empty() {
+                    return Err(EvalError::CondInvalidClause);
+                }
+
+                let test_val = eval(&clause_list[0], env.clone(), ctx)?;
+                if test_val.is_truthy() {
+                    let body = &clause_list[1..];
+                    if body.is_empty() {
+                        return Ok(EvalStep::Done(test_val));
+                    }
+
+                    for e in &body[0..body.len() - 1] {
+                        eval(e, env.clone(), ctx)?;
+                    }
+
+                    return Ok(EvalStep::TailCall(
+                        body.last().expect("Failed to get the last cond clause expression").clone(),
+                        env.clone(),
+                    ));
+                }
+            }
+            Ok(EvalStep::Done(LispExp::nil()))
+        }
+
+        "and" => {
+            if args.is_empty() {
+                return Ok(EvalStep::Done(LispExp::t()));
+            }
+            for arg in &args[0..args.len() - 1] {
+                if eval(arg, env.clone(), ctx)?.is_nil() {
+                    return Ok(EvalStep::Done(LispExp::nil()));
+                }
+            }
+            Ok(EvalStep::TailCall(
+                args.last().expect("Failed to get the last and expression").clone(),
+                env.clone(),
+            ))
+        }
+
+        "or" => {
+            if args.is_empty() {
+                return Ok(EvalStep::Done(LispExp::nil()));
+            }
+            for arg in &args[0..args.len() - 1] {
+                let val = eval(arg, env.clone(), ctx)?;
+                if val.is_truthy() {
+                    return Ok(EvalStep::Done(val));
+                }
+            }
+            Ok(EvalStep::TailCall(
+                args.last().expect("Failed to get the last or expression").clone(),
+                env.clone(),
+            ))
+        }
+
+        "when" => {
+            if args.is_empty() {
+                Err(EvalError::WrongNumberOfArguments {
+                    expected: 1,
+                    got: 0,
+                })
+            } else {
+                if eval(&args[0], env.clone(), ctx)?.is_nil() {
+                    Ok(EvalStep::Done(LispExp::nil()))
+                } else {
+                    let body = &args[1..];
+                    if body.is_empty() {
+                        Ok(EvalStep::Done(LispExp::nil()))
+                    } else {
+                        for e in &body[0..body.len() - 1] {
+                            eval(e, env.clone(), ctx)?;
+                        }
+                        Ok(EvalStep::TailCall(
+                            body.last().expect("Failed to get the last when expression").clone(),
+                            env.clone(),
+                        ))
+                    }
+                }
+            }
+        }
+
+        "unless" => {
+            if args.is_empty() {
+                Err(EvalError::WrongNumberOfArguments {
+                    expected: 1,
+                    got: 0,
+                })
+            } else {
+                if eval(&args[0], env.clone(), ctx)?.is_truthy() {
+                    Ok(EvalStep::Done(LispExp::nil()))
+                } else {
+                    let body = &args[1..];
+                    if body.is_empty() {
+                        Ok(EvalStep::Done(LispExp::nil()))
+                    } else {
+                        for e in &body[0..body.len() - 1] {
+                            eval(e, env.clone(), ctx)?;
+                        }
+                        Ok(EvalStep::TailCall(
+                            body.last().expect("Failed to get the last unless expression").clone(),
+                            env.clone(),
+                        ))
+                    }
+                }
+            }
+        }
+
+        // (dolist (VAR LIST-FORM [RESULT-FORM]) BODY...)
+        "dolist" => {
+            if args.is_empty() {
+                return Err(EvalError::WrongNumberOfArguments {
+                    expected: 1,
+                    got: 0,
+                });
+            }
+            let spec = if let LispExp::List(spec) = &args[0] {
+                spec
+            } else {
+                return Err(EvalError::DolistInvalidBinding);
+            };
+            
+            if spec.len() < 2 || spec.len() > 3 {
+                return Err(EvalError::DolistInvalidBinding);
+            }
+            let var_name = if let LispExp::Symbol(name) = &spec[0] {
+                name.to_string()
+            } else {
+                return Err(EvalError::DolistInvalidBinding);
+            };
+
+            let list_val = eval(&spec[1], env.clone(), ctx)?;
+            let items: Vec<LispExp<T>> = match &list_val {
+                LispExp::List(items) => (**items).clone(),
+                other => {
+                    if other.is_nil() {
+                        vec![]
+                    } else {
+                        return Err(EvalError::WrongArgumentType {
+                            expected: "List".into(),
+                            got: format!("{:?}", other),
+                        });
+                    }
+                }
+            };
+
+            let loop_env = Env::new_child(&env);
+            loop_env.set_variable(var_name.clone(), LispExp::nil());
+            let body = &args[1..];
+            for item in items {
+                loop_env.update_variable(&var_name, item);
+                for e in body {
+                    eval(e, loop_env.clone(), ctx)?;
+                }
+            }
+
+            if spec.len() == 3 {
+                Ok(EvalStep::Done(eval(&spec[2], loop_env, ctx)?))
+            } else {
+                Ok(EvalStep::Done(LispExp::nil()))
+            }
+        }
+
+        // (dotimes (VAR COUNT-FORM [RESULT-FORM]) BODY...)
+        "dotimes" => {
+            if args.is_empty() {
+                return Err(EvalError::WrongNumberOfArguments {
+                    expected: 1,
+                    got: 0,
+                });
+            }
+            let spec = if let LispExp::List(spec) = &args[0] {
+                spec
+            } else {
+                return Err(EvalError::DotimesInvalidBinding);
+            };
+            if spec.len() < 2 || spec.len() > 3 {
+                return Err(EvalError::DotimesInvalidBinding);
+            }
+            let var_name = if let LispExp::Symbol(name) = &spec[0] {
+                name.to_string()
+            } else {
+                return Err(EvalError::DotimesInvalidBinding);
+            };
+
+            let count_val = eval(&spec[1], env.clone(), ctx)?;
+            let count = if let LispExp::Number(n) = count_val {
+                n as i64
+            } else {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "Number".into(),
+                    got: format!("{:?}", count_val),
+                })
+            };
+
+            let loop_env = Env::new_child(&env);
+            loop_env.set_variable(var_name.clone(), LispExp::number(0.0));
+            let body = &args[1..];
+            let mut i = 0;
+            while i < count {
+                loop_env.update_variable(&var_name, LispExp::number(i as f64));
+                for e in body {
+                    eval(e, loop_env.clone(), ctx)?;
+                }
+                i += 1;
+            }
+
+            if spec.len() == 3 {
+                Ok(EvalStep::Done(eval(&spec[2], loop_env, ctx)?))
+            } else {
+                Ok(EvalStep::Done(LispExp::nil()))
+            }
+        }
+
+        // `defvar` only seeds the variable the first time it runs (a
+        // later evaluation of the same `defvar` form is a no-op);
+        // `defconst` always (re)initializes it.
+        "defvar" | "defconst" => {
+            if args.is_empty() {
+                Err(EvalError::DefvarNameMustBeASymbol)
+            } else {
+                let name = if let LispExp::Symbol(name) = &args[0] {
+                    name.to_string()
+                } else {
+                    return Err(EvalError::DefunNameMustBeASymbol);
+                };
+                if args.len() < 2 {
+                    Ok(EvalStep::Done(LispExp::symbol(name)))
+                } else {
+                    if symbol == "defconst" || env.get_variable(&name).is_none() {
+                        let val = eval(&args[1], env.clone(), ctx)?;
+                        env.set_variable(name.clone(), val);
+                    }
+                    Ok(EvalStep::Done(LispExp::symbol(name)))
+                }
+            }
+        }
+
+        // (unwind-protect BODYFORM CLEANUP...) always runs CLEANUP, whether
+        // BODYFORM returned normally or raised an error.
+        "unwind-protect" => {
+            if args.is_empty() {
+                Err(EvalError::WrongNumberOfArguments {
+                    expected: 1,
+                    got: 0,
+                })
+            } else {
+                let body_result = eval(&args[0], env.clone(), ctx);
+                for cleanup in &args[1..] {
+                    eval(cleanup, env.clone(), ctx)?;
+                }
+                Ok(EvalStep::Done(body_result?))
+            }
+        }
+
+        // (defmacro NAME (PARAMS...) BODY...) defines a macro in its
+        // own namespace. Unlike `defun`, the arguments are never
+        // evaluated: they are bound to the raw, unevaluated call-site
+        // AST, and the macro body must produce a new expression to be
+        // evaluated in place of the call.
+        "defmacro" => {
+            if args.len() < 2 {
+                Err(EvalError::DefunNotCorrectExpression)
+            } else {
+                if let LispExp::Symbol(macro_name) = &args[0] {
+                    let mut params_vec = vec![];
+                    if let LispExp::List(params_list) = &args[1] {
+                        for param in params_list.iter() {
+                            if let LispExp::Symbol(param_name) = param {
+                                params_vec.push((**param_name).clone());
+                            } else {
+                                return Err(EvalError::DefunParamIsNotASymbol);
+                            }
+                        }
+
+                        let lambda = Lambda {
+                            params: params_vec,
+                            body: args[2..].to_vec(),
+                            env: env.clone(),
+                            doc: None,
+                        };
+                        env.set_macro(macro_name.to_string(), LispExp::lambda(lambda));
+                        Ok(EvalStep::Done(LispExp::symbol(macro_name.to_string())))
+                    } else {
+                        Err(EvalError::DefunParamsAreNotAList)
+                    }
+                } else {
+                    Err(EvalError::DefunNameMustBeASymbol)
+                }
+            }
+        }
+
+        // The `backquote`/`` ` `` reader macro: builds a template where
+        // `,`/`unquote` splices in a single evaluated value and
+        // `,@`/`unquote-splicing` splices in the elements of an evaluated
+        // list. Only a single level of backquote nesting is supported.
+        "backquote" => {
+            if args.len() != 1 {
+                Err(EvalError::BackquoteNotOneArgument)
+            } else {
+                Ok(EvalStep::Done(eval_backquote(&args[0], env.clone(), ctx)?))
+            }
+        }
+
+        _ => eval_macro_or_function_call_step(symbol, args, env, ctx),
+    }
+}
+
+/// Parses a single `let`/`let*` binding, which is either `(SYMBOL
+/// VALUE-FORM)` or a bare `SYMBOL` (which binds to `nil`).
+/// Returns the bound name and the value-form to evaluate, if any.
+fn parse_let_binding<T: LispContext>(
+    binding: &LispExp<T>,
+    index: usize,
+) -> Result<(String, Option<LispExp<T>>), EvalError> {
+    match binding {
+        LispExp::List(pair) if pair.len() == 2 => {
+            if let LispExp::Symbol(name) = &pair[0] {
+                Ok((name.to_string(), Some(pair[1].clone())))
+            } else {
+                Err(EvalError::LetUnvalidBindingAt(index))
+            }
+        },
+        LispExp::Symbol(name) => Ok((name.to_string(), None)),
+        _ => Err(EvalError::LetUnvalidBindingAt(index)),
+    }
+}
+
+/// Expands a backquoted template, substituting `(unquote X)` forms with the
+/// evaluation of `X` and splicing the evaluated list produced by
+/// `(unquote-splicing X)` forms into the surrounding list.
+fn eval_backquote<T: LispContext>(
+    exp: &LispExp<T>,
+    env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
+    fn is_tagged<T: LispContext>(list: &[LispExp<T>], tag: &str) -> bool {
+        list.len() == 2 && matches!(&list[0], LispExp::Symbol(s) if s.as_str() == tag)
+    }
+
+    match exp {
+        LispExp::List(list) => {
+            if is_tagged(list, "unquote") {
+                return eval(&list[1], env, ctx);
+            }
+
+            let mut result = Vec::with_capacity(list.len());
+            for item in list.iter() {
+                if let LispExp::List(inner) = item {
+                    if is_tagged(inner, "unquote-splicing") {
+                        let spliced = eval(&inner[1], env.clone(), ctx)?;
+                        match &spliced {
+                            LispExp::List(spliced_list) => {
+                                result.extend(spliced_list.iter().cloned());
+                            }
+                            other => {
+                                if !other.is_nil() {
+                                    return Err(EvalError::WrongArgumentType {
+                                        expected: "List".into(),
+                                        got: format!("{:?}", other),
+                                    });
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                } else {
+                    result.push(eval_backquote(item, env.clone(), ctx)?);
+                }
+            }
+            Ok(LispExp::list(result))
+        },
+        LispExp::Vector(vec) => {
+            let mut result = Vec::with_capacity(vec.len());
+            for item in vec.iter() {
+                result.push(eval_backquote(item, env.clone(), ctx)?);
+            }
+            Ok(LispExp::vec(result))
+        },
+        _ => Ok(exp.clone()),
+    }
+}
+
+/// Dispatches a call whose head is a bare symbol: if the symbol names a
+/// macro, expand it (with its arguments left unevaluated) and evaluate the
+/// expansion in the *calling* environment; otherwise fall back to a normal
+/// function call.
+fn eval_macro_or_function_call_step<T: LispContext>(
+    symbol: &str,
+    args: &[LispExp<T>],
+    env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<EvalStep<T>, EvalError> {
+    if let Some(LispExp::Lambda(macro_lambda)) = env.get_macro(symbol) {
+        if macro_lambda.params.len() != args.len() {
+            return Err(EvalError::WrongNumberOfArguments {
+                expected: macro_lambda.params.len(),
+                got: args.len(),
+            });
+        }
+
+        let expand_frame = Env::new_child(&macro_lambda.env);
+        for (i, param_name) in macro_lambda.params.iter().enumerate() {
+            expand_frame.set_variable(param_name.clone(), args[i].clone());
+        }
+
+        let mut expansion = LispExp::nil();
+        for form in &macro_lambda.body {
+            expansion = eval(form, expand_frame.clone(), ctx)?;
+        }
+
+        Ok(EvalStep::TailCall(expansion, env))
+    } else {
+        eval_function_call_step(symbol, args, env, ctx)
     }
 }
 
