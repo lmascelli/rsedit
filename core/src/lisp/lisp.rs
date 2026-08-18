@@ -1719,7 +1719,7 @@ fn eval_backquote<T: LispContext>(
                         }
                         continue;
                     }
-                } 
+                }
                 result.push(eval_backquote(item, env.clone(), ctx)?);
             }
             Ok(LispExp::list(result))
