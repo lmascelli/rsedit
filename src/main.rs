@@ -1,5 +1,5 @@
 mod tui;
-use rsedit_core::{ELispExp, buffer::gap_buffer::GapBuffer, editor::create_global_env, lisp::eval};
+use rsedit_core::{ELispExp, buffer::gap_buffer::GapBuffer, create_global_env, lisp::eval};
 use std::io::{self, IsTerminal};
 use tui::tui_main;
 

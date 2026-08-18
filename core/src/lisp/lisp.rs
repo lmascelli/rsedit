@@ -68,6 +68,9 @@ impl<T: LispContext> PartialEq for SharedFiber<T> {
     }
 }
 
+pub type LispPrimitive<T> =
+    fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError>;
+
 #[derive(Clone, Debug, PartialEq)]
 // Primitive comparison has no meaning and will probably never done
 #[allow(unpredictable_function_pointer_comparisons)]
@@ -80,7 +83,10 @@ pub enum LispExp<T: LispContext> {
     Symbol(Arc<String>),
     String(Arc<String>),
     Lambda(Arc<Lambda<T>>),
-    Primitive(fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError>),
+    Primitive {
+        pointer: LispPrimitive<T>,
+        doc: Arc<String>,
+    },
     Atom(SharedAtom<T>),
     Fiber(SharedFiber<T>),
 }
@@ -197,6 +203,17 @@ impl<T: LispContext> LispExp<T> {
 
     pub fn fiber(value: FiberState<T>) -> LispExp<T> {
         LispExp::Fiber(SharedFiber(Arc::new(RwLock::new(value))))
+    }
+
+    pub fn primitive(pointer: LispPrimitive<T>, doc: Option<String>) -> LispExp<T> {
+        LispExp::Primitive {
+            pointer,
+            doc: Arc::new(if let Some(doc) = doc {
+                doc
+            } else {
+                format!("No documentation provided.")
+            }),
+        }
     }
 
     pub fn nil() -> LispExp<T> {
@@ -911,8 +928,9 @@ fn eval_step<T: LispContext>(
         | LispExp::Number(_)
         | LispExp::Atom(_)
         | LispExp::Fiber(_)
-        | LispExp::Lambda(_)
-        | LispExp::Primitive(_) => Ok(EvalStep::Done(exp.clone())),
+        | LispExp::Lambda(_) => Ok(EvalStep::Done(exp.clone())),
+
+        LispExp::Primitive { pointer: _, doc: _ } => Ok(EvalStep::Done(exp.clone())),
 
         LispExp::Symbol(symbol) => {
             // `nil`, `t` and keyword symbols (`:foo`) are
@@ -1811,12 +1829,8 @@ fn eval_function_call_step<T: LispContext>(
                     .clone(),
                 call_frame,
             ))
-        } else if let LispExp::Primitive(function) = func {
-            Ok(EvalStep::Done(function(
-                &evaled_args[..],
-                env.clone(),
-                ctx,
-            )?))
+        } else if let LispExp::Primitive { pointer, doc: _ } = func {
+            Ok(EvalStep::Done(pointer(&evaled_args[..], env.clone(), ctx)?))
         } else {
             Err(EvalError::UncorrectFunctionDefinition)
         }

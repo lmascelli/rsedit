@@ -96,7 +96,7 @@ fn call_callable<T: LispContext>(
                 ctx,
             )
         }
-        LispExp::Primitive(f) => f(call_args, env, ctx),
+        LispExp::Primitive { pointer: f, doc: _} => f(call_args, env, ctx),
         LispExp::Symbol(name) => {
             if let Some(resolved) = env.get_function(name) {
                 call_callable(&resolved, call_args, env, ctx)
@@ -209,7 +209,7 @@ fn primitive_funcall<T: LispContext>(
                 )
             }
         }
-        LispExp::Primitive(func) => func(func_args, env, ctx),
+        LispExp::Primitive { pointer: func, doc: _} => func(func_args, env, ctx),
         _ => Err(EvalError::UncorrectFunctionDefinition),
     }
 }
@@ -238,8 +238,8 @@ fn primitive_function_doc<T: LispContext>(
                         };
                         Ok(LispExp::string(doc))
                     }
-                    LispExp::Primitive(_) => Ok(LispExp::string(
-                        "Primitive function. Doc not provided at the moment".into(),
+                    LispExp::Primitive{pointer: _, doc: doc} => Ok(LispExp::string(
+                        (*doc).clone(),
                     )),
                     _ => unreachable!(),
                 }
@@ -873,7 +873,7 @@ fn primitive_functionp<T: LispContext>(
     }
     Ok(LispExp::boolean(matches!(
         &args[0],
-        LispExp::Lambda(_) | LispExp::Primitive(_)
+        LispExp::Lambda(_) | LispExp::Primitive{pointer: _, doc: _}
     )))
 }
 
@@ -1548,107 +1548,105 @@ fn primitive_resume<T: LispContext>(
 pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     // ------------------------------- Functions  ------------------------------
     // Functions
-    env.set_function("funcall".into(), LispExp::Primitive(primitive_funcall));
+    env.set_function("funcall".into(), LispExp::primitive(primitive_funcall, None));
     env.set_function(
         "function-doc".into(),
-        LispExp::Primitive(primitive_function_doc),
+        LispExp::primitive(primitive_function_doc, None),
     );
     // Multithreading
-    env.set_function("atom".into(), LispExp::Primitive(primitive_atom));
-    env.set_function("deref".into(), LispExp::Primitive(primitive_deref));
-    env.set_function("reset".into(), LispExp::Primitive(primitive_reset));
-    env.set_function("resume".into(), LispExp::Primitive(primitive_resume));
+    env.set_function("atom".into(), LispExp::primitive(primitive_atom, None));
+    env.set_function("deref".into(), LispExp::primitive(primitive_deref, None));
+    env.set_function("reset".into(), LispExp::primitive(primitive_reset, None));
+    env.set_function("resume".into(), LispExp::primitive(primitive_resume, None));
 
     // Base math
-    env.set_function("+".into(), LispExp::Primitive(primitive_sum));
-    env.set_function("-".into(), LispExp::Primitive(primitive_subtraction));
-    env.set_function("=".into(), LispExp::Primitive(primitive_compare));
-    env.set_function("*".into(), LispExp::Primitive(primitive_mul));
-    env.set_function("/".into(), LispExp::Primitive(primitive_div));
-    env.set_function("mod".into(), LispExp::Primitive(primitive_mod));
-    env.set_function("%".into(), LispExp::Primitive(primitive_mod));
-    env.set_function("1+".into(), LispExp::Primitive(primitive_1plus));
-    env.set_function("1-".into(), LispExp::Primitive(primitive_1minus));
-    env.set_function("<".into(), LispExp::Primitive(primitive_lt));
-    env.set_function(">".into(), LispExp::Primitive(primitive_gt));
-    env.set_function("<=".into(), LispExp::Primitive(primitive_le));
-    env.set_function(">=".into(), LispExp::Primitive(primitive_ge));
-    env.set_function("max".into(), LispExp::Primitive(primitive_max));
-    env.set_function("min".into(), LispExp::Primitive(primitive_min));
-    env.set_function("abs".into(), LispExp::Primitive(primitive_abs));
-
+    env.set_function("+".into(), LispExp::primitive(primitive_sum, None));
+    env.set_function("-".into(), LispExp::primitive(primitive_subtraction, None));
+    env.set_function("=".into(), LispExp::primitive(primitive_compare, None));
+    env.set_function("*".into(), LispExp::primitive(primitive_mul, None));
+    env.set_function("/".into(), LispExp::primitive(primitive_div, None));
+    env.set_function("mod".into(), LispExp::primitive(primitive_mod, None));
+    env.set_function("%".into(), LispExp::primitive(primitive_mod, None));
+    env.set_function("1+".into(), LispExp::primitive(primitive_1plus, None));
+    env.set_function("1-".into(), LispExp::primitive(primitive_1minus, None));
+    env.set_function("<".into(), LispExp::primitive(primitive_lt, None));
+    env.set_function(">".into(), LispExp::primitive(primitive_gt, None));
+    env.set_function("<=".into(), LispExp::primitive(primitive_le, None));
+    env.set_function(">=".into(), LispExp::primitive(primitive_ge, None));
+    env.set_function("max".into(), LispExp::primitive(primitive_max, None));
+    env.set_function("min".into(), LispExp::primitive(primitive_min, None));
+    env.set_function("abs".into(), LispExp::primitive(primitive_abs, None));
 
     // List manipulation
     env.set_function(
         "add-to-list".into(),
-        LispExp::Primitive(primitive_add_to_list),
+        LispExp::primitive(primitive_add_to_list, None),
     );
     env.set_function(
         "append-to-list".into(),
-        LispExp::Primitive(primitive_append_to_list),
+        LispExp::primitive(primitive_append_to_list, None),
     );
     env.set_function(
         "remove-from-list".into(),
-        LispExp::Primitive(primitive_remove_from_list),
+        LispExp::primitive(primitive_remove_from_list, None),
     );
-    env.set_function("car".into(), LispExp::Primitive(primitive_car));
-    env.set_function("cdr".into(), LispExp::Primitive(primitive_cdr));
-    env.set_function("cons".into(), LispExp::Primitive(primitive_cons));
-    env.set_function("list".into(), LispExp::Primitive(primitive_list));
-    env.set_function("nth".into(), LispExp::Primitive(primitive_nth));
-    env.set_function("nthcdr".into(), LispExp::Primitive(primitive_nthcdr));
-    env.set_function("length".into(), LispExp::Primitive(primitive_length));
-    env.set_function("append".into(), LispExp::Primitive(primitive_append));
-    env.set_function("reverse".into(), LispExp::Primitive(primitive_reverse));
-    env.set_function("member".into(), LispExp::Primitive(primitive_member));
-    env.set_function("memq".into(), LispExp::Primitive(primitive_memq));
-    env.set_function("assoc".into(), LispExp::Primitive(primitive_assoc));
-    env.set_function("assq".into(), LispExp::Primitive(primitive_assq));
-    env.set_function("elt".into(), LispExp::Primitive(primitive_elt));
-    env.set_function("mapcar".into(), LispExp::Primitive(primitive_mapcar));
-    env.set_function("mapc".into(), LispExp::Primitive(primitive_mapc));
-    env.set_function("apply".into(), LispExp::Primitive(primitive_apply));
-    env.set_function("identity".into(), LispExp::Primitive(primitive_identity));
+    env.set_function("car".into(), LispExp::primitive(primitive_car, None));
+    env.set_function("cdr".into(), LispExp::primitive(primitive_cdr, None));
+    env.set_function("cons".into(), LispExp::primitive(primitive_cons, None));
+    env.set_function("list".into(), LispExp::primitive(primitive_list, None));
+    env.set_function("nth".into(), LispExp::primitive(primitive_nth, None));
+    env.set_function("nthcdr".into(), LispExp::primitive(primitive_nthcdr, None));
+    env.set_function("length".into(), LispExp::primitive(primitive_length, None));
+    env.set_function("append".into(), LispExp::primitive(primitive_append, None));
+    env.set_function("reverse".into(), LispExp::primitive(primitive_reverse, None));
+    env.set_function("member".into(), LispExp::primitive(primitive_member, None));
+    env.set_function("memq".into(), LispExp::primitive(primitive_memq, None));
+    env.set_function("assoc".into(), LispExp::primitive(primitive_assoc, None));
+    env.set_function("assq".into(), LispExp::primitive(primitive_assq, None));
+    env.set_function("elt".into(), LispExp::primitive(primitive_elt, None));
+    env.set_function("mapcar".into(), LispExp::primitive(primitive_mapcar, None));
+    env.set_function("mapc".into(), LispExp::primitive(primitive_mapc, None));
+    env.set_function("apply".into(), LispExp::primitive(primitive_apply, None));
+    env.set_function("identity".into(), LispExp::primitive(primitive_identity, None));
 
     // ------------------------------- Predicates ------------------------------
-    env.set_function("eq".into(), LispExp::Primitive(primitive_eq));
-    env.set_function("eql".into(), LispExp::Primitive(primitive_eql));
-    env.set_function("equal".into(), LispExp::Primitive(primitive_equal));
-    env.set_function("null".into(), LispExp::Primitive(primitive_null));
-    env.set_function("not".into(), LispExp::Primitive(primitive_not));
-    env.set_function("consp".into(), LispExp::Primitive(primitive_consp));
-    env.set_function("listp".into(), LispExp::Primitive(primitive_listp));
-    env.set_function("stringp".into(), LispExp::Primitive(primitive_stringp));
-    env.set_function("numberp".into(), LispExp::Primitive(primitive_numberp));
-    env.set_function("symbolp".into(), LispExp::Primitive(primitive_symbolp));
-    env.set_function("functionp".into(), LispExp::Primitive(primitive_functionp));
-    env.set_function("vectorp".into(), LispExp::Primitive(primitive_vectorp));
-    env.set_function("zerop".into(), LispExp::Primitive(primitive_zerop));
+    env.set_function("eq".into(), LispExp::primitive(primitive_eq, None));
+    env.set_function("eql".into(), LispExp::primitive(primitive_eql, None));
+    env.set_function("equal".into(), LispExp::primitive(primitive_equal, None));
+    env.set_function("null".into(), LispExp::primitive(primitive_null, None));
+    env.set_function("not".into(), LispExp::primitive(primitive_not, None));
+    env.set_function("consp".into(), LispExp::primitive(primitive_consp, None));
+    env.set_function("listp".into(), LispExp::primitive(primitive_listp, None));
+    env.set_function("stringp".into(), LispExp::primitive(primitive_stringp, None));
+    env.set_function("numberp".into(), LispExp::primitive(primitive_numberp, None));
+    env.set_function("symbolp".into(), LispExp::primitive(primitive_symbolp, None));
+    env.set_function("functionp".into(), LispExp::primitive(primitive_functionp, None));
+    env.set_function("vectorp".into(), LispExp::primitive(primitive_vectorp, None));
+    env.set_function("zerop".into(), LispExp::primitive(primitive_zerop, None));
 
     // ------------------------------- Strings ------------------------------
-    env.set_function("concat".into(), LispExp::Primitive(primitive_concat));
-    env.set_function("string=".into(), LispExp::Primitive(primitive_string_eq));
-    env.set_function("string<".into(), LispExp::Primitive(primitive_string_lt));
-    env.set_function("substring".into(), LispExp::Primitive(primitive_substring));
-    env.set_function("upcase".into(), LispExp::Primitive(primitive_upcase));
-    env.set_function("downcase".into(), LispExp::Primitive(primitive_downcase));
-    env.set_function("format".into(), LispExp::Primitive(primitive_format));
+    env.set_function("concat".into(), LispExp::primitive(primitive_concat, None));
+    env.set_function("string=".into(), LispExp::primitive(primitive_string_eq, None));
+    env.set_function("string<".into(), LispExp::primitive(primitive_string_lt, None));
+    env.set_function("substring".into(), LispExp::primitive(primitive_substring, None));
+    env.set_function("upcase".into(), LispExp::primitive(primitive_upcase, None));
+    env.set_function("downcase".into(), LispExp::primitive(primitive_downcase, None));
+    env.set_function("format".into(), LispExp::primitive(primitive_format, None));
     env.set_function(
         "number-to-string".into(),
-        LispExp::Primitive(primitive_number_to_string),
+        LispExp::primitive(primitive_number_to_string, None),
     );
     env.set_function(
         "string-to-number".into(),
-        LispExp::Primitive(primitive_string_to_number),
+        LispExp::primitive(primitive_string_to_number, None),
     );
     env.set_function(
         "symbol-name".into(),
-        LispExp::Primitive(primitive_symbol_name),
+        LispExp::primitive(primitive_symbol_name, None),
     );
-    env.set_function("intern".into(), LispExp::Primitive(primitive_intern));
+    env.set_function("intern".into(), LispExp::primitive(primitive_intern, None));
     env.set_function(
         "split-string".into(),
-        LispExp::Primitive(primitive_split_string),
+        LispExp::primitive(primitive_split_string, None),
     );
-
 }

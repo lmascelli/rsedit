@@ -1,17 +1,19 @@
 #+author: Leonardo Mascelli
 #+title: rsedit
 
-* [10-08-2026] Multi-keys keyevent
-* [09-08-2026] Add a lisp format string primitive
-* DONE [05-07-2026] Add an init.lisp system
-* DONE [05-07-2026] Make lisp functions accept multiple expressions as body
+* Changes todo
+** [18-08-2026] Make primitive_format format escape characters
+** [10-08-2026] Multi-keys keyevent
+** DONE [09-08-2026] Enhance the lisp base_env
+** DONE [05-07-2026] Add an init.lisp system
+** DONE [05-07-2026] Make lisp functions accept multiple expressions as body
 - maybe wrap them in a progn
 - maybe eval all expr and return the evaluation of the last one
 
 At the moment i switched the keymaps map to be a dict of KeyEvent-LispExp. This breaks the handle_key_event function. It must be retinkered to eval an expression when a keymap is pressed.
-* DONE [03-07-2026] The UI interfaces should setup frame-width and frame-height at startup and update them on resize
+** DONE [03-07-2026] The UI interfaces should setup frame-width and frame-height at startup and update them on resize
 Add an after resize list of callbacks that can be registered after a resize event is done
-* [27-07-2026] Make M-x spawn the floating window of minibuffer
+** [27-07-2026] Make M-x spawn the floating window of minibuffer
 - native functions to implement:
   - buffer-string: get the text the user typed
   - close-buffer: delete the current buffer
@@ -20,24 +22,24 @@ Add an after resize list of callbacks that can be registered after a resize even
 - create a set-text-pos function that insert or replace based on an optional parameter some text in a given buffer position
 - create a match-list function that given a list of strings and a pattern returns all element of the list containing that pattern
 - create a lisp function that spawn a show the minibuffer. it must be a new buffer with major-mode minibuffer-mode. the ui of the buffer still has to be decided.
-* DONE [27-07-2026] Move the *lisp-path* variable to a string list in lisp env
+** DONE [27-07-2026] Move the *lisp-path* variable to a string list in lisp env
 - Add an add-to-list and remove-from-list native functions
 - Modify the eval-file function to look for paths in the lisp-path list in the editor environment
-* DONE [27-07-2026] Add the folder "data/lisp" in the same path of the editor executable to the *lisp-path* list
-* DONE [26-07-2026] Make the build.rs script copy the lisp files in the appropriate location in target directory
+** DONE [27-07-2026] Add the folder "data/lisp" in the same path of the editor executable to the *lisp-path* list
+** DONE [26-07-2026] Make the build.rs script copy the lisp files in the appropriate location in target directory
 
-* [25-07-2026] Comment what is uncommented
-* DONE [25-07-2026] Handle the load of the base lisp libraries
+** [25-07-2026] Comment what is uncommented
+** DONE [25-07-2026] Handle the load of the base lisp libraries
 The mandatory setup of the editor lisp environment must be done natively by the editor itself but the
 lisp libraries should be found and loaded as needed. A *lisp-path* variable is present in the editorstate and
 a function *eval-file* that eval a file and returns the result. file can be:
 - a path to a file
 - the name of a file without extension in the folders that are the elements of *lisp-path*
-* DONE [22-07-2026] Make the handle-key-event look first in the current mode keymaps
+** DONE [22-07-2026] Make the handle-key-event look first in the current mode keymaps
 
-* DONE [22-07-2026] Add a major-mode arg to define-key function
+** DONE [22-07-2026] Add a major-mode arg to define-key function
 
-* DONE [22-07-2026] Create the minibuffer major mode
+** DONE [22-07-2026] Create the minibuffer major mode
 
 * Macro todo
 - [ ] Syntax highlighting (maybe treesitter)

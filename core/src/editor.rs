@@ -3,6 +3,7 @@ use crate::{
     buffer::{Buffer, BufferTrait},
     input::{KeyEvent, fill_default_keymaps},
     lisp::{Env, EvalError, LispContext, LispExp, Parser, bootstrap_vm, eval},
+    minibuffer::MinibufferState,
     modes::MajorMode,
     task::{BackgroundScheduler, WorkerMessage},
     ui::{FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines},
@@ -33,6 +34,7 @@ pub struct EditorState<B: BufferTrait> {
     pub worker_mailbox: Sender<WorkerMessage<B>>,
 
     pub buffers: Arc<RwLock<HashMap<String, Arc<RwLock<Buffer<B>>>>>>,
+    pub minibuffer: Arc<RwLock<MinibufferState>>,
     pub echo_message: Arc<RwLock<String>>,
     pub current_buffer_name: Arc<RwLock<String>>,
 
@@ -118,6 +120,7 @@ impl<B: BufferTrait> EditorState<B> {
             running: Arc::new(AtomicBool::new(true)),
             worker_mailbox: sender,
             buffers: Arc::new(RwLock::new(buffers)),
+            minibuffer: Arc::new(RwLock::new(MinibufferState::default())),
             echo_message: Arc::new(RwLock::new("Welcome to rsedit".to_string())),
             current_buffer_name: Arc::new(RwLock::new(scratch_name)),
             keymaps: Arc::new(RwLock::new(keymaps)),
@@ -652,7 +655,7 @@ pub fn create_global_env<B: BufferTrait>()
     // ---------------------- FILLING PRIMITIVE FUNCTIONS ----------------------
     macro_rules! insert_fn {
         ($name:literal, $func:ident) => {
-            env.set_function($name.into(), LispExp::Primitive(primitives::$func));
+            env.set_function($name.into(), LispExp::primitive(primitives::$func, None));
         };
     }
 
@@ -675,6 +678,8 @@ pub fn create_global_env<B: BufferTrait>()
     insert_fn!("make-floating-window", make_floating_window);
     insert_fn!("close-floating-window", close_floating_window);
     insert_fn!("switch-to-buffer", switch_to_buffer);
+    insert_fn!("current-buffer", current_buffer);
+    insert_fn!("close-buffer", close_buffer);
     insert_fn!("buffer-string", buffer_string);
     insert_fn!("clear-buffer", clear_buffer);
 
@@ -1347,6 +1352,30 @@ mod primitives {
     //                        BUFFERS                             //
     //                                                            //
     //------------------------------------------------------------//
+
+    primitive!(current_buffer, _args, _env, ctx, {
+        Ok(ELispExp::string(ctx.get_current_buffer_name()))
+    });
+
+    primitive!(close_buffer, args, _env, ctx, {
+        if args.is_empty() {
+            let current_buffer_name = ctx.get_current_buffer_name();
+            if let Some(buffer) = ctx.get_buffer(&current_buffer_name) {
+                if current_buffer_name == "*Minibuffer*" {
+                    todo!("Restore the LayoutNode and the focus to the previous window");
+                }
+                todo!(
+                    "Assign an other buffer to the current window. Find a way to store the last viewn buffer"
+                );
+                Ok(ELispExp::t())
+            } else {
+                Ok(ELispExp::nil())
+            }
+        } else {
+            todo!("Extract the name of the buffer to close from the args. Close it if exists.");
+            Ok(ELispExp::nil())
+        }
+    });
 
     primitive!(buffer_string, _args, _env, ctx, {
         let buf = ctx.get_current_buffer();
