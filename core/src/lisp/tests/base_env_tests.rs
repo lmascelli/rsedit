@@ -9,7 +9,7 @@
 //! `-`, `mod`) that were fixed to match real Emacs Lisp semantics.
 #[cfg(test)]
 mod tests {
-    use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval, setup_base_env};
+    use crate::lisp::{Env, EvalError, LispExp, Parser, eval, setup_base_env};
     use std::sync::Arc;
 
     fn env_with_primitives() -> Arc<Env<()>> {
@@ -287,10 +287,7 @@ mod tests {
         assert_eq!(eval_ok("(functionp (lambda () 1))"), LispExp::t());
         assert_eq!(eval_ok("(functionp 'no-such-function)"), LispExp::nil());
         // A variable-only binding doesn't count.
-        assert_eq!(
-            eval_ok("(setq x 1) (functionp 'x)"),
-            LispExp::nil()
-        );
+        assert_eq!(eval_ok("(setq x 1) (functionp 'x)"), LispExp::nil());
     }
 
     #[test]

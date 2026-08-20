@@ -96,7 +96,7 @@ fn call_callable<T: LispContext>(
                 ctx,
             )
         }
-        LispExp::Primitive { pointer: f, doc: _} => f(call_args, env, ctx),
+        LispExp::Primitive { pointer: f, doc: _ } => f(call_args, env, ctx),
         LispExp::Symbol(name) => {
             if let Some(resolved) = env.get_function(name) {
                 call_callable(&resolved, call_args, env, ctx)
@@ -207,9 +207,10 @@ fn primitive_function_doc<T: LispContext>(
                         };
                         Ok(LispExp::string(doc))
                     }
-                    LispExp::Primitive{pointer: _, doc: doc} => Ok(LispExp::string(
-                        (*doc).clone(),
-                    )),
+                    LispExp::Primitive {
+                        pointer: _,
+                        doc,
+                    } => Ok(LispExp::string((*doc).clone())),
                     _ => unreachable!(),
                 }
             } else {
@@ -810,7 +811,8 @@ fn primitive_listp<T: LispContext>(
             got: args.len(),
         });
     }
-    let is_list = args[0].is_nil() || matches!(&args[0], LispExp::List(_) | LispExp::DottedList(_, _));
+    let is_list =
+        args[0].is_nil() || matches!(&args[0], LispExp::List(_) | LispExp::DottedList(_, _));
     Ok(LispExp::boolean(is_list))
 }
 
@@ -868,10 +870,9 @@ fn primitive_functionp<T: LispContext>(
         });
     }
     let is_function = match &args[0] {
-        LispExp::Lambda(_) | LispExp::Primitive{ .. } => true,
+        LispExp::Lambda(_) | LispExp::Primitive { .. } => true,
         LispExp::Symbol(name) => env.get_function(name).is_some(),
         _ => false,
-
     };
     Ok(LispExp::boolean(is_function))
 }
@@ -1587,7 +1588,10 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
         ),
     );
     // Multithreading
-    env.set_function("make-atom".into(), LispExp::primitive(primitive_make_atom, None));
+    env.set_function(
+        "make-atom".into(),
+        LispExp::primitive(primitive_make_atom, None),
+    );
     env.set_function(
         "deref".into(),
         LispExp::primitive(
@@ -2277,8 +2281,8 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     );
 
     env.set_function(
-    "atom".into(),
-    LispExp::primitive(primitive_atom_predicate, None),
+        "atom".into(),
+        LispExp::primitive(primitive_atom_predicate, None),
     );
 
     // ------------------------------- Strings ------------------------------

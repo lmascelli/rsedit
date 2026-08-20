@@ -68,8 +68,7 @@ impl<T: LispContext> PartialEq for SharedFiber<T> {
     }
 }
 
-pub type LispPrimitive<T> =
-    fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError>;
+pub type LispPrimitive<T> = fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError>;
 
 #[derive(Clone, Debug, PartialEq)]
 // Primitive comparison has no meaning and will probably never done

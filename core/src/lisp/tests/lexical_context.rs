@@ -202,7 +202,10 @@ mod tests {
                     )
                 }
             }
-            LispExp::Primitive{ pointer: func, doc: _ } => func(func_args, env, ctx),
+            LispExp::Primitive {
+                pointer: func,
+                doc: _,
+            } => func(func_args, env, ctx),
             _ => Err(EvalError::UncorrectFunctionDefinition),
         }
     }
@@ -211,7 +214,10 @@ mod tests {
     fn test_upward_funarg_closure_capture() {
         let root_env = Env::<DummyCtx>::new_root();
         let mut ctx = DummyCtx;
-        root_env.set_function("funcall".into(), LispExp::primitive(primitive_funcall, None));
+        root_env.set_function(
+            "funcall".into(),
+            LispExp::primitive(primitive_funcall, None),
+        );
 
         // 1. Define a factory function that returns an anonymous lambda.
         // The lambda captures the local 'let' variable "secret".

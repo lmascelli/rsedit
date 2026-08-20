@@ -27,10 +27,10 @@ primitive!(close_buffer, args, _env, ctx, {
 primitive!(buffer_string, _args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let content = buf
-    .read()
-    .expect("Failed to acquire read lock on current buffer")
-    .text
-    .to_string();
+        .read()
+        .expect("Failed to acquire read lock on current buffer")
+        .text
+        .to_string();
     Ok(ELispExp::string(content))
 });
 
@@ -57,38 +57,32 @@ primitive!(switch_to_buffer, args, _env, ctx, {
             ELispExp::String(buffer_name) => {
                 if let Some(_) = ctx.get_buffer(buffer_name) {
                     if let Some(window) = ctx
-                    .layout_root
-                    .write()
-                    .expect("Failed to acquire write lock on layout_root")
-                    .get_window_by_id(ctx.get_focused_window_id())
+                        .layout_root
+                        .write()
+                        .expect("Failed to acquire write lock on layout_root")
+                        .get_window_by_id(ctx.get_focused_window_id())
                     {
                         window.buffer_name = buffer_name.to_string();
                     }
                     Ok(args[0].clone())
                 } else {
-                    ctx.log_diagnostic(&format!(
-                        "[LOG] buffer {} does not exist.",
-                        buffer_name
-                    ));
+                    ctx.log_diagnostic(&format!("[LOG] buffer {} does not exist.", buffer_name));
                     Ok(ELispExp::nil())
                 }
             }
             ELispExp::Symbol(buffer_name) => {
                 if let Some(_) = ctx.get_buffer(buffer_name) {
                     if let Some(window) = ctx
-                    .layout_root
-                    .write()
-                    .expect("Failed to acquire write lock on layout_root")
-                    .get_window_by_id(ctx.get_focused_window_id())
+                        .layout_root
+                        .write()
+                        .expect("Failed to acquire write lock on layout_root")
+                        .get_window_by_id(ctx.get_focused_window_id())
                     {
                         window.buffer_name = buffer_name.to_string();
                     }
                     Ok(args[0].clone())
                 } else {
-                    ctx.log_diagnostic(&format!(
-                        "[LOG] buffer {} does not exist.",
-                        buffer_name
-                    ));
+                    ctx.log_diagnostic(&format!("[LOG] buffer {} does not exist.", buffer_name));
                     Ok(ELispExp::nil())
                 }
             }

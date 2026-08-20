@@ -1,16 +1,10 @@
 use crate::{
-    BufferTrait, EditorState, ELispExp,
-    modes::{MajorMode, SyntaxRule},
+    BufferTrait, ELispExp, EditorState,
     input::{KeyCode, KeyEvent, KeyModifiers},
     lisp::{Env, EvalError, LispContext},
+    modes::{MajorMode, SyntaxRule},
     ui::{Face, FloatingWindow, Rect, Window},
 };
-
-fn is_nil<B: BufferTrait>(args: &[ELispExp<B>]) -> bool {
-    args.len() == 0
-        || (args.len() == 1 && (args[0] == ELispExp::list(vec![]))
-            || args[0] == ELispExp::symbol("nil".into()))
-}
 
 fn parse_key_sequence(seq: &str) -> Option<KeyEvent> {
     let mut modifiers = KeyModifiers::default();
@@ -70,8 +64,8 @@ macro_rules! primitive {
 }
 
 pub mod buffers;
-pub mod general;
-pub mod modes;
 pub mod edits;
+pub mod general;
 pub mod io;
+pub mod modes;
 pub mod ui;

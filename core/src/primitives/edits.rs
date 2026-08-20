@@ -28,8 +28,8 @@ primitive!(insert_newline, _args, _env, ctx, {
 primitive!(delete_backward_char, _args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf
-    .write()
-    .expect("Failed to acquire a write lock on buffer");
+        .write()
+        .expect("Failed to acquire a write lock on buffer");
     buf.text.delete();
     buf.is_modified = true;
     Ok(ELispExp::nil())
@@ -38,9 +38,9 @@ primitive!(delete_backward_char, _args, _env, ctx, {
 primitive!(forward_char, args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf
-    .write()
-    .expect("Failed to acquire a write lock on buffer");
-    let step = if is_nil(args) {
+        .write()
+        .expect("Failed to acquire a write lock on buffer");
+    let step = if args.is_empty() {
         1
     } else {
         if let ELispExp::Number(n) = args[0] {
@@ -61,9 +61,9 @@ primitive!(forward_char, args, _env, ctx, {
 primitive!(backward_char, args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf
-    .write()
-    .expect("Failed to acquire a write lock on buffer");
-    let step = if is_nil(args) {
+        .write()
+        .expect("Failed to acquire a write lock on buffer");
+    let step = if args.is_empty() {
         1
     } else {
         if let ELispExp::Number(n) = args[0] {
@@ -87,8 +87,8 @@ primitive!(backward_char, args, _env, ctx, {
 primitive!(previous_line, _args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf
-    .write()
-    .expect("Failed to acquire a write lock on buffer");
+        .write()
+        .expect("Failed to acquire a write lock on buffer");
     let (line, col) = buf.text.cursor_pos();
     if line > 0 {
         buf.text.cursor_move(line - 1, col);

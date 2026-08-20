@@ -216,7 +216,7 @@ impl<B: BufferTrait> EditorState<B> {
                             let mut script_content = None;
                             for path in lisp_path {
                                 if let Ok(content) =
-                                    std::fs::read_to_string(&format!("{path}/{file}.lisp"))
+                                std::fs::read_to_string(&format!("{path}/{file}.lisp"))
                                 {
                                     script_content = Some(content);
                                     break;
@@ -624,9 +624,9 @@ pub fn create_global_env<B: BufferTrait>()
                 ELispExp::list(vec![ELispExp::string(format!(
                     "{}/data/lisp",
                     exe_path
-                        .parent()
-                        .expect("Failed to get the parent directory of rsedit")
-                        .display()
+                    .parent()
+                    .expect("Failed to get the parent directory of rsedit")
+                    .display()
                 ))]),
             );
         }
@@ -689,7 +689,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "define-key",
-general::define_key,
+        general::define_key,
         "(define-key MODE KEY COMMAND): Bind KEY (an Emacs-style key sequence \
          string, e.g. \"C-x\" or \"<ret>\") to COMMAND. MODE is either nil, \
          binding KEY globally, or a mode name symbol/string, binding KEY only \
@@ -705,7 +705,7 @@ general::define_key,
     );
     insert_fn!(
         "log",
-general::log,
+        general::log,
         "(log MESSAGE): Append the string MESSAGE to the editor's diagnostic \
          log (and to the log file, if one is enabled).\n\n\
          Example:\n\
@@ -713,7 +713,7 @@ general::log,
     );
     insert_fn!(
         "make-mode",
-modes::make_mode,
+        modes::make_mode,
         "(make-mode NAME): Register a new, empty major mode named NAME (a \
          symbol) with no keymaps, hooks, or syntax rules of its own. Returns \
          t. rsedit's own simplified alternative to Emacs's \
@@ -724,7 +724,7 @@ modes::make_mode,
     );
     insert_fn!(
         "add-hook",
-modes::add_hook,
+        modes::add_hook,
         "(add-hook MODE HOOK FUNCTION): Append the function named FUNCTION to \
          the list of functions run for HOOK (a string, e.g. \
          \"post-command-hook\") in major mode MODE. Returns t, or nil \
@@ -737,7 +737,7 @@ modes::add_hook,
     );
     insert_fn!(
         "add-syntax-rule",
-modes::add_syntax_rule,
+        modes::add_syntax_rule,
         "(add-syntax-rule MODE REGEX FACE): Add a syntax-highlighting rule to \
          major mode MODE: any text matching the regular expression REGEX (a \
          string) is rendered with FACE (a symbol: keyword, type, string, \
@@ -750,7 +750,7 @@ modes::add_syntax_rule,
     );
     insert_fn!(
         "self-insert",
-edits::self_insert,
+        edits::self_insert,
         "(self-insert STRING): Insert the first character of STRING at point \
          in the current buffer. Unlike Emacs's `self-insert-command`, which \
          reads the character to insert from `last-command-event`, this takes \
@@ -760,7 +760,7 @@ edits::self_insert,
     );
     insert_fn!(
         "insert-newline",
-edits::insert_newline,
+        edits::insert_newline,
         "(insert-newline): Insert a newline character at point in the current \
          buffer.\n\n\
          Example:\n\
@@ -768,7 +768,7 @@ edits::insert_newline,
     );
     insert_fn!(
         "delete-backward-char",
-edits::delete_backward_char,
+        edits::delete_backward_char,
         "(delete-backward-char): Delete the character before point in the \
          current buffer. Unlike Emacs's command of the same name, this takes \
          no count argument -- it always deletes exactly one character.\n\n\
@@ -777,7 +777,7 @@ edits::delete_backward_char,
     );
     insert_fn!(
         "backward-char",
-edits::backward_char,
+        edits::backward_char,
         "(backward-char &optional N): Move point backward N characters \
          (default 1) in the current buffer, stopping at the beginning of the \
          line.\n\n\
@@ -787,7 +787,7 @@ edits::backward_char,
     );
     insert_fn!(
         "forward-char",
-edits::forward_char,
+        edits::forward_char,
         "(forward-char &optional N): Move point forward N characters (default \
          1) in the current buffer.\n\n\
          Example:\n\
@@ -796,7 +796,7 @@ edits::forward_char,
     );
     insert_fn!(
         "previous-line",
-edits::previous_line,
+        edits::previous_line,
         "(previous-line): Move point up one line in the current buffer, \
          keeping the same column (clamped to that line's length), stopping at \
          the first line.\n\n\
@@ -805,7 +805,7 @@ edits::previous_line,
     );
     insert_fn!(
         "next-line",
-edits::next_line,
+        edits::next_line,
         "(next-line): Move point down one line in the current buffer, keeping \
          the same column.\n\n\
          Example:\n\
@@ -813,7 +813,7 @@ edits::next_line,
     );
     insert_fn!(
         "find-file",
-io::find_file,
+        io::find_file,
         "(find-file PATH): Open the file at PATH into a new buffer named \
          after PATH's file name (or PATH itself if it has none), make it the \
          current buffer, and return its buffer name. Returns nil (logging a \
@@ -823,7 +823,7 @@ io::find_file,
     );
     insert_fn!(
         "save-buffer",
-io::save_buffer,
+        io::save_buffer,
         "(save-buffer): Write the current buffer's contents to the file it \
          was visiting. Returns nil in every case (logging a diagnostic \
          either way); if the buffer has no associated file, or the write \
@@ -833,7 +833,7 @@ io::save_buffer,
     );
     insert_fn!(
         "make-floating-window",
-ui::make_floating_window,
+        ui::make_floating_window,
         "(make-floating-window BUFFER-NAME X Y WIDTH HEIGHT &optional TITLE): \
          Create a new buffer named BUFFER-NAME, open it in a new bordered \
          floating window positioned at (X, Y) with the given WIDTH and \
@@ -845,7 +845,7 @@ ui::make_floating_window,
     insert_fn!("close-floating-window", ui::close_floating_window);
     insert_fn!(
         "switch-to-buffer",
-buffers::switch_to_buffer,
+        buffers::switch_to_buffer,
         "(switch-to-buffer BUFFER-NAME): Make the buffer named BUFFER-NAME \
          (a string or symbol) the one shown in the focused window, and \
          return BUFFER-NAME. Returns nil (logging a diagnostic) if no buffer \
@@ -856,7 +856,7 @@ buffers::switch_to_buffer,
     );
     insert_fn!(
         "current-buffer",
-buffers::current_buffer,
+        buffers::current_buffer,
         "(current-buffer): Return the name of the current buffer, as a \
          string. Unlike real Emacs Lisp's `current-buffer`, which returns a \
          buffer object, this returns the buffer's name.\n\n\
@@ -866,7 +866,7 @@ buffers::current_buffer,
     insert_fn!("close-buffer", buffers::close_buffer);
     insert_fn!(
         "buffer-string",
-buffers::buffer_string,
+        buffers::buffer_string,
         "(buffer-string): Return the entire contents of the current buffer as \
          a string.\n\n\
          Example:\n\
@@ -874,7 +874,7 @@ buffers::buffer_string,
     );
     insert_fn!(
         "clear-buffer",
-buffers::clear_buffer,
+        buffers::clear_buffer,
         "(clear-buffer): Delete the entire contents of the current buffer. \
          Not a standard Elisp primitive -- comparable to Emacs's \
          `erase-buffer`.\n\n\

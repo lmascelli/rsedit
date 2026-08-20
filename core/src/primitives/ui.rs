@@ -48,9 +48,9 @@ primitive!(make_floating_window, args, _env, ctx, {
             };
 
             ctx.floating_windows
-            .write()
-            .expect("Failed to acquire write lock on floating_windows")
-            .push(floating_win);
+                .write()
+                .expect("Failed to acquire write lock on floating_windows")
+                .push(floating_win);
 
             ctx.set_focused_window_id(new_id);
             ctx.set_current_buffer_name(buf_name);
@@ -71,11 +71,10 @@ primitive!(close_floating_window, _args, _env, ctx, {
     // the buffer or the id of the window to close or toggle. Moreover the last not floating
     // window id must be stored so when a window is closed the focus can be passed where it was.
     let mut floats = ctx
-    .floating_windows
-    .write()
-    .expect("Failed to acquire write lock for floating_windows");
+        .floating_windows
+        .write()
+        .expect("Failed to acquire write lock for floating_windows");
     floats.pop();
     ctx.set_focused_window_id(0);
     Ok(ELispExp::nil())
-    });
-
+});

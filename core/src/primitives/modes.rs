@@ -9,9 +9,9 @@ primitive!(make_mode, args, _env, ctx, {
     } else {
         if let Some(ELispExp::Symbol(mode_name)) = args.get(0) {
             ctx.mode_registry
-            .write()
-            .expect("Failed to acquire write lock on mode_registry")
-            .insert(mode_name.to_string(), MajorMode::new(mode_name));
+                .write()
+                .expect("Failed to acquire write lock on mode_registry")
+                .insert(mode_name.to_string(), MajorMode::new(mode_name));
             Ok(ELispExp::symbol("t".into()))
         } else {
             Err(EvalError::WrongArgumentType {
@@ -30,22 +30,19 @@ primitive!(add_hook, args, _env, ctx, {
         });
     }
 
-    if let (
-        ELispExp::Symbol(mode_name),
-        ELispExp::String(hook_name),
-        ELispExp::Symbol(func_name),
-    ) = (&args[0], &args[1], &args[2])
+    if let (ELispExp::Symbol(mode_name), ELispExp::String(hook_name), ELispExp::Symbol(func_name)) =
+        (&args[0], &args[1], &args[2])
     {
         let mut registry = ctx
-        .mode_registry
-        .write()
-        .expect("Failed to acquire write lock on mode_registry");
+            .mode_registry
+            .write()
+            .expect("Failed to acquire write lock on mode_registry");
 
         if let Some(mode) = registry.get_mut(mode_name.as_str()) {
             let hook_list = mode
-            .hooks
-            .entry(hook_name.to_string())
-            .or_insert_with(Vec::new);
+                .hooks
+                .entry(hook_name.to_string())
+                .or_insert_with(Vec::new);
             hook_list.push(ELispExp::symbol(func_name.to_string()));
 
             Ok(ELispExp::symbol("t".into()))
@@ -93,9 +90,9 @@ primitive!(add_syntax_rule, args, _env, ctx, {
             match regex::Regex::new(regex_str) {
                 Ok(pattern) => {
                     let mut registry = ctx
-                    .mode_registry
-                    .write()
-                    .expect("Failed to acquire read lock on mode_registry");
+                        .mode_registry
+                        .write()
+                        .expect("Failed to acquire read lock on mode_registry");
                     if let Some(mode) = registry.get_mut(mode_name.as_str()) {
                         mode.syntax_rules.push(SyntaxRule { pattern, face });
 

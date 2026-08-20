@@ -636,10 +636,13 @@ mod test {
 
         env.set_function(
             "bump".into(),
-            LispExp::primitive(|_args: &[LispExp<MockHost>], _env, ctx| {
-                *ctx.tracker.write().unwrap() += 1.0;
-                Ok(LispExp::number(*ctx.tracker.read().unwrap()))
-            }, None),
+            LispExp::primitive(
+                |_args: &[LispExp<MockHost>], _env, ctx| {
+                    *ctx.tracker.write().unwrap() += 1.0;
+                    Ok(LispExp::number(*ctx.tracker.read().unwrap()))
+                },
+                None,
+            ),
         );
 
         (
@@ -685,13 +688,16 @@ mod test {
         // Assuming native primitives like '+' are mapped
         env.set_function(
             "+".into(),
-            LispExp::primitive(|args, _, _| {
-                if let (LispExp::Number(a), LispExp::Number(b)) = (&args[0], &args[1]) {
-                    Ok(LispExp::number(a + b))
-                } else {
-                    Err(EvalError::UnvalidFunctionCall)
-                }
-            }, None),
+            LispExp::primitive(
+                |args, _, _| {
+                    if let (LispExp::Number(a), LispExp::Number(b)) = (&args[0], &args[1]) {
+                        Ok(LispExp::number(a + b))
+                    } else {
+                        Err(EvalError::UnvalidFunctionCall)
+                    }
+                },
+                None,
+            ),
         );
 
         let let_exp = LispExp::list(vec![

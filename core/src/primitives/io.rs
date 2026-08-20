@@ -5,10 +5,10 @@ primitive!(find_file, args, _env, ctx, {
         let path_str = path_str.to_string();
         let path = std::path::Path::new(&path_str);
         let file_name = path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let buf_name = if file_name.is_empty() {
             path_str.to_string()
         } else {
@@ -48,5 +48,3 @@ primitive!(save_buffer, _args, _env, ctx, {
         }
     }
 });
-
-
