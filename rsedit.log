@@ -2,5 +2,9 @@
 [LOG] VM Handshake: State verification successful. Core is stable.
 [LOG] End of the common-keymaps.lisp
 [LOG] End of the minibuffer.lisp
-[LOG] 5\n
+[LOG] (format STRING &rest OBJECTS): Format OBJECTS according to the directives in STRING and return the result. Supports %s/%S (display), %d (integer), %f (float), and %% (literal percent). Signals an error if there are fewer OBJECTS than directives require.
+
+Example:
+(format "%s is %d" "age" 30) => "age is 30"
+(format "100%%")               => "100%"
 [LOG] Hello from rsedit init.lisp

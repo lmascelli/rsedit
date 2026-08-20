@@ -1548,105 +1548,910 @@ fn primitive_resume<T: LispContext>(
 pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     // ------------------------------- Functions  ------------------------------
     // Functions
-    env.set_function("funcall".into(), LispExp::primitive(primitive_funcall, None));
+    env.set_function(
+        "funcall".into(),
+        LispExp::primitive(
+            primitive_funcall,
+            Some(
+                "(funcall FUNCTION &rest ARGS): Call FUNCTION with ARGS. \
+                 Unlike `apply`/`mapcar`, FUNCTION must already be a callable \
+                 value (a lambda or a primitive) -- a symbol naming a function \
+                 is NOT resolved and calling one signals an error.\n\n\
+                 Example:\n\
+                 (funcall (lambda (x y) (+ x y)) 2 3) => 5\n\
+                 (funcall 'car '(1 2))                => error, 'car is a \
+                 symbol, not a callable value; use (funcall #'car '(1 2)) or \
+                 `apply` instead."
+                    .into(),
+            ),
+        ),
+    );
     env.set_function(
         "function-doc".into(),
-        LispExp::primitive(primitive_function_doc, None),
+        LispExp::primitive(
+            primitive_function_doc,
+            Some(
+                "(function-doc SYMBOL): Return the documentation string of the \
+                 function bound to SYMBOL, or \"Undocumented function\" if it \
+                 has none. Returns nil and logs a diagnostic if SYMBOL names no \
+                 function. Not a standard Elisp primitive -- the closest real \
+                 Elisp equivalent is `documentation`.\n\n\
+                 Example:\n\
+                 (function-doc 'car) => \"(car LIST): Return the first \
+                 element of LIST, or nil if LIST is nil.\"\n\
+                 (function-doc 'no-such-fn) => nil"
+                    .into(),
+            ),
+        ),
     );
     // Multithreading
+    // `atom`/`deref`/`reset`/`resume` are rsedit's own concurrency
+    // primitives, not part of standard Elisp. `atom` in particular collides
+    // in name (but not meaning) with real Elisp's cons-cell predicate, so it
+    // is deliberately left undocumented here until that's resolved.
     env.set_function("atom".into(), LispExp::primitive(primitive_atom, None));
-    env.set_function("deref".into(), LispExp::primitive(primitive_deref, None));
-    env.set_function("reset".into(), LispExp::primitive(primitive_reset, None));
-    env.set_function("resume".into(), LispExp::primitive(primitive_resume, None));
+    env.set_function(
+        "deref".into(),
+        LispExp::primitive(
+            primitive_deref,
+            Some(
+                "(deref ATOM): Return the current value stored in ATOM.\n\n\
+                 Example:\n\
+                 (setq counter (atom 0))\n\
+                 (deref counter) => 0"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "reset".into(),
+        LispExp::primitive(
+            primitive_reset,
+            Some(
+                "(reset ATOM NEWVAL): Set ATOM's stored value to NEWVAL and \
+                 return NEWVAL.\n\n\
+                 Example:\n\
+                 (setq counter (atom 0))\n\
+                 (reset counter 42) => 42\n\
+                 (deref counter)    => 42"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "resume".into(),
+        LispExp::primitive(
+            primitive_resume,
+            Some(
+                "(resume FIBER): Run the next suspended expression of FIBER \
+                 and return its value. Returns nil once FIBER has no \
+                 expressions left to run.\n\n\
+                 Example:\n\
+                 (setq f (make-fiber '((log \"a\") (log \"b\"))))\n\
+                 (resume f) ; runs (log \"a\")\n\
+                 (resume f) ; runs (log \"b\")\n\
+                 (resume f) => nil ; fiber is done"
+                    .into(),
+            ),
+        ),
+    );
 
     // Base math
+    // `+`, `-` and `mod`/`%` are deliberately left undocumented: `(+)` should
+    // return 0 but currently errors, `(- 5)` should negate to -5 but returns
+    // 5 unchanged, and `mod` doesn't follow Elisp's "result takes the sign of
+    // the divisor" rule for a negative divisor. Documenting them now would
+    // just describe the bugs as if they were the intended behavior.
     env.set_function("+".into(), LispExp::primitive(primitive_sum, None));
     env.set_function("-".into(), LispExp::primitive(primitive_subtraction, None));
-    env.set_function("=".into(), LispExp::primitive(primitive_compare, None));
-    env.set_function("*".into(), LispExp::primitive(primitive_mul, None));
-    env.set_function("/".into(), LispExp::primitive(primitive_div, None));
+    env.set_function(
+        "=".into(),
+        LispExp::primitive(
+            primitive_compare,
+            Some(
+                "(= NUMBER &rest NUMBERS): Return t if all arguments are \
+                 numerically equal, nil otherwise. Requires at least one \
+                 argument.\n\n\
+                 Example:\n\
+                 (= 1 1 1) => t\n\
+                 (= 1 1 2) => nil\n\
+                 (= 3)     => t"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "*".into(),
+        LispExp::primitive(
+            primitive_mul,
+            Some(
+                "(* &rest NUMBERS): Return the product of NUMBERS. With no \
+                 arguments, returns 1.\n\n\
+                 Example:\n\
+                 (* 2 3 4) => 24\n\
+                 (*)       => 1"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "/".into(),
+        LispExp::primitive(
+            primitive_div,
+            Some(
+                "(/ NUMBER &rest DIVISORS): Divide NUMBER by each of DIVISORS \
+                 in turn. With a single argument, returns its reciprocal. \
+                 Signals a runtime error on division by zero.\n\n\
+                 Example:\n\
+                 (/ 20 2 5) => 2\n\
+                 (/ 4)      => 0.25\n\
+                 (/ 1 0)    => error, division by zero"
+                    .into(),
+            ),
+        ),
+    );
     env.set_function("mod".into(), LispExp::primitive(primitive_mod, None));
     env.set_function("%".into(), LispExp::primitive(primitive_mod, None));
-    env.set_function("1+".into(), LispExp::primitive(primitive_1plus, None));
-    env.set_function("1-".into(), LispExp::primitive(primitive_1minus, None));
-    env.set_function("<".into(), LispExp::primitive(primitive_lt, None));
-    env.set_function(">".into(), LispExp::primitive(primitive_gt, None));
-    env.set_function("<=".into(), LispExp::primitive(primitive_le, None));
-    env.set_function(">=".into(), LispExp::primitive(primitive_ge, None));
-    env.set_function("max".into(), LispExp::primitive(primitive_max, None));
-    env.set_function("min".into(), LispExp::primitive(primitive_min, None));
-    env.set_function("abs".into(), LispExp::primitive(primitive_abs, None));
+    env.set_function(
+        "1+".into(),
+        LispExp::primitive(
+            primitive_1plus,
+            Some(
+                "(1+ NUMBER): Return NUMBER plus one.\n\n\
+                 Example:\n\
+                 (1+ 4) => 5"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "1-".into(),
+        LispExp::primitive(
+            primitive_1minus,
+            Some(
+                "(1- NUMBER): Return NUMBER minus one.\n\n\
+                 Example:\n\
+                 (1- 4) => 3"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "<".into(),
+        LispExp::primitive(
+            primitive_lt,
+            Some(
+                "(< NUMBER &rest NUMBERS): Return t if the arguments are in \
+                 strictly increasing numeric order, nil otherwise.\n\n\
+                 Example:\n\
+                 (< 1 2 3) => t\n\
+                 (< 1 3 2) => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        ">".into(),
+        LispExp::primitive(
+            primitive_gt,
+            Some(
+                "(> NUMBER &rest NUMBERS): Return t if the arguments are in \
+                 strictly decreasing numeric order, nil otherwise.\n\n\
+                 Example:\n\
+                 (> 3 2 1) => t\n\
+                 (> 3 1 2) => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "<=".into(),
+        LispExp::primitive(
+            primitive_le,
+            Some(
+                "(<= NUMBER &rest NUMBERS): Return t if the arguments are in \
+                 non-decreasing numeric order, nil otherwise.\n\n\
+                 Example:\n\
+                 (<= 1 1 2) => t\n\
+                 (<= 2 1)   => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        ">=".into(),
+        LispExp::primitive(
+            primitive_ge,
+            Some(
+                "(>= NUMBER &rest NUMBERS): Return t if the arguments are in \
+                 non-increasing numeric order, nil otherwise.\n\n\
+                 Example:\n\
+                 (>= 2 1 1) => t\n\
+                 (>= 1 2)   => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "max".into(),
+        LispExp::primitive(
+            primitive_max,
+            Some(
+                "(max NUMBER &rest NUMBERS): Return the largest of the \
+                 arguments.\n\n\
+                 Example:\n\
+                 (max 1 5 3) => 5"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "min".into(),
+        LispExp::primitive(
+            primitive_min,
+            Some(
+                "(min NUMBER &rest NUMBERS): Return the smallest of the \
+                 arguments.\n\n\
+                 Example:\n\
+                 (min 1 5 3) => 1"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "abs".into(),
+        LispExp::primitive(
+            primitive_abs,
+            Some(
+                "(abs NUMBER): Return the absolute value of NUMBER.\n\n\
+                 Example:\n\
+                 (abs -5) => 5\n\
+                 (abs 5)  => 5"
+                    .into(),
+            ),
+        ),
+    );
 
     // List manipulation
     env.set_function(
         "add-to-list".into(),
-        LispExp::primitive(primitive_add_to_list, None),
+        LispExp::primitive(
+            primitive_add_to_list,
+            Some(
+                "(add-to-list LIST-VAR &rest ELEMENTS): Prepend each of \
+                 ELEMENTS not already `member` of the list bound to LIST-VAR, \
+                 and rebind LIST-VAR to the result. Returns LIST-VAR. Unlike \
+                 real Elisp's `add-to-list`, this accepts several ELEMENTS at \
+                 once and has no APPEND or COMPARE-FN argument. LIST-VAR must \
+                 already be bound to a list.\n\n\
+                 Example:\n\
+                 (defvar my-list '(2 3))\n\
+                 (add-to-list 'my-list 1) => my-list\n\
+                 my-list                  => (1 2 3)\n\
+                 (add-to-list 'my-list 1) ; 1 already present, unchanged\n\
+                 my-list                  => (1 2 3)"
+                    .into(),
+            ),
+        ),
     );
     env.set_function(
         "append-to-list".into(),
-        LispExp::primitive(primitive_append_to_list, None),
+        LispExp::primitive(
+            primitive_append_to_list,
+            Some(
+                "(append-to-list LIST-VAR &rest ELEMENTS): Like `add-to-list`, \
+                 but appends each of ELEMENTS not already present to the end \
+                 of the list bound to LIST-VAR instead of the front. Not a \
+                 standard Elisp primitive.\n\n\
+                 Example:\n\
+                 (defvar my-list '(1 2))\n\
+                 (append-to-list 'my-list 3) => my-list\n\
+                 my-list                     => (1 2 3)"
+                    .into(),
+            ),
+        ),
     );
     env.set_function(
         "remove-from-list".into(),
-        LispExp::primitive(primitive_remove_from_list, None),
+        LispExp::primitive(
+            primitive_remove_from_list,
+            Some(
+                "(remove-from-list LIST-VAR &rest ELEMENTS): Rebind LIST-VAR \
+                 to a copy of its list with every element `equal` to one of \
+                 ELEMENTS removed. Returns LIST-VAR. Not a standard Elisp \
+                 primitive.\n\n\
+                 Example:\n\
+                 (defvar my-list '(1 2 3 4))\n\
+                 (remove-from-list 'my-list 2 4) => my-list\n\
+                 my-list                         => (1 3)"
+                    .into(),
+            ),
+        ),
     );
-    env.set_function("car".into(), LispExp::primitive(primitive_car, None));
-    env.set_function("cdr".into(), LispExp::primitive(primitive_cdr, None));
-    env.set_function("cons".into(), LispExp::primitive(primitive_cons, None));
-    env.set_function("list".into(), LispExp::primitive(primitive_list, None));
-    env.set_function("nth".into(), LispExp::primitive(primitive_nth, None));
-    env.set_function("nthcdr".into(), LispExp::primitive(primitive_nthcdr, None));
-    env.set_function("length".into(), LispExp::primitive(primitive_length, None));
-    env.set_function("append".into(), LispExp::primitive(primitive_append, None));
-    env.set_function("reverse".into(), LispExp::primitive(primitive_reverse, None));
-    env.set_function("member".into(), LispExp::primitive(primitive_member, None));
-    env.set_function("memq".into(), LispExp::primitive(primitive_memq, None));
-    env.set_function("assoc".into(), LispExp::primitive(primitive_assoc, None));
-    env.set_function("assq".into(), LispExp::primitive(primitive_assq, None));
-    env.set_function("elt".into(), LispExp::primitive(primitive_elt, None));
-    env.set_function("mapcar".into(), LispExp::primitive(primitive_mapcar, None));
-    env.set_function("mapc".into(), LispExp::primitive(primitive_mapc, None));
-    env.set_function("apply".into(), LispExp::primitive(primitive_apply, None));
-    env.set_function("identity".into(), LispExp::primitive(primitive_identity, None));
+    env.set_function(
+        "car".into(),
+        LispExp::primitive(
+            primitive_car,
+            Some(
+                "(car LIST): Return the first element of LIST, or nil if LIST \
+                 is nil.\n\n\
+                 Example:\n\
+                 (car '(1 2 3)) => 1\n\
+                 (car nil)      => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "cdr".into(),
+        LispExp::primitive(
+            primitive_cdr,
+            Some(
+                "(cdr LIST): Return LIST with its first element removed, or \
+                 nil if LIST is nil or has one element. On a dotted pair, \
+                 returns the tail.\n\n\
+                 Example:\n\
+                 (cdr '(1 2 3))   => (2 3)\n\
+                 (cdr '(1))       => nil\n\
+                 (cdr (cons 1 2)) => 2"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "cons".into(),
+        LispExp::primitive(
+            primitive_cons,
+            Some(
+                "(cons CAR CDR): Construct a new cons cell with CAR as its \
+                 first element and CDR as its rest. If CDR is a list, the \
+                 result is a proper list; if CDR is anything else (other than \
+                 nil), the result is a dotted pair.\n\n\
+                 Example:\n\
+                 (cons 1 '(2 3)) => (1 2 3)\n\
+                 (cons 1 2)      => (1 . 2)"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "list".into(),
+        LispExp::primitive(
+            primitive_list,
+            Some(
+                "(list &rest ARGS): Return a newly built list containing \
+                 ARGS.\n\n\
+                 Example:\n\
+                 (list 1 2 3) => (1 2 3)\n\
+                 (list)       => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "nth".into(),
+        LispExp::primitive(
+            primitive_nth,
+            Some(
+                "(nth N LIST): Return the Nth element of LIST (zero-indexed), \
+                 or nil if N is negative or past the end of LIST.\n\n\
+                 Example:\n\
+                 (nth 0 '(a b c)) => a\n\
+                 (nth 2 '(a b c)) => c\n\
+                 (nth 5 '(a b c)) => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "nthcdr".into(),
+        LispExp::primitive(
+            primitive_nthcdr,
+            Some(
+                "(nthcdr N LIST): Return LIST with its first N elements \
+                 removed. A negative N is treated as 0. Returns nil once N is \
+                 at or past the end of LIST.\n\n\
+                 Example:\n\
+                 (nthcdr 2 '(1 2 3 4)) => (3 4)\n\
+                 (nthcdr 99 '(1 2 3))  => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "length".into(),
+        LispExp::primitive(
+            primitive_length,
+            Some(
+                "(length SEQUENCE): Return the number of elements in \
+                 SEQUENCE, which may be a list, vector, string, or nil (0).\n\n\
+                 Example:\n\
+                 (length '(1 2 3)) => 3\n\
+                 (length \"abc\")    => 3\n\
+                 (length nil)      => 0"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "append".into(),
+        LispExp::primitive(
+            primitive_append,
+            Some(
+                "(append &rest SEQUENCES): Concatenate all the given \
+                 SEQUENCES into a list. If the final SEQUENCE is not a proper \
+                 list, the result is a dotted list ending in that value. With \
+                 no arguments, returns nil.\n\n\
+                 Example:\n\
+                 (append '(1 2) '(3 4)) => (1 2 3 4)\n\
+                 (append '(1 2) 3)      => (1 2 . 3)\n\
+                 (append)               => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "reverse".into(),
+        LispExp::primitive(
+            primitive_reverse,
+            Some(
+                "(reverse SEQUENCE): Return a new sequence with the elements \
+                 of SEQUENCE (a list, vector, or string) in reverse order.\n\n\
+                 Example:\n\
+                 (reverse '(1 2 3)) => (3 2 1)\n\
+                 (reverse \"abc\")    => \"cba\""
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "member".into(),
+        LispExp::primitive(
+            primitive_member,
+            Some(
+                "(member ELEMENT LIST): Return the first sublist of LIST whose \
+                 car is `equal` to ELEMENT, or nil if not found.\n\n\
+                 Example:\n\
+                 (member 2 '(1 2 3)) => (2 3)\n\
+                 (member 9 '(1 2 3)) => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "memq".into(),
+        LispExp::primitive(
+            primitive_memq,
+            Some(
+                "(memq ELEMENT LIST): Return the first sublist of LIST whose \
+                 car matches ELEMENT, or nil if not found. Since this \
+                 implementation's `eq` is structural rather than \
+                 identity-based, `memq` currently behaves the same as \
+                 `member`.\n\n\
+                 Example:\n\
+                 (memq 'b '(a b c)) => (b c)"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "assoc".into(),
+        LispExp::primitive(
+            primitive_assoc,
+            Some(
+                "(assoc KEY ALIST): Return the first element of ALIST (an \
+                 association list of cons cells or lists) whose car is `equal` \
+                 to KEY, or nil if not found.\n\n\
+                 Example:\n\
+                 (assoc 'b '((a . 1) (b . 2))) => (b . 2)\n\
+                 (assoc 'z '((a . 1) (b . 2))) => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "assq".into(),
+        LispExp::primitive(
+            primitive_assq,
+            Some(
+                "(assq KEY ALIST): Like `assoc`, but intended to compare KEY \
+                 with `eq`. As with `memq`, this currently behaves the same as \
+                 `assoc` since `eq` is structural here.\n\n\
+                 Example:\n\
+                 (assq 'b '((a . 1) (b . 2))) => (b . 2)"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "elt".into(),
+        LispExp::primitive(
+            primitive_elt,
+            Some(
+                "(elt SEQUENCE N): Return the Nth element of SEQUENCE (a list, \
+                 vector, or string), or nil if N is negative or past the end \
+                 of SEQUENCE.\n\n\
+                 Example:\n\
+                 (elt '(a b c) 1) => b\n\
+                 (elt \"abc\" 1)    => \"b\""
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "mapcar".into(),
+        LispExp::primitive(
+            primitive_mapcar,
+            Some(
+                "(mapcar FUNCTION LIST): Apply FUNCTION to each element of \
+                 LIST in turn and return a list of the results. FUNCTION may \
+                 be a lambda, a primitive, or a symbol naming a function.\n\n\
+                 Example:\n\
+                 (mapcar '1+ '(1 2 3))              => (2 3 4)\n\
+                 (mapcar (lambda (x) (* x x)) '(1 2 3)) => (1 4 9)"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "mapc".into(),
+        LispExp::primitive(
+            primitive_mapc,
+            Some(
+                "(mapc FUNCTION LIST): Apply FUNCTION to each element of LIST \
+                 for its side effects and return LIST unchanged.\n\n\
+                 Example:\n\
+                 (mapc (lambda (x) (log (number-to-string x))) '(1 2 3))\n\
+                 ; logs \"1\", \"2\", \"3\" and returns (1 2 3)"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "apply".into(),
+        LispExp::primitive(
+            primitive_apply,
+            Some(
+                "(apply FUNCTION &rest ARGS LIST): Call FUNCTION with ARGS \
+                 followed by the elements of the final LIST argument, all \
+                 spliced together. FUNCTION may be a lambda, a primitive, or a \
+                 symbol naming a function.\n\n\
+                 Example:\n\
+                 (apply '+ '(1 2 3))       => 6\n\
+                 (apply '+ 1 2 '(3 4))     => 10"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "identity".into(),
+        LispExp::primitive(
+            primitive_identity,
+            Some(
+                "(identity ARG): Return ARG unchanged.\n\n\
+                 Example:\n\
+                 (identity 42) => 42"
+                    .into(),
+            ),
+        ),
+    );
 
     // ------------------------------- Predicates ------------------------------
+    // `eq`/`eql` are left undocumented: both are currently implemented as
+    // structural (deep) equality, the same as `equal`, rather than the
+    // identity/type-aware comparisons real Elisp specifies. `functionp` is
+    // also left undocumented: real Elisp resolves a symbol argument through
+    // `fboundp` (so `(functionp 'car)` is t), but this implementation only
+    // recognizes already-callable values, so it always says nil for a quoted
+    // symbol.
     env.set_function("eq".into(), LispExp::primitive(primitive_eq, None));
     env.set_function("eql".into(), LispExp::primitive(primitive_eql, None));
-    env.set_function("equal".into(), LispExp::primitive(primitive_equal, None));
-    env.set_function("null".into(), LispExp::primitive(primitive_null, None));
-    env.set_function("not".into(), LispExp::primitive(primitive_not, None));
-    env.set_function("consp".into(), LispExp::primitive(primitive_consp, None));
+    env.set_function(
+        "equal".into(),
+        LispExp::primitive(
+            primitive_equal,
+            Some(
+                "(equal A B): Return t if A and B have the same structure and \
+                 contents (deep, structural comparison), nil otherwise.\n\n\
+                 Example:\n\
+                 (equal '(1 2) '(1 2)) => t\n\
+                 (equal \"ab\" \"ab\")    => t\n\
+                 (equal '(1 2) '(1 3)) => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "null".into(),
+        LispExp::primitive(
+            primitive_null,
+            Some(
+                "(null OBJECT): Return t if OBJECT is nil, nil otherwise.\n\n\
+                 Example:\n\
+                 (null nil)   => t\n\
+                 (null '(1))  => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "not".into(),
+        LispExp::primitive(
+            primitive_not,
+            Some(
+                "(not OBJECT): Return t if OBJECT is nil, nil otherwise. \
+                 Identical to `null`.\n\n\
+                 Example:\n\
+                 (not nil) => t\n\
+                 (not t)   => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "consp".into(),
+        LispExp::primitive(
+            primitive_consp,
+            Some(
+                "(consp OBJECT): Return t if OBJECT is a cons cell -- a \
+                 non-empty list or a dotted pair -- nil otherwise.\n\n\
+                 Example:\n\
+                 (consp '(1 2)) => t\n\
+                 (consp nil)    => nil\n\
+                 (consp 5)      => nil"
+                    .into(),
+            ),
+        ),
+    );
     env.set_function("listp".into(), LispExp::primitive(primitive_listp, None));
-    env.set_function("stringp".into(), LispExp::primitive(primitive_stringp, None));
-    env.set_function("numberp".into(), LispExp::primitive(primitive_numberp, None));
-    env.set_function("symbolp".into(), LispExp::primitive(primitive_symbolp, None));
-    env.set_function("functionp".into(), LispExp::primitive(primitive_functionp, None));
-    env.set_function("vectorp".into(), LispExp::primitive(primitive_vectorp, None));
-    env.set_function("zerop".into(), LispExp::primitive(primitive_zerop, None));
+    env.set_function(
+        "stringp".into(),
+        LispExp::primitive(
+            primitive_stringp,
+            Some(
+                "(stringp OBJECT): Return t if OBJECT is a string, nil \
+                 otherwise.\n\n\
+                 Example:\n\
+                 (stringp \"hi\") => t\n\
+                 (stringp 5)    => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "numberp".into(),
+        LispExp::primitive(
+            primitive_numberp,
+            Some(
+                "(numberp OBJECT): Return t if OBJECT is a number, nil \
+                 otherwise.\n\n\
+                 Example:\n\
+                 (numberp 5)     => t\n\
+                 (numberp \"5\")   => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "symbolp".into(),
+        LispExp::primitive(
+            primitive_symbolp,
+            Some(
+                "(symbolp OBJECT): Return t if OBJECT is a symbol, nil \
+                 otherwise.\n\n\
+                 Example:\n\
+                 (symbolp 'foo) => t\n\
+                 (symbolp \"foo\") => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "functionp".into(),
+        LispExp::primitive(primitive_functionp, None),
+    );
+    env.set_function(
+        "vectorp".into(),
+        LispExp::primitive(
+            primitive_vectorp,
+            Some(
+                "(vectorp OBJECT): Return t if OBJECT is a vector, nil \
+                 otherwise.\n\n\
+                 Example:\n\
+                 (vectorp [1 2 3]) => t\n\
+                 (vectorp '(1 2))  => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "zerop".into(),
+        LispExp::primitive(
+            primitive_zerop,
+            Some(
+                "(zerop NUMBER): Return t if NUMBER is zero, nil otherwise.\n\n\
+                 Example:\n\
+                 (zerop 0) => t\n\
+                 (zerop 1) => nil"
+                    .into(),
+            ),
+        ),
+    );
 
     // ------------------------------- Strings ------------------------------
-    env.set_function("concat".into(), LispExp::primitive(primitive_concat, None));
-    env.set_function("string=".into(), LispExp::primitive(primitive_string_eq, None));
-    env.set_function("string<".into(), LispExp::primitive(primitive_string_lt, None));
-    env.set_function("substring".into(), LispExp::primitive(primitive_substring, None));
-    env.set_function("upcase".into(), LispExp::primitive(primitive_upcase, None));
-    env.set_function("downcase".into(), LispExp::primitive(primitive_downcase, None));
-    env.set_function("format".into(), LispExp::primitive(primitive_format, None));
+    env.set_function(
+        "concat".into(),
+        LispExp::primitive(
+            primitive_concat,
+            Some(
+                "(concat &rest STRINGS): Concatenate STRINGS into a single \
+                 string.\n\n\
+                 Example:\n\
+                 (concat \"foo\" \"-\" \"bar\") => \"foo-bar\""
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "string=".into(),
+        LispExp::primitive(
+            primitive_string_eq,
+            Some(
+                "(string= STRING1 STRING2): Return t if STRING1 and STRING2 \
+                 have the same contents, nil otherwise.\n\n\
+                 Example:\n\
+                 (string= \"foo\" \"foo\") => t\n\
+                 (string= \"foo\" \"bar\") => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "string<".into(),
+        LispExp::primitive(
+            primitive_string_lt,
+            Some(
+                "(string< STRING1 STRING2): Return t if STRING1 sorts before \
+                 STRING2 lexicographically, nil otherwise.\n\n\
+                 Example:\n\
+                 (string< \"abc\" \"abd\") => t\n\
+                 (string< \"abd\" \"abc\") => nil"
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "substring".into(),
+        LispExp::primitive(
+            primitive_substring,
+            Some(
+                "(substring STRING &optional START END): Return the substring \
+                 of STRING from START (inclusive, default 0) to END \
+                 (exclusive, default the length of STRING). Negative indices \
+                 count from the end of STRING. Signals a runtime error if \
+                 START is after END.\n\n\
+                 Example:\n\
+                 (substring \"hello\" 1 3)  => \"el\"\n\
+                 (substring \"hello\" -3)   => \"llo\"\n\
+                 (substring \"hello\" -3 -1) => \"ll\""
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "upcase".into(),
+        LispExp::primitive(
+            primitive_upcase,
+            Some(
+                "(upcase STRING): Return a copy of STRING with all letters \
+                 uppercased.\n\n\
+                 Example:\n\
+                 (upcase \"hello\") => \"HELLO\""
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "downcase".into(),
+        LispExp::primitive(
+            primitive_downcase,
+            Some(
+                "(downcase STRING): Return a copy of STRING with all letters \
+                 lowercased.\n\n\
+                 Example:\n\
+                 (downcase \"HELLO\") => \"hello\""
+                    .into(),
+            ),
+        ),
+    );
+    env.set_function(
+        "format".into(),
+        LispExp::primitive(
+            primitive_format,
+            Some(
+                "(format STRING &rest OBJECTS): Format OBJECTS according to \
+                 the directives in STRING and return the result. Supports \
+                 %s/%S (display), %d (integer), %f (float), and %% (literal \
+                 percent). Signals an error if there are fewer OBJECTS than \
+                 directives require.\n\n\
+                 Example:\n\
+                 (format \"%s is %d\" \"age\" 30) => \"age is 30\"\n\
+                 (format \"100%%\")               => \"100%\""
+                    .into(),
+            ),
+        ),
+    );
     env.set_function(
         "number-to-string".into(),
-        LispExp::primitive(primitive_number_to_string, None),
+        LispExp::primitive(
+            primitive_number_to_string,
+            Some(
+                "(number-to-string NUMBER): Return the decimal string \
+                 representation of NUMBER, omitting the decimal point for \
+                 integral values.\n\n\
+                 Example:\n\
+                 (number-to-string 5)   => \"5\"\n\
+                 (number-to-string 5.5) => \"5.5\""
+                    .into(),
+            ),
+        ),
     );
     env.set_function(
         "string-to-number".into(),
-        LispExp::primitive(primitive_string_to_number, None),
+        LispExp::primitive(
+            primitive_string_to_number,
+            Some(
+                "(string-to-number STRING): Parse STRING as a number and \
+                 return it, ignoring leading/trailing whitespace. Returns 0 if \
+                 STRING cannot be parsed.\n\n\
+                 Example:\n\
+                 (string-to-number \"42\")     => 42\n\
+                 (string-to-number \"nope\")   => 0"
+                    .into(),
+            ),
+        ),
     );
     env.set_function(
         "symbol-name".into(),
-        LispExp::primitive(primitive_symbol_name, None),
+        LispExp::primitive(
+            primitive_symbol_name,
+            Some(
+                "(symbol-name SYMBOL): Return the name of SYMBOL as a \
+                 string.\n\n\
+                 Example:\n\
+                 (symbol-name 'foo) => \"foo\""
+                    .into(),
+            ),
+        ),
     );
-    env.set_function("intern".into(), LispExp::primitive(primitive_intern, None));
+    env.set_function(
+        "intern".into(),
+        LispExp::primitive(
+            primitive_intern,
+            Some(
+                "(intern STRING): Return the symbol named STRING.\n\n\
+                 Example:\n\
+                 (intern \"foo\") => foo"
+                    .into(),
+            ),
+        ),
+    );
     env.set_function(
         "split-string".into(),
-        LispExp::primitive(primitive_split_string, None),
+        LispExp::primitive(
+            primitive_split_string,
+            Some(
+                "(split-string STRING &optional SEPARATORS): Split STRING into \
+                 a list of substrings. With no SEPARATORS, splits on \
+                 whitespace and discards empty pieces. With an empty \
+                 SEPARATORS string, splits into individual characters. \
+                 Otherwise splits on literal occurrences of SEPARATORS.\n\n\
+                 Example:\n\
+                 (split-string \"  a  b c \") => (\"a\" \"b\" \"c\")\n\
+                 (split-string \"a,b,c\" \",\") => (\"a\" \"b\" \"c\")\n\
+                 (split-string \"ab\" \"\")     => (\"a\" \"b\")"
+                    .into(),
+            ),
+        ),
     );
 }
