@@ -23,8 +23,7 @@ Add an after resize list of callbacks that can be registered after a resize even
   - create a match-list function that given a list of strings and a pattern returns all element of the list containing that pattern
   - end-of-buffer: move cursor to the end of the buffer
   - start-of-buffer: move cursor to the start of the buffer
-- Remap enter, esc and up and down arrows
-- create a set-text-pos function that insert or replace based on an optional parameter some text in a given buffer position
+  - create a set-text-pos function that insert or replace based on an optional parameter some text in a given buffer position
 - create a lisp function that spawn a show the minibuffer. it must be a new buffer with major-mode minibuffer-mode. the ui of the buffer still has to be decided.
 ** DONE [27-07-2026] Move the *lisp-path* variable to a string list in lisp env
 - Add an add-to-list and remove-from-list native functions
