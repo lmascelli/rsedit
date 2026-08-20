@@ -16,6 +16,7 @@ mod parser_tests;
 mod eval_tests;
 mod lexical_context;
 mod lisp_core_compliance_tests;
+mod base_env_tests;
 // Thread and concurrency
 mod fiber_tests;
 mod thread_tests;

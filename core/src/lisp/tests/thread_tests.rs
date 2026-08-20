@@ -47,22 +47,22 @@ mod tests {
         // Inject a sleep primitive to safely test async execution delays
         env.set_function(
             "sleep-ms".into(),
-            LispExp::Primitive(|args, _, _ctx| {
+            LispExp::primitive(|args, _, _ctx| {
                 if let Some(LispExp::Number(ms)) = args.first() {
                     std::thread::sleep(Duration::from_millis(*ms as u64));
                 }
                 Ok(LispExp::list(vec![])) // return nil
-            }),
+            }, None),
         );
 
         // Inject a primitive that mutates the Host Context directly
         env.set_function(
             "bump-host!".into(),
-            LispExp::Primitive(|_args, _, ctx: &ThreadCtx| {
+            LispExp::primitive(|_args, _, ctx: &ThreadCtx| {
                 let mut lock = ctx.host_counter.write().unwrap();
                 *lock += 1;
                 Ok(LispExp::number(*lock as f64))
-            }),
+            }, None),
         );
 
         let ctx = ThreadCtx {
@@ -77,7 +77,7 @@ mod tests {
         let (env, mut ctx) = setup_thread_env();
 
         let script = r#"
-            (setq my-state (atom 10.0))
+            (setq my-state (make-atom 10.0))
             (reset my-state 99.0)
             (deref my-state)
         "#;
@@ -93,7 +93,7 @@ mod tests {
         // Script: Initialize an atom to 0.
         // Spawn a background thread that sleeps for 50ms, then updates the atom to 42.
         let script = r#"
-            (setq shared-val (atom 0.0))
+            (setq shared-val (make-atom 0.0))
             (spawn (lambda ()
                 (progn
                     (sleep-ms 50.0)

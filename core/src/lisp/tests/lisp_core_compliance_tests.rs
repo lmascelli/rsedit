@@ -93,9 +93,9 @@ mod tests {
     /// `lisp.rs` special forms plus the three primitives above.
     fn bare_env() -> Arc<Env<DummyCtx>> {
         let env = Env::new_root();
-        env.set_function("+".into(), LispExp::Primitive(native_add));
-        env.set_function("cons".into(), LispExp::Primitive(native_cons));
-        env.set_function("eq".into(), LispExp::Primitive(native_eq));
+        env.set_function("+".into(), LispExp::primitive(native_add, None));
+        env.set_function("cons".into(), LispExp::primitive(native_cons, None));
+        env.set_function("eq".into(), LispExp::primitive(native_eq, None));
         env
     }
 

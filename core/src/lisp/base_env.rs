@@ -703,6 +703,16 @@ fn primitive_equal_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T
             got: args.len(),
         });
     }
+    Ok(LispExp::boolean(args[0] == args[1]))
+}
+
+fn primitive_eq_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
     let is_eq = match (&args[0], &args[1]) {
         // Immediate values: compared by value, mirroring how real Elisp's
         // interned symbols and fixnums behave under `eq`.
@@ -728,7 +738,7 @@ fn primitive_eq<T: LispContext>(
     _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
-    primitive_equal_impl(args)
+    primitive_eq_impl(args)
 }
 
 fn primitive_eql<T: LispContext>(
@@ -736,7 +746,7 @@ fn primitive_eql<T: LispContext>(
     _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
-    primitive_equal_impl(args)
+    primitive_eq_impl(args)
 }
 
 fn primitive_equal<T: LispContext>(
@@ -848,7 +858,7 @@ fn primitive_symbolp<T: LispContext>(
 
 fn primitive_functionp<T: LispContext>(
     args: &[LispExp<T>],
-    _env: Arc<Env<T>>,
+    env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
     if args.len() != 1 {
@@ -947,7 +957,7 @@ fn primitive_subtraction<T: LispContext>(
             Ok(LispExp::number(-first))
         } else {
             let mut result = first;
-            for args in &args[1..] {
+            for arg in &args[1..] {
                 result -= expect_number(arg)?;
             }
             Ok(LispExp::number(result))
@@ -1548,14 +1558,12 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
             primitive_funcall,
             Some(
                 "(funcall FUNCTION &rest ARGS): Call FUNCTION with ARGS. \
-                 Unlike `apply`/`mapcar`, FUNCTION must already be a callable \
-                 value (a lambda or a primitive) -- a symbol naming a function \
-                 is NOT resolved and calling one signals an error.\n\n\
+                 FUNCTION may be a lambda, a primitive, or a symbol naming a \
+                 function in the function namespace -- same symbol \
+                 resolution as `apply`/`mapcar`.\n\n\
                  Example:\n\
                  (funcall (lambda (x y) (+ x y)) 2 3) => 5\n\
-                 (funcall 'car '(1 2))                => error, 'car is a \
-                 symbol, not a callable value; use (funcall #'car '(1 2)) or \
-                 `apply` instead."
+                 (funcall 'car '(1 2))                => 1"
                     .into(),
             ),
         ),

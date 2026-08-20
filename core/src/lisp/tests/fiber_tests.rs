@@ -87,7 +87,7 @@ mod tests {
         // added one to your base_env. Let's mock it just for this test:
         env.set_function(
             "+".into(),
-            LispExp::Primitive(|args, _, _| {
+            LispExp::primitive(|args, _, _| {
                 let mut sum = 0.0;
                 for arg in args {
                     if let LispExp::Number(n) = arg {
@@ -95,7 +95,7 @@ mod tests {
                     }
                 }
                 Ok(LispExp::Number(sum))
-            }),
+            }, None),
         );
 
         eval_script(script, env.clone(), &mut ctx).unwrap();

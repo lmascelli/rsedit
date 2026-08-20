@@ -5,6 +5,7 @@ use crate::{
     lisp::{Env, EvalError, LispContext, LispExp, Parser, bootstrap_vm, eval},
     minibuffer::MinibufferState,
     modes::MajorMode,
+    primitives::{buffers, edits, general, io, modes, ui},
     task::{BackgroundScheduler, WorkerMessage},
     ui::{FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines},
 };
@@ -654,7 +655,7 @@ pub fn create_global_env<B: BufferTrait>()
 
     // ---------------------- FILLING PRIMITIVE FUNCTIONS ----------------------
     macro_rules! insert_fn {
-        ($name:literal, $func:item) => {
+        ($name:literal, $func:path) => {
             env.set_function($name.into(), LispExp::primitive($func, None));
         };
         ($name:literal, $func:path, $doc:literal) => {
@@ -674,7 +675,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "eval-file",
-        eval_file,
+        general::eval_file,
         "(eval-file FILE): Evaluate FILE as Lisp. FILE is first looked up as \
          an absolute or relative path; if that fails and FILE has no \
          directory separator or extension, each directory in `lisp-path` is \
@@ -688,7 +689,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "define-key",
-        define_key,
+general::define_key,
         "(define-key MODE KEY COMMAND): Bind KEY (an Emacs-style key sequence \
          string, e.g. \"C-x\" or \"<ret>\") to COMMAND. MODE is either nil, \
          binding KEY globally, or a mode name symbol/string, binding KEY only \
@@ -704,7 +705,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "log",
-        log,
+general::log,
         "(log MESSAGE): Append the string MESSAGE to the editor's diagnostic \
          log (and to the log file, if one is enabled).\n\n\
          Example:\n\
@@ -712,7 +713,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "make-mode",
-        make_mode,
+modes::make_mode,
         "(make-mode NAME): Register a new, empty major mode named NAME (a \
          symbol) with no keymaps, hooks, or syntax rules of its own. Returns \
          t. rsedit's own simplified alternative to Emacs's \
@@ -723,7 +724,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "add-hook",
-        add_hook,
+modes::add_hook,
         "(add-hook MODE HOOK FUNCTION): Append the function named FUNCTION to \
          the list of functions run for HOOK (a string, e.g. \
          \"post-command-hook\") in major mode MODE. Returns t, or nil \
@@ -736,7 +737,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "add-syntax-rule",
-        add_syntax_rule,
+modes::add_syntax_rule,
         "(add-syntax-rule MODE REGEX FACE): Add a syntax-highlighting rule to \
          major mode MODE: any text matching the regular expression REGEX (a \
          string) is rendered with FACE (a symbol: keyword, type, string, \
@@ -749,7 +750,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "self-insert",
-        self_insert,
+edits::self_insert,
         "(self-insert STRING): Insert the first character of STRING at point \
          in the current buffer. Unlike Emacs's `self-insert-command`, which \
          reads the character to insert from `last-command-event`, this takes \
@@ -759,7 +760,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "insert-newline",
-        insert_newline,
+edits::insert_newline,
         "(insert-newline): Insert a newline character at point in the current \
          buffer.\n\n\
          Example:\n\
@@ -767,7 +768,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "delete-backward-char",
-        delete_backward_char,
+edits::delete_backward_char,
         "(delete-backward-char): Delete the character before point in the \
          current buffer. Unlike Emacs's command of the same name, this takes \
          no count argument -- it always deletes exactly one character.\n\n\
@@ -776,7 +777,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "backward-char",
-        backward_char,
+edits::backward_char,
         "(backward-char &optional N): Move point backward N characters \
          (default 1) in the current buffer, stopping at the beginning of the \
          line.\n\n\
@@ -786,7 +787,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "forward-char",
-        forward_char,
+edits::forward_char,
         "(forward-char &optional N): Move point forward N characters (default \
          1) in the current buffer.\n\n\
          Example:\n\
@@ -795,7 +796,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "previous-line",
-        previous_line,
+edits::previous_line,
         "(previous-line): Move point up one line in the current buffer, \
          keeping the same column (clamped to that line's length), stopping at \
          the first line.\n\n\
@@ -804,7 +805,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "next-line",
-        next_line,
+edits::next_line,
         "(next-line): Move point down one line in the current buffer, keeping \
          the same column.\n\n\
          Example:\n\
@@ -812,7 +813,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "find-file",
-        find_file,
+io::find_file,
         "(find-file PATH): Open the file at PATH into a new buffer named \
          after PATH's file name (or PATH itself if it has none), make it the \
          current buffer, and return its buffer name. Returns nil (logging a \
@@ -822,7 +823,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "save-buffer",
-        save_buffer,
+io::save_buffer,
         "(save-buffer): Write the current buffer's contents to the file it \
          was visiting. Returns nil in every case (logging a diagnostic \
          either way); if the buffer has no associated file, or the write \
@@ -832,7 +833,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "make-floating-window",
-        make_floating_window,
+ui::make_floating_window,
         "(make-floating-window BUFFER-NAME X Y WIDTH HEIGHT &optional TITLE): \
          Create a new buffer named BUFFER-NAME, open it in a new bordered \
          floating window positioned at (X, Y) with the given WIDTH and \
@@ -841,10 +842,10 @@ pub fn create_global_env<B: BufferTrait>()
          Example:\n\
          (make-floating-window \"*Minibuffer*\" 0 20 80 1 \"Find file\")"
     );
-    insert_fn!("close-floating-window", close_floating_window);
+    insert_fn!("close-floating-window", ui::close_floating_window);
     insert_fn!(
         "switch-to-buffer",
-        switch_to_buffer,
+buffers::switch_to_buffer,
         "(switch-to-buffer BUFFER-NAME): Make the buffer named BUFFER-NAME \
          (a string or symbol) the one shown in the focused window, and \
          return BUFFER-NAME. Returns nil (logging a diagnostic) if no buffer \
@@ -855,17 +856,17 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "current-buffer",
-        current_buffer,
+buffers::current_buffer,
         "(current-buffer): Return the name of the current buffer, as a \
          string. Unlike real Emacs Lisp's `current-buffer`, which returns a \
          buffer object, this returns the buffer's name.\n\n\
          Example:\n\
          (current-buffer) => \"*scratch*\""
     );
-    insert_fn!("close-buffer", close_buffer);
+    insert_fn!("close-buffer", buffers::close_buffer);
     insert_fn!(
         "buffer-string",
-        buffer_string,
+buffers::buffer_string,
         "(buffer-string): Return the entire contents of the current buffer as \
          a string.\n\n\
          Example:\n\
@@ -873,7 +874,7 @@ pub fn create_global_env<B: BufferTrait>()
     );
     insert_fn!(
         "clear-buffer",
-        clear_buffer,
+buffers::clear_buffer,
         "(clear-buffer): Delete the entire contents of the current buffer. \
          Not a standard Elisp primitive -- comparable to Emacs's \
          `erase-buffer`.\n\n\

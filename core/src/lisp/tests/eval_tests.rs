@@ -428,10 +428,10 @@ mod test {
         let env = Env::new_root();
         env.set_variable("nil".into(), LispExp::list(vec![]));
         env.set_variable("t".into(), LispExp::number(1.0));
-        env.set_function("+".into(), LispExp::Primitive(native_add));
+        env.set_function("+".into(), LispExp::primitive(native_add, None));
         env.set_function(
             "inc-state".into(),
-            LispExp::Primitive(native_increment_state),
+            LispExp::primitive(native_increment_state, None),
         );
         env
     }
@@ -636,10 +636,10 @@ mod test {
 
         env.set_function(
             "bump".into(),
-            LispExp::Primitive(|_args: &[LispExp<MockHost>], _env, ctx| {
+            LispExp::primitive(|_args: &[LispExp<MockHost>], _env, ctx| {
                 *ctx.tracker.write().unwrap() += 1.0;
                 Ok(LispExp::number(*ctx.tracker.read().unwrap()))
-            }),
+            }, None),
         );
 
         (
@@ -685,13 +685,13 @@ mod test {
         // Assuming native primitives like '+' are mapped
         env.set_function(
             "+".into(),
-            LispExp::Primitive(|args, _, _| {
+            LispExp::primitive(|args, _, _| {
                 if let (LispExp::Number(a), LispExp::Number(b)) = (&args[0], &args[1]) {
                     Ok(LispExp::number(a + b))
                 } else {
                     Err(EvalError::UnvalidFunctionCall)
                 }
-            }),
+            }, None),
         );
 
         let let_exp = LispExp::list(vec![
