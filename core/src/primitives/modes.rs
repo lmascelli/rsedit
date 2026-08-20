@@ -1,5 +1,13 @@
 use super::*;
 
+pub const MAKE_MODE_DOC: &str = "(make-mode NAME): Register a new, empty major mode named NAME (a \
+         symbol) with no keymaps, hooks, or syntax rules of its own. Returns \
+         t. rsedit's own simplified alternative to Emacs's \
+         `define-derived-mode`.\n\n\
+         Example:\n\
+         (make-mode 'lisp-mode)\n\
+         (add-syntax-rule 'lisp-mode \"defun\" 'keyword)";
+
 primitive!(make_mode, args, _env, ctx, {
     if args.len() != 1 {
         Err(EvalError::WrongNumberOfArguments {
@@ -21,6 +29,16 @@ primitive!(make_mode, args, _env, ctx, {
         }
     }
 });
+
+pub const ADD_HOOK_DOC: &str = "(add-hook MODE HOOK FUNCTION): Append the function named FUNCTION to \
+         the list of functions run for HOOK (a string, e.g. \
+         \"post-command-hook\") in major mode MODE. Returns t, or nil \
+         (logging a diagnostic) if MODE names an unknown mode. Unlike real \
+         Emacs Lisp's `add-hook`, hooks here are scoped to a single major \
+         mode rather than being global variables.\n\n\
+         Example:\n\
+         (defun my-mode-hook () (log \"entered my-mode\"))\n\
+         (add-hook 'my-mode \"post-command-hook\" 'my-mode-hook)";
 
 primitive!(add_hook, args, _env, ctx, {
     if args.len() != 3 {
@@ -57,6 +75,16 @@ primitive!(add_hook, args, _env, ctx, {
         })
     }
 });
+
+pub const ADD_SYNTAX_RULE_DOC: &str = "(add-syntax-rule MODE REGEX FACE): Add a syntax-highlighting rule to \
+         major mode MODE: any text matching the regular expression REGEX (a \
+         string) is rendered with FACE (a symbol: keyword, type, string, \
+         comment, function, or builtin -- anything else falls back to the \
+         default face). Returns t, or nil (logging a diagnostic) if MODE is \
+         unknown or REGEX fails to compile. Not a standard Elisp primitive.\n\n\
+         Example:\n\
+         (add-syntax-rule 'lisp-mode \"\\\\bdefun\\\\b\" 'keyword)\n\
+         (add-syntax-rule 'lisp-mode \"\\\";.*\\\"\" 'comment)";
 
 primitive!(add_syntax_rule, args, _env, ctx, {
     if args.len() != 3 {

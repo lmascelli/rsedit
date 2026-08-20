@@ -1,5 +1,13 @@
 use super::*;
 
+pub const MAKE_FLOATING_WINDOW_DOC: &str = "(make-floating-window BUFFER-NAME X Y WIDTH HEIGHT &optional TITLE): \
+         Create a new buffer named BUFFER-NAME, open it in a new bordered \
+         floating window positioned at (X, Y) with the given WIDTH and \
+         HEIGHT (and optional TITLE string), give that window focus, and \
+         return t. Not a standard Elisp primitive.\n\n\
+         Example:\n\
+         (make-floating-window \"*Minibuffer*\" 0 20 80 1 \"Find file\")";
+
 primitive!(make_floating_window, args, _env, ctx, {
     if args.len() < 5 {
         Err(EvalError::WrongNumberOfArguments {

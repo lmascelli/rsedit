@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     cmp::PartialEq,
     collections::HashMap,
     fmt::Debug,
@@ -84,7 +85,7 @@ pub enum LispExp<T: LispContext> {
     Lambda(Arc<Lambda<T>>),
     Primitive {
         pointer: LispPrimitive<T>,
-        doc: Arc<String>,
+        doc: Arc<Cow<'static, str>>,
     },
     Atom(SharedAtom<T>),
     Fiber(SharedFiber<T>),
@@ -204,14 +205,18 @@ impl<T: LispContext> LispExp<T> {
         LispExp::Fiber(SharedFiber(Arc::new(RwLock::new(value))))
     }
 
-    pub fn primitive(pointer: LispPrimitive<T>, doc: Option<String>) -> LispExp<T> {
+    /// Build a `Primitive` value from a native function pointer and an
+    /// optional docstring. DOC accepts either a `&'static str` -- the
+    /// common case for primitives whose documentation is a literal sitting
+    /// right next to the function, which costs no allocation -- or an owned
+    /// `String`, for documentation that only exists at runtime (e.g. loaded
+    /// alongside a primitive from a dynamic library). Either way the
+    /// resulting `Primitive` stays cheap to `Clone`: only the `Arc`'s
+    /// refcount is bumped, never the string itself.
+    pub fn primitive(pointer: LispPrimitive<T>, doc: Option<Cow<'static, str>>) -> LispExp<T> {
         LispExp::Primitive {
             pointer,
-            doc: Arc::new(if let Some(doc) = doc {
-                doc
-            } else {
-                format!("No documentation provided.")
-            }),
+            doc: Arc::new(doc.unwrap_or(Cow::Borrowed("No documentation provided."))),
         }
     }
 

@@ -1,9 +1,24 @@
 use super::*;
 
+pub const QUIT_DOC: &str = "(quit): Stop the editor's main loop.\n\n\
+         Example:\n\
+         (define-key nil \"C-x C-c\" 'quit)";
+
 primitive!(quit, _args, _env, ctx, {
     ctx.quit();
     Ok(ELispExp::nil())
 });
+
+pub const EVAL_FILE_DOC: &str = "(eval-file FILE): Evaluate FILE as Lisp. FILE is first looked up as \
+         an absolute or relative path; if that fails and FILE has no \
+         directory separator or extension, each directory in `lisp-path` is \
+         tried in order for FILE.lisp. Returns a one-element list holding the \
+         result of evaluating the file's contents (wrapped in an implicit \
+         `progn`), or nil (logging a diagnostic) if no matching file was \
+         found.\n\n\
+         Example:\n\
+         (eval-file \"common-keymaps\") ; loads <lisp-path>/common-keymaps.lisp\n\
+         (eval-file \"/home/me/.config/rsedit/extra.lisp\")";
 
 primitive!(eval_file, args, env, ctx, {
     if args.len() != 1 {
@@ -20,6 +35,19 @@ primitive!(eval_file, args, env, ctx, {
         })
     }
 });
+
+pub const DEFINE_KEY_DOC: &str = "(define-key MODE KEY COMMAND): Bind KEY (an Emacs-style key sequence \
+         string, e.g. \"C-x\" or \"<ret>\") to COMMAND. MODE is either nil, \
+         binding KEY globally, or a mode name symbol/string, binding KEY only \
+         in that major mode. COMMAND may be a symbol naming a function (which \
+         is wrapped so it is called with no arguments) or an arbitrary \
+         expression to evaluate. Returns t on success, nil (logging a \
+         diagnostic) if MODE names an unknown mode or KEY isn't a recognized \
+         key sequence.\n\n\
+         Example:\n\
+         (define-key nil \"C-n\" 'next-line)          ; global binding\n\
+         (define-key 'lisp-mode \"<ret>\" 'insert-newline) ; mode-local binding\n\
+         (define-key nil \"C-x C-s\" '(save-buffer))  ; arbitrary expression";
 
 primitive!(define_key, args, env, ctx, {
     if args.len() != 3 {
@@ -98,6 +126,11 @@ primitive!(define_key, args, env, ctx, {
         }
     }
 });
+
+pub const LOG_DOC: &str = "(log MESSAGE): Append the string MESSAGE to the editor's diagnostic \
+         log (and to the log file, if one is enabled).\n\n\
+         Example:\n\
+         (log \"buffer saved\")";
 
 primitive!(log, args, _env, ctx, {
     if args.len() != 1 {

@@ -1,5 +1,12 @@
 use super::*;
 
+pub const FIND_FILE_DOC: &str = "(find-file PATH): Open the file at PATH into a new buffer named \
+         after PATH's file name (or PATH itself if it has none), make it the \
+         current buffer, and return its buffer name. Returns nil (logging a \
+         diagnostic) if the file can't be read.\n\n\
+         Example:\n\
+         (find-file \"/home/me/notes.txt\") => \"notes.txt\"";
+
 primitive!(find_file, args, _env, ctx, {
     if let Some(ELispExp::String(path_str)) = args.first() {
         let path_str = path_str.to_string();
@@ -25,6 +32,13 @@ primitive!(find_file, args, _env, ctx, {
         })
     }
 });
+
+pub const SAVE_BUFFER_DOC: &str = "(save-buffer): Write the current buffer's contents to the file it \
+         was visiting. Returns nil in every case (logging a diagnostic \
+         either way); if the buffer has no associated file, or the write \
+         fails, nothing is written.\n\n\
+         Example:\n\
+         (define-key nil \"C-x C-s\" 'save-buffer)";
 
 primitive!(save_buffer, _args, _env, ctx, {
     let buf = ctx.get_current_buffer();
