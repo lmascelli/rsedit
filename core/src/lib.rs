@@ -1,5 +1,6 @@
 pub mod buffer;
 pub(crate) mod editor;
+pub(crate) mod primitives;
 pub mod input;
 pub mod lisp;
 pub(crate) mod minibuffer;

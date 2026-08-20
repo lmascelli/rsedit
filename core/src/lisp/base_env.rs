@@ -180,38 +180,7 @@ fn primitive_funcall<T: LispContext>(
     let func_obj = &args[0];
     let func_args = &args[1..];
 
-    match func_obj {
-        LispExp::Lambda(lambda) => {
-            if lambda.params.len() != func_args.len() {
-                return Err(EvalError::WrongNumberOfArguments {
-                    expected: lambda.params.len(),
-                    got: func_args.len(),
-                });
-            }
-            let call_frame = Env::new_child(&lambda.env);
-            for (i, param_name) in lambda.params.iter().enumerate() {
-                call_frame.set_variable(param_name.clone(), func_args[i].clone());
-            }
-
-            if lambda.body.is_empty() {
-                return Ok(LispExp::symbol("nil".into()));
-            } else {
-                for exp in &lambda.body[0..lambda.body.len() - 1] {
-                    eval(exp, call_frame.clone(), ctx)?;
-                }
-                eval(
-                    lambda
-                        .body
-                        .last()
-                        .expect("Failed to get the last expression in the function call"),
-                    call_frame,
-                    ctx,
-                )
-            }
-        }
-        LispExp::Primitive { pointer: func, doc: _} => func(func_args, env, ctx),
-        _ => Err(EvalError::UncorrectFunctionDefinition),
-    }
+    call_callable(func_obj, func_args, env, ctx)
 }
 
 fn primitive_function_doc<T: LispContext>(
@@ -734,7 +703,24 @@ fn primitive_equal_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T
             got: args.len(),
         });
     }
-    Ok(LispExp::boolean(args[0] == args[1]))
+    let is_eq = match (&args[0], &args[1]) {
+        // Immediate values: compared by value, mirroring how real Elisp's
+        // interned symbols and fixnums behave under `eq`.
+        (LispExp::Number(a), LispExp::Number(b)) => a == b,
+        (LispExp::Symbol(a), LispExp::Symbol(b)) => a == b,
+        (a, b) if a.is_nil() && b.is_nil() => true,
+        // Compound values: only `eq` if they're literally the same
+        // allocation, not just structurally identical.
+        (LispExp::List(a), LispExp::List(b)) => Arc::ptr_eq(a, b),
+        (LispExp::DottedList(a, ta), LispExp::DottedList(b, tb)) => {
+            Arc::ptr_eq(a, b) && Arc::ptr_eq(ta, tb)
+        }
+        (LispExp::Vector(a), LispExp::Vector(b)) => Arc::ptr_eq(a, b),
+        (LispExp::Map(a), LispExp::Map(b)) => Arc::ptr_eq(a, b),
+        (LispExp::String(a), LispExp::String(b)) => Arc::ptr_eq(a, b),
+        _ => false,
+    };
+    Ok(LispExp::boolean(is_eq))
 }
 
 fn primitive_eq<T: LispContext>(
@@ -814,7 +800,7 @@ fn primitive_listp<T: LispContext>(
             got: args.len(),
         });
     }
-    let is_list = matches!(&args[0], LispExp::List(_) | LispExp::DottedList(_, _));
+    let is_list = args[0].is_nil() || matches!(&args[0], LispExp::List(_) | LispExp::DottedList(_, _));
     Ok(LispExp::boolean(is_list))
 }
 
@@ -871,10 +857,13 @@ fn primitive_functionp<T: LispContext>(
             got: args.len(),
         });
     }
-    Ok(LispExp::boolean(matches!(
-        &args[0],
-        LispExp::Lambda(_) | LispExp::Primitive{pointer: _, doc: _}
-    )))
+    let is_function = match &args[0] {
+        LispExp::Lambda(_) | LispExp::Primitive{ .. } => true,
+        LispExp::Symbol(name) => env.get_function(name).is_some(),
+        _ => false,
+
+    };
+    Ok(LispExp::boolean(is_function))
 }
 
 fn primitive_vectorp<T: LispContext>(
@@ -905,6 +894,22 @@ fn primitive_zerop<T: LispContext>(
     Ok(LispExp::boolean(expect_number(&args[0])? == 0.0))
 }
 
+fn primitive_atom_predicate<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.len() != 1 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let is_cons = matches!(&args[0], LispExp::List(l) if !l.is_empty())
+        || matches!(&args[0], LispExp::DottedList(_, _));
+    Ok(LispExp::boolean(!is_cons))
+}
+
 // --------------------------------- Math --------------------------------------
 
 fn primitive_sum<T: LispContext>(
@@ -912,25 +917,18 @@ fn primitive_sum<T: LispContext>(
     _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
-    if args.len() < 1 {
-        Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: 0,
-        })
-    } else {
-        let mut sum = 0.0;
-        for arg in args {
-            if let LispExp::Number(number) = arg {
-                sum += number;
-            } else {
-                return Err(EvalError::WrongArgumentType {
-                    expected: "Number".into(),
-                    got: format!("{:?}", arg),
-                });
-            }
+    let mut sum = 0.0;
+    for arg in args {
+        if let LispExp::Number(number) = arg {
+            sum += number;
+        } else {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Number".into(),
+                got: format!("{:?}", arg),
+            });
         }
-        Ok(LispExp::number(sum))
     }
+    Ok(LispExp::number(sum))
 }
 
 fn primitive_subtraction<T: LispContext>(
@@ -938,32 +936,22 @@ fn primitive_subtraction<T: LispContext>(
     _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
-    if args.len() < 1 {
+    if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
             got: 0,
         })
     } else {
-        let mut sum;
-        if let LispExp::Number(number) = args[0] {
-            sum = number;
+        let first = expect_number(&args[0])?;
+        if args.len() == 1 {
+            Ok(LispExp::number(-first))
         } else {
-            return Err(EvalError::WrongArgumentType {
-                expected: "Number".into(),
-                got: format!("{:?}", args[0]),
-            });
-        }
-        for arg in &args[1..] {
-            if let LispExp::Number(number) = arg {
-                sum -= number;
-            } else {
-                return Err(EvalError::WrongArgumentType {
-                    expected: "Number".into(),
-                    got: format!("{:?}", arg),
-                });
+            let mut result = first;
+            for args in &args[1..] {
+                result -= expect_number(arg)?;
             }
+            Ok(LispExp::number(result))
         }
-        Ok(LispExp::number(sum))
     }
 }
 
@@ -1030,7 +1018,13 @@ fn primitive_mod<T: LispContext>(
             "Arithmetic error: division by zero".into(),
         ));
     }
-    Ok(LispExp::number(a.rem_euclid(b)))
+    let r = a % b;
+    let result = if r != 0.0 && (r < 0.0) != (b < 0.0) {
+        r + b
+    } else {
+        r
+    };
+    Ok(LispExp::number(result))
 }
 
 fn primitive_1plus<T: LispContext>(
@@ -1430,7 +1424,7 @@ fn primitive_format<T: LispContext>(
 
 // -------------------------------- MULTI-THREADING ----------------------------
 
-fn primitive_atom<T: LispContext>(
+fn primitive_make_atom<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
@@ -1585,11 +1579,7 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
         ),
     );
     // Multithreading
-    // `atom`/`deref`/`reset`/`resume` are rsedit's own concurrency
-    // primitives, not part of standard Elisp. `atom` in particular collides
-    // in name (but not meaning) with real Elisp's cons-cell predicate, so it
-    // is deliberately left undocumented here until that's resolved.
-    env.set_function("atom".into(), LispExp::primitive(primitive_atom, None));
+    env.set_function("make-atom".into(), LispExp::primitive(primitive_make_atom, None));
     env.set_function(
         "deref".into(),
         LispExp::primitive(
@@ -2276,6 +2266,11 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
                     .into(),
             ),
         ),
+    );
+
+    env.set_function(
+    "atom".into(),
+    LispExp::primitive(primitive_atom_predicate, None),
     );
 
     // ------------------------------- Strings ------------------------------
