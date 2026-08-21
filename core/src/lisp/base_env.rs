@@ -1,5 +1,5 @@
 use crate::lisp::lisp::SharedAtom;
-use crate::lisp::{Env, EvalError, LispContext, LispExp, eval};
+use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
 use std::sync::{Arc, RwLock};
 
 macro_rules! nil {
@@ -189,6 +189,51 @@ fn primitive_funcall<T: LispContext>(
     let func_args = &args[1..];
 
     call_callable(func_obj, func_args, env, ctx)
+}
+
+const EVAL_DOC: &str = "TODO";
+
+fn primitive_eval<T: LispContext>(
+    args: &[LispExp<T>],
+    env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.is_empty() {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: 0,
+        })
+    } else {
+        eval(&args[0], env.clone(), ctx)
+    }
+}
+
+const EVAL_STRING_DOC: &str = "TODO";
+
+fn primitive_eval_string<T: LispContext>(
+    args: &[LispExp<T>],
+    env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.is_empty() {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: 0,
+        })
+    } else {
+        if let LispExp::String(source) = &args[0] {
+            let mut parser = Parser::new(source);
+            match parser.next() {
+                Ok(ast) => eval(&ast, env.clone(), ctx),
+                Err(parse_error) => Err(EvalError::RuntimeMessage(format!("eval-string: Parser Error {:?}", parse_error)))
+            }
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: format!("{:?}", args[0]),
+            })
+        }
+    }
 }
 
 const FUNCTION_DOC_DOC: &str = "(function-doc SYMBOL): Return the documentation string of the \
@@ -1948,6 +1993,14 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     env.set_function(
         "funcall".into(),
         LispExp::primitive(primitive_funcall, Some(FUNCALL_DOC.into())),
+    );
+    env.set_function(
+        "eval".into(),
+        LispExp::primitive(primitive_eval, Some(EVAL_DOC.into())),
+    );
+    env.set_function(
+        "eval-string".into(),
+        LispExp::primitive(primitive_eval_string, Some(EVAL_STRING_DOC.into())),
     );
     env.set_function(
         "function-doc".into(),

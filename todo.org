@@ -2,6 +2,7 @@
 #+title: rsedit
 
 * Changes todo
+** [20-08-2026] Add comment to primitives eval and eval-string
 ** [18-08-2026] Make primitive_format format escape characters
 ** [10-08-2026] Multi-keys keyevent
 ** DONE [09-08-2026] Enhance the lisp base_env
@@ -15,10 +16,10 @@ At the moment i switched the keymaps map to be a dict of KeyEvent-LispExp. This 
 Add an after resize list of callbacks that can be registered after a resize event is done
 ** [27-07-2026] Make M-x spawn the floating window of minibuffer
 - native functions to implement:
-  - buffer-string: get the text the user typed
-  - close-buffer: delete the current buffer
-  - switch-to-buffer: move the focus to the selected buffer
-  - eval: lisp primitive to call eval with the current environment
+  - [X] buffer-string: get the text the user typed
+  - [ ] close-buffer: delete the current buffer
+  - [X] switch-to-buffer: move the focus to the selected buffer
+  - [X] eval: lisp primitive to call eval with the current environment
   - list-dir: ls on given directory or the current if called with no arguments
   - create a match-list function that given a list of strings and a pattern returns all element of the list containing that pattern
   - end-of-buffer: move cursor to the end of the buffer
