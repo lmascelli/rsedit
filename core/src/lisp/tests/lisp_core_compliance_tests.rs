@@ -696,4 +696,149 @@ mod tests {
             LispExp::list(vec![LispExp::number(11.0), LispExp::number(12.0)])
         );
     }
+
+    // ===========================================================
+    // &optional / &rest parameter lists (defun, lambda, and defmacro all
+    // share the same parsing/binding code, so a handful of tests on each
+    // form is enough to exercise it once rather than three times).
+    // ===========================================================
+
+    #[test]
+    fn optional_params_default_to_nil_when_omitted() {
+        let script = "(defun greet (name &optional greeting) (cons name (cons greeting nil)))";
+        assert_eq!(
+            eval_ok(&format!("{script} (greet \"a\")")),
+            LispExp::list(vec![LispExp::string("a".into()), LispExp::nil()])
+        );
+        assert_eq!(
+            eval_ok(&format!("{script} (greet \"a\" \"hi\")")),
+            LispExp::list(vec![
+                LispExp::string("a".into()),
+                LispExp::string("hi".into())
+            ])
+        );
+    }
+
+    #[test]
+    fn rest_param_collects_every_remaining_argument_into_a_list() {
+        assert_eq!(
+            eval_ok("(defun args-of (a &rest more) more) (args-of 1 2 3 4)"),
+            LispExp::list(vec![
+                LispExp::number(2.0),
+                LispExp::number(3.0),
+                LispExp::number(4.0),
+            ])
+        );
+        // No extra arguments -> the rest param is bound to an empty list,
+        // not left unbound. `LispExp::list(vec![])`, not `LispExp::nil()`:
+        // both are "falsy", but they're different representations of an
+        // empty list under this VM's structural equality.
+        assert_eq!(
+            eval_ok("(defun args-of (a &rest more) more) (args-of 1)"),
+            LispExp::list(vec![])
+        );
+    }
+
+    #[test]
+    fn required_optional_and_rest_combine_in_one_param_list() {
+        let script = "
+            (defun f (a &optional b &rest c) (cons a (cons b c)))
+        ";
+        assert_eq!(
+            eval_ok(&format!("{script} (f 1)")),
+            LispExp::list(vec![LispExp::number(1.0), LispExp::nil()])
+        );
+        assert_eq!(
+            eval_ok(&format!("{script} (f 1 2 3 4)")),
+            LispExp::list(vec![
+                LispExp::number(1.0),
+                LispExp::number(2.0),
+                LispExp::number(3.0),
+                LispExp::number(4.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn too_few_required_arguments_is_still_an_arity_error() {
+        assert_eq!(
+            eval_err("(defun f (a &optional b) a) (f)"),
+            EvalError::WrongNumberOfArguments {
+                expected: 1,
+                got: 0
+            }
+        );
+    }
+
+    #[test]
+    fn too_many_arguments_without_a_rest_param_is_an_arity_error() {
+        assert_eq!(
+            eval_err("(defun f (a &optional b) a) (f 1 2 3)"),
+            EvalError::WrongNumberOfArguments {
+                expected: 2,
+                got: 3
+            }
+        );
+    }
+
+    #[test]
+    fn immediately_invoked_lambdas_respect_optional_and_rest_too() {
+        // Exercises the direct-lambda-call path (no `defun`/symbol lookup
+        // involved), not just the named-function-call path.
+        assert_eq!(
+            eval_ok("((lambda (&optional x) x))"),
+            LispExp::nil()
+        );
+        assert_eq!(
+            eval_ok("((lambda (&rest xs) xs) 1 2)"),
+            LispExp::list(vec![LispExp::number(1.0), LispExp::number(2.0)])
+        );
+    }
+
+    #[test]
+    fn defmacro_supports_optional_and_rest_params_too() {
+        // Macros go through the same parser/binder as defun/lambda. `list`
+        // isn't in this file's deliberately bare environment (see the
+        // module doc comment), so build the quoted form with `cons` alone:
+        // `items` is already bound to the raw, unevaluated call-site args
+        // as a list, so `(cons 'quote (cons items nil))` expands to
+        // `(quote (1 2 3))`, which evaluates back to the plain list.
+        let script = "
+            (defmacro my-list (&rest items) (cons 'quote (cons items nil)))
+        ";
+        assert_eq!(
+            eval_ok(&format!("{script} (my-list 1 2 3)")),
+            LispExp::list(vec![
+                LispExp::number(1.0),
+                LispExp::number(2.0),
+                LispExp::number(3.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn rest_marker_requires_exactly_one_name_after_it() {
+        assert_eq!(
+            eval_err("(defun f (&rest) 1)"),
+            EvalError::DefunRestMustHaveExactlyOneParam
+        );
+        assert_eq!(
+            eval_err("(defun f (&rest a b) 1)"),
+            EvalError::DefunRestMustHaveExactlyOneParam
+        );
+    }
+
+    #[test]
+    fn param_markers_reject_nonsensical_placement() {
+        // &optional after &rest.
+        assert_eq!(
+            eval_err("(defun f (a &rest b &optional c) 1)"),
+            EvalError::DefunMisplacedParamMarker
+        );
+        // &optional appearing twice.
+        assert_eq!(
+            eval_err("(defun f (a &optional b &optional c) 1)"),
+            EvalError::DefunMisplacedParamMarker
+        );
+    }
 }

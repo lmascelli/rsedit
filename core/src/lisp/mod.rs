@@ -1,5 +1,5 @@
 mod lisp;
-pub use lisp::{Env, EvalError, LispContext, LispExp, Parser, ParserError, eval};
+pub use lisp::{Env, EvalError, LispContext, LispExp, Parser, ParserError, bind_lambda_args, eval};
 mod base_env;
 pub use base_env::setup_base_env;
 mod handshake;

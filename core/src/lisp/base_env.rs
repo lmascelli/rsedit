@@ -1,5 +1,5 @@
 use crate::lisp::lisp::SharedAtom;
-use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
+use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, bind_lambda_args, eval};
 use std::sync::{Arc, RwLock};
 
 macro_rules! nil {
@@ -71,16 +71,8 @@ fn call_callable<T: LispContext>(
 ) -> Result<LispExp<T>, EvalError> {
     match func {
         LispExp::Lambda(lambda) => {
-            if lambda.params.len() != call_args.len() {
-                return Err(EvalError::WrongNumberOfArguments {
-                    expected: lambda.params.len(),
-                    got: call_args.len(),
-                });
-            }
             let call_frame = Env::new_child(&lambda.env);
-            for (i, param_name) in lambda.params.iter().enumerate() {
-                call_frame.set_variable(param_name.clone(), call_args[i].clone());
-            }
+            bind_lambda_args(lambda, call_args, &call_frame)?;
             if lambda.body.is_empty() {
                 return Ok(LispExp::nil());
             }

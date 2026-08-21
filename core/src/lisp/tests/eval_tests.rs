@@ -45,6 +45,8 @@ mod test {
         // NEW DAY 2 CHANGE: Mock the function directly using the optimal Lambda struct
         let mock_func = LispExp::Lambda(Arc::new(crate::lisp::Lambda {
             params: vec![], // No parameters
+            optionals: vec![],
+            rest: None,
             body: vec![LispExp::number(42.0)],
             env: env.clone(), // Capture current environment
             doc: None,
@@ -497,6 +499,8 @@ mod test {
         // Bind 'log' in the function namespace to a lambda
         let mock_lambda = LispExp::lambda(crate::lisp::Lambda {
             params: vec![],
+            optionals: vec![],
+            rest: None,
             body: vec![LispExp::number(99.0)],
             env: env.clone(),
             doc: None,

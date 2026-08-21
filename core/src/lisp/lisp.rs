@@ -38,7 +38,17 @@ pub(super) enum Token {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lambda<T: LispContext> {
+    /// Required parameters -- a call must supply exactly one argument for
+    /// each of these.
     pub params: Vec<String>,
+    /// `&optional` parameters. A call may omit any suffix of these;
+    /// omitted ones are bound to `nil`.
+    pub optionals: Vec<String>,
+    /// The `&rest` parameter, if any. Bound to a list of every argument
+    /// past `params`/`optionals`. `None` means the lambda has no `&rest`
+    /// parameter, so supplying more arguments than `params.len() +
+    /// optionals.len()` is an arity error.
+    pub rest: Option<String>,
     pub body: Vec<LispExp<T>>,
     pub env: Arc<Env<T>>,
     pub doc: Option<Arc<String>>,
@@ -108,6 +118,8 @@ pub enum EvalError {
     DefunNotCorrectExpression,
     DefunParamsAreNotAList,
     DefunParamIsNotASymbol,
+    DefunRestMustHaveExactlyOneParam,
+    DefunMisplacedParamMarker,
     LetUnvalidBindingAt(usize),
     LetUnvalidBindingList,
     LetNoBindingsProvided,
@@ -897,6 +909,104 @@ impl<T: LispContext> PartialEq for Env<T> {
     }
 }
 
+/// Binds ARGS into CALL_FRAME according to LAMBDA's parameter list:
+/// required params first (one-to-one), then `&optional` params
+/// (defaulting to `nil` once ARGS runs out), then -- if LAMBDA has an
+/// `&rest` param -- every remaining argument collected into a single
+/// list. Shared by every lambda/macro call site so the required/
+/// optional/rest binding rules only need to be implemented once.
+pub fn bind_lambda_args<T: LispContext>(
+    lambda: &Lambda<T>,
+    args: &[LispExp<T>],
+    call_frame: &Arc<Env<T>>,
+) -> Result<(), EvalError> {
+    let min = lambda.params.len();
+    let max = min + lambda.optionals.len();
+    if args.len() < min || (lambda.rest.is_none() && args.len() > max) {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: if args.len() < min { min } else { max },
+            got: args.len(),
+        });
+    }
+
+    let mut idx = 0;
+    for name in &lambda.params {
+        call_frame.set_variable(name.clone(), args[idx].clone());
+        idx += 1;
+    }
+    for name in &lambda.optionals {
+        let value = args.get(idx).cloned().unwrap_or_else(LispExp::nil);
+        call_frame.set_variable(name.clone(), value);
+        idx += 1;
+    }
+    if let Some(rest_name) = &lambda.rest {
+        // `idx` can run past `args.len()` here -- e.g. `params.len() == 1`,
+        // `optionals.len() == 1`, but only the one required argument was
+        // supplied -- so it must be clamped before slicing.
+        let rest_start = idx.min(args.len());
+        call_frame.set_variable(rest_name.clone(), LispExp::list(args[rest_start..].to_vec()));
+    }
+    Ok(())
+}
+
+/// Parses a `defun`/`lambda`/`defmacro` parameter list into its three
+/// buckets, mirroring Emacs Lisp's own grammar: `(REQUIRED...  [&optional
+/// OPTIONAL...] [&rest REST])`. `&optional` and `&rest` are markers, not
+/// bindable names -- they select which bucket the symbols that follow
+/// land in, and are consumed rather than returned.
+fn parse_lambda_params<T: LispContext>(
+    params_list: &[LispExp<T>],
+) -> Result<(Vec<String>, Vec<String>, Option<String>), EvalError> {
+    #[derive(PartialEq)]
+    enum Mode {
+        Required,
+        Optional,
+        Rest,
+        RestDone,
+    }
+
+    let mut required = Vec::new();
+    let mut optionals = Vec::new();
+    let mut rest = None;
+    let mut mode = Mode::Required;
+
+    for param in params_list {
+        let LispExp::Symbol(name) = param else {
+            return Err(EvalError::DefunParamIsNotASymbol);
+        };
+        match name.as_str() {
+            "&optional" => {
+                if mode != Mode::Required {
+                    return Err(EvalError::DefunMisplacedParamMarker);
+                }
+                mode = Mode::Optional;
+            }
+            "&rest" => {
+                if mode == Mode::Rest || mode == Mode::RestDone {
+                    return Err(EvalError::DefunMisplacedParamMarker);
+                }
+                mode = Mode::Rest;
+            }
+            other => match mode {
+                Mode::Required => required.push(other.to_string()),
+                Mode::Optional => optionals.push(other.to_string()),
+                Mode::Rest => {
+                    rest = Some(other.to_string());
+                    mode = Mode::RestDone;
+                }
+                Mode::RestDone => return Err(EvalError::DefunRestMustHaveExactlyOneParam),
+            },
+        }
+    }
+
+    // `&rest` with nothing after it.
+    if mode == Mode::Rest {
+        return Err(EvalError::DefunRestMustHaveExactlyOneParam);
+    }
+
+    Ok((required, optionals, rest))
+}
+
 enum EvalStep<T: LispContext> {
     Done(LispExp<T>),
     TailCall(LispExp<T>, Arc<Env<T>>),
@@ -979,18 +1089,8 @@ fn eval_step<T: LispContext>(
                             evaled_args.push(eval(arg, env.clone(), ctx)?);
                         }
 
-                        if lambda.params.len() != evaled_args.len() {
-                            return Err(EvalError::WrongNumberOfArguments {
-                                expected: lambda.params.len(),
-                                got: evaled_args.len(),
-                            });
-                        }
-
                         let call_frame = Env::new_child(&lambda.env);
-
-                        for (i, param_name) in lambda.params.iter().enumerate() {
-                            call_frame.set_variable(param_name.clone(), evaled_args[i].clone());
-                        }
+                        bind_lambda_args(lambda, &evaled_args, &call_frame)?;
 
                         if lambda.body.is_empty() {
                             return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
@@ -1169,25 +1269,20 @@ fn eval_special_form_or_call_step<T: LispContext>(
             Ok(EvalStep::Done(value))
         }
 
+        // (defun NAME (REQUIRED... [&optional OPTIONAL...] [&rest REST])
+        //   [DOCSTRING] BODY...)
         "defun" => {
             if args.len() < 3 {
                 return Err(EvalError::DefunNotCorrectExpression);
             }
             if let LispExp::Symbol(func_name) = &args[0] {
-                let mut params_vec = vec![];
                 let mut body_index = 2;
                 let mut doc = None;
-                if let LispExp::List(params_list) = &args[1] {
-                    for param in params_list.iter() {
-                        if let LispExp::Symbol(param_name) = param {
-                            params_vec.push((**param_name).clone());
-                        } else {
-                            return Err(EvalError::DefunParamIsNotASymbol);
-                        }
-                    }
+                let (params, optionals, rest) = if let LispExp::List(params_list) = &args[1] {
+                    parse_lambda_params(params_list)?
                 } else {
                     return Err(EvalError::DefunParamsAreNotAList);
-                }
+                };
 
                 if let LispExp::String(doc_string) = &args[2]
                     && args.len() > 3
@@ -1197,7 +1292,9 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 }
 
                 let lambda = Lambda {
-                    params: params_vec,
+                    params,
+                    optionals,
+                    rest,
                     body: args[body_index..].to_vec(),
                     env: env.clone(),
                     doc,
@@ -1210,29 +1307,24 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
+        // (lambda (REQUIRED... [&optional OPTIONAL...] [&rest REST]) BODY...)
         "lambda" => {
             if args.is_empty() {
                 return Err(EvalError::DefunNotCorrectExpression);
             }
 
-            let mut params_vec = vec![];
-
-            if let LispExp::List(params_list) = &args[0] {
-                for param in params_list.iter() {
-                    if let LispExp::Symbol(p_name) = param {
-                        params_vec.push(p_name.to_string());
-                    } else {
-                        return Err(EvalError::DefunParamIsNotASymbol);
-                    }
-                }
+            let (params, optionals, rest) = if let LispExp::List(params_list) = &args[0] {
+                parse_lambda_params(params_list)?
             } else {
                 return Err(EvalError::DefunParamsAreNotAList);
-            }
+            };
 
             let body = args[1..].to_vec();
 
             Ok(EvalStep::Done(LispExp::lambda(Lambda {
-                params: params_vec,
+                params,
+                optionals,
+                rest,
                 body,
                 env: env.clone(),
                 doc: None,
@@ -1630,28 +1722,23 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
-        // (defmacro NAME (PARAMS...) BODY...) defines a macro in its
-        // own namespace. Unlike `defun`, the arguments are never
-        // evaluated: they are bound to the raw, unevaluated call-site
-        // AST, and the macro body must produce a new expression to be
-        // evaluated in place of the call.
+        // (defmacro NAME (REQUIRED... [&optional OPTIONAL...] [&rest REST])
+        //   BODY...) defines a macro in its own namespace. Unlike `defun`,
+        // the arguments are never evaluated: they are bound to the raw,
+        // unevaluated call-site AST, and the macro body must produce a
+        // new expression to be evaluated in place of the call. The same
+        // `&optional`/`&rest` grammar as `defun`/`lambda` applies here.
         "defmacro" => {
             if args.len() < 2 {
                 Err(EvalError::DefunNotCorrectExpression)
             } else {
                 if let LispExp::Symbol(macro_name) = &args[0] {
-                    let mut params_vec = vec![];
                     if let LispExp::List(params_list) = &args[1] {
-                        for param in params_list.iter() {
-                            if let LispExp::Symbol(param_name) = param {
-                                params_vec.push((**param_name).clone());
-                            } else {
-                                return Err(EvalError::DefunParamIsNotASymbol);
-                            }
-                        }
-
+                        let (params, optionals, rest) = parse_lambda_params(params_list)?;
                         let lambda = Lambda {
-                            params: params_vec,
+                            params,
+                            optionals,
+                            rest,
                             body: args[2..].to_vec(),
                             env: env.clone(),
                             doc: None,
@@ -1768,17 +1855,8 @@ fn eval_macro_or_function_call_step<T: LispContext>(
     ctx: &T,
 ) -> Result<EvalStep<T>, EvalError> {
     if let Some(LispExp::Lambda(macro_lambda)) = env.get_macro(symbol) {
-        if macro_lambda.params.len() != args.len() {
-            return Err(EvalError::WrongNumberOfArguments {
-                expected: macro_lambda.params.len(),
-                got: args.len(),
-            });
-        }
-
         let expand_frame = Env::new_child(&macro_lambda.env);
-        for (i, param_name) in macro_lambda.params.iter().enumerate() {
-            expand_frame.set_variable(param_name.clone(), args[i].clone());
-        }
+        bind_lambda_args(&macro_lambda, args, &expand_frame)?;
 
         let mut expansion = LispExp::nil();
         for form in &macro_lambda.body {
@@ -1804,18 +1882,8 @@ fn eval_function_call_step<T: LispContext>(
 
     if let Some(func) = env.get_function(symbol) {
         if let LispExp::Lambda(lambda) = func {
-            if lambda.params.len() != evaled_args.len() {
-                return Err(EvalError::WrongNumberOfArguments {
-                    expected: lambda.params.len(),
-                    got: evaled_args.len(),
-                });
-            }
-
             let call_frame = Env::new_child(&lambda.env);
-
-            for (i, param_name) in lambda.params.iter().enumerate() {
-                call_frame.set_variable(param_name.clone(), evaled_args[i].clone());
-            }
+            bind_lambda_args(&lambda, &evaled_args, &call_frame)?;
 
             if lambda.body.is_empty() {
                 return Ok(EvalStep::Done(LispExp::symbol("nil".into())));

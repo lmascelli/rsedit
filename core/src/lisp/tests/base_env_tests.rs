@@ -315,4 +315,28 @@ mod tests {
         let script = "(setq r (make-atom 1)) (reset r 2) (deref r)";
         assert_eq!(eval_ok(script), LispExp::number(2.0));
     }
+
+    // ===========================================================
+    // &optional / &rest through funcall/apply -- `call_callable` in
+    // base_env.rs is a separate lambda-invocation path from the ones in
+    // lisp.rs, so it needs its own check that it shares the same binder.
+    // ===========================================================
+
+    #[test]
+    fn funcall_and_apply_respect_optional_and_rest_params() {
+        let script = "(defun f (a &optional b &rest c) (cons a (cons b c)))";
+        assert_eq!(
+            eval_ok(&format!("{script} (funcall 'f 1)")),
+            LispExp::list(vec![LispExp::number(1.0), LispExp::nil()])
+        );
+        assert_eq!(
+            eval_ok(&format!("{script} (apply 'f 1 2 '(3 4))")),
+            LispExp::list(vec![
+                LispExp::number(1.0),
+                LispExp::number(2.0),
+                LispExp::number(3.0),
+                LispExp::number(4.0),
+            ])
+        );
+    }
 }
