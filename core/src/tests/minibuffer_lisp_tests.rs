@@ -1,0 +1,160 @@
+//! End-to-end tests for `core/lisp/minibuffer.lisp`, run against a real
+//! `EditorState` + `install_primitives` stack (not just `setup_base_env`)
+//! since the minibuffer relies on `make-floating-window`, `close-buffer`,
+//! `switch-to-buffer`, and the `after-close-hook`/major-mode machinery,
+//! none of which exist in the bare Lisp-core test environment.
+//!
+//! `minibuffer.lisp` is loaded here by evaluating its contents directly
+//! (`include_str!`) rather than through `eval-file`, since `eval-file`
+//! resolves relative to `lisp-path`, which points at the *installed*
+//! binary's directory and won't find the source tree under `cargo test`.
+#[cfg(test)]
+mod tests {
+    use crate::buffer::gap_buffer::GapBuffer;
+    use crate::editor::{EditorState, create_global_env};
+    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use std::sync::Arc;
+
+    fn eval_str(
+        source: &str,
+        env: &Arc<Env<EditorState<GapBuffer>>>,
+        ctx: &EditorState<GapBuffer>,
+    ) -> Result<LispExp<EditorState<GapBuffer>>, EvalError> {
+        let wrapped = format!("(progn {})", source);
+        let mut parser = Parser::new(&wrapped);
+        let ast = parser.next().expect("failed to parse test script");
+        eval(&ast, env.clone(), ctx)
+    }
+
+    /// A fresh editor with `minibuffer.lisp` loaded and `frame-width`/
+    /// `frame-height` set (both needed by `default-minibuffer-prompt`,
+    /// and otherwise only set by the real resize event from a UI
+    /// frontend).
+    fn setup() -> (EditorState<GapBuffer>, Arc<Env<EditorState<GapBuffer>>>) {
+        let (ctx, env) = create_global_env::<GapBuffer>().expect("create_global_env failed");
+        env.set_variable("frame-width".into(), LispExp::number(80.0));
+        env.set_variable("frame-height".into(), LispExp::number(24.0));
+        eval_str(include_str!("../../lisp/minibuffer.lisp"), &env, &ctx)
+            .unwrap_or_else(|e| panic!("loading minibuffer.lisp failed: {e:?}"));
+        (ctx, env)
+    }
+
+    #[test]
+    fn confirm_flow_captures_input_and_restores_the_previous_buffer() {
+        let (ctx, env) = setup();
+
+        eval_str(
+            r#"
+            (setq *test-result* nil)
+            (minibuffer-read "Test"
+                (lambda (input) (setq *test-result* input))
+                nil nil)
+            "#,
+            &env,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+
+        eval_str(r#"(self-insert "h") (self-insert "i")"#, &env, &ctx).unwrap();
+        eval_str("(minibuffer-confirm)", &env, &ctx).unwrap();
+
+        assert_eq!(
+            eval_str("*test-result*", &env, &ctx).unwrap(),
+            LispExp::string("hi".into())
+        );
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        assert!(ctx.get_buffer("*Minibuffer*").is_none());
+    }
+
+    #[test]
+    fn cancel_flow_calls_on_cancel_without_touching_on_confirm() {
+        let (ctx, env) = setup();
+
+        eval_str(
+            r#"
+            (setq *confirmed* nil)
+            (setq *cancelled* nil)
+            (minibuffer-read "Test"
+                (lambda (input) (setq *confirmed* t))
+                nil
+                (lambda () (setq *cancelled* t)))
+            "#,
+            &env,
+            &ctx,
+        )
+        .unwrap();
+        eval_str("(minibuffer-cancel)", &env, &ctx).unwrap();
+
+        assert_eq!(eval_str("*cancelled*", &env, &ctx).unwrap(), LispExp::t());
+        assert_eq!(eval_str("*confirmed*", &env, &ctx).unwrap(), LispExp::nil());
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+    }
+
+    #[test]
+    fn tab_cycles_through_completion_candidates_and_wraps_around() {
+        let (ctx, env) = setup();
+
+        eval_str(
+            r#"(minibuffer-read "Test" nil (lambda (input) (list "alpha" "beta" "gamma")) nil)"#,
+            &env,
+            &ctx,
+        )
+        .unwrap();
+
+        for expected in ["alpha", "beta", "gamma", "alpha"] {
+            eval_str("(minibuffer-complete)", &env, &ctx).unwrap();
+            assert_eq!(
+                eval_str("(buffer-string)", &env, &ctx).unwrap(),
+                LispExp::string(expected.into())
+            );
+        }
+    }
+
+    #[test]
+    fn typing_after_a_completion_starts_a_fresh_completion_request() {
+        let (ctx, env) = setup();
+
+        eval_str(
+            r#"(minibuffer-read "Test" nil (lambda (input) (list "alpha" "beta")) nil)"#,
+            &env,
+            &ctx,
+        )
+        .unwrap();
+
+        eval_str("(minibuffer-complete)", &env, &ctx).unwrap(); // -> "alpha"
+        // Typing invalidates the mid-cycle state (buffer no longer equals
+        // the last-shown candidate), so the next Tab must ask for fresh
+        // candidates from scratch rather than advancing the old cycle.
+        eval_str(r#"(self-insert "!")"#, &env, &ctx).unwrap(); // -> "alpha!"
+        eval_str("(minibuffer-complete)", &env, &ctx).unwrap();
+        assert_eq!(
+            eval_str("(buffer-string)", &env, &ctx).unwrap(),
+            LispExp::string("alpha".into())
+        );
+    }
+
+    #[test]
+    fn closing_does_not_leak_completion_state_into_the_next_prompt() {
+        let (ctx, env) = setup();
+
+        eval_str(
+            r#"(minibuffer-read "First" nil (lambda (input) (list "x" "y")) nil)"#,
+            &env,
+            &ctx,
+        )
+        .unwrap();
+        eval_str("(minibuffer-complete)", &env, &ctx).unwrap();
+        eval_str("(minibuffer-cancel)", &env, &ctx).unwrap();
+
+        // Reopen with no on-change callback this time; Tab must be a
+        // harmless no-op rather than acting on the previous prompt's
+        // stale candidate list.
+        eval_str(r#"(minibuffer-read "Second" nil nil nil)"#, &env, &ctx).unwrap();
+        eval_str("(minibuffer-complete)", &env, &ctx).unwrap();
+        assert_eq!(
+            eval_str("(buffer-string)", &env, &ctx).unwrap(),
+            LispExp::string("".into())
+        );
+    }
+}

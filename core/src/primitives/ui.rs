@@ -1,12 +1,16 @@
 use super::*;
 
-pub const MAKE_FLOATING_WINDOW_DOC: &str = "(make-floating-window BUFFER-NAME X Y WIDTH HEIGHT &optional TITLE): \
-         Create a new buffer named BUFFER-NAME, open it in a new bordered \
-         floating window positioned at (X, Y) with the given WIDTH and \
-         HEIGHT (and optional TITLE string), give that window focus, and \
-         return t. Not a standard Elisp primitive.\n\n\
+pub const MAKE_FLOATING_WINDOW_DOC: &str = "(make-floating-window BUFFER-NAME X Y WIDTH HEIGHT \
+         &optional TITLE MODE): Create a new buffer named BUFFER-NAME in \
+         major mode MODE (a symbol; defaults to fundamental-mode if \
+         omitted), open it in a new bordered floating window positioned \
+         at (X, Y) with the given WIDTH and HEIGHT (and optional TITLE \
+         string), give that window focus, and return t. Closing the \
+         floating window (e.g. via close-buffer or \
+         close-floating-window) restores focus to whatever window was \
+         focused before this call. Not a standard Elisp primitive.\n\n\
          Example:\n\
-         (make-floating-window \"*Minibuffer*\" 0 20 80 1 \"Find file\")";
+         (make-floating-window \"*Minibuffer*\" 0 20 80 1 \"Find file\" 'minibuffer-mode)";
 
 primitive!(make_floating_window, args, _env, ctx, {
     if args.len() < 5 {
@@ -30,8 +34,13 @@ primitive!(make_floating_window, args, _env, ctx, {
                     None
                 }
             });
+            let mode = args.get(6).and_then(|exp| match exp {
+                ELispExp::Symbol(m) | ELispExp::String(m) => Some(m.to_string()),
+                _ => None,
+            });
 
-            ctx.new_buffer(buf_name, None, None);
+            let previous_focused_window_id = ctx.get_focused_window_id();
+            ctx.new_buffer(buf_name, None, mode);
 
             let new_id = ctx.get_next_window_id();
             let window = Window {
@@ -53,6 +62,7 @@ primitive!(make_floating_window, args, _env, ctx, {
                 rect,
                 has_border: true,
                 title,
+                previous_focused_window_id,
             };
 
             ctx.floating_windows
@@ -74,15 +84,17 @@ primitive!(make_floating_window, args, _env, ctx, {
 });
 
 primitive!(close_floating_window, _args, _env, ctx, {
-    // TODO(improve) this is a mess at the moment. It close the last floating opened and close
-    // it not just toggle it so it has to be reopened. It must be improved to get the name of
-    // the buffer or the id of the window to close or toggle. Moreover the last not floating
-    // window id must be stored so when a window is closed the focus can be passed where it was.
-    let mut floats = ctx
-        .floating_windows
-        .write()
-        .expect("Failed to acquire write lock for floating_windows");
-    floats.pop();
-    ctx.set_focused_window_id(0);
+    // TODO(improve) this still always closes the most-recently-opened
+    // floating window rather than a specific one by name/id. Focus
+    // restoration is now correct, though: it comes from the popped
+    // window's own previous_focused_window_id rather than a hardcoded 0.
+    let restore_id = {
+        let mut floats = ctx
+            .floating_windows
+            .write()
+            .expect("Failed to acquire write lock for floating_windows");
+        floats.pop().map(|f| f.previous_focused_window_id)
+    };
+    ctx.set_focused_window_id(restore_id.unwrap_or(0));
     Ok(ELispExp::nil())
 });

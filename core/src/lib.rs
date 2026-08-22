@@ -2,7 +2,6 @@ pub mod buffer;
 pub(crate) mod editor;
 pub mod input;
 pub mod lisp;
-pub(crate) mod minibuffer;
 pub(crate) mod modes;
 pub(crate) mod primitives;
 pub(crate) mod task;

@@ -43,6 +43,11 @@ pub struct FloatingWindow {
     pub rect: Rect,
     pub has_border: bool,
     pub title: Option<String>,
+    /// The window that was focused right before this floating window was
+    /// opened. Restored when the floating window closes, so closing one
+    /// (including a floating window opened while another one already had
+    /// focus) always lands back exactly where the user was.
+    pub previous_focused_window_id: usize,
 }
 
 pub struct RenderableWindowView {

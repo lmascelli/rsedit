@@ -86,21 +86,61 @@ pub fn install_primitives<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B
     insert_fn!("log", general::log, general::LOG_DOC);
     insert_fn!("make-mode", modes::make_mode, modes::MAKE_MODE_DOC);
     insert_fn!("add-hook", modes::add_hook, modes::ADD_HOOK_DOC);
-    insert_fn!("add-syntax-rule", modes::add_syntax_rule, modes::ADD_SYNTAX_RULE_DOC);
+    insert_fn!(
+        "add-syntax-rule",
+        modes::add_syntax_rule,
+        modes::ADD_SYNTAX_RULE_DOC
+    );
     insert_fn!("self-insert", edits::self_insert, edits::SELF_INSERT_DOC);
-    insert_fn!("insert-newline", edits::insert_newline, edits::INSERT_NEWLINE_DOC);
-    insert_fn!("delete-backward-char", edits::delete_backward_char, edits::DELETE_BACKWARD_CHAR_DOC);
-    insert_fn!("backward-char", edits::backward_char, edits::BACKWARD_CHAR_DOC);
+    insert_fn!(
+        "insert-newline",
+        edits::insert_newline,
+        edits::INSERT_NEWLINE_DOC
+    );
+    insert_fn!(
+        "delete-backward-char",
+        edits::delete_backward_char,
+        edits::DELETE_BACKWARD_CHAR_DOC
+    );
+    insert_fn!(
+        "backward-char",
+        edits::backward_char,
+        edits::BACKWARD_CHAR_DOC
+    );
     insert_fn!("forward-char", edits::forward_char, edits::FORWARD_CHAR_DOC);
-    insert_fn!("previous-line", edits::previous_line, edits::PREVIOUS_LINE_DOC);
+    insert_fn!(
+        "previous-line",
+        edits::previous_line,
+        edits::PREVIOUS_LINE_DOC
+    );
     insert_fn!("next-line", edits::next_line, edits::NEXT_LINE_DOC);
     insert_fn!("find-file", io::find_file, io::FIND_FILE_DOC);
     insert_fn!("save-buffer", io::save_buffer, io::SAVE_BUFFER_DOC);
-    insert_fn!("make-floating-window", ui::make_floating_window, ui::MAKE_FLOATING_WINDOW_DOC);
+    insert_fn!(
+        "make-floating-window",
+        ui::make_floating_window,
+        ui::MAKE_FLOATING_WINDOW_DOC
+    );
     insert_fn!("close-floating-window", ui::close_floating_window);
-    insert_fn!("switch-to-buffer", buffers::switch_to_buffer, buffers::SWITCH_TO_BUFFER_DOC);
-    insert_fn!("current-buffer", buffers::current_buffer, buffers::CURRENT_BUFFER_DOC);
-    insert_fn!("close-buffer", buffers::close_buffer);
-    insert_fn!("buffer-string", buffers::buffer_string, buffers::BUFFER_STRING_DOC);
-    insert_fn!("clear-buffer", buffers::clear_buffer, buffers::CLEAR_BUFFER_DOC);
+    insert_fn!(
+        "switch-to-buffer",
+        buffers::switch_to_buffer,
+        buffers::SWITCH_TO_BUFFER_DOC
+    );
+    insert_fn!(
+        "current-buffer",
+        buffers::current_buffer,
+        buffers::CURRENT_BUFFER_DOC
+    );
+    insert_fn!("close-buffer", buffers::close_buffer, buffers::CLOSE_BUFFER_DOC);
+    insert_fn!(
+        "buffer-string",
+        buffers::buffer_string,
+        buffers::BUFFER_STRING_DOC
+    );
+    insert_fn!(
+        "clear-buffer",
+        buffers::clear_buffer,
+        buffers::CLEAR_BUFFER_DOC
+    );
 }

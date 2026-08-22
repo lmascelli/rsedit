@@ -3,7 +3,6 @@ use crate::{
     buffer::{Buffer, BufferTrait},
     input::{KeyEvent, fill_default_keymaps},
     lisp::{Env, EvalError, LispContext, Parser, bootstrap_vm, eval},
-    minibuffer::MinibufferState,
     modes::MajorMode,
     primitives::install_primitives,
     task::{BackgroundScheduler, WorkerMessage},
@@ -35,7 +34,6 @@ pub struct EditorState<B: BufferTrait> {
     pub worker_mailbox: Sender<WorkerMessage<B>>,
 
     pub buffers: Arc<RwLock<HashMap<String, Arc<RwLock<Buffer<B>>>>>>,
-    pub minibuffer: Arc<RwLock<MinibufferState>>,
     pub echo_message: Arc<RwLock<String>>,
     pub current_buffer_name: Arc<RwLock<String>>,
 
@@ -121,7 +119,6 @@ impl<B: BufferTrait> EditorState<B> {
             running: Arc::new(AtomicBool::new(true)),
             worker_mailbox: sender,
             buffers: Arc::new(RwLock::new(buffers)),
-            minibuffer: Arc::new(RwLock::new(MinibufferState::default())),
             echo_message: Arc::new(RwLock::new("Welcome to rsedit".to_string())),
             current_buffer_name: Arc::new(RwLock::new(scratch_name)),
             keymaps: Arc::new(RwLock::new(keymaps)),
@@ -216,7 +213,7 @@ impl<B: BufferTrait> EditorState<B> {
                             let mut script_content = None;
                             for path in lisp_path {
                                 if let Ok(content) =
-                                std::fs::read_to_string(&format!("{path}/{file}.lisp"))
+                                    std::fs::read_to_string(&format!("{path}/{file}.lisp"))
                                 {
                                     script_content = Some(content);
                                     break;
@@ -300,11 +297,15 @@ impl<B: BufferTrait> EditorState<B> {
                 }
             }
         } else {
+            let mut new_buf = Buffer::new(name);
+            if let Some(mode_name) = start_mode {
+                new_buf.current_mode = mode_name;
+            }
             let mut buffers_lock = self
                 .buffers
                 .write()
                 .expect("Failed to get write lock on buffers");
-            buffers_lock.insert(name.to_string(), Arc::new(RwLock::new(Buffer::new(name))));
+            buffers_lock.insert(name.to_string(), Arc::new(RwLock::new(new_buf)));
             Some(name.to_string())
         }
     }
@@ -366,7 +367,7 @@ impl<B: BufferTrait> EditorState<B> {
             return;
         }
 
-        // Handle the post command hooks
+        // Handle the post-command hooks
         let current_mode_name = {
             let buf_arc = self.get_current_buffer();
             let buf_lock = buf_arc
@@ -374,21 +375,101 @@ impl<B: BufferTrait> EditorState<B> {
                 .expect("Failed to acquire read lock on current buffer");
             buf_lock.current_mode.clone()
         };
+        self.run_hook(&current_mode_name, "post-command-hook", env);
+    }
 
+    /// Run every function registered under HOOK_NAME in the major mode
+    /// named MODE_NAME, in registration order, each called with zero
+    /// arguments. Errors from an individual hook are logged and
+    /// otherwise swallowed, so one broken hook can't block the rest.
+    pub(crate) fn run_hook(&self, mode_name: &str, hook_name: &str, env: &Arc<Env<EditorState<B>>>) {
         let registry = self
             .mode_registry
             .read()
             .expect("Failed to acquire read lock on mode registry");
-        if let Some(mode) = registry.get(&current_mode_name) {
-            if let Some(hook_vec) = mode.hooks.get("post-command-hook") {
+        if let Some(mode) = registry.get(mode_name) {
+            if let Some(hook_vec) = mode.hooks.get(hook_name) {
                 for hook in hook_vec {
                     let hook_call = ELispExp::list(vec![hook.clone()]);
                     if let Err(e) = eval(&hook_call, env.clone(), self) {
-                        self.log_diagnostic(&format!("Hook {:?} execution failed: {:?}", hook, e));
+                        self.log_diagnostic(&format!(
+                            "Hook {hook_name} ({:?}) execution failed: {:?}",
+                            hook, e
+                        ));
                     }
                 }
             }
         }
+    }
+
+    /// Close the buffer named NAME: detach it from whatever window is
+    /// showing it (a floating window is removed outright and focus
+    /// returns to whatever had it before that floating window opened;
+    /// a tiled window falls back to `*scratch*`, since there's no
+    /// per-window buffer history to fall back to yet), run that
+    /// buffer's major mode's `after-close-hook`, then remove it from
+    /// the buffer table. If NAME was the last remaining buffer, a fresh
+    /// empty `*scratch*` is created so the editor is never left with
+    /// none. Returns `false` if no buffer named NAME exists, `true`
+    /// otherwise.
+    pub fn close_buffer(&self, name: &str, env: &Arc<Env<EditorState<B>>>) -> bool {
+        let Some(buffer) = self.get_buffer(name) else {
+            return false;
+        };
+        let closing_mode = buffer
+            .read()
+            .expect("Failed to acquire read lock on buffer")
+            .current_mode
+            .clone();
+
+        // Detach NAME from wherever it's currently displayed.
+        let floating_match = {
+            let floats = self
+                .floating_windows
+                .read()
+                .expect("Failed to acquire read lock on floating_windows");
+            floats.iter().position(|f| f.window.buffer_name == name)
+        };
+        if let Some(idx) = floating_match {
+            let restore_id = self
+                .floating_windows
+                .write()
+                .expect("Failed to acquire write lock on floating_windows")
+                .remove(idx)
+                .previous_focused_window_id;
+            self.set_focused_window_id(restore_id);
+        } else if let Some(window) = self
+            .layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root")
+            .get_window_by_id(self.get_focused_window_id())
+        {
+            if window.buffer_name == name {
+                window.buffer_name = "*scratch*".into();
+            }
+        }
+
+        {
+            let mut buffers = self
+                .buffers
+                .write()
+                .expect("Failed to acquire write lock on buffers");
+            buffers.remove(name);
+            if buffers.is_empty() {
+                buffers.insert(
+                    "*scratch*".to_string(),
+                    Arc::new(RwLock::new(Buffer::new("*scratch*"))),
+                );
+            }
+        }
+
+        if self.get_current_buffer_name() == name || self.get_buffer(&self.get_current_buffer_name()).is_none()
+        {
+            self.set_current_buffer_name("*scratch*");
+        }
+
+        self.run_hook(&closing_mode, "after-close-hook", env);
+        true
     }
 
     /// Ask the editor for a list of window to be rendered. Those are composed of a rect that tells
@@ -624,9 +705,9 @@ pub fn create_global_env<B: BufferTrait>()
                 ELispExp::list(vec![ELispExp::string(format!(
                     "{}/data/lisp",
                     exe_path
-                    .parent()
-                    .expect("Failed to get the parent directory of rsedit")
-                    .display()
+                        .parent()
+                        .expect("Failed to get the parent directory of rsedit")
+                        .display()
                 ))]),
             );
         }

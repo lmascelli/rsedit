@@ -785,10 +785,7 @@ mod tests {
     fn immediately_invoked_lambdas_respect_optional_and_rest_too() {
         // Exercises the direct-lambda-call path (no `defun`/symbol lookup
         // involved), not just the named-function-call path.
-        assert_eq!(
-            eval_ok("((lambda (&optional x) x))"),
-            LispExp::nil()
-        );
+        assert_eq!(eval_ok("((lambda (&optional x) x))"), LispExp::nil());
         assert_eq!(
             eval_ok("((lambda (&rest xs) xs) 1 2)"),
             LispExp::list(vec![LispExp::number(1.0), LispExp::number(2.0)])

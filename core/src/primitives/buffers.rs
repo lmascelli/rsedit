@@ -10,24 +10,38 @@ primitive!(current_buffer, _args, _env, ctx, {
     Ok(ELispExp::string(ctx.get_current_buffer_name()))
 });
 
-primitive!(close_buffer, args, _env, ctx, {
-    if args.is_empty() {
-        let current_buffer_name = ctx.get_current_buffer_name();
-        if let Some(buffer) = ctx.get_buffer(&current_buffer_name) {
-            if current_buffer_name == "*Minibuffer*" {
-                todo!("Restore the LayoutNode and the focus to the previous window");
-            }
-            todo!(
-                "Assign an other buffer to the current window. Find a way to store the last viewn buffer"
-            );
-            Ok(ELispExp::t())
-        } else {
-            Ok(ELispExp::nil())
+pub const CLOSE_BUFFER_DOC: &str = "(close-buffer &optional BUFFER-OR-NAME): Close the buffer named \
+         BUFFER-OR-NAME (a string or symbol), or the current buffer if no \
+         argument is given. Detaches it from whatever window is showing \
+         it -- a tiled window falls back to *scratch*, a floating window \
+         is removed and focus returns to whatever was focused before it \
+         opened -- runs that buffer's major mode's after-close-hook, and \
+         removes it from the buffer list. If BUFFER-OR-NAME was the last \
+         remaining buffer, a fresh empty *scratch* is created so the \
+         editor is never left without one. Returns t on success, nil if \
+         no such buffer exists. Not a standard Elisp primitive -- the \
+         closest real Elisp equivalent is `kill-buffer`.\n\n\
+         Example:\n\
+         (close-buffer) ; closes the current buffer\n\
+         (close-buffer \"*Minibuffer*\")";
+
+primitive!(close_buffer, args, env, ctx, {
+    let target = match args.first() {
+        None => ctx.get_current_buffer_name(),
+        Some(ELispExp::String(name)) => name.to_string(),
+        Some(ELispExp::Symbol(name)) => name.to_string(),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: format!("{:?}", other),
+            });
         }
+    };
+    Ok(if ctx.close_buffer(&target, &env) {
+        ELispExp::t()
     } else {
-        todo!("Extract the name of the buffer to close from the args. Close it if exists.");
-        Ok(ELispExp::nil())
-    }
+        ELispExp::nil()
+    })
 });
 
 pub const BUFFER_STRING_DOC: &str = "(buffer-string): Return the entire contents of the current buffer as \
@@ -79,43 +93,32 @@ primitive!(switch_to_buffer, args, _env, ctx, {
             got: args.len(),
         })
     } else {
-        match &args[0] {
-            ELispExp::String(buffer_name) => {
-                if let Some(_) = ctx.get_buffer(buffer_name) {
-                    if let Some(window) = ctx
-                        .layout_root
-                        .write()
-                        .expect("Failed to acquire write lock on layout_root")
-                        .get_window_by_id(ctx.get_focused_window_id())
-                    {
-                        window.buffer_name = buffer_name.to_string();
-                    }
-                    Ok(args[0].clone())
-                } else {
-                    ctx.log_diagnostic(&format!("[LOG] buffer {} does not exist.", buffer_name));
-                    Ok(ELispExp::nil())
+        let buffer_name = match &args[0] {
+            ELispExp::String(name) => Some(name.to_string()),
+            ELispExp::Symbol(name) => Some(name.to_string()),
+            _ => None,
+        };
+        if let Some(buffer_name) = buffer_name {
+            if ctx.get_buffer(&buffer_name).is_some() {
+                if let Some(window) = ctx
+                    .layout_root
+                    .write()
+                    .expect("Failed to acquire write lock on layout_root")
+                    .get_window_by_id(ctx.get_focused_window_id())
+                {
+                    window.buffer_name = buffer_name.clone();
                 }
+                ctx.set_current_buffer_name(&buffer_name);
+                Ok(args[0].clone())
+            } else {
+                ctx.log_diagnostic(&format!("[LOG] buffer {} does not exist.", buffer_name));
+                Ok(ELispExp::nil())
             }
-            ELispExp::Symbol(buffer_name) => {
-                if let Some(_) = ctx.get_buffer(buffer_name) {
-                    if let Some(window) = ctx
-                        .layout_root
-                        .write()
-                        .expect("Failed to acquire write lock on layout_root")
-                        .get_window_by_id(ctx.get_focused_window_id())
-                    {
-                        window.buffer_name = buffer_name.to_string();
-                    }
-                    Ok(args[0].clone())
-                } else {
-                    ctx.log_diagnostic(&format!("[LOG] buffer {} does not exist.", buffer_name));
-                    Ok(ELispExp::nil())
-                }
-            }
-            _ => Err(EvalError::WrongArgumentType {
+        } else {
+            Err(EvalError::WrongArgumentType {
                 expected: "String".into(),
                 got: format!("{:?}", args.get(0)),
-            }),
+            })
         }
     }
 });

@@ -944,7 +944,10 @@ pub fn bind_lambda_args<T: LispContext>(
         // `optionals.len() == 1`, but only the one required argument was
         // supplied -- so it must be clamped before slicing.
         let rest_start = idx.min(args.len());
-        call_frame.set_variable(rest_name.clone(), LispExp::list(args[rest_start..].to_vec()));
+        call_frame.set_variable(
+            rest_name.clone(),
+            LispExp::list(args[rest_start..].to_vec()),
+        );
     }
     Ok(())
 }

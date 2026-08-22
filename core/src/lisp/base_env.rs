@@ -183,7 +183,14 @@ fn primitive_funcall<T: LispContext>(
     call_callable(func_obj, func_args, env, ctx)
 }
 
-const EVAL_DOC: &str = "TODO";
+const EVAL_DOC: &str = "(eval FORM): Evaluate FORM -- an already-parsed \
+                 Lisp expression, such as a quoted list -- in the current \
+                 environment and return the result. Any arguments after \
+                 FORM are ignored; unlike real Emacs Lisp's `eval`, there \
+                 is no optional LEXICAL argument.\n\n\
+                 Example:\n\
+                 (eval '(+ 1 2)) => 3\n\
+                 (setq form '(* 2 3)) (eval form) => 6";
 
 fn primitive_eval<T: LispContext>(
     args: &[LispExp<T>],
@@ -200,7 +207,17 @@ fn primitive_eval<T: LispContext>(
     }
 }
 
-const EVAL_STRING_DOC: &str = "TODO";
+const EVAL_STRING_DOC: &str = "(eval-string STRING): Parse STRING as Lisp \
+                 source and evaluate the first top-level expression it \
+                 contains in the current environment, returning the \
+                 result. Only the first expression is evaluated -- wrap \
+                 multiple forms in an explicit (progn ...) if STRING needs \
+                 to contain more than one. Not a standard Elisp primitive; \
+                 real Emacs Lisp achieves the same effect with \
+                 (eval (read STRING)).\n\n\
+                 Example:\n\
+                 (eval-string \"(+ 1 2)\") => 3\n\
+                 (eval-string \"(progn (setq x 10) (* x 2))\") => 20";
 
 fn primitive_eval_string<T: LispContext>(
     args: &[LispExp<T>],
@@ -217,7 +234,10 @@ fn primitive_eval_string<T: LispContext>(
             let mut parser = Parser::new(source);
             match parser.next() {
                 Ok(ast) => eval(&ast, env.clone(), ctx),
-                Err(parse_error) => Err(EvalError::RuntimeMessage(format!("eval-string: Parser Error {:?}", parse_error)))
+                Err(parse_error) => Err(EvalError::RuntimeMessage(format!(
+                    "eval-string: Parser Error {:?}",
+                    parse_error
+                ))),
             }
         } else {
             Err(EvalError::WrongArgumentType {
@@ -1813,29 +1833,42 @@ fn primitive_format<T: LispContext>(
     };
 
     while let Some(c) = chars.next() {
-        if c != '%' {
+        if c == '%' {
+            match chars.next() {
+                Some('%') => result.push('%'),
+                Some('s') | Some('S') => {
+                    result.push_str(&lisp_display(next_arg(&mut arg_idx)?));
+                }
+                Some('d') => {
+                    result.push_str(&format!(
+                        "{}",
+                        expect_number(next_arg(&mut arg_idx)?)? as i64
+                    ));
+                }
+                Some('f') => {
+                    result.push_str(&format!("{}", expect_number(next_arg(&mut arg_idx)?)?));
+                }
+                Some(other) => {
+                    result.push('%');
+                    result.push(other);
+                }
+                None => result.push('%'),
+            }
+        } else if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('t') => result.push('\t'),
+                Some('r') => result.push('\r'),
+                Some(other) => {
+                    return Err(EvalError::RuntimeMessage(format!(
+                        "Wrong escape character \\{other}"
+                    )));
+                }
+                None => result.push('\\'),
+            }
+        } else {
             result.push(c);
             continue;
-        }
-        match chars.next() {
-            Some('%') => result.push('%'),
-            Some('s') | Some('S') => {
-                result.push_str(&lisp_display(next_arg(&mut arg_idx)?));
-            }
-            Some('d') => {
-                result.push_str(&format!(
-                    "{}",
-                    expect_number(next_arg(&mut arg_idx)?)? as i64
-                ));
-            }
-            Some('f') => {
-                result.push_str(&format!("{}", expect_number(next_arg(&mut arg_idx)?)?));
-            }
-            Some(other) => {
-                result.push('%');
-                result.push(other);
-            }
-            None => result.push('%'),
         }
     }
     Ok(LispExp::string(result))
@@ -2086,7 +2119,10 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     );
     env.set_function(
         "remove-from-list".into(),
-        LispExp::primitive(primitive_remove_from_list, Some(REMOVE_FROM_LIST_DOC.into())),
+        LispExp::primitive(
+            primitive_remove_from_list,
+            Some(REMOVE_FROM_LIST_DOC.into()),
+        ),
     );
     env.set_function(
         "car".into(),
@@ -2249,11 +2285,17 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     );
     env.set_function(
         "number-to-string".into(),
-        LispExp::primitive(primitive_number_to_string, Some(NUMBER_TO_STRING_DOC.into())),
+        LispExp::primitive(
+            primitive_number_to_string,
+            Some(NUMBER_TO_STRING_DOC.into()),
+        ),
     );
     env.set_function(
         "string-to-number".into(),
-        LispExp::primitive(primitive_string_to_number, Some(STRING_TO_NUMBER_DOC.into())),
+        LispExp::primitive(
+            primitive_string_to_number,
+            Some(STRING_TO_NUMBER_DOC.into()),
+        ),
     );
     env.set_function(
         "symbol-name".into(),
