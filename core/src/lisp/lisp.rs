@@ -448,7 +448,8 @@ impl<'source> Parser<'source> {
                         }
                     }
                     _ => {
-                        return Err(ParserError::NumberInvadidChar(*c));
+                        self.token.push(*c);
+                        self.lexter_state = ParserLexerState::InSymbol;
                     }
                 },
                 ParserLexerState::InNumberMinusStart => match c {
