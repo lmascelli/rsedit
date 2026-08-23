@@ -92,7 +92,7 @@ the bottom 3 lines of the frame."
   (setq *minibuffer-on-cancel* on-cancel)
   (setq *minibuffer-completions* nil)
   (setq *minibuffer-completion-index* 0)
-  (make-floating-window "*Minibuffer*" 1 (- frame-height 3) frame-width 3
+  (make-floating-window "*Minibuffer*" 1 (- frame-height 4) (- frame-width 2) 3
                          prompt 'minibuffer-mode))
 
 (defun minibuffer-read (prompt on-confirm on-change on-cancel)

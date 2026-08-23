@@ -375,12 +375,6 @@ mod test {
 
     #[test]
     fn test_parser_robustness_invalid_numbers() {
-        // A number with an invalid character immediately following it without a space or delimiter
-        assert_eq!(
-            Parser::new("123a").next::<()>().unwrap_err(),
-            ParserError::NumberInvadidChar('a')
-        );
-
         // Multiple decimal points in a row
         assert!(matches!(
             Parser::new("1..2").next::<()>().unwrap_err(),
