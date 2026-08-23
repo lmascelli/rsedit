@@ -58,7 +58,6 @@ fn draw_window_border(
     rect: &Rect,
     title: &Option<String>,
 ) -> std::io::Result<()> {
-    // TODO ensure that the rect.x and rect.y values start from 1
     let top_border = if let Some(title) = title {
         format!(
             "─{}{}",
