@@ -119,4 +119,17 @@ Which implementation actually runs is controlled by
 
 (define-key nil "M-x" 'command-execute-prompt)
 
+(defun eval-expression-confirm (input)
+  "Called when the user presses Return after `eval-expression-prompt' --
+evaluate INPUT (a string) as a Lisp expression and log INPUT alongside its
+result, so it can be inspected in the diagnostic log."
+  (log (format "%s => %s" input (eval-string input))))
+
+(defun eval-expression-prompt ()
+  "Read a Lisp expression via the minibuffer (M-:) and evaluate it in the
+running editor, logging the result. Useful for testing code interactively."
+  (minibuffer-read "Eval:" 'eval-expression-confirm nil nil))
+
+(define-key nil "M-:" 'eval-expression-prompt)
+
 (log "End of the minibuffer.lisp")

@@ -12,6 +12,7 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
+    use crate::input::{KeyCode, KeyEvent, KeyModifiers};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
@@ -155,6 +156,40 @@ mod tests {
         assert_eq!(
             eval_str("(buffer-string)", &env, &ctx).unwrap(),
             LispExp::string("".into())
+        );
+    }
+
+    #[test]
+    fn meta_colon_opens_an_eval_minibuffer_that_evaluates_its_input() {
+        let (ctx, env) = setup();
+
+        eval_str("(setq probe nil)", &env, &ctx).unwrap();
+
+        // Drive the actual M-: key binding rather than calling
+        // `eval-expression-prompt` directly, so the test also proves the
+        // global keymap entry is wired up.
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Char(':'),
+                modifiers: KeyModifiers {
+                    alt: true,
+                    ..Default::default()
+                },
+            },
+            &env,
+        );
+        assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+
+        for c in "(setq probe 42)".chars() {
+            eval_str(&format!(r#"(self-insert "{c}")"#), &env, &ctx).unwrap();
+        }
+        eval_str("(minibuffer-confirm)", &env, &ctx).unwrap();
+
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        assert!(ctx.get_buffer("*Minibuffer*").is_none());
+        assert_eq!(
+            eval_str("probe", &env, &ctx).unwrap(),
+            LispExp::number(42.0)
         );
     }
 }
