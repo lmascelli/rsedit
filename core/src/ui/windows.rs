@@ -12,8 +12,8 @@ pub enum Orientation {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rect {
-    pub x: usize,
-    pub y: usize,
+    pub x: isize,
+    pub y: isize,
     pub width: usize,
     pub height: usize,
 }
@@ -146,7 +146,7 @@ impl LayoutNode {
                     );
                     right.compute_tiled_views(
                         Rect {
-                            y: rect.y + left_height,
+                            y: rect.y + left_height as isize,
                             height: right_height,
                             ..rect
                         },
@@ -170,7 +170,7 @@ impl LayoutNode {
                     );
                     right.compute_tiled_views(
                         Rect {
-                            x: rect.x + left_width,
+                            x: rect.x + left_width as isize,
                             width: right_width,
                             ..rect
                         },

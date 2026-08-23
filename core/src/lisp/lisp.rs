@@ -449,7 +449,7 @@ impl<'source> Parser<'source> {
                     }
                     _ => {
                         self.token.push(*c);
-                        self.lexter_state = ParserLexerState::InSymbol;
+                        self.lexer_state = ParserLexerState::InSymbol;
                     }
                 },
                 ParserLexerState::InNumberMinusStart => match c {

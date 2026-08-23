@@ -51,8 +51,8 @@ primitive!(make_floating_window, args, _env, ctx, {
             };
 
             let rect = Rect {
-                x: *x as usize,
-                y: *y as usize,
+                x: *x as isize,
+                y: *y as isize,
                 width: *w as usize,
                 height: *h as usize,
             };

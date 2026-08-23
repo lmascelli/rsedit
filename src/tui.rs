@@ -32,8 +32,8 @@ pub fn render_screen<B: BufferTrait>(
         }
 
         for (offset_y, line) in view.lines.iter().enumerate() {
-            let target_y = view.rect.y + offset_y;
-            if target_y >= rows as usize {
+            let target_y = view.rect.y + offset_y as isize;
+            if target_y >= rows as isize {
                 break;
             }
 
@@ -42,8 +42,8 @@ pub fn render_screen<B: BufferTrait>(
 
             if view.is_focused {
                 if let Some((cx, cy)) = view.cursor_rel_pos {
-                    let absolute_cx = (view.rect.x + cx) as u16;
-                    let absolute_cy = (view.rect.y + cy) as u16;
+                    let absolute_cx = (view.rect.x + cx as isize) as u16;
+                    let absolute_cy = (view.rect.y + cy as isize) as u16;
                     stdout.queue(cursor::MoveTo(absolute_cx, absolute_cy))?;
                 }
             }
@@ -72,15 +72,15 @@ fn draw_window_border(
     };
     stdout.queue(cursor::MoveTo((rect.x - 1) as u16, (rect.y - 1) as u16))?;
     stdout.queue(Print(format!("┌{}┐", top_border)))?;
-    for r in (rect.y)..(rect.y + rect.height) {
+    for r in (rect.y)..(rect.y + rect.height as isize) {
         stdout.queue(cursor::MoveTo((rect.x - 1) as u16, r as u16))?;
         stdout.queue(Print('│'))?;
-        stdout.queue(cursor::MoveTo((rect.x + rect.width) as u16, r as u16))?;
+        stdout.queue(cursor::MoveTo((rect.x + rect.width as isize) as u16, r as u16))?;
         stdout.queue(Print('│'))?;
     }
     stdout.queue(cursor::MoveTo(
         (rect.x - 1) as u16,
-        (rect.y + rect.height) as u16,
+        (rect.y + rect.height as isize) as u16,
     ))?;
     stdout.queue(Print(format!(
         "└{}┘",
