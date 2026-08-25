@@ -248,6 +248,59 @@ fn primitive_eval_string<T: LispContext>(
     }
 }
 
+const EVAL_STRING_SAFE_DOC: &str = "(eval-string-safe STRING): Like `eval-string', but never \
+                 propagates an error out of the call. Parses and evaluates \
+                 STRING and returns a two-element list: (t RESULT) if \
+                 parsing and evaluation both succeeded, or (nil DESCRIPTION) \
+                 if either failed, where DESCRIPTION is a human-readable \
+                 string describing what went wrong. Meant for interactive \
+                 evaluation (a REPL, a minibuffer, ...) where a bad \
+                 expression -- an unbound variable, a typo, wrong argument \
+                 counts -- shouldn't abort whatever triggered the \
+                 evaluation.\n\n\
+                 Example:\n\
+                 (eval-string-safe \"(+ 1 2)\") => (t 3)\n\
+                 (eval-string-safe \"(1 2 3)\")  => (nil \"UnvalidFunctionCall\")";
+
+fn primitive_eval_string_safe<T: LispContext>(
+    args: &[LispExp<T>],
+    env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<LispExp<T>, EvalError> {
+    if args.is_empty() {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: 0,
+        })
+    } else if let LispExp::String(source) = &args[0] {
+        // A failed nested `eval` below may leave frames pushed (per the
+        // `push_call_frame` protocol, a failed call's frame stays put).
+        // Since we're about to swallow that failure into a return value
+        // instead of propagating it, restore the frame stack to how it
+        // was before we started, or those frames would leak into whatever
+        // *actually* uncaught error is reported next.
+        let depth_before = ctx.call_frame_depth();
+        let mut parser = Parser::new(source);
+        let result = match parser.next() {
+            Ok(ast) => eval(&ast, env.clone(), ctx),
+            Err(parse_error) => Err(EvalError::RuntimeMessage(format!(
+                "Parser Error {:?}",
+                parse_error
+            ))),
+        };
+        ctx.truncate_call_frames(depth_before);
+        Ok(match result {
+            Ok(value) => LispExp::list(vec![LispExp::t(), value]),
+            Err(err) => LispExp::list(vec![LispExp::nil(), LispExp::string(format!("{:?}", err))]),
+        })
+    } else {
+        Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: format!("{:?}", args[0]),
+        })
+    }
+}
+
 const FUNCTION_DOC_DOC: &str = "(function-doc SYMBOL): Return the documentation string of the \
                  function bound to SYMBOL, or \"Undocumented function\" if it \
                  has none. Returns nil and logs a diagnostic if SYMBOL names no \
@@ -2026,6 +2079,13 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     env.set_function(
         "eval-string".into(),
         LispExp::primitive(primitive_eval_string, Some(EVAL_STRING_DOC.into())),
+    );
+    env.set_function(
+        "eval-string-safe".into(),
+        LispExp::primitive(
+            primitive_eval_string_safe,
+            Some(EVAL_STRING_SAFE_DOC.into()),
+        ),
     );
     env.set_function(
         "function-doc".into(),

@@ -10,38 +10,6 @@ primitive!(current_buffer, _args, _env, ctx, {
     Ok(ELispExp::string(ctx.get_current_buffer_name()))
 });
 
-pub const BUFFER_CREATE_DOC: &str = "(buffer-create NAME): Create a new, empty buffer named NAME (a \
-         string or symbol) in fundamental-mode, if one doesn't already \
-         exist -- does nothing if it does. Does not switch to it or \
-         change what any window is displaying; see `switch-to-buffer'. \
-         Returns NAME as a string.\n\n\
-         Example:\n\
-         (buffer-create \"*Messages*\")";
-
-primitive!(buffer_create, args, _env, ctx, {
-    if args.len() != 1 {
-        Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        })
-    } else {
-        let name = match &args[0] {
-            ELispExp::String(name) => name.to_string(),
-            ELispExp::Symbol(name) => name.to_string(),
-            _ => {
-                return Err(EvalError::WrongArgumentType {
-                    expected: "String or Symbol".into(),
-                    got: format!("{:?}", args[0]),
-                });
-            }
-        };
-        if ctx.get_buffer(&name).is_none() {
-            ctx.new_buffer(&name, None, None);
-        }
-        Ok(ELispExp::string(name))
-    }
-});
-
 pub const CLOSE_BUFFER_DOC: &str = "(close-buffer &optional BUFFER-OR-NAME): Close the buffer named \
          BUFFER-OR-NAME (a string or symbol), or the current buffer if no \
          argument is given. Detaches it from whatever window is showing \

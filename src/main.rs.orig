@@ -18,11 +18,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             ELispExp::string(path),
         ]);
         if let Err(e) = eval(&ast, env.clone(), &state) {
-            state.set_echo_message(&format!(
-                "Boot Error: {:?}{}",
-                e,
-                state.take_backtrace_suffix()
-            ));
+            state.set_echo_message(&format!("Boot Error: {:?}", e));
         }
     }
 

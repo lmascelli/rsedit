@@ -4,6 +4,4 @@
 [LOG] End of the minibuffer.lisp
 [LOG] 5
 [LOG] Hello from rsedit init.lisp
-[INFO] Keymap not bound KeyEvent { code: Char('.'), modifiers: KeyModifiers { ctrl: false, alt: true, shift: false, caps_lock_as_ctrl: false } }
-(find-file "/home/leonardo/.bash_profile") => .bash_profile
-[INFO] Keymap not bound KeyEvent { code: Char('e'), modifiers: KeyModifiers { ctrl: true, alt: false, shift: false, caps_lock_as_ctrl: false } }
+(+ 1 2) => 3

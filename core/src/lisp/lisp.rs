@@ -14,6 +14,53 @@ pub trait LispContext: Clone + PartialEq + Debug + Send + Sync + 'static {
     /// Allows the VM to bubble up non-fatal diagnostic logs, trace statements,
     /// or debugging notices to the host without knowing how the host presents them.
     fn log_diagnostic(&self, msg: &str);
+
+    /// Called by the evaluator right before running the body of a function
+    /// call -- a named function, a primitive, or an inline lambda
+    /// application -- with a short description of the frame (typically the
+    /// function's name, or "<lambda>" for an anonymous one). A host that
+    /// wants a call stack for backtraces overrides this (and
+    /// `pop_call_frame`); the default is a no-op, so hosts that don't care
+    /// pay nothing.
+    ///
+    /// The intended protocol: pop the frame when the call *succeeds*, but
+    /// leave it in place when it fails, so that by the time an error has
+    /// finished propagating out to whoever is watching for it, the frames
+    /// still standing are exactly the chain of calls that were active at
+    /// the moment things went wrong -- a backtrace frozen at throw time,
+    /// not inspected after the stack has already unwound. `eval` follows
+    /// this protocol at every call site; a host only needs to store and
+    /// clear the frames.
+    ///
+    /// One caveat worth knowing: this reflects genuine call nesting, not
+    /// full Lisp call semantics. A call in tail position is evaluated by
+    /// the trampoline in `eval` *after* its caller's frame has already
+    /// been popped -- that's the whole point of tail-call elimination, the
+    /// caller's frame is gone, not still waiting -- so a chain of tail
+    /// calls won't show up as a chain of frames, only the innermost one
+    /// still "on the stack" will. Every non-tail call (argument
+    /// evaluation, all but the last form in a body, and any nested
+    /// `eval`/`funcall` performed by a primitive) is captured correctly.
+    fn push_call_frame(&self, _frame: &str) {}
+    /// Pop the most recently pushed frame, undoing one `push_call_frame`.
+    fn pop_call_frame(&self) {}
+
+    /// How many frames are currently pushed. Combined with
+    /// `truncate_call_frames`, this lets a primitive that *catches* an
+    /// error -- swallowing it into a returned value instead of letting it
+    /// propagate, e.g. `eval-string-safe` -- restore the frame stack to
+    /// how it was before its own (now-discarded) nested evaluation. That
+    /// nested evaluation may have pushed frames that never got to pop
+    /// (their call failed, per the `push_call_frame` protocol); without
+    /// this they'd leak into whatever *actually* uncaught error is
+    /// reported next, showing an unrelated, already-handled failure in a
+    /// fresh backtrace.
+    fn call_frame_depth(&self) -> usize {
+        0
+    }
+    /// Pop frames until exactly `depth` remain (a no-op if already at or
+    /// below `depth`).
+    fn truncate_call_frames(&self, _depth: usize) {}
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1094,9 +1141,11 @@ fn eval_step<T: LispContext>(
                         }
 
                         let call_frame = Env::new_child(&lambda.env);
+                        ctx.push_call_frame("<lambda>");
                         bind_lambda_args(lambda, &evaled_args, &call_frame)?;
 
                         if lambda.body.is_empty() {
+                            ctx.pop_call_frame();
                             return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
                         }
 
@@ -1104,6 +1153,9 @@ fn eval_step<T: LispContext>(
                             eval(arg, call_frame.clone(), ctx)?;
                         }
 
+                        // About to tail-call into the last body form: this
+                        // frame is done, the trampoline takes over from here.
+                        ctx.pop_call_frame();
                         return Ok(EvalStep::TailCall(
                             lambda
                                 .body
@@ -1885,11 +1937,13 @@ fn eval_function_call_step<T: LispContext>(
     }
 
     if let Some(func) = env.get_function(symbol) {
+        ctx.push_call_frame(symbol);
         if let LispExp::Lambda(lambda) = func {
             let call_frame = Env::new_child(&lambda.env);
             bind_lambda_args(&lambda, &evaled_args, &call_frame)?;
 
             if lambda.body.is_empty() {
+                ctx.pop_call_frame();
                 return Ok(EvalStep::Done(LispExp::symbol("nil".into())));
             }
 
@@ -1897,6 +1951,9 @@ fn eval_function_call_step<T: LispContext>(
                 eval(arg, call_frame.clone(), ctx)?;
             }
 
+            // About to tail-call into the last body form: this frame is
+            // done, the trampoline takes over from here.
+            ctx.pop_call_frame();
             Ok(EvalStep::TailCall(
                 lambda
                     .body
@@ -1906,7 +1963,9 @@ fn eval_function_call_step<T: LispContext>(
                 call_frame,
             ))
         } else if let LispExp::Primitive { pointer, doc: _ } = func {
-            Ok(EvalStep::Done(pointer(&evaled_args[..], env.clone(), ctx)?))
+            let result = pointer(&evaled_args[..], env.clone(), ctx)?;
+            ctx.pop_call_frame();
+            Ok(EvalStep::Done(result))
         } else {
             Err(EvalError::UncorrectFunctionDefinition)
         }

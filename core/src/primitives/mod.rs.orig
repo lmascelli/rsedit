@@ -84,13 +84,6 @@ pub fn install_primitives<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B
     insert_fn!("eval-file", general::eval_file, general::EVAL_FILE_DOC);
     insert_fn!("define-key", general::define_key, general::DEFINE_KEY_DOC);
     insert_fn!("log", general::log, general::LOG_DOC);
-    insert_fn!("all-logs", general::all_logs, general::ALL_LOGS_DOC);
-    insert_fn!("backtrace", general::backtrace, general::BACKTRACE_DOC);
-    insert_fn!(
-        "set-echo-message",
-        general::set_echo_message,
-        general::SET_ECHO_MESSAGE_DOC
-    );
     insert_fn!("make-mode", modes::make_mode, modes::MAKE_MODE_DOC);
     insert_fn!("add-hook", modes::add_hook, modes::ADD_HOOK_DOC);
     insert_fn!(
@@ -138,11 +131,6 @@ pub fn install_primitives<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B
         "current-buffer",
         buffers::current_buffer,
         buffers::CURRENT_BUFFER_DOC
-    );
-    insert_fn!(
-        "buffer-create",
-        buffers::buffer_create,
-        buffers::BUFFER_CREATE_DOC
     );
     insert_fn!("close-buffer", buffers::close_buffer, buffers::CLOSE_BUFFER_DOC);
     insert_fn!(

@@ -49,15 +49,6 @@ pub fn render_screen<B: BufferTrait>(
         }
     }
 
-    // Echo area: the very last row of the frame, drawn on top of
-    // whatever's under it -- left free by the default minibuffer window,
-    // which docks to the 3 rows just above it, so `message`/error output
-    // always has somewhere visible to land without covering the prompt.
-    let echo_message = state.get_echo_message();
-    if !echo_message.is_empty() {
-        draw_clipped_row(&mut stdout, 0, frame_h - 1, &echo_message, frame_w, frame_h)?;
-    }
-
     stdout.flush()
 }
 

@@ -27,14 +27,18 @@ mod tests {
         eval(&ast, env.clone(), ctx)
     }
 
-    /// A fresh editor with `minibuffer.lisp` loaded and `frame-width`/
-    /// `frame-height` set (both needed by `default-minibuffer-prompt`,
-    /// and otherwise only set by the real resize event from a UI
-    /// frontend).
+    /// A fresh editor with `debug.lisp` and `minibuffer.lisp` loaded (in
+    /// that order, matching the default init.lisp -- `minibuffer.lisp`'s
+    /// `eval-expression-confirm` calls `message`, from `debug.lisp`) and
+    /// `frame-width`/`frame-height` set (both needed by
+    /// `default-minibuffer-prompt`, and otherwise only set by the real
+    /// resize event from a UI frontend).
     fn setup() -> (EditorState<GapBuffer>, Arc<Env<EditorState<GapBuffer>>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("create_global_env failed");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
+        eval_str(include_str!("../../lisp/debug.lisp"), &env, &ctx)
+            .unwrap_or_else(|e| panic!("loading debug.lisp failed: {e:?}"));
         eval_str(include_str!("../../lisp/minibuffer.lisp"), &env, &ctx)
             .unwrap_or_else(|e| panic!("loading minibuffer.lisp failed: {e:?}"));
         (ctx, env)
@@ -191,5 +195,37 @@ mod tests {
             eval_str("probe", &env, &ctx).unwrap(),
             LispExp::number(42.0)
         );
+        // The result is shown in the echo area, not just logged where it's
+        // easy to miss -- see the debug-system work this test accompanies.
+        assert_eq!(ctx.get_echo_message(), "(setq probe 42) => 42");
+    }
+
+    #[test]
+    fn eval_expression_of_an_invalid_form_does_not_abort_the_confirm_flow() {
+        // Regression test: typing something that isn't a valid function
+        // call (e.g. `(1 2 3)`, whose head `1` isn't callable) used to make
+        // `eval-string`'s error propagate all the way out of
+        // `minibuffer-confirm`, so `(minibuffer-confirm)` itself returned
+        // an Err logged as an opaque "Eval Error: (minibuffer-confirm)
+        // UnvalidFunctionCall" -- no mention of what was actually typed.
+        // `eval-expression-confirm` now goes through `eval-string-safe`,
+        // so a bad expression is reported instead of blowing up the whole
+        // confirm flow.
+        let (ctx, env) = setup();
+
+        eval_str("(eval-expression-prompt)", &env, &ctx).unwrap();
+        for c in "(1 2 3)".chars() {
+            eval_str(&format!(r#"(self-insert "{c}")"#), &env, &ctx).unwrap();
+        }
+
+        // Must not error -- the whole point of the fix.
+        eval_str("(minibuffer-confirm)", &env, &ctx).unwrap();
+
+        // The minibuffer still closes and hands focus back cleanly, exactly
+        // as it does for a valid expression, and the echo area explains
+        // what happened instead of staying silent.
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        assert!(ctx.get_buffer("*Minibuffer*").is_none());
+        assert_eq!(ctx.get_echo_message(), "(1 2 3) !! UnvalidFunctionCall");
     }
 }

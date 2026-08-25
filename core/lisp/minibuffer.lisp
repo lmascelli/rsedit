@@ -121,13 +121,22 @@ Which implementation actually runs is controlled by
 
 (defun eval-expression-confirm (input)
   "Called when the user presses Return after `eval-expression-prompt' --
-evaluate INPUT (a string) as a Lisp expression and log INPUT alongside its
-result, so it can be inspected in the diagnostic log."
-  (log (format "%s => %s" input (eval-string input))))
+evaluate INPUT (a string) as a Lisp expression and show INPUT alongside
+its result (or, if evaluation failed, alongside a description of the
+error) via `message', so it's visible right away and stays in the log
+for `switch-to-messages'.
+Uses `eval-string-safe' rather than `eval-string' so a bad expression --
+a typo, an unbound variable, wrong argument counts -- is reported instead
+of aborting the confirm flow."
+  (let ((outcome (eval-string-safe input)))
+    (if (car outcome)
+        (message "%s => %s" input (nth 1 outcome))
+        (message "%s !! %s" input (nth 1 outcome)))))
 
 (defun eval-expression-prompt ()
   "Read a Lisp expression via the minibuffer (M-:) and evaluate it in the
-running editor, logging the result. Useful for testing code interactively."
+running editor, showing the result in the echo area. Useful for testing
+code interactively."
   (minibuffer-read "Eval:" 'eval-expression-confirm nil nil))
 
 (define-key nil "M-:" 'eval-expression-prompt)
