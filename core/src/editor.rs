@@ -3,6 +3,7 @@ use crate::{
     buffer::{Buffer, BufferTrait},
     input::{KeyEvent, fill_default_keymaps},
     lisp::{Env, EvalError, LispContext, Parser, bootstrap_vm, eval},
+    minibuffer::install_minibuffer,
     modes::MajorMode,
     primitives::install_primitives,
     task::{BackgroundScheduler, WorkerMessage},
@@ -417,7 +418,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// named MODE_NAME, in registration order, each called with zero
     /// arguments. Errors from an individual hook are logged and
     /// otherwise swallowed, so one broken hook can't block the rest.
-    pub(crate) fn run_hook(&self, mode_name: &str, hook_name: &str, env: &Arc<Env<EditorState<B>>>) {
+    pub(crate) fn run_hook(
+        &self,
+        mode_name: &str,
+        hook_name: &str,
+        env: &Arc<Env<EditorState<B>>>,
+    ) {
         let registry = self
             .mode_registry
             .read()
@@ -498,7 +504,8 @@ impl<B: BufferTrait> EditorState<B> {
             }
         }
 
-        if self.get_current_buffer_name() == name || self.get_buffer(&self.get_current_buffer_name()).is_none()
+        if self.get_current_buffer_name() == name
+            || self.get_buffer(&self.get_current_buffer_name()).is_none()
         {
             self.set_current_buffer_name("*scratch*");
         }
@@ -627,6 +634,13 @@ impl<B: BufferTrait> EditorState<B> {
                 "[WARNING] there is not after-resize-hook variable bound or it's not a list",
             );
         }
+    }
+
+    pub fn set_mode(&self, mode_name: &str, mode: MajorMode<B>) {
+        self.mode_registry
+            .write()
+            .expect("Failed to acquire write lock on mode_registry")
+            .insert(mode_name.to_string(), mode);
     }
 
     //--------------------------------------------------------------------------
@@ -855,9 +869,12 @@ pub fn create_global_env<B: BufferTrait>()
             MajorMode::new("fundamental-mode".into()),
         );
 
-    // ---------------------- FILLING PRIMITIVE FUNCTIONS ----------------------
+    
+    // ---------------------- FILLING PRIMITIVE FUNCTIONS -----------------------------
     install_primitives(&env);
+    install_minibuffer(&editor_state, env.clone());
 
+    
     // --------------------- LOADING LISP CONFIGURATION -------------------------------
     // Set the `rsedit-path' env variable to the path of rsedit
     let current_exe_path =
