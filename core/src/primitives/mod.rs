@@ -3,7 +3,7 @@ use crate::{
     input::{KeyCode, KeyEvent, KeyModifiers},
     lisp::{Env, EvalError, LispContext},
     modes::{MajorMode, SyntaxRule},
-    ui::{Face, FloatingWindow, Rect, Window},
+    ui::Face,
 };
 
 fn parse_key_sequence(seq: &str) -> Option<KeyEvent> {
@@ -144,7 +144,11 @@ pub fn install_primitives<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B
         buffers::buffer_create,
         buffers::BUFFER_CREATE_DOC
     );
-    insert_fn!("close-buffer", buffers::close_buffer, buffers::CLOSE_BUFFER_DOC);
+    insert_fn!(
+        "close-buffer",
+        buffers::close_buffer,
+        buffers::CLOSE_BUFFER_DOC
+    );
     insert_fn!(
         "buffer-string",
         buffers::buffer_string,

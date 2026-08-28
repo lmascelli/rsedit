@@ -346,6 +346,80 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
+    /// Make the buffer named NAME the one shown in the focused window and
+    /// the current buffer. Returns `false` (logging a diagnostic) if no
+    /// buffer named NAME exists, `true` otherwise. Shared by the
+    /// `switch-to-buffer` primitive and the built-in minibuffer's cleanup.
+    pub(crate) fn switch_to_buffer(&self, name: &str) -> bool {
+        if self.get_buffer(name).is_none() {
+            self.log_diagnostic(&format!("[LOG] buffer {} does not exist.", name));
+            return false;
+        }
+        if let Some(window) = self
+            .layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root")
+            .get_window_by_id(self.get_focused_window_id())
+        {
+            window.buffer_name = name.to_string();
+        }
+        self.set_current_buffer_name(name);
+        true
+    }
+
+    /// Create a new buffer named BUF_NAME (in major mode MODE, defaulting
+    /// to fundamental-mode) and open it in a new bordered floating window
+    /// at (X, Y) with the given WIDTH/HEIGHT and optional TITLE, giving
+    /// that window focus. Closing the floating window (`close-buffer` or
+    /// `close-floating-window`) restores focus to whatever window was
+    /// focused before this call. Shared by the `make-floating-window`
+    /// primitive and the built-in minibuffer, so both open a floating
+    /// window exactly the same way.
+    pub(crate) fn open_floating_window(
+        &self,
+        buf_name: &str,
+        x: isize,
+        y: isize,
+        width: usize,
+        height: usize,
+        title: Option<String>,
+        mode: Option<String>,
+    ) {
+        let previous_focused_window_id = self.get_focused_window_id();
+        self.new_buffer(buf_name, None, mode);
+
+        let new_id = self.get_next_window_id();
+        let window = Window {
+            id: new_id,
+            buffer_name: buf_name.to_string(),
+            scroll_x: 0,
+            scroll_y: 0,
+        };
+
+        let rect = Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+
+        let floating_win = FloatingWindow {
+            window,
+            rect,
+            has_border: true,
+            title,
+            previous_focused_window_id,
+        };
+
+        self.floating_windows
+            .write()
+            .expect("Failed to acquire write lock on floating_windows")
+            .push(floating_win);
+
+        self.set_focused_window_id(new_id);
+        self.set_current_buffer_name(buf_name);
+    }
+
     /// Handle a key event. An UI provider is responsible to call this function
     /// every time it want to make the editor react to an user input.
     pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
@@ -869,12 +943,10 @@ pub fn create_global_env<B: BufferTrait>()
             MajorMode::new("fundamental-mode".into()),
         );
 
-    
     // ---------------------- FILLING PRIMITIVE FUNCTIONS -----------------------------
     install_primitives(&env);
     install_minibuffer(&editor_state, env.clone());
 
-    
     // --------------------- LOADING LISP CONFIGURATION -------------------------------
     // Set the `rsedit-path' env variable to the path of rsedit
     let current_exe_path =

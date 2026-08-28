@@ -39,39 +39,15 @@ primitive!(make_floating_window, args, _env, ctx, {
                 _ => None,
             });
 
-            let previous_focused_window_id = ctx.get_focused_window_id();
-            ctx.new_buffer(buf_name, None, mode);
-
-            let new_id = ctx.get_next_window_id();
-            let window = Window {
-                id: new_id,
-                buffer_name: buf_name.to_string(),
-                scroll_x: 0,
-                scroll_y: 0,
-            };
-
-            let rect = Rect {
-                x: *x as isize,
-                y: *y as isize,
-                width: *w as usize,
-                height: *h as usize,
-            };
-
-            let floating_win = FloatingWindow {
-                window,
-                rect,
-                has_border: true,
+            ctx.open_floating_window(
+                buf_name,
+                *x as isize,
+                *y as isize,
+                *w as usize,
+                *h as usize,
                 title,
-                previous_focused_window_id,
-            };
-
-            ctx.floating_windows
-                .write()
-                .expect("Failed to acquire write lock on floating_windows")
-                .push(floating_win);
-
-            ctx.set_focused_window_id(new_id);
-            ctx.set_current_buffer_name(buf_name);
+                mode,
+            );
 
             Ok(ELispExp::t())
         } else {

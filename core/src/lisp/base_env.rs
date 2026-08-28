@@ -62,8 +62,11 @@ fn lisp_display<T: LispContext>(exp: &LispExp<T>) -> String {
 
 /// Invokes something callable (a `Lambda`, a `Primitive`, or a symbol naming
 /// one in the function namespace) with already-evaluated arguments. Shared
-/// by `funcall`, `apply`, `mapcar` and `mapc`.
-fn call_callable<T: LispContext>(
+/// by `funcall`, `apply`, `mapcar` and `mapc`, and exported for hosts that
+/// need to invoke a Lisp callback from Rust with values they already have
+/// in hand (no need to build and `eval` a quoted call AST just to pass
+/// already-evaluated arguments back into Lisp).
+pub fn call_callable<T: LispContext>(
     func: &LispExp<T>,
     call_args: &[LispExp<T>],
     env: Arc<Env<T>>,

@@ -131,19 +131,9 @@ primitive!(switch_to_buffer, args, _env, ctx, {
             _ => None,
         };
         if let Some(buffer_name) = buffer_name {
-            if ctx.get_buffer(&buffer_name).is_some() {
-                if let Some(window) = ctx
-                    .layout_root
-                    .write()
-                    .expect("Failed to acquire write lock on layout_root")
-                    .get_window_by_id(ctx.get_focused_window_id())
-                {
-                    window.buffer_name = buffer_name.clone();
-                }
-                ctx.set_current_buffer_name(&buffer_name);
+            if ctx.switch_to_buffer(&buffer_name) {
                 Ok(args[0].clone())
             } else {
-                ctx.log_diagnostic(&format!("[LOG] buffer {} does not exist.", buffer_name));
                 Ok(ELispExp::nil())
             }
         } else {

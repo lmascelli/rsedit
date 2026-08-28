@@ -4,4 +4,3 @@
 [LOG] End of the minibuffer.lisp
 [LOG] 5
 [LOG] Hello from rsedit init.lisp
-(+ 1 2) => 3
