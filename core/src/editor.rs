@@ -2,7 +2,7 @@ use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
     input::{KeyEvent, fill_default_keymaps},
-    lisp::{Env, EvalError, LispContext, Parser, bootstrap_vm, eval},
+    lisp::{DEFAULT_FUEL, Env, EvalError, FuelMeter, LispContext, Parser, bootstrap_vm, eval},
     minibuffer::install_minibuffer,
     modes::MajorMode,
     primitives::install_primitives,
@@ -16,7 +16,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, RwLock,
-        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::Sender,
     },
 };
@@ -51,9 +51,8 @@ pub struct EditorState<B: BufferTrait> {
     /// A value only used to fastly create a new window id
     pub next_window_id: Arc<AtomicUsize>,
 
-    /// The fuel of the lisp machine, if somehow it will start to use too much
-    /// cpu power, it will run out of fuel
-    fuel: Arc<AtomicU32>,
+    /// Execution budget for Lisp evaluation.
+    fuel: Arc<FuelMeter>,
     /// Here the lisp VM will output its logs
     logs: Arc<RwLock<Vec<String>>>,
     /// If some, is the file where the logs will be written into
@@ -68,13 +67,7 @@ pub struct EditorState<B: BufferTrait> {
 
 impl<B: BufferTrait> LispContext for EditorState<B> {
     fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
-        if self.fuel.load(Ordering::Relaxed) > amount {
-            self.fuel.fetch_sub(amount, Ordering::Relaxed);
-            Ok(())
-        } else {
-            self.fuel.store(0, Ordering::Relaxed);
-            Err(EvalError::OutOfFuel)
-        }
+        self.fuel.consume(amount)
     }
 
     fn log_diagnostic(&self, msg: &str) {
@@ -167,7 +160,7 @@ impl<B: BufferTrait> EditorState<B> {
             floating_windows: Arc::new(RwLock::new(Vec::new())),
             focused_window_id: Arc::new(RwLock::new(0)),
             next_window_id: Arc::new(AtomicUsize::new(1)),
-            fuel: Arc::new(AtomicU32::new(10_000)),
+            fuel: Arc::new(FuelMeter::new(DEFAULT_FUEL)),
             logs: Arc::new(RwLock::new(Vec::new())),
             log_file: None,
             call_stack: Arc::new(RwLock::new(Vec::new())),
