@@ -2,7 +2,7 @@ use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
     input::{KeyEvent, fill_default_keymaps},
-    lisp::{DEFAULT_FUEL, Env, EvalError, FuelMeter, LispContext, Parser, bootstrap_vm, eval},
+    lisp::{DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval},
     minibuffer::install_minibuffer,
     modes::MajorMode,
     primitives::install_primitives,
@@ -271,6 +271,7 @@ impl<B: BufferTrait> EditorState<B> {
             return Ok(ELispExp::list(vec![]));
         };
 
+        let _command = self.begin_command();
         Ok(ELispExp::list(vec![eval(&ast, env.clone(), self)?]))
     }
 
@@ -465,7 +466,11 @@ impl<B: BufferTrait> EditorState<B> {
             return;
         };
 
-        if let Err(e) = eval(&ast, env.clone(), self) {
+        let outcome = {
+            self.begin_command();
+            eval(&ast, env.clone(), self)
+        };
+        if let Err(e) = outcome {
             self.report_error(&format!("{:?} {:?}", ast, e), env);
             return;
         }
@@ -499,6 +504,7 @@ impl<B: BufferTrait> EditorState<B> {
             if let Some(hook_vec) = mode.hooks.get(hook_name) {
                 for hook in hook_vec {
                     let hook_call = ELispExp::list(vec![hook.clone()]);
+                    let _command = self.begin_command();
                     if let Err(e) = eval(&hook_call, env.clone(), self) {
                         self.log_diagnostic(&format!(
                             "Hook {hook_name} ({:?}) execution failed: {:?}",
@@ -674,6 +680,7 @@ impl<B: BufferTrait> EditorState<B> {
         );
         if let Some(ELispExp::List(callback_list)) = env.get_variable("after-resize-hook") {
             for el in callback_list.iter() {
+                let _command = self.begin_command();
                 match el {
                     ELispExp::Lambda(_) | ELispExp::Symbol(_) => {
                         if let Err(err) = eval(
@@ -804,6 +811,7 @@ impl<B: BufferTrait> EditorState<B> {
                     ELispExp::list(frames.into_iter().map(ELispExp::string).collect()),
                 ]),
             ]);
+            let _command = self.begin_command();
             if let Err(e) = eval(&call_ast, env.clone(), self) {
                 self.log_diagnostic(&format!("[ERROR] report-error hook itself failed: {:?}", e));
             }
@@ -815,6 +823,19 @@ impl<B: BufferTrait> EditorState<B> {
             };
             self.log_diagnostic(&format!("Eval Error: {message}{suffix}"));
         }
+    }
+
+    /// Open a fresh Lisp execution budget for one top-level command -- a
+    /// keystroke, a hook run, a config file being loaded.
+    ///
+    /// What counts as "one command" is editor *policy*, which is why this lives
+    /// here rather than in `FuelMeter`: only the editor knows a keystroke is one
+    /// unit of work. Nesting is safe -- the meter tracks depth and only the
+    /// outermost scope refills -- so a command that re-enters the evaluator, via
+    /// the Lisp-callable `eval-file` primitive for instance, keeps spending the
+    /// budget it already has instead of quietly being handed a new one.
+    pub(crate) fn begin_command(&self) -> FuelScope<'_> {
+        self.fuel.begin()
     }
 
     /// Return the next valid ID for a new window
