@@ -2,7 +2,9 @@ use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
     input::{KeyEvent, fill_default_keymaps},
-    lisp::{DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval},
+    lisp::{
+        DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
+    },
     minibuffer::install_minibuffer,
     modes::MajorMode,
     primitives::install_primitives,
@@ -86,6 +88,10 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
         }
     }
 
+    fn begin_thread_evaluation(&self) {
+        self.fuel.arm_thread();
+    }
+    
     fn push_call_frame(&self, frame: &str) {
         self.call_stack
             .write()
@@ -467,7 +473,7 @@ impl<B: BufferTrait> EditorState<B> {
         };
 
         let outcome = {
-            self.begin_command();
+            let _command = self.begin_command();
             eval(&ast, env.clone(), self)
         };
         if let Err(e) = outcome {
@@ -836,6 +842,13 @@ impl<B: BufferTrait> EditorState<B> {
     /// budget it already has instead of quietly being handed a new one.
     pub(crate) fn begin_command(&self) -> FuelScope<'_> {
         self.fuel.begin()
+    }
+
+    /// Set how much fuel a fresh command receives, and top the current thread's
+    /// remaining fuel up to it. Exposed so the `set-command-fuel` primitive --
+    /// and tests that want a deliberately tiny budget -- can reach it.
+    pub(crate) fn set_fuel_budget(&self, budget: u32) {
+        self.fuel.set_budget(budget);
     }
 
     /// Return the next valid ID for a new window

@@ -18,8 +18,9 @@ mod base_env_tests;
 mod eval_tests;
 mod lexical_context;
 mod lisp_core_compliance_tests;
-// Thread and concurrency
+// Thread, concurrency and fuel
 mod fiber_tests;
 mod thread_tests;
+mod fuel;
 // Handshake
 mod handshake;

@@ -442,4 +442,39 @@ mod performance_tests {
             "Lock contention is too high, the editor will lag!"
         );
     }
+
+    /// The regression guard for the bug this whole change exists to fix: fuel
+    /// used to be a single budget for the *entire session*, never replenished,
+    /// so after roughly five thousand keystrokes every subsequent evaluation
+    /// failed with `OutOfFuel` and the editor stopped accepting input while
+    /// still running.
+    #[test]
+    fn fuel_is_replenished_for_every_command() {
+        const ATTEMPTS: usize = 10_000;
+
+        let (state, env) =
+            create_global_env::<GapBuffer>().expect("Failed to create the global env");
+        let scratch = state
+            .get_buffer("*scratch*")
+            .expect("*scratch* buffer must exist");
+        let before = scratch.read().unwrap().text.len();
+
+        for _ in 0..ATTEMPTS {
+            state.handle_key_event(char_event('a'), &env);
+        }
+
+        let inserted = scratch.read().unwrap().text.len() - before;
+        let out_of_fuel = state
+            .get_logs()
+            .iter()
+            .filter(|line| line.contains("OutOfFuel"))
+            .count();
+
+        assert_eq!(
+            inserted, ATTEMPTS,
+            "only {inserted} of {ATTEMPTS} keystrokes were accepted -- fuel is not being \
+             refilled per command"
+        );
+        assert_eq!(out_of_fuel, 0, "no keystroke should exhaust a fresh budget");
+    }
 }

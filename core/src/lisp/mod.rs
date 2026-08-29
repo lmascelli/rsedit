@@ -1,7 +1,8 @@
 mod lisp;
-pub use lisp::{Env, EvalError, LispContext, LispExp, Parser, ParserError, bind_lambda_args, eval};
-mod fuel;
-pub use fuel::{DEFAULT_FUEL, FuelMeter, FuelScope};
+pub use lisp::{
+    DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, LispExp, Parser, ParserError,
+    bind_lambda_args, eval,
+};
 mod base_env;
 pub use base_env::{call_callable, setup_base_env};
 mod handshake;
