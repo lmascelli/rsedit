@@ -4,17 +4,7 @@ mod test {
     // PARSER TESTS
     // ==========================================
 
-    use crate::lisp::{EvalError, LispContext, LispExp, Parser, ParserError};
-
-    #[derive(Clone, Debug, PartialEq)]
-    struct DummyCtx;
-
-    impl LispContext for DummyCtx {
-        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
-            Ok(())
-        }
-        fn log_diagnostic(&self, _msg: &str) {}
-    }
+    use crate::lisp::{LispExp, Parser, ParserError};
 
     #[test]
     fn test_parse_primitives() {
@@ -420,7 +410,7 @@ mod test {
     #[test]
     fn test_parse_quoted_symbol() {
         let mut parser = Parser::new("'foo");
-        let exp: LispExp<DummyCtx> = parser.next().unwrap();
+        let exp: LispExp<()> = parser.next().unwrap();
 
         // Should expand to: (quote foo)
         assert_eq!(
@@ -435,7 +425,7 @@ mod test {
     #[test]
     fn test_parse_quoted_list() {
         let mut parser = Parser::new("'(1 2 a)");
-        let exp: LispExp<DummyCtx> = parser.next().unwrap();
+        let exp: LispExp<()> = parser.next().unwrap();
 
         // Should expand to: (quote (1 2 a))
         assert_eq!(
@@ -454,7 +444,7 @@ mod test {
     #[test]
     fn test_parse_nested_quotes() {
         let mut parser = Parser::new("''foo");
-        let exp: LispExp<DummyCtx> = parser.next().unwrap();
+        let exp: LispExp<()> = parser.next().unwrap();
 
         // Should expand to: (quote (quote foo))
         assert_eq!(
@@ -472,7 +462,7 @@ mod test {
     #[test]
     fn test_parse_quote_inside_list() {
         let mut parser = Parser::new("(setq x 'y)");
-        let exp: LispExp<DummyCtx> = parser.next().unwrap();
+        let exp: LispExp<()> = parser.next().unwrap();
 
         // Should expand to: (setq x (quote y))
         assert_eq!(
@@ -492,7 +482,7 @@ mod test {
     fn test_quote_at_eof() {
         // Edge Case 1: A dangling quote at the very end of the file/buffer
         let mut parser = Parser::new("'");
-        let res: Result<LispExp<DummyCtx>, ParserError> = parser.next();
+        let res: Result<LispExp<()>, ParserError> = parser.next();
 
         // The parser should gracefully report a VoidExp, not crash or loop forever
         assert_eq!(res, Err(ParserError::VoidExp));
@@ -503,13 +493,13 @@ mod test {
         // Edge Case 2: Quoting empty lists, vectors, and maps
         let mut parser_list = Parser::new("'()");
         assert_eq!(
-            parser_list.next::<DummyCtx>().unwrap(),
+            parser_list.next::<()>().unwrap(),
             LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::list(vec![])])
         );
 
         let mut parser_vec = Parser::new("'[]");
         assert_eq!(
-            parser_vec.next::<DummyCtx>().unwrap(),
+            parser_vec.next::<()>().unwrap(),
             LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::vec(vec![])])
         );
     }
@@ -520,13 +510,13 @@ mod test {
         // (Evaluating these is redundant, but the parser MUST handle them structurally)
         let mut parser_num = Parser::new("'42.5");
         assert_eq!(
-            parser_num.next::<DummyCtx>().unwrap(),
+            parser_num.next::<()>().unwrap(),
             LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::number(42.5)])
         );
 
         let mut parser_str = Parser::new("'\"hello\"");
         assert_eq!(
-            parser_str.next::<DummyCtx>().unwrap(),
+            parser_str.next::<()>().unwrap(),
             LispExp::list(vec![
                 LispExp::symbol("quote".into()),
                 LispExp::string("hello".into())
@@ -539,7 +529,7 @@ mod test {
         // Edge Case 4: A comment sitting directly between the quote and the expression
         let mut parser = Parser::new("' ; this is an evil comment\n target-symbol");
         assert_eq!(
-            parser.next::<DummyCtx>().unwrap(),
+            parser.next::<()>().unwrap(),
             LispExp::list(vec![
                 LispExp::symbol("quote".into()),
                 LispExp::symbol("target-symbol".into())

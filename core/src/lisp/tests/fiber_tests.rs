@@ -4,18 +4,6 @@ mod tests {
     use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
     use std::sync::Arc;
 
-    // A simple dummy context
-    #[derive(Clone, Debug, PartialEq)]
-    struct FiberCtx;
-
-    impl LispContext for FiberCtx {
-        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
-            Ok(())
-        }
-
-        fn log_diagnostic(&self, _msg: &str) {}
-    }
-
     // Helper to evaluate multiple expressions easily by wrapping them in a progn
     fn eval_script<T: LispContext>(
         script: &str,
@@ -28,13 +16,13 @@ mod tests {
         eval(&exp, env, ctx)
     }
 
-    fn setup_fiber_env() -> (Arc<Env<FiberCtx>>, FiberCtx) {
+    fn setup_fiber_env() -> (Arc<Env<()>>, ()) {
         let env = Env::new_root();
 
         // This loads `resume`, `atom`, `deref`, `reset`, and `funcall`
         setup_base_env(env.clone());
 
-        (env, FiberCtx)
+        (env, ())
     }
 
     #[test]

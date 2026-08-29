@@ -14,28 +14,18 @@
 //! "real" standard library in `base_env.rs` does or how it evolves.
 #[cfg(test)]
 mod tests {
-    use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
+    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
-
-    #[derive(Clone, Debug, PartialEq)]
-    struct DummyCtx;
-
-    impl LispContext for DummyCtx {
-        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
-            Ok(())
-        }
-        fn log_diagnostic(&self, _msg: &str) {}
-    }
 
     // ===========================================================
     // Minimal, self-contained primitives -- NOT from base_env.rs.
     // ===========================================================
 
     fn native_add(
-        args: &[LispExp<DummyCtx>],
-        _env: Arc<Env<DummyCtx>>,
-        _ctx: &DummyCtx,
-    ) -> Result<LispExp<DummyCtx>, EvalError> {
+        args: &[LispExp<()>],
+        _env: Arc<Env<()>>,
+        _ctx: &(),
+    ) -> Result<LispExp<()>, EvalError> {
         let mut sum = 0.0;
         for arg in args {
             if let LispExp::Number(n) = arg {
@@ -51,10 +41,10 @@ mod tests {
     }
 
     fn native_cons(
-        args: &[LispExp<DummyCtx>],
-        _env: Arc<Env<DummyCtx>>,
-        _ctx: &DummyCtx,
-    ) -> Result<LispExp<DummyCtx>, EvalError> {
+        args: &[LispExp<()>],
+        _env: Arc<Env<()>>,
+        _ctx: &(),
+    ) -> Result<LispExp<()>, EvalError> {
         if args.len() != 2 {
             return Err(EvalError::WrongNumberOfArguments {
                 expected: 2,
@@ -76,10 +66,10 @@ mod tests {
     }
 
     fn native_eq(
-        args: &[LispExp<DummyCtx>],
-        _env: Arc<Env<DummyCtx>>,
-        _ctx: &DummyCtx,
-    ) -> Result<LispExp<DummyCtx>, EvalError> {
+        args: &[LispExp<()>],
+        _env: Arc<Env<()>>,
+        _ctx: &(),
+    ) -> Result<LispExp<()>, EvalError> {
         if args.len() != 2 {
             return Err(EvalError::WrongNumberOfArguments {
                 expected: 2,
@@ -91,7 +81,7 @@ mod tests {
 
     /// A root environment with *no* `setup_base_env` call: just the raw
     /// `lisp.rs` special forms plus the three primitives above.
-    fn bare_env() -> Arc<Env<DummyCtx>> {
+    fn bare_env() -> Arc<Env<()>> {
         let env = Env::new_root();
         env.set_function("+".into(), LispExp::primitive(native_add, None));
         env.set_function("cons".into(), LispExp::primitive(native_cons, None));
@@ -99,8 +89,8 @@ mod tests {
         env
     }
 
-    fn eval_str(source: &str, env: Arc<Env<DummyCtx>>) -> Result<LispExp<DummyCtx>, EvalError> {
-        let mut ctx = DummyCtx;
+    fn eval_str(source: &str, env: Arc<Env<()>>) -> Result<LispExp<()>, EvalError> {
+        let mut ctx = ();
         // Wrapping in `progn` lets a test script contain several top-level
         // forms while still handing `eval` a single AST node.
         let wrapped = format!("(progn {})", source);
@@ -109,7 +99,7 @@ mod tests {
         eval(&ast, env, &mut ctx)
     }
 
-    fn eval_ok(source: &str) -> LispExp<DummyCtx> {
+    fn eval_ok(source: &str) -> LispExp<()> {
         eval_str(source, bare_env()).unwrap_or_else(|e| {
             panic!("eval of `{source}` failed: {e:?}");
         })
@@ -126,14 +116,14 @@ mod tests {
     #[test]
     fn nil_and_t_self_evaluate_with_no_environment_at_all() {
         // Not even `bare_env()` -- a totally empty root environment.
-        let env = Env::<DummyCtx>::new_root();
+        let env = Env::<()>::new_root();
         assert_eq!(eval_str("nil", env.clone()).unwrap(), LispExp::nil());
         assert_eq!(eval_str("t", env).unwrap(), LispExp::t());
     }
 
     #[test]
     fn keyword_symbols_self_evaluate() {
-        let env = Env::<DummyCtx>::new_root();
+        let env = Env::<()>::new_root();
         assert_eq!(
             eval_str(":foo", env.clone()).unwrap(),
             LispExp::symbol(":foo".into())
@@ -146,7 +136,7 @@ mod tests {
 
     #[test]
     fn unbound_ordinary_symbol_still_errors() {
-        let env = Env::<DummyCtx>::new_root();
+        let env = Env::<()>::new_root();
         assert_eq!(
             eval_str("unbound-thing", env).unwrap_err(),
             EvalError::UnboundVariable("unbound-thing".into())

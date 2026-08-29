@@ -3,24 +3,8 @@ mod tests {
     use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
     use std::sync::Arc;
 
-    // A dummy context to satisfy the generic T in our evaluator
-    #[derive(Clone, PartialEq, Debug)]
-    struct DummyCtx;
-
-    impl LispContext for DummyCtx {
-        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
-            Ok(())
-        }
-
-        fn log_diagnostic(&self, _msg: &str) {}
-    }
-
     // Helper function to parse and evaluate a simple string expression
-    fn eval_str(
-        source: &str,
-        env: Arc<Env<DummyCtx>>,
-        ctx: &mut DummyCtx,
-    ) -> Result<LispExp<DummyCtx>, EvalError> {
+    fn eval_str(source: &str, env: Arc<Env<()>>, ctx: &mut ()) -> Result<LispExp<()>, EvalError> {
         let mut parser = Parser::new(source);
         let exp = parser.next().unwrap();
         eval(&exp, env, ctx)
@@ -28,10 +12,10 @@ mod tests {
 
     #[test]
     fn test_env_hierarchical_resolution() {
-        let root_env = Env::<DummyCtx>::new_root();
+        let root_env = Env::<()>::new_root();
         root_env.set_variable("global_var".into(), LispExp::number(100.0));
 
-        let child_env = Env::<DummyCtx>::new_child(&root_env);
+        let child_env = Env::<()>::new_child(&root_env);
         child_env.set_variable("local_var".into(), LispExp::number(42.0));
 
         // Child should see its own variables
@@ -52,10 +36,10 @@ mod tests {
 
     #[test]
     fn test_env_update_variable_crawling() {
-        let root_env = Env::<DummyCtx>::new_root();
+        let root_env = Env::<()>::new_root();
         root_env.set_variable("counter".into(), LispExp::number(1.0));
 
-        let child_env = Env::<DummyCtx>::new_child(&root_env);
+        let child_env = Env::<()>::new_child(&root_env);
 
         // Update the variable from the child scope
         let found_and_updated = child_env.update_variable("counter", LispExp::number(2.0));
@@ -74,8 +58,8 @@ mod tests {
 
     #[test]
     fn test_eval_if_special_form_lazy_evaluation() {
-        let root_env = Env::<DummyCtx>::new_root();
-        let mut ctx = DummyCtx;
+        let root_env = Env::<()>::new_root();
+        let mut ctx = ();
 
         // Setup a variable to prove branches are evaluated properly
         root_env.set_variable("x".into(), LispExp::number(0.0));
@@ -94,11 +78,11 @@ mod tests {
 
     #[test]
     fn test_eval_setq_shadowing_fix() {
-        let root_env = Env::<DummyCtx>::new_root();
-        let mut ctx = DummyCtx;
+        let root_env = Env::<()>::new_root();
+        let mut ctx = ();
 
         root_env.set_variable("shared_val".into(), LispExp::number(5.0));
-        let child_env = Env::<DummyCtx>::new_child(&root_env);
+        let child_env = Env::<()>::new_child(&root_env);
 
         // Execute setq in the child environment
         let setq_exp = "(setq shared_val 99)";
@@ -121,8 +105,8 @@ mod tests {
 
     #[test]
     fn test_eval_let_creates_isolated_scope() {
-        let root_env = Env::<DummyCtx>::new_root();
-        let mut ctx = DummyCtx;
+        let root_env = Env::<()>::new_root();
+        let mut ctx = ();
 
         root_env.set_variable("a".into(), LispExp::number(1.0));
 
@@ -137,8 +121,8 @@ mod tests {
 
     #[test]
     fn test_lexical_vs_dynamic_scoping() {
-        let root_env = Env::<DummyCtx>::new_root();
-        let mut ctx = DummyCtx;
+        let root_env = Env::<()>::new_root();
+        let mut ctx = ();
 
         // 1. Define 'x' in the global scope
         eval_str("(setq x 10)", root_env.clone(), &mut ctx).unwrap();
@@ -212,8 +196,8 @@ mod tests {
 
     #[test]
     fn test_upward_funarg_closure_capture() {
-        let root_env = Env::<DummyCtx>::new_root();
-        let mut ctx = DummyCtx;
+        let root_env = Env::<()>::new_root();
+        let mut ctx = ();
         root_env.set_function(
             "funcall".into(),
             LispExp::primitive(primitive_funcall, None),

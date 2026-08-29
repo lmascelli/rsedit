@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod test {
     use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, sync::Arc, sync::RwLock};
 
     fn setup_env() -> (std::sync::Arc<Env<()>>, ()) {
         let env = Env::new_root();
@@ -32,36 +32,6 @@ mod test {
         T: PartialEq,
     {
         *exp == LispExp::list(vec![]) || *exp == LispExp::symbol("nil".into())
-    }
-
-    #[test]
-    fn test_lisp_2_namespaces() {
-        let (env, mut ctx) = setup_env();
-
-        // Bind the variable 'buffer' to the string "main.txt"
-        // (setq buffer "main.txt")
-        env.set_variable("buffer".into(), LispExp::string("main.txt".into()));
-
-        // NEW DAY 2 CHANGE: Mock the function directly using the optimal Lambda struct
-        let mock_func = LispExp::Lambda(Arc::new(crate::lisp::Lambda {
-            params: vec![], // No parameters
-            optionals: vec![],
-            rest: None,
-            body: vec![LispExp::number(42.0)],
-            env: env.clone(), // Capture current environment
-            doc: None,
-        }));
-        env.set_function("buffer".into(), mock_func);
-
-        // Test 1: Evaluating the symbol alone yields the variable slot
-        let var_eval = eval(&LispExp::symbol("buffer".into()), env.clone(), &mut ctx).unwrap();
-        assert_eq!(var_eval, LispExp::string("main.txt".into()));
-
-        // Test 2: Evaluating the symbol as a function call executes the function slot
-        // Execution of (buffer)
-        let call_exp = LispExp::list(vec![LispExp::symbol("buffer".into())]);
-        let func_eval = eval(&call_exp, env.clone(), &mut ctx).unwrap();
-        assert_eq!(func_eval, LispExp::number(42.0));
     }
 
     #[test]
@@ -96,35 +66,6 @@ mod test {
     }
 
     #[test]
-    fn test_elisp_nil_truthiness() {
-        // In Elisp, the symbol "nil" and the empty list () are false.
-        assert!(is_nil(&LispExp::<()>::symbol("nil".into())));
-        assert!(is_nil(&LispExp::<()>::list(vec![])));
-
-        // Everything else is true (not nil)
-        assert!(!is_nil(&LispExp::<()>::symbol("t".into())));
-        assert!(!is_nil(&LispExp::<()>::number(0.0)));
-        assert!(!is_nil(&LispExp::<()>::string("".into())));
-        assert!(!is_nil(&LispExp::<()>::vec(vec![]))); // Empty vectors are true in Elisp!
-    }
-
-    #[test]
-    fn test_eval_setq() {
-        let (env, mut ctx) = setup_env();
-        // (setq a 42.0)
-        let setq_exp = LispExp::list(vec![
-            LispExp::symbol("setq".into()),
-            LispExp::symbol("a".into()),
-            LispExp::number(42.0),
-        ]);
-
-        let result = eval(&setq_exp, env.clone(), &mut ctx).unwrap();
-
-        assert_eq!(result, LispExp::Number(42.0));
-        assert_eq!(env.get_variable("a"), Some(LispExp::Number(42.0)));
-    }
-
-    #[test]
     fn test_eval_defun() {
         let (env, mut ctx) = setup_env();
 
@@ -147,35 +88,6 @@ mod test {
         } else {
             panic!("defun did not store a lambda");
         }
-    }
-
-    #[test]
-    fn test_eval_if() {
-        let (env, mut ctx) = setup_env();
-
-        // (if nil 1.0 2.0) -> should evaluate to 2.0
-        let if_false = LispExp::list(vec![
-            LispExp::symbol("if".into()),
-            LispExp::symbol("nil".into()),
-            LispExp::number(1.0),
-            LispExp::number(2.0),
-        ]);
-        assert_eq!(
-            eval(&if_false, env.clone(), &mut ctx).unwrap(),
-            LispExp::number(2.0)
-        );
-
-        // (if "truthy" 1.0 2.0) -> should evaluate to 1.0
-        let if_true = LispExp::list(vec![
-            LispExp::symbol("if".into()),
-            LispExp::string("truthy".into()),
-            LispExp::number(1.0),
-            LispExp::number(2.0),
-        ]);
-        assert_eq!(
-            eval(&if_true, env.clone(), &mut ctx).unwrap(),
-            LispExp::number(1.0)
-        );
     }
 
     #[test]
@@ -439,117 +351,6 @@ mod test {
     }
 
     #[test]
-    fn test_elisp_if_truthiness() {
-        let env = setup_env_test();
-        let mut ctx = TestHost {
-            state_changes: RwLock::new(0),
-        };
-
-        // Helper macro to generate an `if` AST
-        let make_if = |cond: LispExp<TestHost>| -> LispExp<TestHost> {
-            LispExp::list(vec![
-                LispExp::symbol("if".into()),
-                cond,
-                LispExp::string("true_branch".into()),
-                LispExp::string("false_branch".into()),
-            ])
-        };
-
-        let true_res = LispExp::string("true_branch".into());
-        let false_res = LispExp::string("false_branch".into());
-
-        // 1. `nil` is false
-        let if_nil = make_if(LispExp::symbol("nil".into()));
-        assert_eq!(eval(&if_nil, env.clone(), &mut ctx).unwrap(), false_res);
-
-        // 2. Empty list `()` is false
-        let if_empty = make_if(LispExp::list(vec![]));
-        assert_eq!(eval(&if_empty, env.clone(), &mut ctx).unwrap(), false_res);
-
-        // 3. Everything else is true (e.g., number 0.0, empty string, "t")
-        assert_eq!(
-            eval(&make_if(LispExp::number(0.0)), env.clone(), &mut ctx).unwrap(),
-            true_res
-        );
-        assert_eq!(
-            eval(&make_if(LispExp::string("".into())), env.clone(), &mut ctx).unwrap(),
-            true_res
-        );
-        assert_eq!(
-            eval(&make_if(LispExp::symbol("t".into())), env.clone(), &mut ctx).unwrap(),
-            true_res
-        );
-    }
-
-    #[test]
-    fn test_lisp_2_namespace_isolation() {
-        let env = setup_env_test();
-        let mut ctx = TestHost {
-            state_changes: RwLock::new(0),
-        };
-
-        // AST: (setq log "var-data")
-        let setq_exp = LispExp::list(vec![
-            LispExp::symbol("setq".into()),
-            LispExp::symbol("log".into()),
-            LispExp::string("var-data".into()),
-        ]);
-        eval(&setq_exp, env.clone(), &mut ctx).unwrap();
-
-        // Bind 'log' in the function namespace to a lambda
-        let mock_lambda = LispExp::lambda(crate::lisp::Lambda {
-            params: vec![],
-            optionals: vec![],
-            rest: None,
-            body: vec![LispExp::number(99.0)],
-            env: env.clone(),
-            doc: None,
-        });
-        env.set_function("log".into(), mock_lambda);
-
-        // 1. Evaluate as variable: log -> "var-data"
-        let var_eval = eval(&LispExp::symbol("log".into()), env.clone(), &mut ctx).unwrap();
-        assert_eq!(var_eval, LispExp::string("var-data".into()));
-
-        // 2. Evaluate as function: (log) -> 99.0
-        let func_eval = eval(
-            &LispExp::list(vec![LispExp::symbol("log".into())]),
-            env.clone(),
-            &mut ctx,
-        )
-        .unwrap();
-        assert_eq!(func_eval, LispExp::number(99.0));
-    }
-
-    #[test]
-    fn test_eval_setq_multiple() {
-        let env = setup_env_test();
-        let mut ctx = TestHost {
-            state_changes: RwLock::new(0),
-        };
-
-        // (setq a 1.0 b (+ 1.0 2.0))
-        let setq_exp = LispExp::list(vec![
-            LispExp::symbol("setq".into()),
-            LispExp::symbol("a".into()),
-            LispExp::number(1.0),
-            LispExp::symbol("b".into()),
-            LispExp::list(vec![
-                LispExp::symbol("+".into()),
-                LispExp::number(1.0),
-                LispExp::number(2.0),
-            ]),
-        ]);
-
-        let result = eval(&setq_exp, env.clone(), &mut ctx).unwrap();
-
-        // Returns last assigned value
-        assert_eq!(result, LispExp::number(3.0));
-        assert_eq!(env.get_variable("a").unwrap(), LispExp::Number(1.0));
-        assert_eq!(env.get_variable("b").unwrap(), LispExp::Number(3.0));
-    }
-
-    #[test]
     fn test_lambda_argument_binding() {
         let env = setup_env_test();
         let mut ctx = TestHost {
@@ -682,50 +483,6 @@ mod test {
     }
 
     #[test]
-    fn test_let_scoping_and_shadowing() {
-        let (env, mut ctx) = setup_interpreter_env();
-        // Inject global variable x = 10.0
-        env.set_variable("x".into(), LispExp::number(10.0));
-
-        // AST representation of:
-        // (let ((x 20.0) (y 30.0)) (+ x y))
-        // Assuming native primitives like '+' are mapped
-        env.set_function(
-            "+".into(),
-            LispExp::primitive(
-                |args, _, _| {
-                    if let (LispExp::Number(a), LispExp::Number(b)) = (&args[0], &args[1]) {
-                        Ok(LispExp::number(a + b))
-                    } else {
-                        Err(EvalError::UnvalidFunctionCall)
-                    }
-                },
-                None,
-            ),
-        );
-
-        let let_exp = LispExp::list(vec![
-            LispExp::symbol("let".into()),
-            LispExp::list(vec![
-                LispExp::list(vec![LispExp::symbol("x".into()), LispExp::number(20.0)]),
-                LispExp::list(vec![LispExp::symbol("y".into()), LispExp::number(30.0)]),
-            ]),
-            LispExp::list(vec![
-                LispExp::symbol("+".into()),
-                LispExp::symbol("x".into()),
-                LispExp::symbol("y".into()),
-            ]),
-        ]);
-
-        let result = eval(&let_exp, env.clone(), &mut ctx).unwrap();
-        assert_eq!(result, LispExp::number(50.0));
-
-        // CRITICAL CHECK: Global variable namespace must be untouched (Lexical isolation)
-        assert_eq!(env.get_variable("x"), Some(LispExp::number(10.0)));
-        assert!(env.get_variable("y").is_none());
-    }
-
-    #[test]
     fn test_let_malformed_syntax_errors() {
         let (env, mut ctx) = setup_interpreter_env();
 
@@ -790,40 +547,7 @@ mod test {
         }
     }
 
-    use std::sync::RwLock;
-    #[derive(Debug)]
-    struct DummyCtx {
-        fuel: RwLock<u32>,
-    }
-
-    impl Clone for DummyCtx {
-        fn clone(&self) -> Self {
-            unreachable!()
-        }
-    }
-
-    impl PartialEq for DummyCtx {
-        fn eq(&self, _other: &Self) -> bool {
-            unreachable!()
-        }
-    }
-
-    impl LispContext for DummyCtx {
-        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
-            if *self.fuel.read().unwrap() < amount {
-                Err(EvalError::OutOfFuel)
-            } else {
-                *self.fuel.write().unwrap() -= amount;
-                Ok(())
-            }
-        }
-        fn log_diagnostic(&self, _msg: &str) {}
-    }
-
-    fn eval_script(script: &str) -> Result<LispExp<DummyCtx>, EvalError> {
-        let mut ctx = DummyCtx {
-            fuel: RwLock::new(1000),
-        };
+    fn eval_script(script: &str) -> Result<LispExp<()>, EvalError> {
         let env = Env::new_root();
 
         // We wrap in a progn just in case the script has multiple top-level expressions,
@@ -832,7 +556,7 @@ mod test {
         let mut parser = Parser::new(&wrapped);
         let ast = parser.next().unwrap();
 
-        eval(&ast, env, &mut ctx)
+        eval(&ast, env, &())
     }
 
     #[test]

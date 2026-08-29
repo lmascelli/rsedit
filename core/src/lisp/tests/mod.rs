@@ -20,7 +20,9 @@ mod lexical_context;
 mod lisp_core_compliance_tests;
 // Thread, concurrency and fuel
 mod fiber_tests;
-mod thread_tests;
 mod fuel;
+mod thread_tests;
 // Handshake
 mod handshake;
+// Performance characterisation of the interpreter
+mod performance;

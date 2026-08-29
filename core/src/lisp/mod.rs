@@ -9,5 +9,5 @@ mod handshake;
 pub use handshake::bootstrap_vm;
 
 #[cfg(test)]
-use lisp::{Lambda, Token};
+use lisp::Token;
 mod tests;
