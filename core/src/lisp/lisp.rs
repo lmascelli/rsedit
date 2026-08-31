@@ -11,8 +11,9 @@ use std::{
 };
 
 // ========================================================================== //
-// Execution metering for the interpreter.
-//
+//               +------------------------------------------+
+//               |  Execution metering for the interpreter. |
+//               +------------------------------------------+
 // The evaluator charges the host on every step through
 // `LispContext::consume_fuel`, but how large a budget is, and when it
 // refills, is host *policy*. This module supplies the *mechanism* that policy
@@ -132,6 +133,9 @@ impl FuelMeter {
 }
 
 // ========================================================================== //
+//                 +------------------------------------------+
+//                 |  Context that can embed the interpreter  |
+//                 +------------------------------------------+
 // ========================================================================== //
 
 pub trait LispContext: Clone + PartialEq + Debug + Send + Sync + 'static {
@@ -208,6 +212,12 @@ pub trait LispContext: Clone + PartialEq + Debug + Send + Sync + 'static {
     fn truncate_call_frames(&self, _depth: usize) {}
 }
 
+// ========================================================================== //
+//                    +----------------------------------------+
+//                    |  Parsing system for the lisp language  |
+//                    +----------------------------------------+
+// ========================================================================== //
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Token {
     Uninitialized,
@@ -226,110 +236,6 @@ pub(super) enum Token {
     Number(f64),
     String(String),
     Symbol(String),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Lambda<T: LispContext> {
-    /// Required parameters -- a call must supply exactly one argument for
-    /// each of these.
-    pub params: Vec<String>,
-    /// `&optional` parameters. A call may omit any suffix of these;
-    /// omitted ones are bound to `nil`.
-    pub optionals: Vec<String>,
-    /// The `&rest` parameter, if any. Bound to a list of every argument
-    /// past `params`/`optionals`. `None` means the lambda has no `&rest`
-    /// parameter, so supplying more arguments than `params.len() +
-    /// optionals.len()` is an arity error.
-    pub rest: Option<String>,
-    pub body: Vec<LispExp<T>>,
-    pub env: Arc<Env<T>>,
-    pub doc: Option<Arc<String>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SharedAtom<T: LispContext>(pub Arc<RwLock<LispExp<T>>>);
-
-impl<T: LispContext> PartialEq for SharedAtom<T> {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-#[derive(Debug)]
-pub struct FiberState<T: LispContext> {
-    pub body: Vec<LispExp<T>>,
-    pub env: Arc<Env<T>>,
-    pub is_done: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct SharedFiber<T: LispContext>(pub Arc<RwLock<FiberState<T>>>);
-
-impl<T: LispContext> PartialEq for SharedFiber<T> {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other)
-    }
-}
-
-pub type LispPrimitive<T> = fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError>;
-
-#[derive(Clone, Debug, PartialEq)]
-// Primitive comparison has no meaning and will probably never done
-#[allow(unpredictable_function_pointer_comparisons)]
-pub enum LispExp<T: LispContext> {
-    List(Arc<Vec<LispExp<T>>>),
-    DottedList(Arc<Vec<LispExp<T>>>, Arc<LispExp<T>>),
-    Vector(Arc<Vec<LispExp<T>>>),
-    Map(Arc<HashMap<String, LispExp<T>>>),
-    Number(f64),
-    Symbol(Arc<String>),
-    String(Arc<String>),
-    Lambda(Arc<Lambda<T>>),
-    Primitive {
-        pointer: LispPrimitive<T>,
-        doc: Arc<Cow<'static, str>>,
-    },
-    Atom(SharedAtom<T>),
-    Fiber(SharedFiber<T>),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum EvalError {
-    UnboundVariable(String),
-    UndefinedFunction(String),
-    UnvalidFunctionCall,
-    UncorrectFunctionDefinition,
-    WrongNumberOfArguments { expected: usize, got: usize },
-    WrongArgumentType { expected: String, got: String },
-    QuoteNotOneArgument,
-    IfNoConditionProvided,
-    IfNoTrueBrach,
-    SetqSymbolRequired,
-    SetqWrongNumberOfArgs(usize),
-    DefunNameMustBeASymbol,
-    DefunNotCorrectExpression,
-    DefunParamsAreNotAList,
-    DefunParamIsNotASymbol,
-    DefunRestMustHaveExactlyOneParam,
-    DefunMisplacedParamMarker,
-    LetUnvalidBindingAt(usize),
-    LetUnvalidBindingList,
-    LetNoBindingsProvided,
-    CondInvalidClause,
-    DolistInvalidBinding,
-    DotimesInvalidBinding,
-    DefvarNameMustBeASymbol,
-    BackquoteNotOneArgument,
-    OutOfFuel,
-    RuntimeMessage(String),
-}
-
-#[derive(Debug)]
-pub struct Env<T: LispContext> {
-    pub variables: RwLock<HashMap<String, LispExp<T>>>,
-    pub functions: RwLock<HashMap<String, LispExp<T>>>,
-    pub macros: RwLock<HashMap<String, LispExp<T>>>,
-    pub parent: Option<Arc<Env<T>>>,
 }
 
 enum ParserLexerState {
@@ -372,80 +278,181 @@ pub struct Parser<'source> {
     lexer_state: ParserLexerState,
 }
 
-impl<T: LispContext> LispExp<T> {
-    pub fn symbol(value: String) -> LispExp<T> {
-        LispExp::Symbol(Arc::new(value))
-    }
+// ========================================================================== //
+//                       +--------------------------------+
+//                       |  Lisp language implementation  |
+//                       +--------------------------------+
+// ========================================================================== //
 
-    pub fn string(value: String) -> LispExp<T> {
-        LispExp::String(Arc::new(value))
-    }
+#[derive(Debug, PartialEq)]
+pub enum EvalError {
+    UnboundVariable(String),
+    UndefinedFunction(String),
+    UnvalidFunctionCall,
+    UncorrectFunctionDefinition,
+    WrongNumberOfArguments { expected: usize, got: usize },
+    WrongArgumentType { expected: String, got: String },
+    QuoteNotOneArgument,
+    IfNoConditionProvided,
+    IfNoTrueBrach,
+    SetqSymbolRequired,
+    SetqWrongNumberOfArgs(usize),
+    DefunNameMustBeASymbol,
+    DefunNotCorrectExpression,
+    DefunParamsAreNotAList,
+    DefunParamIsNotASymbol,
+    DefunRestMustHaveExactlyOneParam,
+    DefunMisplacedParamMarker,
+    LetUnvalidBindingAt(usize),
+    LetUnvalidBindingList,
+    LetNoBindingsProvided,
+    CondInvalidClause,
+    DolistInvalidBinding,
+    DotimesInvalidBinding,
+    DefvarNameMustBeASymbol,
+    BackquoteNotOneArgument,
+    OutOfFuel,
+    RuntimeMessage(String),
+}
 
-    pub fn number(value: f64) -> LispExp<T> {
-        LispExp::Number(value)
-    }
+// -------------------------------  Environment --------------------------------
 
-    pub fn list(value: Vec<LispExp<T>>) -> LispExp<T> {
-        LispExp::List(Arc::new(value))
-    }
+#[derive(Debug)]
+pub struct Env<T: LispContext> {
+    pub variables: RwLock<HashMap<String, LispExp<T>>>,
+    pub functions: RwLock<HashMap<String, LispExp<T>>>,
+    pub macros: RwLock<HashMap<String, LispExp<T>>>,
+    pub parent: Option<Arc<Env<T>>>,
+}
 
-    pub fn dotted_list(elements: Vec<LispExp<T>>, tail: LispExp<T>) -> LispExp<T> {
-        LispExp::DottedList(Arc::new(elements), Arc::new(tail))
-    }
+// ---------------------------------  Cons cell  -------------------------------
 
-    pub fn vec(value: Vec<LispExp<T>>) -> LispExp<T> {
-        LispExp::Vector(Arc::new(value))
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConsCell<T: LispContext> {
+    pub car: LispExp<T>,
+    pub cdr: LispExp<T>,
+}
 
-    pub fn map(value: HashMap<String, LispExp<T>>) -> LispExp<T> {
-        LispExp::Map(Arc::new(value))
-    }
+pub struct ConsIter<T: LispContext> {
+    cursor: LispExp<T>,
+}
 
-    pub fn lambda(value: Lambda<T>) -> LispExp<T> {
-        LispExp::Lambda(Arc::new(value))
-    }
-
-    pub fn fiber(value: FiberState<T>) -> LispExp<T> {
-        LispExp::Fiber(SharedFiber(Arc::new(RwLock::new(value))))
-    }
-
-    /// Build a `Primitive` value from a native function pointer and an
-    /// optional docstring. DOC accepts either a `&'static str` -- the
-    /// common case for primitives whose documentation is a literal sitting
-    /// right next to the function, which costs no allocation -- or an owned
-    /// `String`, for documentation that only exists at runtime (e.g. loaded
-    /// alongside a primitive from a dynamic library). Either way the
-    /// resulting `Primitive` stays cheap to `Clone`: only the `Arc`'s
-    /// refcount is bumped, never the string itself.
-    pub fn primitive(pointer: LispPrimitive<T>, doc: Option<Cow<'static, str>>) -> LispExp<T> {
-        LispExp::Primitive {
-            pointer,
-            doc: Arc::new(doc.unwrap_or(Cow::Borrowed("No documentation provided."))),
+impl<T: LispContext> Iterator for ConsIter<T> {
+    type Item = LispExp<T>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match &self.cursor {
+            LispExp::Cons(cell) => {
+                let cell = cell.clone();
+                self.cursor = cell.cdr.clone();
+                Some(cell.car.clone())
+            }
+            _ => None,
         }
     }
+}
 
-    pub fn nil() -> LispExp<T> {
-        LispExp::symbol("nil".into())
+// ----------------------------------  Lambda ----------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lambda<T: LispContext> {
+    /// Required parameters -- a call must supply exactly one argument for
+    /// each of these.
+    pub params: Vec<String>,
+    /// `&optional` parameters. A call may omit any suffix of these;
+    /// omitted ones are bound to `nil`.
+    pub optionals: Vec<String>,
+    /// The `&rest` parameter, if any. Bound to a list of every argument
+    /// past `params`/`optionals`. `None` means the lambda has no `&rest`
+    /// parameter, so supplying more arguments than `params.len() +
+    /// optionals.len()` is an arity error.
+    pub rest: Option<String>,
+    pub body: Vec<LispExp<T>>,
+    pub env: Arc<Env<T>>,
+    pub doc: Option<Arc<String>>,
+}
+
+// --------------------------------  Shared Atom -------------------------------
+
+#[derive(Clone, Debug)]
+pub struct SharedAtom<T: LispContext>(pub Arc<RwLock<LispExp<T>>>);
+
+impl<T: LispContext> PartialEq for SharedAtom<T> {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
     }
+}
 
-    pub fn t() -> LispExp<T> {
-        LispExp::symbol("t".into())
+// -----------------------------------  Fiber ----------------------------------
+
+#[derive(Debug)]
+pub struct FiberState<T: LispContext> {
+    pub body: Vec<LispExp<T>>,
+    pub env: Arc<Env<T>>,
+    pub is_done: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct SharedFiber<T: LispContext>(pub Arc<RwLock<FiberState<T>>>);
+
+impl<T: LispContext> PartialEq for SharedFiber<T> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
     }
+}
 
-    pub fn boolean(value: bool) -> LispExp<T> {
-        if value { Self::t() } else { Self::nil() }
-    }
+// --------------------------------  Primitive  --------------------------------
 
-    pub fn is_nil(&self) -> bool {
-        match self {
-            LispExp::Symbol(s) => s.as_str() == "nil",
-            LispExp::List(l) => l.is_empty(),
-            _ => false,
+pub type LispPrimitive<T> = fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError>;
+
+// --------------------------------  LispExp  ----------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+// Primitive comparison has no meaning and will probably never done
+#[allow(unpredictable_function_pointer_comparisons)]
+pub enum LispExp<T: LispContext> {
+    /// A *syntax* node: the vector-backed form the reader produces and
+    /// `eval` dispatches on. Never a runtime value.
+    List(Arc<Vec<LispExp<T>>>),
+
+    /// A *data* list. `nil` terminates a proper list; anything else
+    /// terminates an improper (dotted) one, so `DottedList` is gone.
+    Cons(Arc<ConsCell<T>>),
+
+    DottedList(Arc<Vec<LispExp<T>>>, Arc<LispExp<T>>), // TODO remove
+    Vector(Arc<Vec<LispExp<T>>>),
+    Map(Arc<HashMap<String, LispExp<T>>>),
+    Number(f64),
+    Symbol(Arc<String>),
+    String(Arc<String>),
+    Lambda(Arc<Lambda<T>>),
+    Primitive {
+        pointer: LispPrimitive<T>,
+        doc: Arc<Cow<'static, str>>,
+    },
+    Atom(SharedAtom<T>),
+    Fiber(SharedFiber<T>),
+}
+
+// ========================================================================== //
+//                           +--------------------------+
+//                           |  Methods implementation  |
+//                           +--------------------------+
+// ========================================================================== //
+
+/// Convert a form produced by the reader into the data it denotes.
+/// Runs once, at read time, on quoted structure only.
+pub fn form_to_data<T: LispContext>(exp: &LispExp<T>) -> LispExp<T> {
+    match exp {
+        LispExp::List(items) => {
+            LispExp::proper_list(items.iter().map(form_to_data).collect())
         }
-    }
-
-    pub fn is_truthy(&self) -> bool {
-        !self.is_nil()
+        LispExp::Vector(items) => {
+            LispExp::vec(items.iter().map(form_to_data).collect())
+        }
+        LispExp::Map(m) => LispExp::map(
+            m.iter().map(|(k, v)| (k.clone(), form_to_data(v))).collect(),
+        ),
+        other => other.clone(),
     }
 }
 
@@ -843,7 +850,7 @@ impl<'source> Parser<'source> {
                         return Err(ParserError::MalformedDottedList);
                     }
                     self.advance_token()?;
-                    return Ok(LispExp::dotted_list(list, tail));
+                    return Ok(LispExp::improper_list(list, tail));
                 }
                 _ => {
                     list.push(self.next()?);
@@ -944,9 +951,10 @@ impl<'source> Parser<'source> {
             }
             Token::Quote => {
                 self.advance_token()?;
+                let quoted = self.next()?;
                 return Ok(LispExp::list(vec![
                     LispExp::symbol("quote".into()),
-                    self.next()?,
+                    form_to_data(&quoted),
                 ]));
             }
             Token::BackQuote => {
@@ -1102,6 +1110,147 @@ impl<T: LispContext> PartialEq for Env<T> {
     }
 }
 
+impl<T: LispContext> LispExp<T> {
+    pub fn symbol(value: String) -> LispExp<T> {
+        LispExp::Symbol(Arc::new(value))
+    }
+
+    pub fn nil() -> LispExp<T> {
+        LispExp::symbol("nil".into())
+    }
+
+    pub fn t() -> LispExp<T> {
+        LispExp::symbol("t".into())
+    }
+
+    pub fn boolean(value: bool) -> LispExp<T> {
+        if value { Self::t() } else { Self::nil() }
+    }
+
+    pub fn is_nil(&self) -> bool {
+        match self {
+            LispExp::Symbol(s) => s.as_str() == "nil",
+            LispExp::List(l) => l.is_empty(),
+            _ => false,
+        }
+    }
+
+    pub fn is_truthy(&self) -> bool {
+        !self.is_nil()
+    }
+
+    pub fn string(value: String) -> LispExp<T> {
+        LispExp::String(Arc::new(value))
+    }
+
+    pub fn number(value: f64) -> LispExp<T> {
+        LispExp::Number(value)
+    }
+
+    pub fn cons(car: LispExp<T>, cdr: LispExp<T>) -> LispExp<T> {
+        LispExp::Cons(Arc::new(ConsCell { car, cdr }))
+    }
+
+    /// Fold a vector into a proper list, right to left.
+    pub fn proper_list(items: Vec<LispExp<T>>) -> LispExp<T> {
+        items.into_iter().rev().fold(LispExp::nil(), |cdr, car| LispExp::cons(car, cdr))
+    }
+
+    /// Fold a vector into a chain ending in an arbitrary tail.
+    pub fn improper_list(items: Vec<LispExp<T>>, tail: LispExp<T>) -> LispExp<T> {
+        items.into_iter().rev().fold(tail, |cdr, car| LispExp::cons(car, cdr))
+    }
+
+    /// Walk a cons chain, yielding each `car`. Stops at any non-`Cons`
+    /// cdr, so it silently treats an improper list as its proper prefix —
+    /// callers that care use `split_list` below.
+    pub fn iter(&self) -> ConsIter<T> {
+        ConsIter { cursor: self.clone() }
+    }
+
+    /// Collect a chain into `(elements, final_tail)`. The tail is `nil`
+    /// for a proper list.
+    pub fn split_list(&self) -> (Vec<LispExp<T>>, LispExp<T>) {
+        let mut items = Vec::new();
+        let mut cursor = self.clone();
+        while let LispExp::Cons(cell) = cursor {
+            items.push(cell.car.clone());
+            cursor = cell.cdr.clone();
+        }
+        (items, cursor)
+    }
+
+    // TODO REMOVE
+    pub fn list(value: Vec<LispExp<T>>) -> LispExp<T> {
+        LispExp::List(Arc::new(value))
+    }
+
+    // TODO REMOVE
+    pub fn dotted_list(elements: Vec<LispExp<T>>, tail: LispExp<T>) -> LispExp<T> {
+        LispExp::DottedList(Arc::new(elements), Arc::new(tail))
+    }
+
+    pub fn vec(value: Vec<LispExp<T>>) -> LispExp<T> {
+        LispExp::Vector(Arc::new(value))
+    }
+
+    pub fn map(value: HashMap<String, LispExp<T>>) -> LispExp<T> {
+        LispExp::Map(Arc::new(value))
+    }
+
+    pub fn lambda(value: Lambda<T>) -> LispExp<T> {
+        LispExp::Lambda(Arc::new(value))
+    }
+
+    pub fn fiber(value: FiberState<T>) -> LispExp<T> {
+        LispExp::Fiber(SharedFiber(Arc::new(RwLock::new(value))))
+    }
+
+    /// Build a `Primitive` value from a native function pointer and an
+    /// optional docstring. DOC accepts either a `&'static str` -- the
+    /// common case for primitives whose documentation is a literal sitting
+    /// right next to the function, which costs no allocation -- or an owned
+    /// `String`, for documentation that only exists at runtime (e.g. loaded
+    /// alongside a primitive from a dynamic library). Either way the
+    /// resulting `Primitive` stays cheap to `Clone`: only the `Arc`'s
+    /// refcount is bumped, never the string itself.
+    pub fn primitive(pointer: LispPrimitive<T>, doc: Option<Cow<'static, str>>) -> LispExp<T> {
+        LispExp::Primitive {
+            pointer,
+            doc: Arc::new(doc.unwrap_or(Cow::Borrowed("No documentation provided."))),
+        }
+    }
+}
+
+// ============================== Utility functions ============================
+
+/// The inverse: reconstitute a form `eval` can dispatch on from a data
+/// list. Only reached when data is evaluated — `(eval (list '+ 1 2))`,
+/// and macro expansions.
+pub fn data_to_form<T: LispContext>(exp: &LispExp<T>) -> Result<LispExp<T>, EvalError> {
+    match exp {
+        LispExp::Cons(_) => {
+            let (items, tail) = exp.split_list();
+            if !tail.is_nil() {
+                return Err(EvalError::UnvalidFunctionCall);
+            }
+            let mut form = Vec::with_capacity(items.len());
+            for item in &items {
+                form.push(data_to_form(item)?);
+            }
+            Ok(LispExp::list(form))
+        }
+        LispExp::Vector(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                out.push(data_to_form(item)?);
+            }
+            Ok(LispExp::vec(out))
+        }
+        other => Ok(other.clone()),
+    }
+}
+
 /// Binds ARGS into CALL_FRAME according to LAMBDA's parameter list:
 /// required params first (one-to-one), then `&optional` params
 /// (defaulting to `nil` once ARGS runs out), then -- if LAMBDA has an
@@ -1203,6 +1352,17 @@ fn parse_lambda_params<T: LispContext>(
     Ok((required, optionals, rest))
 }
 
+
+
+
+
+// ========================================================================== //
+//                           +-----------------------------+
+//                           |  Lisp evaluation functions  |
+//                           +-----------------------------+
+// ========================================================================== //
+
+
 enum EvalStep<T: LispContext> {
     Done(LispExp<T>),
     TailCall(LispExp<T>, Arc<Env<T>>),
@@ -1258,7 +1418,7 @@ fn eval_step<T: LispContext>(
             }
         }
 
-        LispExp::DottedList(_, _) => Err(EvalError::UnvalidFunctionCall),
+        LispExp::Cons(_) => Ok(EvalStep::TailCall(data_to_form(exp)?, env)),
 
         LispExp::List(list) => {
             if list.is_empty() {
@@ -1332,6 +1492,7 @@ fn eval_step<T: LispContext>(
             }
             Ok(EvalStep::Done(LispExp::map(new_map)))
         }
+        LispExp::DottedList(_, _) => todo!()
     }
 }
 
@@ -2019,6 +2180,7 @@ fn eval_backquote<T: LispContext>(
                     if is_tagged(inner, "unquote-splicing") {
                         let spliced = eval(&inner[1], env.clone(), ctx)?;
                         match &spliced {
+                            LispExp::Cons(_) => result.extend(spliced.iter()),
                             LispExp::List(spliced_list) => {
                                 result.extend(spliced_list.iter().cloned());
                             }
@@ -2036,7 +2198,7 @@ fn eval_backquote<T: LispContext>(
                 }
                 result.push(eval_backquote(item, env.clone(), ctx)?);
             }
-            Ok(LispExp::list(result))
+            Ok(LispExp::proper_list(result))
         }
         LispExp::Vector(vec) => {
             let mut result = Vec::with_capacity(vec.len());
