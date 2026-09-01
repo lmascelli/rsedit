@@ -13,7 +13,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.enable_log_file("rsedit.log")?;
 
     if let Some(path) = args.get(1).cloned() {
-        let ast = ELispExp::list(vec![
+        let ast = ELispExp::form(vec![
             ELispExp::symbol("find-file".into()),
             ELispExp::string(path),
         ]);

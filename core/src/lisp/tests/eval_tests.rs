@@ -5,7 +5,7 @@ mod test {
 
     fn setup_env() -> (std::sync::Arc<Env<()>>, ()) {
         let env = Env::new_root();
-        env.set_variable("nil".into(), LispExp::list(vec![]));
+        env.set_variable("nil".into(), LispExp::form(vec![]));
         env.set_variable("t".into(), LispExp::number(1.0));
         (env, ())
     }
@@ -25,13 +25,6 @@ mod test {
         T: Clone,
     {
         env.get_function(name)
-    }
-
-    fn is_nil<T: LispContext>(exp: &LispExp<T>) -> bool
-    where
-        T: PartialEq,
-    {
-        *exp == LispExp::list(vec![]) || *exp == LispExp::symbol("nil".into())
     }
 
     #[test]
@@ -70,10 +63,10 @@ mod test {
         let (env, mut ctx) = setup_env();
 
         // (defun my-func () "hello")
-        let defun_exp = LispExp::list(vec![
+        let defun_exp = LispExp::form(vec![
             LispExp::symbol("defun".into()),
             LispExp::symbol("my-func".into()),
-            LispExp::list(vec![]),
+            LispExp::form(vec![]),
             LispExp::string("hello".into()),
         ]);
 
@@ -109,7 +102,7 @@ mod test {
         let (env, mut ctx) = setup_env();
 
         // (missing-func 1 2)
-        let exp = LispExp::list(vec![
+        let exp = LispExp::form(vec![
             LispExp::symbol("missing-func".into()),
             LispExp::number(1.0),
         ]);
@@ -130,7 +123,7 @@ mod test {
         env.set_variable("x".into(), LispExp::number(42.0));
 
         // Try to call it: (x)
-        let exp = LispExp::list(vec![LispExp::symbol("x".into())]);
+        let exp = LispExp::form(vec![LispExp::symbol("x".into())]);
         let result = eval(&exp, env.clone(), &mut ctx);
 
         // It should fail because 'x' is not in the function namespace!
@@ -146,7 +139,7 @@ mod test {
         let (env, mut ctx) = setup_env();
 
         // (42 "hello") -> The first element is not a symbol!
-        let exp = LispExp::list(vec![LispExp::number(42.0), LispExp::string("hello".into())]);
+        let exp = LispExp::form(vec![LispExp::number(42.0), LispExp::string("hello".into())]);
         let result = eval(&exp, env.clone(), &mut ctx);
 
         assert!(result.is_err());
@@ -158,7 +151,7 @@ mod test {
         let (env, mut ctx) = setup_env();
 
         // (setq 42 "value") -> 42 is not a valid variable name
-        let exp = LispExp::list(vec![
+        let exp = LispExp::form(vec![
             LispExp::symbol("setq".into()),
             LispExp::number(42.0),
             LispExp::string("value".into()),
@@ -174,10 +167,10 @@ mod test {
         let (env, mut ctx) = setup_env();
 
         // (defun "my-func" () 1) -> Function name must be a symbol, not a string
-        let exp = LispExp::list(vec![
+        let exp = LispExp::form(vec![
             LispExp::symbol("defun".into()),
             LispExp::string("my-func".into()),
-            LispExp::list(vec![]),
+            LispExp::form(vec![]),
             LispExp::number(1.0),
         ]);
         let result = eval(&exp, env.clone(), &mut ctx);
@@ -191,7 +184,7 @@ mod test {
         let (env, mut ctx) = setup_env();
 
         // (if) -> Missing condition and branches
-        let exp = LispExp::list(vec![LispExp::symbol("if".into())]);
+        let exp = LispExp::form(vec![LispExp::symbol("if".into())]);
         let result = eval(&exp, env.clone(), &mut ctx);
 
         // Your evaluator needs bounds checking for `args[0]` to pass this without panicking!
@@ -205,7 +198,7 @@ mod test {
 
         // (if t) -> Has condition, but missing the true_branch.
         // Currently panics at `args[1].clone()`
-        let exp = LispExp::list(vec![
+        let exp = LispExp::form(vec![
             LispExp::symbol("if".into()),
             LispExp::symbol("t".into()),
         ]);
@@ -218,7 +211,7 @@ mod test {
 
         // (setq a) -> Missing the value to set!
         // Currently panics at `eval(&args[1], env, ctx)?`
-        let exp = LispExp::list(vec![
+        let exp = LispExp::form(vec![
             LispExp::symbol("setq".into()),
             LispExp::symbol("a".into()),
         ]);
@@ -231,7 +224,7 @@ mod test {
 
         // (defun my-func) -> Missing params list and body!
         // Currently panics at `args[1].clone()`
-        let exp = LispExp::list(vec![
+        let exp = LispExp::form(vec![
             LispExp::symbol("defun".into()),
             LispExp::symbol("my-func".into()),
         ]);
@@ -243,11 +236,11 @@ mod test {
         let (env, mut ctx) = setup_env();
 
         // Register a completely broken lambda: (lambda (x)) -> Missing the body!
-        let bad_lambda = LispExp::list(vec![LispExp::symbol("lambda".into())]);
+        let bad_lambda = LispExp::form(vec![LispExp::symbol("lambda".into())]);
         env.set_function("broken-func".into(), bad_lambda);
 
         // Execute it: (broken-func 10)
-        let exp = LispExp::list(vec![
+        let exp = LispExp::form(vec![
             LispExp::symbol("broken-func".into()),
             LispExp::number(10.0),
         ]);
@@ -340,7 +333,7 @@ mod test {
     // Helper to create a fresh environment with primitives loaded
     fn setup_env_test() -> Arc<Env<TestHost>> {
         let env = Env::new_root();
-        env.set_variable("nil".into(), LispExp::list(vec![]));
+        env.set_variable("nil".into(), LispExp::form(vec![]));
         env.set_variable("t".into(), LispExp::number(1.0));
         env.set_function("+".into(), LispExp::primitive(native_add, None));
         env.set_function(
@@ -358,14 +351,14 @@ mod test {
         };
 
         // (defun add-custom (x y) (+ x y))
-        let defun_exp = LispExp::list(vec![
+        let defun_exp = LispExp::form(vec![
             LispExp::symbol("defun".into()),
             LispExp::symbol("add-custom".into()),
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("x".into()),
                 LispExp::symbol("y".into()),
             ]),
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("+".into()),
                 LispExp::symbol("x".into()),
                 LispExp::symbol("y".into()),
@@ -374,7 +367,7 @@ mod test {
         eval(&defun_exp, env.clone(), &mut ctx).unwrap();
 
         // (add-custom 10.0 20.0)
-        let call_exp = LispExp::list(vec![
+        let call_exp = LispExp::form(vec![
             LispExp::symbol("add-custom".into()),
             LispExp::number(10.0),
             LispExp::number(20.0),
@@ -398,7 +391,7 @@ mod test {
         };
 
         // AST: (inc-state)
-        let call_mutation = LispExp::list(vec![LispExp::symbol("inc-state".into())]);
+        let call_mutation = LispExp::form(vec![LispExp::symbol("inc-state".into())]);
 
         // Call it three times
         eval(&call_mutation, env.clone(), &mut ctx).unwrap();
@@ -463,10 +456,10 @@ mod test {
         let (env, mut ctx) = setup_interpreter_env();
 
         // (progn (bump) (bump) 99.0) -> changes state twice, returns last value
-        let exp = LispExp::list(vec![
+        let exp = LispExp::form(vec![
             LispExp::symbol("progn".into()),
-            LispExp::list(vec![LispExp::symbol("bump".into())]),
-            LispExp::list(vec![LispExp::symbol("bump".into())]),
+            LispExp::form(vec![LispExp::symbol("bump".into())]),
+            LispExp::form(vec![LispExp::symbol("bump".into())]),
             LispExp::number(99.0),
         ]);
 
@@ -475,7 +468,7 @@ mod test {
         assert_eq!(*ctx.tracker.read().unwrap(), 2.0);
 
         // Empty progn should evaluate to nil symbol safely
-        let empty_progn = LispExp::list(vec![LispExp::symbol("progn".into())]);
+        let empty_progn = LispExp::form(vec![LispExp::symbol("progn".into())]);
         assert_eq!(
             eval(&empty_progn, env.clone(), &mut ctx).unwrap(),
             LispExp::symbol("nil".into())
@@ -487,14 +480,14 @@ mod test {
         let (env, mut ctx) = setup_interpreter_env();
 
         // 1. Missing binding block entirely
-        let no_bindings = LispExp::list(vec![LispExp::symbol("let".into())]);
+        let no_bindings = LispExp::form(vec![LispExp::symbol("let".into())]);
         assert_eq!(
             eval(&no_bindings, env.clone(), &mut ctx).unwrap_err(),
             EvalError::LetNoBindingsProvided
         );
 
         // 2. Binding block isn't a collection list: (let x body)
-        let invalid_list = LispExp::list(vec![
+        let invalid_list = LispExp::form(vec![
             LispExp::symbol("let".into()),
             LispExp::symbol("x".into()),
             LispExp::number(1.0),
@@ -505,9 +498,9 @@ mod test {
         );
 
         // 3. Malformed tuple inside binding array: (let ((x 1 2)) body)
-        let broken_tuple = LispExp::list(vec![
+        let broken_tuple = LispExp::form(vec![
             LispExp::symbol("let".into()),
-            LispExp::list(vec![LispExp::list(vec![
+            LispExp::form(vec![LispExp::form(vec![
                 LispExp::symbol("x".into()),
                 LispExp::number(1.0),
                 LispExp::number(2.0),
@@ -529,9 +522,9 @@ mod test {
         let mut input_map = HashMap::new();
         input_map.insert(
             "computed-val".to_string(),
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("progn".into()),
-                LispExp::list(vec![LispExp::symbol("bump".into())]),
+                LispExp::form(vec![LispExp::symbol("bump".into())]),
                 LispExp::symbol("factor".into()),
             ]),
         );
@@ -573,7 +566,7 @@ mod test {
         let res = eval_script("'(1 2 3)").unwrap();
         assert_eq!(
             res,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0),
@@ -587,7 +580,7 @@ mod test {
         let res = eval_script("'(+ 1 2)").unwrap();
         assert_eq!(
             res,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::symbol("+".into()),
                 LispExp::number(1.0),
                 LispExp::number(2.0),

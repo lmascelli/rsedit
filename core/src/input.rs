@@ -51,7 +51,7 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
                 ..Default::default()
             },
         },
-        ELispExp::list(vec![ELispExp::symbol("quit".into())]),
+        ELispExp::form(vec![ELispExp::symbol("quit".into())]),
     );
 
     // -------------------------------- BUFFER ---------------------------------
@@ -63,7 +63,7 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
                 ..Default::default()
             },
         },
-        ELispExp::list(vec![ELispExp::symbol("save-buffer".into())]),
+        ELispExp::form(vec![ELispExp::symbol("save-buffer".into())]),
     );
 
     keymaps.insert(
@@ -71,35 +71,35 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
             code: KeyCode::Left,
             modifiers: KeyModifiers::default(),
         },
-        ELispExp::list(vec![ELispExp::symbol("backward-char".into())]),
+        ELispExp::form(vec![ELispExp::symbol("backward-char".into())]),
     );
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Right,
             modifiers: KeyModifiers::default(),
         },
-        ELispExp::list(vec![ELispExp::symbol("forward-char".into())]),
+        ELispExp::form(vec![ELispExp::symbol("forward-char".into())]),
     );
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Up,
             modifiers: KeyModifiers::default(),
         },
-        ELispExp::list(vec![ELispExp::symbol("previous-line".into())]),
+        ELispExp::form(vec![ELispExp::symbol("previous-line".into())]),
     );
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Down,
             modifiers: KeyModifiers::default(),
         },
-        ELispExp::list(vec![ELispExp::symbol("next-line".into())]),
+        ELispExp::form(vec![ELispExp::symbol("next-line".into())]),
     );
     keymaps.insert(
         KeyEvent {
             code: KeyCode::Enter,
             modifiers: KeyModifiers::default(),
         },
-        ELispExp::list(vec![ELispExp::symbol("insert-newline".into())]),
+        ELispExp::form(vec![ELispExp::symbol("insert-newline".into())]),
     );
 
     for c in ' '..='~' {
@@ -109,7 +109,7 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
         };
         keymaps.insert(
             event,
-            ELispExp::list(vec![
+            ELispExp::form(vec![
                 ELispExp::symbol("self-insert".into()),
                 ELispExp::string(c.into()),
             ]),

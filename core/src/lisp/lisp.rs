@@ -406,19 +406,19 @@ pub type LispPrimitive<T> = fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp
 
 // --------------------------------  LispExp  ----------------------------------
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 // Primitive comparison has no meaning and will probably never done
 #[allow(unpredictable_function_pointer_comparisons)]
 pub enum LispExp<T: LispContext> {
     /// A *syntax* node: the vector-backed form the reader produces and
-    /// `eval` dispatches on. Never a runtime value.
-    List(Arc<Vec<LispExp<T>>>),
+    /// `eval` dispatches on. Never a runtime value -- a list of *data* is
+    /// a `Cons` chain, and the two are not interchangeable.
+    Form(Arc<Vec<LispExp<T>>>),
 
     /// A *data* list. `nil` terminates a proper list; anything else
-    /// terminates an improper (dotted) one, so `DottedList` is gone.
+    /// terminates an improper (dotted) one.
     Cons(Arc<ConsCell<T>>),
 
-    DottedList(Arc<Vec<LispExp<T>>>, Arc<LispExp<T>>), // TODO remove
     Vector(Arc<Vec<LispExp<T>>>),
     Map(Arc<HashMap<String, LispExp<T>>>),
     Number(f64),
@@ -439,11 +439,136 @@ pub enum LispExp<T: LispContext> {
 //                           +--------------------------+
 // ========================================================================== //
 
+/// `LispExp` prints as Lisp source, not as a Rust value. The derived
+/// `Debug` was tolerable while lists were vectors, but a cons chain
+/// derives as `Cons(ConsCell { car: .., cdr: Cons(ConsCell { .. } ) })`,
+/// nested once per element -- unreadable in the echo area, which is where
+/// most of these strings end up (`report-error`, `*Messages*`, the eval
+/// minibuffer). Everything the reader can produce round-trips; the values
+/// it cannot read back (lambdas, primitives, atoms, fibers) print in
+/// `#<...>` form, following Elisp.
+impl<T: LispContext> Debug for LispExp<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // Both list shapes print the same way: the distinction between
+            // a syntax node and a data list is ours, not the reader's.
+            LispExp::Form(items) => {
+                write!(f, "(")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{:?}", item)?;
+                }
+                write!(f, ")")
+            }
+
+            LispExp::Cons(_) => {
+                let (items, tail) = self.split_list();
+                write!(f, "(")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{:?}", item)?;
+                }
+                if !tail.is_nil() {
+                    write!(f, " . {:?}", tail)?;
+                }
+                write!(f, ")")
+            }
+
+            LispExp::Vector(items) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{:?}", item)?;
+                }
+                write!(f, "]")
+            }
+
+            LispExp::Map(map) => {
+                write!(f, "{{")?;
+                for (i, (key, value)) in map.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{} {:?}", key, value)?;
+                }
+                write!(f, "}}")
+            }
+
+            // Every number is an `f64`, but `(+ 1 2)` should echo as `3`,
+            // not `3.0`. Only values that really are integral take the
+            // integer path, so `1.5` and `1e300` still print faithfully.
+            LispExp::Number(n) => {
+                if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e15 {
+                    write!(f, "{}", *n as i64)
+                } else {
+                    write!(f, "{}", n)
+                }
+            }
+
+            LispExp::Symbol(s) => write!(f, "{}", s),
+
+            // Rust's string escaping is close enough to Lisp's that the
+            // result reads back correctly for the escapes the lexer knows.
+            LispExp::String(s) => write!(f, "{:?}", s.as_str()),
+
+            LispExp::Lambda(lambda) => {
+                write!(f, "#<lambda (")?;
+                let mut first = true;
+                for param in &lambda.params {
+                    if !first {
+                        write!(f, " ")?;
+                    }
+                    first = false;
+                    write!(f, "{}", param)?;
+                }
+                if !lambda.optionals.is_empty() {
+                    if !first {
+                        write!(f, " ")?;
+                    }
+                    first = false;
+                    write!(f, "&optional")?;
+                    for param in &lambda.optionals {
+                        write!(f, " {}", param)?;
+                    }
+                }
+                if let Some(rest) = &lambda.rest {
+                    if !first {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "&rest {}", rest)?;
+                }
+                write!(f, ")>")
+            }
+
+            LispExp::Primitive { .. } => write!(f, "#<primitive>"),
+
+            // Deliberately opaque. An atom is the one mutable container in
+            // the language, so it is also the one place a value can be made
+            // to contain itself -- recursing here could hang the printer,
+            // and taking the lock could deadlock against a writer that is
+            // formatting its own contents. `deref` is how you look inside.
+            LispExp::Atom(_) => write!(f, "#<atom>"),
+
+            LispExp::Fiber(fiber) => match fiber.0.try_read() {
+                Ok(state) if state.is_done => write!(f, "#<fiber done>"),
+                Ok(_) => write!(f, "#<fiber>"),
+                Err(_) => write!(f, "#<fiber running>"),
+            },
+        }
+    }
+}
+
 /// Convert a form produced by the reader into the data it denotes.
 /// Runs once, at read time, on quoted structure only.
 pub fn form_to_data<T: LispContext>(exp: &LispExp<T>) -> LispExp<T> {
     match exp {
-        LispExp::List(items) => {
+        LispExp::Form(items) => {
             LispExp::proper_list(items.iter().map(form_to_data).collect())
         }
         LispExp::Vector(items) => {
@@ -835,7 +960,7 @@ impl<'source> Parser<'source> {
             match self.current_token {
                 Token::RParen => {
                     self.advance_token()?;
-                    return Ok(LispExp::list(list));
+                    return Ok(LispExp::form(list));
                 }
                 Token::Dot => {
                     if list.is_empty() {
@@ -952,28 +1077,28 @@ impl<'source> Parser<'source> {
             Token::Quote => {
                 self.advance_token()?;
                 let quoted = self.next()?;
-                return Ok(LispExp::list(vec![
+                return Ok(LispExp::form(vec![
                     LispExp::symbol("quote".into()),
                     form_to_data(&quoted),
                 ]));
             }
             Token::BackQuote => {
                 self.advance_token()?;
-                return Ok(LispExp::list(vec![
+                return Ok(LispExp::form(vec![
                     LispExp::symbol("backquote".into()),
                     self.next()?,
                 ]));
             }
             Token::Comma => {
                 self.advance_token()?;
-                return Ok(LispExp::list(vec![
+                return Ok(LispExp::form(vec![
                     LispExp::symbol("unquote".into()),
                     self.next()?,
                 ]));
             }
             Token::CommaAt => {
                 self.advance_token()?;
-                return Ok(LispExp::list(vec![
+                return Ok(LispExp::form(vec![
                     LispExp::symbol("unquote-splicing".into()),
                     self.next()?,
                 ]));
@@ -1130,7 +1255,7 @@ impl<T: LispContext> LispExp<T> {
     pub fn is_nil(&self) -> bool {
         match self {
             LispExp::Symbol(s) => s.as_str() == "nil",
-            LispExp::List(l) => l.is_empty(),
+            LispExp::Form(l) => l.is_empty(),
             _ => false,
         }
     }
@@ -1180,14 +1305,11 @@ impl<T: LispContext> LispExp<T> {
         (items, cursor)
     }
 
-    // TODO REMOVE
-    pub fn list(value: Vec<LispExp<T>>) -> LispExp<T> {
-        LispExp::List(Arc::new(value))
-    }
-
-    // TODO REMOVE
-    pub fn dotted_list(elements: Vec<LispExp<T>>, tail: LispExp<T>) -> LispExp<T> {
-        LispExp::DottedList(Arc::new(elements), Arc::new(tail))
+    /// Build a *syntax* node. Reserved for the reader, macro expansion and
+    /// `data_to_form`; primitives that return a list to Lisp want
+    /// `proper_list` instead.
+    pub fn form(value: Vec<LispExp<T>>) -> LispExp<T> {
+        LispExp::Form(Arc::new(value))
     }
 
     pub fn vec(value: Vec<LispExp<T>>) -> LispExp<T> {
@@ -1234,11 +1356,22 @@ pub fn data_to_form<T: LispContext>(exp: &LispExp<T>) -> Result<LispExp<T>, Eval
             if !tail.is_nil() {
                 return Err(EvalError::UnvalidFunctionCall);
             }
+            // `(quote X)` is the one form whose argument must stay data.
+            // The reader leaves it that way (it runs `form_to_data` over
+            // the literal at read time), and a macro that builds a quote
+            // form by hand -- `(cons 'quote (cons items nil))` -- has to
+            // behave identically. Recursing here would turn X into syntax
+            // and `quote` would then hand a syntax node back as a value.
+            if items.len() == 2 {
+                if matches!(&items[0], LispExp::Symbol(s) if s.as_str() == "quote") {
+                    return Ok(LispExp::form(vec![items[0].clone(), items[1].clone()]));
+                }
+            }
             let mut form = Vec::with_capacity(items.len());
             for item in &items {
                 form.push(data_to_form(item)?);
             }
-            Ok(LispExp::list(form))
+            Ok(LispExp::form(form))
         }
         LispExp::Vector(items) => {
             let mut out = Vec::with_capacity(items.len());
@@ -1288,7 +1421,10 @@ pub fn bind_lambda_args<T: LispContext>(
         let rest_start = idx.min(args.len());
         call_frame.set_variable(
             rest_name.clone(),
-            LispExp::list(args[rest_start..].to_vec()),
+            // The `&rest` container is data even for a macro, where the
+            // elements it holds are unevaluated syntax -- the body walks it
+            // with `car`/`cdr` either way.
+            LispExp::proper_list(args[rest_start..].to_vec()),
         );
     }
     Ok(())
@@ -1420,9 +1556,11 @@ fn eval_step<T: LispContext>(
 
         LispExp::Cons(_) => Ok(EvalStep::TailCall(data_to_form(exp)?, env)),
 
-        LispExp::List(list) => {
+        LispExp::Form(list) => {
             if list.is_empty() {
-                Ok(EvalStep::Done(LispExp::list(vec![])))
+                // `()` evaluates to the empty list, which is `nil` -- there
+                // is no longer a second representation of it to return.
+                Ok(EvalStep::Done(LispExp::nil()))
             } else {
                 let head = &list[0];
                 match head {
@@ -1430,12 +1568,12 @@ fn eval_step<T: LispContext>(
                         eval_special_form_or_call_step(symbol, &list[1..], env.clone(), ctx)
                     }
 
-                    LispExp::List(_) => {
+                    LispExp::Form(_) => {
                         let mut new_ast = vec![eval(head, env.clone(), ctx)?];
                         for arg in &list[1..] {
                             new_ast.push(arg.clone());
                         }
-                        return Ok(EvalStep::TailCall(LispExp::list(new_ast), env.clone()));
+                        return Ok(EvalStep::TailCall(LispExp::form(new_ast), env.clone()));
                     }
 
                     LispExp::Lambda(lambda) => {
@@ -1492,7 +1630,6 @@ fn eval_step<T: LispContext>(
             }
             Ok(EvalStep::Done(LispExp::map(new_map)))
         }
-        LispExp::DottedList(_, _) => todo!()
     }
 }
 
@@ -1584,7 +1721,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     }
                 });
 
-                Ok(EvalStep::Done(LispExp::list(vec![])))
+                Ok(EvalStep::Done(LispExp::form(vec![])))
             } else {
                 Err(EvalError::WrongArgumentType {
                     expected: "Lambda".into(),
@@ -1644,7 +1781,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             if let LispExp::Symbol(func_name) = &args[0] {
                 let mut body_index = 2;
                 let mut doc = None;
-                let (params, optionals, rest) = if let LispExp::List(params_list) = &args[1] {
+                let (params, optionals, rest) = if let LispExp::Form(params_list) = &args[1] {
                     parse_lambda_params(params_list)?
                 } else {
                     return Err(EvalError::DefunParamsAreNotAList);
@@ -1679,7 +1816,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 return Err(EvalError::DefunNotCorrectExpression);
             }
 
-            let (params, optionals, rest) = if let LispExp::List(params_list) = &args[0] {
+            let (params, optionals, rest) = if let LispExp::Form(params_list) = &args[0] {
                 parse_lambda_params(params_list)?
             } else {
                 return Err(EvalError::DefunParamsAreNotAList);
@@ -1749,7 +1886,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
 
             let let_env = Env::new_child(&env);
-            if let LispExp::List(bindings) = &args[0] {
+            if let LispExp::Form(bindings) = &args[0] {
                 for (i, binding) in bindings.iter().enumerate() {
                     let (name, value_form) = parse_let_binding(binding, i)?;
                     let val = match value_form {
@@ -1786,7 +1923,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 Err(EvalError::LetNoBindingsProvided)
             } else {
                 let let_env = Env::new_child(&env);
-                if let LispExp::List(bindings) = &args[0] {
+                if let LispExp::Form(bindings) = &args[0] {
                     for (i, binding) in bindings.iter().enumerate() {
                         let (name, value_form) = parse_let_binding(binding, i)?;
                         let val = match value_form {
@@ -1819,7 +1956,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
 
         "cond" => {
             for clause in args {
-                let clause_list = if let LispExp::List(clause_list) = clause {
+                let clause_list = if let LispExp::Form(clause_list) = clause {
                     clause_list
                 } else {
                     return Err(EvalError::CondInvalidClause);
@@ -1949,7 +2086,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     got: 0,
                 });
             }
-            let spec = if let LispExp::List(spec) = &args[0] {
+            let spec = if let LispExp::Form(spec) = &args[0] {
                 spec
             } else {
                 return Err(EvalError::DolistInvalidBinding);
@@ -1966,7 +2103,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
 
             let list_val = eval(&spec[1], env.clone(), ctx)?;
             let items: Vec<LispExp<T>> = match &list_val {
-                LispExp::List(items) => (**items).clone(),
+                LispExp::Cons(_) => list_val.iter().collect(),
                 other => {
                     if other.is_nil() {
                         vec![]
@@ -2004,7 +2141,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     got: 0,
                 });
             }
-            let spec = if let LispExp::List(spec) = &args[0] {
+            let spec = if let LispExp::Form(spec) = &args[0] {
                 spec
             } else {
                 return Err(EvalError::DotimesInvalidBinding);
@@ -2099,7 +2236,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 Err(EvalError::DefunNotCorrectExpression)
             } else {
                 if let LispExp::Symbol(macro_name) = &args[0] {
-                    if let LispExp::List(params_list) = &args[1] {
+                    if let LispExp::Form(params_list) = &args[1] {
                         let (params, optionals, rest) = parse_lambda_params(params_list)?;
                         let lambda = Lambda {
                             params,
@@ -2144,7 +2281,7 @@ fn parse_let_binding<T: LispContext>(
     index: usize,
 ) -> Result<(String, Option<LispExp<T>>), EvalError> {
     match binding {
-        LispExp::List(pair) if pair.len() == 2 => {
+        LispExp::Form(pair) if pair.len() == 2 => {
             if let LispExp::Symbol(name) = &pair[0] {
                 Ok((name.to_string(), Some(pair[1].clone())))
             } else {
@@ -2169,19 +2306,19 @@ fn eval_backquote<T: LispContext>(
     }
 
     match exp {
-        LispExp::List(list) => {
+        LispExp::Form(list) => {
             if is_tagged(list, "unquote") {
                 return eval(&list[1], env, ctx);
             }
 
             let mut result = Vec::with_capacity(list.len());
             for item in list.iter() {
-                if let LispExp::List(inner) = item {
+                if let LispExp::Form(inner) = item {
                     if is_tagged(inner, "unquote-splicing") {
                         let spliced = eval(&inner[1], env.clone(), ctx)?;
                         match &spliced {
                             LispExp::Cons(_) => result.extend(spliced.iter()),
-                            LispExp::List(spliced_list) => {
+                            LispExp::Form(spliced_list) => {
                                 result.extend(spliced_list.iter().cloned());
                             }
                             other => {

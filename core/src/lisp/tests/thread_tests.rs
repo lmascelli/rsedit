@@ -52,7 +52,7 @@ mod tests {
                     if let Some(LispExp::Number(ms)) = args.first() {
                         std::thread::sleep(Duration::from_millis(*ms as u64));
                     }
-                    Ok(LispExp::list(vec![])) // return nil
+                    Ok(LispExp::form(vec![])) // return nil
                 },
                 None,
             ),

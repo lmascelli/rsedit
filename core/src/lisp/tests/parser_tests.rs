@@ -25,7 +25,7 @@ mod test {
 
         assert_eq!(
             ast,
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("print".to_string()),
                 LispExp::string("world".to_string()),
             ])
@@ -40,10 +40,10 @@ mod test {
 
         assert_eq!(
             ast,
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("define".to_string()),
                 LispExp::symbol("x".to_string()),
-                LispExp::list(vec![
+                LispExp::form(vec![
                     LispExp::symbol("+".to_string()),
                     LispExp::Number(10.0),
                     LispExp::Number(20.0),
@@ -59,7 +59,7 @@ mod test {
 
         assert_eq!(
             ast,
-            LispExp::list(vec![LispExp::list(vec![LispExp::list(vec![
+            LispExp::form(vec![LispExp::form(vec![LispExp::form(vec![
                 LispExp::Number(1.0)
             ])])])
         );
@@ -81,7 +81,7 @@ mod test {
 
     #[test]
     fn test_vector_parsing() {
-        // Testing that [1 2 3] creates a Vector, not a List
+        // Testing that [1 2 3] creates a Vector, not a Form
         let input = "[1 2 3]";
         let mut parser = Parser::new(input);
         let ast: LispExp<()> = parser.next().expect("Should parse vector");
@@ -117,12 +117,12 @@ mod test {
         let mut parser = Parser::new(input);
         let ast: LispExp<()> = parser.next().expect("Should parse complex structure");
 
-        if let LispExp::List(list) = ast {
+        if let LispExp::Form(list) = ast {
             assert_eq!(list[0], LispExp::symbol("calculate".into()));
             assert!(matches!(list[1], LispExp::Vector(_)));
             assert!(matches!(list[2], LispExp::Map(_)));
         } else {
-            panic!("Root should be a List");
+            panic!("Root should be a Form");
         }
     }
 
@@ -208,10 +208,10 @@ mod test {
 
         let ast: LispExp<()> = parser.next().unwrap();
 
-        // Expected: List containing one Vector containing one Map (all empty)
+        // Expected: Form containing one Vector containing one Map (all empty)
         assert_eq!(
             ast,
-            LispExp::list(vec![LispExp::vec(vec![LispExp::map(
+            LispExp::form(vec![LispExp::vec(vec![LispExp::map(
                 std::collections::HashMap::new()
             )])])
         );
@@ -225,14 +225,14 @@ mod test {
         let mut parser = Parser::new(input);
         let ast: LispExp<()> = parser.next().expect("Should parse successfully");
 
-        // Expected structure: Map { "data" => Vector [ List [1, 2, 3] ] }
+        // Expected structure: Map { "data" => Vector [ Form [1, 2, 3] ] }
         if let LispExp::Map(map) = ast {
             let value = map.get("data").expect("Expected key 'data' in Map");
 
             if let LispExp::Vector(vec) = value {
                 assert_eq!(vec.len(), 1);
 
-                if let LispExp::List(inner) = &vec[0] {
+                if let LispExp::Form(inner) = &vec[0] {
                     assert_eq!(inner.len(), 3);
                     assert_eq!(inner[0], LispExp::Number(1.0));
                 } else {
@@ -275,9 +275,9 @@ mod test {
         let mut parser = Parser::new(input);
 
         assert_eq!(parser.next::<()>().unwrap(), LispExp::string("".into()));
-        assert_eq!(parser.next::<()>().unwrap(), LispExp::list(vec![]));
+        assert_eq!(parser.next::<()>().unwrap(), LispExp::form(vec![]));
 
-        // These now expect Vector and Map instead of List
+        // These now expect Vector and Map instead of Form
         assert_eq!(parser.next::<()>().unwrap(), LispExp::vec(vec![]));
         assert_eq!(
             parser.next::<()>().unwrap(),
@@ -415,7 +415,7 @@ mod test {
         // Should expand to: (quote foo)
         assert_eq!(
             exp,
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("quote".into()),
                 LispExp::symbol("foo".into())
             ])
@@ -430,9 +430,9 @@ mod test {
         // Should expand to: (quote (1 2 a))
         assert_eq!(
             exp,
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("quote".into()),
-                LispExp::list(vec![
+                LispExp::proper_list(vec![
                     LispExp::number(1.0),
                     LispExp::number(2.0),
                     LispExp::symbol("a".into()),
@@ -449,9 +449,9 @@ mod test {
         // Should expand to: (quote (quote foo))
         assert_eq!(
             exp,
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("quote".into()),
-                LispExp::list(vec![
+                LispExp::proper_list(vec![
                     LispExp::symbol("quote".into()),
                     LispExp::symbol("foo".into())
                 ])
@@ -467,10 +467,10 @@ mod test {
         // Should expand to: (setq x (quote y))
         assert_eq!(
             exp,
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("setq".into()),
                 LispExp::symbol("x".into()),
-                LispExp::list(vec![
+                LispExp::form(vec![
                     LispExp::symbol("quote".into()),
                     LispExp::symbol("y".into())
                 ])
@@ -494,13 +494,13 @@ mod test {
         let mut parser_list = Parser::new("'()");
         assert_eq!(
             parser_list.next::<()>().unwrap(),
-            LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::list(vec![])])
+            LispExp::form(vec![LispExp::symbol("quote".into()), LispExp::nil()])
         );
 
         let mut parser_vec = Parser::new("'[]");
         assert_eq!(
             parser_vec.next::<()>().unwrap(),
-            LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::vec(vec![])])
+            LispExp::form(vec![LispExp::symbol("quote".into()), LispExp::vec(vec![])])
         );
     }
 
@@ -511,13 +511,13 @@ mod test {
         let mut parser_num = Parser::new("'42.5");
         assert_eq!(
             parser_num.next::<()>().unwrap(),
-            LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::number(42.5)])
+            LispExp::form(vec![LispExp::symbol("quote".into()), LispExp::number(42.5)])
         );
 
         let mut parser_str = Parser::new("'\"hello\"");
         assert_eq!(
             parser_str.next::<()>().unwrap(),
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("quote".into()),
                 LispExp::string("hello".into())
             ])
@@ -530,7 +530,7 @@ mod test {
         let mut parser = Parser::new("' ; this is an evil comment\n target-symbol");
         assert_eq!(
             parser.next::<()>().unwrap(),
-            LispExp::list(vec![
+            LispExp::form(vec![
                 LispExp::symbol("quote".into()),
                 LispExp::symbol("target-symbol".into())
             ])

@@ -63,7 +63,7 @@ mod tests {
 
         // Setup a variable to prove branches are evaluated properly
         root_env.set_variable("x".into(), LispExp::number(0.0));
-        root_env.set_variable("nil".into(), LispExp::list(vec![]));
+        root_env.set_variable("nil".into(), LispExp::form(vec![]));
 
         // Test True branch (1 is truthy)
         let true_exp = "(if 1 (setq x 10) (setq x 99))";

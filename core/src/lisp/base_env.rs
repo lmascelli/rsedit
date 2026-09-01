@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 
 macro_rules! nil {
     () => {
-        LispExp::list(vec![])
+        LispExp::nil()
     };
 }
 
@@ -20,15 +20,29 @@ fn expect_number<T: LispContext>(exp: &LispExp<T>) -> Result<f64, EvalError> {
     }
 }
 
+/// Materialise a data list into a vector.
+///
+/// Walking a cons chain into a `Vec` is O(n), exactly what the previous
+/// `Form(l) => (**l).clone()` cost -- it copied the whole backing vector
+/// too. So every caller keeps the complexity it already had, and the ones
+/// that want the O(1) chain (`car`, `cdr`, `cons`) simply do not call
+/// this. Tightening the remaining callers to walk the chain in place is a
+/// separate, independently testable change.
 fn expect_list<T: LispContext>(exp: &LispExp<T>) -> Result<Vec<LispExp<T>>, EvalError> {
     match exp {
-        LispExp::List(l) => Ok((**l).clone()),
+        LispExp::Cons(_) => Ok(exp.iter().collect()),
         other if other.is_nil() => Ok(vec![]),
         other => Err(EvalError::WrongArgumentType {
             expected: "List".into(),
             got: format!("{:?}", other),
         }),
     }
+}
+
+/// True for anything Lisp calls a list: a cons chain, or `nil` for the
+/// empty one. Used where a primitive rebinds a list-valued variable.
+fn is_list_value<T: LispContext>(exp: &LispExp<T>) -> bool {
+    matches!(exp, LispExp::Cons(_)) || exp.is_nil()
 }
 
 fn expect_string<T: LispContext>(exp: &LispExp<T>) -> Result<String, EvalError> {
@@ -112,9 +126,10 @@ fn find_assoc<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalErr
     }
     let list = expect_list(&args[1])?;
     for entry in list {
+        // `(a . 1)` and `(a 1)` are both valid alist entries, and both are
+        // now a cons whose car is the key.
         let key = match &entry {
-            LispExp::List(pair) => pair.first().cloned(),
-            LispExp::DottedList(pair, _) => pair.first().cloned(),
+            LispExp::Cons(cell) => Some(cell.car.clone()),
             _ => None,
         };
         if key == Some(args[0].clone()) {
@@ -133,7 +148,7 @@ fn find_member<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalEr
     }
     let list = expect_list(&args[1])?;
     if let Some(pos) = list.iter().position(|e| *e == args[0]) {
-        Ok(LispExp::list(list[pos..].to_vec()))
+        Ok(LispExp::proper_list(list[pos..].to_vec()))
     } else {
         Ok(LispExp::nil())
     }
@@ -293,8 +308,10 @@ fn primitive_eval_string_safe<T: LispContext>(
         };
         ctx.truncate_call_frames(depth_before);
         Ok(match result {
-            Ok(value) => LispExp::list(vec![LispExp::t(), value]),
-            Err(err) => LispExp::list(vec![LispExp::nil(), LispExp::string(format!("{:?}", err))]),
+            Ok(value) => LispExp::proper_list(vec![LispExp::t(), value]),
+            Err(err) => {
+                LispExp::proper_list(vec![LispExp::nil(), LispExp::string(format!("{:?}", err))])
+            }
         })
     } else {
         Err(EvalError::WrongArgumentType {
@@ -386,14 +403,18 @@ fn primitive_add_to_list<T: LispContext>(
         })
     } else {
         if let LispExp::Symbol(list_name) = &args[0] {
-            if let Some(LispExp::List(list)) = env.get_variable(&list_name) {
-                let mut new_list = (*list).clone();
+            // `nil` is now the empty list, so `(defvar my-list nil)`
+            // followed by `add-to-list` works -- it did not before, when
+            // only the `Form` variant was accepted here.
+            if let Some(list) = env.get_variable(&list_name).filter(is_list_value) {
+                let existing: Vec<LispExp<T>> = list.iter().collect();
+                let mut new_list = existing.clone();
                 for i in 1..args.len() {
-                    if !list.contains(&args[i]) {
+                    if !existing.contains(&args[i]) {
                         new_list.insert(0, args[i].clone());
                     }
                 }
-                env.set_variable(list_name.to_string(), LispExp::list(new_list));
+                env.set_variable(list_name.to_string(), LispExp::proper_list(new_list));
                 Ok(args[0].clone())
             } else {
                 Err(EvalError::RuntimeMessage(format!(
@@ -431,14 +452,15 @@ fn primitive_append_to_list<T: LispContext>(
         })
     } else {
         if let LispExp::Symbol(list_name) = &args[0] {
-            if let Some(LispExp::List(list)) = env.get_variable(&list_name) {
-                let mut new_list = (*list).clone();
+            if let Some(list) = env.get_variable(&list_name).filter(is_list_value) {
+                let existing: Vec<LispExp<T>> = list.iter().collect();
+                let mut new_list = existing.clone();
                 for i in 1..args.len() {
-                    if !list.contains(&args[i]) {
+                    if !existing.contains(&args[i]) {
                         new_list.push(args[i].clone());
                     }
                 }
-                env.set_variable(list_name.to_string(), LispExp::list(new_list));
+                env.set_variable(list_name.to_string(), LispExp::proper_list(new_list));
                 Ok(args[0].clone())
             } else {
                 Err(EvalError::RuntimeMessage(format!(
@@ -476,21 +498,21 @@ fn primitive_remove_from_list<T: LispContext>(
         })
     } else {
         if let LispExp::Symbol(list_name) = &args[0] {
-            if let Some(LispExp::List(list)) = env.get_variable(&list_name) {
+            if let Some(list) = env.get_variable(&list_name).filter(is_list_value) {
                 let mut new_list = vec![];
                 for el in list.iter() {
                     let mut el_found = false;
                     for arg in &args[1..] {
-                        if el == arg {
+                        if &el == arg {
                             el_found = true;
                             break;
                         }
                     }
                     if !el_found {
-                        new_list.push(el.clone());
+                        new_list.push(el);
                     }
                 }
-                env.set_variable(list_name.to_string(), LispExp::list(new_list));
+                env.set_variable(list_name.to_string(), LispExp::proper_list(new_list));
                 Ok(args[0].clone())
             } else {
                 Err(EvalError::RuntimeMessage(format!(
@@ -525,8 +547,7 @@ fn primitive_car<T: LispContext>(
         });
     }
     match &args[0] {
-        LispExp::List(l) => Ok(l.first().cloned().unwrap_or_else(LispExp::nil)),
-        LispExp::DottedList(l, _) => Ok(l.first().cloned().unwrap_or_else(LispExp::nil)),
+        LispExp::Cons(cell) => Ok(cell.car.clone()),
         other if other.is_nil() => Ok(LispExp::nil()),
         other => Err(EvalError::WrongArgumentType {
             expected: "List".into(),
@@ -555,20 +576,7 @@ fn primitive_cdr<T: LispContext>(
         });
     }
     match &args[0] {
-        LispExp::List(l) => {
-            if l.is_empty() {
-                Ok(LispExp::nil())
-            } else {
-                Ok(LispExp::list(l[1..].to_vec()))
-            }
-        }
-        LispExp::DottedList(l, tail) => {
-            if l.len() <= 1 {
-                Ok((**tail).clone())
-            } else {
-                Ok(LispExp::dotted_list(l[1..].to_vec(), (**tail).clone()))
-            }
-        }
+        LispExp::Cons(cell) => Ok(cell.cdr.clone()),
         other if other.is_nil() => Ok(LispExp::nil()),
         other => Err(EvalError::WrongArgumentType {
             expected: "List".into(),
@@ -596,23 +604,9 @@ fn primitive_cons<T: LispContext>(
             got: args.len(),
         });
     }
-    let head = args[0].clone();
-    match &args[1] {
-        LispExp::List(l) => {
-            let mut new_list = Vec::with_capacity(l.len() + 1);
-            new_list.push(head);
-            new_list.extend(l.iter().cloned());
-            Ok(LispExp::list(new_list))
-        }
-        LispExp::DottedList(l, tail) => {
-            let mut new_list = Vec::with_capacity(l.len() + 1);
-            new_list.push(head);
-            new_list.extend(l.iter().cloned());
-            Ok(LispExp::dotted_list(new_list, (**tail).clone()))
-        }
-        other if other.is_nil() => Ok(LispExp::list(vec![head])),
-        other => Ok(LispExp::dotted_list(vec![head], other.clone())),
-    }
+    // One allocation, no copying of the tail: this is the whole point of
+    // the cons-cell representation. It used to rebuild the entire spine.
+    Ok(LispExp::cons(args[0].clone(), args[1].clone()))
 }
 
 const LIST_DOC: &str = "(list &rest ARGS): Return a newly built list containing \
@@ -626,7 +620,7 @@ fn primitive_list<T: LispContext>(
     _env: Arc<Env<T>>,
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError> {
-    Ok(LispExp::list(args.to_vec()))
+    Ok(LispExp::proper_list(args.to_vec()))
 }
 
 const NTH_DOC: &str = "(nth N LIST): Return the Nth element of LIST (zero-indexed), \
@@ -648,11 +642,13 @@ fn primitive_nth<T: LispContext>(
         });
     }
     let n = expect_number(&args[0])?;
-    let list = expect_list(&args[1])?;
     if n < 0.0 {
         return Ok(LispExp::nil());
     }
-    Ok(list.get(n as usize).cloned().unwrap_or_else(LispExp::nil))
+    // Previously this cloned the entire backing vector via `expect_list`
+    // and then indexed it. Walking the chain is the same O(n) without the
+    // allocation and the n refcount bumps.
+    Ok(args[1].iter().nth(n as usize).unwrap_or_else(LispExp::nil))
 }
 
 const NTHCDR_DOC: &str = "(nthcdr N LIST): Return LIST with its first N elements \
@@ -674,12 +670,22 @@ fn primitive_nthcdr<T: LispContext>(
         });
     }
     let n = expect_number(&args[0])?.max(0.0) as usize;
-    let list = expect_list(&args[1])?;
-    if n >= list.len() {
-        Ok(LispExp::nil())
-    } else {
-        Ok(LispExp::list(list[n..].to_vec()))
+    // Walking to the nth cell and returning it shares the tail instead of
+    // copying it, so `nthcdr` is now allocation-free.
+    let mut cursor = args[1].clone();
+    for _ in 0..n {
+        match &cursor {
+            LispExp::Cons(cell) => cursor = cell.cdr.clone(),
+            other if other.is_nil() => return Ok(LispExp::nil()),
+            other => {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "List".into(),
+                    got: format!("{:?}", other),
+                });
+            }
+        }
     }
+    Ok(cursor)
 }
 
 const LENGTH_DOC: &str = "(length SEQUENCE): Return the number of elements in \
@@ -701,7 +707,7 @@ fn primitive_length<T: LispContext>(
         });
     }
     let len = match &args[0] {
-        LispExp::List(l) => l.len(),
+        LispExp::Cons(_) => args[0].iter().count(),
         LispExp::Vector(v) => v.len(),
         LispExp::String(s) => s.chars().count(),
         other if other.is_nil() => 0,
@@ -736,14 +742,7 @@ fn primitive_append<T: LispContext>(
     for arg in &args[0..args.len() - 1] {
         result.extend(expect_list(arg)?);
     }
-    match &args[args.len() - 1] {
-        LispExp::List(l) => {
-            result.extend(l.iter().cloned());
-            Ok(LispExp::list(result))
-        }
-        other if other.is_nil() => Ok(LispExp::list(result)),
-        other => Ok(LispExp::dotted_list(result, other.clone())),
-    }
+    Ok(LispExp::improper_list(result, args[args.len() - 1].clone()))
 }
 
 const REVERSE_DOC: &str = "(reverse SEQUENCE): Return a new sequence with the elements \
@@ -764,10 +763,10 @@ fn primitive_reverse<T: LispContext>(
         });
     }
     match &args[0] {
-        LispExp::List(l) => {
-            let mut v = (**l).clone();
+        LispExp::Cons(_) => {
+            let mut v: Vec<LispExp<T>> = args[0].iter().collect();
             v.reverse();
-            Ok(LispExp::list(v))
+            Ok(LispExp::proper_list(v))
         }
         LispExp::Vector(v) => {
             let mut v = (**v).clone();
@@ -866,7 +865,7 @@ fn primitive_elt<T: LispContext>(
     }
     let n = n as usize;
     match &args[0] {
-        LispExp::List(l) => Ok(l.get(n).cloned().unwrap_or_else(LispExp::nil)),
+        LispExp::Cons(_) => Ok(args[0].iter().nth(n).unwrap_or_else(LispExp::nil)),
         LispExp::Vector(v) => Ok(v.get(n).cloned().unwrap_or_else(LispExp::nil)),
         LispExp::String(s) => Ok(s
             .chars()
@@ -904,7 +903,7 @@ fn primitive_mapcar<T: LispContext>(
     for item in list {
         result.push(call_callable(&args[0], &[item], env.clone(), ctx)?);
     }
-    Ok(LispExp::list(result))
+    Ok(LispExp::proper_list(result))
 }
 
 const MAPC_DOC: &str = "(mapc FUNCTION LIST): Apply FUNCTION to each element of LIST \
@@ -1004,10 +1003,10 @@ fn primitive_eq_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, 
         (a, b) if a.is_nil() && b.is_nil() => true,
         // Compound values: only `eq` if they're literally the same
         // allocation, not just structurally identical.
-        (LispExp::List(a), LispExp::List(b)) => Arc::ptr_eq(a, b),
-        (LispExp::DottedList(a, ta), LispExp::DottedList(b, tb)) => {
-            Arc::ptr_eq(a, b) && Arc::ptr_eq(ta, tb)
-        }
+        (LispExp::Form(a), LispExp::Form(b)) => Arc::ptr_eq(a, b),
+        // Two chains are `eq` when they are the same cell -- sharing a
+        // tail is not enough, exactly as in real Elisp.
+        (LispExp::Cons(a), LispExp::Cons(b)) => Arc::ptr_eq(a, b),
         (LispExp::Vector(a), LispExp::Vector(b)) => Arc::ptr_eq(a, b),
         (LispExp::Map(a), LispExp::Map(b)) => Arc::ptr_eq(a, b),
         (LispExp::String(a), LispExp::String(b)) => Arc::ptr_eq(a, b),
@@ -1099,11 +1098,7 @@ fn primitive_consp<T: LispContext>(
             got: args.len(),
         });
     }
-    let is_cons = match &args[0] {
-        LispExp::List(l) => !l.is_empty(),
-        LispExp::DottedList(_, _) => true,
-        _ => false,
-    };
+    let is_cons = matches!(&args[0], LispExp::Cons(_));
     Ok(LispExp::boolean(is_cons))
 }
 
@@ -1118,9 +1113,7 @@ fn primitive_listp<T: LispContext>(
             got: args.len(),
         });
     }
-    let is_list =
-        args[0].is_nil() || matches!(&args[0], LispExp::List(_) | LispExp::DottedList(_, _));
-    Ok(LispExp::boolean(is_list))
+    Ok(LispExp::boolean(is_list_value(&args[0])))
 }
 
 const STRINGP_DOC: &str = "(stringp OBJECT): Return t if OBJECT is a string, nil \
@@ -1252,8 +1245,7 @@ fn primitive_atom_predicate<T: LispContext>(
             got: args.len(),
         });
     }
-    let is_cons = matches!(&args[0], LispExp::List(l) if !l.is_empty())
-        || matches!(&args[0], LispExp::DottedList(_, _));
+    let is_cons = matches!(&args[0], LispExp::Cons(_));
     Ok(LispExp::boolean(!is_cons))
 }
 
@@ -1851,7 +1843,7 @@ fn primitive_split_string<T: LispContext>(
             .map(|p| LispExp::string(p.to_string()))
             .collect()
     };
-    Ok(LispExp::list(parts))
+    Ok(LispExp::proper_list(parts))
 }
 
 const FORMAT_DOC: &str = "(format STRING &rest OBJECTS): Format OBJECTS according to \

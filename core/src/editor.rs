@@ -220,15 +220,15 @@ impl<B: BufferTrait> EditorState<B> {
                             self.log_diagnostic(&format!(
                                 "[ERROR] eval_file {file} is not a valid script name"
                             ));
-                            return Ok(ELispExp::list(vec![]));
+                            return Ok(ELispExp::nil());
                         } else {
                             // search for file.lisp in every lisp-path folder
                             // 1. get the lisp-path lists, and check it is a list of strings
                             let mut lisp_path = vec![];
                             if let Some(lisp_path_list) = env.get_variable("lisp-path") {
-                                if let ELispExp::List(paths) = lisp_path_list {
-                                    for ipath in paths.iter() {
-                                        if let ELispExp::String(path) = ipath {
+                                if matches!(lisp_path_list, ELispExp::Cons(_)) {
+                                    for ipath in lisp_path_list.iter() {
+                                        if let ELispExp::String(path) = &ipath {
                                             lisp_path.push(path.clone());
                                         } else {
                                             self.log_diagnostic(&format!(
@@ -260,12 +260,12 @@ impl<B: BufferTrait> EditorState<B> {
                                 self.log_diagnostic(&format!(
                                     "[ERROR] eval_file {file}.lisp was not found in lisp_path"
                                 ));
-                                return Ok(ELispExp::list(vec![]));
+                                return Ok(ELispExp::nil());
                             }
                         }
                     } else {
                         self.log_diagnostic(&format!("[ERROR] Failed eval file {file} {:?}", err));
-                        return Ok(ELispExp::list(vec![]));
+                        return Ok(ELispExp::nil());
                     }
                 }
             }
@@ -274,11 +274,11 @@ impl<B: BufferTrait> EditorState<B> {
         let ast = if let Ok(ast) = Parser::new(&content).next() {
             ast
         } else {
-            return Ok(ELispExp::list(vec![]));
+            return Ok(ELispExp::nil());
         };
 
         let _command = self.begin_command();
-        Ok(ELispExp::list(vec![eval(&ast, env.clone(), self)?]))
+        Ok(ELispExp::proper_list(vec![eval(&ast, env.clone(), self)?]))
     }
 
     /// Quit the editor
@@ -423,7 +423,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Handle a key event. An UI provider is responsible to call this function
     /// every time it want to make the editor react to an user input.
     pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
-        let mut ast = ELispExp::list(vec![]);
+        let mut ast = ELispExp::form(vec![]);
         let mut keymap_found = false;
 
         // Look for the keymap in the major mode of the current buffer
@@ -462,7 +462,7 @@ impl<B: BufferTrait> EditorState<B> {
                 self.log_diagnostic(&format!("Keymap {event:?} associated to a lambda with some parameters. Associate it to a lambda with 0 parameters."));
                 return;
             } else {
-                ast = ELispExp::list(vec![ELispExp::symbol("funcall".into()), ast]);
+                ast = ELispExp::form(vec![ELispExp::symbol("funcall".into()), ast]);
             }
         }
 
@@ -509,7 +509,7 @@ impl<B: BufferTrait> EditorState<B> {
         if let Some(mode) = registry.get(mode_name) {
             if let Some(hook_vec) = mode.hooks.get(hook_name) {
                 for hook in hook_vec {
-                    let hook_call = ELispExp::list(vec![hook.clone()]);
+                    let hook_call = ELispExp::form(vec![hook.clone()]);
                     let _command = self.begin_command();
                     if let Err(e) = eval(&hook_call, env.clone(), self) {
                         self.log_diagnostic(&format!(
@@ -684,13 +684,13 @@ impl<B: BufferTrait> EditorState<B> {
             "frame-height".into(),
             ELispExp::number(new_screen_height as f64),
         );
-        if let Some(ELispExp::List(callback_list)) = env.get_variable("after-resize-hook") {
+        if let Some(callback_list) = env.get_variable("after-resize-hook") {
             for el in callback_list.iter() {
                 let _command = self.begin_command();
-                match el {
+                match &el {
                     ELispExp::Lambda(_) | ELispExp::Symbol(_) => {
                         if let Err(err) = eval(
-                            &ELispExp::list(vec![
+                            &ELispExp::form(vec![
                                 el.clone(),
                                 ELispExp::number(new_screen_width as f64),
                                 ELispExp::number(new_screen_height as f64),
@@ -809,12 +809,12 @@ impl<B: BufferTrait> EditorState<B> {
         self.clear_backtrace();
 
         if env.get_function("report-error").is_some() {
-            let call_ast = ELispExp::list(vec![
+            let call_ast = ELispExp::form(vec![
                 ELispExp::symbol("report-error".into()),
                 ELispExp::string(message.to_string()),
-                ELispExp::list(vec![
+                ELispExp::form(vec![
                     ELispExp::symbol("quote".into()),
-                    ELispExp::list(frames.into_iter().map(ELispExp::string).collect()),
+                    ELispExp::proper_list(frames.into_iter().map(ELispExp::string).collect()),
                 ]),
             ]);
             let _command = self.begin_command();
@@ -938,7 +938,7 @@ pub fn create_global_env<B: BufferTrait>()
         Ok(exe_path) => {
             env.set_variable(
                 "lisp-path".into(),
-                ELispExp::list(vec![ELispExp::string(format!(
+                ELispExp::proper_list(vec![ELispExp::string(format!(
                     "{}/data/lisp",
                     exe_path
                         .parent()
@@ -957,7 +957,7 @@ pub fn create_global_env<B: BufferTrait>()
 
     // Add a list of callbacks that will be called after a resize event.
     // The list will contain lambdas with arguments (new_width, new_height)
-    env.set_variable("after-resize-hook".into(), ELispExp::list(vec![]));
+    env.set_variable("after-resize-hook".into(), ELispExp::nil());
 
     // Create the fundamental modes:
     // - fundamental-mode to edit base files
