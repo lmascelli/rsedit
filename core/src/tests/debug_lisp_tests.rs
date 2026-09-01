@@ -116,7 +116,7 @@ mod tests {
 
         assert_eq!(
             eval_str("(backtrace)", &env, &ctx).unwrap(),
-            LispExp::list(vec![LispExp::string("eval-string".into())])
+            LispExp::proper_list(vec![LispExp::string("eval-string".into())])
         );
     }
 

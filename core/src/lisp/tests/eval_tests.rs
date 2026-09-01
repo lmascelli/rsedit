@@ -573,7 +573,7 @@ mod test {
         let res = eval_script("'(1 2 3)").unwrap();
         assert_eq!(
             res,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0),
@@ -587,7 +587,7 @@ mod test {
         let res = eval_script("'(+ 1 2)").unwrap();
         assert_eq!(
             res,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::symbol("+".into()),
                 LispExp::number(1.0),
                 LispExp::number(2.0),

@@ -406,7 +406,7 @@ pub type LispPrimitive<T> = fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp
 
 // --------------------------------  LispExp  ----------------------------------
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 // Primitive comparison has no meaning and will probably never done
 #[allow(unpredictable_function_pointer_comparisons)]
 pub enum LispExp<T: LispContext> {
@@ -415,10 +415,10 @@ pub enum LispExp<T: LispContext> {
     List(Arc<Vec<LispExp<T>>>),
 
     /// A *data* list. `nil` terminates a proper list; anything else
-    /// terminates an improper (dotted) one, so `DottedList` is gone.
+    /// terminates an improper (dotted) one -- there is no separate
+    /// `DottedList` variant, improperness is just what the final cdr is.
     Cons(Arc<ConsCell<T>>),
 
-    DottedList(Arc<Vec<LispExp<T>>>, Arc<LispExp<T>>), // TODO remove
     Vector(Arc<Vec<LispExp<T>>>),
     Map(Arc<HashMap<String, LispExp<T>>>),
     Number(f64),
@@ -438,6 +438,131 @@ pub enum LispExp<T: LispContext> {
 //                           |  Methods implementation  |
 //                           +--------------------------+
 // ========================================================================== //
+
+/// `LispExp` prints as Lisp source, not as a Rust value. The derived
+/// `Debug` was tolerable while lists were vectors, but a cons chain
+/// derives as `Cons(ConsCell { car: .., cdr: Cons(ConsCell { .. } ) })`,
+/// nested once per element -- unreadable in the echo area, which is where
+/// most of these strings end up (`report-error`, `*Messages*`, the eval
+/// minibuffer). Everything the reader can produce round-trips; the values
+/// it cannot read back (lambdas, primitives, atoms, fibers) print in
+/// `#<...>` form, following Elisp.
+impl<T: LispContext> Debug for LispExp<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // Both list shapes print the same way: the distinction between
+            // a syntax node and a data list is ours, not the reader's.
+            LispExp::List(items) => {
+                write!(f, "(")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{:?}", item)?;
+                }
+                write!(f, ")")
+            }
+
+            LispExp::Cons(_) => {
+                let (items, tail) = self.split_list();
+                write!(f, "(")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{:?}", item)?;
+                }
+                if !tail.is_nil() {
+                    write!(f, " . {:?}", tail)?;
+                }
+                write!(f, ")")
+            }
+
+            LispExp::Vector(items) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{:?}", item)?;
+                }
+                write!(f, "]")
+            }
+
+            LispExp::Map(map) => {
+                write!(f, "{{")?;
+                for (i, (key, value)) in map.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{} {:?}", key, value)?;
+                }
+                write!(f, "}}")
+            }
+
+            // Every number is an `f64`, but `(+ 1 2)` should echo as `3`,
+            // not `3.0`. Only values that really are integral take the
+            // integer path, so `1.5` and `1e300` still print faithfully.
+            LispExp::Number(n) => {
+                if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e15 {
+                    write!(f, "{}", *n as i64)
+                } else {
+                    write!(f, "{}", n)
+                }
+            }
+
+            LispExp::Symbol(s) => write!(f, "{}", s),
+
+            // Rust's string escaping is close enough to Lisp's that the
+            // result reads back correctly for the escapes the lexer knows.
+            LispExp::String(s) => write!(f, "{:?}", s.as_str()),
+
+            LispExp::Lambda(lambda) => {
+                write!(f, "#<lambda (")?;
+                let mut first = true;
+                for param in &lambda.params {
+                    if !first {
+                        write!(f, " ")?;
+                    }
+                    first = false;
+                    write!(f, "{}", param)?;
+                }
+                if !lambda.optionals.is_empty() {
+                    if !first {
+                        write!(f, " ")?;
+                    }
+                    first = false;
+                    write!(f, "&optional")?;
+                    for param in &lambda.optionals {
+                        write!(f, " {}", param)?;
+                    }
+                }
+                if let Some(rest) = &lambda.rest {
+                    if !first {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "&rest {}", rest)?;
+                }
+                write!(f, ")>")
+            }
+
+            LispExp::Primitive { .. } => write!(f, "#<primitive>"),
+
+            // Deliberately opaque. An atom is the one mutable container in
+            // the language, so it is also the one place a value can be made
+            // to contain itself -- recursing here could hang the printer,
+            // and taking the lock could deadlock against a writer that is
+            // formatting its own contents. `deref` is how you look inside.
+            LispExp::Atom(_) => write!(f, "#<atom>"),
+
+            LispExp::Fiber(fiber) => match fiber.0.try_read() {
+                Ok(state) if state.is_done => write!(f, "#<fiber done>"),
+                Ok(_) => write!(f, "#<fiber>"),
+                Err(_) => write!(f, "#<fiber running>"),
+            },
+        }
+    }
+}
 
 /// Convert a form produced by the reader into the data it denotes.
 /// Runs once, at read time, on quoted structure only.
@@ -1180,14 +1305,11 @@ impl<T: LispContext> LispExp<T> {
         (items, cursor)
     }
 
-    // TODO REMOVE
+    /// Build a *syntax* node. Reserved for the reader, macro expansion and
+    /// `data_to_form`; primitives that return a list to Lisp want
+    /// `proper_list` instead.
     pub fn list(value: Vec<LispExp<T>>) -> LispExp<T> {
         LispExp::List(Arc::new(value))
-    }
-
-    // TODO REMOVE
-    pub fn dotted_list(elements: Vec<LispExp<T>>, tail: LispExp<T>) -> LispExp<T> {
-        LispExp::DottedList(Arc::new(elements), Arc::new(tail))
     }
 
     pub fn vec(value: Vec<LispExp<T>>) -> LispExp<T> {
@@ -1233,6 +1355,17 @@ pub fn data_to_form<T: LispContext>(exp: &LispExp<T>) -> Result<LispExp<T>, Eval
             let (items, tail) = exp.split_list();
             if !tail.is_nil() {
                 return Err(EvalError::UnvalidFunctionCall);
+            }
+            // `(quote X)` is the one form whose argument must stay data.
+            // The reader leaves it that way (it runs `form_to_data` over
+            // the literal at read time), and a macro that builds a quote
+            // form by hand -- `(cons 'quote (cons items nil))` -- has to
+            // behave identically. Recursing here would turn X into syntax
+            // and `quote` would then hand a syntax node back as a value.
+            if items.len() == 2 {
+                if matches!(&items[0], LispExp::Symbol(s) if s.as_str() == "quote") {
+                    return Ok(LispExp::list(vec![items[0].clone(), items[1].clone()]));
+                }
             }
             let mut form = Vec::with_capacity(items.len());
             for item in &items {
@@ -1288,7 +1421,10 @@ pub fn bind_lambda_args<T: LispContext>(
         let rest_start = idx.min(args.len());
         call_frame.set_variable(
             rest_name.clone(),
-            LispExp::list(args[rest_start..].to_vec()),
+            // The `&rest` container is data even for a macro, where the
+            // elements it holds are unevaluated syntax -- the body walks it
+            // with `car`/`cdr` either way.
+            LispExp::proper_list(args[rest_start..].to_vec()),
         );
     }
     Ok(())
@@ -1422,7 +1558,9 @@ fn eval_step<T: LispContext>(
 
         LispExp::List(list) => {
             if list.is_empty() {
-                Ok(EvalStep::Done(LispExp::list(vec![])))
+                // `()` evaluates to the empty list, which is `nil` -- there
+                // is no longer a second representation of it to return.
+                Ok(EvalStep::Done(LispExp::nil()))
             } else {
                 let head = &list[0];
                 match head {
@@ -1492,7 +1630,6 @@ fn eval_step<T: LispContext>(
             }
             Ok(EvalStep::Done(LispExp::map(new_map)))
         }
-        LispExp::DottedList(_, _) => todo!()
     }
 }
 
@@ -1966,7 +2103,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
 
             let list_val = eval(&spec[1], env.clone(), ctx)?;
             let items: Vec<LispExp<T>> = match &list_val {
-                LispExp::List(items) => (**items).clone(),
+                LispExp::Cons(_) => list_val.iter().collect(),
                 other => {
                     if other.is_nil() {
                         vec![]

@@ -51,18 +51,7 @@ mod tests {
                 got: args.len(),
             });
         }
-        match &args[1] {
-            LispExp::List(list) => {
-                let mut items = vec![args[0].clone()];
-                items.extend(list.iter().cloned());
-                Ok(LispExp::list(items))
-            }
-            other if other.is_nil() => Ok(LispExp::list(vec![args[0].clone()])),
-            other => Err(EvalError::WrongArgumentType {
-                expected: "List".into(),
-                got: format!("{:?}", other),
-            }),
-        }
+        Ok(LispExp::cons(args[0].clone(), args[1].clone()))
     }
 
     fn native_eq(
@@ -168,7 +157,7 @@ mod tests {
         );
         assert_eq!(
             eval_ok("'(1 unbound-var)"),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::symbol("unbound-var".into())
             ])
@@ -316,7 +305,7 @@ mod tests {
     fn let_and_let_star_support_bare_symbol_bindings_defaulting_to_nil() {
         assert_eq!(eval_ok("(let (x) x)"), LispExp::nil());
         assert_eq!(eval_ok("(let* (x (y 1)) (cons x (cons y nil)))"), {
-            LispExp::list(vec![LispExp::nil(), LispExp::number(1.0)])
+            LispExp::proper_list(vec![LispExp::nil(), LispExp::number(1.0)])
         });
     }
 
@@ -445,7 +434,7 @@ mod tests {
         ";
         assert_eq!(
             eval_ok(script),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(3.0),
                 LispExp::number(2.0),
                 LispExp::number(1.0),
@@ -512,7 +501,7 @@ mod tests {
             "(setq log nil) (prog1 'first (setq log (cons 1 log)) (setq log (cons 2 log))) log";
         assert_eq!(
             eval_ok(script),
-            LispExp::list(vec![LispExp::number(2.0), LispExp::number(1.0)])
+            LispExp::proper_list(vec![LispExp::number(2.0), LispExp::number(1.0)])
         );
     }
 
@@ -605,7 +594,7 @@ mod tests {
     fn backquote_with_no_unquotes_behaves_like_quote() {
         assert_eq!(
             eval_ok("`(1 2 3)"),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0),
@@ -617,7 +606,7 @@ mod tests {
     fn unquote_splices_a_single_evaluated_value() {
         assert_eq!(
             eval_ok("`(1 ,(+ 1 1) 3)"),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0),
@@ -629,7 +618,7 @@ mod tests {
     fn unquote_splicing_splices_every_element_of_an_evaluated_list() {
         assert_eq!(
             eval_ok("`(1 ,@(cons 2 (cons 3 nil)) 4)"),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0),
@@ -642,9 +631,9 @@ mod tests {
     fn backquote_recurses_into_nested_lists_and_vectors() {
         assert_eq!(
             eval_ok("`(a (b ,(+ 1 2)) [c ,(+ 3 4)])"),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::symbol("a".into()),
-                LispExp::list(vec![LispExp::symbol("b".into()), LispExp::number(3.0)]),
+                LispExp::proper_list(vec![LispExp::symbol("b".into()), LispExp::number(3.0)]),
                 LispExp::vec(vec![LispExp::symbol("c".into()), LispExp::number(7.0)]),
             ])
         );
@@ -683,7 +672,7 @@ mod tests {
         ";
         assert_eq!(
             eval_ok(script),
-            LispExp::list(vec![LispExp::number(11.0), LispExp::number(12.0)])
+            LispExp::proper_list(vec![LispExp::number(11.0), LispExp::number(12.0)])
         );
     }
 
@@ -698,11 +687,11 @@ mod tests {
         let script = "(defun greet (name &optional greeting) (cons name (cons greeting nil)))";
         assert_eq!(
             eval_ok(&format!("{script} (greet \"a\")")),
-            LispExp::list(vec![LispExp::string("a".into()), LispExp::nil()])
+            LispExp::proper_list(vec![LispExp::string("a".into()), LispExp::nil()])
         );
         assert_eq!(
             eval_ok(&format!("{script} (greet \"a\" \"hi\")")),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::string("a".into()),
                 LispExp::string("hi".into())
             ])
@@ -713,19 +702,19 @@ mod tests {
     fn rest_param_collects_every_remaining_argument_into_a_list() {
         assert_eq!(
             eval_ok("(defun args-of (a &rest more) more) (args-of 1 2 3 4)"),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(2.0),
                 LispExp::number(3.0),
                 LispExp::number(4.0),
             ])
         );
-        // No extra arguments -> the rest param is bound to an empty list,
-        // not left unbound. `LispExp::list(vec![])`, not `LispExp::nil()`:
-        // both are "falsy", but they're different representations of an
-        // empty list under this VM's structural equality.
+        // No extra arguments -> the rest param is bound to the empty list,
+        // not left unbound. With cons cells there is only one empty list:
+        // `nil`. There used to be two representations of it, and this
+        // assertion existed to pin down which one you got.
         assert_eq!(
             eval_ok("(defun args-of (a &rest more) more) (args-of 1)"),
-            LispExp::list(vec![])
+            LispExp::nil()
         );
     }
 
@@ -736,11 +725,11 @@ mod tests {
         ";
         assert_eq!(
             eval_ok(&format!("{script} (f 1)")),
-            LispExp::list(vec![LispExp::number(1.0), LispExp::nil()])
+            LispExp::proper_list(vec![LispExp::number(1.0), LispExp::nil()])
         );
         assert_eq!(
             eval_ok(&format!("{script} (f 1 2 3 4)")),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0),
@@ -778,7 +767,7 @@ mod tests {
         assert_eq!(eval_ok("((lambda (&optional x) x))"), LispExp::nil());
         assert_eq!(
             eval_ok("((lambda (&rest xs) xs) 1 2)"),
-            LispExp::list(vec![LispExp::number(1.0), LispExp::number(2.0)])
+            LispExp::proper_list(vec![LispExp::number(1.0), LispExp::number(2.0)])
         );
     }
 
@@ -795,7 +784,7 @@ mod tests {
         ";
         assert_eq!(
             eval_ok(&format!("{script} (my-list 1 2 3)")),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0),

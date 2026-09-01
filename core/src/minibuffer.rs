@@ -150,25 +150,23 @@ primitive!(minibuffer_complete, _args, env, ctx, {
     // the next one, wrapping around. Otherwise -- either the very first
     // Tab press, or the user typed something since the last completion --
     // ask *minibuffer-on-change* for a fresh candidate list.
-    let still_cycling = match &completions {
-        Some(ELispExp::List(items)) => {
-            !items.is_empty()
-                && matches!(items.get(index), Some(ELispExp::String(s)) if s.as_str() == current)
-        }
-        _ => false,
-    };
+    let items: Vec<ELispExp<B>> = completions
+        .as_ref()
+        .map(|list| list.iter().collect())
+        .unwrap_or_default();
+
+    let still_cycling = !items.is_empty()
+        && matches!(items.get(index), Some(ELispExp::String(s)) if s.as_str() == current);
 
     if still_cycling {
-        if let Some(ELispExp::List(items)) = &completions {
-            let next_index = (index + 1) % items.len();
-            setq(
-                &env,
-                "*minibuffer-completion-index*",
-                ELispExp::number(next_index as f64),
-            );
-            if let Some(ELispExp::String(s)) = items.get(next_index) {
-                set_minibuffer_content(ctx, s);
-            }
+        let next_index = (index + 1) % items.len();
+        setq(
+            &env,
+            "*minibuffer-completion-index*",
+            ELispExp::number(next_index as f64),
+        );
+        if let Some(ELispExp::String(s)) = items.get(next_index) {
+            set_minibuffer_content(ctx, s.as_str());
         }
     } else if let Some(on_change) = env.get_variable("*minibuffer-on-change*") {
         if on_change.is_truthy() {
@@ -176,10 +174,8 @@ primitive!(minibuffer_complete, _args, env, ctx, {
                 call_callable(&on_change, &[ELispExp::string(current)], env.clone(), ctx)?;
             setq(&env, "*minibuffer-completions*", candidates.clone());
             setq(&env, "*minibuffer-completion-index*", ELispExp::number(0.0));
-            if let ELispExp::List(items) = &candidates {
-                if let Some(ELispExp::String(first)) = items.first() {
-                    set_minibuffer_content(ctx, first);
-                }
+            if let Some(ELispExp::String(first)) = candidates.iter().next() {
+                set_minibuffer_content(ctx, &first);
             }
         }
     }

@@ -96,7 +96,7 @@ mod tests {
         };
 
         // 1. Setup: Define a list (2 3)
-        let initial_list = LispExp::list(vec![LispExp::number(2.0), LispExp::number(3.0)]);
+        let initial_list = LispExp::proper_list(vec![LispExp::number(2.0), LispExp::number(3.0)]);
         env.set_variable("my-list".into(), initial_list);
 
         // 2. Evaluate: (add-to-list 'my-list 1) -> Should prepend 1
@@ -111,7 +111,7 @@ mod tests {
         let current_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             current_list,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0)
@@ -130,7 +130,7 @@ mod tests {
         let unmodified_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             unmodified_list,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0)
@@ -148,7 +148,7 @@ mod tests {
         };
 
         // 1. Setup: Define a list (1 2)
-        let initial_list = LispExp::list(vec![LispExp::number(1.0), LispExp::number(2.0)]);
+        let initial_list = LispExp::proper_list(vec![LispExp::number(1.0), LispExp::number(2.0)]);
         env.set_variable("my-list".into(), initial_list);
 
         // 2. Evaluate: (append-to-list 'my-list 3) -> Should append 3
@@ -163,7 +163,7 @@ mod tests {
         let current_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             current_list,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0)
@@ -181,7 +181,7 @@ mod tests {
         let unmodified_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             unmodified_list,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0)
@@ -199,7 +199,7 @@ mod tests {
         };
 
         // 1. Setup: Define a list (1 2 3 4 5)
-        let initial_list = LispExp::list(vec![
+        let initial_list = LispExp::proper_list(vec![
             LispExp::number(1.0),
             LispExp::number(2.0),
             LispExp::number(3.0),
@@ -221,7 +221,7 @@ mod tests {
         let current_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             current_list,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(3.0),
                 LispExp::number(5.0)
@@ -239,7 +239,7 @@ mod tests {
         let unmodified_list = env.get_variable("my-list").unwrap();
         assert_eq!(
             unmodified_list,
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(3.0),
                 LispExp::number(5.0)

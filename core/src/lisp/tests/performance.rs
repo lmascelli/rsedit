@@ -278,29 +278,27 @@ mod tests {
         );
     }
 
-    /// Documents a structural property of the current value representation
-    /// rather than a regression: **`cons` is O(n), not O(1)**.
+    /// Guards the defining property of the cons-cell representation:
+    /// **`cons` is O(1), so accumulating a list is linear**.
     ///
-    /// Lists are `LispExp::List(Arc<Vec<LispExp>>)` -- a flat vector -- rather
-    /// than genuine cons cells sharing a tail. So `primitive_cons` cannot link a
-    /// new head onto an existing tail; it allocates a fresh vector and copies
-    /// every element. The most fundamental Lisp operation therefore costs time
-    /// proportional to the list it extends, which makes *any* loop accumulating
-    /// n elements O(n^2) -- including the `cons`-then-`reverse` idiom that exists
-    /// in real Lisp precisely *because* it is supposed to be the linear one.
+    /// A list is a chain of `LispExp::Cons(Arc<ConsCell>)` cells, each holding
+    /// a car and a cdr, so `primitive_cons` links a new head onto an existing
+    /// tail with one allocation and no copying. That makes the `cons`-then-
+    /// `reverse` idiom linear, which is the whole reason it exists in real
+    /// Lisp.
     ///
-    /// That reaches well past microbenchmarks: it is why a Lisp-side `grep`
-    /// collecting matches, or any library function accumulating results,
-    /// degrades sharply with result count.
+    /// This used to be the opposite test. Lists were `List(Arc<Vec<LispExp>>)`,
+    /// a flat vector, so `cons` had to allocate a fresh vector and copy every
+    /// element -- making any accumulating loop O(n^2), and any Lisp-side `grep`
+    /// or filter degrade sharply with result count. The old test pinned that
+    /// quadratic behaviour and said to invert it once `cons` became O(1). This
+    /// is that inversion.
     ///
     /// The measurement subtracts a control loop running the same iterations with
     /// O(1) work per iteration, so what remains is the list work alone rather
-    /// than interpreter overhead. The assertion pins the *current* quadratic
-    /// behaviour: if lists ever move to a representation with an O(1) `cons`,
-    /// this starts failing, and that failure is the signal to flip it into an
-    /// assertion of linearity.
+    /// than interpreter overhead.
     #[test]
-    fn cons_copies_so_list_accumulation_is_quadratic() {
+    fn cons_is_constant_time_so_list_accumulation_is_linear() {
         // Large enough that the quadratic term dominates the noise left after
         // the subtraction below; at smaller sizes the result wobbles close
         // enough to linear to be unreliable.
@@ -333,14 +331,17 @@ mod tests {
         let g = growth(large, small);
         println!(
             "list accumulation (interpreter overhead subtracted): {N} elements {small:?}, {} \
-             elements {large:?} -> {g:.2}x (O(1) cons would be ~2x, copying cons ~4x)",
+             elements {large:?} -> {g:.2}x (O(1) cons is ~2x, copying cons was ~4x)",
             N * 2
         );
 
+        // Doubling the length doubles the work. The bound sits well below the
+        // ~4x a copying `cons` produced, with enough headroom above 2x to
+        // absorb allocator and scheduler noise in a debug build.
         assert!(
-            g > 2.6,
-            "accumulating a list now scales at {g:.2}x when doubling its length, close to \
-             linear -- if `cons` became O(1), invert this test to assert linearity and tighten it"
+            g < 3.0,
+            "accumulating a list scales at {g:.2}x when doubling its length -- `cons` is \
+             copying its tail again, which makes list building quadratic"
         );
     }
 }

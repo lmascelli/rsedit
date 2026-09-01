@@ -432,7 +432,7 @@ mod test {
             exp,
             LispExp::list(vec![
                 LispExp::symbol("quote".into()),
-                LispExp::list(vec![
+                LispExp::proper_list(vec![
                     LispExp::number(1.0),
                     LispExp::number(2.0),
                     LispExp::symbol("a".into()),
@@ -451,7 +451,7 @@ mod test {
             exp,
             LispExp::list(vec![
                 LispExp::symbol("quote".into()),
-                LispExp::list(vec![
+                LispExp::proper_list(vec![
                     LispExp::symbol("quote".into()),
                     LispExp::symbol("foo".into())
                 ])
@@ -494,7 +494,7 @@ mod test {
         let mut parser_list = Parser::new("'()");
         assert_eq!(
             parser_list.next::<()>().unwrap(),
-            LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::list(vec![])])
+            LispExp::list(vec![LispExp::symbol("quote".into()), LispExp::nil()])
         );
 
         let mut parser_vec = Parser::new("'[]");

@@ -65,16 +65,6 @@ primitive!(define_key, args, env, ctx, {
                         Some(mode_name.to_string())
                     }
                 }
-                ELispExp::List(list) => {
-                    if *list == std::sync::Arc::new(vec![]) {
-                        None
-                    } else {
-                        return Err(EvalError::WrongArgumentType {
-                            expected: "Symbol, String, Symbol".into(),
-                            got: format!("{:?}, {:?}, {:?}", &args[0], &args[1], &args[2]),
-                        });
-                    }
-                }
                 _ => {
                     return Err(EvalError::WrongArgumentType {
                         expected: "Symbol, String, Symbol".into(),
@@ -158,7 +148,7 @@ pub const ALL_LOGS_DOC: &str = "(all-logs): Return every diagnostic message logg
          (length (all-logs))";
 
 primitive!(all_logs, _args, _env, ctx, {
-    Ok(ELispExp::list(
+    Ok(ELispExp::proper_list(
         ctx.get_logs().into_iter().map(ELispExp::string).collect(),
     ))
 });
@@ -183,7 +173,7 @@ primitive!(backtrace, _args, _env, ctx, {
     if !frames.is_empty() {
         frames.remove(0);
     }
-    Ok(ELispExp::list(
+    Ok(ELispExp::proper_list(
         frames.into_iter().map(ELispExp::string).collect(),
     ))
 });

@@ -50,7 +50,7 @@ mod tests {
         // (cons 1 (cons 2 3)) => (1 2 . 3)
         assert_eq!(
             eval_ok("(cons 1 (cons 2 3))"),
-            LispExp::dotted_list(
+            LispExp::improper_list(
                 vec![LispExp::number(1.0), LispExp::number(2.0)],
                 LispExp::number(3.0)
             )
@@ -61,7 +61,7 @@ mod tests {
     fn append_with_a_non_list_final_argument_produces_a_dotted_list() {
         assert_eq!(
             eval_ok("(append '(1 2) 3)"),
-            LispExp::dotted_list(
+            LispExp::improper_list(
                 vec![LispExp::number(1.0), LispExp::number(2.0)],
                 LispExp::number(3.0)
             )
@@ -182,7 +182,7 @@ mod tests {
     fn split_string_defaults_to_whitespace_and_drops_empty_pieces() {
         assert_eq!(
             eval_ok("(split-string \"  a  b c \")"),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::string("a".into()),
                 LispExp::string("b".into()),
                 LispExp::string("c".into()),
@@ -194,7 +194,7 @@ mod tests {
     fn split_string_with_empty_separator_splits_into_characters() {
         assert_eq!(
             eval_ok("(split-string \"ab\" \"\")"),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::string("a".into()),
                 LispExp::string("b".into())
             ])
@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(eval_ok("(apply 'car '((1 2)))"), LispExp::number(1.0));
         assert_eq!(
             eval_ok("(mapcar 'car '((1 2) (3 4)))"),
-            LispExp::list(vec![LispExp::number(1.0), LispExp::number(3.0)])
+            LispExp::proper_list(vec![LispExp::number(1.0), LispExp::number(3.0)])
         );
     }
 
@@ -327,16 +327,59 @@ mod tests {
         let script = "(defun f (a &optional b &rest c) (cons a (cons b c)))";
         assert_eq!(
             eval_ok(&format!("{script} (funcall 'f 1)")),
-            LispExp::list(vec![LispExp::number(1.0), LispExp::nil()])
+            LispExp::proper_list(vec![LispExp::number(1.0), LispExp::nil()])
         );
         assert_eq!(
             eval_ok(&format!("{script} (apply 'f 1 2 '(3 4))")),
-            LispExp::list(vec![
+            LispExp::proper_list(vec![
                 LispExp::number(1.0),
                 LispExp::number(2.0),
                 LispExp::number(3.0),
                 LispExp::number(4.0),
             ])
         );
+    }
+
+    // ===========================================================
+    // Printing
+    // ===========================================================
+
+    /// `LispExp`'s `Debug` is the printer: it renders Lisp source rather
+    /// than a Rust value dump, because these strings land in the echo area
+    /// and in `*Messages*`. Cons chains especially -- a derived `Debug`
+    /// nests one `ConsCell { .. }` per element and is unreadable.
+    #[test]
+    fn values_print_as_lisp_source() {
+        let cases = [
+            ("'(1 2 3)", "(1 2 3)"),
+            ("(list)", "nil"),
+            ("'()", "nil"),
+            ("nil", "nil"),
+            // A dotted pair, and a chain that only turns improper at the end.
+            ("(cons 1 2)", "(1 . 2)"),
+            ("(cons 1 (cons 2 3))", "(1 2 . 3)"),
+            ("'(1 . 2)", "(1 . 2)"),
+            // Nesting, vectors and strings inside a list.
+            ("'(a (b c) [1 2] \"hi\")", "(a (b c) [1 2] \"hi\")"),
+            ("'(nested (deep (deeper 1)))", "(nested (deep (deeper 1)))"),
+            ("'(quote x)", "(quote x)"),
+            // Numbers are `f64` internally, but an integral one prints
+            // without a fractional part -- `(+ 1 2)` should echo as `3`.
+            ("(+ 1 2)", "3"),
+            ("(list 1.5 2.0 -3)", "(1.5 2 -3)"),
+            // Values the reader cannot produce print in `#<...>` form.
+            (
+                "(lambda (a &optional b &rest c) a)",
+                "#<lambda (a &optional b &rest c)>",
+            ),
+            ("(make-atom 5)", "#<atom>"),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(
+                format!("{:?}", eval_ok(source)),
+                expected,
+                "printing the value of `{source}`"
+            );
+        }
     }
 }
