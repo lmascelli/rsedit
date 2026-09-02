@@ -1,4 +1,4 @@
-use crate::lisp::lisp::SharedAtom;
+use crate::lisp::SharedAtom;
 use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, bind_lambda_args, eval};
 use std::sync::{Arc, RwLock};
 
