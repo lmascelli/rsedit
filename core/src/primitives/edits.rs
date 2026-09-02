@@ -19,7 +19,7 @@ primitive!(self_insert, args, _env, ctx, {
     } else {
         Err(EvalError::WrongArgumentType {
             expected: "String".into(),
-            got: format!("{:?}", args.first()),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         })
     }
 });
@@ -72,7 +72,7 @@ primitive!(forward_char, args, _env, ctx, {
         } else {
             return Err(EvalError::WrongArgumentType {
                 expected: "Number".into(),
-                got: format!("{:?}", args[0]),
+                got: args[0].clone(),
             });
         }
     };
@@ -102,7 +102,7 @@ primitive!(backward_char, args, _env, ctx, {
         } else {
             return Err(EvalError::WrongArgumentType {
                 expected: "Number".into(),
-                got: format!("{:?}", args[0]),
+                got: args[0].clone(),
             });
         }
     };

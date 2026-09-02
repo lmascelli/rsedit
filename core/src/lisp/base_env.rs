@@ -9,13 +9,13 @@ macro_rules! nil {
 }
 
 // -------------------------------- HELPER FUNCTIONS ---------------------------
-fn expect_number<T: LispContext>(exp: &LispExp<T>) -> Result<f64, EvalError> {
+fn expect_number<T: LispContext>(exp: &LispExp<T>) -> Result<f64, EvalError<T>> {
     if let LispExp::Number(n) = exp {
         Ok(*n)
     } else {
         Err(EvalError::WrongArgumentType {
             expected: "Number".into(),
-            got: format!("{:?}", exp),
+            got: exp.clone(),
         })
     }
 }
@@ -28,13 +28,13 @@ fn expect_number<T: LispContext>(exp: &LispExp<T>) -> Result<f64, EvalError> {
 /// that want the O(1) chain (`car`, `cdr`, `cons`) simply do not call
 /// this. Tightening the remaining callers to walk the chain in place is a
 /// separate, independently testable change.
-fn expect_list<T: LispContext>(exp: &LispExp<T>) -> Result<Vec<LispExp<T>>, EvalError> {
+fn expect_list<T: LispContext>(exp: &LispExp<T>) -> Result<Vec<LispExp<T>>, EvalError<T>> {
     match exp {
         LispExp::Cons(_) => Ok(exp.iter().collect()),
         other if other.is_nil() => Ok(vec![]),
         other => Err(EvalError::WrongArgumentType {
             expected: "List".into(),
-            got: format!("{:?}", other),
+            got: other.clone(),
         }),
     }
 }
@@ -45,13 +45,13 @@ fn is_list_value<T: LispContext>(exp: &LispExp<T>) -> bool {
     matches!(exp, LispExp::Cons(_)) || exp.is_nil()
 }
 
-fn expect_string<T: LispContext>(exp: &LispExp<T>) -> Result<String, EvalError> {
+fn expect_string<T: LispContext>(exp: &LispExp<T>) -> Result<String, EvalError<T>> {
     if let LispExp::String(s) = exp {
         Ok((**s).clone())
     } else {
         Err(EvalError::WrongArgumentType {
             expected: "String".into(),
-            got: format!("{:?}", exp),
+            got: exp.clone(),
         })
     }
 }
@@ -85,7 +85,7 @@ pub fn call_callable<T: LispContext>(
     call_args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     match func {
         LispExp::Lambda(lambda) => {
             let call_frame = Env::new_child(&lambda.env);
@@ -117,7 +117,7 @@ pub fn call_callable<T: LispContext>(
     }
 }
 
-fn find_assoc<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError> {
+fn find_assoc<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -139,7 +139,7 @@ fn find_assoc<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalErr
     Ok(LispExp::nil())
 }
 
-fn find_member<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError> {
+fn find_member<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -157,7 +157,7 @@ fn find_member<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalEr
 fn compare_chain<T: LispContext>(
     args: &[LispExp<T>],
     op: fn(f64, f64) -> bool,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -185,7 +185,7 @@ fn primitive_funcall<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -214,7 +214,7 @@ fn primitive_eval<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -241,7 +241,7 @@ fn primitive_eval_string<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -260,7 +260,7 @@ fn primitive_eval_string<T: LispContext>(
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "String".into(),
-                got: format!("{:?}", args[0]),
+                got: args[0].clone(),
             })
         }
     }
@@ -284,7 +284,7 @@ fn primitive_eval_string_safe<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -316,7 +316,7 @@ fn primitive_eval_string_safe<T: LispContext>(
     } else {
         Err(EvalError::WrongArgumentType {
             expected: "String".into(),
-            got: format!("{:?}", args[0]),
+            got: args[0].clone(),
         })
     }
 }
@@ -335,7 +335,7 @@ fn primitive_function_doc<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         let err = Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -368,7 +368,7 @@ fn primitive_function_doc<T: LispContext>(
         } else {
             let err = Err(EvalError::WrongArgumentType {
                 expected: "Symbol".into(),
-                got: format!("{:?}", args[0]),
+                got: args[0].clone(),
             });
             ctx.log_diagnostic(&format!("{err:?}"));
             err
@@ -395,7 +395,7 @@ fn primitive_add_to_list<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() < 2 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -425,7 +425,7 @@ fn primitive_add_to_list<T: LispContext>(
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "Symbol".into(),
-                got: format!("{:?}", &args[0]),
+                got: args[0].clone(),
             })
         }
     }
@@ -444,7 +444,7 @@ fn primitive_append_to_list<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() < 2 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -471,7 +471,7 @@ fn primitive_append_to_list<T: LispContext>(
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "Symbol".into(),
-                got: format!("{:?}", &args[0]),
+                got: args[0].clone(),
             })
         }
     }
@@ -490,7 +490,7 @@ fn primitive_remove_from_list<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() < 2 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -523,7 +523,7 @@ fn primitive_remove_from_list<T: LispContext>(
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "Symbol".into(),
-                got: format!("{:?}", &args[0]),
+                got: args[0].clone(),
             })
         }
     }
@@ -539,7 +539,7 @@ fn primitive_car<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -551,7 +551,7 @@ fn primitive_car<T: LispContext>(
         other if other.is_nil() => Ok(LispExp::nil()),
         other => Err(EvalError::WrongArgumentType {
             expected: "List".into(),
-            got: format!("{:?}", other),
+            got: other.clone(),
         }),
     }
 }
@@ -568,7 +568,7 @@ fn primitive_cdr<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -580,7 +580,7 @@ fn primitive_cdr<T: LispContext>(
         other if other.is_nil() => Ok(LispExp::nil()),
         other => Err(EvalError::WrongArgumentType {
             expected: "List".into(),
-            got: format!("{:?}", other),
+            got: other.clone(),
         }),
     }
 }
@@ -597,7 +597,7 @@ fn primitive_cons<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -619,8 +619,61 @@ fn primitive_list<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     Ok(LispExp::proper_list(args.to_vec()))
+}
+
+const THROW_DOC: &str = "(throw TAG VALUE): Jump to the innermost enclosing \
+                 `catch' whose tag equals TAG, making that `catch' return \
+                 VALUE. Signals an error if no such `catch' is active.\n\n\
+                 A `catch' with a different tag does not intercept it, an \
+                 `unwind-protect' in between still runs its cleanups, and a \
+                 `condition-case' deliberately does not catch it -- a throw is \
+                 a control transfer, not a failure.\n\n\
+                 Example:\n\
+                 (catch 'done (dolist (x '(1 2 3)) (if (= x 2) (throw 'done x))))\n\
+                 => 2";
+
+fn primitive_throw<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    Err(EvalError::Throw {
+        tag: args[0].clone(),
+        value: args[1].clone(),
+    })
+}
+
+const SIGNAL_DOC: &str = "(signal SYMBOL DATA): Raise the error condition SYMBOL, carrying \
+                 DATA. A `condition-case' handler for SYMBOL (or for `error', \
+                 which matches everything) receives (SYMBOL . DATA) in its \
+                 variable.\n\n\
+                 Example:\n\
+                 (condition-case e (signal 'my-error '(1 2)) (my-error (cdr e)))\n\
+                 => (1 2)";
+
+fn primitive_signal<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    Err(EvalError::Signal {
+        symbol: args[0].clone(),
+        data: args[1].clone(),
+    })
 }
 
 const NTH_DOC: &str = "(nth N LIST): Return the Nth element of LIST (zero-indexed), \
@@ -634,7 +687,7 @@ fn primitive_nth<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -662,7 +715,7 @@ fn primitive_nthcdr<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -680,7 +733,7 @@ fn primitive_nthcdr<T: LispContext>(
             other => {
                 return Err(EvalError::WrongArgumentType {
                     expected: "List".into(),
-                    got: format!("{:?}", other),
+                    got: other.clone(),
                 });
             }
         }
@@ -699,7 +752,7 @@ fn primitive_length<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -714,7 +767,7 @@ fn primitive_length<T: LispContext>(
         other => {
             return Err(EvalError::WrongArgumentType {
                 expected: "Sequence".into(),
-                got: format!("{:?}", other),
+                got: other.clone(),
             });
         }
     };
@@ -734,7 +787,7 @@ fn primitive_append<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Ok(LispExp::nil());
     }
@@ -755,7 +808,7 @@ fn primitive_reverse<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -777,7 +830,7 @@ fn primitive_reverse<T: LispContext>(
         other if other.is_nil() => Ok(LispExp::nil()),
         other => Err(EvalError::WrongArgumentType {
             expected: "Sequence".into(),
-            got: format!("{:?}", other),
+            got: other.clone(),
         }),
     }
 }
@@ -792,7 +845,7 @@ fn primitive_member<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     find_member(args)
 }
 
@@ -808,7 +861,7 @@ fn primitive_memq<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     find_member(args)
 }
 
@@ -823,7 +876,7 @@ fn primitive_assoc<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     find_assoc(args)
 }
 
@@ -837,7 +890,7 @@ fn primitive_assq<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     find_assoc(args)
 }
 
@@ -852,7 +905,7 @@ fn primitive_elt<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -875,7 +928,7 @@ fn primitive_elt<T: LispContext>(
         other if other.is_nil() => Ok(LispExp::nil()),
         other => Err(EvalError::WrongArgumentType {
             expected: "Sequence".into(),
-            got: format!("{:?}", other),
+            got: other.clone(),
         }),
     }
 }
@@ -891,7 +944,7 @@ fn primitive_mapcar<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -916,7 +969,7 @@ fn primitive_mapc<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -942,7 +995,7 @@ fn primitive_apply<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -966,7 +1019,7 @@ fn primitive_identity<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -978,7 +1031,7 @@ fn primitive_identity<T: LispContext>(
 
 // ----------------------------- Predicates ------------------------------------
 
-fn primitive_equal_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError> {
+fn primitive_equal_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -988,7 +1041,7 @@ fn primitive_equal_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T
     Ok(LispExp::boolean(args[0] == args[1]))
 }
 
-fn primitive_eq_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError> {
+fn primitive_eq_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -1019,7 +1072,7 @@ fn primitive_eq<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     primitive_eq_impl(args)
 }
 
@@ -1027,7 +1080,7 @@ fn primitive_eql<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     primitive_eq_impl(args)
 }
 
@@ -1042,7 +1095,7 @@ fn primitive_equal<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     primitive_equal_impl(args)
 }
 
@@ -1055,7 +1108,7 @@ fn primitive_null<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1075,7 +1128,7 @@ fn primitive_not<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     // `not` and `null` are the same operation in Elisp.
     primitive_null(args, env, ctx)
 }
@@ -1091,7 +1144,7 @@ fn primitive_consp<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1106,7 +1159,7 @@ fn primitive_listp<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1126,7 +1179,7 @@ fn primitive_stringp<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1146,7 +1199,7 @@ fn primitive_numberp<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1166,7 +1219,7 @@ fn primitive_symbolp<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1180,7 +1233,7 @@ fn primitive_functionp<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1205,7 +1258,7 @@ fn primitive_vectorp<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1224,7 +1277,7 @@ fn primitive_zerop<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1238,7 +1291,7 @@ fn primitive_atom_predicate<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1255,7 +1308,7 @@ fn primitive_sum<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     let mut sum = 0.0;
     for arg in args {
         if let LispExp::Number(number) = arg {
@@ -1263,7 +1316,7 @@ fn primitive_sum<T: LispContext>(
         } else {
             return Err(EvalError::WrongArgumentType {
                 expected: "Number".into(),
-                got: format!("{:?}", arg),
+                got: arg.clone(),
             });
         }
     }
@@ -1274,7 +1327,7 @@ fn primitive_subtraction<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1304,7 +1357,7 @@ fn primitive_mul<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     let mut product = 1.0;
     for arg in args {
         product *= expect_number(arg)?;
@@ -1324,7 +1377,7 @@ fn primitive_div<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1357,7 +1410,7 @@ fn primitive_mod<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -1388,7 +1441,7 @@ fn primitive_1plus<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1406,7 +1459,7 @@ fn primitive_1minus<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1430,7 +1483,7 @@ fn primitive_compare<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1444,7 +1497,7 @@ fn primitive_compare<T: LispContext>(
         } else {
             return Err(EvalError::WrongArgumentType {
                 expected: "Number".into(),
-                got: format!("{:?}", arg),
+                got: arg.clone(),
             });
         }
     }
@@ -1461,7 +1514,7 @@ fn primitive_lt<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     compare_chain(args, |a, b| a < b)
 }
 
@@ -1475,7 +1528,7 @@ fn primitive_gt<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     compare_chain(args, |a, b| a > b)
 }
 
@@ -1489,7 +1542,7 @@ fn primitive_le<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     compare_chain(args, |a, b| a <= b)
 }
 
@@ -1503,7 +1556,7 @@ fn primitive_ge<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     compare_chain(args, |a, b| a >= b)
 }
 
@@ -1516,7 +1569,7 @@ fn primitive_max<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1539,7 +1592,7 @@ fn primitive_min<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1562,7 +1615,7 @@ fn primitive_abs<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1583,7 +1636,7 @@ fn primitive_concat<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     let mut result = String::new();
     for arg in args {
         result.push_str(&expect_string(arg)?);
@@ -1601,7 +1654,7 @@ fn primitive_string_eq<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -1623,7 +1676,7 @@ fn primitive_string_lt<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -1649,7 +1702,7 @@ fn primitive_substring<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() || args.len() > 3 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -1690,7 +1743,7 @@ fn primitive_upcase<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1709,7 +1762,7 @@ fn primitive_downcase<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1730,7 +1783,7 @@ fn primitive_number_to_string<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1751,7 +1804,7 @@ fn primitive_string_to_number<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1772,7 +1825,7 @@ fn primitive_symbol_name<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1784,7 +1837,7 @@ fn primitive_symbol_name<T: LispContext>(
     } else {
         Err(EvalError::WrongArgumentType {
             expected: "Symbol".into(),
-            got: format!("{:?}", args[0]),
+            got: args[0].clone(),
         })
     }
 }
@@ -1797,7 +1850,7 @@ fn primitive_intern<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1821,7 +1874,7 @@ fn primitive_split_string<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() || args.len() > 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1859,7 +1912,7 @@ fn primitive_format<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1871,7 +1924,7 @@ fn primitive_format<T: LispContext>(
     let mut arg_idx = 1;
     let mut chars = fmt.chars();
 
-    let next_arg = |idx: &mut usize| -> Result<&LispExp<T>, EvalError> {
+    let next_arg = |idx: &mut usize| -> Result<&LispExp<T>, EvalError<T>> {
         let val = args.get(*idx).ok_or(EvalError::WrongNumberOfArguments {
             expected: *idx + 1,
             got: args.len(),
@@ -1928,7 +1981,7 @@ fn primitive_make_atom<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1950,7 +2003,7 @@ fn primitive_deref<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -1966,7 +2019,7 @@ fn primitive_deref<T: LispContext>(
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "Atom".into(),
-                got: format!("{:?}", args[0]),
+                got: args[0].clone(),
             })
         }
     }
@@ -1983,7 +2036,7 @@ fn primitive_reset<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     _ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() < 2 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -2001,7 +2054,7 @@ fn primitive_reset<T: LispContext>(
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "Atom".into(),
-                got: format!("{:?}", args[0]),
+                got: args[0].clone(),
             })
         }
     }
@@ -2022,7 +2075,7 @@ fn primitive_resume<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -2053,7 +2106,7 @@ fn primitive_resume<T: LispContext>(
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "Fiber".into(),
-                got: format!("{:?}", args[0]),
+                got: args[0].clone(),
             })
         }
     }
@@ -2070,6 +2123,14 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     env.set_function(
         "eval".into(),
         LispExp::primitive(primitive_eval, Some(EVAL_DOC.into())),
+    );
+    env.set_function(
+        "throw".into(),
+        LispExp::primitive(primitive_throw, Some(THROW_DOC.into())),
+    );
+    env.set_function(
+        "signal".into(),
+        LispExp::primitive(primitive_signal, Some(SIGNAL_DOC.into())),
     );
     env.set_function(
         "eval-string".into(),

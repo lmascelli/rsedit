@@ -46,7 +46,7 @@ mod tests {
         meter
             .consume(10)
             .expect("spending exactly the remaining budget must succeed");
-        assert_eq!(meter.consume(1).unwrap_err(), EvalError::OutOfFuel);
+        assert_eq!(meter.consume(1).unwrap_err(), Exhausted);
     }
 
     // ====================================================================== //
@@ -78,7 +78,7 @@ mod tests {
             child
                 .consume(DEFAULT_FUEL)
                 .expect("a fresh thread starts from DEFAULT_FUEL");
-            assert_eq!(child.consume(1).unwrap_err(), EvalError::OutOfFuel);
+            assert_eq!(child.consume(1).unwrap_err(), Exhausted);
         })
         .join()
         .expect("the child thread panicked");
@@ -88,7 +88,7 @@ mod tests {
         meter
             .consume(1)
             .expect("the parent still holds its last unit");
-        assert_eq!(meter.consume(1).unwrap_err(), EvalError::OutOfFuel);
+        assert_eq!(meter.consume(1).unwrap_err(), Exhausted);
     }
 
     #[test]
@@ -102,7 +102,7 @@ mod tests {
             child
                 .consume(500)
                 .expect("the child starts from the configured budget");
-            assert_eq!(child.consume(1).unwrap_err(), EvalError::OutOfFuel);
+            assert_eq!(child.consume(1).unwrap_err(), Exhausted);
         })
         .join()
         .expect("the child thread panicked");
@@ -128,8 +128,8 @@ mod tests {
     }
 
     impl LispContext for FuelCtx {
-        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
-            self.fuel.consume(amount)
+        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError<FuelCtx>> {
+            self.fuel.consume(amount).map_err(|_| EvalError::OutOfFuel)
         }
 
         fn log_diagnostic(&self, msg: &str) {
@@ -171,7 +171,7 @@ mod tests {
         script: &str,
         env: Arc<Env<FuelCtx>>,
         ctx: &FuelCtx,
-    ) -> Result<LispExp<FuelCtx>, EvalError> {
+    ) -> Result<LispExp<FuelCtx>, EvalError<FuelCtx>> {
         let wrapped = format!("(progn {script})");
         let mut parser = Parser::new(&wrapped);
         eval(

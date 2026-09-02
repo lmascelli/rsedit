@@ -4,7 +4,11 @@ mod tests {
     use std::sync::Arc;
 
     // Helper function to parse and evaluate a simple string expression
-    fn eval_str(source: &str, env: Arc<Env<()>>, ctx: &mut ()) -> Result<LispExp<()>, EvalError> {
+    fn eval_str(
+        source: &str,
+        env: Arc<Env<()>>,
+        ctx: &mut (),
+    ) -> Result<LispExp<()>, EvalError<()>> {
         let mut parser = Parser::new(source);
         let exp = parser.next().unwrap();
         eval(&exp, env, ctx)
@@ -144,7 +148,7 @@ mod tests {
         args: &[LispExp<T>],
         env: Arc<Env<T>>,
         ctx: &T,
-    ) -> Result<LispExp<T>, EvalError> {
+    ) -> Result<LispExp<T>, EvalError<T>> {
         if args.is_empty() {
             return Err(EvalError::WrongNumberOfArguments {
                 expected: 1,

@@ -24,7 +24,7 @@ mod tests {
     }
 
     impl LispContext for MockHostContext {
-        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, amount: u32) -> Result<(), EvalError<MockHostContext>> {
             if *self.fuel_remaining.read().unwrap() < amount {
                 Err(EvalError::OutOfFuel)
             } else {

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     impl crate::lisp::LispContext for () {
-        fn consume_fuel(&self, _amount: u32) -> Result<(), crate::lisp::EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), crate::lisp::EvalError<()>> {
             Ok(())
         }
 
@@ -18,6 +18,7 @@ mod base_env_tests;
 mod eval_tests;
 mod lexical_context;
 mod lisp_core_compliance_tests;
+mod nonlocal_exit_tests;
 // Thread, concurrency and fuel
 mod fiber_tests;
 mod fuel;

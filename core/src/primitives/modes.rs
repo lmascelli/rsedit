@@ -24,7 +24,7 @@ primitive!(make_mode, args, _env, ctx, {
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "Symbol".into(),
-                got: format!("{:?}", args.get(0)),
+                got: args.first().cloned().unwrap_or_else(ELispExp::nil),
             })
         }
     }
@@ -71,7 +71,7 @@ primitive!(add_hook, args, _env, ctx, {
     } else {
         Err(EvalError::WrongArgumentType {
             expected: "Symbol, String, Symbol".into(),
-            got: "other".into(),
+            got: ELispExp::string("other".into()),
         })
     }
 });
@@ -137,7 +137,7 @@ primitive!(add_syntax_rule, args, _env, ctx, {
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "Symbol, String, Symbol".into(),
-                got: format!("{:?}", args),
+                got: ELispExp::string(format!("{:?}", args)),
             })
         }
     }

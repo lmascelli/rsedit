@@ -20,7 +20,7 @@ mod tests {
         source: &str,
         env: &Arc<Env<EditorState<GapBuffer>>>,
         ctx: &EditorState<GapBuffer>,
-    ) -> Result<LispExp<EditorState<GapBuffer>>, EvalError> {
+    ) -> Result<LispExp<EditorState<GapBuffer>>, EvalError<EditorState<GapBuffer>>> {
         let wrapped = format!("(progn {})", source);
         let mut parser = Parser::new(&wrapped);
         let ast = parser.next().expect("failed to parse test script");

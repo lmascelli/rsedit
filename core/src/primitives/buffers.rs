@@ -31,7 +31,7 @@ primitive!(buffer_create, args, _env, ctx, {
             _ => {
                 return Err(EvalError::WrongArgumentType {
                     expected: "String or Symbol".into(),
-                    got: format!("{:?}", args[0]),
+                    got: args[0].clone(),
                 });
             }
         };
@@ -65,7 +65,7 @@ primitive!(close_buffer, args, env, ctx, {
         Some(other) => {
             return Err(EvalError::WrongArgumentType {
                 expected: "String".into(),
-                got: format!("{:?}", other),
+                got: other.clone(),
             });
         }
     };
@@ -139,7 +139,7 @@ primitive!(switch_to_buffer, args, _env, ctx, {
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "String".into(),
-                got: format!("{:?}", args.get(0)),
+                got: args.first().cloned().unwrap_or_else(ELispExp::nil),
             })
         }
     }

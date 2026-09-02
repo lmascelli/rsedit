@@ -30,7 +30,7 @@ mod tests {
     }
 
     impl LispContext for BacktraceCtx {
-        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError<BacktraceCtx>> {
             Ok(())
         }
         fn log_diagnostic(&self, _msg: &str) {}
@@ -63,7 +63,10 @@ mod tests {
         }
     }
 
-    fn eval_script(ctx: &BacktraceCtx, script: &str) -> Result<LispExp<BacktraceCtx>, EvalError> {
+    fn eval_script(
+        ctx: &BacktraceCtx,
+        script: &str,
+    ) -> Result<LispExp<BacktraceCtx>, EvalError<BacktraceCtx>> {
         let env = Env::new_root();
         setup_base_env(env.clone());
         let wrapped = format!("(progn {})", script);

@@ -12,7 +12,7 @@ mod tests {
     }
 
     impl LispContext for ThreadCtx {
-        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError<ThreadCtx>> {
             Ok(())
         }
 
@@ -31,7 +31,7 @@ mod tests {
         script: &str,
         env: Arc<Env<T>>,
         ctx: &mut T,
-    ) -> Result<LispExp<T>, EvalError> {
+    ) -> Result<LispExp<T>, EvalError<T>> {
         let wrapped = format!("(progn {})", script);
         let mut parser = Parser::new(&wrapped);
         let exp = parser.next().unwrap();

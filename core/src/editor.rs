@@ -68,8 +68,10 @@ pub struct EditorState<B: BufferTrait> {
 }
 
 impl<B: BufferTrait> LispContext for EditorState<B> {
-    fn consume_fuel(&self, amount: u32) -> Result<(), EvalError> {
-        self.fuel.consume(amount)
+    fn consume_fuel(&self, amount: u32) -> Result<(), EvalError<EditorState<B>>> {
+        // The meter reports a host-agnostic `Exhausted`; naming it as a Lisp
+        // error is the host's job, which is the point of the split.
+        self.fuel.consume(amount).map_err(|_| EvalError::OutOfFuel)
     }
 
     fn log_diagnostic(&self, msg: &str) {
@@ -91,7 +93,7 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
     fn begin_thread_evaluation(&self) {
         self.fuel.arm_thread();
     }
-    
+
     fn push_call_frame(&self, frame: &str) {
         self.call_stack
             .write()
@@ -206,7 +208,11 @@ impl<B: BufferTrait> EditorState<B> {
     /// it on the logs and doesn't evaluate anything otherwise evaluate it and if
     /// the evaluation succeeds return a list with the result of the evaluation or
     /// the error of the evaluation.
-    pub fn eval_file(&self, file: &str, env: Arc<Env<Self>>) -> Result<ELispExp<B>, EvalError> {
+    pub fn eval_file(
+        &self,
+        file: &str,
+        env: Arc<Env<Self>>,
+    ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
         let content = format!(
             "(progn {})",
             // first search the file as a relative path
@@ -927,7 +933,7 @@ impl<B: BufferTrait> EditorState<B> {
 /// It installs in the lisp environment all the primitive functions to use the editor.
 /// It is mandatory that the lisp environment does not outlive the EditorState struct.
 pub fn create_global_env<B: BufferTrait>()
--> Result<(EditorState<B>, Arc<Env<EditorState<B>>>), EvalError> {
+-> Result<(EditorState<B>, Arc<Env<EditorState<B>>>), EvalError<EditorState<B>>> {
     let editor_state = EditorState::new();
     let env = bootstrap_vm(&editor_state)?;
 

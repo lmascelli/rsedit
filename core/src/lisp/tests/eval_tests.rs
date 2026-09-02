@@ -293,7 +293,7 @@ mod test {
     }
 
     impl LispContext for TestHost {
-        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError<TestHost>> {
             Ok(())
         }
 
@@ -305,7 +305,7 @@ mod test {
         _args: &[LispExp<TestHost>],
         _env: Arc<Env<TestHost>>,
         ctx: &TestHost,
-    ) -> Result<LispExp<TestHost>, EvalError> {
+    ) -> Result<LispExp<TestHost>, EvalError<TestHost>> {
         *ctx.state_changes.write().unwrap() += 1;
         Ok(LispExp::symbol("nil".into()))
     }
@@ -315,7 +315,7 @@ mod test {
         args: &[LispExp<TestHost>],
         _env: Arc<Env<TestHost>>,
         _ctx: &TestHost,
-    ) -> Result<LispExp<TestHost>, EvalError> {
+    ) -> Result<LispExp<TestHost>, EvalError<TestHost>> {
         let mut sum = 0.0;
         for arg in args {
             if let LispExp::Number(n) = arg {
@@ -323,7 +323,7 @@ mod test {
             } else {
                 return Err(EvalError::WrongArgumentType {
                     expected: "number".into(),
-                    got: format!("{:?}", arg),
+                    got: arg.clone(),
                 });
             }
         }
@@ -421,7 +421,7 @@ mod test {
     }
 
     impl LispContext for MockHost {
-        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError> {
+        fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError<MockHost>> {
             Ok(())
         }
 
@@ -540,7 +540,7 @@ mod test {
         }
     }
 
-    fn eval_script(script: &str) -> Result<LispExp<()>, EvalError> {
+    fn eval_script(script: &str) -> Result<LispExp<()>, EvalError<()>> {
         let env = Env::new_root();
 
         // We wrap in a progn just in case the script has multiple top-level expressions,

@@ -25,7 +25,7 @@ mod tests {
         args: &[LispExp<()>],
         _env: Arc<Env<()>>,
         _ctx: &(),
-    ) -> Result<LispExp<()>, EvalError> {
+    ) -> Result<LispExp<()>, EvalError<()>> {
         let mut sum = 0.0;
         for arg in args {
             if let LispExp::Number(n) = arg {
@@ -33,7 +33,7 @@ mod tests {
             } else {
                 return Err(EvalError::WrongArgumentType {
                     expected: "Number".into(),
-                    got: format!("{:?}", arg),
+                    got: arg.clone(),
                 });
             }
         }
@@ -44,7 +44,7 @@ mod tests {
         args: &[LispExp<()>],
         _env: Arc<Env<()>>,
         _ctx: &(),
-    ) -> Result<LispExp<()>, EvalError> {
+    ) -> Result<LispExp<()>, EvalError<()>> {
         if args.len() != 2 {
             return Err(EvalError::WrongNumberOfArguments {
                 expected: 2,
@@ -58,7 +58,7 @@ mod tests {
         args: &[LispExp<()>],
         _env: Arc<Env<()>>,
         _ctx: &(),
-    ) -> Result<LispExp<()>, EvalError> {
+    ) -> Result<LispExp<()>, EvalError<()>> {
         if args.len() != 2 {
             return Err(EvalError::WrongNumberOfArguments {
                 expected: 2,
@@ -78,7 +78,7 @@ mod tests {
         env
     }
 
-    fn eval_str(source: &str, env: Arc<Env<()>>) -> Result<LispExp<()>, EvalError> {
+    fn eval_str(source: &str, env: Arc<Env<()>>) -> Result<LispExp<()>, EvalError<()>> {
         let mut ctx = ();
         // Wrapping in `progn` lets a test script contain several top-level
         // forms while still handing `eval` a single AST node.
@@ -94,7 +94,7 @@ mod tests {
         })
     }
 
-    fn eval_err(source: &str) -> EvalError {
+    fn eval_err(source: &str) -> EvalError<()> {
         eval_str(source, bare_env()).expect_err(&format!("expected `{source}` to fail"))
     }
 

@@ -81,6 +81,14 @@ impl Drop for FuelScope<'_> {
 /// remaining count lives in thread-local storage (private, touched every
 /// step). That split is deliberate: the hot counter never needs
 /// synchronisation, while the setting stays global and adjustable.
+/// What [`FuelMeter::consume`] reports when the budget is gone.
+///
+/// Deliberately not an `EvalError`: the meter is host-agnostic machinery and
+/// has no business naming the interpreter's error type, which is generic over
+/// the context. Callers map it to `EvalError::OutOfFuel`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Exhausted;
+
 #[derive(Debug)]
 pub struct FuelMeter {
     budget: AtomicU32,
@@ -93,13 +101,13 @@ impl FuelMeter {
         }
     }
 
-    pub fn consume(&self, amount: u32) -> Result<(), EvalError> {
+    pub fn consume(&self, amount: u32) -> Result<(), Exhausted> {
         FUEL.with(|fuel| match fuel.get().checked_sub(amount) {
             Some(remaining) => {
                 fuel.set(remaining);
                 Ok(())
             }
-            None => Err(EvalError::OutOfFuel),
+            None => Err(Exhausted),
         })
     }
 
@@ -141,7 +149,7 @@ impl FuelMeter {
 pub trait LispContext: Clone + PartialEq + Debug + Send + Sync + 'static {
     /// Consumes a given amount of execution ticks.
     /// Returns `Err(EvalError::OutOfFuel)` if the host-defined budget is exhausted.
-    fn consume_fuel(&self, amount: u32) -> Result<(), EvalError>;
+    fn consume_fuel(&self, amount: u32) -> Result<(), EvalError<Self>>;
 
     /// Allows the VM to bubble up non-fatal diagnostic logs, trace statements,
     /// or debugging notices to the host without knowing how the host presents them.
@@ -285,13 +293,21 @@ pub struct Parser<'source> {
 // ========================================================================== //
 
 #[derive(Debug, PartialEq)]
-pub enum EvalError {
+pub enum EvalError<T: LispContext> {
     UnboundVariable(String),
     UndefinedFunction(String),
     UnvalidFunctionCall,
     UncorrectFunctionDefinition,
-    WrongNumberOfArguments { expected: usize, got: usize },
-    WrongArgumentType { expected: String, got: String },
+    WrongNumberOfArguments {
+        expected: usize,
+        got: usize,
+    },
+    /// `got` is the offending value itself, not a rendering of it, so a
+    /// `condition-case` handler can inspect it.
+    WrongArgumentType {
+        expected: String,
+        got: LispExp<T>,
+    },
     QuoteNotOneArgument,
     IfNoConditionProvided,
     IfNoTrueBrach,
@@ -312,7 +328,81 @@ pub enum EvalError {
     DefvarNameMustBeASymbol,
     BackquoteNotOneArgument,
     OutOfFuel,
+    ConditionCaseInvalidVariable,
+    ConditionCaseInvalidHandler,
+    /// A `(throw TAG VALUE)` in flight, looking for its `catch`. Carrying the
+    /// payload here rather than out of band is the whole reason this enum is
+    /// generic over the context type.
+    Throw {
+        tag: LispExp<T>,
+        value: LispExp<T>,
+    },
+    /// A `(signal SYMBOL DATA)` raised from Lisp. `symbol` is the condition a
+    /// handler matches on; `data` is whatever the caller attached.
+    Signal {
+        symbol: LispExp<T>,
+        data: LispExp<T>,
+    },
     RuntimeMessage(String),
+}
+
+/// The condition symbol a `condition-case` handler matches against.
+///
+/// Every malformed-special-form variant collapses to `error`: none of them is
+/// worth naming individually from Lisp, and they all mean the same thing --
+/// the form was written wrongly.
+fn error_symbol<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
+    let name = match err {
+        EvalError::Signal { symbol, .. } => return symbol.clone(),
+        EvalError::UnboundVariable(_) => "unbound-variable",
+        EvalError::UndefinedFunction(_) => "undefined-function",
+        EvalError::UnvalidFunctionCall | EvalError::UncorrectFunctionDefinition => {
+            "invalid-function"
+        }
+        EvalError::WrongNumberOfArguments { .. } => "wrong-number-of-arguments",
+        EvalError::WrongArgumentType { .. } => "wrong-type-argument",
+        EvalError::OutOfFuel => "out-of-fuel",
+        EvalError::RuntimeMessage(_) => "runtime-error",
+        _ => "error",
+    };
+    LispExp::symbol(name.into())
+}
+
+/// The data a `condition-case` binds alongside the condition symbol.
+///
+/// Carrying the offending *value* rather than a rendering of it is what the
+/// generic error type buys: a handler can look at what actually went wrong.
+fn error_data<T: LispContext>(err: &EvalError<T>) -> LispExp<T> {
+    match err {
+        EvalError::Signal { data, .. } => data.clone(),
+        EvalError::WrongArgumentType { expected, got } => {
+            LispExp::proper_list(vec![LispExp::string(expected.clone()), got.clone()])
+        }
+        EvalError::UnboundVariable(name) | EvalError::UndefinedFunction(name) => {
+            LispExp::proper_list(vec![LispExp::symbol(name.clone())])
+        }
+        EvalError::WrongNumberOfArguments { expected, got } => LispExp::proper_list(vec![
+            LispExp::number(*expected as f64),
+            LispExp::number(*got as f64),
+        ]),
+        EvalError::RuntimeMessage(msg) => LispExp::proper_list(vec![LispExp::string(msg.clone())]),
+        other => LispExp::proper_list(vec![LispExp::string(format!("{:?}", other))]),
+    }
+}
+
+/// Does a handler's condition cover `symbol`? `t` and `error` cover
+/// everything; a list covers whatever any of its elements covers.
+fn condition_matches<T: LispContext>(condition: &LispExp<T>, symbol: &LispExp<T>) -> bool {
+    match condition {
+        LispExp::Symbol(name) => {
+            let name = name.as_str();
+            name == "t" || name == "error" || condition == symbol
+        }
+        // Handler conditions are unevaluated syntax, so a list of them is a
+        // `Form`, not a `Cons`.
+        LispExp::Form(items) => items.iter().any(|c| condition_matches(c, symbol)),
+        _ => false,
+    }
 }
 
 // -------------------------------  Environment --------------------------------
@@ -402,7 +492,7 @@ impl<T: LispContext> PartialEq for SharedFiber<T> {
 
 // --------------------------------  Primitive  --------------------------------
 
-pub type LispPrimitive<T> = fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError>;
+pub type LispPrimitive<T> = fn(&[LispExp<T>], Arc<Env<T>>, &T) -> Result<LispExp<T>, EvalError<T>>;
 
 // --------------------------------  LispExp  ----------------------------------
 
@@ -568,14 +658,12 @@ impl<T: LispContext> Debug for LispExp<T> {
 /// Runs once, at read time, on quoted structure only.
 pub fn form_to_data<T: LispContext>(exp: &LispExp<T>) -> LispExp<T> {
     match exp {
-        LispExp::Form(items) => {
-            LispExp::proper_list(items.iter().map(form_to_data).collect())
-        }
-        LispExp::Vector(items) => {
-            LispExp::vec(items.iter().map(form_to_data).collect())
-        }
+        LispExp::Form(items) => LispExp::proper_list(items.iter().map(form_to_data).collect()),
+        LispExp::Vector(items) => LispExp::vec(items.iter().map(form_to_data).collect()),
         LispExp::Map(m) => LispExp::map(
-            m.iter().map(|(k, v)| (k.clone(), form_to_data(v))).collect(),
+            m.iter()
+                .map(|(k, v)| (k.clone(), form_to_data(v)))
+                .collect(),
         ),
         other => other.clone(),
     }
@@ -1278,19 +1366,27 @@ impl<T: LispContext> LispExp<T> {
 
     /// Fold a vector into a proper list, right to left.
     pub fn proper_list(items: Vec<LispExp<T>>) -> LispExp<T> {
-        items.into_iter().rev().fold(LispExp::nil(), |cdr, car| LispExp::cons(car, cdr))
+        items
+            .into_iter()
+            .rev()
+            .fold(LispExp::nil(), |cdr, car| LispExp::cons(car, cdr))
     }
 
     /// Fold a vector into a chain ending in an arbitrary tail.
     pub fn improper_list(items: Vec<LispExp<T>>, tail: LispExp<T>) -> LispExp<T> {
-        items.into_iter().rev().fold(tail, |cdr, car| LispExp::cons(car, cdr))
+        items
+            .into_iter()
+            .rev()
+            .fold(tail, |cdr, car| LispExp::cons(car, cdr))
     }
 
     /// Walk a cons chain, yielding each `car`. Stops at any non-`Cons`
     /// cdr, so it silently treats an improper list as its proper prefix —
     /// callers that care use `split_list` below.
     pub fn iter(&self) -> ConsIter<T> {
-        ConsIter { cursor: self.clone() }
+        ConsIter {
+            cursor: self.clone(),
+        }
     }
 
     /// Collect a chain into `(elements, final_tail)`. The tail is `nil`
@@ -1349,7 +1445,7 @@ impl<T: LispContext> LispExp<T> {
 /// The inverse: reconstitute a form `eval` can dispatch on from a data
 /// list. Only reached when data is evaluated — `(eval (list '+ 1 2))`,
 /// and macro expansions.
-pub fn data_to_form<T: LispContext>(exp: &LispExp<T>) -> Result<LispExp<T>, EvalError> {
+pub fn data_to_form<T: LispContext>(exp: &LispExp<T>) -> Result<LispExp<T>, EvalError<T>> {
     match exp {
         LispExp::Cons(_) => {
             let (items, tail) = exp.split_list();
@@ -1394,7 +1490,7 @@ pub fn bind_lambda_args<T: LispContext>(
     lambda: &Lambda<T>,
     args: &[LispExp<T>],
     call_frame: &Arc<Env<T>>,
-) -> Result<(), EvalError> {
+) -> Result<(), EvalError<T>> {
     let min = lambda.params.len();
     let max = min + lambda.optionals.len();
     if args.len() < min || (lambda.rest.is_none() && args.len() > max) {
@@ -1437,7 +1533,7 @@ pub fn bind_lambda_args<T: LispContext>(
 /// land in, and are consumed rather than returned.
 fn parse_lambda_params<T: LispContext>(
     params_list: &[LispExp<T>],
-) -> Result<(Vec<String>, Vec<String>, Option<String>), EvalError> {
+) -> Result<(Vec<String>, Vec<String>, Option<String>), EvalError<T>> {
     #[derive(PartialEq)]
     enum Mode {
         Required,
@@ -1488,16 +1584,11 @@ fn parse_lambda_params<T: LispContext>(
     Ok((required, optionals, rest))
 }
 
-
-
-
-
 // ========================================================================== //
 //                           +-----------------------------+
 //                           |  Lisp evaluation functions  |
 //                           +-----------------------------+
 // ========================================================================== //
-
 
 enum EvalStep<T: LispContext> {
     Done(LispExp<T>),
@@ -1508,7 +1599,7 @@ pub fn eval<T: LispContext>(
     exp: &LispExp<T>,
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     let mut current_exp = exp.clone();
     let mut current_env = env;
 
@@ -1527,7 +1618,7 @@ fn eval_step<T: LispContext>(
     exp: &LispExp<T>,
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<EvalStep<T>, EvalError> {
+) -> Result<EvalStep<T>, EvalError<T>> {
     ctx.consume_fuel(1)?;
     match exp {
         LispExp::String(_)
@@ -1638,7 +1729,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<EvalStep<T>, EvalError> {
+) -> Result<EvalStep<T>, EvalError<T>> {
     match symbol {
         "quote" => {
             if args.len() != 1 {
@@ -1725,7 +1816,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             } else {
                 Err(EvalError::WrongArgumentType {
                     expected: "Lambda".into(),
-                    got: format!("{:?}", target_closure),
+                    got: target_closure.clone(),
                 })
             }
         }
@@ -2110,7 +2201,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     } else {
                         return Err(EvalError::WrongArgumentType {
                             expected: "List".into(),
-                            got: format!("{:?}", other),
+                            got: other.clone(),
                         });
                     }
                 }
@@ -2161,7 +2252,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
             } else {
                 return Err(EvalError::WrongArgumentType {
                     expected: "Number".into(),
-                    got: format!("{:?}", count_val),
+                    got: count_val.clone(),
                 });
             };
 
@@ -2218,11 +2309,116 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 })
             } else {
                 let body_result = eval(&args[0], env.clone(), ctx);
+                // Where the failure happened, so the cleanup forms can be
+                // unwound back to it. A failed body leaves its frames standing
+                // on purpose -- that is what `backtrace` reads -- but the
+                // cleanup's own frames are not part of the failure.
+                let depth_after_body = ctx.call_frame_depth();
                 for cleanup in &args[1..] {
                     eval(cleanup, env.clone(), ctx)?;
                 }
+                ctx.truncate_call_frames(depth_after_body);
                 Ok(EvalStep::Done(body_result?))
             }
+        }
+
+        // (catch TAG BODY...) evaluates TAG, then BODY in order, returning the
+        // last body value -- unless a `(throw TAG VALUE)` with a matching tag
+        // unwinds through it, in which case it returns VALUE instead.
+        "catch" => {
+            if args.is_empty() {
+                return Err(EvalError::WrongNumberOfArguments {
+                    expected: 1,
+                    got: 0,
+                });
+            }
+            let tag = eval(&args[0], env.clone(), ctx)?;
+            let depth_before = ctx.call_frame_depth();
+            let mut result = LispExp::nil();
+            for form in &args[1..] {
+                // Evaluated here rather than handed back as a `TailCall`: the
+                // trampoline would run the form *outside* this Rust frame and
+                // the throw would sail straight past. The price is that a
+                // `catch` is not tail-call transparent, as in real Elisp.
+                match eval(form, env.clone(), ctx) {
+                    Ok(value) => result = value,
+                    Err(EvalError::Throw { tag: thrown, value }) => {
+                        if thrown == tag {
+                            ctx.truncate_call_frames(depth_before);
+                            return Ok(EvalStep::Done(value));
+                        }
+                        // Another catch's tag: keep unwinding, payload intact.
+                        return Err(EvalError::Throw { tag: thrown, value });
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+            Ok(EvalStep::Done(result))
+        }
+
+        // (condition-case VAR BODY-FORM HANDLER...) where each HANDLER is
+        // (CONDITION HANDLER-BODY...). VAR, unless nil, is bound in the handler
+        // to (CONDITION-SYMBOL . DATA), as in Emacs.
+        "condition-case" => {
+            if args.len() < 2 {
+                return Err(EvalError::WrongNumberOfArguments {
+                    expected: 2,
+                    got: args.len(),
+                });
+            }
+            let var = match &args[0] {
+                other if other.is_nil() => None,
+                LispExp::Symbol(name) => Some(name.to_string()),
+                _ => return Err(EvalError::ConditionCaseInvalidVariable),
+            };
+
+            let depth_before = ctx.call_frame_depth();
+            // Same reason as `catch`: the protected form must run inside this
+            // Rust frame for the handlers to see its failure at all.
+            let err = match eval(&args[1], env.clone(), ctx) {
+                Ok(value) => return Ok(EvalStep::Done(value)),
+                // A throw is a control transfer, not a failure. It belongs to
+                // whichever `catch` named its tag and passes through untouched.
+                Err(throw @ EvalError::Throw { .. }) => return Err(throw),
+                Err(err) => err,
+            };
+
+            let symbol = error_symbol(&err);
+            for handler in &args[2..] {
+                let clause = match handler {
+                    LispExp::Form(clause) if !clause.is_empty() => clause,
+                    _ => return Err(EvalError::ConditionCaseInvalidHandler),
+                };
+                if !condition_matches(&clause[0], &symbol) {
+                    continue;
+                }
+
+                // The protected form died partway and left its frames standing;
+                // drop them now the failure is handled, or they surface in the
+                // next unrelated backtrace.
+                ctx.truncate_call_frames(depth_before);
+
+                let handler_env = Env::new_child(&env);
+                if let Some(name) = &var {
+                    handler_env.set_variable(
+                        name.clone(),
+                        LispExp::cons(symbol.clone(), error_data(&err)),
+                    );
+                }
+                if clause.len() == 1 {
+                    return Ok(EvalStep::Done(LispExp::nil()));
+                }
+                for form in &clause[1..clause.len() - 1] {
+                    eval(form, handler_env.clone(), ctx)?;
+                }
+                // Nothing is protected any more, so the handler's last form can
+                // go back to the trampoline.
+                return Ok(EvalStep::TailCall(
+                    clause[clause.len() - 1].clone(),
+                    handler_env,
+                ));
+            }
+            Err(err)
         }
 
         // (defmacro NAME (REQUIRED... [&optional OPTIONAL...] [&rest REST])
@@ -2279,7 +2475,7 @@ fn eval_special_form_or_call_step<T: LispContext>(
 fn parse_let_binding<T: LispContext>(
     binding: &LispExp<T>,
     index: usize,
-) -> Result<(String, Option<LispExp<T>>), EvalError> {
+) -> Result<(String, Option<LispExp<T>>), EvalError<T>> {
     match binding {
         LispExp::Form(pair) if pair.len() == 2 => {
             if let LispExp::Symbol(name) = &pair[0] {
@@ -2300,7 +2496,7 @@ fn eval_backquote<T: LispContext>(
     exp: &LispExp<T>,
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<LispExp<T>, EvalError> {
+) -> Result<LispExp<T>, EvalError<T>> {
     fn is_tagged<T: LispContext>(list: &[LispExp<T>], tag: &str) -> bool {
         list.len() == 2 && matches!(&list[0], LispExp::Symbol(s) if s.as_str() == tag)
     }
@@ -2325,7 +2521,7 @@ fn eval_backquote<T: LispContext>(
                                 if !other.is_nil() {
                                     return Err(EvalError::WrongArgumentType {
                                         expected: "List".into(),
-                                        got: format!("{:?}", other),
+                                        got: other.clone(),
                                     });
                                 }
                             }
@@ -2357,7 +2553,7 @@ fn eval_macro_or_function_call_step<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<EvalStep<T>, EvalError> {
+) -> Result<EvalStep<T>, EvalError<T>> {
     if let Some(LispExp::Lambda(macro_lambda)) = env.get_macro(symbol) {
         let expand_frame = Env::new_child(&macro_lambda.env);
         bind_lambda_args(&macro_lambda, args, &expand_frame)?;
@@ -2378,7 +2574,7 @@ fn eval_function_call_step<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
     ctx: &T,
-) -> Result<EvalStep<T>, EvalError> {
+) -> Result<EvalStep<T>, EvalError<T>> {
     let mut evaled_args = Vec::new();
     for arg in args {
         evaled_args.push(eval(arg, env.clone(), ctx)?);

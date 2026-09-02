@@ -53,7 +53,7 @@ primitive!(make_floating_window, args, _env, ctx, {
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "String, Number, Number, Number, Number".into(),
-                got: format!("{:?}", args),
+                got: ELispExp::string(format!("{:?}", args)),
             })
         }
     }

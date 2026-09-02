@@ -9,7 +9,7 @@ mod tests {
         script: &str,
         env: Arc<Env<T>>,
         ctx: &mut T,
-    ) -> Result<LispExp<T>, EvalError> {
+    ) -> Result<LispExp<T>, EvalError<T>> {
         let wrapped = format!("(progn {})", script);
         let mut parser = Parser::new(&wrapped);
         let exp = parser.next().unwrap();

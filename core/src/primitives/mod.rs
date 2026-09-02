@@ -57,7 +57,7 @@ macro_rules! primitive {
             $args: &[ELispExp<B>],
             $env: std::sync::Arc<Env<EditorState<B>>>,
             $ctx: &EditorState<B>,
-        ) -> Result<ELispExp<B>, EvalError> {
+        ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
             $body
         }
     };

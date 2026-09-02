@@ -18,7 +18,7 @@ mod tests {
         env
     }
 
-    fn eval_str(source: &str, env: Arc<Env<()>>) -> Result<LispExp<()>, EvalError> {
+    fn eval_str(source: &str, env: Arc<Env<()>>) -> Result<LispExp<()>, EvalError<()>> {
         let wrapped = format!("(progn {})", source);
         let mut parser = Parser::new(&wrapped);
         let ast = parser.next().expect("failed to parse test script");
@@ -31,7 +31,7 @@ mod tests {
         })
     }
 
-    fn eval_err(source: &str) -> EvalError {
+    fn eval_err(source: &str) -> EvalError<()> {
         eval_str(source, env_with_primitives()).expect_err(&format!("expected `{source}` to fail"))
     }
 

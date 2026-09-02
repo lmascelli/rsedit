@@ -31,7 +31,7 @@ primitive!(eval_file, args, env, ctx, {
     } else {
         Err(EvalError::WrongArgumentType {
             expected: "String".into(),
-            got: format!("{:?}", args.first()),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         })
     }
 });
@@ -68,7 +68,10 @@ primitive!(define_key, args, env, ctx, {
                 _ => {
                     return Err(EvalError::WrongArgumentType {
                         expected: "Symbol, String, Symbol".into(),
-                        got: format!("{:?}, {:?}, {:?}", &args[0], &args[1], &args[2]),
+                        got: ELispExp::string(format!(
+                            "{:?}, {:?}, {:?}",
+                            &args[0], &args[1], &args[2]
+                        )),
                     });
                 }
             };
@@ -111,7 +114,7 @@ primitive!(define_key, args, env, ctx, {
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "String, Symbol".into(),
-                got: format!("{:?}, {:?}", &args[0], &args[1]),
+                got: ELispExp::string(format!("{:?}, {:?}", &args[0], &args[1])),
             })
         }
     }
@@ -135,7 +138,7 @@ primitive!(log, args, _env, ctx, {
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "String".into(),
-                got: format!("{:?}", args.get(0)),
+                got: args.first().cloned().unwrap_or_else(ELispExp::nil),
             })
         }
     }
@@ -197,7 +200,7 @@ primitive!(set_echo_message, args, _env, ctx, {
     } else {
         Err(EvalError::WrongArgumentType {
             expected: "String".into(),
-            got: format!("{:?}", args.get(0)),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         })
     }
 });

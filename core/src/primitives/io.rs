@@ -28,7 +28,7 @@ primitive!(find_file, args, _env, ctx, {
     } else {
         Err(EvalError::WrongArgumentType {
             expected: "String".into(),
-            got: format!("{:?}", args.first()),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         })
     }
 });
