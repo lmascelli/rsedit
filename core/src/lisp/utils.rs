@@ -1,3 +1,7 @@
+//!
+//! Description of the utility functions
+//!
+
 use super::{Env, EvalError, Lambda, LispContext, LispExp};
 use std::sync::Arc;
 

@@ -1,16 +1,16 @@
-// ========================================================================== //
-//               +------------------------------------------+
-//               |  Execution metering for the interpreter. |
-//               +------------------------------------------+
-// The evaluator charges the host on every step through
-// `LispContext::consume_fuel`, but how large a budget is, and when it
-// refills, is host *policy*. This module supplies the *mechanism* that policy
-// needs, so that each embedder does not have to re-derive the thread-local
-// bookkeeping, the nesting rules, and the arithmetic edge cases for itself.
-//
-// It knows nothing about context. A host decides what constitutes
-// one metered unit of work by wrapping it in [`FuelMeter::begin`].
-// ========================================================================== //
+//! ========================================================================== //
+//!               +------------------------------------------+
+//!               |  Execution metering for the interpreter. |
+//!               +------------------------------------------+
+//! The evaluator charges the host on every step through
+//! `LispContext::consume_fuel`, but how large a budget is, and when it
+//! refills, is host *policy*. This module supplies the *mechanism* that policy
+//! needs, so that each embedder does not have to re-derive the thread-local
+//! bookkeeping, the nesting rules, and the arithmetic edge cases for itself.
+//!
+//! It knows nothing about context. A host decides what constitutes
+//! one metered unit of work by wrapping it in [`FuelMeter::begin`].
+//! ========================================================================== //
 
 use std::{
     cell::Cell,

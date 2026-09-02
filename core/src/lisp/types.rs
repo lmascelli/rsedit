@@ -1,3 +1,7 @@
+//!
+//! Add a general description of the base types here
+//!
+
 use super::{Env, EvalError, LispContext, LispExp};
 use std::sync::{Arc, RwLock};
 

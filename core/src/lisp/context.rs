@@ -1,3 +1,7 @@
+///
+/// Add a general description of the context here
+///
+
 // ========================================================================== //
 //                 +------------------------------------------+
 //                 |  Context that can embed the interpreter  |

@@ -1,3 +1,7 @@
+//!
+//!  Add a general description of the environment here
+//! 
+
 use super::{LispContext, LispExp};
 use std::{
     collections::HashMap,

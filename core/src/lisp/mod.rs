@@ -1,3 +1,7 @@
+//!
+//!  Add a general description of the interpreter here
+//!
+
 mod context;
 mod environment;
 mod error;
