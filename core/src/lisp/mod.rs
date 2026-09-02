@@ -15,10 +15,10 @@ pub use eval::eval;
 pub use fuel::{DEFAULT_FUEL, Exhausted, FuelMeter, FuelScope};
 pub use lispexp::LispExp;
 pub use parser::{Parser, ParserError};
-pub(self) use types::{
+use types::{
     ConsCell, ConsIter, FiberState, Lambda, LispPrimitive, SharedAtom, SharedFiber,
 };
-pub(self) use utils::{
+use utils::{
     bind_lambda_args, condition_matches, data_to_form, error_data, error_symbol,
     parse_lambda_params,
 };
