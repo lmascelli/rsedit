@@ -16,7 +16,7 @@ pub use context::LispContext;
 pub use environment::Env;
 pub use error::EvalError;
 pub use eval::eval;
-pub use fuel::{DEFAULT_FUEL, Exhausted, FuelMeter, FuelScope};
+pub use fuel::{DEFAULT_FUEL, Exhausted, FuelMeter, FuelScope, measure};
 pub use lispexp::LispExp;
 pub use parser::{Parser, ParserError};
 use types::{

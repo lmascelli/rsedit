@@ -1,0 +1,125 @@
+rsedit -- timing report (wall clock, machine-dependent)
+=======================================================
+
+These operations run inside Rust and are never driven by the interpreter, so
+no fuel is charged and there is nothing exact to count. What follows is wall
+clock, and wall clock describes the machine as much as the code.
+
+Two things make it useful anyway. Deltas compare against the previous run in
+the same environment, so a change of direction is visible. And every figure is
+also given as a multiple of a calibration workload timed in the same run, so a
+machine-wide slowdown can be told apart from a real regression.
+
+Only complexity classes are asserted on here. Absolute durations are tracked,
+never used as a pass/fail threshold: a wall-clock bound encodes the speed of
+whatever machine wrote it, and goes red on a slower one while staying green
+through a genuine regression on a faster one.
+reference:   one calibration round takes 4.491 ns on this machine; the
+             'x ref' column is each cost divided by that.
+environment: x86_64-linux debug 16-cpu
+baseline:    none -- this is the first run, so no deltas are shown.
+
+1. CALIBRATION
+--------------
+A fixed integer workload, timed the same way as everything below. It is
+the control: if a row got slower and this did not, the code got slower;
+if this moved too, the machine did.
+  reference round   4.491 ns   the unit the 'x ref' column is in
+
+2. PARSER
+---------
+Source text to AST. Not fuel-charged -- nothing is evaluating yet -- so this
+is one of the few interpreter costs that only a clock can see.
+  parse one form        4926 ns   1097 x ref
+  doubling the source     2.01x   linear is ~2x; must stay under 3x
+
+3. SCOPE CHAIN
+--------------
+The same loop run at the top level and inside 12 nested `let`s. Lookup walks
+the environment chain by name, so the gap between these two is what nesting
+costs. Lexical addressing would collapse it toward 1.00x.
+  eval step at depth 0   2870 ns   639 x ref
+  depth 12 vs depth 0      4.03x   must stay under 12x
+
+4. GAP BUFFER
+-------------
+Insertion at the cursor, and reading a viewport out. The locality row is the
+one number in this file that is a known problem rather than a control: it is
+what "linear scan from character zero" looks like at 100,000 lines. The
+bound below is not asking the operation to be fast, only to stay linear --
+anything quadratic overshoots it by orders of magnitude. If a cached line
+index lands, this collapses toward 1.0x and the bound should be tightened
+hard to lock the win in.
+  insert one char                   10.4 ns   2.31 x ref
+  doubling characters typed           1.97x   linear is ~2x; must stay under 3x
+  read 50 lines at head            37775 ns   one viewport
+  read 50 lines at line 50000   21544792 ns   one viewport
+    mid-file vs head                   570x   linear at this size; must stay under 2500x
+
+5. LAYOUT
+---------
+Walking the window tree to compute tiled views, once per redraw. The growth
+row asks that per-frame cost not drift upward as the editor runs.
+  compose one frame          160463 ns   35733 x ref
+  doubling frames rendered       2.00x   linear is ~2x; must stay under 3x
+
+6. COMMAND PATH
+---------------
+Key event, keymap lookup, Lisp dispatch, buffer write, post-command hook.
+The per-keystroke figure is what a user waits for between pressing a key and
+seeing the character; the exact work behind it is the command-path section
+of the cost report.
+  one keystroke, end to end   2985 ns   665 x ref
+
+7. CONCURRENCY
+--------------
+The same total work done sequentially on one thread, then spread across three
+threads writing to three separate buffers. Per-buffer locks make the
+concurrent run faster; a single coarse lock around the buffer table would
+make it *slower* than sequential, since every write would serialise anyway
+and pay contention on top. Three threads on separate buffers should approach
+0.33x; 1.00x is the line between fine-grained and coarse.
+  one buffer write          56 ns   sequential
+  3 threads vs sequential   0.54x   under 1.00x means the locks are fine-grained
+
+8. EXECUTION BUDGET
+-------------------
+A runaway loop calling an O(n) primitive on a long list, under a deliberately
+small budget. The budget's promise is about elapsed time, so this is the one
+row in the suite where an absolute duration is the thing being asserted.
+  stop (while t (length lst)) over 20000 elements   2.44 ms   60000 units of budget; must stop under 1000 ms
+
+VERDICT
+=======
+
+  [PASS] doubling the source size cost 2.01x rather than ~2x
+  [PASS] running inside 12 nested scopes costs 4.03x running at the top level
+  [PASS] doubling the characters typed cost 1.97x rather than ~2x -- insertion is no longer independent of buffer size
+  [PASS] reading a viewport at line 50000 costs 570x reading one at the head
+  [PASS] doubling the frame count cost 2.00x rather than ~2x
+  [PASS] 20000 of 20000 keystrokes reached the buffer, 0 exhausted their budget
+  [PASS] each of the three buffers holds all 20000 of its writes
+  [PASS] spreading the work across three threads cost 0.54x doing it sequentially -- at or above 1.00x, writes are contending on a shared lock
+  [PASS] an infinite loop still exhausts its budget and returns OutOfFuel
+  [PASS] a runaway loop over 20000 elements was stopped in 2.44 ms -- if this climbs into seconds, a primitive is being charged per call rather than per element
+
+  10 of 10 checks passed.
+
+### baseline -- parsed by the next run; do not edit
+### fingerprint	x86_64-linux debug 16-cpu
+calibration/round	4.490631
+parser/form-ns	4926.12125
+parser/growth	2.014022188349505
+eval/step-ns	2869.87285
+scope/depth-penalty	4.033842265869026
+gapbuffer/insert-ns	10.37792
+gapbuffer/insert-growth	1.9694697974160524
+gapbuffer/get-lines-head-ns	37775
+gapbuffer/get-lines-mid-ns	21544792
+gapbuffer/locality	570.3452547981469
+layout/frame-ns	160462.595
+layout/growth	2.000911240404656
+command/keystroke-ns	2985.1145
+concurrency/write-ns	56.3826
+concurrency/speedup	0.5407055249905705
+budget/runaway-ms	2.435388

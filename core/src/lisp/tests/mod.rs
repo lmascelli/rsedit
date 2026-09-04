@@ -25,5 +25,7 @@ mod fuel;
 mod thread_tests;
 // Handshake
 mod handshake;
-// Performance characterisation of the interpreter
-mod performance;
+// Performance lives in `crate::tests::perf`, which measures the interpreter and
+// the editor together so that one runner can emit one report per run. The
+// interpreter benchmarks there still evaluate against a bare metering host, so
+// what they measure is the evaluator alone.

@@ -1,0 +1,110 @@
+rsedit -- cost report (exact, machine-independent)
+==================================================
+
+Costs here are FUEL UNITS: one per reduction step, plus one per element for
+primitives that walk a list. They are exact integers describing the work the
+program does, so they are the same on every machine and reproducible to the
+unit. Nothing in this file is a stopwatch reading.
+
+That makes this file worth committing. A diff on it is a complete, noise-free
+account of how a change altered the interpreter's workload -- which is the one
+question a pass/fail suite cannot answer.
+
+Scaling rows are measured at n, 2n and 4n. Differencing twice cancels the
+fixed setup cost exactly, so a linear operation reports 2.000 and a quadratic
+one 4.000, with no tolerance needed for noise.
+environment: any -- these counts are exact and machine-independent
+baseline:    none -- this is the first run, so no deltas are shown.
+
+1. EVALUATOR CORE LOOP
+----------------------
+Special-form dispatch, variable lookup and primitive invocation, exercised
+together. The broadest health check there is: anything that made per-step
+cost depend on how much work had already been done -- a growing environment
+chain, an unbounded frame stack, a cache that never evicts -- shows up here
+before it shows up anywhere else.
+  while iteration   7.000   units/iteration; shape 2.000  [14007 at 2000, 28007 at 4000, 56007 at 8000]
+  tail call         8.000   units/frame; shape 2.000  [16008 at 2000, 32008 at 4000, 64008 at 8000]
+
+2. CALLS
+--------
+What a user-defined call costs over the same arithmetic written inline:
+argument evaluation, a child `Env`, parameter binding, the trampolined body.
+And what a macro costs over a function -- macros are re-expanded on every
+evaluation, never cached, so each invocation rebuilds its expansion before it
+can run it. These are the numbers that would move if frames were pooled, if
+binding stopped allocating per call, or if expansion were memoised.
+  inline (+ i 1)         7.000   units/iteration; shape 2.000  [14007 at 2000, 28007 at 4000, 56007 at 8000]
+  via (inc i)            9.000   units/iteration; shape 2.000  [18007 at 2000, 36007 at 4000, 72007 at 8000]
+  via (inc-macro i)     13.000   units/iteration; shape 2.000  [26007 at 2000, 52007 at 4000, 104007 at 8000]
+    function overhead   +2.000   units a call adds over inline
+    macro overhead      +4.000   units expansion adds over a call
+
+3. LIST PRIMITIVES
+------------------
+Accumulation, and the primitives that walk what was accumulated.
+The per-element charge on the walking primitives is not bookkeeping: the
+evaluator charges per reduction step, so before these were priced by length
+`(length lst)` cost one unit whether the list held three elements or a
+hundred thousand, and the execution budget bounded the number of steps
+rather than the amount of work. The execution-budget section of the timing
+report shows what that cost in practice.
+  cons accumulation         12.000   units/element; shape 2.000  [24011 at 2000, 48011 at 4000, 96011 at 8000]
+  build only (control)      11.000   units/element; shape 2.000  [22010 at 2000, 44010 at 4000, 88010 at 8000]
+  build + (length lst)      12.000   units/element; shape 2.000  [24011 at 2000, 48011 at 4000, 96011 at 8000]
+  build + (reverse lst)     12.000   units/element; shape 2.000  [24011 at 2000, 48011 at 4000, 96011 at 8000]
+  build + (member .. lst)   12.000   units/element; shape 2.000  [24012 at 2000, 48012 at 4000, 96012 at 8000]
+    (length lst) alone       1.000   units per element walked
+    (reverse lst) alone      1.000   units per element walked
+    (member .. lst) alone    1.000   units per element walked
+
+4. COMMAND PATH
+---------------
+One keystroke, end to end, at three document sizes. A flat column is the
+result that matters -- and being fuel, it is flat exactly, not approximately.
+Note also what a keystroke costs against the budget a command is given: a
+runaway loop has to burn millions of units before it is stopped, while
+ordinary typing spends a handful.
+  1 line document        2   units per keystroke
+  10000 line document    2   units per keystroke
+  100000 line document   2   units per keystroke
+
+VERDICT
+=======
+
+  [PASS] while iteration scales at 2.000 (2.000 is linear, 4.000 quadratic) -- 14007 at 2000, 28007 at 4000, 56007 at 8000
+  [PASS] tail call scales at 2.000 (2.000 is linear, 4.000 quadratic) -- 16008 at 2000, 32008 at 4000, 64008 at 8000
+  [PASS] 100,000 tail-recursive frames ran without growing the Rust stack
+  [PASS] function call scales at 2.000 (2.000 is linear, 4.000 quadratic) -- 18007 at 2000, 36007 at 4000, 72007 at 8000
+  [PASS] macro call scales at 2.000 (2.000 is linear, 4.000 quadratic) -- 26007 at 2000, 52007 at 4000, 104007 at 8000
+  [PASS] cons accumulation scales at 2.000 (2.000 is linear, 4.000 quadratic) -- 24011 at 2000, 48011 at 4000, 96011 at 8000
+  [PASS] (length LIST) scales at 2.000 (2.000 is linear, 4.000 quadratic) -- 24011 at 2000, 48011 at 4000, 96011 at 8000
+  [PASS] (reverse LIST) scales at 2.000 (2.000 is linear, 4.000 quadratic) -- 24011 at 2000, 48011 at 4000, 96011 at 8000
+  [PASS] (member ELT LIST) scales at 2.000 (2.000 is linear, 4.000 quadratic) -- 24012 at 2000, 48012 at 4000, 96012 at 8000
+  [PASS] `length` charges 1.00 units per element walked -- a list-walking primitive must be priced by length, or the budget bounds steps, not work
+  [PASS] `reverse` charges 1.00 units per element walked -- a list-walking primitive must be priced by length, or the budget bounds steps, not work
+  [PASS] `member` charges 1.00 units per element walked -- a list-walking primitive must be priced by length, or the budget bounds steps, not work
+  [PASS] one keystroke costs 2 / 2 / 2 units at 1 / 10,000 / 100,000 lines
+
+  13 of 13 checks passed.
+
+### baseline -- parsed by the next run; do not edit
+### fingerprint	any -- these counts are exact and machine-independent
+eval/loop-iteration	7
+eval/tail-call	8
+call/inline	7
+call/function	9
+call/macro	13
+call/function-overhead	2
+call/macro-overhead	4
+list/cons	12
+list/build	11
+list/length	12
+list/reverse	12
+list/member	12
+list/length-walk	1
+list/reverse-walk	1
+list/member-walk	1
+command/keystroke-1	2
+command/keystroke-10000	2
+command/keystroke-100000	2

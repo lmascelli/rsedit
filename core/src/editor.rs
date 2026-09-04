@@ -850,6 +850,14 @@ impl<B: BufferTrait> EditorState<B> {
         self.fuel.begin()
     }
 
+    /// The execution meter behind [`Self::begin_command`].
+    ///
+    /// Exposed for `lisp::measure`, which needs the meter to hold a scope of
+    /// its own for the duration of a measurement.
+    pub(crate) fn fuel_meter(&self) -> &FuelMeter {
+        &self.fuel
+    }
+
     /// Set how much fuel a fresh command receives, and top the current thread's
     /// remaining fuel up to it. Exposed so the `set-command-fuel` primitive --
     /// and tests that want a deliberately tiny budget -- can reach it.

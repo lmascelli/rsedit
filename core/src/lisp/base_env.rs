@@ -28,9 +28,29 @@ fn expect_number<T: LispContext>(exp: &LispExp<T>) -> Result<f64, EvalError<T>> 
 /// that want the O(1) chain (`car`, `cdr`, `cons`) simply do not call
 /// this. Tightening the remaining callers to walk the chain in place is a
 /// separate, independently testable change.
-fn expect_list<T: LispContext>(exp: &LispExp<T>) -> Result<Vec<LispExp<T>>, EvalError<T>> {
+/// Charge the host for `units` of work, saturating rather than wrapping on the
+/// (unreachable in practice) list longer than `u32::MAX`.
+fn charge<T: LispContext>(ctx: &T, units: usize) -> Result<(), EvalError<T>> {
+    ctx.consume_fuel(u32::try_from(units).unwrap_or(u32::MAX))
+}
+
+/// Collect a list argument into a vector, charging one unit per element.
+///
+/// The evaluator charges one unit per *reduction step*, which is the right
+/// model for a step-shaped interpreter but silently mis-prices primitives that
+/// walk their argument: `(length lst)` is one step whether the list holds three
+/// elements or a hundred thousand. That made the budget bound the number of
+/// steps rather than the amount of work, so `(while t (length big-list))`
+/// burned its whole budget over minutes instead of milliseconds. Charging per
+/// element restores the invariant the budget is supposed to provide -- that a
+/// runaway command is stopped in bounded *time*.
+fn expect_list<T: LispContext>(exp: &LispExp<T>, ctx: &T) -> Result<Vec<LispExp<T>>, EvalError<T>> {
     match exp {
-        LispExp::Cons(_) => Ok(exp.iter().collect()),
+        LispExp::Cons(_) => {
+            let items: Vec<LispExp<T>> = exp.iter().collect();
+            charge(ctx, items.len())?;
+            Ok(items)
+        }
         other if other.is_nil() => Ok(vec![]),
         other => Err(EvalError::WrongArgumentType {
             expected: "List".into(),
@@ -117,14 +137,14 @@ pub fn call_callable<T: LispContext>(
     }
 }
 
-fn find_assoc<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError<T>> {
+fn find_assoc<T: LispContext>(args: &[LispExp<T>], ctx: &T) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
             got: args.len(),
         });
     }
-    let list = expect_list(&args[1])?;
+    let list = expect_list(&args[1], ctx)?;
     for entry in list {
         // `(a . 1)` and `(a 1)` are both valid alist entries, and both are
         // now a cons whose car is the key.
@@ -139,14 +159,14 @@ fn find_assoc<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalErr
     Ok(LispExp::nil())
 }
 
-fn find_member<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, EvalError<T>> {
+fn find_member<T: LispContext>(args: &[LispExp<T>], ctx: &T) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
             got: args.len(),
         });
     }
-    let list = expect_list(&args[1])?;
+    let list = expect_list(&args[1], ctx)?;
     if let Some(pos) = list.iter().position(|e| *e == args[0]) {
         Ok(LispExp::proper_list(list[pos..].to_vec()))
     } else {
@@ -686,7 +706,7 @@ const NTH_DOC: &str = "(nth N LIST): Return the Nth element of LIST (zero-indexe
 fn primitive_nth<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
@@ -701,7 +721,11 @@ fn primitive_nth<T: LispContext>(
     // Previously this cloned the entire backing vector via `expect_list`
     // and then indexed it. Walking the chain is the same O(n) without the
     // allocation and the n refcount bumps.
-    Ok(args[1].iter().nth(n as usize).unwrap_or_else(LispExp::nil))
+    let n = n as usize;
+    let mut walked = 0usize;
+    let found = args[1].iter().inspect(|_| walked += 1).nth(n);
+    charge(ctx, walked)?;
+    Ok(found.unwrap_or_else(LispExp::nil))
 }
 
 const NTHCDR_DOC: &str = "(nthcdr N LIST): Return LIST with its first N elements \
@@ -714,7 +738,7 @@ const NTHCDR_DOC: &str = "(nthcdr N LIST): Return LIST with its first N elements
 fn primitive_nthcdr<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
@@ -727,6 +751,9 @@ fn primitive_nthcdr<T: LispContext>(
     // copying it, so `nthcdr` is now allocation-free.
     let mut cursor = args[1].clone();
     for _ in 0..n {
+        // Charged a cell at a time rather than `n` up front: `n` may be far
+        // past the end of a short list, and only cells actually walked are work.
+        charge(ctx, 1)?;
         match &cursor {
             LispExp::Cons(cell) => cursor = cell.cdr.clone(),
             other if other.is_nil() => return Ok(LispExp::nil()),
@@ -751,7 +778,7 @@ const LENGTH_DOC: &str = "(length SEQUENCE): Return the number of elements in \
 fn primitive_length<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
@@ -771,6 +798,9 @@ fn primitive_length<T: LispContext>(
             });
         }
     };
+    // `length` is O(n) in the sequence for every representation above, so it
+    // is priced as such rather than as the single step the evaluator charged.
+    charge(ctx, len)?;
     Ok(LispExp::number(len as f64))
 }
 
@@ -786,14 +816,14 @@ const APPEND_DOC: &str = "(append &rest SEQUENCES): Concatenate all the given \
 fn primitive_append<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     if args.is_empty() {
         return Ok(LispExp::nil());
     }
     let mut result = Vec::new();
     for arg in &args[0..args.len() - 1] {
-        result.extend(expect_list(arg)?);
+        result.extend(expect_list(arg, ctx)?);
     }
     Ok(LispExp::improper_list(result, args[args.len() - 1].clone()))
 }
@@ -807,7 +837,7 @@ const REVERSE_DOC: &str = "(reverse SEQUENCE): Return a new sequence with the el
 fn primitive_reverse<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 1 {
         return Err(EvalError::WrongNumberOfArguments {
@@ -818,15 +848,20 @@ fn primitive_reverse<T: LispContext>(
     match &args[0] {
         LispExp::Cons(_) => {
             let mut v: Vec<LispExp<T>> = args[0].iter().collect();
+            charge(ctx, v.len())?;
             v.reverse();
             Ok(LispExp::proper_list(v))
         }
         LispExp::Vector(v) => {
+            charge(ctx, v.len())?;
             let mut v = (**v).clone();
             v.reverse();
             Ok(LispExp::vec(v))
         }
-        LispExp::String(s) => Ok(LispExp::string(s.chars().rev().collect())),
+        LispExp::String(s) => {
+            charge(ctx, s.chars().count())?;
+            Ok(LispExp::string(s.chars().rev().collect()))
+        }
         other if other.is_nil() => Ok(LispExp::nil()),
         other => Err(EvalError::WrongArgumentType {
             expected: "Sequence".into(),
@@ -844,9 +879,9 @@ const MEMBER_DOC: &str = "(member ELEMENT LIST): Return the first sublist of LIS
 fn primitive_member<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    find_member(args)
+    find_member(args, ctx)
 }
 
 const MEMQ_DOC: &str = "(memq ELEMENT LIST): Return the first sublist of LIST whose \
@@ -860,9 +895,9 @@ const MEMQ_DOC: &str = "(memq ELEMENT LIST): Return the first sublist of LIST wh
 fn primitive_memq<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    find_member(args)
+    find_member(args, ctx)
 }
 
 const ASSOC_DOC: &str = "(assoc KEY ALIST): Return the first element of ALIST (an \
@@ -875,9 +910,9 @@ const ASSOC_DOC: &str = "(assoc KEY ALIST): Return the first element of ALIST (a
 fn primitive_assoc<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    find_assoc(args)
+    find_assoc(args, ctx)
 }
 
 const ASSQ_DOC: &str = "(assq KEY ALIST): Like `assoc`, but intended to compare KEY \
@@ -889,9 +924,9 @@ const ASSQ_DOC: &str = "(assq KEY ALIST): Like `assoc`, but intended to compare 
 fn primitive_assq<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
-    find_assoc(args)
+    find_assoc(args, ctx)
 }
 
 const ELT_DOC: &str = "(elt SEQUENCE N): Return the Nth element of SEQUENCE (a list, \
@@ -904,7 +939,7 @@ const ELT_DOC: &str = "(elt SEQUENCE N): Return the Nth element of SEQUENCE (a l
 fn primitive_elt<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
-    _ctx: &T,
+    ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
@@ -918,7 +953,12 @@ fn primitive_elt<T: LispContext>(
     }
     let n = n as usize;
     match &args[0] {
-        LispExp::Cons(_) => Ok(args[0].iter().nth(n).unwrap_or_else(LispExp::nil)),
+        LispExp::Cons(_) => {
+            let mut walked = 0usize;
+            let found = args[0].iter().inspect(|_| walked += 1).nth(n);
+            charge(ctx, walked)?;
+            Ok(found.unwrap_or_else(LispExp::nil))
+        }
         LispExp::Vector(v) => Ok(v.get(n).cloned().unwrap_or_else(LispExp::nil)),
         LispExp::String(s) => Ok(s
             .chars()
@@ -951,7 +991,7 @@ fn primitive_mapcar<T: LispContext>(
             got: args.len(),
         });
     }
-    let list = expect_list(&args[1])?;
+    let list = expect_list(&args[1], ctx)?;
     let mut result = Vec::with_capacity(list.len());
     for item in list {
         result.push(call_callable(&args[0], &[item], env.clone(), ctx)?);
@@ -976,7 +1016,7 @@ fn primitive_mapc<T: LispContext>(
             got: args.len(),
         });
     }
-    let list = expect_list(&args[1])?;
+    let list = expect_list(&args[1], ctx)?;
     for item in &list {
         call_callable(&args[0], std::slice::from_ref(item), env.clone(), ctx)?;
     }
@@ -1007,7 +1047,7 @@ fn primitive_apply<T: LispContext>(
         return call_callable(func, &[], env, ctx);
     }
     let mut call_args = args[1..args.len() - 1].to_vec();
-    call_args.extend(expect_list(&args[args.len() - 1])?);
+    call_args.extend(expect_list(&args[args.len() - 1], ctx)?);
     call_callable(func, &call_args, env, ctx)
 }
 

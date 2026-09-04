@@ -132,3 +132,44 @@ impl FuelMeter {
         FUEL.set(budget);
     }
 }
+
+/// Steps left in the calling thread's current scope.
+///
+/// Exposed so that a host can *count* the work an evaluation did, rather than
+/// only be told when it ran out. See [`measure`].
+pub fn remaining() -> u32 {
+    FUEL.get()
+}
+
+/// Run `body` with an effectively unlimited budget and report how much fuel it
+/// spent, alongside its result.
+///
+/// # Why this exists
+///
+/// Wall-clock timings describe the machine that took them. Fuel counts describe
+/// the *program*: one unit per reduction step, plus one per element for
+/// primitives that walk a list. They are exact integers, identical on every
+/// machine and reproducible to the unit, which makes them the only measurement
+/// in this codebase that can be committed to git and diffed to show a
+/// regression.
+///
+/// # Why it holds a scope of its own
+///
+/// `body` typically re-enters the host, and a host opens a metered scope per
+/// command. Were this to run at depth zero, that inner `begin()` would see
+/// depth 0, refill `FUEL` to the configured budget, and destroy the accounting
+/// mid-measurement. Holding a scope for the whole measurement makes every
+/// nested `begin()` a no-op refill-wise, so the counter only ever goes down.
+///
+/// The thread's real remaining fuel is saved and restored, so measuring cannot
+/// hand the surrounding scope a larger budget than it started with.
+pub fn measure<T, F: FnOnce() -> T>(meter: &FuelMeter, body: F) -> (T, u64) {
+    let saved = FUEL.get();
+    let scope = meter.begin();
+    FUEL.set(u32::MAX);
+    let value = body();
+    let spent = u64::from(u32::MAX - FUEL.get());
+    drop(scope);
+    FUEL.set(saved);
+    (value, spent)
+}
