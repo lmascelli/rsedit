@@ -8,6 +8,7 @@ use crate::{
     minibuffer::install_minibuffer,
     modes::MajorMode,
     primitives::install_primitives,
+    commands::{ArgSpec, CommandRegistry, PendingCommand},
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
         FloatingWindow, FrameSnapshot, LayoutNode, Rect, RenderableWindowView, Window,
@@ -55,6 +56,14 @@ pub struct EditorState<B: BufferTrait> {
     pub focused_window_id: Arc<RwLock<usize>>,
     /// A value only used to fastly create a new window id
     pub next_window_id: Arc<AtomicUsize>,
+
+    /// Which named functions the user may invoke by name, and what arguments
+    /// the editor collects for each. See `crate::commands`.
+    commands: Arc<RwLock<CommandRegistry>>,
+
+    /// Commands whose arguments are still being collected, innermost last.
+    /// See `crate::commands::PendingCommand`.
+    pending_commands: Arc<RwLock<Vec<PendingCommand<ELispExp<B>>>>>,
 
     /// Execution budget for Lisp evaluation.
     fuel: Arc<FuelMeter>,
@@ -171,6 +180,8 @@ impl<B: BufferTrait> EditorState<B> {
             floating_windows: Arc::new(RwLock::new(Vec::new())),
             focused_window_id: Arc::new(RwLock::new(0)),
             next_window_id: Arc::new(AtomicUsize::new(1)),
+            commands: Arc::new(RwLock::new(CommandRegistry::new())),
+            pending_commands: Arc::new(RwLock::new(Vec::new())),
             fuel: Arc::new(FuelMeter::new(DEFAULT_FUEL)),
             logs: Arc::new(RwLock::new(Vec::new())),
             log_file: None,
@@ -480,6 +491,49 @@ impl<B: BufferTrait> EditorState<B> {
             self.log_diagnostic(&format!("[INFO] Keymap not bound {:?}", event));
             return;
         };
+
+        // A key bound to a bare command invocation -- `(next-line)`, as
+        // `define-key` stores a symbol -- is routed through
+        // `call-interactively` so that the editor collects whatever arguments
+        // the command declared. Without this a command taking arguments simply
+        // cannot be bound to a key: `find-file` needs a path, and a keystroke
+        // has none to give it, which is why it had no binding at all.
+        //
+        // Routing every such binding through one Lisp entry point, rather than
+        // only those that need arguments, is deliberate: it is the single
+        // place to observe or advise command execution, which is what a macro
+        // recorder or a `repeat` command would later hook.
+        //
+        // A binding that already supplies its arguments -- `(self-insert "a")`,
+        // which is every ordinary keystroke -- is left exactly as it was, so
+        // the typing path is untouched and still costs what it always did.
+        // A binding may name its command either way: `define-key` wraps a
+        // symbol into a one-element form, while the keymaps built in Rust
+        // (`install_minibuffer`) store the bare symbol. Both mean "run this
+        // command".
+        //
+        // The bare-symbol case was previously unreachable code: evaluating a
+        // symbol looks up a *variable*, so Enter, Escape and Tab in the
+        // minibuffer all failed with `UnboundVariable` in the real editor. No
+        // test caught it because they all call `(minibuffer-confirm)` through
+        // `eval` rather than pressing the key.
+        let bound_command = match &ast {
+            ELispExp::Symbol(name) => Some(name.to_string()),
+            ELispExp::Form(items) if items.len() == 1 => match &items[0] {
+                ELispExp::Symbol(name) => Some(name.to_string()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(name) = bound_command {
+            // The name is passed as a string rather than a quoted symbol:
+            // a string literal is self-evaluating, so this needs no `quote`
+            // and cannot be mistaken for a variable reference.
+            ast = ELispExp::form(vec![
+                ELispExp::symbol("call-interactively".into()),
+                ELispExp::string(name),
+            ]);
+        }
 
         let outcome = {
             let _command = self.begin_command();
@@ -904,6 +958,133 @@ impl<B: BufferTrait> EditorState<B> {
         &self.fuel
     }
 
+    // ---------------------------------------------------------------
+    // Argument collection for a command in flight
+    // ---------------------------------------------------------------
+
+    /// Begin collecting arguments for NAME.
+    pub(crate) fn push_pending_command(&self, name: String, remaining: Vec<ArgSpec>) {
+        self.pending_commands
+            .write()
+            .expect("Failed to acquire write lock on pending_commands")
+            .push(PendingCommand::new(name, remaining));
+    }
+
+    /// The argument the innermost pending command is waiting on.
+    pub(crate) fn pending_current_spec(&self) -> Option<ArgSpec> {
+        self.pending_commands
+            .read()
+            .expect("Failed to acquire read lock on pending_commands")
+            .last()
+            .and_then(|pending| pending.current().cloned())
+    }
+
+    /// Record VALUE as the innermost pending command's next argument, and
+    /// report what it still needs: `Some(spec)` to prompt for, or `None` when
+    /// it is complete -- in which case the entry is removed and its name and
+    /// arguments are returned by [`Self::take_pending_command`].
+    pub(crate) fn accept_pending_arg(&self, value: ELispExp<B>) -> Option<ArgSpec> {
+        let mut stack = self
+            .pending_commands
+            .write()
+            .expect("Failed to acquire write lock on pending_commands");
+        let pending = stack.last_mut()?;
+        if !pending.remaining.is_empty() {
+            pending.remaining.remove(0);
+        }
+        pending.collected.push(value);
+        pending.current().cloned()
+    }
+
+    /// Remove and return the innermost pending command.
+    pub(crate) fn take_pending_command(&self) -> Option<(String, Vec<ELispExp<B>>)> {
+        self.pending_commands
+            .write()
+            .expect("Failed to acquire write lock on pending_commands")
+            .pop()
+            .map(|pending| (pending.name, pending.collected))
+    }
+
+    /// Drop every pending command.
+    ///
+    /// Called when a fresh command starts with no minibuffer open, which means
+    /// any entry still on the stack belongs to a prompt that was closed by some
+    /// path other than confirm or cancel. Without this, that orphan would be
+    /// fed the *next* command's input.
+    pub(crate) fn clear_pending_commands(&self) {
+        self.pending_commands
+            .write()
+            .expect("Failed to acquire write lock on pending_commands")
+            .clear();
+    }
+
+    /// Whether a minibuffer prompt is currently open.
+    pub(crate) fn minibuffer_is_open(&self) -> bool {
+        self.buffers
+            .read()
+            .expect("Failed to acquire read lock on buffers")
+            .contains_key("*Minibuffer*")
+    }
+
+    /// Every live buffer's name, sorted. Used for buffer-name completion.
+    pub(crate) fn buffer_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .buffers
+            .read()
+            .expect("Failed to acquire read lock on buffers")
+            .keys()
+            .cloned()
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    /// Register NAME as a command taking SPECS.
+    ///
+    /// Idempotent by name: re-registering replaces the previous specs, so a
+    /// user can change how an existing command prompts without restarting.
+    pub(crate) fn register_command(&self, name: &str, specs: Vec<ArgSpec>) {
+        self.commands
+            .write()
+            .expect("Failed to acquire write lock on commands")
+            .insert(name.to_string(), specs);
+    }
+
+    /// The arguments to collect for NAME, or `None` if it is not a command.
+    ///
+    /// Returns owned data, and every other accessor here does too. That is not
+    /// incidental: `call-interactively` looks a command up and then evaluates
+    /// Lisp, and Lisp can call `register-command`. Handing back a guard would
+    /// mean holding this lock across `eval` -- exactly the reentrancy that
+    /// deadlocked `run_hook`.
+    pub(crate) fn command_specs(&self, name: &str) -> Option<Vec<ArgSpec>> {
+        self.commands
+            .read()
+            .expect("Failed to acquire read lock on commands")
+            .get(name)
+            .cloned()
+    }
+
+    pub(crate) fn is_command(&self, name: &str) -> bool {
+        self.commands
+            .read()
+            .expect("Failed to acquire read lock on commands")
+            .contains_key(name)
+    }
+
+    /// Every command name, sorted, for M-x completion.
+    pub(crate) fn command_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .commands
+            .read()
+            .expect("Failed to acquire read lock on commands")
+            .keys()
+            .cloned()
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
     /// Set how much fuel a fresh command receives, and top the current thread's
     /// remaining fuel up to it. Exposed so the `set-command-fuel` primitive --
     /// and tests that want a deliberately tiny budget -- can reach it.
@@ -1031,7 +1212,7 @@ pub fn create_global_env<B: BufferTrait>()
         );
 
     // ---------------------- FILLING PRIMITIVE FUNCTIONS -----------------------------
-    install_primitives(&env);
+    install_primitives(&editor_state, &env);
     install_minibuffer(&editor_state, env.clone());
 
     // --------------------- LOADING LISP CONFIGURATION -------------------------------

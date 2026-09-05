@@ -54,6 +54,21 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
         ELispExp::form(vec![ELispExp::symbol("quit".into())]),
     );
 
+    // M-x is bound here rather than in a `.lisp` file because it is the only
+    // way to reach a command by name: without it the command system exists but
+    // is unreachable, which is not something a configuration file should be
+    // able to take away.
+    keymaps.insert(
+        KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers {
+                alt: true,
+                ..Default::default()
+            },
+        },
+        ELispExp::symbol("command-execute-prompt".into()),
+    );
+
     // -------------------------------- BUFFER ---------------------------------
     keymaps.insert(
         KeyEvent {

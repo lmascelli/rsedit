@@ -64,13 +64,17 @@ macro_rules! primitive {
 }
 
 mod buffers;
+mod commands;
 mod edits;
 mod general;
 mod io;
 mod modes;
 mod ui;
 
-pub fn install_primitives<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B>>>) {
+pub fn install_primitives<B: BufferTrait>(
+    state: &EditorState<B>,
+    env: &std::sync::Arc<Env<EditorState<B>>>,
+) {
     macro_rules! insert_fn {
         ($name:literal, $func:path) => {
             env.set_function($name.into(), ELispExp::primitive($func, None));
@@ -80,7 +84,78 @@ pub fn install_primitives<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B
         };
     }
 
-    insert_fn!("quit", general::quit, general::QUIT_DOC);
+    /// Install a primitive *and* register it as a command in one place, so a
+    /// built-in command's argument spec sits next to its implementation and
+    /// its docstring rather than in a `.lisp` file that could drift or fail to
+    /// load. User-defined commands take the other route, `defcommand`, which
+    /// expands to a `defun` plus a `register-command` call; both end up in the
+    /// same registry, and neither knows about the other.
+    ///
+    /// Specs are parsed here, at boot, so a malformed one is a startup panic
+    /// rather than a surprise the first time someone runs the command.
+    macro_rules! insert_cmd {
+        ($name:literal, $func:path, $specs:expr, $doc:expr) => {
+            insert_fn!($name, $func, $doc);
+            state.register_command(
+                $name,
+                $specs
+                    .iter()
+                    .map(|code: &&str| {
+                        $crate::commands::ArgSpec::parse(code)
+                            .unwrap_or_else(|why| panic!("built-in command `{}`: {why}", $name))
+                    })
+                    .collect(),
+            );
+        };
+    }
+
+    // The registry itself. These are plain functions, not commands: they are
+    // how Lisp inspects and extends the command set, not things a user runs
+    // from M-x.
+    insert_fn!(
+        "register-command",
+        commands::register_command,
+        commands::REGISTER_COMMAND_DOC
+    );
+    insert_fn!("commandp", commands::commandp, commands::COMMANDP_DOC);
+    insert_fn!(
+        "command-args",
+        commands::command_args,
+        commands::COMMAND_ARGS_DOC
+    );
+    insert_fn!(
+        "all-commands",
+        commands::all_commands,
+        commands::ALL_COMMANDS_DOC
+    );
+    insert_fn!(
+        "execute-extended-command",
+        commands::execute_extended_command,
+        commands::EXECUTE_EXTENDED_COMMAND_DOC
+    );
+    insert_fn!(
+        "command-completions",
+        commands::command_completions,
+        commands::COMMAND_COMPLETIONS_DOC
+    );
+    insert_cmd!(
+        "command-execute-prompt",
+        commands::command_execute_prompt,
+        [] as [&str; 0],
+        commands::COMMAND_EXECUTE_PROMPT_DOC
+    );
+    insert_fn!(
+        "all-buffer-names",
+        commands::all_buffer_names,
+        commands::ALL_BUFFER_NAMES_DOC
+    );
+    insert_fn!(
+        "call-interactively",
+        commands::call_interactively,
+        commands::CALL_INTERACTIVELY_DOC
+    );
+
+    insert_cmd!("quit", general::quit, [] as [&str; 0], general::QUIT_DOC);
     insert_fn!("eval-file", general::eval_file, general::EVAL_FILE_DOC);
     insert_fn!("define-key", general::define_key, general::DEFINE_KEY_DOC);
     insert_fn!("log", general::log, general::LOG_DOC);
@@ -99,30 +174,54 @@ pub fn install_primitives<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B
         modes::ADD_SYNTAX_RULE_DOC
     );
     insert_fn!("self-insert", edits::self_insert, edits::SELF_INSERT_DOC);
-    insert_fn!(
+    insert_cmd!(
         "insert-newline",
         edits::insert_newline,
+        [] as [&str; 0],
         edits::INSERT_NEWLINE_DOC
     );
-    insert_fn!(
+    insert_cmd!(
         "delete-backward-char",
         edits::delete_backward_char,
+        [] as [&str; 0],
         edits::DELETE_BACKWARD_CHAR_DOC
     );
-    insert_fn!(
+    insert_cmd!(
         "backward-char",
         edits::backward_char,
+        [] as [&str; 0],
         edits::BACKWARD_CHAR_DOC
     );
-    insert_fn!("forward-char", edits::forward_char, edits::FORWARD_CHAR_DOC);
-    insert_fn!(
+    insert_cmd!(
+        "forward-char",
+        edits::forward_char,
+        [] as [&str; 0],
+        edits::FORWARD_CHAR_DOC
+    );
+    insert_cmd!(
         "previous-line",
         edits::previous_line,
+        [] as [&str; 0],
         edits::PREVIOUS_LINE_DOC
     );
-    insert_fn!("next-line", edits::next_line, edits::NEXT_LINE_DOC);
-    insert_fn!("find-file", io::find_file, io::FIND_FILE_DOC);
-    insert_fn!("save-buffer", io::save_buffer, io::SAVE_BUFFER_DOC);
+    insert_cmd!(
+        "next-line",
+        edits::next_line,
+        [] as [&str; 0],
+        edits::NEXT_LINE_DOC
+    );
+    insert_cmd!(
+        "find-file",
+        io::find_file,
+        ["fFind file: "],
+        io::FIND_FILE_DOC
+    );
+    insert_cmd!(
+        "save-buffer",
+        io::save_buffer,
+        [] as [&str; 0],
+        io::SAVE_BUFFER_DOC
+    );
     insert_fn!(
         "make-floating-window",
         ui::make_floating_window,

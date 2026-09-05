@@ -1,4 +1,5 @@
 pub mod buffer;
+pub(crate) mod commands;
 pub(crate) mod editor;
 pub mod input;
 pub mod lisp;

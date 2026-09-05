@@ -2,9 +2,10 @@
 ;; `core/src/minibuffer.rs` -- the read/confirm/cancel/complete mechanics
 ;; themselves are hardcoded in Rust, not defined here).
 
-;; M-x lives in commands.lisp, which defines the command registry's Lisp
-;; side; the stub that used to sit here opened a prompt whose Return did
-;; nothing, because there was no dispatch to hand the name to.
+(defun command-execute-prompt ()
+  (minibuffer-read "Command" nil nil nil))
+
+(define-key nil "M-x" 'command-execute-prompt)
 
 (defun eval-expression-confirm (input)
   "Called when the user presses Return after `eval-expression-prompt' --
