@@ -50,6 +50,13 @@ pub struct FloatingWindow {
     pub previous_focused_window_id: usize,
 }
 
+/// One window, resolved to exactly what should appear on screen.
+///
+/// Owned data with no borrows back into editor state, so a [`FrameSnapshot`]
+/// built from these can outlive the locks it was captured under.
+///
+/// [`FrameSnapshot`]: crate::ui::FrameSnapshot
+#[derive(Clone, Debug, PartialEq)]
 pub struct RenderableWindowView {
     pub rect: Rect,
     pub buffer_name: String,

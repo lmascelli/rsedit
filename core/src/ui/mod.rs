@@ -1,3 +1,6 @@
+mod frame;
+pub use frame::FrameSnapshot;
+
 mod windows;
 pub use windows::{
     FloatingWindow, LayoutNode, Orientation, Rect, RenderableWindowView, Window,

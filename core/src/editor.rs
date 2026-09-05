@@ -9,7 +9,10 @@ use crate::{
     modes::MajorMode,
     primitives::install_primitives,
     task::{BackgroundScheduler, WorkerMessage},
-    ui::{FloatingWindow, LayoutNode, Rect, RenderableWindowView, Window, extract_buffer_lines},
+    ui::{
+        FloatingWindow, FrameSnapshot, LayoutNode, Rect, RenderableWindowView, Window,
+        extract_buffer_lines,
+    },
 };
 use std::{
     collections::HashMap,
@@ -508,22 +511,36 @@ impl<B: BufferTrait> EditorState<B> {
         hook_name: &str,
         env: &Arc<Env<EditorState<B>>>,
     ) {
-        let registry = self
+        // Copy the hook list out and release the registry *before* evaluating
+        // any of it.
+        //
+        // Holding the lock across `eval` deadlocks the editor outright: a hook
+        // that calls `add-hook`, `define-key` with a mode, `make-mode` or
+        // `add-syntax-rule` needs a write lock on the same registry this thread
+        // is already reading, and `RwLock` is not reentrant. It is not a race --
+        // it hangs every time, on one thread, from ordinary user Lisp.
+        //
+        // The general rule this is an instance of: never hold a lock across a
+        // callback into the interpreter. Lisp can re-enter the editor through
+        // any primitive, so a lock held across `eval` is a lock offered to
+        // arbitrary code.
+        let hooks: Vec<ELispExp<B>> = self
             .mode_registry
             .read()
-            .expect("Failed to acquire read lock on mode registry");
-        if let Some(mode) = registry.get(mode_name) {
-            if let Some(hook_vec) = mode.hooks.get(hook_name) {
-                for hook in hook_vec {
-                    let hook_call = ELispExp::form(vec![hook.clone()]);
-                    let _command = self.begin_command();
-                    if let Err(e) = eval(&hook_call, env.clone(), self) {
-                        self.log_diagnostic(&format!(
-                            "Hook {hook_name} ({:?}) execution failed: {:?}",
-                            hook, e
-                        ));
-                    }
-                }
+            .expect("Failed to acquire read lock on mode registry")
+            .get(mode_name)
+            .and_then(|mode| mode.hooks.get(hook_name))
+            .cloned()
+            .unwrap_or_default();
+
+        for hook in hooks {
+            let hook_call = ELispExp::form(vec![hook.clone()]);
+            let _command = self.begin_command();
+            if let Err(e) = eval(&hook_call, env.clone(), self) {
+                self.log_diagnostic(&format!(
+                    "Hook {hook_name} ({:?}) execution failed: {:?}",
+                    hook, e
+                ));
             }
         }
     }
@@ -603,82 +620,111 @@ impl<B: BufferTrait> EditorState<B> {
     /// where the window is placed and its size, the name of the buffer it represents, if it's
     /// focused, the relative cursor position in it, if it has a border and of course the line
     /// that it contains and that have to be drawn.
-    pub fn compose_layout(
-        &self,
-        screen_width: usize,
-        screen_height: usize,
-    ) -> Vec<RenderableWindowView> {
-        let mut views = Vec::new();
-        let tiled_space = Rect {
-            x: 0,
-            y: 0,
-            width: screen_width,
-            height: screen_height,
-        };
-        self.layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root")
-            .compute_tiled_views(
-                tiled_space,
-                self.get_focused_window_id(),
-                self.buffers
-                    .read()
-                    .as_ref()
-                    .expect("Failed to acquire a read lock on buffers"),
-                &mut views,
-            );
-
-        for float in self
-            .floating_windows
-            .as_ref()
+    /// Capture everything the UI needs to draw one frame.
+    ///
+    /// # Lock order
+    ///
+    /// This is the **canonical order** for the whole editor. It is currently
+    /// the only code path that holds more than one of these at a time, so it
+    /// gets to define the order; anything added later that needs two or more
+    /// must take them in this sequence or risk a deadlock the moment a second
+    /// thread writes:
+    ///
+    /// `focused_window_id` -> `echo_message` -> `layout_root` ->
+    /// `floating_windows` -> `buffers` -> an individual `Buffer`
+    ///
+    /// Cheap scalars first so the structural locks are held for as short a
+    /// time as possible. Every lock is acquired exactly once and released
+    /// before the caller sees the result, so no terminal I/O ever happens with
+    /// a lock held.
+    ///
+    /// # Why one capture rather than field-by-field reads
+    ///
+    /// See [`FrameSnapshot`]. The short version: `BackgroundScheduler` and
+    /// `(spawn ...)` already mutate this state from other threads, so a
+    /// renderer that reads six locks at six different instants can compose a
+    /// frame that never existed.
+    ///
+    /// # Note on `layout_root`
+    ///
+    /// A *write* lock, because `compute_tiled_views` adjusts each window's
+    /// `scroll_x`/`scroll_y` to keep the cursor in view -- rendering mutates
+    /// editor state. That works while one thread renders, and is the thing to
+    /// untangle before the UI loop moves off the command thread: hoisting the
+    /// scroll reconciliation into an explicit post-command step would let this
+    /// take a read lock and let renders run concurrently.
+    pub fn snapshot(&self, screen_width: usize, screen_height: usize) -> FrameSnapshot {
+        let focused_window_id = *self
+            .focused_window_id
             .read()
-            .expect("Failed to acquire a read lock on floating_windows")
-            .iter()
-        {
-            let lines = extract_buffer_lines(
-                &float.window,
-                &float.rect,
-                self.buffers
-                    .read()
-                    .as_ref()
-                    .expect("Failed to acquire a read lock on buffers"),
-            );
-            let is_focused = float.window.id == self.get_focused_window_id();
+            .expect("Failed to acquire read lock on focused_window_id");
+        let echo_message = self
+            .echo_message
+            .read()
+            .expect("Failed to acquire read lock on echo_message")
+            .clone();
+        let mut layout_root = self
+            .layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root");
+        let floating_windows = self
+            .floating_windows
+            .read()
+            .expect("Failed to acquire read lock on floating_windows");
+        let buffers = self
+            .buffers
+            .read()
+            .expect("Failed to acquire read lock on buffers");
 
-            let cursor_rel_pos = if is_focused {
-                if let Some(buf) = self
-                    .buffers
-                    .read()
-                    .expect("Failed to acquire read lock on buffers")
-                    .get(&float.window.buffer_name)
-                {
+        let mut views = Vec::new();
+        layout_root.compute_tiled_views(
+            Rect {
+                x: 0,
+                y: 0,
+                width: screen_width,
+                height: screen_height,
+            },
+            focused_window_id,
+            &buffers,
+            &mut views,
+        );
+
+        for float in floating_windows.iter() {
+            let is_focused = float.window.id == focused_window_id;
+            // Unlike a tiled window, a float is not auto-scrolled to follow the
+            // cursor; its scroll offsets are whatever whoever opened it set.
+            let cursor_rel_pos = is_focused
+                .then(|| buffers.get(&float.window.buffer_name))
+                .flatten()
+                .map(|buf| {
                     let (c_line, c_col) = buf
                         .read()
                         .expect("Failed to acquire read lock on buffer")
                         .text
                         .cursor_pos();
-                    Some((
+                    (
                         c_col.saturating_sub(float.window.scroll_x),
                         c_line.saturating_sub(float.window.scroll_y),
-                    ))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+                    )
+                });
 
             views.push(RenderableWindowView {
                 rect: float.rect.clone(),
                 buffer_name: float.window.buffer_name.clone(),
                 is_focused,
                 cursor_rel_pos,
-                lines,
+                lines: extract_buffer_lines(&float.window, &float.rect, &buffers),
                 has_border: float.has_border,
             });
         }
 
-        views
+        FrameSnapshot {
+            views,
+            echo_message,
+            focused_window_id,
+            width: screen_width,
+            height: screen_height,
+        }
     }
 
     pub fn resize(&self, env: Arc<Env<Self>>, new_screen_width: usize, new_screen_height: usize) {

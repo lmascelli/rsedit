@@ -5,22 +5,26 @@ use rsedit_core::ELispExp;
 use rsedit_core::EditorState;
 use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
 use rsedit_core::lisp::Env;
-use rsedit_core::ui::Rect;
+use rsedit_core::ui::{FrameSnapshot, Rect};
 use std::{
     io::{Write, stdout},
     sync::Arc,
 };
 
-pub fn render_screen<B: BufferTrait>(
-    state: &mut EditorState<B>,
-    cols: u16,
-    rows: u16,
-) -> std::io::Result<()> {
+/// Draw one frame from an already-captured [`FrameSnapshot`].
+///
+/// Takes the snapshot rather than the editor deliberately: this function does
+/// terminal I/O, which is slow and can block, and it must not do that while
+/// holding a lock on editor state. Capture is `EditorState::snapshot`, which
+/// takes every lock once in a fixed order and releases them all before
+/// returning; by the time control reaches here there is nothing shared left to
+/// touch. That separation is also what lets this move to its own thread later
+/// without an audit of every draw call.
+pub fn render_frame(frame: &FrameSnapshot) -> std::io::Result<()> {
     let mut stdout = stdout();
 
-    let views = state.compose_layout(cols as usize, rows as usize);
-    let frame_w = cols as isize;
-    let frame_h = rows as isize;
+    let frame_w = frame.width as isize;
+    let frame_h = frame.height as isize;
 
     execute!(
         stdout,
@@ -28,9 +32,15 @@ pub fn render_screen<B: BufferTrait>(
         cursor::MoveTo(0, 0)
     )?;
 
-    for view in views {
+    for view in &frame.views {
         if view.has_border {
-            draw_window_border(&mut stdout, &view.rect, &Some(view.buffer_name), cols, rows)?;
+            draw_window_border(
+                &mut stdout,
+                &view.rect,
+                &Some(view.buffer_name.clone()),
+                frame.width as u16,
+                frame.height as u16,
+            )?;
         }
 
         for (offset_y, line) in view.lines.iter().enumerate() {
@@ -53,9 +63,15 @@ pub fn render_screen<B: BufferTrait>(
     // whatever's under it -- left free by the default minibuffer window,
     // which docks to the 3 rows just above it, so `message`/error output
     // always has somewhere visible to land without covering the prompt.
-    let echo_message = state.get_echo_message();
-    if !echo_message.is_empty() {
-        draw_clipped_row(&mut stdout, 0, frame_h - 1, &echo_message, frame_w, frame_h)?;
+    if !frame.echo_message.is_empty() {
+        draw_clipped_row(
+            &mut stdout,
+            0,
+            frame_h - 1,
+            &frame.echo_message,
+            frame_w,
+            frame_h,
+        )?;
     }
 
     stdout.flush()
@@ -161,7 +177,7 @@ fn draw_window_border(
 }
 
 pub fn tui_main<B: BufferTrait>(
-    state: &mut EditorState<B>,
+    state: &EditorState<B>,
     env: Arc<Env<EditorState<B>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     terminal::enable_raw_mode()?;
@@ -174,7 +190,9 @@ pub fn tui_main<B: BufferTrait>(
 
     while state.is_running() {
         let (cols, rows) = terminal::size()?;
-        render_screen(state, cols, rows)?;
+        // Capture, then draw. Two steps on purpose: the capture holds locks and
+        // does no I/O, the draw does I/O and holds no locks.
+        render_frame(&state.snapshot(cols as usize, rows as usize))?;
 
         match read()? {
             Event::Key(key_event) => {

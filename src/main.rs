@@ -27,7 +27,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if io::stdin().is_terminal() {
-        tui_main(&mut state, env.clone())?;
+        tui_main(&state, env.clone())?;
     } else {
     }
 
