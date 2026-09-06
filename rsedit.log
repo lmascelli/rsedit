@@ -4,5 +4,3 @@
 [LOG] End of the minibuffer.lisp
 [LOG] 5
 [LOG] Hello from rsedit init.lisp
-open-config call
-Eval Error: minibuffer-confirm UnboundVariable("minibuffer-confirm")
