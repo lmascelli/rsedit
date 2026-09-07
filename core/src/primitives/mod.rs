@@ -205,6 +205,62 @@ pub fn install_primitives<B: BufferTrait>(
         edits::PREVIOUS_LINE_DOC
     );
     insert_cmd!(
+        "beginning-of-line",
+        edits::beginning_of_line,
+        [] as [&str; 0],
+        edits::BEGINNING_OF_LINE_DOC
+    );
+    insert_cmd!(
+        "end-of-line",
+        edits::end_of_line,
+        [] as [&str; 0],
+        edits::END_OF_LINE_DOC
+    );
+    insert_cmd!(
+        "forward-word",
+        edits::forward_word,
+        [] as [&str; 0],
+        edits::FORWARD_WORD_DOC
+    );
+    insert_cmd!(
+        "backward-word",
+        edits::backward_word,
+        [] as [&str; 0],
+        edits::BACKWARD_WORD_DOC
+    );
+    insert_cmd!(
+        "forward-paragraph",
+        edits::forward_paragraph,
+        [] as [&str; 0],
+        edits::FORWARD_PARAGRAPH_DOC
+    );
+    insert_cmd!(
+        "backward-paragraph",
+        edits::backward_paragraph,
+        [] as [&str; 0],
+        edits::BACKWARD_PARAGRAPH_DOC
+    );
+    insert_cmd!(
+        "beginning-of-buffer",
+        edits::beginning_of_buffer,
+        [] as [&str; 0],
+        edits::BEGINNING_OF_BUFFER_DOC
+    );
+    insert_cmd!(
+        "end-of-buffer",
+        edits::end_of_buffer,
+        [] as [&str; 0],
+        edits::END_OF_BUFFER_DOC
+    );
+    // The first built-in command that prompts for an argument, so M-x
+    // goto-line asks for the number rather than failing on arity.
+    insert_cmd!(
+        "goto-line",
+        edits::goto_line,
+        ["nGoto line: "],
+        edits::GOTO_LINE_DOC
+    );
+    insert_cmd!(
         "next-line",
         edits::next_line,
         [] as [&str; 0],

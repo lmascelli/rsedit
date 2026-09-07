@@ -65,6 +65,21 @@ pub struct EditorState<B: BufferTrait> {
     /// See `crate::commands::PendingCommand`.
     pending_commands: Arc<RwLock<Vec<PendingCommand<ELispExp<B>>>>>,
 
+    /// Name of the command that ran immediately before the current one.
+    ///
+    /// Emacs' `last-command`. A command that wants to know whether it is a
+    /// repeat of itself needs this: vertical movement uses it to decide
+    /// whether a goal column is still in play, and appending kills (#20) will
+    /// want it too.
+    last_command: Arc<RwLock<Option<String>>>,
+
+    /// Column that repeated vertical movement is aiming for.
+    ///
+    /// Moving down through a short line and back up must return to the
+    /// column you started from, so the target column is remembered rather
+    /// than re-read from the cursor -- which a short line would have clamped.
+    goal_column: Arc<RwLock<Option<usize>>>,
+
     /// Execution budget for Lisp evaluation.
     fuel: Arc<FuelMeter>,
     /// Here the lisp VM will output its logs
@@ -188,6 +203,8 @@ impl<B: BufferTrait> EditorState<B> {
             next_window_id: Arc::new(AtomicUsize::new(1)),
             commands: Arc::new(RwLock::new(CommandRegistry::new())),
             pending_commands: Arc::new(RwLock::new(Vec::new())),
+            last_command: Arc::new(RwLock::new(None)),
+            goal_column: Arc::new(RwLock::new(None)),
             fuel: Arc::new(FuelMeter::new(DEFAULT_FUEL)),
             logs: Arc::new(RwLock::new(Vec::new())),
             log_file: None,
@@ -531,6 +548,10 @@ impl<B: BufferTrait> EditorState<B> {
             },
             _ => None,
         };
+        // Remembered for the *next* command to consult, so that during this
+        // one `last_command` still names its predecessor -- which is what
+        // makes "am I a repeat of myself?" answerable.
+        let this_command = bound_command.clone();
         if let Some(name) = bound_command {
             // The name is passed as a string rather than a quoted symbol:
             // a string literal is self-evaluating, so this needs no `quote`
@@ -559,6 +580,7 @@ impl<B: BufferTrait> EditorState<B> {
             buf_lock.current_mode.clone()
         };
         self.run_hook(&current_mode_name, "post-command-hook", env);
+        self.set_last_command(this_command);
     }
 
     /// Run every function registered under HOOK_NAME in the major mode
@@ -1049,6 +1071,38 @@ impl<B: BufferTrait> EditorState<B> {
             .read()
             .expect("Failed to acquire read lock on buffers")
             .contains_key("*Minibuffer*")
+    }
+
+    // ---------------------------------------------------------------
+    // What the previous command was, and where vertical movement is aiming
+    // ---------------------------------------------------------------
+
+    pub(crate) fn last_command(&self) -> Option<String> {
+        self.last_command
+            .read()
+            .expect("Failed to acquire read lock on last_command")
+            .clone()
+    }
+
+    pub(crate) fn set_last_command(&self, name: Option<String>) {
+        *self
+            .last_command
+            .write()
+            .expect("Failed to acquire write lock on last_command") = name;
+    }
+
+    pub(crate) fn goal_column(&self) -> Option<usize> {
+        *self
+            .goal_column
+            .read()
+            .expect("Failed to acquire read lock on goal_column")
+    }
+
+    pub(crate) fn set_goal_column(&self, col: Option<usize>) {
+        *self
+            .goal_column
+            .write()
+            .expect("Failed to acquire write lock on goal_column") = col;
     }
 
     /// Every live buffer's name, sorted. Used for buffer-name completion.
