@@ -205,6 +205,48 @@ pub fn install_primitives<B: BufferTrait>(
         edits::PREVIOUS_LINE_DOC
     );
     insert_cmd!(
+        "delete-char",
+        edits::delete_char,
+        [] as [&str; 0],
+        edits::DELETE_CHAR_DOC
+    );
+    insert_cmd!(
+        "kill-line",
+        edits::kill_line,
+        [] as [&str; 0],
+        edits::KILL_LINE_DOC
+    );
+    insert_cmd!(
+        "kill-whole-line",
+        edits::kill_whole_line,
+        [] as [&str; 0],
+        edits::KILL_WHOLE_LINE_DOC
+    );
+    insert_cmd!(
+        "kill-word",
+        edits::kill_word,
+        [] as [&str; 0],
+        edits::KILL_WORD_DOC
+    );
+    insert_cmd!(
+        "backward-kill-word",
+        edits::backward_kill_word,
+        [] as [&str; 0],
+        edits::BACKWARD_KILL_WORD_DOC
+    );
+    insert_cmd!(
+        "kill-paragraph",
+        edits::kill_paragraph,
+        [] as [&str; 0],
+        edits::KILL_PARAGRAPH_DOC
+    );
+    insert_cmd!(
+        "backward-kill-paragraph",
+        edits::backward_kill_paragraph,
+        [] as [&str; 0],
+        edits::BACKWARD_KILL_PARAGRAPH_DOC
+    );
+    insert_cmd!(
         "beginning-of-line",
         edits::beginning_of_line,
         [] as [&str; 0],

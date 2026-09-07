@@ -106,6 +106,81 @@ fn is_blank_line<B: BufferTrait>(text: &B, line: usize) -> bool {
         .unwrap_or(true)
 }
 
+/// Offset `count` words forward of `from`.
+///
+/// Factored out so `forward-word` and `kill-word` agree by construction: a
+/// deletion that computed its own target could drift from the movement it is
+/// supposed to mirror.
+fn word_forward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
+    let len = text.len();
+    let mut pos = from;
+    for _ in 0..count {
+        while pos < len && !text.at(pos).map(is_word_char).unwrap_or(false) {
+            pos += 1;
+        }
+        while pos < len && text.at(pos).map(is_word_char).unwrap_or(false) {
+            pos += 1;
+        }
+    }
+    pos
+}
+
+/// Offset `count` words back of `from`.
+fn word_backward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
+    let mut pos = from;
+    for _ in 0..count {
+        while pos > 0 && !text.at(pos - 1).map(is_word_char).unwrap_or(false) {
+            pos -= 1;
+        }
+        while pos > 0 && text.at(pos - 1).map(is_word_char).unwrap_or(false) {
+            pos -= 1;
+        }
+    }
+    pos
+}
+
+/// Line that `forward-paragraph` would land on from `line`.
+fn paragraph_forward<B: BufferTrait>(text: &B, line: usize) -> usize {
+    let last = text.line_count().saturating_sub(1);
+    let mut line = line;
+    while line < last && is_blank_line(text, line) {
+        line += 1;
+    }
+    while line < last && !is_blank_line(text, line) {
+        line += 1;
+    }
+    line
+}
+
+/// Line that `backward-paragraph` would land on from `line`.
+fn paragraph_backward<B: BufferTrait>(text: &B, line: usize) -> usize {
+    let mut line = line;
+    while line > 0 && is_blank_line(text, line) {
+        line -= 1;
+    }
+    while line > 0 && !is_blank_line(text, line) {
+        line -= 1;
+    }
+    line
+}
+
+/// Remove the text between two offsets, leaving point where the text began.
+///
+/// `delete()` removes the character *before* point, so this positions at the
+/// far end and deletes backwards. Each of those is O(1) once the gap is there,
+/// so the whole range costs one gap move rather than one per character.
+fn delete_between<B: BufferTrait>(text: &mut B, from: usize, to: usize) {
+    let start = from.min(to);
+    let end = to.max(from).min(text.len());
+    if start >= end {
+        return;
+    }
+    goto_offset(text, end);
+    for _ in 0..(end - start) {
+        text.delete();
+    }
+}
+
 fn line_length<B: BufferTrait>(text: &B, line: usize) -> usize {
     text.get_lines(line, line + 1)
         .first()
@@ -226,19 +301,8 @@ pub const FORWARD_WORD_DOC: &str = "(forward-word &optional N): Move point forwa
 primitive!(forward_word, args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
-    let len = buf.text.len();
-    let mut pos = buf.text.cursor_pos_1d();
-    for _ in 0..repeat_count(args)? {
-        // Skip whatever separates us from the next word, then cross the word
-        // itself -- so point lands after the word, as M-f does.
-        while pos < len && !buf.text.at(pos).map(is_word_char).unwrap_or(false) {
-            pos += 1;
-        }
-        while pos < len && buf.text.at(pos).map(is_word_char).unwrap_or(false) {
-            pos += 1;
-        }
-    }
-    goto_offset(&mut buf.text, pos);
+    let target = word_forward(&buf.text, buf.text.cursor_pos_1d(), repeat_count(args)?);
+    goto_offset(&mut buf.text, target);
     Ok(ELispExp::nil())
 });
 
@@ -250,16 +314,8 @@ pub const BACKWARD_WORD_DOC: &str = "(backward-word &optional N): Move point bac
 primitive!(backward_word, args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
-    let mut pos = buf.text.cursor_pos_1d();
-    for _ in 0..repeat_count(args)? {
-        while pos > 0 && !buf.text.at(pos - 1).map(is_word_char).unwrap_or(false) {
-            pos -= 1;
-        }
-        while pos > 0 && buf.text.at(pos - 1).map(is_word_char).unwrap_or(false) {
-            pos -= 1;
-        }
-    }
-    goto_offset(&mut buf.text, pos);
+    let target = word_backward(&buf.text, buf.text.cursor_pos_1d(), repeat_count(args)?);
+    goto_offset(&mut buf.text, target);
     Ok(ELispExp::nil())
 });
 
@@ -272,17 +328,9 @@ pub const FORWARD_PARAGRAPH_DOC: &str = "(forward-paragraph): Move point to the 
 primitive!(forward_paragraph, _args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
-    let last = buf.text.line_count().saturating_sub(1);
-    let (mut line, _) = buf.text.cursor_pos();
-    // Step off any blank lines first, so repeating this walks paragraph by
-    // paragraph instead of sticking to the separator it just landed on.
-    while line < last && is_blank_line(&buf.text, line) {
-        line += 1;
-    }
-    while line < last && !is_blank_line(&buf.text, line) {
-        line += 1;
-    }
-    buf.text.cursor_move(line, 0);
+    let (line, _) = buf.text.cursor_pos();
+    let target = paragraph_forward(&buf.text, line);
+    buf.text.cursor_move(target, 0);
     Ok(ELispExp::nil())
 });
 
@@ -294,14 +342,9 @@ pub const BACKWARD_PARAGRAPH_DOC: &str = "(backward-paragraph): Move point to th
 primitive!(backward_paragraph, _args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
-    let (mut line, _) = buf.text.cursor_pos();
-    while line > 0 && is_blank_line(&buf.text, line) {
-        line -= 1;
-    }
-    while line > 0 && !is_blank_line(&buf.text, line) {
-        line -= 1;
-    }
-    buf.text.cursor_move(line, 0);
+    let (line, _) = buf.text.cursor_pos();
+    let target = paragraph_backward(&buf.text, line);
+    buf.text.cursor_move(target, 0);
     Ok(ELispExp::nil())
 });
 
@@ -358,5 +401,144 @@ primitive!(goto_line, args, _env, ctx, {
     let last = buf.text.line_count().saturating_sub(1);
     let line = (requested.max(1.0) as usize - 1).min(last);
     buf.text.cursor_move(line, 0);
+    Ok(ELispExp::nil())
+});
+
+// ---------------------------------------------------------------------------
+// Deletion, mirroring the movement commands above
+// ---------------------------------------------------------------------------
+//
+// Each of these removes exactly the text the corresponding movement command
+// would have travelled over, by asking the same helper where that movement
+// ends. That is why they cannot drift apart: `kill-word` deletes to
+// `word_forward`, which is the offset `forward-word` moves to.
+//
+// A note on the names. In Emacs a *kill* also copies the text to the kill ring
+// so it can be yanked back, while a *delete* discards it. The ring is roadmap
+// #20 and does not exist yet, so today these all discard. The Emacs names are
+// used regardless, so that the bindings and muscle memory people already have
+// keep working, and so that #20 adds saving to these commands rather than
+// renaming them out from under anyone's configuration.
+
+pub const DELETE_CHAR_DOC: &str = "(delete-char &optional N): Delete N characters (default 1) \
+         forward from point, crossing line boundaries. Deletes nothing at the \
+         end of the buffer.\n\n\
+         Example:\n\
+         (define-key nil \"C-d\" 'delete-char)";
+
+primitive!(delete_char, args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let from = buf.text.cursor_pos_1d();
+    let to = from + repeat_count(args)?;
+    delete_between(&mut buf.text, from, to);
+    buf.is_modified = true;
+    Ok(ELispExp::nil())
+});
+
+pub const KILL_LINE_DOC: &str = "(kill-line): Delete from point to the end of the line. When point \
+         is already at the end of a line, delete the newline instead, joining \
+         the next line onto this one.\n\n\
+         Does not yet save to a kill ring -- see roadmap #20.\n\n\
+         Example:\n\
+         (define-key nil \"C-k\" 'kill-line)";
+
+primitive!(kill_line, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let from = buf.text.cursor_pos_1d();
+    let (line, _) = buf.text.cursor_pos();
+    let end_of_line = buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line));
+    // At the end of a line there is nothing left to kill on it, so the newline
+    // goes instead -- which is what makes repeated C-k swallow a paragraph
+    // rather than stalling on every line ending.
+    let to = if from == end_of_line {
+        from + 1
+    } else {
+        end_of_line
+    };
+    delete_between(&mut buf.text, from, to);
+    buf.is_modified = true;
+    Ok(ELispExp::nil())
+});
+
+pub const KILL_WHOLE_LINE_DOC: &str = "(kill-whole-line): Delete the entire line point is on, \
+         including its newline.\n\n\
+         Does not yet save to a kill ring -- see roadmap #20.";
+
+primitive!(kill_whole_line, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let (line, _) = buf.text.cursor_pos();
+    let from = buf.text.cursor_2d_to_1d(line, 0);
+    let to = (buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line)) + 1).min(buf.text.len());
+    delete_between(&mut buf.text, from, to);
+    buf.is_modified = true;
+    Ok(ELispExp::nil())
+});
+
+pub const KILL_WORD_DOC: &str = "(kill-word &optional N): Delete forward to the end of the Nth next \
+         word (default 1) -- the text `forward-word' would move over.\n\n\
+         Does not yet save to a kill ring -- see roadmap #20.\n\n\
+         Example:\n\
+         (define-key nil \"M-d\" 'kill-word)";
+
+primitive!(kill_word, args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let from = buf.text.cursor_pos_1d();
+    let to = word_forward(&buf.text, from, repeat_count(args)?);
+    delete_between(&mut buf.text, from, to);
+    buf.is_modified = true;
+    Ok(ELispExp::nil())
+});
+
+pub const BACKWARD_KILL_WORD_DOC: &str = "(backward-kill-word &optional N): Delete back to the \
+         beginning of the Nth previous word (default 1) -- the text \
+         `backward-word' would move over.\n\n\
+         Does not yet save to a kill ring -- see roadmap #20.\n\n\
+         Example:\n\
+         (define-key nil \"M-<backspace>\" 'backward-kill-word)";
+
+primitive!(backward_kill_word, args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let to = buf.text.cursor_pos_1d();
+    let from = word_backward(&buf.text, to, repeat_count(args)?);
+    delete_between(&mut buf.text, from, to);
+    buf.is_modified = true;
+    Ok(ELispExp::nil())
+});
+
+pub const KILL_PARAGRAPH_DOC: &str = "(kill-paragraph): Delete forward to the end of the current \
+         paragraph -- the text `forward-paragraph' would move over.\n\n\
+         Does not yet save to a kill ring -- see roadmap #20.";
+
+primitive!(kill_paragraph, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let from = buf.text.cursor_pos_1d();
+    let (line, _) = buf.text.cursor_pos();
+    let target_line = paragraph_forward(&buf.text, line);
+    let to = buf.text.cursor_2d_to_1d(target_line, 0);
+    delete_between(&mut buf.text, from, to);
+    buf.is_modified = true;
+    Ok(ELispExp::nil())
+});
+
+pub const BACKWARD_KILL_PARAGRAPH_DOC: &str = "(backward-kill-paragraph): Delete back to the \
+         beginning of the current paragraph -- the text `backward-paragraph' \
+         would move over.\n\n\
+         Does not yet save to a kill ring -- see roadmap #20.";
+
+primitive!(backward_kill_paragraph, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let to = buf.text.cursor_pos_1d();
+    let (line, _) = buf.text.cursor_pos();
+    let target_line = paragraph_backward(&buf.text, line);
+    let from = buf.text.cursor_2d_to_1d(target_line, 0);
+    delete_between(&mut buf.text, from, to);
+    buf.is_modified = true;
     Ok(ELispExp::nil())
 });
