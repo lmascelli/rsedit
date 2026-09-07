@@ -337,6 +337,75 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
+    // Prompt titles
+    // ---------------------------------------------------------------
+
+    /// The minibuffer's border label, as the renderer would draw it.
+    fn prompt_title(ctx: &Ctx) -> String {
+        let frame = ctx.snapshot(80, 24);
+        frame
+            .views
+            .iter()
+            .find(|v| v.buffer_name == "*Minibuffer*")
+            .expect("a minibuffer must be open")
+            .title
+            .clone()
+            .expect("the minibuffer must be titled with its prompt")
+    }
+
+    /// A prompt has to say who is waiting on the answer.
+    ///
+    /// Reading `Find file:` on its own gives no clue that `find-file` asked, or
+    /// that a command is running at all.
+    #[test]
+    fn an_argument_prompt_names_the_command_that_asked() {
+        let (ctx, env) = bare();
+        eval_str(
+            r#"(progn (defun probe-cmd (p) p)
+                      (register-command 'probe-cmd '("fFind file: ")))"#,
+            &env,
+            &ctx,
+        )
+        .expect("setup");
+
+        ctx.handle_key_event(meta('x'), &env);
+        assert_eq!(prompt_title(&ctx), "M-x", "M-x labels itself");
+
+        type_and_confirm(&ctx, &env, "probe-cmd");
+        assert_eq!(prompt_title(&ctx), "probe-cmd - Find file: ");
+    }
+
+    /// With more than one argument the prompt also says which one, so two
+    /// questions in a row cannot be mistaken for each other.
+    #[test]
+    fn a_multi_argument_prompt_says_which_argument_it_is_on() {
+        let (ctx, env) = bare();
+        eval_str(
+            r#"(progn (defun probe-cmd (a b) (list a b))
+                      (register-command 'probe-cmd '("sReplace: " "sWith: ")))"#,
+            &env,
+            &ctx,
+        )
+        .expect("setup");
+
+        ctx.handle_key_event(meta('x'), &env);
+        type_and_confirm(&ctx, &env, "probe-cmd");
+        assert_eq!(prompt_title(&ctx), "probe-cmd (1/2) - Replace: ");
+
+        type_and_confirm(&ctx, &env, "x");
+        assert_eq!(prompt_title(&ctx), "probe-cmd (2/2) - With: ");
+    }
+
+    /// `minibuffer-read` called straight from Lisp -- as M-: does -- has no
+    /// command behind it, so its prompt is shown exactly as given.
+    #[test]
+    fn a_prompt_with_no_command_behind_it_is_left_alone() {
+        let (ctx, env) = bare();
+        eval_str(r#"(minibuffer-read "Eval:" nil nil nil)"#, &env, &ctx).expect("prompt");
+        assert_eq!(prompt_title(&ctx), "Eval:");
+    }
+
+    // ---------------------------------------------------------------
     // M-x
     // ---------------------------------------------------------------
 

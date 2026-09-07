@@ -231,7 +231,7 @@ fn prompt_for<B: BufferTrait>(
     call_callable(
         &reader,
         &[
-            ELispExp::string(spec.prompt().to_string()),
+            ELispExp::string(argument_title(spec, ctx)),
             ELispExp::primitive(command_arg_confirm, None),
             ELispExp::primitive(command_arg_complete, None),
             ELispExp::primitive(command_arg_cancel, None),
@@ -239,6 +239,31 @@ fn prompt_for<B: BufferTrait>(
         env.clone(),
         ctx,
     )
+}
+
+/// The prompt shown while reading one of a command's arguments.
+///
+/// A bare `Find file:` says nothing about who is waiting on the answer, and
+/// with more than one argument it says nothing about which one is being asked
+/// for -- two prompts reading `Replace:` then `With:` look like two unrelated
+/// questions. So the command's own name leads, and a multi-argument command
+/// also shows its position:
+///
+/// ```text
+///   find-file - Find file:
+///   query-replace (2/2) - With:
+/// ```
+///
+/// If nothing is pending -- `minibuffer-read` called straight from Lisp, as
+/// `M-:` does -- the caller's prompt is used unchanged, since there is no
+/// command to name.
+fn argument_title<B: BufferTrait>(spec: &ArgSpec, ctx: &EditorState<B>) -> String {
+    let prompt = spec.prompt();
+    match ctx.pending_progress() {
+        Some((name, at, total)) if total > 1 => format!("{name} ({at}/{total}) - {prompt}"),
+        Some((name, _, _)) => format!("{name} - {prompt}"),
+        None => prompt.to_string(),
+    }
 }
 
 /// Convert the raw minibuffer input to the value the command should receive.

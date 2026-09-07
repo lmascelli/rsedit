@@ -60,6 +60,12 @@ pub struct FloatingWindow {
 pub struct RenderableWindowView {
     pub rect: Rect,
     pub buffer_name: String,
+    /// What the window's border should be labelled, when it has one.
+    ///
+    /// A floating window carries the caller's title -- for the minibuffer that
+    /// is the prompt, which is the entire point of showing a border. Tiled
+    /// windows have none and fall back to the buffer name.
+    pub title: Option<String>,
     pub is_focused: bool,
     pub cursor_rel_pos: Option<(usize, usize)>,
     pub lines: Vec<String>,
@@ -125,6 +131,7 @@ impl LayoutNode {
                 out_views.push(RenderableWindowView {
                     rect,
                     buffer_name: win.buffer_name.clone(),
+                    title: None,
                     is_focused,
                     cursor_rel_pos,
                     lines,

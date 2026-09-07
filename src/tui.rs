@@ -58,10 +58,17 @@ pub fn render_to<W: Write>(out: &mut W, frame: &FrameSnapshot) -> std::io::Resul
 
     for view in &frame.views {
         if view.has_border {
+            // The window's own title when it has one -- for the minibuffer that
+            // is the prompt. Falling back to the buffer name keeps an untitled
+            // floating window labelled rather than bare.
+            let label = view
+                .title
+                .clone()
+                .or_else(|| Some(view.buffer_name.clone()));
             draw_window_border(
                 out,
                 &view.rect,
-                &Some(view.buffer_name.clone()),
+                &label,
                 frame.width as u16,
                 frame.height as u16,
             )?;
@@ -321,6 +328,33 @@ mod tests {
             (view.rect.x + cx as isize) as u16,
             (view.rect.y + cy as isize) as u16,
         )
+    }
+
+    /// The border of a titled window shows its title, not its buffer name.
+    ///
+    /// This was dead data before: `minibuffer-read` computed a prompt,
+    /// `open_floating_window` stored it, and the renderer drew
+    /// `Some(view.buffer_name)` instead -- so every prompt was labelled
+    /// `*Minibuffer*` and the question being asked was never shown at all.
+    #[test]
+    fn a_titled_window_is_labelled_with_its_title() {
+        let (state, env) = create_global_env::<GapBuffer>().expect("global env");
+        env.set_variable("frame-width".into(), ELispExp::number(COLS as f64));
+        env.set_variable("frame-height".into(), ELispExp::number(ROWS as f64));
+        let ast = rsedit_core::lisp::Parser::new(r#"(minibuffer-read "Find file:" nil nil nil)"#)
+            .next()
+            .expect("source must parse");
+        rsedit_core::lisp::eval(&ast, env.clone(), &state).expect("prompt must open");
+
+        let rendered = frame(&state);
+        assert!(
+            rendered.contains("Find file:"),
+            "the prompt should be drawn on the minibuffer's border"
+        );
+        assert!(
+            !rendered.contains("*Minibuffer*"),
+            "the buffer name should not be used as the label when a title exists"
+        );
     }
 
     /// The regression this guards.

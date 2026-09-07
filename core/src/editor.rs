@@ -765,6 +765,7 @@ impl<B: BufferTrait> EditorState<B> {
             views.push(RenderableWindowView {
                 rect: float.rect.clone(),
                 buffer_name: float.window.buffer_name.clone(),
+                title: float.title.clone(),
                 is_focused,
                 cursor_rel_pos,
                 lines: extract_buffer_lines(&float.window, &float.rect, &buffers),
@@ -968,6 +969,24 @@ impl<B: BufferTrait> EditorState<B> {
             .write()
             .expect("Failed to acquire write lock on pending_commands")
             .push(PendingCommand::new(name, remaining));
+    }
+
+    /// How far through its arguments the innermost pending command is:
+    /// `(command name, 1-based position of the argument being read, total)`.
+    ///
+    /// Used to title the prompt, so that answering the second of two questions
+    /// says which command asked and which question it is. Without it a prompt
+    /// reading `Find file:` gives no hint that `find-file` is what is waiting
+    /// on the answer -- and with two arguments, no hint of which one is being
+    /// asked for.
+    pub(crate) fn pending_progress(&self) -> Option<(String, usize, usize)> {
+        let stack = self
+            .pending_commands
+            .read()
+            .expect("Failed to acquire read lock on pending_commands");
+        let pending = stack.last()?;
+        let done = pending.collected.len();
+        Some((pending.name.clone(), done + 1, done + pending.remaining.len()))
     }
 
     /// The argument the innermost pending command is waiting on.
