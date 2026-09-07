@@ -721,6 +721,21 @@ fn primitive_nth<T: LispContext>(
     // Previously this cloned the entire backing vector via `expect_list`
     // and then indexed it. Walking the chain is the same O(n) without the
     // allocation and the n refcount bumps.
+    // A `Form` is syntax, not a list of data, and `iter()` yields nothing for
+    // one -- so without this check `(nth 0 some-form)` quietly returned nil
+    // where every sibling (car, cdr, length, mapcar) raises. A silent nil
+    // turns a mistake into wrong data instead of a diagnosable failure.
+    match &args[1] {
+        LispExp::Cons(_) => {}
+        other if other.is_nil() => return Ok(LispExp::nil()),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "List".into(),
+                got: other.clone(),
+            });
+        }
+    }
+
     let n = n as usize;
     let mut walked = 0usize;
     let found = args[1].iter().inspect(|_| walked += 1).nth(n);

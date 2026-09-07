@@ -1,6 +1,6 @@
 //!
 //!  Add a general description of the environment here
-//! 
+//!
 
 use super::{LispContext, LispExp};
 use std::{
@@ -132,14 +132,20 @@ impl<T: LispContext> Env<T> {
     }
 }
 
-impl<T: LispContext> Clone for Env<T> {
-    fn clone(&self) -> Self {
-        unreachable!()
-    }
-}
-
+/// Environments compare by **identity**, not by contents.
+///
+/// This exists only because `Lambda` derives `PartialEq` and holds an
+/// `Arc<Env>`. It used to be `unreachable!()`, which made
+/// `(equal (lambda (x) x) (lambda (x) x))` panic and take the editor with it --
+/// reachable from a one-line program.
+///
+/// Identity is also the right answer rather than merely a safe one: two
+/// environments with equal bindings are still different scopes, and comparing
+/// them structurally would mean walking two parent chains and every binding in
+/// them, which is expensive, and cyclic once a closure captures the scope that
+/// holds it.
 impl<T: LispContext> PartialEq for Env<T> {
-    fn eq(&self, _: &Env<T>) -> bool {
-        unreachable!()
+    fn eq(&self, other: &Env<T>) -> bool {
+        std::ptr::eq(self, other)
     }
 }

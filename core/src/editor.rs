@@ -102,6 +102,12 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
         }
     }
 
+    fn begin_unwind(&self) {
+        // Roughly a hundredth of a command's budget: ample for closing a file
+        // or restoring a variable, far too little to hide a runaway loop.
+        self.fuel.grant(100_000);
+    }
+
     fn begin_thread_evaluation(&self) {
         self.fuel.arm_thread();
     }

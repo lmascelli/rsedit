@@ -13,6 +13,32 @@ pub struct ConsCell<T: LispContext> {
     pub cdr: LispExp<T>,
 }
 
+/// Unlink a cons chain iteratively when it is dropped.
+///
+/// Without this, dropping a list recurses once per cell -- `Arc<ConsCell>`
+/// drops its `cdr`, which drops the next cell, and so on -- so letting go of a
+/// list of a few tens of thousands of elements overflows the stack and
+/// *aborts* the process. Not a catchable panic: `condition-case` cannot help,
+/// and the editor simply dies. Building a list that long is ordinary Lisp, and
+/// the crash happens when it goes out of scope, far from anything that looks
+/// like a cause.
+///
+/// The loop walks the chain taking ownership of each cell whose last reference
+/// this is, replacing its `cdr` with `nil` before the cell itself is dropped,
+/// so no drop ever nests. A cell that is still shared ends the walk: its tail
+/// belongs to someone else and is not ours to unlink.
+impl<T: LispContext> Drop for ConsCell<T> {
+    fn drop(&mut self) {
+        let mut next = std::mem::replace(&mut self.cdr, LispExp::nil());
+        while let LispExp::Cons(cell) = next {
+            match Arc::try_unwrap(cell) {
+                Ok(mut owned) => next = std::mem::replace(&mut owned.cdr, LispExp::nil()),
+                Err(_) => break,
+            }
+        }
+    }
+}
+
 pub struct ConsIter<T: LispContext> {
     pub(super) cursor: LispExp<T>,
 }

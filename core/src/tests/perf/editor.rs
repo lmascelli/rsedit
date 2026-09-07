@@ -139,9 +139,11 @@ fn gap_buffer(report: &mut Report, calibration: f64) {
     let insert_growth = ratio(insert(N * 2).as_secs_f64(), small.as_secs_f64());
     let insert_ns = per_unit_ns(small, N as u64);
 
-    // `get_lines` walks from character zero to find the requested start line --
-    // there is no cached line index -- so drawing one screenful costs more the
-    // deeper into the file it sits. `render_screen` calls it every keystroke.
+    // `get_lines` seeks straight to the requested line through GapBuffer's
+    // line index, so drawing one screenful costs the size of the screenful and
+    // not the size of the document. It used to walk from character zero, which
+    // put a viewport 50,000 lines in at 400-600x the cost of one at the head --
+    // on a call `render_screen` makes on every keystroke.
     const LINES: usize = 100_000;
     const VIEWPORT: usize = 50;
     let buf = GapBuffer::from(text_of_lines(LINES).as_str());
@@ -156,13 +158,12 @@ fn gap_buffer(report: &mut Report, calibration: f64) {
 
     report.section(
         "GAP BUFFER",
-        "Insertion at the cursor, and reading a viewport out. The locality row is the\n\
-         one number in this file that is a known problem rather than a control: it is\n\
-         what \"linear scan from character zero\" looks like at 100,000 lines. The\n\
-         bound below is not asking the operation to be fast, only to stay linear --\n\
-         anything quadratic overshoots it by orders of magnitude. If a cached line\n\
-         index lands, this collapses toward 1.0x and the bound should be tightened\n\
-         hard to lock the win in.",
+        "Insertion at the cursor, and reading a viewport out. The locality row says\n\
+         what it costs to read a screenful from deep in a document versus from its\n\
+         start: 1.0x means the line index is doing its job and the cost depends on\n\
+         the size of the viewport, not of the file. It read 400-600x before the\n\
+         index existed, so the bound is set tight enough that losing the index\n\
+         fails here rather than quietly making redraws scale with file length.",
         vec![
             Row::timed(
                 "gapbuffer/insert-ns",
@@ -196,8 +197,8 @@ fn gap_buffer(report: &mut Report, calibration: f64) {
                 "gapbuffer/locality",
                 "  mid-file vs head",
                 locality,
-                format!("{locality:.0}x"),
-                "linear at this size; must stay under 2500x",
+                format!("{locality:.2}x"),
+                "1.00x means the index is seeking; must stay under 2.00x",
             ),
         ],
     );
@@ -211,10 +212,11 @@ fn gap_buffer(report: &mut Report, calibration: f64) {
         ),
     );
     report.verdict(
-        locality < 2_500.0,
-        "get_lines is still merely linear",
+        locality < 2.0,
+        "reading a viewport is independent of where it is",
         format!(
-            "reading a viewport at line {} costs {locality:.0}x reading one at the head",
+            "reading a viewport at line {} costs {locality:.2}x reading one at the head -- \
+             the line index is no longer being used to seek",
             LINES / 2
         ),
     );

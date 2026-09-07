@@ -13,9 +13,7 @@ use std::{
 
 // --------------------------------  LispExp  ----------------------------------
 
-#[derive(Clone, PartialEq)]
-// Primitive comparison has no meaning and will probably never done
-#[allow(unpredictable_function_pointer_comparisons)]
+#[derive(Clone)]
 pub enum LispExp<T: LispContext> {
     /// A *syntax* node: the vector-backed form the reader produces and
     /// `eval` dispatches on. Never a runtime value -- a list of *data* is
@@ -38,6 +36,70 @@ pub enum LispExp<T: LispContext> {
     },
     Atom(SharedAtom<T>),
     Fiber(SharedFiber<T>),
+}
+
+/// Equality, written out rather than derived.
+///
+/// Deriving it was wrong in two ways, both of which took the process down:
+///
+/// * **Cons chains recursed.** One stack frame per cell meant `(equal l l)`
+///   on a long list overflowed the stack and *aborted* -- not a catchable
+///   panic, so `condition-case` could not save the editor. Building a long
+///   list is ordinary Lisp, so this was reachable from a one-line program.
+///   The `Cons` arm below walks the two chains with a loop instead.
+///
+/// * **Lambdas compared their captured environments.** `Lambda` holds an
+///   `Arc<Env>`, and `Env`'s `PartialEq` is `unreachable!()`, so
+///   `(equal (lambda (x) x) (lambda (x) x))` panicked. Comparing environments
+///   structurally is meaningless anyway -- two closures are the same closure
+///   when they *are* the same closure -- so identity is the right test.
+#[allow(unpredictable_function_pointer_comparisons)]
+impl<T: LispContext> PartialEq for LispExp<T> {
+    fn eq(&self, other: &Self) -> bool {
+        use LispExp::*;
+        match (self, other) {
+            // Iterative, so the depth of the data does not become the depth
+            // of the Rust stack. `Arc::ptr_eq` short-circuits the common case
+            // of a list compared against itself, and also stops a shared tail
+            // being walked twice.
+            (Cons(_), Cons(_)) => {
+                let mut left = self.clone();
+                let mut right = other.clone();
+                loop {
+                    match (&left, &right) {
+                        (Cons(a), Cons(b)) => {
+                            if Arc::ptr_eq(a, b) {
+                                return true;
+                            }
+                            if a.car != b.car {
+                                return false;
+                            }
+                            let (next_left, next_right) = (a.cdr.clone(), b.cdr.clone());
+                            left = next_left;
+                            right = next_right;
+                        }
+                        _ => return left == right,
+                    }
+                }
+            }
+
+            // Closures are equal when they are the same closure. Anything
+            // else would have to compare captured environments, which is both
+            // meaningless and, as written, a panic.
+            (Lambda(a), Lambda(b)) => Arc::ptr_eq(a, b),
+
+            (Form(a), Form(b)) => a == b,
+            (Vector(a), Vector(b)) => a == b,
+            (Map(a), Map(b)) => a == b,
+            (Number(a), Number(b)) => a == b,
+            (Symbol(a), Symbol(b)) => a == b,
+            (String(a), String(b)) => a == b,
+            (Atom(a), Atom(b)) => a == b,
+            (Fiber(a), Fiber(b)) => a == b,
+            (Primitive { pointer: a, .. }, Primitive { pointer: b, .. }) => a == b,
+            _ => false,
+        }
+    }
 }
 
 /// `LispExp` prints as Lisp source, not as a Rust value. The derived

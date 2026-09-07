@@ -738,11 +738,42 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 // on purpose -- that is what `backtrace` reads -- but the
                 // cleanup's own frames are not part of the failure.
                 let depth_after_body = ctx.call_frame_depth();
+
+                // Cleanups need something to run on. A body that ended in
+                // `OutOfFuel` has left the budget at zero, so without this the
+                // first step of the first cleanup fails the same way and
+                // nothing gets unwound.
+                ctx.begin_unwind();
+
+                // Every cleanup runs even if an earlier one fails -- the whole
+                // point of `unwind-protect` is that these happen -- and the
+                // first failure is kept rather than propagated immediately.
+                let mut cleanup_error = None;
                 for cleanup in &args[1..] {
-                    eval(cleanup, env.clone(), ctx)?;
+                    if let Err(err) = eval(cleanup, env.clone(), ctx) {
+                        if cleanup_error.is_none() {
+                            cleanup_error = Some(err);
+                        }
+                    }
                 }
                 ctx.truncate_call_frames(depth_after_body);
-                Ok(EvalStep::Done(body_result?))
+
+                // When both the body and a cleanup failed, the body's error is
+                // the one that explains what went wrong; the cleanup's is
+                // logged rather than silently dropped. Previously the `?` on
+                // the cleanup discarded the body's error entirely, which made
+                // a runaway loop indistinguishable from a broken cleanup.
+                match (body_result, cleanup_error) {
+                    (Err(body), Some(cleanup)) => {
+                        ctx.log_diagnostic(&format!(
+                            "[WARNING] unwind-protect cleanup also failed: {cleanup:?}"
+                        ));
+                        Err(body)
+                    }
+                    (Err(body), None) => Err(body),
+                    (Ok(_), Some(cleanup)) => Err(cleanup),
+                    (Ok(value), None) => Ok(EvalStep::Done(value)),
+                }
             }
         }
 

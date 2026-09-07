@@ -17,4 +17,10 @@ pub trait BufferTrait:
     fn delete(&mut self);
     fn line_count(&self) -> usize;
     fn get_lines(&self, start_line: usize, end_line: usize) -> Vec<String>;
+    /// Discard all text, leaving an empty buffer with the cursor at the start.
+    ///
+    /// A method rather than a loop at the call site because deleting a
+    /// character at a time moves the gap on every step: clearing 60,000
+    /// characters that way took close to two minutes.
+    fn clear(&mut self);
 }

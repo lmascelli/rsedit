@@ -1,13 +1,11 @@
 ///
 /// Add a general description of the context here
 ///
-
 // ========================================================================== //
 //                 +------------------------------------------+
 //                 |  Context that can embed the interpreter  |
 //                 +------------------------------------------+
 // ========================================================================== //
-
 use super::EvalError;
 
 pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static {
@@ -20,6 +18,18 @@ pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'stat
     /// Allows the VM to bubble up non-fatal diagnostic logs, trace statements,
     /// or debugging notices to the host without knowing how the host presents them.
     fn log_diagnostic(&self, msg: &str) {}
+
+    /// Called by the evaluator immediately before running `unwind-protect`
+    /// cleanup forms.
+    ///
+    /// A host that meters execution should grant a small, bounded allowance
+    /// here. Without one, a body that failed with `OutOfFuel` leaves nothing
+    /// for its cleanups: the first step of the first cleanup fails the same
+    /// way, so the guard cannot unwind a runaway loop -- which is precisely
+    /// the situation unwinding exists for.
+    ///
+    /// Default: a no-op, so hosts that do not meter pay nothing.
+    fn begin_unwind(&self) {}
 
     /// Called by the evaluator when it begins evaluating on a **newly created
     /// thread** -- currently only the `(spawn ...)` special form.

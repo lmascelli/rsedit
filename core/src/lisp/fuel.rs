@@ -124,6 +124,21 @@ impl FuelMeter {
         FUEL.set(self.budget.load(Ordering::Relaxed));
     }
 
+    /// Raise this thread's remaining fuel to at least `amount`, without
+    /// opening a scope or changing the configured budget.
+    ///
+    /// For running code that must complete even though the budget is spent --
+    /// `unwind-protect` cleanups, which otherwise cannot run at all after an
+    /// `OutOfFuel`, exactly when unwinding matters most. Bounded and one-shot,
+    /// so it relaxes the guard for a cleanup rather than removing it.
+    pub fn grant(&self, amount: u32) {
+        FUEL.with(|fuel| {
+            if fuel.get() < amount {
+                fuel.set(amount);
+            }
+        });
+    }
+
     /// Set the budget future scopes receive, and top the current thread's
     /// remaining fuel up to it -- so code that knows it will be expensive can
     /// raise its own ceiling as its first act rather than having to restart.

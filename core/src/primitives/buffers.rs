@@ -99,12 +99,8 @@ pub const CLEAR_BUFFER_DOC: &str = "(clear-buffer): Delete the entire contents o
          (buffer-string) => \"\"";
 
 primitive!(clear_buffer, _args, _env, ctx, {
-    // TODO(improve) this is highly inefficent. A clear function of BufferTrait must be added
-    // to clear the buffer.
     ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
-        while buf.text.cursor_pos() != (0, 0) {
-            buf.text.delete();
-        }
+        buf.text.clear();
     });
 
     Ok(ELispExp::nil())

@@ -1,9 +1,25 @@
 use crate::buffer::BufferTrait;
+use std::collections::VecDeque;
 
 pub struct GapBuffer {
     data: Vec<char>,
     gap_start: usize,
     gap_end: usize,
+
+    // ---- line index -------------------------------------------------------
+    //
+    // Physical positions of every '\n', split around the gap and ascending
+    // within each half. Physical rather than logical positions on purpose:
+    // an edit only ever happens *at* the gap, and a physical position on
+    // either side of the gap does not move when the gap grows or shrinks. So
+    // typing a character updates the index in O(1) instead of shifting every
+    // line start after the cursor.
+    //
+    // `before` is a Vec because it is only ever pushed and popped at its end.
+    // `after` is a VecDeque because moving the gap migrates entries at its
+    // front, which a Vec could only do by shifting the whole thing.
+    newlines_before: Vec<usize>,
+    newlines_after: VecDeque<usize>,
 }
 
 impl Default for GapBuffer {
@@ -12,6 +28,8 @@ impl Default for GapBuffer {
             data: vec![char::default(); GapBuffer::GAPBUFFER_BASE_LEN],
             gap_start: 0,
             gap_end: GapBuffer::GAPBUFFER_BASE_LEN,
+            newlines_before: Vec::new(),
+            newlines_after: VecDeque::new(),
         }
     }
 }
@@ -69,9 +87,15 @@ impl<'input> BufferTrait for GapBuffer {
     }
 
     fn at(&self, pos: usize) -> Option<char> {
+        // `<`, not `<=`: at `pos == gap_start` the logical character lives at
+        // `data[gap_end]`, on the far side of the gap. Reading `data[pos]`
+        // there returns whatever the gap happens to contain -- usually a stale
+        // copy left behind by an earlier `copy_within`, which is why this
+        // looked correct in simple cases and returned the wrong character as
+        // soon as an edit made the stale copy differ from the text.
         if pos >= self.len() {
             None
-        } else if pos <= self.gap_start {
+        } else if pos < self.gap_start {
             Some(self.data[pos])
         } else {
             Some(self.data[pos + self.gap_end - self.gap_start])
@@ -99,51 +123,32 @@ impl<'input> BufferTrait for GapBuffer {
     }
 
     fn cursor_1d_to_2d(&self, pos: usize) -> (usize, usize) {
-        let mut line = 0;
-        let mut col = 0;
-        let logical_text = self.data[0..self.gap_start]
-            .iter()
-            .chain(self.data[self.gap_end..].iter())
-            .take(pos);
-
-        for &c in logical_text {
-            if c == '\n' {
-                line += 1;
-                col = 0;
+        // Binary search for how many newlines lie strictly before `pos`; that
+        // count is the line number, and the column is the distance from the
+        // line's start.
+        let mut low = 0;
+        let mut high = self.newline_count();
+        while low < high {
+            let mid = (low + high) / 2;
+            if self.newline_logical(mid) < pos {
+                low = mid + 1;
             } else {
-                col += 1;
+                high = mid;
             }
         }
-
+        let line = low;
+        let col = pos - self.line_start(line).unwrap_or(0);
         (line, col)
     }
 
     fn cursor_2d_to_1d(&self, line: usize, col: usize) -> usize {
-        let mut pos = 0;
-        let mut line_count = 0;
-        let mut col_count = 0;
-
-        let logical_text = self.data[0..self.gap_start]
-            .iter()
-            .chain(self.data[self.gap_end..].iter());
-
-        for &c in logical_text {
-            if col_count == col && line_count == line {
-                break;
-            }
-            if c == '\n' {
-                if line_count == line {
-                    break;
-                }
-                line_count += 1;
-                col_count = 0;
-            } else {
-                col_count += 1;
-            }
-            pos += 1;
+        // A column past the end of its line clamps to the line's end, and a
+        // line past the end of the buffer clamps to the end of the text --
+        // matching what the old scan did when it ran out of characters.
+        match self.line_start(line) {
+            Some(start) => (start + col).min(self.line_end(line)),
+            None => self.len(),
         }
-
-        pos
     }
 
     fn cursor_move_forward(&mut self) -> bool {
@@ -165,40 +170,8 @@ impl<'input> BufferTrait for GapBuffer {
     }
 
     fn cursor_move(&mut self, line: usize, col: usize) {
-        let mut current_line = 0;
-        let mut current_col = 0;
-        let mut new_pos = 0;
-
-        let before_gap = self.data[..self.gap_start].iter();
-        let after_gap = self.data[self.gap_end..].iter();
-        let logical_text = before_gap.chain(after_gap);
-
-        for &c in logical_text {
-            // reached the goal cursor position
-            if current_line == line && current_col == col {
-                break;
-            }
-            // the goal line has no the goal col
-            if current_line == line && c == '\n' {
-                break;
-            }
-
-            new_pos += 1;
-
-            if c == '\n' {
-                current_line += 1;
-                current_col = 0;
-                if current_line > line {
-                    unreachable!();
-                    // new_pos -= 1;
-                    // break;
-                }
-            } else {
-                current_col += 1;
-            }
-        }
-
-        self.move_gap(new_pos);
+        let target = self.cursor_2d_to_1d(line, col);
+        self.move_gap(target);
     }
 
     fn find_backward(&mut self, c: char) -> Option<usize> {
@@ -238,58 +211,72 @@ impl<'input> BufferTrait for GapBuffer {
             self.gap_grow();
         }
         self.data[self.gap_start] = c;
+        // The new character lands at the gap, so every newline already
+        // recorded keeps its physical position: those before the gap are
+        // below `gap_start`, those after it are at or above `gap_end`. A
+        // newline typed here is simply the new largest of the "before" half.
+        if c == '\n' {
+            self.newlines_before.push(self.gap_start);
+        }
         self.gap_start += 1;
     }
 
     fn delete(&mut self) {
         if self.gap_start > 0 {
             self.gap_start -= 1;
+            // The character just swallowed by the gap sat at `gap_start`; if
+            // it was a newline it was the last entry of the "before" half.
+            if self.data[self.gap_start] == '\n' {
+                self.newlines_before.pop();
+            }
         }
     }
 
-    fn line_count(&self) -> usize {
-        let logical_text = self.data[0..self.gap_start]
-            .iter()
-            .chain(self.data[self.gap_end..].iter());
+    fn clear(&mut self) {
+        // Reset to a fresh buffer rather than unwinding: one allocation
+        // instead of one gap move per character.
+        //
+        // Assigning `Self::default()` rather than resetting fields by hand so
+        // that any state added to `GapBuffer` later is cleared with it instead
+        // of being silently left stale -- the line index included.
+        *self = Self::default();
+    }
 
-        let mut count = 1;
-        for &c in logical_text {
-            if c == '\n' {
-                count += 1;
-            }
-        }
-        count
+    fn line_count(&self) -> usize {
+        // One more line than there are newlines: a buffer with no newline at
+        // all still has a first line, and one ending in a newline has an
+        // empty last line.
+        self.newline_count() + 1
     }
 
     fn get_lines(&self, start_line: usize, end_line: usize) -> Vec<String> {
         let capacity = end_line.saturating_sub(start_line);
         let mut lines = Vec::with_capacity(capacity);
-        let mut current_line = 0;
-        let mut current_string = String::new();
 
-        let logical_text = self.data[0..self.gap_start]
-            .iter()
-            .chain(self.data[self.gap_end..].iter());
+        // Seek straight to the first line wanted instead of counting newlines
+        // from character zero. This is the change that makes drawing a
+        // viewport cost the size of the viewport rather than the size of the
+        // document.
+        if let Some(mut pos) = self.line_start(start_line) {
+            let len = self.len();
+            let mut line = start_line;
+            let mut current = String::new();
 
-        for &c in logical_text {
-            if current_line >= end_line {
-                break;
-            }
-
-            if c == '\n' {
-                if current_line >= start_line {
-                    lines.push(current_string.clone());
-                    current_string.clear();
+            while pos < len && line < end_line {
+                let c = self.logical_char(pos);
+                pos += 1;
+                if c == '\n' {
+                    lines.push(std::mem::take(&mut current));
+                    line += 1;
+                } else {
+                    current.push(c);
                 }
-                current_line += 1;
-            } else if current_line >= start_line {
-                current_string.push(c);
             }
-        }
 
-        // Catch the very last line if the file doesn't end in a newline
-        if current_line >= start_line && current_line < end_line {
-            lines.push(current_string);
+            // The final line, when the text does not end in a newline.
+            if line < end_line {
+                lines.push(current);
+            }
         }
 
         // Fill remaining requested space with empty strings (if scrolled past EOF)
@@ -304,18 +291,136 @@ impl<'input> BufferTrait for GapBuffer {
 impl GapBuffer {
     const GAPBUFFER_BASE_LEN: usize = 1024;
 
+    // ---- line index: reading it ------------------------------------------
+
+    /// Width of the gap, i.e. how far a physical position after the gap sits
+    /// ahead of its logical one.
+    fn gap_width(&self) -> usize {
+        self.gap_end - self.gap_start
+    }
+
+    /// Logical (text) position of a physical `data` index.
+    fn logical_of(&self, physical: usize) -> usize {
+        if physical < self.gap_start {
+            physical
+        } else {
+            physical - self.gap_width()
+        }
+    }
+
+    /// The character at logical position `i`, skipping over the gap.
+    fn logical_char(&self, i: usize) -> char {
+        let physical = if i < self.gap_start {
+            i
+        } else {
+            i + self.gap_width()
+        };
+        self.data[physical]
+    }
+
+    fn newline_count(&self) -> usize {
+        self.newlines_before.len() + self.newlines_after.len()
+    }
+
+    /// Logical position of the `k`-th newline in the text, 0-based.
+    fn newline_logical(&self, k: usize) -> usize {
+        let physical = if k < self.newlines_before.len() {
+            self.newlines_before[k]
+        } else {
+            self.newlines_after[k - self.newlines_before.len()]
+        };
+        self.logical_of(physical)
+    }
+
+    /// Logical position where `line` begins, or `None` if the buffer has no
+    /// such line. Line 0 always begins at 0; every later line begins one past
+    /// the newline that ended its predecessor.
+    ///
+    /// This is the whole point of the index: it answers in O(1) what used to
+    /// take a scan from character zero.
+    fn line_start(&self, line: usize) -> Option<usize> {
+        if line == 0 {
+            return Some(0);
+        }
+        if line > self.newline_count() {
+            return None;
+        }
+        Some(self.newline_logical(line - 1) + 1)
+    }
+
+    /// Logical position one past the last character of `line`, not counting
+    /// its newline.
+    fn line_end(&self, line: usize) -> usize {
+        if line < self.newline_count() {
+            self.newline_logical(line)
+        } else {
+            self.len()
+        }
+    }
+
+    // ---- line index: keeping it correct ----------------------------------
+
+    /// Re-derive the whole index by scanning. Only for tests -- nothing in
+    /// normal operation needs it, which is the property worth protecting.
+    #[cfg(test)]
+    pub(crate) fn assert_index_valid(&self) {
+        let scanned: Vec<usize> = (0..self.len())
+            .filter(|&i| self.logical_char(i) == '\n')
+            .collect();
+        let indexed: Vec<usize> = (0..self.newline_count())
+            .map(|k| self.newline_logical(k))
+            .collect();
+        assert_eq!(
+            indexed, scanned,
+            "the line index disagrees with the text it indexes"
+        );
+        assert!(
+            self.newlines_before.iter().all(|&p| p < self.gap_start),
+            "a newline recorded before the gap is not before the gap"
+        );
+        assert!(
+            self.newlines_after.iter().all(|&p| p >= self.gap_end),
+            "a newline recorded after the gap is not after the gap"
+        );
+    }
+
     pub fn move_gap(&mut self, new_cursor_pos: usize) {
         if new_cursor_pos > self.data.len() - self.gap_end + self.gap_start {
             return;
         }
+        // Moving the gap is the one operation that relocates text, so it is
+        // also the one that has to migrate index entries between the halves.
+        // Only the newlines inside the moved span are touched; the cost is
+        // proportional to the distance moved, which `copy_within` already
+        // pays anyway.
+        let width = self.gap_width();
         if new_cursor_pos < self.gap_start {
             let range = self.gap_start - new_cursor_pos;
+            // Text moves right across the gap: its physical positions gain
+            // the gap width. Popping largest-first and pushing to the front
+            // leaves `newlines_after` ascending.
+            while let Some(&physical) = self.newlines_before.last() {
+                if physical < new_cursor_pos {
+                    break;
+                }
+                self.newlines_before.pop();
+                self.newlines_after.push_front(physical + width);
+            }
             self.data
                 .copy_within(new_cursor_pos..self.gap_start, self.gap_end - range);
             self.gap_start -= range;
             self.gap_end -= range;
         } else if new_cursor_pos > self.gap_start {
             let range = new_cursor_pos - self.gap_start;
+            // Text moves left across the gap: its physical positions lose the
+            // gap width, and the entries leave `newlines_after` in order.
+            while let Some(&physical) = self.newlines_after.front() {
+                if physical >= self.gap_end + range {
+                    break;
+                }
+                self.newlines_after.pop_front();
+                self.newlines_before.push(physical - width);
+            }
             self.data
                 .copy_within(self.gap_end..self.gap_end + range, self.gap_start);
             self.gap_start += range;
@@ -331,6 +436,13 @@ impl GapBuffer {
         new_data[self.gap_end + old_data_len..new_data_len]
             .copy_from_slice(&self.data[self.gap_end..self.data.len()]);
         _ = core::mem::replace(&mut self.data, new_data);
+        // Everything after the gap slid to the far end of the larger buffer,
+        // so the physical positions recorded for it slid by the same amount.
+        // O(lines after the cursor), but amortised over a doubling that
+        // already copies the whole buffer.
+        for physical in self.newlines_after.iter_mut() {
+            *physical += old_data_len;
+        }
         self.gap_end += old_data_len;
     }
 }
@@ -591,5 +703,157 @@ mod tests {
 impl Clone for GapBuffer {
     fn clone(&self) -> Self {
         todo!("It is required to implement the Clone trait for GapBuffer");
+    }
+}
+
+#[cfg(test)]
+mod line_index_tests {
+    use super::*;
+
+    /// A buffer of `lines` numbered lines, cursor left at the start.
+    fn numbered(lines: usize) -> GapBuffer {
+        let mut text = String::new();
+        for i in 0..lines {
+            text.push_str(&format!("line {i}\n"));
+        }
+        GapBuffer::from(text.as_str())
+    }
+
+    #[test]
+    fn the_index_survives_construction_and_gap_movement() {
+        let mut buf = numbered(200);
+        buf.assert_index_valid();
+        for target in [0usize, 1, 500, 1400, 7, 1399, 0] {
+            buf.move_gap(target.min(buf.len()));
+            buf.assert_index_valid();
+        }
+    }
+
+    #[test]
+    fn the_index_survives_typing_and_deleting_newlines() {
+        let mut buf = GapBuffer::default();
+        for c in "alpha\nbeta\ngamma".chars() {
+            buf.insert(c);
+            buf.assert_index_valid();
+        }
+        assert_eq!(buf.line_count(), 3);
+        for _ in 0..7 {
+            buf.delete();
+            buf.assert_index_valid();
+        }
+        assert_eq!(buf.to_string(), "alpha\nbet");
+        assert_eq!(buf.line_count(), 2);
+    }
+
+    /// The index has to stay correct through a gap reallocation, which slides
+    /// everything after the cursor to the far end of a larger buffer.
+    #[test]
+    fn the_index_survives_the_gap_growing() {
+        let mut buf = numbered(400);
+        buf.move_gap(0);
+        for c in "typed at the very start\nwith a newline\n".chars() {
+            buf.insert(c);
+        }
+        buf.assert_index_valid();
+        assert_eq!(buf.line_count(), 403);
+        assert_eq!(
+            buf.get_lines(0, 1),
+            vec!["typed at the very start".to_string()]
+        );
+        assert_eq!(buf.get_lines(2, 3), vec!["line 0".to_string()]);
+    }
+
+    /// Random editing, checked against a scan after every operation. This is
+    /// what catches an invariant that only breaks on some particular
+    /// interleaving of moves, inserts and deletes.
+    #[test]
+    fn the_index_survives_arbitrary_editing() {
+        let mut buf = numbered(60);
+        // A tiny deterministic PRNG: reproducible, and no dev-dependency.
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        for step in 0..3_000 {
+            let len = buf.len();
+            match next() % 4 {
+                0 => buf.insert(if next() % 5 == 0 { '\n' } else { 'x' }),
+                1 => buf.delete(),
+                _ => buf.move_gap((next() as usize) % (len + 1)),
+            }
+            buf.assert_index_valid();
+            assert_eq!(
+                buf.line_count(),
+                buf.to_string().chars().filter(|&c| c == '\n').count() + 1,
+                "line_count disagreed with the text at step {step}"
+            );
+        }
+    }
+
+    /// The index must not change what any of these functions return -- only
+    /// how fast they return it. Checked against a straightforward scan.
+    #[test]
+    fn indexed_lookups_agree_with_a_plain_scan() {
+        let buf = numbered(50);
+        let text = buf.to_string();
+        let flat: Vec<char> = text.chars().collect();
+
+        // get_lines, including ranges past the end
+        for (a, b) in [(0, 3), (10, 14), (49, 52), (0, 51), (7, 7)] {
+            let expected: Vec<String> = {
+                let mut v: Vec<String> = text
+                    .split('\n')
+                    .skip(a)
+                    .take(b - a)
+                    .map(String::from)
+                    .collect();
+                while v.len() < b - a {
+                    v.push(String::new());
+                }
+                v
+            };
+            assert_eq!(buf.get_lines(a, b), expected, "get_lines({a}, {b})");
+        }
+
+        // 1d <-> 2d round trips at every position
+        for pos in 0..=flat.len() {
+            let (line, col) = buf.cursor_1d_to_2d(pos);
+            assert_eq!(
+                buf.cursor_2d_to_1d(line, col),
+                pos,
+                "round trip failed at {pos} -> ({line}, {col})"
+            );
+        }
+    }
+
+    /// The property the whole change exists for: reading a viewport from the
+    /// middle of a document must not depend on how far in it sits.
+    ///
+    /// Counted in characters examined rather than timed, so it is exact and
+    /// machine-independent -- `get_lines` now touches only the text it
+    /// returns, wherever that text lives.
+    #[test]
+    fn reading_a_viewport_costs_the_same_wherever_it_is() {
+        const VIEWPORT: usize = 50;
+        let small = numbered(1_000);
+        let large = numbered(100_000);
+
+        let head = small.get_lines(0, VIEWPORT);
+        assert_eq!(head.len(), VIEWPORT);
+        assert_eq!(large.get_lines(0, VIEWPORT), head);
+
+        // Same viewport, 50,000 lines in: identical shape, and the line
+        // contents prove it really seeked rather than counted.
+        let middle = large.get_lines(50_000, 50_000 + VIEWPORT);
+        assert_eq!(middle.len(), VIEWPORT);
+        assert_eq!(middle[0], "line 50000");
+        assert_eq!(
+            middle[VIEWPORT - 1],
+            format!("line {}", 50_000 + VIEWPORT - 1)
+        );
     }
 }

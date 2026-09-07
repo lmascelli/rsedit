@@ -1,3 +1,4 @@
+mod bug_fix_tests;
 mod command_test;
 mod deadlock_tests;
 mod debug_lisp_tests;
