@@ -65,7 +65,7 @@ macro_rules! primitive {
 
 mod buffers;
 mod commands;
-mod edits;
+pub(crate) mod edits;
 mod general;
 mod io;
 mod modes;
@@ -245,6 +245,20 @@ pub fn install_primitives<B: BufferTrait>(
         edits::backward_kill_paragraph,
         [] as [&str; 0],
         edits::BACKWARD_KILL_PARAGRAPH_DOC
+    );
+    insert_cmd!("undo", edits::undo, [] as [&str; 0], edits::UNDO_DOC);
+    insert_cmd!("redo", edits::redo, [] as [&str; 0], edits::REDO_DOC);
+    insert_cmd!(
+        "undo-boundary",
+        edits::undo_boundary,
+        [] as [&str; 0],
+        edits::UNDO_BOUNDARY_DOC
+    );
+    insert_cmd!(
+        "set-undo-limit",
+        edits::set_undo_limit,
+        ["n:Undo limit in bytes: "],
+        edits::SET_UNDO_LIMIT_DOC
     );
     insert_cmd!(
         "beginning-of-line",

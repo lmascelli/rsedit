@@ -17,4 +17,12 @@
 (define-key nil "M->" 'end-of-buffer)
 (define-key nil "M-g" 'goto-line)
 
+;; Deletion, mirroring the movement bindings above. These discard the text
+;; rather than saving it -- the kill ring is roadmap #20 -- but they carry the
+;; Emacs names so the bindings will not change once it exists.
+(define-key nil "C-d" 'delete-char)
+(define-key nil "C-k" 'kill-line)
+(define-key nil "M-d" 'kill-word)
+(define-key nil "M-<backspace>" 'backward-kill-word)
+
 (log "End of the common-keymaps.lisp")

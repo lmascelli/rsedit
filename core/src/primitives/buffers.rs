@@ -100,7 +100,12 @@ pub const CLEAR_BUFFER_DOC: &str = "(clear-buffer): Delete the entire contents o
 
 primitive!(clear_buffer, _args, _env, ctx, {
     ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
-        buf.text.clear();
+        // Through the recording layer rather than straight to `clear`, so that
+        // emptying a buffer is undoable like any other deletion. The layer
+        // still uses `clear` underneath for a whole-buffer range, so this
+        // costs one pass rather than one deletion per character.
+        let len = buf.text.len();
+        super::edits::delete_range(buf, 0, len);
     });
 
     Ok(ELispExp::nil())

@@ -2,6 +2,8 @@
 mod buffer_trait;
 pub use buffer_trait::BufferTrait;
 pub mod gap_buffer;
+pub mod undo;
+pub use undo::UndoHistory;
 
 use crate::input::KeyEvent;
 use std::collections::HashMap;
@@ -13,6 +15,8 @@ pub struct Buffer<B: BufferTrait> {
     pub is_modified: bool,
     pub local_keymap: Option<HashMap<KeyEvent, String>>,
     pub current_mode: String,
+    /// This buffer's edit history: recorded changes for undo and redo.
+    pub undo: UndoHistory,
 }
 
 impl<B: BufferTrait> Buffer<B> {
@@ -24,6 +28,7 @@ impl<B: BufferTrait> Buffer<B> {
             is_modified: false,
             local_keymap: None,
             current_mode: "fundamental".into(),
+            undo: UndoHistory::default(),
         }
     }
 
@@ -35,6 +40,7 @@ impl<B: BufferTrait> Buffer<B> {
             is_modified: false,
             local_keymap: None,
             current_mode: "fundamental".into(),
+            undo: UndoHistory::default(),
         }
     }
 }

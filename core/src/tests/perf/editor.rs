@@ -265,6 +265,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 file_path: None,
                 is_modified: false,
                 local_keymap: None,
+                undo: Default::default(),
             })),
         );
     }

@@ -42,7 +42,7 @@ mod tests {
     /// `last-command` is set the way `handle_key_event` would set it.
     fn run_command(name: &str, ctx: &Ctx, env: &Arc<Env<Ctx>>) {
         eval_str(&format!("({name})"), env, ctx).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        ctx.set_last_command(Some(name.to_string()));
+        ctx.set_last_command(Some(Arc::new(name.to_string())));
     }
 
     // ---------------- characters ----------------

@@ -42,7 +42,11 @@ pub struct EditorState<B: BufferTrait> {
 
     pub buffers: Arc<RwLock<HashMap<String, Arc<RwLock<Buffer<B>>>>>>,
     pub echo_message: Arc<RwLock<String>>,
-    pub current_buffer_name: Arc<RwLock<String>>,
+    /// An `Arc<str>` rather than a `String` because every buffer access starts
+    /// by reading this name, and reading a `String` out of a lock means
+    /// copying it. Sharing it instead makes `get_current_buffer` allocation
+    /// free, on a path that runs several times per keystroke.
+    pub current_buffer_name: Arc<RwLock<Arc<str>>>,
 
     /// A keymap is an association between a KeyEvent and the name of a
     /// function that have to be executed (i.e. self-insert)
@@ -71,7 +75,10 @@ pub struct EditorState<B: BufferTrait> {
     /// repeat of itself needs this: vertical movement uses it to decide
     /// whether a goal column is still in play, and appending kills (#20) will
     /// want it too.
-    last_command: Arc<RwLock<Option<String>>>,
+    /// Held as the symbol's own `Arc` rather than a fresh `String`: this is
+    /// written on every keystroke, and a name that is already interned in the
+    /// keymap does not need copying to be remembered.
+    last_command: Arc<RwLock<Option<Arc<String>>>>,
 
     /// Column that repeated vertical movement is aiming for.
     ///
@@ -189,7 +196,7 @@ impl<B: BufferTrait> EditorState<B> {
             worker_mailbox: sender,
             buffers: Arc::new(RwLock::new(buffers)),
             echo_message: Arc::new(RwLock::new("Welcome to rsedit".to_string())),
-            current_buffer_name: Arc::new(RwLock::new(scratch_name)),
+            current_buffer_name: Arc::new(RwLock::new(Arc::from(scratch_name.as_str()))),
             keymaps: Arc::new(RwLock::new(keymaps)),
             mode_registry: Arc::new(RwLock::new(HashMap::new())),
             layout_root: Arc::new(RwLock::new(LayoutNode::Leaf(Window {
@@ -548,10 +555,25 @@ impl<B: BufferTrait> EditorState<B> {
             },
             _ => None,
         };
+        // The command this key runs, whether or not the binding supplies its
+        // arguments: `(self-insert "a")` names `self-insert` just as much as a
+        // bare `next-line` does. `bound_command` above deliberately matches
+        // only the argument-less shapes, because those are the ones to route
+        // through `call-interactively`; grouping and `last-command` want the
+        // wider answer, since typing is exactly the case they care about.
+        //
         // Remembered for the *next* command to consult, so that during this
         // one `last_command` still names its predecessor -- which is what
         // makes "am I a repeat of myself?" answerable.
-        let this_command = bound_command.clone();
+        let this_command = match &ast {
+            ELispExp::Symbol(name) => Some(name.clone()),
+            ELispExp::Form(items) => items.first().and_then(|head| match head {
+                ELispExp::Symbol(name) => Some(name.clone()),
+                _ => None,
+            }),
+            _ => None,
+        };
+        self.undo_boundary_before(this_command.as_deref().map(String::as_str));
         if let Some(name) = bound_command {
             // The name is passed as a string rather than a quoted symbol:
             // a string literal is self-evaluating, so this needs no `quote`
@@ -688,9 +710,8 @@ impl<B: BufferTrait> EditorState<B> {
             }
         }
 
-        if self.get_current_buffer_name() == name
-            || self.get_buffer(&self.get_current_buffer_name()).is_none()
-        {
+        let current = self.current_buffer_name_shared();
+        if &*current == name || self.get_buffer(&current).is_none() {
             self.set_current_buffer_name("*scratch*");
         }
 
@@ -1077,18 +1098,51 @@ impl<B: BufferTrait> EditorState<B> {
     // What the previous command was, and where vertical movement is aiming
     // ---------------------------------------------------------------
 
-    pub(crate) fn last_command(&self) -> Option<String> {
+    /// Whether the previous command was NAME.
+    ///
+    /// A predicate rather than a getter because the question asked of
+    /// `last-command` is always "was it this one?", and answering it by
+    /// handing out a copy of the name would allocate on a path that runs
+    /// between a key being pressed and the character appearing.
+    pub(crate) fn last_command_is(&self, name: &str) -> bool {
         self.last_command
             .read()
             .expect("Failed to acquire read lock on last_command")
-            .clone()
+            .as_deref()
+            .map(String::as_str)
+            == Some(name)
     }
 
-    pub(crate) fn set_last_command(&self, name: Option<String>) {
+    pub(crate) fn set_last_command(&self, name: Option<Arc<String>>) {
         *self
             .last_command
             .write()
             .expect("Failed to acquire write lock on last_command") = name;
+    }
+
+    /// Close the current buffer's open undo group unless this command should
+    /// join the previous one.
+    ///
+    /// Called before the command runs, not after, because "should these be one
+    /// group?" is a question about a pair of commands, and the pair is only
+    /// complete once the second one is known.
+    ///
+    /// Only a run of ordinary typing amalgamates, and only up to
+    /// [`crate::primitives::edits::AMALGAMATION_LIMIT`] characters. Everything
+    /// else undoes as one command per step: a kill that quietly merged with
+    /// the typing before it would take the typing with it.
+    pub(crate) fn undo_boundary_before(&self, command: Option<&str>) {
+        let amalgamate = command == Some("self-insert") && self.last_command_is("self-insert");
+        let buffer = self.get_current_buffer();
+        let mut buffer = buffer
+            .write()
+            .expect("Failed to acquire write lock on current buffer");
+        if amalgamate
+            && buffer.undo.open_insert_len() < crate::primitives::edits::AMALGAMATION_LIMIT
+        {
+            return;
+        }
+        buffer.undo.boundary();
     }
 
     pub(crate) fn goal_column(&self) -> Option<usize> {
@@ -1194,10 +1248,15 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Get the name of the current buffer
     pub(crate) fn get_current_buffer_name(&self) -> String {
+        self.current_buffer_name_shared().to_string()
+    }
+
+    /// The current buffer's name without copying it.
+    pub(crate) fn current_buffer_name_shared(&self) -> Arc<str> {
         self.current_buffer_name
             .read()
             .expect("Failed to acquire read lock on current_buffer_name")
-            .to_string()
+            .clone()
     }
 
     /// Set the name of the current buffer
@@ -1205,7 +1264,7 @@ impl<B: BufferTrait> EditorState<B> {
         *self
             .current_buffer_name
             .write()
-            .expect("Failed to acquire write lock on current_buffer_name") = name.to_string();
+            .expect("Failed to acquire write lock on current_buffer_name") = Arc::from(name);
     }
 
     /// Returns an Arc reference to the current buffer
@@ -1213,7 +1272,7 @@ impl<B: BufferTrait> EditorState<B> {
         self.buffers
             .read()
             .expect("Failed to acquire read lock on buffers")
-            .get(&self.get_current_buffer_name())
+            .get(&*self.current_buffer_name_shared())
             .expect("Corruption in the hashmap of buffers")
             .clone()
     }

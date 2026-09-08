@@ -1,4 +1,80 @@
 use super::*;
+use crate::buffer::{Buffer, undo};
+
+// ---------------------------------------------------------------------------
+// The recording editing layer
+// ---------------------------------------------------------------------------
+//
+// Every primitive that changes buffer text goes through one of the two
+// functions below. That is the whole reason undo works: history is not
+// something each command has to remember to write, it is a property of the
+// only two doors into the text. A new editing command gets undo by being
+// unable to avoid it.
+//
+// They take the whole `Buffer` rather than its text, because recording needs
+// the history that sits beside the text -- and taking both together is what
+// makes it impossible to hold one without the other.
+
+/// How many characters a run of `self-insert` amalgamates before the next one
+/// starts a fresh undo group.
+///
+/// Without a cap, typing a paragraph without pausing would undo in one step
+/// and lose the lot. Emacs uses 20; there is nothing magic about the number
+/// beyond it being about a word or two -- small enough that an undo feels
+/// local, large enough that undo is not per-keystroke.
+pub(crate) const AMALGAMATION_LIMIT: usize = 20;
+
+/// Delete `[from, to)` from BUF, recording it so it can be undone.
+///
+/// `delete()` removes the character *before* point, so the application step
+/// positions at the far end and deletes backwards. Each of those is O(1) once
+/// the gap is there, so the whole range costs one gap move rather than one per
+/// character.
+pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) {
+    let start = from.min(to);
+    let end = from.max(to).min(buf.text.len());
+    if start >= end {
+        return;
+    }
+    let point = buf.text.cursor_pos_1d();
+    let whole_buffer = start == 0 && end == buf.text.len();
+    // Captured before the deletion, since afterwards there is nothing left to
+    // read. Clearing the whole buffer is the one case worth special casing:
+    // `to_string` reads the text in one pass, where the general path pays a
+    // lookup per character.
+    let removed: String = if whole_buffer {
+        buf.text.to_string()
+    } else {
+        (start..end).filter_map(|i| buf.text.at(i)).collect()
+    };
+    buf.undo.record_delete(start, removed, point);
+    if whole_buffer {
+        // `clear` exists precisely so that emptying a large buffer is not
+        // 60,000 gap-moving deletions -- see `BufferTrait::clear`.
+        buf.text.clear();
+    } else {
+        undo::apply_delete(&mut buf.text, start, end);
+    }
+    buf.is_modified = true;
+}
+
+/// Insert CONTENT at offset AT in BUF, recording it so it can be undone.
+pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, content: &str) {
+    if content.is_empty() {
+        return;
+    }
+    let at = at.min(buf.text.len());
+    let point = buf.text.cursor_pos_1d();
+    buf.undo.record_insert(at, content.chars().count(), point);
+    undo::apply_insert(&mut buf.text, at, content);
+    buf.is_modified = true;
+}
+
+/// Insert CONTENT at point.
+pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str) {
+    let at = buf.text.cursor_pos_1d();
+    insert_text(buf, at, content);
+}
 
 pub const SELF_INSERT_DOC: &str = "(self-insert STRING): Insert the first character of STRING at point \
          in the current buffer. Unlike Emacs's `self-insert-command`, which \
@@ -11,8 +87,8 @@ primitive!(self_insert, args, _env, ctx, {
     if let Some(ELispExp::String(s)) = args.first() {
         if let Some(c) = s.chars().next() {
             ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
-                buf.text.insert(c);
-                buf.is_modified = true;
+                let mut utf8 = [0u8; 4];
+                insert_at_point(buf, c.encode_utf8(&mut utf8));
             });
         }
         Ok(ELispExp::symbol("nil".into()))
@@ -31,8 +107,7 @@ pub const INSERT_NEWLINE_DOC: &str = "(insert-newline): Insert a newline charact
 
 primitive!(insert_newline, _args, _env, ctx, {
     ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
-        buf.text.insert('\n');
-        buf.is_modified = true;
+        insert_at_point(buf, "\n");
     });
     Ok(ELispExp::nil())
 });
@@ -48,8 +123,8 @@ primitive!(delete_backward_char, _args, _env, ctx, {
     let mut buf = buf
         .write()
         .expect("Failed to acquire a write lock on buffer");
-    buf.text.delete();
-    buf.is_modified = true;
+    let point = buf.text.cursor_pos_1d();
+    delete_range(&mut buf, point.saturating_sub(1), point);
     Ok(ELispExp::nil())
 });
 
@@ -164,23 +239,6 @@ fn paragraph_backward<B: BufferTrait>(text: &B, line: usize) -> usize {
     line
 }
 
-/// Remove the text between two offsets, leaving point where the text began.
-///
-/// `delete()` removes the character *before* point, so this positions at the
-/// far end and deletes backwards. Each of those is O(1) once the gap is there,
-/// so the whole range costs one gap move rather than one per character.
-fn delete_between<B: BufferTrait>(text: &mut B, from: usize, to: usize) {
-    let start = from.min(to);
-    let end = to.max(from).min(text.len());
-    if start >= end {
-        return;
-    }
-    goto_offset(text, end);
-    for _ in 0..(end - start) {
-        text.delete();
-    }
-}
-
 fn line_length<B: BufferTrait>(text: &B, line: usize) -> usize {
     text.get_lines(line, line + 1)
         .first()
@@ -239,10 +297,7 @@ fn move_line<B: BufferTrait>(
         .expect("Failed to acquire a write lock on buffer");
 
     let (line, col) = buf.text.cursor_pos();
-    let continuing = matches!(
-        ctx.last_command().as_deref(),
-        Some("next-line") | Some("previous-line")
-    );
+    let continuing = ctx.last_command_is("next-line") || ctx.last_command_is("previous-line");
     let goal = match (continuing, ctx.goal_column()) {
         (true, Some(goal)) => goal,
         _ => col,
@@ -431,8 +486,7 @@ primitive!(delete_char, args, _env, ctx, {
     let mut buf = buf.write().expect("write lock on buffer");
     let from = buf.text.cursor_pos_1d();
     let to = from + repeat_count(args)?;
-    delete_between(&mut buf.text, from, to);
-    buf.is_modified = true;
+    delete_range(&mut buf, from, to);
     Ok(ELispExp::nil())
 });
 
@@ -457,8 +511,7 @@ primitive!(kill_line, _args, _env, ctx, {
     } else {
         end_of_line
     };
-    delete_between(&mut buf.text, from, to);
-    buf.is_modified = true;
+    delete_range(&mut buf, from, to);
     Ok(ELispExp::nil())
 });
 
@@ -472,8 +525,7 @@ primitive!(kill_whole_line, _args, _env, ctx, {
     let (line, _) = buf.text.cursor_pos();
     let from = buf.text.cursor_2d_to_1d(line, 0);
     let to = (buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line)) + 1).min(buf.text.len());
-    delete_between(&mut buf.text, from, to);
-    buf.is_modified = true;
+    delete_range(&mut buf, from, to);
     Ok(ELispExp::nil())
 });
 
@@ -488,8 +540,7 @@ primitive!(kill_word, args, _env, ctx, {
     let mut buf = buf.write().expect("write lock on buffer");
     let from = buf.text.cursor_pos_1d();
     let to = word_forward(&buf.text, from, repeat_count(args)?);
-    delete_between(&mut buf.text, from, to);
-    buf.is_modified = true;
+    delete_range(&mut buf, from, to);
     Ok(ELispExp::nil())
 });
 
@@ -505,8 +556,7 @@ primitive!(backward_kill_word, args, _env, ctx, {
     let mut buf = buf.write().expect("write lock on buffer");
     let to = buf.text.cursor_pos_1d();
     let from = word_backward(&buf.text, to, repeat_count(args)?);
-    delete_between(&mut buf.text, from, to);
-    buf.is_modified = true;
+    delete_range(&mut buf, from, to);
     Ok(ELispExp::nil())
 });
 
@@ -521,8 +571,7 @@ primitive!(kill_paragraph, _args, _env, ctx, {
     let (line, _) = buf.text.cursor_pos();
     let target_line = paragraph_forward(&buf.text, line);
     let to = buf.text.cursor_2d_to_1d(target_line, 0);
-    delete_between(&mut buf.text, from, to);
-    buf.is_modified = true;
+    delete_range(&mut buf, from, to);
     Ok(ELispExp::nil())
 });
 
@@ -538,7 +587,98 @@ primitive!(backward_kill_paragraph, _args, _env, ctx, {
     let (line, _) = buf.text.cursor_pos();
     let target_line = paragraph_backward(&buf.text, line);
     let from = buf.text.cursor_2d_to_1d(target_line, 0);
-    delete_between(&mut buf.text, from, to);
-    buf.is_modified = true;
+    delete_range(&mut buf, from, to);
+    Ok(ELispExp::nil())
+});
+
+// ---------------------------------------------------------------------------
+// Undo and redo
+// ---------------------------------------------------------------------------
+
+pub const UNDO_DOC: &str = "(undo): Undo the most recent group of changes in the current buffer, \
+         and move point to where that change happened. Returns t if something \
+         was undone, nil if the history is empty.\n\n\
+         A group is one command's worth of editing, except that a run of \
+         ordinary typing amalgamates into groups of about twenty characters \
+         so that undo does not step one keystroke at a time.\n\n\
+         Example:\n\
+         (define-key nil \"C-/\" 'undo)";
+
+primitive!(undo, _args, _env, ctx, {
+    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+        // Split borrow: the history and the text it describes are two fields
+        // of the same buffer, and undo needs to write both.
+        let Buffer { text, undo, .. } = buf;
+        match undo.undo(text) {
+            Some(point) => {
+                goto_offset(text, point);
+                buf.is_modified = true;
+                Ok(ELispExp::symbol("t".into()))
+            }
+            None => Ok(ELispExp::nil()),
+        }
+    })
+});
+
+pub const REDO_DOC: &str = "(redo): Redo the most recently undone group of changes in the current \
+         buffer. Returns t if something was redone, nil if there is nothing to \
+         redo.\n\n\
+         Making a new edit after an undo discards what could have been redone, \
+         which is the usual editor behaviour: history is a stack of undone \
+         changes, not a tree of alternatives.\n\n\
+         Example:\n\
+         (define-key nil \"M-_\" 'redo)";
+
+primitive!(redo, _args, _env, ctx, {
+    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+        let Buffer { text, undo, .. } = buf;
+        match undo.redo(text) {
+            Some(point) => {
+                goto_offset(text, point);
+                buf.is_modified = true;
+                Ok(ELispExp::symbol("t".into()))
+            }
+            None => Ok(ELispExp::nil()),
+        }
+    })
+});
+
+pub const UNDO_BOUNDARY_DOC: &str = "(undo-boundary): End the current undo group, so that the next \
+         change begins a new one and the two undo separately. Does nothing if \
+         no group is open.\n\n\
+         The editor already places a boundary between commands; this is for a \
+         Lisp function that makes several edits and wants them undone in \
+         steps rather than all at once.\n\n\
+         Example:\n\
+         (self-insert \"a\")\n\
+         (undo-boundary)\n\
+         (self-insert \"b\") ; (undo) removes only b";
+
+primitive!(undo_boundary, _args, _env, ctx, {
+    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| buf.undo.boundary());
+    Ok(ELispExp::nil())
+});
+
+pub const SET_UNDO_LIMIT_DOC: &str = "(set-undo-limit N): Keep at most N bytes of deleted text in the \
+         current buffer's undo history, dropping the oldest changes when it \
+         grows past that. The most recent change is always kept, so a single \
+         deletion larger than the limit stays undoable.\n\n\
+         Only deletions carry text, so this bounds the one part of the history \
+         that grows with the size of the document rather than with the number \
+         of edits. The default is one mebibyte.\n\n\
+         Example:\n\
+         (set-undo-limit 0) ; keep only the most recent change";
+
+primitive!(set_undo_limit, args, _env, ctx, {
+    let limit = match args.first() {
+        Some(ELispExp::Number(n)) => n.floor().max(0.0) as usize,
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Number".into(),
+                got: other.cloned().unwrap_or_else(ELispExp::nil),
+            });
+        }
+    };
+    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| buf.undo.set_limit(limit));
     Ok(ELispExp::nil())
 });
