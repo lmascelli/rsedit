@@ -17,6 +17,92 @@
 //! rather than being stored up front against the possibility of a redo that
 //! may never come.
 use crate::buffer::BufferTrait;
+use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+// ---------------------------------------------------------------------------
+// Which command an edit belongs to
+// ---------------------------------------------------------------------------
+//
+// Undo works in commands, not in edits: one press of C-k undoes as one step
+// even though it deletes many characters, and a run of typing undoes as one
+// step even though each keystroke is its own command. So the history has to
+// know where one command ends and the next begins.
+//
+// The editor could tell it directly -- call `boundary` between commands -- and
+// that is what this did at first. It cost a buffer lookup and a write lock on
+// every keystroke, whether or not the key edited anything, and measured as the
+// entire cost of undo on the keystroke path: ~120ns of ~890ns, with the
+// recording itself too small to measure.
+//
+// So the announcement is made cheap instead. Each command stamps a token into
+// a thread-local; a group remembers the token it was opened under; and the
+// history closes the group lazily, at the first edit that arrives under a
+// different token. A command that edits nothing now costs nothing, which is
+// most of them -- every movement key, every prefix, every unbound key.
+
+/// How many characters a run of `self-insert` amalgamates before the next one
+/// starts a fresh undo group.
+///
+/// Without a cap, typing a paragraph without pausing would undo in one step
+/// and lose the lot. Emacs uses 20; there is nothing magic about the number
+/// beyond it being about a word or two -- small enough that an undo feels
+/// local, large enough that undo is not per-keystroke.
+pub const AMALGAMATION_LIMIT: usize = 20;
+
+/// The command an edit is being made by.
+#[derive(Clone, Copy)]
+struct Command {
+    /// Tells one command from the next. Drawn from a global counter rather
+    /// than a per-thread one so that two threads editing the same buffer
+    /// cannot collide on a value and have their edits silently merged.
+    epoch: u64,
+    /// Whether a run of this command amalgamates -- true only for ordinary
+    /// typing.
+    amalgamating_kind: bool,
+    /// Whether this command should join the group the previous one opened.
+    joins_previous: bool,
+}
+
+/// What edits made outside any command belong to: everything evaluated from
+/// Lisp without a key being pressed shares one group, which is what makes a
+/// function that edits several times undo as a unit.
+const NO_COMMAND: Command = Command {
+    epoch: 0,
+    amalgamating_kind: false,
+    joins_previous: false,
+};
+
+static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+thread_local! {
+    /// The command running on *this* thread. Thread-local because commands are
+    /// dispatched per thread -- the background scheduler and `(spawn ...)`
+    /// each run their own -- and because reading it must cost nothing.
+    static CURRENT: Cell<Command> = const { Cell::new(NO_COMMAND) };
+}
+
+/// Announce that a new command is about to run on this thread.
+///
+/// AMALGAMATING_KIND says whether a run of this command should undo as one
+/// step; only ordinary typing does. Whether it *actually* joins the previous
+/// group also depends on what the previous command was, which is why that is
+/// decided here rather than at the call site: this is the only place that sees
+/// both.
+pub(crate) fn begin_command(amalgamating_kind: bool) {
+    CURRENT.with(|current| {
+        let previous = current.get();
+        current.set(Command {
+            epoch: NEXT_EPOCH.fetch_add(1, Ordering::Relaxed),
+            amalgamating_kind,
+            joins_previous: amalgamating_kind && previous.amalgamating_kind,
+        });
+    });
+}
+
+fn current_command() -> Command {
+    CURRENT.with(|current| current.get())
+}
 
 /// One edit, described by what it did.
 #[derive(Clone, Debug, PartialEq)]
@@ -59,6 +145,9 @@ pub struct UndoHistory {
     undone: Vec<Group>,
     /// The group currently being accumulated, if a command is mid-edit.
     open: Option<Group>,
+    /// The command [`Self::open`] was opened under, so that the first edit of
+    /// the next command can close it.
+    open_epoch: u64,
     /// Bytes of deleted text held in `done`, against [`Self::limit`].
     bytes: usize,
     limit: usize,
@@ -70,6 +159,7 @@ impl Default for UndoHistory {
             done: Vec::new(),
             undone: Vec::new(),
             open: None,
+            open_epoch: NO_COMMAND.epoch,
             bytes: 0,
             limit: DEFAULT_UNDO_LIMIT,
         }
@@ -97,6 +187,20 @@ impl UndoHistory {
         // cost of a plain two-stack model over a tree, and it is the behaviour
         // people expect from an editor.
         self.undone.clear();
+
+        // The group belongs to the command that opened it. An edit arriving
+        // under a different command closes it first -- unless the two are a
+        // continuing run of typing that has not yet grown past the
+        // amalgamation limit.
+        let command = current_command();
+        if self.open.is_some()
+            && command.epoch != self.open_epoch
+            && !(command.joins_previous && self.open_insert_len() < AMALGAMATION_LIMIT)
+        {
+            self.boundary();
+        }
+        self.open_epoch = command.epoch;
+
         self.bytes += change.weight();
         let group = self.open.get_or_insert_with(|| Group {
             changes: Vec::new(),

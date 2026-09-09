@@ -341,8 +341,8 @@ mod tests {
     // ---------------------------------------------------------------
 
     /// The minibuffer's border label, as the renderer would draw it.
-    fn prompt_title(ctx: &Ctx) -> String {
-        let frame = ctx.snapshot(80, 24);
+    fn prompt_title(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> String {
+        let frame = ctx.snapshot(env, 80, 24);
         frame
             .views
             .iter()
@@ -369,10 +369,10 @@ mod tests {
         .expect("setup");
 
         ctx.handle_key_event(meta('x'), &env);
-        assert_eq!(prompt_title(&ctx), "M-x", "M-x labels itself");
+        assert_eq!(prompt_title(&ctx, &env), "M-x", "M-x labels itself");
 
         type_and_confirm(&ctx, &env, "probe-cmd");
-        assert_eq!(prompt_title(&ctx), "probe-cmd - Find file: ");
+        assert_eq!(prompt_title(&ctx, &env), "probe-cmd - Find file: ");
     }
 
     /// With more than one argument the prompt also says which one, so two
@@ -390,10 +390,10 @@ mod tests {
 
         ctx.handle_key_event(meta('x'), &env);
         type_and_confirm(&ctx, &env, "probe-cmd");
-        assert_eq!(prompt_title(&ctx), "probe-cmd (1/2) - Replace: ");
+        assert_eq!(prompt_title(&ctx, &env), "probe-cmd (1/2) - Replace: ");
 
         type_and_confirm(&ctx, &env, "x");
-        assert_eq!(prompt_title(&ctx), "probe-cmd (2/2) - With: ");
+        assert_eq!(prompt_title(&ctx, &env), "probe-cmd (2/2) - With: ");
     }
 
     /// `minibuffer-read` called straight from Lisp -- as M-: does -- has no
@@ -402,7 +402,7 @@ mod tests {
     fn a_prompt_with_no_command_behind_it_is_left_alone() {
         let (ctx, env) = bare();
         eval_str(r#"(minibuffer-read "Eval:" nil nil nil)"#, &env, &ctx).expect("prompt");
-        assert_eq!(prompt_title(&ctx), "Eval:");
+        assert_eq!(prompt_title(&ctx, &env), "Eval:");
     }
 
     // ---------------------------------------------------------------

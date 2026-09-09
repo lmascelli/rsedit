@@ -8,7 +8,7 @@ mod tests {
     use crate::{
         buffer::{BufferTrait, gap_buffer::GapBuffer},
         editor::{EditorState, create_global_env},
-        lisp::{LispExp, Parser, eval},
+        lisp::{Env, LispExp, Parser, eval},
         ui::FrameSnapshot,
     };
     use std::sync::Arc;
@@ -18,10 +18,8 @@ mod tests {
     const W: usize = 120;
     const H: usize = 40;
 
-    fn editor() -> EditorState<GapBuffer> {
-        create_global_env::<GapBuffer>()
-            .expect("global env must build")
-            .0
+    fn editor() -> (EditorState<GapBuffer>, Arc<Env<EditorState<GapBuffer>>>) {
+        create_global_env::<GapBuffer>().expect("global env must build")
     }
 
     /// A snapshot is a plain value: no locks, no borrows, nothing pointing back
@@ -33,8 +31,8 @@ mod tests {
         fn assert_send_sync_static<T: Send + Sync + 'static>() {}
         assert_send_sync_static::<FrameSnapshot>();
 
-        let state = editor();
-        let frame = state.snapshot(W, H);
+        let (state, env) = editor();
+        let frame = state.snapshot(&env, W, H);
         let moved = thread::spawn(move || frame.views.len())
             .join()
             .expect("the snapshot must be usable off the capturing thread");
@@ -49,12 +47,12 @@ mod tests {
     /// mid-composition could not promise this.
     #[test]
     fn two_snapshots_of_an_unchanged_editor_are_identical() {
-        let state = editor();
+        let (state, env) = editor();
         state.set_echo_message("steady");
 
         assert_eq!(
-            state.snapshot(W, H),
-            state.snapshot(W, H),
+            state.snapshot(&env, W, H),
+            state.snapshot(&env, W, H),
             "capturing twice from an unchanged editor produced two different frames"
         );
     }
@@ -65,16 +63,16 @@ mod tests {
     /// set after its own windows were composed.
     #[test]
     fn the_echo_area_is_captured_with_the_windows_not_after_them() {
-        let state = editor();
+        let (state, env) = editor();
         state.set_echo_message("first");
-        let frame = state.snapshot(W, H);
+        let frame = state.snapshot(&env, W, H);
         state.set_echo_message("second");
 
         assert_eq!(
             frame.echo_message, "first",
             "the snapshot picked up an echo message set after it was taken"
         );
-        assert_eq!(state.snapshot(W, H).echo_message, "second");
+        assert_eq!(state.snapshot(&env, W, H).echo_message, "second");
     }
 
     /// The regression this refactor is for.
@@ -154,7 +152,7 @@ mod tests {
         };
 
         for _ in 0..SNAPSHOTS {
-            let frame = state.snapshot(W, H);
+            let frame = state.snapshot(&env, W, H);
             assert_eq!((frame.width, frame.height), (W, H));
             assert!(
                 frame.views.len() >= 2,

@@ -25,7 +25,70 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::Sender,
     },
+    time::{Duration, Instant},
 };
+
+/// The name of the Lisp variable that arms the echo area's timeout.
+pub const ECHO_MESSAGE_TIMEOUT: &str = "echo-message-timeout";
+
+/// How long an echo message stays on screen when nothing sets
+/// [`ECHO_MESSAGE_TIMEOUT`] to something else.
+pub const DEFAULT_ECHO_MESSAGE_TIMEOUT: f64 = 5.0;
+
+/// What the echo area is showing, and since when.
+///
+/// The timestamp lives beside the text rather than in a lock of its own so
+/// that a reader cannot catch a new message paired with the previous one's
+/// clock and hide it a moment after it appeared.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EchoMessage {
+    pub text: String,
+    /// When [`EditorState::set_echo_message`] last wrote `text`. Each new
+    /// message restarts the clock, so a message is always shown for its full
+    /// timeout however soon it followed the one before.
+    pub set_at: Instant,
+}
+
+impl EchoMessage {
+    pub fn new(text: &str) -> Self {
+        Self {
+            text: text.to_string(),
+            set_at: Instant::now(),
+        }
+    }
+
+    /// How long this message has been on screen, or `None` once TIMEOUT has
+    /// run out -- and `None` too when there is no message to show, so that an
+    /// empty echo area never counts as something waiting to expire.
+    fn visible_for(&self, timeout: Option<Duration>) -> Option<Duration> {
+        if self.text.is_empty() {
+            return None;
+        }
+        let elapsed = self.set_at.elapsed();
+        match timeout {
+            Some(timeout) if elapsed >= timeout => None,
+            _ => Some(elapsed),
+        }
+    }
+}
+
+/// The echo timeout as Lisp currently defines it, or `None` for "never
+/// expires".
+///
+/// Only a finite, non-negative number arms the timeout. `nil` means the
+/// message stays until something replaces it, and so does anything else --
+/// an unbound variable, a string, a list, or an infinity. Refusing to guess
+/// at a nonsensical value is the safe direction: the failure mode is a
+/// message that outstays its welcome, not one that disappears before it is
+/// read.
+fn echo_timeout<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Option<Duration> {
+    match env.get_variable(ECHO_MESSAGE_TIMEOUT) {
+        Some(ELispExp::Number(seconds)) if seconds.is_finite() => {
+            Some(Duration::from_secs_f64(seconds.max(0.0)))
+        }
+        _ => None,
+    }
+}
 
 /// This is the container for all the editor informations.
 /// The whole editor memory should live in an instance of this
@@ -41,7 +104,9 @@ pub struct EditorState<B: BufferTrait> {
     pub worker_mailbox: Sender<WorkerMessage<B>>,
 
     pub buffers: Arc<RwLock<HashMap<String, Arc<RwLock<Buffer<B>>>>>>,
-    pub echo_message: Arc<RwLock<String>>,
+    /// The echo area's text together with when it was set, in one lock so a
+    /// reader can never pair a new message with an old timestamp.
+    pub echo_message: Arc<RwLock<EchoMessage>>,
     /// An `Arc<str>` rather than a `String` because every buffer access starts
     /// by reading this name, and reading a `String` out of a lock means
     /// copying it. Sharing it instead makes `get_current_buffer` allocation
@@ -195,7 +260,7 @@ impl<B: BufferTrait> EditorState<B> {
             running: Arc::new(AtomicBool::new(true)),
             worker_mailbox: sender,
             buffers: Arc::new(RwLock::new(buffers)),
-            echo_message: Arc::new(RwLock::new("Welcome to rsedit".to_string())),
+            echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
             current_buffer_name: Arc::new(RwLock::new(Arc::from(scratch_name.as_str()))),
             keymaps: Arc::new(RwLock::new(keymaps)),
             mode_registry: Arc::new(RwLock::new(HashMap::new())),
@@ -573,7 +638,13 @@ impl<B: BufferTrait> EditorState<B> {
             }),
             _ => None,
         };
-        self.undo_boundary_before(this_command.as_deref().map(String::as_str));
+        // Told to the undo history before the command runs, so that its edits
+        // -- however many it makes -- land in one group. This is a thread-local
+        // stamp and an atomic increment: it costs nothing on the keys that
+        // edit nothing, which is most of them.
+        crate::buffer::undo::begin_command(
+            this_command.as_deref().map(String::as_str) == Some("self-insert"),
+        );
         if let Some(name) = bound_command {
             // The name is passed as a string rather than a quoted symbol:
             // a string literal is self-evaluating, so this needs no `quote`
@@ -736,6 +807,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// `focused_window_id` -> `echo_message` -> `layout_root` ->
     /// `floating_windows` -> `buffers` -> an individual `Buffer`
     ///
+    /// The Lisp environment is read first of all, before any of these, so that
+    /// no editor lock is ever held while touching it.
+    ///
     /// Cheap scalars first so the structural locks are held for as short a
     /// time as possible. Every lock is acquired exactly once and released
     /// before the caller sees the result, so no terminal I/O ever happens with
@@ -756,16 +830,33 @@ impl<B: BufferTrait> EditorState<B> {
     /// untangle before the UI loop moves off the command thread: hoisting the
     /// scroll reconciliation into an explicit post-command step would let this
     /// take a read lock and let renders run concurrently.
-    pub fn snapshot(&self, screen_width: usize, screen_height: usize) -> FrameSnapshot {
+    pub fn snapshot(
+        &self,
+        env: &Arc<Env<EditorState<B>>>,
+        screen_width: usize,
+        screen_height: usize,
+    ) -> FrameSnapshot {
+        // Read *before* the first editor lock is taken. The environment has
+        // locks of its own, and taking one while holding an editor lock would
+        // add an edge to the ordering below that nothing else respects.
+        let echo_timeout = echo_timeout(env);
+
         let focused_window_id = *self
             .focused_window_id
             .read()
             .expect("Failed to acquire read lock on focused_window_id");
-        let echo_message = self
-            .echo_message
-            .read()
-            .expect("Failed to acquire read lock on echo_message")
-            .clone();
+        // An expired message is simply not reported. The state keeps it -- the
+        // view is what forgets, so nothing has to run on a timer to tidy up.
+        let echo_message = {
+            let echo = self
+                .echo_message
+                .read()
+                .expect("Failed to acquire read lock on echo_message");
+            match echo.visible_for(echo_timeout) {
+                Some(_) => echo.text.clone(),
+                None => String::new(),
+            }
+        };
         let mut layout_root = self
             .layout_root
             .write()
@@ -883,21 +974,43 @@ impl<B: BufferTrait> EditorState<B> {
     //                         GETTERS AND SETTERS
     //--------------------------------------------------------------------------
 
-    /// Return the editor echo string
+    /// Return the editor echo string.
+    ///
+    /// The message as stored, whether or not it is still being shown: expiry
+    /// is a question for the view, decided in [`Self::snapshot`], and state is
+    /// not rewritten by the passage of time.
     pub fn get_echo_message(&self) -> String {
-        let lock = self
-            .echo_message
+        self.echo_message
             .read()
-            .expect("Failed to acquire read lock on echo_message");
-        lock.clone()
+            .expect("Failed to acquire read lock on echo_message")
+            .text
+            .clone()
     }
 
-    /// Set the echo message to be MSG
+    /// How long until the current echo message stops being shown, or `None`
+    /// when nothing is waiting to expire -- there is no message, no timeout is
+    /// set, or the message has already expired.
+    ///
+    /// This is what a UI event loop needs in order to redraw when a message
+    /// vanishes. Without it the loop blocks on the next key and the message
+    /// stays on screen until the user happens to press one, which is not a
+    /// timeout so much as a coincidence.
+    pub fn echo_expiry_in(&self, env: &Arc<Env<EditorState<B>>>) -> Option<Duration> {
+        let timeout = echo_timeout(env)?;
+        let elapsed = self
+            .echo_message
+            .read()
+            .expect("Failed to acquire read lock on echo_message")
+            .visible_for(Some(timeout))?;
+        timeout.checked_sub(elapsed).filter(|left| !left.is_zero())
+    }
+
+    /// Set the echo message to be MSG, and start its timeout running.
     pub fn set_echo_message(&self, msg: &str) {
         *self
             .echo_message
             .write()
-            .expect("Failed to acquire write lock on echo_message") = msg.to_string();
+            .expect("Failed to acquire write lock on echo_message") = EchoMessage::new(msg);
     }
 
     /// Return every diagnostic logged so far via `log_diagnostic`, oldest
@@ -1120,31 +1233,6 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on last_command") = name;
     }
 
-    /// Close the current buffer's open undo group unless this command should
-    /// join the previous one.
-    ///
-    /// Called before the command runs, not after, because "should these be one
-    /// group?" is a question about a pair of commands, and the pair is only
-    /// complete once the second one is known.
-    ///
-    /// Only a run of ordinary typing amalgamates, and only up to
-    /// [`crate::primitives::edits::AMALGAMATION_LIMIT`] characters. Everything
-    /// else undoes as one command per step: a kill that quietly merged with
-    /// the typing before it would take the typing with it.
-    pub(crate) fn undo_boundary_before(&self, command: Option<&str>) {
-        let amalgamate = command == Some("self-insert") && self.last_command_is("self-insert");
-        let buffer = self.get_current_buffer();
-        let mut buffer = buffer
-            .write()
-            .expect("Failed to acquire write lock on current buffer");
-        if amalgamate
-            && buffer.undo.open_insert_len() < crate::primitives::edits::AMALGAMATION_LIMIT
-        {
-            return;
-        }
-        buffer.undo.boundary();
-    }
-
     pub(crate) fn goal_column(&self) -> Option<usize> {
         *self
             .goal_column
@@ -1337,6 +1425,15 @@ pub fn create_global_env<B: BufferTrait>()
     // Add a list of callbacks that will be called after a resize event.
     // The list will contain lambdas with arguments (new_width, new_height)
     env.set_variable("after-resize-hook".into(), ELispExp::nil());
+
+    // How long a message stays in the echo area. A number of seconds arms the
+    // timeout; nil leaves messages up until something replaces them. Set here
+    // rather than in a `.lisp` file so the default holds even with no Lisp
+    // loaded, and so that `describe`-style introspection finds it bound.
+    env.set_variable(
+        ECHO_MESSAGE_TIMEOUT.into(),
+        ELispExp::number(DEFAULT_ECHO_MESSAGE_TIMEOUT),
+    );
 
     // Create the fundamental modes:
     // - fundamental-mode to edit base files

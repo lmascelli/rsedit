@@ -15,15 +15,6 @@ use crate::buffer::{Buffer, undo};
 // the history that sits beside the text -- and taking both together is what
 // makes it impossible to hold one without the other.
 
-/// How many characters a run of `self-insert` amalgamates before the next one
-/// starts a fresh undo group.
-///
-/// Without a cap, typing a paragraph without pausing would undo in one step
-/// and lose the lot. Emacs uses 20; there is nothing magic about the number
-/// beyond it being about a word or two -- small enough that an undo feels
-/// local, large enough that undo is not per-keystroke.
-pub(crate) const AMALGAMATION_LIMIT: usize = 20;
-
 /// Delete `[from, to)` from BUF, recording it so it can be undone.
 ///
 /// `delete()` removes the character *before* point, so the application step

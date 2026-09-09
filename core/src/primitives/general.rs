@@ -185,8 +185,13 @@ pub const SET_ECHO_MESSAGE_DOC: &str = "(set-echo-message MESSAGE): Show MESSAGE
          echo area (the status line at the bottom of the frame). Prefer \
          `message', which also keeps MESSAGE in the log, unless you \
          specifically don't want that.\n\n\
+         MESSAGE stays on screen for `echo-message-timeout' seconds and is \
+         then no longer drawn; set that variable to nil to leave messages up \
+         until something replaces them. Each new message starts its own \
+         timeout.\n\n\
          Example:\n\
-         (set-echo-message \"Saved\")";
+         (set-echo-message \"Saved\")\n\
+         (setq echo-message-timeout nil) ; messages no longer time out";
 
 primitive!(set_echo_message, args, _env, ctx, {
     if args.len() != 1 {

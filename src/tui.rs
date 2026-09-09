@@ -1,4 +1,6 @@
-use crossterm::event::{Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers, read};
+use crossterm::event::{
+    Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers, poll, read,
+};
 use crossterm::{QueueableCommand, cursor, execute, style::Print, terminal};
 use rsedit_core::BufferTrait;
 use rsedit_core::ELispExp;
@@ -225,7 +227,21 @@ pub fn tui_main<B: BufferTrait>(
         let (cols, rows) = terminal::size()?;
         // Capture, then draw. Two steps on purpose: the capture holds locks and
         // does no I/O, the draw does I/O and holds no locks.
-        render_frame(&state.snapshot(cols as usize, rows as usize))?;
+        render_frame(&state.snapshot(&env, cols as usize, rows as usize))?;
+
+        // An echo message with a timeout in force is the one thing that
+        // changes the screen without the user doing anything, so it is the one
+        // thing this loop cannot simply block through: waiting on `read` alone
+        // would leave the message up until the next keystroke, which is not a
+        // timeout but a coincidence. Waiting only as long as the message has
+        // left, and looping back to redraw when nothing arrives, keeps the
+        // loop event-driven -- there is no polling when no message is pending,
+        // and at most one extra wake-up when one is.
+        if let Some(remaining) = state.echo_expiry_in(&env)
+            && !poll(remaining)?
+        {
+            continue;
+        }
 
         match read()? {
             Event::Key(key_event) => {
@@ -286,9 +302,9 @@ mod tests {
     const ROWS: u16 = 24;
 
     /// Render one frame into memory and return the bytes.
-    fn frame(state: &EditorState<GapBuffer>) -> String {
+    fn frame(state: &EditorState<GapBuffer>, env: &Arc<Env<EditorState<GapBuffer>>>) -> String {
         let mut out: Vec<u8> = Vec::new();
-        let snapshot = state.snapshot(COLS as usize, ROWS as usize);
+        let snapshot = state.snapshot(env, COLS as usize, ROWS as usize);
         render_to(&mut out, &snapshot).expect("rendering must succeed");
         String::from_utf8(out).expect("crossterm emits valid UTF-8")
     }
@@ -315,8 +331,11 @@ mod tests {
         out
     }
 
-    fn expected_cursor(state: &EditorState<GapBuffer>) -> (u16, u16) {
-        let snapshot = state.snapshot(COLS as usize, ROWS as usize);
+    fn expected_cursor(
+        state: &EditorState<GapBuffer>,
+        env: &Arc<Env<EditorState<GapBuffer>>>,
+    ) -> (u16, u16) {
+        let snapshot = state.snapshot(env, COLS as usize, ROWS as usize);
         let view = snapshot
             .focused_view()
             .expect("a window must have focus")
@@ -346,7 +365,7 @@ mod tests {
             .expect("source must parse");
         rsedit_core::lisp::eval(&ast, env.clone(), &state).expect("prompt must open");
 
-        let rendered = frame(&state);
+        let rendered = frame(&state, &env);
         assert!(
             rendered.contains("Find file:"),
             "the prompt should be drawn on the minibuffer's border"
@@ -366,17 +385,16 @@ mod tests {
     #[test]
     fn the_cursor_is_placed_after_the_echo_area_not_before_it() {
         let (state, env) = create_global_env::<GapBuffer>().expect("global env");
-        let _ = &env;
         state.set_echo_message("a message long enough to move the cursor");
 
-        let rendered = frame(&state);
+        let rendered = frame(&state, &env);
         let last = *placements(&rendered)
             .last()
             .expect("the frame must position the cursor at least once");
 
         assert_eq!(
             last,
-            expected_cursor(&state),
+            expected_cursor(&state, &env),
             "the last cursor placement should be point, not wherever drawing ended"
         );
         assert_ne!(last.1, ROWS - 1, "the cursor was left on the echo-area row");
@@ -387,10 +405,9 @@ mod tests {
     #[test]
     fn the_cursor_is_hidden_while_drawing_and_shown_at_the_end() {
         let (state, env) = create_global_env::<GapBuffer>().expect("global env");
-        let _ = &env;
         state.set_echo_message("hello");
 
-        let rendered = frame(&state);
+        let rendered = frame(&state, &env);
         let hide = rendered
             .find("\u{1b}[?25l")
             .expect("the cursor must be hidden first");
@@ -410,11 +427,10 @@ mod tests {
     #[test]
     fn the_cursor_lands_at_point_with_no_echo_message() {
         let (state, env) = create_global_env::<GapBuffer>().expect("global env");
-        let _ = &env;
         state.set_echo_message("");
 
-        let rendered = frame(&state);
+        let rendered = frame(&state, &env);
         let last = *placements(&rendered).last().expect("a cursor placement");
-        assert_eq!(last, expected_cursor(&state));
+        assert_eq!(last, expected_cursor(&state, &env));
     }
 }

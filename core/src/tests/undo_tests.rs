@@ -263,6 +263,53 @@ mod tests {
         );
     }
 
+    /// Two presses of the *same* editing command are two commands, and must
+    /// undo separately. Grouping keys on which command instance is running,
+    /// not on which command it is -- keying on the name would merge these.
+    #[test]
+    fn two_presses_of_the_same_kill_command_undo_separately() {
+        let (ctx, env) = editor_with("alpha beta gamma");
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("common-keymaps.lisp must load");
+
+        press(&ctx, &env, KeyCode::Char('d'), alt());
+        press(&ctx, &env, KeyCode::Char('d'), alt());
+        assert_eq!(text_of(&ctx), " gamma");
+
+        eval_str("(undo)", &env, &ctx).expect("undo");
+        assert_eq!(
+            text_of(&ctx),
+            " beta gamma",
+            "the second kill should undo on its own"
+        );
+        eval_str("(undo)", &env, &ctx).expect("undo again");
+        assert_eq!(text_of(&ctx), "alpha beta gamma", "and then the first");
+    }
+
+    /// One command, several edits, one undo step -- even when the command is a
+    /// Lisp function reached through a key rather than a single primitive.
+    #[test]
+    fn one_command_that_edits_several_times_undoes_as_one_step() {
+        let (ctx, env) = editor_with("alpha beta gamma");
+        eval_str(
+            "(defun kill-two-words () (kill-word) (kill-word)) \
+             (define-key nil \"C-t\" 'kill-two-words)",
+            &env,
+            &ctx,
+        )
+        .expect("define the command");
+
+        press(&ctx, &env, KeyCode::Char('t'), ctrl());
+        assert_eq!(text_of(&ctx), " gamma");
+
+        eval_str("(undo)", &env, &ctx).expect("undo");
+        assert_eq!(
+            text_of(&ctx),
+            "alpha beta gamma",
+            "both kills belong to the one command that made them"
+        );
+    }
+
     #[test]
     fn undo_boundary_splits_a_single_lisp_form_into_steps() {
         let (ctx, env) = editor_with("");
