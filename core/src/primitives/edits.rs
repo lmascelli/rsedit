@@ -1,5 +1,6 @@
 use super::*;
-use crate::buffer::{Buffer, undo};
+use crate::buffer::{Buffer, Mark, undo};
+use crate::kill_ring::Direction;
 
 // ---------------------------------------------------------------------------
 // The recording editing layer
@@ -39,6 +40,7 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
         (start..end).filter_map(|i| buf.text.at(i)).collect()
     };
     buf.undo.record_delete(start, removed, point);
+    buf.mark = deactivated(buf.mark);
     if whole_buffer {
         // `clear` exists precisely so that emptying a large buffer is not
         // 60,000 gap-moving deletions -- see `BufferTrait::clear`.
@@ -57,14 +59,48 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
     let at = at.min(buf.text.len());
     let point = buf.text.cursor_pos_1d();
     buf.undo.record_insert(at, content.chars().count(), point);
+    buf.mark = deactivated(buf.mark);
     undo::apply_insert(&mut buf.text, at, content);
     buf.is_modified = true;
+}
+
+/// A mark that survives an edit, but no longer defines a region.
+///
+/// Every edit goes through the two functions above, so this is every edit:
+/// making a change is what ends a selection, in this editor as in Emacs.
+/// Deactivating rather than clearing keeps the position available to
+/// `exchange-point-and-mark`, and it is also what keeps an active region
+/// honest -- an active mark can never have had an edit under it, so it never
+/// needs adjusting for one.
+fn deactivated(mark: Option<Mark>) -> Option<Mark> {
+    mark.map(|mark| Mark {
+        active: false,
+        ..mark
+    })
 }
 
 /// Insert CONTENT at point.
 pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str) {
     let at = buf.text.cursor_pos_1d();
     insert_text(buf, at, content);
+}
+
+/// Delete `[from, to)` and return what was deleted, ready for the kill ring.
+///
+/// The text comes back rather than going straight into the ring because the
+/// caller is holding the buffer lock and the ring is a lock of its own. Taking
+/// the second while holding the first would put an ordering between them that
+/// nothing else in the editor respects -- so every kill command drops the
+/// buffer first and saves afterwards.
+fn cut_out<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) -> String {
+    let start = from.min(to);
+    let end = from.max(to).min(buf.text.len());
+    if start >= end {
+        return String::new();
+    }
+    let text: String = (start..end).filter_map(|i| buf.text.at(i)).collect();
+    delete_range(buf, start, end);
+    text
 }
 
 pub const SELF_INSERT_DOC: &str = "(self-insert STRING): Insert the first character of STRING at point \
@@ -460,11 +496,11 @@ primitive!(goto_line, args, _env, ctx, {
 // `word_forward`, which is the offset `forward-word` moves to.
 //
 // A note on the names. In Emacs a *kill* also copies the text to the kill ring
-// so it can be yanked back, while a *delete* discards it. The ring is roadmap
-// #20 and does not exist yet, so today these all discard. The Emacs names are
-// used regardless, so that the bindings and muscle memory people already have
-// keep working, and so that #20 adds saving to these commands rather than
-// renaming them out from under anyone's configuration.
+// so it can be yanked back, while a *delete* discards it. That distinction is
+// live here: the `kill-*` commands below save what they remove, and
+// `delete-char` and `delete-backward-char` do not. Keeping the Emacs names
+// meant the ring could be added to these commands later without renaming them
+// out from under anyone's configuration, which is exactly what happened.
 
 pub const DELETE_CHAR_DOC: &str = "(delete-char &optional N): Delete N characters (default 1) \
          forward from point, crossing line boundaries. Deletes nothing at the \
@@ -484,101 +520,126 @@ primitive!(delete_char, args, _env, ctx, {
 pub const KILL_LINE_DOC: &str = "(kill-line): Delete from point to the end of the line. When point \
          is already at the end of a line, delete the newline instead, joining \
          the next line onto this one.\n\n\
-         Does not yet save to a kill ring -- see roadmap #20.\n\n\
+         The text is saved to the kill ring, so `yank' puts it back. A run \
+         of kill commands accumulates into one entry.\n\n\
          Example:\n\
          (define-key nil \"C-k\" 'kill-line)";
 
 primitive!(kill_line, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let from = buf.text.cursor_pos_1d();
-    let (line, _) = buf.text.cursor_pos();
-    let end_of_line = buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line));
-    // At the end of a line there is nothing left to kill on it, so the newline
-    // goes instead -- which is what makes repeated C-k swallow a paragraph
-    // rather than stalling on every line ending.
-    let to = if from == end_of_line {
-        from + 1
-    } else {
-        end_of_line
+    let killed = {
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("write lock on buffer");
+        let from = buf.text.cursor_pos_1d();
+        let (line, _) = buf.text.cursor_pos();
+        let end_of_line = buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line));
+        // At the end of a line there is nothing left to kill on it, so the
+        // newline goes instead -- which is what makes repeated C-k swallow a
+        // paragraph rather than stalling on every line ending.
+        let to = if from == end_of_line {
+            from + 1
+        } else {
+            end_of_line
+        };
+        cut_out(&mut buf, from, to)
     };
-    delete_range(&mut buf, from, to);
+    ctx.kill(killed, Direction::Forward);
     Ok(ELispExp::nil())
 });
 
 pub const KILL_WHOLE_LINE_DOC: &str = "(kill-whole-line): Delete the entire line point is on, \
          including its newline.\n\n\
-         Does not yet save to a kill ring -- see roadmap #20.";
+         The text is saved to the kill ring, so `yank' puts it back. A run \
+         of kill commands accumulates into one entry.";
 
 primitive!(kill_whole_line, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let (line, _) = buf.text.cursor_pos();
-    let from = buf.text.cursor_2d_to_1d(line, 0);
-    let to = (buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line)) + 1).min(buf.text.len());
-    delete_range(&mut buf, from, to);
+    let killed = {
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("write lock on buffer");
+        let (line, _) = buf.text.cursor_pos();
+        let from = buf.text.cursor_2d_to_1d(line, 0);
+        let to =
+            (buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line)) + 1).min(buf.text.len());
+        cut_out(&mut buf, from, to)
+    };
+    ctx.kill(killed, Direction::Forward);
     Ok(ELispExp::nil())
 });
 
 pub const KILL_WORD_DOC: &str = "(kill-word &optional N): Delete forward to the end of the Nth next \
          word (default 1) -- the text `forward-word' would move over.\n\n\
-         Does not yet save to a kill ring -- see roadmap #20.\n\n\
+         The text is saved to the kill ring, so `yank' puts it back. A run \
+         of kill commands accumulates into one entry.\n\n\
          Example:\n\
          (define-key nil \"M-d\" 'kill-word)";
 
 primitive!(kill_word, args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let from = buf.text.cursor_pos_1d();
-    let to = word_forward(&buf.text, from, repeat_count(args)?);
-    delete_range(&mut buf, from, to);
+    let killed = {
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("write lock on buffer");
+        let from = buf.text.cursor_pos_1d();
+        let to = word_forward(&buf.text, from, repeat_count(args)?);
+        cut_out(&mut buf, from, to)
+    };
+    ctx.kill(killed, Direction::Forward);
     Ok(ELispExp::nil())
 });
 
 pub const BACKWARD_KILL_WORD_DOC: &str = "(backward-kill-word &optional N): Delete back to the \
          beginning of the Nth previous word (default 1) -- the text \
          `backward-word' would move over.\n\n\
-         Does not yet save to a kill ring -- see roadmap #20.\n\n\
+         The text is saved to the kill ring, so `yank' puts it back. A run \
+         of kill commands accumulates into one entry.\n\n\
          Example:\n\
          (define-key nil \"M-<backspace>\" 'backward-kill-word)";
 
 primitive!(backward_kill_word, args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let to = buf.text.cursor_pos_1d();
-    let from = word_backward(&buf.text, to, repeat_count(args)?);
-    delete_range(&mut buf, from, to);
+    let killed = {
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("write lock on buffer");
+        let to = buf.text.cursor_pos_1d();
+        let from = word_backward(&buf.text, to, repeat_count(args)?);
+        cut_out(&mut buf, from, to)
+    };
+    ctx.kill(killed, Direction::Backward);
     Ok(ELispExp::nil())
 });
 
 pub const KILL_PARAGRAPH_DOC: &str = "(kill-paragraph): Delete forward to the end of the current \
          paragraph -- the text `forward-paragraph' would move over.\n\n\
-         Does not yet save to a kill ring -- see roadmap #20.";
+         The text is saved to the kill ring, so `yank' puts it back. A run \
+         of kill commands accumulates into one entry.";
 
 primitive!(kill_paragraph, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let from = buf.text.cursor_pos_1d();
-    let (line, _) = buf.text.cursor_pos();
-    let target_line = paragraph_forward(&buf.text, line);
-    let to = buf.text.cursor_2d_to_1d(target_line, 0);
-    delete_range(&mut buf, from, to);
+    let killed = {
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("write lock on buffer");
+        let from = buf.text.cursor_pos_1d();
+        let (line, _) = buf.text.cursor_pos();
+        let target_line = paragraph_forward(&buf.text, line);
+        let to = buf.text.cursor_2d_to_1d(target_line, 0);
+        cut_out(&mut buf, from, to)
+    };
+    ctx.kill(killed, Direction::Forward);
     Ok(ELispExp::nil())
 });
 
 pub const BACKWARD_KILL_PARAGRAPH_DOC: &str = "(backward-kill-paragraph): Delete back to the \
          beginning of the current paragraph -- the text `backward-paragraph' \
          would move over.\n\n\
-         Does not yet save to a kill ring -- see roadmap #20.";
+         The text is saved to the kill ring, so `yank' puts it back. A run \
+         of kill commands accumulates into one entry.";
 
 primitive!(backward_kill_paragraph, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let to = buf.text.cursor_pos_1d();
-    let (line, _) = buf.text.cursor_pos();
-    let target_line = paragraph_backward(&buf.text, line);
-    let from = buf.text.cursor_2d_to_1d(target_line, 0);
-    delete_range(&mut buf, from, to);
+    let killed = {
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("write lock on buffer");
+        let to = buf.text.cursor_pos_1d();
+        let (line, _) = buf.text.cursor_pos();
+        let target_line = paragraph_backward(&buf.text, line);
+        let from = buf.text.cursor_2d_to_1d(target_line, 0);
+        cut_out(&mut buf, from, to)
+    };
+    ctx.kill(killed, Direction::Backward);
     Ok(ELispExp::nil())
 });
 

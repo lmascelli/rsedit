@@ -10,21 +10,20 @@ fn parse_key_sequence(seq: &str) -> Option<KeyEvent> {
     let mut modifiers = KeyModifiers::default();
     let mut chars = seq.chars().peekable();
 
-    if seq.starts_with("C-") {
-        modifiers.ctrl = true;
-        chars.nth(0);
-        chars.nth(0);
-    } else if seq.starts_with("M-") {
-        modifiers.alt = true;
-        chars.nth(0);
-        chars.nth(0);
-    } else if seq.starts_with("C-M-") {
+    // Longest prefix first. Tested after `C-` this branch could never run,
+    // since every `C-M-x` starts with `C-`, so `C-M-` bindings silently became
+    // plain `C-` ones with a stray `M-` left in the key name -- which then
+    // failed to parse and dropped the binding on the floor.
+    if let Some(rest) = seq.strip_prefix("C-M-") {
         modifiers.ctrl = true;
         modifiers.alt = true;
-        chars.nth(0);
-        chars.nth(0);
-        chars.nth(0);
-        chars.nth(0);
+        chars = rest.chars().peekable();
+    } else if let Some(rest) = seq.strip_prefix("C-") {
+        modifiers.ctrl = true;
+        chars = rest.chars().peekable();
+    } else if let Some(rest) = seq.strip_prefix("M-") {
+        modifiers.alt = true;
+        chars = rest.chars().peekable();
     }
 
     let key_code = match chars.collect::<String>().as_str() {
@@ -32,6 +31,9 @@ fn parse_key_sequence(seq: &str) -> Option<KeyEvent> {
         "<esc>" | "<Escape>" => KeyCode::Esc,
         "tab" | "<Tab>" => KeyCode::Tab,
         "<backspace>" => KeyCode::Backspace,
+        // Spelt out because a bare space is impossible to see in a key name,
+        // and `C-<space>` is how `set-mark` is bound.
+        "<space>" | " " => KeyCode::Char(' '),
         "<up>" => KeyCode::Up,
         "<down>" => KeyCode::Down,
         "<left>" => KeyCode::Left,
@@ -69,6 +71,8 @@ pub(crate) mod edits;
 mod general;
 mod io;
 mod modes;
+mod region;
+mod theme;
 mod ui;
 
 pub fn install_primitives<B: BufferTrait>(
@@ -259,6 +263,96 @@ pub fn install_primitives<B: BufferTrait>(
         edits::set_undo_limit,
         ["n:Undo limit in bytes: "],
         edits::SET_UNDO_LIMIT_DOC
+    );
+
+    // ---------------------------------------------------------------
+    // The mark, the region, and the kill ring
+    // ---------------------------------------------------------------
+    insert_cmd!(
+        "set-mark",
+        region::set_mark,
+        [] as [&str; 0],
+        region::SET_MARK_DOC
+    );
+    insert_cmd!(
+        "deactivate-mark",
+        region::deactivate_mark,
+        [] as [&str; 0],
+        region::DEACTIVATE_MARK_DOC
+    );
+    insert_cmd!(
+        "exchange-point-and-mark",
+        region::exchange_point_and_mark,
+        [] as [&str; 0],
+        region::EXCHANGE_POINT_AND_MARK_DOC
+    );
+    insert_cmd!(
+        "mark-whole-buffer",
+        region::mark_whole_buffer,
+        [] as [&str; 0],
+        region::MARK_WHOLE_BUFFER_DOC
+    );
+    insert_cmd!(
+        "kill-region",
+        region::kill_region,
+        [] as [&str; 0],
+        region::KILL_REGION_DOC
+    );
+    insert_cmd!(
+        "kill-ring-save",
+        region::kill_ring_save,
+        [] as [&str; 0],
+        region::KILL_RING_SAVE_DOC
+    );
+    insert_cmd!("yank", region::yank, [] as [&str; 0], region::YANK_DOC);
+    insert_cmd!(
+        "yank-pop",
+        region::yank_pop,
+        [] as [&str; 0],
+        region::YANK_POP_DOC
+    );
+    insert_cmd!(
+        "set-kill-ring-max",
+        region::set_kill_ring_max,
+        ["n:Kill ring size: "],
+        region::SET_KILL_RING_MAX_DOC
+    );
+    // ---------------------------------------------------------------
+    // Faces and the theme
+    // ---------------------------------------------------------------
+    insert_cmd!(
+        "set-face",
+        theme::set_face,
+        ["s:Face: ", "s:Foreground: ", "s:Background: "],
+        theme::SET_FACE_DOC
+    );
+    insert_fn!("face-style", theme::face_style, theme::FACE_STYLE_DOC);
+    insert_fn!("list-faces", theme::list_faces, theme::LIST_FACES_DOC);
+    insert_fn!("list-colors", theme::list_colors, theme::LIST_COLORS_DOC);
+
+    // Predicates and accessors rather than things to run from M-x.
+    insert_fn!("mark", region::mark, region::MARK_DOC);
+    insert_fn!(
+        "use-region-p",
+        region::use_region_p,
+        region::USE_REGION_P_DOC
+    );
+    insert_fn!(
+        "region-beginning",
+        region::region_beginning,
+        region::REGION_BEGINNING_DOC
+    );
+    insert_fn!("region-end", region::region_end, region::REGION_END_DOC);
+    insert_fn!("kill-new", region::kill_new, region::KILL_NEW_DOC);
+    insert_fn!(
+        "current-kill",
+        region::current_kill,
+        region::CURRENT_KILL_DOC
+    );
+    insert_fn!(
+        "kill-ring-length",
+        region::kill_ring_length,
+        region::KILL_RING_LENGTH_DOC
     );
     insert_cmd!(
         "beginning-of-line",

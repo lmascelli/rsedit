@@ -2,6 +2,8 @@
 mod buffer_trait;
 pub use buffer_trait::BufferTrait;
 pub mod gap_buffer;
+pub mod mark;
+pub use mark::Mark;
 pub mod undo;
 pub use undo::UndoHistory;
 
@@ -17,6 +19,9 @@ pub struct Buffer<B: BufferTrait> {
     pub current_mode: String,
     /// This buffer's edit history: recorded changes for undo and redo.
     pub undo: UndoHistory,
+    /// Where the mark is, when this buffer has one. The region is the text
+    /// between it and point -- see [`crate::buffer::mark::region_bounds`].
+    pub mark: Option<Mark>,
 }
 
 impl<B: BufferTrait> Buffer<B> {
@@ -29,6 +34,7 @@ impl<B: BufferTrait> Buffer<B> {
             local_keymap: None,
             current_mode: "fundamental".into(),
             undo: UndoHistory::default(),
+            mark: None,
         }
     }
 
@@ -41,6 +47,7 @@ impl<B: BufferTrait> Buffer<B> {
             local_keymap: None,
             current_mode: "fundamental".into(),
             undo: UndoHistory::default(),
+            mark: None,
         }
     }
 }

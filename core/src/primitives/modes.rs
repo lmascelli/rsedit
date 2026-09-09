@@ -99,21 +99,13 @@ primitive!(add_syntax_rule, args, _env, ctx, {
             ELispExp::Symbol(face_sym),
         ) = (&args[0], &args[1], &args[2])
         {
-            let face = match face_sym.as_str() {
-                "keyword" => Face::Keyword,
-                "type" => Face::Type,
-                "string" => Face::String,
-                "comment" => Face::Comment,
-                "function" => Face::Function,
-                "builtin" => Face::Builtin,
-                face_sym_str => {
-                    ctx.log_diagnostic(&format!(
-                        "Unknown face: {}. Used Face::Default",
-                        face_sym_str
-                    ));
-                    Face::Default
-                }
-            };
+            // One name mapping, shared with `set-face`, so a face a syntax
+            // rule can name is a face a theme can style. These were two
+            // separate lists, and `region` was in neither.
+            let face = Face::from_name(face_sym.as_str()).unwrap_or_else(|| {
+                ctx.log_diagnostic(&format!("Unknown face: {}. Used Face::Default", face_sym));
+                Face::Default
+            });
 
             match regex::Regex::new(regex_str) {
                 Ok(pattern) => {

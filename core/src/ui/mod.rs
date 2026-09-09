@@ -3,9 +3,9 @@ pub use frame::FrameSnapshot;
 
 mod windows;
 pub use windows::{
-    FloatingWindow, LayoutNode, Orientation, Rect, RenderableWindowView, Window,
-    extract_buffer_lines,
+    FloatingWindow, Highlight, LayoutNode, Orientation, Rect, RenderableWindowView, Window,
+    extract_buffer_lines, region_highlights,
 };
 
 mod faces;
-pub use faces::Face;
+pub use faces::{Color, Face, NAMED_COLORS, Style, Theme};

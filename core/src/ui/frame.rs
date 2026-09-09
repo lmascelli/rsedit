@@ -30,7 +30,7 @@
 //! and each one that follows this rule costs nothing when the UI event loop
 //! eventually moves to its own thread; each one that does not is another torn
 //! frame to find later.
-use super::RenderableWindowView;
+use super::{RenderableWindowView, Theme};
 
 /// Everything the UI needs to draw one frame, owned outright.
 ///
@@ -44,6 +44,13 @@ pub struct FrameSnapshot {
     pub views: Vec<RenderableWindowView>,
     /// Text for the echo area, or empty when there is nothing to show.
     pub echo_message: String,
+    /// How each face should be drawn, as it stood at capture time.
+    ///
+    /// Carried in the frame rather than looked up by the renderer for the same
+    /// reason everything else here is: drawing touches no shared state. It also
+    /// means a frame is self-describing -- a snapshot kept for comparison still
+    /// knows the colours it was composed under.
+    pub theme: Theme,
     /// Which window had focus at capture time. `views` already carries
     /// `is_focused` per window; this is here for renderers that need to know
     /// even when the focused window is not currently visible.

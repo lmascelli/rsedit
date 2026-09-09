@@ -266,6 +266,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 is_modified: false,
                 local_keymap: None,
                 undo: Default::default(),
+                mark: None,
             })),
         );
     }

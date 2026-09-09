@@ -2,6 +2,7 @@ use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
     input::{KeyEvent, fill_default_keymaps},
+    kill_ring::{Direction, KillRing},
     lisp::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
@@ -11,8 +12,8 @@ use crate::{
     commands::{ArgSpec, CommandRegistry, PendingCommand},
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
-        FloatingWindow, FrameSnapshot, LayoutNode, Rect, RenderableWindowView, Window,
-        extract_buffer_lines,
+        Face, FloatingWindow, FrameSnapshot, LayoutNode, Rect, RenderableWindowView, Style, Theme,
+        Window, extract_buffer_lines, region_highlights,
     },
 };
 use std::{
@@ -145,6 +146,35 @@ pub struct EditorState<B: BufferTrait> {
     /// keymap does not need copying to be remembered.
     last_command: Arc<RwLock<Option<Arc<String>>>>,
 
+    /// Killed and copied text, shared by every buffer so that a kill in one
+    /// can be yanked into another.
+    kill_ring: Arc<RwLock<KillRing>>,
+
+    /// How each face is drawn. One theme for the whole editor -- a per-buffer
+    /// theme would mean two windows on the same file disagreeing about what a
+    /// keyword looks like.
+    theme: Arc<RwLock<Theme>>,
+
+    /// Whether the command *before* this one killed, and whether this one has.
+    ///
+    /// A pair rather than one flag because the question -- "is this kill
+    /// continuing a run?" -- is asked during a command about the one before
+    /// it, so the answer has to be settled before the command runs and
+    /// recorded while it does. `handle_key_event` rolls the second into the
+    /// first between commands, exactly as it does for `last_command`.
+    ///
+    /// Deliberately *not* rolled over inside a single Lisp function: two
+    /// `(kill-line)` calls in one `defun` append into one entry, which is what
+    /// Emacs does too and what makes a Lisp-driven kill loop useful.
+    last_command_killed: Arc<AtomicBool>,
+    this_command_killed: Arc<AtomicBool>,
+
+    /// Where the last yank put its text, so `yank-pop` knows what to replace,
+    /// and whether the previous command was that yank.
+    last_yank: Arc<RwLock<Option<(usize, usize)>>>,
+    last_command_yanked: Arc<AtomicBool>,
+    this_command_yanked: Arc<AtomicBool>,
+
     /// Column that repeated vertical movement is aiming for.
     ///
     /// Moving down through a short line and back up must return to the
@@ -276,6 +306,13 @@ impl<B: BufferTrait> EditorState<B> {
             commands: Arc::new(RwLock::new(CommandRegistry::new())),
             pending_commands: Arc::new(RwLock::new(Vec::new())),
             last_command: Arc::new(RwLock::new(None)),
+            kill_ring: Arc::new(RwLock::new(KillRing::default())),
+            theme: Arc::new(RwLock::new(Theme::default())),
+            last_command_killed: Arc::new(AtomicBool::new(false)),
+            this_command_killed: Arc::new(AtomicBool::new(false)),
+            last_yank: Arc::new(RwLock::new(None)),
+            last_command_yanked: Arc::new(AtomicBool::new(false)),
+            this_command_yanked: Arc::new(AtomicBool::new(false)),
             goal_column: Arc::new(RwLock::new(None)),
             fuel: Arc::new(FuelMeter::new(DEFAULT_FUEL)),
             logs: Arc::new(RwLock::new(Vec::new())),
@@ -645,6 +682,11 @@ impl<B: BufferTrait> EditorState<B> {
         crate::buffer::undo::begin_command(
             this_command.as_deref().map(String::as_str) == Some("self-insert"),
         );
+        // Before the command runs, not after: a command asks these about its
+        // predecessor, so the answer has to be in place by the time it starts.
+        // Rolling over here rather than at the end also means a command that
+        // fails partway cannot leave its flag set for the next one to read.
+        self.roll_over_command_flags();
         if let Some(name) = bound_command {
             // The name is passed as a string rather than a quoted symbol:
             // a string literal is self-evaluating, so this needs no `quote`
@@ -840,6 +882,11 @@ impl<B: BufferTrait> EditorState<B> {
         // locks of its own, and taking one while holding an editor lock would
         // add an edge to the ordering below that nothing else respects.
         let echo_timeout = echo_timeout(env);
+        // The theme is read before the structural locks and never alongside
+        // them, so it stays outside the ordering below rather than becoming
+        // another link in it. It is a small `Copy` value, so this is a memcpy
+        // and the lock is released immediately.
+        let theme = self.theme();
 
         let focused_window_id = *self
             .focused_window_id
@@ -909,6 +956,7 @@ impl<B: BufferTrait> EditorState<B> {
                 is_focused,
                 cursor_rel_pos,
                 lines: extract_buffer_lines(&float.window, &float.rect, &buffers),
+                highlights: region_highlights(&float.window, &float.rect, &buffers),
                 has_border: float.has_border,
             });
         }
@@ -916,6 +964,7 @@ impl<B: BufferTrait> EditorState<B> {
         FrameSnapshot {
             views,
             echo_message,
+            theme,
             focused_window_id,
             width: screen_width,
             height: screen_height,
@@ -1224,6 +1273,134 @@ impl<B: BufferTrait> EditorState<B> {
             .as_deref()
             .map(String::as_str)
             == Some(name)
+    }
+
+    // ---------------------------------------------------------------
+    // Faces and the theme
+    // ---------------------------------------------------------------
+
+    /// Bind FACE to STYLE for the whole editor.
+    pub(crate) fn set_face_style(&self, face: Face, style: Style) {
+        self.theme
+            .write()
+            .expect("Failed to acquire write lock on theme")
+            .set(face, style);
+    }
+
+    pub(crate) fn face_style(&self, face: Face) -> Style {
+        self.theme
+            .read()
+            .expect("Failed to acquire read lock on theme")
+            .style(face)
+    }
+
+    pub(crate) fn theme(&self) -> Theme {
+        *self
+            .theme
+            .read()
+            .expect("Failed to acquire read lock on theme")
+    }
+
+    // ---------------------------------------------------------------
+    // The kill ring
+    // ---------------------------------------------------------------
+
+    /// Save TEXT as killed text.
+    ///
+    /// A run of kill commands accumulates into one entry rather than filling
+    /// the ring with fragments -- that is what makes repeated `C-k` yank back
+    /// as the whole passage. DIRECTION says which end of the entry a
+    /// continued kill joins onto, so a backward kill does not assemble its
+    /// text inside out.
+    pub(crate) fn kill(&self, text: String, direction: Direction) {
+        let continuing = self.last_command_killed.load(Ordering::Relaxed);
+        self.this_command_killed.store(true, Ordering::Relaxed);
+        let mut ring = self
+            .kill_ring
+            .write()
+            .expect("Failed to acquire write lock on kill_ring");
+        if continuing {
+            ring.append(text, direction);
+        } else {
+            ring.push(text);
+        }
+    }
+
+    /// What `yank` would insert, if anything.
+    pub(crate) fn current_kill(&self) -> Option<String> {
+        self.kill_ring
+            .read()
+            .expect("Failed to acquire read lock on kill_ring")
+            .current()
+            .map(str::to_string)
+    }
+
+    /// The entry N kills back, without moving the ring.
+    pub(crate) fn nth_kill(&self, n: usize) -> Option<String> {
+        self.kill_ring
+            .read()
+            .expect("Failed to acquire read lock on kill_ring")
+            .nth(n)
+            .map(str::to_string)
+    }
+
+    /// Step the ring back one entry and return what is now current.
+    pub(crate) fn rotate_kill_ring(&self) -> Option<String> {
+        self.kill_ring
+            .write()
+            .expect("Failed to acquire write lock on kill_ring")
+            .rotate()
+            .map(str::to_string)
+    }
+
+    pub(crate) fn set_kill_ring_max(&self, max: usize) {
+        self.kill_ring
+            .write()
+            .expect("Failed to acquire write lock on kill_ring")
+            .set_max(max);
+    }
+
+    pub(crate) fn kill_ring_len(&self) -> usize {
+        self.kill_ring
+            .read()
+            .expect("Failed to acquire read lock on kill_ring")
+            .len()
+    }
+
+    /// Remember that a yank put LEN characters at AT, so `yank-pop` knows what
+    /// to take back out.
+    pub(crate) fn note_yank(&self, at: usize, len: usize) {
+        self.this_command_yanked.store(true, Ordering::Relaxed);
+        *self
+            .last_yank
+            .write()
+            .expect("Failed to acquire write lock on last_yank") = Some((at, len));
+    }
+
+    /// What the previous command yanked, if the previous command was a yank.
+    ///
+    /// `yank-pop` replaces the text a yank just inserted, so it is only
+    /// meaningful directly after one; anything else in between and there is
+    /// nothing it would be safe to remove.
+    pub(crate) fn yank_to_replace(&self) -> Option<(usize, usize)> {
+        if !self.last_command_yanked.load(Ordering::Relaxed) {
+            return None;
+        }
+        *self
+            .last_yank
+            .read()
+            .expect("Failed to acquire read lock on last_yank")
+    }
+
+    /// Roll "this command" into "the previous command" for the flags that a
+    /// command needs to ask about its predecessor.
+    fn roll_over_command_flags(&self) {
+        for (last, this) in [
+            (&self.last_command_killed, &self.this_command_killed),
+            (&self.last_command_yanked, &self.this_command_yanked),
+        ] {
+            last.store(this.swap(false, Ordering::Relaxed), Ordering::Relaxed);
+        }
     }
 
     pub(crate) fn set_last_command(&self, name: Option<Arc<String>>) {

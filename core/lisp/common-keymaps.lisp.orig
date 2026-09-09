@@ -25,4 +25,11 @@
 (define-key nil "M-d" 'kill-word)
 (define-key nil "M-<backspace>" 'backward-kill-word)
 
+;; Undo and redo. C-/ and C-_ are the same keystroke on most terminals -- the
+;; terminal reports C-/ as C-_ -- so both are bound, and whichever one the
+;; terminal sends arrives at the same command.
+(define-key nil "C-/" 'undo)
+(define-key nil "C-_" 'undo)
+(define-key nil "M-_" 'redo)
+
 (log "End of the common-keymaps.lisp")

@@ -30,7 +30,7 @@ pub fn compute_syntax_spans(text: &str, rules: &[SyntaxRule]) -> Vec<SyntaxSpan>
             all_matches.push(RawMatch {
                 start: mat.start(),
                 len: mat.end() - mat.start(),
-                face: rule.face.clone(),
+                face: rule.face,
                 priority,
             });
         }

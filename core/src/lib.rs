@@ -2,6 +2,7 @@ pub mod buffer;
 pub(crate) mod commands;
 pub(crate) mod editor;
 pub mod input;
+pub(crate) mod kill_ring;
 pub mod lisp;
 pub(crate) mod minibuffer;
 pub(crate) mod modes;
