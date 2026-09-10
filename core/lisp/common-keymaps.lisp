@@ -59,8 +59,14 @@
 ;;
 ;; `list-faces' names everything that can be styled this way.
 
-;; `exchange-point-and-mark' and `mark-whole-buffer' are C-x C-x and C-x h in
-;; Emacs, and both need a prefix key sequence, which is roadmap #30. Until then
-;; they are reachable from M-x by name.
+;; Prefix key sequences. A binding is written as its keys separated by spaces;
+;; pressing the first shows it in the echo area and waits for the rest.
+(define-key nil "C-x C-x" 'exchange-point-and-mark)
+(define-key nil "C-x h" 'mark-whole-buffer)
+(define-key nil "C-x C-f" 'find-file)
+
+;; C-g abandons a half-typed key sequence or prefix argument, and ends the
+;; region. It does not interrupt a running command -- that is roadmap #24.
+(define-key nil "C-g" 'keyboard-quit)
 
 (log "End of the common-keymaps.lisp")

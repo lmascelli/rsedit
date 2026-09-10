@@ -306,3 +306,22 @@ pub const KILL_RING_LENGTH_DOC: &str = "(kill-ring-length): Return how many entr
 primitive!(kill_ring_length, _args, _env, ctx, {
     Ok(ELispExp::number(ctx.kill_ring_len() as f64))
 });
+
+pub const KEYBOARD_QUIT_DOC: &str = "(keyboard-quit): Abandon whatever is half-finished -- a key \
+         sequence part-way typed, a prefix argument part-way built, the \
+         region. Returns nil.\n\n\
+         This does not interrupt a command that is already running; that is a \
+         different problem and needs more than a keystroke to solve.\n\n\
+         Example:\n\
+         (define-key nil \"C-g\" 'keyboard-quit)";
+
+primitive!(keyboard_quit, _args, _env, ctx, {
+    ctx.abandon_pending_input();
+    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+        if let Some(mark) = buf.mark.as_mut() {
+            mark.active = false;
+        }
+    });
+    ctx.set_echo_message("Quit");
+    Ok(ELispExp::nil())
+});

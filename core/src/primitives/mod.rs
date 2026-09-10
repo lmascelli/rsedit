@@ -6,7 +6,25 @@ use crate::{
     ui::Face,
 };
 
-fn parse_key_sequence(seq: &str) -> Option<KeyEvent> {
+/// Parse a whole binding: one or more keys, separated by spaces.
+///
+/// A part that fails to parse fails the whole sequence rather than being
+/// dropped. Silently binding `C-x` when `"C-x C-"` was written would define a
+/// prefix that swallows the real binding underneath it.
+fn parse_key_sequence(seq: &str) -> Option<Vec<KeyEvent>> {
+    let parts: Vec<&str> = seq.split_whitespace().collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let keys: Vec<KeyEvent> = parts.iter().filter_map(|part| parse_key(part)).collect();
+    if keys.len() != parts.len() {
+        return None;
+    }
+    Some(keys)
+}
+
+/// Parse one key: optional `C-`, `M-` or `C-M-` modifiers, then a key name.
+fn parse_key(seq: &str) -> Option<KeyEvent> {
     let mut modifiers = KeyModifiers::default();
     let mut chars = seq.chars().peekable();
 
@@ -193,25 +211,25 @@ pub fn install_primitives<B: BufferTrait>(
     insert_cmd!(
         "backward-char",
         edits::backward_char,
-        [] as [&str; 0],
+        ["p"],
         edits::BACKWARD_CHAR_DOC
     );
     insert_cmd!(
         "forward-char",
         edits::forward_char,
-        [] as [&str; 0],
+        ["p"],
         edits::FORWARD_CHAR_DOC
     );
     insert_cmd!(
         "previous-line",
         edits::previous_line,
-        [] as [&str; 0],
+        ["p"],
         edits::PREVIOUS_LINE_DOC
     );
     insert_cmd!(
         "delete-char",
         edits::delete_char,
-        [] as [&str; 0],
+        ["p"],
         edits::DELETE_CHAR_DOC
     );
     insert_cmd!(
@@ -226,16 +244,11 @@ pub fn install_primitives<B: BufferTrait>(
         [] as [&str; 0],
         edits::KILL_WHOLE_LINE_DOC
     );
-    insert_cmd!(
-        "kill-word",
-        edits::kill_word,
-        [] as [&str; 0],
-        edits::KILL_WORD_DOC
-    );
+    insert_cmd!("kill-word", edits::kill_word, ["p"], edits::KILL_WORD_DOC);
     insert_cmd!(
         "backward-kill-word",
         edits::backward_kill_word,
-        [] as [&str; 0],
+        ["p"],
         edits::BACKWARD_KILL_WORD_DOC
     );
     insert_cmd!(
@@ -273,6 +286,12 @@ pub fn install_primitives<B: BufferTrait>(
         region::set_mark,
         [] as [&str; 0],
         region::SET_MARK_DOC
+    );
+    insert_cmd!(
+        "keyboard-quit",
+        region::keyboard_quit,
+        [] as [&str; 0],
+        region::KEYBOARD_QUIT_DOC
     );
     insert_cmd!(
         "deactivate-mark",
@@ -369,13 +388,13 @@ pub fn install_primitives<B: BufferTrait>(
     insert_cmd!(
         "forward-word",
         edits::forward_word,
-        [] as [&str; 0],
+        ["p"],
         edits::FORWARD_WORD_DOC
     );
     insert_cmd!(
         "backward-word",
         edits::backward_word,
-        [] as [&str; 0],
+        ["p"],
         edits::BACKWARD_WORD_DOC
     );
     insert_cmd!(
@@ -410,12 +429,7 @@ pub fn install_primitives<B: BufferTrait>(
         ["nGoto line: "],
         edits::GOTO_LINE_DOC
     );
-    insert_cmd!(
-        "next-line",
-        edits::next_line,
-        [] as [&str; 0],
-        edits::NEXT_LINE_DOC
-    );
+    insert_cmd!("next-line", edits::next_line, ["p"], edits::NEXT_LINE_DOC);
     insert_cmd!(
         "find-file",
         io::find_file,

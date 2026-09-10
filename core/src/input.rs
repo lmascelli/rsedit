@@ -1,5 +1,5 @@
 use crate::{ELispExp, buffer::BufferTrait};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum KeyCode {
@@ -39,11 +39,124 @@ impl KeyEvent {
     }
 }
 
+/// How a key sequence is written in a binding and shown to the user.
+///
+/// The inverse of the parser in `primitives::parse_key_sequence`, so that what
+/// the echo area shows while a sequence is half-typed is spelt the same way
+/// the binding that will complete it was written.
+pub fn describe_keys(keys: &[KeyEvent]) -> String {
+    keys.iter().map(describe_key).collect::<Vec<_>>().join(" ")
+}
+
+fn describe_key(key: &KeyEvent) -> String {
+    let mut out = String::new();
+    if key.modifiers.ctrl {
+        out.push_str("C-");
+    }
+    if key.modifiers.alt {
+        out.push_str("M-");
+    }
+    out.push_str(&match key.code {
+        KeyCode::Char(' ') => "<space>".to_string(),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Backspace => "<backspace>".to_string(),
+        KeyCode::Enter => "<ret>".to_string(),
+        KeyCode::Esc => "<esc>".to_string(),
+        KeyCode::Tab => "<tab>".to_string(),
+        KeyCode::Left => "<left>".to_string(),
+        KeyCode::Right => "<right>".to_string(),
+        KeyCode::Up => "<up>".to_string(),
+        KeyCode::Down => "<down>".to_string(),
+        KeyCode::None => "<none>".to_string(),
+    });
+    out
+}
+
+/// Key sequences bound to expressions, and the prefixes that lead to them.
+///
+/// # Why the prefixes are stored rather than searched for
+///
+/// Every keystroke asks two questions of a keymap: "is this sequence a
+/// binding?" and "is it the start of one?". The first is a hash lookup. The
+/// second, done honestly, is a scan of every binding in the map -- on the path
+/// between a key being pressed and a character appearing, several hundred
+/// times over for the self-insert bindings alone.
+///
+/// So the answer is maintained instead of computed. The set changes only when
+/// a binding is defined, which happens at startup and when a user edits their
+/// configuration; the question is asked on every key.
+///
+/// # Why this is a type and not two fields
+///
+/// Inserting a binding without registering its prefixes leaves a `C-x C-f`
+/// that can never be reached, because `C-x` alone would be reported undefined
+/// and the sequence thrown away. Putting both behind one `insert` makes that
+/// state unrepresentable rather than merely discouraged.
+#[derive(Clone, Debug)]
+pub struct Keymap<B: BufferTrait> {
+    bindings: HashMap<Vec<KeyEvent>, ELispExp<B>>,
+    prefixes: HashSet<Vec<KeyEvent>>,
+}
+
+impl<B: BufferTrait> Default for Keymap<B> {
+    fn default() -> Self {
+        Self {
+            bindings: HashMap::new(),
+            prefixes: HashSet::new(),
+        }
+    }
+}
+
+impl<B: BufferTrait> Keymap<B> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Bind KEYS to AST, and register every proper prefix of KEYS.
+    ///
+    /// *Proper*: the sequence itself is not registered. Nothing observable
+    /// depends on that -- a lookup checks `get` before `is_prefix`, so a
+    /// complete binding is found as a binding either way -- but leaving it out
+    /// keeps roughly a hundred single-key bindings from each taking a second
+    /// slot in the set for no purpose.
+    pub fn insert(&mut self, keys: Vec<KeyEvent>, ast: ELispExp<B>) {
+        for len in 1..keys.len() {
+            self.prefixes.insert(keys[..len].to_vec());
+        }
+        self.bindings.insert(keys, ast);
+    }
+
+    /// Bind a single key. Most bindings are one key long, and writing every
+    /// one of them as a one-element vector would obscure the few that are not.
+    pub fn insert_key(&mut self, key: KeyEvent, ast: ELispExp<B>) {
+        self.insert(vec![key], ast);
+    }
+
+    /// What KEYS is bound to, if it is a complete binding.
+    pub fn get(&self, keys: &[KeyEvent]) -> Option<&ELispExp<B>> {
+        self.bindings.get(keys)
+    }
+
+    /// Whether KEYS is the beginning of some longer binding, and so worth
+    /// waiting on rather than reporting as undefined.
+    pub fn is_prefix(&self, keys: &[KeyEvent]) -> bool {
+        self.prefixes.contains(keys)
+    }
+
+    pub fn len(&self) -> usize {
+        self.bindings.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
+    }
+}
+
 /// Fills a keymaps map with all the ascii char self-insert char so the editor
 /// can handle the typing of letters, digits and most of symbols.
-pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELispExp<B>>) {
+pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
     // -------------------------------- EDITOR ---------------------------------
-    keymaps.insert(
+    keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Char('q'),
             modifiers: KeyModifiers {
@@ -58,7 +171,7 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
     // way to reach a command by name: without it the command system exists but
     // is unreachable, which is not something a configuration file should be
     // able to take away.
-    keymaps.insert(
+    keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Char('x'),
             modifiers: KeyModifiers {
@@ -70,7 +183,7 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
     );
 
     // -------------------------------- BUFFER ---------------------------------
-    keymaps.insert(
+    keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Char('s'),
             modifiers: KeyModifiers {
@@ -81,35 +194,35 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
         ELispExp::form(vec![ELispExp::symbol("save-buffer".into())]),
     );
 
-    keymaps.insert(
+    keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Left,
             modifiers: KeyModifiers::default(),
         },
         ELispExp::form(vec![ELispExp::symbol("backward-char".into())]),
     );
-    keymaps.insert(
+    keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Right,
             modifiers: KeyModifiers::default(),
         },
         ELispExp::form(vec![ELispExp::symbol("forward-char".into())]),
     );
-    keymaps.insert(
+    keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Up,
             modifiers: KeyModifiers::default(),
         },
         ELispExp::form(vec![ELispExp::symbol("previous-line".into())]),
     );
-    keymaps.insert(
+    keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Down,
             modifiers: KeyModifiers::default(),
         },
         ELispExp::form(vec![ELispExp::symbol("next-line".into())]),
     );
-    keymaps.insert(
+    keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Enter,
             modifiers: KeyModifiers::default(),
@@ -122,7 +235,7 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut HashMap<KeyEvent, ELis
             code: KeyCode::Char(c),
             modifiers: KeyModifiers::default(), // No modifiers (Ctrl/Alt off)
         };
-        keymaps.insert(
+        keymaps.insert_key(
             event,
             ELispExp::form(vec![
                 ELispExp::symbol("self-insert".into()),

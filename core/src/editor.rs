@@ -1,7 +1,7 @@
 use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
-    input::{KeyEvent, fill_default_keymaps},
+    input::{KeyCode, KeyEvent, Keymap, describe_keys, fill_default_keymaps},
     kill_ring::{Direction, KillRing},
     lisp::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
@@ -9,7 +9,7 @@ use crate::{
     minibuffer::install_minibuffer,
     modes::MajorMode,
     primitives::install_primitives,
-    commands::{ArgSpec, CommandRegistry, PendingCommand},
+    commands::{ArgSpec, CommandRegistry, Invocation, PendingCommand, PrefixArg},
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
         Face, FloatingWindow, FrameSnapshot, LayoutNode, Rect, RenderableWindowView, Style, Theme,
@@ -116,7 +116,7 @@ pub struct EditorState<B: BufferTrait> {
 
     /// A keymap is an association between a KeyEvent and the name of a
     /// function that have to be executed (i.e. self-insert)
-    pub keymaps: Arc<RwLock<HashMap<KeyEvent, ELispExp<B>>>>,
+    pub keymaps: Arc<RwLock<Keymap<B>>>,
     pub mode_registry: Arc<RwLock<HashMap<String, MajorMode<B>>>>,
     /// This is the root of the window tree that the UI should visualize
     pub layout_root: Arc<RwLock<LayoutNode>>,
@@ -154,6 +154,26 @@ pub struct EditorState<B: BufferTrait> {
     /// theme would mean two windows on the same file disagreeing about what a
     /// keyword looks like.
     theme: Arc<RwLock<Theme>>,
+
+    /// The argument being built for the next command, and whether the digit
+    /// keys are still being read into it.
+    ///
+    /// Two fields because "there is an argument" and "digits still extend it"
+    /// are different: after `C-u 4 C-x`, the four is still the next command's
+    /// argument, but the `4` in a following `C-x 4 f` belongs to the key
+    /// sequence, not to the number.
+    prefix_arg: Arc<RwLock<(Option<PrefixArg>, bool)>>,
+
+    /// Keys pressed so far that do not yet make a complete binding.
+    ///
+    /// On the editor rather than on a mode, because a mode keymap is consulted
+    /// before the global one and a sequence begun under one must not be
+    /// half-remembered by another. One place, whatever mode is active.
+    ///
+    /// Kept as one `Vec` that is pushed to and cleared rather than rebuilt, so
+    /// the common case -- a single key that is a whole binding -- costs a push
+    /// and a clear rather than an allocation on the keystroke path.
+    pending_keys: Arc<RwLock<Vec<KeyEvent>>>,
 
     /// Whether the command *before* this one killed, and whether this one has.
     ///
@@ -280,7 +300,7 @@ impl<B: BufferTrait> EditorState<B> {
             Arc::new(RwLock::new(Buffer::new(&scratch_name))),
         );
 
-        let mut keymaps = HashMap::new();
+        let mut keymaps = Keymap::new();
         fill_default_keymaps(&mut keymaps);
 
         // Create a secondary worker thread and the communication channels with it.
@@ -308,6 +328,8 @@ impl<B: BufferTrait> EditorState<B> {
             last_command: Arc::new(RwLock::new(None)),
             kill_ring: Arc::new(RwLock::new(KillRing::default())),
             theme: Arc::new(RwLock::new(Theme::default())),
+            prefix_arg: Arc::new(RwLock::new((None, false))),
+            pending_keys: Arc::new(RwLock::new(Vec::new())),
             last_command_killed: Arc::new(AtomicBool::new(false)),
             this_command_killed: Arc::new(AtomicBool::new(false)),
             last_yank: Arc::new(RwLock::new(None)),
@@ -574,39 +596,183 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Handle a key event. An UI provider is responsible to call this function
     /// every time it want to make the editor react to an user input.
-    pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
-        let mut ast = ELispExp::form(vec![]);
-        let mut keymap_found = false;
+    /// Offer EVENT to the prefix-argument reader, and say whether it was taken.
+    ///
+    /// Called before the key sequence gets a look, because `C-u` and the digits
+    /// that follow it are not keys the keymaps should ever see. Anything the
+    /// reader does not want falls straight through -- including a digit typed
+    /// when no argument is being built, which is how you can still type the
+    /// number four into a buffer.
+    fn read_prefix_argument(&self, event: &KeyEvent) -> bool {
+        let mut state = self
+            .prefix_arg
+            .write()
+            .expect("Failed to acquire write lock on prefix_arg");
+        let (arg, reading) = &mut *state;
 
-        // Look for the keymap in the major mode of the current buffer
-        if let Some(current_mode) = self
-            .mode_registry
-            .read()
-            .expect("Failed to acquire read lock on mode_registry")
-            .get(
-                &self
-                    .get_current_buffer()
-                    .read()
-                    .expect("Failed to acquire read lock on current_buffer")
-                    .current_mode,
-            )
+        // C-u: start an argument, or multiply the one being built by four.
+        if event.modifiers.ctrl && !event.modifiers.alt && event.code == KeyCode::Char('u') {
+            *arg = Some(match (*arg, *reading) {
+                (Some(PrefixArg::Raw(times)), true) => PrefixArg::Raw(times + 1),
+                _ => PrefixArg::Raw(1),
+            });
+            *reading = true;
+            return true;
+        }
+
+        if *reading
+            && let KeyCode::Char(c) = event.code
+            && !event.modifiers.ctrl
+            && !event.modifiers.alt
         {
-            if let Some(mode_ast) = current_mode.keymaps.get(&event) {
-                ast = mode_ast.clone();
-                keymap_found = true;
+            if let Some(digit) = c.to_digit(10) {
+                arg.get_or_insert(PrefixArg::Raw(1)).push_digit(digit);
+                return true;
             }
+            // A minus is only a sign, and only before any digits.
+            if c == '-' && matches!(*arg, Some(PrefixArg::Raw(_))) {
+                *arg = Some(PrefixArg::Negative);
+                return true;
+            }
+        }
+
+        // Whatever this key is, it is not part of the argument -- so the
+        // argument is finished, even though it has not been used yet.
+        *reading = false;
+        false
+    }
+
+    /// The argument waiting for the next command, if any.
+    pub(crate) fn prefix_argument(&self) -> Option<PrefixArg> {
+        self.prefix_arg
+            .read()
+            .expect("Failed to acquire read lock on prefix_arg")
+            .0
+    }
+
+    /// Abandon whatever is half-finished: a key sequence, a prefix argument.
+    ///
+    /// The text-level half of `keyboard-quit`. Interrupting a *running* command
+    /// is roadmap #24 and needs more than this; abandoning something not yet
+    /// started needs only this, and is what a mistyped `C-x` calls for.
+    pub(crate) fn abandon_pending_input(&self) {
+        self.pending_keys
+            .write()
+            .expect("Failed to acquire write lock on pending_keys")
+            .clear();
+        self.clear_prefix_argument();
+    }
+
+    /// Show the argument being built, the way `C-x-` shows a half-typed key
+    /// sequence: without it, `C-u` looks like a key that did nothing.
+    fn show_prefix_argument(&self) {
+        if let Some(arg) = self.prefix_argument() {
+            self.set_echo_message(&format!("{}-", arg.describe()));
+        }
+    }
+
+    /// Forget the argument. Called after every command, whether or not
+    /// anything consumed it: an argument belongs to exactly one command, and
+    /// one that errors must not leave its argument for the next.
+    pub(crate) fn clear_prefix_argument(&self) {
+        *self
+            .prefix_arg
+            .write()
+            .expect("Failed to acquire write lock on prefix_arg") = (None, false);
+    }
+
+    /// Add EVENT to the sequence being typed, and say what to run.
+    ///
+    /// `Some(ast)` means the sequence is now a complete binding and has been
+    /// cleared ready for the next one. `None` means there is nothing to run --
+    /// either because more keys are expected, or because the sequence is bound
+    /// to nothing.
+    ///
+    /// # Why this returns rather than dispatching
+    ///
+    /// A key that only lengthens a sequence is **not a command**. It must not
+    /// reach `begin_command`, `roll_over_command_flags` or `set_last_command`,
+    /// all of which live in the caller below the point this returns `None`.
+    /// Letting `C-x` through any of them would silently end the undo group
+    /// being typed into, and split a run of kills into two ring entries --
+    /// neither of which looks like a key-handling bug when you go looking.
+    fn resolve_key_sequence(&self, event: KeyEvent) -> Option<ELispExp<B>> {
+        let mut pending = self
+            .pending_keys
+            .write()
+            .expect("Failed to acquire write lock on pending_keys");
+        pending.push(event);
+
+        let current_mode = {
+            let buffer = self.get_current_buffer();
+            let buffer = buffer
+                .read()
+                .expect("Failed to acquire read lock on current_buffer");
+            buffer.current_mode.clone()
         };
 
-        // If no keymap was found in the major mode look for it in the global keymaps
-        if !keymap_found
-            && let Some(global_ast) = self
-                .keymaps
-                .read()
-                .expect("Failed to acquire read lock on keymaps")
-                .get(&event)
-        {
-            ast = global_ast.clone();
-            keymap_found = true;
+        // The mode's own keymap wins, then the global one -- and a mode that
+        // binds a prefix keeps the sequence alive even when only the global
+        // map completes it.
+        let registry = self
+            .mode_registry
+            .read()
+            .expect("Failed to acquire read lock on mode_registry");
+        let mode_keymap = registry.get(&current_mode).map(|mode| &mode.keymaps);
+        let global_keymap = self
+            .keymaps
+            .read()
+            .expect("Failed to acquire read lock on keymaps");
+
+        let bound = mode_keymap
+            .and_then(|keymap| keymap.get(&pending))
+            .or_else(|| global_keymap.get(&pending))
+            .cloned();
+        let is_prefix = mode_keymap.is_some_and(|keymap| keymap.is_prefix(&pending))
+            || global_keymap.is_prefix(&pending);
+
+        // Everything the keymaps had to say, said. Released here so that
+        // reporting -- which writes the echo area, a lock of its own -- happens
+        // under no keymap lock at all.
+        drop(global_keymap);
+        drop(registry);
+
+        let described = describe_keys(&pending);
+        if bound.is_some() || !is_prefix {
+            pending.clear();
+        }
+        drop(pending);
+
+        match (bound, is_prefix) {
+            (Some(ast), _) => Some(ast),
+            (None, true) => {
+                // Shown as it would be written in a binding, with a trailing
+                // dash for the key still to come -- otherwise a half-typed
+                // sequence is indistinguishable from a frozen editor.
+                self.set_echo_message(&format!("{described}-"));
+                None
+            }
+            (None, false) => {
+                self.set_echo_message(&format!("{described} is undefined"));
+                self.log_diagnostic(&format!("[INFO] Keymap not bound {described}"));
+                None
+            }
+        }
+    }
+
+    pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
+        // The argument reader gets first refusal. A key it takes is not a
+        // command and never reaches a keymap.
+        if self.read_prefix_argument(&event) {
+            self.show_prefix_argument();
+            return;
+        }
+
+        // A key may be the whole of a binding, the start of a longer one, or
+        // neither. Deciding which comes first, and two of the three answers
+        // return before anything below runs -- see `resolve_key_sequence`.
+        let Some(mut ast) = self.resolve_key_sequence(event.clone()) else {
+            return;
         };
 
         if let ELispExp::Lambda(ref lambda) = ast {
@@ -617,12 +783,6 @@ impl<B: BufferTrait> EditorState<B> {
                 ast = ELispExp::form(vec![ELispExp::symbol("funcall".into()), ast]);
             }
         }
-
-        // If no symbol has been found
-        if !keymap_found {
-            self.log_diagnostic(&format!("[INFO] Keymap not bound {:?}", event));
-            return;
-        };
 
         // A key bound to a bare command invocation -- `(next-line)`, as
         // `define-key` stores a symbol -- is routed through
@@ -701,6 +861,9 @@ impl<B: BufferTrait> EditorState<B> {
             let _command = self.begin_command();
             eval(&ast, env.clone(), self)
         };
+        // Before the error check, so a command that fails still consumes its
+        // argument rather than leaving it for whatever runs next.
+        self.clear_prefix_argument();
         if let Err(e) = outcome {
             self.report_error(&format!("{:?} {:?}", ast, e), env);
             return;
@@ -1175,11 +1338,61 @@ impl<B: BufferTrait> EditorState<B> {
     // ---------------------------------------------------------------
 
     /// Begin collecting arguments for NAME.
-    pub(crate) fn push_pending_command(&self, name: String, remaining: Vec<ArgSpec>) {
+    pub(crate) fn push_pending_command(
+        &self,
+        name: String,
+        remaining: Vec<ArgSpec>,
+        invocation: Invocation,
+    ) {
         self.pending_commands
             .write()
             .expect("Failed to acquire write lock on pending_commands")
-            .push(PendingCommand::new(name, remaining));
+            .push(PendingCommand::new(name, remaining, invocation));
+    }
+
+    /// Everything the editor can answer on the user's behalf, as it stands now.
+    ///
+    /// Taken once, when a command starts. See [`Invocation`] for why it is not
+    /// read again later.
+    pub(crate) fn capture_invocation(&self) -> Invocation {
+        let buffer = self.get_current_buffer();
+        let buffer = buffer
+            .read()
+            .expect("Failed to acquire read lock on current buffer");
+        Invocation {
+            prefix_arg: self.prefix_argument(),
+            region: crate::buffer::mark::region_bounds(
+                buffer.mark,
+                buffer.text.cursor_pos_1d(),
+                buffer.text.len(),
+            ),
+        }
+    }
+
+    /// Answer every argument the editor can answer itself, in order, and
+    /// return the first one that still needs the user.
+    ///
+    /// `None` means the command has everything it needs and is ready to run.
+    ///
+    /// Done in one loop with the prompted arguments rather than as a separate
+    /// pass: a spec list like `["p", "sReplace with: "]` interleaves the two
+    /// kinds, and two code paths that both maintain the pending stack would
+    /// have to agree about it forever.
+    pub(crate) fn fill_answerable_args(&self) -> Option<ArgSpec> {
+        let mut stack = self
+            .pending_commands
+            .write()
+            .expect("Failed to acquire write lock on pending_commands");
+        let pending = stack.last_mut()?;
+        while let Some(spec) = pending.remaining.first() {
+            if spec.prompts() {
+                return Some(spec.clone());
+            }
+            let values = answer_spec::<B>(spec, &pending.invocation);
+            pending.remaining.remove(0);
+            pending.collected.extend(values);
+        }
+        None
     }
 
     /// How far through its arguments the innermost pending command is:
@@ -1209,21 +1422,23 @@ impl<B: BufferTrait> EditorState<B> {
             .and_then(|pending| pending.current().cloned())
     }
 
-    /// Record VALUE as the innermost pending command's next argument, and
-    /// report what it still needs: `Some(spec)` to prompt for, or `None` when
-    /// it is complete -- in which case the entry is removed and its name and
-    /// arguments are returned by [`Self::take_pending_command`].
-    pub(crate) fn accept_pending_arg(&self, value: ELispExp<B>) -> Option<ArgSpec> {
+    /// Record VALUE as the innermost pending command's next argument.
+    ///
+    /// What to do next is [`Self::fill_answerable_args`]'s answer, not this
+    /// one's: the specs after this may be a mix of answerable and prompted,
+    /// and only one place should know how to walk them.
+    pub(crate) fn accept_pending_arg(&self, value: ELispExp<B>) {
         let mut stack = self
             .pending_commands
             .write()
             .expect("Failed to acquire write lock on pending_commands");
-        let pending = stack.last_mut()?;
+        let Some(pending) = stack.last_mut() else {
+            return;
+        };
         if !pending.remaining.is_empty() {
             pending.remaining.remove(0);
         }
         pending.collected.push(value);
-        pending.current().cloned()
     }
 
     /// Remove and return the innermost pending command.
@@ -1564,6 +1779,43 @@ impl<B: BufferTrait> EditorState<B> {
             .write()
             .expect("Failed to acquire write lock on current buffer");
         op(&mut *guard)
+    }
+}
+
+/// What the editor hands a command for an argument it answers itself.
+///
+/// One spec can produce more than one value -- `r` is the region's *two* ends,
+/// exactly as `interactive "r"` is in Emacs -- so this returns a list rather
+/// than a value.
+fn answer_spec<B: BufferTrait>(spec: &ArgSpec, invocation: &Invocation) -> Vec<ELispExp<B>> {
+    match spec {
+        // `p`: a plain count, and one when the user asked for nothing. This is
+        // what makes `(forward-char)` and `C-u 4 C-f` the same code path.
+        ArgSpec::Count => vec![ELispExp::number(
+            invocation.prefix_arg.map(|arg| arg.count()).unwrap_or(1) as f64,
+        )],
+        // `P`: the argument as given, so a command can tell "no argument" from
+        // "the argument 1", and a bare `C-u` from `C-u 4`. A bare `C-u` is a
+        // one-element list, as in Emacs, which is why `p` and `P` both exist.
+        ArgSpec::RawCount => vec![match invocation.prefix_arg {
+            None => ELispExp::nil(),
+            Some(PrefixArg::Raw(times)) => {
+                ELispExp::proper_list(vec![ELispExp::number(4i32.saturating_pow(times) as f64)])
+            }
+            Some(PrefixArg::Number(n)) => ELispExp::number(n as f64),
+            Some(PrefixArg::Negative) => ELispExp::symbol("-".into()),
+        }],
+        // `r`: start then end. `call-interactively` refuses the command before
+        // this is reached when there is no region, so the fallback is
+        // unreachable rather than a silent default.
+        ArgSpec::Region => {
+            let (start, end) = invocation.region.unwrap_or((0, 0));
+            vec![ELispExp::number(start as f64), ELispExp::number(end as f64)]
+        }
+        prompted => {
+            debug_assert!(prompted.prompts(), "an unprompted spec with no answer");
+            Vec::new()
+        }
     }
 }
 

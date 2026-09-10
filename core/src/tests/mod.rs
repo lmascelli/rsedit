@@ -11,6 +11,8 @@ mod movement_tests;
 /// Performance characterisation of the whole editor, interpreter included.
 /// One submodule, one runner, two reports -- see `perf::mod` for the rationale.
 mod perf;
+mod prefix_arg_tests;
+mod prefix_key_tests;
 mod region_tests;
 mod theme_tests;
 mod undo_tests;

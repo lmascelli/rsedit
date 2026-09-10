@@ -297,14 +297,18 @@ pub const PREVIOUS_LINE_DOC: &str = "(previous-line): Move point up one line in 
          Example:\n\
          (define-key nil \"<up>\" 'previous-line)";
 
-primitive!(previous_line, _args, _env, ctx, { move_line(ctx, -1) });
+primitive!(previous_line, args, _env, ctx, {
+    move_line(ctx, -(repeat_count(args)? as isize))
+});
 
 pub const NEXT_LINE_DOC: &str = "(next-line): Move point down one line in the current buffer, keeping \
          the same column.\n\n\
          Example:\n\
          (define-key nil \"<down>\" 'next-line)";
 
-primitive!(next_line, _args, _env, ctx, { move_line(ctx, 1) });
+primitive!(next_line, args, _env, ctx, {
+    move_line(ctx, repeat_count(args)? as isize)
+});
 
 /// Move point one line up or down, keeping the column the user is aiming for.
 ///

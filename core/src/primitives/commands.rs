@@ -95,7 +95,8 @@ primitive!(register_command, args, env, ctx, {
     if let Some(ELispExp::Lambda(lambda)) = env.get_function(&name) {
         let required = lambda.params.len();
         let accepted = required + lambda.optionals.len();
-        let supplied = specs.len();
+        // Values, not specs: `r` alone supplies two of them.
+        let supplied: usize = specs.iter().map(ArgSpec::arity).sum();
         if lambda.rest.is_none() && (supplied < required || supplied > accepted) {
             return Err(EvalError::RuntimeMessage(format!(
                 "{name}: {supplied} argument spec(s) registered but the function takes {}",
@@ -209,9 +210,43 @@ primitive!(call_interactively, args, env, ctx, {
         return call_callable(&callable, &[], env.clone(), ctx);
     }
 
-    ctx.push_pending_command(name, specs.clone());
-    prompt_for(&specs[0], env, ctx)
+    // Fixed here, at the start, and carried by the pending command from now
+    // on -- see `Invocation`.
+    let invocation = ctx.capture_invocation();
+    if specs.contains(&ArgSpec::Region) && invocation.region.is_none() {
+        // Refused before a single prompt opens. A command that asked two
+        // questions and only then said "there is no region" would have wasted
+        // the answers.
+        return Err(EvalError::RuntimeMessage(
+            "The mark is not set now, so there is no region".into(),
+        ));
+    }
+
+    ctx.push_pending_command(name, specs, invocation);
+    advance_pending(env, ctx)
 });
+
+/// Answer what the editor can, then either prompt for the next argument or --
+/// nothing left to ask -- run the command.
+///
+/// Both ends of the chain funnel through here: the first call from
+/// `call-interactively`, and every later one from a confirmed prompt. One
+/// place decides what happens next, so the two cannot drift.
+fn advance_pending<B: BufferTrait>(
+    env: std::sync::Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
+    if let Some(next) = ctx.fill_answerable_args() {
+        return prompt_for(&next, env, ctx);
+    }
+    let Some((name, collected)) = ctx.take_pending_command() else {
+        return Ok(ELispExp::nil());
+    };
+    let callable = env
+        .get_function(&name)
+        .ok_or_else(|| EvalError::UndefinedFunction(name.clone()))?;
+    call_callable(&callable, &collected, env.clone(), ctx)
+}
 
 /// Open a minibuffer prompt for SPEC, with this module's own primitives as the
 /// confirm and cancel callbacks.
@@ -298,17 +333,8 @@ primitive!(command_arg_confirm, args, env, ctx, {
         return Ok(ELispExp::nil());
     };
 
-    if let Some(next) = ctx.accept_pending_arg(convert_arg(&spec, &input)) {
-        return prompt_for(&next, env, ctx);
-    }
-
-    let Some((name, collected)) = ctx.take_pending_command() else {
-        return Ok(ELispExp::nil());
-    };
-    let callable = env
-        .get_function(&name)
-        .ok_or_else(|| EvalError::UndefinedFunction(name.clone()))?;
-    call_callable(&callable, &collected, env.clone(), ctx)
+    ctx.accept_pending_arg(convert_arg(&spec, &input));
+    advance_pending(env, ctx)
 });
 
 /// The prompt was cancelled, so the command is abandoned. Nothing is applied:

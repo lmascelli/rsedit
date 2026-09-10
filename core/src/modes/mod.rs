@@ -1,4 +1,4 @@
-use crate::{ELispExp, buffer::BufferTrait, input::KeyEvent};
+use crate::{ELispExp, buffer::BufferTrait, input::Keymap};
 use std::collections::HashMap;
 
 pub mod syntax;
@@ -12,7 +12,7 @@ pub use syntax::SyntaxRule;
 #[derive(Clone, Debug)]
 pub struct MajorMode<B: BufferTrait> {
     pub name: String,
-    pub keymaps: HashMap<KeyEvent, ELispExp<B>>,
+    pub keymaps: Keymap<B>,
     pub syntax_rules: Vec<SyntaxRule>,
     pub hooks: HashMap<String, Vec<ELispExp<B>>>,
 }
@@ -21,7 +21,7 @@ impl<B: BufferTrait> MajorMode<B> {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            keymaps: HashMap::new(),
+            keymaps: Keymap::new(),
             syntax_rules: vec![],
             hooks: HashMap::new(),
         }

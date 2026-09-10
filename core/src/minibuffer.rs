@@ -307,15 +307,15 @@ pub fn install_minibuffer<B: BufferTrait>(
     );
 
     let mut minibuffer_mode = MajorMode::new("minibuffer-mode");
-    minibuffer_mode.keymaps.insert(
+    minibuffer_mode.keymaps.insert_key(
         KeyEvent::new(KeyCode::Enter),
         ELispExp::symbol("minibuffer-confirm".into()),
     );
-    minibuffer_mode.keymaps.insert(
+    minibuffer_mode.keymaps.insert_key(
         KeyEvent::new(KeyCode::Esc),
         ELispExp::symbol("minibuffer-cancel".into()),
     );
-    minibuffer_mode.keymaps.insert(
+    minibuffer_mode.keymaps.insert_key(
         KeyEvent::new(KeyCode::Tab),
         ELispExp::symbol("minibuffer-complete".into()),
     );

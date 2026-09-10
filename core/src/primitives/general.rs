@@ -84,14 +84,14 @@ primitive!(define_key, args, env, ctx, {
             } else {
                 ast.clone()
             };
-            if let Some(key_event) = parse_key_sequence(key_str) {
+            if let Some(keys) = parse_key_sequence(key_str) {
                 if let Some(mode_name) = mode_name {
                     let mut mode_registry_lock = ctx
                         .mode_registry
                         .write()
                         .expect("Failed to acquire write lock on mode_registry");
                     if let Some(mode) = mode_registry_lock.get_mut(&mode_name) {
-                        mode.keymaps.insert(key_event, actual_ast);
+                        mode.keymaps.insert(keys, actual_ast);
                         Ok(ELispExp::t())
                     } else {
                         ctx.log_diagnostic(&format!(
@@ -104,7 +104,7 @@ primitive!(define_key, args, env, ctx, {
                         .keymaps
                         .write()
                         .expect("Failed to acquire write lock on keymaps");
-                    keymaps.insert(key_event, actual_ast);
+                    keymaps.insert(keys, actual_ast);
                     Ok(ELispExp::t())
                 }
             } else {

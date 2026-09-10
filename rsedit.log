@@ -4,3 +4,4 @@
 [LOG] End of the minibuffer.lisp
 [LOG] 5
 [LOG] Hello from rsedit init.lisp
+[INFO] Keymap not bound KeyEvent { code: Char('x'), modifiers: KeyModifiers { ctrl: true, alt: false, shift: false, caps_lock_as_ctrl: false } }
