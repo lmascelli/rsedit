@@ -92,6 +92,7 @@ mod modes;
 mod region;
 mod theme;
 mod ui;
+mod windows;
 
 pub fn install_primitives<B: BufferTrait>(
     state: &EditorState<B>,
@@ -336,6 +337,50 @@ pub fn install_primitives<B: BufferTrait>(
         ["n:Kill ring size: "],
         region::SET_KILL_RING_MAX_DOC
     );
+    // ---------------------------------------------------------------
+    // Windows
+    // ---------------------------------------------------------------
+    insert_cmd!(
+        "split-window-below",
+        windows::split_window_below,
+        [] as [&str; 0],
+        windows::SPLIT_WINDOW_BELOW_DOC
+    );
+    insert_cmd!(
+        "split-window-right",
+        windows::split_window_right,
+        [] as [&str; 0],
+        windows::SPLIT_WINDOW_RIGHT_DOC
+    );
+    insert_cmd!(
+        "delete-window",
+        windows::delete_window,
+        [] as [&str; 0],
+        windows::DELETE_WINDOW_DOC
+    );
+    insert_cmd!(
+        "delete-other-windows",
+        windows::delete_other_windows,
+        [] as [&str; 0],
+        windows::DELETE_OTHER_WINDOWS_DOC
+    );
+    insert_cmd!(
+        "other-window",
+        windows::other_window,
+        ["p"],
+        windows::OTHER_WINDOW_DOC
+    );
+    insert_fn!(
+        "count-windows",
+        windows::count_windows,
+        windows::COUNT_WINDOWS_DOC
+    );
+    insert_fn!(
+        "window-buffer",
+        windows::window_buffer,
+        windows::WINDOW_BUFFER_DOC
+    );
+
     // ---------------------------------------------------------------
     // Faces and the theme
     // ---------------------------------------------------------------

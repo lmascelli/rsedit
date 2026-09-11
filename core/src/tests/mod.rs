@@ -17,3 +17,4 @@ mod prefix_key_tests;
 mod region_tests;
 mod theme_tests;
 mod undo_tests;
+mod window_tests;

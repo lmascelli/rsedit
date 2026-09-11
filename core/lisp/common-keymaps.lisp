@@ -65,6 +65,14 @@
 (define-key nil "C-x h" 'mark-whole-buffer)
 (define-key nil "C-x C-f" 'find-file)
 
+;; Windows. C-x 2 splits above/below, C-x 3 side by side, C-x 0 closes this
+;; one, C-x 1 closes the others, C-x o cycles.
+(define-key nil "C-x 2" 'split-window-below)
+(define-key nil "C-x 3" 'split-window-right)
+(define-key nil "C-x 0" 'delete-window)
+(define-key nil "C-x 1" 'delete-other-windows)
+(define-key nil "C-x o" 'other-window)
+
 ;; C-g abandons a half-typed key sequence or prefix argument, and ends the
 ;; region. It does not interrupt a running command -- that is roadmap #24.
 (define-key nil "C-g" 'keyboard-quit)

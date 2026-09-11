@@ -116,6 +116,117 @@ impl LayoutNode {
         }
     }
 
+    /// Every window, in the order they are laid out on screen.
+    ///
+    /// Left-to-right, top-to-bottom, because that is the order the tree is
+    /// built in -- which is what makes "the next window" mean what a user
+    /// expects when they cycle through them.
+    pub fn window_ids(&self) -> Vec<usize> {
+        let mut ids = Vec::new();
+        self.collect_window_ids(&mut ids);
+        ids
+    }
+
+    fn collect_window_ids(&self, out: &mut Vec<usize>) {
+        match self {
+            LayoutNode::Leaf(window) => out.push(window.id),
+            LayoutNode::Split { left, right, .. } => {
+                left.collect_window_ids(out);
+                right.collect_window_ids(out);
+            }
+        }
+    }
+
+    /// Turn the window with ID into a split holding it and NEW_WINDOW.
+    ///
+    /// The existing window keeps the first half, so a split "below" or "right"
+    /// puts the new window where its name says. Returns false when no window
+    /// has that id.
+    ///
+    /// The tree knows nothing about sizes -- those are computed at render time
+    /// from whatever rect the frame gives it -- so there is no "too small to
+    /// split" to check here. A split of a one-row window yields two windows,
+    /// one of which draws nothing until the frame grows.
+    pub fn split_window(
+        &mut self,
+        id: usize,
+        orientation: Orientation,
+        new_window: Window,
+    ) -> bool {
+        match self {
+            LayoutNode::Leaf(window) if window.id == id => {
+                let existing = std::mem::replace(window, placeholder_window());
+                *self = LayoutNode::Split {
+                    orientation,
+                    ratio: 0.5,
+                    left: Box::new(LayoutNode::Leaf(existing)),
+                    right: Box::new(LayoutNode::Leaf(new_window)),
+                };
+                true
+            }
+            LayoutNode::Leaf(_) => false,
+            LayoutNode::Split { left, right, .. } => {
+                left.split_window(id, orientation, new_window.clone())
+                    || right.split_window(id, orientation, new_window)
+            }
+        }
+    }
+
+    /// Remove the window with ID, and collapse the split it was half of.
+    ///
+    /// Returns false when no window has that id, and when the window is the
+    /// only one there is -- a frame with no windows has nowhere to put the
+    /// cursor, so the last one cannot be closed.
+    pub fn remove_window(&mut self, id: usize) -> bool {
+        let LayoutNode::Split { left, right, .. } = self else {
+            // A lone leaf. Even if it matches, it cannot go.
+            return false;
+        };
+        let is_target = |node: &LayoutNode| matches!(node, LayoutNode::Leaf(w) if w.id == id);
+
+        if is_target(left) || is_target(right) {
+            // The sibling takes the place of the split entirely, which is what
+            // makes the remaining window grow into the space.
+            let survivor = if is_target(left) { right } else { left };
+            *self = std::mem::replace(&mut **survivor, LayoutNode::Leaf(placeholder_window()));
+            return true;
+        }
+        left.remove_window(id) || right.remove_window(id)
+    }
+
+    /// Replace the whole tree with just the window with ID.
+    pub fn keep_only(&mut self, id: usize) -> bool {
+        let Some(window) = self.window(id).cloned() else {
+            return false;
+        };
+        *self = LayoutNode::Leaf(window);
+        true
+    }
+
+    /// The window with ID, if the tree holds one.
+    pub fn window(&self, id: usize) -> Option<&Window> {
+        match self {
+            LayoutNode::Leaf(window) => (window.id == id).then_some(window),
+            LayoutNode::Split { left, right, .. } => left.window(id).or_else(|| right.window(id)),
+        }
+    }
+}
+
+/// A window that exists only long enough to be overwritten.
+///
+/// `std::mem::replace` needs something to leave behind while a subtree is
+/// moved out of the tree it is part of. Nothing ever reads this, and it is
+/// gone by the time the function it is used in returns.
+fn placeholder_window() -> Window {
+    Window {
+        id: usize::MAX,
+        buffer_name: String::new(),
+        scroll_x: 0,
+        scroll_y: 0,
+    }
+}
+
+impl LayoutNode {
     pub fn compute_tiled_views<B: BufferTrait>(
         &mut self,
         rect: Rect,

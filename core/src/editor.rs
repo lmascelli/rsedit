@@ -12,8 +12,8 @@ use crate::{
     commands::{ArgSpec, CommandRegistry, Invocation, PendingCommand, PrefixArg},
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
-        Face, FloatingWindow, FrameSnapshot, LayoutNode, Rect, RenderableWindowView, Style, Theme,
-        Window, extract_buffer_lines, region_highlights,
+        Face, FloatingWindow, FrameSnapshot, LayoutNode, Orientation, Rect, RenderableWindowView,
+        Style, Theme, Window, extract_buffer_lines, region_highlights,
     },
 };
 use std::{
@@ -557,6 +557,109 @@ impl<B: BufferTrait> EditorState<B> {
         }
         self.set_current_buffer_name(name);
         true
+    }
+
+    // ---------------------------------------------------------------
+    // Splitting, closing and cycling through windows
+    // ---------------------------------------------------------------
+
+    /// Split the focused window, and return the new window's id.
+    ///
+    /// Focus stays where it was, as it does in Emacs: `C-x 2` then typing
+    /// continues in the window you were already in.
+    pub(crate) fn split_focused_window(&self, orientation: Orientation) -> Option<usize> {
+        let focused = self.get_focused_window_id();
+        let new_id = self.get_next_window_id();
+        let mut layout = self
+            .layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root");
+        // The new window shows the same buffer, scrolled the same way, so a
+        // split looks like what it is: one view becoming two of the same
+        // thing rather than a jump somewhere else.
+        let existing = layout.window(focused)?.clone();
+        let new_window = Window {
+            id: new_id,
+            ..existing
+        };
+        layout
+            .split_window(focused, orientation, new_window)
+            .then_some(new_id)
+    }
+
+    /// Close the focused window. Returns false when it is the only one.
+    pub(crate) fn delete_focused_window(&self) -> bool {
+        let focused = self.get_focused_window_id();
+        let survivor = {
+            let mut layout = self
+                .layout_root
+                .write()
+                .expect("Failed to acquire write lock on layout_root");
+            if !layout.remove_window(focused) {
+                return false;
+            }
+            // Focus is pointing at a window that no longer exists, so it has
+            // to move before anything tries to draw a cursor in it.
+            layout.window_ids().first().copied()
+        };
+        if let Some(id) = survivor {
+            self.set_focused_window_id(id);
+        }
+        true
+    }
+
+    /// Close every window but the focused one.
+    pub(crate) fn delete_other_windows(&self) -> bool {
+        let focused = self.get_focused_window_id();
+        self.layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root")
+            .keep_only(focused)
+    }
+
+    /// Move focus COUNT windows on, wrapping round.
+    ///
+    /// A negative count goes the other way, which is what lets one command
+    /// serve `C-x o` and a reversed `C-x o` alike.
+    pub(crate) fn focus_other_window(&self, count: isize) -> bool {
+        let ids = self
+            .layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root")
+            .window_ids();
+        if ids.len() < 2 {
+            return false;
+        }
+        let here = ids
+            .iter()
+            .position(|id| *id == self.get_focused_window_id())
+            .unwrap_or(0) as isize;
+        let len = ids.len() as isize;
+        // `rem_euclid` rather than `%`, so a negative count wraps round to the
+        // end instead of producing a negative index.
+        let there = (here + count).rem_euclid(len) as usize;
+        self.set_focused_window_id(ids[there]);
+        true
+    }
+
+    /// How many tiled windows the frame holds.
+    pub(crate) fn window_count(&self) -> usize {
+        self.layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root")
+            .window_ids()
+            .len()
+    }
+
+    /// The buffer shown by the focused window, which is not always the current
+    /// buffer: a floating prompt takes the current buffer without taking a
+    /// tiled window's place.
+    pub(crate) fn focused_window_buffer(&self) -> Option<String> {
+        self.layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root")
+            .window(self.get_focused_window_id())
+            .map(|window| window.buffer_name.clone())
     }
 
     /// Create a new buffer named BUF_NAME (in major mode MODE, defaulting
