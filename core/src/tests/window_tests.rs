@@ -39,6 +39,11 @@ mod tests {
             .collect()
     }
 
+    /// The rules drawn between the tiled windows of a rendered frame.
+    fn separators(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> Vec<crate::ui::Separator> {
+        ctx.snapshot(env, W, H).separators
+    }
+
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode, modifiers: KeyModifiers) {
         ctx.handle_key_event(KeyEvent { code, modifiers }, env);
     }
@@ -367,6 +372,209 @@ mod tests {
         assert!(
             views.iter().all(|v| v.mode_line.is_some()),
             "both windows carry a status line"
+        );
+    }
+
+    // ---------------- the rule between windows ----------------
+
+    /// Without this column the last character of a line on the left and the
+    /// first on the right are adjacent cells, and two buffers read as one.
+    #[test]
+    fn windows_side_by_side_get_a_rule_between_them() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-right)", &env, &ctx).expect("split");
+
+        let views = tiled(&ctx, &env);
+        let rules = separators(&ctx, &env);
+        assert_eq!(rules.len(), 1, "one split, one rule");
+
+        let rule = &rules[0];
+        assert_eq!(
+            rule.rect.x,
+            views[0].rect.x + views[0].rect.width as isize,
+            "the rule starts where the left window stops"
+        );
+        assert_eq!(
+            views[1].rect.x,
+            rule.rect.x + 1,
+            "and the right window starts where the rule stops"
+        );
+        assert_eq!(rule.rect.width, 1);
+    }
+
+    /// The column comes out of the frame, not out of thin air: the two windows
+    /// and the rule together are exactly as wide as what they were given.
+    #[test]
+    fn the_rule_is_paid_for_out_of_the_windows() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-right)", &env, &ctx).expect("split");
+
+        let views = tiled(&ctx, &env);
+        assert_eq!(views[0].rect.width + 1 + views[1].rect.width, W);
+    }
+
+    /// A split above and below needs no rule: the upper window's status line
+    /// already occupies the row between them.
+    #[test]
+    fn windows_above_and_below_get_no_rule() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-below)", &env, &ctx).expect("split");
+
+        assert!(separators(&ctx, &env).is_empty());
+        assert_eq!(
+            tiled(&ctx, &env).len(),
+            2,
+            "but there are still two windows"
+        );
+    }
+
+    #[test]
+    fn the_rule_is_as_tall_as_the_windows_it_divides() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-right)", &env, &ctx).expect("split");
+
+        let views = tiled(&ctx, &env);
+        let rule = separators(&ctx, &env).remove(0);
+        assert_eq!(rule.rect.y, views[0].rect.y);
+        assert_eq!(
+            rule.rect.height,
+            views[0].rect.height + 1,
+            "the full height of the window including its status line row"
+        );
+    }
+
+    #[test]
+    fn each_side_by_side_split_gets_its_own_rule() {
+        let (ctx, env) = editor();
+        eval_str(
+            "(progn (split-window-right) (split-window-right))",
+            &env,
+            &ctx,
+        )
+        .expect("split twice");
+
+        assert_eq!(tiled(&ctx, &env).len(), 3);
+        let mut xs: Vec<isize> = separators(&ctx, &env).iter().map(|r| r.rect.x).collect();
+        xs.sort();
+        xs.dedup();
+        assert_eq!(xs.len(), 2, "two dividers, in two different columns");
+    }
+
+    // ---------------- what the rule is made of ----------------
+
+    #[test]
+    fn the_rule_ships_drawn_with_a_box_character() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-right)", &env, &ctx).expect("split");
+
+        assert_eq!(
+            separators(&ctx, &env)[0].ch,
+            '\u{2502}',
+            "the default has to hold with no configuration loaded"
+        );
+    }
+
+    #[test]
+    fn the_rule_is_drawn_with_its_own_face_so_it_can_be_coloured() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-right)", &env, &ctx).expect("split");
+
+        assert_eq!(
+            separators(&ctx, &env)[0].face,
+            crate::ui::Face::WindowSeparator
+        );
+
+        eval_str(r#"(set-face "window-separator" "blue" nil)"#, &env, &ctx).expect("set-face");
+        let frame = ctx.snapshot(&env, W, H);
+        assert_eq!(
+            frame.theme.style(crate::ui::Face::WindowSeparator).fg,
+            Some(crate::ui::Color::BLUE)
+        );
+    }
+
+    #[test]
+    fn lisp_chooses_the_character() {
+        let (ctx, env) = editor();
+        eval_str(
+            r#"(progn (split-window-right) (setq window-separator "|"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("split and set");
+
+        assert_eq!(separators(&ctx, &env)[0].ch, '|');
+    }
+
+    /// One column, so one character. A longer string is a typo, not a way to
+    /// make the rule wider.
+    #[test]
+    fn only_the_first_character_of_the_setting_is_used() {
+        let (ctx, env) = editor();
+        eval_str(
+            r#"(progn (split-window-right) (setq window-separator "<>"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("split and set");
+
+        assert_eq!(separators(&ctx, &env)[0].ch, '<');
+    }
+
+    /// Blanking the rule must not reflow the windows: the column is part of
+    /// the layout, and only what is drawn in it is a matter of taste.
+    #[test]
+    fn nil_blanks_the_rule_without_giving_its_column_back() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-right)", &env, &ctx).expect("split");
+        let before: Vec<usize> = tiled(&ctx, &env).iter().map(|v| v.rect.width).collect();
+
+        eval_str("(setq window-separator nil)", &env, &ctx).expect("setq");
+
+        assert_eq!(separators(&ctx, &env)[0].ch, ' ');
+        assert_eq!(
+            tiled(&ctx, &env)
+                .iter()
+                .map(|v| v.rect.width)
+                .collect::<Vec<_>>(),
+            before,
+            "the windows must not have moved"
+        );
+    }
+
+    /// A setting that is neither a string nor nil is a mistake. Falling back
+    /// to the default makes it look wrong rather than making the frame look
+    /// broken.
+    #[test]
+    fn a_nonsense_setting_falls_back_to_the_default() {
+        let (ctx, env) = editor();
+        eval_str(
+            "(progn (split-window-right) (setq window-separator 42))",
+            &env,
+            &ctx,
+        )
+        .expect("split and set");
+
+        assert_eq!(separators(&ctx, &env)[0].ch, '\u{2502}');
+    }
+
+    /// Below three columns there is one for each window and none to spare, and
+    /// spending a third of the width on a divider helps nobody.
+    #[test]
+    fn a_frame_too_narrow_to_spare_a_column_keeps_all_of_them() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-right)", &env, &ctx).expect("split");
+
+        let frame = ctx.snapshot(&env, 2, H);
+        assert!(frame.separators.is_empty());
+        let widths: usize = frame
+            .views
+            .iter()
+            .filter(|v| !v.has_border)
+            .map(|v| v.rect.width)
+            .sum();
+        assert_eq!(
+            widths, 2,
+            "no column may be lost to a rule there is no room for"
         );
     }
 }

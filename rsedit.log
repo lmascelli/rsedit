@@ -4,7 +4,4 @@
 [LOG] End of the minibuffer.lisp
 [LOG] 5
 [LOG] Hello from rsedit init.lisp
-[INFO] Keymap not bound C-x C-g
-[INFO] Keymap not bound C-4
-Error reading file: No such file or directory (os error 2)
-[INFO] Keymap not bound C-x k
+[INFO] Keymap not bound C-x C-c

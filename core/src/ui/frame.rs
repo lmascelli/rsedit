@@ -30,7 +30,7 @@
 //! and each one that follows this rule costs nothing when the UI event loop
 //! eventually moves to its own thread; each one that does not is another torn
 //! frame to find later.
-use super::{RenderableWindowView, Theme};
+use super::{RenderableWindowView, Separator, Theme};
 
 /// Everything the UI needs to draw one frame, owned outright.
 ///
@@ -42,6 +42,8 @@ pub struct FrameSnapshot {
     /// Tiled windows first, in layout order, then floating windows in the order
     /// they should be drawn -- later entries paint over earlier ones.
     pub views: Vec<RenderableWindowView>,
+    /// The rules between windows sitting side by side, in draw order.
+    pub separators: Vec<Separator>,
     /// Text for the echo area, or empty when there is nothing to show.
     pub echo_message: String,
     /// Input the editor is part-way through reading -- a key sequence begun, a

@@ -3,6 +3,9 @@ use rsedit_core::{ELispExp, buffer::gap_buffer::GapBuffer, create_global_env, li
 use std::io::{self, IsTerminal};
 use tui::tui_main;
 
+#[cfg(test)]
+mod tests;
+
 type BufferType = GapBuffer;
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {

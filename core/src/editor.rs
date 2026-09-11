@@ -13,7 +13,7 @@ use crate::{
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
         Face, FloatingWindow, FrameSnapshot, LayoutNode, Orientation, Rect, RenderableWindowView,
-        Style, Theme, Window, extract_buffer_lines, region_highlights,
+        Separator, Style, Theme, Window, extract_buffer_lines, region_highlights,
     },
 };
 use std::{
@@ -88,6 +88,17 @@ fn mode_line_format<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> String {
     match env.get_variable(MODE_LINE_FORMAT) {
         Some(ELispExp::String(format)) => format.to_string(),
         _ => DEFAULT_MODE_LINE_FORMAT.to_string(),
+    }
+}
+
+pub const WINDOW_SEPARATOR: &str = "window-separator";
+pub const DEFAULT_WINDOW_SEPARATOR: char = '\u{2502}';
+
+fn window_separator<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> char {
+    match env.get_variable(WINDOW_SEPARATOR) {
+        Some(ELispExp::String(text)) => text.chars().next().unwrap_or(' '),
+        Some(value) if value.is_nil() => ' ',
+        _ => DEFAULT_WINDOW_SEPARATOR,
     }
 }
 
@@ -1184,6 +1195,7 @@ impl<B: BufferTrait> EditorState<B> {
         let theme = self.theme();
         let pending_input = self.pending_input();
         let mode_line_format = mode_line_format(env);
+        let separator_char = window_separator(env);
 
         let focused_window_id = *self
             .focused_window_id
@@ -1215,6 +1227,7 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire read lock on buffers");
 
         let mut views = Vec::new();
+        let mut separator_rects = Vec::new();
         layout_root.compute_tiled_views(
             Rect {
                 x: 0,
@@ -1230,7 +1243,13 @@ impl<B: BufferTrait> EditorState<B> {
             &buffers,
             &mode_line_format,
             &mut views,
+            &mut separator_rects,
         );
+
+        let separators: Vec<Separator> = separator_rects
+            .into_iter()
+            .map(|rect| Separator { rect, ch: separator_char, face: Face::WindowSeparator, })
+            .collect();
 
         for float in floating_windows.iter() {
             let is_focused = float.window.id == focused_window_id;
@@ -1274,6 +1293,7 @@ impl<B: BufferTrait> EditorState<B> {
             focused_window_id,
             width: screen_width,
             height: screen_height,
+            separators,
         }
     }
 
@@ -1999,19 +2019,22 @@ pub fn create_global_env<B: BufferTrait>()
     env.set_variable("after-resize-hook".into(), ELispExp::nil());
 
     // How long a message stays in the echo area. A number of seconds arms the
-    // timeout; nil leaves messages up until something replaces them. Set here
-    // rather than in a `.lisp` file so the default holds even with no Lisp
-    // loaded, and so that `describe`-style introspection finds it bound.
+    // timeout; nil leaves messages up until something replaces them.
     env.set_variable(
         ECHO_MESSAGE_TIMEOUT.into(),
         ELispExp::number(DEFAULT_ECHO_MESSAGE_TIMEOUT),
     );
 
-    // What each window's status line shows. Set here rather than in a `.lisp`
-    // file so a window is labelled even with no configuration loaded.
+    // What each window's status line shows.
     env.set_variable(
         MODE_LINE_FORMAT.into(),
         ELispExp::string(DEFAULT_MODE_LINE_FORMAT.to_string()),
+    );
+
+    // The char used to draw vertical windows separators.
+    env.set_variable(
+        WINDOW_SEPARATOR.into(),
+        ELispExp::string(DEFAULT_WINDOW_SEPARATOR.to_string()),
     );
 
     // Create the fundamental modes:

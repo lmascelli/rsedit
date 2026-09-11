@@ -72,6 +72,13 @@ pub struct Highlight {
     pub face: Face,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Separator {
+    pub rect: Rect,
+    pub ch: char,
+    pub face: Face,
+}
+
 /// One window, resolved to exactly what should appear on screen.
 ///
 /// Owned data with no borrows back into editor state, so a [`FrameSnapshot`]
@@ -226,6 +233,11 @@ fn placeholder_window() -> Window {
     }
 }
 
+/// The narrowest a rect can be and still give a column to a divider.
+///
+/// Three: one for each window and one for the rule.
+const MIN_WIDTH_FOR_SEPARATOR: usize = 3;
+
 impl LayoutNode {
     pub fn compute_tiled_views<B: BufferTrait>(
         &mut self,
@@ -234,6 +246,7 @@ impl LayoutNode {
         buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
         mode_line_format: &str,
         out_views: &mut Vec<RenderableWindowView>,
+        out_separators: &mut Vec<Rect>,
     ) {
         match self {
             LayoutNode::Leaf(win) => {
@@ -327,6 +340,7 @@ impl LayoutNode {
                         buffers,
                         mode_line_format,
                         out_views,
+                        out_separators,
                     );
                     right.compute_tiled_views(
                         Rect {
@@ -338,11 +352,23 @@ impl LayoutNode {
                         buffers,
                         mode_line_format,
                         out_views,
+                        out_separators,
                     );
                 }
                 Orientation::Vertical => {
-                    let left_width = ((rect.width as f32) * *ratio).round() as usize;
-                    let right_width = rect.width.saturating_sub(left_width);
+                    let divided = rect.width >= MIN_WIDTH_FOR_SEPARATOR;
+                    let usable = rect.width.saturating_sub(divided as usize);
+                    let left_width = ((usable as f32) * *ratio).round() as usize;
+                    let right_width = usable.saturating_sub(left_width);
+
+                    if divided {
+                        out_separators.push(Rect {
+                            x: rect.x + left_width as isize,
+                            y: rect.y,
+                            width: 1,
+                            height: rect.height,
+                        });
+                    }
 
                     left.compute_tiled_views(
                         Rect {
@@ -353,10 +379,11 @@ impl LayoutNode {
                         buffers,
                         mode_line_format,
                         out_views,
+                        out_separators,
                     );
                     right.compute_tiled_views(
                         Rect {
-                            x: rect.x + left_width as isize,
+                            x: rect.x + left_width as isize + divided as isize,
                             width: right_width,
                             ..rect
                         },
@@ -364,6 +391,7 @@ impl LayoutNode {
                         buffers,
                         mode_line_format,
                         out_views,
+                        out_separators,
                     );
                 }
             },

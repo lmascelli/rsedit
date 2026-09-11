@@ -49,6 +49,7 @@ pub enum Face {
     ModeLine,
     /// The status line under any other window.
     ModeLineInactive,
+    WindowSeparator,
     Keyword,
     Type,
     String,
@@ -60,11 +61,12 @@ pub enum Face {
 impl Face {
     /// Every face, in theme order. The array and [`Self::index`] have to agree;
     /// `faces_are_indexed_consistently` in the tests is what checks they do.
-    pub const ALL: [Face; 10] = [
+    pub const ALL: [Face; 11] = [
         Face::Default,
         Face::Region,
         Face::ModeLine,
         Face::ModeLineInactive,
+        Face::WindowSeparator,
         Face::Keyword,
         Face::Type,
         Face::String,
@@ -84,6 +86,7 @@ impl Face {
             Face::Region => "region",
             Face::ModeLine => "mode-line",
             Face::ModeLineInactive => "mode-line-inactive",
+            Face::WindowSeparator => "window-separator",
             Face::Keyword => "keyword",
             Face::Type => "type",
             Face::String => "string",
@@ -103,12 +106,13 @@ impl Face {
             Face::Region => 1,
             Face::ModeLine => 2,
             Face::ModeLineInactive => 3,
-            Face::Keyword => 4,
-            Face::Type => 5,
-            Face::String => 6,
-            Face::Comment => 7,
-            Face::Function => 8,
-            Face::Builtin => 9,
+            Face::WindowSeparator => 4,
+            Face::Keyword => 5,
+            Face::Type => 6,
+            Face::String => 7,
+            Face::Comment => 8,
+            Face::Function => 9,
+            Face::Builtin => 10,
         }
     }
 }
