@@ -40,7 +40,7 @@ pub fn translate_key(key_event: crossterm::event::KeyEvent) -> Option<KeyEvent> 
         CrossKeyCode::Backspace => KeyCode::Backspace,
         CrossKeyCode::Enter => KeyCode::Enter,
         CrossKeyCode::Tab => KeyCode::Tab,
-        CrossKeyCode::Esc => KeyCode::Tab,
+        CrossKeyCode::Esc => KeyCode::Esc,
         _ => return None,
     };
 
