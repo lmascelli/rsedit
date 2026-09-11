@@ -13,7 +13,7 @@ use rsedit_core::ELispExp;
 use rsedit_core::EditorState;
 use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
 use rsedit_core::lisp::Env;
-use rsedit_core::ui::{Color, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Style, Theme};
+use rsedit_core::ui::{Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Style, Theme};
 use std::{
     io::{Write, stdout},
     sync::Arc,
@@ -223,6 +223,34 @@ pub fn render_to<W: Write>(
             draw_highlight(out, view, highlight, &frame.theme, depth, frame_w, frame_h)?;
         }
 
+        // The status line sits on the row below the text, outside the rect --
+        // the same arrangement as a border, and for the same reason: the rect
+        // is what the buffer gets, and decoration goes around it.
+        if let Some(mode_line) = &view.mode_line {
+            let face = if view.is_focused {
+                Face::ModeLine
+            } else {
+                Face::ModeLineInactive
+            };
+            // Padded across the window so the status line reads as a bar
+            // rather than as a piece of reversed text floating on the row.
+            let width = view.rect.width;
+            let mut text: String = mode_line.chars().take(width).collect();
+            text.push_str(&" ".repeat(width.saturating_sub(text.chars().count())));
+
+            let style = frame.theme.style(face);
+            apply_style(out, &style, depth)?;
+            draw_clipped_row(
+                out,
+                view.rect.x,
+                view.rect.y + view.rect.height as isize,
+                &text,
+                frame_w,
+                frame_h,
+            )?;
+            out.queue(SetAttribute(Attribute::Reset))?;
+        }
+
         if view.is_focused {
             if let Some((cx, cy)) = view.cursor_rel_pos {
                 let absolute_cx = view.rect.x + cx as isize;
@@ -240,6 +268,21 @@ pub fn render_to<W: Write>(
     // always has somewhere visible to land without covering the prompt.
     if !frame.echo_message.is_empty() {
         draw_clipped_row(out, 0, frame_h - 1, &frame.echo_message, frame_w, frame_h)?;
+    }
+
+    // What the editor is waiting for, at the right-hand end of the same row.
+    // Right-aligned so it never collides with a message growing from the left,
+    // and drawn after one so it wins if they ever meet.
+    if !frame.pending_input.is_empty() {
+        let start = frame_w - frame.pending_input.chars().count() as isize;
+        draw_clipped_row(
+            out,
+            start.max(0),
+            frame_h - 1,
+            &frame.pending_input,
+            frame_w,
+            frame_h,
+        )?;
     }
 
     // Now, with nothing left to draw over it, put the cursor where it belongs.
@@ -684,9 +727,11 @@ mod tests {
                 cursor_rel_pos: Some((0, 0)),
                 lines: lines.iter().map(|l| l.to_string()).collect(),
                 highlights,
+                mode_line: None,
                 has_border: false,
             }],
             echo_message: String::new(),
+            pending_input: String::new(),
             theme,
             focused_window_id: 0,
             width: COLS as usize,
@@ -763,6 +808,106 @@ mod tests {
         assert!(
             run.contains("ab   "),
             "the highlight should extend past the text: {run:?}"
+        );
+    }
+
+    /// The status line is drawn on the row below the window's text, styled and
+    /// padded across the window's width so it reads as a bar.
+    #[test]
+    fn a_mode_line_is_drawn_below_the_text_as_a_bar() {
+        let snapshot = FrameSnapshot {
+            views: vec![rsedit_core::ui::RenderableWindowView {
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 20,
+                    height: 1,
+                },
+                buffer_name: "*scratch*".into(),
+                title: None,
+                is_focused: true,
+                cursor_rel_pos: Some((0, 0)),
+                lines: vec!["alpha".into()],
+                highlights: Vec::new(),
+                mode_line: Some("status".into()),
+                has_border: false,
+            }],
+            echo_message: String::new(),
+            pending_input: String::new(),
+            theme: Theme::default(),
+            focused_window_id: 0,
+            width: COLS as usize,
+            height: ROWS as usize,
+        };
+        let mut out: Vec<u8> = Vec::new();
+        render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("render");
+        let rendered = String::from_utf8(out).expect("valid UTF-8");
+
+        let run = styled_run(&rendered, "\u{1b}[7m");
+        assert!(run.contains("status"), "the status text: {run:?}");
+        assert!(
+            run.contains("status              "),
+            "padded across the window so it reads as a bar: {run:?}"
+        );
+    }
+
+    /// An unfocused window's status line is drawn with the other face. There
+    /// is only ever one tiled window until splits exist (#17), so this is
+    /// built by hand -- the alternative is a rule nothing checks until the
+    /// feature that needs it arrives.
+    #[test]
+    fn an_unfocused_window_uses_the_inactive_mode_line_face() {
+        fn window(name: &str, y: isize, focused: bool) -> rsedit_core::ui::RenderableWindowView {
+            rsedit_core::ui::RenderableWindowView {
+                rect: Rect {
+                    x: 0,
+                    y,
+                    width: 20,
+                    height: 1,
+                },
+                buffer_name: name.into(),
+                title: None,
+                is_focused: focused,
+                cursor_rel_pos: focused.then_some((0, 0)),
+                lines: vec!["text".into()],
+                highlights: Vec::new(),
+                mode_line: Some(name.into()),
+                has_border: false,
+            }
+        }
+        let snapshot = FrameSnapshot {
+            views: vec![window("here", 0, true), window("there", 2, false)],
+            echo_message: String::new(),
+            pending_input: String::new(),
+            theme: Theme::default(),
+            focused_window_id: 0,
+            width: COLS as usize,
+            height: ROWS as usize,
+        };
+        let mut out: Vec<u8> = Vec::new();
+        render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("render");
+        let rendered = String::from_utf8(out).expect("valid UTF-8");
+
+        // Each styled run ends at a reset, so the chunk holding a status
+        // line's text is the run that drew it.
+        let run_with = |needle: &str| {
+            rendered
+                .split("\u{1b}[0m")
+                .find(|chunk| chunk.contains(needle) && chunk.contains("\u{1b}[7m"))
+                .unwrap_or_else(|| panic!("{needle} was never drawn styled"))
+                .to_string()
+        };
+        // Any foreground escape, in whichever form this depth resolves to --
+        // the point is that one face asks for a colour and the other does not.
+        assert!(
+            !run_with("here").contains("\u{1b}[38;"),
+            "the focused status line asks for no colour: {:?}",
+            run_with("here")
+        );
+        assert!(
+            run_with("there").contains("\u{1b}[38;"),
+            "the unfocused one is dimmed: {:?}",
+            run_with("there")
         );
     }
 

@@ -283,7 +283,7 @@ fn layout(report: &mut Report, calibration: f64) {
             let mut views = Vec::new();
             for _ in 0..frames {
                 views.clear();
-                root.compute_tiled_views(screen.clone(), 1, &buffers, &mut views);
+                root.compute_tiled_views(screen.clone(), 1, &buffers, " %b ", &mut views);
             }
             assert_eq!(views.len(), 4);
         })

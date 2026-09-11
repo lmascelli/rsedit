@@ -143,7 +143,7 @@ mod tests {
         let (ctx, env) = editor_with("");
         keys(&ctx, &env, "^u4");
         assert_eq!(text_of(&ctx), "", "C-u 4 inserts no text");
-        assert_eq!(ctx.get_echo_message(), "C-u 4-");
+        assert_eq!(ctx.snapshot(&env, 80, 24).pending_input, "C-u 4-");
     }
 
     // ---------------- spending it ----------------
@@ -367,7 +367,7 @@ mod tests {
     fn keyboard_quit_abandons_a_half_typed_sequence() {
         let (ctx, env) = editor_with("");
         keys(&ctx, &env, "^x");
-        assert_eq!(ctx.get_echo_message(), "C-x-");
+        assert_eq!(ctx.snapshot(&env, 80, 24).pending_input, "C-x-");
 
         keys(&ctx, &env, "^g");
         // The sequence is gone, so the next key starts afresh.

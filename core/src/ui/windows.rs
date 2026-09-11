@@ -91,6 +91,11 @@ pub struct RenderableWindowView {
     pub is_focused: bool,
     pub cursor_rel_pos: Option<(usize, usize)>,
     pub lines: Vec<String>,
+    /// The status line for this window, drawn on the row immediately below
+    /// `rect` -- outside it, as a border is. `None` for a window with no room
+    /// for one, and for floating windows, which say what they are with a title
+    /// on their border instead.
+    pub mode_line: Option<String>,
     /// Runs within `lines` to draw with a face other than the default.
     pub highlights: Vec<Highlight>,
     pub has_border: bool,
@@ -116,11 +121,37 @@ impl LayoutNode {
         rect: Rect,
         focused_id: usize,
         buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
+        mode_line_format: &str,
         out_views: &mut Vec<RenderableWindowView>,
     ) {
         match self {
             LayoutNode::Leaf(win) => {
                 let is_focused = win.id == focused_id;
+
+                // The status line takes the window's bottom row, so the text
+                // gets one fewer -- computed here, before anything reads the
+                // rect, so scrolling and the cursor agree with what is drawn.
+                // A window with only one row keeps it for text: a status line
+                // with nothing under it says nothing useful.
+                let mode_line = buffers.get(&win.buffer_name).and_then(|buffer| {
+                    (rect.height >= 2).then(|| {
+                        expand_mode_line(
+                            mode_line_format,
+                            &buffer
+                                .read()
+                                .expect("Failed to acquire read lock on buffer"),
+                        )
+                    })
+                });
+                let rect = if mode_line.is_some() {
+                    Rect {
+                        height: rect.height - 1,
+                        ..rect
+                    }
+                } else {
+                    rect
+                };
+
                 let mut cursor_rel_pos = None;
 
                 if is_focused {
@@ -161,6 +192,7 @@ impl LayoutNode {
                     cursor_rel_pos,
                     lines,
                     highlights,
+                    mode_line,
                     has_border: false,
                 });
             }
@@ -182,6 +214,7 @@ impl LayoutNode {
                         },
                         focused_id,
                         buffers,
+                        mode_line_format,
                         out_views,
                     );
                     right.compute_tiled_views(
@@ -192,6 +225,7 @@ impl LayoutNode {
                         },
                         focused_id,
                         buffers,
+                        mode_line_format,
                         out_views,
                     );
                 }
@@ -206,6 +240,7 @@ impl LayoutNode {
                         },
                         focused_id,
                         buffers,
+                        mode_line_format,
                         out_views,
                     );
                     right.compute_tiled_views(
@@ -216,6 +251,7 @@ impl LayoutNode {
                         },
                         focused_id,
                         buffers,
+                        mode_line_format,
                         out_views,
                     );
                 }
@@ -292,6 +328,71 @@ fn line_width<B: BufferTrait>(text: &B, line: usize) -> usize {
         .first()
         .map(|l| l.chars().count())
         .unwrap_or(0)
+}
+
+/// Expand a mode-line format string against WIN's buffer.
+///
+/// The escapes are Emacs' own, so a format copied from an Emacs configuration
+/// means the same thing here:
+///
+/// | escape | shows                                        |
+/// |--------|----------------------------------------------|
+/// | `%b`   | buffer name                                  |
+/// | `%f`   | file path, or the buffer name when unvisited |
+/// | `%m`   | major mode                                   |
+/// | `%l`   | line number, counting from one               |
+/// | `%c`   | column, counting from zero as Emacs does     |
+/// | `%p`   | how far down the buffer point is             |
+/// | `%*`   | `**` when modified, `--` when not            |
+/// | `%%`   | a literal per cent                           |
+///
+/// An unknown escape is left as it was written rather than swallowed: a format
+/// that silently loses a chunk of itself is harder to debug than one that
+/// shows you the `%q` you meant to be something else.
+pub fn expand_mode_line<B: BufferTrait>(format: &str, buffer: &Buffer<B>) -> String {
+    let (line, column) = buffer.text.cursor_pos();
+    let lines = buffer.text.line_count().max(1);
+    let mut out = String::with_capacity(format.len() + 16);
+    let mut chars = format.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('b') => out.push_str(&buffer.name),
+            Some('f') => out.push_str(buffer.file_path.as_deref().unwrap_or(&buffer.name)),
+            Some('m') => out.push_str(&buffer.current_mode),
+            Some('l') => out.push_str(&(line + 1).to_string()),
+            Some('c') => out.push_str(&column.to_string()),
+            Some('p') => out.push_str(&position_in_buffer(line, lines)),
+            Some('*') => out.push_str(if buffer.is_modified { "**" } else { "--" }),
+            Some('%') => out.push('%'),
+            Some(other) => {
+                out.push('%');
+                out.push(other);
+            }
+            None => out.push('%'),
+        }
+    }
+    out
+}
+
+/// Where point sits in the buffer, as Emacs words it: `All` when the whole
+/// buffer is one screen's worth of lines, otherwise `Top`, `Bot` or a
+/// percentage.
+fn position_in_buffer(line: usize, lines: usize) -> String {
+    if lines <= 1 {
+        return "All".to_string();
+    }
+    if line == 0 {
+        return "Top".to_string();
+    }
+    if line + 1 >= lines {
+        return "Bot".to_string();
+    }
+    format!("{}%", (line * 100) / (lines - 1))
 }
 
 pub fn extract_buffer_lines<B: BufferTrait>(

@@ -45,6 +45,10 @@ pub enum Face {
     Default,
     /// The active region, between mark and point.
     Region,
+    /// The status line under the focused window.
+    ModeLine,
+    /// The status line under any other window.
+    ModeLineInactive,
     Keyword,
     Type,
     String,
@@ -56,9 +60,11 @@ pub enum Face {
 impl Face {
     /// Every face, in theme order. The array and [`Self::index`] have to agree;
     /// `faces_are_indexed_consistently` in the tests is what checks they do.
-    pub const ALL: [Face; 8] = [
+    pub const ALL: [Face; 10] = [
         Face::Default,
         Face::Region,
+        Face::ModeLine,
+        Face::ModeLineInactive,
         Face::Keyword,
         Face::Type,
         Face::String,
@@ -76,6 +82,8 @@ impl Face {
         match self {
             Face::Default => "default",
             Face::Region => "region",
+            Face::ModeLine => "mode-line",
+            Face::ModeLineInactive => "mode-line-inactive",
             Face::Keyword => "keyword",
             Face::Type => "type",
             Face::String => "string",
@@ -93,12 +101,14 @@ impl Face {
         match self {
             Face::Default => 0,
             Face::Region => 1,
-            Face::Keyword => 2,
-            Face::Type => 3,
-            Face::String => 4,
-            Face::Comment => 5,
-            Face::Function => 6,
-            Face::Builtin => 7,
+            Face::ModeLine => 2,
+            Face::ModeLineInactive => 3,
+            Face::Keyword => 4,
+            Face::Type => 5,
+            Face::String => 6,
+            Face::Comment => 7,
+            Face::Function => 8,
+            Face::Builtin => 9,
         }
     }
 }
@@ -307,6 +317,19 @@ impl Default for Theme {
         let mut styles = [Style::plain(); Face::ALL.len()];
         styles[Face::Region.index()] = Style {
             reverse: true,
+            ..Style::plain()
+        };
+        // Reverse video for the same reason the region uses it: a status bar
+        // has to be visible against a background this code cannot know.
+        styles[Face::ModeLine.index()] = Style {
+            reverse: true,
+            ..Style::plain()
+        };
+        // Distinguishable without being another colour decision -- an
+        // unfocused window's status line is present but not competing.
+        styles[Face::ModeLineInactive.index()] = Style {
+            reverse: true,
+            fg: Some(Color::BRIGHT_BLACK),
             ..Style::plain()
         };
         styles[Face::Keyword.index()] = Style::fg(Color::MAGENTA);

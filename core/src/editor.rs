@@ -73,6 +73,24 @@ impl EchoMessage {
     }
 }
 
+/// The name of the Lisp variable holding the mode-line format.
+pub const MODE_LINE_FORMAT: &str = "mode-line-format";
+
+/// What a window's status line says when nothing sets [`MODE_LINE_FORMAT`].
+pub const DEFAULT_MODE_LINE_FORMAT: &str = " %* %b   %m   L%l C%c   %p ";
+
+/// The mode-line format as Lisp currently defines it.
+///
+/// Anything that is not a string falls back to the default rather than
+/// blanking every status line in the editor: a mistyped format should look
+/// wrong, not make the editor look broken.
+fn mode_line_format<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> String {
+    match env.get_variable(MODE_LINE_FORMAT) {
+        Some(ELispExp::String(format)) => format.to_string(),
+        _ => DEFAULT_MODE_LINE_FORMAT.to_string(),
+    }
+}
+
 /// The echo timeout as Lisp currently defines it, or `None` for "never
 /// expires".
 ///
@@ -663,12 +681,28 @@ impl<B: BufferTrait> EditorState<B> {
         self.clear_prefix_argument();
     }
 
-    /// Show the argument being built, the way `C-x-` shows a half-typed key
-    /// sequence: without it, `C-u` looks like a key that did nothing.
-    fn show_prefix_argument(&self) {
+    /// What the editor is part-way through reading, spelt the way a binding
+    /// is written and ending in a dash for the key still to come.
+    ///
+    /// The argument and the key sequence appear together -- `C-u 4 C-x-` --
+    /// because they compose, and showing only one of them would misreport
+    /// what pressing the next key will do.
+    pub(crate) fn pending_input(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
         if let Some(arg) = self.prefix_argument() {
-            self.set_echo_message(&format!("{}-", arg.describe()));
+            parts.push(arg.describe());
         }
+        let keys = self
+            .pending_keys
+            .read()
+            .expect("Failed to acquire read lock on pending_keys");
+        if !keys.is_empty() {
+            parts.push(describe_keys(&keys));
+        }
+        if parts.is_empty() {
+            return String::new();
+        }
+        format!("{}-", parts.join(" "))
     }
 
     /// Forget the argument. Called after every command, whether or not
@@ -745,13 +779,9 @@ impl<B: BufferTrait> EditorState<B> {
 
         match (bound, is_prefix) {
             (Some(ast), _) => Some(ast),
-            (None, true) => {
-                // Shown as it would be written in a binding, with a trailing
-                // dash for the key still to come -- otherwise a half-typed
-                // sequence is indistinguishable from a frozen editor.
-                self.set_echo_message(&format!("{described}-"));
-                None
-            }
+            // Nothing to say: the sequence is in `pending_input`, which the
+            // frame carries and which does not expire the way a message does.
+            (None, true) => None,
             (None, false) => {
                 self.set_echo_message(&format!("{described} is undefined"));
                 self.log_diagnostic(&format!("[INFO] Keymap not bound {described}"));
@@ -764,7 +794,6 @@ impl<B: BufferTrait> EditorState<B> {
         // The argument reader gets first refusal. A key it takes is not a
         // command and never reaches a keymap.
         if self.read_prefix_argument(&event) {
-            self.show_prefix_argument();
             return;
         }
 
@@ -1050,6 +1079,8 @@ impl<B: BufferTrait> EditorState<B> {
         // another link in it. It is a small `Copy` value, so this is a memcpy
         // and the lock is released immediately.
         let theme = self.theme();
+        let pending_input = self.pending_input();
+        let mode_line_format = mode_line_format(env);
 
         let focused_window_id = *self
             .focused_window_id
@@ -1086,10 +1117,15 @@ impl<B: BufferTrait> EditorState<B> {
                 x: 0,
                 y: 0,
                 width: screen_width,
-                height: screen_height,
+                // The bottom row belongs to the echo area, which is drawn over
+                // whatever is under it. Tiling into it would put a window's
+                // status line on the same row as a message, and one of the two
+                // would win at random.
+                height: screen_height.saturating_sub(1),
             },
             focused_window_id,
             &buffers,
+            &mode_line_format,
             &mut views,
         );
 
@@ -1120,6 +1156,9 @@ impl<B: BufferTrait> EditorState<B> {
                 cursor_rel_pos,
                 lines: extract_buffer_lines(&float.window, &float.rect, &buffers),
                 highlights: region_highlights(&float.window, &float.rect, &buffers),
+                // A float says what it is on its border, so a status line
+                // would be a second answer to the same question.
+                mode_line: None,
                 has_border: float.has_border,
             });
         }
@@ -1127,6 +1166,7 @@ impl<B: BufferTrait> EditorState<B> {
         FrameSnapshot {
             views,
             echo_message,
+            pending_input,
             theme,
             focused_window_id,
             width: screen_width,
@@ -1862,6 +1902,13 @@ pub fn create_global_env<B: BufferTrait>()
     env.set_variable(
         ECHO_MESSAGE_TIMEOUT.into(),
         ELispExp::number(DEFAULT_ECHO_MESSAGE_TIMEOUT),
+    );
+
+    // What each window's status line shows. Set here rather than in a `.lisp`
+    // file so a window is labelled even with no configuration loaded.
+    env.set_variable(
+        MODE_LINE_FORMAT.into(),
+        ELispExp::string(DEFAULT_MODE_LINE_FORMAT.to_string()),
     );
 
     // Create the fundamental modes:

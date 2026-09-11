@@ -69,4 +69,16 @@
 ;; region. It does not interrupt a running command -- that is roadmap #24.
 (define-key nil "C-g" 'keyboard-quit)
 
+;; Each window carries a status line on its bottom row. `mode-line-format' is
+;; the string it shows, with Emacs' escapes:
+;;
+;;   %b buffer   %f file path   %m major mode
+;;   %l line     %c column      %p where point is (All/Top/Bot/NN%)
+;;   %* "**" when modified, "--" when not      %% a literal per cent
+;;
+;;   (setq mode-line-format " %* %b   %m   L%l C%c   %p ")   ; the default
+;;
+;; It is styled with the `mode-line' face, and `mode-line-inactive' for a
+;; window that does not have focus -- see `set-face'.
+
 (log "End of the common-keymaps.lisp")

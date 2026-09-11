@@ -7,6 +7,7 @@ mod echo_tests;
 mod frame_snapshot_tests;
 mod fuel_tests;
 mod minibuffer_lisp_tests;
+mod mode_line_tests;
 mod movement_tests;
 /// Performance characterisation of the whole editor, interpreter included.
 /// One submodule, one runner, two reports -- see `perf::mod` for the rationale.

@@ -152,8 +152,13 @@ mod tests {
         assert_eq!(text_of(&ctx), "x", "plain x still self-inserts");
     }
 
+    /// A half-typed sequence has to be visible, or the editor looks hung.
+    ///
+    /// It travels in the frame rather than the echo area because it is state,
+    /// not a message: a message expires, and a sequence that is still pending
+    /// must not stop being shown while the editor is still waiting on it.
     #[test]
-    fn a_sequence_is_shown_in_the_echo_area_while_it_waits() {
+    fn a_pending_sequence_is_carried_in_the_frame() {
         let (ctx, env) = editor_with("");
         eval_str(
             "(define-key nil \"C-x m\" 'beginning-of-buffer)",
@@ -161,12 +166,20 @@ mod tests {
             &ctx,
         )
         .expect("bind");
+        assert_eq!(ctx.snapshot(&env, 80, 24).pending_input, "");
 
         press(&ctx, &env, KeyCode::Char('x'), ctrl());
         assert_eq!(
-            ctx.get_echo_message(),
+            ctx.snapshot(&env, 80, 24).pending_input,
             "C-x-",
-            "a half-typed sequence should look like one, not like a hung editor"
+            "spelt as the binding that completes it is written"
+        );
+
+        press(&ctx, &env, KeyCode::Char('m'), plain());
+        assert_eq!(
+            ctx.snapshot(&env, 80, 24).pending_input,
+            "",
+            "nothing is pending once the sequence completes"
         );
     }
 

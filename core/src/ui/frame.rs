@@ -44,6 +44,15 @@ pub struct FrameSnapshot {
     pub views: Vec<RenderableWindowView>,
     /// Text for the echo area, or empty when there is nothing to show.
     pub echo_message: String,
+    /// Input the editor is part-way through reading -- a key sequence begun, a
+    /// prefix argument being built -- or empty when it is waiting for nothing.
+    ///
+    /// A field of its own rather than an echo message, because the two are
+    /// different kinds of thing. A message reports something that *happened*,
+    /// and so has a natural expiry; this reports what is *true right now*, and
+    /// expiring it would leave the editor waiting for a key with nothing on
+    /// screen to say so.
+    pub pending_input: String,
     /// How each face should be drawn, as it stood at capture time.
     ///
     /// Carried in the frame rather than looked up by the renderer for the same
