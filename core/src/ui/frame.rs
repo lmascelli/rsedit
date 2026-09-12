@@ -78,7 +78,7 @@ pub struct FrameSnapshot {
     /// reason everything else here is: drawing touches no shared state. It also
     /// means a frame is self-describing -- a snapshot kept for comparison still
     /// knows the colours it was composed under.
-    pub theme: Theme,
+    pub theme: std::sync::Arc<Theme>,
     /// Which window had focus at capture time. `views` already carries
     /// `is_focused` per window; this is here for renderers that need to know
     /// even when the focused window is not currently visible.

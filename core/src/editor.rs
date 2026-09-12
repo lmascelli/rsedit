@@ -186,7 +186,14 @@ pub struct EditorState<B: BufferTrait> {
     /// How each face is drawn. One theme for the whole editor -- a per-buffer
     /// theme would mean two windows on the same file disagreeing about what a
     /// keyword looks like.
-    theme: Arc<RwLock<Theme>>,
+    /// How each face is drawn. One theme for the whole editor.
+    ///
+    /// `Arc<Theme>` inside the lock, not a bare `Theme`: every frame takes a
+    /// copy, and now that the face set is open a theme is a heap-allocated
+    /// `Vec` rather than a fixed array -- so copying one per frame would mean
+    /// allocating per frame. Sharing it costs a refcount, and changing it
+    /// (`set-face`, which happens when configuration is read) makes a new one.
+    theme: Arc<RwLock<Arc<Theme>>>,
 
     /// The argument being built for the next command, and whether the digit
     /// keys are still being read into it.
@@ -387,7 +394,7 @@ impl<B: BufferTrait> EditorState<B> {
             pending_commands: Arc::new(RwLock::new(Vec::new())),
             last_command: Arc::new(RwLock::new(None)),
             kill_ring: Arc::new(RwLock::new(KillRing::default())),
-            theme: Arc::new(RwLock::new(Theme::default())),
+            theme: Arc::new(RwLock::new(Arc::new(Theme::default()))),
             prefix_arg: Arc::new(RwLock::new((None, false))),
             pending_keys: Arc::new(RwLock::new(Vec::new())),
             last_command_killed: Arc::new(AtomicBool::new(false)),
@@ -1479,7 +1486,7 @@ impl<B: BufferTrait> EditorState<B> {
 
         let separators: Vec<Separator> = separator_rects
             .into_iter()
-            .map(|rect| Separator { rect, ch: separator_char, face: Face::WindowSeparator, })
+            .map(|rect| Separator { rect, ch: separator_char, face: Face::WINDOW_SEPARATOR, })
             .collect();
 
         for float in floating_windows.iter() {
@@ -1891,10 +1898,13 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Bind FACE to STYLE for the whole editor.
     pub(crate) fn set_face_style(&self, face: Face, style: Style) {
-        self.theme
+        // Copy-on-write: whatever frames are already holding keep the theme
+        // they were composed under, and the next one picks this up.
+        let mut theme = self
+            .theme
             .write()
-            .expect("Failed to acquire write lock on theme")
-            .set(face, style);
+            .expect("Failed to acquire write lock on theme");
+        Arc::make_mut(&mut theme).set(face, style);
     }
 
     pub(crate) fn face_style(&self, face: Face) -> Style {
@@ -1904,11 +1914,11 @@ impl<B: BufferTrait> EditorState<B> {
             .style(face)
     }
 
-    pub(crate) fn theme(&self) -> Theme {
-        *self
-            .theme
+    pub(crate) fn theme(&self) -> Arc<Theme> {
+        self.theme
             .read()
             .expect("Failed to acquire read lock on theme")
+            .clone()
     }
 
     // ---------------------------------------------------------------

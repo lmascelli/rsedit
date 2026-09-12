@@ -1,3 +1,4 @@
+use crate::tests::tui_test::ColorDepth::TrueColor;
 use crossterm::event::{
     Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers, poll, read,
 };
@@ -11,6 +12,8 @@ use crossterm::{
 use rsedit_core::BufferTrait;
 use rsedit_core::ELispExp;
 use rsedit_core::EditorState;
+use rsedit_core::buffer::gap_buffer::GapBuffer;
+use rsedit_core::create_global_env;
 use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
 use rsedit_core::lisp::{Env, LispContext};
 use rsedit_core::ui::{Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Style, Theme};
@@ -18,16 +21,13 @@ use std::{
     io::{Write, stdout},
     sync::Arc,
 };
-use rsedit_core::buffer::gap_buffer::GapBuffer;
-use rsedit_core::create_global_env;
-use crate::tests::tui_test::ColorDepth::TrueColor;
 
-use crate::tui::ColorDepth;
 use crate::tests::tui_test::ColorDepth::Ansi16;
 use crate::tests::tui_test::ColorDepth::Ansi256;
-use crate::tui::translate_key;
-use crate::tui::resolve;
+use crate::tui::ColorDepth;
 use crate::tui::render_to;
+use crate::tui::resolve;
+use crate::tui::translate_key;
 
 const COLS: u16 = 80;
 const ROWS: u16 = 24;
@@ -75,8 +75,8 @@ fn expected_cursor(
         .cursor_rel_pos
         .expect("the focused window has a cursor");
     (
-            (view.rect.x + cx as isize) as u16,
-            (view.rect.y + cy as isize) as u16,
+        (view.rect.x + cx as isize) as u16,
+        (view.rect.y + cy as isize) as u16,
     )
 }
 
@@ -106,8 +106,8 @@ fn terminal_key(code: CrossKeyCode, modifiers: CrossModifiers) -> CrossKeyEvent 
 fn escape_reaches_the_editor() {
     assert_eq!(
         translate_key(terminal_key(CrossKeyCode::Esc, CrossModifiers::NONE))
-        .expect("Escape must translate")
-        .code,
+            .expect("Escape must translate")
+            .code,
         KeyCode::Esc
     );
 }
@@ -142,7 +142,7 @@ fn modifiers_are_carried_across() {
         CrossKeyCode::Char('x'),
         CrossModifiers::CONTROL | CrossModifiers::ALT,
     ))
-        .expect("a modified key still translates");
+    .expect("a modified key still translates");
 
     assert!(event.modifiers.ctrl && event.modifiers.alt);
     assert_eq!(event.code, KeyCode::Char('x'));
@@ -239,7 +239,7 @@ fn the_rule_between_windows_is_drawn_down_its_whole_column() {
 #[test]
 fn the_rule_is_drawn_with_the_window_separator_face() {
     let mut theme = Theme::default();
-    theme.set(Face::WindowSeparator, Style::fg(Color::BLUE));
+    theme.set(Face::WINDOW_SEPARATOR, Style::fg(Color::BLUE));
 
     let snapshot = FrameSnapshot {
         views: Vec::new(),
@@ -251,12 +251,12 @@ fn the_rule_is_drawn_with_the_window_separator_face() {
                 height: 2,
             },
             ch: '\u{2502}',
-            face: Face::WindowSeparator,
+            face: Face::WINDOW_SEPARATOR,
         }],
         echo_message: String::new(),
         pending_input: String::new(),
         prompt: String::new(),
-        theme,
+        theme: Arc::new(theme),
         focused_window_id: 0,
         width: COLS as usize,
         height: ROWS as usize,
@@ -391,7 +391,7 @@ fn frame_at_depth(
         echo_message: String::new(),
         pending_input: String::new(),
         prompt: String::new(),
-        theme,
+        theme: Arc::new(theme),
         focused_window_id: 0,
         width: COLS as usize,
         height: ROWS as usize,
@@ -433,7 +433,7 @@ fn a_highlight_is_drawn_in_reverse_video_over_exactly_its_own_columns() {
             row: 0,
             start_col: 0,
             end_col: 5,
-            face: Face::Region,
+            face: Face::REGION,
         }],
     );
 
@@ -459,7 +459,7 @@ fn a_highlight_past_the_end_of_a_line_is_padded_with_spaces() {
             row: 0,
             start_col: 0,
             end_col: 5,
-            face: Face::Region,
+            face: Face::REGION,
         }],
     );
 
@@ -495,7 +495,7 @@ fn a_mode_line_is_drawn_below_the_text_as_a_bar() {
         echo_message: String::new(),
         pending_input: String::new(),
         prompt: String::new(),
-        theme: Theme::default(),
+        theme: Arc::new(Theme::default()),
         focused_window_id: 0,
         width: COLS as usize,
         height: ROWS as usize,
@@ -542,7 +542,7 @@ fn an_unfocused_window_uses_the_inactive_mode_line_face() {
         echo_message: String::new(),
         pending_input: String::new(),
         prompt: String::new(),
-        theme: Theme::default(),
+        theme: Arc::new(Theme::default()),
         focused_window_id: 0,
         width: COLS as usize,
         height: ROWS as usize,
@@ -591,7 +591,7 @@ fn a_frame_with_no_highlights_emits_no_attributes() {
 fn a_restyled_face_is_drawn_with_its_new_colours() {
     let mut theme = Theme::default();
     theme.set(
-        Face::Region,
+        Face::REGION,
         Style {
             fg: Some(Color::rgb(0xf8, 0xf8, 0xf2)),
             bg: Some(Color::BLUE),
@@ -606,7 +606,7 @@ fn a_restyled_face_is_drawn_with_its_new_colours() {
             row: 0,
             start_col: 0,
             end_col: 5,
-            face: Face::Region,
+            face: Face::REGION,
         }],
         theme,
     );
@@ -647,7 +647,7 @@ fn a_face_bound_to_nothing_is_not_redrawn() {
             row: 0,
             start_col: 0,
             end_col: 5,
-            face: Face::Default,
+            face: Face::DEFAULT,
         }],
         Theme::default(),
     );
@@ -746,7 +746,7 @@ fn an_approximated_colour_lands_on_something_close() {
 fn the_same_face_renders_differently_on_different_terminals() {
     let mut theme = Theme::default();
     theme.set(
-        Face::Region,
+        Face::REGION,
         Style {
             bg: Some(Color::rgb(0x3a, 0x5f, 0xcd)),
             ..Style::plain()
@@ -756,13 +756,13 @@ fn the_same_face_renders_differently_on_different_terminals() {
         row: 0,
         start_col: 0,
         end_col: 5,
-        face: Face::Region,
+        face: Face::REGION,
     }];
 
     let truecolor = frame_at_depth(
         &["alpha beta"],
         highlight.clone(),
-        theme,
+        theme.clone(),
         ColorDepth::TrueColor,
     );
     let sixteen = frame_at_depth(&["alpha beta"], highlight, theme, ColorDepth::Ansi16);
@@ -811,7 +811,7 @@ fn a_highlight_outside_the_drawn_rows_is_ignored() {
             row: 7,
             start_col: 0,
             end_col: 3,
-            face: Face::Region,
+            face: Face::REGION,
         }],
     );
     assert!(!rendered.contains("\u{1b}[7m"));

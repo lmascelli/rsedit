@@ -481,13 +481,13 @@ mod tests {
 
         assert_eq!(
             separators(&ctx, &env)[0].face,
-            crate::ui::Face::WindowSeparator
+            crate::ui::Face::WINDOW_SEPARATOR
         );
 
         eval_str(r#"(set-face "window-separator" "blue" nil)"#, &env, &ctx).expect("set-face");
         let frame = ctx.snapshot(&env, W, H);
         assert_eq!(
-            frame.theme.style(crate::ui::Face::WindowSeparator).fg,
+            frame.theme.style(crate::ui::Face::WINDOW_SEPARATOR).fg,
             Some(crate::ui::Color::BLUE)
         );
     }

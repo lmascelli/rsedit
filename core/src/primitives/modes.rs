@@ -102,10 +102,9 @@ primitive!(add_syntax_rule, args, _env, ctx, {
             // One name mapping, shared with `set-face`, so a face a syntax
             // rule can name is a face a theme can style. These were two
             // separate lists, and `region` was in neither.
-            let face = Face::from_name(face_sym.as_str()).unwrap_or_else(|| {
-                ctx.log_diagnostic(&format!("Unknown face: {}. Used Face::Default", face_sym));
-                Face::Default
-            });
+            // Interned, not looked up: a grammar names the faces its language
+            // needs and they exist. See `Face`.
+            let face = Face::intern(face_sym.as_str());
 
             match regex::Regex::new(regex_str) {
                 Ok(pattern) => {

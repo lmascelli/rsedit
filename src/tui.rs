@@ -256,9 +256,9 @@ pub fn render_to<W: Write>(
         // is what the buffer gets, and decoration goes around it.
         if let Some(mode_line) = &view.mode_line {
             let face = if view.is_focused {
-                Face::ModeLine
+                Face::MODE_LINE
             } else {
-                Face::ModeLineInactive
+                Face::MODE_LINE_INACTIVE
             };
             // Padded across the window so the status line reads as a bar
             // rather than as a piece of reversed text floating on the row.

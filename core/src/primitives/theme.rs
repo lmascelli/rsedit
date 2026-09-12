@@ -69,13 +69,11 @@ fn face_arg<B: BufferTrait>(arg: Option<&ELispExp<B>>) -> Result<Face, EvalError
             });
         }
     };
-    Face::from_name(&name).ok_or_else(|| {
-        let known: Vec<&str> = Face::ALL.iter().map(Face::name).collect();
-        EvalError::RuntimeMessage(format!(
-            "Unknown face: {name:?}. Known faces: {}",
-            known.join(", ")
-        ))
-    })
+    // Interned rather than looked up: naming a face is how one comes to exist,
+    // now that the set is open. A misspelt name is therefore not an error --
+    // it defines an inert face, which `list-faces` shows, so the mistake is
+    // visible rather than silently falling back to the default.
+    Ok(Face::intern(&name))
 }
 
 pub const SET_FACE_DOC: &str = "(set-face FACE &optional FOREGROUND BACKGROUND ATTRIBUTES): Bind \
@@ -132,13 +130,17 @@ primitive!(face_style, args, _env, ctx, {
 });
 
 pub const LIST_FACES_DOC: &str = "(list-faces): Return the names of every face the editor knows, as \
-         a list of strings. These are the names `set-face' and \
-         `add-syntax-rule' accept.";
+         a list of strings: the ones it ships with, then any that `set-face' or \
+         `add-syntax-rule' have named since.\n\n\
+         The set is open. Naming a face that does not exist defines it, so a \
+         grammar can colour whatever its language has -- and a face nobody \
+         styles is inert rather than an error, which is why a misspelling shows \
+         up here.";
 
 primitive!(list_faces, _args, _env, _ctx, {
     Ok(ELispExp::proper_list(
-        Face::ALL
-            .iter()
+        Face::all()
+            .into_iter()
             .map(|face| ELispExp::string(face.name().to_string()))
             .collect(),
     ))

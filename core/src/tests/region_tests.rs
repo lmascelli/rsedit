@@ -600,7 +600,7 @@ mod tests {
             (spans[0].row, spans[0].start_col, spans[0].end_col),
             (0, 0, 5)
         );
-        assert_eq!(spans[0].face, crate::ui::Face::Region);
+        assert_eq!(spans[0].face, crate::ui::Face::REGION);
     }
 
     /// A multi-line selection has to cover the line endings too, or it reads

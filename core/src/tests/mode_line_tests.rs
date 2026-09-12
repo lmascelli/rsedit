@@ -195,13 +195,13 @@ mod tests {
         assert!(view(&ctx, &env).is_focused);
         let theme = ctx.snapshot(&env, W, H).theme;
         assert_ne!(
-            theme.style(Face::ModeLine),
-            theme.style(Face::ModeLineInactive),
+            theme.style(Face::MODE_LINE),
+            theme.style(Face::MODE_LINE_INACTIVE),
             "an unfocused window's status line has to look different, or the \
              two faces are one face with two names"
         );
         assert!(
-            theme.style(Face::ModeLine).reverse,
+            theme.style(Face::MODE_LINE).reverse,
             "the default has to be visible against a background the editor \
              cannot know"
         );

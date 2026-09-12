@@ -34,17 +34,30 @@ mod tests {
 
     // ---------------- the face set ----------------
 
-    /// `Face::ALL` and `Face::index` have to agree: a face added to the enum
-    /// but forgotten in `ALL` would be styleable and never listed, and one
-    /// given a duplicate index would silently share another face's style.
+    /// The constants and [`Face::BUILT_IN`] have to agree. A built-in whose
+    /// constant did not match its position in that array would silently share
+    /// another face's style, and the array is what fills the registry -- so
+    /// the two are the same fact written twice.
     #[test]
-    fn faces_are_indexed_consistently() {
+    fn built_in_faces_are_interned_at_their_own_ids() {
+        for (position, (face, name)) in Face::BUILT_IN.into_iter().enumerate() {
+            assert_eq!(
+                face.index(),
+                position,
+                "{name} is declared at a different id than it sits at"
+            );
+            assert_eq!(&*face.name(), name, "{name} does not know its own name");
+        }
+    }
+
+    /// Distinct ids mean distinct styles -- the property a theme depends on.
+    #[test]
+    fn faces_do_not_share_a_style() {
         let mut theme = Theme::default();
-        for (position, face) in Face::ALL.into_iter().enumerate() {
-            // A style no other face has, keyed to this face's position.
+        for (position, (face, _)) in Face::BUILT_IN.into_iter().enumerate() {
             theme.set(face, Style::fg(Color::rgb(position as u8, 0, 0)));
         }
-        for (position, face) in Face::ALL.into_iter().enumerate() {
+        for (position, (face, _)) in Face::BUILT_IN.into_iter().enumerate() {
             assert_eq!(
                 theme.style(face).fg,
                 Some(Color::rgb(position as u8, 0, 0)),
@@ -52,26 +65,97 @@ mod tests {
                 face.name()
             );
         }
-        assert_eq!(
-            theme.bindings().len(),
-            Face::ALL.len(),
-            "every face should be listed exactly once"
-        );
     }
 
     /// One name mapping, shared by `set-face` and `add-syntax-rule`. These
     /// were two lists, and `region` was in neither.
     #[test]
     fn every_face_round_trips_through_its_name() {
-        for face in Face::ALL {
+        for (face, _) in Face::BUILT_IN {
             assert_eq!(
-                Face::from_name(face.name()),
+                Face::named(&face.name()),
                 Some(face),
                 "{} does not parse back from its own name",
                 face.name()
             );
         }
-        assert_eq!(Face::from_name("no-such-face"), None);
+    }
+
+    // ---------------- the set is open ----------------
+
+    /// The point of the whole thing: a grammar names a face its language needs
+    /// and it exists, with no change to any Rust file.
+    #[test]
+    fn naming_a_new_face_defines_it() {
+        let before = Face::named("rust-attribute");
+        let face = Face::intern("rust-attribute");
+
+        assert!(
+            before.is_none() || before == Some(face),
+            "interning twice must give the same face back"
+        );
+        assert_eq!(&*face.name(), "rust-attribute");
+        assert_eq!(Face::named("rust-attribute"), Some(face));
+        assert_eq!(
+            Face::intern("rust-attribute"),
+            face,
+            "a name already taken must not define a second face"
+        );
+    }
+
+    #[test]
+    fn a_new_face_can_be_styled_and_listed_from_lisp() {
+        let (ctx, env) = editor();
+        eval_str(r#"(set-face 'doc-comment "bright-blue" nil)"#, &env, &ctx).expect("set-face");
+
+        let listed = strings(&eval_str("(list-faces)", &env, &ctx).expect("list-faces"));
+        assert!(
+            listed.iter().any(|name| name == "doc-comment"),
+            "a face named from Lisp should be listed, got {listed:?}"
+        );
+        assert_eq!(
+            ctx.face_style(Face::named("doc-comment").expect("just defined"))
+                .fg,
+            Some(Color::BRIGHT_BLUE)
+        );
+    }
+
+    /// The headline: a grammar names a face its language needs, and the rule
+    /// carries that face rather than falling back to the default.
+    #[test]
+    fn a_syntax_rule_can_name_a_face_that_did_not_exist() {
+        let (ctx, env) = editor();
+        eval_str(
+            r#"(progn (make-mode 'toy-mode)
+                      (add-syntax-rule 'toy-mode "\\bmacro\\b" 'toy-macro))"#,
+            &env,
+            &ctx,
+        )
+        .expect("defining the rule");
+
+        let face = Face::named("toy-macro").expect("the rule should have defined the face");
+        assert_ne!(face, Face::DEFAULT, "it must not have fallen back");
+        assert_eq!(
+            ctx.mode_registry
+                .read()
+                .expect("mode registry")
+                .get("toy-mode")
+                .expect("toy-mode")
+                .syntax_rules
+                .first()
+                .expect("one rule")
+                .face,
+            face,
+            "the rule should carry the face it named"
+        );
+    }
+
+    /// A face nobody has themed is unstyled rather than out of bounds -- which
+    /// is what lets a grammar name faces before any theme mentions them.
+    #[test]
+    fn an_unstyled_face_reads_back_plain() {
+        let theme = Theme::default();
+        assert_eq!(theme.style(Face::intern("never-themed")), Style::plain());
     }
 
     #[test]
@@ -79,7 +163,12 @@ mod tests {
         let (ctx, env) = editor();
         let listed = strings(&eval_str("(list-faces)", &env, &ctx).expect("list-faces"));
 
-        assert_eq!(listed.len(), Face::ALL.len());
+        for (_, name) in Face::BUILT_IN {
+            assert!(
+                listed.iter().any(|listed| listed == name),
+                "list-faces should include the built-in {name:?}"
+            );
+        }
         for name in &listed {
             assert!(
                 eval_str(&format!("(set-face \"{name}\" \"red\")"), &env, &ctx).is_ok(),
@@ -167,7 +256,13 @@ mod tests {
             eval_str("(set-face 'region nil nil '(\"bolder\"))", &env, &ctx).is_err(),
             "and so should a mistyped attribute"
         );
-        assert!(eval_str("(set-face 'nonesuch \"red\")", &env, &ctx).is_err());
+        // An unknown *face* name is no longer an error: naming one is how a
+        // face comes to exist. A colour and an attribute still are, because
+        // there is a fixed set of each and nothing a typo could be defining.
+        assert!(
+            eval_str("(set-face 'nonesuch \"red\")", &env, &ctx).is_ok(),
+            "the face set is open -- see `Face`"
+        );
     }
 
     // ---------------- binding faces from Lisp ----------------
@@ -182,7 +277,7 @@ mod tests {
         )
         .expect("set-face");
 
-        let style = ctx.face_style(Face::Region);
+        let style = ctx.face_style(Face::REGION);
         assert_eq!(style.fg, Some(Color::rgb(0xf8, 0xf8, 0xf2)));
         assert_eq!(style.bg, Some(Color::rgb(0x3a, 0x5f, 0xcd)));
         assert!(style.bold && style.underline);
@@ -204,7 +299,7 @@ mod tests {
         let (ctx, env) = editor();
         eval_str("(set-face 'region nil nil '(\"reverse\"))", &env, &ctx).expect("set-face");
 
-        let style = ctx.face_style(Face::Region);
+        let style = ctx.face_style(Face::REGION);
         assert_eq!((style.fg, style.bg), (None, None));
         assert!(style.reverse);
     }
@@ -216,7 +311,7 @@ mod tests {
         let (ctx, env) = editor();
         eval_str("(set-face 'region \"\" \"blue\")", &env, &ctx).expect("set-face");
 
-        let style = ctx.face_style(Face::Region);
+        let style = ctx.face_style(Face::REGION);
         assert_eq!(style.fg, None, "an empty foreground is not an error");
         assert_eq!(style.bg, Some(Color::BLUE));
     }
@@ -225,9 +320,9 @@ mod tests {
     fn faces_are_named_by_string_or_symbol_alike() {
         let (ctx, env) = editor();
         eval_str("(set-face \"comment\" \"green\")", &env, &ctx).expect("by string");
-        assert_eq!(ctx.face_style(Face::Comment).fg, Some(Color::GREEN));
+        assert_eq!(ctx.face_style(Face::COMMENT).fg, Some(Color::GREEN));
         eval_str("(set-face 'comment \"blue\")", &env, &ctx).expect("by symbol");
-        assert_eq!(ctx.face_style(Face::Comment).fg, Some(Color::BLUE));
+        assert_eq!(ctx.face_style(Face::COMMENT).fg, Some(Color::BLUE));
     }
 
     // ---------------- defaults ----------------
@@ -238,7 +333,7 @@ mod tests {
     #[test]
     fn the_region_defaults_to_reverse_video_and_no_colour() {
         let (ctx, _env) = editor();
-        let style = ctx.face_style(Face::Region);
+        let style = ctx.face_style(Face::REGION);
         assert!(style.reverse);
         assert_eq!((style.fg, style.bg), (None, None));
     }
@@ -250,12 +345,12 @@ mod tests {
     fn the_syntax_defaults_are_conventional_colours() {
         let theme = Theme::default();
         for face in [
-            Face::Keyword,
-            Face::Type,
-            Face::String,
-            Face::Comment,
-            Face::Function,
-            Face::Builtin,
+            Face::KEYWORD,
+            Face::TYPE,
+            Face::STRING,
+            Face::COMMENT,
+            Face::FUNCTION,
+            Face::BUILTIN,
         ] {
             assert!(
                 NAMED_COLORS
@@ -266,7 +361,7 @@ mod tests {
             );
         }
         assert!(
-            theme.style(Face::Default).is_plain(),
+            theme.style(Face::DEFAULT).is_plain(),
             "the default face must ask for nothing, so ordinary text is drawn \
              exactly as it was before any of this existed"
         );
@@ -280,18 +375,18 @@ mod tests {
     fn a_snapshot_carries_the_theme_as_it_stood() {
         let (ctx, env) = editor();
         let before = ctx.snapshot(&env, 80, 24);
-        assert!(before.theme.style(Face::Region).reverse);
+        assert!(before.theme.style(Face::REGION).reverse);
 
         eval_str("(set-face 'region \"red\" nil nil)", &env, &ctx).expect("restyle");
         let after = ctx.snapshot(&env, 80, 24);
 
         assert_eq!(
-            after.theme.style(Face::Region).fg,
+            after.theme.style(Face::REGION).fg,
             Some(Color::RED),
             "a new frame should see the new theme"
         );
         assert!(
-            before.theme.style(Face::Region).reverse,
+            before.theme.style(Face::REGION).reverse,
             "and the old frame should still describe the colours it was \
              composed under"
         );

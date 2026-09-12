@@ -455,7 +455,7 @@ pub fn region_highlights<B: BufferTrait>(
             row: line - win.scroll_y,
             start_col: from,
             end_col: to,
-            face: Face::Region,
+            face: Face::REGION,
         });
     }
     highlights

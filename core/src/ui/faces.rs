@@ -40,80 +40,161 @@
 //! a face nothing else has, and not before.
 
 /// A thing that can be drawn differently, named rather than coloured.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Face {
-    Default,
-    /// The active region, between mark and point.
-    Region,
-    /// The status line under the focused window.
-    ModeLine,
-    /// The status line under any other window.
-    ModeLineInactive,
-    WindowSeparator,
-    Keyword,
-    Type,
-    String,
-    Comment,
-    Function,
-    Builtin,
-}
+///
+/// # Why this is an interned name and not an enum
+///
+/// It was an enum, and that was right while the set was closed: the region, the
+/// mode line, and the handful of kinds a syntax rule could name. A *grammar*
+/// breaks that. Every language wants faces nothing else does -- a macro, an
+/// attribute, a doc comment, an operator -- and a closed enum makes each of
+/// them a change to this file, a change every frontend recompiles for, and a
+/// decision someone has to ask permission for.
+///
+/// So a face is now a **name**, interned to a small integer. `(set-face
+/// 'rust-attribute "yellow" nil)` defines one, and nothing in Rust had to know
+/// it was coming.
+///
+/// # Why an integer rather than the name itself
+///
+/// A `Face` is copied into every [`Highlight`], of which a coloured screen has
+/// hundreds, and looked up in a [`Theme`] for each one. An integer keeps the
+/// highlight small and the lookup an array index; the string is paid for once,
+/// when the face is first named.
+///
+/// [`Highlight`]: crate::ui::Highlight
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Face(u16);
+
+/// The names of every face interned so far, indexed by id.
+///
+/// # Why this is global
+///
+/// A face is a name, and a name means the same thing everywhere -- `keyword` in
+/// one buffer is `keyword` in another, and a `Theme` is per-editor precisely so
+/// that the *style* can differ while the face does not. Threading a registry
+/// through `Highlight`, `SyntaxRule` and `Theme` would put a context on three
+/// types that have no other use for one, to describe something that never
+/// varies.
+///
+/// It only ever grows, and only by the names Lisp mentions, so it is bounded by
+/// the configuration rather than by anything the editor does at runtime.
+static FACE_NAMES: std::sync::LazyLock<std::sync::RwLock<Vec<std::sync::Arc<str>>>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::RwLock::new(
+            Face::BUILT_IN
+                .iter()
+                .map(|(_, name)| (*name).into())
+                .collect(),
+        )
+    });
 
 impl Face {
-    /// Every face, in theme order. The array and [`Self::index`] have to agree;
-    /// `faces_are_indexed_consistently` in the tests is what checks they do.
-    pub const ALL: [Face; 11] = [
-        Face::Default,
-        Face::Region,
-        Face::ModeLine,
-        Face::ModeLineInactive,
-        Face::WindowSeparator,
-        Face::Keyword,
-        Face::Type,
-        Face::String,
-        Face::Comment,
-        Face::Function,
-        Face::Builtin,
+    /// Text with nothing said about it.
+    pub const DEFAULT: Face = Face(0);
+    /// The active region, between mark and point.
+    pub const REGION: Face = Face(1);
+    /// The status line under the focused window.
+    pub const MODE_LINE: Face = Face(2);
+    /// The status line under any other window.
+    pub const MODE_LINE_INACTIVE: Face = Face(3);
+    /// The rule between two windows sitting side by side.
+    pub const WINDOW_SEPARATOR: Face = Face(4);
+    pub const KEYWORD: Face = Face(5);
+    pub const TYPE: Face = Face(6);
+    pub const STRING: Face = Face(7);
+    pub const COMMENT: Face = Face(8);
+    pub const FUNCTION: Face = Face(9);
+    pub const BUILTIN: Face = Face(10);
+
+    /// The faces the editor names itself, with the ids they are interned at.
+    ///
+    /// These are pre-interned so that Rust can refer to them as constants: the
+    /// region code says [`Face::REGION`] without asking a registry, and the ids
+    /// are fixed because this array is what fills the registry to begin with.
+    /// The order and the constants above have to agree, and
+    /// `built_in_faces_are_interned_at_their_own_ids` in the tests is what
+    /// checks they do.
+    pub const BUILT_IN: [(Face, &'static str); 11] = [
+        (Face::DEFAULT, "default"),
+        (Face::REGION, "region"),
+        (Face::MODE_LINE, "mode-line"),
+        (Face::MODE_LINE_INACTIVE, "mode-line-inactive"),
+        (Face::WINDOW_SEPARATOR, "window-separator"),
+        (Face::KEYWORD, "keyword"),
+        (Face::TYPE, "type"),
+        (Face::STRING, "string"),
+        (Face::COMMENT, "comment"),
+        (Face::FUNCTION, "function"),
+        (Face::BUILTIN, "builtin"),
     ];
+
+    /// The face called NAME, defining it if nothing has named it yet.
+    ///
+    /// Defining-on-use is the point: a grammar written in Lisp names the faces
+    /// it wants and they exist. A name nobody styles is inert rather than an
+    /// error, which is the same outcome a misspelt face had when the set was
+    /// closed -- except that the name survives, so `list-faces` shows it and
+    /// the mistake is visible.
+    pub fn intern(name: &str) -> Face {
+        // The write lock is taken even to answer "already known", rather than
+        // checking under a read lock first and taking the write lock only on a
+        // miss. That would be two checks doing one job -- and the second would
+        // still have to be there, since two threads could both miss the first.
+        // Interning happens when configuration is read and a grammar is
+        // defined, never while drawing, so there is nothing here to optimise.
+        let mut names = FACE_NAMES
+            .write()
+            .expect("Failed to acquire write lock on the face registry");
+        if let Some(id) = names.iter().position(|known| &**known == name) {
+            return Face(id as u16);
+        }
+        names.push(name.into());
+        Face((names.len() - 1) as u16)
+    }
+
+    /// The face called NAME, or `None` if nothing has named it.
+    ///
+    /// A linear scan, deliberately: naming a face happens when configuration is
+    /// read and a grammar is defined, never while drawing, and a few dozen
+    /// short strings are quicker to walk than to hash.
+    pub fn named(name: &str) -> Option<Face> {
+        FACE_NAMES
+            .read()
+            .expect("Failed to acquire read lock on the face registry")
+            .iter()
+            .position(|known| &**known == name)
+            .map(|id| Face(id as u16))
+    }
 
     /// The name Lisp uses for this face, in `set-face` and `add-syntax-rule`.
     ///
     /// One mapping, used by both, so a face a syntax rule can name is a face a
     /// theme can style. They used to be separate lists, and `region` was in
     /// neither.
-    pub const fn name(&self) -> &'static str {
-        match self {
-            Face::Default => "default",
-            Face::Region => "region",
-            Face::ModeLine => "mode-line",
-            Face::ModeLineInactive => "mode-line-inactive",
-            Face::WindowSeparator => "window-separator",
-            Face::Keyword => "keyword",
-            Face::Type => "type",
-            Face::String => "string",
-            Face::Comment => "comment",
-            Face::Function => "function",
-            Face::Builtin => "builtin",
-        }
+    pub fn name(self) -> std::sync::Arc<str> {
+        FACE_NAMES
+            .read()
+            .expect("Failed to acquire read lock on the face registry")
+            .get(self.index())
+            .cloned()
+            // Only reachable for a `Face` built by hand out of a raw id, which
+            // nothing outside this module can do.
+            .unwrap_or_else(|| "default".into())
     }
 
-    pub fn from_name(name: &str) -> Option<Face> {
-        Face::ALL.into_iter().find(|face| face.name() == name)
+    /// Every face named so far, built-ins first and then in the order they were
+    /// defined.
+    pub fn all() -> Vec<Face> {
+        let count = FACE_NAMES
+            .read()
+            .expect("Failed to acquire read lock on the face registry")
+            .len();
+        (0..count as u16).map(Face).collect()
     }
 
-    const fn index(&self) -> usize {
-        match self {
-            Face::Default => 0,
-            Face::Region => 1,
-            Face::ModeLine => 2,
-            Face::ModeLineInactive => 3,
-            Face::WindowSeparator => 4,
-            Face::Keyword => 5,
-            Face::Type => 6,
-            Face::String => 7,
-            Face::Comment => 8,
-            Face::Function => 9,
-            Face::Builtin => 10,
-        }
+    /// Where this face sits in a [`Theme`].
+    pub fn index(self) -> usize {
+        self.0 as usize
     }
 }
 
@@ -289,27 +370,41 @@ impl Style {
 
 /// The style bound to each face.
 ///
-/// A fixed array rather than a map: the face set is closed and small, so a
-/// lookup is an index, a clone is a memcpy of a couple of hundred bytes, and
-/// the whole theme can be copied into a frame snapshot without allocating.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A `Vec` indexed by face id rather than a map: ids are dense and small, so a
+/// lookup stays an array index even though the face set is now open. A face
+/// beyond the end is simply unstyled, which is what lets a grammar name a face
+/// nobody has themed without every lookup having to check first.
+///
+/// Cloned into each frame snapshot. That is one allocation per frame where it
+/// used to be a memcpy -- worth watching in the perf suite rather than assuming
+/// either way, and worth an `Arc` if it ever shows up there.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Theme {
-    styles: [Style; Face::ALL.len()],
+    styles: Vec<Style>,
 }
 
 impl Theme {
     pub fn style(&self, face: Face) -> Style {
-        self.styles[face.index()]
+        self.styles
+            .get(face.index())
+            .copied()
+            .unwrap_or_else(Style::plain)
     }
 
     pub fn set(&mut self, face: Face, style: Style) {
+        if self.styles.len() <= face.index() {
+            self.styles.resize(face.index() + 1, Style::plain());
+        }
         self.styles[face.index()] = style;
     }
 
-    /// Every face and its style, in theme order -- for `list-faces` and for
+    /// Every face and its style, in id order -- for `list-faces` and for
     /// anything that wants to show the user what is bound.
     pub fn bindings(&self) -> Vec<(Face, Style)> {
-        Face::ALL.into_iter().map(|f| (f, self.style(f))).collect()
+        Face::all()
+            .into_iter()
+            .map(|f| (f, self.style(f)))
+            .collect()
     }
 }
 
@@ -318,33 +413,47 @@ impl Default for Theme {
     /// the palette slot of the same name -- and the region uses reverse video,
     /// which needs no colour decision at all and so cannot clash with one.
     fn default() -> Self {
-        let mut styles = [Style::plain(); Face::ALL.len()];
-        styles[Face::Region.index()] = Style {
-            reverse: true,
-            ..Style::plain()
+        let mut theme = Theme {
+            styles: vec![Style::plain(); Face::BUILT_IN.len()],
         };
+        theme.set(
+            Face::REGION,
+            Style {
+                reverse: true,
+                ..Style::plain()
+            },
+        );
         // Reverse video for the same reason the region uses it: a status bar
         // has to be visible against a background this code cannot know.
-        styles[Face::ModeLine.index()] = Style {
-            reverse: true,
-            ..Style::plain()
-        };
+        theme.set(
+            Face::MODE_LINE,
+            Style {
+                reverse: true,
+                ..Style::plain()
+            },
+        );
         // Distinguishable without being another colour decision -- an
         // unfocused window's status line is present but not competing.
-        styles[Face::ModeLineInactive.index()] = Style {
-            reverse: true,
-            fg: Some(Color::BRIGHT_BLACK),
-            ..Style::plain()
-        };
-        styles[Face::Keyword.index()] = Style::fg(Color::MAGENTA);
-        styles[Face::Type.index()] = Style::fg(Color::YELLOW);
-        styles[Face::String.index()] = Style::fg(Color::GREEN);
-        styles[Face::Comment.index()] = Style {
-            italic: true,
-            ..Style::fg(Color::BRIGHT_BLACK)
-        };
-        styles[Face::Function.index()] = Style::fg(Color::CYAN);
-        styles[Face::Builtin.index()] = Style::fg(Color::BLUE);
-        Self { styles }
+        theme.set(
+            Face::MODE_LINE_INACTIVE,
+            Style {
+                reverse: true,
+                fg: Some(Color::BRIGHT_BLACK),
+                ..Style::plain()
+            },
+        );
+        theme.set(Face::KEYWORD, Style::fg(Color::MAGENTA));
+        theme.set(Face::TYPE, Style::fg(Color::YELLOW));
+        theme.set(Face::STRING, Style::fg(Color::GREEN));
+        theme.set(
+            Face::COMMENT,
+            Style {
+                italic: true,
+                ..Style::fg(Color::BRIGHT_BLACK)
+            },
+        );
+        theme.set(Face::FUNCTION, Style::fg(Color::CYAN));
+        theme.set(Face::BUILTIN, Style::fg(Color::BLUE));
+        theme
     }
 }
