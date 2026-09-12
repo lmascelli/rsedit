@@ -523,4 +523,45 @@ pub fn install_primitives<B: BufferTrait>(
         buffers::clear_buffer,
         buffers::CLEAR_BUFFER_DOC
     );
+    insert_fn!(
+        "with-current-buffer",
+        buffers::with_current_buffer,
+        buffers::WITH_CURRENT_BUFFER_DOC
+    );
+
+    // Point as a number. Plain functions rather than commands: nothing is
+    // usefully reached by typing `M-x point', and everything that moves point
+    // by a described amount -- a word, a line -- already is a command.
+    insert_fn!("point", edits::point, edits::POINT_DOC);
+    insert_fn!("point-min", edits::point_min, edits::POINT_MIN_DOC);
+    insert_fn!("point-max", edits::point_max, edits::POINT_MAX_DOC);
+    insert_fn!("goto-char", edits::goto_char, edits::GOTO_CHAR_DOC);
+
+    // Incremental search. The four entry points are commands so that M-x
+    // reaches them; the keys that answer the prompt are installed with
+    // `isearch-mode` itself -- see `crate::isearch`.
+    insert_cmd!(
+        "isearch-forward",
+        crate::isearch::isearch_forward,
+        [] as [&str; 0],
+        crate::isearch::ISEARCH_FORWARD_DOC
+    );
+    insert_cmd!(
+        "isearch-backward",
+        crate::isearch::isearch_backward,
+        [] as [&str; 0],
+        crate::isearch::ISEARCH_BACKWARD_DOC
+    );
+    insert_cmd!(
+        "isearch-forward-regexp",
+        crate::isearch::isearch_forward_regexp,
+        [] as [&str; 0],
+        crate::isearch::ISEARCH_FORWARD_REGEXP_DOC
+    );
+    insert_cmd!(
+        "isearch-backward-regexp",
+        crate::isearch::isearch_backward_regexp,
+        [] as [&str; 0],
+        crate::isearch::ISEARCH_BACKWARD_REGEXP_DOC
+    );
 }

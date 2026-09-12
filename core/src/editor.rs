@@ -2,6 +2,7 @@ use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
     input::{KeyCode, KeyEvent, Keymap, describe_keys, fill_default_keymaps},
+    isearch::install_isearch,
     kill_ring::{Direction, KillRing},
     lisp::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
@@ -10,6 +11,7 @@ use crate::{
     modes::MajorMode,
     primitives::install_primitives,
     commands::{ArgSpec, CommandRegistry, Invocation, PendingCommand, PrefixArg},
+    search::Isearch,
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
         Face, FloatingWindow, FrameSnapshot, LayoutNode, Orientation, Rect, RenderableWindowView,
@@ -237,6 +239,10 @@ pub struct EditorState<B: BufferTrait> {
     logs: Arc<RwLock<Vec<String>>>,
     /// If some, is the file where the logs will be written into
     log_file: Option<Arc<RwLock<File>>>,
+    /// The incremental search currently running, between one keystroke and the
+    /// next. See `crate::search::Isearch`.
+    isearch: Arc<RwLock<Option<Isearch>>>,
+
     /// The call stack, as maintained by `LispContext::push_call_frame` /
     /// `pop_call_frame` (see their docs for the exact protocol). Frozen at
     /// its state at the moment of the most recent uncaught error until
@@ -368,6 +374,7 @@ impl<B: BufferTrait> EditorState<B> {
             fuel: Arc::new(FuelMeter::new(DEFAULT_FUEL)),
             logs: Arc::new(RwLock::new(Vec::new())),
             log_file: None,
+            isearch: Arc::new(RwLock::new(None)),
             call_stack: Arc::new(RwLock::new(Vec::new())),
         };
         BackgroundScheduler::spawn(receiver, editor_state.clone());
@@ -772,6 +779,39 @@ impl<B: BufferTrait> EditorState<B> {
         // argument is finished, even though it has not been used yet.
         *reading = false;
         false
+    }
+
+    /// Start, or continue, an incremental search.
+    pub(crate) fn begin_isearch(&self, session: Isearch) {
+        *self
+            .isearch
+            .write()
+            .expect("Failed to acquire write lock on isearch") = Some(session);
+    }
+
+    /// Take the running search *out* of the editor, leaving none behind.
+    ///
+    /// Out rather than borrowed, because acting on a session means taking
+    /// buffer locks and moving point. Handing a `&mut` to a closure would mean
+    /// holding this lock across all of that, putting an ordering between it and
+    /// the buffers that nothing else in the editor respects. Taking it out owes
+    /// no ordering to anything -- the caller puts it back with
+    /// [`Self::begin_isearch`] when the search continues, and simply drops it
+    /// when it does not.
+    pub(crate) fn take_isearch(&self) -> Option<Isearch> {
+        self.isearch
+            .write()
+            .expect("Failed to acquire write lock on isearch")
+            .take()
+    }
+
+    /// Whether an incremental search is running. Only for reporting -- anything
+    /// that acts on the session takes it.
+    pub(crate) fn isearch_active(&self) -> bool {
+        self.isearch
+            .read()
+            .expect("Failed to acquire read lock on isearch")
+            .is_some()
     }
 
     /// The argument waiting for the next command, if any.
@@ -1910,6 +1950,24 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on current_buffer_name") = Arc::from(name);
     }
 
+    /// Make NAME the current buffer without showing it, and give back whatever
+    /// was current before.
+    ///
+    /// This is Emacs' `set-buffer`, and the difference from `switch-to-buffer`
+    /// is the whole reason it exists: that one also points the focused window
+    /// at the buffer, which is right when a person asked to see it and wrong
+    /// when a piece of Lisp merely wants to *act* on it. Rebinding the window
+    /// for the duration of a computation and putting it back would be a window
+    /// doing something nobody asked for.
+    ///
+    /// Returns `None` when there is no such buffer, having changed nothing.
+    pub(crate) fn set_current_buffer(&self, name: &str) -> Option<Arc<str>> {
+        self.get_buffer(name)?;
+        let previous = self.current_buffer_name_shared();
+        self.set_current_buffer_name(name);
+        Some(previous)
+    }
+
     /// Returns an Arc reference to the current buffer
     pub(crate) fn get_current_buffer(&self) -> Arc<RwLock<Buffer<B>>> {
         self.buffers
@@ -2051,6 +2109,7 @@ pub fn create_global_env<B: BufferTrait>()
     // ---------------------- FILLING PRIMITIVE FUNCTIONS -----------------------------
     install_primitives(&editor_state, &env);
     install_minibuffer(&editor_state, env.clone());
+    install_isearch(&editor_state, env.clone());
 
     // --------------------- LOADING LISP CONFIGURATION -------------------------------
     // Set the `rsedit-path' env variable to the path of rsedit

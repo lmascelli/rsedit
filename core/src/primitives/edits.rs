@@ -738,3 +738,83 @@ primitive!(set_undo_limit, args, _env, ctx, {
     ctx.mutate_buffer(ctx.get_current_buffer(), |buf| buf.undo.set_limit(limit));
     Ok(ELispExp::nil())
 });
+
+// ---------------------------------------------------------------------------
+// Point, as a number
+// ---------------------------------------------------------------------------
+//
+// Everything above moves point by *describing* the move -- a character, a word,
+// a line. That covers editing, and it is useless to anything that has computed
+// a position and simply wants to go there: a search result, a saved place, a
+// jump back to where a command started. These three are that missing half, and
+// they are counted in characters because point, mark, the region and the undo
+// history all are.
+
+pub const POINT_DOC: &str = "(point): Return the position of point in the current buffer, as a \
+         character offset from the beginning. The first position is 0.\n\n\
+         Example:\n\
+         (point) => 42";
+
+primitive!(point, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let buf = buf.read().expect("read lock on buffer");
+    Ok(ELispExp::number(buf.text.cursor_pos_1d() as f64))
+});
+
+pub const POINT_MIN_DOC: &str = "(point-min): Return the first position in the current buffer, \
+         which is always 0. Present so that code walking a buffer can name both ends rather than \
+         writing one of them as a literal.";
+
+primitive!(point_min, _args, _env, _ctx, { Ok(ELispExp::number(0.0)) });
+
+pub const POINT_MAX_DOC: &str = "(point-max): Return the position just past the last character of \
+         the current buffer -- the position `point' reaches at the end of the text.\n\n\
+         Example:\n\
+         (goto-char (point-max))   ; to the end";
+
+primitive!(point_max, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let buf = buf.read().expect("read lock on buffer");
+    Ok(ELispExp::number(buf.text.len() as f64))
+});
+
+pub const GOTO_CHAR_DOC: &str = "(goto-char POSITION): Move point to POSITION, a character offset \
+         from the beginning of the buffer, and return where it ended up.\n\n\
+         POSITION is clamped to the buffer rather than refused, so a position \
+         computed before an edit still lands somewhere sensible afterwards \
+         instead of failing.\n\n\
+         Example:\n\
+         (goto-char 0)             ; to the beginning\n\
+         (goto-char (point-max))   ; to the end";
+
+primitive!(goto_char, args, _env, ctx, {
+    let requested = match args.first() {
+        Some(ELispExp::Number(n)) => *n,
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Number".into(),
+                got: other.clone(),
+            });
+        }
+        None => {
+            return Err(EvalError::WrongNumberOfArguments {
+                expected: 1,
+                got: 0,
+            });
+        }
+    };
+    Ok(ELispExp::number(ctx.mutate_buffer(
+        ctx.get_current_buffer(),
+        |buf| {
+            // Clamped at both ends: a negative offset is the beginning, and
+            // anything past the text is the end. A position outside the buffer
+            // is almost always one computed before an edit, and putting point
+            // somewhere real is more useful than refusing.
+            let target = requested.max(0.0) as usize;
+            let target = target.min(buf.text.len());
+            let (line, col) = buf.text.cursor_1d_to_2d(target);
+            buf.text.cursor_move(line, col);
+            target as f64
+        },
+    )))
+});

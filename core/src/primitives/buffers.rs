@@ -145,3 +145,44 @@ primitive!(switch_to_buffer, args, _env, ctx, {
         }
     }
 });
+
+pub const WITH_CURRENT_BUFFER_DOC: &str = "(with-current-buffer NAME FUNCTION): Call FUNCTION with \
+         no arguments while NAME is the current buffer, then make whatever was current before \
+         current again -- whether FUNCTION returned or signalled. Returns what FUNCTION returned.\n\n\
+         The buffer is made current without being *shown*: no window changes, so this is for code \
+         that wants to act on a buffer rather than take the user to it.\n\n\
+         Signals if there is no buffer called NAME.\n\n\
+         Unlike Emacs Lisp's macro of the same name, this takes a function rather than a body, \
+         because a primitive receives its arguments already evaluated. Wrap the body in a lambda:\n\n\
+         Example:\n\
+         (with-current-buffer \"notes.txt\" (lambda () (buffer-string)))";
+
+primitive!(with_current_buffer, args, env, ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let name = match &args[0] {
+        ELispExp::String(name) | ELispExp::Symbol(name) => name.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let Some(previous) = ctx.set_current_buffer(&name) else {
+        return Err(EvalError::RuntimeMessage(format!("No such buffer: {name}")));
+    };
+
+    // The call is not allowed to leave the editor pointing somewhere the caller
+    // did not ask for, so the result is caught rather than propagated with `?`
+    // and the buffer is put back either way. An error that escaped here would
+    // strand every later command on whatever buffer this one happened to be
+    // visiting.
+    let result = crate::lisp::call_callable(&args[1], &[], env.clone(), ctx);
+    ctx.set_current_buffer(&previous);
+    result
+});

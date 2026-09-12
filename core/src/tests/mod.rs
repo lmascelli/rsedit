@@ -6,6 +6,7 @@ mod deletion_tests;
 mod echo_tests;
 mod frame_snapshot_tests;
 mod fuel_tests;
+mod isearch_tests;
 mod minibuffer_lisp_tests;
 mod mode_line_tests;
 mod movement_tests;

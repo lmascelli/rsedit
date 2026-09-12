@@ -183,18 +183,28 @@ primitive!(minibuffer_complete, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-const DEFAULT_MINIBUFFER_PROMPT_DOC: &str = "(default-minibuffer-prompt PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL): The \
-         built-in *minibuffer-read-function*: a floating window docked to the \
-         bottom 3 lines of the frame, titled PROMPT. Not normally called \
+const DEFAULT_MINIBUFFER_PROMPT_DOC: &str = "(default-minibuffer-prompt PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL \
+         &optional MODE): The built-in *minibuffer-read-function*: a floating \
+         window docked to the bottom 3 lines of the frame, titled PROMPT, in \
+         major mode MODE (default `minibuffer-mode'). Not normally called \
          directly -- see `minibuffer-read'.";
 
 primitive!(default_minibuffer_prompt, args, env, ctx, {
-    if args.len() != 4 {
+    if !(4..=5).contains(&args.len()) {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 4,
             got: args.len(),
         });
     }
+    // The mode the prompt's buffer opens in. Defaults to `minibuffer-mode`,
+    // which is what gives it Return, Escape and Tab; a caller that wants the
+    // prompt to behave differently -- incremental search, whose keys mean
+    // something else entirely -- names its own mode instead of reimplementing
+    // the prompt.
+    let mode = match args.get(4) {
+        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => name.to_string(),
+        _ => "minibuffer-mode".to_string(),
+    };
     let title = if let ELispExp::String(s) = &args[0] {
         Some(s.to_string())
     } else {
@@ -228,13 +238,13 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
         (frame_width - 2.0) as usize,
         3,
         title,
-        Some("minibuffer-mode".into()),
+        Some(mode),
     );
 
     Ok(ELispExp::t())
 });
 
-const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL): \
+const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL &optional MODE): \
          Read a line of input from the user via a minibuffer prompt. PROMPT \
          is shown as the window's title. ON-CONFIRM is called with the final \
          input string when the user presses Return. ON-CHANGE, if non-nil, \
@@ -242,6 +252,11 @@ const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE 
          Tab, and must return a list of completion candidate strings; \
          repeated Tab presses cycle through them. ON-CANCEL, if non-nil, is \
          called with no arguments when the user presses Escape.\n\n\
+         MODE, if given, is the major mode the prompt's buffer opens in, and \
+         therefore which keymap answers keys typed into it. It defaults to \
+         `minibuffer-mode'. A prompt whose keys mean something other than \
+         \"edit a line of text\" -- incremental search is the one in the tree \
+         -- names its own mode here rather than reimplementing the prompt.\n\n\
          Which implementation actually runs is controlled by \
          *minibuffer-read-function* -- rebind it to replace the built-in \
          minibuffer with a custom implementation; every caller of \
@@ -250,7 +265,7 @@ const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE 
          (minibuffer-read \"Eval:\" 'my-on-confirm nil nil)";
 
 primitive!(minibuffer_read, args, env, ctx, {
-    if args.len() != 4 {
+    if !(4..=5).contains(&args.len()) {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 4,
             got: args.len(),
@@ -318,6 +333,14 @@ pub fn install_minibuffer<B: BufferTrait>(
     minibuffer_mode.keymaps.insert_key(
         KeyEvent::new(KeyCode::Tab),
         ELispExp::symbol("minibuffer-complete".into()),
+    );
+    // Correcting a typo is part of reading a line of input, so it is bound
+    // here with the rest of the prompt's mechanics rather than left to the
+    // global map -- where it lives in a `.lisp` file that can fail to load.
+    // Without it a mistyped prompt can only be abandoned and started again.
+    minibuffer_mode.keymaps.insert_key(
+        KeyEvent::new(KeyCode::Backspace),
+        ELispExp::symbol("delete-backward-char".into()),
     );
     minibuffer_mode.hooks.insert(
         "after-close-hook".into(),
