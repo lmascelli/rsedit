@@ -29,7 +29,7 @@ use utils::{
 
 mod base_env;
 mod handshake;
-pub use base_env::{call_callable, lisp_display, setup_base_env};
+pub use base_env::{call_callable, setup_base_env};
 pub use handshake::bootstrap_vm;
 
 #[cfg(test)]

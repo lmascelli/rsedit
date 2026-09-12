@@ -222,9 +222,42 @@ impl<'source> Parser<'source> {
                         self.token.push(*c);
                     }
                 },
+                // An escape inside a string.
+                //
+                // The named ones are the characters that cannot otherwise be
+                // written: without `\n` a string cannot contain a newline at
+                // all, so no module could build so much as a two-line
+                // listing.
+                //
+                // Everything else keeps its backslash rather than being
+                // rejected or silently eaten, because the regular expressions
+                // the syntax rules are written out of are full of escapes that
+                // mean something to `regex` and nothing here -- `\b`, `\s`,
+                // `\.`. Passing those through is what lets a grammar be
+                // written with single backslashes as well as doubled ones.
                 ParserLexerState::InStringSlash => match c {
                     '"' | '\\' => {
                         self.token.push(*c);
+                        self.lexer_state = ParserLexerState::InString;
+                    }
+                    'n' => {
+                        self.token.push('\n');
+                        self.lexer_state = ParserLexerState::InString;
+                    }
+                    't' => {
+                        self.token.push('\t');
+                        self.lexer_state = ParserLexerState::InString;
+                    }
+                    'r' => {
+                        self.token.push('\r');
+                        self.lexer_state = ParserLexerState::InString;
+                    }
+                    'e' => {
+                        self.token.push('\u{1b}');
+                        self.lexer_state = ParserLexerState::InString;
+                    }
+                    '0' => {
+                        self.token.push('\0');
                         self.lexer_state = ParserLexerState::InString;
                     }
                     _ => {

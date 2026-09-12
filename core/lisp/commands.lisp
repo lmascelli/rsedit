@@ -41,4 +41,17 @@ Example:
   (and (<= (length prefix) (length s))
        (string= prefix (substring s 0 (length prefix)))))
 
+(defun string-suffix-p (suffix s)
+  "Return t if S ends with SUFFIX.
+
+The length test states the precondition rather than earning its keep: this
+`substring' clamps an out-of-range index instead of complaining -- (substring
+\"abc\" -1) is \"c\" and (substring \"abc\" 5) is \"\" -- so a SUFFIX longer than S
+would come out as nil anyway, by luck rather than by reasoning. Written the
+same way as `string-prefix-p' above, and for the same reason: the day
+`substring' is made to complain about a range that is not there, neither of
+these should be what breaks."
+  (and (<= (length suffix) (length s))
+       (string= suffix (substring s (- (length s) (length suffix))))))
+
 (log "End of the commands.lisp")

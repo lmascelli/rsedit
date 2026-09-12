@@ -269,6 +269,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 mark: None,
                 version: 0,
                 syntax: Default::default(),
+                read_only: false,
             })),
         );
     }

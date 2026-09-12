@@ -137,12 +137,56 @@ mod test {
         assert_eq!(
             tokens,
             vec![
-                // Note: Your current InStringSlash logic doesn't handle \n yet,
-                // it just pushes the \ and the n.
-                Token::String("line1\\nline2".into()),
+                Token::String("line1\nline2".into()),
                 Token::String("quote: \" ".into()),
                 Token::String("".into()), // Empty string
             ]
+        );
+    }
+
+    /// The named escapes, which are the characters a string has no other way
+    /// to contain.
+    #[test]
+    fn the_named_escapes_become_the_characters_they_name() {
+        let input = r#" "a\nb" "a\tb" "a\rb" "a\0b" "a\eb" "#;
+        assert_eq!(
+            lex_all(input).unwrap(),
+            vec![
+                Token::String("a\nb".into()),
+                Token::String("a\tb".into()),
+                Token::String("a\rb".into()),
+                Token::String("a\0b".into()),
+                Token::String("a\u{1b}b".into()),
+            ]
+        );
+    }
+
+    /// An escape the reader does not know keeps its backslash rather than
+    /// being eaten, because the syntax grammars are written out of regular
+    /// expressions full of escapes that mean nothing here: `\b`, `\s`, `\.`.
+    /// Dropping the backslash would turn `"\b(fn|let)"` into a rule matching
+    /// the letter b.
+    #[test]
+    fn an_unknown_escape_keeps_its_backslash() {
+        assert_eq!(
+            lex_all(r#" "\b(fn|let)" "\s*" "\." "#).unwrap(),
+            vec![
+                Token::String("\\b(fn|let)".into()),
+                Token::String("\\s*".into()),
+                Token::String("\\.".into()),
+            ]
+        );
+    }
+
+    /// A doubled backslash is one backslash, so the two ways of writing a
+    /// grammar's escapes -- `"\\b"` and `"\b"` -- still arrive as the same
+    /// pattern, and a string can still contain a literal backslash followed by
+    /// an n.
+    #[test]
+    fn a_doubled_backslash_is_one_backslash() {
+        assert_eq!(
+            lex_all(r#" "\\b" "\\n" "#).unwrap(),
+            vec![Token::String("\\b".into()), Token::String("\\n".into())]
         );
     }
 

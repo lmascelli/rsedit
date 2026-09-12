@@ -658,4 +658,53 @@ mod tests {
             "completion should not offer non-matching commands: {rendered}"
         );
     }
+
+    // ---------------- the string helpers commands.lisp ships ----------------
+    //
+    // Small enough to look obviously right and wrong often enough to be worth
+    // pinning: both are written with `substring`, which is happy to be asked
+    // for a range that is not there.
+
+    #[test]
+    fn string_prefix_and_suffix_recognise_their_own_ends() {
+        let (ctx, env) = setup();
+        for (src, expected) in [
+            (r#"(string-prefix-p "ab" "abc")"#, true),
+            (r#"(string-prefix-p "bc" "abc")"#, false),
+            (r#"(string-prefix-p "" "abc")"#, true),
+            (r#"(string-prefix-p "abc" "abc")"#, true),
+            (r#"(string-suffix-p "bc" "abc")"#, true),
+            (r#"(string-suffix-p "ab" "abc")"#, false),
+            (r#"(string-suffix-p "" "abc")"#, true),
+            (r#"(string-suffix-p "abc" "abc")"#, true),
+        ] {
+            let got = eval_str(src, &env, &ctx).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+            let want = if expected {
+                LispExp::t()
+            } else {
+                LispExp::nil()
+            };
+            assert_eq!(got, want, "{src}");
+        }
+    }
+
+    /// A needle longer than the haystack is a no, not a range error. This is
+    /// what the length test in each of them is for: without it the `substring`
+    /// is asked for a negative start, or for more characters than there are.
+    #[test]
+    fn a_prefix_or_suffix_longer_than_the_string_is_simply_absent() {
+        let (ctx, env) = setup();
+        for src in [
+            r#"(string-prefix-p "abcd" "abc")"#,
+            r#"(string-suffix-p "abcd" "abc")"#,
+            r#"(string-prefix-p "/" "")"#,
+            r#"(string-suffix-p "/" "")"#,
+        ] {
+            assert_eq!(
+                eval_str(src, &env, &ctx).unwrap_or_else(|e| panic!("{src}: {e:?}")),
+                LispExp::nil(),
+                "{src}"
+            );
+        }
+    }
 }

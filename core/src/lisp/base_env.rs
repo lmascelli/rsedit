@@ -84,7 +84,14 @@ fn format_number(n: f64) -> String {
     }
 }
 
-fn lisp_display<T: LispContext>(exp: &LispExp<T>) -> String {
+/// How a value looks to a person: a string as its own text, a symbol as its
+/// name, everything else as the reader would write it.
+///
+/// Shared so that every route from a value to the user agrees -- `format`'s
+/// `%s`, `message`, and `insert`. Two conversions would mean a number reaching
+/// the echo area and the same number reaching a buffer could disagree about
+/// whether it has a trailing `.0`.
+pub fn lisp_display<T: LispContext>(exp: &LispExp<T>) -> String {
     match exp {
         LispExp::String(s) => (**s).clone(),
         LispExp::Symbol(s) => (**s).clone(),

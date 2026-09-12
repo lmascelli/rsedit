@@ -169,12 +169,18 @@ pub const KILL_REGION_DOC: &str = "(kill-region): Delete the region and save it 
          (define-key nil \"C-w\" 'kill-region)";
 
 primitive!(kill_region, _args, _env, ctx, {
-    let text = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let killed = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
         let (start, end) = require_region(buf)?;
         let text = text_between(&buf.text, start, end);
-        edits::delete_range(buf, start, end);
-        Ok::<_, EvalError<EditorState<B>>>(text)
+        // Only what actually left the buffer reaches the ring. Saving the text
+        // of a refused kill would offer a later `yank' a copy of something
+        // that is still there.
+        let killed = edits::delete_range(buf, start, end).then_some(text);
+        Ok::<_, EvalError<EditorState<B>>>(killed)
     })?;
+    let Some(text) = killed else {
+        return Ok(edits::edited(ctx, false));
+    };
     ctx.kill(text, Direction::Forward);
     Ok(ELispExp::nil())
 });
@@ -248,11 +254,13 @@ primitive!(yank, _args, _env, ctx, {
     let Some(text) = ctx.current_kill() else {
         return Ok(ELispExp::nil());
     };
-    let at = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let inserted = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
         let at = buf.text.cursor_pos_1d();
-        edits::insert_text(buf, at, &text);
-        at
+        edits::insert_text(buf, at, &text).then_some(at)
     });
+    let Some(at) = inserted else {
+        return Ok(edits::edited(ctx, false));
+    };
     ctx.note_yank(at, text.chars().count());
     Ok(ELispExp::string(text))
 });
@@ -273,12 +281,16 @@ primitive!(yank_pop, _args, _env, ctx, {
     let Some(text) = ctx.rotate_kill_ring() else {
         return Ok(ELispExp::nil());
     };
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
         // Out then in, through the same editing layer as everything else, so
-        // one `yank-pop` is one undo step like any other command.
-        edits::delete_range(buf, at, at + len);
-        edits::insert_text(buf, at, &text);
+        // one `yank-pop` is one undo step like any other command. The second
+        // step is not attempted if the first was refused, which would leave
+        // the replacement text in a buffer the old text never left.
+        edits::delete_range(buf, at, at + len) && edits::insert_text(buf, at, &text)
     });
+    if !happened {
+        return Ok(edits::edited(ctx, false));
+    }
     ctx.note_yank(at, text.chars().count());
     Ok(ELispExp::string(text))
 });

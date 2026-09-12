@@ -11,11 +11,6 @@
 ;; what it can and can't show), and `all-logs' returns the raw log this
 ;; file's `messages-buffer-refresh' renders into a buffer.
 
-(defun debug--insert-string (s)
-  "Insert S into the current buffer, character by character. A small
-shared helper -- `self-insert' only takes one character at a time."
-  (mapc 'self-insert (split-string s "")))
-
 (defun message (fmt-string &rest args)
   "Format FMT-STRING with ARGS exactly like `format', show the result in
 the echo area, and append it to the diagnostic log (see
@@ -36,10 +31,7 @@ logged since."
   (buffer-create "*Messages*")
   (switch-to-buffer "*Messages*")
   (clear-buffer)
-  (mapc (lambda (line)
-          (debug--insert-string line)
-          (self-insert "\n"))
-        (all-logs)))
+  (mapc (lambda (line) (insert line "\n")) (all-logs)))
 
 (defun switch-to-messages ()
   "Open the *Messages* buffer, showing the diagnostic log so far."
@@ -106,15 +98,10 @@ stacking a new one on top of it. Dismissed with q or Escape."
                          (max 5 (- frame-height 6))
                          "Backtrace (q to dismiss)" 'backtrace-mode)
   (setq *backtrace-window-open* t)
-  (debug--insert-string message)
-  (insert-newline)
+  (insert message "\n")
   (if frames
-      (mapc (lambda (f)
-              (debug--insert-string (format "  at %s" f))
-              (insert-newline))
-            frames)
-      (debug--insert-string
-       "  (no call-stack frames captured -- the failure was likely in a tail call; see `backtrace's docstring)")))
+      (mapc (lambda (f) (insert "  at " f "\n")) frames)
+      (insert "  (no call-stack frames captured -- the failure was likely in a tail call; see `backtrace's docstring)")))
 
 (defun report-error (message frames)
   "The editor's default error-reporting hook -- see the comment above.

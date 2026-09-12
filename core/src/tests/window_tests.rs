@@ -494,6 +494,83 @@ mod tests {
         assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
     }
 
+    /// `find-file` and `switch-to-buffer` put the buffer in the window that
+    /// has focus.
+    ///
+    /// They used to put it in the leftmost one, whichever had focus, because
+    /// the lookup they named the focused window to ignored the id it was given
+    /// and returned the first leaf of the layout tree. With one window on
+    /// screen that is the right answer every time, which is why nothing caught
+    /// it; with two, the file opened in the window you were not looking at and
+    /// the one you were kept showing what was there before.
+    #[test]
+    fn opening_a_buffer_replaces_what_the_focused_window_shows() {
+        let (ctx, env) = editor();
+        eval_str(
+            r#"(buffer-create "left")(switch-to-buffer "left")"#,
+            &env,
+            &ctx,
+        )
+        .expect("a buffer to start from");
+        eval_str("(split-window-right)", &env, &ctx).expect("two windows");
+        eval_str("(other-window)", &env, &ctx).expect("focus the second");
+        let focused = ctx.get_focused_window_id();
+
+        eval_str(
+            r#"(buffer-create "right")(switch-to-buffer "right")"#,
+            &env,
+            &ctx,
+        )
+        .expect("switch");
+
+        let layout = ctx.layout_root.read().expect("layout");
+        let ids = layout.window_ids();
+        let other = *ids
+            .iter()
+            .find(|id| **id != focused)
+            .expect("the other window");
+        assert_eq!(
+            layout.window(focused).expect("focused window").buffer_name,
+            "right",
+            "the focused window should show what was just opened"
+        );
+        assert_eq!(
+            layout.window(other).expect("the other window").buffer_name,
+            "left",
+            "the window without focus should be left alone"
+        );
+    }
+
+    /// The same for a file, which is the way the bug was actually met: `C-x 2`,
+    /// `C-x o`, `C-x C-f`.
+    #[test]
+    fn finding_a_file_opens_it_in_the_focused_window() {
+        let (ctx, env) = editor();
+        let path = std::env::temp_dir().join(format!("rsedit-window-find-{}", std::process::id()));
+        std::fs::write(&path, "from the file").expect("write");
+
+        eval_str("(split-window-right)", &env, &ctx).expect("two windows");
+        eval_str("(other-window)", &env, &ctx).expect("focus the second");
+        let focused = ctx.get_focused_window_id();
+        eval_str(&format!(r#"(find-file "{}")"#, path.display()), &env, &ctx).expect("find-file");
+
+        let opened = {
+            let layout = ctx.layout_root.read().expect("layout");
+            let ids = layout.window_ids();
+            let other = *ids.iter().find(|id| **id != focused).expect("the other");
+            let focused_name = layout.window(focused).expect("focused").buffer_name.clone();
+            let other_name = layout.window(other).expect("other").buffer_name.clone();
+            (focused_name, other_name)
+        };
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(opened.0, ctx.get_current_buffer_name());
+        assert_eq!(
+            opened.1, "*scratch*",
+            "the window without focus should still show what it did"
+        );
+    }
+
     // ---------------- the rule between windows ----------------
 
     /// Without this column the last character of a line on the left and the

@@ -580,15 +580,7 @@ impl<B: BufferTrait> EditorState<B> {
                         .expect("Failed to get write lock on buffers");
                     buffers_lock.insert(name.to_string(), Arc::new(RwLock::new(new_buf)));
 
-                    self.set_current_buffer_name(name);
-                    if let Some(window) = self
-                        .layout_root
-                        .write()
-                        .expect("Failed to acquire write lock on layout_root")
-                        .get_window_by_id(self.get_focused_window_id())
-                    {
-                        window.buffer_name = name.to_string();
-                    }
+                    self.show_in_focused_window(name);
 
                     Some(name.to_string())
                 }
@@ -620,16 +612,39 @@ impl<B: BufferTrait> EditorState<B> {
             self.log_diagnostic(&format!("[LOG] buffer {} does not exist.", name));
             return false;
         }
+        self.show_in_focused_window(name);
+        true
+    }
+
+    /// Show the buffer named NAME in the focused window, and make it current.
+    ///
+    /// # Why this is a method and not five lines at each call site
+    ///
+    /// It is the mirror of [`EditorState::set_focused_window_id`]. That one
+    /// moves focus and brings the current buffer along; this one changes the
+    /// buffer and leaves focus where it is. Between them they are every way
+    /// the pair (focused window, current buffer) is allowed to change, and
+    /// keeping them in step is the whole job -- let them drift and the editor
+    /// draws a cursor in one window and types into another.
+    ///
+    /// It was five lines at each of three call sites, and all three named the
+    /// focused window and then edited whichever window the lookup handed back
+    /// -- which, until [`LayoutNode::window_mut`] was fixed, was the leftmost
+    /// one. Three copies is also three places for the next such bug to be
+    /// fixed in only two of.
+    fn show_in_focused_window(&self, name: &str) {
         if let Some(window) = self
             .layout_root
             .write()
             .expect("Failed to acquire write lock on layout_root")
-            .get_window_by_id(self.get_focused_window_id())
+            .window_mut(self.get_focused_window_id())
         {
             window.buffer_name = name.to_string();
         }
+        // After the layout lock is released: the current buffer name sits
+        // before the layout in the canonical order, so taking it while
+        // holding the layout would invert them.
         self.set_current_buffer_name(name);
-        true
     }
 
     // ---------------------------------------------------------------
@@ -1392,7 +1407,7 @@ impl<B: BufferTrait> EditorState<B> {
             .layout_root
             .write()
             .expect("Failed to acquire write lock on layout_root")
-            .get_window_by_id(self.get_focused_window_id())
+            .window_mut(self.get_focused_window_id())
         {
             if window.buffer_name == name {
                 window.buffer_name = "*scratch*".into();
@@ -2453,10 +2468,20 @@ pub fn create_global_env<B: BufferTrait>()
                 if let Err(err) = fs::write(
                     &user_config_path,
                     r#";; rsedit init.lisp
-;; Add your configuration here
-(eval-file "common-keymaps")
+;; Add your configuration here.
+;;
+;; The order matters: each of these uses what the ones above it define.
+;; `commands' defines `defcommand', which the modules below are written with,
+;; and `debug' defines `message', which they report through.
+(eval-file "commands")
 (eval-file "debug")
+(eval-file "common-keymaps")
 (eval-file "minibuffer")
+
+;; Modules. Each is optional -- comment one out and the editor comes up
+;; without it, missing exactly that feature and nothing else.
+(eval-file "rust-mode")   ; colouring for Rust source
+(eval-file "dired")       ; a directory in a buffer (C-x d)
 
 
 "#,

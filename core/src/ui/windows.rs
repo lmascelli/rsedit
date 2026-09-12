@@ -109,17 +109,27 @@ pub struct RenderableWindowView {
 }
 
 impl LayoutNode {
-    pub fn get_window_by_id(&mut self, id: usize) -> Option<&mut Window> {
+    /// The window with this id, to be changed.
+    ///
+    /// Named as the mutable partner of [`LayoutNode::window`] so that the two
+    /// are read together. They were not always: this one used to return the
+    /// first leaf it reached whatever id was asked for, which with one window
+    /// on screen is the right answer every time -- and with two meant
+    /// `find-file` and `switch-to-buffer` replaced the buffer in the leftmost
+    /// window rather than the focused one. The file opened in the window you
+    /// were not looking at.
+    pub fn window_mut(&mut self, id: usize) -> Option<&mut Window> {
         match self {
-            LayoutNode::Leaf(window) => Some(window),
-            LayoutNode::Split {
-                orientation: _,
-                ratio: _,
-                left,
-                right,
-            } => left
-                .get_window_by_id(id)
-                .or_else(|| right.get_window_by_id(id)),
+            LayoutNode::Leaf(window) => {
+                if window.id == id {
+                    Some(window)
+                } else {
+                    None
+                }
+            }
+            LayoutNode::Split { left, right, .. } => {
+                left.window_mut(id).or_else(|| right.window_mut(id))
+            }
         }
     }
 
@@ -211,6 +221,7 @@ impl LayoutNode {
     }
 
     /// The window with ID, if the tree holds one.
+    /// The window with this id, to be read. See [`LayoutNode::window_mut`].
     pub fn window(&self, id: usize) -> Option<&Window> {
         match self {
             LayoutNode::Leaf(window) => (window.id == id).then_some(window),

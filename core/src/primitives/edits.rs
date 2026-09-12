@@ -15,6 +15,10 @@ use crate::kill_ring::Direction;
 // They take the whole `Buffer` rather than its text, because recording needs
 // the history that sits beside the text -- and taking both together is what
 // makes it impossible to hold one without the other.
+//
+// Both return whether the edit happened. A read-only buffer refuses, and the
+// answer is `#[must_use]` so a caller cannot quietly assume it went through
+// and report success to the user -- see `Buffer::read_only`.
 
 /// Delete `[from, to)` from BUF, recording it so it can be undone.
 ///
@@ -22,11 +26,17 @@ use crate::kill_ring::Direction;
 /// positions at the far end and deletes backwards. Each of those is O(1) once
 /// the gap is there, so the whole range costs one gap move rather than one per
 /// character.
-pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) {
+#[must_use]
+pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) -> bool {
+    if buf.read_only {
+        return false;
+    }
     let start = from.min(to);
     let end = from.max(to).min(buf.text.len());
     if start >= end {
-        return;
+        // Nothing to remove, which is not a refusal: a command that asked to
+        // delete an empty range got what it wanted.
+        return true;
     }
     let point = buf.text.cursor_pos_1d();
     let whole_buffer = start == 0 && end == buf.text.len();
@@ -50,12 +60,17 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
     }
     buf.is_modified = true;
     changed(buf, start);
+    true
 }
 
 /// Insert CONTENT at offset AT in BUF, recording it so it can be undone.
-pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, content: &str) {
+#[must_use]
+pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, content: &str) -> bool {
+    if buf.read_only {
+        return false;
+    }
     if content.is_empty() {
-        return;
+        return true;
     }
     let at = at.min(buf.text.len());
     let point = buf.text.cursor_pos_1d();
@@ -64,6 +79,7 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
     undo::apply_insert(&mut buf.text, at, content);
     buf.is_modified = true;
     changed(buf, at);
+    true
 }
 
 /// Note that the text changed at offset AT.
@@ -94,10 +110,26 @@ fn deactivated(mark: Option<Mark>) -> Option<Mark> {
     })
 }
 
+/// The answer every editing primitive gives, having said so if the buffer
+/// refused.
+///
+/// One message for all of them, because the reason is always the same one and
+/// naming the command that was turned away would not tell the user anything
+/// they do not already know: they pressed the key. Silence is the thing to
+/// avoid -- a key that does nothing and says nothing reads as a broken editor
+/// rather than a protected buffer.
+pub(crate) fn edited<B: BufferTrait>(ctx: &EditorState<B>, happened: bool) -> ELispExp<B> {
+    if !happened {
+        ctx.set_echo_message("Buffer is read-only");
+    }
+    ELispExp::nil()
+}
+
 /// Insert CONTENT at point.
-pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str) {
+#[must_use]
+pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str) -> bool {
     let at = buf.text.cursor_pos_1d();
-    insert_text(buf, at, content);
+    insert_text(buf, at, content)
 }
 
 /// Delete `[from, to)` and return what was deleted, ready for the kill ring.
@@ -114,7 +146,12 @@ fn cut_out<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) -> Strin
         return String::new();
     }
     let text: String = (start..end).filter_map(|i| buf.text.at(i)).collect();
-    delete_range(buf, start, end);
+    // Nothing is killed out of a read-only buffer: a kill that reported the
+    // text but left it in place would put it on the ring as though it had been
+    // cut, and the next yank would duplicate it.
+    if !delete_range(buf, start, end) {
+        return String::new();
+    }
     text
 }
 
@@ -128,10 +165,11 @@ pub const SELF_INSERT_DOC: &str = "(self-insert STRING): Insert the first charac
 primitive!(self_insert, args, _env, ctx, {
     if let Some(ELispExp::String(s)) = args.first() {
         if let Some(c) = s.chars().next() {
-            ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+            let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
                 let mut utf8 = [0u8; 4];
-                insert_at_point(buf, c.encode_utf8(&mut utf8));
+                insert_at_point(buf, c.encode_utf8(&mut utf8))
             });
+            return Ok(edited(ctx, happened));
         }
         Ok(ELispExp::symbol("nil".into()))
     } else {
@@ -142,16 +180,42 @@ primitive!(self_insert, args, _env, ctx, {
     }
 });
 
+pub const INSERT_DOC: &str = "(insert &rest STRINGS): Insert STRINGS at point in the current \
+         buffer, one after another, and return nil. Anything that is not a string is \
+         formatted as `format' would with \"%s\", so a number can be inserted without \
+         converting it first.\n\n\
+         The whole insertion is one edit: one undo step, one entry in the change history, \
+         and one lock on the buffer, however long the text is. This is what \
+         `self-insert' is not -- it takes a single character, so building a line out of it \
+         costs a primitive call and an undo record per character.\n\n\
+         Does nothing (reporting \"Buffer is read-only\") in a read-only buffer -- see \
+         `set-buffer-read-only'.\n\n\
+         Example:\n\
+         (insert \"total: \" 42 \"\\n\")";
+
+primitive!(insert, args, _env, ctx, {
+    // Joined before the buffer is touched, so that `(insert a b c)` is one
+    // edit rather than three. Three would undo in three steps, and the two
+    // intermediate states would each be published to the syntax worker.
+    let mut text = String::new();
+    for arg in args {
+        match arg {
+            ELispExp::String(s) => text.push_str(s),
+            other => text.push_str(&crate::lisp::lisp_display(other)),
+        }
+    }
+    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, &text));
+    Ok(edited(ctx, happened))
+});
+
 pub const INSERT_NEWLINE_DOC: &str = "(insert-newline): Insert a newline character at point in the current \
          buffer.\n\n\
          Example:\n\
          (define-key nil \"<ret>\" 'insert-newline)";
 
 primitive!(insert_newline, _args, _env, ctx, {
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
-        insert_at_point(buf, "\n");
-    });
-    Ok(ELispExp::nil())
+    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, "\n"));
+    Ok(edited(ctx, happened))
 });
 
 pub const DELETE_BACKWARD_CHAR_DOC: &str = "(delete-backward-char): Delete the character before point in the \
@@ -166,8 +230,11 @@ primitive!(delete_backward_char, _args, _env, ctx, {
         .write()
         .expect("Failed to acquire a write lock on buffer");
     let point = buf.text.cursor_pos_1d();
-    delete_range(&mut buf, point.saturating_sub(1), point);
-    Ok(ELispExp::nil())
+    let happened = delete_range(&mut buf, point.saturating_sub(1), point);
+    // Dropped before reporting: the echo area is a lock of its own, and the
+    // canonical order puts it before any individual buffer.
+    drop(buf);
+    Ok(edited(ctx, happened))
 });
 
 pub const FORWARD_CHAR_DOC: &str = "(forward-char &optional N): Move point forward N characters (default \
@@ -532,8 +599,9 @@ primitive!(delete_char, args, _env, ctx, {
     let mut buf = buf.write().expect("write lock on buffer");
     let from = buf.text.cursor_pos_1d();
     let to = from + repeat_count(args)?;
-    delete_range(&mut buf, from, to);
-    Ok(ELispExp::nil())
+    let happened = delete_range(&mut buf, from, to);
+    drop(buf);
+    Ok(edited(ctx, happened))
 });
 
 pub const KILL_LINE_DOC: &str = "(kill-line): Delete from point to the end of the line. When point \
@@ -764,6 +832,45 @@ primitive!(set_undo_limit, args, _env, ctx, {
 // jump back to where a command started. These three are that missing half, and
 // they are counted in characters because point, mark, the region and the undo
 // history all are.
+
+pub const LINE_NUMBER_AT_POINT_DOC: &str = "(line-number-at-point): Return the number of the line \
+         point is on in the current buffer, counting from 1 -- the same numbering \
+         `goto-line' takes, so the two compose into \"remember where I was\".\n\n\
+         Example:\n\
+         (let ((here (line-number-at-point))) (revert-something) (goto-line here))";
+
+primitive!(line_number_at_point, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let buf = buf.read().expect("read lock on buffer");
+    let point = buf.text.cursor_pos_1d();
+    let line = buf.text.cursor_1d_to_2d(point).0;
+    Ok(ELispExp::number(line as f64 + 1.0))
+});
+
+pub const CURRENT_LINE_DOC: &str = "(current-line): Return the text of the line point is on in the \
+         current buffer, as a string, without its newline. Returns \"\" in an empty \
+         buffer.\n\n\
+         This is what a buffer that *presents* something reads to find out what the \
+         cursor is on -- a directory listing asking which file is under the cursor \
+         re-reads the line rather than keeping a table of line numbers beside the \
+         buffer, so there is nothing that can fall out of step with what is on \
+         screen.\n\n\
+         Example:\n\
+         (current-line) => \"src/\"";
+
+primitive!(current_line, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let buf = buf.read().expect("read lock on buffer");
+    let point = buf.text.cursor_pos_1d();
+    let line = buf.text.cursor_1d_to_2d(point).0;
+    let text = buf
+        .text
+        .get_lines(line, line + 1)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    Ok(ELispExp::string(text))
+});
 
 pub const POINT_DOC: &str = "(point): Return the position of point in the current buffer, as a \
          character offset from the beginning. The first position is 0.\n\n\

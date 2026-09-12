@@ -7,6 +7,7 @@ fn main() {
         "commands.lisp",
         "common-keymaps.lisp",
         "debug.lisp",
+        "dired.lisp",
         "minibuffer.lisp",
         "rust-mode.lisp",
     ];

@@ -212,6 +212,10 @@ pub fn install_primitives<B: BufferTrait>(
         modes::ADD_AUTO_MODE_DOC
     );
     insert_fn!("self-insert", edits::self_insert, edits::SELF_INSERT_DOC);
+    // Not a command: there is no key to bind it to and no argument spec that
+    // could collect arbitrary text. `self-insert` is a command only because
+    // every printable key is bound to it.
+    insert_fn!("insert", edits::insert, edits::INSERT_DOC);
     insert_cmd!(
         "insert-newline",
         edits::insert_newline,
@@ -509,6 +513,26 @@ pub fn install_primitives<B: BufferTrait>(
         [] as [&str; 0],
         io::SAVE_BUFFER_DOC
     );
+
+    // Asking about the filesystem, and changing it. Plain functions, not
+    // commands: `M-x delete-file` would be a command whose prompt is the only
+    // thing standing between a typo and a deleted file, with no listing in
+    // front of the user saying what is there. What a person reaches for is a
+    // command of the file manager's -- see `dired.lisp` -- which knows what
+    // the cursor is on and asks accordingly.
+    insert_fn!("file-exists-p", io::file_exists_p, io::FILE_EXISTS_P_DOC);
+    insert_fn!(
+        "file-directory-p",
+        io::file_directory_p,
+        io::FILE_DIRECTORY_P_DOC
+    );
+    insert_fn!(
+        "directory-entry-count",
+        io::directory_entry_count,
+        io::DIRECTORY_ENTRY_COUNT_DOC
+    );
+    insert_fn!("delete-file", io::delete_file, io::DELETE_FILE_DOC);
+    insert_fn!("rename-file", io::rename_file, io::RENAME_FILE_DOC);
     insert_fn!(
         "make-floating-window",
         ui::make_floating_window,
@@ -550,6 +574,16 @@ pub fn install_primitives<B: BufferTrait>(
         buffers::with_current_buffer,
         buffers::WITH_CURRENT_BUFFER_DOC
     );
+    insert_fn!(
+        "set-buffer-read-only",
+        buffers::set_buffer_read_only,
+        buffers::SET_BUFFER_READ_ONLY_DOC
+    );
+    insert_fn!(
+        "buffer-read-only-p",
+        buffers::buffer_read_only_p,
+        buffers::BUFFER_READ_ONLY_P_DOC
+    );
 
     // Point as a number. Plain functions rather than commands: nothing is
     // usefully reached by typing `M-x point', and everything that moves point
@@ -558,6 +592,12 @@ pub fn install_primitives<B: BufferTrait>(
     insert_fn!("point-min", edits::point_min, edits::POINT_MIN_DOC);
     insert_fn!("point-max", edits::point_max, edits::POINT_MAX_DOC);
     insert_fn!("goto-char", edits::goto_char, edits::GOTO_CHAR_DOC);
+    insert_fn!(
+        "line-number-at-point",
+        edits::line_number_at_point,
+        edits::LINE_NUMBER_AT_POINT_DOC
+    );
+    insert_fn!("current-line", edits::current_line, edits::CURRENT_LINE_DOC);
 
     // Incremental search. The four entry points are commands so that M-x
     // reaches them; the keys that answer the prompt are installed with
