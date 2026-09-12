@@ -64,6 +64,7 @@
 (define-key nil "C-x C-x" 'exchange-point-and-mark)
 (define-key nil "C-x h" 'mark-whole-buffer)
 (define-key nil "C-x C-f" 'find-file)
+(define-key nil "C-x C-s" 'save-buffer)
 
 ;; Windows. C-x 2 splits above/below, C-x 3 side by side, C-x 0 closes this
 ;; one, C-x 1 closes the others, C-x o cycles.

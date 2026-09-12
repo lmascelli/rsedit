@@ -3,9 +3,7 @@
 [LOG] End of the common-keymaps.lisp
 [LOG] End of the minibuffer.lisp
 [LOG] rust-mode loaded
+[LOG] End of the commands.lisp
+[LOG] End of the dired.lisp
 [LOG] 5
 [LOG] Hello from rsedit init.lisp
-[INFO] Keymap not bound <esc>
-open-config call
-[INFO] Keymap not bound C-x C-s
-Wrote /home/leonardo/.config/rsedit/init.lisp

@@ -11,8 +11,14 @@ type BufferType = GapBuffer;
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
-    let (mut state, env) =
-        create_global_env::<BufferType>().expect("Failed to create the editor environment");
+    let (mut state, env) = match
+        create_global_env::<BufferType>() {
+            Ok((state, env)) => (state, env),
+            Err(err) => {
+                eprintln!("{:?}", err);
+                return Ok(());
+            }
+        };
     state.enable_log_file("rsedit.log")?;
 
     if let Some(path) = args.get(1).cloned() {
