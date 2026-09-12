@@ -2,6 +2,15 @@
 [LOG] VM Handshake: State verification successful. Core is stable.
 [LOG] End of the common-keymaps.lisp
 [LOG] End of the minibuffer.lisp
+[LOG] rust-mode loaded
 [LOG] 5
 [LOG] Hello from rsedit init.lisp
+[INFO] Keymap not bound C-v
+[INFO] Keymap not bound C-v
+[INFO] Keymap not bound C-v
+[INFO] Keymap not bound M-v
+[INFO] Keymap not bound M-v
+[INFO] Keymap not bound M-v
+[INFO] Keymap not bound C-x i
+open-config call
 [INFO] Keymap not bound C-x C-c

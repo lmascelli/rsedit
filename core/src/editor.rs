@@ -784,8 +784,11 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on floating_windows")
             .push(floating_win);
 
+        // No `set_current_buffer_name` here: the float is in the list before
+        // focus moves, so the chokepoint finds it and makes it current. Setting
+        // it a second time would work today and rot the moment the two
+        // disagree about what "the buffer of window N" means.
         self.set_focused_window_id(new_id);
-        self.set_current_buffer_name(buf_name);
     }
 
     /// Handle a key event. An UI provider is responsible to call this function
@@ -2176,11 +2179,53 @@ impl<B: BufferTrait> EditorState<B> {
         lock.clone()
     }
 
+    /// Move focus to window ID, and make what it shows the current buffer.
+    ///
+    /// # Why the two move together
+    ///
+    /// They are one idea with two representations. The focused window is what
+    /// the cursor is drawn in; the current buffer is what a command edits. Let
+    /// them disagree and the editor draws a cursor in one place and types in
+    /// another -- `C-x o` then `C-n` moves point in the buffer you just left,
+    /// so the cursor you *can* see sits perfectly still while text you cannot
+    /// see scrolls past.
+    ///
+    /// That was the bug, and it is fixed here rather than in `other-window`
+    /// because there are four ways to move focus -- cycling, closing a window,
+    /// opening a floating one, and closing it again -- and any of them could
+    /// have forgotten. Nothing can move focus without going through this.
     pub(crate) fn set_focused_window_id(&self, id: usize) {
         *self
             .focused_window_id
             .write()
             .expect("Failed to acquire write lock on focused_window_id") = id;
+        // Released before the lookup below: that takes the layout and the
+        // floating windows, which sit *after* this one in the lock ordering.
+        if let Some(name) = self.window_buffer(id) {
+            self.set_current_buffer_name(&name);
+        }
+    }
+
+    /// What window ID is showing, whether it is tiled or floating.
+    ///
+    /// Both, because a minibuffer prompt is a floating window and giving it
+    /// focus has to make its buffer current in exactly the same way -- that is
+    /// what every prompt in the editor depends on.
+    fn window_buffer(&self, id: usize) -> Option<String> {
+        if let Some(window) = self
+            .layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root")
+            .window(id)
+        {
+            return Some(window.buffer_name.clone());
+        }
+        self.floating_windows
+            .read()
+            .expect("Failed to acquire read lock on floating_windows")
+            .iter()
+            .find(|float| float.window.id == id)
+            .map(|float| float.window.buffer_name.clone())
     }
 
     /// Get the name of the current buffer

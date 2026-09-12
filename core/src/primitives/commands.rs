@@ -381,7 +381,19 @@ primitive!(command_arg_complete, args, env, ctx, {
             .into_iter()
             .filter(|name| name != "*Minibuffer*")
             .collect(),
-        // Free text, and file completion is not implemented yet.
+        // Already whole paths, and already filtered against what was typed --
+        // a file name is completed one path component at a time, so the
+        // generic "starts with the prefix" filter below would be both wrong
+        // and redundant. Returned directly for that reason.
+        ArgSpec::File { .. } => {
+            return Ok(ELispExp::proper_list(
+                super::io::file_completions(&prefix)
+                    .into_iter()
+                    .map(ELispExp::string)
+                    .collect(),
+            ));
+        }
+        // Free text: nothing to complete over.
         _ => Vec::new(),
     };
     Ok(ELispExp::proper_list(

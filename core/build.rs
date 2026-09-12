@@ -3,7 +3,13 @@ use std::path::Path;
 
 fn main() {
     #[allow(non_snake_case)]
-    let LISP_FILES: Vec<&str> = vec!["common-keymaps.lisp", "minibuffer.lisp"];
+    let LISP_FILES: Vec<&str> = vec![
+        "commands.lisp",
+        "common-keymaps.lisp",
+        "debug.lisp",
+        "minibuffer.lisp",
+        "rust-mode.lisp",
+    ];
 
     for file in &LISP_FILES {
         println!("{}", &format!("cargo::rerun-if-changed=lisp/{file}"));

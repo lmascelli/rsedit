@@ -87,7 +87,7 @@ mod buffers;
 mod commands;
 pub(crate) mod edits;
 mod general;
-mod io;
+pub(crate) mod io;
 mod modes;
 mod region;
 mod theme;
@@ -495,6 +495,13 @@ pub fn install_primitives<B: BufferTrait>(
         io::find_file,
         ["fFind file: "],
         io::FIND_FILE_DOC
+    );
+    insert_fn!("list-dir", io::list_dir, io::LIST_DIR_DOC);
+    insert_fn!("match-list", io::match_list, io::MATCH_LIST_DOC);
+    insert_fn!(
+        "expand-file-name",
+        io::expand_file_name,
+        io::EXPAND_FILE_NAME_DOC
     );
     insert_cmd!(
         "save-buffer",

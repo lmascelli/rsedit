@@ -375,6 +375,125 @@ mod tests {
         );
     }
 
+    // ---------------- focus and the current buffer ----------------
+
+    /// The bug: focus moved and the current buffer did not, so the cursor was
+    /// drawn in one window while typing edited the buffer shown in another.
+    #[test]
+    fn switching_windows_takes_the_current_buffer_with_it() {
+        let (ctx, env) = editor();
+        eval_str(
+            r#"(progn (split-window-right)
+                      (buffer-create "other")
+                      (switch-to-buffer "other"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("two windows showing two buffers");
+        assert_eq!(ctx.get_current_buffer_name(), "other");
+
+        eval_str("(other-window)", &env, &ctx).expect("switch");
+
+        assert_eq!(
+            ctx.get_current_buffer_name(),
+            "*scratch*",
+            "the current buffer must be the one the focused window shows"
+        );
+    }
+
+    /// What the bug actually looked like: the cursor sat still in the focused
+    /// window while point moved in the buffer that had been left behind.
+    #[test]
+    fn typing_after_a_switch_edits_the_window_you_are_looking_at() {
+        let (ctx, env) = editor();
+        eval_str(
+            r#"(progn (split-window-right)
+                      (buffer-create "other")
+                      (switch-to-buffer "other"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("two windows showing two buffers");
+
+        press(&ctx, &env, KeyCode::Char('a'), plain());
+        eval_str("(other-window)", &env, &ctx).expect("switch");
+        press(&ctx, &env, KeyCode::Char('b'), plain());
+
+        let text_of = |name: &str| {
+            ctx.get_buffer(name)
+                .expect("the buffer")
+                .read()
+                .unwrap()
+                .text
+                .to_string()
+        };
+        assert_eq!(
+            text_of("other"),
+            "a",
+            "the first keystroke went where it was"
+        );
+        assert_eq!(
+            text_of("*scratch*"),
+            "b",
+            "and the second went to the window that now has focus"
+        );
+    }
+
+    /// Closing a window moves focus to the survivor, which is another way in
+    /// to the same mistake.
+    #[test]
+    fn closing_a_window_takes_the_current_buffer_to_the_survivor() {
+        let (ctx, env) = editor();
+        eval_str(
+            r#"(progn (split-window-right)
+                      (buffer-create "other")
+                      (switch-to-buffer "other")
+                      (other-window))"#,
+            &env,
+            &ctx,
+        )
+        .expect("focus on the *scratch* window");
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+
+        eval_str("(delete-window)", &env, &ctx).expect("close it");
+
+        assert_eq!(
+            ctx.get_current_buffer_name(),
+            "other",
+            "the surviving window's buffer is the one to edit now"
+        );
+    }
+
+    /// A cycle all the way round has to land back where it started, current
+    /// buffer included.
+    #[test]
+    fn cycling_through_every_window_comes_back_to_the_same_buffer() {
+        let (ctx, env) = editor();
+        eval_str(
+            r#"(progn (buffer-create "other") (split-window-right)
+                      (switch-to-buffer "other"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("two windows");
+        let start = ctx.get_current_buffer_name();
+
+        for _ in 0..windows(&ctx) {
+            eval_str("(other-window)", &env, &ctx).expect("switch");
+        }
+        assert_eq!(ctx.get_current_buffer_name(), start);
+    }
+
+    /// A prompt is a floating window, and giving it focus has to make its
+    /// buffer current in the same way -- which is what every prompt in the
+    /// editor already depended on.
+    #[test]
+    fn a_floating_prompt_still_becomes_current_when_it_opens() {
+        let (ctx, env) = editor();
+        eval_str(r#"(minibuffer-read "P:" nil nil nil)"#, &env, &ctx).expect("a prompt");
+        assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+    }
+
     // ---------------- the rule between windows ----------------
 
     /// Without this column the last character of a line on the left and the
