@@ -16,6 +16,7 @@ mod perf;
 mod prefix_arg_tests;
 mod prefix_key_tests;
 mod region_tests;
+mod syntax_tests;
 mod theme_tests;
 mod transient_tests;
 mod undo_tests;

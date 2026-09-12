@@ -49,6 +49,7 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
         undo::apply_delete(&mut buf.text, start, end);
     }
     buf.is_modified = true;
+    changed(buf, start);
 }
 
 /// Insert CONTENT at offset AT in BUF, recording it so it can be undone.
@@ -62,6 +63,20 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
     buf.mark = deactivated(buf.mark);
     undo::apply_insert(&mut buf.text, at, content);
     buf.is_modified = true;
+    changed(buf, at);
+}
+
+/// Note that the text changed at offset AT.
+///
+/// One function, called from both doors, because a change that bumped the
+/// version without invalidating the colouring -- or the other way round --
+/// would be a bug that only showed up on screen, minutes later, as colour that
+/// would not settle.
+fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
+    buf.version = buf.version.wrapping_add(1);
+    let line = buf.text.cursor_1d_to_2d(at.min(buf.text.len())).0;
+    buf.syntax.invalidate_from(buf.version, line);
+    buf.syntax.truncate(buf.text.line_count());
 }
 
 /// A mark that survives an edit, but no longer defines a region.

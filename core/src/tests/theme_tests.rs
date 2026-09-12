@@ -141,7 +141,8 @@ mod tests {
                 .expect("mode registry")
                 .get("toy-mode")
                 .expect("toy-mode")
-                .syntax_rules
+                .grammar
+                .rules
                 .first()
                 .expect("one rule")
                 .face,

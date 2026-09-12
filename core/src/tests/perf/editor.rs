@@ -267,6 +267,8 @@ fn layout(report: &mut Report, calibration: f64) {
                 local_keymap: None,
                 undo: Default::default(),
                 mark: None,
+                version: 0,
+                syntax: Default::default(),
             })),
         );
     }

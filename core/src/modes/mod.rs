@@ -1,8 +1,9 @@
 use crate::{ELispExp, buffer::BufferTrait, input::Keymap};
 use std::collections::HashMap;
 
+pub mod highlighter;
 pub mod syntax;
-pub use syntax::SyntaxRule;
+pub use syntax::{Grammar, SyntaxRegion, SyntaxRule, SyntaxSpan, SyntaxState, highlight_line};
 
 /// A major mode is a collection of rules that apply to a specific
 /// kind of buffers like specific programming language, special text
@@ -13,7 +14,8 @@ pub use syntax::SyntaxRule;
 pub struct MajorMode<B: BufferTrait> {
     pub name: String,
     pub keymaps: Keymap<B>,
-    pub syntax_rules: Vec<SyntaxRule>,
+    /// How this mode colours its language. See [`Grammar`].
+    pub grammar: Grammar,
     pub hooks: HashMap<String, Vec<ELispExp<B>>>,
 }
 
@@ -22,7 +24,7 @@ impl<B: BufferTrait> MajorMode<B> {
         Self {
             name: name.to_string(),
             keymaps: Keymap::new(),
-            syntax_rules: vec![],
+            grammar: Grammar::default(),
             hooks: HashMap::new(),
         }
     }

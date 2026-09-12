@@ -1,6 +1,7 @@
 use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
+    commands::{ArgSpec, CommandRegistry, Invocation, PendingCommand, PrefixArg},
     input::{
         KeyCode, KeyEvent, Keymap, OnUnbound, TransientKeymap, describe_keys, fill_default_keymaps,
     },
@@ -11,8 +12,8 @@ use crate::{
     },
     minibuffer::install_minibuffer,
     modes::MajorMode,
+    modes::highlighter::{Highlighter, TURN_INTERVAL},
     primitives::install_primitives,
-    commands::{ArgSpec, CommandRegistry, Invocation, PendingCommand, PrefixArg},
     search::Isearch,
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
@@ -275,6 +276,14 @@ pub struct EditorState<B: BufferTrait> {
     repeat_keys: Arc<RwLock<HashMap<String, KeyEvent>>>,
     any_repeat_keys: Arc<AtomicBool>,
 
+    /// Which file names get which major mode, in the order they were declared.
+    ///
+    /// An ordered list rather than a map: patterns overlap -- `\.rs$` and
+    /// `^Cargo\.` both match `Cargo.rs` -- so which one wins has to be a
+    /// decision somebody made rather than whichever the hash happened to
+    /// offer. First declared, first tried.
+    auto_modes: Arc<RwLock<Vec<(regex::Regex, String)>>>,
+
     /// The call stack, as maintained by `LispContext::push_call_frame` /
     /// `pop_call_frame` (see their docs for the exact protocol). Frozen at
     /// its state at the moment of the most recent uncaught error until
@@ -411,9 +420,19 @@ impl<B: BufferTrait> EditorState<B> {
             transient_up: Arc::new(AtomicBool::new(false)),
             repeat_keys: Arc::new(RwLock::new(HashMap::new())),
             any_repeat_keys: Arc::new(AtomicBool::new(false)),
+            auto_modes: Arc::new(RwLock::new(Vec::new())),
             call_stack: Arc::new(RwLock::new(Vec::new())),
         };
         BackgroundScheduler::spawn(receiver, editor_state.clone());
+        // Colouring runs from here on, a bounded chunk at a time. Started at
+        // construction rather than when a grammar is first defined, because a
+        // job that has nothing to do costs one comparison per turn and a job
+        // that was never started costs a file with no colour and no
+        // explanation.
+        let _ = editor_state.worker_mailbox.send(WorkerMessage::Schedule {
+            task: Box::new(Highlighter),
+            interval: TURN_INTERVAL,
+        });
 
         editor_state
     }
@@ -548,11 +567,11 @@ impl<B: BufferTrait> EditorState<B> {
             match std::fs::read_to_string(file_path) {
                 Ok(content) => {
                     let mut new_buf = Buffer::from_text(name, &content);
-                    new_buf.current_mode = if let Some(mode_name) = start_mode {
-                        mode_name
-                    } else {
-                        "fundamental".into()
-                    };
+                    // An explicit mode wins; otherwise the file's own name
+                    // decides, which is how a language module ever gets used.
+                    new_buf.current_mode = start_mode
+                        .or_else(|| self.auto_mode_for(file_path))
+                        .unwrap_or_else(|| "fundamental".into());
                     new_buf.file_path = Some(file_path.to_string());
 
                     let mut buffers_lock = self
@@ -861,6 +880,31 @@ impl<B: BufferTrait> EditorState<B> {
     /// Whether a transient keymap is installed. Only for reporting.
     pub(crate) fn transient_keymap_active(&self) -> bool {
         self.transient_up.load(Ordering::Acquire)
+    }
+
+    /// Say that a file whose name matches PATTERN opens in MODE.
+    ///
+    /// Without this a language module can be loaded and never selected: nothing
+    /// else maps a file to a mode, so every grammar would have to be reached by
+    /// hand.
+    pub(crate) fn add_auto_mode(&self, pattern: regex::Regex, mode: &str) {
+        self.auto_modes
+            .write()
+            .expect("Failed to acquire write lock on auto_modes")
+            .push((pattern, mode.to_string()));
+    }
+
+    /// The mode a file called PATH should open in, if any pattern claims it.
+    ///
+    /// Matched against the whole path, so a pattern can key on a directory as
+    /// well as an extension.
+    pub(crate) fn auto_mode_for(&self, path: &str) -> Option<String> {
+        self.auto_modes
+            .read()
+            .expect("Failed to acquire read lock on auto_modes")
+            .iter()
+            .find(|(pattern, _)| pattern.is_match(path))
+            .map(|(_, mode)| mode.clone())
     }
 
     /// Say that COMMAND may be repeated by pressing KEYS on its own afterwards.
@@ -1486,7 +1530,11 @@ impl<B: BufferTrait> EditorState<B> {
 
         let separators: Vec<Separator> = separator_rects
             .into_iter()
-            .map(|rect| Separator { rect, ch: separator_char, face: Face::WINDOW_SEPARATOR, })
+            .map(|rect| Separator {
+                rect,
+                ch: separator_char,
+                face: Face::WINDOW_SEPARATOR,
+            })
             .collect();
 
         for float in floating_windows.iter() {
@@ -1812,7 +1860,11 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire read lock on pending_commands");
         let pending = stack.last()?;
         let done = pending.collected.len();
-        Some((pending.name.clone(), done + 1, done + pending.remaining.len()))
+        Some((
+            pending.name.clone(),
+            done + 1,
+            done + pending.remaining.len(),
+        ))
     }
 
     /// The argument the innermost pending command is waiting on.

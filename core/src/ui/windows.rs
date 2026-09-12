@@ -306,7 +306,11 @@ impl LayoutNode {
                 }
 
                 let lines = extract_buffer_lines(win, &rect, buffers);
-                let highlights = region_highlights(win, &rect, buffers);
+                // Syntax first, then the region: the renderer draws later
+                // entries over earlier ones, and a selection has to stay
+                // visible on top of coloured text.
+                let mut highlights = syntax_highlights(win, &rect, buffers);
+                highlights.extend(region_highlights(win, &rect, buffers));
 
                 out_views.push(RenderableWindowView {
                     rect,
@@ -553,4 +557,47 @@ pub fn extract_buffer_lines<B: BufferTrait>(
         }
     }
     visible_lines
+}
+
+/// The syntax colouring of WIN's buffer, as spans within the rows it is
+/// showing.
+///
+/// Reads the cache and clips; it never computes. Colouring happens on the
+/// worker (see [`crate::modes::highlighter`]), and a frame that lexed while
+/// composing would be a frame that blocked on whatever file happened to be
+/// open.
+///
+/// Lines that have never been coloured contribute nothing, which is what makes
+/// a large file open as plain text and fill in rather than making the editor
+/// wait for it.
+pub fn syntax_highlights<B: BufferTrait>(
+    win: &Window,
+    rect: &Rect,
+    buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
+) -> Vec<Highlight> {
+    let Some(buf) = buffers.get(&win.buffer_name) else {
+        return Vec::new();
+    };
+    let buf = buf
+        .read()
+        .expect("Failed to acquire read lock on buffer for highlighting");
+
+    let mut highlights = Vec::new();
+    for row in 0..rect.height {
+        let line = win.scroll_y + row;
+        for span in buf.syntax.spans(line) {
+            let start = span.start.saturating_sub(win.scroll_x);
+            let end = span.end.saturating_sub(win.scroll_x).min(rect.width);
+            if start >= end {
+                continue;
+            }
+            highlights.push(Highlight {
+                row,
+                start_col: start,
+                end_col: end,
+                face: span.face,
+            });
+        }
+    }
+    highlights
 }

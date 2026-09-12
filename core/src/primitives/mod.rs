@@ -2,7 +2,7 @@ use crate::{
     BufferTrait, ELispExp, EditorState,
     input::{KeyCode, KeyEvent, KeyModifiers},
     lisp::{Env, EvalError, LispContext},
-    modes::{MajorMode, SyntaxRule},
+    modes::{MajorMode, SyntaxRegion, SyntaxRule},
     ui::Face,
 };
 
@@ -200,6 +200,16 @@ pub fn install_primitives<B: BufferTrait>(
         "add-syntax-rule",
         modes::add_syntax_rule,
         modes::ADD_SYNTAX_RULE_DOC
+    );
+    insert_fn!(
+        "add-syntax-region",
+        modes::add_syntax_region,
+        modes::ADD_SYNTAX_REGION_DOC
+    );
+    insert_fn!(
+        "add-auto-mode",
+        modes::add_auto_mode,
+        modes::ADD_AUTO_MODE_DOC
     );
     insert_fn!("self-insert", edits::self_insert, edits::SELF_INSERT_DOC);
     insert_cmd!(
