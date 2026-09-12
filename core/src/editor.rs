@@ -1,7 +1,9 @@
 use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
-    input::{KeyCode, KeyEvent, Keymap, describe_keys, fill_default_keymaps},
+    input::{
+        KeyCode, KeyEvent, Keymap, OnUnbound, TransientKeymap, describe_keys, fill_default_keymaps,
+    },
     isearch::install_isearch,
     kill_ring::{Direction, KillRing},
     lisp::{
@@ -243,6 +245,29 @@ pub struct EditorState<B: BufferTrait> {
     /// next. See `crate::search::Isearch`.
     isearch: Arc<RwLock<Option<Isearch>>>,
 
+    /// A keymap consulted before every other, for as long as it is installed.
+    /// See [`TransientKeymap`].
+    ///
+    /// The flag beside it is the *gate*: it is what every keystroke reads, and
+    /// the lock is opened only when it says there is something to read. A
+    /// transient map is up for a handful of keystrokes and absent for all the
+    /// rest, so making the common answer an atomic load rather than a lock
+    /// acquisition keeps the feature off the typing path.
+    ///
+    /// The two are written together and only together, by the methods below:
+    /// the payload is stored before the gate opens and cleared after it closes,
+    /// so a reader that gets through the gate always finds a map there.
+    transient_keymap: Arc<RwLock<Option<TransientKeymap<B>>>>,
+    transient_up: Arc<AtomicBool>,
+
+    /// Which commands offer to repeat, and with which key. See
+    /// `install_repeat_keymap`.
+    ///
+    /// Gated by an atomic for the same reason: until something declares a
+    /// repeat key, no keystroke pays anything at all to ask.
+    repeat_keys: Arc<RwLock<HashMap<String, KeyEvent>>>,
+    any_repeat_keys: Arc<AtomicBool>,
+
     /// The call stack, as maintained by `LispContext::push_call_frame` /
     /// `pop_call_frame` (see their docs for the exact protocol). Frozen at
     /// its state at the moment of the most recent uncaught error until
@@ -375,6 +400,10 @@ impl<B: BufferTrait> EditorState<B> {
             logs: Arc::new(RwLock::new(Vec::new())),
             log_file: None,
             isearch: Arc::new(RwLock::new(None)),
+            transient_keymap: Arc::new(RwLock::new(None)),
+            transient_up: Arc::new(AtomicBool::new(false)),
+            repeat_keys: Arc::new(RwLock::new(HashMap::new())),
+            any_repeat_keys: Arc::new(AtomicBool::new(false)),
             call_stack: Arc::new(RwLock::new(Vec::new())),
         };
         BackgroundScheduler::spawn(receiver, editor_state.clone());
@@ -781,6 +810,101 @@ impl<B: BufferTrait> EditorState<B> {
         false
     }
 
+    /// Install a keymap that is consulted before every other until it goes
+    /// away. See [`TransientKeymap`].
+    ///
+    /// Replaces any map already installed rather than stacking: two maps
+    /// competing for the same keystroke could not both win, and the newer one
+    /// is always the more recent thing the user asked for.
+    pub(crate) fn set_transient_keymap(&self, map: TransientKeymap<B>) {
+        *self
+            .transient_keymap
+            .write()
+            .expect("Failed to acquire write lock on transient_keymap") = Some(map);
+        // Opened last, so nothing can get through the gate before the map it is
+        // meant to find is there.
+        self.transient_up.store(true, Ordering::Release);
+    }
+
+    /// Take the map down. Idempotent, so a command that ends one can call it
+    /// without first asking whether one is up.
+    pub(crate) fn clear_transient_keymap(&self) {
+        // Closed first, for the mirror-image reason: no reader may be sent to a
+        // map that is about to be taken away.
+        self.transient_up.store(false, Ordering::Release);
+        *self
+            .transient_keymap
+            .write()
+            .expect("Failed to acquire write lock on transient_keymap") = None;
+    }
+
+    /// What the installed map wants shown, or empty when none is installed.
+    pub(crate) fn transient_message(&self) -> String {
+        if !self.transient_up.load(Ordering::Acquire) {
+            return String::new();
+        }
+        self.transient_keymap
+            .read()
+            .expect("Failed to acquire read lock on transient_keymap")
+            .as_ref()
+            .map(|map| map.message.clone())
+            .unwrap_or_default()
+    }
+
+    /// Whether a transient keymap is installed. Only for reporting.
+    pub(crate) fn transient_keymap_active(&self) -> bool {
+        self.transient_up.load(Ordering::Acquire)
+    }
+
+    /// Say that COMMAND may be repeated by pressing KEYS on its own afterwards.
+    ///
+    /// Declared rather than inferred. The tempting rule -- "after a sequence
+    /// ending in K, a bare K repeats" -- would make `C-x C-f` followed by `f`
+    /// re-open `find-file`, which is not a convenience.
+    pub(crate) fn set_repeat_key(&self, command: &str, key: KeyEvent) {
+        self.repeat_keys
+            .write()
+            .expect("Failed to acquire write lock on repeat_keys")
+            .insert(command.to_string(), key);
+        self.any_repeat_keys.store(true, Ordering::Release);
+    }
+
+    /// The key that repeats COMMAND, if it has one.
+    fn repeat_key(&self, command: &str) -> Option<KeyEvent> {
+        if !self.any_repeat_keys.load(Ordering::Acquire) {
+            return None;
+        }
+        self.repeat_keys
+            .read()
+            .expect("Failed to acquire read lock on repeat_keys")
+            .get(command)
+            .cloned()
+    }
+
+    /// Offer to repeat COMMAND, if it said it could be.
+    ///
+    /// Run after every command, which is what makes repeating work by the same
+    /// path whether the command was reached by its full sequence or by the
+    /// repeat key it offered last time.
+    fn install_repeat_keymap(&self, command: Option<&str>) {
+        let Some(key) = command.and_then(|name| self.repeat_key(name)) else {
+            // Nothing to offer, and nothing to take down either: a `Release`
+            // map was already dismissed by key resolution before this command
+            // ran, which is what ends a run of `C-x o o o`.
+            //
+            // Taking one down here as well would be actively wrong. A `Refuse`
+            // map -- a question -- is answered by *its own* commands, and this
+            // runs after every one of them: clearing here would dismiss the
+            // question the moment it was answered, before the next one could
+            // be asked.
+            return;
+        };
+        self.set_transient_keymap(TransientKeymap::repeating(
+            key,
+            command.expect("a repeat key was found, so there is a command"),
+        ));
+    }
+
     /// Start, or continue, an incremental search.
     pub(crate) fn begin_isearch(&self, session: Isearch) {
         *self
@@ -890,6 +1014,67 @@ impl<B: BufferTrait> EditorState<B> {
             .write()
             .expect("Failed to acquire write lock on pending_keys");
         pending.push(event);
+
+        // A transient keymap is consulted before every other, for as long as
+        // it is installed. See `TransientKeymap` -- and note that the gate is
+        // an atomic, because on the overwhelming majority of keystrokes the
+        // answer is "no map", and that answer costs a load rather than a lock.
+        let transient = self.transient_up.load(Ordering::Acquire).then(|| {
+            let map = self
+                .transient_keymap
+                .read()
+                .expect("Failed to acquire read lock on transient_keymap");
+            map.as_ref()
+                .map(|map| {
+                    (
+                        map.keymap.get(&pending).cloned(),
+                        map.keymap.is_prefix(&pending),
+                        map.on_unbound,
+                    )
+                })
+                // The gate was open but the map had gone. Only reachable if
+                // something took it down between the two, which the
+                // single-threaded key path does not do; treated as "no map",
+                // which is the safe direction -- the key reaches the ordinary
+                // keymaps rather than vanishing.
+                .unwrap_or((None, false, OnUnbound::Release))
+        });
+        if let Some((bound, is_prefix, on_unbound)) = transient {
+            match (bound, is_prefix, on_unbound) {
+                (Some(ast), _, _) => {
+                    pending.clear();
+                    drop(pending);
+                    return Some(ast);
+                }
+                // Part-way through one of the map's own sequences.
+                (None, true, _) => {
+                    drop(pending);
+                    return None;
+                }
+                // Refused, and nothing said about it: the map's message is
+                // still in the frame, and anything written to the echo area
+                // would be drawn under it.
+                (None, false, OnUnbound::Refuse) => {
+                    pending.clear();
+                    drop(pending);
+                    return None;
+                }
+                // Handed on. The map goes away and the key carries on to the
+                // keymaps below exactly as though it had never been there --
+                // which is what makes the offer free to ignore.
+                (None, false, OnUnbound::Release) => {
+                    // The gate is closed first and the map dropped after, the
+                    // same order `clear_transient_keymap` uses -- holding the
+                    // bindings of a map nobody can reach would be a small leak
+                    // that lasted until the next one was installed.
+                    self.transient_up.store(false, Ordering::Release);
+                    *self
+                        .transient_keymap
+                        .write()
+                        .expect("Failed to acquire write lock on transient_keymap") = None;
+                }
+            }
+        }
 
         let current_mode = {
             let buffer = self.get_current_buffer();
@@ -1061,6 +1246,11 @@ impl<B: BufferTrait> EditorState<B> {
             buf_lock.current_mode.clone()
         };
         self.run_hook(&current_mode_name, "post-command-hook", env);
+        // Offered after the command has run and its hooks have fired, so that
+        // pressing the repeat key goes through every step the first invocation
+        // did. A command with no repeat key takes down whatever the previous
+        // one offered, which is what ends a run of `C-x o o o`.
+        self.install_repeat_keymap(this_command.as_deref().map(String::as_str));
         self.set_last_command(this_command);
     }
 
@@ -1234,6 +1424,7 @@ impl<B: BufferTrait> EditorState<B> {
         // and the lock is released immediately.
         let theme = self.theme();
         let pending_input = self.pending_input();
+        let prompt = self.transient_message();
         let mode_line_format = mode_line_format(env);
         let separator_char = window_separator(env);
 
@@ -1329,6 +1520,7 @@ impl<B: BufferTrait> EditorState<B> {
             views,
             echo_message,
             pending_input,
+            prompt,
             theme,
             focused_window_id,
             width: screen_width,

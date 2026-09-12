@@ -244,3 +244,86 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Keymaps that last for a moment
+// ---------------------------------------------------------------------------
+
+/// What a transient keymap does with a key it does not bind.
+///
+/// The two answers are genuinely different features wearing the same
+/// mechanism, and getting them the wrong way round is maddening in both
+/// directions -- so the choice is made once, where the map is installed, rather
+/// than guessed at per key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnUnbound {
+    /// Swallow it. The map stays up until one of its own keys takes it down.
+    ///
+    /// For a map that is a *question*: a half-finished operation must not be
+    /// walked away from by pressing something unrelated, because nothing would
+    /// then say it was still running. Every map of this kind has to bind an
+    /// answer meaning "stop" -- `C-g` included, since a modal map takes that
+    /// too.
+    Refuse,
+    /// Dismiss the map, and let the key through to the keymaps underneath as
+    /// though the map had never been there.
+    ///
+    /// For a map that is an *offer*: after `C-x o`, a bare `o` moves to the
+    /// next window, and anything else means the user is done cycling and wants
+    /// that other thing to happen. Swallowing it would make the convenience
+    /// cost more than it saves.
+    Release,
+}
+
+/// A keymap consulted before every other, for as long as it is installed.
+///
+/// # Why one mechanism for two things
+///
+/// "Press `y` or `n`" and "press `o` again to keep going" look like different
+/// features, and underneath they are the same one: a keymap that is consulted
+/// first and then goes away. What differs is only [`OnUnbound`] -- whether a
+/// key the map does not bind is refused or handed on.
+///
+/// Being a *keymap* rather than a bespoke read loop is what makes the answers
+/// ordinary commands: they are bound the way everything else is bound, they
+/// appear in `describe-key`-style listings, and each is its own command for
+/// undo grouping. A bespoke loop would have needed all of that reinvented.
+///
+/// # No exit hook, deliberately
+///
+/// A [`OnUnbound::Release`] map is dismissed by a key that was *not* pressed
+/// for it, and nothing of the map's own runs at that moment. There is therefore
+/// nowhere safe to hang cleanup: the dismissal happens inside key resolution,
+/// under the keymap locks, and calling into the interpreter there is the
+/// deadlock the editor warns about everywhere else.
+///
+/// So a `Release` map must carry no state that needs cleaning up -- which
+/// repeat maps do not. Anything with a session behind it uses `Refuse` and ends
+/// through its own bindings, where a command can clean up properly.
+#[derive(Clone, Debug)]
+pub struct TransientKeymap<B: BufferTrait> {
+    pub keymap: Keymap<B>,
+    pub on_unbound: OnUnbound,
+    /// What to show while the map is live -- `[o]` for a repeat map, a question
+    /// for a modal one. Empty to show nothing.
+    pub message: String,
+}
+
+impl<B: BufferTrait> TransientKeymap<B> {
+    /// A map offering one key, which runs COMMAND and offers it again.
+    ///
+    /// The map is *not* rebuilt by the command it runs: it is reinstalled after
+    /// every command that has a repeat key, so pressing `o` re-runs
+    /// `other-window` and re-offers `o` by the same path that offered it first.
+    /// One rule, applied once, rather than a command that has to remember to
+    /// keep itself alive.
+    pub fn repeating(key: KeyEvent, command: &str) -> Self {
+        let mut keymap = Keymap::new();
+        keymap.insert_key(key.clone(), ELispExp::symbol(command.into()));
+        Self {
+            keymap,
+            on_unbound: OnUnbound::Release,
+            message: format!("[{}]", describe_keys(&[key])),
+        }
+    }
+}

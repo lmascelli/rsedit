@@ -55,6 +55,23 @@ pub struct FrameSnapshot {
     /// expiring it would leave the editor waiting for a key with nothing on
     /// screen to say so.
     pub pending_input: String,
+    /// What a transient keymap is offering or asking, or empty when none is
+    /// installed -- `[o]` while `C-x o o o` is live, a question while one is
+    /// being asked.
+    ///
+    /// A field of its own rather than an echo message, for the reason
+    /// `pending_input` is one: a message reports something that *happened* and
+    /// expires, while this reports what is *true right now*. An offer that
+    /// vanished after five seconds while the key still worked would be worse
+    /// than one never shown.
+    ///
+    /// Not folded into `pending_input` either, though it is the same kind of
+    /// thing: that one appends a trailing hyphen to say a sequence is part-way
+    /// typed, and a standing offer is not part-way anything.
+    ///
+    /// Shown *instead of* `echo_message`: the two compete for one row, and
+    /// this is the one the editor is waiting on.
+    pub prompt: String,
     /// How each face should be drawn, as it stood at capture time.
     ///
     /// Carried in the frame rather than looked up by the renderer for the same

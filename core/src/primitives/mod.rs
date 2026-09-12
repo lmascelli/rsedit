@@ -181,6 +181,11 @@ pub fn install_primitives<B: BufferTrait>(
     insert_cmd!("quit", general::quit, [] as [&str; 0], general::QUIT_DOC);
     insert_fn!("eval-file", general::eval_file, general::EVAL_FILE_DOC);
     insert_fn!("define-key", general::define_key, general::DEFINE_KEY_DOC);
+    insert_fn!(
+        "define-repeat-key",
+        general::define_repeat_key,
+        general::DEFINE_REPEAT_KEY_DOC
+    );
     insert_fn!("log", general::log, general::LOG_DOC);
     insert_fn!("all-logs", general::all_logs, general::ALL_LOGS_DOC);
     insert_fn!("backtrace", general::backtrace, general::BACKTRACE_DOC);

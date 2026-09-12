@@ -73,6 +73,23 @@
 (define-key nil "C-x 1" 'delete-other-windows)
 (define-key nil "C-x o" 'other-window)
 
+;; Incremental search. C-s opens a prompt and the buffer jumps to the first
+;; match of whatever has been typed so far, re-searching on every keystroke.
+;; Inside the search, C-s goes to the next match and C-r turns around; Return
+;; stops there, and Escape or C-g puts point back where it started. A search
+;; that runs out says so, and repeating it then wraps around the buffer.
+;;
+;; C-M-s and C-M-r take a regular expression instead.
+(define-key nil "C-s" 'isearch-forward)
+(define-key nil "C-r" 'isearch-backward)
+(define-key nil "C-M-s" 'isearch-forward-regexp)
+(define-key nil "C-M-r" 'isearch-backward-regexp)
+
+;; Whether searching ignores case. Emacs' name, Emacs' default -- and it is
+;; also set from Rust, so searching behaves the same with no configuration
+;; loaded at all.
+(setq case-fold-search t)
+
 ;; C-g abandons a half-typed key sequence or prefix argument, and ends the
 ;; region. It does not interrupt a running command -- that is roadmap #24.
 (define-key nil "C-g" 'keyboard-quit)

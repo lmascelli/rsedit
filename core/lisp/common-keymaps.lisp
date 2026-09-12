@@ -73,6 +73,11 @@
 (define-key nil "C-x 1" 'delete-other-windows)
 (define-key nil "C-x o" 'other-window)
 
+;; ... and once you are cycling, a bare `o' keeps going: C-x o o o walks
+;; through the windows without the prefix each time. Any other key ends the
+;; run and does its own job, so ignoring the offer costs nothing.
+(define-repeat-key 'other-window "o")
+
 ;; Incremental search. C-s opens a prompt and the buffer jumps to the first
 ;; match of whatever has been typed so far, re-searching on every keystroke.
 ;; Inside the search, C-s goes to the next match and C-r turns around; Return

@@ -306,8 +306,16 @@ pub fn render_to<W: Write>(
     // whatever's under it -- left free by the default minibuffer window,
     // which docks to the 3 rows just above it, so `message`/error output
     // always has somewhere visible to land without covering the prompt.
-    if !frame.echo_message.is_empty() {
-        draw_clipped_row(out, 0, frame_h - 1, &frame.echo_message, frame_w, frame_h)?;
+    //
+    // What a transient keymap is offering or asking displaces the message:
+    // they share one row, and of the two it is the offer that is still true.
+    let echo_line = if frame.prompt.is_empty() {
+        &frame.echo_message
+    } else {
+        &frame.prompt
+    };
+    if !echo_line.is_empty() {
+        draw_clipped_row(out, 0, frame_h - 1, echo_line, frame_w, frame_h)?;
     }
 
     // What the editor is waiting for, at the right-hand end of the same row.

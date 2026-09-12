@@ -209,3 +209,48 @@ primitive!(set_echo_message, args, _env, ctx, {
         })
     }
 });
+
+pub const DEFINE_REPEAT_KEY_DOC: &str = "(define-repeat-key COMMAND KEY): Say that after COMMAND \
+         runs, pressing KEY on its own runs it again -- and offers the same again after that, \
+         until some other key is pressed.\n\n\
+         KEY is one key, written as a binding is: \"o\", \"C-o\". The offer is shown in the frame \
+         while it stands, and the key that ends it is *not* swallowed: it does whatever it \
+         ordinarily does, so ignoring the offer costs nothing.\n\n\
+         Declared rather than inferred: a rule like \"the last key of the sequence repeats\" would \
+         make `C-x C-f' followed by `f' re-open `find-file'.\n\n\
+         Example:\n\
+         (define-repeat-key 'other-window \"o\")   ; C-x o o o cycles windows";
+
+primitive!(define_repeat_key, args, _env, ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let command = match &args[0] {
+        ELispExp::Symbol(name) | ELispExp::String(name) => name.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Symbol or String".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let ELispExp::String(key) = &args[1] else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args[1].clone(),
+        });
+    };
+    // One key, not a sequence: a repeat key that took two presses would not be
+    // saving anybody anything, and the map would have to stay up between them.
+    let parsed = super::parse_key_sequence(key).filter(|keys| keys.len() == 1);
+    let Some(keys) = parsed else {
+        return Err(EvalError::RuntimeMessage(format!(
+            "{key:?} is not a single key, so it cannot repeat a command"
+        )));
+    };
+    ctx.set_repeat_key(&command, keys[0].clone());
+    Ok(ELispExp::t())
+});
