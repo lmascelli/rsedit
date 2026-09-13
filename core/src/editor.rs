@@ -2477,7 +2477,6 @@ pub fn create_global_env<B: BufferTrait>()
 (eval-file "debug")
 (eval-file "common-keymaps")
 (eval-file "minibuffer")
-(eval-file "dired")
 
 ;; Modules. Each is optional -- comment one out and the editor comes up
 ;; without it, missing exactly that feature and nothing else.

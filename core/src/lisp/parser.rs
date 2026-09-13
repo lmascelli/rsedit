@@ -155,7 +155,7 @@ impl<'source> Parser<'source> {
                             return Err(ParserError::UnbalancedRBracket);
                         }
                     }
-                    ' ' | '\t' | '\n' => {}
+                    ' ' | '\t' | '\n' | '\r' => {}
                     '"' => {
                         self.lexer_state = ParserLexerState::InString;
                     }
@@ -203,6 +203,7 @@ impl<'source> Parser<'source> {
                         self.lexer_state = ParserLexerState::Default;
                         return Ok(Some(Token::Symbol(token_string)));
                     }
+                    '\n' | '\r' => {}
                     _ => {
                         self.token.push(*c);
                     }
@@ -294,7 +295,7 @@ impl<'source> Parser<'source> {
                             return Err(ParserError::NumberParseError(token_string));
                         }
                     }
-                    ' ' | '\t' | '\n' => {
+                    ' ' | '\t' | '\n' | '\r'  => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
                         if let Ok(number) = token_string.parse() {
@@ -331,7 +332,7 @@ impl<'source> Parser<'source> {
                         self.lexer_state = ParserLexerState::Default;
                         return Ok(Some(Token::Symbol(token_string)));
                     }
-                    ' ' | '\t' | '\n' => {
+                    ' ' | '\t' | '\n' | '\r' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
                         self.lexer_state = ParserLexerState::Default;
@@ -366,7 +367,7 @@ impl<'source> Parser<'source> {
                             return Err(ParserError::NumberParseError(token_string));
                         }
                     }
-                    ' ' | '\t' | '\n' => {
+                    ' ' | '\t' | '\n' | '\r' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
                         if let Ok(number) = token_string.parse() {
@@ -398,7 +399,7 @@ impl<'source> Parser<'source> {
                         self.lexer_state = ParserLexerState::Default;
                         return Ok(Some(Token::Dot));
                     }
-                    ' ' | '\t' | '\n' => {
+                    ' ' | '\t' | '\n' | '\r' => {
                         self.token.clear();
                         self.lexer_state = ParserLexerState::Default;
                         return Ok(Some(Token::Dot));
