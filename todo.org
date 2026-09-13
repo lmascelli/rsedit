@@ -1,13 +1,23 @@
 #+author: Leonardo Mascelli
 #+title: rsedit
 
-* Changes todo
-** [10-08-2026] Multi-keys keyevent
-  - [ ] list-dir: ls on given directory or the current if called with no arguments
-  - [ ] create a match-list function that given a list of strings and a pattern returns all element of the list containing that pattern
+* Fixed todo
+- [ ] Syntax highlighting is computed only on changes. Maybe a timestamp of the snapshot
+      should be added and used from syntax worker to sync the status when possible.
+- [ ] Sometimes the dired . and .. folder brings back to the system root
+- [ ] Dired doesn't work on Windows systems
+
 * Macro todo
-- [ ] Syntax highlighting (maybe treesitter)
-- [ ] Cursor movement functions
-- [ ] Theme system
-- [ ] Selection mode
+- [ ] A completion system. Customizable via callback from the user.
+      The default completion system should open an horizontal split on the top level of
+      the LayoutNode listing all available completions. The user can choose a completion
+      levaraging the transient mode with n or p and accept it pressing Enter or refusing
+      pressing Esc. The height of the completion window should be settable via lisp
+      variable and so the number of columns in it (default 3). Each item should containt
+      its value and an optional description (possibly utilized later for LSP).
+- [ ] Find file recursively from current working directory
+- [ ] Electric pair mode
+- [ ] Shell command spawn with output capture
 - [ ] LSP integration
+- [ ] Integrated terminal emulation
+
