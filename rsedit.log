@@ -6,29 +6,3 @@
 [LOG] End of the minibuffer.lisp
 [LOG] rust-mode loaded
 [LOG] End of the dired.lisp
-Wrote /home/leonardo/.config/rsedit/init.lisp
-defcommand function is not present in the environment
-(function-doc 'defcommand) => nil
-(function-doc 'function-doc) => (function-doc SYMBOL): Return the documentation string of the function bound to SYMBOL, or "Undocumented function" if it has none. Returns nil and logs a diagnostic if SYMBOL names no function. Not a standard Elisp primitive -- the closest real Elisp equivalent is `documentation`.
-
-Example:
-(function-doc 'car) => "(car LIST): Return the first element of LIST, or nil if LIST is nil."
-(function-doc 'no-such-fn) => nil
-[INFO] Keymap not bound C-x k
-[INFO] Keymap not bound M-(
-(kill-buffer) !! UndefinedFunction("kill-buffer")
-[INFO] Keymap not bound M-(
-(close-buffer) => t
-(setq debug-on-error t) => t
-[INFO] Keymap not bound M-k
-[INFO] Keymap not bound M-k
-[INFO] Keymap not bound M-k
-[INFO] Keymap not bound M-k
-[INFO] Keymap not bound M-k
-debug-on-error => t
-[INFO] Keymap not bound M-(
-(+ 1 !! RuntimeMessage("Parser Error UnclosedList")
-[INFO] Keymap not bound M-(
-(defun a () (+ 1 a)) => a
-[INFO] Keymap not bound M-(
-(a) !! UndefinedFunction("a")

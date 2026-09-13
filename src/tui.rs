@@ -1,5 +1,5 @@
 use crossterm::event::{
-    Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers, poll, read,
+    Event, KeyCode as CrossKeyCode, KeyEventKind, KeyModifiers as CrossModifiers, poll, read,
 };
 use crossterm::{
     QueueableCommand, cursor, execute,
@@ -558,7 +558,11 @@ pub fn tui_main<B: BufferTrait>(
 
         match read()? {
             Event::Key(key_event) => match translate_key(key_event) {
-                Some(event) => state.handle_key_event(event, &env),
+                Some(event) => {
+                    if key_event.kind == KeyEventKind::Press {
+                        state.handle_key_event(event, &env)
+                    }
+                }
                 None => state.log_diagnostic(&format!(
                     "[INFO] no translation for the key {:?}",
                     key_event.code
