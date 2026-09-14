@@ -1,11 +1,14 @@
 #+author: Leonardo Mascelli
 #+title: rsedit
 
-* Fixed todo
+* Fixes todo
+- [ ] remove not emacs compliant keymaps
+- [ ] add kill-buffer as available command
 
 * Macro todo
 - [ ] Find file recursively from current working directory
 - [ ] Electric pair mode
+- [ ] Rsedit lisp mode
 - [ ] Shell command spawn with output capture
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
