@@ -1,6 +1,7 @@
 mod bug_fix_tests;
 mod command_test;
 mod completion_tests;
+mod completion_ui_tests;
 mod deadlock_tests;
 mod debug_lisp_tests;
 mod deletion_tests;

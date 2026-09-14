@@ -685,10 +685,9 @@ mod tests {
         );
         crate::ui::region_highlights(
             &crate::ui::Window {
-                id: 0,
-                buffer_name: "*scratch*".into(),
                 scroll_x,
                 scroll_y,
+                ..crate::ui::Window::new(0, "*scratch*")
             },
             &crate::ui::Rect {
                 x: 0,

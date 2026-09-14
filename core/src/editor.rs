@@ -17,8 +17,9 @@ use crate::{
     search::Isearch,
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
-        Face, FloatingWindow, FrameSnapshot, LayoutNode, Orientation, Rect, RenderableWindowView,
-        Separator, Style, Theme, Window, extract_buffer_lines, region_highlights,
+        Division, Face, FloatingWindow, FrameSnapshot, LayoutNode, Orientation, Rect,
+        RenderableWindowView, Separator, Style, Theme, Window, extract_buffer_lines,
+        region_highlights,
     },
 };
 use std::{
@@ -390,12 +391,7 @@ impl<B: BufferTrait> EditorState<B> {
             current_buffer_name: Arc::new(RwLock::new(Arc::from(scratch_name.as_str()))),
             keymaps: Arc::new(RwLock::new(keymaps)),
             mode_registry: Arc::new(RwLock::new(HashMap::new())),
-            layout_root: Arc::new(RwLock::new(LayoutNode::Leaf(Window {
-                id: 0,
-                buffer_name: String::from("*scratch*"),
-                scroll_x: 0,
-                scroll_y: 0,
-            }))),
+            layout_root: Arc::new(RwLock::new(LayoutNode::Leaf(Window::new(0, "*scratch*")))),
             floating_windows: Arc::new(RwLock::new(Vec::new())),
             focused_window_id: Arc::new(RwLock::new(0)),
             next_window_id: Arc::new(AtomicUsize::new(1)),
@@ -676,6 +672,78 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Close the focused window. Returns false when it is the only one.
+    /// Open a full-width window of exactly HEIGHT rows at the bottom of the
+    /// frame, showing BUFFER, and return its id.
+    ///
+    /// # What makes this different from a split
+    ///
+    /// It divides the *whole frame* rather than one window, so it appears below
+    /// everything and every window above it gives up a share of the space. That
+    /// is what a strip is: a thing the frame has, not a thing one window was
+    /// cut in half to make.
+    ///
+    /// # Focus does not move
+    ///
+    /// Deliberately, and it is the property everything else rests on. A strip
+    /// is shown *while something else is being typed into* -- completions
+    /// beneath a prompt being the case this was built for -- and focus moving
+    /// would make the strip's buffer current, so the next keystroke would be
+    /// typed into the list of suggestions instead of into the prompt.
+    pub(crate) fn open_bottom_window(&self, buffer: &str, height: usize) -> usize {
+        let id = self.get_next_window_id();
+        let window = Window {
+            // No status line: the height asked for is the height of what the
+            // caller wanted shown, and spending a row of it saying
+            // "*Completions*" would make six mean five.
+            show_mode_line: false,
+            ..Window::new(id, buffer)
+        };
+        let mut layout = self
+            .layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root");
+        let existing = std::mem::replace(&mut *layout, LayoutNode::Leaf(window.clone()));
+        *layout = LayoutNode::Split {
+            orientation: Orientation::Horizontal,
+            division: Division::SecondFixed(height),
+            left: Box::new(existing),
+            right: Box::new(LayoutNode::Leaf(window)),
+        };
+        id
+    }
+
+    /// Close the window with ID, whoever has focus.
+    ///
+    /// Separate from `delete_focused_window` because a strip is closed by
+    /// whatever put it there, which by then is running in a different window
+    /// entirely -- giving the strip focus first, just to be able to close it,
+    /// would make its buffer current and defeat the point of never focusing it.
+    ///
+    /// Returns false when there is no such window, or when it is the only one:
+    /// a frame with no windows has nowhere to draw a cursor.
+    pub(crate) fn delete_window_by_id(&self, id: usize) -> bool {
+        let focused = self.get_focused_window_id();
+        let survivor = {
+            let mut layout = self
+                .layout_root
+                .write()
+                .expect("Failed to acquire write lock on layout_root");
+            if !layout.remove_window(id) {
+                return false;
+            }
+            // Only when the window that went was the focused one. Closing a
+            // strip must not move focus, which would change the current buffer
+            // out from under whatever asked for the strip in the first place.
+            (focused == id)
+                .then(|| layout.window_ids().first().copied())
+                .flatten()
+        };
+        if let Some(id) = survivor {
+            self.set_focused_window_id(id);
+        }
+        true
+    }
+
     pub(crate) fn delete_focused_window(&self) -> bool {
         let focused = self.get_focused_window_id();
         let survivor = {
@@ -772,12 +840,7 @@ impl<B: BufferTrait> EditorState<B> {
         self.new_buffer(buf_name, None, mode);
 
         let new_id = self.get_next_window_id();
-        let window = Window {
-            id: new_id,
-            buffer_name: buf_name.to_string(),
-            scroll_x: 0,
-            scroll_y: 0,
-        };
+        let window = Window::new(new_id, buf_name);
 
         let rect = Rect {
             x,
@@ -2524,6 +2587,7 @@ pub fn create_global_env<B: BufferTrait>()
 ;; without it, missing exactly that feature and nothing else.
 (eval-file "rust-mode")   ; colouring for Rust source
 (eval-file "dired")       ; a directory in a buffer (C-x d)
+(eval-file "completion")  ; Tab shows every candidate at once, in a strip
 
 
 "#,

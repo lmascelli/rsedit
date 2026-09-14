@@ -571,6 +571,121 @@ mod tests {
         );
     }
 
+    // ---------------- a strip along the bottom ----------------
+
+    /// A split holds a *fraction*, which cannot say "six rows". A strip can,
+    /// and that is the whole reason `Division` has two shapes.
+    #[test]
+    fn a_strip_is_exactly_the_height_it_asked_for() {
+        let (ctx, env) = editor();
+        eval_str(r#"(buffer-create "*strip*")"#, &env, &ctx).expect("a buffer");
+
+        eval_str(r#"(display-buffer-at-bottom "*strip*" 5)"#, &env, &ctx).expect("a strip");
+
+        let views = tiled(&ctx, &env);
+        let strip = views
+            .iter()
+            .find(|view| view.buffer_name == "*strip*")
+            .expect("the strip is on screen");
+        assert_eq!(strip.rect.height, 5);
+        assert_eq!(strip.rect.width, W, "and spans the frame");
+    }
+
+    /// The same height at any frame size, which a ratio could not promise: a
+    /// quarter of a taller terminal is more rows, so a popup sized to its
+    /// contents would grow when the window was resized.
+    #[test]
+    fn a_strip_keeps_its_height_when_the_frame_changes_size() {
+        let (ctx, env) = editor();
+        eval_str(r#"(buffer-create "*strip*")"#, &env, &ctx).expect("a buffer");
+        eval_str(r#"(display-buffer-at-bottom "*strip*" 4)"#, &env, &ctx).expect("a strip");
+
+        for height in [12, 24, 60] {
+            let frame = ctx.snapshot(&env, W, height);
+            let strip = frame
+                .views
+                .iter()
+                .find(|view| view.buffer_name == "*strip*")
+                .expect("the strip is on screen");
+            assert_eq!(strip.rect.height, 4, "at a frame height of {height}");
+        }
+    }
+
+    /// The space comes out of the windows above rather than being painted over
+    /// them, which is the difference between a split and a float.
+    #[test]
+    fn a_strip_takes_its_rows_from_the_windows_above() {
+        let (ctx, env) = editor();
+        let before = tiled(&ctx, &env)[0].rect.height;
+        eval_str(r#"(buffer-create "*strip*")"#, &env, &ctx).expect("a buffer");
+
+        eval_str(r#"(display-buffer-at-bottom "*strip*" 6)"#, &env, &ctx).expect("a strip");
+
+        assert_eq!(tiled(&ctx, &env)[0].rect.height, before - 6);
+    }
+
+    /// Everything the strip is for depends on this. It is opened while
+    /// something else is being typed into, so focus moving would make the
+    /// strip's buffer current and send the next keystroke into it.
+    #[test]
+    fn opening_a_strip_does_not_move_focus_or_change_the_current_buffer() {
+        let (ctx, env) = editor();
+        eval_str(r#"(buffer-create "*strip*")"#, &env, &ctx).expect("a buffer");
+        let focused = ctx.get_focused_window_id();
+        let current = ctx.get_current_buffer_name();
+
+        eval_str(r#"(display-buffer-at-bottom "*strip*" 3)"#, &env, &ctx).expect("a strip");
+
+        assert_eq!(ctx.get_focused_window_id(), focused);
+        assert_eq!(ctx.get_current_buffer_name(), current);
+    }
+
+    /// Closed by id, from wherever the caller happens to be -- giving the strip
+    /// focus just to be able to close it would defeat the point of never
+    /// focusing it.
+    #[test]
+    fn a_strip_is_closed_by_id_without_disturbing_focus() {
+        let (ctx, env) = editor();
+        eval_str(r#"(buffer-create "*strip*")"#, &env, &ctx).expect("a buffer");
+        let id =
+            eval_str(r#"(display-buffer-at-bottom "*strip*" 3)"#, &env, &ctx).expect("a strip");
+        let focused = ctx.get_focused_window_id();
+        assert_eq!(windows(&ctx), 2);
+
+        eval_str(&format!("(delete-window {id:?})"), &env, &ctx).expect("closed");
+
+        assert_eq!(windows(&ctx), 1);
+        assert_eq!(ctx.get_focused_window_id(), focused);
+    }
+
+    /// Asking for a height the frame cannot give must not leave the window the
+    /// user was working in with no rows at all.
+    #[test]
+    fn a_strip_taller_than_the_frame_still_leaves_a_row_above_it() {
+        let (ctx, env) = editor();
+        eval_str(r#"(buffer-create "*strip*")"#, &env, &ctx).expect("a buffer");
+        eval_str(r#"(display-buffer-at-bottom "*strip*" 999)"#, &env, &ctx).expect("a strip");
+
+        let views = tiled(&ctx, &env);
+        assert!(
+            views.iter().all(|view| view.rect.height >= 1),
+            "every window keeps at least a row: {:?}",
+            views.iter().map(|v| v.rect.height).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_strip_of_a_buffer_that_does_not_exist_opens_nothing() {
+        let (ctx, env) = editor();
+        let before = windows(&ctx);
+
+        let result =
+            eval_str(r#"(display-buffer-at-bottom "*nope*" 3)"#, &env, &ctx).expect("no error");
+
+        assert_eq!(result, LispExp::nil());
+        assert_eq!(windows(&ctx), before);
+    }
+
     // ---------------- the rule between windows ----------------
 
     /// Without this column the last character of a line on the left and the

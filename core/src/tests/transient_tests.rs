@@ -407,4 +407,141 @@ mod tests {
             "the two-key sequence must have completed"
         );
     }
+
+    // ---------------- installed from Lisp ----------------
+    //
+    // A module cannot run a modal question without these: it needs a keymap
+    // that is consulted first and swallows everything else, and it needs to be
+    // able to take it down again.
+
+    #[test]
+    fn a_keymap_installed_from_lisp_answers_before_the_buffers_own_bindings() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(progn (setq *picked* nil)
+                      (defun pick () (setq *picked* t))
+                      (set-transient-keymap (list (cons "n" 'pick))))"#,
+            &env,
+            &ctx,
+        )
+        .expect("a transient map");
+
+        press(&ctx, &env, KeyCode::Char('n'));
+
+        assert_eq!(eval_str("*picked*", &env, &ctx).unwrap(), LispExp::t());
+        assert_eq!(text_of(&ctx), "", "and `n` was not typed into the buffer");
+    }
+
+    /// Refuse, not Release: a half-made choice must not be walked away from by
+    /// pressing something unrelated, because nothing would then say the
+    /// question was still standing.
+    #[test]
+    fn a_key_it_does_not_bind_is_swallowed_rather_than_dismissing_it() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(progn (defun pick () nil)
+                      (set-transient-keymap (list (cons "n" 'pick))))"#,
+            &env,
+            &ctx,
+        )
+        .expect("a transient map");
+
+        press(&ctx, &env, KeyCode::Char('z'));
+
+        assert_eq!(text_of(&ctx), "", "z did nothing");
+        assert!(
+            ctx.transient_keymap_active(),
+            "and the question is still standing"
+        );
+    }
+
+    #[test]
+    fn clearing_it_gives_the_keyboard_back() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(progn (defun pick () nil)
+                      (set-transient-keymap (list (cons "n" 'pick))))"#,
+            &env,
+            &ctx,
+        )
+        .expect("a transient map");
+
+        eval_str("(clear-transient-keymap)", &env, &ctx).expect("cleared");
+        press(&ctx, &env, KeyCode::Char('z'));
+
+        assert_eq!(text_of(&ctx), "z");
+    }
+
+    /// The map stands until one of its own bindings takes it down, so a
+    /// command bound in it can run without ending the question -- which is what
+    /// lets `n` move a selection twenty times.
+    #[test]
+    fn running_one_of_its_own_commands_does_not_dismiss_it() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(progn (setq *count* 0)
+                      (defun bump () (setq *count* (+ *count* 1)))
+                      (set-transient-keymap (list (cons "n" 'bump))))"#,
+            &env,
+            &ctx,
+        )
+        .expect("a transient map");
+
+        for _ in 0..3 {
+            press(&ctx, &env, KeyCode::Char('n'));
+        }
+
+        assert_eq!(
+            eval_str("*count*", &env, &ctx).unwrap(),
+            LispExp::number(3.0)
+        );
+        assert!(ctx.transient_keymap_active());
+    }
+
+    #[test]
+    fn its_message_is_shown_in_the_frame_while_it_stands() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(progn (defun pick () nil)
+                      (set-transient-keymap (list (cons "n" 'pick)) "[n to move]"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("a transient map");
+
+        assert_eq!(ctx.snapshot(&env, W, H).prompt, "[n to move]");
+    }
+
+    /// A key that does not parse fails the whole call. Dropping it silently
+    /// would install a modal map missing the binding that was meant to get out
+    /// of it, and the user would find out by pressing Escape and having
+    /// nothing happen.
+    #[test]
+    fn a_binding_that_does_not_parse_installs_nothing() {
+        let (ctx, env) = editor_with("");
+
+        let result = eval_str(
+            r#"(progn (defun pick () nil)
+                      (set-transient-keymap (list (cons "n" 'pick)
+                                                  (cons "not-a-key" 'pick))))"#,
+            &env,
+            &ctx,
+        );
+
+        assert!(result.is_err(), "{result:?}");
+        assert!(
+            !ctx.transient_keymap_active(),
+            "and nothing was left installed"
+        );
+    }
+
+    /// A map with nothing bound would swallow every key for the rest of the
+    /// session, and nothing could take it down.
+    #[test]
+    fn a_map_with_no_bindings_is_refused() {
+        let (ctx, env) = editor_with("");
+
+        assert!(eval_str("(set-transient-keymap nil)", &env, &ctx).is_err());
+        assert!(!ctx.transient_keymap_active());
+    }
 }

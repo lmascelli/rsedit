@@ -75,15 +75,7 @@ primitive!(define_key, args, env, ctx, {
                     });
                 }
             };
-            let actual_ast = if let ELispExp::Symbol(symbol_name) = ast {
-                if let Some(_) = env.get_function(symbol_name) {
-                    ELispExp::form(vec![ast.clone()])
-                } else {
-                    ast.clone()
-                }
-            } else {
-                ast.clone()
-            };
+            let actual_ast = command_ast(ast, &env);
             if let Some(keys) = parse_key_sequence(key_str) {
                 if let Some(mode_name) = mode_name {
                     let mut mode_registry_lock = ctx
@@ -252,5 +244,136 @@ primitive!(define_repeat_key, args, _env, ctx, {
         )));
     };
     ctx.set_repeat_key(&command, keys[0].clone());
+    Ok(ELispExp::t())
+});
+
+/// What a binding's COMMAND argument means, as an expression to evaluate.
+///
+/// A symbol naming a function is a *call* -- `(define-key nil "C-n"
+/// 'next-line)` binds the command, not the symbol -- while anything else is
+/// taken as an expression and evaluated as written, which is what lets a
+/// binding be `'(insert "x")`.
+///
+/// One function because `define-key` and `set-transient-keymap` are two ways
+/// of writing the same thing down, and a user who learns the rule from one has
+/// every right to expect the other to follow it. They answered it separately
+/// once, and separately means eventually differently.
+///
+/// # It changes nothing today
+///
+/// The key dispatcher accepts a bare symbol and a one-element form alike --
+/// see the comment on `bound_command` in `handle_key_event`, where that is
+/// spelt out -- so wrapping or not wrapping makes no difference to what
+/// happens when the key is pressed, and no test can tell the two apart. What
+/// it buys is that a keymap holds *one* shape rather than two, which is what
+/// anything reading a keymap back rather than running it -- describing a
+/// binding, finding where a command is bound -- would otherwise have to know
+/// about.
+fn command_ast<B: BufferTrait>(
+    exp: &ELispExp<B>,
+    env: &std::sync::Arc<Env<EditorState<B>>>,
+) -> ELispExp<B> {
+    match exp {
+        // Only when it names one: a symbol that is not a function is a
+        // variable reference, and wrapping it would call something that does
+        // not exist rather than reading what does.
+        ELispExp::Symbol(name) if env.get_function(name).is_some() => {
+            ELispExp::form(vec![exp.clone()])
+        }
+        other => other.clone(),
+    }
+}
+
+pub const SET_TRANSIENT_KEYMAP_DOC: &str = "(set-transient-keymap BINDINGS &optional MESSAGE): \
+         Install a keymap that is consulted before every other and that **swallows every key it \
+         does not bind**, until one of its own bindings takes it down with \
+         `clear-transient-keymap'.\n\n\
+         BINDINGS is a list of (KEY . COMMAND) pairs, where KEY is written as a binding is -- \
+         \"n\", \"<ret>\", \"C-g\" -- and COMMAND is a symbol naming a function or an expression \
+         to evaluate. MESSAGE, if given, is shown in the frame while the map stands, so that the \
+         user can see what is being asked of them.\n\n\
+         This is for a map that is a *question*: a list of completions to pick from, a \
+         confirmation to answer. Swallowing the unbound keys is the point -- a half-finished \
+         choice must not be walked away from by pressing something unrelated, because nothing \
+         would then say it was still standing. Which is also why every such map must bind a way \
+         out, `C-g' and Escape included: nothing else can take it down.\n\n\
+         For the other kind of transient map -- an *offer*, like the `o' that keeps cycling \
+         windows after `C-x o' -- see `define-repeat-key', which dismisses itself the moment \
+         something else is pressed.\n\n\
+         Example:\n\
+         (set-transient-keymap (list (cons \"n\" 'next-candidate)\n\
+                                     (cons \"p\" 'previous-candidate)\n\
+                                     (cons \"<ret>\" 'choose-candidate)\n\
+                                     (cons \"<esc>\" 'abandon-candidates)\n\
+                                     (cons \"C-g\" 'abandon-candidates))\n\
+                               \"[n/p to move, RET to choose]\")";
+
+primitive!(set_transient_keymap, args, env, ctx, {
+    if args.is_empty() || args.len() > 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let mut keymap = Keymap::new();
+    let mut bound = 0;
+    for binding in args[0].iter() {
+        let (key, command) = match &binding {
+            ELispExp::Cons(cell) => (cell.car.clone(), cell.cdr.clone()),
+            other => {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "a (KEY . COMMAND) pair".into(),
+                    got: other.clone(),
+                });
+            }
+        };
+        let ELispExp::String(key) = &key else {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String naming a key".into(),
+                got: key.clone(),
+            });
+        };
+        // A key that does not parse fails the whole call rather than being
+        // dropped: a modal map with a missing binding is a map the user cannot
+        // get out of, and finding that out by pressing Escape and having
+        // nothing happen is the worst possible time.
+        let Some(keys) = super::parse_key_sequence(key) else {
+            return Err(EvalError::RuntimeMessage(format!(
+                "{key:?} is not a key sequence"
+            )));
+        };
+        // Through the same rule `define-key` uses, so that a binding written
+        // one way means what it means written the other.
+        keymap.insert(keys, command_ast(&command, &env));
+        bound += 1;
+    }
+    if bound == 0 {
+        return Err(EvalError::RuntimeMessage(
+            "A transient keymap with no bindings could never be dismissed".into(),
+        ));
+    }
+    let message = match args.get(1) {
+        Some(ELispExp::String(message)) => message.to_string(),
+        _ => String::new(),
+    };
+    ctx.set_transient_keymap(TransientKeymap {
+        keymap,
+        on_unbound: OnUnbound::Refuse,
+        message,
+    });
+    Ok(ELispExp::t())
+});
+
+pub const CLEAR_TRANSIENT_KEYMAP_DOC: &str = "(clear-transient-keymap): Take down the keymap \
+         installed by `set-transient-keymap', so that keys reach the buffer's own bindings \
+         again. Returns t.\n\n\
+         Every command bound in such a map that ends the question -- choosing, cancelling -- \
+         has to call this. The map does not dismiss itself when one of its own bindings runs, \
+         which is what lets a map offer several keys that do not end anything.\n\n\
+         Example:\n\
+         (defun abandon-candidates () (completion--close) (clear-transient-keymap))";
+
+primitive!(clear_transient_keymap, _args, _env, ctx, {
+    ctx.clear_transient_keymap();
     Ok(ELispExp::t())
 });

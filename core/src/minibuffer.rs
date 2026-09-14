@@ -130,7 +130,31 @@ const MINIBUFFER_COMPLETE_DOC: &str = "(minibuffer-complete): Called when the us
          The first press after a change to the input calls \
          *minibuffer-on-change* with the current input to compute completion \
          candidates and shows the first one; further presses (as long as the \
-         input hasn't changed since) cycle through the rest.";
+         input hasn't changed since) cycle through the rest.\n\n\
+         If *completion-read-function* is set, it is called instead of cycling, with the \
+         candidate list and the symbol `minibuffer-choose-completion' -- which it calls with \
+         whichever candidate the user picked. Setting that variable is how a module replaces \
+         the way completions are presented without this, or any of its callers, knowing that \
+         it did. Unset, the cycling below is all there is, so nothing here depends on such a \
+         module existing.";
+
+const MINIBUFFER_CHOOSE_COMPLETION_DOC: &str = "(minibuffer-choose-completion VALUE): Replace the \
+         minibuffer's contents with VALUE. Returns VALUE.\n\n\
+         This is the symbol handed to *completion-read-function* as the thing to call when the \
+         user picks a candidate. A presenter is given it rather than being told to write to the \
+         minibuffer itself, so that it needs to know nothing about where the completion came \
+         from -- the same presenter serves a prompt, and would serve a buffer.";
+
+primitive!(minibuffer_choose_completion, args, _env, ctx, {
+    let Some(ELispExp::String(value)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+        });
+    };
+    set_minibuffer_content(ctx, value);
+    Ok(args[0].clone())
+});
 
 primitive!(minibuffer_complete, _args, env, ctx, {
     let current = ctx
@@ -154,6 +178,35 @@ primitive!(minibuffer_complete, _args, env, ctx, {
         .as_ref()
         .map(|list| list.iter().collect())
         .unwrap_or_default();
+
+    // A presenter takes the whole job: it is handed the candidates and the way
+    // to report a choice, and nothing below runs. Asked for *before* the
+    // cycling state is consulted, because a presenter has no use for an index
+    // into a list it is about to show all of.
+    if let Some(present) = env.get_variable("*completion-read-function*")
+        && present.is_truthy()
+    {
+        let candidates = match env.get_variable("*minibuffer-on-change*") {
+            Some(on_change) if on_change.is_truthy() => call_callable(
+                &on_change,
+                &[ELispExp::string(current.clone())],
+                env.clone(),
+                ctx,
+            )?,
+            _ => ELispExp::nil(),
+        };
+        setq(&env, "*minibuffer-completions*", candidates.clone());
+        call_callable(
+            &present,
+            &[
+                candidates,
+                ELispExp::symbol("minibuffer-choose-completion".into()),
+            ],
+            env.clone(),
+            ctx,
+        )?;
+        return Ok(ELispExp::nil());
+    }
 
     let still_cycling = !items.is_empty()
         && matches!(items.get(index), Some(ELispExp::String(s)) if s.as_str() == current);
@@ -299,6 +352,13 @@ pub fn install_minibuffer<B: BufferTrait>(
     env.set_function(
         "minibuffer-complete".into(),
         ELispExp::primitive(minibuffer_complete, Some(MINIBUFFER_COMPLETE_DOC.into())),
+    );
+    env.set_function(
+        "minibuffer-choose-completion".into(),
+        ELispExp::primitive(
+            minibuffer_choose_completion,
+            Some(MINIBUFFER_CHOOSE_COMPLETION_DOC.into()),
+        ),
     );
     env.set_function(
         "default-minibuffer-prompt".into(),

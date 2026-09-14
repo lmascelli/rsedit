@@ -1689,6 +1689,61 @@ fn primitive_abs<T: LispContext>(
 
 // ----------------------------------- Strings ---------------------------------
 
+const FLOOR_DOC: &str = "(floor NUMBER): Return the largest integer not greater than NUMBER. \
+                 Negative numbers round away from zero, so (floor -1.5) is -2.\n\n\
+                 Needed because `/' here is division, not integer division: (/ 1 3) is \
+                 0.3333333, and anything counting rows and columns wants the 0.\n\n\
+                 Example:\n\
+                 (floor (/ 7 3)) => 2";
+
+fn primitive_floor<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    if args.len() != 1 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    Ok(LispExp::number(expect_number(&args[0])?.floor()))
+}
+
+const MAKE_STRING_DOC: &str = "(make-string COUNT STRING): Return COUNT copies of STRING's first \
+                 character, joined. A COUNT of zero or less gives the empty string.\n\n\
+                 Chiefly for padding: laying anything out in columns means writing the spaces \
+                 between them, and building those a character at a time in Lisp costs a cons \
+                 per space.\n\n\
+                 Example:\n\
+                 (concat \"a\" (make-string 3 \" \") \"b\") => \"a   b\"";
+
+fn primitive_make_string<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let count = expect_number(&args[0])?;
+    let fill = expect_string(&args[1])?;
+    // The first character, as `self-insert` takes it -- this Lisp has no
+    // character type, so a one-character string is how one is written.
+    let Some(c) = fill.chars().next() else {
+        return Ok(LispExp::string(String::new()));
+    };
+    let count = if count.is_finite() {
+        count.max(0.0) as usize
+    } else {
+        0
+    };
+    Ok(LispExp::string(String::from(c).repeat(count)))
+}
+
 const CONCAT_DOC: &str = "(concat &rest STRINGS): Concatenate STRINGS into a single \
                  string.\n\n\
                  Example:\n\
@@ -2433,6 +2488,14 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     );
 
     // ------------------------------- Strings ------------------------------
+    env.set_function(
+        "floor".into(),
+        LispExp::primitive(primitive_floor, Some(FLOOR_DOC.into())),
+    );
+    env.set_function(
+        "make-string".into(),
+        LispExp::primitive(primitive_make_string, Some(MAKE_STRING_DOC.into())),
+    );
     env.set_function(
         "concat".into(),
         LispExp::primitive(primitive_concat, Some(CONCAT_DOC.into())),

@@ -43,14 +43,75 @@ pub const DELETE_WINDOW_DOC: &str = "(delete-window): Close the focused window; 
          Example:\n\
          (define-key nil \"C-x 0\" 'delete-window)";
 
-primitive!(delete_window, _args, _env, ctx, {
-    if ctx.delete_focused_window() {
+primitive!(delete_window, args, _env, ctx, {
+    let closed = match args.first() {
+        None => ctx.delete_focused_window(),
+        Some(exp) if exp.is_nil() => ctx.delete_focused_window(),
+        Some(ELispExp::Number(id)) => ctx.delete_window_by_id(*id as usize),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Number naming a window".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    if closed {
         Ok(ELispExp::t())
     } else {
         Err(EvalError::RuntimeMessage(
             "Attempt to delete minibuffer or sole ordinary window".into(),
         ))
     }
+});
+
+pub const DISPLAY_BUFFER_AT_BOTTOM_DOC: &str = "(display-buffer-at-bottom BUFFER HEIGHT): Show \
+         BUFFER in a full-width window of exactly HEIGHT rows along the bottom of the frame, \
+         and return the new window's id -- which is what `delete-window' needs to close it \
+         again.\n\n\
+         The frame is divided, not one window: the strip appears below everything, and every \
+         window above it gives up a share of the space. Its height stays HEIGHT whatever the \
+         terminal is resized to, which an ordinary split cannot promise -- a split holds a \
+         fraction, and a fraction of a taller frame is more rows.\n\n\
+         **Focus does not move.** A strip is shown while something else is being typed into, \
+         and focus moving would make the strip's buffer current -- so the next keystroke would \
+         go into the strip instead of wherever the user is looking. Nothing about a strip is \
+         usable if this is not true.\n\n\
+         Example:\n\
+         (setq w (display-buffer-at-bottom \"*Completions*\" 6))\n\
+         (delete-window w)";
+
+primitive!(display_buffer_at_bottom, args, _env, ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let name = match &args[0] {
+        ELispExp::String(name) | ELispExp::Symbol(name) => name.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String or Symbol naming a buffer".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let ELispExp::Number(height) = &args[1] else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "Number".into(),
+            got: args[1].clone(),
+        });
+    };
+    if ctx.get_buffer(&name).is_none() {
+        ctx.log_diagnostic(&format!("[LOG] buffer {name} does not exist."));
+        return Ok(ELispExp::nil());
+    }
+    // At least one row: a strip of no rows is invisible, and a caller that
+    // asked for one and got nothing would have no way to tell.
+    let height = (height.max(1.0)) as usize;
+    Ok(ELispExp::number(
+        ctx.open_bottom_window(&name, height) as f64
+    ))
 });
 
 pub const DELETE_OTHER_WINDOWS_DOC: &str = "(delete-other-windows): Close every window but the \

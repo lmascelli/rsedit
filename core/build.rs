@@ -6,6 +6,7 @@ fn main() {
     let LISP_FILES: Vec<&str> = vec![
         "commands.lisp",
         "common-keymaps.lisp",
+        "completion.lisp",
         "debug.lisp",
         "dired.lisp",
         "minibuffer.lisp",

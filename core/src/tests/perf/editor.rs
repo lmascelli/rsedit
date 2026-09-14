@@ -226,28 +226,23 @@ fn layout(report: &mut Report, calibration: f64) {
     const FRAMES: usize = 200;
 
     fn leaf(id: usize) -> LayoutNode {
-        LayoutNode::Leaf(Window {
-            id,
-            buffer_name: format!("buf{id}"),
-            scroll_x: 0,
-            scroll_y: 0,
-        })
+        LayoutNode::Leaf(Window::new(id, &format!("buf{id}")))
     }
 
     // Built by hand because there is still no `split-window` primitive to build
     // one from Lisp (roadmap item 3).
     let mut root = LayoutNode::Split {
         orientation: Orientation::Horizontal,
-        ratio: 0.5,
+        division: Division::Ratio(0.5),
         left: Box::new(LayoutNode::Split {
             orientation: Orientation::Vertical,
-            ratio: 0.5,
+            division: Division::Ratio(0.5),
             left: Box::new(leaf(1)),
             right: Box::new(leaf(2)),
         }),
         right: Box::new(LayoutNode::Split {
             orientation: Orientation::Vertical,
-            ratio: 0.5,
+            division: Division::Ratio(0.5),
             left: Box::new(leaf(3)),
             right: Box::new(leaf(4)),
         }),

@@ -25,6 +25,71 @@ pub struct Window {
     pub buffer_name: String,
     pub scroll_x: usize,
     pub scroll_y: usize,
+    /// Whether this window draws a status line along its bottom row.
+    ///
+    /// True for a window somebody is working in, which is all of them but one
+    /// kind: a *strip* -- a few rows of completions or of output, opened to be
+    /// read and then dismissed -- has no state worth a status line, and giving
+    /// it one would spend a row of a window whose whole size was chosen
+    /// deliberately. A caller asking for six rows should get six rows of what
+    /// it asked to show.
+    pub show_mode_line: bool,
+}
+
+impl Window {
+    /// A window showing BUFFER, scrolled to the top, with a status line.
+    pub fn new(id: usize, buffer_name: &str) -> Self {
+        Self {
+            id,
+            buffer_name: buffer_name.to_string(),
+            scroll_x: 0,
+            scroll_y: 0,
+            show_mode_line: true,
+        }
+    }
+}
+
+/// How a split shares its space between its two children.
+///
+/// # Why this is one value and not two fields
+///
+/// A window that must be exactly six rows -- a strip of completions, a
+/// compilation log -- cannot be described by a fraction: six rows of a
+/// twenty-four-row frame is a quarter, and the same quarter is nine rows on a
+/// taller terminal. Resizing the terminal would silently resize a popup that
+/// was sized to its contents.
+///
+/// Adding a `fixed: Option<usize>` beside `ratio` would express it, and would
+/// also express *both at once*, which means every reader has to decide which
+/// wins and they will not all decide the same way. One value, two shapes: a
+/// split divides one way or the other and there is nothing to reconcile.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Division {
+    /// The first child takes this fraction of the space; the second takes what
+    /// is left.
+    Ratio(f32),
+    /// The second child is exactly this many rows (stacked) or columns (side by
+    /// side), and the first takes what is left.
+    ///
+    /// The second rather than the first, because the fixed one is always the
+    /// thing being added -- a strip appears below what was already there, and
+    /// what was already there gives up the space.
+    SecondFixed(usize),
+}
+
+impl Division {
+    /// How much of TOTAL the first child gets.
+    ///
+    /// The second child is never given more than there is, and the first is
+    /// never left with nothing to draw in when the frame is too small to honour
+    /// the request -- a zero-height window renders as nothing at all, and the
+    /// buffer the user was working in is the wrong one to make disappear.
+    fn first_share(&self, total: usize) -> usize {
+        match self {
+            Division::Ratio(ratio) => ((total as f32) * ratio).round() as usize,
+            Division::SecondFixed(size) => total.saturating_sub(*size).max(total.min(1)),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -32,7 +97,7 @@ pub enum LayoutNode {
     Leaf(Window),
     Split {
         orientation: Orientation,
-        ratio: f32,
+        division: Division,
         left: Box<LayoutNode>,
         right: Box<LayoutNode>,
     },
@@ -175,7 +240,7 @@ impl LayoutNode {
                 let existing = std::mem::replace(window, placeholder_window());
                 *self = LayoutNode::Split {
                     orientation,
-                    ratio: 0.5,
+                    division: Division::Ratio(0.5),
                     left: Box::new(LayoutNode::Leaf(existing)),
                     right: Box::new(LayoutNode::Leaf(new_window)),
                 };
@@ -236,12 +301,7 @@ impl LayoutNode {
 /// moved out of the tree it is part of. Nothing ever reads this, and it is
 /// gone by the time the function it is used in returns.
 fn placeholder_window() -> Window {
-    Window {
-        id: usize::MAX,
-        buffer_name: String::new(),
-        scroll_x: 0,
-        scroll_y: 0,
-    }
+    Window::new(usize::MAX, "")
 }
 
 /// The narrowest a rect can be and still give a column to a divider.
@@ -269,7 +329,7 @@ impl LayoutNode {
                 // A window with only one row keeps it for text: a status line
                 // with nothing under it says nothing useful.
                 let mode_line = buffers.get(&win.buffer_name).and_then(|buffer| {
-                    (rect.height >= 2).then(|| {
+                    (win.show_mode_line && rect.height >= 2).then(|| {
                         expand_mode_line(
                             mode_line_format,
                             &buffer
@@ -338,12 +398,12 @@ impl LayoutNode {
 
             LayoutNode::Split {
                 orientation,
-                ratio,
+                division,
                 left,
                 right,
             } => match orientation {
                 Orientation::Horizontal => {
-                    let left_height = ((rect.height as f32) * *ratio).round() as usize;
+                    let left_height = division.first_share(rect.height);
                     let right_height = rect.height.saturating_sub(left_height);
 
                     left.compute_tiled_views(
@@ -373,7 +433,7 @@ impl LayoutNode {
                 Orientation::Vertical => {
                     let divided = rect.width >= MIN_WIDTH_FOR_SEPARATOR;
                     let usable = rect.width.saturating_sub(divided as usize);
-                    let left_width = ((usable as f32) * *ratio).round() as usize;
+                    let left_width = division.first_share(usable);
                     let right_width = usable.saturating_sub(left_width);
 
                     if divided {

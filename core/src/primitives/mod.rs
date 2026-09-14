@@ -1,6 +1,6 @@
 use crate::{
     BufferTrait, ELispExp, EditorState,
-    input::{KeyCode, KeyEvent, KeyModifiers},
+    input::{KeyCode, KeyEvent, KeyModifiers, Keymap, OnUnbound, TransientKeymap},
     lisp::{Env, EvalError, LispContext},
     modes::{MajorMode, SyntaxRegion, SyntaxRule},
     ui::Face,
@@ -393,6 +393,25 @@ pub fn install_primitives<B: BufferTrait>(
         "count-windows",
         windows::count_windows,
         windows::COUNT_WINDOWS_DOC
+    );
+    insert_fn!(
+        "display-buffer-at-bottom",
+        windows::display_buffer_at_bottom,
+        windows::DISPLAY_BUFFER_AT_BOTTOM_DOC
+    );
+
+    // A keymap that is a question. Not commands: `M-x set-transient-keymap`
+    // would put the editor into a state whose way out is in an argument the
+    // user was never asked for.
+    insert_fn!(
+        "set-transient-keymap",
+        general::set_transient_keymap,
+        general::SET_TRANSIENT_KEYMAP_DOC
+    );
+    insert_fn!(
+        "clear-transient-keymap",
+        general::clear_transient_keymap,
+        general::CLEAR_TRANSIENT_KEYMAP_DOC
     );
     insert_fn!(
         "window-buffer",
