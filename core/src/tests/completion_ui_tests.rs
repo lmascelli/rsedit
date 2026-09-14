@@ -653,4 +653,248 @@ mod tests {
             "typing reaches the prompt again"
         );
     }
+
+    // ---------------- the prompt and the strip share the frame ----------------
+
+    /// The bug: the prompt used to be docked along the bottom edge, which is
+    /// exactly where the completion strip goes. Two things drawn in one place
+    /// is not a layout.
+    ///
+    /// Checked at several sizes, because one size proves nothing here -- the
+    /// answer depends on how much of the frame the strip is taking.
+    #[test]
+    fn on_a_frame_with_room_the_prompt_and_the_strip_do_not_overlap() {
+        for (width, height) in [(80, 24), (100, 40), (60, 20)] {
+            let (ctx, env) = with_module();
+            prompt_offering(&["alpha", "beta", "gamma"], &env, &ctx);
+            press(&ctx, &env, KeyCode::Tab);
+
+            let frame = ctx.snapshot(&env, width, height);
+            let overlap = shared_rows(&frame);
+            assert!(
+                overlap.is_empty(),
+                "at {width}x{height} the prompt and the strip share rows {overlap:?}"
+            );
+        }
+    }
+
+    /// And on a frame too small to hold both, they do overlap -- there is
+    /// nowhere else for a *centred* prompt to go when a six-row strip is most
+    /// of the screen. What matters then is which one wins: a float is drawn
+    /// after the tiled windows, so the prompt is on top and can still be read
+    /// and typed into. Losing sight of some candidates is survivable; losing
+    /// the prompt is not, because a prompt is how you would run the command
+    /// that made the strip smaller.
+    #[test]
+    fn on_a_frame_too_small_for_both_the_prompt_is_drawn_over_the_strip() {
+        let (ctx, env) = with_module();
+        prompt_offering(&["alpha", "beta", "gamma"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+
+        let frame = ctx.snapshot(&env, 40, 12);
+        assert!(
+            !shared_rows(&frame).is_empty(),
+            "this size is chosen because they *do* collide; if they no longer \
+             do, this test is measuring nothing"
+        );
+
+        let position = |name: &str| {
+            frame
+                .views
+                .iter()
+                .position(|view| view.buffer_name == name)
+                .unwrap_or_else(|| panic!("{name} is on screen"))
+        };
+        assert!(
+            position("*Minibuffer*") > position("*Completions*"),
+            "the prompt is drawn later, so it is the one that is legible"
+        );
+    }
+
+    /// Rows covered by both the prompt and the completion strip.
+    fn shared_rows(frame: &crate::ui::FrameSnapshot) -> Vec<isize> {
+        let rect_of = |name: &str| {
+            frame
+                .views
+                .iter()
+                .find(|view| view.buffer_name == name)
+                .map(|view| view.rect.clone())
+                .unwrap_or_else(|| panic!("{name} is on screen"))
+        };
+        let prompt = rect_of("*Minibuffer*");
+        let strip = rect_of("*Completions*");
+        let rows = |rect: &crate::ui::Rect| rect.y..(rect.y + rect.height as isize);
+        rows(&prompt)
+            .filter(|row| rows(&strip).contains(row))
+            .collect()
+    }
+
+    #[test]
+    fn the_prompt_sits_in_the_middle_of_the_frame() {
+        let (ctx, env) = with_module();
+        prompt_offering(&["alpha"], &env, &ctx);
+
+        let frame = ctx.snapshot(&env, W, H);
+        let prompt = frame
+            .views
+            .iter()
+            .find(|view| view.buffer_name == "*Minibuffer*")
+            .expect("the prompt is on screen");
+
+        let left = prompt.rect.x;
+        let right = W as isize - (prompt.rect.x + prompt.rect.width as isize);
+        assert!(
+            (left - right).abs() <= 1,
+            "margins differ: {left} left, {right} right"
+        );
+        let above = prompt.rect.y;
+        // The echo area owns the bottom row, so the space centred in is one
+        // shorter than the frame.
+        let below = (H - 1) as isize - (prompt.rect.y + prompt.rect.height as isize);
+        assert!(
+            (above - below).abs() <= 1,
+            "margins differ: {above} above, {below} below"
+        );
+    }
+
+    #[test]
+    fn the_prompt_is_the_size_the_variables_ask_for() {
+        let (ctx, env) = with_module();
+        run(
+            "(setq minibuffer-width 30)(setq minibuffer-height 5)",
+            &env,
+            &ctx,
+        );
+        prompt_offering(&["alpha"], &env, &ctx);
+
+        let frame = ctx.snapshot(&env, W, H);
+        let prompt = frame
+            .views
+            .iter()
+            .find(|view| view.buffer_name == "*Minibuffer*")
+            .expect("the prompt is on screen");
+
+        assert_eq!(prompt.rect.width, 30);
+        assert_eq!(prompt.rect.height, 5);
+    }
+
+    /// A prompt must always be openable -- it is how `M-x` works, and how you
+    /// would run the command that fixed the setting -- so a size the terminal
+    /// cannot hold is clamped rather than refused.
+    #[test]
+    fn a_prompt_larger_than_the_frame_is_cut_down_to_fit() {
+        let (ctx, env) = with_module();
+        run(
+            "(setq minibuffer-width 9999)(setq minibuffer-height 9999)",
+            &env,
+            &ctx,
+        );
+        prompt_offering(&["alpha"], &env, &ctx);
+
+        let frame = ctx.snapshot(&env, W, H);
+        let prompt = frame
+            .views
+            .iter()
+            .find(|view| view.buffer_name == "*Minibuffer*")
+            .expect("the prompt is still openable");
+
+        assert!(prompt.rect.x >= 0);
+        assert!(prompt.rect.y >= 0);
+        assert!(
+            prompt.rect.x + prompt.rect.width as isize <= W as isize,
+            "{:?}",
+            prompt.rect
+        );
+        assert!(
+            prompt.rect.y + prompt.rect.height as isize <= H as isize,
+            "{:?}",
+            prompt.rect
+        );
+    }
+
+    /// A nonsense size falls back to the *default*, not merely to something
+    /// legal. One column wide is technically a window and is no more use than
+    /// none: the point of falling back is that the prompt stays usable, and a
+    /// prompt that cannot open -- or cannot be read -- leaves no way to run the
+    /// command that would put the setting right.
+    #[test]
+    fn a_nonsense_size_falls_back_to_the_default() {
+        for (setting, width, height) in [
+            (r#"(setq minibuffer-width nil)"#, None, None),
+            (r#"(setq minibuffer-width "wide")"#, None, None),
+            (r#"(setq minibuffer-width 0)"#, None, None),
+            (r#"(setq minibuffer-height -4)"#, None, None),
+            // A good value beside a bad one is still honoured: they fall back
+            // one at a time, not together.
+            (
+                r#"(setq minibuffer-width 30)(setq minibuffer-height nil)"#,
+                Some(30),
+                None,
+            ),
+        ] {
+            let (ctx, env) = with_module();
+            // Wide enough that the default is not clamped, so what is measured
+            // is the fallback and not the frame.
+            run("(setq frame-width 100)", &env, &ctx);
+            run(setting, &env, &ctx);
+            prompt_offering(&["alpha"], &env, &ctx);
+
+            let frame = ctx.snapshot(&env, 100, H);
+            let prompt = frame
+                .views
+                .iter()
+                .find(|view| view.buffer_name == "*Minibuffer*")
+                .unwrap_or_else(|| panic!("still openable after {setting}"));
+
+            let expected_width = width.unwrap_or(crate::editor::DEFAULT_MINIBUFFER_WIDTH as usize);
+            let expected_height =
+                height.unwrap_or(crate::editor::DEFAULT_MINIBUFFER_HEIGHT as usize);
+            assert_eq!(prompt.rect.width, expected_width, "width after {setting}");
+            assert_eq!(
+                prompt.rect.height, expected_height,
+                "height after {setting}"
+            );
+        }
+    }
+
+    /// The echo area owns the bottom row, so a prompt is centred in what is
+    /// left rather than in the whole frame. Only a tall prompt can tell the
+    /// difference -- and a tall prompt whose last row sat under a message
+    /// would hide the line being typed.
+    #[test]
+    fn a_prompt_as_tall_as_the_frame_still_leaves_the_echo_row_clear() {
+        let (ctx, env) = with_module();
+        run(&format!("(setq minibuffer-height {H})"), &env, &ctx);
+        prompt_offering(&["alpha"], &env, &ctx);
+
+        let frame = ctx.snapshot(&env, W, H);
+        let prompt = frame
+            .views
+            .iter()
+            .find(|view| view.buffer_name == "*Minibuffer*")
+            .expect("the prompt is on screen");
+
+        let echo_row = (H - 1) as isize;
+        assert!(
+            prompt.rect.y + prompt.rect.height as isize <= echo_row,
+            "the prompt at {:?} reaches the echo row {echo_row}",
+            prompt.rect
+        );
+    }
+
+    /// Both are set at boot, so a configuration adjusts a value that already
+    /// exists rather than bringing the setting into being.
+    #[test]
+    fn the_sizes_are_set_without_anyone_configuring_them() {
+        let (ctx, env) = with_module();
+
+        assert_eq!(
+            run("minibuffer-width", &env, &ctx),
+            LispExp::number(crate::editor::DEFAULT_MINIBUFFER_WIDTH)
+        );
+        assert_eq!(
+            run("minibuffer-height", &env, &ctx),
+            LispExp::number(crate::editor::DEFAULT_MINIBUFFER_HEIGHT)
+        );
+    }
 }

@@ -42,6 +42,22 @@ pub const ECHO_MESSAGE_TIMEOUT: &str = "echo-message-timeout";
 /// [`ECHO_MESSAGE_TIMEOUT`] to something else.
 pub const DEFAULT_ECHO_MESSAGE_TIMEOUT: f64 = 5.0;
 
+/// The names of the Lisp variables that size a minibuffer prompt.
+pub const MINIBUFFER_WIDTH: &str = "minibuffer-width";
+pub const MINIBUFFER_HEIGHT: &str = "minibuffer-height";
+
+/// How large a prompt is when nothing says otherwise.
+///
+/// Wide enough for a path and narrow enough to read as a dialogue rather than
+/// as part of the frame. Both are clamped to what the terminal can actually
+/// hold, so these are a preference and not a promise -- a 40-column terminal
+/// gets a 38-column prompt rather than one running off the edge.
+///
+/// Three rows, of which one is text: a border above and below, and the line
+/// being typed between them.
+pub const DEFAULT_MINIBUFFER_WIDTH: f64 = 60.0;
+pub const DEFAULT_MINIBUFFER_HEIGHT: f64 = 3.0;
+
 /// What the echo area is showing, and since when.
 ///
 /// The timestamp lives beside the text rather than in a lock of its own so
@@ -2500,6 +2516,18 @@ pub fn create_global_env<B: BufferTrait>()
     env.set_variable(
         ECHO_MESSAGE_TIMEOUT.into(),
         ELispExp::number(DEFAULT_ECHO_MESSAGE_TIMEOUT),
+    );
+
+    // How large a prompt is. Set here so that `(setq minibuffer-width 40)` in a
+    // configuration is an adjustment to a value that already exists, rather
+    // than the thing that brings the setting into being.
+    env.set_variable(
+        MINIBUFFER_WIDTH.into(),
+        ELispExp::number(DEFAULT_MINIBUFFER_WIDTH),
+    );
+    env.set_variable(
+        MINIBUFFER_HEIGHT.into(),
+        ELispExp::number(DEFAULT_MINIBUFFER_HEIGHT),
     );
 
     // What each window's status line shows.

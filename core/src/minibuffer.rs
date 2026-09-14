@@ -17,6 +17,9 @@
 //! can rebind it -- every caller of `minibuffer-read` picks that up
 //! automatically -- so *this* mechanism being hardcoded doesn't lock in the
 //! *implementation* it happens to ship with.
+use crate::editor::{
+    DEFAULT_MINIBUFFER_HEIGHT, DEFAULT_MINIBUFFER_WIDTH, MINIBUFFER_HEIGHT, MINIBUFFER_WIDTH,
+};
 use crate::{
     BufferTrait, ELispExp, EditorState,
     input::{KeyCode, KeyEvent},
@@ -237,10 +240,15 @@ primitive!(minibuffer_complete, _args, env, ctx, {
 });
 
 const DEFAULT_MINIBUFFER_PROMPT_DOC: &str = "(default-minibuffer-prompt PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL \
-         &optional MODE): The built-in *minibuffer-read-function*: a floating \
-         window docked to the bottom 3 lines of the frame, titled PROMPT, in \
-         major mode MODE (default `minibuffer-mode'). Not normally called \
-         directly -- see `minibuffer-read'.";
+         &optional MODE): The built-in *minibuffer-read-function*: a floating window in the \
+         middle of the frame, titled PROMPT, in major mode MODE (default \
+         `minibuffer-mode'). Not normally called directly -- see `minibuffer-read'.\n\n\
+         `minibuffer-width' and `minibuffer-height' say how large it is, in columns and rows \
+         including its border; both are clamped to what the frame can hold. It used to be \
+         docked along the bottom, which put it exactly where anything else wanting a strip \
+         there -- a list of completions -- also goes.\n\n\
+         Example:\n\
+         (setq minibuffer-width 40)   ; a narrower prompt";
 
 primitive!(default_minibuffer_prompt, args, env, ctx, {
     if !(4..=5).contains(&args.len()) {
@@ -284,18 +292,64 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
         _ => return Err(EvalError::UnboundVariable("frame-width".into())),
     };
 
-    ctx.open_floating_window(
-        "*Minibuffer*",
-        1,
-        (frame_height - 4.0) as isize,
-        (frame_width - 2.0) as usize,
-        3,
-        title,
-        Some(mode),
+    let (x, y, width, height) = centred(
+        frame_width as usize,
+        frame_height as usize,
+        sized(&env, MINIBUFFER_WIDTH, DEFAULT_MINIBUFFER_WIDTH),
+        sized(&env, MINIBUFFER_HEIGHT, DEFAULT_MINIBUFFER_HEIGHT),
     );
+
+    ctx.open_floating_window("*Minibuffer*", x, y, width, height, title, Some(mode));
 
     Ok(ELispExp::t())
 });
+
+/// A size asked for in Lisp, or DEFAULT when the variable says nothing usable.
+///
+/// A nonsense value -- nil, a string, a negative -- falls back rather than
+/// signalling. Getting a prompt you did not expect is recoverable; being unable
+/// to open one at all means `M-x` stops working, and the way out of that is
+/// also a prompt.
+fn sized<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>, name: &str, default: f64) -> usize {
+    match env.get_variable(name) {
+        Some(ELispExp::Number(n)) if n.is_finite() && n >= 1.0 => n as usize,
+        _ => default as usize,
+    }
+}
+
+/// A rectangle of WIDTH by HEIGHT in the middle of a frame, clamped to fit.
+///
+/// # Why the middle
+///
+/// Because the bottom is taken. A prompt docked along the bottom edge sits
+/// exactly where anything else wanting a strip there goes -- a list of
+/// completions, and later a compilation log -- and two things drawn in one
+/// place is not a layout, it is a collision. The middle is the one region
+/// nothing else claims.
+///
+/// # Why clamped rather than refused
+///
+/// A prompt must always be openable: it is how `M-x` works, and how the user
+/// would run whatever command fixed the setting. So a width larger than the
+/// terminal becomes the terminal's width rather than an error, and one
+/// character of margin is kept on each side so the border does not merge with
+/// the frame's own edge.
+fn centred(
+    frame_width: usize,
+    frame_height: usize,
+    width: usize,
+    height: usize,
+) -> (isize, isize, usize, usize) {
+    // The echo area owns the bottom row, so the space a prompt may be centred
+    // in is one row shorter than the frame. Centring in the whole of it would
+    // put a tall prompt's last row underneath a message.
+    let available_height = frame_height.saturating_sub(1);
+    let width = width.min(frame_width.saturating_sub(2)).max(1);
+    let height = height.min(available_height).max(1);
+    let x = (frame_width.saturating_sub(width) / 2) as isize;
+    let y = (available_height.saturating_sub(height) / 2) as isize;
+    (x, y, width, height)
+}
 
 const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL &optional MODE): \
          Read a line of input from the user via a minibuffer prompt. PROMPT \
