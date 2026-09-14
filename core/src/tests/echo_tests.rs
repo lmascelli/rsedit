@@ -264,4 +264,59 @@ mod tests {
             "and it is on a clock without anyone having set the variable"
         );
     }
+
+    // ---------------- what the renderer is told to wait for ----------------
+
+    /// The message's clock is what the renderer waits on. It used to ask
+    /// `echo_expiry_in` directly; it now asks `next_redraw_in`, which has a
+    /// second reason to wake in it -- and the message must not have been lost
+    /// in the move, or a message would sit on screen until the next keystroke.
+    #[test]
+    fn a_pending_message_is_reason_enough_to_wake() {
+        let (ctx, env) = editor();
+        eval_str(
+            &format!("(setq echo-message-timeout {NEVER_IN_PRACTICE})"),
+            &env,
+            &ctx,
+        )
+        .expect("a long timeout");
+        ctx.set_echo_message("still here");
+
+        // No grammar anywhere, so the colouring has nothing to say and the
+        // message is the only thing left to wait for.
+        let frame = ctx.snapshot(&env, W, H);
+        assert!(!frame.colouring_pending);
+        let waited = ctx
+            .next_redraw_in(&env, &frame)
+            .expect("a message is pending, so there is something to wake for");
+        let message = ctx.echo_expiry_in(&env).expect("the message's own clock");
+
+        // Not equality: the two read the clock a moment apart, and a test that
+        // demanded they agree to the microsecond would fail on a busy machine
+        // rather than on a broken editor.
+        assert!(
+            waited.abs_diff(message) < Duration::from_secs(1),
+            "with nothing being coloured the wait is the message's own, but {waited:?} \
+             is nowhere near {message:?}"
+        );
+    }
+
+    /// And with no message and nothing being coloured, the renderer is told it
+    /// may sleep until the user does something -- which is what keeps an idle
+    /// editor costing nothing.
+    #[test]
+    fn with_nothing_pending_the_renderer_is_told_to_block() {
+        let (ctx, env) = editor();
+        eval_str(
+            &format!("(setq echo-message-timeout {ALREADY_GONE})"),
+            &env,
+            &ctx,
+        )
+        .expect("a short timeout");
+        ctx.set_echo_message("gone in a moment");
+        sleep(LONGER_THAN_THAT);
+
+        let frame = ctx.snapshot(&env, W, H);
+        assert_eq!(ctx.next_redraw_in(&env, &frame), None);
+    }
 }

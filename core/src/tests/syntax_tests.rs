@@ -833,4 +833,169 @@ mod tests {
             "and given it an appearance of its own"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Telling the renderer that more colour is coming
+    // -----------------------------------------------------------------------
+    //
+    // The worker runs on a timer and always has: the bug these pin was never
+    // that colour failed to be computed, but that a renderer blocked on input
+    // slept through its arrival, so the file stayed plain until a key was
+    // pressed. From the outside that looks exactly like highlighting that only
+    // runs on changes.
+
+    #[test]
+    fn a_buffer_waiting_to_be_coloured_says_so_in_its_frame() {
+        let (ctx, env) = editor_with("fn one\nfn two\n");
+        define_toy(&ctx, &env);
+
+        assert!(
+            ctx.snapshot(&env, W, H).colouring_pending,
+            "nothing has been coloured yet, so more is on its way"
+        );
+    }
+
+    #[test]
+    fn a_fully_coloured_buffer_stops_asking_to_be_redrawn() {
+        let (ctx, env) = editor_with("fn one\nfn two\n");
+        define_toy(&ctx, &env);
+        colour_fully(&ctx);
+
+        assert!(!ctx.snapshot(&env, W, H).colouring_pending);
+    }
+
+    /// An edit is what puts the worker back to work, so it is what puts the
+    /// renderer back on a timer.
+    #[test]
+    fn an_edit_asks_for_redrawing_again() {
+        let (ctx, env) = editor_with("fn one\nfn two\n");
+        define_toy(&ctx, &env);
+        colour_fully(&ctx);
+        assert!(!ctx.snapshot(&env, W, H).colouring_pending);
+
+        eval_str(
+            r#"(progn (end-of-buffer) (insert "fn three\n"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("an edit");
+
+        assert!(ctx.snapshot(&env, W, H).colouring_pending);
+        colour_fully(&ctx);
+        assert!(!ctx.snapshot(&env, W, H).colouring_pending);
+    }
+
+    /// The case that would have made this worse than the bug: a mode with no
+    /// grammar never catches up, because there is nothing to catch up to. Read
+    /// as "behind" it would put the renderer on a 40ms timer for the life of
+    /// the session, for a file whose colours can never change.
+    #[test]
+    fn a_buffer_with_no_grammar_never_asks_to_be_redrawn() {
+        let (ctx, env) = editor_with("plain text\nwith no mode\n");
+
+        assert!(
+            !ctx.snapshot(&env, W, H).colouring_pending,
+            "fundamental-mode has no grammar, so there is no colour to wait for"
+        );
+    }
+
+    /// A buffer nobody is looking at is still work in flight, and the turn it
+    /// takes is a turn the visible buffer does not get.
+    #[test]
+    fn colouring_a_buffer_that_is_off_screen_still_asks_for_redrawing() {
+        let (ctx, env) = editor_with("fn one\n");
+        define_toy(&ctx, &env);
+        colour_fully(&ctx);
+        assert!(!ctx.snapshot(&env, W, H).colouring_pending);
+
+        eval_str(
+            r#"(progn (buffer-create "other" 'toy)
+                      (switch-to-buffer "other")
+                      (insert "fn hidden\n")
+                      (switch-to-buffer "*scratch*"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("a second buffer");
+
+        assert!(
+            ctx.snapshot(&env, W, H).colouring_pending,
+            "the other buffer is behind even though it is not on screen"
+        );
+    }
+
+    /// What the renderer actually asks. With colour outstanding it may sleep
+    /// no longer than one turn; with nothing outstanding it may sleep forever,
+    /// which is what keeps an idle editor free.
+    #[test]
+    fn the_renderer_is_told_to_wake_for_colour_and_then_told_to_stop() {
+        let (ctx, env) = editor_with("fn one\nfn two\n");
+        define_toy(&ctx, &env);
+        // The editor boots with a welcome message, and a message that has not
+        // expired is a second, perfectly real reason to wake. Taken away here
+        // so that what is left to measure is the colouring alone.
+        eval_str("(setq echo-message-timeout nil)", &env, &ctx).expect("no message timeout");
+
+        let frame = ctx.snapshot(&env, W, H);
+        assert_eq!(
+            ctx.next_redraw_in(&env, &frame),
+            Some(crate::modes::highlighter::TURN_INTERVAL)
+        );
+
+        colour_fully(&ctx);
+        let frame = ctx.snapshot(&env, W, H);
+        assert_eq!(
+            ctx.next_redraw_in(&env, &frame),
+            None,
+            "nothing left to draw and nothing expiring: block indefinitely"
+        );
+    }
+
+    /// Two reasons to wake, and the sooner one wins -- otherwise a message
+    /// about to expire would sit on screen until the colouring happened to
+    /// finish.
+    #[test]
+    fn the_sooner_of_the_two_reasons_to_wake_is_the_one_reported() {
+        let (ctx, env) = editor_with("fn one\n");
+        define_toy(&ctx, &env);
+        eval_str("(setq echo-message-timeout 5)", &env, &ctx).expect("a long timeout");
+        ctx.set_echo_message("something happened");
+
+        let frame = ctx.snapshot(&env, W, H);
+        let waited = ctx
+            .next_redraw_in(&env, &frame)
+            .expect("colour is outstanding");
+        assert_eq!(
+            waited,
+            crate::modes::highlighter::TURN_INTERVAL,
+            "the turn comes long before the five-second message expires"
+        );
+        assert!(
+            ctx.echo_expiry_in(&env).expect("the message is pending") > waited,
+            "and the message really was the later of the two"
+        );
+    }
+
+    /// The worker and the frame have to agree about what "behind" means. They
+    /// ask one function, so this is really a test that nobody has quietly
+    /// given them two.
+    #[test]
+    fn the_frame_and_the_worker_agree_about_what_is_left_to_do() {
+        let (ctx, env) = editor_with("fn one\nfn two\nfn three\n");
+        define_toy(&ctx, &env);
+
+        for _ in 0..60 {
+            let pending = ctx.snapshot(&env, W, H).colouring_pending;
+            let has_work = ctx.turn_for("*scratch*").is_some();
+            assert_eq!(
+                pending, has_work,
+                "the frame says {pending} and the worker says {has_work}"
+            );
+            if !has_work {
+                return;
+            }
+            ctx.highlight_one_turn();
+        }
+        panic!("the colouring never finished");
+    }
 }

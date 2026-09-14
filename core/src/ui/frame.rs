@@ -37,7 +37,15 @@ use super::{RenderableWindowView, Separator, Theme};
 /// Contains no locks, no `Arc`s into editor state and no borrows, so it can be
 /// handed to a renderer on another thread, kept for comparison against the next
 /// frame, or asserted on in a test without a terminal anywhere in sight.
-#[derive(Debug, Clone, PartialEq)]
+/// `Default` is an empty frame: no windows, nothing to say, no size.
+///
+/// It exists for the callers that care about two fields and have to write the
+/// other nine -- chiefly the renderer's tests, which draw one separator or one
+/// line of text. Without it, every field added here edits every one of them,
+/// and the edit is always the same: repeat the empty value. That churn is not
+/// free -- it is a diff to review that says nothing, in a file where a real
+/// change would then be easy to miss.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct FrameSnapshot {
     /// Tiled windows first, in layout order, then floating windows in the order
     /// they should be drawn -- later entries paint over earlier ones.
@@ -88,6 +96,25 @@ pub struct FrameSnapshot {
     /// drawing a mis-sized frame.
     pub width: usize,
     pub height: usize,
+    /// Whether colouring is still being worked out, so this frame will be
+    /// superseded without anybody touching the keyboard.
+    ///
+    /// # Why the frame has to say this
+    ///
+    /// Syntax highlighting is computed on another thread, a chunk at a time.
+    /// Every other thing that changes the screen is caused by the user, so a
+    /// renderer can draw and then block until the next event and be right. This
+    /// one is not: the colour arrives on its own, and a renderer blocked on
+    /// input sleeps straight through it. The file stays plain until some key is
+    /// pressed, which looks like highlighting that only runs on changes -- when
+    /// in fact it ran on time and nothing redrew.
+    ///
+    /// So the frame reports it, and the renderer asks
+    /// [`EditorState::next_redraw_in`] how long it may sleep. False is the
+    /// normal state and costs nothing: when there is no colouring left to do
+    /// and no message about to expire, the renderer blocks indefinitely, as it
+    /// did before.
+    pub colouring_pending: bool,
 }
 
 impl FrameSnapshot {

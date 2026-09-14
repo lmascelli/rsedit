@@ -242,7 +242,6 @@ fn the_rule_is_drawn_with_the_window_separator_face() {
     theme.set(Face::WINDOW_SEPARATOR, Style::fg(Color::BLUE));
 
     let snapshot = FrameSnapshot {
-        views: Vec::new(),
         separators: vec![rsedit_core::ui::Separator {
             rect: Rect {
                 x: 4,
@@ -253,13 +252,10 @@ fn the_rule_is_drawn_with_the_window_separator_face() {
             ch: '\u{2502}',
             face: Face::WINDOW_SEPARATOR,
         }],
-        echo_message: String::new(),
-        pending_input: String::new(),
-        prompt: String::new(),
         theme: Arc::new(theme),
-        focused_window_id: 0,
         width: COLS as usize,
         height: ROWS as usize,
+        ..Default::default()
     };
     let mut out: Vec<u8> = Vec::new();
     render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("rendering must succeed");
@@ -387,14 +383,10 @@ fn frame_at_depth(
             mode_line: None,
             has_border: false,
         }],
-        separators: Vec::new(),
-        echo_message: String::new(),
-        pending_input: String::new(),
-        prompt: String::new(),
         theme: Arc::new(theme),
-        focused_window_id: 0,
         width: COLS as usize,
         height: ROWS as usize,
+        ..Default::default()
     };
     let mut out: Vec<u8> = Vec::new();
     render_to(&mut out, &snapshot, depth).expect("rendering must succeed");
@@ -491,14 +483,10 @@ fn a_mode_line_is_drawn_below_the_text_as_a_bar() {
             mode_line: Some("status".into()),
             has_border: false,
         }],
-        separators: Vec::new(),
-        echo_message: String::new(),
-        pending_input: String::new(),
-        prompt: String::new(),
         theme: Arc::new(Theme::default()),
-        focused_window_id: 0,
         width: COLS as usize,
         height: ROWS as usize,
+        ..Default::default()
     };
     let mut out: Vec<u8> = Vec::new();
     render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("render");
@@ -538,14 +526,10 @@ fn an_unfocused_window_uses_the_inactive_mode_line_face() {
     }
     let snapshot = FrameSnapshot {
         views: vec![window("here", 0, true), window("there", 2, false)],
-        separators: Vec::new(),
-        echo_message: String::new(),
-        pending_input: String::new(),
-        prompt: String::new(),
         theme: Arc::new(Theme::default()),
-        focused_window_id: 0,
         width: COLS as usize,
         height: ROWS as usize,
+        ..Default::default()
     };
     let mut out: Vec<u8> = Vec::new();
     render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("render");

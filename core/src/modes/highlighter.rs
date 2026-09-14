@@ -151,8 +151,74 @@ impl<B: BufferTrait> EditorState<B> {
         None
     }
 
+    /// Whether NAME's colouring has fallen behind its text.
+    ///
+    /// # Why this is its own function
+    ///
+    /// Two things ask it, for different reasons. The worker asks so it knows
+    /// whether to do a turn; a frame asks so the renderer knows whether to go
+    /// back to sleep -- see [`crate::ui::FrameSnapshot::colouring_pending`].
+    /// If they answered it separately they could disagree, and a renderer that
+    /// believed the work was finished while the worker believed otherwise
+    /// would sleep through exactly the colour it was waiting for.
+    ///
+    /// The cheap half is asked first. Whether the cache has caught up costs one
+    /// buffer lock; whether the mode has a grammar at all costs the registry
+    /// too, and is only worth asking about a buffer that is actually behind.
+    /// Getting that order wrong would put the registry in the path of every
+    /// frame, forever, for a file that is fully coloured.
+    pub(crate) fn colouring_behind(&self, name: &str) -> bool {
+        let Some(buffer) = self.get_buffer(name) else {
+            return false;
+        };
+        let (mode, behind) = {
+            let buf = buffer
+                .read()
+                .expect("Failed to acquire read lock on buffer for highlighting");
+            (
+                buf.current_mode.clone(),
+                buf.syntax.valid_to() < buf.text.line_count(),
+            )
+        };
+        if !behind {
+            return false;
+        }
+        // A mode with no grammar never catches up, because there is nothing to
+        // catch up *to*. Without this a plain-text buffer would report itself
+        // behind forever, and the renderer would wake every turn for the life
+        // of the session to redraw a frame that cannot change.
+        let registry = self
+            .mode_registry
+            .read()
+            .expect("Failed to acquire read lock on mode_registry");
+        registry
+            .get(&mode)
+            .is_some_and(|mode| !mode.grammar.is_empty())
+    }
+
+    /// Whether any buffer's colouring has fallen behind.
+    ///
+    /// Every buffer, not only the visible ones: a file being coloured in a
+    /// window that is not on screen is still work in flight, and the turn it
+    /// takes is a turn the visible buffer does not get. The renderer waking for
+    /// it is the honest reflection of that, and it stops as soon as the work
+    /// does.
+    pub(crate) fn colouring_pending(&self) -> bool {
+        let names: Vec<String> = self
+            .buffers
+            .read()
+            .expect("Failed to acquire read lock on buffers")
+            .keys()
+            .cloned()
+            .collect();
+        names.iter().any(|name| self.colouring_behind(name))
+    }
+
     /// One buffer's next chunk, if it has one.
     pub(crate) fn turn_for(&self, name: &str) -> Option<Turn> {
+        if !self.colouring_behind(name) {
+            return None;
+        }
         let grammar = {
             let buffer = self.get_buffer(name)?;
             let buf = buffer
@@ -167,11 +233,7 @@ impl<B: BufferTrait> EditorState<B> {
                 .mode_registry
                 .read()
                 .expect("Failed to acquire read lock on mode_registry");
-            let grammar = registry.get(&mode).map(|mode| mode.grammar.clone())?;
-            if grammar.is_empty() {
-                return None;
-            }
-            grammar
+            registry.get(&mode).map(|mode| mode.grammar.clone())?
         };
 
         let buffer = self.get_buffer(name)?;
@@ -180,6 +242,9 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire read lock on buffer for highlighting");
         let line_count = buf.text.line_count();
         let first_line = buf.syntax.valid_to();
+        // Re-checked rather than assumed from `colouring_behind` above: the
+        // buffer lock was released in between, so the text may have been
+        // coloured, shortened, or emptied since.
         if first_line >= line_count {
             return None;
         }

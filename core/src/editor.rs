@@ -1496,6 +1496,10 @@ impl<B: BufferTrait> EditorState<B> {
         let prompt = self.transient_message();
         let mode_line_format = mode_line_format(env);
         let separator_char = window_separator(env);
+        // Asked before the structural locks, alongside the other independent
+        // reads: it takes the buffers and the mode registry, and the registry
+        // has no place in the ordering that begins below.
+        let colouring_pending = self.colouring_pending();
 
         let focused_window_id = *self
             .focused_window_id
@@ -1598,6 +1602,7 @@ impl<B: BufferTrait> EditorState<B> {
             focused_window_id,
             width: screen_width,
             height: screen_height,
+            colouring_pending,
             separators,
         }
     }
@@ -1683,6 +1688,43 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire read lock on echo_message")
             .visible_for(Some(timeout))?;
         timeout.checked_sub(elapsed).filter(|left| !left.is_zero())
+    }
+
+    /// How long a renderer may wait for input before the screen it has just
+    /// drawn will want drawing again, or `None` when it may wait indefinitely.
+    ///
+    /// # Why the renderer asks rather than decides
+    ///
+    /// Almost everything on screen changes because the user did something, so a
+    /// renderer can draw, block on input, and be right. Two things do not: an
+    /// echo message that expires on a timer, and colour that arrives from the
+    /// highlighter's thread. A renderer blocked on input sleeps through both.
+    ///
+    /// Which of those are outstanding, and how soon each matters, are questions
+    /// about the editor, not about drawing -- so they are answered here and the
+    /// renderer is handed a single duration. A second frontend gets the
+    /// behaviour by asking the same question, rather than by remembering to
+    /// reimplement two special cases.
+    ///
+    /// FRAME is the one just drawn, because the question is whether *that*
+    /// frame goes stale. Taking it from the frame also means the colouring is
+    /// not asked about twice per redraw, once to compose and once to wait.
+    ///
+    /// `None` is the ordinary answer, and it is the one that matters: with
+    /// nothing being coloured and no message pending there is no wake-up at
+    /// all, so an idle editor costs nothing.
+    pub fn next_redraw_in(
+        &self,
+        env: &Arc<Env<EditorState<B>>>,
+        frame: &FrameSnapshot,
+    ) -> Option<Duration> {
+        // One more turn is the soonest new colour can appear, so it is the
+        // longest this may sleep without being late for it.
+        let colouring = frame.colouring_pending.then_some(TURN_INTERVAL);
+        [self.echo_expiry_in(env), colouring]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     /// Set the echo message to be MSG, and start its timeout running.

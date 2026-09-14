@@ -295,9 +295,14 @@ pub fn render_to<W: Write>(
         apply_style(out, &style, depth)?;
         let run: String = std::iter::repeat_n(separator.ch, separator.rect.width).collect();
         for offset in 0..separator.rect.height {
-            draw_clipped_row(out, separator.rect.x,
+            draw_clipped_row(
+                out,
+                separator.rect.x,
                 separator.rect.y + offset as isize,
-                &run, frame_w, frame_h)?;
+                &run,
+                frame_w,
+                frame_h,
+            )?;
         }
         out.queue(SetAttribute(Attribute::Reset))?;
     }
@@ -540,17 +545,19 @@ pub fn tui_main<B: BufferTrait>(
         let (cols, rows) = terminal::size()?;
         // Capture, then draw. Two steps on purpose: the capture holds locks and
         // does no I/O, the draw does I/O and holds no locks.
-        render_frame(&state.snapshot(&env, cols as usize, rows as usize), depth)?;
+        let frame = state.snapshot(&env, cols as usize, rows as usize);
+        render_frame(&frame, depth)?;
 
-        // An echo message with a timeout in force is the one thing that
-        // changes the screen without the user doing anything, so it is the one
-        // thing this loop cannot simply block through: waiting on `read` alone
-        // would leave the message up until the next keystroke, which is not a
-        // timeout but a coincidence. Waiting only as long as the message has
-        // left, and looping back to redraw when nothing arrives, keeps the
-        // loop event-driven -- there is no polling when no message is pending,
-        // and at most one extra wake-up when one is.
-        if let Some(remaining) = state.echo_expiry_in(&env)
+        // Some things change the screen without the user doing anything -- an
+        // echo message expiring on its timer, colour arriving from the
+        // highlighter's thread -- and blocking on `read` alone sleeps straight
+        // through them. Which of those are outstanding is a question about the
+        // editor, so it answers it; this loop only has to wait no longer than
+        // it is told and redraw when nothing arrives.
+        //
+        // Still event-driven: with nothing pending the answer is `None` and
+        // this blocks indefinitely, so an idle editor wakes for nothing at all.
+        if let Some(remaining) = state.next_redraw_in(&env, &frame)
             && !poll(remaining)?
         {
             continue;
