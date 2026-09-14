@@ -394,6 +394,21 @@ pub fn install_primitives<B: BufferTrait>(
         windows::count_windows,
         windows::COUNT_WINDOWS_DOC
     );
+
+    // Moving the view rather than point. Commands, because `C-v` and `M-v` are
+    // keys and because a prefix argument means screenfuls.
+    insert_cmd!(
+        "scroll-up-command",
+        windows::scroll_up_command,
+        ["p"],
+        windows::SCROLL_UP_COMMAND_DOC
+    );
+    insert_cmd!(
+        "scroll-down-command",
+        windows::scroll_down_command,
+        ["p"],
+        windows::SCROLL_DOWN_COMMAND_DOC
+    );
     insert_fn!(
         "display-buffer-at-bottom",
         windows::display_buffer_at_bottom,
@@ -603,6 +618,15 @@ pub fn install_primitives<B: BufferTrait>(
         "close-buffer",
         buffers::close_buffer,
         buffers::CLOSE_BUFFER_DOC
+    );
+    // The same function under Emacs' name, and *this* is the one registered as
+    // a command: `M-x close-buffer` would be a second way to reach one thing,
+    // named what no Emacs user would look for.
+    insert_cmd!(
+        "kill-buffer",
+        buffers::close_buffer,
+        ["bKill buffer: "],
+        buffers::KILL_BUFFER_DOC
     );
     insert_fn!(
         "buffer-string",

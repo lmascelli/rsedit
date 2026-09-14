@@ -37,7 +37,11 @@ logged since."
   "Open the *Messages* buffer, showing the diagnostic log so far."
   (messages-buffer-refresh))
 
-(define-key nil "M-l" 'switch-to-messages)
+;; Not bound to a key. It was on M-l, which is `downcase-word' in Emacs; the
+;; Emacs way to this buffer is `C-h e', and making `C-h' a prefix here would
+;; break Backspace on every terminal that still sends it as C-h. So it is
+;; reached by name -- `M-x switch-to-messages' -- until there is a help prefix
+;; worth the risk.
 
 ;; `report-error' below is the editor's error-reporting hook: whenever a
 ;; key-triggered evaluation fails uncaught, the editor calls

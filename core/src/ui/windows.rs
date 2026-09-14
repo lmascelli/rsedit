@@ -25,6 +25,23 @@ pub struct Window {
     pub buffer_name: String,
     pub scroll_x: usize,
     pub scroll_y: usize,
+    /// How many rows of text this window had the last time a frame was
+    /// composed, or 0 if it has never been on screen.
+    ///
+    /// # Why a render fact is stored on the window
+    ///
+    /// A window's height is worked out while the frame is being laid out and
+    /// exists nowhere else: it depends on the frame size, on how the tree is
+    /// split, and on whether there is a status line. But "scroll down a
+    /// screenful" is a *command*, and a command runs between frames, when none
+    /// of that is in hand.
+    ///
+    /// So the layout leaves the answer behind. This is the same bargain
+    /// `scroll_x`/`scroll_y` already make -- they are also written during
+    /// composition -- and the honest way to read all three is as what the last
+    /// frame decided, which is exactly what the user is looking at when they
+    /// press the key.
+    pub text_height: usize,
     /// Whether this window draws a status line along its bottom row.
     ///
     /// True for a window somebody is working in, which is all of them but one
@@ -44,6 +61,7 @@ impl Window {
             buffer_name: buffer_name.to_string(),
             scroll_x: 0,
             scroll_y: 0,
+            text_height: 0,
             show_mode_line: true,
         }
     }
@@ -346,6 +364,12 @@ impl LayoutNode {
                 } else {
                     rect
                 };
+
+                // Recorded here, after the status line has been taken out of
+                // the rect and before anything reads it, so that what is left
+                // behind is the number of rows of *text* -- which is what a
+                // screenful means to somebody pressing a key.
+                win.text_height = rect.height;
 
                 let mut cursor_rel_pos = None;
 

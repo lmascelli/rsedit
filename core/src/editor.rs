@@ -46,6 +46,13 @@ pub const DEFAULT_ECHO_MESSAGE_TIMEOUT: f64 = 5.0;
 pub const MINIBUFFER_WIDTH: &str = "minibuffer-width";
 pub const MINIBUFFER_HEIGHT: &str = "minibuffer-height";
 
+/// How many lines two consecutive screenfuls share.
+///
+/// Emacs' name and Emacs' value. Without the overlap a reader loses their place
+/// at every page: the line they were reading when they pressed the key is gone,
+/// and nothing on the new screen says where it was.
+pub const NEXT_SCREEN_CONTEXT_LINES: usize = 2;
+
 /// How large a prompt is when nothing says otherwise.
 ///
 /// Wide enough for a path and narrow enough to read as a dialogue rather than
@@ -726,6 +733,88 @@ impl<B: BufferTrait> EditorState<B> {
             right: Box::new(LayoutNode::Leaf(window)),
         };
         id
+    }
+
+    /// Move the focused window's view by AMOUNT screenfuls, forwards when
+    /// AMOUNT is positive, and drag point along if it would otherwise be left
+    /// outside.
+    ///
+    /// Returns false when the view could not move at all -- already showing
+    /// the end and asked to go forward, or the beginning and asked to go back
+    /// -- so the caller can say so rather than leaving the key looking broken.
+    ///
+    /// # Why point moves second
+    ///
+    /// Scrolling and moving point are different things, and Emacs keeps them
+    /// different: `C-v` moves the *view*, and point comes along only because it
+    /// has to stay somewhere visible. Moving point first and letting the
+    /// renderer's cursor-following do the scrolling would look similar and be
+    /// wrong in the case that matters -- point would land at the window's edge
+    /// rather than keeping its place on the screen.
+    pub(crate) fn scroll_focused_window(&self, amount: isize) -> bool {
+        let id = self.get_focused_window_id();
+        let Some(buffer) = self
+            .focused_window_buffer()
+            .and_then(|n| self.get_buffer(&n))
+        else {
+            return false;
+        };
+        let (line_count, point_line, point_column) = {
+            let buf = buffer.read().expect("read lock on buffer");
+            let (line, column) = buf.text.cursor_pos();
+            (buf.text.line_count(), line, column)
+        };
+
+        let mut layout = self
+            .layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root");
+        let Some(window) = layout.window_mut(id) else {
+            return false;
+        };
+        // A window that has never been drawn has no height to scroll by: the
+        // layout has not run, so nothing has worked one out. Treating it as one
+        // row keeps every calculation below sane -- `bottom` does not run off
+        // the bottom of zero, and `furthest` does not let the view past the end
+        // by a line. It barely shows: the floor on `step` below already makes
+        // such a window scroll, so what this changes is one line of travel, in
+        // a state that ends with the first frame.
+        let height = window.text_height.max(1);
+        // Two lines of overlap, as Emacs keeps: a screenful with nothing in
+        // common with the last one gives the reader nothing to place
+        // themselves by. The floor matters for a genuinely tiny window -- one
+        // or two rows -- where the overlap would otherwise be the whole of it
+        // and the key would do nothing at all.
+        let step = height.saturating_sub(NEXT_SCREEN_CONTEXT_LINES).max(1) as isize;
+        // Far enough that the last line sits on the bottom row, and no
+        // further. Past that the window fills with the blank space after the
+        // end of the buffer -- a screen showing nothing at all, which the user
+        // then has to scroll back out of by hand.
+        let furthest = line_count.saturating_sub(height) as isize;
+        let target = (window.scroll_y as isize + amount * step).clamp(0, furthest);
+        if target == window.scroll_y as isize {
+            return false;
+        }
+        window.scroll_y = target as usize;
+        let top = target as usize;
+        let bottom = top + height - 1;
+        drop(layout);
+
+        // Point only if it fell outside. Inside the new view it keeps the line
+        // it was on, which is what makes two screenfuls of reading leave the
+        // cursor where the eye left it.
+        let last_line = line_count.saturating_sub(1);
+        let moved_to = if point_line < top {
+            Some(top)
+        } else if point_line > bottom {
+            Some(bottom.min(last_line))
+        } else {
+            None
+        };
+        if let Some(line) = moved_to {
+            self.mutate_buffer(buffer, |buf| buf.text.cursor_move(line, point_column));
+        }
+        true
     }
 
     /// Close the window with ID, whoever has focus.

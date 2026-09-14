@@ -159,3 +159,44 @@ primitive!(window_buffer, _args, _env, ctx, {
         None => ELispExp::nil(),
     })
 });
+
+pub const SCROLL_UP_COMMAND_DOC: &str = "(scroll-up-command &optional N): Move the focused window's \
+         view forward through the buffer by N screenfuls (default 1), taking point along only if \
+         it would otherwise be left behind.\n\n\
+         A screenful is the window's height less `next-screen-context-lines' (2), so two pages \
+         share a couple of lines and a reader can find their place. Point keeps the line it was \
+         on whenever that line is still on screen, so reading a long file leaves the cursor where \
+         the eye left it.\n\n\
+         Reports \"End of buffer\" and does nothing when the last line is already at the top.\n\n\
+         Example:\n\
+         (define-key nil \"C-v\" 'scroll-up-command)";
+
+primitive!(scroll_up_command, args, _env, ctx, {
+    Ok(scrolled(ctx, count(args), "End of buffer"))
+});
+
+pub const SCROLL_DOWN_COMMAND_DOC: &str = "(scroll-down-command &optional N): Move the focused \
+         window's view back through the buffer by N screenfuls (default 1). The mirror of \
+         `scroll-up-command'; see it for what a screenful is and when point moves.\n\n\
+         Reports \"Beginning of buffer\" and does nothing when the first line is already at the \
+         top.\n\n\
+         Example:\n\
+         (define-key nil \"M-v\" 'scroll-down-command)";
+
+primitive!(scroll_down_command, args, _env, ctx, {
+    Ok(scrolled(ctx, -count(args), "Beginning of buffer"))
+});
+
+/// Scroll by AMOUNT screenfuls, saying AT_THE_END when there was nowhere to go.
+///
+/// The report is the point of this being shared. A scroll key that does nothing
+/// and says nothing is indistinguishable from one that is not bound, and the
+/// user's next move is to press it harder.
+fn scrolled<B: BufferTrait>(ctx: &EditorState<B>, amount: isize, at_the_end: &str) -> ELispExp<B> {
+    if ctx.scroll_focused_window(amount) {
+        ELispExp::t()
+    } else {
+        ctx.set_echo_message(at_the_end);
+        ELispExp::nil()
+    }
+}

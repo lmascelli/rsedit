@@ -11,11 +11,25 @@
 (define-key nil "C-p" 'previous-line)
 (define-key nil "M-f" 'forward-word)
 (define-key nil "M-b" 'backward-word)
-(define-key nil "M-n" 'forward-paragraph)
-(define-key nil "M-p" 'backward-paragraph)
+(define-key nil "M-}" 'forward-paragraph)
+(define-key nil "M-{" 'backward-paragraph)
 (define-key nil "M-<" 'beginning-of-buffer)
 (define-key nil "M->" 'end-of-buffer)
-(define-key nil "M-g" 'goto-line)
+
+;; Paragraph motion was on M-n and M-p, which is not what those keys do in
+;; Emacs -- they are not globally bound at all there, and mean "next/previous
+;; history entry" in a prompt. M-} and M-{ are the real bindings.
+
+;; Going to a line. M-g is a prefix in Emacs, and both of the keys after it
+;; reach the same command, so both are bound.
+(define-key nil "M-g g" 'goto-line)
+(define-key nil "M-g M-g" 'goto-line)
+
+;; Scrolling by a screenful, with two lines of overlap so you can find your
+;; place. Point comes along only when the line it is on scrolls out of sight,
+;; so reading a long file leaves the cursor where you were looking.
+(define-key nil "C-v" 'scroll-up-command)
+(define-key nil "M-v" 'scroll-down-command)
 
 ;; Deletion, mirroring the movement bindings above. These discard the text
 ;; rather than saving it -- the kill ring is roadmap #20 -- but they carry the
@@ -30,7 +44,13 @@
 ;; terminal sends arrives at the same command.
 (define-key nil "C-/" 'undo)
 (define-key nil "C-_" 'undo)
-(define-key nil "M-_" 'redo)
+(define-key nil "C-x u" 'undo)
+
+;; Redo was on M-_, which Emacs does not use. `C-?' is what Emacs 28 gave
+;; `undo-redo', so that is where it goes -- with the caveat that some terminals
+;; cannot send it. On one of those, reach redo through M-x until you bind it to
+;; something your terminal does send.
+(define-key nil "C-?" 'redo)
 
 ;; The mark and the region. C-<space> sets the mark; moving point from there
 ;; grows the region, and any edit ends it.
@@ -66,6 +86,7 @@
 (define-key nil "C-x C-f" 'find-file)
 (define-key nil "C-x C-s" 'save-buffer)
 (define-key nil "C-x C-c" 'quit)
+(define-key nil "C-x k" 'kill-buffer)
 
 ;; Windows. C-x 2 splits above/below, C-x 3 side by side, C-x 0 closes this
 ;; one, C-x 1 closes the others, C-x o cycles.

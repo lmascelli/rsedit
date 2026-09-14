@@ -6,6 +6,7 @@
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
+    use crate::input::{KeyCode, KeyEvent, KeyModifiers};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
@@ -27,6 +28,30 @@ mod tests {
             b.text.cursor_move(0, 0);
         });
         (ctx, env)
+    }
+
+    fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode, modifiers: KeyModifiers) {
+        ctx.handle_key_event(KeyEvent { code, modifiers }, env);
+    }
+
+    fn alt() -> KeyModifiers {
+        KeyModifiers {
+            alt: true,
+            ..Default::default()
+        }
+    }
+
+    fn plain() -> KeyModifiers {
+        KeyModifiers::default()
+    }
+
+    fn point_1d(ctx: &Ctx) -> usize {
+        ctx.get_buffer("*scratch*")
+            .expect("*scratch*")
+            .read()
+            .unwrap()
+            .text
+            .cursor_pos_1d()
     }
 
     fn point(ctx: &Ctx) -> (usize, usize) {
@@ -250,5 +275,95 @@ mod tests {
                 "{name} should be a command"
             );
         }
+    }
+
+    // ---------------- the keys Emacs actually uses ----------------
+
+    /// Paragraph motion was on `M-n` and `M-p`, which Emacs does not bind
+    /// globally at all -- in a prompt they mean "next/previous history entry".
+    /// `M-}` and `M-{` are the real bindings.
+    #[test]
+    fn paragraphs_move_on_the_brace_keys() {
+        let (ctx, env) = editor_with("one\n\ntwo\n\nthree\n");
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("common-keymaps.lisp must load");
+        eval_str("(beginning-of-buffer)", &env, &ctx).expect("start");
+
+        press(&ctx, &env, KeyCode::Char('}'), alt());
+        let forward = point_1d(&ctx);
+        assert!(forward > 0, "M-}} should have moved forward");
+
+        press(&ctx, &env, KeyCode::Char('{'), alt());
+        assert!(point_1d(&ctx) < forward, "M-{{ should have moved back");
+    }
+
+    #[test]
+    fn the_old_paragraph_keys_are_no_longer_bound() {
+        let (ctx, env) = editor_with("one\n\ntwo\n\nthree\n");
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("common-keymaps.lisp must load");
+        eval_str("(beginning-of-buffer)", &env, &ctx).expect("start");
+
+        press(&ctx, &env, KeyCode::Char('n'), alt());
+
+        assert_eq!(point_1d(&ctx), 0, "M-n no longer moves by a paragraph");
+    }
+
+    /// `M-g` is a prefix in Emacs, and both of the keys after it reach
+    /// `goto-line`.
+    #[test]
+    fn goto_line_is_behind_the_m_g_prefix() {
+        for second in ['g', 'G'] {
+            let (ctx, env) = editor_with("one\ntwo\nthree\nfour\n");
+            // `goto-line` prompts, and a prompt is a floating window that has
+            // to know how big the frame is.
+            env.set_variable("frame-width".into(), LispExp::number(80.0));
+            env.set_variable("frame-height".into(), LispExp::number(24.0));
+            eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+                .expect("common-keymaps.lisp must load");
+
+            press(&ctx, &env, KeyCode::Char('g'), alt());
+            // M-g g and M-g M-g are both bound; the second press differs only
+            // in its modifier.
+            if second == 'g' {
+                press(&ctx, &env, KeyCode::Char('g'), plain());
+            } else {
+                press(&ctx, &env, KeyCode::Char('g'), alt());
+            }
+            for c in "3".chars() {
+                eval_str(&format!(r#"(self-insert "{c}")"#), &env, &ctx).expect("type");
+            }
+            eval_str("(minibuffer-confirm)", &env, &ctx).expect("confirm");
+
+            assert_eq!(
+                ctx.get_buffer("*scratch*")
+                    .unwrap()
+                    .read()
+                    .unwrap()
+                    .text
+                    .cursor_pos()
+                    .0,
+                2,
+                "M-g then {second} should go to line 3"
+            );
+        }
+    }
+
+    /// A bare `M-g` is now a prefix waiting for a second key, so it must not
+    /// go anywhere on its own.
+    #[test]
+    fn a_bare_m_g_no_longer_prompts() {
+        let (ctx, env) = editor_with("one\ntwo\nthree\n");
+        env.set_variable("frame-width".into(), LispExp::number(80.0));
+        env.set_variable("frame-height".into(), LispExp::number(24.0));
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("common-keymaps.lisp must load");
+
+        press(&ctx, &env, KeyCode::Char('g'), alt());
+
+        assert!(
+            ctx.get_buffer("*Minibuffer*").is_none(),
+            "M-g alone is a prefix, not a command"
+        );
     }
 }

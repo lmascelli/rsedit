@@ -77,6 +77,10 @@ mod tests {
         }
     }
 
+    fn plain() -> KeyModifiers {
+        KeyModifiers::default()
+    }
+
     // ---------------- the basic round trip ----------------
 
     #[test]
@@ -474,8 +478,40 @@ mod tests {
         press(&ctx, &env, KeyCode::Char('_'), ctrl());
         assert_eq!(text_of(&ctx), "alpha beta", "C-_ should undo");
 
+        // Redo was on M-_, which Emacs does not use at all. `C-?' is what
+        // Emacs 28 gave `undo-redo'.
+        press(&ctx, &env, KeyCode::Char('?'), ctrl());
+        assert_eq!(text_of(&ctx), " beta", "C-? should redo");
+    }
+
+    /// `C-x u` is the third way Emacs spells undo, and the one that works on a
+    /// terminal that can send neither `C-/` nor `C-_`.
+    #[test]
+    fn undo_is_also_on_the_prefix_key() {
+        let (ctx, env) = editor_with("alpha beta");
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("common-keymaps.lisp must load");
+        eval_str("(kill-word)", &env, &ctx).expect("kill");
+
+        press(&ctx, &env, KeyCode::Char('x'), ctrl());
+        press(&ctx, &env, KeyCode::Char('u'), plain());
+
+        assert_eq!(text_of(&ctx), "alpha beta");
+    }
+
+    /// The bindings Emacs gives to other commands entirely are gone: `M-_` is
+    /// nothing in Emacs, and pressing it must not quietly redo.
+    #[test]
+    fn the_bindings_emacs_does_not_use_are_not_bound() {
+        let (ctx, env) = editor_with("alpha beta");
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("common-keymaps.lisp must load");
+        eval_str("(kill-word)", &env, &ctx).expect("kill");
+        assert_eq!(text_of(&ctx), " beta");
+
         press(&ctx, &env, KeyCode::Char('_'), alt());
-        assert_eq!(text_of(&ctx), " beta", "M-_ should redo");
+
+        assert_eq!(text_of(&ctx), " beta", "M-_ no longer redoes");
     }
 
     /// Replaying history must not be recorded as new history: if it were, the

@@ -119,9 +119,26 @@ pub const CLOSE_BUFFER_DOC: &str = "(close-buffer &optional BUFFER-OR-NAME): Clo
          (close-buffer) ; closes the current buffer\n\
          (close-buffer \"*Minibuffer*\")";
 
+pub const KILL_BUFFER_DOC: &str = "(kill-buffer &optional BUFFER-OR-NAME): Emacs' name for \
+         `close-buffer', and the one reachable from `M-x' and bound to `C-x k'. Closes the buffer \
+         named BUFFER-OR-NAME, or the current buffer when the name is omitted or empty.\n\n\
+         Answering the prompt with nothing kills the buffer you are in, which is what the key is \
+         reached for nine times in ten.\n\n\
+         The same function as `close-buffer', under both names: one is what Emacs calls it and \
+         the other is what this editor called it first, and two implementations would eventually \
+         be two behaviours.\n\n\
+         Example:\n\
+         (kill-buffer)\n\
+         (kill-buffer \"*Messages*\")";
+
 primitive!(close_buffer, args, env, ctx, {
     let target = match args.first() {
         None => ctx.get_current_buffer_name(),
+        // An empty answer is not the buffer called "": the prompt was offered
+        // with a default of "this one", and Return without typing is how that
+        // default is taken.
+        Some(ELispExp::String(name)) if name.is_empty() => ctx.get_current_buffer_name(),
+        Some(exp) if exp.is_nil() => ctx.get_current_buffer_name(),
         Some(ELispExp::String(name)) => name.to_string(),
         Some(ELispExp::Symbol(name)) => name.to_string(),
         Some(other) => {

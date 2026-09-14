@@ -156,16 +156,14 @@ impl<B: BufferTrait> Keymap<B> {
 /// can handle the typing of letters, digits and most of symbols.
 pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
     // -------------------------------- EDITOR ---------------------------------
-    keymaps.insert_key(
-        KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers: KeyModifiers {
-                ctrl: true,
-                ..Default::default()
-            },
-        },
-        ELispExp::form(vec![ELispExp::symbol("quit".into())]),
-    );
+    //
+    // `C-q` used to quit here and `C-s` used to save. Both are Emacs keys that
+    // mean something else -- `quoted-insert` and `isearch-forward` -- and
+    // `C-s` was worse than merely wrong: `common-keymaps.lisp` binds it to
+    // incremental search, so this one was shadowed and did nothing except
+    // decide what happened with no configuration loaded. The commands they ran
+    // are reached by `C-x C-c` and `C-x C-s`, which is where an Emacs user
+    // looks for them.
 
     // M-x is bound here rather than in a `.lisp` file because it is the only
     // way to reach a command by name: without it the command system exists but
@@ -183,17 +181,6 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
     );
 
     // -------------------------------- BUFFER ---------------------------------
-    keymaps.insert_key(
-        KeyEvent {
-            code: KeyCode::Char('s'),
-            modifiers: KeyModifiers {
-                ctrl: true,
-                ..Default::default()
-            },
-        },
-        ELispExp::form(vec![ELispExp::symbol("save-buffer".into())]),
-    );
-
     keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Left,

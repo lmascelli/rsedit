@@ -707,4 +707,112 @@ mod tests {
             );
         }
     }
+
+    // ---------------- kill-buffer, and the bindings that went ----------------
+
+    #[test]
+    fn kill_buffer_is_reachable_by_name() {
+        let (ctx, env) = setup();
+        eval_str(r#"(buffer-create "doomed")"#, &env, &ctx).expect("a buffer");
+        assert!(ctx.get_buffer("doomed").is_some());
+
+        eval_str(r#"(kill-buffer "doomed")"#, &env, &ctx).expect("kill");
+
+        assert!(ctx.get_buffer("doomed").is_none());
+    }
+
+    /// Reachable from `M-x`, which `close-buffer` never was -- it is a plain
+    /// function, so the registry did not know about it.
+    #[test]
+    fn kill_buffer_is_a_command_and_close_buffer_is_not() {
+        let (ctx, env) = setup();
+
+        assert_eq!(
+            eval_str("(commandp 'kill-buffer)", &env, &ctx).expect("commandp"),
+            LispExp::t()
+        );
+        assert_eq!(
+            eval_str("(commandp 'close-buffer)", &env, &ctx).expect("commandp"),
+            LispExp::nil(),
+            "one command, under the name an Emacs user would look for"
+        );
+    }
+
+    /// It prompts for a buffer name, with completion over the live ones.
+    #[test]
+    fn m_x_kill_buffer_prompts_for_which_one() {
+        let (ctx, env) = setup();
+        eval_str(r#"(buffer-create "doomed")"#, &env, &ctx).expect("a buffer");
+
+        eval_str("(execute-extended-command \"kill-buffer\")", &env, &ctx).expect("M-x");
+        for c in "doomed".chars() {
+            eval_str(&format!(r#"(self-insert "{c}")"#), &env, &ctx).expect("type");
+        }
+        eval_str("(minibuffer-confirm)", &env, &ctx).expect("confirm");
+
+        assert!(ctx.get_buffer("doomed").is_none());
+    }
+
+    /// Answering the prompt with nothing kills the buffer you are in, which is
+    /// what the key is reached for nine times in ten.
+    #[test]
+    fn an_empty_answer_kills_the_current_buffer() {
+        let (ctx, env) = setup();
+        eval_str(
+            r#"(buffer-create "here")(switch-to-buffer "here")"#,
+            &env,
+            &ctx,
+        )
+        .expect("a buffer to be in");
+
+        eval_str("(execute-extended-command \"kill-buffer\")", &env, &ctx).expect("M-x");
+        eval_str("(minibuffer-confirm)", &env, &ctx).expect("confirm");
+
+        assert!(ctx.get_buffer("here").is_none());
+    }
+
+    #[test]
+    fn c_x_k_kills_a_buffer() {
+        let (ctx, env) = setup();
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("common-keymaps.lisp must load");
+        eval_str(
+            r#"(buffer-create "here")(switch-to-buffer "here")"#,
+            &env,
+            &ctx,
+        )
+        .expect("a buffer to be in");
+
+        ctx.handle_key_event(key_with('x', true), &env);
+        ctx.handle_key_event(key('k'), &env);
+        eval_str("(minibuffer-confirm)", &env, &ctx).expect("take the default");
+
+        assert!(ctx.get_buffer("here").is_none());
+    }
+
+    /// `C-q` is `quoted-insert` in Emacs and `C-s` is `isearch-forward`. Both
+    /// used to be bound here to something else entirely, in Rust, where no
+    /// configuration could take them back.
+    #[test]
+    fn the_keys_emacs_gives_other_commands_no_longer_quit_or_save() {
+        let (ctx, _env) = bare();
+        let keymaps = ctx.keymaps.read().expect("keymaps");
+
+        for c in ['q', 's'] {
+            assert!(
+                keymaps.get(&[key_with(c, true)]).is_none(),
+                "C-{c} should not be bound by default"
+            );
+        }
+    }
+
+    fn key_with(c: char, ctrl: bool) -> KeyEvent {
+        KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers {
+                ctrl,
+                ..Default::default()
+            },
+        }
+    }
 }
