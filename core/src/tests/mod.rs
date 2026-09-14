@@ -9,12 +9,14 @@ mod echo_tests;
 mod edit_protection_tests;
 mod frame_snapshot_tests;
 mod fuel_tests;
+mod home_guard;
 mod isearch_tests;
 mod minibuffer_lisp_tests;
 mod mode_line_tests;
 mod movement_tests;
 /// Performance characterisation of the whole editor, interpreter included.
 /// One submodule, one runner, two reports -- see `perf::mod` for the rationale.
+mod path_tests;
 mod perf;
 mod prefix_arg_tests;
 mod prefix_key_tests;

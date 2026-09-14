@@ -59,48 +59,24 @@
 ;; Paths
 ;; ---------------------------------------------------------------------------
 
-(defun dired--as-directory (path)
-  "PATH with exactly one trailing slash, so a name can be joined onto it.
-
-Every path this module holds is in this form, which is what makes joining a
-name onto it a `concat' and nothing more.
-
-The empty path needs no case of its own: it does not end in a slash, so it gets
-one, and \"/\" is the right answer for it."
-  (if (string-suffix-p "/" path)
-      path
-      (concat path "/")))
-
 (defun dired--parent (directory)
   "The directory above DIRECTORY. At the root, the root.
 
-Written with `split-string' rather than by searching for the last slash
-because this Lisp has no `string-match': splitting on \"/\" gives the
-components, and dropping the last one is the answer. A trailing slash means the
-last component is empty, so it is dropped first."
-  (let ((parts (reverse (split-string (dired--as-directory directory) "/"))))
-    ;; ("" "src" "project" "user" "home" "") reversed -- the empty head is the
-    ;; trailing slash, and the one after it is the component to drop.
-    (dired--rejoin (reverse (nthcdr 2 parts)))))
+Asked rather than computed. This module used to work it out by splitting on
+\"/\" and dropping the last component, which is one platform's rule written down
+as though it were the rule -- on Windows a path has no \"/\" in it to split on,
+so every answer was the root. It also had no way to be right about a *relative*
+path: \"./\" has one component, dropping it leaves nothing, and nothing renders
+as the root. That is the whole of the bug where `^' jumped to \"/\".
 
-(defun dired--rejoin (parts)
-  "PARTS, joined with slashes, as a directory path.
-
-A slash goes *before* each part rather than between them, which needs no
-special case for the first: the empty string that `split-string' peels off the
-leading slash of an absolute path is skipped like any other empty part, and the
-slash it stood for is put back by the next one.
-
-Nothing is left over for the empty list either -- no parts means no slashes
-means the empty path, and `dired--as-directory' is the one place that says what
-an empty path means. A guard here returning \"/\" for it was a second answer to
-the same question, agreeing with the first only by luck."
-  (let ((path ""))
-    (mapc (lambda (part)
-            (unless (string= "" part)
-              (setq path (concat path "/" part))))
-          parts)
-    (dired--as-directory path)))
+The two primitives are what make the first half impossible: they ask the
+platform what a separator is instead of assuming. `expand-file-name' is what
+makes the second half impossible -- and it is applied here rather than relied
+on from the caller, so that this function has an answer for every input rather
+than only for the ones it currently gets. A relative DIRECTORY resolves against
+the editor's working directory, which is the same reading `dired' itself gives
+one."
+  (file-name-directory (directory-file-name (expand-file-name directory))))
 
 ;; ---------------------------------------------------------------------------
 ;; Reading the buffer back
@@ -116,7 +92,7 @@ cursor off the file the user is looking at."
     (let ((header (current-line)))
       (goto-char here)
       ;; The header ends in the `:' that marks it as one.
-      (dired--as-directory (substring header 0 -1)))))
+      (file-name-as-directory (substring header 0 -1)))))
 
 (defun dired--name-here ()
   "The name on the line point is on, or nil if that line is not an entry.
@@ -160,7 +136,10 @@ through, so nothing else, command or keystroke or line of Lisp, gets in."
 
 (defun dired--show (directory)
   "Show a listing of DIRECTORY in the dired buffer, and go to its first entry."
-  (let ((directory (dired--as-directory (expand-file-name directory))))
+  ;; Expanded first: what arrives here may be relative -- typed as ".", or
+  ;; completed from the prompt -- and a relative path in the header is a path
+  ;; whose parent cannot be worked out.
+  (let ((directory (file-name-as-directory (expand-file-name directory))))
     (buffer-create dired-buffer-name 'dired-mode)
     (switch-to-buffer dired-buffer-name)
     (dired--draw directory)
@@ -199,12 +178,18 @@ there rather than being edited to match what was expected."
 (defun dired--visit (path)
   "Open PATH: a directory as a listing, a file in the current window.
 
-The trailing slash `list-dir' puts on a directory is what decides, so this
-does not need to ask the filesystem -- and `..', which has no slash, is sent
-to `dired-up-directory' rather than being opened as the file it is not."
+`file-directory-p' decides, rather than the trailing separator `list-dir' puts
+on a directory. The separator is there to be *read* -- it is what tells you at a
+glance that Enter will descend -- and reading it back to make the decision meant
+writing down which character it is, which is the platform's business and not
+this module's. Asking costs one call and is also simply the truth: the listing
+may be a few seconds old.
+
+`..' is sent up rather than opened as the directory it also is, so that the
+header ends up normalised instead of growing a `..' on the end."
   (cond
    ((string= "  .." (current-line)) (dired-up-directory))
-   ((string= "/" (substring path -1)) (dired--show path))
+   ((file-directory-p path) (dired--show path))
    (t (find-file path))))
 
 (defcommand dired-find-file () nil
@@ -229,7 +214,7 @@ different days."
      ;; A directory in another window would be a second listing in the one
      ;; buffer both windows show -- see the module header on why there is only
      ;; one. It opens here instead, which is what `RET' would have done.
-     ((string= "/" (substring path -1)) (dired--visit path))
+     ((file-directory-p path) (dired--visit path))
      (t (progn
           (split-window-right)
           (other-window 1)
@@ -262,7 +247,7 @@ A directory with anything in it says how much would go with it, because
     (cond
      ((null path) (message "No file on this line"))
      ((string= "  .." (current-line)) (message "Refusing to delete .."))
-     (t (let* ((directory (string= "/" (substring path -1)))
+     (t (let* ((directory (file-directory-p path))
                (count (if directory (directory-entry-count path) 0))
                ;; Whether this is the recursive question, decided now: the
                ;; answer the user gives is an answer to the question they were
@@ -318,17 +303,19 @@ which is how a file is moved somewhere else."
 (defun dired--destination (directory new-name)
   "Where a rename to NEW-NAME lands, for a file listed in DIRECTORY.
 
-An absolute NEW-NAME, or one starting with `~\', is taken as given: that is how
-a file is moved somewhere else entirely. Anything else is relative to
-DIRECTORY -- so \"notes.md\" renames in place and \"archive/notes.md\" moves it
-into a subdirectory of the listing.
+One call, because this is exactly what `expand-file-name' second argument is
+for: an absolute NEW-NAME is taken as given, a `~' is expanded, and anything
+else is resolved against DIRECTORY. So \"notes.md\" renames in place,
+\"archive/notes.md\" moves it into a subdirectory of the listing, and
+\"/tmp/notes.md\" moves it out entirely.
 
-Relative to the listing rather than to wherever the editor was started, which
-is the only reading that matches what is on screen. The process working
-directory is not something the user can see."
-  (if (or (string-prefix-p "/" new-name) (string-prefix-p "~" new-name))
-      (expand-file-name new-name)
-      (concat directory new-name)))
+Against the listing rather than against wherever the editor was started, which
+is the only reading that matches what is on screen -- the process working
+directory is not something the user can see.
+
+This used to test for a leading \"/\" to decide whether NEW-NAME was absolute,
+which is a rule that holds on exactly one family of platforms."
+  (expand-file-name new-name directory))
 
 (defun dired--renamed (path outcome)
   "Report the result of renaming PATH and re-read the listing."

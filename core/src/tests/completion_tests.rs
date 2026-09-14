@@ -7,6 +7,7 @@ mod tests {
     use crate::input::{KeyCode, KeyEvent, KeyModifiers};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
     use crate::primitives::io::{expand_path, file_completions, split_for_completion};
+    use crate::tests::home_guard::guard::HomeAs;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -210,51 +211,10 @@ mod tests {
     // Paths
     // -----------------------------------------------------------------------
 
-    /// `HOME` pointed at a sandbox for the duration of one test, and put back
-    /// however the test ends.
-    ///
-    /// The environment is process-wide and the test runner is threaded, so
-    /// every test that leans on `HOME` takes the same lock. Only the tests in
-    /// this block touch it -- everything else here uses absolute paths, which
-    /// never reach the expansion at all.
-    struct HomeAs {
-        previous: Option<String>,
-        _guard: std::sync::MutexGuard<'static, ()>,
-    }
-
-    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    impl HomeAs {
-        fn new(dir: &std::path::Path) -> Self {
-            let guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let previous = std::env::var("HOME").ok();
-            // SAFETY: the lock above is the only way into this, and no other
-            // test in the crate reads `HOME`.
-            unsafe { std::env::set_var("HOME", dir) };
-            HomeAs {
-                previous,
-                _guard: guard,
-            }
-        }
-    }
-
-    impl Drop for HomeAs {
-        fn drop(&mut self) {
-            // SAFETY: as above -- still under the lock, which is released when
-            // the guard field drops after this.
-            unsafe {
-                match &self.previous {
-                    Some(home) => std::env::set_var("HOME", home),
-                    None => std::env::remove_var("HOME"),
-                }
-            }
-        }
-    }
-
     #[test]
     fn a_leading_tilde_expands_to_the_home_directory() {
         let sandbox = Sandbox::new("tilde");
-        let _home = HomeAs::new(&sandbox.0);
+        let _home = HomeAs::directory(&sandbox.0);
         let home = sandbox.0.display().to_string();
 
         assert_eq!(expand_path("~"), home);
@@ -272,7 +232,7 @@ mod tests {
         // creates a config directory, and a sandbox with one in it would make
         // this assert on the editor's own housekeeping rather than the listing.
         let (ctx, env) = setup();
-        let _home = HomeAs::new(&sandbox.0);
+        let _home = HomeAs::directory(&sandbox.0);
 
         let listed = eval_str(r#"(list-dir "~")"#, &env, &ctx).expect("list-dir");
 
@@ -283,7 +243,7 @@ mod tests {
     fn file_completion_expands_a_tilde() {
         let sandbox = Sandbox::new("tilde-complete");
         sandbox.file("target.txt");
-        let _home = HomeAs::new(&sandbox.0);
+        let _home = HomeAs::directory(&sandbox.0);
 
         assert_eq!(
             file_completions("~/tar"),
@@ -299,7 +259,7 @@ mod tests {
         let sandbox = Sandbox::new("tilde-open");
         sandbox.file("target.txt");
         let (ctx, env) = setup();
-        let _home = HomeAs::new(&sandbox.0);
+        let _home = HomeAs::directory(&sandbox.0);
 
         assert_eq!(
             eval_str(r#"(find-file "~/target.txt")"#, &env, &ctx).expect("find-file"),
@@ -308,21 +268,27 @@ mod tests {
         assert_eq!(ctx.get_current_buffer_name(), "target.txt");
     }
 
-    /// `~other` is a different feature -- it needs the password database -- and
-    /// a file really can be called `~weird`, so anything that is not the home
-    /// directory is left exactly as it was.
+    /// `~other` is a different feature -- it needs the password database -- so
+    /// the tilde in it is not touched. What is left is then an ordinary
+    /// relative name, and gets resolved against the working directory like any
+    /// other: a file really can be called `~other`, and the point of not
+    /// expanding it is to be able to open *that file*.
     #[test]
-    fn a_tilde_that_is_not_the_home_directory_is_left_alone() {
-        assert_eq!(expand_path("~other/file"), "~other/file");
+    fn a_tilde_that_is_not_the_home_directory_is_not_a_home_directory() {
+        let here = std::env::current_dir().expect("a working directory");
+        assert_eq!(
+            expand_path("~other/file"),
+            here.join("~other/file").to_string_lossy()
+        );
+        // An absolute path keeps its tilde and needs no resolving at all.
         assert_eq!(expand_path("/tmp/~backup"), "/tmp/~backup");
-        assert_eq!(expand_path("plain"), "plain");
     }
 
     #[test]
     fn expand_file_name_is_the_same_answer_from_lisp() {
         let sandbox = Sandbox::new("tilde-lisp");
         let (ctx, env) = setup();
-        let _home = HomeAs::new(&sandbox.0);
+        let _home = HomeAs::directory(&sandbox.0);
 
         assert_eq!(
             eval_str(r#"(expand-file-name "~/x")"#, &env, &ctx).expect("expand"),

@@ -507,6 +507,32 @@ pub fn install_primitives<B: BufferTrait>(
         io::expand_file_name,
         io::EXPAND_FILE_NAME_DOC
     );
+
+    // Shaping a file name, without asking the filesystem anything. In Rust
+    // rather than in a module because what counts as a separator, and what
+    // counts as a root, is a property of the platform -- `/a/b` and `C:\a\b`
+    // are the same shape and share no characters. A module splitting strings on
+    // "/" is writing down one platform's answer and calling it the rule.
+    insert_fn!(
+        "file-name-as-directory",
+        io::file_name_as_directory,
+        io::FILE_NAME_AS_DIRECTORY_DOC
+    );
+    insert_fn!(
+        "directory-file-name",
+        io::directory_file_name,
+        io::DIRECTORY_FILE_NAME_DOC
+    );
+    insert_fn!(
+        "file-name-directory",
+        io::file_name_directory,
+        io::FILE_NAME_DIRECTORY_DOC
+    );
+    insert_fn!(
+        "file-name-nondirectory",
+        io::file_name_nondirectory,
+        io::FILE_NAME_NONDIRECTORY_DOC
+    );
     insert_cmd!(
         "save-buffer",
         io::save_buffer,

@@ -169,18 +169,6 @@ mod tests {
     // ---------------- paths ----------------
 
     #[test]
-    fn a_directory_path_gets_exactly_one_trailing_slash() {
-        let (ctx, env) = setup();
-        for (given, expected) in [("/etc", "/etc/"), ("/etc/", "/etc/"), ("/", "/"), ("", "/")] {
-            assert_eq!(
-                run(&format!(r#"(dired--as-directory "{given}")"#), &env, &ctx),
-                LispExp::string(expected.into()),
-                "normalising {given}"
-            );
-        }
-    }
-
-    #[test]
     fn the_parent_of_a_directory_drops_its_last_component() {
         let (ctx, env) = setup();
         for (given, expected) in [
@@ -194,6 +182,92 @@ mod tests {
                 "parent of {given}"
             );
         }
+    }
+
+    /// The bug this module actually had: a listing opened by a relative name
+    /// -- `.`, or anything tab-completed from the working directory -- had a
+    /// header with fewer components than it looked like it had, and going up
+    /// from it walked off the front and landed at the filesystem root. One
+    /// keystroke from where you were to `/`.
+    #[test]
+    fn going_up_from_a_listing_opened_by_a_relative_name_does_not_jump_to_the_root() {
+        let sandbox = Sandbox::new("relative-up");
+        sandbox.dir("inner");
+        let (ctx, env) = setup();
+
+        // `.` is the sharpest case: one component, and the old arithmetic
+        // dropped it and rendered what was left as the root.
+        run(
+            &format!(r#"(dired "{}inner/.")"#, sandbox.lisp()),
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(dired--directory)", &env, &ctx),
+            LispExp::string(format!("{}inner/", sandbox.lisp())),
+            "the header is absolute and the `.' is gone"
+        );
+
+        run("(dired-up-directory)", &env, &ctx);
+
+        assert_eq!(
+            run("(dired--directory)", &env, &ctx),
+            LispExp::string(sandbox.lisp()),
+            "up from inner/ is the sandbox, not /"
+        );
+    }
+
+    /// And `..` as an entry, which is the other way to ask the same question.
+    #[test]
+    fn return_on_the_parent_entry_of_a_relatively_named_listing_is_the_real_parent() {
+        let sandbox = Sandbox::new("relative-dotdot");
+        sandbox.dir("inner");
+        let (ctx, env) = setup();
+        run(&format!(r#"(dired "{}inner")"#, sandbox.lisp()), &env, &ctx);
+        goto_entry("..", &env, &ctx);
+
+        run("(dired-find-file)", &env, &ctx);
+
+        assert_eq!(
+            run("(dired--directory)", &env, &ctx),
+            LispExp::string(sandbox.lisp())
+        );
+    }
+
+    /// A header carrying `..` would make the next `^` wrong in the same way,
+    /// so the expansion happens on the way in rather than being cleaned up
+    /// later.
+    #[test]
+    fn a_path_with_dot_dot_in_it_is_collapsed_before_it_reaches_the_header() {
+        let sandbox = Sandbox::new("dotdot-collapse");
+        sandbox.dir("inner");
+        let (ctx, env) = setup();
+
+        run(
+            &format!(r#"(dired "{}inner/../inner")"#, sandbox.lisp()),
+            &env,
+            &ctx,
+        );
+
+        assert_eq!(
+            run("(dired--directory)", &env, &ctx),
+            LispExp::string(format!("{}inner/", sandbox.lisp()))
+        );
+    }
+
+    /// A relative directory has an answer too, rather than a fallback that
+    /// quietly returns it unchanged: it is resolved against the working
+    /// directory, which is the same reading `dired' itself gives one.
+    #[test]
+    fn the_parent_of_a_relative_directory_is_resolved_rather_than_refused() {
+        let (ctx, env) = setup();
+        let here = std::env::current_dir().expect("a working directory");
+
+        assert_eq!(
+            run(r#"(dired--parent "src/")"#, &env, &ctx),
+            LispExp::string(format!("{}/", here.display())),
+            "up from ./src is the working directory"
+        );
     }
 
     /// Going up from the root stays at the root rather than producing an empty
