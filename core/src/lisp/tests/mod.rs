@@ -19,6 +19,7 @@ mod eval_tests;
 mod lexical_context;
 mod lisp_core_compliance_tests;
 mod nonlocal_exit_tests;
+mod symbol_tests;
 // Thread, concurrency and fuel
 mod fiber_tests;
 mod fuel;

@@ -769,6 +769,64 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Which mode a buffer is in
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn a_buffer_reports_the_mode_it_is_in() {
+        let (ctx, env) = plain();
+        assert_eq!(
+            run("(major-mode)", &env, &ctx),
+            LispExp::symbol("fundamental-mode".into()),
+            "a buffer nobody gave a mode is in the default one"
+        );
+
+        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
+        ctx.mutate_buffer(scratch, |b| b.current_mode = "toy".into());
+        assert_eq!(
+            run("(major-mode)", &env, &ctx),
+            LispExp::symbol("toy".into())
+        );
+    }
+
+    #[test]
+    fn the_mode_comes_back_as_a_symbol_and_not_a_string() {
+        // It is handed straight to `get`, which takes either -- so nothing
+        // fails if this regresses to a string. What breaks instead is `eq`
+        // against a mode written in source, which is how any dispatch on mode
+        // would be written.
+        let (ctx, env) = plain();
+        assert_eq!(
+            run("(eq (major-mode) 'fundamental-mode)", &env, &ctx),
+            LispExp::t()
+        );
+    }
+
+    #[test]
+    fn another_buffer_can_be_asked_about() {
+        let (ctx, env) = plain();
+        run("(buffer-create \"other\" 'toy)", &env, &ctx);
+        assert_eq!(
+            run("(major-mode \"other\")", &env, &ctx),
+            LispExp::symbol("toy".into())
+        );
+        assert_eq!(
+            run("(major-mode)", &env, &ctx),
+            LispExp::symbol("fundamental-mode".into()),
+            "asking about another buffer does not change which one is current"
+        );
+    }
+
+    #[test]
+    fn a_buffer_that_does_not_exist_has_no_mode() {
+        let (ctx, env) = plain();
+        assert_eq!(
+            run("(major-mode \"no-such-buffer\")", &env, &ctx),
+            LispExp::nil()
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // bounds-of-thing-at-point
     // -----------------------------------------------------------------------
 
