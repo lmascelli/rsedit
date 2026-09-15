@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 pub mod highlighter;
 pub mod syntax;
-pub use syntax::{Grammar, SyntaxRegion, SyntaxRule, SyntaxSpan, SyntaxState, highlight_line};
+pub use syntax::{Grammar, SyntaxRegion, SyntaxRule, SyntaxSpan, SyntaxState, SyntaxTable, highlight_line};
 
 /// A major mode is a collection of rules that apply to a specific
 /// kind of buffers like specific programming language, special text
@@ -25,6 +25,9 @@ pub struct MajorMode<B: BufferTrait> {
     /// what can be completed in a Lisp buffer is not what can be completed in
     /// a directory listing. See `crate::primitives::completion`.
     pub completion_functions: Vec<ELispExp<B>>,
+
+    /// Used to look for pairing element of the text like () [] {} "" etc...
+    pub syntax_table: Option<SyntaxTable>,
 }
 
 impl<B: BufferTrait> MajorMode<B> {

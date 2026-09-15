@@ -40,6 +40,7 @@
 //!   region names the escape explicitly and the scan steps over it.
 use crate::ui::Face;
 use regex::Regex;
+use std::collections::{HashMap, HashSet};
 
 /// A run of characters to draw with a face, in **character columns** within its
 /// line.
@@ -80,6 +81,56 @@ pub struct SyntaxRegion {
     /// Whether `begin` matching inside the region opens another one, so that
     /// `/* /* */ */` closes where it should rather than at the first `*/`.
     pub nestable: bool,
+}
+
+/// What one character means to the scanner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyntaxClass {
+    Open(char),   // carries the character that closes it
+    Close(char),  // carries the character that opened it
+    StringQuote,  // the same character ends it
+    Escape,       // the next character is literal
+    Prefix,       // attaches to the expression after it: ' ` , #
+    Symbol,
+    Punctuation,  // separates, belongs to nothing
+}
+
+/// One way this language writes a comment.
+#[derive(Clone, Debug)]
+pub enum CommentStyle {
+    Line { opener: String },
+    Block { opener: String, closer: String, nestable: bool },
+}
+
+#[derive(Clone, Debug)]
+pub struct SyntaxTable {
+    classes: HashMap<char, SyntaxClass>,
+    comments: Vec<CommentStyle>,
+    /// First character of every comment opener, so the scan asks "could a
+    /// comment begin here?" with one set lookup rather than a string compare
+    /// per style per position.
+    comment_starts: HashSet<char>,
+}
+
+impl SyntaxTable {
+    pub fn class_of(&self, c: char) -> SyntaxClass {
+        if let Some(class) = self.classes.get(&c) { return *class; }
+        if c.is_alphanumeric() || c == '_' { SyntaxClass::Symbol } else { SyntaxClass::Punctuation }
+    }
+}
+
+impl Default for SyntaxTable {
+    fn default() -> Self {
+        let mut classes = HashMap::new();
+        classes.insert('(', SyntaxClass::Open(')');
+        classes.insert(')', SyntaxClass::Close('(');
+        classes.insert('[', SyntaxClass::Open(']');
+        classes.insert(']', SyntaxClass::Close('[');
+        classes.insert('{', SyntaxClass::Open('}');
+        classes.insert('}', SyntaxClass::Close('{');
+        classes.insert('\"', SyntaxClass::StringQuote);
+        classes.insert('\\"', SyntaxClass::Escape);
+    }
 }
 
 /// Everything a major mode knows about colouring its language.

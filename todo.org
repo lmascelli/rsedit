@@ -2,6 +2,10 @@
 #+title: rsedit
 
 * Fixes todo
+- [ ] In rust mode '\"' is not seen from syntax highlighting as a char but as a
+      string quote start so the rest of the text is coloured as string.
+- [ ] In tui rendering float windows does not clear the rect so the text behind the
+      window can be seen and overlap with window text.
 
 * Macro todo
 - [ ] Find file recursively from current working directory
