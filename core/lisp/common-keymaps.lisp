@@ -25,6 +25,16 @@
 (define-key nil "M-g g" 'goto-line)
 (define-key nil "M-g M-g" 'goto-line)
 
+;; Completion at point. C-M-i is Emacs' binding and is the same keystroke as
+;; M-<tab>, which is what most terminals actually send -- so both are bound and
+;; whichever arrives reaches the same command.
+;;
+;; What it can complete depends on the buffer: every mode's own sources are
+;; tried before the global ones. `completion-functions' lists them and
+;; `set-completion-functions' reorders or removes them.
+(define-key nil "C-M-i" 'completion-at-point)
+(define-key nil "M-tab" 'completion-at-point)
+
 ;; Scrolling by a screenful, with two lines of overlap so you can find your
 ;; place. Point comes along only when the line it is on scrolls out of sight,
 ;; so reading a long file leaves the cursor where you were looking.

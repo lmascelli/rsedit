@@ -38,12 +38,37 @@
 ;; Attributes, likewise a face of this module's own.
 (add-syntax-rule 'rust-mode "#!?\\[[^]]*\\]" 'attribute)
 
-(add-syntax-rule 'rust-mode
-                 "\\b(fn|let|mut|const|static|pub|crate|mod|use|as|impl|trait|for|in|where|match|if|else|while|loop|break|continue|return|struct|enum|type|dyn|move|ref|self|super|unsafe|async|await)\\b"
-                 'keyword)
 
-(add-syntax-rule 'rust-mode "\\b(true|false|None|Some|Ok|Err)\\b" 'builtin)
-(add-syntax-rule 'rust-mode "\\b(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|str|String|Vec|Option|Result)\\b" 'type)
+;; The vocabulary, written once and used twice.
+;;
+;; `set-mode-keywords' is what `capf-mode-keywords' offers when you complete in
+;; a Rust buffer; `regexp-opt' turns the same list into the pattern that
+;; colours it. Written as a regexp literal and a list side by side, the two
+;; would agree today and disagree the first time someone added a keyword to one
+;; of them -- and the failure would be a word that highlights but will not
+;; complete, which nobody reports as a bug.
+(defconst rust-keywords
+  '("fn" "let" "mut" "const" "static" "pub" "crate" "mod" "use" "as" "impl"
+    "trait" "for" "in" "where" "match" "if" "else" "while" "loop" "break"
+    "continue" "return" "struct" "enum" "type" "dyn" "move" "ref" "self"
+    "super" "unsafe" "async" "await")
+  "The words Rust reserves.")
+
+(defconst rust-constants '("true" "false" "None" "Some" "Ok" "Err")
+  "Values spelled as names.")
+
+(defconst rust-types
+  '("i8" "i16" "i32" "i64" "isize" "u8" "u16" "u32" "u64" "usize" "f32" "f64"
+    "bool" "char" "str" "String" "Vec" "Option" "Result")
+  "The types worth knowing without being told.")
+
+;; All three are offered for completion, because all three are things you type.
+(set-mode-keywords 'rust-mode
+                   (append rust-keywords (append rust-constants rust-types)))
+
+(add-syntax-rule 'rust-mode (concat "\\b" (regexp-opt rust-keywords) "\\b") 'keyword)
+(add-syntax-rule 'rust-mode (concat "\\b" (regexp-opt rust-constants) "\\b") 'builtin)
+(add-syntax-rule 'rust-mode (concat "\\b" (regexp-opt rust-types) "\\b") 'type)
 
 ;; A capitalised word is a type by convention.
 (add-syntax-rule 'rust-mode "\\b[A-Z][A-Za-z0-9_]*\\b" 'type)

@@ -170,6 +170,45 @@ primitive!(buffer_string, _args, _env, ctx, {
     Ok(ELispExp::string(content))
 });
 
+pub const BUFFER_SUBSTRING_DOC: &str = "(buffer-substring START END): Return the text of the \
+         current buffer between positions START and END, as a string. The positions are clamped \
+         to the buffer and may be given in either order, so a caller holding a region does not \
+         have to sort it first.\n\n\
+         Unlike `buffer-string', this copies only what was asked for -- which is what makes it \
+         usable on a key press, where reading a whole buffer to look at eight characters is the \
+         difference between a completion and a pause.\n\n\
+         Example:\n\
+         (buffer-substring (point-min) (point)) => \"everything before point\"";
+
+primitive!(buffer_substring, args, _env, ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let bound = |exp: &ELispExp<B>| match exp {
+        ELispExp::Number(n) if n.is_finite() && *n >= 0.0 => Ok(*n as usize),
+        other => Err(EvalError::WrongArgumentType {
+            expected: "Number".into(),
+            got: other.clone(),
+        }),
+    };
+    let (from, to) = (bound(&args[0])?, bound(&args[1])?);
+
+    let buf = ctx.get_current_buffer();
+    let buf = buf
+        .read()
+        .expect("Failed to acquire read lock on current buffer");
+    let end = from.max(to).min(buf.text.len());
+    let start = from.min(to).min(end);
+    Ok(ELispExp::string(
+        (start..end)
+            .filter_map(|at| buf.text.at(at))
+            .collect::<String>(),
+    ))
+});
+
 pub const CLEAR_BUFFER_DOC: &str = "(clear-buffer): Delete the entire contents of the current buffer. \
          Not a standard Elisp primitive -- comparable to Emacs's \
          `erase-buffer`.\n\n\

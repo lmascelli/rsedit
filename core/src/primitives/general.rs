@@ -377,3 +377,116 @@ primitive!(clear_transient_keymap, _args, _env, ctx, {
     ctx.clear_transient_keymap();
     Ok(ELispExp::t())
 });
+
+// ---------------------------------------------------------------------------
+// Asking the interpreter what it knows
+// ---------------------------------------------------------------------------
+//
+// A completion source for this editor's own Lisp has a problem no other source
+// has: the list of names worth offering is not a property of the language, it
+// is a property of *this session*. Half of them are primitives compiled into
+// the editor, the other half are whatever the user's modules defined, and both
+// change as the editor grows. Writing that list into a `.lisp` file means
+// writing down a snapshot that is wrong by the next commit.
+//
+// So `capf-symbols` does not write it down. It asks, every time it is called,
+// and a name is offered exactly when calling it would work.
+
+pub const ALL_FUNCTIONS_DOC: &str = "(all-functions): Return the names of every function visible \
+         from the current environment, as a sorted list of strings -- primitives and Lisp \
+         definitions alike, since nothing calling them can tell the difference.\n\n\
+         A name bound in an inner scope appears once, not twice: this is the set of names that \
+         would resolve, not the set of bindings that exist.\n\n\
+         Macros are *not* included; see `all-macros'. Keeping them apart is what lets a caller \
+         treat a macro as syntax and a function as a call.\n\n\
+         Example:\n\
+         (all-functions) => (\"1+\" \"abs\" \"append\" ...)";
+
+primitive!(all_functions, _args, env, _ctx, {
+    Ok(ELispExp::proper_list(
+        env.function_names()
+            .into_iter()
+            .map(ELispExp::string)
+            .collect(),
+    ))
+});
+
+pub const ALL_MACROS_DOC: &str = "(all-macros): Return the names of every macro visible from the \
+         current environment, as a sorted list of strings.\n\n\
+         Special forms are not macros and are not listed: `if' and `let' are built into the \
+         evaluator and have no binding to enumerate.\n\n\
+         Example:\n\
+         (all-macros) => (\"defcommand\")";
+
+primitive!(all_macros, _args, env, _ctx, {
+    Ok(ELispExp::proper_list(
+        env.macro_names()
+            .into_iter()
+            .map(ELispExp::string)
+            .collect(),
+    ))
+});
+
+pub const ALL_VARIABLES_DOC: &str = "(all-variables): Return the names of every variable visible \
+         from the current environment, as a sorted list of strings.\n\n\
+         Called inside a `let', its bindings are in the list too -- they are variables, and they \
+         would resolve. What comes back describes the environment it was asked in.\n\n\
+         Example:\n\
+         (all-variables) => (\"case-fold-search\" \"frame-width\" ...)";
+
+primitive!(all_variables, _args, env, _ctx, {
+    Ok(ELispExp::proper_list(
+        env.variable_names()
+            .into_iter()
+            .map(ELispExp::string)
+            .collect(),
+    ))
+});
+
+pub const REGEXP_OPT_DOC: &str = "(regexp-opt WORDS): Return a regular expression matching any one \
+         of WORDS, with every character that means something to the regexp engine escaped. The \
+         group is non-capturing, so a rule wrapping it can still use group 1 for its own.\n\n\
+         In Rust rather than in a module because which characters are special is a property of \
+         the engine, not of the language being matched. A module escaping the ones it could \
+         think of is writing down a guess -- and this editor's own names are full of them: \
+         unquoted, `1+' is a pattern matching `11', `111' and every other run of ones, and \
+         `*items*' does not compile at all.\n\n\
+         What it is for is letting a mode keep **one** list of its keywords and get both its \
+         colouring and its completion out of it, rather than two copies that drift.\n\n\
+         Example:\n\
+         (regexp-opt '(\\\"fn\\\" \\\"let\\\")) => \\\"(?:fn|let)\\\"";
+
+primitive!(regexp_opt, args, _env, _ctx, {
+    if args.len() != 1 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let words: Vec<ELispExp<B>> = match &args[0] {
+        ELispExp::Form(items) => items.to_vec(),
+        other if other.is_nil() => Vec::new(),
+        other => other.iter().collect(),
+    };
+    let mut parts = Vec::with_capacity(words.len());
+    for word in &words {
+        let (ELispExp::String(text) | ELispExp::Symbol(text)) = word else {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: word.clone(),
+            });
+        };
+        parts.push(regex::escape(text));
+    }
+    // An alternation of nothing matches the empty string at every position,
+    // which as a syntax rule would face the whole buffer one character at a
+    // time. A pattern that matches nothing at all is the honest answer.
+    //
+    // Spelt as a character class that excludes every character, because the
+    // obvious `(?!)` is a look-ahead and this engine has none -- the same
+    // constraint that shapes `crate::modes::syntax`.
+    if parts.is_empty() {
+        return Ok(ELispExp::string("[^\\s\\S]".into()));
+    }
+    Ok(ELispExp::string(format!("(?:{})", parts.join("|"))))
+});

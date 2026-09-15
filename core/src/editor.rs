@@ -175,6 +175,10 @@ pub struct EditorState<B: BufferTrait> {
     /// A keymap is an association between a KeyEvent and the name of a
     /// function that have to be executed (i.e. self-insert)
     pub keymaps: Arc<RwLock<Keymap<B>>>,
+    /// Where completions come from in any buffer, whatever its mode -- the
+    /// global half of what `MajorMode::completion_functions` holds per mode,
+    /// and the same relationship `keymaps` has to `MajorMode::keymaps`.
+    pub completion_functions: Arc<RwLock<Vec<ELispExp<B>>>>,
     pub mode_registry: Arc<RwLock<HashMap<String, MajorMode<B>>>>,
     /// This is the root of the window tree that the UI should visualize
     pub layout_root: Arc<RwLock<LayoutNode>>,
@@ -413,6 +417,7 @@ impl<B: BufferTrait> EditorState<B> {
             echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
             current_buffer_name: Arc::new(RwLock::new(Arc::from(scratch_name.as_str()))),
             keymaps: Arc::new(RwLock::new(keymaps)),
+            completion_functions: Arc::new(RwLock::new(Vec::new())),
             mode_registry: Arc::new(RwLock::new(HashMap::new())),
             layout_root: Arc::new(RwLock::new(LayoutNode::Leaf(Window::new(0, "*scratch*")))),
             floating_windows: Arc::new(RwLock::new(Vec::new())),
@@ -1066,6 +1071,136 @@ impl<B: BufferTrait> EditorState<B> {
     /// Whether a transient keymap is installed. Only for reporting.
     pub(crate) fn transient_keymap_active(&self) -> bool {
         self.transient_up.load(Ordering::Acquire)
+    }
+
+    // -----------------------------------------------------------------------
+    // Completion sources
+    // -----------------------------------------------------------------------
+    //
+    // A list per mode and one global list, reached through the five methods
+    // below so that no caller has to know there are two places. `nil` means
+    // the global list everywhere, exactly as it does in `define-key`.
+
+    /// Every completion source to try in MODE, most specific first.
+    ///
+    /// The mode's own sources come before the global ones because a mode knows
+    /// something the editor does not: in a Lisp buffer the interpreter's
+    /// function names are the good answer and the words lying around in other
+    /// buffers are the fallback, and only `risp-mode` is in a position to say
+    /// so.
+    ///
+    /// Both lists are copied out and both locks released before the caller
+    /// gets them. Every one of these is about to be *called*, and a source is
+    /// arbitrary Lisp that may load a module, define a mode, or open a buffer
+    /// -- the same rule `run_hook` is written to, for the same reason.
+    pub(crate) fn completion_sources(&self, mode: &str) -> Vec<ELispExp<B>> {
+        let mut sources: Vec<ELispExp<B>> = self
+            .mode_registry
+            .read()
+            .expect("Failed to acquire read lock on mode_registry")
+            .get(mode)
+            .map(|mode| mode.completion_functions.clone())
+            .unwrap_or_default();
+        sources.extend(
+            self.completion_functions
+                .read()
+                .expect("Failed to acquire read lock on completion_functions")
+                .iter()
+                .cloned(),
+        );
+        sources
+    }
+
+    /// Append a source to MODE's list, or to the global one when MODE is
+    /// `None`. False if MODE names a mode that does not exist.
+    pub(crate) fn add_completion_function(
+        &self,
+        mode: Option<&str>,
+        function: ELispExp<B>,
+    ) -> bool {
+        match mode {
+            None => {
+                self.completion_functions
+                    .write()
+                    .expect("Failed to acquire write lock on completion_functions")
+                    .push(function);
+                true
+            }
+            Some(name) => self.with_mode_mut(name, |mode| mode.completion_functions.push(function)),
+        }
+    }
+
+    /// Replace a whole list. This is how a source is removed or the order
+    /// changed -- `(set-completion-functions nil (list ...))` -- which a
+    /// bare `add` could not express.
+    pub(crate) fn set_completion_functions(
+        &self,
+        mode: Option<&str>,
+        functions: Vec<ELispExp<B>>,
+    ) -> bool {
+        match mode {
+            None => {
+                *self
+                    .completion_functions
+                    .write()
+                    .expect("Failed to acquire write lock on completion_functions") = functions;
+                true
+            }
+            Some(name) => self.with_mode_mut(name, |mode| mode.completion_functions = functions),
+        }
+    }
+
+    /// One list on its own, unmerged, or `None` if MODE is unknown.
+    pub(crate) fn completion_function_list(&self, mode: Option<&str>) -> Option<Vec<ELispExp<B>>> {
+        match mode {
+            None => Some(
+                self.completion_functions
+                    .read()
+                    .expect("Failed to acquire read lock on completion_functions")
+                    .clone(),
+            ),
+            Some(name) => self
+                .mode_registry
+                .read()
+                .expect("Failed to acquire read lock on mode_registry")
+                .get(name)
+                .map(|mode| mode.completion_functions.clone()),
+        }
+    }
+
+    /// Declare the words MODE's language has of its own. Replaces rather than
+    /// appends: a language states its vocabulary, it does not accumulate one.
+    pub(crate) fn set_mode_keywords(&self, mode: &str, keywords: Vec<String>) -> bool {
+        self.with_mode_mut(mode, |mode| mode.keywords = keywords)
+    }
+
+    pub(crate) fn mode_keywords(&self, mode: &str) -> Vec<String> {
+        self.mode_registry
+            .read()
+            .expect("Failed to acquire read lock on mode_registry")
+            .get(mode)
+            .map(|mode| mode.keywords.clone())
+            .unwrap_or_default()
+    }
+
+    /// Change one mode in the registry, reporting whether it was there.
+    ///
+    /// The write lock is taken and released inside, and the closure is given
+    /// only the mode -- so nothing that runs under this lock can reach the
+    /// interpreter.
+    fn with_mode_mut(&self, name: &str, edit: impl FnOnce(&mut MajorMode<B>)) -> bool {
+        match self
+            .mode_registry
+            .write()
+            .expect("Failed to acquire write lock on mode_registry")
+            .get_mut(name)
+        {
+            Some(mode) => {
+                edit(mode);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Say that a file whose name matches PATTERN opens in MODE.
@@ -2705,6 +2840,12 @@ pub fn create_global_env<B: BufferTrait>()
 (eval-file "rust-mode")   ; colouring for Rust source
 (eval-file "dired")       ; a directory in a buffer (C-x d)
 (eval-file "completion")  ; Tab shows every candidate at once, in a strip
+
+;; Where completions come from, for C-M-i in a buffer. The command is built in
+;; and works without this; what this adds is the five sources it asks. Take one
+;; out with `set-completion-functions', or add one of your own for a single
+;; mode with `add-completion-function'.
+(eval-file "completion-at-point")
 
 
 "#,

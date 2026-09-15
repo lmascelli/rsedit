@@ -85,6 +85,7 @@ macro_rules! primitive {
 
 mod buffers;
 mod commands;
+mod completion;
 pub(crate) mod edits;
 mod general;
 pub(crate) mod io;
@@ -187,6 +188,75 @@ pub fn install_primitives<B: BufferTrait>(
         general::DEFINE_REPEAT_KEY_DOC
     );
     insert_fn!("log", general::log, general::LOG_DOC);
+    insert_fn!(
+        "all-functions",
+        general::all_functions,
+        general::ALL_FUNCTIONS_DOC
+    );
+    insert_fn!("all-macros", general::all_macros, general::ALL_MACROS_DOC);
+    insert_fn!(
+        "all-variables",
+        general::all_variables,
+        general::ALL_VARIABLES_DOC
+    );
+    insert_fn!("regexp-opt", general::regexp_opt, general::REGEXP_OPT_DOC);
+
+    // Completion at point. The registry of sources and the merge that runs
+    // them are Rust: they are the mechanism, not a policy, and every source
+    // and every presenter is reached through them. What each source actually
+    // knows -- file names, buffer words, the interpreter's own names -- is
+    // Lisp, in `completion-at-point.lisp`, and replaceable one at a time.
+    insert_cmd!(
+        "completion-at-point",
+        completion::completion_at_point,
+        [] as [&str; 0],
+        completion::COMPLETION_AT_POINT_DOC
+    );
+    insert_fn!(
+        "completion-at-point-choose",
+        completion::completion_at_point_choose,
+        completion::COMPLETION_AT_POINT_CHOOSE_DOC
+    );
+    insert_fn!(
+        "add-completion-function",
+        completion::add_completion_function,
+        completion::ADD_COMPLETION_FUNCTION_DOC
+    );
+    insert_fn!(
+        "set-completion-functions",
+        completion::set_completion_functions,
+        completion::SET_COMPLETION_FUNCTIONS_DOC
+    );
+    insert_fn!(
+        "completion-functions",
+        completion::completion_functions,
+        completion::COMPLETION_FUNCTIONS_DOC
+    );
+    insert_fn!(
+        "set-mode-keywords",
+        completion::set_mode_keywords,
+        completion::SET_MODE_KEYWORDS_DOC
+    );
+    insert_fn!(
+        "mode-keywords",
+        completion::mode_keywords,
+        completion::MODE_KEYWORDS_DOC
+    );
+    insert_fn!(
+        "buffer-words",
+        completion::buffer_words,
+        completion::BUFFER_WORDS_DOC
+    );
+    insert_fn!(
+        "buffer-substring",
+        buffers::buffer_substring,
+        buffers::BUFFER_SUBSTRING_DOC
+    );
+    insert_fn!(
+        "bounds-of-thing-at-point",
+        completion::bounds_of_thing_at_point,
+        completion::BOUNDS_OF_THING_AT_POINT_DOC
+    );
     insert_fn!("all-logs", general::all_logs, general::ALL_LOGS_DOC);
     insert_fn!("backtrace", general::backtrace, general::BACKTRACE_DOC);
     insert_fn!(
