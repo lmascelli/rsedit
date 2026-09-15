@@ -88,7 +88,7 @@ mod tests {
         eval_str("(setq mode-line-format \"%b|%m|%l|%c|%*|%%\")", &env, &ctx).expect("setq");
         eval_str("(next-line) (forward-char 1)", &env, &ctx).expect("move");
 
-        assert_eq!(mode_line(&ctx, &env), "*scratch*|fundamental|2|1|--|%");
+        assert_eq!(mode_line(&ctx, &env), "*scratch*|fundamental-mode|2|1|--|%");
     }
 
     /// An unknown escape is left as written. A format that silently swallowed

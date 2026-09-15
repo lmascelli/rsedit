@@ -707,14 +707,23 @@ mod tests {
     // -----------------------------------------------------------------------
     // A language's own words
     // -----------------------------------------------------------------------
+    //
+    // A mode's vocabulary is no longer something the editor knows about. A
+    // language module puts a list on its own symbol and `capf-mode-keywords`
+    // reads it back, so what these check is a convention between two Lisp
+    // modules rather than a primitive -- there is no primitive left to check.
+    //
+    // One consequence worth seeing written down: `put` does not care whether
+    // the symbol names a mode that exists. It is a property of a symbol, and a
+    // symbol needs no permission to carry one. The old `set-mode-keywords`
+    // refused an unknown mode; nothing refuses now.
 
     #[test]
     fn a_mode_can_declare_its_vocabulary() {
         let (ctx, env) = plain();
-        run("(make-mode 'toy)", &env, &ctx);
-        run("(set-mode-keywords 'toy '(\"begin\" \"end\"))", &env, &ctx);
+        run("(put 'toy 'keywords '(\"begin\" \"end\"))", &env, &ctx);
         assert_eq!(
-            strings(&run("(mode-keywords 'toy)", &env, &ctx)),
+            strings(&run("(get 'toy 'keywords)", &env, &ctx)),
             vec!["begin", "end"]
         );
     }
@@ -722,38 +731,41 @@ mod tests {
     #[test]
     fn declaring_a_vocabulary_replaces_rather_than_accumulates() {
         let (ctx, env) = plain();
-        run("(make-mode 'toy)", &env, &ctx);
-        run("(set-mode-keywords 'toy '(\"begin\"))", &env, &ctx);
-        run("(set-mode-keywords 'toy '(\"end\"))", &env, &ctx);
+        run("(put 'toy 'keywords '(\"begin\"))", &env, &ctx);
+        run("(put 'toy 'keywords '(\"end\"))", &env, &ctx);
         assert_eq!(
-            strings(&run("(mode-keywords 'toy)", &env, &ctx)),
+            strings(&run("(get 'toy 'keywords)", &env, &ctx)),
             vec!["end"]
         );
     }
 
     #[test]
-    fn mode_keywords_defaults_to_the_current_buffers_mode() {
+    fn the_vocabulary_read_is_the_one_for_this_buffers_mode() {
         let (ctx, env) = plain();
         run(
-            "(make-mode 'toy) (set-mode-keywords 'toy '(\"begin\"))",
+            "(make-mode 'toy) (put 'toy 'keywords '(\"begin\"))",
             &env,
             &ctx,
         );
-        assert_eq!(run("(mode-keywords)", &env, &ctx), LispExp::nil());
+        assert_eq!(
+            run("(get (major-mode) 'keywords)", &env, &ctx),
+            LispExp::nil(),
+            "*scratch* is not in toy mode"
+        );
+
         let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
         ctx.mutate_buffer(scratch, |b| b.current_mode = "toy".into());
-        assert_eq!(strings(&run("(mode-keywords)", &env, &ctx)), vec!["begin"]);
+        assert_eq!(
+            strings(&run("(get (major-mode) 'keywords)", &env, &ctx)),
+            vec!["begin"]
+        );
     }
 
     #[test]
     fn a_mode_that_declared_nothing_has_no_vocabulary() {
         let (ctx, env) = plain();
         run("(make-mode 'toy)", &env, &ctx);
-        assert_eq!(run("(mode-keywords 'toy)", &env, &ctx), LispExp::nil());
-        assert_eq!(
-            run("(set-mode-keywords 'no-such-mode '(\"x\"))", &env, &ctx),
-            LispExp::nil()
-        );
+        assert_eq!(run("(get 'toy 'keywords)", &env, &ctx), LispExp::nil());
     }
 
     // -----------------------------------------------------------------------
@@ -994,7 +1006,7 @@ mod tests {
     fn a_declared_keyword_is_completed() {
         let (ctx, env) = with_sources();
         run(
-            "(make-mode 'toy) (set-mode-keywords 'toy '(\"zzzbegin\"))",
+            "(make-mode 'toy) (put 'toy 'keywords '(\"zzzbegin\"))",
             &env,
             &ctx,
         );
@@ -1082,7 +1094,7 @@ mod tests {
         // because there is only one list.
         let (ctx, env) = with_sources();
         eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
-        let declared = strings(&run("(mode-keywords 'rust-mode)", &env, &ctx));
+        let declared = strings(&run("(get 'rust-mode 'keywords)", &env, &ctx));
         assert!(declared.contains(&"unsafe".to_string()), "got {declared:?}");
         assert!(declared.contains(&"usize".to_string()), "got {declared:?}");
 

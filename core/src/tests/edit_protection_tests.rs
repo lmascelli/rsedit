@@ -272,12 +272,15 @@ mod tests {
     }
 
     #[test]
-    fn a_buffer_created_without_a_mode_is_in_fundamental() {
+    fn a_buffer_created_without_a_mode_is_in_fundamental_mode() {
         let (ctx, env) = setup();
         run(r#"(buffer-create "*plain*")"#, &env, &ctx);
 
         let buffer = ctx.get_buffer("*plain*").expect("the buffer");
-        assert_eq!(buffer.read().expect("read").current_mode, "fundamental");
+        assert_eq!(
+            buffer.read().expect("read").current_mode,
+            "fundamental-mode"
+        );
     }
 
     /// Re-creating a buffer is how a view is refreshed, and a refresh that

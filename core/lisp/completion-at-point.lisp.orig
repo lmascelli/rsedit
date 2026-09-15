@@ -63,16 +63,10 @@ would be writing down one operating system's answer and calling it the rule."
 (defun capf-mode-keywords ()
   "Complete the words this buffer's language has of its own.
 
-The convention lives here rather than in the editor: a language module puts a
-list on its own mode symbol, and this reads it back. Nothing in Rust knows what
-a keyword is, which is as it should be -- `dired-mode' and `minibuffer-mode'
-are major modes and neither has any.
-
-Empty for a mode that put nothing there, which costs nothing: `capf--offer'
-answers nil for an empty list, so a source with nothing to say contributes
-nothing rather than claiming the region and then being unable to fill it."
-  (capf--offer (mapcar (lambda (word) (cons word "keyword"))
-                       (get (major-mode) 'keywords))))
+Empty for a mode that never called `set-mode-keywords', which costs nothing:
+a source with no candidates contributes none rather than claiming the region
+and then having nothing to say."
+  (get (major-mode) 'keywords))
 
 ;; ---------------------------------------------------------------------------
 ;; The interpreter
