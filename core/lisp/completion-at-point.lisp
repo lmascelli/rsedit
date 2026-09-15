@@ -66,8 +66,7 @@ would be writing down one operating system's answer and calling it the rule."
 Empty for a mode that never called `set-mode-keywords', which costs nothing:
 a source with no candidates contributes none rather than claiming the region
 and then having nothing to say."
-  (capf--offer (mapcar (lambda (word) (cons word "keyword"))
-                       (mode-keywords))))
+  (get (major-mode) 'keywords))
 
 ;; ---------------------------------------------------------------------------
 ;; The interpreter

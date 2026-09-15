@@ -63,7 +63,7 @@
   "The types worth knowing without being told.")
 
 ;; All three are offered for completion, because all three are things you type.
-(set-mode-keywords 'rust-mode
+(put 'rust-mode 'keywords
                    (append rust-keywords (append rust-constants rust-types)))
 
 (add-syntax-rule 'rust-mode (concat "\\b" (regexp-opt rust-keywords) "\\b") 'keyword)

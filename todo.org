@@ -2,11 +2,8 @@
 #+title: rsedit
 
 * Fixes todo
-- [ ] remove not emacs compliant keymaps
-- [ ] add kill-buffer as available command
 
 * Macro todo
-- [X] Completion at point (capf-style sources, per mode and global)
 - [ ] Find file recursively from current working directory
 - [ ] Electric pair mode
 - [ ] Rsedit lisp mode

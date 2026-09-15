@@ -266,65 +266,6 @@ fn mode_argument<B: BufferTrait>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// A language's own words
-// ---------------------------------------------------------------------------
-
-pub const SET_MODE_KEYWORDS_DOC: &str = "(set-mode-keywords MODE WORDS): Declare the words the \
-         language of major mode MODE has of its own. Returns t, or nil if MODE is unknown.\n\n\
-         Replaces rather than appends: a language states its vocabulary, it does not accumulate \
-         one. `capf-mode-keywords' offers these for completion.\n\n\
-         A list rather than the grammar's regexp, because a regexp can only be matched against \
-         and a completion source has to be able to enumerate. A mode that keeps its keywords \
-         here can build its colouring rule from the same list and never have the two disagree.\n\n\
-         Example:\n\
-         (set-mode-keywords 'rust-mode '(\"fn\" \"let\" \"mut\" \"impl\"))";
-
-primitive!(set_mode_keywords, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
-    let Some(mode) = mode_argument(&args[0])? else {
-        return Err(EvalError::WrongArgumentType {
-            expected: "Symbol or String naming a mode".into(),
-            got: args[0].clone(),
-        });
-    };
-    let words: Vec<String> = as_list(&args[1])
-        .iter()
-        .filter_map(candidate_value)
-        .collect();
-    if ctx.set_mode_keywords(&mode, words) {
-        Ok(ELispExp::t())
-    } else {
-        ctx.log_diagnostic(&format!("Mode {mode} does not exist"));
-        Ok(ELispExp::nil())
-    }
-});
-
-pub const MODE_KEYWORDS_DOC: &str = "(mode-keywords &optional MODE): The words declared for major \
-         mode MODE, or for the current buffer's mode when MODE is omitted. The empty list for a \
-         mode that never declared any.\n\n\
-         Example:\n\
-         (mode-keywords 'rust-mode) => (\"fn\" \"let\" ...)";
-
-primitive!(mode_keywords, args, _env, ctx, {
-    let mode = match args.first() {
-        None => None,
-        Some(exp) => mode_argument(exp)?,
-    };
-    let mode = mode.unwrap_or_else(|| current_mode(ctx));
-    Ok(ELispExp::proper_list(
-        ctx.mode_keywords(&mode)
-            .into_iter()
-            .map(ELispExp::string)
-            .collect(),
-    ))
-});
-
 fn current_mode<B: BufferTrait>(ctx: &EditorState<B>) -> String {
     ctx.get_current_buffer()
         .read()

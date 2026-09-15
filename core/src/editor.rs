@@ -595,7 +595,7 @@ impl<B: BufferTrait> EditorState<B> {
                     // decides, which is how a language module ever gets used.
                     new_buf.current_mode = start_mode
                         .or_else(|| self.auto_mode_for(file_path))
-                        .unwrap_or_else(|| "fundamental".into());
+                        .unwrap_or_else(|| "fundamental-mode".into());
                     new_buf.file_path = Some(file_path.to_string());
 
                     let mut buffers_lock = self
@@ -1166,21 +1166,6 @@ impl<B: BufferTrait> EditorState<B> {
                 .get(name)
                 .map(|mode| mode.completion_functions.clone()),
         }
-    }
-
-    /// Declare the words MODE's language has of its own. Replaces rather than
-    /// appends: a language states its vocabulary, it does not accumulate one.
-    pub(crate) fn set_mode_keywords(&self, mode: &str, keywords: Vec<String>) -> bool {
-        self.with_mode_mut(mode, |mode| mode.keywords = keywords)
-    }
-
-    pub(crate) fn mode_keywords(&self, mode: &str) -> Vec<String> {
-        self.mode_registry
-            .read()
-            .expect("Failed to acquire read lock on mode_registry")
-            .get(mode)
-            .map(|mode| mode.keywords.clone())
-            .unwrap_or_default()
     }
 
     /// Change one mode in the registry, reporting whether it was there.

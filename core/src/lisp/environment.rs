@@ -9,6 +9,8 @@ use std::{
 };
 
 // -------------------------------  Environment --------------------------------
+/// Properties, by symbol name and then by key.
+type PropertyTable<T> = RwLock<HashMap<String, HashMap<String, LispExp<T>>>>;
 
 /// Which of an environment's three name spaces to walk.
 ///
@@ -27,6 +29,19 @@ pub struct Env<T: LispContext> {
     pub variables: RwLock<HashMap<String, LispExp<T>>>,
     pub functions: RwLock<HashMap<String, LispExp<T>>>,
     pub macros: RwLock<HashMap<String, LispExp<T>>>,
+    /// What symbols carry besides a value and a function and where anything
+    /// keyed by a symbol belongs.
+    ///
+    /// Only a root has one. Properties are global and are *not* scoped: one
+    /// set inside a `let` is still there outside it, because a property
+    /// belongs to the symbol and a symbol is not a binding. So a child holds
+    /// `None` and the accessors walk up.
+    ///
+    /// Boxed, and not shared by an `Arc` on every environment, because
+    /// `new_child` runs on every function call: an `Arc` would trade a pointer
+    /// chase on a rare operation for an atomic increment on the hottest one.
+    /// `None` costs eight bytes and no allocation.
+    pub properties: Option<Box<PropertyTable<T>>>,
     pub parent: Option<Arc<Env<T>>>,
 }
 
@@ -36,6 +51,7 @@ impl<T: LispContext> Env<T> {
             variables: RwLock::new(HashMap::new()),
             functions: RwLock::new(HashMap::new()),
             macros: RwLock::new(HashMap::new()),
+            properties: Some(Box::new(RwLock::new(HashMap::new()))),
             parent: None,
         })
     }
@@ -45,8 +61,44 @@ impl<T: LispContext> Env<T> {
             variables: RwLock::new(HashMap::new()),
             functions: RwLock::new(HashMap::new()),
             macros: RwLock::new(HashMap::new()),
+            properties: None,
             parent: Some(parent.clone()),
         })
+    }
+
+    /// The environment holding the property table: the root of this chain.
+    fn property_owner(&self) -> &Env<T> {
+        let mut env = self;
+        loop {
+            if env.properties.is_some() {
+                return env;
+            }
+            match env.parent.as_deref() {
+                Some(parent) => env = parent,
+                None => return env,
+            }
+        }
+    }
+
+    pub fn put_property(&self, symbol: &str, key: &str, value: LispExp<T>) {
+        let owner = self.property_owner();
+        if let Some(properties) = &owner.properties {
+            properties
+                .write()
+                .expect("Failed to acquire write lock on properties")
+                .entry(symbol.to_string())
+                .or_default()
+                .insert(key.to_string(), value);
+        }
+    }
+
+    pub fn get_property(&self, symbol: &str, key: &str) -> Option<LispExp<T>> {
+        let owner = self.property_owner();
+        let properties = owner.properties.as_ref()?;
+        let table = properties
+            .read()
+            .expect("Failed to acquire read lock on properties");
+        table.get(symbol)?.get(key).cloned()
     }
 
     pub fn get_variable(&self, name: &str) -> Option<LispExp<T>> {

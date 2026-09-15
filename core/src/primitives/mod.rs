@@ -233,16 +233,6 @@ pub fn install_primitives<B: BufferTrait>(
         completion::COMPLETION_FUNCTIONS_DOC
     );
     insert_fn!(
-        "set-mode-keywords",
-        completion::set_mode_keywords,
-        completion::SET_MODE_KEYWORDS_DOC
-    );
-    insert_fn!(
-        "mode-keywords",
-        completion::mode_keywords,
-        completion::MODE_KEYWORDS_DOC
-    );
-    insert_fn!(
         "buffer-words",
         completion::buffer_words,
         completion::BUFFER_WORDS_DOC
@@ -723,6 +713,7 @@ pub fn install_primitives<B: BufferTrait>(
         buffers::buffer_read_only_p,
         buffers::BUFFER_READ_ONLY_P_DOC
     );
+    insert_fn!("major-mode", buffers::major_mode, buffers::MAJOR_MODE_DOC);
 
     // Point as a number. Plain functions rather than commands: nothing is
     // usefully reached by typing `M-x point', and everything that moves point

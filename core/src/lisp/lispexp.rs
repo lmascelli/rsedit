@@ -8,8 +8,57 @@ use super::{
 use std::{
     borrow::Cow,
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, OnceLock, RwLock},
 };
+
+/// Every symbol name that has been seen, stored once.
+///
+/// A symbol is a name, and two symbols spelled the same should be the same
+/// thing: that is what lets `eq` be a pointer comparison, and what stops
+/// `(progn nil nil nil)` allocating the word "nil" three times.
+///
+/// One table for the whole process rather than one per interpreter. Rust has
+/// no generic statics -- and this needs none, because the table holds only
+/// names and never a `LispExp`. That is precisely why properties live beside
+/// symbols rather than inside them: a plist would drag the context type in
+/// here and this static would become impossible to write.
+fn obarray() -> &'static RwLock<HashMap<String, Arc<String>>> {
+    static OBARRAY: OnceLock<RwLock<HashMap<String, Arc<String>>>> = OnceLock::new();
+    OBARRAY.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// The one `Arc` for NAME.
+pub fn intern(name: String) -> Arc<String> {
+    // The overwhelmingly common case: a read lock, a hit, done. The write lock
+    // is taken only the first time a name is ever seen.
+    if let Some(found) = obarray()
+        .read()
+        .expect("Failed to acquire read lock on the obarray")
+        .get(&name)
+    {
+        return found.clone();
+    }
+    obarray()
+        .write()
+        .expect("Failed to acquire write lock on the obarray")
+        .entry(name.clone())
+        .or_insert_with(|| Arc::new(name))
+        .clone()
+}
+
+/// `nil` and `t`, held directly rather than looked up.
+///
+/// `eval` builds `nil` on the way out of nearly every form and `is_nil` is
+/// asked of nearly every value; neither should touch a lock to do it.
+fn nil_name() -> &'static Arc<String> {
+    static NIL: OnceLock<Arc<String>> = OnceLock::new();
+    NIL.get_or_init(|| intern("nil".to_string()))
+}
+
+fn t_name() -> &'static Arc<String> {
+    static T: OnceLock<Arc<String>> = OnceLock::new();
+    T.get_or_init(|| intern("t".to_string()))
+}
 
 // --------------------------------  LispExp  ----------------------------------
 
@@ -229,15 +278,15 @@ impl<T: LispContext> std::fmt::Debug for LispExp<T> {
 
 impl<T: LispContext> LispExp<T> {
     pub fn symbol(value: String) -> LispExp<T> {
-        LispExp::Symbol(Arc::new(value))
+        LispExp::Symbol(intern(value))
     }
 
     pub fn nil() -> LispExp<T> {
-        LispExp::symbol("nil".into())
+        LispExp::Symbol(nil_name().clone())
     }
 
     pub fn t() -> LispExp<T> {
-        LispExp::symbol("t".into())
+        LispExp::Symbol(t_name().clone())
     }
 
     pub fn boolean(value: bool) -> LispExp<T> {

@@ -304,3 +304,35 @@ primitive!(with_current_buffer, args, env, ctx, {
     ctx.set_current_buffer(&previous);
     result
 });
+
+pub const MAJOR_MODE_DOC: &str = "(major-mode &optional BUFFER): The major mode BUFFER is in -- \
+         the current buffer if it is omitted -- as a symbol. nil if BUFFER names no live \
+         buffer.\n\n\
+         A symbol rather than a string because that is how every other form taking a mode is \
+         written -- `(make-mode 'rust-mode)', `(add-hook 'rust-mode ...)' -- and because it makes \
+         `eq' work on the result, which is what anything keying data by mode needs.\n\n\
+         Example:\n\
+         (get (major-mode) 'keywords)";
+
+primitive!(major_mode, args, _env, ctx, {
+    let handle = match args.first() {
+        None => Some(ctx.get_current_buffer()),
+        Some(exp) if exp.is_nil() => Some(ctx.get_current_buffer()),
+        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => ctx.get_buffer(name),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String naming a buffer".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let Some(handle) = handle else {
+        return Ok(ELispExp::nil());
+    };
+    let mode = handle
+        .read()
+        .expect("Failed to acquire read lock on buffer")
+        .current_mode
+        .clone();
+    Ok(ELispExp::symbol(mode))
+});
