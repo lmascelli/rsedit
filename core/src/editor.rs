@@ -11,8 +11,8 @@ use crate::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
     minibuffer::install_minibuffer,
-    modes::{MajorMode, SyntaxTable},
     modes::highlighter::{Highlighter, TURN_INTERVAL},
+    modes::{MajorMode, SyntaxTable},
     primitives::install_primitives,
     search::Isearch,
     task::{BackgroundScheduler, WorkerMessage},
@@ -756,6 +756,56 @@ impl<B: BufferTrait> EditorState<B> {
     /// renderer's cursor-following do the scrolling would look similar and be
     /// wrong in the case that matters -- point would land at the window's edge
     /// rather than keeping its place on the screen.
+    /// Scroll the focused window so that the line point is on sits `where_to`
+    /// of the way down it: 0.0 the top row, 0.5 the middle, 1.0 the bottom.
+    ///
+    /// Point does not move. This is the opposite of `scroll_focused_window`,
+    /// which moves the view and drags point along only when it would otherwise
+    /// fall off the screen: here the cursor is the fixed thing and the text
+    /// slides under it, which is what makes `C-l` a way of *looking* rather
+    /// than a way of moving.
+    ///
+    /// False when nothing changed, so a caller can tell a no-op from a scroll.
+    pub(crate) fn recenter_focused_window(&self, where_to: f64) -> bool {
+        let id = self.get_focused_window_id();
+        let Some(buffer) = self
+            .focused_window_buffer()
+            .and_then(|n| self.get_buffer(&n))
+        else {
+            return false;
+        };
+        let (line_count, point_line) = {
+            let buf = buffer.read().expect("read lock on buffer");
+            (buf.text.line_count(), buf.text.cursor_pos().0)
+        };
+
+        let mut layout = self
+            .layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root");
+        let Some(window) = layout.window_mut(id) else {
+            return false;
+        };
+        // A window the layout has not drawn yet has no height; one row keeps
+        // the arithmetic below sane. See `scroll_focused_window`.
+        let height = window.text_height.max(1);
+        let above = ((height - 1) as f64 * where_to.clamp(0.0, 1.0)).round() as usize;
+
+        // Clamped at the top, and *not* at the bottom. Near the end of a file
+        // there are not enough lines left to fill the window, and refusing to
+        // scroll past that would make `C-l` do nothing for the last screenful
+        // -- exactly where centring is most wanted. A few blank rows below the
+        // last line is the price, and it is what Emacs shows too.
+        let target = point_line
+            .saturating_sub(above)
+            .min(line_count.saturating_sub(1));
+        if target == window.scroll_y {
+            return false;
+        }
+        window.scroll_y = target;
+        true
+    }
+
     pub(crate) fn scroll_focused_window(&self, amount: isize) -> bool {
         let id = self.get_focused_window_id();
         let Some(buffer) = self
@@ -2843,6 +2893,7 @@ pub fn create_global_env<B: BufferTrait>()
 (eval-file "commands")
 (eval-file "debug")
 (eval-file "common-keymaps")
+(eval-file "indent")      ; what Tab does; a mode plugs its own rule in
 (eval-file "minibuffer")
 
 ;; Modules. Each is optional -- comment one out and the editor comes up

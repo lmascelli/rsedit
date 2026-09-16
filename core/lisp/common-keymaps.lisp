@@ -139,6 +139,17 @@
 (define-key nil "C-M-u" 'backward-up-list)
 (define-key nil "C-M-d" 'down-list)
 
+;; `up-list' is left unbound, as in Emacs -- C-M-u is the *backward* one there,
+;; and reaching the forward one through M-x is what people expect.
+
+;; Put the line point is on in the middle of the window, without moving point.
+;; The text slides under the cursor; `C-v' moves the cursor with the text.
+(define-key nil "C-l" 'recenter)
+
+;; Tab: the region, or the line, or whatever `tab-always-indent' says when the
+;; line is already indented. See indent.lisp.
+(define-key nil "tab" 'indent-for-tab-command)
+
 ;; C-g abandons a half-typed key sequence or prefix argument, and ends the
 ;; region. It does not interrupt a running command -- that is roadmap #24.
 (define-key nil "C-g" 'keyboard-quit)

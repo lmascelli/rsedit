@@ -10,6 +10,7 @@ fn main() {
         "completion.lisp",
         "debug.lisp",
         "dired.lisp",
+        "indent.lisp",
         "minibuffer.lisp",
         "rust-mode.lisp",
     ];

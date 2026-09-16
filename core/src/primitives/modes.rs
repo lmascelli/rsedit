@@ -538,13 +538,14 @@ primitive!(syntax_class, args, _env, ctx, {
     ))
 });
 
-
 pub const SYNTAX_PPSS_DOC: &str = "(syntax-ppss &optional POS): What point -- or POS, if given -- \
          is inside, as a list of four:\n\n\
          0  how many lists deep it is; 0 at the top level\n\
          1  where the innermost open list begins, or nil at the top level\n\
          2  where the string it is inside begins, or nil if it is not in one\n\
-         3  where the comment it is inside begins, or nil if it is not in one\n\n\
+         3  where the comment it is inside begins, or nil if it is not in one\n\
+         4  where the innermost list's delimiter is, as opposed to where its expression \
+         begins -- they differ by any prefix, and indentation lines up against the delimiter\n\n\
          Positional, so `(nth 3 (syntax-ppss))' asks whether point is in a comment. Emacs \
          returns eleven elements; these four are the ones this editor knows.\n\n\
          A string does not change the depth: point inside a string in a list is still one list \
@@ -557,18 +558,22 @@ primitive!(syntax_ppss, args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let buf = buf.read().expect("read lock on buffer");
     let pos = match args.first() {
-        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => (*n as usize).min(buf.text.len()),
+        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => {
+            (*n as usize).min(buf.text.len())
+        }
         _ => buf.text.cursor_pos_1d(),
     };
     let found = sexp::context_at(&buf.text, &table, pos);
     let offset = |at: Option<usize>| {
-        at.map(|at| ELispExp::number(at as f64)).unwrap_or_else(ELispExp::nil)
+        at.map(|at| ELispExp::number(at as f64))
+            .unwrap_or_else(ELispExp::nil)
     };
     Ok(ELispExp::proper_list(vec![
         ELispExp::number(found.depth as f64),
         offset(found.innermost),
         offset(found.string_start),
         offset(found.comment_start),
+        offset(found.innermost_delimiter),
     ]))
 });
 
@@ -580,3 +585,23 @@ pub const BOUNDS_OF_ENCLOSING_LIST_DOC: &str = "(bounds-of-enclosing-list &optio
          buffer, which is what a file being typed into looks like.\n\n\
          Example:\n\
          (bounds-of-enclosing-list) => (12 48)";
+primitive!(bounds_of_enclosing_list, args, _env, ctx, {
+    let table = ctx.current_syntax_table();
+    let buf = ctx.get_current_buffer();
+    let buf = buf
+        .read()
+        .expect("Failed to acquire read lock on current buffer");
+    let pos = match args.first() {
+        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => {
+            (*n as usize).min(buf.text.len())
+        }
+        _ => buf.text.cursor_pos_1d(),
+    };
+    Ok(match sexp::enclosing(&buf.text, &table, pos) {
+        Some(found) => ELispExp::proper_list(vec![
+            ELispExp::number(found.start as f64),
+            ELispExp::number(found.end as f64),
+        ]),
+        None => ELispExp::nil(),
+    })
+});

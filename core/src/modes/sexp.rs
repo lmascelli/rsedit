@@ -38,6 +38,15 @@ pub struct Context {
     pub depth: usize,
     /// Where the innermost still-open list begins.
     pub innermost: Option<usize>,
+    /// Where that list's *delimiter* is, as opposed to where its expression
+    /// begins.
+    ///
+    /// The two differ by any prefix: `'(a b)` is one expression starting at
+    /// the quote, but a line inside it lines up against the parenthesis.
+    /// Motion wants the first -- a kill should take the quote with it --
+    /// and indentation wants the second, and neither can be worked out from
+    /// the other without scanning again.
+    pub innermost_delimiter: Option<usize>,
     pub string_start: Option<usize>,
     pub comment_start: Option<usize>,
 }
@@ -61,6 +70,8 @@ struct Frame {
     /// Where the expression opening this level begins  the prefix, if there
     /// was one, rather than the delimiter: `'(a b)` opens at the quote.
     start: usize,
+    /// Where the delimiter itself is. See `Context::innermost_delimiter`.
+    delimiter: usize,
     /// Bounded, and that is the point: a whole file's expressions would be
     /// hundreds of thousands of entries rebuilt on every keystroke, while
     /// `backward-sexp` with a count of N needs exactly the last N.
@@ -103,6 +114,7 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
             // answer for a file with more `)` than `(`.
             stack: vec![Frame {
                 start: 0,
+                delimiter: 0,
                 children: VecDeque::new(),
             }],
             prefix: None,
@@ -259,6 +271,7 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                         let start = self.opening(self.pos);
                         self.stack.push(Frame {
                             start,
+                            delimiter: self.pos,
                             children: VecDeque::new(),
                         });
                         self.pos += 1;
@@ -353,6 +366,11 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
             depth: self.depth(),
             innermost: if self.stack.len() > 1 {
                 self.stack.last().map(|frame| frame.start)
+            } else {
+                None
+            },
+            innermost_delimiter: if self.stack.len() > 1 {
+                self.stack.last().map(|frame| frame.delimiter)
             } else {
                 None
             },

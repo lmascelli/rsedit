@@ -12,6 +12,7 @@ mod edit_protection_tests;
 mod frame_snapshot_tests;
 mod fuel_tests;
 mod home_guard;
+mod indent_tests;
 mod isearch_tests;
 mod minibuffer_lisp_tests;
 mod mode_line_tests;

@@ -959,7 +959,12 @@ primitive!(forward_sexp, args, _env, ctx, {
     let table = ctx.current_syntax_table();
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
-    let target = sexp::forward(&buf.text, &table, buf.text.cursor_pos_1d(), repeat_count(args)?);
+    let target = sexp::forward(
+        &buf.text,
+        &table,
+        buf.text.cursor_pos_1d(),
+        repeat_count(args)?,
+    );
     goto_offset(&mut buf.text, target);
     Ok(ELispExp::nil())
 });
@@ -975,7 +980,12 @@ primitive!(backward_sexp, args, _env, ctx, {
     let table = ctx.current_syntax_table();
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
-    let target = sexp::backward(&buf.text, &table, buf.text.cursor_pos_1d(), repeat_count(args)?);
+    let target = sexp::backward(
+        &buf.text,
+        &table,
+        buf.text.cursor_pos_1d(),
+        repeat_count(args)?,
+    );
     goto_offset(&mut buf.text, target);
     Ok(ELispExp::nil())
 });
@@ -1054,7 +1064,6 @@ primitive!(backward_up_list, _args, _env, ctx, {
         goto_offset(&mut buf.text, found.start);
     }
     Ok(ELispExp::nil())
-
 });
 
 pub const DOWN_LIST_DOC: &str = "(down-list): Move point just inside the next list that opens \
@@ -1073,4 +1082,158 @@ primitive!(down_list, _args, _env, ctx, {
         goto_offset(&mut buf.text, at);
     }
     Ok(ELispExp::nil())
+});
+// ---------------------------------------------------------------------------
+// Indentation
+// ---------------------------------------------------------------------------
+//
+// Three primitives, and none of them decides anything. What column a line
+// *should* start at is a question about a language, so it is asked in Lisp --
+// `indent-line' looks for an `indent-function' on the mode's symbol and falls
+// back to matching the line above. What is here is only what Lisp cannot do
+// safely or quickly: reading a line's indentation, and rewriting it through the
+// two doors so that undo and the read-only flag still apply.
+
+/// The column of the first character on LINE that is not a space or a tab.
+///
+/// A line with nothing else on it counts as indented all the way across, which
+/// is what Emacs reports and what stops `indent-line-to` treating trailing
+/// whitespace as text it has to preserve.
+fn indentation_of<B: BufferTrait>(text: &B, line: usize) -> usize {
+    text.get_lines(line, line + 1)
+        .first()
+        .map(|line| line.chars().take_while(|c| *c == ' ' || *c == '\t').count())
+        .unwrap_or(0)
+}
+
+fn is_blank<B: BufferTrait>(text: &B, line: usize) -> bool {
+    text.get_lines(line, line + 1)
+        .first()
+        .map(|line| line.trim().is_empty())
+        .unwrap_or(true)
+}
+
+/// The line an optional 1-based argument names, or the one point is on.
+fn line_argument<B: BufferTrait>(args: &[ELispExp<B>], text: &B) -> usize {
+    match args.first() {
+        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 1.0 => {
+            (*n as usize - 1).min(text.line_count().saturating_sub(1))
+        }
+        _ => text.cursor_pos().0,
+    }
+}
+
+pub const CURRENT_INDENTATION_DOC: &str = "(current-indentation &optional LINE): The column of the \
+         first character on LINE that is not a space or a tab -- the line point is on when LINE \
+         is omitted. Lines are numbered from 1, as `goto-line' numbers them.\n\n\
+         A line with nothing but whitespace on it counts as indented all the way across.\n\n\
+         Example:\n\
+         (current-indentation) => 4";
+
+primitive!(current_indentation, args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let buf = buf
+        .read()
+        .expect("Failed to acquire read lock on current buffer");
+    let line = line_argument(args, &buf.text);
+    Ok(ELispExp::number(indentation_of(&buf.text, line) as f64))
+});
+
+pub const PREVIOUS_INDENTATION_DOC: &str = "(previous-indentation): The indentation of the nearest \
+         line above point's that has something on it, or 0 if there is none.\n\n\
+         Blank lines are skipped rather than reported as indented to zero: a blank line between \
+         two indented ones is a paragraph break, not a return to the left margin, and taking it \
+         literally would make Tab walk a block back to column 0 one blank line at a time.\n\n\
+         This is what `indent-line' falls back to for a mode that declared no `indent-function' \
+         -- language-agnostic, and right often enough to be useful in any buffer.\n\n\
+         Example:\n\
+         (previous-indentation) => 4";
+
+primitive!(previous_indentation, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let buf = buf
+        .read()
+        .expect("Failed to acquire read lock on current buffer");
+    let mut line = buf.text.cursor_pos().0;
+    while line > 0 {
+        line -= 1;
+        if !is_blank(&buf.text, line) {
+            return Ok(ELispExp::number(indentation_of(&buf.text, line) as f64));
+        }
+    }
+    Ok(ELispExp::number(0.0))
+});
+
+pub const INDENT_LINE_TO_DOC: &str = "(indent-line-to COLUMN): Replace the whitespace at the start \
+         of the line point is on with COLUMN spaces. Returns t if the line changed, nil if it \
+         was already there -- which is how `indent-for-tab-command' tells \"I indented it\" from \
+         \"there was nothing to do\".\n\n\
+         Point comes along: inside the old indentation it lands at the end of the new one, and \
+         after it, it keeps the character it was on.\n\n\
+         The change goes through the same two doors every edit goes through, so it is one undo \
+         step and a read-only buffer refuses it.\n\n\
+         Example:\n\
+         (indent-line-to (previous-indentation))";
+
+primitive!(indent_line_to, args, _env, ctx, {
+    let Some(ELispExp::Number(column)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "Number".into(),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+        });
+    };
+    let column = column.max(0.0) as usize;
+
+    let happened = {
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("write lock on buffer");
+        let (line, _) = buf.text.cursor_pos();
+        let start = buf.text.cursor_2d_to_1d(line, 0);
+        let width = indentation_of(&buf.text, line);
+        if width == column {
+            return Ok(ELispExp::nil());
+        }
+
+        let point = buf.text.cursor_pos_1d();
+        if !delete_range(&mut buf, start, start + width) {
+            drop(buf);
+            return Ok(edited(ctx, false));
+        }
+        let padding: String = " ".repeat(column);
+        insert_text(&mut buf, start, &padding);
+
+        // Where point ends up. Inside the indentation it has no character of
+        // its own to keep, so it goes to the end of the new one; past it, it
+        // keeps whatever it was sitting on, which has moved by the difference.
+        let target = if point <= start + width {
+            start + column
+        } else {
+            (point + column).saturating_sub(width)
+        };
+        let target = target.min(buf.text.len());
+        let (line, col) = buf.text.cursor_1d_to_2d(target);
+        buf.text.cursor_move(line, col);
+        true
+    };
+    Ok(if happened {
+        ELispExp::t()
+    } else {
+        ELispExp::nil()
+    })
+});
+
+pub const CURRENT_COLUMN_DOC: &str = "(current-column): The column point is on, counting from 0.\n\n\
+         Columns, not characters: this is what a line has to be lined up *against*, which is why \
+         indentation is written in terms of it. `current-indentation' counts characters instead, \
+         and the two agree in a buffer indented with spaces -- which is every buffer \
+         `indent-line-to' has touched, since it only ever writes spaces.\n\n\
+         Example:\n\
+         (progn (goto-char open) (current-column))";
+
+primitive!(current_column, _args, _env, ctx, {
+    let buf = ctx.get_current_buffer();
+    let buf = buf
+        .read()
+        .expect("Failed to acquire read lock on current buffer");
+    Ok(ELispExp::number(buf.text.cursor_pos().1 as f64))
 });

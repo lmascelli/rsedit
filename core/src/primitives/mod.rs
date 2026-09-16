@@ -555,6 +555,74 @@ pub fn install_primitives<B: BufferTrait>(
         ["p"],
         edits::BACKWARD_WORD_DOC
     );
+    // Structural motion. `forward-word` and these look alike from the outside
+    // and are not: a word is found by looking at characters, an expression by
+    // lexing the buffer against the mode's syntax table -- a `)` is only a
+    // delimiter when it is not inside a string or a comment.
+    insert_cmd!(
+        "forward-sexp",
+        edits::forward_sexp,
+        ["p"],
+        edits::FORWARD_SEXP_DOC
+    );
+    insert_cmd!(
+        "backward-sexp",
+        edits::backward_sexp,
+        ["p"],
+        edits::BACKWARD_SEXP_DOC
+    );
+    insert_cmd!("kill-sexp", edits::kill_sexp, ["p"], edits::KILL_SEXP_DOC);
+    insert_cmd!(
+        "backward-kill-sexp",
+        edits::backward_kill_sexp,
+        ["p"],
+        edits::BACKWARD_KILL_SEXP_DOC
+    );
+    insert_cmd!(
+        "up-list",
+        edits::up_list,
+        [] as [&str; 0],
+        edits::UP_LIST_DOC
+    );
+    insert_cmd!(
+        "backward-up-list",
+        edits::backward_up_list,
+        [] as [&str; 0],
+        edits::BACKWARD_UP_LIST_DOC
+    );
+    insert_cmd!(
+        "down-list",
+        edits::down_list,
+        [] as [&str; 0],
+        edits::DOWN_LIST_DOC
+    );
+    insert_fn!(
+        "current-column",
+        edits::current_column,
+        edits::CURRENT_COLUMN_DOC
+    );
+    insert_fn!(
+        "current-indentation",
+        edits::current_indentation,
+        edits::CURRENT_INDENTATION_DOC
+    );
+    insert_fn!(
+        "previous-indentation",
+        edits::previous_indentation,
+        edits::PREVIOUS_INDENTATION_DOC
+    );
+    insert_fn!(
+        "indent-line-to",
+        edits::indent_line_to,
+        edits::INDENT_LINE_TO_DOC
+    );
+    insert_cmd!("recenter", ui::recenter, [] as [&str; 0], ui::RECENTER_DOC);
+    insert_fn!("syntax-ppss", modes::syntax_ppss, modes::SYNTAX_PPSS_DOC);
+    insert_fn!(
+        "bounds-of-enclosing-list",
+        modes::bounds_of_enclosing_list,
+        modes::BOUNDS_OF_ENCLOSING_LIST_DOC
+    );
     insert_cmd!(
         "forward-paragraph",
         edits::forward_paragraph,

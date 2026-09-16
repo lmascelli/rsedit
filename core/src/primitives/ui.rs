@@ -74,3 +74,24 @@ primitive!(close_floating_window, _args, _env, ctx, {
     ctx.set_focused_window_id(restore_id.unwrap_or(0));
     Ok(ELispExp::nil())
 });
+
+pub const RECENTER_DOC: &str = "(recenter &optional WHERE): Scroll the window so that the line \
+         point is on sits WHERE of the way down it -- 0 the top row, 0.5 the middle, 1 the \
+         bottom. WHERE defaults to 0.5.\n\n\
+         Point does not move: the text slides under the cursor. That is the difference between \
+         this and `scroll-up-command', which moves the view and takes point along only when it \
+         would otherwise fall off the screen.\n\n\
+         Near the end of a buffer the view may show blank rows below the last line, because \
+         there is nothing left to fill them with and refusing to scroll would leave the last \
+         screenful uncentreable.\n\n\
+         Example:\n\
+         (define-key nil \\\"C-l\\\" 'recenter)";
+
+primitive!(recenter, args, _env, ctx, {
+    let where_to = match args.first() {
+        Some(ELispExp::Number(n)) if n.is_finite() => *n,
+        _ => 0.5,
+    };
+    ctx.recenter_focused_window(where_to);
+    Ok(ELispExp::nil())
+});
