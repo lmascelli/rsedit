@@ -11,7 +11,7 @@ use crate::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
     minibuffer::install_minibuffer,
-    modes::MajorMode,
+    modes::{MajorMode, SyntaxTable},
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     primitives::install_primitives,
     search::Isearch,
@@ -2644,6 +2644,31 @@ impl<B: BufferTrait> EditorState<B> {
             .write()
             .expect("Failed to acquire write lock on current buffer");
         op(&mut *guard)
+    }
+
+    /// The syntax table for MODE, or the default one when it has none.
+    ///
+    /// Cloned out and the lock released, because every caller is about to run a
+    /// scan with it  and a scan reads a whole buffer, far too long to hold the
+    /// registry against everything else that wants a mode.
+    pub(crate) fn syntax_table(&self, mode: &str) -> SyntaxTable {
+        self.mode_registry
+            .read()
+            .expect("Failed to acquire read lock on mode_registry")
+            .get(mode)
+            .and_then(|mode| mode.syntax_table.clone())
+            .unwrap_or_default()
+    }
+
+    /// The syntax table in force in the current buffer.
+    pub(crate) fn current_syntax_table(&self) -> SyntaxTable {
+        let mode = self
+            .get_current_buffer()
+            .read()
+            .expect("Failed to acquire read lock on buffer")
+            .current_mode
+            .clone();
+        self.syntax_table(&mode)
     }
 }
 

@@ -128,6 +128,17 @@
 ;; loaded at all.
 (setq case-fold-search t)
 
+;; Structural motion, over balanced expressions rather than over words. What
+;; counts as a delimiter, a string or a comment comes from the buffer's mode 
+;; see `set-syntax-pairs'. A mode that declared nothing still gets brackets,
+;; double quotes and backslash, so these work everywhere.
+(define-key nil "C-M-f" 'forward-sexp)
+(define-key nil "C-M-b" 'backward-sexp)
+(define-key nil "C-M-k" 'kill-sexp)
+(define-key nil "C-M-<backspace>" 'backward-kill-sexp)
+(define-key nil "C-M-u" 'backward-up-list)
+(define-key nil "C-M-d" 'down-list)
+
 ;; C-g abandons a half-typed key sequence or prefix argument, and ends the
 ;; region. It does not interrupt a running command -- that is roadmap #24.
 (define-key nil "C-g" 'keyboard-quit)

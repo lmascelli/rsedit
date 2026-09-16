@@ -431,7 +431,10 @@ fn primitive_put<T: LispContext>(
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 3 {
-        return Err(EvalError::WrongNumberOfArguments { expected: 3, got: args.len() });
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 3,
+            got: args.len(),
+        });
     }
     let (Some(symbol), Some(key)) = (property_name(&args[0]), property_name(&args[1])) else {
         return Err(EvalError::WrongArgumentType {
@@ -449,7 +452,10 @@ fn primitive_get<T: LispContext>(
     _ctx: &T,
 ) -> Result<LispExp<T>, EvalError<T>> {
     if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments { expected: 2, got: args.len() });
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
     }
     let (Some(symbol), Some(key)) = (property_name(&args[0]), property_name(&args[1])) else {
         return Err(EvalError::WrongArgumentType {
@@ -2399,9 +2405,15 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     );
 
     // Symbol plist
-    env.set_function("put".into(), LispExp::primitive(primitive_put, Some(PUT_DOC.into())));
-    env.set_function("get".into(), LispExp::primitive(primitive_get, Some(GET_DOC.into())));
-    
+    env.set_function(
+        "put".into(),
+        LispExp::primitive(primitive_put, Some(PUT_DOC.into())),
+    );
+    env.set_function(
+        "get".into(),
+        LispExp::primitive(primitive_get, Some(GET_DOC.into())),
+    );
+
     // List manipulation
     env.set_function(
         "add-to-list".into(),

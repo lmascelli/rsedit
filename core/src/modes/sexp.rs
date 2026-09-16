@@ -45,8 +45,15 @@ pub struct Context {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum State {
     Code,
-    Str { quote: char, start: usize },
-    Comment { style: usize, depth: usize, start: usize },
+    Str {
+        quote: char,
+        start: usize,
+    },
+    Comment {
+        style: usize,
+        depth: usize,
+        start: usize,
+    },
 }
 
 /// One level of nesting, and the last few expressions completed inside it.
@@ -94,17 +101,25 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
             // The outermost frame is the buffer itself. It is never popped, so
             // `stack.last_mut()` cannot be None and no caller has to invent an
             // answer for a file with more `)` than `(`.
-            stack: vec![Frame { start: 0, children: VecDeque::new() }],
+            stack: vec![Frame {
+                start: 0,
+                children: VecDeque::new(),
+            }],
             prefix: None,
             keep: keep.max(1),
         }
     }
 
-    fn depth(&self) -> usize { self.stack.len() - 1 }
+    fn depth(&self) -> usize {
+        self.stack.len() - 1
+    }
 
     fn complete(&mut self, start: usize, end: usize) -> Step {
         let keep = self.keep;
-        let frame = self.stack.last_mut().expect("the root frame is never popped");
+        let frame = self
+            .stack
+            .last_mut()
+            .expect("the root frame is never popped");
         frame.children.push_back(Sexp { start, end });
         while frame.children.len() > keep {
             frame.children.pop_front();
@@ -161,7 +176,11 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
         };
 
         match self.state.clone() {
-            State::Comment { style, depth, start } => {
+            State::Comment {
+                style,
+                depth,
+                start,
+            } => {
                 match &self.table.comments()[style] {
                     CommentStyle::Line { .. } => {
                         if c == '\n' {
@@ -169,17 +188,29 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                         }
                         self.pos += 1;
                     }
-                    CommentStyle::Block { opener, closer, nestable } => {
+                    CommentStyle::Block {
+                        opener,
+                        closer,
+                        nestable,
+                    } => {
                         if self.literal_at(self.pos, closer) {
                             self.pos += closer.chars().count();
                             if depth == 0 {
                                 self.state = State::Code;
                                 return self.complete_comment(start, self.pos);
                             }
-                            self.state = State::Comment { style, depth: depth - 1, start };
+                            self.state = State::Comment {
+                                style,
+                                depth: depth - 1,
+                                start,
+                            };
                         } else if *nestable && self.literal_at(self.pos, opener) {
                             self.pos += opener.chars().count();
-                            self.state = State::Comment { style, depth: depth + 1, start };
+                            self.state = State::Comment {
+                                style,
+                                depth: depth + 1,
+                                start,
+                            };
                         } else {
                             self.pos += 1;
                         }
@@ -213,7 +244,11 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                     };
                     let start = self.pos;
                     self.pos += opener.chars().count();
-                    self.state = State::Comment { style, depth: 0, start };
+                    self.state = State::Comment {
+                        style,
+                        depth: 0,
+                        start,
+                    };
                     // A prefix with only a comment after it prefixes nothing.
                     self.prefix = None;
                     return Step::Advanced;
@@ -222,7 +257,10 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                 match self.table.class_of(c) {
                     SyntaxClass::Open(_) => {
                         let start = self.opening(self.pos);
-                        self.stack.push(Frame { start, children: VecDeque::new() });
+                        self.stack.push(Frame {
+                            start,
+                            children: VecDeque::new(),
+                        });
                         self.pos += 1;
                         Step::Advanced
                     }
@@ -263,9 +301,11 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                         let start = self.opening(self.pos);
                         let mut end = self.pos;
                         while end < len
-                            && self.text.at(end).map(|c| {
-                                matches!(self.table.class_of(c), SyntaxClass::Symbol)
-                            }) == Some(true)
+                            && self
+                                .text
+                                .at(end)
+                                .map(|c| matches!(self.table.class_of(c), SyntaxClass::Symbol))
+                                == Some(true)
                         {
                             end += 1;
                         }
@@ -332,7 +372,9 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
 /// expressions left at this level  at the end of a list the command does
 /// nothing rather than escaping outwards.
 pub fn forward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, count: usize) -> usize {
-    if count == 0 { return from; }
+    if count == 0 {
+        return from;
+    }
     let mut scan = Scan::begin(text, table, from, 1);
     scan.run_to(from);
     let start_depth = scan.depth();
@@ -343,7 +385,9 @@ pub fn forward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, count
             Step::End => return from,
             Step::Completed(depth, sexp) if depth == start_depth && sexp.end > from => {
                 remaining -= 1;
-                if remaining == 0 { return sexp.end; }
+                if remaining == 0 {
+                    return sexp.end;
+                }
             }
             _ => {}
         }
@@ -353,15 +397,38 @@ pub fn forward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, count
 /// Where `backward-sexp` lands: the first character of the Nth previous
 /// expression, its prefix included.
 pub fn backward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, count: usize) -> usize {
-    if count == 0 { return from; }
+    if count == 0 {
+        return from;
+    }
     // Scanning only up to `from` is what makes this work: the innermost frame
     // left open there is the list point is in, and its remembered children are
     // exactly the siblings behind point, most recent last.
     let mut scan = Scan::begin(text, table, from, count);
     scan.run_to(from);
     let frame = scan.stack.last().expect("the root frame is never popped");
-    if frame.children.len() < count { return from; }
+    if frame.children.len() < count {
+        return from;
+    }
     frame.children[frame.children.len() - count].start
+}
+
+/// Where `down-list` lands: just inside the next list that opens after `from`.
+///
+/// `None` when there is no list left to enter. Unlike the motions above this is
+/// not looking for a *completed* expression but for an opener, which the scan
+/// passes over silently  so it watches the depth: the moment the scan is one
+/// level deeper than it began, it has just stepped through one.
+pub fn down<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize) -> Option<usize> {
+    let mut scan = Scan::begin(text, table, from, 1);
+    scan.run_to(from);
+    let start_depth = scan.depth();
+    loop {
+        match scan.step() {
+            Step::End => return None,
+            _ if scan.depth() > start_depth => return Some(scan.pos),
+            _ => {}
+        }
+    }
 }
 
 pub fn context_at<B: BufferTrait>(text: &B, table: &SyntaxTable, pos: usize) -> Context {
@@ -375,11 +442,18 @@ pub fn enclosing<B: BufferTrait>(text: &B, table: &SyntaxTable, pos: usize) -> O
     let mut scan = Scan::begin(text, table, pos, 1);
     scan.run_to(pos);
     let wanted = scan.depth();
-    if wanted == 0 { return None; }
+    if wanted == 0 {
+        return None;
+    }
     let start = scan.stack.last()?.start;
     loop {
         match scan.step() {
-            Step::End => return Some(Sexp { start, end: text.len() }),
+            Step::End => {
+                return Some(Sexp {
+                    start,
+                    end: text.len(),
+                });
+            }
             Step::Completed(depth, sexp) if depth + 1 == wanted && sexp.start == start => {
                 return Some(sexp);
             }

@@ -295,7 +295,7 @@ impl<'source> Parser<'source> {
                             return Err(ParserError::NumberParseError(token_string));
                         }
                     }
-                    ' ' | '\t' | '\n' | '\r'  => {
+                    ' ' | '\t' | '\n' | '\r' => {
                         let mut token_string = String::new();
                         core::mem::swap(&mut token_string, &mut self.token);
                         if let Ok(number) = token_string.parse() {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::buffer::{Buffer, Mark, undo};
 use crate::kill_ring::Direction;
+use crate::modes::sexp;
 
 // ---------------------------------------------------------------------------
 // The recording editing layer
@@ -939,4 +940,137 @@ primitive!(goto_char, args, _env, ctx, {
             target as f64
         },
     )))
+});
+
+pub const FORWARD_SEXP_DOC: &str = "(forward-sexp &optional N): Move point forward over N \
+         balanced expressions (default 1) -- a list, a string or an atom, together with any \
+         prefix character in front of it.\n\n\
+         What counts as a delimiter, a string or a comment is the buffer's own: see \
+         `set-syntax-pairs' and `set-comment-syntax'. A mode that declared nothing still gets \
+         brackets, double quotes and backslash, so this works in any buffer.\n\n\
+         Delimiters inside strings and comments are text, so this steps over \
+         `(message \\\"a )\\\")' in one move. At the end of the enclosing list it does nothing \
+         rather than escaping outwards -- see `up-list' for that.\n\n\
+         Example:\n\
+         (define-key nil \\\"C-M-f\\\" 'forward-sexp)";
+
+primitive!(forward_sexp, args, _env, ctx, {
+    // Before the write lock: this reads the buffer to find its mode.
+    let table = ctx.current_syntax_table();
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let target = sexp::forward(&buf.text, &table, buf.text.cursor_pos_1d(), repeat_count(args)?);
+    goto_offset(&mut buf.text, target);
+    Ok(ELispExp::nil())
+});
+
+pub const BACKWARD_SEXP_DOC: &str = "(backward-sexp &optional N): Move point back over N balanced \
+         expressions (default 1), landing on the first character of the Nth previous one -- the \
+         prefix included, so point ends before the quote in `'foo' rather than after it.\n\n\
+         At the beginning of the enclosing list it does nothing.\n\n\
+         Example:\n\
+         (define-key nil \\\"C-M-b\\\" 'backward-sexp)";
+
+primitive!(backward_sexp, args, _env, ctx, {
+    let table = ctx.current_syntax_table();
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let target = sexp::backward(&buf.text, &table, buf.text.cursor_pos_1d(), repeat_count(args)?);
+    goto_offset(&mut buf.text, target);
+    Ok(ELispExp::nil())
+});
+
+pub const KILL_SEXP_DOC: &str = "(kill-sexp &optional N): Delete forward over N balanced \
+         expressions (default 1) -- exactly the text `forward-sexp' would move over.\n\n\
+         The text is saved to the kill ring, so `yank' puts it back. A run of kill commands \
+         accumulates into one entry.\n\n\
+         Example:\n\
+         (define-key nil \\\"C-M-k\\\" 'kill-sexp)";
+
+primitive!(kill_sexp, args, _env, ctx, {
+    let table = ctx.current_syntax_table();
+    let killed = {
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("write lock on buffer");
+        let from = buf.text.cursor_pos_1d();
+        let to = sexp::forward(&buf.text, &table, from, repeat_count(args)?);
+        cut_out(&mut buf, from, to)
+    };
+    ctx.kill(killed, Direction::Forward);
+    Ok(ELispExp::nil())
+});
+
+pub const BACKWARD_KILL_SEXP_DOC: &str = "(backward-kill-sexp &optional N): Delete back over N \
+         balanced expressions (default 1) -- exactly the text `backward-sexp' would move over.\n\n\
+         The text is saved to the kill ring, so `yank' puts it back. A run of kill commands \
+         accumulates into one entry.\n\n\
+         Example:\n\
+         (define-key nil \\\"C-M-<backspace>\\\" 'backward-kill-sexp)";
+
+primitive!(backward_kill_sexp, args, _env, ctx, {
+    let table = ctx.current_syntax_table();
+    let killed = {
+        let buf = ctx.get_current_buffer();
+        let mut buf = buf.write().expect("write lock on buffer");
+        let to = buf.text.cursor_pos_1d();
+        let from = sexp::backward(&buf.text, &table, to, repeat_count(args)?);
+        cut_out(&mut buf, from, to)
+    };
+    ctx.kill(killed, Direction::Backward);
+    Ok(ELispExp::nil())
+});
+
+pub const UP_LIST_DOC: &str = "(up-list): Move point past the end of the list it is inside, \
+         leaving it after the closing delimiter.\n\n\
+         Does nothing at the top level, where there is no list to leave. Unbound by default, as \
+         in Emacs -- reach it with M-x, or bind it yourself.\n\n\
+         Example:\n\
+         (up-list)";
+
+primitive!(up_list, _args, _env, ctx, {
+    let table = ctx.current_syntax_table();
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let point = buf.text.cursor_pos_1d();
+    if let Some(found) = sexp::enclosing(&buf.text, &table, point) {
+        goto_offset(&mut buf.text, found.end);
+    }
+    Ok(ELispExp::nil())
+});
+
+pub const BACKWARD_UP_LIST_DOC: &str = "(backward-up-list): Move point to the beginning of the \
+         list it is inside, leaving it on the opening delimiter -- or on the prefix in front of \
+         it, since `'(a b)' begins at the quote.\n\n\
+         Does nothing at the top level.\n\n\
+         Example:\n\
+         (define-key nil \\\"C-M-u\\\" 'backward-up-list)";
+
+primitive!(backward_up_list, _args, _env, ctx, {
+    let table = ctx.current_syntax_table();
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let point = buf.text.cursor_pos_1d();
+    if let Some(found) = sexp::enclosing(&buf.text, &table, point) {
+        goto_offset(&mut buf.text, found.start);
+    }
+    Ok(ELispExp::nil())
+
+});
+
+pub const DOWN_LIST_DOC: &str = "(down-list): Move point just inside the next list that opens \
+         after it.\n\n\
+         Does nothing when no list opens between point and the end of the buffer. A delimiter \
+         inside a string or a comment is text and is not entered.\n\n\
+         Example:\n\
+         (define-key nil \\\"C-M-d\\\" 'down-list)";
+
+primitive!(down_list, _args, _env, ctx, {
+    let table = ctx.current_syntax_table();
+    let buf = ctx.get_current_buffer();
+    let mut buf = buf.write().expect("write lock on buffer");
+    let point = buf.text.cursor_pos_1d();
+    if let Some(at) = sexp::down(&buf.text, &table, point) {
+        goto_offset(&mut buf.text, at);
+    }
+    Ok(ELispExp::nil())
 });

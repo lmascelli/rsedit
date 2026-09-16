@@ -86,20 +86,26 @@ pub struct SyntaxRegion {
 /// What one character means to the scanner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyntaxClass {
-    Open(char),   // carries the character that closes it
-    Close(char),  // carries the character that opened it
-    StringQuote,  // the same character ends it
-    Escape,       // the next character is literal
-    Prefix,       // attaches to the expression after it: ' ` , #
+    Open(char),  // carries the character that closes it
+    Close(char), // carries the character that opened it
+    StringQuote, // the same character ends it
+    Escape,      // the next character is literal
+    Prefix,      // attaches to the expression after it: ' ` , #
     Symbol,
-    Punctuation,  // separates, belongs to nothing
+    Punctuation, // separates, belongs to nothing
 }
 
 /// One way this language writes a comment.
 #[derive(Clone, Debug)]
 pub enum CommentStyle {
-    Line { opener: String },
-    Block { opener: String, closer: String, nestable: bool },
+    Line {
+        opener: String,
+    },
+    Block {
+        opener: String,
+        closer: String,
+        nestable: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -114,8 +120,14 @@ pub struct SyntaxTable {
 
 impl SyntaxTable {
     pub fn class_of(&self, c: char) -> SyntaxClass {
-        if let Some(class) = self.classes.get(&c) { return *class; }
-        if c.is_alphanumeric() || c == '_' { SyntaxClass::Symbol } else { SyntaxClass::Punctuation }
+        if let Some(class) = self.classes.get(&c) {
+            return *class;
+        }
+        if c.is_alphanumeric() || c == '_' {
+            SyntaxClass::Symbol
+        } else {
+            SyntaxClass::Punctuation
+        }
     }
 }
 
@@ -167,8 +179,12 @@ impl SyntaxTable {
         self.comments = comments;
     }
 
-    pub fn comments(&self) -> &[CommentStyle] { &self.comments }
-    pub fn may_start_comment(&self, c: char) -> bool { self.comment_starts.contains(&c) }
+    pub fn comments(&self) -> &[CommentStyle] {
+        &self.comments
+    }
+    pub fn may_start_comment(&self, c: char) -> bool {
+        self.comment_starts.contains(&c)
+    }
 }
 
 /// Everything a major mode knows about colouring its language.

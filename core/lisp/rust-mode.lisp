@@ -86,6 +86,11 @@
 (set-face 'doc-comment "bright-cyan" nil '("italic"))
 (set-face 'attribute "bright-yellow" nil)
 
+;; What the scanner needs, as opposed to what the grammar above needs: the
+;; grammar says what text should look like, this says what it means.
+(set-syntax-pairs 'rust-mode "()[]{}")
+(set-comment-syntax 'rust-mode '(("//") ("/*" "*/" t)))
+
 (add-auto-mode "\\.rs$" 'rust-mode)
 
 (log "rust-mode loaded")
