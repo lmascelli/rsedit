@@ -811,3 +811,139 @@ fn the_cursor_lands_at_point_with_no_echo_message() {
     let last = *placements(&rendered).last().expect("a cursor placement");
     assert_eq!(last, expected_cursor(&state, &env));
 }
+
+/// Every `MoveTo` with the text printed straight after it.
+///
+/// `placements` answers where the renderer went; this answers what it put
+/// there, which is what a test about painting a rectangle has to look at.
+fn printed(rendered: &str) -> Vec<(u16, u16, String)> {
+    let mut out = Vec::new();
+    for chunk in rendered.split('\u{1b}').skip(1) {
+        let Some(body) = chunk.strip_prefix('[') else {
+            continue;
+        };
+        let Some(end) = body.find('H') else { continue };
+        let coords = &body[..end];
+        let Some((row, col)) = coords.split_once(';') else {
+            continue;
+        };
+        let (Ok(row), Ok(col)) = (row.parse::<u16>(), col.parse::<u16>()) else {
+            continue;
+        };
+        out.push((
+            col.saturating_sub(1),
+            row.saturating_sub(1),
+            body[end + 1..].to_string(),
+        ));
+    }
+    out
+}
+
+/// A tiled window covering the frame, with a small floating one over it.
+fn frame_with_float() -> String {
+    let under: Vec<String> = (0..6)
+        .map(|n| format!("UNDERNEATH-{n} and more text past the float"))
+        .collect();
+    let snapshot = FrameSnapshot {
+        views: vec![
+            rsedit_core::ui::RenderableWindowView {
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: COLS as usize,
+                    height: under.len(),
+                },
+                buffer_name: "*under*".into(),
+                title: None,
+                is_focused: false,
+                cursor_rel_pos: None,
+                lines: under,
+                mode_line: None,
+                highlights: vec![],
+                has_border: false,
+            },
+            rsedit_core::ui::RenderableWindowView {
+                rect: Rect {
+                    x: 10,
+                    y: 1,
+                    width: 20,
+                    height: 3,
+                },
+                buffer_name: "*float*".into(),
+                title: Some("prompt".into()),
+                is_focused: true,
+                cursor_rel_pos: Some((0, 0)),
+                // Two lines for three rows, one of them wider than the window:
+                // between them they cover every way a view can fail to own its
+                // rectangle -- too few rows, a row too short, and a row too
+                // long spilling into the window beside it.
+                lines: vec![
+                    "hi".into(),
+                    "a line much longer than the float is wide".into(),
+                ],
+                mode_line: None,
+                highlights: vec![],
+                has_border: true,
+            },
+        ],
+        width: COLS as usize,
+        height: ROWS as usize,
+        ..Default::default()
+    };
+    let mut out = Vec::new();
+    render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("render");
+    String::from_utf8(out).expect("utf8")
+}
+
+/// A floating window is opaque.
+///
+/// The bug this guards: rows were drawn only for the lines a buffer had, and
+/// only as wide as each line's text. A prompt three rows tall showing one short
+/// line left the other two rows -- and the rest of that row -- showing the
+/// buffer underneath, so the window had another buffer's text running through
+/// it.
+#[test]
+fn a_floating_window_paints_every_cell_of_its_rect() {
+    let rendered = frame_with_float();
+    let drawn = printed(&rendered);
+
+    for row in 1..4u16 {
+        let painted = drawn
+            .iter()
+            .filter(|(x, y, _)| *x == 10 && *y == row)
+            .map(|(_, _, text)| text.chars().count())
+            .max();
+        assert_eq!(
+            painted,
+            Some(20),
+            "row {row} of the float should be painted across its full width, \
+             got {painted:?}"
+        );
+    }
+}
+
+#[test]
+fn a_float_does_not_show_the_buffer_underneath_it() {
+    let rendered = frame_with_float();
+    for (x, y, text) in printed(&rendered) {
+        if x == 10 && (1..4).contains(&y) {
+            assert!(
+                !text.contains("UNDERNEATH"),
+                "the float's own rows must not carry the buffer below: {text:?}"
+            );
+        }
+    }
+}
+
+/// A line wider than its window belongs to that window, not to its neighbour.
+#[test]
+fn a_line_is_clipped_to_the_window_it_is_in() {
+    let rendered = frame_with_float();
+    let widest = printed(&rendered)
+        .into_iter()
+        .filter(|(x, y, _)| *x == 10 && (1..4).contains(y))
+        .map(|(_, _, text)| text.chars().count())
+        .max()
+        .expect("the float drew something");
+    assert_eq!(widest, 20, "never wider than the rect");
+}

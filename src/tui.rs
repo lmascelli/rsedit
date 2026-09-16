@@ -237,9 +237,26 @@ pub fn render_to<W: Write>(
             )?;
         }
 
-        for (offset_y, line) in view.lines.iter().enumerate() {
+        // Every row of the rect, padded to its full width -- not just the rows
+        // that have text, and not just as far as the text goes.
+        //
+        // A tiled window would get away without this, because the screen is
+        // cleared before any of it is drawn. A floating window is drawn *over*
+        // what is already there, so every cell it leaves unpainted shows the
+        // window underneath: a prompt three lines tall over a full buffer used
+        // to have that buffer's text running through the gaps and past the ends
+        // of its own lines. Painting the whole rectangle is what makes a
+        // floating window opaque, and it costs no extra `Print` for the rows
+        // that do have text -- the padding goes into the same string.
+        for offset_y in 0..view.rect.height {
             let target_y = view.rect.y + offset_y as isize;
-            draw_clipped_row(out, view.rect.x, target_y, line, frame_w, frame_h)?;
+            let text = view.lines.get(offset_y).map(String::as_str).unwrap_or("");
+            // Clipped to the window as well as padded to it: a line longer than
+            // the window it is in belongs to that window, not to its neighbour.
+            let mut row: String = text.chars().take(view.rect.width).collect();
+            let padding = view.rect.width.saturating_sub(row.chars().count());
+            row.push_str(&" ".repeat(padding));
+            draw_clipped_row(out, view.rect.x, target_y, &row, frame_w, frame_h)?;
         }
 
         // Highlights are drawn *over* the rows rather than woven into them, so

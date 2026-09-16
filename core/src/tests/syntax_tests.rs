@@ -394,6 +394,65 @@ mod tests {
     /// A grammar is configuration: one bad pattern should cost that pattern,
     /// not the file it is in.
     #[test]
+    fn a_character_literal_holding_a_quote_does_not_open_a_string() {
+        // The bug this guards: `'"'` contains a double quote, which opened a
+        // string region that never closed -- so every line after it in the
+        // file was coloured as a string, and stayed that way.
+        let (ctx, env) = editor_with("");
+        eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
+        let grammar = grammar_of(&ctx, "rust-mode");
+
+        let line = "let q = '\"'; let n = 1;";
+        let (_, leaving) = highlight_line(&grammar, line, &Vec::new());
+        assert!(
+            leaving.is_empty(),
+            "the line must leave no region open, got {leaving:?}"
+        );
+
+        let coloured = faces(&grammar, line, &Vec::new());
+        assert!(
+            coloured
+                .iter()
+                .any(|(s, e, face)| (*s, *e) == (8, 11) && face == "string"),
+            "the literal itself is a string, got {coloured:?}"
+        );
+        assert!(
+            coloured.iter().any(|(_, _, face)| face == "builtin"),
+            "and the `1` after it is still a number, got {coloured:?}"
+        );
+    }
+
+    #[test]
+    fn a_lifetime_is_not_a_character_literal() {
+        // The other half. A lifetime is spelled like an unterminated character
+        // literal, so the rule requires the closing quote -- otherwise `&'a`
+        // would open something that runs to the end of the file, which is the
+        // same bug wearing a different hat.
+        let (ctx, env) = editor_with("");
+        eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
+        let grammar = grammar_of(&ctx, "rust-mode");
+
+        for line in [
+            "fn f<'a>(s: &'a str) -> &'a str { s }",
+            "let v: Vec<&'a T> = x;",
+        ] {
+            let (_, leaving) = highlight_line(&grammar, line, &Vec::new());
+            assert!(leaving.is_empty(), "{line:?} left {leaving:?} open");
+        }
+    }
+
+    #[test]
+    fn an_escaped_quote_is_still_one_character() {
+        let (ctx, env) = editor_with("");
+        eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
+        let grammar = grammar_of(&ctx, "rust-mode");
+
+        let line = "let q = '\\''; let n = 1;";
+        let (_, leaving) = highlight_line(&grammar, line, &Vec::new());
+        assert!(leaving.is_empty(), "got {leaving:?}");
+    }
+
+    #[test]
     fn a_bad_pattern_is_reported_rather_than_signalled() {
         let (ctx, env) = editor_with("");
         eval_str("(make-mode 'toy)", &env, &ctx).expect("make-mode");

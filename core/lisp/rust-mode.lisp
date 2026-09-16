@@ -24,6 +24,17 @@
 ;; Block comments nest in Rust: /* /* */ */ is one comment, not two.
 (add-syntax-region 'rust-mode "/\\*" "\\*/" 'comment nil t)
 
+;; A character literal, and it has to come before the string region can open.
+;; `'"'` contains a double quote: without this rule that quote opens a string
+;; which never closes, and the rest of the file is coloured as one. The rule
+;; wins because it starts one character earlier -- at the `'` -- and the scan
+;; takes the leftmost match.
+;;
+;; `'` is deliberately *not* a string delimiter here. A lifetime is spelled the
+;; same way, and `&'a str` would open a string that runs to the end of the
+;; file. Requiring the closing quote is the whole of what tells the two apart.
+(add-syntax-rule 'rust-mode "'(\\\\.|[^'\\\\])'" 'string)
+
 ;; The escape is why a string does not end at the quote in "say \"hi\"".
 (add-syntax-region 'rust-mode "\"" "\"" 'string "\\\\.")
 (add-syntax-region 'rust-mode "r#\"" "\"#" 'string)
