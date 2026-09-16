@@ -2,7 +2,7 @@ use crate::{
     BufferTrait, ELispExp, EditorState,
     input::{KeyCode, KeyEvent, KeyModifiers, Keymap, OnUnbound, TransientKeymap},
     lisp::{Env, EvalError, LispContext},
-    modes::{MajorMode, SyntaxRegion, SyntaxRule},
+    modes::{CommentStyle, MajorMode, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxTable},
     ui::Face,
 };
 
@@ -713,6 +713,22 @@ pub fn install_primitives<B: BufferTrait>(
         buffers::buffer_read_only_p,
         buffers::BUFFER_READ_ONLY_P_DOC
     );
+    insert_fn!(
+        "set-syntax-pairs",
+        modes::set_syntax_pairs,
+        modes::SET_SYNTAX_PAIRS_DOC
+    );
+    insert_fn!(
+        "set-syntax-entry",
+        modes::set_syntax_entry,
+        modes::SET_SYNTAX_ENTRY_DOC
+    );
+    insert_fn!(
+        "set-comment-syntax",
+        modes::set_comment_syntax,
+        modes::SET_COMMENT_SYNTAX_DOC
+    );
+    insert_fn!("syntax-class", modes::syntax_class, modes::SYNTAX_CLASS_DOC);
     insert_fn!("major-mode", buffers::major_mode, buffers::MAJOR_MODE_DOC);
 
     // Point as a number. Plain functions rather than commands: nothing is

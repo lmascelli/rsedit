@@ -278,3 +278,261 @@ primitive!(add_auto_mode, args, _env, ctx, {
     ctx.add_auto_mode(pattern, &mode);
     Ok(ELispExp::t())
 });
+
+// ---------------------------------------------------------------------------
+// The syntax table
+// ---------------------------------------------------------------------------
+//
+// What a mode tells the *scanner*, as opposed to what it tells the highlighter.
+// The two are separate declarations of overlapping facts, and deliberately so:
+// a grammar says what text should look like, a table says what it means. A
+// mode may colour a doc comment differently from an ordinary one and they are
+// still both comments, and the scanner has to work on a buffer whose grammar
+// has never run -- the colouring is computed on another thread, and `C-M-f`
+// cannot wait for it.
+//
+// A mode starts from `SyntaxTable::default`, which pairs the brackets and
+// knows `"` and `\`, so a table only ever states its differences.
+
+/// The classes a mode may name. `open` and `close` are deliberately absent:
+/// a delimiter is useless without knowing what matches it, so pairs are
+/// declared together by `set-syntax-pairs`.
+fn syntax_class_arg<B: BufferTrait>(
+    exp: &ELispExp<B>,
+) -> Result<SyntaxClass, EvalError<EditorState<B>>> {
+    let (ELispExp::Symbol(name) | ELispExp::String(name)) = exp else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "Symbol naming a syntax class".into(),
+            got: exp.clone(),
+        });
+    };
+    Ok(match name.as_str() {
+        "string" => SyntaxClass::StringQuote,
+        "escape" => SyntaxClass::Escape,
+        "prefix" => SyntaxClass::Prefix,
+        "symbol" => SyntaxClass::Symbol,
+        "punctuation" => SyntaxClass::Punctuation,
+        other => {
+            return Err(EvalError::RuntimeMessage(format!(
+                "{other:?} is not a syntax class; expected string, escape, prefix, symbol or \
+                 punctuation -- and see `set-syntax-pairs' for delimiters"
+            )));
+        }
+    })
+}
+
+fn string_arg<B: BufferTrait>(exp: &ELispExp<B>) -> Result<String, EvalError<EditorState<B>>> {
+    match exp {
+        ELispExp::String(text) | ELispExp::Symbol(text) => Ok(text.to_string()),
+        other => Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: other.clone(),
+        }),
+    }
+}
+
+/// Change MODE's table, making one from the default if it has none yet.
+fn with_syntax_table<B: BufferTrait, F>(
+    ctx: &EditorState<B>,
+    mode_name: &str,
+    edit: F,
+) -> ELispExp<B>
+where
+    F: FnOnce(&mut SyntaxTable),
+{
+    with_mode(ctx, mode_name, |mode| {
+        edit(mode.syntax_table.get_or_insert_with(SyntaxTable::default));
+    })
+}
+
+pub const SET_SYNTAX_PAIRS_DOC: &str = "(set-syntax-pairs MODE PAIRS): Declare the delimiters that \
+         nest in major mode MODE. PAIRS is a string read two characters at a time: each opener \
+         followed by the closer that matches it. Returns t, or nil (logging a diagnostic) if \
+         MODE is unknown.\n\n\
+         Openers and closers are declared together, and cannot be set one at a time by \
+         `set-syntax-entry': a delimiter whose partner is unknown tells the scanner nothing.\n\n\
+         A trailing odd character is ignored rather than refused -- it is a typo in a mode file, \
+         and taking the whole table down over it would take the mode with it.\n\n\
+         Example:\n\
+         (set-syntax-pairs 'rust-mode \"()[]{}\")";
+
+primitive!(set_syntax_pairs, args, _env, ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let mode = string_arg(&args[0])?;
+    let pairs = string_arg(&args[1])?;
+    let answer = with_syntax_table(ctx, &mode, |table| table.set_pairs(&pairs));
+    if answer.is_nil() {
+        ctx.log_diagnostic(&format!("Mode {mode} does not exist"));
+    }
+    Ok(answer)
+});
+
+pub const SET_SYNTAX_ENTRY_DOC: &str = "(set-syntax-entry MODE CHARS CLASS): Give every character \
+         in the string CHARS the syntax CLASS in major mode MODE. Returns t, or nil (logging a \
+         diagnostic) if MODE is unknown.\n\n\
+         CLASS is one of:\n\
+         `string'       opens and closes a string; the same character ends it\n\
+         `escape'       the next character is literal, whatever it is\n\
+         `prefix'       attaches to the expression that follows it\n\
+         `symbol'       part of a name\n\
+         `punctuation'  separates, and belongs to nothing\n\n\
+         Delimiters are not here; see `set-syntax-pairs'.\n\n\
+         The same character means different things in different languages, which is the whole \
+         reason a table is per mode: `'' is a prefix in Lisp and punctuation in Rust, where \
+         making it a string quote would leave every lifetime looking like an unterminated \
+         string.\n\n\
+         Example:\n\
+         (set-syntax-entry 'risp-mode \"'`,#\" 'prefix)\n\
+         (set-syntax-entry 'rust-mode \"'\" 'punctuation)";
+
+primitive!(set_syntax_entry, args, _env, ctx, {
+    if args.len() != 3 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 3,
+            got: args.len(),
+        });
+    }
+    let mode = string_arg(&args[0])?;
+    let chars = string_arg(&args[1])?;
+    let class = syntax_class_arg(&args[2])?;
+    let answer = with_syntax_table(ctx, &mode, |table| {
+        for c in chars.chars() {
+            table.set_class(c, class);
+        }
+    });
+    if answer.is_nil() {
+        ctx.log_diagnostic(&format!("Mode {mode} does not exist"));
+    }
+    Ok(answer)
+});
+
+pub const SET_COMMENT_SYNTAX_DOC: &str = "(set-comment-syntax MODE STYLES): Declare how major mode \
+         MODE writes comments. Replaces whatever was declared before. Returns t, or nil (logging \
+         a diagnostic) if MODE is unknown.\n\n\
+         STYLES is a list, one entry per way the language writes a comment:\n\
+         (OPENER)                runs from OPENER to the end of the line\n\
+         (OPENER CLOSER)         runs from OPENER to CLOSER, across lines if need be\n\
+         (OPENER CLOSER t)       the same, and nests: /* /* */ */ is one comment\n\n\
+         A list rather than one line-comment and one block-comment, because a language may have \
+         two of either and the limit would be the editor's rather than the language's.\n\n\
+         Example:\n\
+         (set-comment-syntax 'risp-mode '((\";\")))\n\
+         (set-comment-syntax 'rust-mode '((\"//\") (\"/*\" \"*/\" t)))";
+
+primitive!(set_comment_syntax, args, _env, ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let mode = string_arg(&args[0])?;
+
+    let entries: Vec<ELispExp<B>> = match &args[1] {
+        ELispExp::Form(items) => items.to_vec(),
+        other if other.is_nil() => Vec::new(),
+        other => other.iter().collect(),
+    };
+    let mut styles = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let parts: Vec<ELispExp<B>> = match entry {
+            ELispExp::Form(items) => items.to_vec(),
+            other => other.iter().collect(),
+        };
+        let Some(opener) = parts.first() else {
+            return Err(EvalError::RuntimeMessage(
+                "a comment style needs at least an opener".into(),
+            ));
+        };
+        let opener = string_arg(opener)?;
+        if opener.is_empty() {
+            // An empty opener matches everywhere, which would make the whole
+            // buffer a comment the first time the scanner looked at it.
+            return Err(EvalError::RuntimeMessage(
+                "a comment opener cannot be empty".into(),
+            ));
+        }
+        styles.push(match parts.get(1) {
+            None => CommentStyle::Line { opener },
+            Some(closer) if closer.is_nil() => CommentStyle::Line { opener },
+            Some(closer) => CommentStyle::Block {
+                opener,
+                closer: string_arg(closer)?,
+                nestable: parts.get(2).is_some_and(|nest| !nest.is_nil()),
+            },
+        });
+    }
+
+    let answer = with_syntax_table(ctx, &mode, |table| table.set_comments(styles));
+    if answer.is_nil() {
+        ctx.log_diagnostic(&format!("Mode {mode} does not exist"));
+    }
+    Ok(answer)
+});
+
+pub const SYNTAX_CLASS_DOC: &str = "(syntax-class CHAR &optional MODE): What CHAR -- a \
+         one-character string -- means in major mode MODE, or in the current buffer's mode when \
+         MODE is omitted. One of `open', `close', `string', `escape', `prefix', `symbol' or \
+         `punctuation'.\n\n\
+         A mode that declared no table of its own answers from the default one, which pairs the \
+         brackets and knows `\\\"' and `\\\\'. That is why sexp motion works in a buffer whose \
+         mode never mentioned syntax.\n\n\
+         Example:\n\
+         (syntax-class \"(\" 'rust-mode) => open";
+
+primitive!(syntax_class, args, _env, ctx, {
+    if args.is_empty() || args.len() > 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let text = string_arg(&args[0])?;
+    let Some(c) = text.chars().next() else {
+        return Err(EvalError::RuntimeMessage(
+            "syntax-class wants a character, and was given an empty string".into(),
+        ));
+    };
+    let mode = match args.get(1) {
+        None => None,
+        Some(exp) if exp.is_nil() => None,
+        Some(exp) => Some(string_arg(exp)?),
+    };
+    let mode = match mode {
+        Some(mode) => mode,
+        None => ctx
+            .get_current_buffer()
+            .read()
+            .expect("Failed to acquire read lock on buffer")
+            .current_mode
+            .clone(),
+    };
+
+    let class = {
+        let registry = ctx
+            .mode_registry
+            .read()
+            .expect("Failed to acquire read lock on mode_registry");
+        let table = registry
+            .get(&mode)
+            .and_then(|mode| mode.syntax_table.clone());
+        table.unwrap_or_default().class_of(c)
+    };
+    Ok(ELispExp::symbol(
+        match class {
+            SyntaxClass::Open(_) => "open",
+            SyntaxClass::Close(_) => "close",
+            SyntaxClass::StringQuote => "string",
+            SyntaxClass::Escape => "escape",
+            SyntaxClass::Prefix => "prefix",
+            SyntaxClass::Symbol => "symbol",
+            SyntaxClass::Punctuation => "punctuation",
+        }
+        .to_string(),
+    ))
+});
