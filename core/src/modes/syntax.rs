@@ -122,15 +122,53 @@ impl SyntaxTable {
 impl Default for SyntaxTable {
     fn default() -> Self {
         let mut classes = HashMap::new();
-        classes.insert('(', SyntaxClass::Open(')');
-        classes.insert(')', SyntaxClass::Close('(');
-        classes.insert('[', SyntaxClass::Open(']');
-        classes.insert(']', SyntaxClass::Close('[');
-        classes.insert('{', SyntaxClass::Open('}');
-        classes.insert('}', SyntaxClass::Close('{');
+        classes.insert('(', SyntaxClass::Open(')'));
+        classes.insert(')', SyntaxClass::Close('('));
+        classes.insert('[', SyntaxClass::Open(']'));
+        classes.insert(']', SyntaxClass::Close('['));
+        classes.insert('{', SyntaxClass::Open('}'));
+        classes.insert('}', SyntaxClass::Close('{'));
         classes.insert('\"', SyntaxClass::StringQuote);
-        classes.insert('\\"', SyntaxClass::Escape);
+        classes.insert('\\', SyntaxClass::Escape);
+
+        Self {
+            classes,
+            comments: Vec::new(),
+            comment_starts: HashSet::new(),
+        }
     }
+}
+
+impl SyntaxTable {
+    /// Each pair of characters is an opener and the closer that matches it.
+    pub fn set_pairs(&mut self, pairs: &str) {
+        let chars: Vec<char> = pairs.chars().collect();
+        for pair in chars.chunks(2) {
+            if let [open, close] = pair {
+                self.classes.insert(*open, SyntaxClass::Open(*close));
+                self.classes.insert(*close, SyntaxClass::Close(*open));
+            }
+        }
+    }
+
+    pub fn set_class(&mut self, c: char, class: SyntaxClass) {
+        self.classes.insert(c, class);
+    }
+
+    pub fn set_comments(&mut self, comments: Vec<CommentStyle>) {
+        self.comment_starts = comments
+            .iter()
+            .filter_map(|style| match style {
+                CommentStyle::Line { opener } | CommentStyle::Block { opener, .. } => {
+                    opener.chars().next()
+                }
+            })
+            .collect();
+        self.comments = comments;
+    }
+
+    pub fn comments(&self) -> &[CommentStyle] { &self.comments }
+    pub fn may_start_comment(&self, c: char) -> bool { self.comment_starts.contains(&c) }
 }
 
 /// Everything a major mode knows about colouring its language.

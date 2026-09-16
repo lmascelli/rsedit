@@ -8,6 +8,10 @@
       window can be seen and overlap with window text.
 
 * Macro todo
+- [ ] C-l to center view
+- [ ] Tab predisposed for indent line or region or instert spaces if the line is already
+      indented
+- [ ] System clipboard
 - [ ] Find file recursively from current working directory
 - [ ] Electric pair mode
 - [ ] Rsedit lisp mode

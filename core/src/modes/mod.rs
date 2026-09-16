@@ -3,7 +3,9 @@ use std::collections::HashMap;
 
 pub mod highlighter;
 pub mod syntax;
-pub use syntax::{Grammar, SyntaxRegion, SyntaxRule, SyntaxSpan, SyntaxState, SyntaxTable, highlight_line};
+pub use syntax::{CommentStyle, Grammar, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxSpan, SyntaxState, SyntaxTable, highlight_line};
+pub mod sexp;
+
 
 /// A major mode is a collection of rules that apply to a specific
 /// kind of buffers like specific programming language, special text
@@ -38,6 +40,7 @@ impl<B: BufferTrait> MajorMode<B> {
             grammar: Grammar::default(),
             hooks: HashMap::new(),
             completion_functions: Vec::new(),
+            syntax_table: None,
         }
     }
 }
