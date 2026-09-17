@@ -4,6 +4,7 @@ use std::path::Path;
 fn main() {
     #[allow(non_snake_case)]
     let LISP_FILES: Vec<&str> = vec![
+        "buffer-list.lisp",
         "clipboard.lisp",
         "commands.lisp",
         "common-keymaps.lisp",
@@ -15,7 +16,9 @@ fn main() {
         "find-file-recursive.lisp",
         "indent.lisp",
         "minibuffer.lisp",
+        "risp-mode.lisp",
         "rust-mode.lisp",
+        "shell.lisp",
     ];
 
     for file in &LISP_FILES {

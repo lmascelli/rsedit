@@ -208,6 +208,21 @@ pub struct EditorState<B: BufferTrait> {
     /// keymap does not need copying to be remembered.
     last_command: Arc<RwLock<Option<Arc<String>>>>,
 
+    /// How many shell commands are still running.
+    ///
+    /// # Why the editor counts them
+    ///
+    /// Output arrives from the worker thread, on its own, with nobody touching
+    /// the keyboard -- the same situation syntax colouring is in, and it has
+    /// the same consequence: a renderer blocked on input sleeps straight
+    /// through it, and the output appears only when some key is pressed. So
+    /// [`Self::next_redraw_in`] asks this, and keeps waking while anything is
+    /// running.
+    ///
+    /// A count rather than a flag because several commands can run at once,
+    /// each into a buffer of its own.
+    shell_commands: Arc<AtomicUsize>,
+
     /// Hooks that run in every major mode, keyed by hook name.
     ///
     /// A mode's own hooks live on the mode (see `MajorMode::hooks`), which is
@@ -467,6 +482,7 @@ impl<B: BufferTrait> EditorState<B> {
             last_command: Arc::new(RwLock::new(None)),
             last_command_form: Arc::new(RwLock::new(None)),
             global_hooks: Arc::new(RwLock::new(HashMap::new())),
+            shell_commands: Arc::new(AtomicUsize::new(0)),
             kill_ring: Arc::new(RwLock::new(KillRing::default())),
             pending_clipboard: Arc::new(RwLock::new(None)),
             theme: Arc::new(RwLock::new(Arc::new(Theme::default()))),
@@ -2189,7 +2205,12 @@ impl<B: BufferTrait> EditorState<B> {
         // One more turn is the soonest new colour can appear, so it is the
         // longest this may sleep without being late for it.
         let colouring = frame.colouring_pending.then_some(TURN_INTERVAL);
-        [self.echo_expiry_in(env), colouring]
+        // Output from a running command arrives without anybody pressing a
+        // key, so the renderer has to come back and look. Same interval as
+        // colouring for the same reason: it is short enough to read as live
+        // and long enough to cost nothing.
+        let shell = (self.shell_commands_running() > 0).then_some(TURN_INTERVAL);
+        [self.echo_expiry_in(env), colouring, shell]
             .into_iter()
             .flatten()
             .min()
@@ -2639,6 +2660,29 @@ impl<B: BufferTrait> EditorState<B> {
         ] {
             last.store(this.swap(false, Ordering::Relaxed), Ordering::Relaxed);
         }
+    }
+
+    /// Note that a shell command has started.
+    pub(crate) fn begin_shell_command(&self) {
+        self.shell_commands.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Note that one has finished. Called from the worker thread, after the
+    /// last of its output is in the buffer.
+    pub(crate) fn finish_shell_command(&self) {
+        // Saturating rather than wrapping: a stray extra call would otherwise
+        // take the count to `usize::MAX` and leave the renderer spinning for
+        // the rest of the session.
+        let _ = self
+            .shell_commands
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                Some(n.saturating_sub(1))
+            });
+    }
+
+    /// How many shell commands are still running.
+    pub(crate) fn shell_commands_running(&self) -> usize {
+        self.shell_commands.load(Ordering::Relaxed)
     }
 
     /// Register FUNCTION to run under HOOK_NAME in every major mode.
@@ -3109,11 +3153,14 @@ pub fn create_global_env<B: BufferTrait>()
 ;; Modules. Each is optional -- comment one out and the editor comes up
 ;; without it, missing exactly that feature and nothing else.
 (eval-file "rust-mode")   ; colouring for Rust source
+(eval-file "risp-mode")   ; colouring and indentation for this editor's own Lisp
 (eval-file "dired")       ; a directory in a buffer (C-x d)
 (eval-file "completion")  ; Tab shows every candidate at once, in a strip
 (eval-file "clipboard")   ; kills also go to the system clipboard
 (eval-file "electric-pair") ; typing "(" gives you "()"
 (eval-file "find-file-recursive") ; C-x C-r: open any file under this directory
+(eval-file "buffer-list")  ; C-x b to switch, C-x C-b for the whole list
+(eval-file "shell")       ; M-! runs a command and shows what it said
 
 ;; Where completions come from, for C-M-i in a buffer. The command is built in
 ;; and works without this; what this adds is the five sources it asks. Take one

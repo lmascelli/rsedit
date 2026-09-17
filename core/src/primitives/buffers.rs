@@ -1,4 +1,6 @@
 use super::*;
+use std::sync::{Arc, RwLock};
+use crate::buffer::Buffer;
 
 pub const CURRENT_BUFFER_DOC: &str = "(current-buffer): Return the name of the current buffer, as a \
          string. Unlike real Emacs Lisp's `current-buffer`, which returns a \
@@ -335,4 +337,74 @@ primitive!(major_mode, args, _env, ctx, {
         .current_mode
         .clone();
     Ok(ELispExp::symbol(mode))
+});
+
+/// A buffer handle, as the accessors below hand one around.
+type BufferHandle<B> = Arc<RwLock<Buffer<B>>>;
+
+/// The buffer NAME refers to, or the current one when it is omitted.
+///
+/// Every per-buffer accessor takes its argument the same way -- `major-mode`,
+/// `buffer-modified-p`, `buffer-file-name` -- so that a listing can ask all of
+/// them about the same name without any of them being the odd one out.
+fn buffer_argument<B: BufferTrait>(
+    args: &[ELispExp<B>],
+    ctx: &EditorState<B>,
+) -> Result<Option<BufferHandle<B>>, EvalError<EditorState<B>>> {
+    match args.first() {
+        None => Ok(Some(ctx.get_current_buffer())),
+        Some(exp) if exp.is_nil() => Ok(Some(ctx.get_current_buffer())),
+        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => Ok(ctx.get_buffer(name)),
+        Some(other) => Err(EvalError::WrongArgumentType {
+            expected: "String naming a buffer".into(),
+            got: other.clone(),
+        }),
+    }
+}
+
+pub const BUFFER_MODIFIED_P_DOC: &str = "(buffer-modified-p &optional BUFFER): t if BUFFER has \
+         changes that have not been saved -- the current buffer if it is omitted. nil if it has \
+         none, and nil if BUFFER names no live buffer.\n\n\
+         A buffer with no file behind it can still be modified: `*scratch*' counts as changed \
+         the moment something is typed into it, which is what makes killing it worth a question.\n\n\
+         Example:\n\
+         (if (buffer-modified-p \"notes.txt\") (message \"unsaved\"))";
+
+primitive!(buffer_modified_p, args, _env, ctx, {
+    let Some(handle) = buffer_argument(args, ctx)? else {
+        return Ok(ELispExp::nil());
+    };
+    let modified = handle
+        .read()
+        .expect("Failed to acquire read lock on buffer")
+        .is_modified;
+    Ok(if modified {
+        ELispExp::t()
+    } else {
+        ELispExp::nil()
+    })
+});
+
+pub const BUFFER_FILE_NAME_DOC: &str = "(buffer-file-name &optional BUFFER): The file BUFFER is \
+         visiting, as a string -- the current buffer if it is omitted. nil when the buffer has no \
+         file behind it, and nil if BUFFER names no live buffer.\n\n\
+         nil for `*scratch*', `*Messages*', a directory listing, a completion strip: the buffers \
+         that present something rather than holding a file. That is the question this answers, \
+         and why a listing can use it to tell the two kinds apart.\n\n\
+         Example:\n\
+         (buffer-file-name) => \"/home/user/notes.txt\"";
+
+primitive!(buffer_file_name, args, _env, ctx, {
+    let Some(handle) = buffer_argument(args, ctx)? else {
+        return Ok(ELispExp::nil());
+    };
+    let path = handle
+        .read()
+        .expect("Failed to acquire read lock on buffer")
+        .file_path
+        .clone();
+    Ok(match path {
+        Some(path) => ELispExp::string(path),
+        None => ELispExp::nil(),
+    })
 });

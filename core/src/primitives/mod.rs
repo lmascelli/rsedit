@@ -91,6 +91,7 @@ mod general;
 pub(crate) mod io;
 mod modes;
 mod region;
+mod shell;
 mod theme;
 mod ui;
 mod windows;
@@ -692,6 +693,17 @@ pub fn install_primitives<B: BufferTrait>(
         ["fFind file: "],
         io::FIND_FILE_DOC
     );
+    insert_cmd!(
+        "shell-command-start",
+        shell::shell_command_start,
+        ["sShell command: "],
+        shell::SHELL_COMMAND_START_DOC
+    );
+    insert_fn!(
+        "shell-command-running-p",
+        shell::shell_command_running_p,
+        shell::SHELL_COMMAND_RUNNING_P_DOC
+    );
     insert_fn!("list-dir", io::list_dir, io::LIST_DIR_DOC);
     insert_fn!(
         "directory-files-recursive",
@@ -841,6 +853,16 @@ pub fn install_primitives<B: BufferTrait>(
         "matching-delimiter",
         modes::matching_delimiter,
         modes::MATCHING_DELIMITER_DOC
+    );
+    insert_fn!(
+        "buffer-modified-p",
+        buffers::buffer_modified_p,
+        buffers::BUFFER_MODIFIED_P_DOC
+    );
+    insert_fn!(
+        "buffer-file-name",
+        buffers::buffer_file_name,
+        buffers::BUFFER_FILE_NAME_DOC
     );
     insert_fn!("major-mode", buffers::major_mode, buffers::MAJOR_MODE_DOC);
 

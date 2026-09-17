@@ -4,9 +4,26 @@
 * Fixes todo
 
 * Macro todo 
-- [ ] Switch to buffer command and buffer-list major mode
-- [ ] Rsedit lisp mode
-- [ ] Shell command spawn with output capture
+- [X] Switch to buffer command and buffer-list major mode
+      `C-x b' prompts and completes fuzzily over buffer names; `C-x C-b' opens a listing with
+      a modified mark, the name, the mode and the file. Like dired it keeps no state beside
+      the buffer -- each line carries a name, read back by column since a buffer name may
+      contain spaces. RET switches, d kills (asking first if there are unsaved changes), g
+      refreshes, q puts it away.
+- [X] Rsedit lisp mode
+      The vocabulary is asked for rather than listed: `all-macros' and `all-functions' report
+      what this editor actually has, including anything defined in your own init.lisp. Only
+      the special forms are written down, because they have no binding to enumerate.
+      `risp-refresh-vocabulary' rebuilds after you define something. This is also what
+      `lisp-indent-line' had been waiting for -- indent.lisp shipped it with no mode to attach
+      to, and it is now attached.
+- [X] Shell command spawn with output capture
+      `M-!' runs a command on the worker thread, so the editor stays usable while a build
+      runs, and output is appended as it is produced. The worker gets no Env, so completion is
+      reported by writing `--- exited 0 ---' into the buffer it is already writing to. Each
+      command gets its own buffer, since two sharing one would interleave their lines. The
+      running count is what keeps the renderer waking up -- the same problem `colouring_pending'
+      solves for syntax highlighting.
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 
