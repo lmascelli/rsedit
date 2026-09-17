@@ -168,7 +168,7 @@ pub const KILL_REGION_DOC: &str = "(kill-region): Delete the region and save it 
          Example:\n\
          (define-key nil \"C-w\" 'kill-region)";
 
-primitive!(kill_region, _args, _env, ctx, {
+primitive!(kill_region, _args, env, ctx, {
     let killed = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
         let (start, end) = require_region(buf)?;
         let text = text_between(&buf.text, start, end);
@@ -181,7 +181,7 @@ primitive!(kill_region, _args, _env, ctx, {
     let Some(text) = killed else {
         return Ok(edits::edited(ctx, false));
     };
-    ctx.kill(text, Direction::Forward);
+    ctx.kill(text, Direction::Forward, &env);
     Ok(ELispExp::nil())
 });
 
@@ -191,7 +191,7 @@ pub const KILL_RING_SAVE_DOC: &str = "(kill-ring-save): Save the region to the k
          Example:\n\
          (define-key nil \"M-w\" 'kill-ring-save)";
 
-primitive!(kill_ring_save, _args, _env, ctx, {
+primitive!(kill_ring_save, _args, env, ctx, {
     let text = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
         let (start, end) = require_region(buf)?;
         let text = text_between(&buf.text, start, end);
@@ -203,17 +203,17 @@ primitive!(kill_ring_save, _args, _env, ctx, {
         }
         Ok::<_, EvalError<EditorState<B>>>(text)
     })?;
-    ctx.kill(text, Direction::Forward);
+    ctx.kill(text, Direction::Forward, &env);
     Ok(ELispExp::nil())
 });
 
 pub const KILL_NEW_DOC: &str = "(kill-new STRING): Add STRING to the kill ring as the most recent \
          entry, as if it had been killed. Does nothing for an empty string.";
 
-primitive!(kill_new, args, _env, ctx, {
+primitive!(kill_new, args, env, ctx, {
     match args.first() {
         Some(ELispExp::String(text)) => {
-            ctx.kill(text.to_string(), Direction::Forward);
+            ctx.kill(text.to_string(), Direction::Forward, &env);
             Ok(ELispExp::nil())
         }
         other => Err(EvalError::WrongArgumentType {

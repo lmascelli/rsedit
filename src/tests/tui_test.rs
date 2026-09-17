@@ -25,6 +25,8 @@ use std::{
 use crate::tests::tui_test::ColorDepth::Ansi16;
 use crate::tests::tui_test::ColorDepth::Ansi256;
 use crate::tui::ColorDepth;
+use crate::tui::base64_encode;
+use crate::tui::osc52_copy;
 use crate::tui::render_to;
 use crate::tui::resolve;
 use crate::tui::translate_key;
@@ -946,4 +948,79 @@ fn a_line_is_clipped_to_the_window_it_is_in() {
         .max()
         .expect("the float drew something");
     assert_eq!(widest, 20, "never wider than the rect");
+}
+
+
+// ---------------------------------------------------------------------------
+// The system clipboard
+// ---------------------------------------------------------------------------
+
+/// Base64 against the worked examples in RFC 4648, which exist precisely
+/// because the padding cases are where hand-written encoders go wrong.
+#[test]
+fn base64_matches_the_standard_at_every_padding() {
+    // Length 3n: no padding. 3n+1: two `=`. 3n+2: one `=`.
+    assert_eq!(base64_encode(b""), "");
+    assert_eq!(base64_encode(b"f"), "Zg==");
+    assert_eq!(base64_encode(b"fo"), "Zm8=");
+    assert_eq!(base64_encode(b"foo"), "Zm9v");
+    assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+    assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+    assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+}
+
+/// The last two alphabet entries are `+` and `/`, and an encoder that built
+/// its table by hand is exactly where those go missing.
+#[test]
+fn base64_reaches_the_end_of_its_alphabet() {
+    assert_eq!(base64_encode(&[0xfb, 0xff, 0xfe]), "+//+");
+}
+
+#[test]
+fn base64_encodes_bytes_rather_than_characters() {
+    // Killed text is arbitrary UTF-8, and a multi-byte character has to
+    // survive the round trip as its bytes rather than as a char count.
+    assert_eq!(base64_encode("é".as_bytes()), "w6k=");
+    assert_eq!(base64_encode("日本".as_bytes()), "5pel5pys");
+}
+
+#[test]
+fn the_clipboard_escape_is_an_osc_52_write() {
+    // `ESC ] 52 ; c ; <payload> ESC \`. The `c` is the clipboard selection,
+    // and the terminator is ST rather than BEL because tmux passes ST through
+    // without special-casing it.
+    assert_eq!(osc52_copy("foo"), "\u{1b}]52;c;Zm9v\u{1b}\\");
+}
+
+#[test]
+fn a_frame_carrying_clipboard_text_emits_the_escape() {
+    let snapshot = FrameSnapshot {
+        width: COLS as usize,
+        height: ROWS as usize,
+        clipboard: Some("hello".to_string()),
+        ..Default::default()
+    };
+    let mut out: Vec<u8> = Vec::new();
+    render_to(&mut out, &snapshot, TrueColor).expect("rendering must succeed");
+    let rendered = String::from_utf8(out).expect("crossterm emits valid UTF-8");
+    assert!(
+        rendered.contains("\u{1b}]52;c;aGVsbG8=\u{1b}\\"),
+        "the frame's clipboard payload should reach the terminal, got {rendered:?}"
+    );
+}
+
+#[test]
+fn a_frame_with_no_clipboard_text_emits_no_escape() {
+    // The common case by far: this must cost nothing on the frames that carry
+    // nothing, and above all must not clear the clipboard by sending an empty
+    // payload on every redraw.
+    let snapshot = FrameSnapshot {
+        width: COLS as usize,
+        height: ROWS as usize,
+        ..Default::default()
+    };
+    let mut out: Vec<u8> = Vec::new();
+    render_to(&mut out, &snapshot, TrueColor).expect("rendering must succeed");
+    let rendered = String::from_utf8(out).expect("crossterm emits valid UTF-8");
+    assert!(!rendered.contains("]52;c;"));
 }

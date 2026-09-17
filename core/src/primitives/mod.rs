@@ -276,6 +276,15 @@ pub fn install_primitives<B: BufferTrait>(
     // could collect arbitrary text. `self-insert` is a command only because
     // every printable key is bound to it.
     insert_fn!("insert", edits::insert, edits::INSERT_DOC);
+    // A command rather than a plain function, because it is one: the renderer
+    // runs it when the terminal reports a bracketed paste, and it wants the
+    // undo grouping and the `post-command-hook' that being a command brings.
+    insert_cmd!(
+        "insert-pasted-text",
+        edits::insert_pasted_text,
+        [] as [&str; 0],
+        edits::INSERT_PASTED_TEXT_DOC
+    );
     insert_cmd!(
         "insert-newline",
         edits::insert_newline,
@@ -663,6 +672,16 @@ pub fn install_primitives<B: BufferTrait>(
         io::FIND_FILE_DOC
     );
     insert_fn!("list-dir", io::list_dir, io::LIST_DIR_DOC);
+    insert_fn!(
+        "directory-files-recursive",
+        io::directory_files_recursive,
+        io::DIRECTORY_FILES_RECURSIVE_DOC
+    );
+    insert_fn!(
+        "read-file-to-string",
+        io::read_file_to_string,
+        io::READ_FILE_TO_STRING_DOC
+    );
     insert_fn!("match-list", io::match_list, io::MATCH_LIST_DOC);
     insert_fn!(
         "expand-file-name",
@@ -797,6 +816,11 @@ pub fn install_primitives<B: BufferTrait>(
         modes::SET_COMMENT_SYNTAX_DOC
     );
     insert_fn!("syntax-class", modes::syntax_class, modes::SYNTAX_CLASS_DOC);
+    insert_fn!(
+        "matching-delimiter",
+        modes::matching_delimiter,
+        modes::MATCHING_DELIMITER_DOC
+    );
     insert_fn!("major-mode", buffers::major_mode, buffers::MAJOR_MODE_DOC);
 
     // Point as a number. Plain functions rather than commands: nothing is

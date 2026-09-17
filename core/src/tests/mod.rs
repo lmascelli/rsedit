@@ -1,4 +1,5 @@
 mod bug_fix_tests;
+mod clipboard_tests;
 mod command_test;
 mod completion_at_point_tests;
 mod completion_tests;
@@ -8,7 +9,9 @@ mod debug_lisp_tests;
 mod deletion_tests;
 mod dired_tests;
 mod echo_tests;
+mod electric_pair_tests;
 mod edit_protection_tests;
+mod find_file_recursive_tests;
 mod frame_snapshot_tests;
 mod fuel_tests;
 mod home_guard;
@@ -19,6 +22,7 @@ mod mode_line_tests;
 mod movement_tests;
 /// Performance characterisation of the whole editor, interpreter included.
 /// One submodule, one runner, two reports -- see `perf::mod` for the rationale.
+mod paste_tests;
 mod path_tests;
 mod perf;
 mod prefix_arg_tests;
@@ -26,6 +30,7 @@ mod prefix_key_tests;
 mod region_tests;
 mod scroll_tests;
 mod sexp_tests;
+mod shipped_lisp_tests;
 mod syntax_tests;
 mod theme_tests;
 mod transient_tests;

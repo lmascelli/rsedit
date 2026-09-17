@@ -209,6 +209,35 @@ primitive!(insert, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
+pub const INSERT_PASTED_TEXT_DOC: &str = "(insert-pasted-text STRING): Insert STRING at point as a \
+         single bracketed paste. Returns t if the buffer changed.\n\n\
+         This is what a paste from the system clipboard runs, and the reason it is not just \
+         `insert': a paste is a *command*, so it takes one undo step and one run of \
+         `post-command-hook', and it deliberately does not run `post-self-insert-hook'. \
+         Without that last part every bracket and quote in pasted code would be auto-paired \
+         as though it had been typed.\n\n\
+         Calling it from Lisp pastes exactly as the terminal would, which is how a test -- or \
+         a command that pastes from somewhere else -- gets the same treatment.\n\n\
+         Does nothing (reporting \"Buffer is read-only\") in a read-only buffer.\n\n\
+         Example:\n\
+         (insert-pasted-text \"fn main() {}\")";
+
+primitive!(insert_pasted_text, args, _env, ctx, {
+    let Some(ELispExp::String(text)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+        });
+    };
+    // Through `insert_at_point' like any other insertion: a paste is not
+    // exempt from read-only buffers, undo, or telling the highlighter that the
+    // text moved. What makes it a paste is that it is *one* call, which is
+    // decided by the caller rather than here.
+    let happened =
+        ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, text));
+    Ok(edited(ctx, happened))
+});
+
 pub const INSERT_NEWLINE_DOC: &str = "(insert-newline): Insert a newline character at point in the current \
          buffer.\n\n\
          Example:\n\
@@ -613,7 +642,7 @@ pub const KILL_LINE_DOC: &str = "(kill-line): Delete from point to the end of th
          Example:\n\
          (define-key nil \"C-k\" 'kill-line)";
 
-primitive!(kill_line, _args, _env, ctx, {
+primitive!(kill_line, _args, env, ctx, {
     let killed = {
         let buf = ctx.get_current_buffer();
         let mut buf = buf.write().expect("write lock on buffer");
@@ -630,7 +659,7 @@ primitive!(kill_line, _args, _env, ctx, {
         };
         cut_out(&mut buf, from, to)
     };
-    ctx.kill(killed, Direction::Forward);
+    ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
 });
 
@@ -639,7 +668,7 @@ pub const KILL_WHOLE_LINE_DOC: &str = "(kill-whole-line): Delete the entire line
          The text is saved to the kill ring, so `yank' puts it back. A run \
          of kill commands accumulates into one entry.";
 
-primitive!(kill_whole_line, _args, _env, ctx, {
+primitive!(kill_whole_line, _args, env, ctx, {
     let killed = {
         let buf = ctx.get_current_buffer();
         let mut buf = buf.write().expect("write lock on buffer");
@@ -649,7 +678,7 @@ primitive!(kill_whole_line, _args, _env, ctx, {
             (buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line)) + 1).min(buf.text.len());
         cut_out(&mut buf, from, to)
     };
-    ctx.kill(killed, Direction::Forward);
+    ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
 });
 
@@ -660,7 +689,7 @@ pub const KILL_WORD_DOC: &str = "(kill-word &optional N): Delete forward to the 
          Example:\n\
          (define-key nil \"M-d\" 'kill-word)";
 
-primitive!(kill_word, args, _env, ctx, {
+primitive!(kill_word, args, env, ctx, {
     let killed = {
         let buf = ctx.get_current_buffer();
         let mut buf = buf.write().expect("write lock on buffer");
@@ -668,7 +697,7 @@ primitive!(kill_word, args, _env, ctx, {
         let to = word_forward(&buf.text, from, repeat_count(args)?);
         cut_out(&mut buf, from, to)
     };
-    ctx.kill(killed, Direction::Forward);
+    ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
 });
 
@@ -680,7 +709,7 @@ pub const BACKWARD_KILL_WORD_DOC: &str = "(backward-kill-word &optional N): Dele
          Example:\n\
          (define-key nil \"M-<backspace>\" 'backward-kill-word)";
 
-primitive!(backward_kill_word, args, _env, ctx, {
+primitive!(backward_kill_word, args, env, ctx, {
     let killed = {
         let buf = ctx.get_current_buffer();
         let mut buf = buf.write().expect("write lock on buffer");
@@ -688,7 +717,7 @@ primitive!(backward_kill_word, args, _env, ctx, {
         let from = word_backward(&buf.text, to, repeat_count(args)?);
         cut_out(&mut buf, from, to)
     };
-    ctx.kill(killed, Direction::Backward);
+    ctx.kill(killed, Direction::Backward, &env);
     Ok(ELispExp::nil())
 });
 
@@ -697,7 +726,7 @@ pub const KILL_PARAGRAPH_DOC: &str = "(kill-paragraph): Delete forward to the en
          The text is saved to the kill ring, so `yank' puts it back. A run \
          of kill commands accumulates into one entry.";
 
-primitive!(kill_paragraph, _args, _env, ctx, {
+primitive!(kill_paragraph, _args, env, ctx, {
     let killed = {
         let buf = ctx.get_current_buffer();
         let mut buf = buf.write().expect("write lock on buffer");
@@ -707,7 +736,7 @@ primitive!(kill_paragraph, _args, _env, ctx, {
         let to = buf.text.cursor_2d_to_1d(target_line, 0);
         cut_out(&mut buf, from, to)
     };
-    ctx.kill(killed, Direction::Forward);
+    ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
 });
 
@@ -717,7 +746,7 @@ pub const BACKWARD_KILL_PARAGRAPH_DOC: &str = "(backward-kill-paragraph): Delete
          The text is saved to the kill ring, so `yank' puts it back. A run \
          of kill commands accumulates into one entry.";
 
-primitive!(backward_kill_paragraph, _args, _env, ctx, {
+primitive!(backward_kill_paragraph, _args, env, ctx, {
     let killed = {
         let buf = ctx.get_current_buffer();
         let mut buf = buf.write().expect("write lock on buffer");
@@ -727,7 +756,7 @@ primitive!(backward_kill_paragraph, _args, _env, ctx, {
         let from = buf.text.cursor_2d_to_1d(target_line, 0);
         cut_out(&mut buf, from, to)
     };
-    ctx.kill(killed, Direction::Backward);
+    ctx.kill(killed, Direction::Backward, &env);
     Ok(ELispExp::nil())
 });
 
@@ -997,7 +1026,7 @@ pub const KILL_SEXP_DOC: &str = "(kill-sexp &optional N): Delete forward over N 
          Example:\n\
          (define-key nil \\\"C-M-k\\\" 'kill-sexp)";
 
-primitive!(kill_sexp, args, _env, ctx, {
+primitive!(kill_sexp, args, env, ctx, {
     let table = ctx.current_syntax_table();
     let killed = {
         let buf = ctx.get_current_buffer();
@@ -1006,7 +1035,7 @@ primitive!(kill_sexp, args, _env, ctx, {
         let to = sexp::forward(&buf.text, &table, from, repeat_count(args)?);
         cut_out(&mut buf, from, to)
     };
-    ctx.kill(killed, Direction::Forward);
+    ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
 });
 
@@ -1017,7 +1046,7 @@ pub const BACKWARD_KILL_SEXP_DOC: &str = "(backward-kill-sexp &optional N): Dele
          Example:\n\
          (define-key nil \\\"C-M-<backspace>\\\" 'backward-kill-sexp)";
 
-primitive!(backward_kill_sexp, args, _env, ctx, {
+primitive!(backward_kill_sexp, args, env, ctx, {
     let table = ctx.current_syntax_table();
     let killed = {
         let buf = ctx.get_current_buffer();
@@ -1026,7 +1055,7 @@ primitive!(backward_kill_sexp, args, _env, ctx, {
         let from = sexp::backward(&buf.text, &table, to, repeat_count(args)?);
         cut_out(&mut buf, from, to)
     };
-    ctx.kill(killed, Direction::Backward);
+    ctx.kill(killed, Direction::Backward, &env);
     Ok(ELispExp::nil())
 });
 

@@ -4,12 +4,15 @@ use std::path::Path;
 fn main() {
     #[allow(non_snake_case)]
     let LISP_FILES: Vec<&str> = vec![
+        "clipboard.lisp",
         "commands.lisp",
         "common-keymaps.lisp",
         "completion-at-point.lisp",
         "completion.lisp",
         "debug.lisp",
         "dired.lisp",
+        "electric-pair.lisp",
+        "find-file-recursive.lisp",
         "indent.lisp",
         "minibuffer.lisp",
         "rust-mode.lisp",

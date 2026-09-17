@@ -1,5 +1,6 @@
 use crossterm::event::{
-    Event, KeyCode as CrossKeyCode, KeyEventKind, KeyModifiers as CrossModifiers, poll, read,
+    DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode as CrossKeyCode, KeyEventKind,
+    KeyModifiers as CrossModifiers, poll, read,
 };
 use crossterm::{
     QueueableCommand, cursor, execute,
@@ -364,7 +365,69 @@ pub fn render_to<W: Write>(
         out.queue(cursor::Show)?;
     }
 
+    // The one thing here that is not drawing. See `FrameSnapshot::clipboard`:
+    // the editor cannot reach the clipboard because it does not know it has a
+    // terminal, so it leaves the text on the frame and this puts it where a
+    // terminal can see it. Emitted after everything else and before the flush,
+    // so it costs one write on the frames that carry it and nothing at all on
+    // the ones that do not.
+    if let Some(text) = &frame.clipboard {
+        out.queue(Print(osc52_copy(text)))?;
+    }
+
     out.flush()
+}
+
+/// The escape sequence that asks the terminal to put `text` in the system
+/// clipboard.
+///
+/// # Why an escape sequence and not a program
+///
+/// The alternative is spawning `pbcopy`, `wl-copy` or `xclip`, which means
+/// knowing which one this machine has, and which fails outright over SSH --
+/// the clipboard those talk to is the remote machine's, and the one the user
+/// is looking at is local. An escape travels the same pty as the text does, so
+/// it arrives wherever the terminal is. That is the whole argument for it.
+///
+/// Terminated with `ESC \` (ST) rather than BEL: both are accepted, and ST is
+/// what tmux passes through without special-casing.
+///
+/// The read direction of OSC 52 is deliberately not implemented. Terminals
+/// disable it by default -- it would let any program that can write to the
+/// terminal read the user's clipboard -- and where it is allowed the reply
+/// arrives on stdin interleaved with keystrokes. Text comes *in* by bracketed
+/// paste instead, which is the terminal volunteering the same content through
+/// a channel that already exists.
+pub(crate) fn osc52_copy(text: &str) -> String {
+    format!("\x1b]52;c;{}\x1b\\", base64_encode(text.as_bytes()))
+}
+
+/// Standard base64, no line breaks.
+///
+/// Hand-written because the alternative is a dependency for one alphabet and
+/// twenty lines: `core` has exactly one dependency today, and a clipboard is
+/// not the reason to make it two.
+pub(crate) fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        // Three bytes become four six-bit groups. A short final chunk is
+        // padded with zero bits here and with `=` below, which is what tells
+        // the decoder how many of those bits were never data.
+        let mut block = [0u8; 3];
+        block[..chunk.len()].copy_from_slice(chunk);
+        let packed = u32::from(block[0]) << 16 | u32::from(block[1]) << 8 | u32::from(block[2]);
+        for group in 0..4 {
+            if group <= chunk.len() {
+                let index = (packed >> (18 - 6 * group)) & 0x3f;
+                out.push(ALPHABET[index as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// Redraw one run of an already-drawn row with its face applied.
@@ -548,6 +611,17 @@ pub fn tui_main<B: BufferTrait>(
     env: Arc<Env<EditorState<B>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     terminal::enable_raw_mode()?;
+    // With this on, a paste arrives as one `Event::Paste` instead of as the
+    // keystrokes it looks like. That is the difference between pasting a
+    // function and typing it: one undo step rather than one per character, one
+    // run of the hooks rather than hundreds, and no auto-pairing of brackets
+    // that were already balanced in the pasted text.
+    //
+    // It is also how text gets *in* from the system clipboard at all. The read
+    // direction of OSC 52 is refused by most terminals, so rather than ask for
+    // the clipboard the editor accepts it when the terminal offers it -- which
+    // is what the user's own paste key already does.
+    execute!(stdout(), EnableBracketedPaste)?;
     // Asked once: the terminal's capabilities do not change while it runs, and
     // a frame should not be re-reading the environment.
     let depth = ColorDepth::detect();
@@ -597,12 +671,20 @@ pub fn tui_main<B: BufferTrait>(
                 state.resize(env.clone(), width as usize, height as usize);
             }
 
-            _ => todo!(),
+            Event::Paste(text) => state.handle_paste(text, &env),
+
+            // Focus changes, mouse events and anything a future crossterm
+            // adds. Ignored rather than `todo!()`: this arm used to panic, so
+            // enabling bracketed paste without handling it would have crashed
+            // the editor on the first paste -- and a terminal that starts
+            // reporting focus would have crashed it for no reason at all.
+            _ => (),
         }
     }
 
     execute!(
         stdout(),
+        DisableBracketedPaste,
         terminal::Clear(terminal::ClearType::All),
         cursor::MoveTo(0, 0)
     )?;

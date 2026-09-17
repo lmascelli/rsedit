@@ -670,3 +670,177 @@ fn path_arg<B: BufferTrait>(
 fn bool_exp<B: BufferTrait>(yes: bool) -> ELispExp<B> {
     if yes { ELispExp::t() } else { ELispExp::nil() }
 }
+
+// ---------------------------------------------------------------------------
+// Walking a tree
+// ---------------------------------------------------------------------------
+
+/// Collect every file under `root`, depth-first, as paths relative to it.
+///
+/// `prune` is a set of directory *names* -- not paths -- that the walk never
+/// descends into, and `limit` is how many files it will collect before giving
+/// up. Returns the paths and whether the limit stopped it early.
+///
+/// # Why pruning is here and not in the caller
+///
+/// Everything else about which files are interesting is policy, and policy
+/// lives in Lisp. Not descending is the exception, because it cannot be done
+/// afterwards: `.git` in a working repository holds thousands of objects, and
+/// a walk that collected them would spend its whole budget before reaching any
+/// source file. Filtering that result gives an empty list, not a slow one.
+///
+/// So the *mechanism* is here because it has to be, and the *list* arrives
+/// from Lisp on every call. The caller still decides what is uninteresting;
+/// this only knows how to not look.
+fn walk_files(
+    root: &std::path::Path,
+    prune: &std::collections::HashSet<String>,
+    limit: usize,
+) -> (Vec<String>, bool) {
+    let mut found = Vec::new();
+    // Explicit stack rather than recursion: a deep tree -- or a symlink loop
+    // that `read_dir` happens to follow -- would otherwise overflow, and an
+    // editor should not be able to be crashed by a directory.
+    let mut pending = vec![(root.to_path_buf(), String::new())];
+    while let Some((directory, prefix)) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            // Unreadable directories are skipped rather than reported: a walk
+            // from the home directory crosses several, and a permission error
+            // for one of them is not a failure of the search.
+            continue;
+        };
+        // Sorted per directory rather than at the end, so the order is stable
+        // across filesystems -- `read_dir` promises nothing about it.
+        let mut names: Vec<_> = entries
+            .flatten()
+            .map(|entry| (entry.file_name().to_string_lossy().to_string(), entry))
+            .collect();
+        names.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, entry) in names {
+            let relative = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            // `file_type` rather than `metadata`: it does not follow symlinks,
+            // so a link to a parent directory is listed as the link it is
+            // instead of sending the walk round in a circle.
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                if !prune.contains(&name) {
+                    pending.push((entry.path(), relative));
+                }
+            } else {
+                if found.len() >= limit {
+                    return (found, true);
+                }
+                found.push(relative);
+            }
+        }
+    }
+    found.sort();
+    (found, false)
+}
+
+pub const DIRECTORY_FILES_RECURSIVE_DOC: &str = "(directory-files-recursive &optional DIRECTORY \
+         LIMIT PRUNE): Every file under DIRECTORY -- the current directory if it is omitted -- \
+         as a list of paths relative to it, sorted. Directories themselves are not listed, only \
+         the files in them.\n\n\
+         Returns (TRUNCATED PATHS): TRUNCATED is t if LIMIT stopped the walk before it \
+         finished, nil if the list is everything there is. A caller that ignores it shows a \
+         partial list as though it were complete, which is how a search comes to quietly not \
+         find a file that is there.\n\n\
+         LIMIT defaults to 10000. PRUNE is a list of directory *names* -- not paths -- that the \
+         walk does not descend into; every directory so named is skipped wherever it appears. \
+         Pruning is not the same as filtering the result: \".git\" alone holds thousands of \
+         files, and a walk that collected them would reach LIMIT before reaching any source.\n\n\
+         Unreadable directories are skipped rather than reported -- a walk of a home directory \
+         crosses several, and one refusal is not a failed search. Symlinks are listed as the \
+         links they are and never followed, so a link pointing at an ancestor cannot send the \
+         walk round in a circle.\n\n\
+         Example:\n\
+         (directory-files-recursive \".\" 5000 '(\".git\" \"target\"))\n\
+         => (nil (\"Cargo.toml\" \"src/main.rs\" ...))";
+
+primitive!(directory_files_recursive, args, _env, ctx, {
+    if args.len() > 3 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 3,
+            got: args.len(),
+        });
+    }
+    let directory = match args.first() {
+        None => ".".to_string(),
+        Some(exp) if exp.is_nil() => ".".to_string(),
+        Some(ELispExp::String(path)) => path.to_string(),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let limit = match args.get(1) {
+        None => 10000,
+        Some(exp) if exp.is_nil() => 10000,
+        Some(ELispExp::Number(n)) if *n >= 0.0 => *n as usize,
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "a non-negative Number".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let mut prune = std::collections::HashSet::new();
+    if let Some(list) = args.get(2)
+        && !list.is_nil()
+    {
+        for name in list.iter() {
+            match name {
+                ELispExp::String(s) => {
+                    prune.insert(s.to_string());
+                }
+                other => {
+                    return Err(EvalError::WrongArgumentType {
+                        expected: "String".into(),
+                        got: other.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    let root = expand_path(&directory);
+    let root = std::path::Path::new(&root);
+    if !root.is_dir() {
+        ctx.log_diagnostic(&format!("Cannot walk {directory}: not a directory"));
+        return Ok(ELispExp::nil());
+    }
+    let (paths, truncated) = walk_files(root, &prune, limit);
+    Ok(ELispExp::proper_list(vec![
+        bool_exp(truncated),
+        ELispExp::proper_list(paths.into_iter().map(ELispExp::string).collect()),
+    ]))
+});
+
+pub const READ_FILE_TO_STRING_DOC: &str = "(read-file-to-string PATH): The contents of PATH as a \
+         string, or nil (logging a diagnostic) if it cannot be read.\n\n\
+         No buffer is involved: nothing is displayed, no mode is chosen, nothing is added to \
+         the buffer list, and there is nothing to close afterwards. That is the point -- it is \
+         for the files a *module* reads rather than the ones a user edits, such as the \
+         `.gitignore' that tells a recursive find what to leave out.\n\n\
+         A leading \"~\" is expanded. A file that is not valid UTF-8 is refused rather than \
+         mangled.\n\n\
+         Example:\n\
+         (read-file-to-string \"~/.gitignore\")";
+
+primitive!(read_file_to_string, args, _env, ctx, {
+    let path = path_arg(args.first())?;
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => Ok(ELispExp::string(contents)),
+        Err(why) => {
+            ctx.log_diagnostic(&format!("Cannot read {path}: {why}"));
+            Ok(ELispExp::nil())
+        }
+    }
+});

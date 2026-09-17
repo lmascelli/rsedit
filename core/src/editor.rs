@@ -212,6 +212,22 @@ pub struct EditorState<B: BufferTrait> {
     /// can be yanked into another.
     kill_ring: Arc<RwLock<KillRing>>,
 
+    /// Text waiting to be handed to the *system* clipboard, or `None` when
+    /// there is nothing outstanding.
+    ///
+    /// # Why the editor cannot just do it
+    ///
+    /// Putting text in the system clipboard means writing an OSC 52 escape to
+    /// the terminal, and the editor does not own the terminal -- it does not
+    /// know it has one. So a kill leaves the text here, [`Self::snapshot`]
+    /// *takes* it onto the frame, and the renderer -- the one part that does
+    /// own stdout -- emits it. Same shape as everything else the renderer
+    /// draws, arrived at for the same reason.
+    ///
+    /// Taken rather than read, so one kill sends one escape however many
+    /// frames get drawn afterwards.
+    pending_clipboard: Arc<RwLock<Option<String>>>,
+
     /// How each face is drawn. One theme for the whole editor -- a per-buffer
     /// theme would mean two windows on the same file disagreeing about what a
     /// keyword looks like.
@@ -427,6 +443,7 @@ impl<B: BufferTrait> EditorState<B> {
             pending_commands: Arc::new(RwLock::new(Vec::new())),
             last_command: Arc::new(RwLock::new(None)),
             kill_ring: Arc::new(RwLock::new(KillRing::default())),
+            pending_clipboard: Arc::new(RwLock::new(None)),
             theme: Arc::new(RwLock::new(Arc::new(Theme::default()))),
             prefix_arg: Arc::new(RwLock::new((None, false))),
             pending_keys: Arc::new(RwLock::new(Vec::new())),
@@ -1584,6 +1601,17 @@ impl<B: BufferTrait> EditorState<B> {
         // minibuffer all failed with `UnboundVariable` in the real editor. No
         // test caught it because they all call `(minibuffer-confirm)` through
         // `eval` rather than pressing the key.
+        self.run_command_form(ast, env);
+    }
+
+    /// Run AST as a command: one undo group, one `post-command-hook`, one
+    /// entry in `last-command`.
+    ///
+    /// Split out of [`Self::handle_key_event`] because a keystroke is no
+    /// longer the only thing that runs a command -- a bracketed paste does
+    /// too, and it has to be grouped, hooked and remembered exactly as a
+    /// keystroke is. Two dispatch paths would drift; one cannot.
+    fn run_command_form(&self, mut ast: ELispExp<B>, env: &Arc<Env<EditorState<B>>>) {
         let bound_command = match &ast {
             ELispExp::Symbol(name) => Some(name.to_string()),
             ELispExp::Form(items) if items.len() == 1 => match &items[0] {
@@ -1652,6 +1680,18 @@ impl<B: BufferTrait> EditorState<B> {
                 .expect("Failed to acquire read lock on current buffer");
             buf_lock.current_mode.clone()
         };
+        // Before `post-command-hook', and only for the command that typed a
+        // character. This is where electric-pair and anything else that
+        // reacts to typing hangs; running it after the general hook would put
+        // the pair in after a mode had already looked at the line.
+        //
+        // Deliberately *not* run for a paste, which reaches the buffer as
+        // `insert-pasted-text' rather than as a run of `self-insert'. A hook
+        // that fires per character would auto-pair every bracket in pasted
+        // code, which is exactly the mangling bracketed paste exists to stop.
+        if this_command.as_deref().map(String::as_str) == Some("self-insert") {
+            self.run_hook(&current_mode_name, "post-self-insert-hook", env);
+        }
         self.run_hook(&current_mode_name, "post-command-hook", env);
         // Offered after the command has run and its hooks have fired, so that
         // pressing the repeat key goes through every step the first invocation
@@ -1659,6 +1699,33 @@ impl<B: BufferTrait> EditorState<B> {
         // one offered, which is what ends a run of `C-x o o o`.
         self.install_repeat_keymap(this_command.as_deref().map(String::as_str));
         self.set_last_command(this_command);
+    }
+
+    /// Insert TEXT as a single bracketed paste.
+    ///
+    /// # Why paste is not typing
+    ///
+    /// Without bracketed paste a terminal delivers a paste as the keystrokes
+    /// it looks like, and the editor cannot tell the difference: N characters
+    /// become N `self-insert' commands, N undo entries, N runs of every hook.
+    /// Pasting a function and then pressing `undo' would walk back through it
+    /// one character at a time, and auto-pairing would double every bracket in
+    /// it.
+    ///
+    /// The terminal knows the difference and says so, so this takes the whole
+    /// paste as one command: one undo group, one syntax invalidation, one
+    /// `post-command-hook', and no `post-self-insert-hook' at all.
+    pub fn handle_paste(&self, text: String, env: &Arc<Env<EditorState<B>>>) {
+        if text.is_empty() {
+            return;
+        }
+        self.run_command_form(
+            ELispExp::form(vec![
+                ELispExp::symbol("insert-pasted-text".into()),
+                ELispExp::string(text),
+            ]),
+            env,
+        );
     }
 
     /// Run every function registered under HOOK_NAME in the major mode
@@ -1942,6 +2009,7 @@ impl<B: BufferTrait> EditorState<B> {
             height: screen_height,
             colouring_pending,
             separators,
+            clipboard: self.take_pending_clipboard(),
         }
     }
 
@@ -2382,7 +2450,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// as the whole passage. DIRECTION says which end of the entry a
     /// continued kill joins onto, so a backward kill does not assemble its
     /// text inside out.
-    pub(crate) fn kill(&self, text: String, direction: Direction) {
+    pub(crate) fn kill(&self, text: String, direction: Direction, env: &Arc<Env<Self>>) {
         let continuing = self.last_command_killed.load(Ordering::Relaxed);
         self.this_command_killed.store(true, Ordering::Relaxed);
         let mut ring = self
@@ -2394,6 +2462,44 @@ impl<B: BufferTrait> EditorState<B> {
         } else {
             ring.push(text);
         }
+        // The system clipboard gets whatever the ring now holds, not the
+        // fragment that just arrived: a run of `C-k` is one kill as far as the
+        // user is concerned, and sending each line on its own would leave the
+        // clipboard holding the last line of a passage they meant to take
+        // whole. `current` is the entry `yank` would insert, which is exactly
+        // the promise the clipboard should be making.
+        if Self::clipboard_sync_enabled(env)
+            && let Some(current) = ring.current()
+        {
+            *self
+                .pending_clipboard
+                .write()
+                .expect("Failed to acquire write lock on pending_clipboard") =
+                Some(current.to_string());
+        }
+    }
+
+    /// Whether killed text should also reach the system clipboard.
+    ///
+    /// Unbound means no. The variable is set by `clipboard.lisp`, so the
+    /// editor comes up with it on; a harness that loads no Lisp -- which is
+    /// every test in this crate -- gets the old behaviour untouched rather
+    /// than queueing a clipboard payload on every kill it makes.
+    fn clipboard_sync_enabled(env: &Arc<Env<Self>>) -> bool {
+        env.get_variable("clipboard-sync")
+            .is_some_and(|flag| flag.is_truthy())
+    }
+
+    /// Take the text owed to the system clipboard, leaving nothing behind.
+    ///
+    /// Called once per frame by [`Self::snapshot`]. Taking rather than reading
+    /// is what stops a redraw of an unchanged frame from re-sending the same
+    /// escape.
+    pub(crate) fn take_pending_clipboard(&self) -> Option<String> {
+        self.pending_clipboard
+            .write()
+            .expect("Failed to acquire write lock on pending_clipboard")
+            .take()
     }
 
     /// What `yank` would insert, if anything.
@@ -2901,6 +3007,9 @@ pub fn create_global_env<B: BufferTrait>()
 (eval-file "rust-mode")   ; colouring for Rust source
 (eval-file "dired")       ; a directory in a buffer (C-x d)
 (eval-file "completion")  ; Tab shows every candidate at once, in a strip
+(eval-file "clipboard")   ; kills also go to the system clipboard
+(eval-file "electric-pair") ; typing "(" gives you "()"
+(eval-file "find-file-recursive") ; C-x C-r: open any file under this directory
 
 ;; Where completions come from, for C-M-i in a buffer. The command is built in
 ;; and works without this; what this adds is the five sources it asks. Take one

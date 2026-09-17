@@ -115,6 +115,27 @@ pub struct FrameSnapshot {
     /// and no message about to expire, the renderer blocks indefinitely, as it
     /// did before.
     pub colouring_pending: bool,
+    /// Text the editor owes to the *system* clipboard, or `None` when it owes
+    /// nothing.
+    ///
+    /// # Why this is on the frame at all
+    ///
+    /// Every other field here describes what the screen should look like; this
+    /// one does not. It is here because the clipboard is reached by writing an
+    /// escape sequence to the terminal, and the renderer is the only part that
+    /// has a terminal to write to -- the editor does not know whether it is
+    /// driving one, a test harness, or nothing at all. So the frame carries
+    /// the payload for the same reason it carries the theme: so that drawing
+    /// touches no shared state.
+    ///
+    /// Each capture *takes* it from the editor, so a value here has never been
+    /// seen before and will not appear on the next frame. A renderer that
+    /// draws a snapshot twice sends the escape twice; a renderer that draws
+    /// each snapshot once -- which is the contract -- sends it once per kill.
+    ///
+    /// A renderer with no clipboard to offer ignores this, and the only thing
+    /// lost is the clipboard.
+    pub clipboard: Option<String>,
 }
 
 impl FrameSnapshot {

@@ -476,6 +476,68 @@ primitive!(set_comment_syntax, args, _env, ctx, {
     Ok(answer)
 });
 
+pub const MATCHING_DELIMITER_DOC: &str = "(matching-delimiter CHAR &optional MODE): The character \
+         that closes CHAR if CHAR opens, or the one that opens it if CHAR closes, according to \
+         major mode MODE -- the current buffer's mode when MODE is omitted. Returns nil if CHAR \
+         is not a delimiter at all.\n\n\
+         This is the same table `syntax-class' reads, asked for the partner rather than the \
+         kind, and it is what auto-pairing is built on. A mode that declared its brackets with \
+         `set-syntax-pairs' has therefore already said everything electric pairing needs to \
+         know -- there is no second list of pairs to keep in step with the first, and a mode \
+         whose brackets are unusual gets pairing that matches them for free.\n\n\
+         A string quote is not a delimiter in this sense and answers nil: the same character \
+         both opens and closes it, so `syntax-class' already says all there is to say. A \
+         caller that pairs quotes tests for `string' and uses CHAR itself.\n\n\
+         Example:\n\
+         (matching-delimiter \"(\")            => \")\"\n\
+         (matching-delimiter \"]\")            => \"[\"\n\
+         (matching-delimiter \"x\")            => nil";
+
+primitive!(matching_delimiter, args, _env, ctx, {
+    if args.is_empty() || args.len() > 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let text = string_arg(&args[0])?;
+    let Some(c) = text.chars().next() else {
+        return Err(EvalError::RuntimeMessage(
+            "matching-delimiter wants a character, and was given an empty string".into(),
+        ));
+    };
+    let mode = match args.get(1) {
+        None => None,
+        Some(exp) if exp.is_nil() => None,
+        Some(exp) => Some(string_arg(exp)?),
+    };
+    let mode = match mode {
+        Some(mode) => mode,
+        None => ctx
+            .get_current_buffer()
+            .read()
+            .expect("Failed to acquire read lock on buffer")
+            .current_mode
+            .clone(),
+    };
+
+    let class = {
+        let registry = ctx
+            .mode_registry
+            .read()
+            .expect("Failed to acquire read lock on mode_registry");
+        let table = registry
+            .get(&mode)
+            .and_then(|mode| mode.syntax_table.clone());
+        table.unwrap_or_default().class_of(c)
+    };
+    Ok(match class {
+        SyntaxClass::Open(closer) => ELispExp::string(closer.to_string()),
+        SyntaxClass::Close(opener) => ELispExp::string(opener.to_string()),
+        _ => ELispExp::nil(),
+    })
+});
+
 pub const SYNTAX_CLASS_DOC: &str = "(syntax-class CHAR &optional MODE): What CHAR -- a \
          one-character string -- means in major mode MODE, or in the current buffer's mode when \
          MODE is omitted. One of `open', `close', `string', `escape', `prefix', `symbol' or \
