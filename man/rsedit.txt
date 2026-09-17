@@ -1,0 +1,37 @@
+NAME
+    rsedit - an editor with an embedded Lisp
+
+DESCRIPTION
+    rsedit is a text editor whose behaviour is written in its own Lisp. The
+    Rust underneath provides mechanisms that cannot sensibly be swapped --
+    the buffer, the display, the evaluator -- and policy lives in `.lisp`
+    modules that can be read, edited and reloaded.
+
+    The division is deliberate and load-bearing. If Rust reads it, it is a
+    field; if only Lisp reads it, it is a variable. A feature that can be
+    expressed as a module is one, which is why dired, the completion strip,
+    electric-pair and this manual reader are all Lisp.
+
+MODULES
+    Loaded by your init.lisp, in order, each written against what the ones
+    above it define. Comment one out and the editor comes up without it,
+    missing exactly that feature and nothing else.
+
+    commands            defcommand, and the command registry's Lisp side
+    debug               message, and the *Messages* buffer
+    common-keymaps      the default bindings
+    indent              what Tab does; a mode plugs its own rule in
+    minibuffer          commands built on the built-in prompt
+    completion          the strip that narrows as you type
+    completion-at-point where completions come from
+    dired               a directory in a buffer, and C-x C-r
+    buffer-list         C-x b, and C-x C-b
+    clipboard           kills also reach the system clipboard
+    electric-pair       closing delimiters that type themselves
+    shell               M-! and its output buffer
+    manpage             this
+    rust-mode           colouring for Rust
+    risp-mode           colouring and indentation for rsedit's own Lisp
+
+SEE ALSO
+    buffers, windows, completion, modes, keymaps

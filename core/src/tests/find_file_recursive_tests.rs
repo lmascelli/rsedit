@@ -1,5 +1,8 @@
 //! The recursive walk, and the .gitignore reading built on top of it.
 //!
+//! The Lisp half lives in `dired.lisp` now rather than in a module of its own:
+//! it is a way of getting at files, which is what that module is for.
+//!
 //! Two layers with a deliberate seam between them. `directory-files-recursive'
 //! knows how to walk and how to *not* descend; everything about which files are
 //! worth offering is Lisp. The tests follow that split.
@@ -31,7 +34,7 @@ mod tests {
             include_str!("../../lisp/commands.lisp"),
             include_str!("../../lisp/debug.lisp"),
             include_str!("../../lisp/completion.lisp"),
-            include_str!("../../lisp/find-file-recursive.lisp"),
+            include_str!("../../lisp/dired.lisp"),
         ] {
             eval_str(source, &env, &ctx).expect("loading the shipped lisp");
         }

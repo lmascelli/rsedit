@@ -2,6 +2,30 @@
 #+title: rsedit
 
 * Fixes todo
+- [X] find-file should handle also:
+      - opening a new file in a new unsaved buffer
+      - opening a directory if dired is loaded (this can be done by defining a global variable
+        *open-directory-callback* that dired install when loaded)
+      A missing path gives an empty buffer that remembers where it goes, not marked modified --
+      nothing was written, so leaving asks nothing and `save-buffer' creates the file. A
+      directory goes to `*open-directory-callback*', which dired sets when it loads; nothing in
+      the editor mentions dired. Two files of the same name in different directories now both
+      open, as `mod.rs' and `mod.rs<2>', and re-opening a file returns to its buffer rather
+      than re-reading over your edits.
+- [X] opening the same buffer in two different windows and killing the buffer leave a window
+      with a dangling buffer reference causing when closing it an unwrap call in the
+      get_current_buffer function
+      `close_buffer' repointed the focused window only. Every window showing the buffer is
+      repointed now, at the most recently used buffer that still exists -- which needed a
+      recency list, since the buffer table is a HashMap with no order at all. The panic is
+      left in place: with the cause fixed, a stale current-buffer name means a broken
+      invariant and should say so loudly rather than limp on.
+- [X] i think find-file-recursive can be part of the dired module not a separate one to avoid
+      spreading tons of modules for a single feature and should open a minibuffer where the
+      user can insert the file to search.
+      Folded into dired.lisp and reshaped as a prompt: the tree is walked once when the command
+      starts and narrowed from that snapshot as you type. Walking per keystroke would be
+      thousands of directory reads per character on a real project.
 
 * Macro todo 
 - [X] Switch to buffer command and buffer-list major mode
@@ -24,6 +48,34 @@
       command gets its own buffer, since two sharing one would interleave their lines. The
       running count is what keeps the renderer waking up -- the same problem `colouring_pending'
       solves for syntax highlighting.
+- [X] manpage-mode: add to the global variables a list of path where to search for manpages.
+                    when compiled for linux the default manpages dirs should be part of the
+                    list at the start. provide a function to open the word under the cursor
+                    as manpage if available and an other one to open a minibuffer to prompt
+                    the user what manpages to open. also should provide a capf function to
+                    list all available manpages that can be used for the minibuffer
+                    completion of the second function
+      `manpage-path' is handed to `man' as MANPATH, so it controls what is found as well as
+      what is listed. `K' opens the word under the cursor, `C-h m' prompts with completion,
+      and `capf-manpage-names' is the completion source. New primitives: getenv, setenv,
+      path-separator, shell-command-to-string, strip-overstrike, data-directory.
+      NOTE: the overstrike is *stripped* rather than turned into faces. This editor faces text
+      through its mode's syntax rules and has nothing that can face an arbitrary span -- no
+      text properties, no overlays -- so the emphasis is recovered from structure instead (a
+      heading is a word alone at the left margin). Bold mid-sentence would need an overlay
+      mechanism, which is a feature of its own.
+- [~] rsedit manpages: the base interpreter standard library, the editor functions and the
+                       modules should provide a manpage that can be consulted when creating
+                       rsedit code. The location of this pages should be in the root of the
+                       project under man folder and when compiled they should be copied in
+                       the data folder that is created in the target directory alongside the
+                       lisp one where modules are copied.
+      Infrastructure done, content started. man/*.txt is copied to data/man beside data/lisp,
+      `data-directory' finds it, and rsedit's pages are searched before the system's so `K' on
+      `insert' gives this editor's. Written so far: rsedit, buffers, windows, and a README
+      stating the format. The rest is writing -- every primitive already carries a doc string
+      that `function-doc' and C-M-i will show, so these pages are for what a doc string cannot
+      say: how the pieces fit and why they are shaped that way.
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 

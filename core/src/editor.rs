@@ -208,6 +208,23 @@ pub struct EditorState<B: BufferTrait> {
     /// keymap does not need copying to be remembered.
     last_command: Arc<RwLock<Option<Arc<String>>>>,
 
+    /// Buffer names in the order they were last current, most recent first.
+    ///
+    /// # What it is for
+    ///
+    /// Answering "and what should I show instead?". When a buffer is killed,
+    /// every window showing it needs somewhere to point, and `*scratch*` is a
+    /// poor answer when the person had three files open -- they want one of
+    /// the files. That question cannot be answered from the buffer table,
+    /// which is a `HashMap` and has no order at all.
+    ///
+    /// Updated by [`Self::set_current_buffer_name`], which is the one place a
+    /// buffer becomes current, so nothing else has to remember to record
+    /// anything. Names of killed buffers are left in the list rather than
+    /// pruned on every kill; readers skip the ones that are gone, which costs
+    /// a lookup there and saves a scan on a path that runs per keystroke.
+    buffer_recency: Arc<RwLock<Vec<String>>>,
+
     /// How many shell commands are still running.
     ///
     /// # Why the editor counts them
@@ -483,6 +500,7 @@ impl<B: BufferTrait> EditorState<B> {
             last_command_form: Arc::new(RwLock::new(None)),
             global_hooks: Arc::new(RwLock::new(HashMap::new())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
+            buffer_recency: Arc::new(RwLock::new(Vec::new())),
             kill_ring: Arc::new(RwLock::new(KillRing::default())),
             pending_clipboard: Arc::new(RwLock::new(None)),
             theme: Arc::new(RwLock::new(Arc::new(Theme::default()))),
@@ -683,6 +701,39 @@ impl<B: BufferTrait> EditorState<B> {
             buffers_lock.insert(name.to_string(), Arc::new(RwLock::new(new_buf)));
             Some(name.to_string())
         }
+    }
+
+    /// An empty buffer that will be saved to PATH, for a file that is not
+    /// there yet.
+    ///
+    /// # Why this is not `new_buffer` with a path
+    ///
+    /// That one reads the file, and reports failure when it cannot. A file
+    /// that does not exist is not a failure here -- it is the ordinary way a
+    /// file gets created, by opening it and typing. So this makes the empty
+    /// buffer and remembers where it goes.
+    ///
+    /// The buffer is *not* modified. An empty buffer with no changes is the
+    /// truth: nothing has been written, so leaving without saving loses
+    /// nothing and should ask nothing. `C-x C-s` creates the file, because
+    /// saving writes `file_path` whether or not anything was typed.
+    pub(crate) fn new_file_buffer(
+        &self,
+        name: &str,
+        path: &str,
+        start_mode: Option<String>,
+    ) -> String {
+        let mut new_buf = Buffer::new(name);
+        new_buf.current_mode = start_mode
+            .or_else(|| self.auto_mode_for(path))
+            .unwrap_or_else(|| "fundamental-mode".into());
+        new_buf.file_path = Some(path.to_string());
+        self.buffers
+            .write()
+            .expect("Failed to get write lock on buffers")
+            .insert(name.to_string(), Arc::new(RwLock::new(new_buf)));
+        self.show_in_focused_window(name);
+        name.to_string()
     }
 
     /// Make the buffer named NAME the one shown in the focused window and
@@ -1886,16 +1937,34 @@ impl<B: BufferTrait> EditorState<B> {
                 .remove(idx)
                 .previous_focused_window_id;
             self.set_focused_window_id(restore_id);
-        } else if let Some(window) = self
-            .layout_root
+        }
+
+        // *Every* tiled window showing it, not only the focused one.
+        //
+        // # The bug this fixes
+        //
+        // This used to repoint the focused window alone. Open one buffer in
+        // two windows, kill it, and the other window was left naming a buffer
+        // that no longer existed. Nothing complained until focus moved there
+        // -- at which point `current_buffer_name` became that dead name and
+        // the next `get_current_buffer` hit its "Corruption in the hashmap of
+        // buffers" panic, taking the editor down with whatever was unsaved in
+        // the other windows.
+        //
+        // Worked out before the layout lock is taken: `most_recent_buffer`
+        // reads `buffer_recency` and the buffer table, and taking those while
+        // holding the layout would invert the canonical lock order.
+        let replacement = self
+            .most_recent_buffer(name)
+            .unwrap_or_else(|| "*scratch*".to_string());
+        self.layout_root
             .write()
             .expect("Failed to acquire write lock on layout_root")
-            .window_mut(self.get_focused_window_id())
-        {
-            if window.buffer_name == name {
-                window.buffer_name = "*scratch*".into();
-            }
-        }
+            .each_window_mut(&mut |window| {
+                if window.buffer_name == name {
+                    window.buffer_name = replacement.clone();
+                }
+            });
 
         {
             let mut buffers = self
@@ -1913,7 +1982,15 @@ impl<B: BufferTrait> EditorState<B> {
 
         let current = self.current_buffer_name_shared();
         if &*current == name || self.get_buffer(&current).is_none() {
-            self.set_current_buffer_name("*scratch*");
+            // The same buffer the windows were repointed at, so that what is
+            // current and what is on screen agree. They disagreeing is how the
+            // panic above was reached in the first place.
+            let fallback = if self.get_buffer(&replacement).is_some() {
+                replacement
+            } else {
+                "*scratch*".to_string()
+            };
+            self.set_current_buffer_name(&fallback);
         }
 
         self.run_hook(&closing_mode, "after-close-hook", env);
@@ -2896,6 +2973,39 @@ impl<B: BufferTrait> EditorState<B> {
             .current_buffer_name
             .write()
             .expect("Failed to acquire write lock on current_buffer_name") = Arc::from(name);
+        self.record_buffer_use(name);
+    }
+
+    /// Move NAME to the front of the recency list.
+    fn record_buffer_use(&self, name: &str) {
+        let mut recency = self
+            .buffer_recency
+            .write()
+            .expect("Failed to acquire write lock on buffer_recency");
+        if recency.first().is_some_and(|first| first == name) {
+            // Already the most recent, which is the common case by far: this
+            // runs whenever a buffer becomes current, `with-current-buffer'
+            // included, so it is worth not touching the list at all.
+            return;
+        }
+        recency.retain(|existing| existing != name);
+        recency.insert(0, name.to_string());
+    }
+
+    /// The most recently current buffer that still exists and is not EXCEPT.
+    ///
+    /// `None` when there is no such buffer. The caller answers that for
+    /// itself -- there is always `*scratch*`, but falling back to it is a
+    /// policy this does not get to make.
+    pub(crate) fn most_recent_buffer(&self, except: &str) -> Option<String> {
+        let recency = self
+            .buffer_recency
+            .read()
+            .expect("Failed to acquire read lock on buffer_recency");
+        recency
+            .iter()
+            .find(|name| name.as_str() != except && self.get_buffer(name).is_some())
+            .cloned()
     }
 
     /// Make NAME the current buffer without showing it, and give back whatever
@@ -3158,9 +3268,9 @@ pub fn create_global_env<B: BufferTrait>()
 (eval-file "completion")  ; Tab shows every candidate at once, in a strip
 (eval-file "clipboard")   ; kills also go to the system clipboard
 (eval-file "electric-pair") ; typing "(" gives you "()"
-(eval-file "find-file-recursive") ; C-x C-r: open any file under this directory
 (eval-file "buffer-list")  ; C-x b to switch, C-x C-b for the whole list
 (eval-file "shell")       ; M-! runs a command and shows what it said
+(eval-file "manpage")     ; C-h m, and K on a word
 
 ;; Where completions come from, for C-M-i in a buffer. The command is built in
 ;; and works without this; what this adds is the five sources it asks. Take one

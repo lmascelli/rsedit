@@ -1,0 +1,26 @@
+NAME
+    windows - what shows a buffer
+
+DESCRIPTION
+    A window is a view onto a buffer. Two windows may show one buffer; they
+    share its point, because the point belongs to the buffer.
+
+    Windows tile: splitting divides one into two, and closing one gives its
+    space back to its sibling. A floating window -- the minibuffer, a
+    completion strip -- sits above the tiling and is not part of it.
+
+SIZES
+    split-window-right and split-window-below take an optional size, which
+    is what the window being split *keeps*. That way round is deliberate:
+    the window with an opinion about its width is the one asking, and it
+    should keep that width when the frame is resized.
+
+        (split-window-right 40)   ; this window keeps 40 columns
+
+KILLING A BUFFER
+    Every window showing it is repointed at the most recently used buffer
+    that still exists. A window is never left naming something that is not
+    there.
+
+SEE ALSO
+    buffers, (selected-window), (select-window), (delete-window)

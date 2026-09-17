@@ -700,10 +700,28 @@ pub fn install_primitives<B: BufferTrait>(
         shell::SHELL_COMMAND_START_DOC
     );
     insert_fn!(
+        "shell-command-to-string",
+        shell::shell_command_to_string,
+        shell::SHELL_COMMAND_TO_STRING_DOC
+    );
+    insert_fn!(
+        "strip-overstrike",
+        shell::strip_overstrike,
+        shell::STRIP_OVERSTRIKE_DOC
+    );
+    insert_fn!(
         "shell-command-running-p",
         shell::shell_command_running_p,
         shell::SHELL_COMMAND_RUNNING_P_DOC
     );
+    insert_fn!(
+        "data-directory",
+        io::data_directory,
+        io::DATA_DIRECTORY_DOC
+    );
+    insert_fn!("getenv", io::getenv, io::GETENV_DOC);
+    insert_fn!("setenv", io::setenv, io::SETENV_DOC);
+    insert_fn!("path-separator", io::path_separator, io::PATH_SEPARATOR_DOC);
     insert_fn!("list-dir", io::list_dir, io::LIST_DIR_DOC);
     insert_fn!(
         "directory-files-recursive",

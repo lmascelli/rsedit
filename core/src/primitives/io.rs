@@ -1,37 +1,123 @@
 use super::*;
 
-pub const FIND_FILE_DOC: &str = "(find-file PATH): Open the file at PATH into a new buffer named \
-         after PATH's file name (or PATH itself if it has none), make it the \
-         current buffer, and return its buffer name. Returns nil (logging a \
-         diagnostic) if the file can't be read.\n\n\
+pub const FIND_FILE_DOC: &str = "(find-file PATH): Open PATH into a buffer, make it current, and \
+         return the buffer's name.\n\n\
+         The buffer is named after PATH's file name, or after PATH itself when it has none. A \
+         name already taken by a buffer visiting a *different* file gets a suffix -- \
+         `mod.rs<2>' -- so that two files of the same name in different directories can both be \
+         open. Opening a file that is already open returns to its buffer rather than reading it \
+         again.\n\n\
+         A PATH that does not exist yet is not an error: an empty buffer is made that remembers \
+         where it goes, and `save-buffer' creates the file. It is *not* marked modified, since \
+         nothing has been written -- so leaving without saving loses nothing and asks nothing. \
+         The echo area says \"(New file)\", which is the only thing distinguishing it from an \
+         empty file that does exist.\n\n\
+         A PATH that is a directory is handed to `*open-directory-callback*' -- the function \
+         `dired' installs when it loads -- and its answer is returned. With nothing installed, \
+         this reports that PATH is a directory rather than failing obscurely on the read. That \
+         variable is the whole of what the editor knows about file managers: nothing here \
+         mentions `dired', and a different one can be installed instead.\n\n\
+         Returns nil (logging a diagnostic) if the file exists but cannot be read.\n\n\
          Example:\n\
          (find-file \"/home/me/notes.txt\") => \"notes.txt\"";
 
-primitive!(find_file, args, _env, ctx, {
-    if let Some(ELispExp::String(path_str)) = args.first() {
-        // Expanded before anything else looks at it, so that the `~/...` a
-        // completion candidate offers is a path that can actually be opened.
-        let path_str = expand_path(path_str);
-        let path = std::path::Path::new(&path_str);
-        let file_name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let buf_name = if file_name.is_empty() {
-            path_str.to_string()
-        } else {
-            file_name
-        };
-        match ctx.new_buffer(&buf_name, Some(&path_str), None) {
-            Some(buf_name) => Ok(ELispExp::string(buf_name)),
-            None => Ok(ELispExp::nil()),
-        }
+/// The buffer name to use for PATH: its file name, made unique.
+///
+/// A buffer already visiting this exact file is returned as `Err`, meaning
+/// "there is nothing to open, go there". Otherwise the plain file name, with
+/// `<2>`, `<3>`... appended if that name is taken by something else -- which is
+/// what lets two `mod.rs` from different directories both be open, the case
+/// that made this worth doing at all.
+fn buffer_name_for<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> Result<String, String> {
+    let file_name = std::path::Path::new(path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let base = if file_name.is_empty() {
+        path.to_string()
     } else {
-        Err(EvalError::WrongArgumentType {
+        file_name
+    };
+    let visiting = |name: &str| -> Option<String> {
+        ctx.get_buffer(name).and_then(|handle| {
+            handle
+                .read()
+                .expect("Failed to acquire read lock on buffer")
+                .file_path
+                .clone()
+        })
+    };
+    if ctx.get_buffer(&base).is_none() {
+        return Ok(base);
+    }
+    if visiting(&base).as_deref() == Some(path) {
+        return Err(base);
+    }
+    for n in 2.. {
+        let candidate = format!("{base}<{n}>");
+        if ctx.get_buffer(&candidate).is_none() {
+            return Ok(candidate);
+        }
+        if visiting(&candidate).as_deref() == Some(path) {
+            return Err(candidate);
+        }
+    }
+    unreachable!("the loop above returns")
+}
+
+primitive!(find_file, args, env, ctx, {
+    let Some(ELispExp::String(path_str)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
             expected: "String".into(),
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
-        })
+        });
+    };
+    // Expanded before anything else looks at it, so that the `~/...` a
+    // completion candidate offers is a path that can actually be opened.
+    let path_str = expand_path(path_str);
+    let path = std::path::Path::new(&path_str);
+
+    // A directory is somebody else's job. The editor knows only that there is
+    // a variable to ask; what answers it -- `dired', or something else
+    // entirely -- it never learns.
+    if path.is_dir() {
+        return match env.get_variable("*open-directory-callback*") {
+            Some(callback) if callback.is_truthy() => crate::lisp::call_callable(
+                &callback,
+                &[ELispExp::string(path_str.clone())],
+                env.clone(),
+                ctx,
+            ),
+            _ => {
+                ctx.set_echo_message(&format!("{path_str} is a directory"));
+                Ok(ELispExp::nil())
+            }
+        };
+    }
+
+    let buf_name = match buffer_name_for(ctx, &path_str) {
+        // Already open. Going back to it is what was meant, and reading the
+        // file again would throw away whatever had been typed into it.
+        Err(existing) => {
+            ctx.switch_to_buffer(&existing);
+            return Ok(ELispExp::string(existing));
+        }
+        Ok(name) => name,
+    };
+
+    if !path.exists() {
+        let name = ctx.new_file_buffer(&buf_name, &path_str, None);
+        // Said out loud, because an empty buffer for a file that does not
+        // exist looks exactly like an empty buffer for one that does -- and
+        // the difference matters when the reason is a typo in the path.
+        ctx.set_echo_message("(New file)");
+        return Ok(ELispExp::string(name));
+    }
+
+    match ctx.new_buffer(&buf_name, Some(&path_str), None) {
+        Some(buf_name) => Ok(ELispExp::string(buf_name)),
+        None => Ok(ELispExp::nil()),
     }
 });
 
@@ -843,4 +929,157 @@ primitive!(read_file_to_string, args, _env, ctx, {
             Ok(ELispExp::nil())
         }
     }
+});
+
+// ---------------------------------------------------------------------------
+// The environment
+// ---------------------------------------------------------------------------
+
+pub const GETENV_DOC: &str = "(getenv NAME): The value of the environment variable NAME, or nil \
+         if it is not set.\n\n\
+         nil is also the answer for a variable whose value is not valid Unicode, which cannot be \
+         told apart from unset here. The alternative is a second kind of nil, and nothing in \
+         this editor would do anything different with it.\n\n\
+         Example:\n\
+         (getenv \"HOME\") => \"/home/user\"\n\
+         (getenv \"MANPATH\")";
+
+primitive!(getenv, args, _env, _ctx, {
+    let Some(ELispExp::String(name)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+        });
+    };
+    Ok(match std::env::var(name.as_str()) {
+        Ok(value) => ELispExp::string(value),
+        Err(_) => ELispExp::nil(),
+    })
+});
+
+pub const SETENV_DOC: &str = "(setenv NAME &optional VALUE): Set the environment variable NAME to \
+         VALUE, or remove it when VALUE is omitted or nil. Returns VALUE.\n\n\
+         The change applies to this editor and to every process it starts afterwards -- which is \
+         the point: `(setenv \"MANPATH\" ...)' before running `man' is how `manpage-mode' \
+         decides where pages are looked for. It does not reach the shell that started the \
+         editor, because no process can change its parent's environment.\n\n\
+         Cross-platform: this is `std::env`, not a shell builtin, so it means the same thing \
+         everywhere.\n\n\
+         Example:\n\
+         (setenv \"MANPATH\" \"/usr/share/man:/usr/local/share/man\")\n\
+         (setenv \"PAGER\")        ; remove it";
+
+primitive!(setenv, args, _env, _ctx, {
+    if args.is_empty() || args.len() > 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let ELispExp::String(name) = &args[0] else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args[0].clone(),
+        });
+    };
+    // An empty or otherwise impossible name would panic inside `set_var`, and
+    // a typo in a configuration file should not take the editor down.
+    if name.is_empty() || name.contains('=') || name.contains('\0') {
+        return Err(EvalError::RuntimeMessage(format!(
+            "{name:?} is not a usable environment variable name"
+        )));
+    }
+    match args.get(1) {
+        None => {
+            // SAFETY: single-threaded with respect to the environment -- see
+            // the note on `set_var` below.
+            unsafe { std::env::remove_var(name.as_str()) };
+            Ok(ELispExp::nil())
+        }
+        Some(exp) if exp.is_nil() => {
+            unsafe { std::env::remove_var(name.as_str()) };
+            Ok(ELispExp::nil())
+        }
+        Some(ELispExp::String(value)) => {
+            if value.contains('\0') {
+                return Err(EvalError::RuntimeMessage(
+                    "an environment variable's value cannot contain a null byte".into(),
+                ));
+            }
+            // SAFETY: `set_var` is unsafe because another thread reading the
+            // environment at the same moment is undefined behaviour. This
+            // editor's other threads -- the background worker -- read it only
+            // when spawning a process, which happens on the command thread
+            // that is running this. Nothing else touches it.
+            unsafe { std::env::set_var(name.as_str(), value.as_str()) };
+            Ok(ELispExp::string(value.to_string()))
+        }
+        Some(other) => Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: other.clone(),
+        }),
+    }
+});
+
+pub const PATH_SEPARATOR_DOC: &str = "(path-separator): The character this platform puts between \
+         paths in a variable like PATH or MANPATH, as a string: \":\" on Unix, \";\" on \
+         Windows.\n\n\
+         Asked rather than assumed, for the reason `dired--parent' asks what a directory \
+         separator is: writing \":\" is one platform's rule spelled as though it were the rule, \
+         and the resulting MANPATH is one long nonsense entry on the other.\n\n\
+         Example:\n\
+         (setenv \"MANPATH\" (string-join manpage-path (path-separator)))";
+
+primitive!(path_separator, _args, _env, _ctx, {
+    Ok(ELispExp::string(
+        if cfg!(windows) { ";" } else { ":" }.to_string(),
+    ))
+});
+
+pub const DATA_DIRECTORY_DOC: &str = "(data-directory &optional KIND): The directory the editor's \
+         own data was installed into, or nil if it cannot be worked out.\n\n\
+         With KIND -- a string like \"man\" or \"lisp\" -- the subdirectory of it. These sit \
+         beside the executable, put there at build time, because they are read at runtime and \
+         the source tree they came from may not be present.\n\n\
+         This is what `lisp-path' is built from, and what `rsedit-man' looks in for the \
+         editor's own manual pages.\n\n\
+         Example:\n\
+         (data-directory \"man\") => \"/path/to/target/debug/data/man\"";
+
+primitive!(data_directory, args, _env, ctx, {
+    let kind = match args.first() {
+        None => None,
+        Some(exp) if exp.is_nil() => None,
+        Some(ELispExp::String(kind)) => Some(kind.to_string()),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let Ok(exe) = std::env::current_exe() else {
+        ctx.log_diagnostic("Cannot find the rsedit executable, so nor its data directory");
+        return Ok(ELispExp::nil());
+    };
+    let Some(parent) = exe.parent() else {
+        return Ok(ELispExp::nil());
+    };
+    // Beside the executable normally. One level up as well, because a test
+    // binary lives in `target/<profile>/deps/` while the data was put in
+    // `target/<profile>/data/` -- so without this the editor's own pages are
+    // unreachable from every test that looks for them, which is exactly the
+    // code that needs testing.
+    let candidates = [parent.join("data"), parent.join("..").join("data")];
+    let base = candidates
+        .iter()
+        .find(|path| path.is_dir())
+        // Nothing installed. The first candidate is still the right answer to
+        // report: a caller wants to be told where it looked.
+        .unwrap_or(&candidates[0]);
+    let path = match kind {
+        Some(kind) => base.join(kind),
+        None => base.clone(),
+    };
+    Ok(ELispExp::string(path.display().to_string()))
 });

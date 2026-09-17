@@ -1,0 +1,27 @@
+NAME
+    buffers - where text lives
+
+DESCRIPTION
+    A buffer holds text, a point, a mark, an undo history and a major mode.
+    It may be visiting a file, and it may not: *scratch*, *Messages* and a
+    directory listing are all buffers with no file behind them.
+
+    Exactly one buffer is current at a time. Commands act on it without
+    being told which, which is why most of them take no buffer argument.
+
+THE TWO DOORS
+    Every change to a buffer's text goes through one of two functions in
+    Rust: insert_text and delete_range. Undo, the mark, the version stamp
+    the highlighter reads, and the read-only refusal all hang off those two.
+
+    This matters when writing Lisp: there is no way to change text that
+    skips them, and that is on purpose. A buffer that refuses edits refuses
+    all of them.
+
+READ-ONLY
+    set-buffer-read-only makes a buffer refuse changes. A listing uses it so
+    that what is on screen is a drawing rather than something typed into.
+    The flag is checked at the doors above, so nothing gets past it.
+
+SEE ALSO
+    windows, modes, (buffer-string), (buffer-file-name), (buffer-modified-p)

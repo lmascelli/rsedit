@@ -220,6 +220,21 @@ impl LayoutNode {
     /// `find-file` and `switch-to-buffer` replaced the buffer in the leftmost
     /// window rather than the focused one. The file opened in the window you
     /// were not looking at.
+    /// Every window in this subtree, in layout order.
+    ///
+    /// Added for the one job that has to touch all of them rather than one by
+    /// id: when a buffer is killed, *every* window showing it is left naming
+    /// something that no longer exists, not only the focused one.
+    pub fn each_window_mut(&mut self, visit: &mut impl FnMut(&mut Window)) {
+        match self {
+            LayoutNode::Leaf(window) => visit(window),
+            LayoutNode::Split { left, right, .. } => {
+                left.each_window_mut(visit);
+                right.each_window_mut(visit);
+            }
+        }
+    }
+
     pub fn window_mut(&mut self, id: usize) -> Option<&mut Window> {
         match self {
             LayoutNode::Leaf(window) => {

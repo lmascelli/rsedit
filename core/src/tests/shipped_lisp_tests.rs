@@ -35,12 +35,9 @@ mod tests {
         ("completion", include_str!("../../lisp/completion.lisp")),
         ("clipboard", include_str!("../../lisp/clipboard.lisp")),
         ("electric-pair", include_str!("../../lisp/electric-pair.lisp")),
-        (
-            "find-file-recursive",
-            include_str!("../../lisp/find-file-recursive.lisp"),
-        ),
         ("buffer-list", include_str!("../../lisp/buffer-list.lisp")),
         ("shell", include_str!("../../lisp/shell.lisp")),
+        ("manpage", include_str!("../../lisp/manpage.lisp")),
     ];
 
     fn loaded() -> (Ctx, Arc<Env<Ctx>>) {
@@ -66,8 +63,7 @@ mod tests {
     fn the_commands_the_new_modules_define_are_registered() {
         let (ctx, env) = loaded();
         for name in [
-            "find-file-recursive",
-            "electric-pair-delete-backward",
+                        "electric-pair-delete-backward",
             "insert-pasted-text",
         ] {
             let ast = Parser::new(&format!("(commandp '{name})"))

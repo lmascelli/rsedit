@@ -237,3 +237,74 @@ primitive!(shell_command_running_p, _args, _env, ctx, {
         ELispExp::number(running as f64)
     })
 });
+
+pub const SHELL_COMMAND_TO_STRING_DOC: &str = "(shell-command-to-string COMMAND): Run COMMAND with \
+         the shell, wait for it, and return everything it wrote to standard output as a \
+         string.\n\n\
+         **This blocks the editor until the command finishes.** Use it for commands that are \
+         bounded and quick -- `man ls', `git rev-parse HEAD' -- and `shell-command-start' for \
+         anything that might not be. There is no timeout: `shell-command-to-string \\\"sleep \
+         600\\\"' stops the editor for ten minutes, and that is the caller's to avoid.\n\n\
+         Blocking is the point rather than an oversight. A caller that wants the output as a \
+         *value* has nowhere to put an answer that arrives later: the background worker cannot \
+         call back into Lisp, so an asynchronous version of this could only write into a buffer, \
+         which is what `shell-command-start' already does.\n\n\
+         Standard error is not included, and a non-zero exit is not an error here -- whatever \
+         was printed is returned either way. Returns nil (reporting it) if the command could \
+         not be started at all.\n\n\
+         Example:\n\
+         (shell-command-to-string \\\"git rev-parse --short HEAD\\\")";
+
+primitive!(shell_command_to_string, args, _env, ctx, {
+    let Some(ELispExp::String(command)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+        });
+    };
+    match shell_invocation(command).output() {
+        Ok(output) => Ok(ELispExp::string(
+            String::from_utf8_lossy(&output.stdout).to_string(),
+        )),
+        Err(why) => {
+            ctx.set_echo_message(&format!("Cannot run the shell: {why}"));
+            Ok(ELispExp::nil())
+        }
+    }
+});
+
+pub const STRIP_OVERSTRIKE_DOC: &str = "(strip-overstrike TEXT): TEXT with terminal overstrike \
+         sequences removed.\n\n\
+         `man' marks bold by printing a character, a backspace and the same character again \
+         (`e\\\\be'), and underline by printing an underscore, a backspace and the character \
+         (`_\\\\be'). It is how formatting was done on a printer that could only strike the same \
+         spot twice, and it is still what comes out of `man' today. Left in, every emphasised \
+         word is unreadable.\n\n\
+         The formatting is dropped rather than translated, because this editor gives text a \
+         face through its mode's syntax rules and has no way to face an arbitrary span. A mode \
+         showing this output recovers the emphasis from the structure -- a heading is a heading \
+         because of where it sits, not because `man' doubled its letters.\n\n\
+         Example:\n\
+         (strip-overstrike \\\"N\\\\bNA\\\\bAM\\\\bME\\\\bE\\\") => \\\"NAME\\\"";
+
+primitive!(strip_overstrike, args, _env, _ctx, {
+    let Some(ELispExp::String(text)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+        });
+    };
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c == '\u{8}' {
+            // The backspace says "what I printed last did not count". Dropping
+            // the character before it is the whole of the rule, and it is why
+            // this cannot be done with a regexp over pairs: `_\bx` and `x\bx`
+            // are the same operation on different inputs.
+            out.pop();
+        } else {
+            out.push(c);
+        }
+    }
+    Ok(ELispExp::string(out))
+});
