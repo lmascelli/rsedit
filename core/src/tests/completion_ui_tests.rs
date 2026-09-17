@@ -87,6 +87,21 @@ mod tests {
         ))
     }
 
+    /// `C-n`, `C-p` -- the keys the strip binds now that bare letters have to
+    /// reach the buffer.
+    fn press_ctrl(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode) {
+        ctx.handle_key_event(
+            KeyEvent {
+                code,
+                modifiers: KeyModifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            },
+            env,
+        );
+    }
+
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode) {
         ctx.handle_key_event(
             KeyEvent {
@@ -119,6 +134,140 @@ mod tests {
 
     fn minibuffer_text(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> String {
         text_of(&run("(buffer-string)", env, ctx))
+    }
+
+    /// A prompt whose candidates actually depend on what has been typed --
+    /// which is what a real one does, and what `prompt_offering` deliberately
+    /// does not, so that the two cases can be told apart.
+    fn prompt_filtering(names: &[&str], env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        let list = names
+            .iter()
+            .map(|name| format!(r#""{name}""#))
+            .collect::<Vec<_>>()
+            .join(" ");
+        run(
+            &format!(
+                r#"(progn (setq *test-answer* nil)
+                          (minibuffer-read "Pick:"
+                            (lambda (input) (setq *test-answer* input))
+                            (lambda (input) (fuzzy-filter input (list {list})))
+                            nil))"#
+            ),
+            env,
+            ctx,
+        );
+    }
+
+    // ---------------- narrowing as you type ----------------
+
+    #[test]
+    fn typing_narrows_the_strip() {
+        let (ctx, env) = with_module();
+        prompt_filtering(&["alpha", "beta", "gamma"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        assert!(strip(&env, &ctx).contains("alpha"));
+
+        press(&ctx, &env, KeyCode::Char('b'));
+
+        let shown = strip(&env, &ctx);
+        assert!(shown.contains("beta"), "beta should survive, got {shown:?}");
+        assert!(!shown.contains("alpha"), "alpha should be gone, got {shown:?}");
+    }
+
+    #[test]
+    fn backspacing_widens_the_list_again() {
+        // Why the unnarrowed list is kept: filtering the filtered list could
+        // only ever make it smaller, and backspace has to make it bigger.
+        let (ctx, env) = with_module();
+        prompt_filtering(&["alpha", "beta"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        press(&ctx, &env, KeyCode::Char('b'));
+        assert!(!strip(&env, &ctx).contains("alpha"));
+
+        press(&ctx, &env, KeyCode::Backspace);
+
+        assert!(strip(&env, &ctx).contains("alpha"), "alpha should be back");
+    }
+
+    #[test]
+    fn moving_the_selection_does_not_re_narrow() {
+        // The refresh runs after every command, `C-n` included. Without the
+        // guard that compares against the last pattern, moving the selection
+        // would reset it to the first candidate and the key would appear dead.
+        let (ctx, env) = with_module();
+        prompt_filtering(&["alpha", "beta", "gamma"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
+        press(&ctx, &env, KeyCode::Enter);
+
+        // Into the prompt, not confirming it -- see
+        // `return_chooses_a_candidate_without_confirming_the_prompt`.
+        assert_eq!(minibuffer_text(&env, &ctx), "beta");
+    }
+
+    #[test]
+    fn typing_puts_the_selection_back_on_the_first_candidate() {
+        // The one that was selected may not even be in the list any more, so
+        // keeping the index would select something arbitrary.
+        let (ctx, env) = with_module();
+        prompt_filtering(&["alpha", "aardvark", "beta"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
+
+        press(&ctx, &env, KeyCode::Char('a'));
+        press(&ctx, &env, KeyCode::Enter);
+
+        let chosen = minibuffer_text(&env, &ctx);
+        assert!(
+            chosen.starts_with('a'),
+            "the first of what matches `a`, got {chosen:?}"
+        );
+    }
+
+    #[test]
+    fn nothing_matching_leaves_the_strip_up_saying_so() {
+        let (ctx, env) = with_module();
+        prompt_filtering(&["alpha", "beta"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+
+        press(&ctx, &env, KeyCode::Char('z'));
+
+        assert_eq!(windows(&ctx), 2, "the strip stays");
+        assert!(strip(&env, &ctx).contains("No matches"));
+    }
+
+    #[test]
+    fn choosing_with_nothing_matching_takes_nothing() {
+        let (ctx, env) = with_module();
+        prompt_filtering(&["alpha", "beta"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        press(&ctx, &env, KeyCode::Char('z'));
+
+        press(&ctx, &env, KeyCode::Enter);
+
+        // The `z` is still in the prompt and nothing replaced it, because
+        // there was nothing to replace it with.
+        assert_eq!(minibuffer_text(&env, &ctx), "z");
+    }
+
+    #[test]
+    fn a_strip_nobody_is_typing_into_is_left_alone() {
+        // A module may call the presenter directly, with no prompt and no
+        // buffer position behind it. There is no text to narrow by, and the
+        // refresh must leave such a strip standing rather than closing it --
+        // which is exactly what a `completion-choose' callback opening a
+        // second strip relies on.
+        let (ctx, env) = with_module();
+        run(
+            r#"(completion--present (list "one" "two")
+                                    (lambda (v) (setq *test-answer* v)))"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(windows(&ctx), 2, "the strip opened");
+        run("(next-line)", &env, &ctx);
+        assert_eq!(windows(&ctx), 2, "and is still there");
     }
 
     // ---------------- the editor without the module ----------------
@@ -310,13 +459,13 @@ mod tests {
         prompt_offering(&["alpha", "beta", "gamma"], &env, &ctx);
         press(&ctx, &env, KeyCode::Tab);
 
-        press(&ctx, &env, KeyCode::Char('n'));
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
         assert_eq!(selected(&env, &ctx), "beta");
-        press(&ctx, &env, KeyCode::Char('n'));
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
         assert_eq!(selected(&env, &ctx), "gamma");
-        press(&ctx, &env, KeyCode::Char('n'));
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
         assert_eq!(selected(&env, &ctx), "alpha", "past the end is the start");
-        press(&ctx, &env, KeyCode::Char('p'));
+        press_ctrl(&ctx, &env, KeyCode::Char('p'));
         assert_eq!(selected(&env, &ctx), "gamma", "and back the other way");
     }
 
@@ -340,7 +489,7 @@ mod tests {
         let (ctx, env) = with_module();
         prompt_offering(&["alpha", "beta", "gamma"], &env, &ctx);
         press(&ctx, &env, KeyCode::Tab);
-        press(&ctx, &env, KeyCode::Char('n'));
+        press_ctrl(&ctx, &env, KeyCode::Char('n'));
 
         press(&ctx, &env, KeyCode::Enter);
 
@@ -411,11 +560,13 @@ mod tests {
         );
     }
 
-    /// A modal map has to swallow what it does not bind, or a half-made choice
-    /// could be walked away from by pressing something unrelated -- leaving a
-    /// strip on screen that nothing is listening to.
+    /// The strip used to swallow every key it did not bind, so a list of forty
+    /// candidates could only be walked through one `n` at a time. It passes
+    /// them on now -- and stays up, which is the part neither of the other two
+    /// `OnUnbound` answers could give: `Refuse` could not be typed at, and
+    /// `Release` would vanish at the first letter.
     #[test]
-    fn a_key_the_strip_does_not_bind_does_nothing_at_all() {
+    fn a_key_the_strip_does_not_bind_reaches_the_prompt_and_leaves_the_strip_up() {
         let (ctx, env) = with_module();
         prompt_offering(&["alpha", "beta"], &env, &ctx);
         press(&ctx, &env, KeyCode::Tab);
@@ -423,7 +574,7 @@ mod tests {
         press(&ctx, &env, KeyCode::Char('z'));
 
         assert_eq!(windows(&ctx), 2, "the strip is still up");
-        assert_eq!(minibuffer_text(&env, &ctx), "", "and z was not typed");
+        assert_eq!(minibuffer_text(&env, &ctx), "z", "and z was typed");
     }
 
     #[test]
@@ -495,7 +646,7 @@ mod tests {
         assert!(!strip(&env, &ctx).contains("item4"), "not yet");
 
         for _ in 0..4 {
-            press(&ctx, &env, KeyCode::Char('n'));
+            press_ctrl(&ctx, &env, KeyCode::Char('n'));
         }
 
         assert!(

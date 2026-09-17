@@ -1,4 +1,5 @@
 //! Splitting the frame into windows, and moving between them.
+use crate::ui::Division;
 use super::*;
 use crate::ui::Orientation;
 
@@ -10,30 +11,70 @@ fn count(args: &[ELispExp<impl BufferTrait>]) -> isize {
     }
 }
 
-pub const SPLIT_WINDOW_BELOW_DOC: &str = "(split-window-below): Split the focused window in two, one \
-         above the other. The new window shows the same buffer at the same \
-         place; focus stays where it was.\n\n\
-         Example:\n\
-         (define-key nil \"C-x 2\" 'split-window-below)";
+/// The division a split gets, given an optional size argument.
+///
+/// With no size the two halves share the space evenly, as `C-x 2` and `C-x 3`
+/// always have. With one, *this* window -- the one being split -- keeps exactly
+/// that many rows or columns and the new one takes the rest, which is what
+/// Emacs' `split-window-right SIZE` means too.
+///
+/// Fixing the window being split rather than the new one is the useful way
+/// round: a directory listing that wants to stay 40 columns wide should keep
+/// those 40 columns when the frame is resized, and it is the file beside it
+/// that should grow.
+fn split_division<B: BufferTrait>(
+    size: Option<&ELispExp<B>>,
+) -> Result<Division, EvalError<EditorState<B>>> {
+    match size {
+        None => Ok(Division::Ratio(0.5)),
+        Some(exp) if exp.is_nil() => Ok(Division::Ratio(0.5)),
+        Some(ELispExp::Number(n)) if *n >= 0.0 => Ok(Division::FirstFixed(*n as usize)),
+        Some(other) => Err(EvalError::WrongArgumentType {
+            expected: "a non-negative Number".into(),
+            got: other.clone(),
+        }),
+    }
+}
 
-primitive!(split_window_below, _args, _env, ctx, {
-    Ok(match ctx.split_focused_window(Orientation::Horizontal) {
-        Some(_) => ELispExp::t(),
-        None => ELispExp::nil(),
-    })
+pub const SPLIT_WINDOW_BELOW_DOC: &str = "(split-window-below &optional ROWS): Split the focused \
+         window in two, one above the other. The new window shows the same buffer at the same \
+         place; focus stays where it was.\n\n\
+         With ROWS, *this* window keeps exactly that many rows and the new one takes the rest. \
+         Without it the two share the space evenly. Fixing the window being split rather than \
+         the new one is the useful way round: a window that should stay a given height should \
+         keep it when the frame is resized, and it is the other one that gives or takes.\n\n\
+         Example:\n\
+         (define-key nil \"C-x 2\" 'split-window-below)\n\
+         (split-window-below 10)   ; this window keeps 10 rows";
+
+primitive!(split_window_below, args, _env, ctx, {
+    let division = split_division(args.first())?;
+    Ok(
+        match ctx.split_focused_window(Orientation::Horizontal, division) {
+            Some(_) => ELispExp::t(),
+            None => ELispExp::nil(),
+        },
+    )
 });
 
-pub const SPLIT_WINDOW_RIGHT_DOC: &str = "(split-window-right): Split the focused window in two, side \
-         by side. The new window shows the same buffer at the same place; \
+pub const SPLIT_WINDOW_RIGHT_DOC: &str = "(split-window-right &optional COLUMNS): Split the focused \
+         window in two, side by side. The new window shows the same buffer at the same place; \
          focus stays where it was.\n\n\
+         With COLUMNS, *this* window keeps exactly that many columns and the new one takes the \
+         rest -- the same meaning Emacs' `split-window-right' gives its SIZE. Without it the two \
+         share the space evenly.\n\n\
          Example:\n\
-         (define-key nil \"C-x 3\" 'split-window-right)";
+         (define-key nil \"C-x 3\" 'split-window-right)\n\
+         (split-window-right 40)   ; this window keeps 40 columns";
 
-primitive!(split_window_right, _args, _env, ctx, {
-    Ok(match ctx.split_focused_window(Orientation::Vertical) {
-        Some(_) => ELispExp::t(),
-        None => ELispExp::nil(),
-    })
+primitive!(split_window_right, args, _env, ctx, {
+    let division = split_division(args.first())?;
+    Ok(
+        match ctx.split_focused_window(Orientation::Vertical, division) {
+            Some(_) => ELispExp::t(),
+            None => ELispExp::nil(),
+        },
+    )
 });
 
 pub const DELETE_WINDOW_DOC: &str = "(delete-window): Close the focused window; the window it was \
@@ -200,3 +241,42 @@ fn scrolled<B: BufferTrait>(ctx: &EditorState<B>, amount: isize, at_the_end: &st
         ELispExp::nil()
     }
 }
+
+pub const SELECTED_WINDOW_DOC: &str = "(selected-window): The id of the window that has focus.\n\n\
+         An id is what `select-window' and `delete-window' take, so this is how a command \
+         remembers a window to come back to. `dired' uses it for exactly that: `o' opens a file \
+         beside the listing and remembers where it put it, so pressing `o' again replaces that \
+         file rather than splitting the frame a second time.\n\n\
+         Example:\n\
+         (setq my-window (selected-window))";
+
+primitive!(selected_window, _args, _env, ctx, {
+    Ok(ELispExp::number(ctx.get_focused_window_id() as f64))
+});
+
+pub const SELECT_WINDOW_DOC: &str = "(select-window ID): Give focus to the window with ID. Returns \
+         t, or nil if no window has that id.\n\n\
+         Returning nil rather than signalling is the point: a window remembered earlier may have \
+         been closed since, and a caller that checks the answer can fall back to opening a new \
+         one. That is the whole of what \"reuse the window if it is still there\" needs.\n\n\
+         A floating window's id works here too, though focus returns to whatever had it when the \
+         float closes.\n\n\
+         Example:\n\
+         (if (select-window my-window) (find-file path) (progn (split-window-right) ...))";
+
+primitive!(select_window, args, _env, ctx, {
+    let id = match args.first() {
+        Some(ELispExp::Number(n)) if *n >= 0.0 => *n as usize,
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "a non-negative Number".into(),
+                got: other.cloned().unwrap_or_else(ELispExp::nil),
+            });
+        }
+    };
+    Ok(if ctx.select_window(id) {
+        ELispExp::t()
+    } else {
+        ELispExp::nil()
+    })
+});

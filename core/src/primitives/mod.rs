@@ -47,7 +47,7 @@ fn parse_key(seq: &str) -> Option<KeyEvent> {
     let key_code = match chars.collect::<String>().as_str() {
         "<ret>" | "<Return>" => KeyCode::Enter,
         "<esc>" | "<Escape>" => KeyCode::Esc,
-        "tab" | "<Tab>" => KeyCode::Tab,
+        "tab" | "<tab>" | "<Tab>" => KeyCode::Tab,
         "<backspace>" => KeyCode::Backspace,
         // Spelt out because a bare space is impossible to see in a key name,
         // and `C-<space>` is how `set-mark` is bound.
@@ -187,6 +187,12 @@ pub fn install_primitives<B: BufferTrait>(
         general::define_repeat_key,
         general::DEFINE_REPEAT_KEY_DOC
     );
+    insert_cmd!(
+        "repeat",
+        general::repeat,
+        [] as [&str; 0],
+        general::REPEAT_DOC
+    );
     insert_fn!("log", general::log, general::LOG_DOC);
     insert_fn!(
         "all-functions",
@@ -211,6 +217,11 @@ pub fn install_primitives<B: BufferTrait>(
         completion::completion_at_point,
         [] as [&str; 0],
         completion::COMPLETION_AT_POINT_DOC
+    );
+    insert_fn!(
+        "fuzzy-filter",
+        completion::fuzzy_filter,
+        completion::FUZZY_FILTER_DOC
     );
     insert_fn!(
         "completion-at-point-choose",
@@ -457,6 +468,16 @@ pub fn install_primitives<B: BufferTrait>(
         windows::other_window,
         ["p"],
         windows::OTHER_WINDOW_DOC
+    );
+    insert_fn!(
+        "selected-window",
+        windows::selected_window,
+        windows::SELECTED_WINDOW_DOC
+    );
+    insert_fn!(
+        "select-window",
+        windows::select_window,
+        windows::SELECT_WINDOW_DOC
     );
     insert_fn!(
         "count-windows",

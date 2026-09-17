@@ -591,6 +591,49 @@ mod tests {
         assert!(listing(&env, &ctx).contains("  sub/"));
     }
 
+    #[test]
+    fn o_pressed_again_reuses_the_window_rather_than_splitting_again() {
+        let sandbox = Sandbox::new("reuse-window");
+        sandbox.file("one.txt", "first");
+        sandbox.file("two.txt", "second");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "one.txt", &env, &ctx);
+
+        run("(dired-find-file-other-window)", &env, &ctx);
+        assert_eq!(run("(count-windows)", &env, &ctx), LispExp::number(2.0));
+
+        // Back to the listing, onto the other file, and `o` again.
+        run("(switch-to-buffer \"*dired*\")", &env, &ctx);
+        open_on(&sandbox, "two.txt", &env, &ctx);
+        run("(dired-find-file-other-window)", &env, &ctx);
+
+        // Still two windows. Walking a directory reading files should not
+        // leave the frame sliced into eight.
+        assert_eq!(run("(count-windows)", &env, &ctx), LispExp::number(2.0));
+        assert_eq!(ctx.get_current_buffer_name(), "two.txt");
+    }
+
+    #[test]
+    fn o_splits_again_when_the_window_it_used_has_been_closed() {
+        let sandbox = Sandbox::new("reuse-gone");
+        sandbox.file("one.txt", "first");
+        sandbox.file("two.txt", "second");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "one.txt", &env, &ctx);
+
+        run("(dired-find-file-other-window)", &env, &ctx);
+        run("(delete-window)", &env, &ctx);
+        assert_eq!(run("(count-windows)", &env, &ctx), LispExp::number(1.0));
+
+        open_on(&sandbox, "two.txt", &env, &ctx);
+        run("(dired-find-file-other-window)", &env, &ctx);
+
+        // A remembered window that has gone is not an error, it is a reason to
+        // open a new one.
+        assert_eq!(run("(count-windows)", &env, &ctx), LispExp::number(2.0));
+        assert_eq!(ctx.get_current_buffer_name(), "two.txt");
+    }
+
     /// `o` is the whole reason a file manager is nicer than `C-x C-f`: the
     /// listing stays on screen while the file opens beside it.
     #[test]

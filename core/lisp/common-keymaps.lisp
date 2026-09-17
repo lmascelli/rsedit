@@ -111,6 +111,13 @@
 ;; run and does its own job, so ignoring the offer costs nothing.
 (define-repeat-key 'other-window "o")
 
+;; Repeat the last command. The reason this is worth a key of its own is the
+;; commands whose binding is long: `C-x u' three times to undo three times is
+;; three two-key sequences, where `C-x u C-x z z z' is one sequence and three
+;; taps. The repeat key on `repeat' itself is what makes the tail of that work.
+(define-key nil "C-x z" 'repeat)
+(define-repeat-key 'repeat "z")
+
 ;; Incremental search. C-s opens a prompt and the buffer jumps to the first
 ;; match of whatever has been typed so far, re-searching on every keystroke.
 ;; Inside the search, C-s goes to the next match and C-r turns around; Return

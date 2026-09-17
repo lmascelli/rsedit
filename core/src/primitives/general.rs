@@ -202,6 +202,35 @@ primitive!(set_echo_message, args, _env, ctx, {
     }
 });
 
+pub const REPEAT_DOC: &str = "(repeat): Run the last command again.\n\n\
+         Emacs' `C-x z'. With `repeat' given a repeat key of its own, `C-x z z z' runs it three \
+         times more -- which is what makes it worth having over pressing the original key again: \
+         the original may be a three-key sequence, and `C-x u C-x u C-x u' to undo three times is \
+         the complaint this answers.\n\n\
+         Works for every command, including ones defined later, because it re-runs the form the \
+         last command ran rather than consulting a list of which commands may be repeated. A \
+         command that prompts will prompt again: what is remembered is the command, not the \
+         answers that were given to it.\n\n\
+         Repeating `repeat' is not a thing -- it never becomes the last command, so the second \
+         press repeats what the first one did.\n\n\
+         Returns whatever the repeated command returned, or nil (reporting it) when nothing has \
+         run yet.\n\n\
+         Example:\n\
+         (define-key nil \"C-x z\" 'repeat)\n\
+         (define-repeat-key 'repeat \"z\")";
+
+primitive!(repeat, _args, env, ctx, {
+    let Some(form) = ctx.last_command_form() else {
+        ctx.set_echo_message("No command to repeat");
+        return Ok(ELispExp::nil());
+    };
+    // Evaluated here rather than pushed back through the key handler: this is
+    // already running inside a command, so it inherits that command's undo
+    // group and hooks. Re-entering the dispatcher would open a second one
+    // inside the first.
+    crate::lisp::eval(&form, env.clone(), ctx)
+});
+
 pub const DEFINE_REPEAT_KEY_DOC: &str = "(define-repeat-key COMMAND KEY): Say that after COMMAND \
          runs, pressing KEY on its own runs it again -- and offers the same again after that, \
          until some other key is pressed.\n\n\
@@ -284,10 +313,12 @@ fn command_ast<B: BufferTrait>(
     }
 }
 
-pub const SET_TRANSIENT_KEYMAP_DOC: &str = "(set-transient-keymap BINDINGS &optional MESSAGE): \
-         Install a keymap that is consulted before every other and that **swallows every key it \
-         does not bind**, until one of its own bindings takes it down with \
-         `clear-transient-keymap'.\n\n\
+pub const SET_TRANSIENT_KEYMAP_DOC: &str = "(set-transient-keymap BINDINGS &optional MESSAGE \
+         PASS-THROUGH): Install a keymap that is consulted before every other, until one of its \
+         own bindings takes it down with `clear-transient-keymap'.\n\n\
+         With PASS-THROUGH nil -- the default -- the map **swallows every key it does not \
+         bind**. Non-nil, an unbound key is handed on to the keymaps underneath and the map \
+         stays up.\n\n\
          BINDINGS is a list of (KEY . COMMAND) pairs, where KEY is written as a binding is -- \
          \"n\", \"<ret>\", \"C-g\" -- and COMMAND is a symbol naming a function or an expression \
          to evaluate. MESSAGE, if given, is shown in the frame while the map stands, so that the \
@@ -297,6 +328,12 @@ pub const SET_TRANSIENT_KEYMAP_DOC: &str = "(set-transient-keymap BINDINGS &opti
          choice must not be walked away from by pressing something unrelated, because nothing \
          would then say it was still standing. Which is also why every such map must bind a way \
          out, `C-g' and Escape included: nothing else can take it down.\n\n\
+         PASS-THROUGH is for the third kind: a map that is a *filter*. The completion strip \
+         binds the keys that move and choose, and lets ordinary typing through to the buffer so \
+         that it narrows the list -- which needs the key to arrive *and* the map to survive. A \
+         swallowing map could not be typed at and a dismissing one would vanish at the first \
+         letter, so neither of the other answers can be bent into it. Such a map still has to \
+         bind a way out, because nothing takes it down on its own.\n\n\
          For the other kind of transient map -- an *offer*, like the `o' that keeps cycling \
          windows after `C-x o' -- see `define-repeat-key', which dismisses itself the moment \
          something else is pressed.\n\n\
@@ -309,7 +346,7 @@ pub const SET_TRANSIENT_KEYMAP_DOC: &str = "(set-transient-keymap BINDINGS &opti
                                \"[n/p to move, RET to choose]\")";
 
 primitive!(set_transient_keymap, args, env, ctx, {
-    if args.is_empty() || args.len() > 2 {
+    if args.is_empty() || args.len() > 3 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
             got: args.len(),
@@ -356,9 +393,13 @@ primitive!(set_transient_keymap, args, env, ctx, {
         Some(ELispExp::String(message)) => message.to_string(),
         _ => String::new(),
     };
+    let on_unbound = match args.get(2) {
+        Some(flag) if flag.is_truthy() => OnUnbound::Pass,
+        _ => OnUnbound::Refuse,
+    };
     ctx.set_transient_keymap(TransientKeymap {
         keymap,
-        on_unbound: OnUnbound::Refuse,
+        on_unbound,
         message,
     });
     Ok(ELispExp::t())

@@ -888,4 +888,51 @@ mod tests {
             "no column may be lost to a rule there is no room for"
         );
     }
+
+    // ----------------------------------------------------------------
+    // Splitting to a size
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn a_sized_split_keeps_that_much_for_the_window_being_split() {
+        // The window that asked keeps the columns; the new one takes the rest.
+        // This way round on purpose -- the thing with an opinion about its
+        // width is the one being split, and it should keep that width when the
+        // frame is resized.
+        let (ctx, env) = editor();
+        eval_str("(split-window-right 30)", &env, &ctx).expect("split");
+        let views = tiled(&ctx, &env);
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0].rect.width, 30, "the listing keeps what it asked");
+        assert!(
+            views[1].rect.width >= W - 31,
+            "and the new window takes the rest, got {}",
+            views[1].rect.width
+        );
+    }
+
+    #[test]
+    fn a_split_with_no_size_still_halves_the_frame() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-right)", &env, &ctx).expect("split");
+        let views = tiled(&ctx, &env);
+        assert_eq!(views.len(), 2);
+        assert!(
+            views[0].rect.width.abs_diff(views[1].rect.width) <= 1,
+            "an unsized split is still even: {} and {}",
+            views[0].rect.width,
+            views[1].rect.width
+        );
+    }
+
+    #[test]
+    fn a_fixed_width_wider_than_the_frame_still_leaves_the_other_window_something() {
+        // A window with no width renders as nothing at all, so the request is
+        // clamped rather than honoured.
+        let (ctx, env) = editor();
+        eval_str("(split-window-right 500)", &env, &ctx).expect("split");
+        let views = tiled(&ctx, &env);
+        assert_eq!(views.len(), 2);
+        assert!(views[1].rect.width >= 1, "the new window must be drawable");
+    }
 }

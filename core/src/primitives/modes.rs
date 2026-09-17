@@ -34,12 +34,20 @@ primitive!(make_mode, args, _env, ctx, {
 pub const ADD_HOOK_DOC: &str = "(add-hook MODE HOOK FUNCTION): Append the function named FUNCTION to \
          the list of functions run for HOOK (a string, e.g. \
          \"post-command-hook\") in major mode MODE. Returns t, or nil \
-         (logging a diagnostic) if MODE names an unknown mode. Unlike real \
-         Emacs Lisp's `add-hook`, hooks here are scoped to a single major \
-         mode rather than being global variables.\n\n\
+         (logging a diagnostic) if MODE names an unknown mode.\n\n\
+         MODE may be nil, meaning every mode -- the same way nil means the global keymap in \
+         `define-key'. Use that for a hook whose business has nothing to do with what kind of \
+         buffer this is: the completion strip redraws after any command that changed what was \
+         typed, and registering that in each mode separately would work until somebody defined \
+         a mode afterwards.\n\n\
+         A mode's own hooks run before the ones registered for every mode, so the specific \
+         statement about this buffer acts before anything general reacts to the result.\n\n\
+         Unlike real Emacs Lisp's `add-hook`, a hook here belongs to a mode (or to all of them) \
+         rather than being a variable that can be let-bound.\n\n\
          Example:\n\
          (defun my-mode-hook () (log \"entered my-mode\"))\n\
-         (add-hook 'my-mode \"post-command-hook\" 'my-mode-hook)";
+         (add-hook 'my-mode \"post-command-hook\" 'my-mode-hook)\n\
+         (add-hook nil \"post-command-hook\" 'something-everywhere)";
 
 primitive!(add_hook, args, _env, ctx, {
     if args.len() != 3 {
@@ -47,6 +55,20 @@ primitive!(add_hook, args, _env, ctx, {
             expected: 3,
             got: args.len(),
         });
+    }
+
+    // `nil' for the mode means every mode, the way it does in `define-key'.
+    // Checked before the pattern below, because nil *is* a symbol here and
+    // would otherwise be looked up as a mode named "nil" and reported missing.
+    if args[0].is_nil() {
+        let (ELispExp::String(hook_name), ELispExp::Symbol(func_name)) = (&args[1], &args[2]) else {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String, Symbol".into(),
+                got: args[1].clone(),
+            });
+        };
+        ctx.add_global_hook(hook_name, ELispExp::symbol(func_name.to_string()));
+        return Ok(ELispExp::t());
     }
 
     if let (ELispExp::Symbol(mode_name), ELispExp::String(hook_name), ELispExp::Symbol(func_name)) =

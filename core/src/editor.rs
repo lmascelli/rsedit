@@ -208,6 +208,29 @@ pub struct EditorState<B: BufferTrait> {
     /// keymap does not need copying to be remembered.
     last_command: Arc<RwLock<Option<Arc<String>>>>,
 
+    /// Hooks that run in every major mode, keyed by hook name.
+    ///
+    /// A mode's own hooks live on the mode (see `MajorMode::hooks`), which is
+    /// right for anything that is about *this kind of buffer*. Some things are
+    /// not: the completion strip has to redraw after any command that changed
+    /// what was typed, and what the buffer's mode happens to be has nothing to
+    /// do with it. Registering such a hook in every mode separately would work
+    /// until somebody defined a mode afterwards.
+    ///
+    /// Reached from Lisp as `(add-hook nil HOOK FUNCTION)` -- nil meaning
+    /// everywhere, the same way it does in `define-key`.
+    global_hooks: Arc<RwLock<HashMap<String, Vec<ELispExp<B>>>>>,
+
+    /// The last command as a form that can be evaluated again, which is what
+    /// `repeat` re-runs.
+    ///
+    /// Separate from `last_command` because that holds a *name*, and a name is
+    /// not enough to run anything: the keymaps store `(self-insert "a")`, and
+    /// the character is in the form rather than in the name. Stored after the
+    /// `call-interactively` rewrite, so what is kept is the form that actually
+    /// ran -- which means repeating a command that prompts, prompts again.
+    last_command_form: Arc<RwLock<Option<ELispExp<B>>>>,
+
     /// Killed and copied text, shared by every buffer so that a kill in one
     /// can be yanked into another.
     kill_ring: Arc<RwLock<KillRing>>,
@@ -442,6 +465,8 @@ impl<B: BufferTrait> EditorState<B> {
             commands: Arc::new(RwLock::new(CommandRegistry::new())),
             pending_commands: Arc::new(RwLock::new(Vec::new())),
             last_command: Arc::new(RwLock::new(None)),
+            last_command_form: Arc::new(RwLock::new(None)),
+            global_hooks: Arc::new(RwLock::new(HashMap::new())),
             kill_ring: Arc::new(RwLock::new(KillRing::default())),
             pending_clipboard: Arc::new(RwLock::new(None)),
             theme: Arc::new(RwLock::new(Arc::new(Theme::default()))),
@@ -696,7 +721,18 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// Focus stays where it was, as it does in Emacs: `C-x 2` then typing
     /// continues in the window you were already in.
-    pub(crate) fn split_focused_window(&self, orientation: Orientation) -> Option<usize> {
+    /// Split the focused window, giving the two halves DIVISION.
+    ///
+    /// `Division::Ratio(0.5)` is the ordinary `C-x 2`/`C-x 3`. A caller that
+    /// wants to keep a particular size -- a directory listing that should stay
+    /// a fixed width while the file beside it takes the rest -- passes
+    /// `Division::FirstFixed` instead, the first child being the window that
+    /// was split.
+    pub(crate) fn split_focused_window(
+        &self,
+        orientation: Orientation,
+        division: Division,
+    ) -> Option<usize> {
         let focused = self.get_focused_window_id();
         let new_id = self.get_next_window_id();
         let mut layout = self
@@ -712,7 +748,7 @@ impl<B: BufferTrait> EditorState<B> {
             ..existing
         };
         layout
-            .split_window(focused, orientation, new_window)
+            .split_window(focused, orientation, new_window, division)
             .then_some(new_id)
     }
 
@@ -1486,6 +1522,11 @@ impl<B: BufferTrait> EditorState<B> {
                 // Handed on. The map goes away and the key carries on to the
                 // keymaps below exactly as though it had never been there --
                 // which is what makes the offer free to ignore.
+                // Handed on, and the map stays. The key carries on to the
+                // keymaps below and the map is consulted again next time,
+                // which is what lets the completion strip be typed at without
+                // either swallowing the letter or dismissing itself.
+                (None, false, OnUnbound::Pass) => {}
                 (None, false, OnUnbound::Release) => {
                     // The gate is closed first and the map dropped after, the
                     // same order `clear_transient_keymap` uses -- holding the
@@ -1697,6 +1738,16 @@ impl<B: BufferTrait> EditorState<B> {
         // pressing the repeat key goes through every step the first invocation
         // did. A command with no repeat key takes down whatever the previous
         // one offered, which is what ends a run of `C-x o o o`.
+        // Remembered only for a command that is not itself `repeat'. Were
+        // `repeat' to overwrite this with its own form, the second press would
+        // repeat the repeating rather than the thing repeated, and every press
+        // after that would too.
+        if this_command.as_deref().map(String::as_str) != Some("repeat") {
+            *self
+                .last_command_form
+                .write()
+                .expect("Failed to acquire write lock on last_command_form") = Some(ast);
+        }
         self.install_repeat_keymap(this_command.as_deref().map(String::as_str));
         self.set_last_command(this_command);
     }
@@ -1751,7 +1802,7 @@ impl<B: BufferTrait> EditorState<B> {
         // callback into the interpreter. Lisp can re-enter the editor through
         // any primitive, so a lock held across `eval` is a lock offered to
         // arbitrary code.
-        let hooks: Vec<ELispExp<B>> = self
+        let mut hooks: Vec<ELispExp<B>> = self
             .mode_registry
             .read()
             .expect("Failed to acquire read lock on mode registry")
@@ -1759,6 +1810,17 @@ impl<B: BufferTrait> EditorState<B> {
             .and_then(|mode| mode.hooks.get(hook_name))
             .cloned()
             .unwrap_or_default();
+        // The mode's own first, then the ones registered for every mode. A
+        // mode-specific hook is the more specific statement about this buffer,
+        // so it gets to act before anything general reacts to the result.
+        hooks.extend(
+            self.global_hooks
+                .read()
+                .expect("Failed to acquire read lock on global hooks")
+                .get(hook_name)
+                .cloned()
+                .unwrap_or_default(),
+        );
 
         for hook in hooks {
             let hook_call = ELispExp::form(vec![hook.clone()]);
@@ -2579,6 +2641,24 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
+    /// Register FUNCTION to run under HOOK_NAME in every major mode.
+    pub(crate) fn add_global_hook(&self, hook_name: &str, function: ELispExp<B>) {
+        self.global_hooks
+            .write()
+            .expect("Failed to acquire write lock on global hooks")
+            .entry(hook_name.to_string())
+            .or_default()
+            .push(function);
+    }
+
+    /// The last command as a runnable form, for `repeat`.
+    pub(crate) fn last_command_form(&self) -> Option<ELispExp<B>> {
+        self.last_command_form
+            .read()
+            .expect("Failed to acquire read lock on last_command_form")
+            .clone()
+    }
+
     pub(crate) fn set_last_command(&self, name: Option<Arc<String>>) {
         *self
             .last_command
@@ -2695,6 +2775,30 @@ impl<B: BufferTrait> EditorState<B> {
     /// because there are four ways to move focus -- cycling, closing a window,
     /// opening a floating one, and closing it again -- and any of them could
     /// have forgotten. Nothing can move focus without going through this.
+    /// Give focus to the window with ID, if there is still one.
+    ///
+    /// False when there is not, which is the useful answer rather than a
+    /// failure: a window remembered earlier may have been closed since, and
+    /// the caller wants to open a new one rather than be stopped.
+    pub(crate) fn select_window(&self, id: usize) -> bool {
+        let exists = self
+            .layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root")
+            .window(id)
+            .is_some()
+            || self
+                .floating_windows
+                .read()
+                .expect("Failed to acquire read lock on floating_windows")
+                .iter()
+                .any(|float| float.window.id == id);
+        if exists {
+            self.set_focused_window_id(id);
+        }
+        exists
+    }
+
     pub(crate) fn set_focused_window_id(&self, id: usize) {
         *self
             .focused_window_id

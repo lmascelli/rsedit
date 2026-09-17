@@ -586,3 +586,162 @@ primitive!(completion_at_point_choose, args, env, ctx, {
     env.set_variable(END_VAR.into(), ELispExp::nil());
     Ok(args[0].clone())
 });
+
+// ---------------------------------------------------------------------------
+// Fuzzy matching
+// ---------------------------------------------------------------------------
+
+/// Whether the character at `index` begins a word.
+///
+/// Word starts are where people abbreviate from: typing "cap" for
+/// `completion-at-point` works because `c`, `a` and `p` are each the first
+/// letter of a part. Recognising them is most of what separates a fuzzy match
+/// that feels like it read your mind from one that feels like a coincidence.
+fn is_word_start(chars: &[char], index: usize) -> bool {
+    if index == 0 {
+        return true;
+    }
+    let previous = chars[index - 1];
+    let current = chars[index];
+    // A separator before it, or a lowercase-to-uppercase step -- which is the
+    // same boundary written the other way, in `camelCase` rather than in
+    // `kebab-case`.
+    matches!(previous, '-' | '_' | '/' | '.' | ' ' | ':' | '\\')
+        || (previous.is_lowercase() && current.is_uppercase())
+}
+
+/// How well `candidate` matches `pattern`, or `None` if it does not.
+///
+/// A match means the pattern's characters appear in the candidate in order,
+/// though not necessarily together: "cap" matches `completion-at-point`. The
+/// score then says how good that match is, so that the candidate somebody meant
+/// comes first rather than merely appearing somewhere in the list.
+///
+/// # What is rewarded
+///
+/// Characters landing at word starts, and characters landing next to the one
+/// before them. Between them these are what make an abbreviation of the parts
+/// beat an accidental scattering of the same letters. Longer candidates are
+/// penalised gently, so that when two both match, the tighter one wins.
+///
+/// # Why greedy rather than optimal
+///
+/// Taking the leftmost occurrence of each character can, in principle, score a
+/// candidate lower than some other alignment would. Finding the best alignment
+/// is a dynamic program over pattern by candidate, per candidate, on every
+/// keystroke -- and `find-file-recursive` hands this five thousand candidates.
+/// The greedy walk is linear, and the cases where it differs are ones where
+/// both alignments match anyway.
+fn fuzzy_score(pattern: &str, candidate: &str) -> Option<i64> {
+    let needle: Vec<char> = pattern.chars().flat_map(char::to_lowercase).collect();
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let hay: Vec<char> = candidate.chars().collect();
+    let hay_lower: Vec<char> = hay
+        .iter()
+        .flat_map(|c| c.to_lowercase())
+        .collect::<Vec<_>>();
+    // `to_lowercase` can yield more than one character for some scripts, which
+    // would put the two vectors out of step and make every index below wrong.
+    // Falling back to a plain case-sensitive walk is a worse match for such a
+    // candidate and still a correct one.
+    let hay_lower: &[char] = if hay_lower.len() == hay.len() {
+        &hay_lower
+    } else {
+        &hay
+    };
+
+    let mut score = 0i64;
+    let mut at = 0usize;
+    let mut previous_match: Option<usize> = None;
+    for wanted in needle {
+        let found = hay_lower[at..].iter().position(|c| *c == wanted)? + at;
+        score += 1;
+        if is_word_start(&hay, found) {
+            score += 9;
+        }
+        if previous_match == Some(found.saturating_sub(1)) && found > 0 {
+            score += 8;
+        }
+        previous_match = Some(found);
+        at = found + 1;
+    }
+    // A candidate that contains the pattern *literally* beats one that merely
+    // has the letters scattered through it, and one that starts with it beats
+    // one that has it in the middle.
+    //
+    // Without this, "abc" ranks `a-b-c-x-y-z` level with `abc`: three letters
+    // each sitting at a word start score exactly what a three-letter run
+    // scores, and the tie goes to whichever arrived first. Nobody typing "abc"
+    // means the first of those. Scoring the literal cases explicitly says so,
+    // rather than leaving it to be an accident of how the two bonuses happen
+    // to be weighted against each other.
+    let literal = {
+        let needle_lower: String = pattern.to_lowercase();
+        let hay_lower: String = candidate.to_lowercase();
+        if hay_lower.starts_with(&needle_lower) {
+            25
+        } else if hay_lower.contains(&needle_lower) {
+            15
+        } else {
+            0
+        }
+    };
+    // Gentle, and integer division on purpose: it separates candidates that
+    // differ a lot in length without letting length overrule a much better
+    // match.
+    Some(score + literal - (hay.len() as i64) / 4)
+}
+
+pub const FUZZY_FILTER_DOC: &str = "(fuzzy-filter PATTERN CANDIDATES): The candidates matching \
+         PATTERN, best first.\n\n\
+         A candidate matches when PATTERN's characters occur in it in order, though not \
+         necessarily next to each other -- so \"cap\" matches `completion-at-point'. The order is \
+         by how good the match is: characters landing at word starts and characters landing \
+         next to each other both count for a lot, and a long candidate counts slightly against \
+         itself, so the tightest match comes first.\n\n\
+         Case is ignored. An empty PATTERN matches everything, in the order given -- which is \
+         what makes a freshly-opened completion strip show the whole list.\n\n\
+         A candidate may be a string or a (VALUE . DESCRIPTION) pair; the match is against \
+         VALUE, and whichever shape arrived is what comes back.\n\n\
+         This is what `*completion-filter-function*' is normally set to. Set that to something \
+         else and every completion source in the editor changes how it matches at once.\n\n\
+         Example:\n\
+         (fuzzy-filter \\\"cap\\\" '(\\\"completion-at-point\\\" \\\"copy\\\" \\\"cap\\\"))\n\
+         (setq *completion-filter-function* 'fuzzy-filter)";
+
+primitive!(fuzzy_filter, args, _env, _ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let pattern = match &args[0] {
+        ELispExp::String(text) | ELispExp::Symbol(text) => text.to_string(),
+        other if other.is_nil() => String::new(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let mut scored: Vec<(i64, usize, ELispExp<B>)> = Vec::new();
+    for (position, item) in as_list(&args[1]).into_iter().enumerate() {
+        let Some(value) = candidate_value(&item) else {
+            continue;
+        };
+        if let Some(score) = fuzzy_score(&pattern, &value) {
+            scored.push((score, position, item));
+        }
+    }
+    // Highest score first; ties broken by the order the candidates arrived in,
+    // so a source that sorted its own output keeps that order among equals
+    // rather than having it shuffled by an unstable comparison.
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    Ok(ELispExp::proper_list(
+        scored.into_iter().map(|(_, _, item)| item).collect(),
+    ))
+});

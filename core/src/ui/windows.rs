@@ -93,6 +93,19 @@ pub enum Division {
     /// thing being added -- a strip appears below what was already there, and
     /// what was already there gives up the space.
     SecondFixed(usize),
+    /// The first child is exactly this many rows (stacked) or columns (side by
+    /// side), and the second takes what is left.
+    ///
+    /// The mirror of `SecondFixed`, and needed for the case where the window
+    /// being *split* is the one whose size matters: a directory listing wants
+    /// to stay a fixed width while the file opened beside it takes the rest,
+    /// and to keep that width when the frame is resized. Sizing the new window
+    /// instead would fix the file and let the listing absorb every resize,
+    /// which is backwards.
+    ///
+    /// This is also what Emacs' `split-window-right SIZE` means: SIZE is the
+    /// width the left window keeps.
+    FirstFixed(usize),
 }
 
 impl Division {
@@ -106,6 +119,12 @@ impl Division {
         match self {
             Division::Ratio(ratio) => ((total as f32) * ratio).round() as usize,
             Division::SecondFixed(size) => total.saturating_sub(*size).max(total.min(1)),
+            // Clamped so the *other* child keeps a column when there is one to
+            // spare, for the reason the arm above clamps the other way: a
+            // window with no width renders as nothing at all.
+            Division::FirstFixed(size) => {
+                (*size).min(total.saturating_sub(1)).max(total.min(1))
+            }
         }
     }
 }
@@ -252,13 +271,14 @@ impl LayoutNode {
         id: usize,
         orientation: Orientation,
         new_window: Window,
+        division: Division,
     ) -> bool {
         match self {
             LayoutNode::Leaf(window) if window.id == id => {
                 let existing = std::mem::replace(window, placeholder_window());
                 *self = LayoutNode::Split {
                     orientation,
-                    division: Division::Ratio(0.5),
+                    division,
                     left: Box::new(LayoutNode::Leaf(existing)),
                     right: Box::new(LayoutNode::Leaf(new_window)),
                 };
@@ -266,8 +286,8 @@ impl LayoutNode {
             }
             LayoutNode::Leaf(_) => false,
             LayoutNode::Split { left, right, .. } => {
-                left.split_window(id, orientation, new_window.clone())
-                    || right.split_window(id, orientation, new_window)
+                left.split_window(id, orientation, new_window.clone(), division)
+                    || right.split_window(id, orientation, new_window, division)
             }
         }
     }
@@ -373,26 +393,44 @@ impl LayoutNode {
 
                 let mut cursor_rel_pos = None;
 
-                if is_focused {
-                    if let Some(buf) = buffers.get(&win.buffer_name) {
-                        let (c_line, c_col) = buf
-                            .read()
-                            .expect("Failed to acquire read lock on buffer")
-                            .text
-                            .cursor_pos();
+                // Scrolling follows point whether or not this window has
+                // focus; only *drawing* the cursor depends on focus.
+                //
+                // # Why not just when focused
+                //
+                // A buffer has one point, and a window is a view onto it. When
+                // something moves that point while a floating window holds the
+                // keyboard -- which is exactly what incremental search does,
+                // match after match -- the tiled window showing the buffer is
+                // not the focused one, so a focus-gated reconciliation never
+                // runs. The match is found, point is moved, and the view stays
+                // where it was: the search silently walks off the top of the
+                // screen and `C-s' looks like it has stopped finding anything.
+                //
+                // Two windows on one buffer therefore both follow. That is not
+                // a new asymmetry -- they already share the single point and
+                // already both draw it -- and it is the behaviour that makes a
+                // search visible in whichever window is showing the file.
+                if let Some(buf) = buffers.get(&win.buffer_name) {
+                    let (c_line, c_col) = buf
+                        .read()
+                        .expect("Failed to acquire read lock on buffer")
+                        .text
+                        .cursor_pos();
 
-                        if c_line < win.scroll_y {
-                            win.scroll_y = c_line;
-                        } else if c_line >= win.scroll_y + rect.height {
-                            win.scroll_y = c_line - rect.height + 1;
-                        }
+                    if c_line < win.scroll_y {
+                        win.scroll_y = c_line;
+                    } else if c_line >= win.scroll_y + rect.height {
+                        win.scroll_y = c_line - rect.height + 1;
+                    }
 
-                        if c_col < win.scroll_x {
-                            win.scroll_x = c_col;
-                        } else if c_col >= win.scroll_x + rect.width {
-                            win.scroll_x = c_col - rect.width + 1;
-                        }
+                    if c_col < win.scroll_x {
+                        win.scroll_x = c_col;
+                    } else if c_col >= win.scroll_x + rect.width {
+                        win.scroll_x = c_col - rect.width + 1;
+                    }
 
+                    if is_focused {
                         cursor_rel_pos = Some((
                             c_col.saturating_sub(win.scroll_x),
                             c_line.saturating_sub(win.scroll_y),

@@ -2,17 +2,6 @@
 #+title: rsedit
 
 * Fixes todo
-- [ ] The completion system should not block the user input for scrolling the list. It was
-      a mistake. The user should press C-n or C-p to move through canditates and typing
-      should update the list fuzzy searching between them.
-- [ ] Some keymaps doesn't permit to repeat the last event to emit them again. (I've found undo
-      doing that for example C-x u).
-- [ ] Electric-pair should also work on delete when the delimiters are the only adiacent thing
-      i suppouse
-- [ ] in isearch the cursor doesn't follow the search result when it goes out of the view
-- [ ] Dired mode split window should be assigned a start window size so it does not occupy half
-      of a window when opened. Also it must have a command to reuse the last window to open a
-      file.
 
 * Macro todo 
 - [ ] Switch to buffer command and buffer-list major mode

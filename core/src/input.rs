@@ -260,6 +260,22 @@ pub enum OnUnbound {
     /// that other thing to happen. Swallowing it would make the convenience
     /// cost more than it saves.
     Release,
+    /// Hand the key on, and stay up.
+    ///
+    /// For a map that is a *filter*: the completion strip binds `C-n`, `C-p`,
+    /// Return and the ways out, and everything else -- the ordinary typing that
+    /// narrows the list -- goes to the buffer underneath while the strip stays
+    /// on screen and redraws.
+    ///
+    /// The difference from [`Self::Release`] is only that the map survives, and
+    /// that is the whole feature: a strip that dismissed itself the moment a
+    /// letter was typed could not be typed at, and one that swallowed the
+    /// letter could not be narrowed. Neither of the other two answers can be
+    /// bent into this one.
+    ///
+    /// A map of this kind still has to bind a way out, since nothing takes it
+    /// down on its own.
+    Pass,
 }
 
 /// A keymap consulted before every other, for as long as it is installed.

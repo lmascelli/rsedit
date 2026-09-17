@@ -199,15 +199,28 @@ header ends up normalised instead of growing a `..' on the end."
         (dired--visit path)
         (message "No file on this line"))))
 
+(defconst dired-window-width 40
+  "How many columns the listing keeps when `o' opens a file beside it.
+
+A column count rather than a fraction of the frame. A listing is as wide as the
+file names in it, which does not change when the terminal is resized -- so 30%
+of a wide terminal is more than the listing needs and 30% of a narrow one is
+too little to read. Fixing the listing also means the *file* absorbs a resize,
+which is the right way round: that is the window being worked in.")
+
+;; The window `o' last opened a file into, so that pressing it again replaces
+;; that file instead of splitting the frame a second time. nil when `o' has not
+;; been pressed, or when the window it used has since been closed.
+(setq dired--file-window nil)
+
 (defcommand dired-find-file-other-window () nil
   "Open what the cursor is on in a window beside this one, keeping the listing
 visible. Bound to o in dired-mode.
 
-Always a fresh split rather than reusing whatever other window happens to
-exist: `o' pressed twice in a row should put the second file where the first
-one went, and with a search for an existing window it would instead depend on
-how the frame was divided, so the same keystroke would do different things on
-different days."
+The first `o' splits, leaving the listing `dired-window-width' columns wide.
+Every `o' after that reuses the window the last one opened, so walking down a
+directory reading files leaves two windows rather than a frame sliced into
+eight. If that window has since been closed, the next `o' splits again."
   (let ((path (dired--path-here)))
     (cond
      ((null path) (message "No file on this line"))
@@ -215,10 +228,21 @@ different days."
      ;; buffer both windows show -- see the module header on why there is only
      ;; one. It opens here instead, which is what `RET' would have done.
      ((file-directory-p path) (dired--visit path))
-     (t (progn
-          (split-window-right)
-          (other-window 1)
-          (find-file path))))))
+     (t (dired--visit-other-window path)))))
+
+(defun dired--visit-other-window (path)
+  "Open PATH beside the listing, reusing the window `o' last used if it is
+still there."
+  ;; `select-window' answers nil for a window that has been closed since, which
+  ;; is what makes "reuse it if it is still there" a single question rather than
+  ;; a search through the layout.
+  (if (and dired--file-window (select-window dired--file-window))
+      (find-file path)
+      (progn
+        (split-window-right dired-window-width)
+        (other-window 1)
+        (setq dired--file-window (selected-window))
+        (find-file path))))
 
 ;; ---------------------------------------------------------------------------
 ;; Changing the filesystem

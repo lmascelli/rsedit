@@ -142,28 +142,132 @@ Set with (put 'rust-mode 'electric-pair-inhibit-quotes t)."
   (get (major-mode) 'electric-pair-inhibit-quotes))
 
 ;; ---------------------------------------------------------------------------
-;; Backspace
+;; Deleting
 ;; ---------------------------------------------------------------------------
+;;
+;; The one part of this module that is not a hook. Deleting is a command, and
+;; the only way to make it aware of pairs is to *be* the command that runs -- so
+;; these replace `delete-backward-char' and `delete-char' on their keys and
+;; delegate to them in every case but one.
+;;
+;; That case is stated once and covers both directions: **if the character
+;; about to be deleted is half of an empty pair, the whole pair goes.** Four
+;; situations fall out of it rather than being enumerated --
+;;
+;;   ()|  backspace deletes `)', whose partner is just before it
+;;   (|)  backspace deletes `(', whose partner is just after point
+;;   |()  delete removes `(', whose partner is just after it
+;;   (|)  delete removes `)', whose partner is just before it
+;;
+;; -- and all four leave nothing behind, which is what makes an auto-inserted
+;; closer feel undoable rather than permanent.
+;;
+;; A pair with anything in it is left alone. Deleting the bracket from around
+;; text is something people do deliberately, and silently taking the other one
+;; with it would destroy the thing they were unwrapping.
+
+(defconst electric-pair-blanks '(" " "\t")
+  "What may sit between two delimiters and still count as an empty pair.
+
+Spaces and tabs, deliberately not newlines. `(   )' is a pair someone left a
+gap in; `{' and `}' three lines apart is a block with a body about to be
+written, and collapsing that on one backspace would be startling.")
+
+(defun electric-pair--blank-p (ch)
+  "Whether CH is blank enough to sit inside an otherwise empty pair."
+  (and ch (member ch electric-pair-blanks)))
+
+(defun electric-pair--skip-blanks-forward (pos)
+  "The first position at or after POS whose character is not blank."
+  (let ((p pos))
+    (while (and (< p (point-max))
+                (electric-pair--blank-p (buffer-substring p (+ p 1))))
+      (setq p (+ p 1)))
+    p))
+
+(defun electric-pair--skip-blanks-backward (pos)
+  "The first position at or before POS whose preceding character is not blank."
+  (let ((p pos))
+    (while (and (> p (point-min))
+                (electric-pair--blank-p (buffer-substring (- p 1) p)))
+      (setq p (- p 1)))
+    p))
+
+(defun electric-pair--span-around-point ()
+  "(START . END) of the empty pair point is *inside*, or nil.
+
+Blanks either side of point are skipped, so this is what catches `(   |   )'
+as well as `(|)'. Tried before the character-being-deleted rule below, because
+when point sits among the blanks there is no delimiter next to it for that rule
+to recognise -- and deleting one space out of the middle of a gap nobody wanted
+is not what backspace was pressed for."
+  (let ((back (electric-pair--skip-blanks-backward (point)))
+        (fwd (electric-pair--skip-blanks-forward (point))))
+    (if (and (> back (point-min)) (< fwd (point-max)))
+        (let ((opener (buffer-substring (- back 1) back)))
+          (if (and (eq (syntax-class opener) 'open)
+                   (string= (buffer-substring fwd (+ fwd 1))
+                            (matching-delimiter opener)))
+              (cons (- back 1) (+ fwd 1))
+              nil))
+        nil)))
+
+(defun electric-pair--pair-span (pos)
+  "(START . END) of the empty pair the character at POS is half of, or nil.
+
+END is one past the closing delimiter, so the span is what `delete-char' would
+take given START and (- END START). Blanks between the two are inside the span
+and go with it."
+  (let ((ch (buffer-substring pos (+ pos 1))))
+    (cond
+     ((eq (syntax-class ch) 'open)
+      (let ((closer-at (electric-pair--skip-blanks-forward (+ pos 1))))
+        (if (and (< closer-at (point-max))
+                 (string= (buffer-substring closer-at (+ closer-at 1))
+                          (matching-delimiter ch)))
+            (cons pos (+ closer-at 1))
+            nil)))
+     ((eq (syntax-class ch) 'close)
+      (let ((opener-end (electric-pair--skip-blanks-backward pos)))
+        (if (and (> opener-end (point-min))
+                 (string= (buffer-substring (- opener-end 1) opener-end)
+                          (matching-delimiter ch)))
+            (cons (- opener-end 1) (+ pos 1))
+            nil)))
+     (t nil))))
+
+(defun electric-pair--delete-span (span)
+  "Remove SPAN, a (START . END) pair, and leave point where it began."
+  (goto-char (car span))
+  (delete-char (- (cdr span) (car span))))
 
 (defcommand electric-pair-delete-backward () nil
-  "Delete backwards, taking a pair's closing delimiter with its opener.
+  "Delete backwards, taking a pair's other half when what goes is half of an
+empty one.
 
-The one part of this module that is not a hook. Deleting is a command of its
-own, and the only way to make it aware of pairs is to be the command that runs
--- so this replaces `delete-backward-char' on the backspace key and delegates
-to it in every case but one.
-
-That one case is an *empty* pair: `()' with point between. A pair with anything
-in it is left alone, because deleting the bracket around text is a thing people
-do on purpose."
-  (let ((before (electric-pair--char-before))
-        (after (electric-pair--char-after)))
-    (if (and electric-pair-mode
-             before after
-             (eq (syntax-class before) 'open)
-             (string= after (matching-delimiter before)))
-        (progn (delete-char) (delete-backward-char))
+Replaces `delete-backward-char' on the backspace key."
+  (let ((span (and electric-pair-mode
+                   (or (electric-pair--span-around-point)
+                       (and (> (point) (point-min))
+                            (electric-pair--pair-span (- (point) 1)))))))
+    (if span
+        (electric-pair--delete-span span)
         (delete-backward-char))))
+
+(defcommand electric-pair-delete-forward () nil
+  "Delete forwards, taking a pair's other half when what goes is half of an
+empty one.
+
+Replaces `delete-char' on C-d and the delete key -- the mirror of
+`electric-pair-delete-backward', and for the same reason: an auto-inserted
+closer should be as easy to get rid of from either side."
+  (let ((span (and electric-pair-mode
+                   (or (electric-pair--span-around-point)
+                       (and (< (point) (point-max))
+                            (electric-pair--pair-span (point)))))))
+    (if span
+        (electric-pair--delete-span span)
+        (delete-char))))
 
 ;; ---------------------------------------------------------------------------
 ;; Turning it on
@@ -185,5 +289,7 @@ a Rust buffer is helpful and pairing in a directory listing is not."
 (put 'rust-mode 'electric-pair-inhibit-quotes t)
 
 (define-key nil "<backspace>" 'electric-pair-delete-backward)
+(define-key nil "C-d" 'electric-pair-delete-forward)
+(define-key nil "<delete>" 'electric-pair-delete-forward)
 
 (log "electric-pair loaded")

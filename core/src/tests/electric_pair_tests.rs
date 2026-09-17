@@ -208,6 +208,76 @@ mod tests {
     }
 
     #[test]
+    fn forward_delete_takes_the_partner_too() {
+        // The mirror of backspace: point before the `(` of an empty pair.
+        let (ctx, env) = editor();
+        run(r#"(insert "()") (goto-char 0)"#, &env, &ctx);
+        run("(electric-pair-delete-forward)", &env, &ctx);
+        assert_eq!(contents(&ctx), "");
+    }
+
+    #[test]
+    fn forward_delete_from_inside_the_pair_takes_both() {
+        let (ctx, env) = editor();
+        run(r#"(insert "()") (goto-char 1)"#, &env, &ctx);
+        run("(electric-pair-delete-forward)", &env, &ctx);
+        assert_eq!(contents(&ctx), "");
+    }
+
+    #[test]
+    fn backspace_from_after_the_closer_takes_both() {
+        let (ctx, env) = editor();
+        run(r#"(insert "()") (goto-char 2)"#, &env, &ctx);
+        run("(electric-pair-delete-backward)", &env, &ctx);
+        assert_eq!(contents(&ctx), "");
+    }
+
+    #[test]
+    fn a_pair_with_only_blanks_in_it_counts_as_empty() {
+        for at in [1, 2, 4] {
+            let (ctx, env) = editor();
+            run(&format!(r#"(insert "a(   )b") (goto-char {})"#, at + 1), &env, &ctx);
+            run("(electric-pair-delete-backward)", &env, &ctx);
+            assert_eq!(contents(&ctx), "ab", "backspace at {at}");
+        }
+    }
+
+    #[test]
+    fn the_blanks_inside_go_with_the_pair() {
+        let (ctx, env) = editor();
+        run(r#"(insert "(  )") (goto-char 2)"#, &env, &ctx);
+        run("(electric-pair-delete-forward)", &env, &ctx);
+        // Not `(  ` or ` )` -- the whole span, so nothing is left to tidy up.
+        assert_eq!(contents(&ctx), "");
+    }
+
+    #[test]
+    fn a_newline_inside_does_not_make_a_pair_empty() {
+        // `{` and `}` on separate lines is a block about to get a body, and
+        // collapsing it on one backspace would be startling.
+        let (ctx, env) = editor();
+        run("(insert \"{\n}\") (goto-char 2)", &env, &ctx);
+        run("(electric-pair-delete-backward)", &env, &ctx);
+        assert_eq!(contents(&ctx), "{}");
+    }
+
+    #[test]
+    fn a_pair_with_something_in_it_survives_both_directions() {
+        let (ctx, env) = editor();
+        run(r#"(insert "(ab)") (goto-char 1)"#, &env, &ctx);
+        run("(electric-pair-delete-forward)", &env, &ctx);
+        assert_eq!(contents(&ctx), "(b)", "forward delete is ordinary");
+    }
+
+    #[test]
+    fn forward_delete_at_the_end_of_the_buffer_does_nothing() {
+        let (ctx, env) = editor();
+        run(r#"(insert "ab") (goto-char 2)"#, &env, &ctx);
+        run("(electric-pair-delete-forward)", &env, &ctx);
+        assert_eq!(contents(&ctx), "ab");
+    }
+
+    #[test]
     fn turning_the_mode_off_stops_all_of_it() {
         let (ctx, env) = editor();
         run("(setq electric-pair-mode nil)", &env, &ctx);
@@ -216,5 +286,8 @@ mod tests {
         run(r#"(clear-buffer) (insert "()") (goto-char 1)"#, &env, &ctx);
         run("(electric-pair-delete-backward)", &env, &ctx);
         assert_eq!(contents(&ctx), ")", "backspace is ordinary again");
+        run(r#"(clear-buffer) (insert "()") (goto-char 0)"#, &env, &ctx);
+        run("(electric-pair-delete-forward)", &env, &ctx);
+        assert_eq!(contents(&ctx), ")", "and so is forward delete");
     }
 }
