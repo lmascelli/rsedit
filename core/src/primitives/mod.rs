@@ -541,6 +541,7 @@ pub fn install_primitives<B: BufferTrait>(
         theme::SET_FACE_DOC
     );
     insert_fn!("face-style", theme::face_style, theme::FACE_STYLE_DOC);
+    insert_fn!("reset-faces", theme::reset_faces, theme::RESET_FACES_DOC);
     insert_fn!("list-faces", theme::list_faces, theme::LIST_FACES_DOC);
     insert_fn!("list-colors", theme::list_colors, theme::LIST_COLORS_DOC);
 
@@ -861,6 +862,11 @@ pub fn install_primitives<B: BufferTrait>(
         "set-syntax-pairs",
         modes::set_syntax_pairs,
         modes::SET_SYNTAX_PAIRS_DOC
+    );
+    insert_fn!(
+        "set-char-quote",
+        modes::set_char_quote,
+        modes::SET_CHAR_QUOTE_DOC
     );
     insert_fn!(
         "set-syntax-entry",

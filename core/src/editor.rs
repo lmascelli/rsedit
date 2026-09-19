@@ -2575,6 +2575,17 @@ impl<B: BufferTrait> EditorState<B> {
     // ---------------------------------------------------------------
 
     /// Bind FACE to STYLE for the whole editor.
+    /// Put every face back to how the editor ships it.
+    ///
+    /// The compiled-in defaults rather than a snapshot taken at startup, so
+    /// this means the same thing however many themes have been applied since.
+    pub(crate) fn reset_theme(&self) {
+        *self
+            .theme
+            .write()
+            .expect("Failed to acquire write lock on theme") = Arc::new(Theme::default());
+    }
+
     pub(crate) fn set_face_style(&self, face: Face, style: Style) {
         // Copy-on-write: whatever frames are already holding keep the theme
         // they were composed under, and the next one picks this up.
@@ -3272,6 +3283,7 @@ pub fn create_global_env<B: BufferTrait>()
 (eval-file "shell")       ; M-! runs a command and shows what it said
 (eval-file "manpage")     ; C-h m, and K on a word
 (eval-file "compile")     ; C-c c, and M-g n to walk what it complained about
+(eval-file "theme")       ; C-c t to choose how faces are drawn
 
 ;; Where completions come from, for C-M-i in a buffer. The command is built in
 ;; and works without this; what this adds is the five sources it asks. Take one

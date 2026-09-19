@@ -31,8 +31,9 @@ MODULES
     shell               M-! and its output buffer
     manpage             this
     compile             C-c c, and jumping to what it complained about
+    theme               C-c t, and how faces are drawn
     rust-mode           colouring for Rust
     risp-mode           colouring and indentation for rsedit's own Lisp
 
 SEE ALSO
-    buffers, windows, overlays, compile, completion, modes, keymaps
+    buffers, windows, overlays, compile, themes, completion, modes, keymaps

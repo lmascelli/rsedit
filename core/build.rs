@@ -20,6 +20,7 @@ fn main() {
         "risp-mode.lisp",
         "rust-mode.lisp",
         "shell.lisp",
+        "theme.lisp",
     ];
 
     for file in &LISP_FILES {
@@ -73,6 +74,27 @@ fn main() {
     // that is not loaded is a feature that silently does not exist, which is
     // worth a list you have to edit; a page that is not copied is a page
     // `rsedit-man' reports as missing, which says so plainly.
+    // The same for themes: data read at runtime, so it lives beside the
+    // binary rather than in the source tree it was built from.
+    let theme_source = Path::new("../themes");
+    let theme_dir = target_dir.join("data").join("themes");
+    if theme_source.is_dir() {
+        println!("cargo::rerun-if-changed=../themes");
+        let _ = fs::create_dir_all(&theme_dir);
+        for entry in fs::read_dir(theme_source).expect("Failed to read the themes directory") {
+            let entry = entry.expect("Failed to read a theme");
+            let is_theme = entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "lisp");
+            if entry.path().is_file() && is_theme {
+                let name = entry.file_name();
+                fs::copy(entry.path(), theme_dir.join(&name))
+                    .unwrap_or_else(|_| panic!("Failed to copy {}", name.to_string_lossy()));
+            }
+        }
+    }
+
     let man_source = Path::new("../man");
     let man_dir = target_dir.join("data").join("man");
     if man_source.is_dir() {

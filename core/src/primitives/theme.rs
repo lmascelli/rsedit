@@ -158,3 +158,18 @@ primitive!(list_colors, _args, _env, _ctx, {
             .collect(),
     ))
 });
+
+pub const RESET_FACES_DOC: &str = "(reset-faces): Put every face back to how the editor ships it, \
+         undoing anything `set-face' has done. Returns nil.\n\n\
+         What selecting a theme does first. Without it a theme only changes what it names, so a \
+         sparse theme keeps whatever the previous one left behind -- and a monochrome theme that \
+         is still half blue is the failure that makes themes feel broken.\n\n\
+         The defaults are the ones compiled in, not a snapshot of some earlier moment, so this \
+         means the same thing however many themes have been applied since the editor started.\n\n\
+         Example:\n\
+         (reset-faces)   ; back to the shipped appearance";
+
+primitive!(reset_faces, _args, _env, ctx, {
+    ctx.reset_theme();
+    Ok(ELispExp::nil())
+});

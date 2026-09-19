@@ -3,16 +3,19 @@
 
 * Fixes todo
 - [ ] electric-pair doesn't recognize a match pair in some case for example:
-
-fn a() {
-  body function
+fn push_call_frame(&self, frame: &str) {
+    self.call_stack
+    .write()
+    .expect("Failed to acquire write lock on call_stack")
+    .push(frame.to_string());
 }
 
-this bug is still here. i've disabled the keymap that associate the forward deleting
-in electric-pair (there is a TODO in the electric-pair.lisp)
+this bug is still here. try to remove the open bracket after the function arguments
+and add it again. a couple of brackets will be added (this is wrong) the closed bracket
+is the one the close the function body. Also if you delete the wrong close bracket added
+the open one is deleted.
 
 * Macro todo 
-- [ ] Theme system plus a monochromatic theme
 - [ ] The editor structure is becoming too complex. I want to create compartiment
       that manage single aspects of the editor like buffers, layout, searches, commands,
       etc... so that a fail like the previous one where two windows where associated

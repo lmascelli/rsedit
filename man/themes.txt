@@ -1,0 +1,44 @@
+NAME
+    themes - choosing how faces are drawn
+
+SYNOPSIS
+    C-c t                      list what is installed
+    RET                        apply the theme on this line
+    (select-theme 'monochrome) the same, from a configuration file
+    (reset-theme)              back to the shipped appearance
+
+DESCRIPTION
+    A theme is a file under data/themes that puts an alist on a symbol named
+    after it: monochrome.lisp defines monochrome-theme. Each entry is
+
+        (FACE FOREGROUND BACKGROUND ATTRIBUTES)
+
+    which is exactly what set-face takes, so a theme is written the way a
+    face is set and there is no second vocabulary.
+
+    An entry is a style rather than a colour because that is what makes a
+    monochrome theme possible: it has to be able to say "bold" where it
+    cannot say "blue".
+
+    Loading a theme file changes nothing. It defines data; applying it is a
+    separate act, which is what makes it safe to read one in order to find
+    out its name.
+
+RESETTING
+    Applying a theme puts every face back to how the editor ships it, then
+    sets the ones the theme names. Without that a theme only changes what it
+    mentions, so switching from a colourful theme to a sparse one leaves the
+    colourful one's choices behind.
+
+    The cost is that themes do not compose: a small theme cannot tweak a big
+    one. That is the right trade while selecting a theme means "make the
+    editor look like this" rather than "adjust it a bit".
+
+WRITING ONE
+    Put a file in themes/ at the project root; the build copies it. Use
+    list-faces to see what can be set, and face-style to read how a face is
+    drawn now -- it answers in the form set-face takes, so a theme can be
+    read out of a running editor and pasted into a file.
+
+SEE ALSO
+    rsedit, overlays, (set-face), (face-style), (list-faces)

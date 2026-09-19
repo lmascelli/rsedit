@@ -395,6 +395,56 @@ primitive!(set_syntax_pairs, args, _env, ctx, {
     Ok(answer)
 });
 
+pub const SET_CHAR_QUOTE_DOC: &str = "(set-char-quote MODE CHAR): Declare the character that \
+         encloses a single literal character in major mode MODE -- `\'` in Rust, C, C++ and \
+         Java. CHAR is a one-character string; nil removes it. Returns t, or nil (logging a \
+         diagnostic) if MODE is unknown.\n\n\
+         Not a syntax class, because `\'` is not one thing. In `\'a\'` it quotes a character, in \
+         Rust\'s `\'static` it begins a lifetime, and in prose it is an apostrophe. A class says \
+         what a character *is*; this depends on what comes after it, so the scanner decides by \
+         looking: a quote that closes within one character -- two if the first is an escape -- \
+         is a literal and is read as one atom, and anything else is ordinary punctuation.\n\n\
+         Neither existing class can do the job. `string\' would make the first lifetime open a \
+         string that swallows the rest of the file. `escape\' is honoured inside strings too, so \
+         it would eat the closing quote of \\\"it\'s\\\".\n\n\
+         What it fixes is everything that reads the table: `forward-sexp\', the indenter, \
+         `syntax-ppss\' and the pairing built on them all stop being confused by `let c = \
+         \'\\\"\';\'.\n\n\
+         Example:\n\
+         (set-char-quote \'rust-mode \"\'\")";
+
+primitive!(set_char_quote, args, _env, ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let mode = string_arg(&args[0])?;
+    let quote = match &args[1] {
+        exp if exp.is_nil() => None,
+        ELispExp::String(text) => match text.chars().next() {
+            Some(c) => Some(c),
+            None => {
+                return Err(EvalError::RuntimeMessage(
+                    "set-char-quote wants a character, and was given an empty string".into(),
+                ));
+            }
+        },
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let answer = with_syntax_table(ctx, &mode, |table| table.set_char_quote(quote));
+    if answer.is_nil() {
+        ctx.log_diagnostic(&format!("Mode {mode} does not exist"));
+    }
+    Ok(answer)
+});
+
 pub const SET_SYNTAX_ENTRY_DOC: &str = "(set-syntax-entry MODE CHARS CLASS): Give every character \
          in the string CHARS the syntax CLASS in major mode MODE. Returns t, or nil (logging a \
          diagnostic) if MODE is unknown.\n\n\

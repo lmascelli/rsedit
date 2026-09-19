@@ -1,5 +1,6 @@
 mod buffer_list_tests;
 mod bug_fix_tests;
+mod char_quote_tests;
 mod clipboard_tests;
 mod command_test;
 mod completion_at_point_tests;
@@ -46,6 +47,7 @@ mod sexp_tests;
 mod shell_tests;
 mod shipped_lisp_tests;
 mod syntax_tests;
+mod theme_system_tests;
 mod theme_tests;
 mod transient_tests;
 mod undo_tests;

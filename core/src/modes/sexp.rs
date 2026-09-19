@@ -266,6 +266,26 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                     return Step::Advanced;
                 }
 
+                // A character literal, before the class dispatch, because the
+                // character that opens one has no single class: `'` quotes a
+                // character in `'a'`, begins a lifetime in `'static`, and is
+                // an apostrophe in prose. Which it is depends on what follows,
+                // so it is decided by looking rather than by looking up.
+                //
+                // The whole literal is one atom. Without this, the `"` in
+                // `let c = '"';` opens a string that never closes, and every
+                // bracket in the rest of the file stops counting -- which is
+                // how a brace three lines down became invisible to anything
+                // asking whether the buffer balanced.
+                if let Some(end) = self
+                    .table
+                    .char_literal_at(self.pos, len, |at| self.text.at(at))
+                {
+                    let start = self.opening(self.pos);
+                    self.pos = end;
+                    return self.complete(start, end);
+                }
+
                 match self.table.class_of(c) {
                     SyntaxClass::Open(_) => {
                         let start = self.opening(self.pos);

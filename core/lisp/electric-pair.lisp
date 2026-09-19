@@ -353,12 +353,7 @@ a Rust buffer is helpful and pairing in a directory listing is not."
 (put 'rust-mode 'electric-pair-inhibit-quotes t)
 
 (define-key nil "<backspace>" 'electric-pair-delete-backward)
-;; TODO(fix)
-;; For the moment those are disabled because the SyntaxTable is not always
-;; computed correctly and opening a bracket the already has its corrispondent
-;; closing one far in the buffer is not recoginzed so it is necessary to insert
-;; a pair and delete the adiacent closing one
-;(define-key nil "C-d" 'electric-pair-delete-forward)
-;(define-key nil "<delete>" 'electric-pair-delete-forward)
+(define-key nil "C-d" 'electric-pair-delete-forward)
+(define-key nil "<delete>" 'electric-pair-delete-forward)
 
 (log "electric-pair loaded")

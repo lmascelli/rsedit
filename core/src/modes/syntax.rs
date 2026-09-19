@@ -116,6 +116,21 @@ pub struct SyntaxTable {
     /// comment begin here?" with one set lookup rather than a string compare
     /// per style per position.
     comment_starts: HashSet<char>,
+    /// The character that encloses a single literal character, if this
+    /// language has one: `'` in Rust, C, C++, Java.
+    ///
+    /// # Why this cannot be a class
+    ///
+    /// `'` is not one thing in those languages. In `'a'` it quotes a
+    /// character; in Rust's `'static` it begins a lifetime, and in an English
+    /// comment it is an apostrophe. A class says what a character *is*, once
+    /// and for all, and this one depends on what follows it.
+    ///
+    /// So it is a table entry the scanner reads with lookahead rather than a
+    /// class it looks up. `StringQuote` would swallow the rest of the file
+    /// from the first lifetime; `Escape` would eat the closing quote of
+    /// `"it's"`, since escapes are honoured inside strings too.
+    char_quote: Option<char>,
 }
 
 impl SyntaxTable {
@@ -147,6 +162,7 @@ impl Default for SyntaxTable {
             classes,
             comments: Vec::new(),
             comment_starts: HashSet::new(),
+            char_quote: None,
         }
     }
 }
@@ -160,6 +176,37 @@ impl SyntaxTable {
                 self.classes.insert(*open, SyntaxClass::Open(*close));
                 self.classes.insert(*close, SyntaxClass::Close(*open));
             }
+        }
+    }
+
+    /// Declare the character that encloses a single literal character.
+    pub fn set_char_quote(&mut self, c: Option<char>) {
+        self.char_quote = c;
+    }
+
+    /// How long the character literal beginning at `at` is, if there is one.
+    ///
+    /// `None` when this language has no character quote, when `at` does not
+    /// hold it, or when what follows does not close within one character
+    /// (optionally escaped). That last part is the whole of the rule, and it
+    /// is what tells `'a'` from `'a`: a lifetime never closes, so it is not a
+    /// literal and the quote is left to be ordinary punctuation.
+    pub fn char_literal_at<F>(&self, at: usize, len: usize, char_at: F) -> Option<usize>
+    where
+        F: Fn(usize) -> Option<char>,
+    {
+        let quote = self.char_quote?;
+        if char_at(at) != Some(quote) {
+            return None;
+        }
+        // `'x'` is three characters, `'\n'` is four. Nothing longer is a
+        // character literal in any language that has them.
+        let escaped = matches!(self.class_of(char_at(at + 1)?), SyntaxClass::Escape);
+        let end = if escaped { at + 3 } else { at + 2 };
+        if end < len && char_at(end) == Some(quote) {
+            Some(end + 1)
+        } else {
+            None
         }
     }
 

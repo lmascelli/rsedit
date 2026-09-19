@@ -100,6 +100,17 @@
 ;; What the scanner needs, as opposed to what the grammar above needs: the
 ;; grammar says what text should look like, this says what it means.
 (set-syntax-pairs 'rust-mode "()[]{}")
+
+;; `'a'` is one character, `'static` is a lifetime, and the scanner tells them
+;; apart by whether the quote closes. Without this the `"` in `let c = '"';`
+;; opens a string that never ends, and every brace after it stops counting --
+;; which is how a closing brace three lines down became invisible to anything
+;; asking whether the buffer balanced.
+;;
+;; The grammar above already colours char literals with a rule. A rule only
+;; says what text should *look* like; this says what it *is*, which is what
+;; `forward-sexp', the indenter and electric-pair read.
+(set-char-quote 'rust-mode "'")
 (set-comment-syntax 'rust-mode '(("//") ("/*" "*/" t)))
 
 (add-auto-mode "\\.rs$" 'rust-mode)
