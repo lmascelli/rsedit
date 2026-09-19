@@ -437,14 +437,18 @@ everything.")
         nil
         ;; Blank lines and comments dropped here so that nothing downstream has
         ;; to keep checking for them.
+        ;; Built with `cons' and reversed once at the end rather than with
+        ;; `append', which walks everything gathered so far on each element and
+        ;; so costs the square of the list's length. See
+        ;; `find-file-recursive--candidates' for where that mattered.
         (let ((kept nil))
           (mapc (lambda (line)
                   (let ((trimmed (find-file-recursive--trim line)))
                     (if (and (not (string= trimmed ""))
                              (not (string= (substring trimmed 0 1) "#")))
-                        (setq kept (append kept (list trimmed))))))
+                        (setq kept (cons trimmed kept)))))
                 (split-string text "\n"))
-          kept))))
+          (reverse kept)))))
 
 (defun find-file-recursive--trim (text)
   "TEXT without leading or trailing spaces, tabs or carriage returns.
@@ -487,9 +491,9 @@ name is dropped by the suffix rules below anyway."
   (let ((out nil)
         (n 0))
     (while (< n (length text))
-      (setq out (append out (list (substring text n (+ n 1)))))
+      (setq out (cons (substring text n (+ n 1)) out))
       (setq n (+ n 1)))
-    out))
+    (reverse out)))
 
 (defun find-file-recursive--strip-trailing-slash (pattern)
   "PATTERN without its trailing `/', if it has one."
@@ -511,9 +515,9 @@ strength of it is how a search comes to not find a file that is there."
                      (null (member "*" (find-file-recursive--characters
                                         (substring pattern 1))))
                      (null (member "/" (find-file-recursive--characters pattern))))
-                (setq suffixes (append suffixes (list (substring pattern 1))))))
+                (setq suffixes (cons (substring pattern 1) suffixes))))
           (find-file-recursive--gitignore-lines directory))
-    suffixes))
+    (reverse suffixes)))
 
 (defun find-file-recursive--has-suffix (path suffixes)
   "Whether PATH ends with any of SUFFIXES."
@@ -540,11 +544,19 @@ strength of it is how a search comes to not find a file that is there."
                                             pruned))
          (truncated (car walked))
          (kept nil))
+    ;; `cons' and one `reverse', not `append' per element.
+    ;;
+    ;; `append' copies everything gathered so far, so building an n-element
+    ;; list this way costs about n squared units of work -- and the
+    ;; interpreter charges for the walk, so it is the *fuel budget* that runs
+    ;; out rather than merely time. It gives up somewhere around 4,500
+    ;; elements, which is under `find-file-recursive-limit': this function
+    ;; could not reach the limit it advertises.
     (mapc (lambda (path)
             (if (not (find-file-recursive--has-suffix path suffixes))
-                (setq kept (append kept (list path)))))
+                (setq kept (cons path kept))))
           (nth 1 walked))
-    (list truncated kept)))
+    (list truncated (reverse kept))))
 
 (defun dired-find-recursive--candidates (input)
   "File names under the working directory matching INPUT, best first.

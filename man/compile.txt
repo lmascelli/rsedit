@@ -1,0 +1,51 @@
+NAME
+    compile - run a build and jump to what it complained about
+
+SYNOPSIS
+    C-c c        run a command, output into a compilation buffer
+    RET          open the place named on this line, beside the output
+    n, p         move between locations in the buffer
+    M-g n, M-g p walk them from anywhere
+    g            run the same command again
+    q            put the window away
+
+DESCRIPTION
+    The running is `shell-command-start', unchanged: asynchronous, output
+    appended as it arrives, an "--- exited N ---" trailer at the end. This
+    module is the mode put on that buffer, plus the navigation. There is no
+    second way of running processes.
+
+LOCATIONS
+    A line names a place when one of `compilation-patterns' matches it. Each
+    entry is (REGEXP FILE-GROUP LINE-GROUP COLUMN-GROUP), where the groups
+    index what `string-match' returns -- 0 is the whole match, so the first
+    capture is 1. A nil column group means the format has no column.
+
+    Recognised out of the box: path:line:col (gcc, clang, rustc, most
+    linters), path:line (make and older tools), rustc's indented "--> " line,
+    and Python's File "x", line N. Adding a compiler is adding a line to the
+    variable.
+
+    A relative path resolves against the editor's working directory, which is
+    right when the editor was started where the command was run. When it is
+    not, the file is reported as missing rather than some other file of the
+    same name being opened.
+
+WHERE THE STATE IS
+    In the buffer. `shell-command-start' writes the command as the first
+    line -- "$ cargo build" -- so `g' reads it back off the screen rather
+    than from a variable that could disagree with what is displayed. Two
+    compilation buffers each re-run their own command.
+
+    The exception is which buffer M-g n walks, which is kept outside: that
+    question is asked from a different buffer, so it cannot be answered by
+    reading the current one.
+
+MARKS
+    The location being visited is marked in the compilation buffer, and the
+    line jumped to is marked in the file. Both by overlay category, so the
+    previous mark goes when the next arrives and exactly one line is ever
+    marked -- which is what makes a list of forty errors legible.
+
+SEE ALSO
+    overlays, buffers, windows, (shell-command-start), (string-match)

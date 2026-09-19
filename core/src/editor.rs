@@ -3271,6 +3271,7 @@ pub fn create_global_env<B: BufferTrait>()
 (eval-file "buffer-list")  ; C-x b to switch, C-x C-b for the whole list
 (eval-file "shell")       ; M-! runs a command and shows what it said
 (eval-file "manpage")     ; C-h m, and K on a word
+(eval-file "compile")     ; C-c c, and M-g n to walk what it complained about
 
 ;; Where completions come from, for C-M-i in a buffer. The command is built in
 ;; and works without this; what this adds is the five sources it asks. Take one

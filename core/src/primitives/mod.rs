@@ -207,6 +207,11 @@ pub fn install_primitives<B: BufferTrait>(
         general::all_variables,
         general::ALL_VARIABLES_DOC
     );
+    insert_fn!(
+        "string-match",
+        general::string_match,
+        general::STRING_MATCH_DOC
+    );
     insert_fn!("regexp-opt", general::regexp_opt, general::REGEXP_OPT_DOC);
 
     // Completion at point. The registry of sources and the merge that runs

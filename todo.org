@@ -2,13 +2,20 @@
 #+title: rsedit
 
 * Fixes todo
-- [ ] fuzzy-filter function often run out-of-fuel, one example is the the manpage-candidates
-      function used in the test rsedits_pages_are_offered_for_completion
+- [ ] C-x u still doens't ask to repeat u to do further undos
+- [ ] rsedits_pages_are_offered_for_completion still fail probably for OutOfFuel 
+- [ ] electric-pair doesn't recognize a match pair in some case for example:
+
+fn a() {
+  body function
+}
+
+deleting the first { and inserting it against brings to a couple {} and the second
+one can't be removed without removing also the first. When a pair match the corrispective
+closed one the closing one shouldn't be added. The same is valid for inserting a closing
+one that match an already inserted open pair
 
 * Macro todo 
-- [ ] emacs like compilation mode that produce a read only buffer from a shell command where
-      it recognize the standard filepath:row_number format and pressing enter with the cursor
-      on it lead to that file and that row,col
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 

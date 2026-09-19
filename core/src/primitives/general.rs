@@ -531,3 +531,67 @@ primitive!(regexp_opt, args, _env, _ctx, {
     }
     Ok(ELispExp::string(format!("(?:{})", parts.join("|"))))
 });
+
+pub const STRING_MATCH_DOC: &str = "(string-match REGEXP STRING): Match REGEXP against STRING and \
+         return what it captured, or nil if it does not match.\n\n\
+         The answer is a list: the whole match first, then one element per capture group, in \
+         order. A group that did not take part is nil, so the positions of the others do not \
+         shift -- which is what lets a caller say \"group 3 is the column\" and be right whether \
+         or not group 2 was there.\n\n\
+         Stateless, unlike Emacs' `string-match', which records the match in global data that a \
+         later `match-string' reads. Global match data is a variable that any function you call \
+         in between can overwrite, and the bug it causes -- the right groups, from the wrong \
+         match -- is invisible at the point it is read.\n\n\
+         Returns nil (logging a diagnostic) if REGEXP does not compile. The engine is the one \
+         the syntax rules use: no lookahead, no backreferences, which is how it stays linear.\n\n\
+         Example:\n\
+         (string-match \\\"([a-z]+):([0-9]+)\\\" \\\"src/main.rs:42\\\")\n\
+         => (\\\"main.rs:42\\\" \\\"main.rs\\\" \\\"42\\\")";
+
+primitive!(string_match, args, _env, ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let pattern = match &args[0] {
+        ELispExp::String(text) => text.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let subject = match &args[1] {
+        ELispExp::String(text) => text.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let compiled = match regex::Regex::new(&pattern) {
+        Ok(compiled) => compiled,
+        Err(why) => {
+            ctx.log_diagnostic(&format!("{pattern:?} is not a regular expression: {why}"));
+            return Ok(ELispExp::nil());
+        }
+    };
+    let Some(captures) = compiled.captures(&subject) else {
+        return Ok(ELispExp::nil());
+    };
+    // Every group, including the ones that did not take part -- as nil, so
+    // that a caller counting groups is never off by one because an optional
+    // one was absent.
+    let groups = captures
+        .iter()
+        .map(|group| match group {
+            Some(matched) => ELispExp::string(matched.as_str().to_string()),
+            None => ELispExp::nil(),
+        })
+        .collect();
+    Ok(ELispExp::proper_list(groups))
+});

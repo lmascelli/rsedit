@@ -230,13 +230,24 @@ returning everything: the list on a full system is tens of thousands of names."
 Walked each time rather than cached. The result is only ever handed to
 `fuzzy-filter', and a cache would be one more thing to invalidate when
 `manpage-path' changes."
+  ;; `mapcar' per directory, and one `append' per directory to join them.
+  ;;
+  ;; What this used to do was `(setq names (append names (list one-name)))'
+  ;; per file, which copies everything gathered so far on every step: building
+  ;; an n-element list that way costs about n squared units of work. The
+  ;; interpreter charges for the walk, so on a system with a real set of manual
+  ;; pages -- five to thirty thousand of them -- this did not merely go slowly,
+  ;; it ran out of fuel and gave up. The budget gives out somewhere around
+  ;; 4,500 elements.
+  ;;
+  ;; `mapcar' builds its result once, and the joins are per *directory*, of
+  ;; which there is a handful.
   (let ((names nil))
     (mapc (lambda (directory)
-            (mapc (lambda (file)
-                    (setq names
-                          (append names
-                                  (list (manpage--strip-extensions file)))))
-                  (nth 1 (directory-files-recursive directory 20000))))
+            (setq names
+                  (append names
+                          (mapcar 'manpage--strip-extensions
+                                  (nth 1 (directory-files-recursive directory 20000))))))
           (append (let ((ours (manpage--rsedit-directory)))
                     (if (and ours (file-directory-p ours)) (list ours) nil))
                   manpage-path))

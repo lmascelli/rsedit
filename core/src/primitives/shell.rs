@@ -177,9 +177,13 @@ pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND): Run CO
          because two commands sharing one would interleave their lines into something neither \
          of them said. The buffer is read-only; killing it while the command runs is allowed, \
          and the rest of the output is then dropped.\n\n\
+         MODE, if given, is the major mode the output buffer is put in, so a module can give the \
+         transcript keys and colouring of its own -- which is the whole of how `compile' differs \
+         from `M-!'. It defaults to `shell-output-mode'.\n\n\
          Returns nil (reporting it) if the command could not be started at all.\n\n\
          Example:\n\
-         (shell-command-start \"git status --short\") => \"*Shell Output*\"";
+         (shell-command-start \"git status --short\") => \"*Shell Output*\"\n\
+         (shell-command-start \"cargo build\" \'compilation-mode)";
 
 primitive!(shell_command_start, args, _env, ctx, {
     let Some(ELispExp::String(command)) = args.first() else {
@@ -187,6 +191,17 @@ primitive!(shell_command_start, args, _env, ctx, {
             expected: "String".into(),
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
+    };
+    let mode = match args.get(1) {
+        None => "shell-output-mode".to_string(),
+        Some(exp) if exp.is_nil() => "shell-output-mode".to_string(),
+        Some(ELispExp::Symbol(name)) | Some(ELispExp::String(name)) => name.to_string(),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Symbol naming a mode".into(),
+                got: other.clone(),
+            });
+        }
     };
     let child = match shell_invocation(command).spawn() {
         Ok(child) => child,
@@ -197,7 +212,7 @@ primitive!(shell_command_start, args, _env, ctx, {
     };
 
     let name = free_output_name(ctx);
-    ctx.new_buffer(&name, None, Some("shell-output-mode".to_string()));
+    ctx.new_buffer(&name, None, Some(mode));
     append(ctx, &name, &format!("$ {command}\n"));
     if let Some(handle) = ctx.get_buffer(&name) {
         ctx.mutate_buffer(handle, |buf| buf.read_only = true);

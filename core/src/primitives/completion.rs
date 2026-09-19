@@ -711,7 +711,7 @@ pub const FUZZY_FILTER_DOC: &str = "(fuzzy-filter PATTERN CANDIDATES): The candi
          (fuzzy-filter \\\"cap\\\" '(\\\"completion-at-point\\\" \\\"copy\\\" \\\"cap\\\"))\n\
          (setq *completion-filter-function* 'fuzzy-filter)";
 
-primitive!(fuzzy_filter, args, _env, _ctx, {
+primitive!(fuzzy_filter, args, _env, ctx, {
     if args.len() != 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 2,
@@ -728,8 +728,22 @@ primitive!(fuzzy_filter, args, _env, _ctx, {
             });
         }
     };
+    let candidates = as_list(&args[1]);
+    // Charged for the whole list before any of it is scored.
+    //
+    // The evaluator charges one unit per reduction step, which prices this
+    // call at 1 however many candidates it is handed -- and scoring twenty
+    // thousand names is not one step's worth of work. The budget is meant to
+    // bound *time*, so that a runaway loop is stopped in about a second; a
+    // primitive doing n units of work for one unit of fuel is how that
+    // guarantee quietly stops holding. Same reasoning as `expect_list` in
+    // `base_env`, which is where this rule is written down.
+    //
+    // It costs nothing in practice: twenty thousand candidates against a
+    // budget of ten million is a fifth of a percent.
+    ctx.consume_fuel(u32::try_from(candidates.len()).unwrap_or(u32::MAX))?;
     let mut scored: Vec<(i64, usize, ELispExp<B>)> = Vec::new();
-    for (position, item) in as_list(&args[1]).into_iter().enumerate() {
+    for (position, item) in candidates.into_iter().enumerate() {
         let Some(value) = candidate_value(&item) else {
             continue;
         };

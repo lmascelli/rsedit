@@ -23,7 +23,7 @@ mod tests {
     /// The modules `create_global_env` writes into a fresh init.lisp, in order.
     /// Order is the whole point: each is written against what the ones above it
     /// define.
-    const SHIPPED: [(&str, &str); 14] = [
+    const SHIPPED: [(&str, &str); 15] = [
         ("commands", include_str!("../../lisp/commands.lisp")),
         ("debug", include_str!("../../lisp/debug.lisp")),
         ("common-keymaps", include_str!("../../lisp/common-keymaps.lisp")),
@@ -38,6 +38,7 @@ mod tests {
         ("buffer-list", include_str!("../../lisp/buffer-list.lisp")),
         ("shell", include_str!("../../lisp/shell.lisp")),
         ("manpage", include_str!("../../lisp/manpage.lisp")),
+        ("compile", include_str!("../../lisp/compile.lisp")),
     ];
 
     fn loaded() -> (Ctx, Arc<Env<Ctx>>) {
