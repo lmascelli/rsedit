@@ -457,7 +457,13 @@ impl LayoutNode {
                 // Syntax first, then the region: the renderer draws later
                 // entries over earlier ones, and a selection has to stay
                 // visible on top of coloured text.
+                // Syntax, then overlays, then the region. Later entries are
+                // drawn over earlier ones, so this is the order of the rules:
+                // an overlay wins over colouring -- a diagnostic has to be
+                // visible on a keyword -- and the selection wins over
+                // everything, which is what the eye depends on.
                 let mut highlights = syntax_highlights(win, &rect, buffers);
+                highlights.extend(overlay_highlights(win, &rect, buffers));
                 highlights.extend(region_highlights(win, &rect, buffers));
 
                 out_views.push(RenderableWindowView {
@@ -562,6 +568,80 @@ impl LayoutNode {
 /// already applied and both ends clipped to the window's width, because the
 /// renderer knows about the screen and should not have to know about the
 /// buffer.
+/// The window's overlays, clipped to what it is showing.
+///
+/// The third producer of [`Highlight`], beside the mode's colouring and the
+/// region -- and the only one reading positions that were *stored* rather than
+/// recomputed. What makes that safe is that the two doors move them; see
+/// [`crate::buffer::overlay`].
+///
+/// # Why this walks the visible rows rather than the overlays
+///
+/// An overlay may be anywhere in a buffer of any size, and almost all of them
+/// are off screen at any moment. Asking the table what overlaps the visible
+/// span once, and then cutting that answer into rows, keeps the work
+/// proportional to what is being drawn instead of to what the buffer holds.
+pub fn overlay_highlights<B: BufferTrait>(
+    win: &Window,
+    rect: &Rect,
+    buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
+) -> Vec<Highlight> {
+    let Some(buf) = buffers.get(&win.buffer_name) else {
+        return Vec::new();
+    };
+    let buf = buf
+        .read()
+        .expect("Failed to acquire read lock on buffer for highlighting");
+    if buf.overlays.is_empty() {
+        // The state almost every buffer is in. Worth its own exit so that a
+        // frame with no overlays anywhere costs one comparison per window.
+        return Vec::new();
+    }
+
+    // The character range on screen, as one span. The last visible line runs
+    // to the end of the buffer rather than to a computed offset: a window
+    // showing the end of a file has fewer lines than it has rows.
+    let first_line = win.scroll_y;
+    let last_line = (win.scroll_y + rect.height).min(buf.text.line_count());
+    if first_line >= last_line {
+        return Vec::new();
+    }
+    let visible_from = buf.text.cursor_2d_to_1d(first_line, 0);
+    let visible_to = buf.text.len();
+
+    let mut highlights = Vec::new();
+    for overlay in buf.overlays.overlapping(visible_from, visible_to) {
+        let (start_line, start_col) = buf.text.cursor_1d_to_2d(overlay.start);
+        let (end_line, end_col) = buf.text.cursor_1d_to_2d(overlay.end);
+        for line in start_line.max(first_line)..=end_line.min(last_line.saturating_sub(1)) {
+            // Only the two ends of an overlay are partial lines; everything
+            // between is covered whole. The same shape `region_highlights`
+            // uses, and for the same reason.
+            let from = if line == start_line { start_col } else { 0 };
+            let to = if line == end_line {
+                end_col
+            } else {
+                // One past the last character, so a multi-line overlay reads
+                // as covering whole lines rather than stopping raggedly.
+                line_width(&buf.text, line) + 1
+            };
+            let row = line - first_line;
+            let start_col = from.saturating_sub(win.scroll_x);
+            let end_col = to.saturating_sub(win.scroll_x).min(rect.width);
+            if start_col >= end_col {
+                continue;
+            }
+            highlights.push(Highlight {
+                row,
+                start_col,
+                end_col,
+                face: overlay.face,
+            });
+        }
+    }
+    highlights
+}
+
 pub fn region_highlights<B: BufferTrait>(
     win: &Window,
     rect: &Rect,

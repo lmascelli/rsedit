@@ -52,6 +52,7 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
     };
     buf.undo.record_delete(start, removed, point);
     buf.mark = deactivated(buf.mark);
+    buf.overlays.adjust_for_delete(start, end);
     if whole_buffer {
         // `clear` exists precisely so that emptying a large buffer is not
         // 60,000 gap-moving deletions -- see `BufferTrait::clear`.
@@ -75,8 +76,14 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
     }
     let at = at.min(buf.text.len());
     let point = buf.text.cursor_pos_1d();
-    buf.undo.record_insert(at, content.chars().count(), point);
+    let inserted = content.chars().count();
+    buf.undo.record_insert(at, inserted, point);
     buf.mark = deactivated(buf.mark);
+    // Before the text moves, and through the table's own rule rather than
+    // here: an overlay that did not move with the text under it is a highlight
+    // drawn over the wrong words, noticed minutes later with nothing to say
+    // why. See `buffer::overlay`.
+    buf.overlays.adjust_for_insert(at, inserted);
     undo::apply_insert(&mut buf.text, at, content);
     buf.is_modified = true;
     changed(buf, at);

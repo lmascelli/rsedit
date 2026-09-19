@@ -262,6 +262,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 local_keymap: None,
                 undo: Default::default(),
                 mark: None,
+                overlays: Default::default(),
                 version: 0,
                 syntax: Default::default(),
                 read_only: false,

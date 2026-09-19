@@ -3,8 +3,10 @@ mod buffer_trait;
 pub use buffer_trait::BufferTrait;
 pub mod gap_buffer;
 pub mod mark;
+pub mod overlay;
 pub mod syntax;
 pub use mark::Mark;
+pub use overlay::{Overlay, OverlayTable};
 pub mod undo;
 pub use undo::UndoHistory;
 
@@ -20,6 +22,18 @@ pub struct Buffer<B: BufferTrait> {
     pub current_mode: String,
     /// This buffer's edit history: recorded changes for undo and redo.
     pub undo: UndoHistory,
+    /// Faces put on this buffer's text by something other than its mode.
+    ///
+    /// A search marking its matches, a diagnostic from elsewhere, a manual
+    /// page whose emphasis was in the bytes -- none of those can be said as a
+    /// syntax rule, which is a pattern over the text rather than a statement
+    /// about one particular span of it. See [`crate::buffer::overlay`].
+    ///
+    /// Unlike everything else here that knows a position, these survive edits:
+    /// the two doors adjust them. That is the whole of what makes them
+    /// interesting, and the reason they are a table rather than a `Vec`.
+    pub overlays: OverlayTable,
+
     /// Where the mark is, when this buffer has one. The region is the text
     /// between it and point -- see [`crate::buffer::mark::region_bounds`].
     pub mark: Option<Mark>,
@@ -69,6 +83,7 @@ impl<B: BufferTrait> Buffer<B> {
             current_mode: "fundamental-mode".into(),
             undo: UndoHistory::default(),
             mark: None,
+            overlays: OverlayTable::default(),
             version: 0,
             syntax: syntax::SyntaxCache::default(),
             read_only: false,
@@ -85,6 +100,7 @@ impl<B: BufferTrait> Buffer<B> {
             current_mode: "fundamental-mode".into(),
             undo: UndoHistory::default(),
             mark: None,
+            overlays: OverlayTable::default(),
             version: 0,
             syntax: syntax::SyntaxCache::default(),
             read_only: false,

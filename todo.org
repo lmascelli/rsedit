@@ -58,12 +58,11 @@
       `manpage-path' is handed to `man' as MANPATH, so it controls what is found as well as
       what is listed. `K' opens the word under the cursor, `C-h m' prompts with completion,
       and `capf-manpage-names' is the completion source. New primitives: getenv, setenv,
-      path-separator, shell-command-to-string, strip-overstrike, data-directory.
-      NOTE: the overstrike is *stripped* rather than turned into faces. This editor faces text
-      through its mode's syntax rules and has nothing that can face an arbitrary span -- no
-      text properties, no overlays -- so the emphasis is recovered from structure instead (a
-      heading is a word alone at the left margin). Bold mid-sentence would need an overlay
-      mechanism, which is a feature of its own.
+      path-separator, shell-command-to-string, parse-overstrike, data-directory.
+      The overstrike was stripped at first, because nothing could face an arbitrary span.
+      Overlays exist now, so `parse-overstrike' returns the text *and* the spans that were
+      emphasised, and each becomes an overlay -- bold mid-sentence included. The syntax rules
+      still do the structural part, which is what patterns are good at.
 - [~] rsedit manpages: the base interpreter standard library, the editor functions and the
                        modules should provide a manpage that can be consulted when creating
                        rsedit code. The location of this pages should be in the root of the
@@ -76,6 +75,28 @@
       stating the format. The rest is writing -- every primitive already carries a doc string
       that `function-doc' and C-M-i will show, so these pages are for what a doc string cannot
       say: how the pieces fit and why they are shaped that way.
+- [X] Overlay mechanism
+      A face on one particular span, which a syntax rule cannot express -- rules are patterns
+      over the text, and "this match, here" is not a pattern. A third producer of Highlight
+      beside the mode's colouring and the region, drawn between them.
+      The hard part is that these are the first stored positions in the editor: everything
+      else either recomputes every frame or is invalidated by the next edit, and the mark is
+      *deactivated* by every edit precisely so it never needs adjusting. Overlays are adjusted
+      at the two doors instead. Insert moves `start' when it is at or before it and `end' only
+      when strictly before, which is the whole of "neither end grows": a highlighted match
+      stays exactly the text that matched, however much is typed either side. Delete clamps
+      both ends and removes anything left covering nothing.
+      Kept sorted by start, which makes the adjustment a binary search and a walk of the tail;
+      a `furthest_end' makes the common case -- editing past everything highlighted -- one
+      comparison. That is the place this would grow an interval tree if it ever needs one.
+      Lisp: make-overlay, delete-overlay, remove-overlays, overlays-at, overlay-face.
+      Deliberately left out: property bags (before-string, invisible and overlay keymaps need
+      renderer and input support that does not exist, so they would be stored and ignored),
+      and undo integration (an overlay destroyed by a delete does not come back -- restoring
+      it means the undo history carrying state owned by other modules).
+      The mark could now be an overlay. It should not be: it is deactivated by every edit so
+      that it never needs adjusting, and folding it in would trade a rule that cannot go wrong
+      for one that can.
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 

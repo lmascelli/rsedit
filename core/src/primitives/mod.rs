@@ -90,6 +90,7 @@ pub(crate) mod edits;
 mod general;
 pub(crate) mod io;
 mod modes;
+mod overlays;
 mod region;
 mod shell;
 mod theme;
@@ -705,9 +706,9 @@ pub fn install_primitives<B: BufferTrait>(
         shell::SHELL_COMMAND_TO_STRING_DOC
     );
     insert_fn!(
-        "strip-overstrike",
-        shell::strip_overstrike,
-        shell::STRIP_OVERSTRIKE_DOC
+        "parse-overstrike",
+        shell::parse_overstrike,
+        shell::PARSE_OVERSTRIKE_DOC
     );
     insert_fn!(
         "shell-command-running-p",
@@ -865,6 +866,27 @@ pub fn install_primitives<B: BufferTrait>(
         "set-comment-syntax",
         modes::set_comment_syntax,
         modes::SET_COMMENT_SYNTAX_DOC
+    );
+    insert_fn!(
+        "make-overlay",
+        overlays::make_overlay,
+        overlays::MAKE_OVERLAY_DOC
+    );
+    insert_fn!(
+        "delete-overlay",
+        overlays::delete_overlay,
+        overlays::DELETE_OVERLAY_DOC
+    );
+    insert_fn!(
+        "remove-overlays",
+        overlays::remove_overlays,
+        overlays::REMOVE_OVERLAYS_DOC
+    );
+    insert_fn!("overlays-at", overlays::overlays_at, overlays::OVERLAYS_AT_DOC);
+    insert_fn!(
+        "overlay-face",
+        overlays::overlay_face,
+        overlays::OVERLAY_FACE_DOC
     );
     insert_fn!("syntax-class", modes::syntax_class, modes::SYNTAX_CLASS_DOC);
     insert_fn!(

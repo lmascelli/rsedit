@@ -117,46 +117,141 @@ mod tests {
     // Overstrike
     // ----------------------------------------------------------------
 
+    /// The plain half of `(parse-overstrike TEXT)`.
+    fn plain_of(answer: &LispExp<Ctx>) -> String {
+        text_of(&answer.iter().next().expect("the plain text"))
+    }
+
+    /// The spans half, as (start, end, kind).
+    fn spans_of(answer: &LispExp<Ctx>) -> Vec<(usize, usize, String)> {
+        answer
+            .iter()
+            .nth(1)
+            .expect("the spans")
+            .iter()
+            .map(|span| {
+                let parts: Vec<LispExp<Ctx>> = span.iter().collect();
+                let number = |exp: &LispExp<Ctx>| match exp {
+                    LispExp::Number(n) => *n as usize,
+                    other => panic!("expected a number, got {other:?}"),
+                };
+                let kind = match &parts[2] {
+                    LispExp::Symbol(name) => name.to_string(),
+                    other => panic!("expected a symbol, got {other:?}"),
+                };
+                (number(&parts[0]), number(&parts[1]), kind)
+            })
+            .collect()
+    }
+
     #[test]
-    fn overstruck_bold_becomes_the_plain_word() {
+    fn overstruck_bold_gives_the_plain_word_and_a_bold_span() {
         let (ctx, env) = editor();
         // N\bNA\bAM\bME\bE -- how `man` writes a bold "NAME".
-        let stripped = text_of(&run(
-            "(strip-overstrike \"N\u{8}NA\u{8}AM\u{8}ME\u{8}E\")",
+        let answer = run(
+            "(parse-overstrike \"N\u{8}NA\u{8}AM\u{8}ME\u{8}E\")",
             &env,
             &ctx,
-        ));
-        assert_eq!(stripped, "NAME");
+        );
+        assert_eq!(plain_of(&answer), "NAME");
+        // One span, not four: a word emphasised letter by letter is one
+        // emphasised word, and an overlay per character would be thousands
+        // for a page.
+        assert_eq!(spans_of(&answer), vec![(0, 4, "bold".to_string())]);
     }
 
     #[test]
-    fn overstruck_underline_becomes_the_plain_word() {
+    fn overstruck_underline_gives_the_plain_word_and_an_underline_span() {
         let (ctx, env) = editor();
         // _\bf_\bi_\bl_\be -- how `man` writes an underlined "file".
-        let stripped = text_of(&run(
-            "(strip-overstrike \"_\u{8}f_\u{8}i_\u{8}l_\u{8}e\")",
+        let answer = run(
+            "(parse-overstrike \"_\u{8}f_\u{8}i_\u{8}l_\u{8}e\")",
             &env,
             &ctx,
-        ));
-        assert_eq!(stripped, "file");
+        );
+        assert_eq!(plain_of(&answer), "file");
+        assert_eq!(spans_of(&answer), vec![(0, 4, "underline".to_string())]);
     }
 
     #[test]
-    fn text_with_no_overstrike_is_unchanged() {
+    fn plain_text_has_no_spans() {
         let (ctx, env) = editor();
+        let answer = run(r#"(parse-overstrike "plain text")"#, &env, &ctx);
+        assert_eq!(plain_of(&answer), "plain text");
+        assert!(spans_of(&answer).is_empty());
+    }
+
+    #[test]
+    fn emphasis_in_the_middle_of_a_line_is_found_where_it_is() {
+        // The case that needed overlays at all: a bold word inside a sentence,
+        // which no syntax rule could match on.
+        let (ctx, env) = editor();
+        let answer = run(
+            "(parse-overstrike \"see t\u{8}th\u{8}he\u{8}e file\")",
+            &env,
+            &ctx,
+        );
+        assert_eq!(plain_of(&answer), "see the file");
+        assert_eq!(spans_of(&answer), vec![(4, 7, "bold".to_string())]);
+    }
+
+    #[test]
+    fn two_runs_of_emphasis_are_two_spans() {
+        let (ctx, env) = editor();
+        let answer = run(
+            "(parse-overstrike \"a\u{8}a b c\u{8}c\")",
+            &env,
+            &ctx,
+        );
+        assert_eq!(plain_of(&answer), "a b c");
         assert_eq!(
-            text_of(&run(r#"(strip-overstrike "plain text")"#, &env, &ctx)),
-            "plain text"
+            spans_of(&answer),
+            vec![(0, 1, "bold".to_string()), (4, 5, "bold".to_string())]
+        );
+    }
+
+    #[test]
+    fn bold_and_underline_next_to_each_other_do_not_merge() {
+        let (ctx, env) = editor();
+        let answer = run(
+            "(parse-overstrike \"a\u{8}a_\u{8}b\")",
+            &env,
+            &ctx,
+        );
+        assert_eq!(plain_of(&answer), "ab");
+        assert_eq!(
+            spans_of(&answer),
+            vec![(0, 1, "bold".to_string()), (1, 2, "underline".to_string())]
         );
     }
 
     #[test]
     fn a_backspace_at_the_start_removes_nothing_and_does_not_panic() {
         let (ctx, env) = editor();
-        assert_eq!(
-            text_of(&run("(strip-overstrike \"\u{8}abc\")", &env, &ctx)),
-            "abc"
+        let answer = run("(parse-overstrike \"\u{8}abc\")", &env, &ctx);
+        assert_eq!(plain_of(&answer), "abc");
+    }
+
+    #[test]
+    fn a_trailing_backspace_does_not_panic() {
+        let (ctx, env) = editor();
+        let answer = run("(parse-overstrike \"abc\u{8}\")", &env, &ctx);
+        assert_eq!(plain_of(&answer), "ab");
+    }
+
+    #[test]
+    fn spans_are_offsets_into_the_plain_text_not_the_original() {
+        // They are handed straight to `make-overlay`, so they have to index
+        // the text that was actually inserted.
+        let (ctx, env) = editor();
+        let answer = run(
+            "(parse-overstrike \"xx t\u{8}th\u{8}he\u{8}e\")",
+            &env,
+            &ctx,
         );
+        let plain = plain_of(&answer);
+        let (start, end, _) = spans_of(&answer)[0].clone();
+        assert_eq!(&plain[start..end], "the");
     }
 
     // ----------------------------------------------------------------

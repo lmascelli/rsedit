@@ -17,19 +17,19 @@
 ;;; completion candidates would be the kind of half-truth that wastes an
 ;;; afternoon.
 ;;;
-;;; # Why the formatting is dropped rather than translated
+;;; # How the formatting survives
 ;;;
 ;;; `man' marks bold and underline with overstrike -- `e\be' -- which is
-;;; unreadable if left in. Translating it into faces is not possible here: this
-;;; editor gives text a face through its mode's *syntax rules*, and has no way
-;;; to face an arbitrary span. There is no text-property or overlay mechanism to
-;;; hang one on.
+;;; unreadable if left in. `parse-overstrike' takes it apart into plain text and
+;;; the spans that were emphasised, and each span becomes an overlay.
 ;;;
-;;; So the overstrike is stripped and the emphasis recovered from the structure
-;;; instead. A heading is a heading because it is a word alone at the left
-;;; margin, not because `man' doubled its letters -- and the rules below say so.
-;;; The result reads the way the page does in a terminal. What it cannot do is
-;;; bold a word mid-sentence, which is the part that would need overlays.
+;;; Overlays are what make this possible at all. A mode's colouring is a set of
+;;; patterns over the text, and "this word, because `man' doubled its letters"
+;;; is not a pattern -- there is nothing about the word itself to match on. The
+;;; syntax rules at the bottom still do the structural part, which patterns are
+;;; good at: a heading is a heading because it is a word alone at the left
+;;; margin. The two together give a page that reads the way it does in a
+;;; terminal, emphasis mid-sentence included.
 
 (make-mode 'manpage-mode)
 
@@ -138,16 +138,45 @@ a manual page whose entire content is an apology for not having manual pages."
 ;; Showing it
 ;; ---------------------------------------------------------------------------
 
+(defconst manpage-emphasis-priority 10
+  "Where a page's own emphasis sits among overlaps.
+
+Above nothing in particular today -- it is the only thing making overlays in a
+manual buffer. Named rather than written as a bare 10 so that whatever is added
+next has something to be higher or lower than.")
+
 (defun manpage--show (name text)
-  "Put TEXT in the manual buffer as the page for NAME."
+  "Put TEXT in the manual buffer as the page for NAME, emphasis and all."
   (buffer-create manpage-buffer-name 'manpage-mode)
   (switch-to-buffer manpage-buffer-name)
-  (set-buffer-read-only nil)
-  (clear-buffer)
-  (insert (strip-overstrike text))
-  (set-buffer-read-only t)
+  (let* ((parsed (parse-overstrike text))
+         (plain (car parsed))
+         (spans (nth 1 parsed)))
+    (set-buffer-read-only nil)
+    (clear-buffer)
+    (insert plain)
+    (set-buffer-read-only t)
+    ;; The old overlays first: a buffer reused for a second page would
+    ;; otherwise keep the first one's emphasis at the first one's offsets,
+    ;; which is emphasis scattered over unrelated words.
+    (remove-overlays 'manpage)
+    (mapc (lambda (span)
+            (make-overlay (nth 0 span)
+                          (nth 1 span)
+                          (manpage--face-for (nth 2 span))
+                          manpage-emphasis-priority
+                          'manpage))
+          spans))
   (goto-char 0)
   (message "Manual page %s" name))
+
+(defun manpage--face-for (kind)
+  "The face KIND -- `bold' or `underline' -- should be drawn in.
+
+Two faces of this module's own rather than reusing `keyword' and so on: a
+manual page's bold means "this is emphasised", not "this is a keyword", and a
+theme should be able to say so."
+  (if (eq kind 'underline) 'manpage-underline 'manpage-bold))
 
 (defcommand manpage (name) ("sManual page: ")
   "Show the manual page for NAME. Bound to M-x manpage.
@@ -250,5 +279,11 @@ Walked each time rather than cached. The result is only ever handed to
 (add-syntax-rule 'manpage-mode "^[ \t]+(--?[a-zA-Z0-9][a-zA-Z0-9-]*)" 'function 1)
 ;; The name being documented, as `man' writes it in the header line.
 (add-syntax-rule 'manpage-mode "^([A-Za-z0-9_.-]+)\\([0-9][a-zA-Z]*\\)" 'type 1)
+
+;; The two faces the page's own emphasis is drawn in. Given an appearance here
+;; because this module invents them -- the editor has never heard of either
+;; until these lines name them.
+(set-face 'manpage-bold nil nil '("bold"))
+(set-face 'manpage-underline nil nil '("underline"))
 
 (log "manpage loaded")

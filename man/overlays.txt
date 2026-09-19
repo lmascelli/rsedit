@@ -1,0 +1,61 @@
+NAME
+    overlays - a face on one particular span of text
+
+DESCRIPTION
+    A mode's colouring is a set of patterns: it can say "a word in this list
+    is a keyword" and cannot say "this span, here, because of something that
+    happened". A search marking its matches, a diagnostic arriving from
+    elsewhere, a manual page whose emphasis was in the bytes rather than in
+    the words -- none of those are expressible as a rule over the text.
+
+    An overlay is that: a span, a face, a priority, and a category naming
+    whatever made it.
+
+        (make-overlay START END FACE &optional PRIORITY CATEGORY)  => handle
+        (delete-overlay HANDLE)
+        (remove-overlays &optional CATEGORY)
+        (overlays-at POSITION)
+        (overlay-face HANDLE)
+
+DRAW ORDER
+    Syntax colouring, then overlays, then the region. An overlay is drawn
+    over the mode's colouring, so a diagnostic is visible on a keyword; the
+    selection is drawn over everything, which is what the eye depends on.
+
+    Among themselves, overlays are ordered by priority, higher winning.
+    Equal priorities are drawn oldest first, so the later one covers.
+
+SURVIVING EDITS
+    Overlays are the only stored positions in the editor. Everything else
+    either recomputes each frame -- syntax spans, the region -- or is
+    invalidated when the text changes. So the two doors move them.
+
+    Inserting before an overlay carries it along. Inserting at either end
+    leaves the new text outside it: a highlighted match stays exactly the
+    text that matched, however much is typed either side. Inserting strictly
+    inside is absorbed, because text typed into a highlighted region is part
+    of it.
+
+    Deleting shrinks an overlay, and deleting everything it covered removes
+    it. Undoing that deletion does not bring it back -- whatever made the
+    overlay will make it again if it still matters.
+
+CATEGORIES
+    The useful half of the interface. A producer re-running -- a search
+    finding new matches -- clears its own batch with one call rather than
+    keeping every handle, and that still works after the module has been
+    reloaded, which loose handles do not survive.
+
+        (remove-overlays 'isearch)
+
+WHAT THEY ARE NOT
+    An overlay carries a face and a priority and nothing else. Emacs'
+    before-string, invisible and overlay keymaps would need renderer and
+    input support this editor does not have, so they are not accepted rather
+    than being stored and quietly ignored.
+
+    The mark is not an overlay, though it could be. It is deactivated by
+    every edit precisely so that it never needs adjusting for one.
+
+SEE ALSO
+    buffers, windows, (make-overlay), (set-face), (list-faces)

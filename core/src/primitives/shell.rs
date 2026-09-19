@@ -273,38 +273,127 @@ primitive!(shell_command_to_string, args, _env, ctx, {
     }
 });
 
-pub const STRIP_OVERSTRIKE_DOC: &str = "(strip-overstrike TEXT): TEXT with terminal overstrike \
-         sequences removed.\n\n\
+pub const PARSE_OVERSTRIKE_DOC: &str = "(parse-overstrike TEXT): TEXT with its terminal \
+         overstrike removed, together with where the emphasis was. Returns (PLAIN SPANS), where \
+         SPANS is a list of (START END KIND) over PLAIN and KIND is `bold' or `underline'.\n\n\
          `man' marks bold by printing a character, a backspace and the same character again \
-         (`e\\\\be'), and underline by printing an underscore, a backspace and the character \
-         (`_\\\\be'). It is how formatting was done on a printer that could only strike the same \
+         (`e\\be'), and underline by printing an underscore, a backspace and the character \
+         (`_\\be'). It is how emphasis was done on a printer that could only strike the same \
          spot twice, and it is still what comes out of `man' today. Left in, every emphasised \
          word is unreadable.\n\n\
-         The formatting is dropped rather than translated, because this editor gives text a \
-         face through its mode's syntax rules and has no way to face an arbitrary span. A mode \
-         showing this output recovers the emphasis from the structure -- a heading is a heading \
-         because of where it sits, not because `man' doubled its letters.\n\n\
+         Both halves come from one pass, and both are returned. An earlier version of this threw \
+         the spans away and kept only the text, which made the emphasis unrecoverable without \
+         parsing the whole thing a second time -- and two passes over the same string have to \
+         agree about offsets, which is exactly the sort of thing that disagrees on a multi-byte \
+         character.\n\n\
+         Offsets are in characters, into PLAIN, so they can be handed straight to \
+         `make-overlay'.\n\n\
          Example:\n\
-         (strip-overstrike \\\"N\\\\bNA\\\\bAM\\\\bME\\\\bE\\\") => \\\"NAME\\\"";
+         (parse-overstrike page) => (\"NAME\" ((0 4 bold)))";
 
-primitive!(strip_overstrike, args, _env, _ctx, {
+primitive!(parse_overstrike, args, _env, _ctx, {
     let Some(ELispExp::String(text)) = args.first() else {
         return Err(EvalError::WrongArgumentType {
             expected: "String".into(),
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        if c == '\u{8}' {
-            // The backspace says "what I printed last did not count". Dropping
-            // the character before it is the whole of the rule, and it is why
-            // this cannot be done with a regexp over pairs: `_\bx` and `x\bx`
-            // are the same operation on different inputs.
-            out.pop();
+
+    #[derive(PartialEq, Clone, Copy)]
+    enum Kind {
+        Bold,
+        Underline,
+    }
+
+    let mut plain = String::with_capacity(text.len());
+    // What each character of `plain` is emphasised as, by character index.
+    let mut marks: Vec<Option<Kind>> = Vec::new();
+    // The character just written, so a backspace knows what it is undoing.
+    let mut previous: Option<char> = None;
+
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{8}' {
+            plain.push(c);
+            marks.push(None);
+            previous = Some(c);
+            continue;
+        }
+        // A backspace says the last character did not count. What replaces it
+        // says which kind of emphasis this was: the same character again is
+        // bold, an underscore before it was underline.
+        let Some(struck) = previous else {
+            // A backspace with nothing before it. Nothing to undo, and nothing
+            // to mark.
+            continue;
+        };
+        plain.pop();
+        marks.pop();
+        let Some(&next) = chars.peek() else {
+            // Trailing backspace: the character it removed is simply gone.
+            previous = None;
+            continue;
+        };
+        chars.next();
+        let kind = if struck == '_' && next != '_' {
+            Kind::Underline
+        } else if next == '_' && struck != '_' {
+            // `x\b_`, which some formatters emit for the same thing.
+            Kind::Underline
         } else {
-            out.push(c);
+            Kind::Bold
+        };
+        // The character that survives is the one that is not the underscore,
+        // so that an underlined `e` reads as `e` rather than as `_`.
+        let shown = if kind == Kind::Underline && next == '_' {
+            struck
+        } else {
+            next
+        };
+        plain.push(shown);
+        marks.push(Some(kind));
+        previous = Some(shown);
+    }
+
+    // Runs of the same kind become one span, because a word emphasised letter
+    // by letter is one emphasised word -- and an overlay per character would
+    // be a thousand overlays for a manual page.
+    let mut spans = Vec::new();
+    let mut run: Option<(usize, Kind)> = None;
+    for (index, mark) in marks.iter().enumerate() {
+        match (run, mark) {
+            (Some((_, kind)), Some(here)) if kind == *here => {}
+            (Some((start, kind)), _) => {
+                spans.push((start, index, kind));
+                run = mark.map(|kind| (index, kind));
+            }
+            (None, Some(kind)) => run = Some((index, *kind)),
+            (None, None) => {}
         }
     }
-    Ok(ELispExp::string(out))
+    if let Some((start, kind)) = run {
+        spans.push((start, marks.len(), kind));
+    }
+
+    let spans = spans
+        .into_iter()
+        .map(|(start, end, kind)| {
+            ELispExp::proper_list(vec![
+                ELispExp::number(start as f64),
+                ELispExp::number(end as f64),
+                ELispExp::symbol(
+                    match kind {
+                        Kind::Bold => "bold",
+                        Kind::Underline => "underline",
+                    }
+                    .to_string(),
+                ),
+            ])
+        })
+        .collect();
+
+    Ok(ELispExp::proper_list(vec![
+        ELispExp::string(plain),
+        ELispExp::proper_list(spans),
+    ]))
 });

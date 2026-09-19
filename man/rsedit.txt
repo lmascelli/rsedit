@@ -34,4 +34,4 @@ MODULES
     risp-mode           colouring and indentation for rsedit's own Lisp
 
 SEE ALSO
-    buffers, windows, completion, modes, keymaps
+    buffers, windows, overlays, completion, modes, keymaps
