@@ -52,6 +52,27 @@ pair it."
   (let ((state (syntax-ppss position)))
     (or (nth 2 state) (nth 3 state))))
 
+(defun electric-pair--balanced-p ()
+  "Whether every list in the buffer is closed.
+
+Asked of the *whole buffer*, and that is the part worth understanding.
+
+The obvious question is \"is the list point is in already closed?\", and it gives
+the wrong answer. A scanner matches a closer to the *innermost* opener, so just
+after typing `{' inside a block that is already closed, the new brace appears to
+have taken the outer one's `}' -- and the check refuses to pair in exactly the
+case where pairing is wanted. It is not the scanner being wrong; innermost-first
+is what matching means.
+
+Depth at the end of the buffer has no such confusion. It counts openers that
+nothing closes, wherever they are, and that is the question: a buffer with an
+unclosed opener wants a closer, and a balanced one does not.
+
+Costs a scan of the buffer. `post-self-insert-hook' already asks `syntax-ppss'
+about the position before point on every character typed, so this roughly
+doubles a cost that was already being paid rather than introducing one."
+  (= 0 (nth 0 (syntax-ppss (point-max)))))
+
 (defun electric-pair--word-after-p ()
   "Whether the character after point belongs to a word.
 
@@ -117,17 +138,26 @@ string\" ahead of the dispatch reads better and is wrong."
                ;; Everything else leaves the contents of strings alone.
                (in-string nil)
 
-               ;; An opener: put its partner after point and stay between them.
+               ;; An opener: put its partner after point and stay between
+               ;; them -- unless the list it opens is closed already.
+               ;;
+               ;; That last part is what stops this making a mess of repairing
+               ;; a brace. Delete the `{' from `fn a() {' and type it back,
+               ;; and the `}' three lines below is still there: adding another
+               ;; gives `{}' with a stray `}' after it, which the delete rules
+               ;; then treat as an empty pair and take out together.
                ((and (eq class 'open) partner)
-                (if (not (electric-pair--word-after-p))
+                (if (or (electric-pair--word-after-p)
+                        (electric-pair--balanced-p))
+                    nil
                     (progn (insert partner) (backward-char))))
 
-               ;; A closer typed where one already is. The one just inserted is
-               ;; removed and point steps over the one that was already there,
-               ;; so the buffer ends with one closer rather than two.
-               ((and (eq class 'close) electric-pair-skip-self
-                     next (string= next typed))
-                (progn (delete-backward-char) (forward-char))))))))
+               ;; A closer, where one is already doing the job.
+               ((and (eq class 'close) electric-pair-skip-self)
+                (electric-pair--closing typed next))
+
+               ;; A closer with skipping turned off, or nothing to skip to.
+               (t nil))))))
   nil)
 
 (defun electric-pair--quotes-inhibited ()
@@ -140,6 +170,40 @@ quote really does want closing.
 
 Set with (put 'rust-mode 'electric-pair-inhibit-quotes t)."
   (get (major-mode) 'electric-pair-inhibit-quotes))
+
+(defun electric-pair--closing (typed next)
+  "Decide what a closing delimiter that was just typed should do.
+
+Three cases, and the middle one is the reason this is a function rather than a
+branch. The closer is already in the buffer when this runs -- `self-insert' put
+it there -- so deciding not to have typed it means taking it back out.
+
+- The partner is right next to point: step over it.
+- The list is closed further along: take the typed one out and go to the
+  closer that was already there. Typing `}' a line above an existing one means
+  \"finish this block\", and the block is finished -- so this goes to the end of
+  it rather than making a second end.
+- Neither: leave the typed character where it is.
+
+The take-out-and-check is a real edit, so it is recorded -- but it happens
+inside the same command as the insertion it is undoing, so undo sees one step,
+not three."
+  (cond
+   ((and next (string= next typed))
+    (progn (delete-backward-char) (forward-char)))
+   (t
+    (progn
+      (delete-backward-char)
+      ;; Two things have to be true to call the typed closer surplus: the
+      ;; buffer must already balance without it, *and* there must be a list to
+      ;; move out of. Balance alone is not enough -- at the top level, with no
+      ;; list open at all, the buffer balances trivially and a typed `}' is
+      ;; just a character the user wanted.
+      (let ((here (point)))
+        (if (and (electric-pair--balanced-p)
+                 (progn (up-list) (> (point) here)))
+            nil
+            (progn (goto-char here) (insert typed))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Deleting

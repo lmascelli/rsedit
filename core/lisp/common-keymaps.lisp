@@ -118,6 +118,17 @@
 (define-key nil "C-x z" 'repeat)
 (define-repeat-key 'repeat "z")
 
+;; And bare letters for the two commands that are most often wanted several
+;; times running. `C-x z' covers every command including these, but `C-x u'
+;; followed by `u u u' is the shape people reach for, and having to type
+;; `C-x z' in between to get it is the complaint this answers.
+;;
+;; The cost of a repeat key is that the letter stops doing its ordinary thing
+;; for exactly one keystroke after that command -- and the offer is shown in
+;; the frame while it stands, so nobody is left guessing.
+(define-repeat-key 'undo "u")
+(define-repeat-key 'redo "r")
+
 ;; Incremental search. C-s opens a prompt and the buffer jumps to the first
 ;; match of whatever has been typed so far, re-searching on every keystroke.
 ;; Inside the search, C-s goes to the next match and C-r turns around; Return

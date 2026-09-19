@@ -33,6 +33,32 @@ mod tests {
         create_global_env::<GapBuffer>().expect("global env")
     }
 
+    /// An editor with the modules loaded, for the ones that are about Lisp
+    /// this project ships rather than about the interpreter.
+    fn editor_with_modules() -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = editor();
+        env.set_variable("frame-width".into(), LispExp::number(80.0));
+        env.set_variable("frame-height".into(), LispExp::number(24.0));
+        for source in [
+            include_str!("../../lisp/commands.lisp"),
+            include_str!("../../lisp/debug.lisp"),
+            include_str!("../../lisp/completion.lisp"),
+            include_str!("../../lisp/manpage.lisp"),
+        ] {
+            eval_str(source, &env, &ctx).expect("loading the shipped lisp");
+        }
+        (ctx, env)
+    }
+
+    /// What one evaluation costs, exactly.
+    fn cost(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> u64 {
+        let ast = Parser::new(src).next().expect("source must parse");
+        let (outcome, spent) =
+            crate::lisp::measure(ctx.fuel_meter(), || eval(&ast, env.clone(), ctx));
+        outcome.unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"));
+        spent
+    }
+
     /// A list of `n` strings, built the cheap way.
     fn list_of(n: usize) -> String {
         format!(
@@ -97,6 +123,68 @@ mod tests {
     // ----------------------------------------------------------------
     // The modules that had it
     // ----------------------------------------------------------------
+
+    #[test]
+    fn reading_a_page_name_costs_the_same_whatever_its_length() {
+        // `manpage--strip-extensions` used to walk the name a character at a
+        // time asking `(< n (length name))` -- and `length` on a string
+        // charges per character, so each step cost the length and the whole
+        // thing cost its square: 184 units for a 7-character name, 808 for a
+        // 20-character one. Called once per page on a system with twenty
+        // thousand of them, that was the entire budget spent deciding what
+        // the files were called.
+        //
+        // Asserting that the cost does not grow with the name is the precise
+        // claim, and it is an exact integer rather than a timing, so it means
+        // the same on every machine.
+        let (ctx, env) = editor_with_modules();
+        let short = cost(r#"(manpage--strip-extensions "ls.1.gz")"#, &env, &ctx);
+        let long = cost(
+            r#"(manpage--strip-extensions "systemd-analyze-verify.1.gz")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            short, long,
+            "a longer name must not cost more: {short} against {long}"
+        );
+    }
+
+    #[test]
+    fn naming_twenty_thousand_pages_fits_in_the_budget() {
+        // The size that failed: a system with a real set of manual pages.
+        //
+        // Costed rather than run. One name is measured and multiplied, which
+        // is exact -- the cost does not depend on the name, which is what the
+        // test above establishes -- and does not spend fifteen seconds of a
+        // debug build proving arithmetic.
+        let (ctx, env) = editor_with_modules();
+        let each = cost(r#"(manpage--strip-extensions "git-rebase.1.gz")"#, &env, &ctx);
+        let total = each * 20_000;
+        assert!(
+            total < u64::from(crate::lisp::DEFAULT_FUEL),
+            "naming 20,000 pages costs {total} of {} -- it used to be over the whole budget",
+            crate::lisp::DEFAULT_FUEL
+        );
+    }
+
+    #[test]
+    fn a_directory_walk_is_charged_for_what_it_found() {
+        // It used to hand back twenty thousand paths for three units, which
+        // is the same gap `fuzzy-filter` had: a loop of walks that the
+        // runaway guard would never stop.
+        let (ctx, env) = editor_with_modules();
+        let spent = cost(r#"(directory-files-recursive "." 200)"#, &env, &ctx);
+        let found = match run(r#"(length (nth 1 (directory-files-recursive "." 200)))"#, &env, &ctx) {
+            LispExp::Number(n) => n as u64,
+            other => panic!("expected a count, got {other:?}"),
+        };
+        assert!(
+            spent >= found,
+            "walking {found} paths should cost at least {found} units, cost {spent}"
+        );
+    }
+
 
     #[test]
     fn a_long_candidate_list_can_be_filtered_without_running_out() {

@@ -277,6 +277,100 @@ mod tests {
         assert_eq!(contents(&ctx), "ab");
     }
 
+    // ----------------------------------------------------------------
+    // Not unbalancing what is already balanced
+    // ----------------------------------------------------------------
+
+    /// A buffer in a mode that pairs braces, with point at OFFSET.
+    fn braces_buffer(text: &str, at: usize, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        run(
+            r#"(make-mode 'braces-mode)
+               (set-syntax-pairs 'braces-mode "(){}[]")
+               (add-hook 'braces-mode "post-self-insert-hook"
+                         'electric-pair-post-self-insert)
+               (buffer-create "code" 'braces-mode)
+               (switch-to-buffer "code")"#,
+            env,
+            ctx,
+        );
+        let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+        run(&format!(r#"(insert "{escaped}") (goto-char {at})"#), env, ctx);
+    }
+
+    #[test]
+    fn retyping_a_deleted_opener_does_not_add_a_second_closer() {
+        // The reported case. Delete the `{` from a function and type it back:
+        // the `}` below is still there, so a new one would leave the brace
+        // doubled -- and the delete rules would then treat `{}` as an empty
+        // pair and take both out together.
+        let (ctx, env) = editor();
+        braces_buffer("fn a() \n  body\n}", 7, &env, &ctx);
+        type_char("{", &env, &ctx);
+        assert_eq!(contents(&ctx), "fn a() {\n  body\n}");
+    }
+
+    #[test]
+    fn an_opener_with_no_closer_ahead_still_pairs() {
+        // The other half: the check must not stop pairing working at all.
+        let (ctx, env) = editor();
+        braces_buffer("fn a() \n  body\n", 7, &env, &ctx);
+        type_char("{", &env, &ctx);
+        assert_eq!(contents(&ctx), "fn a() {}\n  body\n");
+    }
+
+    #[test]
+    fn text_after_point_without_a_closer_does_not_count_as_closed() {
+        // `up-list` reports an unterminated list as ending at the end of the
+        // buffer, so "it moved" is not enough -- what settles it is the
+        // character it landed after.
+        let (ctx, env) = editor();
+        braces_buffer("fn a() \n  body", 7, &env, &ctx);
+        type_char("{", &env, &ctx);
+        assert_eq!(contents(&ctx), "fn a() {}\n  body");
+    }
+
+    #[test]
+    fn a_closer_typed_where_the_block_is_already_closed_goes_to_the_end_of_it() {
+        // Typing `}` a line above an existing one means "finish this block",
+        // and the block is finished.
+        let (ctx, env) = editor();
+        braces_buffer("{\n  body\n}", 8, &env, &ctx);
+        type_char("}", &env, &ctx);
+        assert_eq!(contents(&ctx), "{\n  body\n}", "no second closer");
+        assert_eq!(point(&ctx), 10, "and point is past the one that was there");
+    }
+
+    #[test]
+    fn a_closer_with_nothing_closing_the_block_is_typed_normally() {
+        let (ctx, env) = editor();
+        braces_buffer("{\n  body\n", 9, &env, &ctx);
+        type_char("}", &env, &ctx);
+        assert_eq!(contents(&ctx), "{\n  body\n}");
+    }
+
+    #[test]
+    fn the_repaired_brace_can_then_be_deleted_on_its_own() {
+        // The second half of the complaint: once a stray `{}` existed, the
+        // delete rules saw an empty pair and took both out. With no stray pair
+        // made, backspace over the `{` removes just it.
+        let (ctx, env) = editor();
+        braces_buffer("fn a() \n  body\n}", 7, &env, &ctx);
+        type_char("{", &env, &ctx);
+        run("(electric-pair-delete-backward)", &env, &ctx);
+        assert_eq!(contents(&ctx), "fn a() \n  body\n}");
+    }
+
+    #[test]
+    fn nested_blocks_still_pair_inside_an_outer_one() {
+        // The check asks about the list point is *in*, so an inner brace with
+        // no closer of its own still pairs even though the outer one is
+        // closed.
+        let (ctx, env) = editor();
+        braces_buffer("{\n  \n}", 4, &env, &ctx);
+        type_char("{", &env, &ctx);
+        assert_eq!(contents(&ctx), "{\n  {}\n}");
+    }
+
     #[test]
     fn turning_the_mode_off_stops_all_of_it() {
         let (ctx, env) = editor();

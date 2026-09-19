@@ -903,6 +903,15 @@ primitive!(directory_files_recursive, args, _env, ctx, {
         return Ok(ELispExp::nil());
     }
     let (paths, truncated) = walk_files(root, &prune, limit);
+    // Charged for what it found, not for the one call it was.
+    //
+    // The evaluator prices a primitive at one unit per call, which is right
+    // for a step-shaped interpreter and wrong for anything returning a list
+    // whose length it chose: this hands back twenty thousand paths for three
+    // units. The budget is meant to bound *time* -- see `expect_list` in
+    // `base_env`, where the rule is written down -- and a walk that costs
+    // nothing to the meter is a loop of walks that the guard never stops.
+    ctx.consume_fuel(u32::try_from(paths.len()).unwrap_or(u32::MAX))?;
     Ok(ELispExp::proper_list(vec![
         bool_exp(truncated),
         ELispExp::proper_list(paths.into_iter().map(ELispExp::string).collect()),

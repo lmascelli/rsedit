@@ -39,6 +39,7 @@ mod prefix_arg_tests;
 mod prefix_key_tests;
 mod region_tests;
 mod risp_mode_tests;
+mod repeat_key_tests;
 mod repeat_tests;
 mod scroll_tests;
 mod sexp_tests;
