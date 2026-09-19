@@ -2,47 +2,23 @@
 #+title: rsedit
 
 * Fixes todo
-- [X] C-x u still doens't ask to repeat u to do further undos
-      `C-x z' was built as the general answer and no per-command keys were added with it.
-      `(define-repeat-key 'undo "u")' and the same for `redo' with `r'. The offer is shown in
-      the frame while it stands, and the letter goes back to being a letter after one keystroke
-      of anything else.
-- [X] rsedits_pages_are_offered_for_completion still fail probably for OutOfFuel
-      A second quadratic, in a different place. `manpage--strip-extensions' walked the file
-      name a character at a time asking `(< n (length name))' -- and `length' on a string
-      charges per character, so each step cost the length of the name and the whole call cost
-      its square. Measured: 184 units for a 7-character name, 808 for a 20-character one. Once
-      per page, on a system with twenty thousand of them, that is ten million units spent
-      deciding what the files are called: the entire budget, before anything is matched.
-      Now one `string-match', which is 13 units and does not grow with the name -- 62 times
-      cheaper on a long one, and flat. A test asserts the flatness rather than a timing, since
-      fuel counts are exact integers that mean the same on every machine.
-      Also charged `directory-files-recursive' for the paths it returns. It was handing back
-      twenty thousand for three units, which is the gap `fuzzy-filter' had.
-- [X] electric-pair doesn't recognize a match pair in some case for example:
+- [ ] electric-pair doesn't recognize a match pair in some case for example:
 
 fn a() {
   body function
 }
 
-deleting the first { and inserting it against brings to a couple {} and the second
-one can't be removed without removing also the first. When a pair match the corrispective
-closed one the closing one shouldn't be added. The same is valid for inserting a closing
-one that match an already inserted open pair
-      Both halves done, and the test is the *buffer's* balance rather than the enclosing
-      list's. The obvious check -- "is the list point is in already closed?" -- gives the wrong
-      answer, because a scanner matches a closer to the innermost opener: just after typing `{'
-      inside an already-closed block, the new brace appears to have taken the outer one's `}',
-      so the check refuses to pair in exactly the case where pairing is wanted. Depth at the
-      end of the buffer counts openers that nothing closes, wherever they are, and has no such
-      confusion. (My first attempt used `up-list' on the enclosing list and a nested-block test
-      caught it.)
-      An opener whose buffer already balances adds no closer. A closer typed where the buffer
-      already balances *and* there is a list to leave goes to the end of that list instead of
-      making a second end -- both conditions, because at the top level a buffer balances
-      trivially and a typed `}' is just a character somebody wanted.
+this bug is still here. i've disabled the keymap that associate the forward deleting
+in electric-pair (there is a TODO in the electric-pair.lisp)
 
 * Macro todo 
+- [ ] Theme system plus a monochromatic theme
+- [ ] The editor structure is becoming too complex. I want to create compartiment
+      that manage single aspects of the editor like buffers, layout, searches, commands,
+      etc... so that a fail like the previous one where two windows where associated
+      to the same buffer and one of them is closed cannot leave the other one with a
+      pending reference to that buffer because the behavior of closing a window is 
+      clearly managed by the layout manager. it is just a refactoring of the system.
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 
