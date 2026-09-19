@@ -2,101 +2,13 @@
 #+title: rsedit
 
 * Fixes todo
-- [X] find-file should handle also:
-      - opening a new file in a new unsaved buffer
-      - opening a directory if dired is loaded (this can be done by defining a global variable
-        *open-directory-callback* that dired install when loaded)
-      A missing path gives an empty buffer that remembers where it goes, not marked modified --
-      nothing was written, so leaving asks nothing and `save-buffer' creates the file. A
-      directory goes to `*open-directory-callback*', which dired sets when it loads; nothing in
-      the editor mentions dired. Two files of the same name in different directories now both
-      open, as `mod.rs' and `mod.rs<2>', and re-opening a file returns to its buffer rather
-      than re-reading over your edits.
-- [X] opening the same buffer in two different windows and killing the buffer leave a window
-      with a dangling buffer reference causing when closing it an unwrap call in the
-      get_current_buffer function
-      `close_buffer' repointed the focused window only. Every window showing the buffer is
-      repointed now, at the most recently used buffer that still exists -- which needed a
-      recency list, since the buffer table is a HashMap with no order at all. The panic is
-      left in place: with the cause fixed, a stale current-buffer name means a broken
-      invariant and should say so loudly rather than limp on.
-- [X] i think find-file-recursive can be part of the dired module not a separate one to avoid
-      spreading tons of modules for a single feature and should open a minibuffer where the
-      user can insert the file to search.
-      Folded into dired.lisp and reshaped as a prompt: the tree is walked once when the command
-      starts and narrowed from that snapshot as you type. Walking per keystroke would be
-      thousands of directory reads per character on a real project.
+- [ ] fuzzy-filter function often run out-of-fuel, one example is the the manpage-candidates
+      function used in the test rsedits_pages_are_offered_for_completion
 
 * Macro todo 
-- [X] Switch to buffer command and buffer-list major mode
-      `C-x b' prompts and completes fuzzily over buffer names; `C-x C-b' opens a listing with
-      a modified mark, the name, the mode and the file. Like dired it keeps no state beside
-      the buffer -- each line carries a name, read back by column since a buffer name may
-      contain spaces. RET switches, d kills (asking first if there are unsaved changes), g
-      refreshes, q puts it away.
-- [X] Rsedit lisp mode
-      The vocabulary is asked for rather than listed: `all-macros' and `all-functions' report
-      what this editor actually has, including anything defined in your own init.lisp. Only
-      the special forms are written down, because they have no binding to enumerate.
-      `risp-refresh-vocabulary' rebuilds after you define something. This is also what
-      `lisp-indent-line' had been waiting for -- indent.lisp shipped it with no mode to attach
-      to, and it is now attached.
-- [X] Shell command spawn with output capture
-      `M-!' runs a command on the worker thread, so the editor stays usable while a build
-      runs, and output is appended as it is produced. The worker gets no Env, so completion is
-      reported by writing `--- exited 0 ---' into the buffer it is already writing to. Each
-      command gets its own buffer, since two sharing one would interleave their lines. The
-      running count is what keeps the renderer waking up -- the same problem `colouring_pending'
-      solves for syntax highlighting.
-- [X] manpage-mode: add to the global variables a list of path where to search for manpages.
-                    when compiled for linux the default manpages dirs should be part of the
-                    list at the start. provide a function to open the word under the cursor
-                    as manpage if available and an other one to open a minibuffer to prompt
-                    the user what manpages to open. also should provide a capf function to
-                    list all available manpages that can be used for the minibuffer
-                    completion of the second function
-      `manpage-path' is handed to `man' as MANPATH, so it controls what is found as well as
-      what is listed. `K' opens the word under the cursor, `C-h m' prompts with completion,
-      and `capf-manpage-names' is the completion source. New primitives: getenv, setenv,
-      path-separator, shell-command-to-string, parse-overstrike, data-directory.
-      The overstrike was stripped at first, because nothing could face an arbitrary span.
-      Overlays exist now, so `parse-overstrike' returns the text *and* the spans that were
-      emphasised, and each becomes an overlay -- bold mid-sentence included. The syntax rules
-      still do the structural part, which is what patterns are good at.
-- [~] rsedit manpages: the base interpreter standard library, the editor functions and the
-                       modules should provide a manpage that can be consulted when creating
-                       rsedit code. The location of this pages should be in the root of the
-                       project under man folder and when compiled they should be copied in
-                       the data folder that is created in the target directory alongside the
-                       lisp one where modules are copied.
-      Infrastructure done, content started. man/*.txt is copied to data/man beside data/lisp,
-      `data-directory' finds it, and rsedit's pages are searched before the system's so `K' on
-      `insert' gives this editor's. Written so far: rsedit, buffers, windows, and a README
-      stating the format. The rest is writing -- every primitive already carries a doc string
-      that `function-doc' and C-M-i will show, so these pages are for what a doc string cannot
-      say: how the pieces fit and why they are shaped that way.
-- [X] Overlay mechanism
-      A face on one particular span, which a syntax rule cannot express -- rules are patterns
-      over the text, and "this match, here" is not a pattern. A third producer of Highlight
-      beside the mode's colouring and the region, drawn between them.
-      The hard part is that these are the first stored positions in the editor: everything
-      else either recomputes every frame or is invalidated by the next edit, and the mark is
-      *deactivated* by every edit precisely so it never needs adjusting. Overlays are adjusted
-      at the two doors instead. Insert moves `start' when it is at or before it and `end' only
-      when strictly before, which is the whole of "neither end grows": a highlighted match
-      stays exactly the text that matched, however much is typed either side. Delete clamps
-      both ends and removes anything left covering nothing.
-      Kept sorted by start, which makes the adjustment a binary search and a walk of the tail;
-      a `furthest_end' makes the common case -- editing past everything highlighted -- one
-      comparison. That is the place this would grow an interval tree if it ever needs one.
-      Lisp: make-overlay, delete-overlay, remove-overlays, overlays-at, overlay-face.
-      Deliberately left out: property bags (before-string, invisible and overlay keymaps need
-      renderer and input support that does not exist, so they would be stored and ignored),
-      and undo integration (an overlay destroyed by a delete does not come back -- restoring
-      it means the undo history carrying state owned by other modules).
-      The mark could now be an overlay. It should not be: it is deactivated by every edit so
-      that it never needs adjusting, and folding it in would trade a rule that cannot go wrong
-      for one that can.
+- [ ] emacs like compilation mode that produce a read only buffer from a shell command where
+      it recognize the standard filepath:row_number format and pressing enter with the cursor
+      on it lead to that file and that row,col
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 
