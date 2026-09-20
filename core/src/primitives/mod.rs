@@ -864,6 +864,11 @@ pub fn install_primitives<B: BufferTrait>(
         modes::SET_SYNTAX_PAIRS_DOC
     );
     insert_fn!(
+        "set-string-syntax",
+        modes::set_string_syntax,
+        modes::SET_STRING_SYNTAX_DOC
+    );
+    insert_fn!(
         "set-char-quote",
         modes::set_char_quote,
         modes::SET_CHAR_QUOTE_DOC

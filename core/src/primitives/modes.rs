@@ -1,5 +1,5 @@
 use super::*;
-use crate::modes::sexp;
+use crate::modes::{StringStyle, sexp};
 
 pub const MAKE_MODE_DOC: &str = "(make-mode NAME): Register a new, empty major mode named NAME (a \
          symbol) with no keymaps, hooks, or syntax rules of its own. Returns \
@@ -389,6 +389,65 @@ primitive!(set_syntax_pairs, args, _env, ctx, {
     let mode = string_arg(&args[0])?;
     let pairs = string_arg(&args[1])?;
     let answer = with_syntax_table(ctx, &mode, |table| table.set_pairs(&pairs));
+    if answer.is_nil() {
+        ctx.log_diagnostic(&format!("Mode {mode} does not exist"));
+    }
+    Ok(answer)
+});
+
+pub const SET_STRING_SYNTAX_DOC: &str = "(set-string-syntax MODE STYLES): Declare the strings in \
+         major mode MODE whose delimiters are more than one character. STYLES is a list of \
+         (OPENER CLOSER). Returns t, or nil (logging a diagnostic) if MODE is unknown.\n\n\
+         The `string' syntax class says \\\"this character opens a string and the same one ends \
+         it\\\", which is true of the double quote and of nothing else. A Rust raw string opens \
+         with three characters and closes with two; Python's triple quote opens with three and \
+         closes with three, and its first character is already a string quote in its own \
+         right.\n\n\
+         The longest opener wins, so a raw-string opener beats the plain quote it begins with. \
+         Nothing is escaped inside one, which is usually the point of having them.\n\n\
+         This is about what the text *means* -- what `forward-sexp', the indenter and \
+         `syntax-ppss' read. What it should look like is the grammar's business; a mode \
+         declaring a raw string here will usually want `add-syntax-region' for it too.\n\n\
+         Example:\n\
+         (set-string-syntax 'rust-mode '((\\\"r#\\\\\\\"\\\" \\\"\\\\\\\"#\\\") (\\\"r\\\\\\\"\\\" \\\"\\\\\\\"\\\")))";
+
+primitive!(set_string_syntax, args, _env, ctx, {
+    if args.len() != 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let mode = string_arg(&args[0])?;
+    let entries: Vec<ELispExp<B>> = match &args[1] {
+        ELispExp::Form(items) => items.to_vec(),
+        other if other.is_nil() => Vec::new(),
+        other => other.iter().collect(),
+    };
+    let mut styles = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let parts: Vec<ELispExp<B>> = match entry {
+            ELispExp::Form(items) => items.to_vec(),
+            other => other.iter().collect(),
+        };
+        let (Some(opener), Some(closer)) = (parts.first(), parts.get(1)) else {
+            return Err(EvalError::RuntimeMessage(
+                "a string style needs an opener and a closer".into(),
+            ));
+        };
+        let opener = string_arg(opener)?;
+        let closer = string_arg(closer)?;
+        // An empty opener matches everywhere, which would make the whole
+        // buffer a string the first time the scanner looked at it; an empty
+        // closer would end it immediately and the style would do nothing.
+        if opener.is_empty() || closer.is_empty() {
+            return Err(EvalError::RuntimeMessage(
+                "a string style's opener and closer cannot be empty".into(),
+            ));
+        }
+        styles.push(StringStyle { opener, closer });
+    }
+    let answer = with_syntax_table(ctx, &mode, |table| table.set_strings(styles));
     if answer.is_nil() {
         ctx.log_diagnostic(&format!("Mode {mode} does not exist"));
     }

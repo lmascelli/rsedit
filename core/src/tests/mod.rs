@@ -37,6 +37,7 @@ mod overlay_tests;
 mod path_tests;
 mod perf;
 mod prefix_arg_tests;
+mod raw_string_tests;
 mod prefix_key_tests;
 mod region_tests;
 mod risp_mode_tests;

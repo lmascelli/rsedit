@@ -111,6 +111,23 @@
 ;; says what text should *look* like; this says what it *is*, which is what
 ;; `forward-sexp', the indenter and electric-pair read.
 (set-char-quote 'rust-mode "'")
+
+;; Raw strings. `r#"..."#' is one string however many quotes are inside it --
+;; and without saying so here the scanner reads a raw string as a run of
+;; ordinary strings with *code* between them, so any stray bracket in the
+;; content opens a list that never closes. This editor's own source is the
+;; example: `create_global_env' holds the default init.lisp in a raw string,
+;; and the `"("' in one of its comments made everything after it scan wrong.
+;;
+;; Longest opener first is not needed -- the table sorts that out -- but the
+;; two forms must both be here, or `r"..."' falls back to being a bare `r'
+;; followed by an ordinary string.
+;;
+;; The grammar above declares the same thing again for colouring. They are
+;; different questions -- what the text looks like, and what it means -- and a
+;; mode may reasonably want a raw string coloured differently from a plain one.
+;; Adding a string form means adding it in both places.
+(set-string-syntax 'rust-mode '(("r#\"" "\"#") ("br#\"" "\"#") ("r\"" "\"") ("br\"" "\"")))
 (set-comment-syntax 'rust-mode '(("//") ("/*" "*/" t)))
 
 (add-auto-mode "\\.rs$" 'rust-mode)

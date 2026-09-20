@@ -4,8 +4,8 @@ use std::collections::HashMap;
 pub mod highlighter;
 pub mod syntax;
 pub use syntax::{
-    CommentStyle, Grammar, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxSpan, SyntaxState,
-    SyntaxTable, highlight_line,
+    CommentStyle, Grammar, StringStyle, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxSpan,
+    SyntaxState, SyntaxTable, highlight_line,
 };
 pub mod sexp;
 

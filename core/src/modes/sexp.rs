@@ -63,6 +63,13 @@ enum State {
         depth: usize,
         start: usize,
     },
+    /// Inside a string whose delimiters are more than one character: a raw
+    /// string, a triple-quoted one. Nothing is escaped in here; only the
+    /// closer ends it.
+    StyledStr {
+        style: usize,
+        start: usize,
+    },
 }
 
 /// One level of nesting, and the last few expressions completed inside it.
@@ -152,6 +159,26 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
             .all(|(i, c)| self.text.at(at + i) == Some(c))
     }
 
+    /// Which string style, if any, opens here.
+    ///
+    /// The longest opener wins, so a raw-string opener beats the plain quote
+    /// it begins with. Same rule as `comment_at`, for the same reason: a
+    /// shorter opener that is a prefix of a longer one would always win by
+    /// position and the longer form would be unreachable.
+    fn string_at(&self, at: usize) -> Option<usize> {
+        let c = self.text.at(at)?;
+        if !self.table.could_begin_string(c) {
+            return None;
+        }
+        self.table
+            .strings()
+            .iter()
+            .enumerate()
+            .filter(|(_, style)| self.literal_at(at, &style.opener))
+            .max_by_key(|(_, style)| style.opener.chars().count())
+            .map(|(index, _)| index)
+    }
+
     /// Which comment style, if any, opens here.
     fn comment_at(&self, at: usize) -> Option<usize> {
         let c = self.text.at(at)?;
@@ -231,6 +258,19 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                 Step::Advanced
             }
 
+            State::StyledStr { style, start } => {
+                let closer = &self.table.strings()[style].closer;
+                if self.literal_at(self.pos, closer) {
+                    self.pos += closer.chars().count();
+                    self.state = State::Code;
+                    return self.complete(start, self.pos);
+                }
+                // No escape handling, deliberately: a raw string exists so
+                // that a backslash means a backslash. Only the closer ends it.
+                self.pos += 1;
+                Step::Advanced
+            }
+
             State::Str { quote, start } => {
                 match self.table.class_of(c) {
                     // Two characters at once: the whole reason `"a \" b"` does
@@ -263,6 +303,24 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                     };
                     // A prefix with only a comment after it prefixes nothing.
                     self.prefix = None;
+                    return Step::Advanced;
+                }
+
+                // A string whose delimiters are more than one character,
+                // before the class dispatch -- and before the character
+                // literal, since an opener may begin with a quote.
+                //
+                // It has to come first because its opener *contains* things
+                // that have classes of their own: the quote in a raw string's
+                // opener is a string quote, and dispatching on it would open
+                // an ordinary string that ends at the first quote inside. That
+                // is precisely how the init.lisp in this editor's own source
+                // -- a raw string holding Lisp with quotes in it -- made the
+                // rest of the file scan as though half of it were code.
+                if let Some(style) = self.string_at(self.pos) {
+                    let start = self.opening(self.pos);
+                    self.pos += self.table.strings()[style].opener.chars().count();
+                    self.state = State::StyledStr { style, start };
                     return Step::Advanced;
                 }
 
@@ -395,7 +453,9 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                 None
             },
             string_start: match self.state {
-                State::Str { start, .. } => Some(start),
+                // Both kinds count: `syntax-ppss` is asked "am I in a string",
+                // and a raw one is a string.
+                State::Str { start, .. } | State::StyledStr { start, .. } => Some(start),
                 _ => None,
             },
             comment_start: match self.state {

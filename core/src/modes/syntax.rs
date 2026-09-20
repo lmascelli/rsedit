@@ -95,6 +95,25 @@ pub enum SyntaxClass {
     Punctuation, // separates, belongs to nothing
 }
 
+/// One way this language writes a string whose delimiters are more than a
+/// single character.
+///
+/// # Why this is not a `StringQuote`
+///
+/// That class says "this character opens a string and the same one ends it",
+/// which is true of the double quote and of nothing else. Rust opens a raw
+/// string with three characters and closes it with two; Python opens with
+/// three and closes with three, and its first character is already a string
+/// quote in its own right.
+///
+/// Nothing is escaped inside one. That is usually the point of having them: a
+/// raw string exists so that a backslash means a backslash.
+#[derive(Clone, Debug)]
+pub struct StringStyle {
+    pub opener: String,
+    pub closer: String,
+}
+
 /// One way this language writes a comment.
 #[derive(Clone, Debug)]
 pub enum CommentStyle {
@@ -116,6 +135,16 @@ pub struct SyntaxTable {
     /// comment begin here?" with one set lookup rather than a string compare
     /// per style per position.
     comment_starts: HashSet<char>,
+    /// Strings whose delimiters are more than one character: Rust's raw
+    /// strings, Python's triple quotes.
+    ///
+    /// Tried before the single-character `StringQuote`, longest opener first,
+    /// so a raw-string opener wins over the bare quote it begins with.
+    strings: Vec<StringStyle>,
+    /// First character of every string-style opener, so the scan asks "could
+    /// one begin here?" with one set lookup rather than a compare per style
+    /// per position -- the same trick `comment_starts` plays.
+    string_starts: HashSet<char>,
     /// The character that encloses a single literal character, if this
     /// language has one: `'` in Rust, C, C++, Java.
     ///
@@ -162,6 +191,8 @@ impl Default for SyntaxTable {
             classes,
             comments: Vec::new(),
             comment_starts: HashSet::new(),
+            strings: Vec::new(),
+            string_starts: HashSet::new(),
             char_quote: None,
         }
     }
@@ -212,6 +243,24 @@ impl SyntaxTable {
 
     pub fn set_class(&mut self, c: char, class: SyntaxClass) {
         self.classes.insert(c, class);
+    }
+
+    /// Declare the multi-character string forms this language has.
+    pub fn set_strings(&mut self, strings: Vec<StringStyle>) {
+        self.string_starts = strings
+            .iter()
+            .filter_map(|style| style.opener.chars().next())
+            .collect();
+        self.strings = strings;
+    }
+
+    pub fn strings(&self) -> &[StringStyle] {
+        &self.strings
+    }
+
+    /// Whether a string style could begin with `c`.
+    pub fn could_begin_string(&self, c: char) -> bool {
+        self.string_starts.contains(&c)
     }
 
     pub fn set_comments(&mut self, comments: Vec<CommentStyle>) {
