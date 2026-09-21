@@ -246,8 +246,7 @@ primitive!(insert_pasted_text, args, _env, ctx, {
     // exempt from read-only buffers, undo, or telling the highlighter that the
     // text moved. What makes it a paste is that it is *one* call, which is
     // decided by the caller rather than here.
-    let happened =
-        ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, text));
+    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, text));
     Ok(edited(ctx, happened))
 });
 

@@ -39,7 +39,11 @@ mod tests {
     }
 
     /// `(face-style FACE)` as (fg, bg, attributes).
-    fn style(face: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> (Option<String>, Option<String>, Vec<String>) {
+    fn style(
+        face: &str,
+        env: &Arc<Env<Ctx>>,
+        ctx: &Ctx,
+    ) -> (Option<String>, Option<String>, Vec<String>) {
         let answer = run(&format!("(face-style '{face})"), env, ctx);
         let parts: Vec<LispExp<Ctx>> = answer.iter().collect();
         let text = |exp: &LispExp<Ctx>| match exp {
@@ -82,7 +86,10 @@ mod tests {
         let (fg, bg, attributes) = style("keyword", &env, &ctx);
         assert_eq!(fg, None, "no foreground");
         assert_eq!(bg, None, "no background");
-        assert!(attributes.contains(&"bold".to_string()), "got {attributes:?}");
+        assert!(
+            attributes.contains(&"bold".to_string()),
+            "got {attributes:?}"
+        );
     }
 
     #[test]
@@ -93,11 +100,20 @@ mod tests {
         // Compared against how the face *ships*, not against nothing: several
         // faces have a colour out of the box, and "reset" means back to that.
         let shipped = style("string", &env, &ctx);
-        define("colourful", r#"(keyword "red" nil nil) (string "blue" nil nil)"#, &env, &ctx);
+        define(
+            "colourful",
+            r#"(keyword "red" nil nil) (string "blue" nil nil)"#,
+            &env,
+            &ctx,
+        );
         define("sparse", r#"(keyword nil nil ("bold"))"#, &env, &ctx);
 
         run("(select-theme 'colourful)", &env, &ctx);
-        assert_ne!(style("string", &env, &ctx), shipped, "the theme took effect");
+        assert_ne!(
+            style("string", &env, &ctx),
+            shipped,
+            "the theme took effect"
+        );
 
         run("(select-theme 'sparse)", &env, &ctx);
         assert_eq!(
@@ -161,11 +177,13 @@ mod tests {
         // Read from the installed file, the way the selector reads it.
         let (ctx, env) = editor();
         let faces = run(
-            &format!("(progn (eval-string \"{}\") (get 'monochrome-theme 'faces))",
-                     include_str!("../../../themes/monochrome.lisp")
-                         .replace('\\', "\\\\")
-                         .replace('"', "\\\"")
-                         .replace('\n', "\\n")),
+            &format!(
+                "(progn (eval-string \"{}\") (get 'monochrome-theme 'faces))",
+                include_str!("../../../themes/monochrome.lisp")
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
+            ),
             &env,
             &ctx,
         );
@@ -176,7 +194,10 @@ mod tests {
             let (fg, bg, attributes) = style(face, &env, &ctx);
             assert_eq!(fg, None, "{face} should have no foreground");
             assert_eq!(bg, None, "{face} should have no background");
-            assert!(!attributes.is_empty(), "{face} should be distinguished somehow");
+            assert!(
+                !attributes.is_empty(),
+                "{face} should be distinguished somehow"
+            );
         }
     }
 
@@ -227,7 +248,11 @@ mod tests {
             .position(|l| l.contains("monochrome"))
             .expect("monochrome should be listed")
             + 1;
-        run(&format!("(goto-line {line}) (theme-list-select)"), &env, &ctx);
+        run(
+            &format!("(goto-line {line}) (theme-list-select)"),
+            &env,
+            &ctx,
+        );
         assert_eq!(
             run("current-theme", &env, &ctx),
             LispExp::string("monochrome".to_string())
@@ -241,8 +266,16 @@ mod tests {
         run("(theme-list)", &env, &ctx);
         assert!(!listing(&env, &ctx).contains('*'));
         let shown = listing(&env, &ctx);
-        let line = shown.lines().position(|l| l.contains("monochrome")).expect("listed") + 1;
-        run(&format!("(goto-line {line}) (theme-list-select)"), &env, &ctx);
+        let line = shown
+            .lines()
+            .position(|l| l.contains("monochrome"))
+            .expect("listed")
+            + 1;
+        run(
+            &format!("(goto-line {line}) (theme-list-select)"),
+            &env,
+            &ctx,
+        );
         assert!(listing(&env, &ctx).contains("* monochrome"));
     }
 
@@ -270,7 +303,11 @@ mod tests {
             .position(|l| l.contains("not-a-theme"))
             .expect("the line was added")
             + 1;
-        run(&format!("(goto-line {line}) (theme-list-select)"), &env, &ctx);
+        run(
+            &format!("(goto-line {line}) (theme-list-select)"),
+            &env,
+            &ctx,
+        );
         assert!(run("current-theme", &env, &ctx).is_nil());
     }
 }

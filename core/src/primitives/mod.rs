@@ -721,11 +721,7 @@ pub fn install_primitives<B: BufferTrait>(
         shell::shell_command_running_p,
         shell::SHELL_COMMAND_RUNNING_P_DOC
     );
-    insert_fn!(
-        "data-directory",
-        io::data_directory,
-        io::DATA_DIRECTORY_DOC
-    );
+    insert_fn!("data-directory", io::data_directory, io::DATA_DIRECTORY_DOC);
     insert_fn!("getenv", io::getenv, io::GETENV_DOC);
     insert_fn!("setenv", io::setenv, io::SETENV_DOC);
     insert_fn!("path-separator", io::path_separator, io::PATH_SEPARATOR_DOC);
@@ -898,7 +894,11 @@ pub fn install_primitives<B: BufferTrait>(
         overlays::remove_overlays,
         overlays::REMOVE_OVERLAYS_DOC
     );
-    insert_fn!("overlays-at", overlays::overlays_at, overlays::OVERLAYS_AT_DOC);
+    insert_fn!(
+        "overlays-at",
+        overlays::overlays_at,
+        overlays::OVERLAYS_AT_DOC
+    );
     insert_fn!(
         "overlay-face",
         overlays::overlay_face,

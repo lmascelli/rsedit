@@ -236,7 +236,11 @@ mod tests {
     fn a_pair_with_only_blanks_in_it_counts_as_empty() {
         for at in [1, 2, 4] {
             let (ctx, env) = editor();
-            run(&format!(r#"(insert "a(   )b") (goto-char {})"#, at + 1), &env, &ctx);
+            run(
+                &format!(r#"(insert "a(   )b") (goto-char {})"#, at + 1),
+                &env,
+                &ctx,
+            );
             run("(electric-pair-delete-backward)", &env, &ctx);
             assert_eq!(contents(&ctx), "ab", "backspace at {at}");
         }
@@ -294,7 +298,11 @@ mod tests {
             ctx,
         );
         let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
-        run(&format!(r#"(insert "{escaped}") (goto-char {at})"#), env, ctx);
+        run(
+            &format!(r#"(insert "{escaped}") (goto-char {at})"#),
+            env,
+            ctx,
+        );
     }
 
     #[test]

@@ -203,7 +203,11 @@ mod tests {
     #[test]
     fn an_empty_overlay_is_refused_rather_than_stored() {
         let mut table = table();
-        assert!(table.add(5, 5, Face::DEFAULT, 0, Arc::from("test")).is_none());
+        assert!(
+            table
+                .add(5, 5, Face::DEFAULT, 0, Arc::from("test"))
+                .is_none()
+        );
         assert!(table.is_empty());
     }
 
@@ -231,9 +235,15 @@ mod tests {
         // What a producer actually wants: re-running a search means forgetting
         // every match it found last time.
         let mut table = table();
-        table.add(0, 5, Face::DEFAULT, 0, Arc::from("isearch")).unwrap();
-        table.add(10, 15, Face::DEFAULT, 0, Arc::from("isearch")).unwrap();
-        table.add(20, 25, Face::DEFAULT, 0, Arc::from("diagnostics")).unwrap();
+        table
+            .add(0, 5, Face::DEFAULT, 0, Arc::from("isearch"))
+            .unwrap();
+        table
+            .add(10, 15, Face::DEFAULT, 0, Arc::from("isearch"))
+            .unwrap();
+        table
+            .add(20, 25, Face::DEFAULT, 0, Arc::from("diagnostics"))
+            .unwrap();
 
         assert_eq!(table.remove_category(Some("isearch")), 2);
         assert_eq!(spans(&table), vec![(20, 25)]);
@@ -243,7 +253,9 @@ mod tests {
     fn removing_every_category_clears_the_table() {
         let mut table = table();
         add(&mut table, 0, 5);
-        table.add(10, 15, Face::DEFAULT, 0, Arc::from("other")).unwrap();
+        table
+            .add(10, 15, Face::DEFAULT, 0, Arc::from("other"))
+            .unwrap();
         assert_eq!(table.remove_category(None), 2);
         assert!(table.is_empty());
     }
@@ -287,8 +299,12 @@ mod tests {
     fn overlapping_answers_lowest_priority_first() {
         // Draw order: a renderer painting in order leaves the highest on top.
         let mut table = table();
-        table.add(0, 10, Face::DEFAULT, 5, Arc::from("high")).unwrap();
-        table.add(0, 10, Face::DEFAULT, 1, Arc::from("low")).unwrap();
+        table
+            .add(0, 10, Face::DEFAULT, 5, Arc::from("high"))
+            .unwrap();
+        table
+            .add(0, 10, Face::DEFAULT, 1, Arc::from("low"))
+            .unwrap();
         let found = table.overlapping(0, 10);
         assert_eq!(&*found[0].category, "low");
         assert_eq!(&*found[1].category, "high");

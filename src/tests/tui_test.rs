@@ -950,7 +950,6 @@ fn a_line_is_clipped_to_the_window_it_is_in() {
     assert_eq!(widest, 20, "never wider than the rect");
 }
 
-
 // ---------------------------------------------------------------------------
 // The system clipboard
 // ---------------------------------------------------------------------------

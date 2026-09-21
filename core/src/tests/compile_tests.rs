@@ -48,7 +48,11 @@ mod tests {
     }
 
     /// `(compilation--parse LINE)` as (file, line, column).
-    fn parse(line: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> Option<(String, String, Option<String>)> {
+    fn parse(
+        line: &str,
+        env: &Arc<Env<Ctx>>,
+        ctx: &Ctx,
+    ) -> Option<(String, String, Option<String>)> {
         let escaped = line.replace('\\', "\\\\").replace('"', "\\\"");
         let answer = run(&format!(r#"(compilation--parse "{escaped}")"#), env, ctx);
         if answer.is_nil() {
@@ -110,7 +114,11 @@ mod tests {
         let (ctx, env) = editor();
         assert_eq!(
             parse("/home/user/p/src/lib.rs:3:1: warning", &env, &ctx),
-            Some(("/home/user/p/src/lib.rs".into(), "3".into(), Some("1".into())))
+            Some((
+                "/home/user/p/src/lib.rs".into(),
+                "3".into(),
+                Some("1".into())
+            ))
         );
     }
 
@@ -251,7 +259,11 @@ mod tests {
     #[test]
     fn p_walks_back() {
         let (ctx, env) = editor();
-        compilation_with("$ make\nsrc/a.rs:1:1: bad\nx\nsrc/b.rs:2:1: worse\n", &env, &ctx);
+        compilation_with(
+            "$ make\nsrc/a.rs:1:1: bad\nx\nsrc/b.rs:2:1: worse\n",
+            &env,
+            &ctx,
+        );
         run("(goto-line 4) (compilation-previous)", &env, &ctx);
         assert_eq!(line_number(&env, &ctx), 2.0);
     }
@@ -426,11 +438,25 @@ mod tests {
         // A list of forty errors is only legible if exactly one is marked --
         // which is what the category is for.
         let (ctx, env) = editor();
-        compilation_with("$ make\nsrc/a.rs:1:1: bad\nsrc/b.rs:2:1: worse\n", &env, &ctx);
+        compilation_with(
+            "$ make\nsrc/a.rs:1:1: bad\nsrc/b.rs:2:1: worse\n",
+            &env,
+            &ctx,
+        );
         run("(goto-line 2) (compilation--mark-here)", &env, &ctx);
         run("(goto-line 3) (compilation--mark-here)", &env, &ctx);
-        assert_eq!(run("(goto-line 2) (overlays-at (point))", &env, &ctx).iter().count(), 0);
-        assert_eq!(run("(goto-line 3) (overlays-at (point))", &env, &ctx).iter().count(), 1);
+        assert_eq!(
+            run("(goto-line 2) (overlays-at (point))", &env, &ctx)
+                .iter()
+                .count(),
+            0
+        );
+        assert_eq!(
+            run("(goto-line 3) (overlays-at (point))", &env, &ctx)
+                .iter()
+                .count(),
+            1
+        );
     }
 
     #[test]

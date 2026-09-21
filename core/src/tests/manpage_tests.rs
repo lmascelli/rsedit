@@ -198,11 +198,7 @@ mod tests {
     #[test]
     fn two_runs_of_emphasis_are_two_spans() {
         let (ctx, env) = editor();
-        let answer = run(
-            "(parse-overstrike \"a\u{8}a b c\u{8}c\")",
-            &env,
-            &ctx,
-        );
+        let answer = run("(parse-overstrike \"a\u{8}a b c\u{8}c\")", &env, &ctx);
         assert_eq!(plain_of(&answer), "a b c");
         assert_eq!(
             spans_of(&answer),
@@ -213,11 +209,7 @@ mod tests {
     #[test]
     fn bold_and_underline_next_to_each_other_do_not_merge() {
         let (ctx, env) = editor();
-        let answer = run(
-            "(parse-overstrike \"a\u{8}a_\u{8}b\")",
-            &env,
-            &ctx,
-        );
+        let answer = run("(parse-overstrike \"a\u{8}a_\u{8}b\")", &env, &ctx);
         assert_eq!(plain_of(&answer), "ab");
         assert_eq!(
             spans_of(&answer),
@@ -262,7 +254,10 @@ mod tests {
     fn the_data_directory_is_beside_the_executable() {
         let (ctx, env) = editor();
         let man = text_of(&run(r#"(data-directory "man")"#, &env, &ctx));
-        assert!(man.ends_with("data/man") || man.ends_with("data\\man"), "got {man}");
+        assert!(
+            man.ends_with("data/man") || man.ends_with("data\\man"),
+            "got {man}"
+        );
     }
 
     #[test]
@@ -301,7 +296,14 @@ mod tests {
             &env,
             &ctx,
         ));
-        assert_eq!(joined, if cfg!(windows) { "/one;/two" } else { "/one:/two" });
+        assert_eq!(
+            joined,
+            if cfg!(windows) {
+                "/one;/two"
+            } else {
+                "/one:/two"
+            }
+        );
     }
 
     // ----------------------------------------------------------------
@@ -344,7 +346,11 @@ mod tests {
     fn a_name_that_is_nowhere_says_so() {
         let (ctx, env) = editor();
         let before = ctx.get_current_buffer_name();
-        run(r#"(manpage "definitely-not-a-manual-page-xyzzy")"#, &env, &ctx);
+        run(
+            r#"(manpage "definitely-not-a-manual-page-xyzzy")"#,
+            &env,
+            &ctx,
+        );
         assert_eq!(
             ctx.get_current_buffer_name(),
             before,

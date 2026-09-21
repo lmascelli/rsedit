@@ -811,7 +811,9 @@ fn walk_files(
             // `file_type` rather than `metadata`: it does not follow symlinks,
             // so a link to a parent directory is listed as the link it is
             // instead of sending the walk round in a circle.
-            let Ok(kind) = entry.file_type() else { continue };
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
             if kind.is_dir() {
                 if !prune.contains(&name) {
                     pending.push((entry.path(), relative));

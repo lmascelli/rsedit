@@ -61,7 +61,8 @@ primitive!(add_hook, args, _env, ctx, {
     // Checked before the pattern below, because nil *is* a symbol here and
     // would otherwise be looked up as a mode named "nil" and reported missing.
     if args[0].is_nil() {
-        let (ELispExp::String(hook_name), ELispExp::Symbol(func_name)) = (&args[1], &args[2]) else {
+        let (ELispExp::String(hook_name), ELispExp::Symbol(func_name)) = (&args[1], &args[2])
+        else {
             return Err(EvalError::WrongArgumentType {
                 expected: "String, Symbol".into(),
                 got: args[1].clone(),

@@ -69,7 +69,11 @@ mod tests {
         // region commands: there are eleven commands that kill, and every one
         // of them should reach the clipboard without being listed anywhere.
         let (ctx, env) = editor();
-        run(r#"(insert "one two") (goto-char 0) (kill-word)"#, &env, &ctx);
+        run(
+            r#"(insert "one two") (goto-char 0) (kill-word)"#,
+            &env,
+            &ctx,
+        );
         assert_eq!(ctx.take_pending_clipboard().as_deref(), Some("one"));
     }
 

@@ -122,9 +122,7 @@ impl Division {
             // Clamped so the *other* child keeps a column when there is one to
             // spare, for the reason the arm above clamps the other way: a
             // window with no width renders as nothing at all.
-            Division::FirstFixed(size) => {
-                (*size).min(total.saturating_sub(1)).max(total.min(1))
-            }
+            Division::FirstFixed(size) => (*size).min(total.saturating_sub(1)).max(total.min(1)),
         }
     }
 }

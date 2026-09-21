@@ -60,7 +60,10 @@ mod tests {
     #[test]
     fn an_empty_pattern_matches_everything_in_the_order_given() {
         // What a freshly-opened strip shows, before anything is typed.
-        assert_eq!(filter("", &["one", "two", "three"]), vec!["one", "two", "three"]);
+        assert_eq!(
+            filter("", &["one", "two", "three"]),
+            vec!["one", "two", "three"]
+        );
     }
 
     #[test]
@@ -68,7 +71,10 @@ mod tests {
         // `cap` is an abbreviation of the first, and a coincidence in the
         // second. Both match; only the ordering says which was meant.
         let found = filter("cap", &["chunky-apple-pie-crumble", "completion-at-point"]);
-        assert_eq!(found.first().map(String::as_str), Some("completion-at-point"));
+        assert_eq!(
+            found.first().map(String::as_str),
+            Some("completion-at-point")
+        );
     }
 
     #[test]

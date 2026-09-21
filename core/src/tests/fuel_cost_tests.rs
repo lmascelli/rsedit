@@ -110,10 +110,7 @@ mod tests {
         // What `manpage-names` uses now. One pass, one result.
         let (ctx, env) = editor();
         let answer = run(
-            &format!(
-                "(length (mapcar (lambda (x) x) {}))",
-                list_of(20000)
-            ),
+            &format!("(length (mapcar (lambda (x) x) {}))", list_of(20000)),
             &env,
             &ctx,
         );
@@ -159,7 +156,11 @@ mod tests {
         // test above establishes -- and does not spend fifteen seconds of a
         // debug build proving arithmetic.
         let (ctx, env) = editor_with_modules();
-        let each = cost(r#"(manpage--strip-extensions "git-rebase.1.gz")"#, &env, &ctx);
+        let each = cost(
+            r#"(manpage--strip-extensions "git-rebase.1.gz")"#,
+            &env,
+            &ctx,
+        );
         let total = each * 20_000;
         assert!(
             total < u64::from(crate::lisp::DEFAULT_FUEL),
@@ -175,7 +176,11 @@ mod tests {
         // runaway guard would never stop.
         let (ctx, env) = editor_with_modules();
         let spent = cost(r#"(directory-files-recursive "." 200)"#, &env, &ctx);
-        let found = match run(r#"(length (nth 1 (directory-files-recursive "." 200)))"#, &env, &ctx) {
+        let found = match run(
+            r#"(length (nth 1 (directory-files-recursive "." 200)))"#,
+            &env,
+            &ctx,
+        ) {
             LispExp::Number(n) => n as u64,
             other => panic!("expected a count, got {other:?}"),
         };
@@ -184,7 +189,6 @@ mod tests {
             "walking {found} paths should cost at least {found} units, cost {spent}"
         );
     }
-
 
     #[test]
     fn a_long_candidate_list_can_be_filtered_without_running_out() {
@@ -216,9 +220,8 @@ mod tests {
         let ast = Parser::new(r#"(fuzzy-filter "nm" names)"#)
             .next()
             .expect("source must parse");
-        let (outcome, spent) = crate::lisp::measure(ctx.fuel_meter(), || {
-            eval(&ast, env.clone(), &ctx)
-        });
+        let (outcome, spent) =
+            crate::lisp::measure(ctx.fuel_meter(), || eval(&ast, env.clone(), &ctx));
         assert!(outcome.is_ok());
         assert!(
             spent >= 5000,

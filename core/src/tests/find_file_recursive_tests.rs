@@ -201,10 +201,7 @@ mod tests {
         sandbox.file("a-file", "");
         let (ctx, env) = editor();
         let answer = run(
-            &format!(
-                r#"(directory-files-recursive "{}/a-file")"#,
-                sandbox.path()
-            ),
+            &format!(r#"(directory-files-recursive "{}/a-file")"#, sandbox.path()),
             &env,
             &ctx,
         );
@@ -268,10 +265,7 @@ mod tests {
             .file("build/gone.txt", "");
         let (ctx, env) = editor();
         let answer = run(
-            &format!(
-                r#"(find-file-recursive--candidates "{}")"#,
-                sandbox.path()
-            ),
+            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
             &env,
             &ctx,
         );
@@ -289,10 +283,7 @@ mod tests {
             .file("coverage/gone.txt", "");
         let (ctx, env) = editor();
         let answer = run(
-            &format!(
-                r#"(find-file-recursive--candidates "{}")"#,
-                sandbox.path()
-            ),
+            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
             &env,
             &ctx,
         );
@@ -311,10 +302,7 @@ mod tests {
             .file("deep/also.log", "");
         let (ctx, env) = editor();
         let answer = run(
-            &format!(
-                r#"(find-file-recursive--candidates "{}")"#,
-                sandbox.path()
-            ),
+            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
             &env,
             &ctx,
         );
@@ -330,10 +318,7 @@ mod tests {
             .file("noise.log", "");
         let (ctx, env) = editor();
         let answer = run(
-            &format!(
-                r#"(find-file-recursive--candidates "{}")"#,
-                sandbox.path()
-            ),
+            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
             &env,
             &ctx,
         );
@@ -352,10 +337,7 @@ mod tests {
             .file("build/gone.txt", "");
         let (ctx, env) = editor();
         let answer = run(
-            &format!(
-                r#"(find-file-recursive--candidates "{}")"#,
-                sandbox.path()
-            ),
+            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
             &env,
             &ctx,
         );
@@ -373,10 +355,7 @@ mod tests {
             .file("other.txt", "");
         let (ctx, env) = editor();
         let answer = run(
-            &format!(
-                r#"(find-file-recursive--candidates "{}")"#,
-                sandbox.path()
-            ),
+            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
             &env,
             &ctx,
         );
@@ -398,10 +377,7 @@ mod tests {
             .file("node_modules/pkg/index.js", "");
         let (ctx, env) = editor();
         let answer = run(
-            &format!(
-                r#"(find-file-recursive--candidates "{}")"#,
-                sandbox.path()
-            ),
+            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
             &env,
             &ctx,
         );

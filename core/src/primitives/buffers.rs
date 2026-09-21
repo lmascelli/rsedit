@@ -1,6 +1,6 @@
 use super::*;
-use std::sync::{Arc, RwLock};
 use crate::buffer::Buffer;
+use std::sync::{Arc, RwLock};
 
 pub const CURRENT_BUFFER_DOC: &str = "(current-buffer): Return the name of the current buffer, as a \
          string. Unlike real Emacs Lisp's `current-buffer`, which returns a \

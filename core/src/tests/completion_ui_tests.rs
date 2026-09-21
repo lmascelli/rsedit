@@ -171,7 +171,10 @@ mod tests {
 
         let shown = strip(&env, &ctx);
         assert!(shown.contains("beta"), "beta should survive, got {shown:?}");
-        assert!(!shown.contains("alpha"), "alpha should be gone, got {shown:?}");
+        assert!(
+            !shown.contains("alpha"),
+            "alpha should be gone, got {shown:?}"
+        );
     }
 
     #[test]

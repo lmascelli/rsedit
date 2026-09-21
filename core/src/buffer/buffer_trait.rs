@@ -2,6 +2,19 @@ pub trait BufferTrait:
     Clone + Default + ToString + Send + Sync + 'static + for<'input> From<&'input str>
 {
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    
+    /// Every character from POS onwards, in order.
+    ///
+    /// The primitive that anything walking the buffer actually wants: the
+    /// scanner, the highlighter and search all move forward and never look
+    /// back, and asking for that as a stream lets an implementation walk its
+    /// own storage once instead of being re-entered per character.
+    fn chars_from(&self, pos: usize) -> impl Iterator<Item = char> + '_ {
+        (pos..).map_while(move |i| self.at(i))
+    }
     fn at_line_col(&self, line: usize, col: usize) -> Option<char>;
     fn at(&self, pos: usize) -> Option<char>;
     fn cursor_pos(&self) -> (usize, usize);

@@ -172,7 +172,11 @@ mod tests {
     #[test]
     fn typing_in_front_carries_the_overlay_along() {
         let (ctx, env) = editor();
-        run(r#"(insert "hello world") (make-overlay 6 11 'error)"#, &env, &ctx);
+        run(
+            r#"(insert "hello world") (make-overlay 6 11 'error)"#,
+            &env,
+            &ctx,
+        );
         run(r#"(goto-char 0) (insert ">> ")"#, &env, &ctx);
         // Still on "world", which now begins at 9.
         assert_eq!(run("(overlays-at 9)", &env, &ctx).iter().count(), 1);
@@ -182,8 +186,16 @@ mod tests {
     #[test]
     fn deleting_the_marked_text_removes_the_overlay() {
         let (ctx, env) = editor();
-        run(r#"(insert "hello world") (make-overlay 6 11 'error)"#, &env, &ctx);
-        run(r#"(goto-char 6) (set-mark) (goto-char 11) (kill-region)"#, &env, &ctx);
+        run(
+            r#"(insert "hello world") (make-overlay 6 11 'error)"#,
+            &env,
+            &ctx,
+        );
+        run(
+            r#"(goto-char 6) (set-mark) (goto-char 11) (kill-region)"#,
+            &env,
+            &ctx,
+        );
         assert_eq!(run("(overlays-at 6)", &env, &ctx).iter().count(), 0);
     }
 
@@ -194,7 +206,11 @@ mod tests {
     #[test]
     fn an_overlay_becomes_a_highlight_where_the_text_is() {
         let (ctx, env) = editor();
-        run(r#"(insert "hello world") (make-overlay 6 11 'error)"#, &env, &ctx);
+        run(
+            r#"(insert "hello world") (make-overlay 6 11 'error)"#,
+            &env,
+            &ctx,
+        );
         let drawn = highlights(&ctx, &env);
         let found = drawn
             .iter()
@@ -220,7 +236,11 @@ mod tests {
     #[test]
     fn a_multi_line_overlay_is_drawn_on_each_of_its_rows() {
         let (ctx, env) = editor();
-        run(r#"(insert "one\ntwo\nthree") (make-overlay 0 13 'error)"#, &env, &ctx);
+        run(
+            r#"(insert "one\ntwo\nthree") (make-overlay 0 13 'error)"#,
+            &env,
+            &ctx,
+        );
         let rows: Vec<usize> = highlights(&ctx, &env)
             .iter()
             .filter(|h| h.face == Face::intern("error"))

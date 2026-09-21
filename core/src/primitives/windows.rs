@@ -1,6 +1,6 @@
 //! Splitting the frame into windows, and moving between them.
-use crate::ui::Division;
 use super::*;
+use crate::ui::Division;
 use crate::ui::Orientation;
 
 /// Read a window count from a `p` argument.

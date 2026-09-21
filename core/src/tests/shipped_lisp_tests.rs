@@ -26,7 +26,10 @@ mod tests {
     const SHIPPED: [(&str, &str); 16] = [
         ("commands", include_str!("../../lisp/commands.lisp")),
         ("debug", include_str!("../../lisp/debug.lisp")),
-        ("common-keymaps", include_str!("../../lisp/common-keymaps.lisp")),
+        (
+            "common-keymaps",
+            include_str!("../../lisp/common-keymaps.lisp"),
+        ),
         ("indent", include_str!("../../lisp/indent.lisp")),
         ("minibuffer", include_str!("../../lisp/minibuffer.lisp")),
         ("rust-mode", include_str!("../../lisp/rust-mode.lisp")),
@@ -34,7 +37,10 @@ mod tests {
         ("dired", include_str!("../../lisp/dired.lisp")),
         ("completion", include_str!("../../lisp/completion.lisp")),
         ("clipboard", include_str!("../../lisp/clipboard.lisp")),
-        ("electric-pair", include_str!("../../lisp/electric-pair.lisp")),
+        (
+            "electric-pair",
+            include_str!("../../lisp/electric-pair.lisp"),
+        ),
         ("buffer-list", include_str!("../../lisp/buffer-list.lisp")),
         ("shell", include_str!("../../lisp/shell.lisp")),
         ("manpage", include_str!("../../lisp/manpage.lisp")),
@@ -64,10 +70,7 @@ mod tests {
     #[test]
     fn the_commands_the_new_modules_define_are_registered() {
         let (ctx, env) = loaded();
-        for name in [
-                        "electric-pair-delete-backward",
-            "insert-pasted-text",
-        ] {
+        for name in ["electric-pair-delete-backward", "insert-pasted-text"] {
             let ast = Parser::new(&format!("(commandp '{name})"))
                 .next()
                 .expect("source must parse");

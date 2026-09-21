@@ -164,7 +164,11 @@ mod tests {
         // `'"'`, and type it back.
         let (ctx, env) = editor();
         rust_buffer("i", "fn a() \n  let c = '\"';\n}", 7, &env, &ctx);
-        run(r#"(self-insert "{") (electric-pair-post-self-insert)"#, &env, &ctx);
+        run(
+            r#"(self-insert "{") (electric-pair-post-self-insert)"#,
+            &env,
+            &ctx,
+        );
         assert_eq!(contents(&ctx), "fn a() {\n  let c = '\"';\n}");
     }
 
@@ -173,7 +177,11 @@ mod tests {
         // The check must not have been turned into "never pair".
         let (ctx, env) = editor();
         rust_buffer("j", "fn a() \n  let c = '\"';\n", 7, &env, &ctx);
-        run(r#"(self-insert "{") (electric-pair-post-self-insert)"#, &env, &ctx);
+        run(
+            r#"(self-insert "{") (electric-pair-post-self-insert)"#,
+            &env,
+            &ctx,
+        );
         assert_eq!(contents(&ctx), "fn a() {}\n  let c = '\"';\n");
     }
 
@@ -195,7 +203,11 @@ mod tests {
         // a closer, the brace after it would stop counting.
         let (ctx, env) = editor();
         rust_buffer("l", "fn a<'x>() {\n", 0, &env, &ctx);
-        assert_eq!(depth_at_end(&env, &ctx), 1.0, "the unclosed brace is still seen");
+        assert_eq!(
+            depth_at_end(&env, &ctx),
+            1.0,
+            "the unclosed brace is still seen"
+        );
     }
 
     #[test]

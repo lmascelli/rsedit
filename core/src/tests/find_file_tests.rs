@@ -85,7 +85,10 @@ mod tests {
             &ctx,
         );
         assert_eq!(name_of(&answer), "fresh.txt");
-        assert_eq!(run("(buffer-string)", &env, &ctx), LispExp::string(String::new()));
+        assert_eq!(
+            run("(buffer-string)", &env, &ctx),
+            LispExp::string(String::new())
+        );
     }
 
     #[test]
@@ -166,27 +169,20 @@ mod tests {
             &env,
             &ctx,
         );
-        let answer = run(
-            &format!(r#"(find-file "{}")"#, sandbox.path()),
-            &env,
-            &ctx,
-        );
+        let answer = run(&format!(r#"(find-file "{}")"#, sandbox.path()), &env, &ctx);
+        assert_eq!(run("*opened*", &env, &ctx), LispExp::string(sandbox.path()));
         assert_eq!(
-            run("*opened*", &env, &ctx),
-            LispExp::string(sandbox.path())
+            name_of(&answer),
+            "done",
+            "the callback's answer is returned"
         );
-        assert_eq!(name_of(&answer), "done", "the callback's answer is returned");
     }
 
     #[test]
     fn a_directory_with_no_callback_says_so_rather_than_failing_obscurely() {
         let sandbox = Sandbox::new("dir-none");
         let (ctx, env) = editor();
-        let answer = run(
-            &format!(r#"(find-file "{}")"#, sandbox.path()),
-            &env,
-            &ctx,
-        );
+        let answer = run(&format!(r#"(find-file "{}")"#, sandbox.path()), &env, &ctx);
         assert!(answer.is_nil());
         // And no buffer was made for it.
         assert!(ctx.get_buffer("dir-none").is_none());
@@ -203,11 +199,7 @@ mod tests {
             &env,
             &ctx,
         );
-        let answer = run(
-            &format!(r#"(find-file "{}")"#, sandbox.path()),
-            &env,
-            &ctx,
-        );
+        let answer = run(&format!(r#"(find-file "{}")"#, sandbox.path()), &env, &ctx);
         assert_eq!(name_of(&answer), "my-own-lister");
     }
 

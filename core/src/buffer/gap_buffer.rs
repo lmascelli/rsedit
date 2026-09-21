@@ -60,6 +60,19 @@ impl<'input> BufferTrait for GapBuffer {
         self.gap_start + self.data.len() - self.gap_end
     }
 
+    fn chars_from(&self, pos: usize) -> impl Iterator<Item = char> + '_ {
+        // The two halves of the storage on either side of the gap, as slices.
+        // `at` branches on which side `pos` falls once per character; iterating
+        // the halves decides it once for the whole walk.
+        let front_start = pos.min(self.gap_start);
+        let back_start =
+            (self.gap_end + pos.saturating_sub(self.gap_start)).min(self.data.len());
+        self.data[front_start..self.gap_start]
+            .iter()
+            .chain(self.data[back_start..].iter())
+            .copied()
+    }
+    
     fn at_line_col(&self, line: usize, col: usize) -> Option<char> {
         let mut current_line = 0;
         let mut current_col = 0;

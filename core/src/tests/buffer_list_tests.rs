@@ -138,9 +138,7 @@ mod tests {
         let (ctx, env) = editor();
         let long = "a-really-quite-long-buffer-name-indeed";
         run(
-            &format!(
-                r#"(buffer-create "{long}" 'fundamental-mode) (buffer-list)"#
-            ),
+            &format!(r#"(buffer-create "{long}" 'fundamental-mode) (buffer-list)"#),
             &env,
             &ctx,
         );
@@ -167,7 +165,11 @@ mod tests {
             .position(|l| l.contains("target"))
             .expect("target should be listed")
             + 1;
-        run(&format!("(goto-line {line}) (buffer-list-select)"), &env, &ctx);
+        run(
+            &format!("(goto-line {line}) (buffer-list-select)"),
+            &env,
+            &ctx,
+        );
         assert_eq!(ctx.get_current_buffer_name(), "target");
     }
 
@@ -187,7 +189,11 @@ mod tests {
             .position(|l| l.contains("two words"))
             .expect("listed")
             + 1;
-        run(&format!("(goto-line {line}) (buffer-list-select)"), &env, &ctx);
+        run(
+            &format!("(goto-line {line}) (buffer-list-select)"),
+            &env,
+            &ctx,
+        );
         assert_eq!(ctx.get_current_buffer_name(), "two words");
     }
 
@@ -232,10 +238,21 @@ mod tests {
             &ctx,
         );
         let shown = listing(&env, &ctx);
-        let line = shown.lines().position(|l| l.contains("spare")).expect("listed") + 1;
-        run(&format!("(goto-line {line}) (buffer-list-kill)"), &env, &ctx);
+        let line = shown
+            .lines()
+            .position(|l| l.contains("spare"))
+            .expect("listed")
+            + 1;
+        run(
+            &format!("(goto-line {line}) (buffer-list-kill)"),
+            &env,
+            &ctx,
+        );
         assert!(ctx.get_buffer("spare").is_none());
-        assert!(!listing(&env, &ctx).contains("spare"), "and the list redrew");
+        assert!(
+            !listing(&env, &ctx).contains("spare"),
+            "and the list redrew"
+        );
     }
 
     #[test]
@@ -250,8 +267,16 @@ mod tests {
             &ctx,
         );
         let shown = listing(&env, &ctx);
-        let line = shown.lines().position(|l| l.contains("precious")).expect("listed") + 1;
-        run(&format!("(goto-line {line}) (buffer-list-kill)"), &env, &ctx);
+        let line = shown
+            .lines()
+            .position(|l| l.contains("precious"))
+            .expect("listed")
+            + 1;
+        run(
+            &format!("(goto-line {line}) (buffer-list-kill)"),
+            &env,
+            &ctx,
+        );
         assert!(
             ctx.get_buffer("precious").is_some(),
             "the question is still open, so nothing has been killed"
@@ -270,7 +295,11 @@ mod tests {
             .position(|l| l.contains("*Buffer List*"))
             .expect("it lists itself")
             + 1;
-        run(&format!("(goto-line {line}) (buffer-list-kill)"), &env, &ctx);
+        run(
+            &format!("(goto-line {line}) (buffer-list-kill)"),
+            &env,
+            &ctx,
+        );
         assert!(ctx.get_buffer("*Buffer List*").is_some());
     }
 
@@ -281,7 +310,11 @@ mod tests {
     #[test]
     fn the_prompt_completes_over_buffer_names_fuzzily() {
         let (ctx, env) = editor();
-        run(r#"(buffer-create "notes.txt" 'fundamental-mode)"#, &env, &ctx);
+        run(
+            r#"(buffer-create "notes.txt" 'fundamental-mode)"#,
+            &env,
+            &ctx,
+        );
         let found = run(r#"(switch-to-buffer-candidates "nts")"#, &env, &ctx);
         let names: Vec<String> = found
             .iter()

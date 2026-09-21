@@ -123,11 +123,7 @@ mod tests {
     #[test]
     fn standard_error_is_kept_and_shown() {
         let (ctx, env) = editor();
-        let name = started(
-            r#"(shell-command-start "echo problem >&2")"#,
-            &env,
-            &ctx,
-        );
+        let name = started(r#"(shell-command-start "echo problem >&2")"#, &env, &ctx);
         settle(&ctx);
         assert!(
             text_of(&ctx, &name).contains("problem"),
@@ -158,11 +154,7 @@ mod tests {
     #[test]
     fn quoting_survives_the_way_it_would_at_a_prompt() {
         let (ctx, env) = editor();
-        let name = started(
-            r#"(shell-command-start "echo 'two words'")"#,
-            &env,
-            &ctx,
-        );
+        let name = started(r#"(shell-command-start "echo 'two words'")"#, &env, &ctx);
         settle(&ctx);
         assert!(text_of(&ctx, &name).contains("two words"));
     }
@@ -174,13 +166,15 @@ mod tests {
         settle(&ctx);
         let before = text_of(&ctx, &name);
         run(
-            &format!(
-                r#"(switch-to-buffer "{name}") (goto-char 0) (insert "typed")"#
-            ),
+            &format!(r#"(switch-to-buffer "{name}") (goto-char 0) (insert "typed")"#),
             &env,
             &ctx,
         );
-        assert_eq!(text_of(&ctx, &name), before, "nobody types into a transcript");
+        assert_eq!(
+            text_of(&ctx, &name),
+            before,
+            "nobody types into a transcript"
+        );
     }
 
     #[test]
@@ -241,11 +235,7 @@ mod tests {
     #[test]
     fn a_command_that_writes_a_lot_arrives_whole() {
         let (ctx, env) = editor();
-        let name = started(
-            r#"(shell-command-start "seq 1 500")"#,
-            &env,
-            &ctx,
-        );
+        let name = started(r#"(shell-command-start "seq 1 500")"#, &env, &ctx);
         settle(&ctx);
         let text = text_of(&ctx, &name);
         assert!(text.contains("\n1\n"), "the first line");

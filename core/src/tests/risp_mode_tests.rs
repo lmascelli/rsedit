@@ -49,7 +49,11 @@ mod tests {
             ctx,
         );
         let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
-        run(&format!(r#"(insert "{escaped}") (goto-char {at})"#), env, ctx);
+        run(
+            &format!(r#"(insert "{escaped}") (goto-char {at})"#),
+            env,
+            ctx,
+        );
     }
 
     fn contents(ctx: &Ctx) -> String {
@@ -136,10 +140,7 @@ mod tests {
         };
         let compiled = regex::Regex::new(&pattern).expect("the pattern must compile");
         assert!(compiled.is_match("(1+ x)"), "should match `1+` in a call");
-        assert!(
-            compiled.is_match("(string< a b)"),
-            "should match `string<`"
-        );
+        assert!(compiled.is_match("(string< a b)"), "should match `string<`");
     }
 
     // ----------------------------------------------------------------

@@ -128,7 +128,11 @@ impl<B: BufferTrait> ImmediateTask<B> for ShellTask {
                     // the alternative is a buffer of replacement characters
                     // that looks like the command's own output.
                     Err(why) => {
-                        append(state, &self.buffer, &format!("[unreadable output: {why}]\n"));
+                        append(
+                            state,
+                            &self.buffer,
+                            &format!("[unreadable output: {why}]\n"),
+                        );
                         break;
                     }
                 }
