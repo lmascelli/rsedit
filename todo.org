@@ -2,45 +2,8 @@
 #+title: rsedit
 
 * Fixes todo
-- [X] electric-pair doesn't recognize a match pair in some case for example:
-fn push_call_frame(&self, frame: &str) {
-    self.call_stack
-    .write()
-    .expect("Failed to acquire write lock on call_stack")
-    .push(frame.to_string());
-}
-
-this bug is still here. try to remove the open bracket after the function arguments
-and add it again. a couple of brackets will be added (this is wrong) the closed bracket
-is the one the close the function body. Also if you delete the wrong close bracket added
-the open one is deleted.
-
-  Fixed in the *syntax table*, not in electric-pair -- the third bug of that
-  shape, after block comments and character literals, and always the same
-  cause: the grammar knows a construct that the table does not.
-
-  electric-pair refuses to add a closer when the buffer already balances, so
-  it is only ever as right as the scanner's answer to "does this balance". In
-  =core/src/editor.rs= the answer was wrong. =create_global_env= holds the
-  default init.lisp in a raw string, and one of its comments reads
-  =; typing "(" gives you "()"=. The scanner knew only the =string= syntax
-  class -- one character that opens and the same one that closes -- so it read
-  =r#"..."#= as a run of ordinary strings with *code* between them. That =(=
-  became a real open bracket, the whole file reported depth 1 instead of 0,
-  and from there electric-pair paired everywhere in it. The closer it offered
-  was the brace already closing the body, which is why deleting the stray one
-  took the opener with it.
-
-  The table now carries string *styles* with literal delimiters, declared per
-  mode with =set-string-syntax=; rust-mode declares =r#"= / ="#=, =br#"=,
-  =r"= and =br"=. The longest opener wins, so a raw-string opener beats the
-  plain quote it begins with, and nothing is escaped inside one -- a raw
-  string exists so a backslash is a backslash. Everything that reads the table
-  is fixed at once: =forward-sexp=, the indenter, =syntax-ppss=.
-
-  =core/src/tests/raw_string_tests.rs= pins it, including the reported
-  scenario and a regression that opens this editor's own sources and asserts
-  they balance -- the test that would have caught all three of these bugs.
+- [ ] Having a buffer opened in two windows and move the cursor in one window
+      makes the view of the other window move too.
 
 * Macro todo 
 - [X] Cache the syntax table's scan, so that reading the buffer as balanced
