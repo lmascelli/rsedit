@@ -1,3 +1,4 @@
+mod buffer_conformance_tests;
 mod buffer_list_tests;
 mod bug_fix_tests;
 mod char_quote_tests;

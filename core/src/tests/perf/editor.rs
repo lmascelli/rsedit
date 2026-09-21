@@ -116,6 +116,7 @@ pub(super) fn cost(report: &mut Report) {
 
 pub(super) fn timing(report: &mut Report, calibration: f64) {
     gap_buffer(report, calibration);
+    traversal(report, calibration);
     sexp_scan(report, calibration);
     layout(report, calibration);
     command_path(report, calibration);
@@ -237,6 +238,99 @@ fn gap_buffer(report: &mut Report, calibration: f64) {
 /// one that matters: with checkpoints it should cost the same to ask at the end
 /// of a long file as at its start, because the scan resumes from the nearest
 /// one either way.
+/// The two ways of walking the buffer: `at` per character, or `chars_from`.
+///
+/// `sexp::Scan` reads the whole file one character at a time, and until
+/// `chars_from` existed the only way to ask for the next character was to ask
+/// for an arbitrary one -- which makes the implementation decide, per
+/// character, which side of its storage the offset falls on. The ratio here is
+/// what that decision costs when it is made once per walk instead.
+///
+/// The number to watch is not the speedup, which is whatever this particular
+/// storage happens to give. It is that the row never goes *below* 1.0x: a
+/// streaming primitive that is slower than random access would be one no
+/// caller should use, and the whole argument for adding it was that the
+/// callers walk forward.
+fn traversal(report: &mut Report, calibration: f64) {
+    const LINES: usize = 10_000;
+
+    let buf = GapBuffer::from(text_of_lines(LINES).as_str());
+    let len = buf.len();
+    // Point in the middle, which is where it is while anybody is typing, and
+    // the arrangement `at` has to branch around.
+    let mut buf = buf;
+    buf.cursor_move(LINES / 2, 0);
+    let buf = buf;
+
+    // Both sides accumulate, and neither uses `count`: a chain of slice
+    // iterators knows its own length, so counting one answers without reading
+    // a single character and reports a speedup of five figures.
+    let expected: u64 = (0..len)
+        .map(|pos| buf.at(pos).expect("inside the buffer") as u64)
+        .fold(0, u64::wrapping_add);
+
+    let indexed = time_fastest(|| {
+        let mut sum = 0u64;
+        for pos in 0..len {
+            sum = sum.wrapping_add(buf.at(pos).expect("inside the buffer") as u64);
+        }
+        assert_eq!(sum, expected);
+    });
+    let streamed = time_fastest(|| {
+        let mut sum = 0u64;
+        for c in buf.chars_from(0) {
+            sum = sum.wrapping_add(c as u64);
+        }
+        assert_eq!(sum, expected);
+    });
+
+    let indexed_ns = per_unit_ns(indexed, len as u64);
+    let streamed_ns = per_unit_ns(streamed, len as u64);
+    let speedup = ratio(indexed.as_secs_f64(), streamed.as_secs_f64());
+
+    report.section(
+        "BUFFER TRAVERSAL",
+        "Walking every character of a 10,000-line buffer with point in the middle,\n\
+         once by asking for each offset and once as a stream. The scanner does this\n\
+         walk for `syntax-ppss', `forward-sexp' and the indenter, so the per-character\n\
+         cost here is very nearly the per-character cost of those. The ratio must not\n\
+         fall below 1.0x -- a stream slower than random access would be a primitive\n\
+         with no reason to exist.",
+        vec![
+            Row::timed(
+                "buffer/walk-at-ns",
+                "per char, by offset",
+                indexed_ns,
+                format!("{indexed_ns:.2} ns"),
+                x_ref(indexed_ns, calibration),
+            ),
+            Row::timed(
+                "buffer/walk-stream-ns",
+                "per char, as a stream",
+                streamed_ns,
+                format!("{streamed_ns:.2} ns"),
+                x_ref(streamed_ns, calibration),
+            ),
+            Row::new(
+                "buffer/traversal",
+                "  by offset vs stream",
+                speedup,
+                format!("{speedup:.2}x"),
+                "the stream must not be slower; must stay above 1.00x",
+            ),
+        ],
+    );
+
+    report.verdict(
+        speedup >= 1.0,
+        "streaming the buffer is at least as cheap as indexing it",
+        format!(
+            "walking as a stream cost {speedup:.2}x walking by offset -- the streaming \
+             primitive is slower than the random access it was added to replace"
+        ),
+    );
+}
+
 fn sexp_scan(report: &mut Report, calibration: f64) {
     const LINES: usize = 10_000;
     const CP: usize = crate::buffer::scan::LINES_PER_CHECKPOINT;

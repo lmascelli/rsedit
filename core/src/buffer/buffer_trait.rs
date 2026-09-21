@@ -15,7 +15,6 @@ pub trait BufferTrait:
     fn chars_from(&self, pos: usize) -> impl Iterator<Item = char> + '_ {
         (pos..).map_while(move |i| self.at(i))
     }
-    fn at_line_col(&self, line: usize, col: usize) -> Option<char>;
     fn at(&self, pos: usize) -> Option<char>;
     fn cursor_pos(&self) -> (usize, usize);
     fn cursor_pos_1d(&self) -> usize;

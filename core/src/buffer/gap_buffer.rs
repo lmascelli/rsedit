@@ -55,7 +55,7 @@ impl<'input> From<&'input str> for GapBuffer {
     }
 }
 
-impl<'input> BufferTrait for GapBuffer {
+impl BufferTrait for GapBuffer {
     fn len(&self) -> usize {
         self.gap_start + self.data.len() - self.gap_end
     }
@@ -66,38 +66,18 @@ impl<'input> BufferTrait for GapBuffer {
         // the halves decides it once for the whole walk.
         let front_start = pos.min(self.gap_start);
         let back_start =
-            (self.gap_end + pos.saturating_sub(self.gap_start)).min(self.data.len());
+            (self
+                .gap_end
+                .saturating_sub(pos.saturating_sub(self.gap_start))
+                .min(self.data.len())
+             + pos.saturating_sub(self.gap_start)
+            ).min(self.data.len());
         self.data[front_start..self.gap_start]
             .iter()
             .chain(self.data[back_start..].iter())
             .copied()
     }
     
-    fn at_line_col(&self, line: usize, col: usize) -> Option<char> {
-        let mut current_line = 0;
-        let mut current_col = 0;
-        let logical_text = self.data[0..self.gap_start]
-            .iter()
-            .chain(self.data[self.gap_end..].iter());
-
-        for &c in logical_text {
-            if c == '\n' {
-                current_line += 1;
-                current_col = 0;
-            } else {
-                current_col += 1;
-            }
-            if current_line == line {
-                if current_col > col {
-                    return None;
-                } else if current_col == col {
-                    return Some(c);
-                }
-            }
-        }
-
-        None
-    }
 
     fn at(&self, pos: usize) -> Option<char> {
         // `<`, not `<=`: at `pos == gap_start` the logical character lives at
@@ -591,7 +571,6 @@ mod tests {
         assert_eq!(buf.cursor_pos(), (0, 0));
         assert_eq!(buf.cursor_pos_1d(), 0);
         assert_eq!(buf.at(0), None);
-        assert_eq!(buf.at_line_col(0, 0), None);
 
         // Boundaries should resist out-of-bounds drifting
         assert!(!buf.cursor_move_forward());
