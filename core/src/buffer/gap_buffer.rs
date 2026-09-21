@@ -65,19 +65,15 @@ impl BufferTrait for GapBuffer {
         // `at` branches on which side `pos` falls once per character; iterating
         // the halves decides it once for the whole walk.
         let front_start = pos.min(self.gap_start);
-        let back_start =
-            (self
-                .gap_end
-                .saturating_sub(pos.saturating_sub(self.gap_start))
-                .min(self.data.len())
-             + pos.saturating_sub(self.gap_start)
-            ).min(self.data.len());
+        let back_start = self
+            .gap_end
+            .saturating_add(pos.saturating_sub(self.gap_start))
+            .min(self.data.len());
         self.data[front_start..self.gap_start]
             .iter()
             .chain(self.data[back_start..].iter())
             .copied()
     }
-    
 
     fn at(&self, pos: usize) -> Option<char> {
         // `<`, not `<=`: at `pos == gap_start` the logical character lives at

@@ -5,7 +5,7 @@ pub trait BufferTrait:
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    
+
     /// Every character from POS onwards, in order.
     ///
     /// The primitive that anything walking the buffer actually wants: the
