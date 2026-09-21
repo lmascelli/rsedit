@@ -7,10 +7,15 @@
 use super::metrics::{per_unit_ns, ratio, time_fastest, x_ref};
 use super::report::{Report, Row};
 use crate::{
-    buffer::{Buffer, BufferTrait, gap_buffer::GapBuffer},
+    buffer::{
+        Buffer, BufferTrait,
+        gap_buffer::GapBuffer,
+        scan::{ScanCache, checkpoint_line},
+    },
     editor::create_global_env,
     input::{KeyCode, KeyEvent, KeyModifiers},
     lisp::{EvalError, Parser, eval, measure},
+    modes::{SyntaxTable, sexp},
     ui::*,
 };
 use std::collections::HashMap;
@@ -111,6 +116,7 @@ pub(super) fn cost(report: &mut Report) {
 
 pub(super) fn timing(report: &mut Report, calibration: f64) {
     gap_buffer(report, calibration);
+    sexp_scan(report, calibration);
     layout(report, calibration);
     command_path(report, calibration);
     concurrency(report);
@@ -222,6 +228,127 @@ fn gap_buffer(report: &mut Report, calibration: f64) {
     );
 }
 
+/// Reading the buffer as balanced expressions, with and without checkpoints.
+///
+/// This is the question `syntax-ppss`, `forward-sexp`, the indenter and
+/// electric-pair all ask, and until there was a cache every one of them scanned
+/// from the top of the buffer to get it -- so the cost of asking anything about
+/// point depended on how far down the file point was. The locality row is the
+/// one that matters: with checkpoints it should cost the same to ask at the end
+/// of a long file as at its start, because the scan resumes from the nearest
+/// one either way.
+fn sexp_scan(report: &mut Report, calibration: f64) {
+    const LINES: usize = 10_000;
+    const CP: usize = crate::buffer::scan::LINES_PER_CHECKPOINT;
+
+    let source = "(a (b \"c ( d\") e) ; ) in a comment\n".repeat(LINES);
+    let text = GapBuffer::from(source.as_str());
+    let table = SyntaxTable::default();
+
+    // Both probes sit half a checkpoint interval past a checkpoint, one near
+    // the end of the file and one halfway down. Measuring at the same *phase*
+    // is what makes the locality row about locality: a probe just after a
+    // checkpoint and one just before the next would differ by the interval
+    // however well the cache worked.
+    let deep = text.cursor_2d_to_1d(CP * (LINES / CP - 2) + CP / 2, 0);
+    let shallow = text.cursor_2d_to_1d(CP * (LINES / CP / 2) + CP / 2, 0);
+
+    // The cache the worker would have built, built here directly: this measures
+    // what a warm cache is worth, not how long the worker takes to warm it.
+    let mut cache = ScanCache::default();
+    cache.reset(1, "fundamental-mode");
+    let mut scan = sexp::Scan::begin(&text, &table, usize::MAX, None, 1);
+    let mut index = 0;
+    while checkpoint_line(index) < LINES {
+        let target = text.cursor_2d_to_1d(checkpoint_line(index), 0);
+        scan.run_to(target);
+        cache
+            .record(index, scan.snapshot())
+            .expect("checkpoints are built in order");
+        index += 1;
+    }
+    let resume_at =
+        |pos: usize| cache.resume_for("fundamental-mode", 1, text.cursor_1d_to_2d(pos).0);
+
+    let cold = time_fastest(|| {
+        assert_eq!(sexp::context_at(&text, &table, None, deep).depth, 0);
+    });
+    let warm_end = time_fastest(|| {
+        assert_eq!(
+            sexp::context_at(&text, &table, resume_at(deep), deep).depth,
+            0
+        );
+    });
+    let warm_head = time_fastest(|| {
+        assert_eq!(
+            sexp::context_at(&text, &table, resume_at(shallow), shallow).depth,
+            0
+        );
+    });
+
+    let speedup = ratio(cold.as_secs_f64(), warm_end.as_secs_f64());
+    let locality = ratio(warm_end.as_secs_f64(), warm_head.as_secs_f64());
+    let cold_ns = per_unit_ns(cold, 1);
+    let warm_ns = per_unit_ns(warm_end, 1);
+
+    report.section(
+        "SEXP SCAN",
+        "What `syntax-ppss' costs deep inside a 10,000-line file. Cold is the scan\n\
+         every motion used to do: from character zero, every time. Warm resumes from\n\
+         the nearest checkpoint, at most one checkpoint interval back. The locality\n\
+         row is the point of the whole arrangement: 1.0x means asking at the bottom of\n\
+         the file costs what asking halfway down costs, so the price of a motion no\n\
+         longer depends on where in the file you are.",
+        vec![
+            Row::timed(
+                "sexp/context-cold-ns",
+                "context deep in, from the top",
+                cold_ns,
+                format!("{cold_ns:.0} ns"),
+                x_ref(cold_ns, calibration),
+            ),
+            Row::timed(
+                "sexp/context-warm-ns",
+                "context deep in, from a checkpoint",
+                warm_ns,
+                format!("{warm_ns:.0} ns"),
+                x_ref(warm_ns, calibration),
+            ),
+            Row::new(
+                "sexp/speedup",
+                "  cold vs warm",
+                speedup,
+                format!("{speedup:.1}x"),
+                "checkpoints must be worth at least 10x here",
+            ),
+            Row::new(
+                "sexp/locality",
+                "  deep vs halfway down",
+                locality,
+                format!("{locality:.2}x"),
+                "1.00x means the scan resumes; must stay under 2.00x",
+            ),
+        ],
+    );
+
+    report.verdict(
+        speedup > 10.0,
+        "checkpoints make a scan deep in a long file cheap",
+        format!(
+            "resuming from a checkpoint was only {speedup:.1}x faster than scanning \
+             from the top -- the cache is no longer being reached"
+        ),
+    );
+    report.verdict(
+        locality < 2.0,
+        "the cost of a scan no longer depends on where in the file it is asked",
+        format!(
+            "asking deep in the file cost {locality:.2}x asking halfway down -- \
+             the scan is not resuming from the nearest checkpoint"
+        ),
+    );
+}
+
 fn layout(report: &mut Report, calibration: f64) {
     const FRAMES: usize = 200;
 
@@ -264,6 +391,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 mark: None,
                 overlays: Default::default(),
                 version: 0,
+                scan: Default::default(),
                 syntax: Default::default(),
                 read_only: false,
             })),

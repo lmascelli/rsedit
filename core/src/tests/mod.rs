@@ -41,6 +41,7 @@ mod raw_string_tests;
 mod prefix_key_tests;
 mod region_tests;
 mod risp_mode_tests;
+mod scan_cache_tests;
 mod repeat_key_tests;
 mod repeat_tests;
 mod scroll_tests;

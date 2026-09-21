@@ -15,12 +15,14 @@
 //! far back  a string opened two hundred lines up makes it text  and the same
 //! characters read right-to-left are ambiguous.
 //!
-//! So both directions run the same forward lex from the top. That is linear in
-//! the distance from the start of the buffer rather than the distance moved,
-//! which is the price of being right. [`Scan::begin`] is the single place that
-//! decides, so when this is worth optimising the fix goes there and no caller
-//! changes: `crate::buffer::syntax` already caches a lexer state per line for
-//! colouring, and the same trick applies here.
+//! So both directions run the same forward lex, and the only offset a lex can
+//! start at is one whose state is known. [`Scan::begin`] is the single place
+//! that decides which, which is why making this cheap changed no caller: it now
+//! takes a [`Resume`] -- a state the scan reached earlier, kept per buffer by
+//! [`crate::buffer::scan::ScanCache`] and filled by the background job in
+//! [`crate::modes::prescan`] -- and carries on from there instead of from
+//! character zero. Given none, or one from beyond the position being asked
+//! about, it does what it always did and starts at the top.
 use crate::BufferTrait;
 use crate::modes::{CommentStyle, SyntaxClass, SyntaxTable};
 use std::collections::VecDeque;
@@ -73,6 +75,7 @@ enum State {
 }
 
 /// One level of nesting, and the last few expressions completed inside it.
+#[derive(Clone, Debug)]
 struct Frame {
     /// Where the expression opening this level begins  the prefix, if there
     /// was one, rather than the delimiter: `'(a b)` opens at the quote.
@@ -83,6 +86,43 @@ struct Frame {
     /// hundreds of thousands of entries rebuilt on every keystroke, while
     /// `backward-sexp` with a count of N needs exactly the last N.
     children: VecDeque<Sexp>,
+}
+
+/// Everything a scan needs to carry on from an offset it did not start at.
+///
+/// # Why this is the state and not a summary
+///
+/// It would be tempting to remember only the depth. But a `)` is a closing
+/// delimiter or a character in a string depending on which of those the scan
+/// is currently reading, and how far a list reaches depends on where its
+/// opener was -- so a scan resumed with a depth and nothing else answers
+/// `syntax-ppss` with a position it invented. The state is small enough to
+/// keep in full, and keeping it in full is the only version that is right.
+///
+/// # What is deliberately missing
+///
+/// The remembered children of each frame. They are what `backward-sexp` reads,
+/// they are bounded by a `keep` chosen by whoever started the scan, and a
+/// snapshot taken under one `keep` would quietly answer a different question
+/// under another. So a resumed scan knows the shape of the lists it is inside
+/// but not what it passed on the way there, and [`backward`] never resumes.
+#[derive(Clone, Debug)]
+pub struct Resume {
+    pos: usize,
+    state: State,
+    stack: Vec<Frame>,
+    prefix: Option<usize>,
+}
+
+impl Resume {
+    /// Where a scan carrying this on would begin.
+    ///
+    /// Not necessarily the start of a line: a step may consume several
+    /// characters at once, so a snapshot asked for at a line boundary is taken
+    /// at the first position at or after it that the scan actually stopped on.
+    pub fn offset(&self) -> usize {
+        self.pos
+    }
 }
 
 /// What one step of the scan did.
@@ -105,12 +145,37 @@ pub struct Scan<'a, B: BufferTrait> {
 }
 
 impl<'a, B: BufferTrait> Scan<'a, B> {
-    /// Start a scan that will be asked about `before`.
+    /// Start a scan that will be asked about `before`, carrying on from
+    /// `resume` when there is a usable one.
     ///
-    /// The one place that chooses a starting offset. Today it is always the top
-    /// of the buffer in the base state, because that is the only offset whose
-    /// state the scanner knows without having been told.
-    pub fn begin(text: &'a B, table: &'a SyntaxTable, _before: usize, keep: usize) -> Self {
+    /// The one place that chooses a starting offset, which is why the cache
+    /// arrives here rather than at each of the motions below: they are all the
+    /// same scan asked a different question, and none of them had to change to
+    /// become cheap.
+    ///
+    /// A `resume` from at or before `before` is taken; anything else is
+    /// ignored and the scan starts at the top. That guard is the whole safety
+    /// argument for resuming at all -- a snapshot is only ever a *shortcut* to
+    /// a position, never a substitute for reaching it, so a stale or ill-fitting
+    /// one costs a full scan rather than a wrong answer.
+    pub fn begin(
+        text: &'a B,
+        table: &'a SyntaxTable,
+        before: usize,
+        resume: Option<&Resume>,
+        keep: usize,
+    ) -> Self {
+        if let Some(from) = resume.filter(|from| from.pos <= before) {
+            return Self {
+                text,
+                table,
+                pos: from.pos,
+                state: from.state.clone(),
+                stack: from.stack.clone(),
+                prefix: from.prefix,
+                keep: keep.max(1),
+            };
+        }
         Self {
             text,
             table,
@@ -431,7 +496,33 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
     }
 
     /// Run until the scan reaches `limit`.
-    fn run_to(&mut self, limit: usize) {
+    /// The scan's state here, for carrying on from later.
+    ///
+    /// The frames are copied without their remembered children -- see
+    /// [`Resume`] for why that is the only honest thing to keep.
+    pub fn snapshot(&self) -> Resume {
+        Resume {
+            pos: self.pos,
+            state: self.state.clone(),
+            stack: self
+                .stack
+                .iter()
+                .map(|frame| Frame {
+                    start: frame.start,
+                    delimiter: frame.delimiter,
+                    children: VecDeque::new(),
+                })
+                .collect(),
+            prefix: self.prefix,
+        }
+    }
+
+    /// Where the scan has reached.
+    pub fn offset(&self) -> usize {
+        self.pos
+    }
+
+    pub(crate) fn run_to(&mut self, limit: usize) {
         while self.pos < limit {
             if matches!(self.step(), Step::End) {
                 break;
@@ -469,11 +560,17 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
 /// Where `forward-sexp` lands. `from` unchanged if there are not that many
 /// expressions left at this level  at the end of a list the command does
 /// nothing rather than escaping outwards.
-pub fn forward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, count: usize) -> usize {
+pub fn forward<B: BufferTrait>(
+    text: &B,
+    table: &SyntaxTable,
+    resume: Option<&Resume>,
+    from: usize,
+    count: usize,
+) -> usize {
     if count == 0 {
         return from;
     }
-    let mut scan = Scan::begin(text, table, from, 1);
+    let mut scan = Scan::begin(text, table, from, resume, 1);
     scan.run_to(from);
     let start_depth = scan.depth();
 
@@ -501,7 +598,10 @@ pub fn backward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, coun
     // Scanning only up to `from` is what makes this work: the innermost frame
     // left open there is the list point is in, and its remembered children are
     // exactly the siblings behind point, most recent last.
-    let mut scan = Scan::begin(text, table, from, count);
+    // No `resume`, and that is not an oversight: a snapshot carries the shape
+    // of the open lists but not the expressions already passed inside them,
+    // and those expressions are exactly what this reads. See [`Resume`].
+    let mut scan = Scan::begin(text, table, from, None, count);
     scan.run_to(from);
     let frame = scan.stack.last().expect("the root frame is never popped");
     if frame.children.len() < count {
@@ -516,8 +616,13 @@ pub fn backward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, coun
 /// not looking for a *completed* expression but for an opener, which the scan
 /// passes over silently  so it watches the depth: the moment the scan is one
 /// level deeper than it began, it has just stepped through one.
-pub fn down<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize) -> Option<usize> {
-    let mut scan = Scan::begin(text, table, from, 1);
+pub fn down<B: BufferTrait>(
+    text: &B,
+    table: &SyntaxTable,
+    resume: Option<&Resume>,
+    from: usize,
+) -> Option<usize> {
+    let mut scan = Scan::begin(text, table, from, resume, 1);
     scan.run_to(from);
     let start_depth = scan.depth();
     loop {
@@ -529,15 +634,25 @@ pub fn down<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize) -> Optio
     }
 }
 
-pub fn context_at<B: BufferTrait>(text: &B, table: &SyntaxTable, pos: usize) -> Context {
-    let mut scan = Scan::begin(text, table, pos, 1);
+pub fn context_at<B: BufferTrait>(
+    text: &B,
+    table: &SyntaxTable,
+    resume: Option<&Resume>,
+    pos: usize,
+) -> Context {
+    let mut scan = Scan::begin(text, table, pos, resume, 1);
     scan.run_to(pos);
     scan.context()
 }
 
 /// The innermost list point is inside, whole.
-pub fn enclosing<B: BufferTrait>(text: &B, table: &SyntaxTable, pos: usize) -> Option<Sexp> {
-    let mut scan = Scan::begin(text, table, pos, 1);
+pub fn enclosing<B: BufferTrait>(
+    text: &B,
+    table: &SyntaxTable,
+    resume: Option<&Resume>,
+    pos: usize,
+) -> Option<Sexp> {
+    let mut scan = Scan::begin(text, table, pos, resume, 1);
     scan.run_to(pos);
     let wanted = scan.depth();
     if wanted == 0 {

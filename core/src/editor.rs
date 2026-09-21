@@ -12,6 +12,7 @@ use crate::{
     },
     minibuffer::install_minibuffer,
     modes::highlighter::{Highlighter, TURN_INTERVAL},
+    modes::prescan::Prescanner,
     modes::{MajorMode, SyntaxTable},
     primitives::install_primitives,
     search::Isearch,
@@ -531,6 +532,15 @@ impl<B: BufferTrait> EditorState<B> {
         // explanation.
         let _ = editor_state.worker_mailbox.send(WorkerMessage::Schedule {
             task: Box::new(Highlighter),
+            interval: TURN_INTERVAL,
+        });
+        // And the other lexer over the same text: the balanced-expression scan
+        // that `forward-sexp', the indenter and `syntax-ppss' read. Same
+        // interval and same bargain -- what it has worked out makes a motion
+        // cheap, and what it has not yet reached makes one scan from the top,
+        // which is what every motion did before this job existed.
+        let _ = editor_state.worker_mailbox.send(WorkerMessage::Schedule {
+            task: Box::new(Prescanner),
             interval: TURN_INTERVAL,
         });
 

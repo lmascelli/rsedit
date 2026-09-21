@@ -101,6 +101,12 @@ fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     let line = buf.text.cursor_1d_to_2d(at.min(buf.text.len())).0;
     buf.syntax.invalidate_from(buf.version, line);
     buf.syntax.truncate(buf.text.line_count());
+    // The same rule for the other lexer over the same text. Both caches are
+    // invalidated from the same line by the same call, because a buffer whose
+    // colouring believed one thing about where the edit was and whose scan
+    // believed another would be wrong in a way that only showed up as one
+    // command in ten behaving strangely.
+    buf.scan.invalidate_from(buf.version, line);
 }
 
 /// A mark that survives an edit, but no longer defines a region.
@@ -995,10 +1001,12 @@ primitive!(forward_sexp, args, _env, ctx, {
     let table = ctx.current_syntax_table();
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
+    let from = buf.text.cursor_pos_1d();
     let target = sexp::forward(
         &buf.text,
         &table,
-        buf.text.cursor_pos_1d(),
+        buf.scan_resume(from),
+        from,
         repeat_count(args)?,
     );
     goto_offset(&mut buf.text, target);
@@ -1039,7 +1047,13 @@ primitive!(kill_sexp, args, env, ctx, {
         let buf = ctx.get_current_buffer();
         let mut buf = buf.write().expect("write lock on buffer");
         let from = buf.text.cursor_pos_1d();
-        let to = sexp::forward(&buf.text, &table, from, repeat_count(args)?);
+        let to = sexp::forward(
+            &buf.text,
+            &table,
+            buf.scan_resume(from),
+            from,
+            repeat_count(args)?,
+        );
         cut_out(&mut buf, from, to)
     };
     ctx.kill(killed, Direction::Forward, &env);
@@ -1078,7 +1092,7 @@ primitive!(up_list, _args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
     let point = buf.text.cursor_pos_1d();
-    if let Some(found) = sexp::enclosing(&buf.text, &table, point) {
+    if let Some(found) = sexp::enclosing(&buf.text, &table, buf.scan_resume(point), point) {
         goto_offset(&mut buf.text, found.end);
     }
     Ok(ELispExp::nil())
@@ -1096,7 +1110,7 @@ primitive!(backward_up_list, _args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
     let point = buf.text.cursor_pos_1d();
-    if let Some(found) = sexp::enclosing(&buf.text, &table, point) {
+    if let Some(found) = sexp::enclosing(&buf.text, &table, buf.scan_resume(point), point) {
         goto_offset(&mut buf.text, found.start);
     }
     Ok(ELispExp::nil())
@@ -1114,7 +1128,7 @@ primitive!(down_list, _args, _env, ctx, {
     let buf = ctx.get_current_buffer();
     let mut buf = buf.write().expect("write lock on buffer");
     let point = buf.text.cursor_pos_1d();
-    if let Some(at) = sexp::down(&buf.text, &table, point) {
+    if let Some(at) = sexp::down(&buf.text, &table, buf.scan_resume(point), point) {
         goto_offset(&mut buf.text, at);
     }
     Ok(ELispExp::nil())

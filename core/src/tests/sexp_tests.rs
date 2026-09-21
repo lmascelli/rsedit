@@ -64,7 +64,7 @@ mod tests {
     }
 
     fn forward(table: &SyntaxTable, source: &str, from: usize) -> usize {
-        sexp::forward(&text(source), table, from, 1)
+        sexp::forward(&text(source), table, None, from, 1)
     }
 
     fn backward(table: &SyntaxTable, source: &str, from: usize) -> usize {
@@ -72,13 +72,13 @@ mod tests {
     }
 
     fn context(table: &SyntaxTable, source: &str, at: usize) -> Context {
-        sexp::context_at(&text(source), table, at)
+        sexp::context_at(&text(source), table, None, at)
     }
 
     /// The text `enclosing` picks out, which reads far better in a failure
     /// than a pair of offsets.
     fn enclosing(table: &SyntaxTable, source: &str, at: usize) -> Option<String> {
-        sexp::enclosing(&text(source), table, at).map(|found| {
+        sexp::enclosing(&text(source), table, None, at).map(|found| {
             source
                 .chars()
                 .skip(found.start)
@@ -341,7 +341,7 @@ mod tests {
     fn a_count_moves_over_that_many_expressions() {
         let table = lisp_table();
         let buffer = text("(a) (b) (c)");
-        assert_eq!(sexp::forward(&buffer, &table, 0, 2), 7);
+        assert_eq!(sexp::forward(&buffer, &table, None, 0, 2), 7);
         assert_eq!(sexp::backward(&buffer, &table, 11, 2), 4);
     }
 
@@ -351,7 +351,7 @@ mod tests {
         // different distance than asked would be useless to build on.
         let table = lisp_table();
         let buffer = text("(a) (b)");
-        assert_eq!(sexp::forward(&buffer, &table, 0, 5), 0);
+        assert_eq!(sexp::forward(&buffer, &table, None, 0, 5), 0);
         assert_eq!(sexp::backward(&buffer, &table, 7, 5), 7);
     }
 

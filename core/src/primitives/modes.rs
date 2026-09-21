@@ -756,7 +756,7 @@ primitive!(syntax_ppss, args, _env, ctx, {
         }
         _ => buf.text.cursor_pos_1d(),
     };
-    let found = sexp::context_at(&buf.text, &table, pos);
+    let found = sexp::context_at(&buf.text, &table, buf.scan_resume(pos), pos);
     let offset = |at: Option<usize>| {
         at.map(|at| ELispExp::number(at as f64))
             .unwrap_or_else(ELispExp::nil)
@@ -790,7 +790,8 @@ primitive!(bounds_of_enclosing_list, args, _env, ctx, {
         }
         _ => buf.text.cursor_pos_1d(),
     };
-    Ok(match sexp::enclosing(&buf.text, &table, pos) {
+    let found = sexp::enclosing(&buf.text, &table, buf.scan_resume(pos), pos);
+    Ok(match found {
         Some(found) => ELispExp::proper_list(vec![
             ELispExp::number(found.start as f64),
             ELispExp::number(found.end as f64),

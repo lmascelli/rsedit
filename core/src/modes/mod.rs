@@ -7,6 +7,7 @@ pub use syntax::{
     CommentStyle, Grammar, StringStyle, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxSpan,
     SyntaxState, SyntaxTable, highlight_line,
 };
+pub mod prescan;
 pub mod sexp;
 
 /// A major mode is a collection of rules that apply to a specific
