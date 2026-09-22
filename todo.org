@@ -2,9 +2,6 @@
 #+title: rsedit
 
 * Fixes todo
-- [ ] Having a buffer opened in two windows and move the cursor in one window
-      makes the view of the other window move too.
-- [ ] Pasting multiple lines keep the line on a single row.
 
 * Macro todo 
 - [ ] Make electric-pair's balance check cheaper than a scan to the end of the
