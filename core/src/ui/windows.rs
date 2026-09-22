@@ -64,6 +64,27 @@ pub struct Window {
     /// deliberately. A caller asking for six rows should get six rows of what
     /// it asked to show.
     pub show_mode_line: bool,
+    /// Where point was, last time this window's view was tracking it.
+    ///
+    /// # Why a window remembers a point
+    ///
+    /// A buffer has one point and a window is a view onto it, so two windows
+    /// on one buffer shared a cursor: switching between them dragged you back
+    /// to wherever you had last been in the *other* one. Two views of a file
+    /// are only two views if you can be in two places in it.
+    ///
+    /// # Why nothing explicitly saves it
+    ///
+    /// It is written during frame composition, below, for every window whose
+    /// view is following point. A save-on-leave would have to be repeated at
+    /// every place focus can change; a frame is composed after every command,
+    /// so this one cannot be skipped.
+    ///
+    /// `None` until this window has been composed at all -- a window just made
+    /// by a split. Nothing is restored for those, because the right thing for
+    /// a new window is to adopt the point already there rather than drag it to
+    /// the top of the file.
+    pub point: Option<usize>,
 }
 
 impl Window {
@@ -76,6 +97,7 @@ impl Window {
             scroll_y: 0,
             text_height: 0,
             show_mode_line: true,
+            point: None,
         }
     }
 }
@@ -450,13 +472,23 @@ impl LayoutNode {
 
                 let follows_points = is_focused || !focus.tiled;
                 if let Some(buf) = buffers.get(&win.buffer_name) {
-                    let (c_line, c_col) = buf
-                        .read()
-                        .expect("Failed to acquire read lock on buffer")
-                        .text
-                        .cursor_pos();
+                    let (c_line, c_col, c_offset) = {
+                        let buf = buf
+                            .read()
+                            .expect("Failed to acquire read lock on buffer");
+                         let (line, col) = buf
+                                            .text
+                                            .cursor_pos();
+                         (line, col, buf.text.cursor_pos_1d())
+                        };
 
                     if follows_points {
+                        // Where this window will put point when it is focused
+                        // again -- recorded alongside the scroll, and for the
+                        // same reason: these are exactly the windows whose
+                        // view is tracking point.
+                        win.point = Some(c_offset);
+
                         if c_line < win.scroll_y {
                             win.scroll_y = c_line;
                         } else if c_line >= win.scroll_y + rect.height {

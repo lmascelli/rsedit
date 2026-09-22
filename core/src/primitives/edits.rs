@@ -343,7 +343,7 @@ fn repeat_count<B: BufferTrait>(args: &[ELispExp<B>]) -> Result<usize, EvalError
 }
 
 /// Move point to a 1-D character offset, clamped to the buffer.
-fn goto_offset<B: BufferTrait>(text: &mut B, offset: usize) {
+pub(crate) fn goto_offset<B: BufferTrait>(text: &mut B, offset: usize) {
     let target = offset.min(text.len());
     let (line, col) = text.cursor_1d_to_2d(target);
     text.cursor_move(line, col);

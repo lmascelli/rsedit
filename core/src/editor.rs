@@ -14,7 +14,10 @@ use crate::{
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     modes::prescan::Prescanner,
     modes::{MajorMode, SyntaxTable},
-    primitives::install_primitives,
+    primitives::{
+        edits::{goto_offset},
+        install_primitives
+    },
     search::Isearch,
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
@@ -2954,7 +2957,36 @@ impl<B: BufferTrait> EditorState<B> {
         // floating windows, which sit *after* this one in the lock ordering.
         if let Some(name) = self.window_buffer(id) {
             self.set_current_buffer_name(&name);
+            self.restore_window_point(id, &name);
         }
+    }
+
+    /// Put point back where the window taking focus last had it.
+    ///
+    /// Only tiled windows: a floating one is not in the layout, so it answers
+    /// `None` and nothing happens -- which is right, since a prompt's point
+    /// belongs to the prompt.
+    fn restore_window_point(&self, id: usize, buffer_name: &str) {
+        let remembered = self
+            .layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root")
+            .window(id)
+            .and_then(|window| window.point);
+        let Some(offset) = remembered else {
+            return;
+        };
+        // The layout lock is let go above rather than held across the write
+        // below. Layout comes before buffers in the ordering, so holding both
+        // would be legal -- but every other path here copies out and lets go,
+        // and the one that does not is the one that eventually deadlocks.
+        let Some(buffer) = self.get_buffer(buffer_name) else {
+            return;
+        };
+        let mut buf = buffer
+            .write()
+            .expect("Failed to acquire write lock on buffer");
+        goto_offset(&mut buf.text, offset);
     }
 
     /// What window ID is showing, whether it is tiled or floating.
