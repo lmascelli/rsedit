@@ -19,6 +19,19 @@ pub struct Rect {
     pub height: usize,
 }
 
+/// Which window has the keyboard, and whether that window is one of the tiled
+/// ones at all.
+///
+/// The second half is only interesting to a window *without* focus, which uses
+/// it to decide whether to follow point. See `compute_tiled_views`.
+#[derive(Clone, Copy, Debug)]
+pub struct Focus {
+    pub id: usize,
+    /// False when the keyboard is in a floating window -- the minibuffer, a
+    /// completion strip -- so that no tiled window is the one being typed in.
+    pub tiled: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Window {
     pub id: usize,
@@ -344,6 +357,16 @@ impl LayoutNode {
             LayoutNode::Split { left, right, .. } => left.window(id).or_else(|| right.window(id)),
         }
     }
+
+    /// Whether any window in this tree is the one with the given id.
+    pub fn contains_window(&self, id: usize) -> bool {
+        match self {
+            LayoutNode::Leaf(win) => win.id == id,
+            LayoutNode::Split { left, right, .. } => {
+                left.contains_window(id) || right.contains_window(id)
+            }
+        }
+    }
 }
 
 /// A window that exists only long enough to be overwritten.
@@ -364,7 +387,7 @@ impl LayoutNode {
     pub fn compute_tiled_views<B: BufferTrait>(
         &mut self,
         rect: Rect,
-        focused_id: usize,
+        focus: Focus,
         buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
         mode_line_format: &str,
         out_views: &mut Vec<RenderableWindowView>,
@@ -372,7 +395,7 @@ impl LayoutNode {
     ) {
         match self {
             LayoutNode::Leaf(win) => {
-                let is_focused = win.id == focused_id;
+                let is_focused = win.id == focus.id;
 
                 // The status line takes the window's bottom row, so the text
                 // gets one fewer -- computed here, before anything reads the
@@ -424,6 +447,8 @@ impl LayoutNode {
                 // a new asymmetry -- they already share the single point and
                 // already both draw it -- and it is the behaviour that makes a
                 // search visible in whichever window is showing the file.
+
+                let follows_points = is_focused || !focus.tiled;
                 if let Some(buf) = buffers.get(&win.buffer_name) {
                     let (c_line, c_col) = buf
                         .read()
@@ -431,23 +456,25 @@ impl LayoutNode {
                         .text
                         .cursor_pos();
 
-                    if c_line < win.scroll_y {
-                        win.scroll_y = c_line;
-                    } else if c_line >= win.scroll_y + rect.height {
-                        win.scroll_y = c_line - rect.height + 1;
-                    }
+                    if follows_points {
+                        if c_line < win.scroll_y {
+                            win.scroll_y = c_line;
+                        } else if c_line >= win.scroll_y + rect.height {
+                            win.scroll_y = c_line - rect.height + 1;
+                        }
 
-                    if c_col < win.scroll_x {
-                        win.scroll_x = c_col;
-                    } else if c_col >= win.scroll_x + rect.width {
-                        win.scroll_x = c_col - rect.width + 1;
-                    }
+                        if c_col < win.scroll_x {
+                            win.scroll_x = c_col;
+                        } else if c_col >= win.scroll_x + rect.width {
+                            win.scroll_x = c_col - rect.width + 1;
+                        }
 
-                    if is_focused {
-                        cursor_rel_pos = Some((
-                            c_col.saturating_sub(win.scroll_x),
-                            c_line.saturating_sub(win.scroll_y),
-                        ));
+                        if is_focused {
+                            cursor_rel_pos = Some((
+                                c_col.saturating_sub(win.scroll_x),
+                                c_line.saturating_sub(win.scroll_y),
+                            ));
+                        }
                     }
                 }
 
@@ -492,7 +519,7 @@ impl LayoutNode {
                             height: left_height,
                             ..rect
                         },
-                        focused_id,
+                        focus,
                         buffers,
                         mode_line_format,
                         out_views,
@@ -504,7 +531,7 @@ impl LayoutNode {
                             height: right_height,
                             ..rect
                         },
-                        focused_id,
+                        focus,
                         buffers,
                         mode_line_format,
                         out_views,
@@ -531,7 +558,7 @@ impl LayoutNode {
                             width: left_width,
                             ..rect
                         },
-                        focused_id,
+                        focus,
                         buffers,
                         mode_line_format,
                         out_views,
@@ -543,7 +570,7 @@ impl LayoutNode {
                             width: right_width,
                             ..rect
                         },
-                        focused_id,
+                        focus,
                         buffers,
                         mode_line_format,
                         out_views,

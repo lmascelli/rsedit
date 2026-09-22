@@ -139,6 +139,25 @@ pub(crate) fn edited<B: BufferTrait>(ctx: &EditorState<B>, happened: bool) -> EL
     ELispExp::nil()
 }
 
+/// Line endings as the outside world writes them, as the buffer understands
+/// them.
+///
+/// Borrowed unchanged in the overwhelmingly common case, so a paste with no
+/// carriage returns in it costs nothing.
+#[cfg(not(target_os = "windows"))]
+fn normalize_line_endings(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains('\r') {
+        std::borrow::Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_line_endings(text: &str) -> std::borrow::Cow<'_, str> {
+    std::borrow::Cow::Borrowed(text)
+}
+
 /// Insert CONTENT at point.
 #[must_use]
 pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str) -> bool {
@@ -246,7 +265,19 @@ primitive!(insert_pasted_text, args, _env, ctx, {
     // exempt from read-only buffers, undo, or telling the highlighter that the
     // text moved. What makes it a paste is that it is *one* call, which is
     // decided by the caller rather than here.
-    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, text));
+    // A terminal in bracketed-paste mode hands over the selection's bytes
+    // unchanged, and a line break very often arrives as CR -- that is what
+    // Enter sends, so that is what many terminals put between pasted lines.
+    // Nothing else here treats CR as a line break: the line index counts '\n'
+    // and nothing else, so without this a ten-line paste lands as one very
+    // long line with nine invisible characters in it.
+    //
+    // Here rather than at the terminal because this is the door every paste
+    // comes through, including a `yank' from a system clipboard that may be
+    // holding CRLF from another machine. Ordinary `insert' is deliberately
+    // left alone: a CR written from Lisp on purpose is a CR.
+    let text = normalize_line_endings(text);
+    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, &text));
     Ok(edited(ctx, happened))
 });
 

@@ -3,8 +3,9 @@ pub use frame::FrameSnapshot;
 
 mod windows;
 pub use windows::{
-    Division, FloatingWindow, Highlight, LayoutNode, Orientation, Rect, RenderableWindowView,
-    Separator, Window, extract_buffer_lines, region_highlights, syntax_highlights,
+    Division, FloatingWindow, Focus, Highlight, LayoutNode, Orientation, Rect,
+    RenderableWindowView, Separator, Window, extract_buffer_lines, region_highlights,
+    syntax_highlights,
 };
 
 mod faces;

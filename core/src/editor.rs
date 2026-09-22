@@ -18,7 +18,7 @@ use crate::{
     search::Isearch,
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
-        Division, Face, FloatingWindow, FrameSnapshot, LayoutNode, Orientation, Rect,
+        Division, Face, FloatingWindow, Focus, FrameSnapshot, LayoutNode, Orientation, Rect,
         RenderableWindowView, Separator, Style, Theme, Window, extract_buffer_lines,
         region_highlights,
     },
@@ -2102,6 +2102,10 @@ impl<B: BufferTrait> EditorState<B> {
 
         let mut views = Vec::new();
         let mut separator_rects = Vec::new();
+        let focus = Focus {
+            id: focused_window_id,
+            tiled: layout_root.contains_window(focused_window_id),
+        };
         layout_root.compute_tiled_views(
             Rect {
                 x: 0,
@@ -2113,7 +2117,7 @@ impl<B: BufferTrait> EditorState<B> {
                 // would win at random.
                 height: screen_height.saturating_sub(1),
             },
-            focused_window_id,
+            focus,
             &buffers,
             &mode_line_format,
             &mut views,
