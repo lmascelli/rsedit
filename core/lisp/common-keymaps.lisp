@@ -16,35 +16,6 @@
 (define-key nil "M-<" 'beginning-of-buffer)
 (define-key nil "M->" 'end-of-buffer)
 
-;; Insert newline above or below and move the cursor to them
-(defcommand open-line-below (count) ("p")
-  "Open COUNT blank lines below this one and leave point on the first.
-
-Indented the way the mode wants, because a blank line at column zero in code
-is a line you have to fix before you can use it."
-  (end-of-line)
-  ;; Where the first new line will begin, taken before the text moves: after
-  ;; COUNT newlines point is on the *last* of them, and stepping back by lines
-  ;; would have to care about how `previous-line' treats a goal column.
-  (let ((start (+ (point) 1)))
-    (dotimes (n count)
-      (insert "\n"))
-    (goto-char start)
-    (indent-line)))
-
-(defcommand open-line-above (count) ("p")
-  "Open COUNT blank lines above this one and leave point on the first.
-
-The mirror of `open-line-below'. Written as \"go to the start of this line and
-insert there\" rather than \"go up a line and open below it\", because there is
-no line above the first one and the second form would quietly do nothing there."
-  (beginning-of-line)
-  (let ((start (point)))
-    (dotimes (n count)
-      (insert "\n"))
-    (goto-char start)
-    (indent-line)))
-
 (define-key nil "C-o" 'open-line-above)
 
 ;; Paragraph motion was on M-n and M-p, which is not what those keys do in

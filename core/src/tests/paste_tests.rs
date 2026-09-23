@@ -154,4 +154,85 @@ mod tests {
         // what gets it undo grouping and `post-command-hook' for free.
         assert!(ctx.last_command_is("insert-pasted-text"));
     }
+
+    // ----------------------------------------------------------------
+    // Line endings
+    // ----------------------------------------------------------------
+    //
+    // A terminal in bracketed-paste mode hands over the selection's bytes
+    // unchanged, and a line break very often arrives as CR -- that is what
+    // Enter sends, so that is what many terminals put between pasted lines.
+    // Nothing else in the editor treats CR as a line break: the line index
+    // counts '\n' and nothing else. So a ten-line paste used to land as one
+    // very long line with nine invisible characters in it.
+    //
+    // The symptom was reported as "pasting multiple lines keeps the line on a
+    // single row", which is why these assert the line *count* as well as the
+    // text: the count is what the user was looking at.
+
+    fn line_count(ctx: &Ctx) -> usize {
+        ctx.get_current_buffer()
+            .read()
+            .expect("read lock")
+            .text
+            .line_count()
+    }
+
+    #[test]
+    fn a_paste_with_crlf_endings_becomes_lines() {
+        let (ctx, env) = editor();
+        ctx.handle_paste("one\r\ntwo\r\nthree".to_string(), &env);
+        assert_eq!(contents(&ctx), "one\ntwo\nthree");
+        assert_eq!(line_count(&ctx), 3, "three rows, not one");
+    }
+
+    #[test]
+    fn a_paste_with_bare_carriage_returns_becomes_lines() {
+        // The case the bug was actually about: CR alone, with no LF after it.
+        let (ctx, env) = editor();
+        ctx.handle_paste("one\rtwo\rthree".to_string(), &env);
+        assert_eq!(contents(&ctx), "one\ntwo\nthree");
+        assert_eq!(line_count(&ctx), 3);
+    }
+
+    #[test]
+    fn a_mix_of_endings_all_become_lines() {
+        // A clipboard assembled from more than one source. CRLF has to be
+        // matched before the lone CR, or each pair becomes two line breaks.
+        let (ctx, env) = editor();
+        ctx.handle_paste("a\r\nb\rc\nd".to_string(), &env);
+        assert_eq!(contents(&ctx), "a\nb\nc\nd");
+        assert_eq!(line_count(&ctx), 4, "four lines, not five");
+    }
+
+    #[test]
+    fn a_paste_with_plain_newlines_is_left_alone() {
+        let (ctx, env) = editor();
+        ctx.handle_paste("one\ntwo\n".to_string(), &env);
+        assert_eq!(contents(&ctx), "one\ntwo\n");
+    }
+
+    #[test]
+    fn a_trailing_carriage_return_opens_a_line() {
+        let (ctx, env) = editor();
+        ctx.handle_paste("one\r".to_string(), &env);
+        assert_eq!(contents(&ctx), "one\n");
+        assert_eq!(line_count(&ctx), 2, "the line after it is a place to be");
+    }
+
+    #[test]
+    fn a_carriage_return_inserted_deliberately_is_left_alone() {
+        // The asymmetry, stated rather than assumed. Normalising belongs at the
+        // paste door because that is where text arrives from outside; a CR
+        // written from Lisp on purpose is a CR, and an `insert' that quietly
+        // rewrote its argument would be a worse surprise than the bug.
+        let (ctx, env) = editor();
+        let _ = &env;
+        let buffer = ctx.get_current_buffer();
+        ctx.mutate_buffer(buffer, |buf| {
+            crate::primitives::edits::insert_at_point(buf, "one\rtwo")
+        });
+        assert_eq!(contents(&ctx), "one\rtwo");
+        assert_eq!(line_count(&ctx), 1, "and it is still one row");
+    }
 }

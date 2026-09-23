@@ -508,7 +508,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 separators.clear();
                 root.compute_tiled_views(
                     screen.clone(),
-                    1,
+                    Focus { id: 1, tiled: true },
                     &buffers,
                     " %b ",
                     &mut views,

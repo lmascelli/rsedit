@@ -2,8 +2,13 @@
 #+title: rsedit
 
 * Fixes todo
+- [ ] indent.lisp requires commands.lisp so commands.lisp is mandatory for other modules.
+      The solution can be:
+      - make it always mandatory (need a recap of what does)
+      - add a module dependency system (requires)
 
 * Macro todo 
+- [ ] Line numbers
 - [ ] Make electric-pair's balance check cheaper than a scan to the end of the
       buffer. With the checkpoints above, everything that asks about *point* is
       now nearly free, but `(syntax-ppss (point-max))' still costs the distance
