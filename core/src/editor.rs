@@ -22,7 +22,7 @@ use crate::{
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
         Division, Face, FloatingWindow, Focus, FrameSnapshot, LayoutNode, Orientation, Rect,
-        RenderableWindowView, Separator, Style, Theme, Window, extract_buffer_lines,
+        RenderableWindowView, Separator, Style, Theme, Window, WindowId, extract_buffer_lines,
         region_highlights,
     },
 };
@@ -189,7 +189,7 @@ pub struct EditorState<B: BufferTrait> {
     /// This is a list of floating window that will be renderered above the
     /// others
     pub floating_windows: Arc<RwLock<Vec<FloatingWindow>>>,
-    pub focused_window_id: Arc<RwLock<usize>>,
+    pub focused_window_id: Arc<RwLock<WindowId>>,
     /// A value only used to fastly create a new window id
     pub next_window_id: Arc<AtomicUsize>,
 
@@ -496,7 +496,7 @@ impl<B: BufferTrait> EditorState<B> {
             mode_registry: Arc::new(RwLock::new(HashMap::new())),
             layout_root: Arc::new(RwLock::new(LayoutNode::Leaf(Window::new(0, "*scratch*")))),
             floating_windows: Arc::new(RwLock::new(Vec::new())),
-            focused_window_id: Arc::new(RwLock::new(0)),
+            focused_window_id: Arc::new(RwLock::new(WindowId(0))),
             next_window_id: Arc::new(AtomicUsize::new(1)),
             commands: Arc::new(RwLock::new(CommandRegistry::new())),
             pending_commands: Arc::new(RwLock::new(Vec::new())),
@@ -812,7 +812,7 @@ impl<B: BufferTrait> EditorState<B> {
         &self,
         orientation: Orientation,
         division: Division,
-    ) -> Option<usize> {
+    ) -> Option<WindowId> {
         let focused = self.get_focused_window_id();
         let new_id = self.get_next_window_id();
         let mut layout = self
@@ -850,7 +850,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// beneath a prompt being the case this was built for -- and focus moving
     /// would make the strip's buffer current, so the next keystroke would be
     /// typed into the list of suggestions instead of into the prompt.
-    pub(crate) fn open_bottom_window(&self, buffer: &str, height: usize) -> usize {
+    pub(crate) fn open_bottom_window(&self, buffer: &str, height: usize) -> WindowId {
         let id = self.get_next_window_id();
         let window = Window {
             // No status line: the height asked for is the height of what the
@@ -1014,7 +1014,7 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// Returns false when there is no such window, or when it is the only one:
     /// a frame with no windows has nowhere to draw a cursor.
-    pub(crate) fn delete_window_by_id(&self, id: usize) -> bool {
+    pub(crate) fn delete_window_by_id(&self, id: WindowId) -> bool {
         let focused = self.get_focused_window_id();
         let survivor = {
             let mut layout = self
@@ -2896,12 +2896,12 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Return the next valid ID for a new window
-    pub(crate) fn get_next_window_id(&self) -> usize {
-        self.next_window_id.fetch_add(1, Ordering::Relaxed)
+    pub(crate) fn get_next_window_id(&self) -> WindowId {
+        self.next_window_id.fetch_add(1, Ordering::Relaxed).into()
     }
 
     /// Get the ID of the current focused window
-    pub fn get_focused_window_id(&self) -> usize {
+    pub fn get_focused_window_id(&self) -> WindowId {
         let lock = self
             .focused_window_id
             .read()
@@ -2911,25 +2911,10 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Move focus to window ID, and make what it shows the current buffer.
     ///
-    /// # Why the two move together
-    ///
-    /// They are one idea with two representations. The focused window is what
-    /// the cursor is drawn in; the current buffer is what a command edits. Let
-    /// them disagree and the editor draws a cursor in one place and types in
-    /// another -- `C-x o` then `C-n` moves point in the buffer you just left,
-    /// so the cursor you *can* see sits perfectly still while text you cannot
-    /// see scrolls past.
-    ///
-    /// That was the bug, and it is fixed here rather than in `other-window`
-    /// because there are four ways to move focus -- cycling, closing a window,
-    /// opening a floating one, and closing it again -- and any of them could
-    /// have forgotten. Nothing can move focus without going through this.
-    /// Give focus to the window with ID, if there is still one.
-    ///
     /// False when there is not, which is the useful answer rather than a
     /// failure: a window remembered earlier may have been closed since, and
     /// the caller wants to open a new one rather than be stopped.
-    pub(crate) fn select_window(&self, id: usize) -> bool {
+    pub(crate) fn select_window(&self, id: WindowId) -> bool {
         let exists = self
             .layout_root
             .read()
@@ -2948,7 +2933,7 @@ impl<B: BufferTrait> EditorState<B> {
         exists
     }
 
-    pub(crate) fn set_focused_window_id(&self, id: usize) {
+    pub(crate) fn set_focused_window_id(&self, id: WindowId) {
         *self
             .focused_window_id
             .write()
@@ -2966,7 +2951,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Only tiled windows: a floating one is not in the layout, so it answers
     /// `None` and nothing happens -- which is right, since a prompt's point
     /// belongs to the prompt.
-    fn restore_window_point(&self, id: usize, buffer_name: &str) {
+    fn restore_window_point(&self, id: WindowId, buffer_name: &str) {
         let remembered = self
             .layout_root
             .read()
@@ -2994,7 +2979,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Both, because a minibuffer prompt is a floating window and giving it
     /// focus has to make its buffer current in exactly the same way -- that is
     /// what every prompt in the editor depends on.
-    fn window_buffer(&self, id: usize) -> Option<String> {
+    fn window_buffer(&self, id: WindowId) -> Option<String> {
         if let Some(window) = self
             .layout_root
             .read()

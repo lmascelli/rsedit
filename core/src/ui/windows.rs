@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
 };
+use crate::ELispExp;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Orientation {
@@ -19,6 +20,28 @@ pub struct Rect {
     pub height: usize,
 }
 
+/// Which window, as opposed to how many lines or how far down.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WindowId(pub usize);
+
+impl std::fmt::Display for WindowId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<usize> for WindowId {
+    fn from(id: usize) -> Self {
+        WindowId(id)
+    }
+}
+
+impl<B: BufferTrait> From<WindowId> for ELispExp<B> {
+    fn from(id: WindowId) -> Self {
+        ELispExp::number(id.0 as f64)
+    }
+}
+
 /// Which window has the keyboard, and whether that window is one of the tiled
 /// ones at all.
 ///
@@ -26,7 +49,7 @@ pub struct Rect {
 /// it to decide whether to follow point. See `compute_tiled_views`.
 #[derive(Clone, Copy, Debug)]
 pub struct Focus {
-    pub id: usize,
+    pub id: WindowId,
     /// False when the keyboard is in a floating window -- the minibuffer, a
     /// completion strip -- so that no tiled window is the one being typed in.
     pub tiled: bool,
@@ -34,7 +57,7 @@ pub struct Focus {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Window {
-    pub id: usize,
+    pub id: WindowId,
     pub buffer_name: String,
     pub scroll_x: usize,
     pub scroll_y: usize,
@@ -89,9 +112,9 @@ pub struct Window {
 
 impl Window {
     /// A window showing BUFFER, scrolled to the top, with a status line.
-    pub fn new(id: usize, buffer_name: &str) -> Self {
+    pub fn new(id: impl Into<WindowId>, buffer_name: &str) -> Self {
         Self {
-            id,
+            id: id.into(),
             buffer_name: buffer_name.to_string(),
             scroll_x: 0,
             scroll_y: 0,
@@ -183,7 +206,7 @@ pub struct FloatingWindow {
     /// opened. Restored when the floating window closes, so closing one
     /// (including a floating window opened while another one already had
     /// focus) always lands back exactly where the user was.
-    pub previous_focused_window_id: usize,
+    pub previous_focused_window_id: WindowId,
 }
 
 /// A run of characters in one drawn row that should be drawn differently.
@@ -268,7 +291,16 @@ impl LayoutNode {
         }
     }
 
-    pub fn window_mut(&mut self, id: usize) -> Option<&mut Window> {
+    /// The window with ID, if the tree holds one.
+    /// The window with this id, to be read. See [`LayoutNode::window_mut`].
+    pub fn window(&self, id: WindowId) -> Option<&Window> {
+        match self {
+            LayoutNode::Leaf(window) => (window.id == id).then_some(window),
+            LayoutNode::Split { left, right, .. } => left.window(id).or_else(|| right.window(id)),
+        }
+    }
+
+    pub fn window_mut(&mut self, id: WindowId) -> Option<&mut Window> {
         match self {
             LayoutNode::Leaf(window) => {
                 if window.id == id {
@@ -288,13 +320,13 @@ impl LayoutNode {
     /// Left-to-right, top-to-bottom, because that is the order the tree is
     /// built in -- which is what makes "the next window" mean what a user
     /// expects when they cycle through them.
-    pub fn window_ids(&self) -> Vec<usize> {
+    pub fn window_ids(&self) -> Vec<WindowId> {
         let mut ids = Vec::new();
         self.collect_window_ids(&mut ids);
         ids
     }
 
-    fn collect_window_ids(&self, out: &mut Vec<usize>) {
+    fn collect_window_ids(&self, out: &mut Vec<WindowId>) {
         match self {
             LayoutNode::Leaf(window) => out.push(window.id),
             LayoutNode::Split { left, right, .. } => {
@@ -316,7 +348,7 @@ impl LayoutNode {
     /// one of which draws nothing until the frame grows.
     pub fn split_window(
         &mut self,
-        id: usize,
+        id: WindowId,
         orientation: Orientation,
         new_window: Window,
         division: Division,
@@ -345,7 +377,7 @@ impl LayoutNode {
     /// Returns false when no window has that id, and when the window is the
     /// only one there is -- a frame with no windows has nowhere to put the
     /// cursor, so the last one cannot be closed.
-    pub fn remove_window(&mut self, id: usize) -> bool {
+    pub fn remove_window(&mut self, id: WindowId) -> bool {
         let LayoutNode::Split { left, right, .. } = self else {
             // A lone leaf. Even if it matches, it cannot go.
             return false;
@@ -363,25 +395,16 @@ impl LayoutNode {
     }
 
     /// Replace the whole tree with just the window with ID.
-    pub fn keep_only(&mut self, id: usize) -> bool {
-        let Some(window) = self.window(id).cloned() else {
+    pub fn keep_only(&mut self, id: impl Into<WindowId>) -> bool {
+        let Some(window) = self.window(id.into()).cloned() else {
             return false;
         };
         *self = LayoutNode::Leaf(window);
         true
     }
 
-    /// The window with ID, if the tree holds one.
-    /// The window with this id, to be read. See [`LayoutNode::window_mut`].
-    pub fn window(&self, id: usize) -> Option<&Window> {
-        match self {
-            LayoutNode::Leaf(window) => (window.id == id).then_some(window),
-            LayoutNode::Split { left, right, .. } => left.window(id).or_else(|| right.window(id)),
-        }
-    }
-
     /// Whether any window in this tree is the one with the given id.
-    pub fn contains_window(&self, id: usize) -> bool {
+    pub fn contains_window(&self, id: WindowId) -> bool {
         match self {
             LayoutNode::Leaf(win) => win.id == id,
             LayoutNode::Split { left, right, .. } => {

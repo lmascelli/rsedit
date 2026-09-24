@@ -71,7 +71,7 @@ primitive!(close_floating_window, _args, _env, ctx, {
             .expect("Failed to acquire write lock for floating_windows");
         floats.pop().map(|f| f.previous_focused_window_id)
     };
-    ctx.set_focused_window_id(restore_id.unwrap_or(0));
+    ctx.set_focused_window_id(restore_id.unwrap_or(0.into()));
     Ok(ELispExp::nil())
 });
 

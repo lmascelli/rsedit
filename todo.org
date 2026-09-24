@@ -8,7 +8,9 @@
       - add a module dependency system (requires)
 
 * Macro todo 
+- [ ] Mouse support
 - [ ] Line numbers
+- [ ] Sort by type in dired mode (configurable via a lisp variable)
 - [ ] Make electric-pair's balance check cheaper than a scan to the end of the
       buffer. With the checkpoints above, everything that asks about *point* is
       now nearly free, but `(syntax-ppss (point-max))' still costs the distance

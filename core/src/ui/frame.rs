@@ -30,7 +30,7 @@
 //! and each one that follows this rule costs nothing when the UI event loop
 //! eventually moves to its own thread; each one that does not is another torn
 //! frame to find later.
-use super::{RenderableWindowView, Separator, Theme};
+use super::{RenderableWindowView, Separator, Theme, WindowId};
 
 /// Everything the UI needs to draw one frame, owned outright.
 ///
@@ -90,7 +90,7 @@ pub struct FrameSnapshot {
     /// Which window had focus at capture time. `views` already carries
     /// `is_focused` per window; this is here for renderers that need to know
     /// even when the focused window is not currently visible.
-    pub focused_window_id: usize,
+    pub focused_window_id: WindowId,
     /// Frame size the capture was composed for. A renderer that finds the
     /// terminal has since been resized knows this snapshot is stale rather than
     /// drawing a mis-sized frame.

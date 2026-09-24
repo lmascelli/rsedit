@@ -88,7 +88,7 @@ primitive!(delete_window, args, _env, ctx, {
     let closed = match args.first() {
         None => ctx.delete_focused_window(),
         Some(exp) if exp.is_nil() => ctx.delete_focused_window(),
-        Some(ELispExp::Number(id)) => ctx.delete_window_by_id(*id as usize),
+        Some(ELispExp::Number(id)) => ctx.delete_window_by_id((*id as usize).into()),
         Some(other) => {
             return Err(EvalError::WrongArgumentType {
                 expected: "Number naming a window".into(),
@@ -150,9 +150,9 @@ primitive!(display_buffer_at_bottom, args, _env, ctx, {
     // At least one row: a strip of no rows is invisible, and a caller that
     // asked for one and got nothing would have no way to tell.
     let height = (height.max(1.0)) as usize;
-    Ok(ELispExp::number(
-        ctx.open_bottom_window(&name, height) as f64
-    ))
+    Ok(
+        ctx.open_bottom_window(&name, height).into()
+    )
 });
 
 pub const DELETE_OTHER_WINDOWS_DOC: &str = "(delete-other-windows): Close every window but the \
@@ -251,7 +251,7 @@ pub const SELECTED_WINDOW_DOC: &str = "(selected-window): The id of the window t
          (setq my-window (selected-window))";
 
 primitive!(selected_window, _args, _env, ctx, {
-    Ok(ELispExp::number(ctx.get_focused_window_id() as f64))
+    Ok(ctx.get_focused_window_id().into())
 });
 
 pub const SELECT_WINDOW_DOC: &str = "(select-window ID): Give focus to the window with ID. Returns \
@@ -274,7 +274,7 @@ primitive!(select_window, args, _env, ctx, {
             });
         }
     };
-    Ok(if ctx.select_window(id) {
+    Ok(if ctx.select_window(id.into()) {
         ELispExp::t()
     } else {
         ELispExp::nil()
