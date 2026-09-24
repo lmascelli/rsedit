@@ -2,12 +2,15 @@
 #+title: rsedit
 
 * Fixes todo
+- [ ] open-line-above and below should be part of the editor set of movement, not only
+      pluggable via a module
+- [ ] fix tests for new WindowId type
+
+* Macro todo 
 - [ ] indent.lisp requires commands.lisp so commands.lisp is mandatory for other modules.
       The solution can be:
       - make it always mandatory (need a recap of what does)
       - add a module dependency system (requires)
-
-* Macro todo 
 - [ ] Mouse support
 - [ ] Line numbers
 - [ ] Sort by type in dired mode (configurable via a lisp variable)
