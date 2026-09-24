@@ -6,6 +6,7 @@ mod tests {
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyCode, KeyEvent, KeyModifiers, Keymap, OnUnbound, TransientKeymap};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use crate::ui::WindowId;
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
@@ -263,7 +264,7 @@ mod tests {
         .expect("two windows and a repeat key");
     }
 
-    fn focused(ctx: &Ctx) -> usize {
+    fn focused(ctx: &Ctx) -> WindowId {
         ctx.get_focused_window_id()
     }
 

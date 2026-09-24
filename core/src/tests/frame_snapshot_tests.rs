@@ -9,7 +9,7 @@ mod tests {
         buffer::{BufferTrait, gap_buffer::GapBuffer},
         editor::{EditorState, create_global_env},
         lisp::{Env, LispExp, Parser, eval},
-        ui::FrameSnapshot,
+        ui::{FrameSnapshot, WindowId},
     };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -109,7 +109,7 @@ mod tests {
         // `make-floating-window` focuses what it opens, so this is the float's
         // id; 0 is the original tiled window.
         let float_id = state.get_focused_window_id();
-        assert_ne!(float_id, 0, "the float must have taken focus");
+        assert_ne!(float_id, WindowId(0), "the float must have taken focus");
 
         let scratch = state
             .get_buffer("*scratch*")
@@ -126,7 +126,7 @@ mod tests {
             thread::spawn(move || {
                 let mut on_float = true;
                 while !stop.load(Ordering::Relaxed) {
-                    state.set_focused_window_id(if on_float { float_id } else { 0 });
+                    state.set_focused_window_id(if on_float { float_id } else { WindowId(0) });
                     on_float = !on_float;
                     thread::yield_now();
                 }
