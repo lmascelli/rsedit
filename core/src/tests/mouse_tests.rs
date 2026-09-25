@@ -16,10 +16,11 @@
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
-    use crate::editor::{DEFAULT_INIT_LISP, EditorState, Hit, create_global_env};
+    use crate::editor::{DEFAULT_INIT_LISP, EditorState, create_global_env};
     use crate::input::{KeyModifiers, MouseButton, MouseEvent, MouseKind};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
     use crate::ui::Rect;
+    use crate::windows::Hit;
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
@@ -96,12 +97,13 @@ mod tests {
 
     /// The rows of text the sole window has, and the row its status line is on.
     fn text_rows(ctx: &Ctx) -> usize {
-        ctx.layout_root
-            .read()
-            .expect("layout")
-            .window_at(0, 0)
-            .expect("a window at the origin")
-            .text_height
+        ctx.windows(|windows| {
+            windows
+                .root()
+                .window_at(0, 0)
+                .expect("a window at the origin")
+                .text_height
+        })
     }
 
     // ----------------------------------------------------------------
@@ -135,11 +137,7 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
         assert!(
-            ctx.layout_root
-                .read()
-                .expect("layout")
-                .window_at(0, 0)
-                .is_none(),
+            ctx.windows(|windows| windows.root().window_at(0, 0).is_none()),
             "nothing has been composed, so nothing is anywhere yet"
         );
     }
@@ -191,13 +189,7 @@ mod tests {
         let (ctx, env) = editor(400);
         run("(goto-char (point-max))", &env, &ctx);
         compose(&ctx, &env);
-        let top = ctx
-            .layout_root
-            .read()
-            .expect("layout")
-            .window_at(0, 0)
-            .expect("a window")
-            .scroll_y;
+        let top = scroll_of(&ctx);
         assert!(
             top > 0,
             "the fixture has to be scrolled for this to mean anything"
@@ -247,13 +239,13 @@ mod tests {
         let first = ctx.get_focused_window_id();
         run("(split-window-below)", &env, &ctx);
         compose(&ctx, &env);
-        let lower = ctx
-            .layout_root
-            .read()
-            .expect("layout")
-            .window_at(0, H as isize - 3)
-            .expect("a lower window")
-            .id;
+        let lower = ctx.windows(|windows| {
+            windows
+                .root()
+                .window_at(0, H as isize - 3)
+                .expect("a lower window")
+                .id
+        });
         assert_ne!(lower, first, "the fixture needs two windows");
 
         click(&ctx, &env, 0, H as u16 - 3);
@@ -268,13 +260,13 @@ mod tests {
         run(r#"(minibuffer-read "P:" nil nil nil)"#, &env, &ctx);
         compose(&ctx, &env);
         let before = point(&ctx);
-        let float = ctx
-            .floating_windows
-            .read()
-            .expect("floats")
-            .first()
-            .expect("the prompt is a float")
-            .rect;
+        let float = ctx.windows(|windows| {
+            windows
+                .floating()
+                .first()
+                .expect("the prompt is a float")
+                .rect
+        });
         assert!(matches!(
             ctx.hit_test(float.x, float.y),
             Some(Hit::Floating { .. })
@@ -295,13 +287,7 @@ mod tests {
         let before_point = point(&ctx);
         let before_focus = ctx.get_focused_window_id();
         wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
-        let top = ctx
-            .layout_root
-            .read()
-            .expect("layout")
-            .window_at(0, 0)
-            .expect("a window")
-            .scroll_y;
+        let top = scroll_of(&ctx);
         assert_eq!(top, 3, "one notch is three lines");
         assert_eq!(point(&ctx), before_point);
         assert_eq!(ctx.get_focused_window_id(), before_focus);
@@ -311,15 +297,7 @@ mod tests {
     fn the_wheel_stops_at_the_top() {
         let (ctx, env) = editor(400);
         wheel(&ctx, &env, MouseKind::ScrollUp, 0, 2);
-        assert_eq!(
-            ctx.layout_root
-                .read()
-                .expect("layout")
-                .window_at(0, 0)
-                .expect("a window")
-                .scroll_y,
-            0
-        );
+        assert_eq!(scroll_of(&ctx), 0);
     }
 
     #[test]
@@ -330,13 +308,7 @@ mod tests {
         for _ in 0..20 {
             wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
         }
-        let top = ctx
-            .layout_root
-            .read()
-            .expect("layout")
-            .window_at(0, 0)
-            .expect("a window")
-            .scroll_y;
+        let top = scroll_of(&ctx);
         assert_eq!(top, 10, "the last line, and no further");
     }
 
@@ -357,13 +329,7 @@ mod tests {
             wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
             compose(&ctx, &env);
         }
-        let top = ctx
-            .layout_root
-            .read()
-            .expect("layout")
-            .window_at(0, 0)
-            .expect("a window")
-            .scroll_y;
+        let top = scroll_of(&ctx);
         assert_eq!(top, notches * 3, "every notch moved the view");
         assert!(top > rows, "and point is well above the top of it now");
         assert_eq!(point(&ctx), (0, 0), "while point stayed where it was");
@@ -380,11 +346,10 @@ mod tests {
         }
         run("(next-line)", &env, &ctx);
         compose(&ctx, &env);
-        let (top, rows) = {
-            let layout = ctx.layout_root.read().expect("layout");
-            let win = layout.window_at(0, 0).expect("a window");
+        let (top, rows) = ctx.windows(|windows| {
+            let win = windows.root().window_at(0, 0).expect("a window");
             (win.scroll_y, win.text_height)
-        };
+        });
         let (line, _) = point(&ctx);
         assert!(
             (top..top + rows).contains(&line),
@@ -513,12 +478,7 @@ mod tests {
     // ----------------------------------------------------------------
 
     fn scroll_of(ctx: &Ctx) -> usize {
-        ctx.layout_root
-            .read()
-            .expect("layout")
-            .window_at(0, 0)
-            .expect("a window")
-            .scroll_y
+        ctx.windows(|windows| windows.root().window_at(0, 0).expect("a window").scroll_y)
     }
 
     #[test]
@@ -638,13 +598,7 @@ mod tests {
     }
 
     fn first_window_width(ctx: &Ctx) -> usize {
-        ctx.layout_root
-            .read()
-            .expect("layout")
-            .window_at(0, 0)
-            .expect("a window")
-            .rect
-            .width
+        ctx.windows(|windows| windows.root().window_at(0, 0).expect("a window").rect.width)
     }
 
     #[test]
@@ -724,18 +678,15 @@ mod tests {
         let (ctx, env) = editor(400);
         run("(split-window-below)", &env, &ctx);
         compose(&ctx, &env);
-        let lower = ctx
-            .layout_root
-            .read()
-            .expect("layout")
-            .window_at(0, H as isize - 3)
-            .expect("a lower window")
-            .id;
+        let lower = ctx.windows(|windows| {
+            windows
+                .root()
+                .window_at(0, H as isize - 3)
+                .expect("a lower window")
+                .id
+        });
         assert_eq!(
-            ctx.layout_root
-                .read()
-                .expect("layout")
-                .mode_line_divider(lower),
+            ctx.windows(|windows| windows.root().mode_line_divider(lower)),
             None
         );
     }
@@ -754,15 +705,7 @@ mod tests {
         click(&ctx, &env, 4, 3);
         wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
         assert_eq!(point(&ctx), before);
-        assert_eq!(
-            ctx.layout_root
-                .read()
-                .expect("layout")
-                .window_at(0, 0)
-                .expect("a window")
-                .scroll_y,
-            0
-        );
+        assert_eq!(scroll_of(&ctx), 0);
     }
 
     // ----------------------------------------------------------------

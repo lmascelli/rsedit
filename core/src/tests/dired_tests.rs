@@ -130,13 +130,14 @@ mod tests {
 
     /// What the open prompt is asking, read off the floating window it opened.
     fn prompt_title(ctx: &Ctx) -> String {
-        ctx.floating_windows
-            .read()
-            .expect("read floating_windows")
-            .iter()
-            .find(|float| float.window.buffer_name == "*Minibuffer*")
-            .and_then(|float| float.title.clone())
-            .expect("a prompt should be open")
+        ctx.windows(|windows| {
+            windows
+                .floating()
+                .iter()
+                .find(|float| float.window.buffer_name == "*Minibuffer*")
+                .and_then(|float| float.title.clone())
+        })
+        .expect("a prompt should be open")
     }
 
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, c: char) {

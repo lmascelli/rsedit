@@ -161,12 +161,7 @@ mod tests {
         // Dismissing hands focus back to where it was before the popup.
         eval_str("(backtrace-dismiss)", &env, &ctx).unwrap();
         assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
-        assert!(
-            ctx.floating_windows
-                .read()
-                .expect("read floating_windows")
-                .is_empty()
-        );
+        assert!(ctx.windows(|windows| windows.floating().is_empty()));
     }
 
     #[test]
@@ -179,10 +174,7 @@ mod tests {
         ctx.handle_key_event(key, &env);
 
         assert_eq!(
-            ctx.floating_windows
-                .read()
-                .expect("read floating_windows")
-                .len(),
+            ctx.windows(|windows| windows.floating().len()),
             1,
             "a second error should replace the *Backtrace* window, not stack another one"
         );

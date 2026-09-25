@@ -14,8 +14,11 @@
 //! `insert-pasted-text` has.
 use super::*;
 use crate::buffer::Mark;
-use crate::editor::{MOUSE_MODE, MouseDrag, mouse_mode};
 use crate::ui::WindowId;
+use crate::{
+    editor::{MOUSE_MODE, mouse_mode},
+    windows::MouseDrag,
+};
 
 /// How many lines one notch of the wheel moves.
 ///

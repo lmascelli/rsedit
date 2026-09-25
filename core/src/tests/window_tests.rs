@@ -523,20 +523,32 @@ mod tests {
         )
         .expect("switch");
 
-        let layout = ctx.layout_root.read().expect("layout");
-        let ids = layout.window_ids();
-        let other = *ids
-            .iter()
-            .find(|id| **id != focused)
-            .expect("the other window");
+        let (focused_name, other_name) = ctx.windows(|windows| {
+            let layout = windows.root();
+            let ids = layout.window_ids();
+            let other = *ids
+                .iter()
+                .find(|id| **id != focused)
+                .expect("the other window");
+            (
+                layout
+                    .window(focused)
+                    .expect("focused window")
+                    .buffer_name
+                    .clone(),
+                layout
+                    .window(other)
+                    .expect("the other window")
+                    .buffer_name
+                    .clone(),
+            )
+        });
         assert_eq!(
-            layout.window(focused).expect("focused window").buffer_name,
-            "right",
+            focused_name, "right",
             "the focused window should show what was just opened"
         );
         assert_eq!(
-            layout.window(other).expect("the other window").buffer_name,
-            "left",
+            other_name, "left",
             "the window without focus should be left alone"
         );
     }
@@ -554,14 +566,14 @@ mod tests {
         let focused = ctx.get_focused_window_id();
         eval_str(&format!(r#"(find-file "{}")"#, path.display()), &env, &ctx).expect("find-file");
 
-        let opened = {
-            let layout = ctx.layout_root.read().expect("layout");
+        let opened = ctx.windows(|windows| {
+            let layout = windows.root();
             let ids = layout.window_ids();
             let other = *ids.iter().find(|id| **id != focused).expect("the other");
             let focused_name = layout.window(focused).expect("focused").buffer_name.clone();
             let other_name = layout.window(other).expect("other").buffer_name.clone();
             (focused_name, other_name)
-        };
+        });
         let _ = std::fs::remove_file(&path);
 
         assert_eq!(opened.0, ctx.get_current_buffer_name());

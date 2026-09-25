@@ -3,11 +3,12 @@
 //! # Why this exists
 //!
 //! Rendering used to reach into `EditorState` field by field: it took
-//! `layout_root`, then `focused_window_id`, then `buffers` -- releasing and
+//! the layout, then the focused window's id, then `buffers` -- releasing and
 //! re-acquiring `buffers` three more times for the floating windows -- and then,
 //! after all of that had finished and every lock had been dropped, it read
 //! `echo_message`. Six-plus acquisitions across five locks, with gaps between
-//! them.
+//! them. (Three of those five are one lock now -- see [`crate::windows`] -- but
+//! the lesson was about the gaps, and the gaps are what this fixes.)
 //!
 //! That is not a hypothetical problem. `BackgroundScheduler` already runs on its
 //! own thread with a clone of `EditorState`, and the `(spawn ...)` special form

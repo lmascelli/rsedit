@@ -64,13 +64,12 @@ primitive!(close_floating_window, _args, _env, ctx, {
     // floating window rather than a specific one by name/id. Focus
     // restoration is now correct, though: it comes from the popped
     // window's own previous_focused_window_id rather than a hardcoded 0.
-    let restore_id = {
-        let mut floats = ctx
-            .floating_windows
-            .write()
-            .expect("Failed to acquire write lock for floating_windows");
-        floats.pop().map(|f| f.previous_focused_window_id)
-    };
+    let restore_id = ctx.windows_mut(|windows| {
+        windows
+            .floating_mut()
+            .pop()
+            .map(|f| f.previous_focused_window_id)
+    });
     ctx.set_focused_window_id(restore_id.unwrap_or(0.into()));
     Ok(ELispExp::nil())
 });

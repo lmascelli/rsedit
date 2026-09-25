@@ -150,9 +150,7 @@ primitive!(display_buffer_at_bottom, args, _env, ctx, {
     // At least one row: a strip of no rows is invisible, and a caller that
     // asked for one and got nothing would have no way to tell.
     let height = (height.max(1.0)) as usize;
-    Ok(
-        ctx.open_bottom_window(&name, height).into()
-    )
+    Ok(ctx.open_bottom_window(&name, height).into())
 });
 
 pub const DELETE_OTHER_WINDOWS_DOC: &str = "(delete-other-windows): Close every window but the \

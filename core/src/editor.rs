@@ -15,17 +15,15 @@ use crate::{
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     modes::prescan::Prescanner,
     modes::{MajorMode, SyntaxTable},
-    primitives::{
-        edits::{goto_offset},
-        install_primitives
-    },
+    primitives::{edits::goto_offset, install_primitives},
     search::Isearch,
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
-        Division, Face, FloatingWindow, Focus, FrameSnapshot, LayoutNode, Orientation, Rect,
-        RenderableWindowView, Separator, Side, SplitPath, Style, Theme, Window, WindowId,
+        Division, Face, FloatingWindow, Focus, FrameSnapshot, Orientation, Rect,
+        RenderableWindowView, Separator, Side, Style, Theme, Window, WindowId,
         extract_buffer_lines, region_highlights,
     },
+    windows::{Hit, MouseDrag, Removed, Scrolled, Windows},
 };
 use std::{
     collections::HashMap,
@@ -50,13 +48,6 @@ pub const DEFAULT_ECHO_MESSAGE_TIMEOUT: f64 = 5.0;
 /// The names of the Lisp variables that size a minibuffer prompt.
 pub const MINIBUFFER_WIDTH: &str = "minibuffer-width";
 pub const MINIBUFFER_HEIGHT: &str = "minibuffer-height";
-
-/// How many lines two consecutive screenfuls share.
-///
-/// Emacs' name and Emacs' value. Without the overlap a reader loses their place
-/// at every page: the line they were reading when they pressed the key is gone,
-/// and nothing on the new screen says where it was.
-pub const NEXT_SCREEN_CONTEXT_LINES: usize = 2;
 
 /// How large a prompt is when nothing says otherwise.
 ///
@@ -125,77 +116,6 @@ fn mode_line_format<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> String {
     }
 }
 
-/// What the pointer is over.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Hit {
-    /// Inside a tiled window's text. LINE and COLUMN are buffer coordinates
-    /// with the window's scroll already added; COLUMN may be past the end of
-    /// its line, which the command clamps against the buffer rather than the
-    /// geometry -- the screen has no opinion about how long a line is.
-    Text {
-        window: WindowId,
-        line: usize,
-        column: usize,
-    },
-    /// A tiled window's status line.
-    ///
-    /// Named by its window rather than by the split it divides, because a
-    /// *click* on one does nothing and only a drag needs to know: which split
-    /// a status line belongs to is a question about the tree, and asking it on
-    /// every pointer move would be work for nothing.
-    ModeLine { window: WindowId },
-    /// The rule drawn between two windows side by side, and the split it
-    /// divides.
-    Separator {
-        path: SplitPath,
-        orientation: Orientation,
-    },
-    /// A floating window -- a prompt, a completion strip.
-    ///
-    /// Reported rather than ignored so that a click on one is *swallowed*. A
-    /// float is drawn over a tiled window, so falling through would move point
-    /// in a buffer the pointer is not actually over and the user cannot see.
-    Floating { window: WindowId },
-}
-
-/// What a held mouse button is in the middle of doing.
-///
-/// # Why this is remembered at all
-///
-/// A drag is the one mouse gesture that is not a single event. Where it
-/// started decides what the events after it mean, and the pointer may by then
-/// be somewhere that would answer differently -- over another window, or off
-/// the frame entirely. Reading the position afresh on each event would make a
-/// selection jump buffers halfway through, and a window resize stop the moment
-/// the pointer overshot the rule it was dragging.
-#[derive(Clone, Debug)]
-pub(crate) enum MouseDrag {
-    /// Extending a selection inside one window.
-    ///
-    /// `at` is where the pointer was last seen, in frame cells. Carried
-    /// because a drag that has left the window keeps going while the pointer
-    /// sits still, and a pointer sitting still sends no events -- so the only
-    /// record of where it is, is this one.
-    Text {
-        window: WindowId,
-        at: (isize, isize),
-    },
-    /// Moving the boundary of one split. `last` is the position along the axis
-    /// the boundary moves in, so each event can ask how far it has come since
-    /// the one before it.
-    Divider {
-        path: SplitPath,
-        orientation: Orientation,
-        last: isize,
-    },
-}
-
-/// How often a drag held outside its window scrolls it.
-///
-/// Fast enough to feel continuous, slow enough that a line is still a unit you
-/// can stop on.
-pub const DRAG_SCROLL_INTERVAL: Duration = Duration::from_millis(60);
-
 pub const MOUSE_MODE: &str = "mouse-mode";
 
 /// Whether the editor is reading the mouse, as Lisp currently defines it.
@@ -209,48 +129,6 @@ pub const MOUSE_MODE: &str = "mouse-mode";
 pub fn mouse_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     env.get_variable(MOUSE_MODE)
         .is_some_and(|value| !value.is_nil())
-}
-
-/// The rectangle the tiled windows were last laid out in.
-///
-/// Rebuilt from what they recorded rather than stored: it is the frame less
-/// the echo area, and the one place that decides it is the caller of
-/// `compute_tiled_views`. The separator walk needs it because a rule belongs
-/// to a *split* rather than to a window, so there is no window's own rect to
-/// start from.
-///
-/// A free function over the tree rather than a method on the editor, so that a
-/// caller already holding the layout can ask without taking the lock a second
-/// time. `RwLock` does not promise that a second read on one thread succeeds
-/// -- a writer waiting between the two is entitled to make it wait forever.
-fn tiled_bounds(root: &LayoutNode) -> Rect {
-    // Every tiled window sits inside it, so its bounds are theirs put
-    // together -- which is what the last frame decided, whatever the terminal
-    // has done since.
-    let mut bounds: Option<Rect> = None;
-    root.window_ids()
-        .into_iter()
-        .filter_map(|id| root.window(id).map(|win| win.rect))
-        .for_each(|rect| {
-            bounds = Some(match bounds {
-                None => rect,
-                Some(so_far) => {
-                    let x = so_far.x.min(rect.x);
-                    let y = so_far.y.min(rect.y);
-                    Rect {
-                        x,
-                        y,
-                        width: ((so_far.x + so_far.width as isize)
-                            .max(rect.x + rect.width as isize)
-                            - x) as usize,
-                        height: ((so_far.y + so_far.height as isize)
-                            .max(rect.y + rect.height as isize)
-                            - y) as usize,
-                    }
-                }
-            });
-        });
-    bounds.unwrap_or_default()
 }
 
 /// A command form with numeric arguments, built rather than parsed.
@@ -323,16 +201,17 @@ pub struct EditorState<B: BufferTrait> {
     /// and the same relationship `keymaps` has to `MajorMode::keymaps`.
     pub completion_functions: Arc<RwLock<Vec<ELispExp<B>>>>,
     pub mode_registry: Arc<RwLock<HashMap<String, MajorMode<B>>>>,
-    /// This is the root of the window tree that the UI should visualize
-    pub layout_root: Arc<RwLock<LayoutNode>>,
-    /// This is a list of floating window that will be renderered above the
-    /// others
-    pub floating_windows: Arc<RwLock<Vec<FloatingWindow>>>,
-    pub focused_window_id: Arc<RwLock<WindowId>>,
-    /// A value only used to fastly create a new window id
-    pub next_window_id: Arc<AtomicUsize>,
-    /// What a held mouse button is doing, if one is held. See [`MouseDrag`].
-    mouse_drag: Arc<RwLock<Option<MouseDrag>>>,
+    /// Every window the frame has: the tiled tree, the floats drawn over it,
+    /// which one has focus, the next id to hand out and what a held mouse
+    /// button is doing. See [`Windows`], which says why those are one lock and
+    /// not five.
+    ///
+    /// Private, and reached only through [`EditorState::windows`] and
+    /// [`EditorState::windows_mut`]. That is the whole point of the
+    /// compartment: a caller that cannot name the lock cannot take it out of
+    /// order, cannot hold it across a call into the interpreter, and cannot
+    /// leave focus naming a window the layout has already removed.
+    windows: Arc<RwLock<Windows>>,
 
     /// Which named functions the user may invoke by name, and what arguments
     /// the editor collects for each. See `crate::commands`.
@@ -635,11 +514,7 @@ impl<B: BufferTrait> EditorState<B> {
             keymaps: Arc::new(RwLock::new(keymaps)),
             completion_functions: Arc::new(RwLock::new(Vec::new())),
             mode_registry: Arc::new(RwLock::new(HashMap::new())),
-            layout_root: Arc::new(RwLock::new(LayoutNode::Leaf(Window::new(0, "*scratch*")))),
-            floating_windows: Arc::new(RwLock::new(Vec::new())),
-            focused_window_id: Arc::new(RwLock::new(WindowId(0))),
-            mouse_drag: Arc::new(RwLock::new(None)),
-            next_window_id: Arc::new(AtomicUsize::new(1)),
+            windows: Arc::new(RwLock::new(Windows::default())),
             commands: Arc::new(RwLock::new(CommandRegistry::new())),
             pending_commands: Arc::new(RwLock::new(Vec::new())),
             last_command: Arc::new(RwLock::new(None)),
@@ -904,6 +779,32 @@ impl<B: BufferTrait> EditorState<B> {
         true
     }
 
+    // ---------------------------------------------------------------
+    // The window compartment
+    // ---------------------------------------------------------------
+
+    /// Ask the windows something.
+    ///
+    /// A closure rather than a returned guard, so the lock cannot outlive the
+    /// question. Every deadlock this file has had came from a guard living
+    /// longer than the line that needed it -- read into a second lock, held
+    /// across a call into Lisp, taken twice on one thread. A closure makes
+    /// each of those a thing you have to write on purpose.
+    ///
+    /// The one rule for what goes inside: **no call back into `self`**. A
+    /// method on the editor may take this lock again, and `RwLock` does not
+    /// promise that a second read on one thread succeeds -- a writer waiting
+    /// between the two is entitled to make it wait forever. Copy out, let go,
+    /// then ask.
+    pub(crate) fn windows<R>(&self, f: impl FnOnce(&Windows) -> R) -> R {
+        f(&self.windows.read().expect("read lock on windows"))
+    }
+
+    /// Change the windows. The same rule applies, and more sharply.
+    pub(crate) fn windows_mut<R>(&self, f: impl FnOnce(&mut Windows) -> R) -> R {
+        f(&mut self.windows.write().expect("write lock on windows"))
+    }
+
     /// Show the buffer named NAME in the focused window, and make it current.
     ///
     /// # Why this is a method and not five lines at each call site
@@ -921,17 +822,10 @@ impl<B: BufferTrait> EditorState<B> {
     /// one. Three copies is also three places for the next such bug to be
     /// fixed in only two of.
     fn show_in_focused_window(&self, name: &str) {
-        if let Some(window) = self
-            .layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root")
-            .window_mut(self.get_focused_window_id())
-        {
-            window.show(name);
-        }
-        // After the layout lock is released: the current buffer name sits
-        // before the layout in the canonical order, so taking it while
-        // holding the layout would invert them.
+        self.windows_mut(|windows| windows.show_in_focused(name));
+        // After the window lock is released: the current buffer name sits
+        // before the windows in the canonical order, so taking it while
+        // holding them would invert the two.
         self.set_current_buffer_name(name);
     }
 
@@ -939,11 +833,8 @@ impl<B: BufferTrait> EditorState<B> {
     // Splitting, closing and cycling through windows
     // ---------------------------------------------------------------
 
-    /// Split the focused window, and return the new window's id.
-    ///
-    /// Focus stays where it was, as it does in Emacs: `C-x 2` then typing
-    /// continues in the window you were already in.
-    /// Split the focused window, giving the two halves DIVISION.
+    /// Split the focused window, giving the two halves DIVISION, and return
+    /// the new window's id. See [`Windows::split_focused`].
     ///
     /// `Division::Ratio(0.5)` is the ordinary `C-x 2`/`C-x 3`. A caller that
     /// wants to keep a particular size -- a directory listing that should stay
@@ -955,94 +846,28 @@ impl<B: BufferTrait> EditorState<B> {
         orientation: Orientation,
         division: Division,
     ) -> Option<WindowId> {
-        let focused = self.get_focused_window_id();
-        let new_id = self.get_next_window_id();
-        let mut layout = self
-            .layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root");
-        // The new window shows the same buffer, scrolled the same way, so a
-        // split looks like what it is: one view becoming two of the same
-        // thing rather than a jump somewhere else.
-        let existing = layout.window(focused)?.clone();
-        let new_window = Window {
-            id: new_id,
-            ..existing
-        };
-        layout
-            .split_window(focused, orientation, new_window, division)
-            .then_some(new_id)
+        self.windows_mut(|windows| windows.split_focused(orientation, division))
     }
 
-    /// Close the focused window. Returns false when it is the only one.
     /// Open a full-width window of exactly HEIGHT rows at the bottom of the
     /// frame, showing BUFFER, and return its id.
     ///
-    /// # What makes this different from a split
-    ///
-    /// It divides the *whole frame* rather than one window, so it appears below
-    /// everything and every window above it gives up a share of the space. That
-    /// is what a strip is: a thing the frame has, not a thing one window was
-    /// cut in half to make.
-    ///
-    /// # Focus does not move
-    ///
-    /// Deliberately, and it is the property everything else rests on. A strip
-    /// is shown *while something else is being typed into* -- completions
-    /// beneath a prompt being the case this was built for -- and focus moving
-    /// would make the strip's buffer current, so the next keystroke would be
-    /// typed into the list of suggestions instead of into the prompt.
+    /// Focus does not move, which is the property everything else rests on.
+    /// See [`Windows::open_bottom`] for why.
     pub(crate) fn open_bottom_window(&self, buffer: &str, height: usize) -> WindowId {
-        let id = self.get_next_window_id();
-        let window = Window {
-            // No status line: the height asked for is the height of what the
-            // caller wanted shown, and spending a row of it saying
-            // "*Completions*" would make six mean five.
-            show_mode_line: false,
-            ..Window::new(id, buffer)
-        };
-        let mut layout = self
-            .layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root");
-        let existing = std::mem::replace(&mut *layout, LayoutNode::Leaf(window.clone()));
-        *layout = LayoutNode::Split {
-            orientation: Orientation::Horizontal,
-            division: Division::SecondFixed(height),
-            left: Box::new(existing),
-            right: Box::new(LayoutNode::Leaf(window)),
-        };
-        id
+        self.windows_mut(|windows| windows.open_bottom(buffer, height))
     }
 
-    /// Move the focused window's view by AMOUNT screenfuls, forwards when
-    /// AMOUNT is positive, and drag point along if it would otherwise be left
-    /// outside.
-    ///
-    /// Returns false when the view could not move at all -- already showing
-    /// the end and asked to go forward, or the beginning and asked to go back
-    /// -- so the caller can say so rather than leaving the key looking broken.
-    ///
-    /// # Why point moves second
-    ///
-    /// Scrolling and moving point are different things, and Emacs keeps them
-    /// different: `C-v` moves the *view*, and point comes along only because it
-    /// has to stay somewhere visible. Moving point first and letting the
-    /// renderer's cursor-following do the scrolling would look similar and be
-    /// wrong in the case that matters -- point would land at the window's edge
-    /// rather than keeping its place on the screen.
     /// Scroll the focused window so that the line point is on sits `where_to`
-    /// of the way down it: 0.0 the top row, 0.5 the middle, 1.0 the bottom.
+    /// of the way down it, without moving point. See
+    /// [`Windows::recenter_focused`].
     ///
-    /// Point does not move. This is the opposite of `scroll_focused_window`,
-    /// which moves the view and drags point along only when it would otherwise
-    /// fall off the screen: here the cursor is the fixed thing and the text
-    /// slides under it, which is what makes `C-l` a way of *looking* rather
-    /// than a way of moving.
+    /// The coordination here is reading the buffer first: the compartment is
+    /// told the two numbers it needs rather than being handed the buffer, so
+    /// the two locks are never held together.
     ///
     /// False when nothing changed, so a caller can tell a no-op from a scroll.
     pub(crate) fn recenter_focused_window(&self, where_to: f64) -> bool {
-        let id = self.get_focused_window_id();
         let Some(buffer) = self
             .focused_window_buffer()
             .and_then(|n| self.get_buffer(&n))
@@ -1053,36 +878,17 @@ impl<B: BufferTrait> EditorState<B> {
             let buf = buffer.read().expect("read lock on buffer");
             (buf.text.line_count(), buf.text.cursor_pos().0)
         };
-
-        let mut layout = self
-            .layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root");
-        let Some(window) = layout.window_mut(id) else {
-            return false;
-        };
-        // A window the layout has not drawn yet has no height; one row keeps
-        // the arithmetic below sane. See `scroll_focused_window`.
-        let height = window.text_height.max(1);
-        let above = ((height - 1) as f64 * where_to.clamp(0.0, 1.0)).round() as usize;
-
-        // Clamped at the top, and *not* at the bottom. Near the end of a file
-        // there are not enough lines left to fill the window, and refusing to
-        // scroll past that would make `C-l` do nothing for the last screenful
-        // -- exactly where centring is most wanted. A few blank rows below the
-        // last line is the price, and it is what Emacs shows too.
-        let target = point_line
-            .saturating_sub(above)
-            .min(line_count.saturating_sub(1));
-        if target == window.scroll_y {
-            return false;
-        }
-        window.scroll_y = target;
-        true
+        self.windows_mut(|windows| windows.recenter_focused(where_to, line_count, point_line))
     }
 
+    /// Move the focused window's view by AMOUNT screenfuls, forwards when
+    /// AMOUNT is positive, and drag point along if it would otherwise be left
+    /// outside. See [`Windows::scroll_focused`].
+    ///
+    /// Returns false when the view could not move at all -- already showing
+    /// the end and asked to go forward, or the beginning and asked to go back
+    /// -- so the caller can say so rather than leaving the key looking broken.
     pub(crate) fn scroll_focused_window(&self, amount: isize) -> bool {
-        let id = self.get_focused_window_id();
         let Some(buffer) = self
             .focused_window_buffer()
             .and_then(|n| self.get_buffer(&n))
@@ -1094,54 +900,16 @@ impl<B: BufferTrait> EditorState<B> {
             let (line, column) = buf.text.cursor_pos();
             (buf.text.line_count(), line, column)
         };
-
-        let mut layout = self
-            .layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root");
-        let Some(window) = layout.window_mut(id) else {
+        // The window lock is let go before point is touched. Moving point is
+        // a change to a *buffer*, which is why the compartment names a line
+        // rather than making the move itself: it has no business holding a
+        // buffer, and this way it never does.
+        let Scrolled::Yes { drag_point_to } =
+            self.windows_mut(|windows| windows.scroll_focused(amount, line_count, point_line))
+        else {
             return false;
         };
-        // A window that has never been drawn has no height to scroll by: the
-        // layout has not run, so nothing has worked one out. Treating it as one
-        // row keeps every calculation below sane -- `bottom` does not run off
-        // the bottom of zero, and `furthest` does not let the view past the end
-        // by a line. It barely shows: the floor on `step` below already makes
-        // such a window scroll, so what this changes is one line of travel, in
-        // a state that ends with the first frame.
-        let height = window.text_height.max(1);
-        // Two lines of overlap, as Emacs keeps: a screenful with nothing in
-        // common with the last one gives the reader nothing to place
-        // themselves by. The floor matters for a genuinely tiny window -- one
-        // or two rows -- where the overlap would otherwise be the whole of it
-        // and the key would do nothing at all.
-        let step = height.saturating_sub(NEXT_SCREEN_CONTEXT_LINES).max(1) as isize;
-        // Far enough that the last line sits on the bottom row, and no
-        // further. Past that the window fills with the blank space after the
-        // end of the buffer -- a screen showing nothing at all, which the user
-        // then has to scroll back out of by hand.
-        let furthest = line_count.saturating_sub(height) as isize;
-        let target = (window.scroll_y as isize + amount * step).clamp(0, furthest);
-        if target == window.scroll_y as isize {
-            return false;
-        }
-        window.scroll_y = target as usize;
-        let top = target as usize;
-        let bottom = top + height - 1;
-        drop(layout);
-
-        // Point only if it fell outside. Inside the new view it keeps the line
-        // it was on, which is what makes two screenfuls of reading leave the
-        // cursor where the eye left it.
-        let last_line = line_count.saturating_sub(1);
-        let moved_to = if point_line < top {
-            Some(top)
-        } else if point_line > bottom {
-            Some(bottom.min(last_line))
-        } else {
-            None
-        };
-        if let Some(line) = moved_to {
+        if let Some(line) = drag_point_to {
             self.mutate_buffer(buffer, |buf| buf.text.cursor_move(line, point_column));
         }
         true
@@ -1157,55 +925,34 @@ impl<B: BufferTrait> EditorState<B> {
     /// Returns false when there is no such window, or when it is the only one:
     /// a frame with no windows has nowhere to draw a cursor.
     pub(crate) fn delete_window_by_id(&self, id: WindowId) -> bool {
-        let focused = self.get_focused_window_id();
-        let survivor = {
-            let mut layout = self
-                .layout_root
-                .write()
-                .expect("Failed to acquire write lock on layout_root");
-            if !layout.remove_window(id) {
-                return false;
+        // `Refocus` means the compartment has already moved focus. What is
+        // left is the editor's half of a focus change -- making that window's
+        // buffer current and putting point back where it was -- and it is done
+        // out here, after the lock is given back, because both touch buffers.
+        match self.windows_mut(|windows| windows.remove(id)) {
+            Removed::No => false,
+            Removed::Yes => true,
+            Removed::Refocus(survivor) => {
+                self.follow_focus(survivor);
+                true
             }
-            // Only when the window that went was the focused one. Closing a
-            // strip must not move focus, which would change the current buffer
-            // out from under whatever asked for the strip in the first place.
-            (focused == id)
-                .then(|| layout.window_ids().first().copied())
-                .flatten()
-        };
-        if let Some(id) = survivor {
-            self.set_focused_window_id(id);
         }
-        true
     }
 
+    /// Close the focused window. False when it is the only one.
+    ///
+    /// The same operation as `delete_window_by_id` and now written as one: the
+    /// two used to differ in whether focus moved afterwards, which was never a
+    /// difference between them but a difference between *which* window went.
+    /// [`Windows::remove`] answers that, so there is one rule rather than two
+    /// copies of it that could drift.
     pub(crate) fn delete_focused_window(&self) -> bool {
-        let focused = self.get_focused_window_id();
-        let survivor = {
-            let mut layout = self
-                .layout_root
-                .write()
-                .expect("Failed to acquire write lock on layout_root");
-            if !layout.remove_window(focused) {
-                return false;
-            }
-            // Focus is pointing at a window that no longer exists, so it has
-            // to move before anything tries to draw a cursor in it.
-            layout.window_ids().first().copied()
-        };
-        if let Some(id) = survivor {
-            self.set_focused_window_id(id);
-        }
-        true
+        self.delete_window_by_id(self.get_focused_window_id())
     }
 
     /// Close every window but the focused one.
     pub(crate) fn delete_other_windows(&self) -> bool {
-        let focused = self.get_focused_window_id();
-        self.layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root")
-            .keep_only(focused)
+        self.windows_mut(|windows| windows.delete_others())
     }
 
     /// Move focus COUNT windows on, wrapping round.
@@ -1213,44 +960,25 @@ impl<B: BufferTrait> EditorState<B> {
     /// A negative count goes the other way, which is what lets one command
     /// serve `C-x o` and a reversed `C-x o` alike.
     pub(crate) fn focus_other_window(&self, count: isize) -> bool {
-        let ids = self
-            .layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root")
-            .window_ids();
-        if ids.len() < 2 {
+        // As in `delete_window_by_id`: the compartment moves focus, and the
+        // buffer half of the move happens after the lock is back.
+        let Some(landed) = self.windows_mut(|windows| windows.focus_other(count)) else {
             return false;
-        }
-        let here = ids
-            .iter()
-            .position(|id| *id == self.get_focused_window_id())
-            .unwrap_or(0) as isize;
-        let len = ids.len() as isize;
-        // `rem_euclid` rather than `%`, so a negative count wraps round to the
-        // end instead of producing a negative index.
-        let there = (here + count).rem_euclid(len) as usize;
-        self.set_focused_window_id(ids[there]);
+        };
+        self.follow_focus(landed);
         true
     }
 
     /// How many tiled windows the frame holds.
     pub(crate) fn window_count(&self) -> usize {
-        self.layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root")
-            .window_ids()
-            .len()
+        self.windows(|windows| windows.count())
     }
 
     /// The buffer shown by the focused window, which is not always the current
     /// buffer: a floating prompt takes the current buffer without taking a
     /// tiled window's place.
     pub(crate) fn focused_window_buffer(&self) -> Option<String> {
-        self.layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root")
-            .window(self.get_focused_window_id())
-            .map(|window| window.buffer_name.clone())
+        self.windows(|windows| windows.focused_buffer())
     }
 
     /// Create a new buffer named BUF_NAME (in major mode MODE, defaulting
@@ -1274,28 +1002,25 @@ impl<B: BufferTrait> EditorState<B> {
         let previous_focused_window_id = self.get_focused_window_id();
         self.new_buffer(buf_name, None, mode);
 
-        let new_id = self.get_next_window_id();
-        let window = Window::new(new_id, buf_name);
-
-        let rect = Rect {
-            x,
-            y,
-            width,
-            height,
-        };
-
-        let floating_win = FloatingWindow {
-            window,
-            rect,
-            has_border: true,
-            title,
-            previous_focused_window_id,
-        };
-
-        self.floating_windows
-            .write()
-            .expect("Failed to acquire write lock on floating_windows")
-            .push(floating_win);
+        // The id and the push are one acquisition rather than two, which is
+        // what a single lock over the five old fields buys: no other thread
+        // can see an id handed out and not yet used.
+        let new_id = self.windows_mut(|windows| {
+            let new_id = windows.next_id();
+            windows.floating_mut().push(FloatingWindow {
+                window: Window::new(new_id, buf_name),
+                rect: Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                has_border: true,
+                title,
+                previous_focused_window_id,
+            });
+            new_id
+        });
 
         // No `set_current_buffer_name` here: the float is in the list before
         // focus moves, so the chokepoint finds it and makes it current. Setting
@@ -2006,18 +1731,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// Neither focus nor point moves. False when there is no such window or
     /// the view was already as far as it goes.
     ///
-    /// The three locks are taken one at a time and given straight back rather
+    /// The two locks are taken one at a time and given straight back rather
     /// than nested: the line count has to come from the buffer and the scroll
-    /// has to be written to the layout, and holding both would put an edge in
+    /// has to be written to the window, and holding both would put an edge in
     /// the ordering for the sake of an operation that does not need one.
     pub(crate) fn scroll_window_by(&self, window: WindowId, lines: isize) -> bool {
-        let Some(name) = self
-            .layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root")
-            .window(window)
-            .map(|win| win.buffer_name.clone())
-        else {
+        let Some(name) = self.windows(|windows| windows.buffer_of(window)) else {
             return false;
         };
         let Some(buffer) = self.get_buffer(&name) else {
@@ -2028,24 +1747,7 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire read lock on buffer")
             .text
             .line_count();
-
-        let mut layout = self
-            .layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root");
-        let Some(win) = layout.window_mut(window) else {
-            return false;
-        };
-        // The last line may sit on the top row and no further. Past that the
-        // window fills with the nothing after the end of the buffer, which the
-        // reader then has to scroll back out of by hand.
-        let furthest = line_count.saturating_sub(1) as isize;
-        let target = (win.scroll_y as isize + lines).clamp(0, furthest);
-        if target == win.scroll_y as isize {
-            return false;
-        }
-        win.scroll_y = target as usize;
-        true
+        self.windows_mut(|windows| windows.scroll_by(window, lines, line_count))
     }
 
     /// What the pointer at (X, Y) is over, in cells of the last frame.
@@ -2053,84 +1755,24 @@ impl<B: BufferTrait> EditorState<B> {
     /// `None` when it is over nothing -- the echo area, or a gap no window
     /// claims.
     pub(crate) fn hit_test(&self, x: isize, y: isize) -> Option<Hit> {
-        // Floats first and in reverse, because later ones paint over earlier
-        // ones and the last drawn is the one the pointer is really on. Read
-        // out and the lock let go before the layout is taken: these two are
-        // never held together, and the order here is the reverse of the
-        // canonical one.
-        let float_hit = self
-            .floating_windows
-            .read()
-            .expect("Failed to acquire read lock on floating_windows")
-            .iter()
-            .rev()
-            .find(|float| float.rect.contains(x, y))
-            .map(|float| Hit::Floating {
-                window: float.window.id,
-            });
-        if float_hit.is_some() {
-            return float_hit;
-        }
-
-        let layout = self
-            .layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root");
-        // A rule occupies a column no window claims, so this can be asked
-        // first without stealing anything from them.
-        if let Some((path, orientation)) = layout.separator_at(tiled_bounds(&layout), x, y) {
-            return Some(Hit::Separator { path, orientation });
-        }
-        let win = layout.window_at(x, y)?;
-        let row = (y - win.rect.y) as usize;
-        if row >= win.text_height {
-            return Some(Hit::ModeLine { window: win.id });
-        }
-        Some(Hit::Text {
-            window: win.id,
-            line: win.scroll_y + row,
-            column: win.scroll_x + (x - win.rect.x) as usize,
-        })
-    }
-
-    /// The rectangle the tiled windows were last laid out in.
-    fn frame_rect(&self) -> Rect {
-        tiled_bounds(
-            &self
-                .layout_root
-                .read()
-                .expect("Failed to acquire read lock on layout_root"),
-        )
+        self.windows(|windows| windows.hit_test(x, y))
     }
 
     pub(crate) fn take_mouse_drag(&self) -> Option<MouseDrag> {
-        self.mouse_drag
-            .write()
-            .expect("Failed to acquire write lock on mouse_drag")
-            .take()
+        self.windows_mut(|windows| windows.take_drag())
     }
 
     /// Move the boundary of the split at PATH by DELTA cells.
     pub(crate) fn resize_dragged_split(&self, path: &[Side], delta: isize) -> bool {
-        let rect = self.frame_rect();
-        self.layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root")
-            .resize_split(path, rect, delta)
+        self.windows_mut(|windows| windows.resize_split(path, delta))
     }
 
     fn set_mouse_drag(&self, drag: Option<MouseDrag>) {
-        *self
-            .mouse_drag
-            .write()
-            .expect("Failed to acquire write lock on mouse_drag") = drag;
+        self.windows_mut(|windows| windows.set_drag(drag));
     }
 
     pub(crate) fn mouse_drag(&self) -> Option<MouseDrag> {
-        self.mouse_drag
-            .read()
-            .expect("Failed to acquire read lock on mouse_drag")
-            .clone()
+        self.windows(|windows| windows.drag())
     }
 
     /// Where in WINDOW's buffer the cell (X, Y) is, clamped to what the window
@@ -2142,15 +1784,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// not scroll the window after the pointer, which is a separate feature
     /// and a worse one to get subtly wrong.
     fn position_in(&self, window: WindowId, x: isize, y: isize) -> Option<(usize, usize)> {
-        let layout = self
-            .layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root");
-        let win = layout.window(window)?;
-        let rows = win.text_height.max(1);
-        let row = (y - win.rect.y).clamp(0, rows as isize - 1) as usize;
-        let column = (x - win.rect.x).max(0) as usize;
-        Some((win.scroll_y + row, win.scroll_x + column))
+        self.windows(|windows| windows.position_in(window, x, y))
     }
 
     /// Which way a drag that has left its window wants the view to move, if it
@@ -2161,30 +1795,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// gives; dragging off the top or bottom is a request for lines that are
     /// not on screen, which nothing but scrolling can answer.
     fn drag_scroll_step(&self, window: WindowId, y: isize) -> Option<isize> {
-        let layout = self
-            .layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root");
-        let win = layout.window(window)?;
-        let top = win.rect.y;
-        let bottom = top + win.text_height.max(1) as isize;
-        // Below the text: the status line and anything under it.
-        if y >= bottom {
-            return Some(1);
-        }
-        if y < top {
-            return Some(-1);
-        }
-        // The top row of a window flush with the top of the frame counts as
-        // being above it, because there is no row above it to be on: a
-        // terminal cannot report row -1, so a drag off the top of the screen
-        // arrives clamped to row 0 and would otherwise read as "inside".
-        //
-        // It costs nothing when the view is already at the start of the
-        // buffer, because then there is nothing to scroll to and
-        // `scroll_window_by` says so. It only acts when there is text above,
-        // which is the only time anybody drags there.
-        (y == top && top == 0).then_some(-1)
+        self.windows(|windows| windows.drag_scroll_step(window, y))
     }
 
     /// How long until a drag that has left its window should scroll again, or
@@ -2198,11 +1809,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// they stopped jiggling the mouse, which reads as the editor having lost
     /// interest.
     pub fn drag_scroll_in(&self) -> Option<Duration> {
-        let MouseDrag::Text { window, at: (_, y) } = self.mouse_drag()? else {
-            return None;
-        };
-        self.drag_scroll_step(window, y)
-            .map(|_| DRAG_SCROLL_INTERVAL)
+        self.windows(|windows| windows.drag_scroll_in())
     }
 
     /// Scroll a drag that has left its window by one line, and take the
@@ -2352,11 +1959,7 @@ impl<B: BufferTrait> EditorState<B> {
                 // A status line divides a stacked pair, and which pair is a
                 // question about the tree -- asked here, once, rather than on
                 // every event of the drag that follows.
-                let divider = self
-                    .layout_root
-                    .read()
-                    .expect("Failed to acquire read lock on layout_root")
-                    .mode_line_divider(window);
+                let divider = self.windows(|windows| windows.root().mode_line_divider(window));
                 if let Some(path) = divider {
                     self.set_mouse_drag(Some(MouseDrag::Divider {
                         path,
@@ -2459,20 +2062,26 @@ impl<B: BufferTrait> EditorState<B> {
             .clone();
 
         // Detach NAME from wherever it's currently displayed.
-        let floating_match = {
-            let floats = self
-                .floating_windows
-                .read()
-                .expect("Failed to acquire read lock on floating_windows");
-            floats.iter().position(|f| f.window.buffer_name == name)
-        };
-        if let Some(idx) = floating_match {
-            let restore_id = self
-                .floating_windows
-                .write()
-                .expect("Failed to acquire write lock on floating_windows")
-                .remove(idx)
-                .previous_focused_window_id;
+        //
+        // Finding the float and removing it are now one acquisition rather
+        // than a read followed by a write. They were never safe apart: between
+        // the two, another thread opening or closing a float shifts the index,
+        // and what came back was a *different* window than the one looked for.
+        let restore_id = self.windows_mut(|windows| {
+            let idx = windows
+                .floating()
+                .iter()
+                .position(|f| f.window.buffer_name == name)?;
+            Some(
+                windows
+                    .floating_mut()
+                    .remove(idx)
+                    .previous_focused_window_id,
+            )
+        });
+        // Outside the closure, because moving focus makes a buffer current and
+        // takes the window lock again to find out which.
+        if let Some(restore_id) = restore_id {
             self.set_focused_window_id(restore_id);
         }
 
@@ -2494,14 +2103,13 @@ impl<B: BufferTrait> EditorState<B> {
         let replacement = self
             .most_recent_buffer(name)
             .unwrap_or_else(|| "*scratch*".to_string());
-        self.layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root")
-            .each_window_mut(&mut |window| {
+        self.windows_mut(|windows| {
+            windows.root_mut().each_window_mut(&mut |window| {
                 if window.buffer_name == name {
                     window.show(&replacement);
                 }
-            });
+            })
+        });
 
         {
             let mut buffers = self
@@ -2548,8 +2156,11 @@ impl<B: BufferTrait> EditorState<B> {
     /// must take them in this sequence or risk a deadlock the moment a second
     /// thread writes:
     ///
-    /// `focused_window_id` -> `echo_message` -> `layout_root` ->
-    /// `floating_windows` -> `buffers` -> an individual `Buffer`
+    /// `echo_message` -> `windows` -> `buffers` -> an individual `Buffer`
+    ///
+    /// It used to be five links long. Three of them -- the focused id, the
+    /// layout and the floating windows -- are one lock now, so the order they
+    /// had to be taken in is not a rule anybody can get wrong any more.
     ///
     /// The Lisp environment is read first of all, before any of these, so that
     /// no editor lock is ever held while touching it.
@@ -2566,7 +2177,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// renderer that reads six locks at six different instants can compose a
     /// frame that never existed.
     ///
-    /// # Note on `layout_root`
+    /// # Note on `windows`
     ///
     /// A *write* lock, because `compute_tiled_views` adjusts each window's
     /// `scroll_x`/`scroll_y` to keep the cursor in view -- rendering mutates
@@ -2598,10 +2209,6 @@ impl<B: BufferTrait> EditorState<B> {
         // has no place in the ordering that begins below.
         let colouring_pending = self.colouring_pending();
 
-        let focused_window_id = *self
-            .focused_window_id
-            .read()
-            .expect("Failed to acquire read lock on focused_window_id");
         // An expired message is simply not reported. The state keeps it -- the
         // view is what forgets, so nothing has to run on a timer to tidy up.
         let echo_message = {
@@ -2614,85 +2221,86 @@ impl<B: BufferTrait> EditorState<B> {
                 None => String::new(),
             }
         };
-        let mut layout_root = self
-            .layout_root
-            .write()
-            .expect("Failed to acquire write lock on layout_root");
-        let floating_windows = self
-            .floating_windows
-            .read()
-            .expect("Failed to acquire read lock on floating_windows");
-        let buffers = self
-            .buffers
-            .read()
-            .expect("Failed to acquire read lock on buffers");
 
-        let mut views = Vec::new();
-        let mut separator_rects = Vec::new();
-        let focus = Focus {
-            id: focused_window_id,
-            tiled: layout_root.contains_window(focused_window_id),
-        };
-        layout_root.compute_tiled_views(
-            Rect {
-                x: 0,
-                y: 0,
-                width: screen_width,
-                // The bottom row belongs to the echo area, which is drawn over
-                // whatever is under it. Tiling into it would put a window's
-                // status line on the same row as a message, and one of the two
-                // would win at random.
-                height: screen_height.saturating_sub(1),
-            },
-            focus,
-            &buffers,
-            &mode_line_format,
-            &mut views,
-            &mut separator_rects,
-        );
+        // One acquisition for the tiled tree, the floats and the focused id.
+        // The three used to be read separately, which is how a frame could
+        // report a cursor in a window the layout had already removed.
+        let (views, separators, focused_window_id) = self.windows_mut(|windows| {
+            let buffers = self
+                .buffers
+                .read()
+                .expect("Failed to acquire read lock on buffers");
 
-        let separators: Vec<Separator> = separator_rects
-            .into_iter()
-            .map(|rect| Separator {
-                rect,
-                ch: separator_char,
-                face: Face::WINDOW_SEPARATOR,
-            })
-            .collect();
+            let focused_window_id = windows.focused();
+            let mut views = Vec::new();
+            let mut separator_rects = Vec::new();
+            let focus = Focus {
+                id: focused_window_id,
+                tiled: windows.root().contains_window(focused_window_id),
+            };
+            windows.root_mut().compute_tiled_views(
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: screen_width,
+                    // The bottom row belongs to the echo area, which is drawn over
+                    // whatever is under it. Tiling into it would put a window's
+                    // status line on the same row as a message, and one of the two
+                    // would win at random.
+                    height: screen_height.saturating_sub(1),
+                },
+                focus,
+                &buffers,
+                &mode_line_format,
+                &mut views,
+                &mut separator_rects,
+            );
 
-        for float in floating_windows.iter() {
-            let is_focused = float.window.id == focused_window_id;
-            // Unlike a tiled window, a float is not auto-scrolled to follow the
-            // cursor; its scroll offsets are whatever whoever opened it set.
-            let cursor_rel_pos = is_focused
-                .then(|| buffers.get(&float.window.buffer_name))
-                .flatten()
-                .map(|buf| {
-                    let (c_line, c_col) = buf
-                        .read()
-                        .expect("Failed to acquire read lock on buffer")
-                        .text
-                        .cursor_pos();
-                    (
-                        c_col.saturating_sub(float.window.scroll_x),
-                        c_line.saturating_sub(float.window.scroll_y),
-                    )
+            let separators: Vec<Separator> = separator_rects
+                .into_iter()
+                .map(|rect| Separator {
+                    rect,
+                    ch: separator_char,
+                    face: Face::WINDOW_SEPARATOR,
+                })
+                .collect();
+
+            for float in windows.floating().iter() {
+                let is_focused = float.window.id == focused_window_id;
+                // Unlike a tiled window, a float is not auto-scrolled to follow the
+                // cursor; its scroll offsets are whatever whoever opened it set.
+                let cursor_rel_pos = is_focused
+                    .then(|| buffers.get(&float.window.buffer_name))
+                    .flatten()
+                    .map(|buf| {
+                        let (c_line, c_col) = buf
+                            .read()
+                            .expect("Failed to acquire read lock on buffer")
+                            .text
+                            .cursor_pos();
+                        (
+                            c_col.saturating_sub(float.window.scroll_x),
+                            c_line.saturating_sub(float.window.scroll_y),
+                        )
+                    });
+
+                views.push(RenderableWindowView {
+                    rect: float.rect,
+                    buffer_name: float.window.buffer_name.clone(),
+                    title: float.title.clone(),
+                    is_focused,
+                    cursor_rel_pos,
+                    lines: extract_buffer_lines(&float.window, &float.rect, &buffers),
+                    highlights: region_highlights(&float.window, &float.rect, &buffers),
+                    // A float says what it is on its border, so a status line
+                    // would be a second answer to the same question.
+                    mode_line: None,
+                    has_border: float.has_border,
                 });
+            }
 
-            views.push(RenderableWindowView {
-                rect: float.rect,
-                buffer_name: float.window.buffer_name.clone(),
-                title: float.title.clone(),
-                is_focused,
-                cursor_rel_pos,
-                lines: extract_buffer_lines(&float.window, &float.rect, &buffers),
-                highlights: region_highlights(&float.window, &float.rect, &buffers),
-                // A float says what it is on its border, so a status line
-                // would be a second answer to the same question.
-                mode_line: None,
-                has_border: float.has_border,
-            });
-        }
+            (views, separators, focused_window_id)
+        });
 
         FrameSnapshot {
             views,
@@ -3419,18 +3027,9 @@ impl<B: BufferTrait> EditorState<B> {
         self.fuel.set_budget(budget);
     }
 
-    /// Return the next valid ID for a new window
-    pub(crate) fn get_next_window_id(&self) -> WindowId {
-        self.next_window_id.fetch_add(1, Ordering::Relaxed).into()
-    }
-
     /// Get the ID of the current focused window
     pub fn get_focused_window_id(&self) -> WindowId {
-        let lock = self
-            .focused_window_id
-            .read()
-            .expect("Failed to acquire read lock on focused_window_id");
-        lock.clone()
+        self.windows(|windows| windows.focused())
     }
 
     /// Move focus to window ID, and make what it shows the current buffer.
@@ -3439,18 +3038,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// failure: a window remembered earlier may have been closed since, and
     /// the caller wants to open a new one rather than be stopped.
     pub(crate) fn select_window(&self, id: WindowId) -> bool {
-        let exists = self
-            .layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root")
-            .window(id)
-            .is_some()
-            || self
-                .floating_windows
-                .read()
-                .expect("Failed to acquire read lock on floating_windows")
-                .iter()
-                .any(|float| float.window.id == id);
+        // Tiled or floating: a prompt is a float, and selecting one has to
+        // work exactly as selecting a tiled window does.
+        let exists = self.windows(|windows| windows.buffer_of(id).is_some());
         if exists {
             self.set_focused_window_id(id);
         }
@@ -3458,12 +3048,22 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     pub(crate) fn set_focused_window_id(&self, id: WindowId) {
-        *self
-            .focused_window_id
-            .write()
-            .expect("Failed to acquire write lock on focused_window_id") = id;
-        // Released before the lookup below: that takes the layout and the
-        // floating windows, which sit *after* this one in the lock ordering.
+        self.windows_mut(|windows| windows.set_focused(id));
+        self.follow_focus(id);
+    }
+
+    /// The buffer half of a focus change: make what the newly focused window
+    /// shows the current buffer, and put point back where that window left it.
+    ///
+    /// Separate from [`EditorState::set_focused_window_id`] because focus does
+    /// not always move from out here. `Windows::focus_other` and
+    /// `Windows::remove` move it themselves -- they have the lock open and the
+    /// list of survivors in hand -- and what they cannot do is touch a buffer.
+    /// This is the other half, and every path that moves focus ends in it.
+    ///
+    /// Called with no lock held, deliberately. It takes the windows to ask
+    /// what the window shows, and then the buffers to move point.
+    fn follow_focus(&self, id: WindowId) {
         if let Some(name) = self.window_buffer(id) {
             self.set_current_buffer_name(&name);
             self.restore_window_point(id, &name);
@@ -3476,17 +3076,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// `None` and nothing happens -- which is right, since a prompt's point
     /// belongs to the prompt.
     fn restore_window_point(&self, id: WindowId, buffer_name: &str) {
-        let remembered = self
-            .layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root")
-            .window(id)
-            .and_then(|window| window.point);
+        let remembered = self.windows(|windows| windows.root().window(id).and_then(|w| w.point));
         let Some(offset) = remembered else {
             return;
         };
-        // The layout lock is let go above rather than held across the write
-        // below. Layout comes before buffers in the ordering, so holding both
+        // The window lock is let go above rather than held across the write
+        // below. Windows come before buffers in the ordering, so holding both
         // would be legal -- but every other path here copies out and lets go,
         // and the one that does not is the one that eventually deadlocks.
         let Some(buffer) = self.get_buffer(buffer_name) else {
@@ -3504,20 +3099,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// focus has to make its buffer current in exactly the same way -- that is
     /// what every prompt in the editor depends on.
     fn window_buffer(&self, id: WindowId) -> Option<String> {
-        if let Some(window) = self
-            .layout_root
-            .read()
-            .expect("Failed to acquire read lock on layout_root")
-            .window(id)
-        {
-            return Some(window.buffer_name.clone());
-        }
-        self.floating_windows
-            .read()
-            .expect("Failed to acquire read lock on floating_windows")
-            .iter()
-            .find(|float| float.window.id == id)
-            .map(|float| float.window.buffer_name.clone())
+        self.windows(|windows| windows.buffer_of(id))
     }
 
     /// Get the name of the current buffer
