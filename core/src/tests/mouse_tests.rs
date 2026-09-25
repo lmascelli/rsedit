@@ -340,6 +340,406 @@ mod tests {
         assert_eq!(top, 10, "the last line, and no further");
     }
 
+    #[test]
+    fn the_wheel_keeps_going_once_point_is_off_the_screen() {
+        // The bug this comes from: scrolling stopped dead the moment the
+        // cursor reached an edge. The view had been reconciled with point on
+        // every frame, so as soon as the wheel moved the text far enough for
+        // point to leave the window, the next frame dragged it straight back.
+        //
+        // A frame has to be composed between the notches, because composing is
+        // where that reconciliation happened -- a test that only turned the
+        // wheel would have passed throughout.
+        let (ctx, env) = editor(400);
+        let rows = text_rows(&ctx);
+        let notches = rows / 3 + 4;
+        for _ in 0..notches {
+            wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
+            compose(&ctx, &env);
+        }
+        let top = ctx
+            .layout_root
+            .read()
+            .expect("layout")
+            .window_at(0, 0)
+            .expect("a window")
+            .scroll_y;
+        assert_eq!(top, notches * 3, "every notch moved the view");
+        assert!(top > rows, "and point is well above the top of it now");
+        assert_eq!(point(&ctx), (0, 0), "while point stayed where it was");
+    }
+
+    #[test]
+    fn moving_point_brings_the_view_back_to_it() {
+        // The other half: a view scrolled away from point stays there until
+        // something says where you are, and then it follows again.
+        let (ctx, env) = editor(400);
+        for _ in 0..20 {
+            wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
+            compose(&ctx, &env);
+        }
+        run("(next-line)", &env, &ctx);
+        compose(&ctx, &env);
+        let (top, rows) = {
+            let layout = ctx.layout_root.read().expect("layout");
+            let win = layout.window_at(0, 0).expect("a window");
+            (win.scroll_y, win.text_height)
+        };
+        let (line, _) = point(&ctx);
+        assert!(
+            (top..top + rows).contains(&line),
+            "point is visible again: line {line} in rows {top}..{}",
+            top + rows
+        );
+        // The smallest move that brings it back, not a recentre: point is on
+        // the top row rather than in the middle, which is what `C-p' into the
+        // line above the window does everywhere else.
+        assert_eq!(top, line);
+    }
+
+    // ----------------------------------------------------------------
+    // Dragging out a selection
+    // ----------------------------------------------------------------
+
+    fn drag(ctx: &Ctx, env: &Arc<Env<Ctx>>, column: u16, row: u16) {
+        ctx.handle_mouse_event(
+            MouseEvent {
+                kind: MouseKind::Drag(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::default(),
+            },
+            env,
+        );
+    }
+
+    fn release(ctx: &Ctx, env: &Arc<Env<Ctx>>, column: u16, row: u16) {
+        ctx.handle_mouse_event(
+            MouseEvent {
+                kind: MouseKind::Up(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::default(),
+            },
+            env,
+        );
+    }
+
+    /// (mark, point) as offsets, and whether the region is live.
+    fn region(ctx: &Ctx) -> (Option<usize>, usize, bool) {
+        let buffer = ctx.get_buffer("*scratch*").expect("*scratch*");
+        let buf = buffer.read().expect("read lock");
+        (
+            buf.mark.as_ref().map(|mark| mark.at),
+            buf.text.cursor_pos_1d(),
+            buf.mark.as_ref().is_some_and(|mark| mark.active),
+        )
+    }
+
+    #[test]
+    fn dragging_selects_from_where_the_button_went_down() {
+        let (ctx, env) = editor(100);
+        click(&ctx, &env, 2, 1);
+        let (_, start, active) = region(&ctx);
+        assert!(!active, "a click on its own selects nothing");
+
+        drag(&ctx, &env, 4, 3);
+        let (mark, end, active) = region(&ctx);
+        assert!(active, "a drag makes a region");
+        assert_eq!(mark, Some(start), "anchored where the click was");
+        assert_eq!(point(&ctx), (3, 4));
+        assert!(end > start);
+    }
+
+    #[test]
+    fn the_anchor_stays_put_across_a_whole_drag() {
+        // The mark is set by the *first* event of the drag and left alone
+        // after it, which is what "whether it is already active" decides.
+        let (ctx, env) = editor(100);
+        click(&ctx, &env, 2, 1);
+        let (_, start, _) = region(&ctx);
+        for row in 2..8 {
+            drag(&ctx, &env, 4, row);
+        }
+        assert_eq!(region(&ctx).0, Some(start));
+        assert_eq!(point(&ctx), (7, 4));
+    }
+
+    #[test]
+    fn dragging_off_the_bottom_selects_to_the_last_visible_line() {
+        // Clamped to what the window is showing. Following the pointer off the
+        // window by scrolling is a separate feature and a worse one to get
+        // subtly wrong.
+        let (ctx, env) = editor(400);
+        let rows = text_rows(&ctx);
+        click(&ctx, &env, 0, 1);
+        drag(&ctx, &env, 0, rows as u16 + 40);
+        assert_eq!(point(&ctx).0, rows - 1);
+    }
+
+    #[test]
+    fn a_drag_after_the_button_comes_up_does_nothing() {
+        let (ctx, env) = editor(100);
+        click(&ctx, &env, 2, 1);
+        drag(&ctx, &env, 4, 3);
+        release(&ctx, &env, 4, 3);
+        let before = point(&ctx);
+        drag(&ctx, &env, 8, 9);
+        assert_eq!(point(&ctx), before);
+    }
+
+    #[test]
+    fn a_drag_stays_in_the_window_it_started_in() {
+        // Over the *other* window by the end, and still selecting in this one.
+        // A selection that changed buffers halfway through is nobody's idea of
+        // a selection.
+        let (ctx, env) = editor(400);
+        run("(split-window-below)", &env, &ctx);
+        compose(&ctx, &env);
+        let first = ctx.get_focused_window_id();
+
+        click(&ctx, &env, 0, 1);
+        drag(&ctx, &env, 0, H as u16 - 3);
+        assert_eq!(
+            ctx.get_focused_window_id(),
+            first,
+            "focus did not follow the pointer into the other window"
+        );
+        assert!(region(&ctx).2, "and the region is still being made here");
+    }
+
+    // ----------------------------------------------------------------
+    // Dragging past the edge
+    // ----------------------------------------------------------------
+
+    fn scroll_of(ctx: &Ctx) -> usize {
+        ctx.layout_root
+            .read()
+            .expect("layout")
+            .window_at(0, 0)
+            .expect("a window")
+            .scroll_y
+    }
+
+    #[test]
+    fn a_drag_inside_the_window_asks_for_no_timer() {
+        let (ctx, env) = editor(400);
+        click(&ctx, &env, 0, 1);
+        drag(&ctx, &env, 4, 5);
+        assert_eq!(ctx.drag_scroll_in(), None);
+        assert!(!ctx.drag_scroll_tick(&env));
+    }
+
+    #[test]
+    fn a_drag_below_the_window_keeps_scrolling_while_the_pointer_sits_still() {
+        // The reason this is a timer at all: a pointer held outside the window
+        // sends nothing, and that is exactly where somebody selecting a long
+        // passage leaves it. The test holds it still too -- every turn below
+        // is driven by the clock, not by an event.
+        let (ctx, env) = editor(400);
+        let rows = text_rows(&ctx);
+        click(&ctx, &env, 0, 1);
+        drag(&ctx, &env, 0, rows as u16 + 5);
+        assert_eq!(scroll_of(&ctx), 0, "the drag itself does not scroll");
+        assert!(ctx.drag_scroll_in().is_some(), "but it asks to be woken");
+
+        for turn in 1..=5 {
+            assert!(ctx.drag_scroll_tick(&env));
+            assert_eq!(scroll_of(&ctx), turn, "one line a turn");
+        }
+        assert!(region(&ctx).2, "and the selection came with it");
+        assert_eq!(
+            point(&ctx).0,
+            scroll_of(&ctx) + rows - 1,
+            "reaching to the last line now showing"
+        );
+    }
+
+    #[test]
+    fn a_drag_at_the_top_of_the_frame_scrolls_back_and_stops_there() {
+        // A terminal cannot report a row above zero, so a drag off the top of
+        // the screen arrives clamped to row 0 -- which is inside the topmost
+        // window. Its first row therefore has to count as "above", or upward
+        // auto-scroll would not work at all in the ordinary single window.
+        let (ctx, env) = editor(400);
+        run("(goto-char (point-max))", &env, &ctx);
+        compose(&ctx, &env);
+        let start = scroll_of(&ctx);
+        assert!(start > 10, "the fixture has to be scrolled to begin with");
+
+        click(&ctx, &env, 0, 2);
+        drag(&ctx, &env, 0, 0);
+        assert!(ctx.drag_scroll_in().is_some());
+        for _ in 0..3 {
+            assert!(ctx.drag_scroll_tick(&env));
+        }
+        assert_eq!(scroll_of(&ctx), start - 3, "one line a turn, upwards");
+
+        for _ in 0..(start + 10) {
+            ctx.drag_scroll_tick(&env);
+        }
+        assert_eq!(scroll_of(&ctx), 0, "and it stops at the top");
+        assert!(
+            !ctx.drag_scroll_tick(&env),
+            "with nothing left to do, so the turns stop costing anything"
+        );
+    }
+
+    #[test]
+    fn selecting_along_the_top_row_of_a_buffer_already_at_the_top_scrolls_nothing() {
+        // The cost of the rule above, and it is nil: there is nothing to
+        // scroll to, so the turn does nothing and the selection is ordinary.
+        let (ctx, env) = editor(400);
+        click(&ctx, &env, 0, 0);
+        drag(&ctx, &env, 6, 0);
+        assert!(!ctx.drag_scroll_tick(&env));
+        assert_eq!(scroll_of(&ctx), 0);
+        assert_eq!(point(&ctx), (0, 6));
+    }
+
+    #[test]
+    fn the_timer_is_forgotten_when_the_button_comes_up() {
+        let (ctx, env) = editor(400);
+        let rows = text_rows(&ctx);
+        click(&ctx, &env, 0, 1);
+        drag(&ctx, &env, 0, rows as u16 + 5);
+        assert!(ctx.drag_scroll_in().is_some());
+        release(&ctx, &env, 0, rows as u16 + 5);
+        assert_eq!(ctx.drag_scroll_in(), None);
+        assert!(!ctx.drag_scroll_tick(&env));
+    }
+
+    #[test]
+    fn dragging_a_boundary_never_asks_for_the_timer() {
+        // Only a *selection* runs off the end of what is on screen. A boundary
+        // is bounded by the frame, and a resize that kept going while the hand
+        // was still would be alarming.
+        let (ctx, env) = editor(100);
+        run("(split-window-right)", &env, &ctx);
+        compose(&ctx, &env);
+        let column = rule_column(&ctx, &env);
+        click(&ctx, &env, column as u16, 2);
+        drag(&ctx, &env, column as u16 + 2, 200);
+        assert_eq!(ctx.drag_scroll_in(), None);
+    }
+
+    // ----------------------------------------------------------------
+    // Dragging a boundary
+    // ----------------------------------------------------------------
+
+    /// Where the rule between two side-by-side windows is drawn.
+    fn rule_column(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> isize {
+        ctx.snapshot(env, W, H)
+            .separators
+            .first()
+            .expect("a rule between the two windows")
+            .rect
+            .x
+    }
+
+    fn first_window_width(ctx: &Ctx) -> usize {
+        ctx.layout_root
+            .read()
+            .expect("layout")
+            .window_at(0, 0)
+            .expect("a window")
+            .rect
+            .width
+    }
+
+    #[test]
+    fn the_rule_between_two_windows_is_something_the_pointer_can_find() {
+        let (ctx, env) = editor(100);
+        run("(split-window-right)", &env, &ctx);
+        compose(&ctx, &env);
+        let column = rule_column(&ctx, &env);
+        assert!(matches!(
+            ctx.hit_test(column, 2),
+            Some(Hit::Separator { .. })
+        ));
+        assert!(
+            matches!(ctx.hit_test(column - 1, 2), Some(Hit::Text { .. })),
+            "and the column beside it still belongs to a window"
+        );
+    }
+
+    #[test]
+    fn dragging_the_rule_moves_it() {
+        let (ctx, env) = editor(100);
+        run("(split-window-right)", &env, &ctx);
+        compose(&ctx, &env);
+        let column = rule_column(&ctx, &env);
+        let before = first_window_width(&ctx);
+
+        click(&ctx, &env, column as u16, 2);
+        drag(&ctx, &env, column as u16 + 10, 2);
+        compose(&ctx, &env);
+
+        assert_eq!(first_window_width(&ctx), before + 10);
+        assert_eq!(rule_column(&ctx, &env), column + 10);
+    }
+
+    #[test]
+    fn a_boundary_cannot_be_dragged_past_the_edge() {
+        // Both windows keep enough to be worth looking at. A window dragged to
+        // nothing is a window that cannot be dragged back.
+        let (ctx, env) = editor(100);
+        run("(split-window-right)", &env, &ctx);
+        compose(&ctx, &env);
+        let column = rule_column(&ctx, &env);
+
+        click(&ctx, &env, column as u16, 2);
+        drag(&ctx, &env, 0, 2);
+        compose(&ctx, &env);
+        assert!(
+            first_window_width(&ctx) >= crate::ui::MIN_DRAGGED_WIDTH,
+            "the left window kept a usable width"
+        );
+
+        drag(&ctx, &env, W as u16, 2);
+        compose(&ctx, &env);
+        assert!(
+            W - first_window_width(&ctx) >= crate::ui::MIN_DRAGGED_WIDTH,
+            "and so did the right one"
+        );
+    }
+
+    #[test]
+    fn dragging_a_status_line_resizes_the_windows_it_divides() {
+        let (ctx, env) = editor(400);
+        run("(split-window-below)", &env, &ctx);
+        compose(&ctx, &env);
+        let rows = text_rows(&ctx);
+
+        click(&ctx, &env, 4, rows as u16);
+        drag(&ctx, &env, 4, rows as u16 + 3);
+        compose(&ctx, &env);
+
+        assert_eq!(text_rows(&ctx), rows + 3, "the upper window grew");
+    }
+
+    #[test]
+    fn the_bottom_windows_status_line_divides_nothing() {
+        // The row under it is the echo area, not another window.
+        let (ctx, env) = editor(400);
+        run("(split-window-below)", &env, &ctx);
+        compose(&ctx, &env);
+        let lower = ctx
+            .layout_root
+            .read()
+            .expect("layout")
+            .window_at(0, H as isize - 3)
+            .expect("a lower window")
+            .id;
+        assert_eq!(
+            ctx.layout_root
+                .read()
+                .expect("layout")
+                .mode_line_divider(lower),
+            None
+        );
+    }
+
     // ----------------------------------------------------------------
     // The setting
     // ----------------------------------------------------------------
@@ -395,16 +795,20 @@ mod tests {
         );
         assert!(acted(MouseKind::ScrollDown, 0, 2), "a notch moves the view");
         assert!(
-            !acted(MouseKind::Drag(MouseButton::Left), 4, 4),
-            "nothing is bound to a drag yet"
+            acted(MouseKind::Drag(MouseButton::Left), 4, 4),
+            "a drag extends the selection the click started"
         );
         assert!(
             !acted(MouseKind::Up(MouseButton::Left), 4, 4),
-            "nor to a release"
+            "a release only forgets the drag -- the screen is already right"
+        );
+        assert!(
+            !acted(MouseKind::Drag(MouseButton::Left), 6, 6),
+            "and a drag with no button behind it does nothing"
         );
         assert!(
             !acted(MouseKind::Down(MouseButton::Right), 4, 4),
-            "nor to the right button"
+            "nor does the right button"
         );
         assert!(
             !acted(MouseKind::Down(MouseButton::Left), 0, H as u16 - 1),

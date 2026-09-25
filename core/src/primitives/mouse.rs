@@ -13,7 +13,8 @@
 //! is why they register with no argument specs -- the same arrangement
 //! `insert-pasted-text` has.
 use super::*;
-use crate::editor::{MOUSE_MODE, mouse_mode};
+use crate::buffer::Mark;
+use crate::editor::{MOUSE_MODE, MouseDrag, mouse_mode};
 use crate::ui::WindowId;
 
 /// How many lines one notch of the wheel moves.
@@ -112,6 +113,64 @@ primitive!(mouse_mode_toggle, _args, env, ctx, {
     );
     ctx.set_echo_message(if now_on { "Mouse on" } else { "Mouse off" });
     Ok(if now_on {
+        ELispExp::symbol("t".into())
+    } else {
+        ELispExp::nil()
+    })
+});
+
+pub const MOUSE_DRAG_TO_DOC: &str = "(mouse-drag-to WINDOW LINE COLUMN): Extend the selection in \
+         WINDOW to LINE and COLUMN. Returns t, or nil if there is no such window.\n\n\
+         What dragging with the left button held runs. The first one of a drag sets the mark \
+         where the button went down -- which is where point still is, because nothing has moved \
+         it since -- and every one after it moves point, so the region grows from the click.\n\n\
+         Whether the mark is already active is what tells the first from the rest, so no count \
+         of events has to be kept anywhere.\n\n\
+         Example:\n\
+         (mouse-drag-to 0 12 8)";
+
+primitive!(mouse_drag_to, args, _env, ctx, {
+    let window = number_arg(args, 0)?.max(0.0) as usize;
+    let line = number_arg(args, 1)?.max(0.0) as usize;
+    let column = number_arg(args, 2)?.max(0.0) as usize;
+    // Checked rather than selected. `select_window` restores the point that
+    // window remembered, which during a drag is precisely the wrong thing: the
+    // click already focused it and already put point where the button went
+    // down, and that position is what the region is about to be anchored to.
+    if WindowId(window) != ctx.get_focused_window_id() {
+        return Ok(ELispExp::nil());
+    }
+    let buffer = ctx.get_current_buffer();
+    let mut buf = buffer
+        .write()
+        .expect("Failed to acquire write lock on buffer");
+    // The first event of the drag: point is still where the button went down,
+    // so that is where the region starts.
+    if !buf.mark.as_ref().is_some_and(|mark| mark.active) {
+        buf.mark = Some(Mark::new(buf.text.cursor_pos_1d()));
+    }
+    let line = line.min(buf.text.line_count().saturating_sub(1));
+    let column = column.min(edits::line_length(&buf.text, line));
+    buf.text.cursor_move(line, column);
+    Ok(ELispExp::symbol("t".into()))
+});
+
+pub const MOUSE_RESIZE_DOC: &str = "(mouse-resize DELTA): Move the boundary being dragged by \
+         DELTA cells, towards the second window when positive. Returns t if it moved.\n\n\
+         Which boundary is not an argument: it was decided when the button went down, and is \
+         held with the rest of the drag. A split has no name to pass -- it is a node that exists \
+         to hold two others -- so the alternative would be inventing one.\n\n\
+         The kind of division is kept. A strip opened at a fixed height and then dragged is \
+         still a strip: it asked for a size rather than a share, and it still wants one.\n\n\
+         Example:\n\
+         (mouse-resize 1)";
+
+primitive!(mouse_resize, args, _env, ctx, {
+    let delta = number_arg(args, 0)? as isize;
+    let Some(MouseDrag::Divider { path, .. }) = ctx.mouse_drag() else {
+        return Ok(ELispExp::nil());
+    };
+    Ok(if ctx.resize_dragged_split(&path, delta) {
         ELispExp::symbol("t".into())
     } else {
         ELispExp::nil()

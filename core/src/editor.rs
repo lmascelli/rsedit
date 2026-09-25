@@ -23,8 +23,8 @@ use crate::{
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
         Division, Face, FloatingWindow, Focus, FrameSnapshot, LayoutNode, Orientation, Rect,
-        RenderableWindowView, Separator, Style, Theme, Window, WindowId, extract_buffer_lines,
-        region_highlights,
+        RenderableWindowView, Separator, Side, SplitPath, Style, Theme, Window, WindowId,
+        extract_buffer_lines, region_highlights,
     },
 };
 use std::{
@@ -126,7 +126,7 @@ fn mode_line_format<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> String {
 }
 
 /// What the pointer is over.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Hit {
     /// Inside a tiled window's text. LINE and COLUMN are buffer coordinates
     /// with the window's scroll already added; COLUMN may be past the end of
@@ -138,7 +138,18 @@ pub enum Hit {
         column: usize,
     },
     /// A tiled window's status line.
+    ///
+    /// Named by its window rather than by the split it divides, because a
+    /// *click* on one does nothing and only a drag needs to know: which split
+    /// a status line belongs to is a question about the tree, and asking it on
+    /// every pointer move would be work for nothing.
     ModeLine { window: WindowId },
+    /// The rule drawn between two windows side by side, and the split it
+    /// divides.
+    Separator {
+        path: SplitPath,
+        orientation: Orientation,
+    },
     /// A floating window -- a prompt, a completion strip.
     ///
     /// Reported rather than ignored so that a click on one is *swallowed*. A
@@ -146,6 +157,44 @@ pub enum Hit {
     /// in a buffer the pointer is not actually over and the user cannot see.
     Floating { window: WindowId },
 }
+
+/// What a held mouse button is in the middle of doing.
+///
+/// # Why this is remembered at all
+///
+/// A drag is the one mouse gesture that is not a single event. Where it
+/// started decides what the events after it mean, and the pointer may by then
+/// be somewhere that would answer differently -- over another window, or off
+/// the frame entirely. Reading the position afresh on each event would make a
+/// selection jump buffers halfway through, and a window resize stop the moment
+/// the pointer overshot the rule it was dragging.
+#[derive(Clone, Debug)]
+pub(crate) enum MouseDrag {
+    /// Extending a selection inside one window.
+    ///
+    /// `at` is where the pointer was last seen, in frame cells. Carried
+    /// because a drag that has left the window keeps going while the pointer
+    /// sits still, and a pointer sitting still sends no events -- so the only
+    /// record of where it is, is this one.
+    Text {
+        window: WindowId,
+        at: (isize, isize),
+    },
+    /// Moving the boundary of one split. `last` is the position along the axis
+    /// the boundary moves in, so each event can ask how far it has come since
+    /// the one before it.
+    Divider {
+        path: SplitPath,
+        orientation: Orientation,
+        last: isize,
+    },
+}
+
+/// How often a drag held outside its window scrolls it.
+///
+/// Fast enough to feel continuous, slow enough that a line is still a unit you
+/// can stop on.
+pub const DRAG_SCROLL_INTERVAL: Duration = Duration::from_millis(60);
 
 pub const MOUSE_MODE: &str = "mouse-mode";
 
@@ -160,6 +209,48 @@ pub const MOUSE_MODE: &str = "mouse-mode";
 pub fn mouse_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     env.get_variable(MOUSE_MODE)
         .is_some_and(|value| !value.is_nil())
+}
+
+/// The rectangle the tiled windows were last laid out in.
+///
+/// Rebuilt from what they recorded rather than stored: it is the frame less
+/// the echo area, and the one place that decides it is the caller of
+/// `compute_tiled_views`. The separator walk needs it because a rule belongs
+/// to a *split* rather than to a window, so there is no window's own rect to
+/// start from.
+///
+/// A free function over the tree rather than a method on the editor, so that a
+/// caller already holding the layout can ask without taking the lock a second
+/// time. `RwLock` does not promise that a second read on one thread succeeds
+/// -- a writer waiting between the two is entitled to make it wait forever.
+fn tiled_bounds(root: &LayoutNode) -> Rect {
+    // Every tiled window sits inside it, so its bounds are theirs put
+    // together -- which is what the last frame decided, whatever the terminal
+    // has done since.
+    let mut bounds: Option<Rect> = None;
+    root.window_ids()
+        .into_iter()
+        .filter_map(|id| root.window(id).map(|win| win.rect))
+        .for_each(|rect| {
+            bounds = Some(match bounds {
+                None => rect,
+                Some(so_far) => {
+                    let x = so_far.x.min(rect.x);
+                    let y = so_far.y.min(rect.y);
+                    Rect {
+                        x,
+                        y,
+                        width: ((so_far.x + so_far.width as isize)
+                            .max(rect.x + rect.width as isize)
+                            - x) as usize,
+                        height: ((so_far.y + so_far.height as isize)
+                            .max(rect.y + rect.height as isize)
+                            - y) as usize,
+                    }
+                }
+            });
+        });
+    bounds.unwrap_or_default()
 }
 
 /// A command form with numeric arguments, built rather than parsed.
@@ -240,6 +331,8 @@ pub struct EditorState<B: BufferTrait> {
     pub focused_window_id: Arc<RwLock<WindowId>>,
     /// A value only used to fastly create a new window id
     pub next_window_id: Arc<AtomicUsize>,
+    /// What a held mouse button is doing, if one is held. See [`MouseDrag`].
+    mouse_drag: Arc<RwLock<Option<MouseDrag>>>,
 
     /// Which named functions the user may invoke by name, and what arguments
     /// the editor collects for each. See `crate::commands`.
@@ -545,6 +638,7 @@ impl<B: BufferTrait> EditorState<B> {
             layout_root: Arc::new(RwLock::new(LayoutNode::Leaf(Window::new(0, "*scratch*")))),
             floating_windows: Arc::new(RwLock::new(Vec::new())),
             focused_window_id: Arc::new(RwLock::new(WindowId(0))),
+            mouse_drag: Arc::new(RwLock::new(None)),
             next_window_id: Arc::new(AtomicUsize::new(1)),
             commands: Arc::new(RwLock::new(CommandRegistry::new())),
             pending_commands: Arc::new(RwLock::new(Vec::new())),
@@ -833,7 +927,7 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on layout_root")
             .window_mut(self.get_focused_window_id())
         {
-            window.buffer_name = name.to_string();
+            window.show(name);
         }
         // After the layout lock is released: the current buffer name sits
         // before the layout in the canonical order, so taking it while
@@ -1982,6 +2076,11 @@ impl<B: BufferTrait> EditorState<B> {
             .layout_root
             .read()
             .expect("Failed to acquire read lock on layout_root");
+        // A rule occupies a column no window claims, so this can be asked
+        // first without stealing anything from them.
+        if let Some((path, orientation)) = layout.separator_at(tiled_bounds(&layout), x, y) {
+            return Some(Hit::Separator { path, orientation });
+        }
         let win = layout.window_at(x, y)?;
         let row = (y - win.rect.y) as usize;
         if row >= win.text_height {
@@ -1992,6 +2091,195 @@ impl<B: BufferTrait> EditorState<B> {
             line: win.scroll_y + row,
             column: win.scroll_x + (x - win.rect.x) as usize,
         })
+    }
+
+    /// The rectangle the tiled windows were last laid out in.
+    fn frame_rect(&self) -> Rect {
+        tiled_bounds(
+            &self
+                .layout_root
+                .read()
+                .expect("Failed to acquire read lock on layout_root"),
+        )
+    }
+
+    pub(crate) fn take_mouse_drag(&self) -> Option<MouseDrag> {
+        self.mouse_drag
+            .write()
+            .expect("Failed to acquire write lock on mouse_drag")
+            .take()
+    }
+
+    /// Move the boundary of the split at PATH by DELTA cells.
+    pub(crate) fn resize_dragged_split(&self, path: &[Side], delta: isize) -> bool {
+        let rect = self.frame_rect();
+        self.layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root")
+            .resize_split(path, rect, delta)
+    }
+
+    fn set_mouse_drag(&self, drag: Option<MouseDrag>) {
+        *self
+            .mouse_drag
+            .write()
+            .expect("Failed to acquire write lock on mouse_drag") = drag;
+    }
+
+    pub(crate) fn mouse_drag(&self) -> Option<MouseDrag> {
+        self.mouse_drag
+            .read()
+            .expect("Failed to acquire read lock on mouse_drag")
+            .clone()
+    }
+
+    /// Where in WINDOW's buffer the cell (X, Y) is, clamped to what the window
+    /// is showing.
+    ///
+    /// Clamped rather than refused because this answers a *drag*, and a drag
+    /// that leaves the window is a perfectly ordinary way to select to its
+    /// edge. Dragging beyond an edge selects to that edge and stops; it does
+    /// not scroll the window after the pointer, which is a separate feature
+    /// and a worse one to get subtly wrong.
+    fn position_in(&self, window: WindowId, x: isize, y: isize) -> Option<(usize, usize)> {
+        let layout = self
+            .layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root");
+        let win = layout.window(window)?;
+        let rows = win.text_height.max(1);
+        let row = (y - win.rect.y).clamp(0, rows as isize - 1) as usize;
+        let column = (x - win.rect.x).max(0) as usize;
+        Some((win.scroll_y + row, win.scroll_x + column))
+    }
+
+    /// Which way a drag that has left its window wants the view to move, if it
+    /// has left it at all.
+    ///
+    /// Vertically only. Dragging off the side of a window is a request to
+    /// select to the end of the lines you are over, which clamping already
+    /// gives; dragging off the top or bottom is a request for lines that are
+    /// not on screen, which nothing but scrolling can answer.
+    fn drag_scroll_step(&self, window: WindowId, y: isize) -> Option<isize> {
+        let layout = self
+            .layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root");
+        let win = layout.window(window)?;
+        let top = win.rect.y;
+        let bottom = top + win.text_height.max(1) as isize;
+        // Below the text: the status line and anything under it.
+        if y >= bottom {
+            return Some(1);
+        }
+        if y < top {
+            return Some(-1);
+        }
+        // The top row of a window flush with the top of the frame counts as
+        // being above it, because there is no row above it to be on: a
+        // terminal cannot report row -1, so a drag off the top of the screen
+        // arrives clamped to row 0 and would otherwise read as "inside".
+        //
+        // It costs nothing when the view is already at the start of the
+        // buffer, because then there is nothing to scroll to and
+        // `scroll_window_by` says so. It only acts when there is text above,
+        // which is the only time anybody drags there.
+        (y == top && top == 0).then_some(-1)
+    }
+
+    /// How long until a drag that has left its window should scroll again, or
+    /// `None` when none is waiting to.
+    ///
+    /// # Why this is a timer and not an event
+    ///
+    /// A pointer held still outside a window sends nothing at all, and that is
+    /// exactly the position somebody selecting a long passage leaves it in.
+    /// Scrolling only on movement would mean the selection stopped the moment
+    /// they stopped jiggling the mouse, which reads as the editor having lost
+    /// interest.
+    pub fn drag_scroll_in(&self) -> Option<Duration> {
+        let MouseDrag::Text { window, at: (_, y) } = self.mouse_drag()? else {
+            return None;
+        };
+        self.drag_scroll_step(window, y)
+            .map(|_| DRAG_SCROLL_INTERVAL)
+    }
+
+    /// Scroll a drag that has left its window by one line, and take the
+    /// selection with it. False when there was nothing to do.
+    ///
+    /// One line a turn rather than a distance that grows with how far outside
+    /// the pointer is: a selection running away faster the further the hand
+    /// strays is hard to stop where you meant to, and the turn is short enough
+    /// that holding the pointer out is smooth anyway.
+    pub fn drag_scroll_tick(&self, env: &Arc<Env<EditorState<B>>>) -> bool {
+        let Some(MouseDrag::Text { window, at: (x, y) }) = self.mouse_drag() else {
+            return false;
+        };
+        let Some(step) = self.drag_scroll_step(window, y) else {
+            return false;
+        };
+        if !self.scroll_window_by(window, step) {
+            // Already as far as the buffer goes. The selection is already at
+            // that end, so there is nothing left to extend either.
+            return false;
+        }
+        let Some((line, column)) = self.position_in(window, x, y) else {
+            return false;
+        };
+        self.run_command_form(
+            mouse_form(
+                "mouse-drag-to",
+                &[window.0 as f64, line as f64, column as f64],
+            ),
+            env,
+        );
+        true
+    }
+
+    /// One more event of a drag already in progress.
+    fn continue_drag(&self, x: isize, y: isize, env: &Arc<Env<EditorState<B>>>) -> bool {
+        let form = match self.mouse_drag() {
+            Some(MouseDrag::Text { window, .. }) => {
+                self.set_mouse_drag(Some(MouseDrag::Text { window, at: (x, y) }));
+                // Against the window the drag began in, not whatever is under
+                // the pointer now: a selection that changed buffers halfway
+                // through is nobody's idea of a selection.
+                self.position_in(window, x, y).map(|(line, column)| {
+                    mouse_form(
+                        "mouse-drag-to",
+                        &[window.0 as f64, line as f64, column as f64],
+                    )
+                })
+            }
+            Some(MouseDrag::Divider {
+                path,
+                orientation,
+                last,
+            }) => {
+                // How far the pointer has come since the last event, along the
+                // axis the boundary moves in. Kept as a running position
+                // rather than compared with where the drag started, so a
+                // boundary that could not move as far as the pointer did does
+                // not then lag behind it for the rest of the drag.
+                let now = match orientation {
+                    Orientation::Horizontal => y,
+                    Orientation::Vertical => x,
+                };
+                self.set_mouse_drag(Some(MouseDrag::Divider {
+                    path,
+                    orientation,
+                    last: now,
+                }));
+                (now != last).then(|| mouse_form("mouse-resize", &[(now - last) as f64]))
+            }
+            None => None,
+        };
+        let Some(form) = form else {
+            return false;
+        };
+        self.run_command_form(form, env);
+        true
     }
 
     /// Act on a mouse event from the frontend.
@@ -2018,6 +2306,22 @@ impl<B: BufferTrait> EditorState<B> {
             return false;
         }
         let (x, y) = (event.column as isize, event.row as isize);
+
+        // Continuing or ending a drag is answered before asking what is under
+        // the pointer, because a drag is about where it *began*. By the time
+        // one is a few rows long the pointer is often over another window or
+        // off the frame entirely, where the hit test answers nothing -- and a
+        // selection that stopped growing the moment you overshot the window
+        // would be a selection you could not make.
+        match event.kind {
+            MouseKind::Drag(MouseButton::Left) => return self.continue_drag(x, y, env),
+            MouseKind::Up(MouseButton::Left) => {
+                self.take_mouse_drag();
+                return false;
+            }
+            _ => (),
+        }
+
         let Some(hit) = self.hit_test(x, y) else {
             return false;
         };
@@ -2029,10 +2333,39 @@ impl<B: BufferTrait> EditorState<B> {
                     line,
                     column,
                 },
-            ) => Some(mouse_form(
-                "mouse-set-point",
-                &[window.0 as f64, line as f64, column as f64],
-            )),
+            ) => {
+                self.set_mouse_drag(Some(MouseDrag::Text { window, at: (x, y) }));
+                Some(mouse_form(
+                    "mouse-set-point",
+                    &[window.0 as f64, line as f64, column as f64],
+                ))
+            }
+            (MouseKind::Down(MouseButton::Left), Hit::Separator { path, orientation }) => {
+                self.set_mouse_drag(Some(MouseDrag::Divider {
+                    path,
+                    orientation,
+                    last: x,
+                }));
+                None
+            }
+            (MouseKind::Down(MouseButton::Left), Hit::ModeLine { window }) => {
+                // A status line divides a stacked pair, and which pair is a
+                // question about the tree -- asked here, once, rather than on
+                // every event of the drag that follows.
+                let divider = self
+                    .layout_root
+                    .read()
+                    .expect("Failed to acquire read lock on layout_root")
+                    .mode_line_divider(window);
+                if let Some(path) = divider {
+                    self.set_mouse_drag(Some(MouseDrag::Divider {
+                        path,
+                        orientation: Orientation::Horizontal,
+                        last: y,
+                    }));
+                }
+                None
+            }
             (MouseKind::ScrollUp, Hit::Text { window, .. }) => {
                 Some(mouse_form("mouse-scroll", &[window.0 as f64, -1.0]))
             }
@@ -2040,7 +2373,7 @@ impl<B: BufferTrait> EditorState<B> {
                 Some(mouse_form("mouse-scroll", &[window.0 as f64, 1.0]))
             }
             // Everything else is swallowed on purpose -- every click on a
-            // float, and every button and drag nothing is bound to yet.
+            // float, and every button nothing is bound to yet.
             _ => None,
         };
         let Some(form) = form else {
@@ -2166,7 +2499,7 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on layout_root")
             .each_window_mut(&mut |window| {
                 if window.buffer_name == name {
-                    window.buffer_name = replacement.clone();
+                    window.show(&replacement);
                 }
             });
 

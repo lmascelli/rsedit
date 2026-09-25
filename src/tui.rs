@@ -719,12 +719,20 @@ pub fn tui_main<B: BufferTrait>(
         //
         // Still event-driven: with nothing pending the answer is `None` and
         // this blocks indefinitely, so an idle editor wakes for nothing at all.
-        if let Some(remaining) = state.next_redraw_in(&env, &frame)
+        // The soonest of the things the editor has asked to be woken for: a
+        // message going stale, colour arriving from the highlighter, or a
+        // selection being dragged past the edge of its window. A pointer held
+        // still sends nothing, so that last one can only be a timer.
+        let wake = [state.next_redraw_in(&env, &frame), state.drag_scroll_in()]
+            .into_iter()
+            .flatten()
+            .min();
+        if let Some(remaining) = wake
             && !poll(remaining)?
         {
-            // The timer expired rather than an event arriving: something the
-            // editor was waiting on -- a message going stale, colour arriving
-            // -- has changed the frame without anybody touching a key.
+            // The timer expired rather than an event arriving, so whatever the
+            // editor was waiting on is now due.
+            state.drag_scroll_tick(&env);
             dirty = true;
             continue;
         }

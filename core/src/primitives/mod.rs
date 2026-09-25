@@ -305,6 +305,18 @@ pub fn install_primitives<B: BufferTrait>(
         mouse::MOUSE_SET_POINT_DOC
     );
     insert_cmd!(
+        "mouse-drag-to",
+        mouse::mouse_drag_to,
+        [] as [&str; 0],
+        mouse::MOUSE_DRAG_TO_DOC
+    );
+    insert_cmd!(
+        "mouse-resize",
+        mouse::mouse_resize,
+        [] as [&str; 0],
+        mouse::MOUSE_RESIZE_DOC
+    );
+    insert_cmd!(
         "mouse-mode-toggle",
         mouse::mouse_mode_toggle,
         [] as [&str; 0],

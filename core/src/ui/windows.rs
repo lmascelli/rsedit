@@ -1,12 +1,12 @@
+use crate::ELispExp;
 use crate::buffer::{Buffer, BufferTrait, mark::region_bounds};
 use crate::ui::Face;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
 };
-use crate::ELispExp;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Orientation {
     Horizontal,
     Vertical,
@@ -144,6 +144,22 @@ pub struct Window {
 }
 
 impl Window {
+    /// Point this window at another buffer.
+    ///
+    /// Everything the window remembered describes the buffer it is leaving --
+    /// how far down it was scrolled, and where point was in it -- and none of
+    /// it means anything about the new one. Offset 4,000 of a long file is the
+    /// end of a short one, or past it.
+    ///
+    /// A method rather than an assignment at each call site so that forgetting
+    /// is not something a caller has to remember.
+    pub fn show(&mut self, buffer_name: &str) {
+        buffer_name.clone_into(&mut self.buffer_name);
+        self.scroll_x = 0;
+        self.scroll_y = 0;
+        self.point = None;
+    }
+
     /// A window showing BUFFER, scrolled to the top, with a status line.
     pub fn new(id: impl Into<WindowId>, buffer_name: &str) -> Self {
         Self {
@@ -300,6 +316,91 @@ pub struct RenderableWindowView {
     pub has_border: bool,
 }
 
+/// The smallest a window may be dragged to.
+///
+/// Two rows so a stacked window keeps a row of text under its status line, and
+/// four columns so a side-by-side one can show something. Smaller is not
+/// forbidden -- a split of a tiny frame still divides it -- it is just not
+/// somewhere a drag will take you, because a window you cannot see is a window
+/// you cannot drag back.
+pub const MIN_DRAGGED_HEIGHT: usize = 2;
+pub const MIN_DRAGGED_WIDTH: usize = 4;
+
+/// Which half of a split.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    /// The upper one when stacked, the left one when side by side.
+    First,
+    Second,
+}
+
+/// The way from the root of a layout to one of its nodes.
+///
+/// Splits have no ids, and giving them one would put an identity on a node
+/// that exists only to hold two others. A path is what a tree already offers
+/// instead, and it stays meaningful exactly as long as the shape does -- which
+/// is the whole of a drag and no longer.
+pub type SplitPath = Vec<Side>;
+
+/// How a split divides RECT: a rect for each child, and the rule between them
+/// when there is room for one.
+///
+/// # Why this is a function
+///
+/// Composing a frame and asking what is under the pointer have to agree about
+/// where the windows are, and the second cannot read the first's answer for a
+/// *rule*, because a rule is not stored anywhere -- unlike a window, it has
+/// nothing to remember it. Two copies of this arithmetic would agree until the
+/// day they did not, and the disagreement would be a drag that grabbed nothing
+/// in a narrow split.
+pub fn split_rects(
+    orientation: &Orientation,
+    division: &Division,
+    rect: Rect,
+) -> (Rect, Rect, Option<Rect>) {
+    match orientation {
+        Orientation::Horizontal => {
+            let first_height = division.first_share(rect.height);
+            (
+                Rect {
+                    height: first_height,
+                    ..rect
+                },
+                Rect {
+                    y: rect.y + first_height as isize,
+                    height: rect.height.saturating_sub(first_height),
+                    ..rect
+                },
+                // Stacked windows are divided by the upper one's status line,
+                // which is a row it already owns. There is no rule to draw.
+                None,
+            )
+        }
+        Orientation::Vertical => {
+            let divided = rect.width >= MIN_WIDTH_FOR_SEPARATOR;
+            let usable = rect.width.saturating_sub(divided as usize);
+            let first_width = division.first_share(usable);
+            (
+                Rect {
+                    width: first_width,
+                    ..rect
+                },
+                Rect {
+                    x: rect.x + first_width as isize + divided as isize,
+                    width: usable.saturating_sub(first_width),
+                    ..rect
+                },
+                divided.then_some(Rect {
+                    x: rect.x + first_width as isize,
+                    y: rect.y,
+                    width: 1,
+                    height: rect.height,
+                }),
+            )
+        }
+    }
+}
+
 impl LayoutNode {
     /// The window with this id, to be changed.
     ///
@@ -437,6 +538,142 @@ impl LayoutNode {
         true
     }
 
+    /// The rule under (X, Y), and the split it divides.
+    ///
+    /// Walks the same arithmetic composition used, because a rule is not
+    /// stored anywhere -- see [`split_rects`].
+    pub fn separator_at(&self, rect: Rect, x: isize, y: isize) -> Option<(SplitPath, Orientation)> {
+        let LayoutNode::Split {
+            orientation,
+            division,
+            left,
+            right,
+        } = self
+        else {
+            return None;
+        };
+        let (first, second, rule) = split_rects(orientation, division, rect);
+        if rule.is_some_and(|rule| rule.contains(x, y)) {
+            return Some((Vec::new(), *orientation));
+        }
+        let (child, side, child_rect) = if first.contains(x, y) {
+            (left, Side::First, first)
+        } else if second.contains(x, y) {
+            (right, Side::Second, second)
+        } else {
+            return None;
+        };
+        child.separator_at(child_rect, x, y).map(|(mut path, at)| {
+            path.insert(0, side);
+            (path, at)
+        })
+    }
+
+    /// The way from here to the window with ID.
+    pub fn path_to_window(&self, id: WindowId) -> Option<SplitPath> {
+        match self {
+            LayoutNode::Leaf(win) => (win.id == id).then(Vec::new),
+            LayoutNode::Split { left, right, .. } => left
+                .path_to_window(id)
+                .map(|mut path| {
+                    path.insert(0, Side::First);
+                    path
+                })
+                .or_else(|| {
+                    right.path_to_window(id).map(|mut path| {
+                        path.insert(0, Side::Second);
+                        path
+                    })
+                }),
+        }
+    }
+
+    /// Which way the split at PATH divides, if there is one there.
+    pub fn orientation_at(&self, path: &[Side]) -> Option<Orientation> {
+        let LayoutNode::Split {
+            orientation,
+            left,
+            right,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        match path.split_first() {
+            None => Some(*orientation),
+            Some((Side::First, rest)) => left.orientation_at(rest),
+            Some((Side::Second, rest)) => right.orientation_at(rest),
+        }
+    }
+
+    /// The split that the status line of window ID divides, if any.
+    ///
+    /// A stacked pair has no drawn rule: the upper window's status line is the
+    /// boundary, and it is a row that window already owns. So dragging a
+    /// status line resizes the nearest split the window sits in the *top* half
+    /// of -- and the bottom window of the frame has no such split, which is
+    /// right, because the row under it is the echo area.
+    pub fn mode_line_divider(&self, id: WindowId) -> Option<SplitPath> {
+        let path = self.path_to_window(id)?;
+        (0..path.len()).rev().find_map(|cut| {
+            (path[cut] == Side::First
+                && self.orientation_at(&path[..cut]) == Some(Orientation::Horizontal))
+            .then(|| path[..cut].to_vec())
+        })
+    }
+
+    /// Move the boundary of the split at PATH by DELTA cells, towards the
+    /// second child when positive. False when it could not move.
+    ///
+    /// RECT is what this node was last given, which is needed because a
+    /// division is a share of something and the share has to be worked out
+    /// against a size.
+    pub fn resize_split(&mut self, path: &[Side], rect: Rect, delta: isize) -> bool {
+        let LayoutNode::Split {
+            orientation,
+            division,
+            left,
+            right,
+        } = self
+        else {
+            return false;
+        };
+        if let Some((side, rest)) = path.split_first() {
+            let (first, second, _) = split_rects(orientation, division, rect);
+            return match side {
+                Side::First => left.resize_split(rest, first, delta),
+                Side::Second => right.resize_split(rest, second, delta),
+            };
+        }
+        let (usable, floor) = match orientation {
+            Orientation::Horizontal => (rect.height, MIN_DRAGGED_HEIGHT),
+            Orientation::Vertical => (
+                rect.width
+                    .saturating_sub((rect.width >= MIN_WIDTH_FOR_SEPARATOR) as usize),
+                MIN_DRAGGED_WIDTH,
+            ),
+        };
+        // Too small to hold two windows worth looking at: leave it alone
+        // rather than pick a winner.
+        if usable < floor * 2 {
+            return false;
+        }
+        let current = division.first_share(usable) as isize;
+        let wanted = (current + delta).clamp(floor as isize, (usable - floor) as isize);
+        if wanted == current {
+            return false;
+        }
+        // The *kind* of division is kept, not converted. A strip that was
+        // opened at a fixed height and then dragged is still a strip: it
+        // wanted a size rather than a share, and it still does.
+        *division = match division {
+            Division::Ratio(_) => Division::Ratio(wanted as f32 / usable as f32),
+            Division::FirstFixed(_) => Division::FirstFixed(wanted as usize),
+            Division::SecondFixed(_) => Division::SecondFixed(usable - wanted as usize),
+        };
+        true
+    }
+
     /// The window whose last drawn rectangle contains (X, Y).
     ///
     /// Reads what composition left behind rather than walking the layout's
@@ -488,6 +725,12 @@ impl LayoutNode {
         match self {
             LayoutNode::Leaf(win) => {
                 let is_focused = win.id == focus.id;
+                // Whether the window changed shape since it was last drawn.
+                // See the reconciliation below: a view that has been scrolled
+                // away from point stays there, but one whose height just
+                // changed has to be reconsidered, or a resize can leave the
+                // cursor off the bottom of its own window.
+                let resized = win.rect != rect;
                 // The whole window, status line included, and recorded before
                 // the status line is taken out of the rect below: a pointer
                 // lands in the window, and `text_height` says where its text
@@ -548,32 +791,48 @@ impl LayoutNode {
                 let follows_points = is_focused || !focus.tiled;
                 if let Some(buf) = buffers.get(&win.buffer_name) {
                     let (c_line, c_col, c_offset) = {
-                        let buf = buf
-                            .read()
-                            .expect("Failed to acquire read lock on buffer");
-                         let (line, col) = buf
-                                            .text
-                                            .cursor_pos();
-                         (line, col, buf.text.cursor_pos_1d())
-                        };
+                        let buf = buf.read().expect("Failed to acquire read lock on buffer");
+                        let (line, col) = buf.text.cursor_pos();
+                        (line, col, buf.text.cursor_pos_1d())
+                    };
 
                     if follows_points {
+                        // Whether point has moved since this window last drew
+                        // it. Compared *before* it is recorded, and it is what
+                        // decides whether the view is dragged back below.
+                        //
+                        // # Why the view does not simply always follow
+                        //
+                        // A view that reconciled itself with point on every
+                        // frame could never be scrolled away from it. The
+                        // wheel would move the text until point reached an
+                        // edge and then stop, because the next frame put it
+                        // back -- which reads as the scroll jamming.
+                        //
+                        // Following when point *moves* is the honest rule, and
+                        // the one Emacs uses: scrolling is a way of looking
+                        // somewhere else, and it lasts until you do something
+                        // that says where you are. Typing, searching or moving
+                        // point all say so; turning a wheel does not.
+                        let point_moved = win.point != Some(c_offset);
                         // Where this window will put point when it is focused
                         // again -- recorded alongside the scroll, and for the
                         // same reason: these are exactly the windows whose
                         // view is tracking point.
                         win.point = Some(c_offset);
 
-                        if c_line < win.scroll_y {
-                            win.scroll_y = c_line;
-                        } else if c_line >= win.scroll_y + rect.height {
-                            win.scroll_y = c_line - rect.height + 1;
-                        }
+                        if point_moved || resized {
+                            if c_line < win.scroll_y {
+                                win.scroll_y = c_line;
+                            } else if c_line >= win.scroll_y + rect.height {
+                                win.scroll_y = c_line - rect.height + 1;
+                            }
 
-                        if c_col < win.scroll_x {
-                            win.scroll_x = c_col;
-                        } else if c_col >= win.scroll_x + rect.width {
-                            win.scroll_x = c_col - rect.width + 1;
+                            if c_col < win.scroll_x {
+                                win.scroll_x = c_col;
+                            } else if c_col >= win.scroll_x + rect.width {
+                                win.scroll_x = c_col - rect.width + 1;
+                            }
                         }
 
                         if is_focused {
@@ -616,75 +875,30 @@ impl LayoutNode {
                 division,
                 left,
                 right,
-            } => match orientation {
-                Orientation::Horizontal => {
-                    let left_height = division.first_share(rect.height);
-                    let right_height = rect.height.saturating_sub(left_height);
-
-                    left.compute_tiled_views(
-                        Rect {
-                            height: left_height,
-                            ..rect
-                        },
-                        focus,
-                        buffers,
-                        mode_line_format,
-                        out_views,
-                        out_separators,
-                    );
-                    right.compute_tiled_views(
-                        Rect {
-                            y: rect.y + left_height as isize,
-                            height: right_height,
-                            ..rect
-                        },
-                        focus,
-                        buffers,
-                        mode_line_format,
-                        out_views,
-                        out_separators,
-                    );
+            } => {
+                let (first, second, rule) = split_rects(orientation, division, rect);
+                // Pushed before the children recurse, so the rules come out in
+                // the order they were found and later ones paint over earlier.
+                if let Some(rule) = rule {
+                    out_separators.push(rule);
                 }
-                Orientation::Vertical => {
-                    let divided = rect.width >= MIN_WIDTH_FOR_SEPARATOR;
-                    let usable = rect.width.saturating_sub(divided as usize);
-                    let left_width = division.first_share(usable);
-                    let right_width = usable.saturating_sub(left_width);
-
-                    if divided {
-                        out_separators.push(Rect {
-                            x: rect.x + left_width as isize,
-                            y: rect.y,
-                            width: 1,
-                            height: rect.height,
-                        });
-                    }
-
-                    left.compute_tiled_views(
-                        Rect {
-                            width: left_width,
-                            ..rect
-                        },
-                        focus,
-                        buffers,
-                        mode_line_format,
-                        out_views,
-                        out_separators,
-                    );
-                    right.compute_tiled_views(
-                        Rect {
-                            x: rect.x + left_width as isize + divided as isize,
-                            width: right_width,
-                            ..rect
-                        },
-                        focus,
-                        buffers,
-                        mode_line_format,
-                        out_views,
-                        out_separators,
-                    );
-                }
-            },
+                left.compute_tiled_views(
+                    first,
+                    focus,
+                    buffers,
+                    mode_line_format,
+                    out_views,
+                    out_separators,
+                );
+                right.compute_tiled_views(
+                    second,
+                    focus,
+                    buffers,
+                    mode_line_format,
+                    out_views,
+                    out_separators,
+                );
+            }
         }
     }
 }
