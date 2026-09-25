@@ -29,6 +29,7 @@ mod isearch_tests;
 mod manpage_tests;
 mod minibuffer_lisp_tests;
 mod mode_line_tests;
+mod mouse_tests;
 mod movement_tests;
 mod overlay_lisp_tests;
 mod overlay_tests;

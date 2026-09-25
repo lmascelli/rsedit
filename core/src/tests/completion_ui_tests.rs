@@ -872,7 +872,7 @@ mod tests {
                 .views
                 .iter()
                 .find(|view| view.buffer_name == name)
-                .map(|view| view.rect.clone())
+                .map(|view| view.rect)
                 .unwrap_or_else(|| panic!("{name} is on screen"))
         };
         let prompt = rect_of("*Minibuffer*");

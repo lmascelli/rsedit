@@ -1,0 +1,119 @@
+//! What a click and a wheel notch do.
+//!
+//! # Why these are commands and not code in the event handler
+//!
+//! `EditorState::handle_mouse_event` works out *where* the pointer was, which
+//! needs the layout and every window's scroll and so can only happen there.
+//! What that position should *mean* is a separate question, and routing it
+//! through the command machinery buys the same things a keystroke gets: one
+//! undo step, one `post-command-hook`, a name in the logs and in `M-x`, and a
+//! binding that can be replaced without touching the handler.
+//!
+//! Their arguments come from the dispatcher rather than from a prompt, which
+//! is why they register with no argument specs -- the same arrangement
+//! `insert-pasted-text` has.
+use super::*;
+use crate::editor::{MOUSE_MODE, mouse_mode};
+use crate::ui::WindowId;
+
+/// How many lines one notch of the wheel moves.
+///
+/// Three, which is what a terminal's own scrollback does and therefore what
+/// the hand already expects. Not a screenful: the wheel is for nudging, and
+/// `C-v` is for pages.
+const MOUSE_WHEEL_LINES: isize = 3;
+
+fn number_arg<B: BufferTrait>(
+    args: &[ELispExp<B>],
+    index: usize,
+) -> Result<f64, EvalError<EditorState<B>>> {
+    match args.get(index) {
+        Some(ELispExp::Number(n)) => Ok(*n),
+        Some(other) => Err(EvalError::WrongArgumentType {
+            expected: "Number".into(),
+            got: other.clone(),
+        }),
+        None => Err(EvalError::WrongNumberOfArguments {
+            expected: index + 1,
+            got: args.len(),
+        }),
+    }
+}
+
+pub const MOUSE_SET_POINT_DOC: &str = "(mouse-set-point WINDOW LINE COLUMN): Focus WINDOW and put \
+         point at LINE and COLUMN in it. Returns t, or nil if there is no such window.\n\n\
+         What a left click runs. LINE and COLUMN are buffer coordinates -- the window's scroll \
+         has already been added by the time this is called -- and both are clamped to the \
+         buffer, so clicking past the end of a short line lands at its end rather than \
+         nowhere.\n\n\
+         The window is focused first and point set afterwards, in that order: focusing a window \
+         restores the point it remembered, and the click has to win over it.\n\n\
+         Example:\n\
+         (mouse-set-point 0 12 4)";
+
+primitive!(mouse_set_point, args, _env, ctx, {
+    let window = number_arg(args, 0)?.max(0.0) as usize;
+    let line = number_arg(args, 1)?.max(0.0) as usize;
+    let column = number_arg(args, 2)?.max(0.0) as usize;
+    if !ctx.select_window(WindowId(window)) {
+        return Ok(ELispExp::nil());
+    }
+    let buffer = ctx.get_current_buffer();
+    let mut buf = buffer
+        .write()
+        .expect("Failed to acquire write lock on buffer");
+    // Clamped against the buffer rather than against the window: the screen
+    // has no opinion about how long a line is, and a click in the blank space
+    // to the right of a short one means its end.
+    let line = line.min(buf.text.line_count().saturating_sub(1));
+    let column = column.min(edits::line_length(&buf.text, line));
+    buf.text.cursor_move(line, column);
+    Ok(ELispExp::symbol("t".into()))
+});
+
+pub const MOUSE_SCROLL_DOC: &str = "(mouse-scroll WINDOW NOTCHES): Scroll WINDOW by NOTCHES of \
+         the wheel, positive being towards the end of the buffer. Returns t if the view moved.\n\n\
+         Neither focus nor point moves. Rolling the wheel over a window you are not working in \
+         is a way of *looking* at it, and having it steal the cursor would make the next \
+         keystroke land somewhere unexpected.\n\n\
+         Example:\n\
+         (mouse-scroll 0 1)";
+
+primitive!(mouse_scroll, args, _env, ctx, {
+    let window = number_arg(args, 0)?.max(0.0) as usize;
+    let notches = number_arg(args, 1)? as isize;
+    let moved = ctx.scroll_window_by(WindowId(window), notches * MOUSE_WHEEL_LINES);
+    Ok(if moved {
+        ELispExp::symbol("t".into())
+    } else {
+        ELispExp::nil()
+    })
+});
+
+pub const MOUSE_MODE_TOGGLE_DOC: &str = "(mouse-mode-toggle): Turn the mouse on or off, and say \
+         which. Returns t when it is now on.\n\n\
+         A built-in command rather than three lines in the shipped configuration, because a \
+         setting you cannot change without editing a file is a setting you will fight. It is in \
+         Rust rather than Lisp for a duller reason: the configuration that turns the mouse on is \
+         evaluated before the module defining `defcommand' has necessarily loaded, so a command \
+         defined there is a command that cannot be defined.\n\n\
+         Example:\n\
+         (define-key nil \\\"C-c m\\\" 'mouse-mode-toggle)";
+
+primitive!(mouse_mode_toggle, _args, env, ctx, {
+    let now_on = !mouse_mode(&env);
+    env.set_variable(
+        MOUSE_MODE.into(),
+        if now_on {
+            ELispExp::symbol("t".into())
+        } else {
+            ELispExp::nil()
+        },
+    );
+    ctx.set_echo_message(if now_on { "Mouse on" } else { "Mouse off" });
+    Ok(if now_on {
+        ELispExp::symbol("t".into())
+    } else {
+        ELispExp::nil()
+    })
+});

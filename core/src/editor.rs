@@ -3,7 +3,8 @@ use crate::{
     buffer::{Buffer, BufferTrait},
     commands::{ArgSpec, CommandRegistry, Invocation, PendingCommand, PrefixArg},
     input::{
-        KeyCode, KeyEvent, Keymap, OnUnbound, TransientKeymap, describe_keys, fill_default_keymaps,
+        KeyCode, KeyEvent, Keymap, MouseButton, MouseEvent, MouseKind, OnUnbound, TransientKeymap,
+        describe_keys, fill_default_keymaps,
     },
     isearch::install_isearch,
     kill_ring::{Direction, KillRing},
@@ -122,6 +123,53 @@ fn mode_line_format<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> String {
         Some(ELispExp::String(format)) => format.to_string(),
         _ => DEFAULT_MODE_LINE_FORMAT.to_string(),
     }
+}
+
+/// What the pointer is over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hit {
+    /// Inside a tiled window's text. LINE and COLUMN are buffer coordinates
+    /// with the window's scroll already added; COLUMN may be past the end of
+    /// its line, which the command clamps against the buffer rather than the
+    /// geometry -- the screen has no opinion about how long a line is.
+    Text {
+        window: WindowId,
+        line: usize,
+        column: usize,
+    },
+    /// A tiled window's status line.
+    ModeLine { window: WindowId },
+    /// A floating window -- a prompt, a completion strip.
+    ///
+    /// Reported rather than ignored so that a click on one is *swallowed*. A
+    /// float is drawn over a tiled window, so falling through would move point
+    /// in a buffer the pointer is not actually over and the user cannot see.
+    Floating { window: WindowId },
+}
+
+pub const MOUSE_MODE: &str = "mouse-mode";
+
+/// Whether the editor is reading the mouse, as Lisp currently defines it.
+///
+/// Off unless something says otherwise, and the default `init.lisp` says
+/// otherwise. It is a setting at all because it costs something: a terminal
+/// reporting the mouse to the editor is not using it for its own selection, so
+/// turning this on trades the terminal's copy-and-paste for the editor's. That
+/// is the right trade for most people and an unpleasant surprise for anyone
+/// who was never asked -- which is why upgrading does not make it for them.
+pub fn mouse_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
+    env.get_variable(MOUSE_MODE)
+        .is_some_and(|value| !value.is_nil())
+}
+
+/// A command form with numeric arguments, built rather than parsed.
+///
+/// Built, because the arguments are numbers the editor just worked out: going
+/// through the parser would mean formatting them into text for it to read back.
+fn mouse_form<B: BufferTrait>(name: &str, args: &[f64]) -> ELispExp<B> {
+    let mut items = vec![ELispExp::symbol(name.into())];
+    items.extend(args.iter().copied().map(ELispExp::number));
+    ELispExp::form(items)
 }
 
 pub const WINDOW_SEPARATOR: &str = "window-separator";
@@ -1859,6 +1907,149 @@ impl<B: BufferTrait> EditorState<B> {
         );
     }
 
+    /// Scroll WINDOW by LINES, towards the end of the buffer when positive.
+    ///
+    /// Neither focus nor point moves. False when there is no such window or
+    /// the view was already as far as it goes.
+    ///
+    /// The three locks are taken one at a time and given straight back rather
+    /// than nested: the line count has to come from the buffer and the scroll
+    /// has to be written to the layout, and holding both would put an edge in
+    /// the ordering for the sake of an operation that does not need one.
+    pub(crate) fn scroll_window_by(&self, window: WindowId, lines: isize) -> bool {
+        let Some(name) = self
+            .layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root")
+            .window(window)
+            .map(|win| win.buffer_name.clone())
+        else {
+            return false;
+        };
+        let Some(buffer) = self.get_buffer(&name) else {
+            return false;
+        };
+        let line_count = buffer
+            .read()
+            .expect("Failed to acquire read lock on buffer")
+            .text
+            .line_count();
+
+        let mut layout = self
+            .layout_root
+            .write()
+            .expect("Failed to acquire write lock on layout_root");
+        let Some(win) = layout.window_mut(window) else {
+            return false;
+        };
+        // The last line may sit on the top row and no further. Past that the
+        // window fills with the nothing after the end of the buffer, which the
+        // reader then has to scroll back out of by hand.
+        let furthest = line_count.saturating_sub(1) as isize;
+        let target = (win.scroll_y as isize + lines).clamp(0, furthest);
+        if target == win.scroll_y as isize {
+            return false;
+        }
+        win.scroll_y = target as usize;
+        true
+    }
+
+    /// What the pointer at (X, Y) is over, in cells of the last frame.
+    ///
+    /// `None` when it is over nothing -- the echo area, or a gap no window
+    /// claims.
+    pub(crate) fn hit_test(&self, x: isize, y: isize) -> Option<Hit> {
+        // Floats first and in reverse, because later ones paint over earlier
+        // ones and the last drawn is the one the pointer is really on. Read
+        // out and the lock let go before the layout is taken: these two are
+        // never held together, and the order here is the reverse of the
+        // canonical one.
+        let float_hit = self
+            .floating_windows
+            .read()
+            .expect("Failed to acquire read lock on floating_windows")
+            .iter()
+            .rev()
+            .find(|float| float.rect.contains(x, y))
+            .map(|float| Hit::Floating {
+                window: float.window.id,
+            });
+        if float_hit.is_some() {
+            return float_hit;
+        }
+
+        let layout = self
+            .layout_root
+            .read()
+            .expect("Failed to acquire read lock on layout_root");
+        let win = layout.window_at(x, y)?;
+        let row = (y - win.rect.y) as usize;
+        if row >= win.text_height {
+            return Some(Hit::ModeLine { window: win.id });
+        }
+        Some(Hit::Text {
+            window: win.id,
+            line: win.scroll_y + row,
+            column: win.scroll_x + (x - win.rect.x) as usize,
+        })
+    }
+
+    /// Act on a mouse event from the frontend.
+    ///
+    /// # Why this resolves and then dispatches
+    ///
+    /// Working out *where* a click landed needs the layout and every window's
+    /// scroll, which only the editor has -- so it happens here. Deciding what
+    /// a click *means* is a different kind of question, and it goes through
+    /// the command machinery exactly as `handle_paste` does: one undo step,
+    /// one `post-command-hook`, a name that `M-x` and the logs can see, and a
+    /// binding that can be replaced later without touching this function.
+    ///
+    /// Answers whether the event was acted on. A terminal that is reporting
+    /// the mouse sends motion and drag events by the dozen per second, and
+    /// nearly all of them mean nothing here -- so the frontend needs to know
+    /// which ones are worth a redraw, or it repaints the screen continuously
+    /// for frames identical to the last.
+    pub fn handle_mouse_event(&self, event: MouseEvent, env: &Arc<Env<EditorState<B>>>) -> bool {
+        // Checked here rather than only where the terminal switches capture
+        // on, so the setting means the same thing to every frontend: a GUI
+        // that always delivers mouse events has to obey it too.
+        if !mouse_mode(env) {
+            return false;
+        }
+        let (x, y) = (event.column as isize, event.row as isize);
+        let Some(hit) = self.hit_test(x, y) else {
+            return false;
+        };
+        let form = match (event.kind, hit) {
+            (
+                MouseKind::Down(MouseButton::Left),
+                Hit::Text {
+                    window,
+                    line,
+                    column,
+                },
+            ) => Some(mouse_form(
+                "mouse-set-point",
+                &[window.0 as f64, line as f64, column as f64],
+            )),
+            (MouseKind::ScrollUp, Hit::Text { window, .. }) => {
+                Some(mouse_form("mouse-scroll", &[window.0 as f64, -1.0]))
+            }
+            (MouseKind::ScrollDown, Hit::Text { window, .. }) => {
+                Some(mouse_form("mouse-scroll", &[window.0 as f64, 1.0]))
+            }
+            // Everything else is swallowed on purpose -- every click on a
+            // float, and every button and drag nothing is bound to yet.
+            _ => None,
+        };
+        let Some(form) = form else {
+            return false;
+        };
+        self.run_command_form(form, env);
+        true
+    }
+
     /// Run every function registered under HOOK_NAME in the major mode
     /// named MODE_NAME, in registration order, each called with zero
     /// arguments. Errors from an individual hook are logged and
@@ -2156,7 +2347,7 @@ impl<B: BufferTrait> EditorState<B> {
                 });
 
             views.push(RenderableWindowView {
-                rect: float.rect.clone(),
+                rect: float.rect,
                 buffer_name: float.window.buffer_name.clone(),
                 title: float.title.clone(),
                 is_focused,
@@ -3168,6 +3359,70 @@ fn answer_spec<B: BufferTrait>(spec: &ArgSpec, invocation: &Invocation) -> Vec<E
 /// Create a global EditorState environment and a Lisp environment associated to it.
 /// It installs in the lisp environment all the primitive functions to use the editor.
 /// It is mandatory that the lisp environment does not outlive the EditorState struct.
+/// The configuration the editor writes for somebody who has none.
+///
+/// A named constant rather than a literal inside the function that writes it,
+/// so that a test can evaluate it -- and the test evaluates it into a bare
+/// environment, because that is the situation it is written for.
+///
+/// # What may go in here
+///
+/// `eval-file` lines, and settings. Nothing that needs a macro: the modules
+/// this file loads are what *define* the macros, and when one of them is
+/// missing -- a test binary with no `data/lisp` beside it, an installation
+/// with a module removed -- `defcommand` is not a macro and a form using it is
+/// evaluated as an ordinary call. That does not degrade, it raises, and this
+/// file is evaluated with `?` so it takes the whole editor down with it.
+/// Anything that wants to be a command belongs in a module or in Rust. It is a Rust *raw* string, which means a
+/// backslash in it is a backslash: Lisp written here with the escaping habits
+/// of an ordinary string literal reaches the parser with the backslashes still
+/// attached. Loading survives that -- `defcommand' does not evaluate its body
+/// -- and the failure waits until somebody runs the command, which is a long
+/// way from here.
+pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
+;; Add your configuration here.
+;;
+;; The order matters: each of these uses what the ones above it define.
+;; `commands' defines `defcommand', which the modules below are written with,
+;; and `debug' defines `message', which they report through.
+(eval-file "commands")
+(eval-file "debug")
+(eval-file "common-keymaps")
+(eval-file "indent")      ; what Tab does; a mode plugs its own rule in
+(eval-file "minibuffer")
+
+;; Modules. Each is optional -- comment one out and the editor comes up
+;; without it, missing exactly that feature and nothing else.
+(eval-file "rust-mode")   ; colouring for Rust source
+(eval-file "risp-mode")   ; colouring and indentation for this editor's own Lisp
+(eval-file "dired")       ; a directory in a buffer (C-x d)
+(eval-file "completion")  ; Tab shows every candidate at once, in a strip
+(eval-file "clipboard")   ; kills also go to the system clipboard
+(eval-file "electric-pair") ; typing "(" gives you "()"
+(eval-file "buffer-list")  ; C-x b to switch, C-x C-b for the whole list
+(eval-file "shell")       ; M-! runs a command and shows what it said
+(eval-file "manpage")     ; C-h m, and K on a word
+(eval-file "compile")     ; C-c c, and M-g n to walk what it complained about
+(eval-file "theme")       ; C-c t to choose how faces are drawn
+
+;; Where completions come from, for C-M-i in a buffer. The command is built in
+;; and works without this; what this adds is the five sources it asks. Take one
+;; out with `set-completion-functions', or add one of your own for a single
+;; mode with `add-completion-function'.
+(eval-file "completion-at-point")
+
+;; The mouse: click to put point, wheel to scroll the window under the pointer.
+;;
+;; On here rather than in the editor's own defaults because it costs something.
+;; While the editor is reading the mouse the terminal is not, so selecting text
+;; with the mouse to paste it into another program stops working -- hold Shift
+;; in most terminals to get it back for one drag. Comment this out if you would
+;; rather keep the terminal's selection.
+(setq mouse-mode t)
+
+
+"#;
+
 pub fn create_global_env<B: BufferTrait>()
 -> Result<(EditorState<B>, Arc<Env<EditorState<B>>>), EvalError<EditorState<B>>> {
     let editor_state = EditorState::new();
@@ -3196,6 +3451,10 @@ pub fn create_global_env<B: BufferTrait>()
             ));
         }
     }
+
+    // Off here and turned on by the default init.lisp below. See `mouse_mode`
+    // for why it is a setting rather than simply on.
+    env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
 
     // Add a list of callbacks that will be called after a resize event.
     // The list will contain lambdas with arguments (new_width, new_height)
@@ -3288,43 +3547,7 @@ pub fn create_global_env<B: BufferTrait>()
                     err
                 ));
             } else {
-                if let Err(err) = fs::write(
-                    &user_config_path,
-                    r#";; rsedit init.lisp
-;; Add your configuration here.
-;;
-;; The order matters: each of these uses what the ones above it define.
-;; `commands' defines `defcommand', which the modules below are written with,
-;; and `debug' defines `message', which they report through.
-(eval-file "commands")
-(eval-file "debug")
-(eval-file "common-keymaps")
-(eval-file "indent")      ; what Tab does; a mode plugs its own rule in
-(eval-file "minibuffer")
-
-;; Modules. Each is optional -- comment one out and the editor comes up
-;; without it, missing exactly that feature and nothing else.
-(eval-file "rust-mode")   ; colouring for Rust source
-(eval-file "risp-mode")   ; colouring and indentation for this editor's own Lisp
-(eval-file "dired")       ; a directory in a buffer (C-x d)
-(eval-file "completion")  ; Tab shows every candidate at once, in a strip
-(eval-file "clipboard")   ; kills also go to the system clipboard
-(eval-file "electric-pair") ; typing "(" gives you "()"
-(eval-file "buffer-list")  ; C-x b to switch, C-x C-b for the whole list
-(eval-file "shell")       ; M-! runs a command and shows what it said
-(eval-file "manpage")     ; C-h m, and K on a word
-(eval-file "compile")     ; C-c c, and M-g n to walk what it complained about
-(eval-file "theme")       ; C-c t to choose how faces are drawn
-
-;; Where completions come from, for C-M-i in a buffer. The command is built in
-;; and works without this; what this adds is the five sources it asks. Take one
-;; out with `set-completion-functions', or add one of your own for a single
-;; mode with `add-completion-function'.
-(eval-file "completion-at-point")
-
-
-"#,
-                ) {
+                if let Err(err) = fs::write(&user_config_path, DEFAULT_INIT_LISP) {
                     editor_state.log_diagnostic(&format!(
                         "[ERROR] Failed to write default user configuration {}",
                         err

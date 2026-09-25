@@ -16,7 +16,48 @@ pub enum KeyCode {
     // Add more as needed (Tab, F1...)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+/// Which button, for the events that have one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
+}
+
+/// What the mouse did.
+///
+/// `Up` and `Drag` are carried although nothing acts on them yet: this type is
+/// the contract with whatever frontend is delivering events, and widening it
+/// later would mean touching every frontend a second time for no gain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MouseKind {
+    Down(MouseButton),
+    Up(MouseButton),
+    Drag(MouseButton),
+    ScrollUp,
+    ScrollDown,
+}
+
+/// The mouse, in terminal cells.
+///
+/// # Why this carries no buffer position
+///
+/// A frontend knows where the pointer is on the screen and nothing else. Which
+/// window that cell belongs to, and which character of which line it is,
+/// depends on the layout and on how far each window is scrolled -- facts the
+/// editor has and a terminal does not. So the frontend reports the cell and
+/// the editor does the arithmetic, which is the same division of labour that
+/// keeps the core headless.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MouseEvent {
+    pub kind: MouseKind,
+    /// Zero-based cell coordinates within the frame.
+    pub column: u16,
+    pub row: u16,
+    pub modifiers: KeyModifiers,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct KeyModifiers {
     pub ctrl: bool,
     pub alt: bool,

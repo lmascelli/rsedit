@@ -90,6 +90,7 @@ pub(crate) mod edits;
 mod general;
 pub(crate) mod io;
 mod modes;
+pub(crate) mod mouse;
 mod overlays;
 mod region;
 mod shell;
@@ -297,6 +298,24 @@ pub fn install_primitives<B: BufferTrait>(
     // A command rather than a plain function, because it is one: the renderer
     // runs it when the terminal reports a bracketed paste, and it wants the
     // undo grouping and the `post-command-hook' that being a command brings.
+    insert_cmd!(
+        "mouse-set-point",
+        mouse::mouse_set_point,
+        [] as [&str; 0],
+        mouse::MOUSE_SET_POINT_DOC
+    );
+    insert_cmd!(
+        "mouse-mode-toggle",
+        mouse::mouse_mode_toggle,
+        [] as [&str; 0],
+        mouse::MOUSE_MODE_TOGGLE_DOC
+    );
+    insert_cmd!(
+        "mouse-scroll",
+        mouse::mouse_scroll,
+        [] as [&str; 0],
+        mouse::MOUSE_SCROLL_DOC
+    );
     insert_cmd!(
         "insert-pasted-text",
         edits::insert_pasted_text,

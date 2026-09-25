@@ -421,7 +421,7 @@ fn paragraph_backward<B: BufferTrait>(text: &B, line: usize) -> usize {
     line
 }
 
-fn line_length<B: BufferTrait>(text: &B, line: usize) -> usize {
+pub(crate) fn line_length<B: BufferTrait>(text: &B, line: usize) -> usize {
     text.get_lines(line, line + 1)
         .first()
         .map(|l| l.chars().count())

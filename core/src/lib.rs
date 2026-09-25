@@ -15,7 +15,7 @@ pub type ELispExp<B> = lisp::LispExp<editor::EditorState<B>>;
 
 pub use crate::{
     buffer::BufferTrait,
-    editor::{EditorState, create_global_env},
+    editor::{EditorState, MOUSE_MODE, create_global_env, mouse_mode},
 };
 
 #[cfg(test)]

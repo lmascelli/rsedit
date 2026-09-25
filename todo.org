@@ -1,18 +1,27 @@
 #+author: Leonardo Mascelli
 #+title: rsedit
 
+* Working in progress.
+- [ ] The editor structure is becoming too complex. I want to create compartiment
+      that manage single aspects of the editor like buffers, layout, searches, commands,
+      etc... so that a fail like the previous one where two windows where associated
+      to the same buffer and one of them is closed cannot leave the other one with a
+      pending reference to that buffer because the behavior of closing a window is 
+      clearly managed by the layout manager. it is just a refactoring of the system.
+
 * Fixes todo
-- [ ] open-line-above and below should be part of the editor set of movement, not only
-      pluggable via a module
-- [ ] fix tests for new WindowId type
+- [ ] Mouse support: scrolling with mouse blocks when cursor reach the top or the bottom
+      of a window.
 
 * Macro todo 
 - [ ] indent.lisp requires commands.lisp so commands.lisp is mandatory for other modules.
       The solution can be:
       - make it always mandatory (need a recap of what does)
       - add a module dependency system (requires)
-- [ ] Mouse support
 - [ ] Line numbers
+- [ ] Cursor out of the window view. Moving the cursor brings back the view to the cursor
+      position but scrolling (via keyboard or mouse) keep the cursor where it is and
+      moves the view.
 - [ ] Sort by type in dired mode (configurable via a lisp variable)
 - [ ] Make electric-pair's balance check cheaper than a scan to the end of the
       buffer. With the checkpoints above, everything that asks about *point* is
@@ -21,12 +30,6 @@
       do not change the tail's net depth at all, so there is probably an
       invariant to cache there -- or a cheaper question for electric-pair to
       ask than whether the whole buffer balances.
-- [ ] The editor structure is becoming too complex. I want to create compartiment
-      that manage single aspects of the editor like buffers, layout, searches, commands,
-      etc... so that a fail like the previous one where two windows where associated
-      to the same buffer and one of them is closed cannot leave the other one with a
-      pending reference to that buffer because the behavior of closing a window is 
-      clearly managed by the layout manager. it is just a refactoring of the system.
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 

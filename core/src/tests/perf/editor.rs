@@ -507,7 +507,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 views.clear();
                 separators.clear();
                 root.compute_tiled_views(
-                    screen.clone(),
+                    screen,
                     Focus {
                         id: WindowId(1),
                         tiled: true,

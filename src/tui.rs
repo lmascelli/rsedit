@@ -1,6 +1,7 @@
 use crossterm::event::{
-    DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode as CrossKeyCode, KeyEventKind,
-    KeyModifiers as CrossModifiers, poll, read,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    KeyCode as CrossKeyCode, KeyEventKind, KeyModifiers as CrossModifiers,
+    MouseButton as CrossMouseButton, MouseEventKind as CrossMouseKind, poll, read,
 };
 use crossterm::{
     QueueableCommand, cursor, execute,
@@ -12,13 +13,47 @@ use crossterm::{
 use rsedit_core::BufferTrait;
 use rsedit_core::ELispExp;
 use rsedit_core::EditorState;
-use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
+use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 use rsedit_core::lisp::{Env, LispContext};
+use rsedit_core::mouse_mode;
 use rsedit_core::ui::{Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Style, Theme};
 use std::{
     io::{Write, stdout},
     sync::Arc,
 };
+
+/// A crossterm mouse event as the editor's own.
+///
+/// `None` for the kinds the editor has no word for -- a bare move with no
+/// button down, and the horizontal wheel. Dropping them here rather than
+/// carrying them inwards keeps the editor's vocabulary to the things something
+/// actually acts on.
+pub fn translate_mouse(event: crossterm::event::MouseEvent) -> Option<MouseEvent> {
+    let button = |button: CrossMouseButton| match button {
+        CrossMouseButton::Left => MouseButton::Left,
+        CrossMouseButton::Middle => MouseButton::Middle,
+        CrossMouseButton::Right => MouseButton::Right,
+    };
+    let kind = match event.kind {
+        CrossMouseKind::Down(b) => MouseKind::Down(button(b)),
+        CrossMouseKind::Up(b) => MouseKind::Up(button(b)),
+        CrossMouseKind::Drag(b) => MouseKind::Drag(button(b)),
+        CrossMouseKind::ScrollUp => MouseKind::ScrollUp,
+        CrossMouseKind::ScrollDown => MouseKind::ScrollDown,
+        _ => return None,
+    };
+    Some(MouseEvent {
+        kind,
+        column: event.column,
+        row: event.row,
+        modifiers: KeyModifiers {
+            ctrl: event.modifiers.contains(CrossModifiers::CONTROL),
+            alt: event.modifiers.contains(CrossModifiers::ALT),
+            shift: event.modifiers.contains(CrossModifiers::SHIFT),
+            caps_lock_as_ctrl: false,
+        },
+    })
+}
 
 pub fn translate_key(key_event: crossterm::event::KeyEvent) -> Option<KeyEvent> {
     let mut modifiers = KeyModifiers {
@@ -631,12 +666,49 @@ pub fn tui_main<B: BufferTrait>(
         env.set_variable("frame-height".into(), ELispExp::number(rows as f64));
     }
 
+    // Whether the terminal is currently reporting the mouse. Followed rather
+    // than set once, so `M-x mouse-mode-toggle` takes effect on the next key
+    // instead of the next run -- and so that a terminal is never left
+    // reporting the mouse to an editor that has stopped listening.
+    let mut capturing = false;
+
+    // Whether anything has happened that the screen does not already show.
+    //
+    // # Why the loop is not simply "draw, then wait"
+    //
+    // It was, and it could be while only keys, pastes and resizes woke it:
+    // every one of those changes something, so every one deserved a frame. A
+    // terminal reporting the mouse also delivers motion and drag events, dozens
+    // a second, and almost none of them mean anything here. Redrawing for each
+    // is a screen repainted continuously with a frame identical to the last,
+    // which is visible as flicker and is pure waste.
+    //
+    // So an event that changed nothing leaves this false, and the next pass
+    // goes straight back to waiting without composing or drawing anything.
+    let mut dirty = true;
+    let (cols, rows) = terminal::size()?;
+    let mut frame = state.snapshot(&env, cols as usize, rows as usize);
+
     while state.is_running() {
-        let (cols, rows) = terminal::size()?;
-        // Capture, then draw. Two steps on purpose: the capture holds locks and
-        // does no I/O, the draw does I/O and holds no locks.
-        let frame = state.snapshot(&env, cols as usize, rows as usize);
-        render_frame(&frame, depth)?;
+        // Before the frame rather than after: a capture switched on here is on
+        // for the click that comes with this loop's `read`.
+        let wanted = mouse_mode(&env);
+        if wanted != capturing {
+            if wanted {
+                execute!(stdout(), EnableMouseCapture)?;
+            } else {
+                execute!(stdout(), DisableMouseCapture)?;
+            }
+            capturing = wanted;
+        }
+        if dirty {
+            let (cols, rows) = terminal::size()?;
+            // Capture, then draw. Two steps on purpose: the capture holds locks
+            // and does no I/O, the draw does I/O and holds no locks.
+            frame = state.snapshot(&env, cols as usize, rows as usize);
+            render_frame(&frame, depth)?;
+            dirty = false;
+        }
 
         // Some things change the screen without the user doing anything -- an
         // echo message expiring on its timer, colour arriving from the
@@ -650,6 +722,10 @@ pub fn tui_main<B: BufferTrait>(
         if let Some(remaining) = state.next_redraw_in(&env, &frame)
             && !poll(remaining)?
         {
+            // The timer expired rather than an event arriving: something the
+            // editor was waiting on -- a message going stale, colour arriving
+            // -- has changed the frame without anybody touching a key.
+            dirty = true;
             continue;
         }
 
@@ -657,7 +733,8 @@ pub fn tui_main<B: BufferTrait>(
             Event::Key(key_event) => match translate_key(key_event) {
                 Some(event) => {
                     if key_event.kind == KeyEventKind::Press {
-                        state.handle_key_event(event, &env)
+                        state.handle_key_event(event, &env);
+                        dirty = true;
                     }
                 }
                 None => state.log_diagnostic(&format!(
@@ -668,9 +745,24 @@ pub fn tui_main<B: BufferTrait>(
 
             Event::Resize(width, height) => {
                 state.resize(env.clone(), width as usize, height as usize);
+                dirty = true;
             }
 
-            Event::Paste(text) => state.handle_paste(text, &env),
+            Event::Paste(text) => {
+                state.handle_paste(text, &env);
+                dirty = true;
+            }
+
+            Event::Mouse(mouse_event) => {
+                // Only a mouse event the editor acted on is worth a frame.
+                // Everything else -- a bare move, a button nothing is bound
+                // to, a click on a float -- leaves the screen as it was.
+                if let Some(event) = translate_mouse(mouse_event)
+                    && state.handle_mouse_event(event, &env)
+                {
+                    dirty = true;
+                }
+            }
 
             // Focus changes, mouse events and anything a future crossterm
             // adds. Ignored rather than `todo!()`: this arm used to panic, so
@@ -681,6 +773,9 @@ pub fn tui_main<B: BufferTrait>(
         }
     }
 
+    if capturing {
+        execute!(stdout(), DisableMouseCapture)?;
+    }
     execute!(
         stdout(),
         DisableBracketedPaste,

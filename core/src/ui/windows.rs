@@ -12,12 +12,26 @@ pub enum Orientation {
     Vertical,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
     pub x: isize,
     pub y: isize,
     pub width: usize,
     pub height: usize,
+}
+
+impl Rect {
+    /// Whether the cell at (X, Y) is inside this rectangle.
+    ///
+    /// Half-open on the far edges, as a rectangle of cells has to be: a window
+    /// at x=0 with width 80 owns columns 0 to 79, and column 80 belongs to
+    /// whatever is beside it.
+    pub fn contains(&self, x: isize, y: isize) -> bool {
+        x >= self.x
+            && y >= self.y
+            && x < self.x + self.width as isize
+            && y < self.y + self.height as isize
+    }
 }
 
 /// Which window, as opposed to how many lines or how far down.
@@ -78,6 +92,25 @@ pub struct Window {
     /// frame decided, which is exactly what the user is looking at when they
     /// press the key.
     pub text_height: usize,
+    /// The rectangle this window was last drawn in, status line included, or a
+    /// zero-sized one if it has never been on screen.
+    ///
+    /// # Why another render fact is stored on the window
+    ///
+    /// The same bargain [`Window::text_height`] makes, for the same reason. The
+    /// layout works this out while composing a frame and it exists nowhere
+    /// else -- but *what is under the pointer* is asked between frames, when
+    /// none of that is in hand. So the layout leaves the answer behind.
+    ///
+    /// Reading what composition recorded also means hit-testing and drawing
+    /// cannot disagree. Recomputing the geometry instead would be two copies of
+    /// the same arithmetic, agreeing until the day they did not, and the
+    /// disagreement would be a click landing a column out in a narrow split --
+    /// the kind of wrong that gets blamed on the terminal.
+    ///
+    /// Zero-sized until the first frame, which is exactly what makes a window
+    /// that has never been drawn impossible to click on.
+    pub rect: Rect,
     /// Whether this window draws a status line along its bottom row.
     ///
     /// True for a window somebody is working in, which is all of them but one
@@ -119,6 +152,7 @@ impl Window {
             scroll_x: 0,
             scroll_y: 0,
             text_height: 0,
+            rect: Rect::default(),
             show_mode_line: true,
             point: None,
         }
@@ -403,6 +437,19 @@ impl LayoutNode {
         true
     }
 
+    /// The window whose last drawn rectangle contains (X, Y).
+    ///
+    /// Reads what composition left behind rather than walking the layout's
+    /// arithmetic again -- see [`Window::rect`] for why that matters.
+    pub fn window_at(&self, x: isize, y: isize) -> Option<&Window> {
+        match self {
+            LayoutNode::Leaf(win) => win.rect.contains(x, y).then_some(win),
+            LayoutNode::Split { left, right, .. } => {
+                left.window_at(x, y).or_else(|| right.window_at(x, y))
+            }
+        }
+    }
+
     /// Whether any window in this tree is the one with the given id.
     pub fn contains_window(&self, id: WindowId) -> bool {
         match self {
@@ -441,6 +488,11 @@ impl LayoutNode {
         match self {
             LayoutNode::Leaf(win) => {
                 let is_focused = win.id == focus.id;
+                // The whole window, status line included, and recorded before
+                // the status line is taken out of the rect below: a pointer
+                // lands in the window, and `text_height` says where its text
+                // stops.
+                win.rect = rect;
 
                 // The status line takes the window's bottom row, so the text
                 // gets one fewer -- computed here, before anything reads the

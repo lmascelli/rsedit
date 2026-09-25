@@ -1023,3 +1023,102 @@ fn a_frame_with_no_clipboard_text_emits_no_escape() {
     let rendered = String::from_utf8(out).expect("crossterm emits valid UTF-8");
     assert!(!rendered.contains("]52;c;"));
 }
+
+// -----------------------------------------------------------------
+// Getting the mouse from the terminal to the editor
+// -----------------------------------------------------------------
+
+use crate::tui::translate_mouse;
+use crossterm::event::{
+    MouseButton as CrossMouseButton, MouseEvent as CrossMouseEvent,
+    MouseEventKind as CrossMouseKind,
+};
+use rsedit_core::input::{MouseButton, MouseKind};
+
+fn terminal_mouse(kind: CrossMouseKind, column: u16, row: u16) -> CrossMouseEvent {
+    CrossMouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: CrossModifiers::NONE,
+    }
+}
+
+#[test]
+fn a_left_click_arrives_with_its_position() {
+    let event = translate_mouse(terminal_mouse(
+        CrossMouseKind::Down(CrossMouseButton::Left),
+        7,
+        3,
+    ))
+    .expect("a click must translate");
+    assert_eq!(event.kind, MouseKind::Down(MouseButton::Left));
+    assert_eq!((event.column, event.row), (7, 3));
+}
+
+#[test]
+fn the_wheel_translates_both_ways() {
+    assert_eq!(
+        translate_mouse(terminal_mouse(CrossMouseKind::ScrollUp, 0, 0))
+            .expect("must translate")
+            .kind,
+        MouseKind::ScrollUp
+    );
+    assert_eq!(
+        translate_mouse(terminal_mouse(CrossMouseKind::ScrollDown, 0, 0))
+            .expect("must translate")
+            .kind,
+        MouseKind::ScrollDown
+    );
+}
+
+#[test]
+fn a_bare_move_is_refused() {
+    // The editor has no word for "the pointer went past". Dropping it here
+    // rather than carrying it inwards keeps the vocabulary to things something
+    // acts on -- and a terminal reporting every motion would otherwise wake
+    // the editor for each one.
+    assert!(translate_mouse(terminal_mouse(CrossMouseKind::Moved, 1, 1)).is_none());
+}
+
+#[test]
+fn the_other_buttons_and_drags_survive_translation() {
+    // Nothing is bound to them yet. They translate anyway, because the type is
+    // the contract with the frontend and widening it later would mean touching
+    // this file a second time for no gain.
+    for (from, to) in [
+        (
+            CrossMouseKind::Up(CrossMouseButton::Left),
+            MouseKind::Up(MouseButton::Left),
+        ),
+        (
+            CrossMouseKind::Drag(CrossMouseButton::Left),
+            MouseKind::Drag(MouseButton::Left),
+        ),
+        (
+            CrossMouseKind::Down(CrossMouseButton::Right),
+            MouseKind::Down(MouseButton::Right),
+        ),
+        (
+            CrossMouseKind::Down(CrossMouseButton::Middle),
+            MouseKind::Down(MouseButton::Middle),
+        ),
+    ] {
+        assert_eq!(
+            translate_mouse(terminal_mouse(from, 0, 0))
+                .expect("must translate")
+                .kind,
+            to
+        );
+    }
+}
+
+#[test]
+fn modifiers_are_carried_across_a_click() {
+    let mut event = terminal_mouse(CrossMouseKind::Down(CrossMouseButton::Left), 0, 0);
+    event.modifiers = CrossModifiers::CONTROL | CrossModifiers::SHIFT;
+    let translated = translate_mouse(event).expect("must translate");
+    assert!(translated.modifiers.ctrl);
+    assert!(translated.modifiers.shift);
+    assert!(!translated.modifiers.alt);
+}
