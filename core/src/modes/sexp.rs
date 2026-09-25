@@ -645,6 +645,53 @@ pub fn context_at<B: BufferTrait>(
     scan.context()
 }
 
+/// The first offset after POS at which every list open at POS has been closed.
+///
+/// `None` when the text runs out with something still open.
+///
+/// # Why this is not "does the buffer balance"
+///
+/// A buffer balances when the depth is zero *at the end*. This asks whether
+/// the depth reaches zero *at all*, and stops the moment it does -- which is a
+/// different question and, for anything asking "has my opener already got a
+/// closer", the right one.
+///
+/// They come apart whenever something below is still being typed. In
+///
+/// ```text
+/// fn a() {
+/// }
+/// fn b() {
+/// ```
+///
+/// the depth returns to zero after `a`, and then rises again and stays there.
+/// A caller asking about `a`'s brace wants to hear that it is closed; asking
+/// whether the whole buffer balances hears "no", because of `b`, and acts as
+/// though `a`'s closer were missing.
+///
+/// # Why it is cheaper
+///
+/// It stops at the first point of balance rather than running to the end of
+/// the buffer. From inside a function that is the function's own closing
+/// delimiter -- tens of lines away rather than thousands.
+pub fn balance_point<B: BufferTrait>(
+    text: &B,
+    table: &SyntaxTable,
+    resume: Option<&Resume>,
+    pos: usize,
+) -> Option<usize> {
+    let mut scan = Scan::begin(text, table, pos, resume, 1);
+    scan.run_to(pos);
+    loop {
+        if scan.depth() == 0 {
+            return Some(scan.offset());
+        }
+        if matches!(scan.step(), Step::End) {
+            return None;
+        }
+    }
+}
+
 /// The innermost list point is inside, whole.
 pub fn enclosing<B: BufferTrait>(
     text: &B,

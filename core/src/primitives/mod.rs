@@ -688,6 +688,11 @@ pub fn install_primitives<B: BufferTrait>(
     insert_cmd!("recenter", ui::recenter, [] as [&str; 0], ui::RECENTER_DOC);
     insert_fn!("syntax-ppss", modes::syntax_ppss, modes::SYNTAX_PPSS_DOC);
     insert_fn!(
+        "balance-point",
+        modes::balance_point,
+        modes::BALANCE_POINT_DOC
+    );
+    insert_fn!(
         "bounds-of-enclosing-list",
         modes::bounds_of_enclosing_list,
         modes::BOUNDS_OF_ENCLOSING_LIST_DOC

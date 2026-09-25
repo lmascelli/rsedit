@@ -52,26 +52,42 @@ pair it."
   (let ((state (syntax-ppss position)))
     (or (nth 2 state) (nth 3 state))))
 
-(defun electric-pair--balanced-p ()
-  "Whether every list in the buffer is closed.
+(defun electric-pair--closed-ahead-p ()
+  "Whether the text after point closes every list that is open at it.
 
-Asked of the *whole buffer*, and that is the part worth understanding.
+This is the question a just-typed opener needs answered: did it take a closer
+that was already there, or does it want one of its own?
 
-The obvious question is \"is the list point is in already closed?\", and it gives
-the wrong answer. A scanner matches a closer to the *innermost* opener, so just
-after typing `{' inside a block that is already closed, the new brace appears to
-have taken the outer one's `}' -- and the check refuses to pair in exactly the
-case where pairing is wanted. It is not the scanner being wrong; innermost-first
-is what matching means.
+Two wrong answers are worth naming, because both were tried.
 
-Depth at the end of the buffer has no such confusion. It counts openers that
-nothing closes, wherever they are, and that is the question: a buffer with an
-unclosed opener wants a closer, and a balanced one does not.
+\"Is the innermost list closed?\" fails because a scanner matches a closer to the
+*innermost* opener. Type `{' inside a block that is already closed and the new
+brace appears to have taken the outer one's `}', so the check refuses to pair in
+exactly the case where pairing is wanted. That is not the scanner being wrong --
+innermost-first is what matching means.
 
-Costs a scan of the buffer. `post-self-insert-hook' already asks `syntax-ppss'
-about the position before point on every character typed, so this roughly
-doubles a cost that was already being paid rather than introducing one."
-  (= 0 (nth 0 (syntax-ppss (point-max)))))
+\"Does the whole buffer balance?\" fails the other way, and fails constantly. A
+buffer balances when the depth is zero at the *end*. Anything further down that
+is still being typed keeps it from ever being zero there, so with
+
+    fn a()
+    }
+    fn b() {
+
+retyping `a''s brace adds a second one, even though `a''s closer is on the very
+next line. The unfinished `b' below has nothing to do with `a' and gets a vote
+anyway.
+
+Reaching zero *anywhere* ahead is the question with neither fault. It counts
+every list open at point, so a new brace nested inside a closed block is still
+unclosed and still wants a partner; and it stops at the first point of balance,
+so what is happening further down the file is not consulted.
+
+Cheaper as well, and by more than a constant: it stops at the closing delimiter
+of the outermost list point is inside, which from within a function is that
+function's own brace. The old form ran to the end of the file on every bracket
+typed, which meant typing near the top of a long file cost the most."
+  (if (balance-point) t nil))
 
 (defun electric-pair--word-after-p ()
   "Whether the character after point belongs to a word.
@@ -148,7 +164,7 @@ string\" ahead of the dispatch reads better and is wrong."
                ;; then treat as an empty pair and take out together.
                ((and (eq class 'open) partner)
                 (if (or (electric-pair--word-after-p)
-                        (electric-pair--balanced-p))
+                        (electric-pair--closed-ahead-p))
                     nil
                     (progn (insert partner) (backward-char))))
 
@@ -200,7 +216,7 @@ not three."
       ;; list open at all, the buffer balances trivially and a typed `}' is
       ;; just a character the user wanted.
       (let ((here (point)))
-        (if (and (electric-pair--balanced-p)
+        (if (and (electric-pair--closed-ahead-p)
                  (progn (up-list) (> (point) here)))
             nil
             (progn (goto-char here) (insert typed))))))))

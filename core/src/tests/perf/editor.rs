@@ -344,6 +344,7 @@ fn sexp_scan(report: &mut Report, calibration: f64) {
     // is what makes the locality row about locality: a probe just after a
     // checkpoint and one just before the next would differ by the interval
     // however well the cache worked.
+    let len = text.len();
     let deep = text.cursor_2d_to_1d(CP * (LINES / CP - 2) + CP / 2, 0);
     let shallow = text.cursor_2d_to_1d(CP * (LINES / CP / 2) + CP / 2, 0);
 
@@ -380,6 +381,27 @@ fn sexp_scan(report: &mut Report, calibration: f64) {
         );
     });
 
+    // What electric-pair asks on every bracket typed, measured near the *top*
+    // of the file -- which is where the two questions differ most and where
+    // the old one was worst. "Does the whole buffer balance" is `context_at`
+    // at the end of the file, so typing on line 100 of ten thousand scanned
+    // the other nine thousand nine hundred. The new question stops at the
+    // first point of balance, which from inside a list is that list's closer,
+    // wherever in the file you happen to be.
+    let near_top = text.cursor_2d_to_1d(CP + CP / 2, 0);
+    let whole_buffer = time_fastest(|| {
+        assert_eq!(
+            sexp::context_at(&text, &table, resume_at(near_top), len).depth,
+            0
+        );
+    });
+    let to_the_closer = time_fastest(|| {
+        assert!(
+            sexp::balance_point(&text, &table, resume_at(near_top + 1), near_top + 1).is_some()
+        );
+    });
+    let bounded = ratio(whole_buffer.as_secs_f64(), to_the_closer.as_secs_f64());
+
     let speedup = ratio(cold.as_secs_f64(), warm_end.as_secs_f64());
     let locality = ratio(warm_end.as_secs_f64(), warm_head.as_secs_f64());
     let cold_ns = per_unit_ns(cold, 1);
@@ -415,6 +437,27 @@ fn sexp_scan(report: &mut Report, calibration: f64) {
                 format!("{speedup:.1}x"),
                 "checkpoints must be worth at least 10x here",
             ),
+            Row::timed(
+                "sexp/balance-whole-buffer-ns",
+                "balance, asked of the whole file",
+                per_unit_ns(whole_buffer, 1),
+                format!("{:.0} ns", per_unit_ns(whole_buffer, 1)),
+                x_ref(per_unit_ns(whole_buffer, 1), calibration),
+            ),
+            Row::timed(
+                "sexp/balance-bounded-ns",
+                "balance, asked of the list point is in",
+                per_unit_ns(to_the_closer, 1),
+                format!("{:.0} ns", per_unit_ns(to_the_closer, 1)),
+                x_ref(per_unit_ns(to_the_closer, 1), calibration),
+            ),
+            Row::new(
+                "sexp/balance-bound",
+                "  whole file vs enclosing list",
+                bounded,
+                format!("{bounded:.1}x"),
+                "the bounded question must stay well ahead",
+            ),
             Row::new(
                 "sexp/locality",
                 "  deep vs halfway down",
@@ -425,6 +468,14 @@ fn sexp_scan(report: &mut Report, calibration: f64) {
         ],
     );
 
+    report.verdict(
+        bounded > 50.0,
+        "asking about the enclosing list beats asking about the whole file",
+        format!(
+            "the bounded question was only {bounded:.1}x faster -- it is no longer stopping at \
+             the first point of balance"
+        ),
+    );
     report.verdict(
         speedup > 10.0,
         "checkpoints make a scan deep in a long file cheap",

@@ -23,13 +23,45 @@
       position but scrolling (via keyboard or mouse) keep the cursor where it is and
       moves the view.
 - [ ] Sort by type in dired mode (configurable via a lisp variable)
-- [ ] Make electric-pair's balance check cheaper than a scan to the end of the
+- [X] Make electric-pair's balance check cheaper than a scan to the end of the
       buffer. With the checkpoints above, everything that asks about *point* is
       now nearly free, but `(syntax-ppss (point-max))' still costs the distance
       from the edit to the end of the file on every self-insert. Most keystrokes
       do not change the tail's net depth at all, so there is probably an
       invariant to cache there -- or a cheaper question for electric-pair to
       ask than whether the whole buffer balances.
+
+  It was the cheaper question, and it turned out to be the *correct* one as
+  well -- the old one was quietly wrong, not merely slow.
+
+  "Does the whole buffer balance" is true when the depth is zero at the end.
+  Anything below point that is still being typed keeps it from ever being zero
+  there, so with
+
+      fn a()
+      }
+      fn b() {
+
+  retyping `a''s brace added a second one, although `a''s closer was on the
+  next line. The unfinished `b' had nothing to do with `a' and got a vote.
+
+  The question now asked is whether the depth reaches zero *anywhere* ahead,
+  which the new `balance-point' primitive answers. It has neither fault of the
+  two forms tried before it: it counts every list open at point, so a brace
+  nested inside a closed block is still unclosed and still wants a partner; and
+  it stops at the first point of balance, so what is happening further down the
+  file is never consulted.
+
+  Cheaper for the same reason it is right. It stops at the closing delimiter of
+  the outermost list point is inside -- from within a function, that function's
+  own brace -- instead of running to the end of the file. Measured in the perf
+  suite (SEXP SCAN): on a 10,000-line file, asked from line 100, 143 ms became
+  0.45 ms, a factor of 319. The old form was worst exactly where you are most
+  likely to be editing a long file: near the top of it.
+
+  `core/src/tests/balance_point_tests.rs' pins all three shapes -- the
+  unfinished function below, the nested brace, and the plain repair -- and the
+  first of those fails against the old question.
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 

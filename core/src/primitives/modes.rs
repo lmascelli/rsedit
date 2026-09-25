@@ -771,6 +771,39 @@ primitive!(syntax_ppss, args, _env, ctx, {
     ]))
 });
 
+pub const BALANCE_POINT_DOC: &str = "(balance-point &optional POS): The first position at or \
+         after POS -- or point -- by which every list open there has been closed. nil when the \
+         buffer runs out with something still open.\n\n\
+         POS itself when nothing is open there, since nothing then has to close.\n\n\
+         Not the same question as whether the buffer balances. A buffer balances when the depth \
+         is zero at the *end*; this asks whether it reaches zero at all, and stops as soon as it \
+         does. The two come apart whenever something further down is still being typed: in a \
+         file whose last function is half-written, every brace above it is closed and the buffer \
+         as a whole is not.\n\n\
+         Cheaper for the same reason. It stops at the first point of balance instead of running \
+         to the end of the file, which from inside a function is that function's own closing \
+         brace.\n\n\
+         Example:\n\
+         (if (balance-point) (message \\\"closed already\\\"))";
+
+primitive!(balance_point, args, _env, ctx, {
+    let table = ctx.current_syntax_table();
+    let buf = ctx.get_current_buffer();
+    let buf = buf.read().expect("read lock on buffer");
+    let pos = match args.first() {
+        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => {
+            (*n as usize).min(buf.text.len())
+        }
+        _ => buf.text.cursor_pos_1d(),
+    };
+    Ok(
+        match sexp::balance_point(&buf.text, &table, buf.scan_resume(pos), pos) {
+            Some(at) => ELispExp::number(at as f64),
+            None => ELispExp::nil(),
+        },
+    )
+});
+
 pub const BOUNDS_OF_ENCLOSING_LIST_DOC: &str = "(bounds-of-enclosing-list &optional POS): The \
          positions (START END) of the innermost list point -- or POS -- is inside, or nil at the \
          top level.\n\n\
