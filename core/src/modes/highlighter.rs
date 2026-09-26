@@ -167,13 +167,11 @@ impl<B: BufferTrait> EditorState<B> {
         // catch up *to*. Without this a plain-text buffer would report itself
         // behind forever, and the renderer would wake every turn for the life
         // of the session to redraw a frame that cannot change.
-        let registry = self
-            .mode_registry
-            .read()
-            .expect("Failed to acquire read lock on mode_registry");
-        registry
-            .get(&mode)
-            .is_some_and(|mode| !mode.grammar.is_empty())
+        self.modes(|modes| {
+            modes
+                .get(&mode)
+                .is_some_and(|mode| !mode.grammar.is_empty())
+        })
     }
 
     /// Whether any buffer's colouring has fallen behind.
@@ -200,13 +198,7 @@ impl<B: BufferTrait> EditorState<B> {
         // lock -- so the buffer's is released first. Cloned rather than
         // borrowed because the lexing happens with neither held.
         let mode = self.with_buffer(name, |buf| buf.current_mode.clone())?;
-        let grammar = {
-            let registry = self
-                .mode_registry
-                .read()
-                .expect("Failed to acquire read lock on mode_registry");
-            registry.get(&mode).map(|mode| mode.grammar.clone())?
-        };
+        let grammar = self.modes(|modes| modes.get(&mode).map(|mode| mode.grammar.clone()))?;
 
         self.with_buffer(name, |buf| {
             let line_count = buf.text.line_count();

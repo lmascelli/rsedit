@@ -11,7 +11,7 @@ use crate::{
     lisp::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
-    managers::{BufferRemoved, Buffers, Hit, MouseDrag, Scrolled, WindowRemoved, Windows},
+    managers::{BufferRemoved, Buffers, Hit, Modes, MouseDrag, Scrolled, WindowRemoved, Windows},
     minibuffer::install_minibuffer,
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     modes::prescan::Prescanner,
@@ -131,6 +131,25 @@ pub fn mouse_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
         .is_some_and(|value| !value.is_nil())
 }
 
+/// What the keymaps had to say about the key sequence typed so far.
+///
+/// Four answers rather than the `(Option<ELispExp>, bool)` pair this replaced.
+/// That pair could represent `(Some(command), true)` -- bound *and* a prefix --
+/// which is not a thing a keymap can mean, and it had no way at all to say
+/// "bound to nothing, and say nothing about it", which the transient map's
+/// `Refuse` needs; that case had to return early from the middle of the lookup
+/// instead.
+enum Bound<B: BufferTrait> {
+    /// Run this.
+    Command(ELispExp<B>),
+    /// Part-way through a sequence. The keys are kept.
+    Prefix,
+    /// Bound to nothing, and nothing is to be said about it.
+    Refused,
+    /// Bound to nothing. Say so.
+    Unbound,
+}
+
 /// A command form with numeric arguments, built rather than parsed.
 ///
 /// Built, because the arguments are numbers the editor just worked out: going
@@ -195,14 +214,11 @@ pub struct EditorState<B: BufferTrait> {
     /// reader can never pair a new message with an old timestamp.
     pub echo_message: Arc<RwLock<EchoMessage>>,
 
-    /// A keymap is an association between a KeyEvent and the name of a
-    /// function that have to be executed (i.e. self-insert)
-    pub keymaps: Arc<RwLock<Keymap<B>>>,
-    /// Where completions come from in any buffer, whatever its mode -- the
-    /// global half of what `MajorMode::completion_functions` holds per mode,
-    /// and the same relationship `keymaps` has to `MajorMode::keymaps`.
-    pub completion_functions: Arc<RwLock<Vec<ELispExp<B>>>>,
-    pub mode_registry: Arc<RwLock<HashMap<String, MajorMode<B>>>>,
+    /// What a mode is, what keys do, and where completions come from: the
+    /// registry, the global keymap, the global completion list, the file-name
+    /// patterns, the transient keymap and the repeat keys. See [`Modes`],
+    /// which says why those are one lock and not eight.
+    modes: Arc<RwLock<Modes<B>>>,
     /// Every window the frame has: the tiled tree, the floats drawn over it,
     /// which one has focus, the next id to hand out and what a held mouse
     /// button is doing. See [`Windows`], which says why those are one lock and
@@ -361,37 +377,6 @@ pub struct EditorState<B: BufferTrait> {
     /// next. See `crate::search::Isearch`.
     isearch: Arc<RwLock<Option<Isearch>>>,
 
-    /// A keymap consulted before every other, for as long as it is installed.
-    /// See [`TransientKeymap`].
-    ///
-    /// The flag beside it is the *gate*: it is what every keystroke reads, and
-    /// the lock is opened only when it says there is something to read. A
-    /// transient map is up for a handful of keystrokes and absent for all the
-    /// rest, so making the common answer an atomic load rather than a lock
-    /// acquisition keeps the feature off the typing path.
-    ///
-    /// The two are written together and only together, by the methods below:
-    /// the payload is stored before the gate opens and cleared after it closes,
-    /// so a reader that gets through the gate always finds a map there.
-    transient_keymap: Arc<RwLock<Option<TransientKeymap<B>>>>,
-    transient_up: Arc<AtomicBool>,
-
-    /// Which commands offer to repeat, and with which key. See
-    /// `install_repeat_keymap`.
-    ///
-    /// Gated by an atomic for the same reason: until something declares a
-    /// repeat key, no keystroke pays anything at all to ask.
-    repeat_keys: Arc<RwLock<HashMap<String, KeyEvent>>>,
-    any_repeat_keys: Arc<AtomicBool>,
-
-    /// Which file names get which major mode, in the order they were declared.
-    ///
-    /// An ordered list rather than a map: patterns overlap -- `\.rs$` and
-    /// `^Cargo\.` both match `Cargo.rs` -- so which one wins has to be a
-    /// decision somebody made rather than whichever the hash happened to
-    /// offer. First declared, first tried.
-    auto_modes: Arc<RwLock<Vec<(regex::Regex, String)>>>,
-
     /// The call stack, as maintained by `LispContext::push_call_frame` /
     /// `pop_call_frame` (see their docs for the exact protocol). Frozen at
     /// its state at the moment of the most recent uncaught error until
@@ -488,9 +473,7 @@ impl<B: BufferTrait> EditorState<B> {
             worker_mailbox: sender,
             buffers: Arc::new(RwLock::new(Buffers::default())),
             echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
-            keymaps: Arc::new(RwLock::new(keymaps)),
-            completion_functions: Arc::new(RwLock::new(Vec::new())),
-            mode_registry: Arc::new(RwLock::new(HashMap::new())),
+            modes: Arc::new(RwLock::new(Modes::new(keymaps))),
             windows: Arc::new(RwLock::new(Windows::default())),
             commands: Arc::new(RwLock::new(CommandRegistry::new())),
             pending_commands: Arc::new(RwLock::new(Vec::new())),
@@ -513,11 +496,6 @@ impl<B: BufferTrait> EditorState<B> {
             logs: Arc::new(RwLock::new(Vec::new())),
             log_file: None,
             isearch: Arc::new(RwLock::new(None)),
-            transient_keymap: Arc::new(RwLock::new(None)),
-            transient_up: Arc::new(AtomicBool::new(false)),
-            repeat_keys: Arc::new(RwLock::new(HashMap::new())),
-            any_repeat_keys: Arc::new(AtomicBool::new(false)),
-            auto_modes: Arc::new(RwLock::new(Vec::new())),
             call_stack: Arc::new(RwLock::new(Vec::new())),
         };
         BackgroundScheduler::spawn(receiver, editor_state.clone());
@@ -1106,50 +1084,44 @@ impl<B: BufferTrait> EditorState<B> {
         false
     }
 
+    // ---------------------------------------------------------------
+    // The mode compartment
+    // ---------------------------------------------------------------
+
+    /// Ask the modes something. Same rules as [`EditorState::windows`].
+    ///
+    /// The rule matters more here than anywhere else: the lists this holds are
+    /// Lisp, and calling one re-enters the editor through any primitive it
+    /// likes. Copy out, let go, *then* call.
+    pub(crate) fn modes<R>(&self, f: impl FnOnce(&Modes<B>) -> R) -> R {
+        f(&self.modes.read().expect("read lock on modes"))
+    }
+
+    /// Change the modes -- define one, bind a key, add a completion source.
+    pub(crate) fn modes_mut<R>(&self, f: impl FnOnce(&mut Modes<B>) -> R) -> R {
+        f(&mut self.modes.write().expect("write lock on modes"))
+    }
+
     /// Install a keymap that is consulted before every other until it goes
     /// away. See [`TransientKeymap`].
-    ///
-    /// Replaces any map already installed rather than stacking: two maps
-    /// competing for the same keystroke could not both win, and the newer one
-    /// is always the more recent thing the user asked for.
     pub(crate) fn set_transient_keymap(&self, map: TransientKeymap<B>) {
-        *self
-            .transient_keymap
-            .write()
-            .expect("Failed to acquire write lock on transient_keymap") = Some(map);
-        // Opened last, so nothing can get through the gate before the map it is
-        // meant to find is there.
-        self.transient_up.store(true, Ordering::Release);
+        self.modes_mut(|modes| modes.set_transient(map));
     }
 
     /// Take the map down. Idempotent, so a command that ends one can call it
     /// without first asking whether one is up.
     pub(crate) fn clear_transient_keymap(&self) {
-        // Closed first, for the mirror-image reason: no reader may be sent to a
-        // map that is about to be taken away.
-        self.transient_up.store(false, Ordering::Release);
-        *self
-            .transient_keymap
-            .write()
-            .expect("Failed to acquire write lock on transient_keymap") = None;
+        self.modes_mut(|modes| modes.clear_transient());
     }
 
     /// What the installed map wants shown, or empty when none is installed.
     pub(crate) fn transient_message(&self) -> String {
-        if !self.transient_up.load(Ordering::Acquire) {
-            return String::new();
-        }
-        self.transient_keymap
-            .read()
-            .expect("Failed to acquire read lock on transient_keymap")
-            .as_ref()
-            .map(|map| map.message.clone())
-            .unwrap_or_default()
+        self.modes(|modes| modes.transient_message())
     }
 
     /// Whether a transient keymap is installed. Only for reporting.
     pub(crate) fn transient_keymap_active(&self) -> bool {
-        self.transient_up.load(Ordering::Acquire)
+        self.modes(|modes| modes.transient_active())
     }
 
     // -----------------------------------------------------------------------
@@ -1173,21 +1145,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// arbitrary Lisp that may load a module, define a mode, or open a buffer
     /// -- the same rule `run_hook` is written to, for the same reason.
     pub(crate) fn completion_sources(&self, mode: &str) -> Vec<ELispExp<B>> {
-        let mut sources: Vec<ELispExp<B>> = self
-            .mode_registry
-            .read()
-            .expect("Failed to acquire read lock on mode_registry")
-            .get(mode)
-            .map(|mode| mode.completion_functions.clone())
-            .unwrap_or_default();
-        sources.extend(
-            self.completion_functions
-                .read()
-                .expect("Failed to acquire read lock on completion_functions")
-                .iter()
-                .cloned(),
-        );
-        sources
+        self.modes(|modes| modes.completion_sources(mode))
     }
 
     /// Append a source to MODE's list, or to the global one when MODE is
@@ -1197,16 +1155,7 @@ impl<B: BufferTrait> EditorState<B> {
         mode: Option<&str>,
         function: ELispExp<B>,
     ) -> bool {
-        match mode {
-            None => {
-                self.completion_functions
-                    .write()
-                    .expect("Failed to acquire write lock on completion_functions")
-                    .push(function);
-                true
-            }
-            Some(name) => self.with_mode_mut(name, |mode| mode.completion_functions.push(function)),
-        }
+        self.modes_mut(|modes| modes.add_completion(mode, function))
     }
 
     /// Replace a whole list. This is how a source is removed or the order
@@ -1217,54 +1166,12 @@ impl<B: BufferTrait> EditorState<B> {
         mode: Option<&str>,
         functions: Vec<ELispExp<B>>,
     ) -> bool {
-        match mode {
-            None => {
-                *self
-                    .completion_functions
-                    .write()
-                    .expect("Failed to acquire write lock on completion_functions") = functions;
-                true
-            }
-            Some(name) => self.with_mode_mut(name, |mode| mode.completion_functions = functions),
-        }
+        self.modes_mut(|modes| modes.set_completions(mode, functions))
     }
 
     /// One list on its own, unmerged, or `None` if MODE is unknown.
     pub(crate) fn completion_function_list(&self, mode: Option<&str>) -> Option<Vec<ELispExp<B>>> {
-        match mode {
-            None => Some(
-                self.completion_functions
-                    .read()
-                    .expect("Failed to acquire read lock on completion_functions")
-                    .clone(),
-            ),
-            Some(name) => self
-                .mode_registry
-                .read()
-                .expect("Failed to acquire read lock on mode_registry")
-                .get(name)
-                .map(|mode| mode.completion_functions.clone()),
-        }
-    }
-
-    /// Change one mode in the registry, reporting whether it was there.
-    ///
-    /// The write lock is taken and released inside, and the closure is given
-    /// only the mode -- so nothing that runs under this lock can reach the
-    /// interpreter.
-    fn with_mode_mut(&self, name: &str, edit: impl FnOnce(&mut MajorMode<B>)) -> bool {
-        match self
-            .mode_registry
-            .write()
-            .expect("Failed to acquire write lock on mode_registry")
-            .get_mut(name)
-        {
-            Some(mode) => {
-                edit(mode);
-                true
-            }
-            None => false,
-        }
+        self.modes(|modes| modes.completion_list(mode))
     }
 
     /// Say that a file whose name matches PATTERN opens in MODE.
@@ -1273,10 +1180,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// else maps a file to a mode, so every grammar would have to be reached by
     /// hand.
     pub(crate) fn add_auto_mode(&self, pattern: regex::Regex, mode: &str) {
-        self.auto_modes
-            .write()
-            .expect("Failed to acquire write lock on auto_modes")
-            .push((pattern, mode.to_string()));
+        self.modes_mut(|modes| modes.add_auto_mode(pattern, mode));
     }
 
     /// The mode a file called PATH should open in, if any pattern claims it.
@@ -1284,12 +1188,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Matched against the whole path, so a pattern can key on a directory as
     /// well as an extension.
     pub(crate) fn auto_mode_for(&self, path: &str) -> Option<String> {
-        self.auto_modes
-            .read()
-            .expect("Failed to acquire read lock on auto_modes")
-            .iter()
-            .find(|(pattern, _)| pattern.is_match(path))
-            .map(|(_, mode)| mode.clone())
+        self.modes(|modes| modes.auto_mode_for(path))
     }
 
     /// Say that COMMAND may be repeated by pressing KEYS on its own afterwards.
@@ -1298,23 +1197,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// ending in K, a bare K repeats" -- would make `C-x C-f` followed by `f`
     /// re-open `find-file`, which is not a convenience.
     pub(crate) fn set_repeat_key(&self, command: &str, key: KeyEvent) {
-        self.repeat_keys
-            .write()
-            .expect("Failed to acquire write lock on repeat_keys")
-            .insert(command.to_string(), key);
-        self.any_repeat_keys.store(true, Ordering::Release);
+        self.modes_mut(|modes| modes.set_repeat_key(command, key));
     }
 
     /// The key that repeats COMMAND, if it has one.
     fn repeat_key(&self, command: &str) -> Option<KeyEvent> {
-        if !self.any_repeat_keys.load(Ordering::Acquire) {
-            return None;
-        }
-        self.repeat_keys
-            .read()
-            .expect("Failed to acquire read lock on repeat_keys")
-            .get(command)
-            .cloned()
+        self.modes(|modes| modes.repeat_key(command))
     }
 
     /// Offer to repeat COMMAND, if it said it could be.
@@ -1451,112 +1339,80 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on pending_keys");
         pending.push(event);
 
-        // A transient keymap is consulted before every other, for as long as
-        // it is installed. See `TransientKeymap` -- and note that the gate is
-        // an atomic, because on the overwhelming majority of keystrokes the
-        // answer is "no map", and that answer costs a load rather than a lock.
-        let transient = self.transient_up.load(Ordering::Acquire).then(|| {
-            let map = self
-                .transient_keymap
-                .read()
-                .expect("Failed to acquire read lock on transient_keymap");
-            map.as_ref()
-                .map(|map| {
-                    (
-                        map.keymap.get(&pending).cloned(),
-                        map.keymap.is_prefix(&pending),
-                        map.on_unbound,
-                    )
-                })
-                // The gate was open but the map had gone. Only reachable if
-                // something took it down between the two, which the
-                // single-threaded key path does not do; treated as "no map",
-                // which is the safe direction -- the key reaches the ordinary
-                // keymaps rather than vanishing.
-                .unwrap_or((None, false, OnUnbound::Release))
-        });
-        if let Some((bound, is_prefix, on_unbound)) = transient {
-            match (bound, is_prefix, on_unbound) {
-                (Some(ast), _, _) => {
-                    pending.clear();
-                    drop(pending);
-                    return Some(ast);
-                }
-                // Part-way through one of the map's own sequences.
-                (None, true, _) => {
-                    drop(pending);
-                    return None;
-                }
-                // Refused, and nothing said about it: the map's message is
-                // still in the frame, and anything written to the echo area
-                // would be drawn under it.
-                (None, false, OnUnbound::Refuse) => {
-                    pending.clear();
-                    drop(pending);
-                    return None;
-                }
-                // Handed on. The map goes away and the key carries on to the
-                // keymaps below exactly as though it had never been there --
-                // which is what makes the offer free to ignore.
-                // Handed on, and the map stays. The key carries on to the
-                // keymaps below and the map is consulted again next time,
-                // which is what lets the completion strip be typed at without
-                // either swallowing the letter or dismissing itself.
-                (None, false, OnUnbound::Pass) => {}
-                (None, false, OnUnbound::Release) => {
-                    // The gate is closed first and the map dropped after, the
-                    // same order `clear_transient_keymap` uses -- holding the
-                    // bindings of a map nobody can reach would be a small leak
-                    // that lasted until the next one was installed.
-                    self.transient_up.store(false, Ordering::Release);
-                    *self
-                        .transient_keymap
-                        .write()
-                        .expect("Failed to acquire write lock on transient_keymap") = None;
-                }
-            }
-        }
-
+        // Asked before the modes are taken: buffers come before modes in the
+        // canonical order.
         let current_mode = self.with_current_buffer(|buf| buf.current_mode.clone());
 
-        // The mode's own keymap wins, then the global one -- and a mode that
-        // binds a prefix keeps the sequence alive even when only the global
-        // map completes it.
-        let registry = self
-            .mode_registry
-            .read()
-            .expect("Failed to acquire read lock on mode_registry");
-        let mode_keymap = registry.get(&current_mode).map(|mode| &mode.keymaps);
-        let global_keymap = self
-            .keymaps
-            .read()
-            .expect("Failed to acquire read lock on keymaps");
+        // One acquisition answers the whole question -- the transient map, the
+        // mode's keymap and the global one. It used to be three locks and an
+        // atomic gate in front of the first of them, with a written protocol
+        // keeping the gate and the map it guarded in step. See [`Modes`].
+        let mut release_transient = false;
+        let bound = self.modes(|modes| {
+            // A transient keymap is consulted before every other, for as long
+            // as it is installed. See `TransientKeymap`.
+            if let Some(map) = modes.transient() {
+                let hit = map.keymap.get(&pending).cloned();
+                let prefix = map.keymap.is_prefix(&pending);
+                match (hit, prefix, map.on_unbound) {
+                    (Some(ast), _, _) => return Bound::Command(ast),
+                    // Part-way through one of the map's own sequences.
+                    (None, true, _) => return Bound::Prefix,
+                    // Refused, and nothing said about it: the map's message is
+                    // still in the frame, and anything written to the echo
+                    // area would be drawn under it.
+                    (None, false, OnUnbound::Refuse) => return Bound::Refused,
+                    // Handed on, and the map stays. The key carries on to the
+                    // keymaps below and the map is consulted again next time,
+                    // which is what lets the completion strip be typed at
+                    // without either swallowing the letter or dismissing
+                    // itself.
+                    (None, false, OnUnbound::Pass) => {}
+                    // Handed on, and the map goes. The key carries on exactly
+                    // as though it had never been there -- which is what makes
+                    // the offer free to ignore. Taken down after this lock is
+                    // given back, since dropping it needs the write side.
+                    (None, false, OnUnbound::Release) => release_transient = true,
+                }
+            }
 
-        let bound = mode_keymap
-            .and_then(|keymap| keymap.get(&pending))
-            .or_else(|| global_keymap.get(&pending))
-            .cloned();
-        let is_prefix = mode_keymap.is_some_and(|keymap| keymap.is_prefix(&pending))
-            || global_keymap.is_prefix(&pending);
+            // The mode's own keymap wins, then the global one -- and a mode
+            // that binds a prefix keeps the sequence alive even when only the
+            // global map completes it.
+            let mode_keymap = modes.mode_keymap(&current_mode);
+            let global = modes.global_keymap();
+            let hit = mode_keymap
+                .and_then(|keymap| keymap.get(&pending))
+                .or_else(|| global.get(&pending))
+                .cloned();
+            let prefix = mode_keymap.is_some_and(|keymap| keymap.is_prefix(&pending))
+                || global.is_prefix(&pending);
+            match (hit, prefix) {
+                (Some(ast), _) => Bound::Command(ast),
+                (None, true) => Bound::Prefix,
+                (None, false) => Bound::Unbound,
+            }
+        });
+        if release_transient {
+            // Holding the bindings of a map nobody can reach would be a small
+            // leak that lasted until the next one was installed.
+            self.clear_transient_keymap();
+        }
 
-        // Everything the keymaps had to say, said. Released here so that
-        // reporting -- which writes the echo area, a lock of its own -- happens
-        // under no keymap lock at all.
-        drop(global_keymap);
-        drop(registry);
-
+        // Everything the keymaps had to say, said, and the lock given back --
+        // so reporting, which writes the echo area, happens under none of it.
         let described = describe_keys(&pending);
-        if bound.is_some() || !is_prefix {
+        if !matches!(bound, Bound::Prefix) {
             pending.clear();
         }
         drop(pending);
 
-        match (bound, is_prefix) {
-            (Some(ast), _) => Some(ast),
+        match bound {
+            Bound::Command(ast) => Some(ast),
             // Nothing to say: the sequence is in `pending_input`, which the
             // frame carries and which does not expire the way a message does.
-            (None, true) => None,
-            (None, false) => {
+            Bound::Prefix | Bound::Refused => None,
+            Bound::Unbound => {
                 self.set_echo_message(&format!("{described} is undefined"));
                 self.log_diagnostic(&format!("[INFO] Keymap not bound {described}"));
                 None
@@ -2021,14 +1877,13 @@ impl<B: BufferTrait> EditorState<B> {
         // callback into the interpreter. Lisp can re-enter the editor through
         // any primitive, so a lock held across `eval` is a lock offered to
         // arbitrary code.
-        let mut hooks: Vec<ELispExp<B>> = self
-            .mode_registry
-            .read()
-            .expect("Failed to acquire read lock on mode registry")
-            .get(mode_name)
-            .and_then(|mode| mode.hooks.get(hook_name))
-            .cloned()
-            .unwrap_or_default();
+        let mut hooks: Vec<ELispExp<B>> = self.modes(|modes| {
+            modes
+                .get(mode_name)
+                .and_then(|mode| mode.hooks.get(hook_name))
+                .cloned()
+                .unwrap_or_default()
+        });
         // The mode's own first, then the ones registered for every mode. A
         // mode-specific hook is the more specific statement about this buffer,
         // so it gets to act before anything general reacts to the result.
@@ -2357,10 +2212,7 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     pub fn set_mode(&self, mode_name: &str, mode: MajorMode<B>) {
-        self.mode_registry
-            .write()
-            .expect("Failed to acquire write lock on mode_registry")
-            .insert(mode_name.to_string(), mode);
+        self.modes_mut(|modes| modes.insert(mode_name, mode));
     }
 
     //--------------------------------------------------------------------------
@@ -3133,17 +2985,8 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// The syntax table for MODE, or the default one when it has none.
-    ///
-    /// Cloned out and the lock released, because every caller is about to run a
-    /// scan with it  and a scan reads a whole buffer, far too long to hold the
-    /// registry against everything else that wants a mode.
     pub(crate) fn syntax_table(&self, mode: &str) -> SyntaxTable {
-        self.mode_registry
-            .read()
-            .expect("Failed to acquire read lock on mode_registry")
-            .get(mode)
-            .and_then(|mode| mode.syntax_table.clone())
-            .unwrap_or_default()
+        self.modes(|modes| modes.syntax_table(mode))
     }
 
     /// The syntax table in force in the current buffer.
@@ -3329,14 +3172,10 @@ pub fn create_global_env<B: BufferTrait>()
 
     // Create the fundamental modes:
     // - fundamental-mode to edit base files
-    editor_state
-        .mode_registry
-        .write()
-        .expect("Failed to acquire write lock on mode_registry")
-        .insert(
-            "fundamental-mode".into(),
-            MajorMode::new("fundamental-mode".into()),
-        );
+    editor_state.set_mode(
+        "fundamental-mode",
+        MajorMode::new("fundamental-mode".into()),
+    );
 
     // ---------------------- FILLING PRIMITIVE FUNCTIONS -----------------------------
     install_primitives(&editor_state, &env);

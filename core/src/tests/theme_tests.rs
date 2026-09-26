@@ -136,16 +136,14 @@ mod tests {
         let face = Face::named("toy-macro").expect("the rule should have defined the face");
         assert_ne!(face, Face::DEFAULT, "it must not have fallen back");
         assert_eq!(
-            ctx.mode_registry
-                .read()
-                .expect("mode registry")
+            ctx.modes(|modes| modes
                 .get("toy-mode")
                 .expect("toy-mode")
                 .grammar
                 .rules
                 .first()
                 .expect("one rule")
-                .face,
+                .face),
             face,
             "the rule should carry the face it named"
         );

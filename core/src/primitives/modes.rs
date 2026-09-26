@@ -17,10 +17,7 @@ primitive!(make_mode, args, _env, ctx, {
         })
     } else {
         if let Some(ELispExp::Symbol(mode_name)) = args.get(0) {
-            ctx.mode_registry
-                .write()
-                .expect("Failed to acquire write lock on mode_registry")
-                .insert(mode_name.to_string(), MajorMode::new(mode_name));
+            ctx.modes_mut(|modes| modes.insert(mode_name, MajorMode::new(mode_name)));
             Ok(ELispExp::symbol("t".into()))
         } else {
             Err(EvalError::WrongArgumentType {
@@ -75,18 +72,17 @@ primitive!(add_hook, args, _env, ctx, {
     if let (ELispExp::Symbol(mode_name), ELispExp::String(hook_name), ELispExp::Symbol(func_name)) =
         (&args[0], &args[1], &args[2])
     {
-        let mut registry = ctx
-            .mode_registry
-            .write()
-            .expect("Failed to acquire write lock on mode_registry");
-
-        if let Some(mode) = registry.get_mut(mode_name.as_str()) {
-            let hook_list = mode
-                .hooks
-                .entry(hook_name.to_string())
-                .or_insert_with(Vec::new);
-            hook_list.push(ELispExp::symbol(func_name.to_string()));
-
+        // Reported outside the closure: the diagnostic writes the echo area,
+        // which is a compartment of its own.
+        let added = ctx.modes_mut(|modes| {
+            modes.edit(mode_name.as_str(), |mode| {
+                mode.hooks
+                    .entry(hook_name.to_string())
+                    .or_default()
+                    .push(ELispExp::symbol(func_name.to_string()));
+            })
+        });
+        if added {
             Ok(ELispExp::symbol("t".into()))
         } else {
             ctx.log_diagnostic(&format!("Mode {} does not exist", mode_name));
@@ -249,16 +245,9 @@ fn with_mode<B: BufferTrait, F>(ctx: &EditorState<B>, mode_name: &str, edit: F) 
 where
     F: FnOnce(&mut crate::modes::MajorMode<B>),
 {
-    let mut registry = ctx
-        .mode_registry
-        .write()
-        .expect("Failed to acquire write lock on mode_registry");
-    match registry.get_mut(mode_name) {
-        Some(mode) => {
-            edit(mode);
-            ELispExp::t()
-        }
-        None => ELispExp::nil(),
+    match ctx.modes_mut(|modes| modes.edit(mode_name, edit)) {
+        true => ELispExp::t(),
+        false => ELispExp::nil(),
     }
 }
 
@@ -648,16 +637,7 @@ primitive!(matching_delimiter, args, _env, ctx, {
         None => ctx.with_current_buffer(|buf| buf.current_mode.clone()),
     };
 
-    let class = {
-        let registry = ctx
-            .mode_registry
-            .read()
-            .expect("Failed to acquire read lock on mode_registry");
-        let table = registry
-            .get(&mode)
-            .and_then(|mode| mode.syntax_table.clone());
-        table.unwrap_or_default().class_of(c)
-    };
+    let class = ctx.modes(|modes| modes.syntax_table(&mode)).class_of(c);
     Ok(match class {
         SyntaxClass::Open(closer) => ELispExp::string(closer.to_string()),
         SyntaxClass::Close(opener) => ELispExp::string(opener.to_string()),
@@ -698,16 +678,7 @@ primitive!(syntax_class, args, _env, ctx, {
         None => ctx.with_current_buffer(|buf| buf.current_mode.clone()),
     };
 
-    let class = {
-        let registry = ctx
-            .mode_registry
-            .read()
-            .expect("Failed to acquire read lock on mode_registry");
-        let table = registry
-            .get(&mode)
-            .and_then(|mode| mode.syntax_table.clone());
-        table.unwrap_or_default().class_of(c)
-    };
+    let class = ctx.modes(|modes| modes.syntax_table(&mode)).class_of(c);
     Ok(ELispExp::symbol(
         match class {
             SyntaxClass::Open(_) => "open",

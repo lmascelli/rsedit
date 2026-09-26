@@ -337,13 +337,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn grammar_of(ctx: &Ctx, mode: &str) -> Grammar {
-        ctx.mode_registry
-            .read()
-            .expect("mode registry")
-            .get(mode)
-            .expect("the mode")
-            .grammar
-            .clone()
+        ctx.modes(|modes| modes.get(mode).expect("the mode").grammar.clone())
     }
 
     #[test]

@@ -78,12 +78,12 @@ primitive!(define_key, args, env, ctx, {
             let actual_ast = command_ast(ast, &env);
             if let Some(keys) = parse_key_sequence(key_str) {
                 if let Some(mode_name) = mode_name {
-                    let mut mode_registry_lock = ctx
-                        .mode_registry
-                        .write()
-                        .expect("Failed to acquire write lock on mode_registry");
-                    if let Some(mode) = mode_registry_lock.get_mut(&mode_name) {
-                        mode.keymaps.insert(keys, actual_ast);
+                    // Reported outside the closure: the diagnostic writes the
+                    // echo area, which is a compartment of its own.
+                    let bound = ctx.modes_mut(|modes| {
+                        modes.edit(&mode_name, |mode| mode.keymaps.insert(keys, actual_ast))
+                    });
+                    if bound {
                         Ok(ELispExp::t())
                     } else {
                         ctx.log_diagnostic(&format!(
@@ -92,11 +92,7 @@ primitive!(define_key, args, env, ctx, {
                         Ok(ELispExp::nil())
                     }
                 } else {
-                    let mut keymaps = ctx
-                        .keymaps
-                        .write()
-                        .expect("Failed to acquire write lock on keymaps");
-                    keymaps.insert(keys, actual_ast);
+                    ctx.modes_mut(|modes| modes.global_keymap_mut().insert(keys, actual_ast));
                     Ok(ELispExp::t())
                 }
             } else {

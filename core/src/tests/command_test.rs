@@ -799,11 +799,9 @@ mod tests {
     #[test]
     fn the_keys_emacs_gives_other_commands_no_longer_quit_or_save() {
         let (ctx, _env) = bare();
-        let keymaps = ctx.keymaps.read().expect("keymaps");
-
         for c in ['q', 's'] {
             assert!(
-                keymaps.get(&[key_with(c, true)]).is_none(),
+                ctx.modes(|modes| modes.global_keymap().get(&[key_with(c, true)]).is_none()),
                 "C-{c} should not be bound by default"
             );
         }
