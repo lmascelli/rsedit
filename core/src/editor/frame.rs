@@ -68,6 +68,7 @@ impl<B: BufferTrait> EditorState<B> {
         let prompt = self.transient_message();
         let mode_line_format = mode_line_format(env);
         let separator_char = window_separator(env);
+        let gutter = line_numbers(env);
         // Asked before the structural locks, alongside the other independent
         // reads: it takes the buffers and the mode registry, and the registry
         // has no place in the ordering that begins below.
@@ -115,7 +116,10 @@ impl<B: BufferTrait> EditorState<B> {
                 },
                 focus,
                 &buffers,
-                &mode_line_format,
+                ComposeSettings {
+                    mode_line_format: &mode_line_format,
+                    gutter,
+                },
                 &mut views,
                 &mut separator_rects,
             );
@@ -160,6 +164,14 @@ impl<B: BufferTrait> EditorState<B> {
                     // would be a second answer to the same question.
                     mode_line: None,
                     has_border: float.has_border,
+                    // No gutter on a float, deliberately. A float is a prompt
+                    // or a strip of choices -- a few rows of something being
+                    // read and then dismissed -- and numbering rows that are
+                    // not lines of a file being edited says nothing. It would
+                    // also spend columns of a window whose width was chosen to
+                    // fit what it is showing.
+                    gutter: Vec::new(),
+                    gutter_width: 0,
                 });
             }
 

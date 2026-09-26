@@ -384,6 +384,7 @@ fn frame_at_depth(
             highlights,
             mode_line: None,
             has_border: false,
+            ..Default::default()
         }],
         theme: Arc::new(theme),
         width: COLS as usize,
@@ -484,6 +485,7 @@ fn a_mode_line_is_drawn_below_the_text_as_a_bar() {
             highlights: Vec::new(),
             mode_line: Some("status".into()),
             has_border: false,
+            ..Default::default()
         }],
         theme: Arc::new(Theme::default()),
         width: COLS as usize,
@@ -524,6 +526,7 @@ fn an_unfocused_window_uses_the_inactive_mode_line_face() {
             highlights: Vec::new(),
             mode_line: Some(name.into()),
             has_border: false,
+            ..Default::default()
         }
     }
     let snapshot = FrameSnapshot {
@@ -863,6 +866,7 @@ fn frame_with_float() -> String {
                 mode_line: None,
                 highlights: vec![],
                 has_border: false,
+                ..Default::default()
             },
             rsedit_core::ui::RenderableWindowView {
                 rect: Rect {
@@ -886,6 +890,7 @@ fn frame_with_float() -> String {
                 mode_line: None,
                 highlights: vec![],
                 has_border: true,
+                ..Default::default()
             },
         ],
         width: COLS as usize,
@@ -1163,6 +1168,7 @@ fn a_floating_window_is_drawn_over_the_rule_it_covers() {
             mode_line: None,
             highlights: vec![],
             has_border: true,
+            ..Default::default()
         }],
         theme: Arc::new(Theme::default()),
         width: COLS as usize,
@@ -1181,5 +1187,133 @@ fn a_floating_window_is_drawn_over_the_rule_it_covers() {
         rule < float,
         "the rule must be drawn before the float that covers it, so the float \
          wins the cell; rule at {rule}, float at {float}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// The line-number gutter
+// ---------------------------------------------------------------------
+
+/// A window with a four-column gutter, whose text therefore starts at column
+/// four of the frame.
+///
+/// Built by hand rather than composed from an editor, because what is under
+/// test here is the *renderer's* half of the arrangement: composition already
+/// has its own tests, and the bug this guards against -- numbers painted over
+/// the first characters of every line -- is one only a renderer can commit.
+fn frame_with_gutter(mode_line: Option<&str>) -> String {
+    use rsedit_core::ui::{Face, GutterCell};
+    let cell = |text: &str, face| GutterCell {
+        text: text.into(),
+        face,
+    };
+    let snapshot = FrameSnapshot {
+        views: vec![rsedit_core::ui::RenderableWindowView {
+            rect: Rect {
+                x: 4,
+                y: 0,
+                width: 16,
+                height: 2,
+            },
+            buffer_name: "*scratch*".into(),
+            title: None,
+            is_focused: true,
+            cursor_rel_pos: Some((0, 0)),
+            lines: vec!["alpha".into(), "beta".into()],
+            highlights: Vec::new(),
+            mode_line: mode_line.map(str::to_string),
+            has_border: false,
+            gutter: vec![
+                cell("  1 ", Face::LINE_NUMBER_CURRENT),
+                cell("  2 ", Face::LINE_NUMBER),
+            ],
+            gutter_width: 4,
+        }],
+        theme: Arc::new(Theme::default()),
+        width: COLS as usize,
+        height: ROWS as usize,
+        ..Default::default()
+    };
+    let mut out: Vec<u8> = Vec::new();
+    render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("render");
+    String::from_utf8(out).expect("crossterm emits valid UTF-8")
+}
+
+#[test]
+fn the_gutter_is_drawn_in_the_columns_left_of_the_text() {
+    let rendered = frame_with_gutter(None);
+    let printed = printed(&rendered);
+    assert!(
+        printed.contains(&(0, 0, "  1 ".into())),
+        "the first number at column zero: {printed:?}"
+    );
+    assert!(
+        printed.contains(&(0, 1, "  2 ".into())),
+        "the second on the row below it: {printed:?}"
+    );
+}
+
+#[test]
+fn the_text_is_not_shifted_over_by_its_own_gutter() {
+    // The failure this catches is a renderer that draws the rows at the
+    // window's left edge and then the numbers on top of them, which loses the
+    // first four characters of every line and puts the cursor four columns
+    // out.
+    let rendered = frame_with_gutter(None);
+    let printed = printed(&rendered);
+    let row = printed
+        .iter()
+        .find(|(x, y, text)| *x == 4 && *y == 0 && text.starts_with("alpha"))
+        .unwrap_or_else(|| panic!("the text must be drawn at column four: {printed:?}"));
+    assert!(
+        row.2.chars().count() >= 16,
+        "padded across the sixteen columns it was given: {:?}",
+        row.2
+    );
+}
+
+#[test]
+fn the_current_line_number_is_drawn_with_its_own_face() {
+    // Composition decides which line that is; the renderer's job is only to
+    // use the face it was handed, per cell rather than once for the whole
+    // gutter. `line-number-current' is bold in the default theme, which is
+    // what makes the run findable.
+    let rendered = frame_with_gutter(None);
+    let bold = styled_run(&rendered, "\u{1b}[1m");
+    assert!(
+        bold.contains("  1 "),
+        "the line point is on is the bold one: {bold:?}"
+    );
+    assert!(!bold.contains("  2 "), "and the next line is not: {bold:?}");
+}
+
+#[test]
+fn the_mode_line_spans_the_gutter_as_well_as_the_text() {
+    // A bar with a notch cut out of its left end is not a bar.
+    let rendered = frame_with_gutter(Some("status"));
+    let printed = printed(&rendered);
+    let bar = printed
+        .iter()
+        .find(|(x, y, text)| *x == 0 && *y == 2 && text.starts_with("status"))
+        .unwrap_or_else(|| panic!("the status line must start at column zero: {printed:?}"));
+    assert_eq!(
+        bar.2.chars().count(),
+        20,
+        "padded across the gutter and the text together: {:?}",
+        bar.2
+    );
+}
+
+#[test]
+fn a_window_with_no_gutter_is_drawn_exactly_as_it_was_before() {
+    // The property that makes the field safe to add: nothing changes for a
+    // view that declares none.
+    let rendered = frame_themed(&["alpha"], Vec::new(), Theme::default());
+    let printed = printed(&rendered);
+    assert!(
+        printed
+            .iter()
+            .any(|(x, y, text)| *x == 0 && *y == 0 && text.starts_with("alpha")),
+        "the text still starts at the frame's left edge: {printed:?}"
     );
 }

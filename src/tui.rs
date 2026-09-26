@@ -316,6 +316,29 @@ pub fn render_to<W: Write>(
             draw_clipped_row(out, view.rect.x, target_y, &row, frame_w, frame_h)?;
         }
 
+        // The gutter, in the columns immediately left of the rect -- outside
+        // it, as the status line is drawn on the row immediately below.
+        //
+        // Cell by cell rather than as one styled block, because the line point
+        // is on is styled differently from the rest and composition has
+        // already said which that is. A window with no gutter has no cells, so
+        // the common case is an empty loop.
+        for (offset_y, cell) in view.gutter.iter().enumerate() {
+            let style = frame.theme.style(cell.face);
+            apply_style(out, &style, depth)?;
+            let mut text: String = cell.text.chars().take(view.gutter_width).collect();
+            text.push_str(&" ".repeat(view.gutter_width.saturating_sub(text.chars().count())));
+            draw_clipped_row(
+                out,
+                view.rect.x - view.gutter_width as isize,
+                view.rect.y + offset_y as isize,
+                &text,
+                frame_w,
+                frame_h,
+            )?;
+            out.queue(SetAttribute(Attribute::Reset))?;
+        }
+
         // Highlights are drawn *over* the rows rather than woven into them, so
         // the ordinary case -- a row with nothing special about it -- still
         // costs one `Print` of one string. Re-printing the few runs that do
@@ -335,8 +358,10 @@ pub fn render_to<W: Write>(
                 Face::MODE_LINE_INACTIVE
             };
             // Padded across the window so the status line reads as a bar
-            // rather than as a piece of reversed text floating on the row.
-            let width = view.rect.width;
+            // rather than as a piece of reversed text floating on the row --
+            // across the gutter too, since a bar with a notch cut out of its
+            // left end is not a bar.
+            let width = view.rect.width + view.gutter_width;
             let mut text: String = mode_line.chars().take(width).collect();
             text.push_str(&" ".repeat(width.saturating_sub(text.chars().count())));
 
@@ -344,7 +369,7 @@ pub fn render_to<W: Write>(
             apply_style(out, &style, depth)?;
             draw_clipped_row(
                 out,
-                view.rect.x,
+                view.rect.x - view.gutter_width as isize,
                 view.rect.y + view.rect.height as isize,
                 &text,
                 frame_w,

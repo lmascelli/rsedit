@@ -138,6 +138,22 @@ pub struct Window {
     /// a new window is to adopt the point already there rather than drag it to
     /// the top of the file.
     pub point: Option<usize>,
+    /// How many columns this window gave to its gutter, last time a frame was
+    /// composed. Zero when it draws none.
+    ///
+    /// # Why a third render fact is stored on the window
+    ///
+    /// The same bargain [`Window::text_height`] makes, for the same reason.
+    /// How wide the numbers have to be depends on how many lines the buffer
+    /// has and on what `display-line-numbers` is set to, and it is worked out
+    /// while the frame is laid out -- but *what is under the pointer* is asked
+    /// between frames, when none of that is in hand.
+    ///
+    /// Without it, a click four columns into a window with a four-column
+    /// gutter would land on column four of the text rather than on column
+    /// zero: every click in a numbered window would be off by the width of
+    /// its own numbers.
+    pub gutter_width: usize,
 }
 
 impl Window {
@@ -168,6 +184,7 @@ impl Window {
             rect: Rect::default(),
             show_mode_line: true,
             point: None,
+            gutter_width: 0,
         }
     }
 }
@@ -284,13 +301,186 @@ pub struct Separator {
     pub face: Face,
 }
 
+/// What Lisp says about how a window is drawn, read once per frame.
+///
+/// # Why these travel together
+///
+/// They are the same kind of thing -- settings that the environment owns,
+/// read before any editor lock is taken and then carried down the layout
+/// tree -- and composition takes them as a group rather than one parameter
+/// each. The second one made the signature eight arguments long; the third
+/// would have made it nine, and every recursion into a split would have
+/// repeated all of them.
+#[derive(Clone, Copy, Debug)]
+pub struct ComposeSettings<'a> {
+    pub mode_line_format: &'a str,
+    pub gutter: GutterSpec,
+}
+
+/// One cell of a window's gutter -- the columns to the left of its text.
+///
+/// # Why this carries a face rather than the renderer choosing one
+///
+/// The line the cursor is on is numbered differently from the rest, and which
+/// line that is, is a question about the buffer. A renderer told only the
+/// strings would have to work it back out from `cursor_rel_pos`, and every
+/// renderer would have to work it out the same way. Composition knows the
+/// answer already, so it says it.
+///
+/// It is also the shape the gutter's other job wants. Breakpoints and
+/// diagnostics are a glyph and a colour in the same columns, and a cell that
+/// is already text-plus-face needs nothing added to carry one.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct GutterCell {
+    /// Exactly [`RenderableWindowView::gutter_width`] characters, padded, so a
+    /// renderer prints it without measuring.
+    pub text: String,
+    pub face: Face,
+}
+
+/// What a window puts in its gutter, as Lisp currently has it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LineNumbers {
+    /// No gutter at all: the text starts at the window's left edge.
+    #[default]
+    Off,
+    /// Each line's own number, counted from one.
+    Absolute,
+    /// How far each line is from the one point is on, with point's own line
+    /// showing its absolute number instead of a nought.
+    ///
+    /// The absolute number on that one row is not an inconsistency: a
+    /// distance of zero is the one number nobody needs, and the line you are
+    /// on is the one you want to be able to read off the screen.
+    Relative,
+}
+
+/// How a window's gutter is configured.
+///
+/// Passed into composition rather than read there, for the reason everything
+/// from Lisp is: the environment has locks of its own, and composition runs
+/// with the window and buffer locks held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct GutterSpec {
+    pub numbers: LineNumbers,
+    /// The fewest columns the numbers themselves may take, not counting the
+    /// space between them and the text.
+    ///
+    /// A minimum rather than a fit, so that the text does not shuffle
+    /// sideways as a file grows past its ninth line and then its
+    /// ninety-ninth. Widening still happens when it must -- a number that
+    /// does not fit is worse than a column of whitespace -- it just does not
+    /// happen for every file that is merely short.
+    pub min_digits: usize,
+}
+
+/// The narrowest a window's text may be left after a gutter is taken out of
+/// it.
+///
+/// A window this small is not somewhere line numbers help: they would be most
+/// of what it showed. The text wins, and the numbers go, which is a visible
+/// answer rather than a window full of digits.
+pub const MIN_TEXT_WIDTH_FOR_GUTTER: usize = 8;
+
+/// Digits in N written out in base ten.
+fn decimal_width(n: usize) -> usize {
+    let mut width = 1;
+    let mut rest = n / 10;
+    while rest > 0 {
+        width += 1;
+        rest /= 10;
+    }
+    width
+}
+
+/// How many columns a gutter should take in a window WIDTH columns wide,
+/// showing a buffer of LINE_COUNT lines.
+///
+/// Zero when there is to be no gutter -- either because nothing asked for one
+/// or because the window is too narrow to give up the space. Either way the
+/// caller does the same thing with it, which is why this answers with a width
+/// rather than an `Option`.
+pub fn gutter_columns(spec: GutterSpec, line_count: usize, width: usize) -> usize {
+    if spec.numbers == LineNumbers::Off {
+        return 0;
+    }
+    // An empty buffer still has a line one, so it is numbered like a
+    // one-line one rather than like a zero-digit one.
+    let digits = decimal_width(line_count.max(1)).max(spec.min_digits);
+    // One more for the space between the numbers and the text. Without it a
+    // line starting in column zero runs straight into its own number.
+    let wanted = digits + 1;
+    if width < wanted + MIN_TEXT_WIDTH_FOR_GUTTER {
+        return 0;
+    }
+    wanted
+}
+
+/// The gutter for ROWS rows of a window showing LINE_COUNT lines from
+/// FIRST_LINE, with point on POINT_LINE.
+///
+/// One cell per row drawn, including the rows past the end of the buffer:
+/// those are blank rather than absent, so a renderer can pair cells with rows
+/// by index and a window scrolled past its own text does not show the
+/// previous frame's numbers down its left edge.
+pub fn gutter_cells(
+    spec: GutterSpec,
+    width: usize,
+    first_line: usize,
+    rows: usize,
+    line_count: usize,
+    point_line: usize,
+) -> Vec<GutterCell> {
+    if width == 0 {
+        return Vec::new();
+    }
+    (0..rows)
+        .map(|row| {
+            let line = first_line + row;
+            if line >= line_count {
+                return GutterCell {
+                    text: " ".repeat(width),
+                    face: Face::LINE_NUMBER,
+                };
+            }
+            let current = line == point_line;
+            let shown = match spec.numbers {
+                LineNumbers::Relative if !current => line.abs_diff(point_line),
+                // Lines are counted from zero inside the editor and from one
+                // everywhere a person reads them.
+                _ => line + 1,
+            };
+            // Right-aligned in every column but the last, which is the space
+            // before the text. Truncated from the left if a number somehow
+            // overruns -- a wide number pushed against the text reads better
+            // than one that shifts the whole row.
+            let mut text = format!("{:>pad$} ", shown, pad = width - 1);
+            if text.chars().count() > width {
+                text = text.chars().skip(text.chars().count() - width).collect();
+            }
+            GutterCell {
+                text,
+                face: if current {
+                    Face::LINE_NUMBER_CURRENT
+                } else {
+                    Face::LINE_NUMBER
+                },
+            }
+        })
+        .collect()
+}
+
 /// One window, resolved to exactly what should appear on screen.
 ///
 /// Owned data with no borrows back into editor state, so a [`FrameSnapshot`]
 /// built from these can outlive the locks it was captured under.
 ///
+/// `Default` is a window of nothing, nowhere -- there so that a caller who
+/// cares about two fields is not made to write the other ten. Chiefly the
+/// renderer's tests, for the reason [`FrameSnapshot`] spells out.
+///
 /// [`FrameSnapshot`]: crate::ui::FrameSnapshot
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct RenderableWindowView {
     pub rect: Rect,
     pub buffer_name: String,
@@ -311,6 +501,25 @@ pub struct RenderableWindowView {
     /// Runs within `lines` to draw with a face other than the default.
     pub highlights: Vec<Highlight>,
     pub has_border: bool,
+    /// The gutter, one cell per row of the window, or empty when it draws
+    /// none.
+    ///
+    /// Drawn in the `gutter_width` columns immediately *left* of `rect` --
+    /// outside it, as the status line is drawn on the row immediately below.
+    /// The rect is what the buffer gets; decoration goes around it.
+    ///
+    /// That is what makes this safe to add. A renderer that has never heard
+    /// of a gutter draws everything else exactly where it did before and
+    /// leaves those columns blank, rather than painting numbers over the
+    /// first few characters of every line.
+    pub gutter: Vec<GutterCell>,
+    /// How many columns [`Self::gutter`] occupies. Zero when there is none.
+    ///
+    /// Stated rather than measured from the cells: the status line spans the
+    /// gutter as well as the text -- a bar with a notch cut out of its left
+    /// end is not a bar -- and a window with no rows on screen has no cell to
+    /// measure.
+    pub gutter_width: usize,
 }
 
 /// The smallest a window may be dragged to.
@@ -715,7 +924,7 @@ impl LayoutNode {
         rect: Rect,
         focus: Focus,
         buffers: &Buffers<B>,
-        mode_line_format: &str,
+        settings: ComposeSettings<'_>,
         out_views: &mut Vec<RenderableWindowView>,
         out_separators: &mut Vec<Rect>,
     ) {
@@ -742,7 +951,7 @@ impl LayoutNode {
                 let mode_line = buffers.handle(&win.buffer_name).and_then(|buffer| {
                     (win.show_mode_line && rect.height >= 2).then(|| {
                         expand_mode_line(
-                            mode_line_format,
+                            settings.mode_line_format,
                             &buffer
                                 .read()
                                 .expect("Failed to acquire read lock on buffer"),
@@ -786,58 +995,85 @@ impl LayoutNode {
                 // search visible in whichever window is showing the file.
 
                 let follows_points = is_focused || !focus.tiled;
-                if let Some(buf) = buffers.handle(&win.buffer_name) {
-                    let (c_line, c_col, c_offset) = {
-                        let buf = buf.read().expect("Failed to acquire read lock on buffer");
-                        let (line, col) = buf.text.cursor_pos();
-                        (line, col, buf.text.cursor_pos_1d())
-                    };
 
-                    if follows_points {
-                        // Whether point has moved since this window last drew
-                        // it. Compared *before* it is recorded, and it is what
-                        // decides whether the view is dragged back below.
-                        //
-                        // # Why the view does not simply always follow
-                        //
-                        // A view that reconciled itself with point on every
-                        // frame could never be scrolled away from it. The
-                        // wheel would move the text until point reached an
-                        // edge and then stop, because the next frame put it
-                        // back -- which reads as the scroll jamming.
-                        //
-                        // Following when point *moves* is the honest rule, and
-                        // the one Emacs uses: scrolling is a way of looking
-                        // somewhere else, and it lasts until you do something
-                        // that says where you are. Typing, searching or moving
-                        // point all say so; turning a wheel does not.
-                        let point_moved = win.point != Some(c_offset);
-                        // Where this window will put point when it is focused
-                        // again -- recorded alongside the scroll, and for the
-                        // same reason: these are exactly the windows whose
-                        // view is tracking point.
-                        win.point = Some(c_offset);
+                // Read once, before the gutter is sized and before the view is
+                // reconciled with point: sizing the gutter needs the line
+                // count, numbering it needs point's line, and reconciling
+                // needs all three. Three acquisitions of one lock to answer
+                // one question about one instant is exactly the shape
+                // `FrameSnapshot` exists to stop.
+                let point_and_size = buffers.handle(&win.buffer_name).map(|buf| {
+                    let buf = buf.read().expect("Failed to acquire read lock on buffer");
+                    let (line, col) = buf.text.cursor_pos();
+                    (line, col, buf.text.cursor_pos_1d(), buf.text.line_count())
+                });
+                // A window showing no buffer at all still has to be numbered
+                // consistently with one showing an empty buffer, so the
+                // fallback is the empty buffer's answer rather than a special
+                // case further down.
+                let (point_line, line_count) = point_and_size
+                    .map(|(line, _, _, count)| (line, count))
+                    .unwrap_or((0, 0));
 
-                        if point_moved || resized {
-                            if c_line < win.scroll_y {
-                                win.scroll_y = c_line;
-                            } else if c_line >= win.scroll_y + rect.height {
-                                win.scroll_y = c_line - rect.height + 1;
-                            }
+                // The gutter comes out of the rect here, before anything reads
+                // it -- exactly as the status line came out of the height
+                // above, and for the same reason. Scrolling, the cursor and
+                // every highlight are worked out against the columns the
+                // *text* gets, so none of them has to know a gutter exists.
+                let gutter_width = gutter_columns(settings.gutter, line_count, rect.width);
+                win.gutter_width = gutter_width;
+                let rect = Rect {
+                    x: rect.x + gutter_width as isize,
+                    width: rect.width.saturating_sub(gutter_width),
+                    ..rect
+                };
 
-                            if c_col < win.scroll_x {
-                                win.scroll_x = c_col;
-                            } else if c_col >= win.scroll_x + rect.width {
-                                win.scroll_x = c_col - rect.width + 1;
-                            }
+                if let Some((c_line, c_col, c_offset, _)) = point_and_size
+                    && follows_points
+                {
+                    // Whether point has moved since this window last drew
+                    // it. Compared *before* it is recorded, and it is what
+                    // decides whether the view is dragged back below.
+                    //
+                    // # Why the view does not simply always follow
+                    //
+                    // A view that reconciled itself with point on every
+                    // frame could never be scrolled away from it. The
+                    // wheel would move the text until point reached an
+                    // edge and then stop, because the next frame put it
+                    // back -- which reads as the scroll jamming.
+                    //
+                    // Following when point *moves* is the honest rule, and
+                    // the one Emacs uses: scrolling is a way of looking
+                    // somewhere else, and it lasts until you do something
+                    // that says where you are. Typing, searching or moving
+                    // point all say so; turning a wheel does not.
+                    let point_moved = win.point != Some(c_offset);
+                    // Where this window will put point when it is focused
+                    // again -- recorded alongside the scroll, and for the
+                    // same reason: these are exactly the windows whose
+                    // view is tracking point.
+                    win.point = Some(c_offset);
+
+                    if point_moved || resized {
+                        if c_line < win.scroll_y {
+                            win.scroll_y = c_line;
+                        } else if c_line >= win.scroll_y + rect.height {
+                            win.scroll_y = c_line - rect.height + 1;
                         }
 
-                        if is_focused {
-                            cursor_rel_pos = Some((
-                                c_col.saturating_sub(win.scroll_x),
-                                c_line.saturating_sub(win.scroll_y),
-                            ));
+                        if c_col < win.scroll_x {
+                            win.scroll_x = c_col;
+                        } else if c_col >= win.scroll_x + rect.width {
+                            win.scroll_x = c_col - rect.width + 1;
                         }
+                    }
+
+                    if is_focused {
+                        cursor_rel_pos = Some((
+                            c_col.saturating_sub(win.scroll_x),
+                            c_line.saturating_sub(win.scroll_y),
+                        ));
                     }
                 }
 
@@ -854,6 +1090,17 @@ impl LayoutNode {
                 highlights.extend(overlay_highlights(win, &rect, buffers));
                 highlights.extend(region_highlights(win, &rect, buffers));
 
+                // After the scroll reconciliation above, which is what
+                // decides which lines these number.
+                let gutter_cells = gutter_cells(
+                    settings.gutter,
+                    gutter_width,
+                    win.scroll_y,
+                    rect.height,
+                    line_count,
+                    point_line,
+                );
+
                 out_views.push(RenderableWindowView {
                     rect,
                     buffer_name: win.buffer_name.clone(),
@@ -864,6 +1111,8 @@ impl LayoutNode {
                     highlights,
                     mode_line,
                     has_border: false,
+                    gutter: gutter_cells,
+                    gutter_width,
                 });
             }
 
@@ -883,7 +1132,7 @@ impl LayoutNode {
                     first,
                     focus,
                     buffers,
-                    mode_line_format,
+                    settings,
                     out_views,
                     out_separators,
                 );
@@ -891,7 +1140,7 @@ impl LayoutNode {
                     second,
                     focus,
                     buffers,
-                    mode_line_format,
+                    settings,
                     out_views,
                     out_separators,
                 );

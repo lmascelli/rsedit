@@ -61,8 +61,16 @@
 /// highlight small and the lookup an array index; the string is paid for once,
 /// when the face is first named.
 ///
+/// # Why it has a `Default`
+///
+/// Id zero is [`Face::DEFAULT`] -- text with nothing said about it -- so the
+/// derived default is the right one rather than an accident of the
+/// representation. It is there so that anything holding a face can derive its
+/// own default, which is what a [`GutterCell`] with nothing in it needs.
+///
 /// [`Highlight`]: crate::ui::Highlight
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// [`GutterCell`]: crate::ui::GutterCell
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Face(u16);
 
 /// The names of every face interned so far, indexed by id.
@@ -105,6 +113,10 @@ impl Face {
     pub const COMMENT: Face = Face(8);
     pub const FUNCTION: Face = Face(9);
     pub const BUILTIN: Face = Face(10);
+    /// A line number in a window's gutter.
+    pub const LINE_NUMBER: Face = Face(11);
+    /// The number of the line point is on.
+    pub const LINE_NUMBER_CURRENT: Face = Face(12);
 
     /// The faces the editor names itself, with the ids they are interned at.
     ///
@@ -114,7 +126,7 @@ impl Face {
     /// The order and the constants above have to agree, and
     /// `built_in_faces_are_interned_at_their_own_ids` in the tests is what
     /// checks they do.
-    pub const BUILT_IN: [(Face, &'static str); 11] = [
+    pub const BUILT_IN: [(Face, &'static str); 13] = [
         (Face::DEFAULT, "default"),
         (Face::REGION, "region"),
         (Face::MODE_LINE, "mode-line"),
@@ -126,6 +138,8 @@ impl Face {
         (Face::COMMENT, "comment"),
         (Face::FUNCTION, "function"),
         (Face::BUILTIN, "builtin"),
+        (Face::LINE_NUMBER, "line-number"),
+        (Face::LINE_NUMBER_CURRENT, "line-number-current"),
     ];
 
     /// The face called NAME, defining it if nothing has named it yet.
@@ -454,6 +468,19 @@ impl Default for Theme {
         );
         theme.set(Face::FUNCTION, Style::fg(Color::CYAN));
         theme.set(Face::BUILTIN, Style::fg(Color::BLUE));
+        // Present but receding: numbers are read when looked for and ignored
+        // the rest of the time, which is what dimming them says.
+        theme.set(Face::LINE_NUMBER, Style::fg(Color::BRIGHT_BLACK));
+        // Bold and otherwise unstyled, for the reason the region uses reverse
+        // video: "where you are" has to stand out against a background this
+        // code cannot know, and weight needs no colour decision to do it.
+        theme.set(
+            Face::LINE_NUMBER_CURRENT,
+            Style {
+                bold: true,
+                ..Style::plain()
+            },
+        );
         theme
     }
 }

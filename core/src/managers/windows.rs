@@ -158,6 +158,21 @@ impl Default for Windows {
     }
 }
 
+/// Which column of WIN's *text* the screen column X is over.
+///
+/// Zero for anywhere in the window's gutter, which is the honest answer: a
+/// click on a line number is a click on that line, and the beginning of it is
+/// where the nearest character is. Clamped at zero on the other side too, for
+/// a drag that has left the window to the left.
+///
+/// A function rather than the subtraction written out at each call site,
+/// because there are two of them -- one for a click and one for a drag -- and
+/// a gutter that only one of them knew about would be a selection that jumped
+/// sideways the moment the mouse moved.
+fn text_column(win: &Window, x: isize) -> usize {
+    (x - win.rect.x - win.gutter_width as isize).max(0) as usize
+}
+
 impl Windows {
     // ------------------------------------------------------------------
     // The pieces, for the operations that still live on the facade
@@ -308,7 +323,7 @@ impl Windows {
         Some(Hit::Text {
             window: win.id,
             line: win.scroll_y + row,
-            column: win.scroll_x + (x - win.rect.x) as usize,
+            column: win.scroll_x + text_column(win, x),
         })
     }
 
@@ -323,8 +338,7 @@ impl Windows {
         let win = self.root.window(window)?;
         let rows = win.text_height.max(1);
         let row = (y - win.rect.y).clamp(0, rows as isize - 1) as usize;
-        let column = (x - win.rect.x).max(0) as usize;
-        Some((win.scroll_y + row, win.scroll_x + column))
+        Some((win.scroll_y + row, win.scroll_x + text_column(win, x)))
     }
 
     /// Which way a drag that has left its window wants the view to move, if it

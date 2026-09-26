@@ -53,9 +53,9 @@ use crate::{
     search::Isearch,
     task::{BackgroundScheduler, WorkerMessage},
     ui::{
-        Division, Face, FloatingWindow, Focus, FrameSnapshot, Orientation, Rect,
-        RenderableWindowView, Separator, Side, Style, Theme, Window, WindowId,
-        extract_buffer_lines, region_highlights,
+        ComposeSettings, Division, Face, FloatingWindow, Focus, FrameSnapshot, GutterSpec,
+        LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,
+        Window, WindowId, extract_buffer_lines, region_highlights,
     },
 };
 use std::{

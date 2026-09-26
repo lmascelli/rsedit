@@ -58,6 +58,11 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; mode with `add-completion-function'.
 (eval-file "completion-at-point")
 
+;; Line numbers down the left edge. Off, because a gutter costs columns and
+;; not everybody wants one; `M-x toggle-line-numbers' turns it on for a look,
+;; and 'relative numbers each line by its distance from point instead.
+;; (setq display-line-numbers t)
+
 ;; The mouse: click to put point, wheel to scroll the window under the pointer.
 ;;
 ;; On here rather than in the editor's own defaults because it costs something.

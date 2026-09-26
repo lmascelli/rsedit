@@ -568,7 +568,10 @@ fn layout(report: &mut Report, calibration: f64) {
                         tiled: true,
                     },
                     &buffers,
-                    " %b ",
+                    ComposeSettings {
+                        mode_line_format: " %b ",
+                        gutter: GutterSpec::default(),
+                    },
                     &mut views,
                     &mut separators,
                 );

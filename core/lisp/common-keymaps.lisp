@@ -186,4 +186,35 @@
 ;; It is styled with the `mode-line' face, and `mode-line-inactive' for a
 ;; window that does not have focus -- see `set-face'.
 
+;; Line numbers down the left edge of every tiled window.
+;;
+;;   (setq display-line-numbers t)          ; each line's own number
+;;   (setq display-line-numbers 'relative)  ; how far each line is from point
+;;   (setq display-line-numbers nil)        ; off, which is the default
+;;
+;; `display-line-numbers-width' is the fewest digits the gutter reserves --
+;; three unless it is set -- so the text does not shuffle sideways as a file
+;; grows past its ninth line and then its ninety-ninth. It widens past that
+;; when a number needs the room.
+;;
+;; The numbers use the `line-number' face, and the line point is on uses
+;; `line-number-current'. A window too narrow to spare the columns shows no
+;; numbers at all: the text wins.
+;;
+;; Bound to nothing here, and off, because a gutter costs columns and that is
+;; not a trade to make on somebody's behalf. `M-x toggle-line-numbers' turns
+;; it on for a look.
+(setq display-line-numbers nil)
+
+;; Written out as a `defun' plus a `register-command' rather than with
+;; `defcommand', because this file is loaded on its own by tests and by an
+;; installation with `commands.lisp' commented out. Where that macro is
+;; missing a form using it is not a definition, it is a call -- and the call
+;; raises, taking the rest of this file with it.
+(defun toggle-line-numbers ()
+  "Turn the line-number gutter on, or off if it is already on."
+  (setq display-line-numbers (if display-line-numbers nil t))
+  (message (if display-line-numbers "line numbers on" "line numbers off")))
+(register-command "toggle-line-numbers" nil)
+
 (log "End of the common-keymaps.lisp")

@@ -27,6 +27,7 @@ mod home_guard;
 mod hooks_tests;
 mod indent_tests;
 mod isearch_tests;
+mod line_number_tests;
 mod manpage_tests;
 mod minibuffer_lisp_tests;
 mod mode_line_tests;

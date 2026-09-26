@@ -42,6 +42,27 @@ pub const MOUSE_MODE: &str = "mouse-mode";
 
 pub const WINDOW_SEPARATOR: &str = "window-separator";
 
+/// The name of the Lisp variable that turns the line-number gutter on.
+///
+/// `nil` or unbound is off, `'relative` counts from point, and anything else
+/// truthy is ordinary absolute numbering -- the same three answers Emacs
+/// gives to the same name, so somebody who already knows one does not have to
+/// learn the other.
+pub const DISPLAY_LINE_NUMBERS: &str = "display-line-numbers";
+
+/// The name of the Lisp variable holding the gutter's minimum width, in
+/// digits.
+pub const DISPLAY_LINE_NUMBERS_WIDTH: &str = "display-line-numbers-width";
+
+/// How many digits the gutter reserves when nothing sets
+/// [`DISPLAY_LINE_NUMBERS_WIDTH`].
+///
+/// Three, which covers most of what anybody reads at once. The point of a
+/// minimum is that the text does not shuffle sideways as a file grows past
+/// its ninth line and then its ninety-ninth; the point of it being small is
+/// that a three-line buffer does not lose six columns to whitespace.
+pub const DEFAULT_LINE_NUMBER_DIGITS: usize = 3;
+
 pub const DEFAULT_WINDOW_SEPARATOR: char = '\u{2502}';
 
 /// The mode-line format as Lisp currently defines it.
@@ -68,6 +89,48 @@ pub fn mouse_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     env.get_variable(MOUSE_MODE)
         .is_some_and(|value| !value.is_nil())
 }
+
+/// How the gutter is configured, as Lisp currently defines it.
+///
+/// Read here rather than inside composition for the reason the mode-line
+/// format is: the environment has locks of its own, and composition runs with
+/// the window and buffer locks already held.
+pub(super) fn line_numbers<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> GutterSpec {
+    let numbers = match env.get_variable(DISPLAY_LINE_NUMBERS) {
+        None => LineNumbers::Off,
+        Some(value) if value.is_nil() => LineNumbers::Off,
+        // A symbol, because that is how it is written -- but a string too,
+        // since `(setq display-line-numbers "relative")` is the mistake
+        // everybody makes once and there is nothing else it could have meant.
+        Some(ELispExp::Symbol(name)) if &**name == "relative" => LineNumbers::Relative,
+        Some(ELispExp::String(name)) if &**name == "relative" => LineNumbers::Relative,
+        // Any other truthy value asks for numbers, and gets the ordinary
+        // kind. Guessing at a misspelt `'reltaive` would be worse than showing
+        // numbers that are merely not the ones asked for: the mistake is
+        // visible either way, and this way the feature still works.
+        Some(_) => LineNumbers::Absolute,
+    };
+    let min_digits = match env.get_variable(DISPLAY_LINE_NUMBERS_WIDTH) {
+        Some(ELispExp::Number(digits)) if digits.is_finite() && digits >= 1.0 => {
+            // Clamped, because this is multiplied into a column of blanks on
+            // every row of every window: a fat-fingered 1e9 should be a wide
+            // gutter, not an allocation the size of the frame.
+            (digits as usize).min(MAX_LINE_NUMBER_DIGITS)
+        }
+        _ => DEFAULT_LINE_NUMBER_DIGITS,
+    };
+    GutterSpec {
+        numbers,
+        min_digits,
+    }
+}
+
+/// The widest a gutter's minimum may be asked to be.
+///
+/// Twenty digits is more than a `usize` of lines can reach, so nothing real
+/// is refused by this -- it exists so that a nonsense value is a wide gutter
+/// rather than a window that is all gutter.
+const MAX_LINE_NUMBER_DIGITS: usize = 20;
 
 pub(super) fn window_separator<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> char {
     match env.get_variable(WINDOW_SEPARATOR) {
