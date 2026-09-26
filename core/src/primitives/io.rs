@@ -777,6 +777,7 @@ fn bool_exp<B: BufferTrait>(yes: bool) -> ELispExp<B> {
 fn walk_files(
     root: &std::path::Path,
     prune: &std::collections::HashSet<String>,
+    suffixes: &[String],
     limit: usize,
 ) -> (Vec<String>, bool) {
     let mut found = Vec::new();
@@ -815,6 +816,17 @@ fn walk_files(
                     pending.push((entry.path(), relative));
                 }
             } else {
+                // Dropped here rather than by the caller. A caller filtering
+                // in Lisp pays an evaluation per file per suffix, which is
+                // what made a 5,000-file tree with forty `*.ext` patterns in
+                // its .gitignore exhaust a whole command's fuel budget and
+                // return nothing at all.
+                if suffixes.iter().any(|suffix| relative.ends_with(suffix)) {
+                    continue;
+                }
+                // Counted against LIMIT only once it is kept, so the limit
+                // bounds what the caller is offered rather than what the walk
+                // happened to step over.
                 if found.len() >= limit {
                     return (found, true);
                 }
@@ -827,7 +839,7 @@ fn walk_files(
 }
 
 pub const DIRECTORY_FILES_RECURSIVE_DOC: &str = "(directory-files-recursive &optional DIRECTORY \
-         LIMIT PRUNE): Every file under DIRECTORY -- the current directory if it is omitted -- \
+         LIMIT PRUNE SUFFIXES): Every file under DIRECTORY -- the current directory if it is omitted -- \
          as a list of paths relative to it, sorted. Directories themselves are not listed, only \
          the files in them.\n\n\
          Returns (TRUNCATED PATHS): TRUNCATED is t if LIMIT stopped the walk before it \
@@ -838,18 +850,24 @@ pub const DIRECTORY_FILES_RECURSIVE_DOC: &str = "(directory-files-recursive &opt
          walk does not descend into; every directory so named is skipped wherever it appears. \
          Pruning is not the same as filtering the result: \".git\" alone holds thousands of \
          files, and a walk that collected them would reach LIMIT before reaching any source.\n\n\
+         SUFFIXES is a list of endings -- \".o\", \".lock\" -- that a file must not have to be \
+         listed. Dropped during the walk for the same reason PRUNE is: filtering afterwards in \
+         Lisp costs an evaluation per file per suffix, and on a large tree with a long \
+         .gitignore that alone can exhaust a command's whole fuel budget. A file dropped this \
+         way is not counted against LIMIT either, so LIMIT bounds what you are offered rather \
+         than what the walk stepped over.\n\n\
          Unreadable directories are skipped rather than reported -- a walk of a home directory \
          crosses several, and one refusal is not a failed search. Symlinks are listed as the \
          links they are and never followed, so a link pointing at an ancestor cannot send the \
          walk round in a circle.\n\n\
          Example:\n\
-         (directory-files-recursive \".\" 5000 '(\".git\" \"target\"))\n\
+         (directory-files-recursive \".\" 5000 '(\".git\" \"target\") '(\".o\"))\n\
          => (nil (\"Cargo.toml\" \"src/main.rs\" ...))";
 
 primitive!(directory_files_recursive, args, _env, ctx, {
-    if args.len() > 3 {
+    if args.len() > 4 {
         return Err(EvalError::WrongNumberOfArguments {
-            expected: 3,
+            expected: 4,
             got: args.len(),
         });
     }
@@ -894,13 +912,30 @@ primitive!(directory_files_recursive, args, _env, ctx, {
         }
     }
 
+    let mut suffixes: Vec<String> = Vec::new();
+    if let Some(list) = args.get(3)
+        && !list.is_nil()
+    {
+        for suffix in list.iter() {
+            match suffix {
+                ELispExp::String(s) => suffixes.push(s.to_string()),
+                other => {
+                    return Err(EvalError::WrongArgumentType {
+                        expected: "String".into(),
+                        got: other.clone(),
+                    });
+                }
+            }
+        }
+    }
+
     let root = expand_path(&directory);
     let root = std::path::Path::new(&root);
     if !root.is_dir() {
         ctx.log_diagnostic(&format!("Cannot walk {directory}: not a directory"));
         return Ok(ELispExp::nil());
     }
-    let (paths, truncated) = walk_files(root, &prune, limit);
+    let (paths, truncated) = walk_files(root, &prune, &suffixes, limit);
     // Charged for what it found, not for the one call it was.
     //
     // The evaluator prices a primitive at one unit per call, which is right

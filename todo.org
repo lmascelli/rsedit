@@ -2,12 +2,6 @@
 #+title: rsedit
 
 * Working in progress.
-- [ ] The editor structure is becoming too complex. I want to create compartiment
-      that manage single aspects of the editor like buffers, layout, searches, commands,
-      etc... so that a fail like the previous one where two windows where associated
-      to the same buffer and one of them is closed cannot leave the other one with a
-      pending reference to that buffer because the behavior of closing a window is 
-      clearly managed by the layout manager. it is just a refactoring of the system.
 
 * Fixes todo
 - [ ] Mouse support: scrolling until the cursor goes out of the current view don't really
@@ -16,12 +10,16 @@
 - [ ] Is there a lock problem in log_diagnostic and enable_log_file? Try to learn something
       from it.
 - [ ] Floating windows are drawn below window separators.
+- [ ] Sometimes find file recursively doesn't work or anyway does not produce any completion.
+      Inspect it please.
 
 * Macro todo 
 - [ ] Module dependency system (with functions like provide and requires) with a cached module
       table so that the same dependency is not loaded twice.
 - [ ] Line numbers and decorator column for thing like breakpoint symbols or lsp warning
 - [ ] Sort by type in dired mode (configurable via a lisp variable)
+- [ ] All completions sources where it is possible should be filled asynchronously in the same
+      loop where syntax-highlight sits.
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 

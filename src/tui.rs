@@ -255,6 +255,27 @@ pub fn render_to<W: Write>(
     // Where the cursor should end up, remembered rather than applied.
     let mut cursor_at: Option<(u16, u16)> = None;
 
+    // Before the windows, not after. A rule occupies a column no tiled window
+    // claims -- see `split_rects` -- so nothing tiled can paint over it; but a
+    // *floating* window is meant to cover what is beneath it, and drawing the
+    // rules last put them back through the prompt.
+    for separator in &frame.separators {
+        let style = frame.theme.style(separator.face);
+        apply_style(out, &style, depth)?;
+        let run: String = std::iter::repeat_n(separator.ch, separator.rect.width).collect();
+        for offset in 0..separator.rect.height {
+            draw_clipped_row(
+                out,
+                separator.rect.x,
+                separator.rect.y + offset as isize,
+                &run,
+                frame_w,
+                frame_h,
+            )?;
+        }
+        out.queue(SetAttribute(Attribute::Reset))?;
+    }
+
     for view in &frame.views {
         if view.has_border {
             // The window's own title when it has one -- for the minibuffer that
@@ -341,23 +362,6 @@ pub fn render_to<W: Write>(
                 }
             }
         }
-    }
-
-    for separator in &frame.separators {
-        let style = frame.theme.style(separator.face);
-        apply_style(out, &style, depth)?;
-        let run: String = std::iter::repeat_n(separator.ch, separator.rect.width).collect();
-        for offset in 0..separator.rect.height {
-            draw_clipped_row(
-                out,
-                separator.rect.x,
-                separator.rect.y + offset as isize,
-                &run,
-                frame_w,
-                frame_h,
-            )?;
-        }
-        out.queue(SetAttribute(Attribute::Reset))?;
     }
 
     // Echo area: the very last row of the frame, drawn on top of

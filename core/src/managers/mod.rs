@@ -20,6 +20,20 @@
 //! - **It answers with a verdict, not a side effect.** Where an operation has
 //!   consequences outside its own fields -- a buffer to repoint, a window to
 //!   refocus -- it returns an enum saying so and lets the facade act.
+//! - **It does nothing slow while holding the lock.** No disk, no network, no
+//!   waiting. `Log::record` appends the line and hands the *file* back for the
+//!   caller to write to, because `log_diagnostic` used to `write_all` with the
+//!   list's write lock still open -- putting a disk write inside a lock that
+//!   every diagnostic in the editor, from the worker thread as well as this
+//!   one, had to queue behind.
+//!
+//! The first four rules are about *correctness*: each one removes a way for
+//! two pieces of state to be seen disagreeing. The last is about *latency*,
+//! and it is the one that will be broken by accident, because breaking it
+//! costs nothing until the disk is slow or the tree is large. The tell is a
+//! lock held across a call whose duration you do not control -- I/O, an
+//! allocation the size of a file, a callback. If you cannot say how long the
+//! body takes, copy what you need out and let go first.
 mod buffers;
 mod commands;
 mod kill_yank;

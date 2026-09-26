@@ -586,22 +586,62 @@ impl Windows {
 
     /// Scroll WINDOW by LINES, towards the end of the buffer when positive.
     ///
-    /// Neither focus nor point moves. False when there is no such window or
-    /// the view was already as far as it goes.
-    pub fn scroll_by(&mut self, window: WindowId, lines: isize, line_count: usize) -> bool {
+    /// Focus does not move.
+    ///
+    /// # Why point comes along
+    ///
+    /// For the same reason it does in [`Windows::scroll_focused`], and it is
+    /// the same rule deliberately: a view scrolled far enough that point is no
+    /// longer in it leaves the cursor somewhere the reader cannot see, and the
+    /// next arrow key snaps the view back to wherever that was. Two ways of
+    /// scrolling that disagreed about this was the confusing part -- `C-v`
+    /// took the cursor with it and the wheel did not.
+    ///
+    /// Only for the *focused* window. Scrolling a window you are not typing in
+    /// must not move point, because point belongs to the buffer rather than to
+    /// the window, and another window may be showing the same buffer -- and
+    /// because nothing is about to snap back there anyway.
+    pub fn scroll_by(
+        &mut self,
+        window: WindowId,
+        lines: isize,
+        line_count: usize,
+        point_line: usize,
+    ) -> Scrolled {
+        let focused = self.focused == window;
         let Some(win) = self.root.window_mut(window) else {
-            return false;
+            return Scrolled::No;
         };
+        let height = win.text_height.max(1);
         // The last line may sit on the top row and no further. Past that the
         // window fills with the nothing after the end of the buffer, which the
         // reader then has to scroll back out of by hand.
+        //
+        // Further than `scroll_focused` allows, and on purpose: a wheel is a
+        // way of *looking* at the end of a file, where a screenful key is a
+        // way of reading through it.
         let furthest = line_count.saturating_sub(1) as isize;
         let target = (win.scroll_y as isize + lines).clamp(0, furthest);
         if target == win.scroll_y as isize {
-            return false;
+            return Scrolled::No;
         }
         win.scroll_y = target as usize;
-        true
+        if !focused {
+            return Scrolled::Yes {
+                drag_point_to: None,
+            };
+        }
+        let top = target as usize;
+        let bottom = top + height - 1;
+        let last_line = line_count.saturating_sub(1);
+        let drag_point_to = if point_line < top {
+            Some(top)
+        } else if point_line > bottom {
+            Some(bottom.min(last_line))
+        } else {
+            None
+        };
+        Scrolled::Yes { drag_point_to }
     }
 
     /// Move the boundary of the split at PATH by DELTA cells.

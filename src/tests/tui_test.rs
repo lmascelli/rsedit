@@ -1122,3 +1122,64 @@ fn modifiers_are_carried_across_a_click() {
     assert!(translated.modifiers.shift);
     assert!(!translated.modifiers.alt);
 }
+
+/// A float covers whatever is under it -- including a rule.
+///
+/// The rules used to be drawn last, after every window, so a prompt opened over
+/// a vertical split had the separator painted back through it. They go down
+/// first now: a rule occupies a column no *tiled* window claims, so nothing
+/// tiled can paint over it, and a float is supposed to.
+///
+/// Asserted by order in the byte stream rather than by inspecting a cell: both
+/// writes target the same position, so whichever is emitted last is the one the
+/// terminal shows.
+#[test]
+fn a_floating_window_is_drawn_over_the_rule_it_covers() {
+    let snapshot = FrameSnapshot {
+        separators: vec![rsedit_core::ui::Separator {
+            rect: Rect {
+                x: 4,
+                y: 0,
+                width: 1,
+                height: 3,
+            },
+            // Not the usual box character: the float's own border is drawn
+            // with those, and the test could not tell them apart.
+            ch: '#',
+            face: Face::WINDOW_SEPARATOR,
+        }],
+        views: vec![rsedit_core::ui::RenderableWindowView {
+            rect: Rect {
+                x: 2,
+                y: 0,
+                width: 10,
+                height: 3,
+            },
+            buffer_name: "*float*".into(),
+            title: Some("PROMPT".into()),
+            is_focused: true,
+            cursor_rel_pos: None,
+            lines: vec!["inside".into()],
+            mode_line: None,
+            highlights: vec![],
+            has_border: true,
+        }],
+        theme: Arc::new(Theme::default()),
+        width: COLS as usize,
+        height: ROWS as usize,
+        ..Default::default()
+    };
+    let mut out: Vec<u8> = Vec::new();
+    render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("render");
+    let rendered = String::from_utf8(out).expect("crossterm emits valid UTF-8");
+
+    let rule = rendered.find('#').expect("the rule must be drawn");
+    let float = rendered
+        .find("inside")
+        .expect("the float's text must be drawn");
+    assert!(
+        rule < float,
+        "the rule must be drawn before the float that covers it, so the float \
+         wins the cell; rule at {rule}, float at {float}"
+    );
+}

@@ -519,44 +519,23 @@ strength of it is how a search comes to not find a file that is there."
           (find-file-recursive--gitignore-lines directory))
     (reverse suffixes)))
 
-(defun find-file-recursive--has-suffix (path suffixes)
-  "Whether PATH ends with any of SUFFIXES."
-  (let ((found nil))
-    (mapc (lambda (suffix)
-            (if (and (>= (length path) (length suffix))
-                     (string= (substring path (- (length path) (length suffix)))
-                              suffix))
-                (setq found t)))
-          suffixes)
-    found))
-
 ;; ---------------------------------------------------------------------------
 ;; The command
 ;; ---------------------------------------------------------------------------
 
 (defun find-file-recursive--candidates (directory)
-  "Every file under DIRECTORY worth offering, as (TRUNCATED PATHS)."
-  (let* ((pruned (append find-file-recursive-ignore
-                         (find-file-recursive--ignored-directories directory)))
-         (suffixes (find-file-recursive--ignored-suffixes directory))
-         (walked (directory-files-recursive directory
-                                            find-file-recursive-limit
-                                            pruned))
-         (truncated (car walked))
-         (kept nil))
-    ;; `cons' and one `reverse', not `append' per element.
-    ;;
-    ;; `append' copies everything gathered so far, so building an n-element
-    ;; list this way costs about n squared units of work -- and the
-    ;; interpreter charges for the walk, so it is the *fuel budget* that runs
-    ;; out rather than merely time. It gives up somewhere around 4,500
-    ;; elements, which is under `find-file-recursive-limit': this function
-    ;; could not reach the limit it advertises.
-    (mapc (lambda (path)
-            (if (not (find-file-recursive--has-suffix path suffixes))
-                (setq kept (cons path kept))))
-          (nth 1 walked))
-    (list truncated (reverse kept))))
+  "Every file under DIRECTORY worth offering, as (TRUNCATED PATHS).
+
+Both kinds of exclusion are handed to the walk rather than applied to what it
+returns. That is not tidiness: filtering here costs one evaluation per file per
+pattern, and a 5,000-file tree whose .gitignore names forty `*.ext' patterns
+spent more than a whole command's fuel budget doing it -- so the command
+returned nothing at all, which looked like a project with no files in it."
+  (directory-files-recursive directory
+                             find-file-recursive-limit
+                             (append find-file-recursive-ignore
+                                     (find-file-recursive--ignored-directories directory))
+                             (find-file-recursive--ignored-suffixes directory)))
 
 (defun dired-find-recursive--candidates (input)
   "File names under the working directory matching INPUT, best first.

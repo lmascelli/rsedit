@@ -248,6 +248,43 @@ mod tests {
         assert_eq!(ctx.get_focused_window_id(), lower);
     }
 
+    /// Point belongs to the *buffer*, not to the window, and two windows may be
+    /// showing the same one -- so scrolling a window you are not typing in must
+    /// not drag the cursor about in it. Nothing is going to snap back there
+    /// either, which is the whole reason the focused window's point comes
+    /// along.
+    #[test]
+    fn the_wheel_over_an_unfocused_window_leaves_point_alone() {
+        let (ctx, env) = editor(400);
+        let focused = ctx.get_focused_window_id();
+        run("(split-window-below)", &env, &ctx);
+        compose(&ctx, &env);
+        let lower = ctx.windows(|windows| {
+            windows
+                .root()
+                .window_at(0, H as isize - 3)
+                .expect("a lower window")
+                .id
+        });
+        assert_ne!(lower, focused, "the fixture needs two windows");
+
+        let before = point(&ctx);
+        for _ in 0..8 {
+            wheel(&ctx, &env, MouseKind::ScrollDown, 0, H as u16 - 3);
+            compose(&ctx, &env);
+        }
+        let lower_top = ctx.windows(|windows| {
+            windows
+                .root()
+                .window(lower)
+                .expect("the lower window")
+                .scroll_y
+        });
+        assert!(lower_top > 0, "the unfocused window did scroll");
+        assert_eq!(point(&ctx), before, "but the cursor did not move");
+        assert_eq!(ctx.get_focused_window_id(), focused, "nor did focus");
+    }
+
     #[test]
     fn a_click_on_a_floating_window_is_swallowed() {
         // A float is drawn over a tiled window. Falling through would move
@@ -276,17 +313,36 @@ mod tests {
     // ----------------------------------------------------------------
 
     #[test]
-    fn the_wheel_scrolls_without_moving_point_or_focus() {
-        // Rolling the wheel over a window is a way of looking at it. Stealing
-        // the cursor would make the next keystroke land somewhere unexpected.
+    fn the_wheel_takes_point_with_it_but_not_focus() {
+        // Point comes along only as far as it has to: it was on line 0, the
+        // view now starts at line 3, so it lands on line 3 and not a line
+        // further. The same rule `C-v` follows -- see `scroll_focused`.
         let (ctx, env) = editor(400);
-        let before_point = point(&ctx);
         let before_focus = ctx.get_focused_window_id();
         wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
         let top = scroll_of(&ctx);
         assert_eq!(top, 3, "one notch is three lines");
-        assert_eq!(point(&ctx), before_point);
+        assert_eq!(
+            point(&ctx).0,
+            3,
+            "and the cursor is on the first visible line"
+        );
         assert_eq!(ctx.get_focused_window_id(), before_focus);
+    }
+
+    /// Point is only taken along when it would otherwise be off the screen.
+    /// A notch that leaves the cursor visible leaves it alone, which is what
+    /// makes a small scroll a way of looking around rather than a way of
+    /// moving.
+    #[test]
+    fn a_notch_that_leaves_point_visible_does_not_move_it() {
+        let (ctx, env) = editor(400);
+        run("(goto-line 20)", &env, &ctx);
+        compose(&ctx, &env);
+        let before = point(&ctx);
+        wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
+        assert_eq!(scroll_of(&ctx), 3, "the view moved");
+        assert_eq!(point(&ctx), before, "and the cursor did not");
     }
 
     #[test]
@@ -309,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn the_wheel_keeps_going_once_point_is_off_the_screen() {
+    fn the_wheel_keeps_going_past_a_screenful() {
         // The bug this comes from: scrolling stopped dead the moment the
         // cursor reached an edge. The view had been reconciled with point on
         // every frame, so as soon as the wheel moved the text far enough for
@@ -318,6 +374,10 @@ mod tests {
         // A frame has to be composed between the notches, because composing is
         // where that reconciliation happened -- a test that only turned the
         // wheel would have passed throughout.
+        //
+        // Point riding along with the view is what keeps it fixed now: there
+        // is never a frame in which point is outside the window, so there is
+        // never anything for the reconciliation to undo.
         let (ctx, env) = editor(400);
         let rows = text_rows(&ctx);
         let notches = rows / 3 + 4;
@@ -327,35 +387,42 @@ mod tests {
         }
         let top = scroll_of(&ctx);
         assert_eq!(top, notches * 3, "every notch moved the view");
-        assert!(top > rows, "and point is well above the top of it now");
-        assert_eq!(point(&ctx), (0, 0), "while point stayed where it was");
+        assert!(top > rows, "well past one screenful");
+        assert_eq!(point(&ctx).0, top, "and point came with it, to the top row");
     }
 
     #[test]
-    fn moving_point_brings_the_view_back_to_it() {
-        // The other half: a view scrolled away from point stays there until
-        // something says where you are, and then it follows again.
+    fn a_keystroke_after_scrolling_does_not_jump_the_view() {
+        // The complaint this fixes. Scrolling used to leave point behind, so
+        // the first arrow key snapped the view back to wherever the cursor had
+        // been -- undoing the scroll, and looking for all the world like the
+        // editor had ignored it.
+        //
+        // Now the cursor is already in view when the key arrives, so there is
+        // nothing to snap back to and the view stays put.
         let (ctx, env) = editor(400);
         for _ in 0..20 {
             wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
             compose(&ctx, &env);
         }
+        let scrolled_to = scroll_of(&ctx);
+        assert_eq!(scrolled_to, 60, "twenty notches of three lines");
+
         run("(next-line)", &env, &ctx);
         compose(&ctx, &env);
-        let (top, rows) = ctx.windows(|windows| {
-            let win = windows.root().window_at(0, 0).expect("a window");
-            (win.scroll_y, win.text_height)
-        });
-        let (line, _) = point(&ctx);
-        assert!(
-            (top..top + rows).contains(&line),
-            "point is visible again: line {line} in rows {top}..{}",
-            top + rows
+
+        assert_eq!(
+            scroll_of(&ctx),
+            scrolled_to,
+            "the view stayed where the wheel left it"
         );
-        // The smallest move that brings it back, not a recentre: point is on
-        // the top row rather than in the middle, which is what `C-p' into the
-        // line above the window does everywhere else.
-        assert_eq!(top, line);
+        let (line, _) = point(&ctx);
+        let rows = text_rows(&ctx);
+        assert!(
+            (scrolled_to..scrolled_to + rows).contains(&line),
+            "and the cursor is still on screen: line {line} in rows {scrolled_to}..{}",
+            scrolled_to + rows
+        );
     }
 
     // ----------------------------------------------------------------

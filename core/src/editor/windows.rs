@@ -212,10 +212,24 @@ impl<B: BufferTrait> EditorState<B> {
         let Some(name) = self.windows(|windows| windows.buffer_of(window)) else {
             return false;
         };
-        let Some(line_count) = self.with_buffer(&name, |buf| buf.text.line_count()) else {
+        let Some((line_count, point_line, point_column)) = self.with_buffer(&name, |buf| {
+            let (line, column) = buf.text.cursor_pos();
+            (buf.text.line_count(), line, column)
+        }) else {
             return false;
         };
-        self.windows_mut(|windows| windows.scroll_by(window, lines, line_count))
+        // The window lock is given back before point is touched -- moving point
+        // is a change to a buffer, and the compartment names a line rather than
+        // making the move itself.
+        let Scrolled::Yes { drag_point_to } =
+            self.windows_mut(|windows| windows.scroll_by(window, lines, line_count, point_line))
+        else {
+            return false;
+        };
+        if let Some(line) = drag_point_to {
+            self.with_buffer_mut(&name, |buf| buf.text.cursor_move(line, point_column));
+        }
+        true
     }
 
     /// Get the ID of the current focused window

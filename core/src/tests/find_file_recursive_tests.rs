@@ -10,7 +10,7 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use crate::lisp::{Env, EvalError, LispExp, Parser, eval, measure};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
@@ -382,5 +382,90 @@ mod tests {
             &ctx,
         );
         assert_eq!(paths(&answer), vec!["keep.txt"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Dropping files by suffix, and what it costs not to
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn a_file_with_an_excluded_suffix_is_not_listed() {
+        let sandbox = Sandbox::new("suffix");
+        sandbox.file("keep.rs", "").file("drop.o", "");
+        sandbox
+            .file("nested/also.o", "")
+            .file("nested/keep.txt", "");
+        let (ctx, env) = editor();
+        let answer = run(
+            &format!(
+                r#"(directory-files-recursive "{}" 100 nil '(".o"))"#,
+                sandbox.path()
+            ),
+            &env,
+            &ctx,
+        );
+        assert_eq!(paths(&answer), vec!["keep.rs", "nested/keep.txt"]);
+    }
+
+    /// The limit bounds what the caller is *offered*, not what the walk stepped
+    /// over. Counting excluded files against it would mean a directory of build
+    /// output could use up the whole limit and leave no room for the source
+    /// beside it -- the same argument that makes pruning a walk-time job.
+    #[test]
+    fn an_excluded_file_does_not_count_against_the_limit() {
+        let sandbox = Sandbox::new("suffix-limit");
+        for n in 0..20 {
+            sandbox.file(&format!("junk{n}.o"), "");
+        }
+        for n in 0..3 {
+            sandbox.file(&format!("src{n}.rs"), "");
+        }
+        let (ctx, env) = editor();
+        let answer = run(
+            &format!(
+                r#"(directory-files-recursive "{}" 3 nil '(".o"))"#,
+                sandbox.path()
+            ),
+            &env,
+            &ctx,
+        );
+        assert_eq!(paths(&answer), vec!["src0.rs", "src1.rs", "src2.rs"]);
+        assert!(!truncated(&answer), "three kept files is the whole of it");
+    }
+
+    /// The bug this is here for: gathering the candidates used to cost an
+    /// evaluation per file per .gitignore suffix, so a real project -- a few
+    /// thousand files, forty `*.ext` patterns -- spent more than a command's
+    /// entire fuel budget before the prompt opened, and `C-x C-r` answered
+    /// with nothing at all. It looked exactly like a project with no files.
+    ///
+    /// Measured rather than merely run, because the failure was never a wrong
+    /// answer: it was the right answer costing too much. A threshold catches
+    /// the regression while the tree here stays small enough to build quickly
+    /// -- at this size the old code spent about 1.2 million units.
+    #[test]
+    fn gathering_candidates_is_cheap_against_a_long_gitignore() {
+        let sandbox = Sandbox::new("fuel");
+        for n in 0..600 {
+            sandbox.file(&format!("d{}/f{n}.rs", n % 20), "");
+        }
+        let patterns: String = (0..40).map(|k| format!("*.ext{k}\n")).collect();
+        sandbox.file(".gitignore", &patterns);
+
+        let (ctx, env) = editor();
+        let src = format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path());
+        let (answer, spent) = measure(&ctx.fuel_meter(), || {
+            let ast = Parser::new(&format!("(progn {src})"))
+                .next()
+                .expect("parse");
+            eval(&ast, env.clone(), &ctx)
+        });
+        let answer = answer.expect("the walk should succeed");
+        assert_eq!(paths(&answer).len(), 601, "600 sources and the .gitignore");
+        assert!(
+            spent < 200_000,
+            "gathering 600 candidates behind 40 patterns cost {spent} units; \
+             it is filtering in Lisp again"
+        );
     }
 }
