@@ -40,15 +40,9 @@ fn buffer_name_for<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> Result<S
         file_name
     };
     let visiting = |name: &str| -> Option<String> {
-        ctx.get_buffer(name).and_then(|handle| {
-            handle
-                .read()
-                .expect("Failed to acquire read lock on buffer")
-                .file_path
-                .clone()
-        })
+        ctx.with_buffer(name, |buf| buf.file_path.clone()).flatten()
     };
-    if ctx.get_buffer(&base).is_none() {
+    if !ctx.has_buffer(&base) {
         return Ok(base);
     }
     if visiting(&base).as_deref() == Some(path) {
@@ -56,7 +50,7 @@ fn buffer_name_for<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> Result<S
     }
     for n in 2.. {
         let candidate = format!("{base}<{n}>");
-        if ctx.get_buffer(&candidate).is_none() {
+        if !ctx.has_buffer(&candidate) {
             return Ok(candidate);
         }
         if visiting(&candidate).as_deref() == Some(path) {
@@ -129,18 +123,20 @@ pub const SAVE_BUFFER_DOC: &str = "(save-buffer): Write the current buffer's con
          (define-key nil \"C-x C-s\" 'save-buffer)";
 
 primitive!(save_buffer, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("Failed to acquire write lock on buffer");
-    let path = if let Some(path) = &buf.file_path {
-        path.to_string()
-    } else {
+    // What to write is taken under the lock; the write itself happens with
+    // the lock given back, because a slow disk must not stop every other
+    // thread reading the buffer.
+    let Some((path, content)) = ctx.with_current_buffer(|buf| {
+        buf.file_path
+            .as_ref()
+            .map(|path| (path.to_string(), buf.text.to_string()))
+    }) else {
         ctx.log_diagnostic("No file associated with this buffer");
         return Ok(ELispExp::nil());
     };
-    let content = buf.text.to_string();
     match std::fs::write(&path, content) {
         Ok(_) => {
-            buf.is_modified = false;
+            ctx.with_current_buffer_mut(|buf| buf.is_modified = false);
             ctx.log_diagnostic(&format!("Wrote {}", path));
             Ok(ELispExp::nil())
         }

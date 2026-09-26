@@ -18,8 +18,7 @@ mod tests {
 
     fn editor_with(text: &str) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             b.text.cursor_move(0, 0);
             b.is_modified = false;
@@ -28,30 +27,18 @@ mod tests {
     }
 
     fn text_of(ctx: &Ctx) -> String {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.to_string())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .to_string()
     }
 
     fn point_1d(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos_1d()
     }
 
     fn mark_is_active(ctx: &Ctx) -> bool {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.mark.is_some_and(|mark| mark.active))
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .mark
-            .is_some_and(|mark| mark.active)
     }
 
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode, modifiers: KeyModifiers) {
@@ -543,12 +530,8 @@ mod tests {
         .expect("kill here, yank there");
 
         assert_eq!(
-            ctx.get_buffer("other")
-                .expect("other")
-                .read()
-                .unwrap()
-                .text
-                .to_string(),
+            ctx.with_buffer("other", |b| b.text.to_string())
+                .expect("other"),
             "shared",
             "the ring belongs to the editor, not to a buffer"
         );
@@ -678,25 +661,25 @@ mod tests {
         scroll_y: usize,
         height: usize,
     ) -> Vec<crate::ui::Highlight> {
-        let mut buffers = std::collections::HashMap::new();
-        buffers.insert(
-            "*scratch*".to_string(),
-            ctx.get_buffer("*scratch*").expect("*scratch*"),
-        );
-        crate::ui::region_highlights(
-            &crate::ui::Window {
-                scroll_x,
-                scroll_y,
-                ..crate::ui::Window::new(0, "*scratch*")
-            },
-            &crate::ui::Rect {
-                x: 0,
-                y: 0,
-                width: 20,
-                height,
-            },
-            &buffers,
-        )
+        // The editor's own table, rather than one built for the occasion: the
+        // renderer takes a `Buffers` now, and a second one assembled here
+        // would be a different set of buffers than the editor has.
+        ctx.buffers(|buffers| {
+            crate::ui::region_highlights(
+                &crate::ui::Window {
+                    scroll_x,
+                    scroll_y,
+                    ..crate::ui::Window::new(0, "*scratch*")
+                },
+                &crate::ui::Rect {
+                    x: 0,
+                    y: 0,
+                    width: 20,
+                    height,
+                },
+                buffers,
+            )
+        })
     }
 
     /// Rows come back relative to the window, so a region scrolled up the

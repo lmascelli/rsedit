@@ -185,7 +185,7 @@ mod tests {
         let answer = run(&format!(r#"(find-file "{}")"#, sandbox.path()), &env, &ctx);
         assert!(answer.is_nil());
         // And no buffer was made for it.
-        assert!(ctx.get_buffer("dir-none").is_none());
+        assert!(!ctx.has_buffer("dir-none"));
     }
 
     #[test]

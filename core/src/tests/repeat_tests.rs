@@ -38,19 +38,11 @@ mod tests {
     }
 
     fn contents(ctx: &Ctx) -> String {
-        ctx.get_current_buffer()
-            .read()
-            .expect("read lock")
-            .text
-            .to_string()
+        ctx.with_current_buffer(|b| b.text.to_string())
     }
 
     fn point(ctx: &Ctx) -> usize {
-        ctx.get_current_buffer()
-            .read()
-            .expect("read lock")
-            .text
-            .cursor_pos_1d()
+        ctx.with_current_buffer(|b| b.text.cursor_pos_1d())
     }
 
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, c: char, ctrl: bool) {

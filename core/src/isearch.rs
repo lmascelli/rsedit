@@ -82,14 +82,8 @@ fn case_fold<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
 /// Empty when the prompt is not open, which is also the right answer: a search
 /// with nothing to look for matches nothing.
 fn pattern_text<B: BufferTrait>(ctx: &EditorState<B>) -> String {
-    match ctx.get_buffer(PROMPT_BUFFER) {
-        Some(buffer) => buffer
-            .read()
-            .expect("Failed to acquire read lock on the prompt buffer")
-            .text
-            .to_string(),
-        None => String::new(),
-    }
+    ctx.with_buffer(PROMPT_BUFFER, |buf| buf.text.to_string())
+        .unwrap_or_default()
 }
 
 /// Put point at POSITION in BUF, and the mark wherever a match wants it.
@@ -108,14 +102,11 @@ fn place<B: BufferTrait>(buf: &mut Buffer<B>, point: usize, mark: Option<usize>)
 /// where the reader is looking either way -- and, when the search is confirmed,
 /// where point is left for good.
 fn show<B: BufferTrait>(ctx: &EditorState<B>, session: &Isearch, found: &Match) {
-    let Some(buffer) = ctx.get_buffer(&session.buffer) else {
-        return;
-    };
     let (point, mark) = match session.direction {
         Direction::Forward => (found.end, found.start),
         Direction::Backward => (found.start, found.end),
     };
-    ctx.mutate_buffer(buffer, |buf| place(buf, point, Some(mark)));
+    ctx.with_buffer_mut(&session.buffer, |buf| place(buf, point, Some(mark)));
 }
 
 /// One scan, against the pattern as it currently reads.
@@ -129,26 +120,15 @@ fn scan<B: BufferTrait>(
     session: &Isearch,
     pattern: &Pattern,
 ) -> Option<Match> {
-    let buffer = ctx.get_buffer(&session.buffer)?;
-    let buf = buffer
-        .read()
-        .expect("Failed to acquire read lock on the buffer being searched");
-    match session.direction {
+    ctx.with_buffer(&session.buffer, |buf| match session.direction {
         Direction::Forward => pattern.search_forward(&buf.text, session.from, buf.text.len()),
         Direction::Backward => pattern.search_backward(&buf.text, session.from, 0),
-    }
+    })?
 }
 
 /// How long the buffer being searched is, for wrapping.
 fn searched_len<B: BufferTrait>(ctx: &EditorState<B>, session: &Isearch) -> usize {
-    ctx.get_buffer(&session.buffer)
-        .map(|buffer| {
-            buffer
-                .read()
-                .expect("Failed to acquire read lock on the buffer being searched")
-                .text
-                .len()
-        })
+    ctx.with_buffer(&session.buffer, |buf| buf.text.len())
         .unwrap_or_default()
 }
 
@@ -166,13 +146,7 @@ fn begin<B: BufferTrait>(
     // Read before the prompt opens, because opening it makes the minibuffer
     // current and this position would then be the wrong buffer's.
     let buffer = ctx.get_current_buffer_name();
-    let origin = {
-        let buf = ctx.get_current_buffer();
-        let buf = buf
-            .read()
-            .expect("Failed to acquire read lock on current buffer");
-        buf.text.cursor_pos_1d()
-    };
+    let origin = ctx.with_current_buffer(|buf| buf.text.cursor_pos_1d());
     let session = Isearch::new(buffer, origin, direction, regexp);
     let prompt = session.report("");
     ctx.begin_isearch(session);
@@ -252,10 +226,8 @@ primitive!(isearch_update, _args, env, ctx, {
     // point at the last one would make the search look like it had found
     // something it had not.
     if text.is_empty() {
-        if let Some(buffer) = ctx.get_buffer(&session.buffer) {
-            let origin = session.origin;
-            ctx.mutate_buffer(buffer, |buf| place(buf, origin, None));
-        }
+        let origin = session.origin;
+        ctx.with_buffer_mut(&session.buffer, |buf| place(buf, origin, None));
         session.found = None;
         session.failing = false;
         let report = session.report("");
@@ -364,13 +336,11 @@ primitive!(isearch_exit, _args, _env, ctx, {
     // Point is already at the match -- every update put it there. All that is
     // left is to say what happened, and to stop the mark making the match look
     // like a selection the next command should act on.
-    if let Some(buffer) = ctx.get_buffer(&session.buffer) {
-        ctx.mutate_buffer(buffer, |buf| {
-            if let Some(mark) = buf.mark.as_mut() {
-                mark.active = false;
-            }
-        });
-    }
+    ctx.with_buffer_mut(&session.buffer, |buf| {
+        if let Some(mark) = buf.mark.as_mut() {
+            mark.active = false;
+        }
+    });
     ctx.set_echo_message(&match session.found {
         Some(_) => "Mark saved where search started".to_string(),
         None => "Search failed".to_string(),
@@ -389,10 +359,8 @@ primitive!(isearch_abort, _args, _env, ctx, {
     let Some(session) = ctx.take_isearch() else {
         return Ok(ELispExp::nil());
     };
-    if let Some(buffer) = ctx.get_buffer(&session.buffer) {
-        let origin = session.origin;
-        ctx.mutate_buffer(buffer, |buf| place(buf, origin, None));
-    }
+    let origin = session.origin;
+    ctx.with_buffer_mut(&session.buffer, |buf| place(buf, origin, None));
     ctx.set_echo_message("Quit");
     Ok(ELispExp::nil())
 });

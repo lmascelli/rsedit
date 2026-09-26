@@ -50,8 +50,7 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
         let text: String = (0..lines).map(|n| format!("line {n}\n")).collect();
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text.as_str());
             b.text.cursor_move(0, 0);
         });
@@ -76,32 +75,22 @@ mod tests {
 
     /// The line point is on, in the scratch buffer.
     fn point_line(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos().0)
             .expect("*scratch*")
-            .read()
-            .expect("read lock")
-            .text
-            .cursor_pos()
-            .0
     }
 
     /// Put point on the first character of LINE.
     fn goto_line(ctx: &Ctx, env: &Arc<Env<Ctx>>, line: usize) {
         let offset = ctx
-            .get_buffer("*scratch*")
-            .expect("*scratch*")
-            .read()
-            .expect("read lock")
-            .text
-            .cursor_2d_to_1d(line, 0);
+            .with_buffer("*scratch*", |b| b.text.cursor_2d_to_1d(line, 0))
+            .expect("*scratch*");
         run(&format!("(goto-char {offset})"), env, ctx);
     }
 
     /// Move point without going through the focused window, the way incremental
     /// search does when the minibuffer has the keyboard.
     fn move_point_from_elsewhere(ctx: &Ctx, line: usize) {
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| b.text.cursor_move(line, 0));
+        ctx.with_buffer_mut("*scratch*", |b| b.text.cursor_move(line, 0));
     }
 
     // ----------------------------------------------------------------
@@ -237,17 +226,17 @@ mod tests {
         compose(&ctx, &env);
         run("(other-window)", &env, &ctx);
 
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from("one\ntwo\n");
             b.text.cursor_move(0, 0);
         });
 
         run("(other-window)", &env, &ctx);
         let (point, length) = {
-            let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-            let buf = scratch.read().expect("read lock");
-            (buf.text.cursor_pos_1d(), buf.text.len())
+            ctx.with_buffer("*scratch*", |buf| {
+                (buf.text.cursor_pos_1d(), buf.text.len())
+            })
+            .expect("*scratch*")
         };
         assert_eq!(
             point, length,

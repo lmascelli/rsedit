@@ -30,16 +30,18 @@ mod tests {
         const ATTEMPTS: usize = 20_000;
 
         let (state, env) = create_global_env::<GapBuffer>().expect("global env must build");
-        let scratch = state
-            .get_buffer("*scratch*")
-            .expect("*scratch* buffer must exist");
-        let before = scratch.read().unwrap().text.len();
+        let length = || {
+            state
+                .with_buffer("*scratch*", |b| b.text.len())
+                .expect("*scratch* buffer must exist")
+        };
+        let before = length();
 
         for _ in 0..ATTEMPTS {
             state.handle_key_event(char_event('a'), &env);
         }
 
-        let inserted = scratch.read().unwrap().text.len() - before;
+        let inserted = length() - before;
         let starved = state
             .get_logs()
             .iter()

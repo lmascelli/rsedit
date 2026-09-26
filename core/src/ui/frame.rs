@@ -7,7 +7,7 @@
 //! re-acquiring `buffers` three more times for the floating windows -- and then,
 //! after all of that had finished and every lock had been dropped, it read
 //! `echo_message`. Six-plus acquisitions across five locks, with gaps between
-//! them. (Three of those five are one lock now -- see [`crate::windows`] -- but
+//! them. (Three of those five are one lock now -- see `crate::managers::Windows` -- but
 //! the lesson was about the gaps, and the gaps are what this fixes.)
 //!
 //! That is not a hypothetical problem. `BackgroundScheduler` already runs on its

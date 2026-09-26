@@ -645,12 +645,7 @@ primitive!(matching_delimiter, args, _env, ctx, {
     };
     let mode = match mode {
         Some(mode) => mode,
-        None => ctx
-            .get_current_buffer()
-            .read()
-            .expect("Failed to acquire read lock on buffer")
-            .current_mode
-            .clone(),
+        None => ctx.with_current_buffer(|buf| buf.current_mode.clone()),
     };
 
     let class = {
@@ -700,12 +695,7 @@ primitive!(syntax_class, args, _env, ctx, {
     };
     let mode = match mode {
         Some(mode) => mode,
-        None => ctx
-            .get_current_buffer()
-            .read()
-            .expect("Failed to acquire read lock on buffer")
-            .current_mode
-            .clone(),
+        None => ctx.with_current_buffer(|buf| buf.current_mode.clone()),
     };
 
     let class = {
@@ -749,15 +739,15 @@ pub const SYNTAX_PPSS_DOC: &str = "(syntax-ppss &optional POS): What point -- or
 
 primitive!(syntax_ppss, args, _env, ctx, {
     let table = ctx.current_syntax_table();
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    let pos = match args.first() {
-        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => {
-            (*n as usize).min(buf.text.len())
-        }
-        _ => buf.text.cursor_pos_1d(),
-    };
-    let found = sexp::context_at(&buf.text, &table, buf.scan_resume(pos), pos);
+    let found = ctx.with_current_buffer(|buf| {
+        let pos = match args.first() {
+            Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => {
+                (*n as usize).min(buf.text.len())
+            }
+            _ => buf.text.cursor_pos_1d(),
+        };
+        sexp::context_at(&buf.text, &table, buf.scan_resume(pos), pos)
+    });
     let offset = |at: Option<usize>| {
         at.map(|at| ELispExp::number(at as f64))
             .unwrap_or_else(ELispExp::nil)
@@ -788,20 +778,19 @@ pub const BALANCE_POINT_DOC: &str = "(balance-point &optional POS): The first po
 
 primitive!(balance_point, args, _env, ctx, {
     let table = ctx.current_syntax_table();
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    let pos = match args.first() {
-        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => {
-            (*n as usize).min(buf.text.len())
-        }
-        _ => buf.text.cursor_pos_1d(),
-    };
-    Ok(
-        match sexp::balance_point(&buf.text, &table, buf.scan_resume(pos), pos) {
-            Some(at) => ELispExp::number(at as f64),
-            None => ELispExp::nil(),
-        },
-    )
+    let found = ctx.with_current_buffer(|buf| {
+        let pos = match args.first() {
+            Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => {
+                (*n as usize).min(buf.text.len())
+            }
+            _ => buf.text.cursor_pos_1d(),
+        };
+        sexp::balance_point(&buf.text, &table, buf.scan_resume(pos), pos)
+    });
+    Ok(match found {
+        Some(at) => ELispExp::number(at as f64),
+        None => ELispExp::nil(),
+    })
 });
 
 pub const BOUNDS_OF_ENCLOSING_LIST_DOC: &str = "(bounds-of-enclosing-list &optional POS): The \
@@ -814,17 +803,15 @@ pub const BOUNDS_OF_ENCLOSING_LIST_DOC: &str = "(bounds-of-enclosing-list &optio
          (bounds-of-enclosing-list) => (12 48)";
 primitive!(bounds_of_enclosing_list, args, _env, ctx, {
     let table = ctx.current_syntax_table();
-    let buf = ctx.get_current_buffer();
-    let buf = buf
-        .read()
-        .expect("Failed to acquire read lock on current buffer");
-    let pos = match args.first() {
-        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => {
-            (*n as usize).min(buf.text.len())
-        }
-        _ => buf.text.cursor_pos_1d(),
-    };
-    let found = sexp::enclosing(&buf.text, &table, buf.scan_resume(pos), pos);
+    let found = ctx.with_current_buffer(|buf| {
+        let pos = match args.first() {
+            Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => {
+                (*n as usize).min(buf.text.len())
+            }
+            _ => buf.text.cursor_pos_1d(),
+        };
+        sexp::enclosing(&buf.text, &table, buf.scan_resume(pos), pos)
+    });
     Ok(match found {
         Some(found) => ELispExp::proper_list(vec![
             ELispExp::number(found.start as f64),

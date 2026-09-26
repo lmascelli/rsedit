@@ -17,7 +17,7 @@ use crate::buffer::Mark;
 use crate::ui::WindowId;
 use crate::{
     editor::{MOUSE_MODE, mouse_mode},
-    windows::MouseDrag,
+    managers::MouseDrag,
 };
 
 /// How many lines one notch of the wheel moves.
@@ -62,16 +62,14 @@ primitive!(mouse_set_point, args, _env, ctx, {
     if !ctx.select_window(WindowId(window)) {
         return Ok(ELispExp::nil());
     }
-    let buffer = ctx.get_current_buffer();
-    let mut buf = buffer
-        .write()
-        .expect("Failed to acquire write lock on buffer");
-    // Clamped against the buffer rather than against the window: the screen
-    // has no opinion about how long a line is, and a click in the blank space
-    // to the right of a short one means its end.
-    let line = line.min(buf.text.line_count().saturating_sub(1));
-    let column = column.min(edits::line_length(&buf.text, line));
-    buf.text.cursor_move(line, column);
+    ctx.with_current_buffer_mut(|buf| {
+        // Clamped against the buffer rather than against the window: the
+        // screen has no opinion about how long a line is, and a click in the
+        // blank space to the right of a short one means its end.
+        let line = line.min(buf.text.line_count().saturating_sub(1));
+        let column = column.min(edits::line_length(&buf.text, line));
+        buf.text.cursor_move(line, column);
+    });
     Ok(ELispExp::symbol("t".into()))
 });
 
@@ -143,18 +141,16 @@ primitive!(mouse_drag_to, args, _env, ctx, {
     if WindowId(window) != ctx.get_focused_window_id() {
         return Ok(ELispExp::nil());
     }
-    let buffer = ctx.get_current_buffer();
-    let mut buf = buffer
-        .write()
-        .expect("Failed to acquire write lock on buffer");
-    // The first event of the drag: point is still where the button went down,
-    // so that is where the region starts.
-    if !buf.mark.as_ref().is_some_and(|mark| mark.active) {
-        buf.mark = Some(Mark::new(buf.text.cursor_pos_1d()));
-    }
-    let line = line.min(buf.text.line_count().saturating_sub(1));
-    let column = column.min(edits::line_length(&buf.text, line));
-    buf.text.cursor_move(line, column);
+    ctx.with_current_buffer_mut(|buf| {
+        // The first event of the drag: point is still where the button went
+        // down, so that is where the region starts.
+        if !buf.mark.as_ref().is_some_and(|mark| mark.active) {
+            buf.mark = Some(Mark::new(buf.text.cursor_pos_1d()));
+        }
+        let line = line.min(buf.text.line_count().saturating_sub(1));
+        let column = column.min(edits::line_length(&buf.text, line));
+        buf.text.cursor_move(line, column);
+    });
     Ok(ELispExp::symbol("t".into()))
 });
 

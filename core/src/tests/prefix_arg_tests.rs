@@ -19,8 +19,7 @@ mod tests {
 
     fn editor_with(text: &str) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             b.text.cursor_move(0, 0);
             b.is_modified = false;
@@ -35,21 +34,13 @@ mod tests {
     }
 
     fn text_of(ctx: &Ctx) -> String {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.to_string())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .to_string()
     }
 
     fn point_1d(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos_1d()
     }
 
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode, modifiers: KeyModifiers) {
@@ -277,7 +268,7 @@ mod tests {
         let (ctx, env) = editor_with("alpha beta");
         keys(&ctx, &env, "^u4^f");
         assert!(
-            ctx.get_buffer("*Minibuffer*").is_none(),
+            !ctx.has_buffer("*Minibuffer*"),
             "nothing should have been asked"
         );
     }
@@ -297,7 +288,7 @@ mod tests {
 
         eval_str("(call-interactively \"both\")", &env, &ctx).expect("start it");
         assert!(
-            ctx.get_buffer("*Minibuffer*").is_some(),
+            ctx.has_buffer("*Minibuffer*"),
             "the string argument still has to be asked for"
         );
         for c in "hi".chars() {
@@ -338,7 +329,7 @@ mod tests {
             "with no region the command should be refused"
         );
         assert!(
-            ctx.get_buffer("*Minibuffer*").is_none(),
+            !ctx.has_buffer("*Minibuffer*"),
             "and refused before asking a question whose answer would be wasted"
         );
     }

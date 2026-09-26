@@ -39,11 +39,7 @@ mod tests {
     }
 
     fn contents(ctx: &Ctx) -> String {
-        ctx.get_current_buffer()
-            .read()
-            .expect("read lock")
-            .text
-            .to_string()
+        ctx.with_current_buffer(|b| b.text.to_string())
     }
 
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, c: char, ctrl: bool) {

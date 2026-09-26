@@ -22,8 +22,7 @@ mod tests {
     /// An editor whose *scratch* buffer holds `text`, point at the start.
     fn editor_with(text: &str) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             b.text.cursor_move(0, 0);
         });
@@ -46,21 +45,13 @@ mod tests {
     }
 
     fn point_1d(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos_1d()
     }
 
     fn point(ctx: &Ctx) -> (usize, usize) {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos()
     }
 
     /// Run `src` as if it were a command with the given name, so that
@@ -336,13 +327,8 @@ mod tests {
             eval_str("(minibuffer-confirm)", &env, &ctx).expect("confirm");
 
             assert_eq!(
-                ctx.get_buffer("*scratch*")
-                    .unwrap()
-                    .read()
-                    .unwrap()
-                    .text
-                    .cursor_pos()
-                    .0,
+                ctx.with_buffer("*scratch*", |b| b.text.cursor_pos().0)
+                    .expect("*scratch*"),
                 2,
                 "M-g then {second} should go to line 3"
             );
@@ -362,7 +348,7 @@ mod tests {
         press(&ctx, &env, KeyCode::Char('g'), alt());
 
         assert!(
-            ctx.get_buffer("*Minibuffer*").is_none(),
+            !ctx.has_buffer("*Minibuffer*"),
             "M-g alone is a prefix, not a command"
         );
     }

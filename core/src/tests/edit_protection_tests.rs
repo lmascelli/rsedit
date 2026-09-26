@@ -267,8 +267,10 @@ mod tests {
         run("(make-mode 'view-mode)", &env, &ctx);
         run(r#"(buffer-create "*view*" 'view-mode)"#, &env, &ctx);
 
-        let buffer = ctx.get_buffer("*view*").expect("the buffer");
-        assert_eq!(buffer.read().expect("read").current_mode, "view-mode");
+        let mode = ctx
+            .with_buffer("*view*", |b| b.current_mode.clone())
+            .expect("the buffer");
+        assert_eq!(mode, "view-mode");
     }
 
     #[test]
@@ -276,11 +278,10 @@ mod tests {
         let (ctx, env) = setup();
         run(r#"(buffer-create "*plain*")"#, &env, &ctx);
 
-        let buffer = ctx.get_buffer("*plain*").expect("the buffer");
-        assert_eq!(
-            buffer.read().expect("read").current_mode,
-            "fundamental-mode"
-        );
+        let mode = ctx
+            .with_buffer("*plain*", |b| b.current_mode.clone())
+            .expect("the buffer");
+        assert_eq!(mode, "fundamental-mode");
     }
 
     /// Re-creating a buffer is how a view is refreshed, and a refresh that
@@ -294,8 +295,10 @@ mod tests {
 
         run(r#"(buffer-create "*view*" 'other-mode)"#, &env, &ctx);
 
-        let buffer = ctx.get_buffer("*view*").expect("the buffer");
-        assert_eq!(buffer.read().expect("read").current_mode, "view-mode");
+        let mode = ctx
+            .with_buffer("*view*", |b| b.current_mode.clone())
+            .expect("the buffer");
+        assert_eq!(mode, "view-mode");
     }
 
     // ---------------- reading a line ----------------

@@ -198,7 +198,7 @@ pub const SELF_INSERT_DOC: &str = "(self-insert STRING): Insert the first charac
 primitive!(self_insert, args, _env, ctx, {
     if let Some(ELispExp::String(s)) = args.first() {
         if let Some(c) = s.chars().next() {
-            let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+            let happened = ctx.with_current_buffer_mut(|buf| {
                 let mut utf8 = [0u8; 4];
                 insert_at_point(buf, c.encode_utf8(&mut utf8))
             });
@@ -237,7 +237,7 @@ primitive!(insert, args, _env, ctx, {
             other => text.push_str(&crate::lisp::lisp_display(other)),
         }
     }
-    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, &text));
+    let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, &text));
     Ok(edited(ctx, happened))
 });
 
@@ -277,7 +277,7 @@ primitive!(insert_pasted_text, args, _env, ctx, {
     // holding CRLF from another machine. Ordinary `insert' is deliberately
     // left alone: a CR written from Lisp on purpose is a CR.
     let text = normalize_line_endings(text);
-    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, &text));
+    let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, &text));
     Ok(edited(ctx, happened))
 });
 
@@ -287,7 +287,7 @@ pub const INSERT_NEWLINE_DOC: &str = "(insert-newline): Insert a newline charact
          (define-key nil \"<ret>\" 'insert-newline)";
 
 primitive!(insert_newline, _args, _env, ctx, {
-    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| insert_at_point(buf, "\n"));
+    let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, "\n"));
     Ok(edited(ctx, happened))
 });
 
@@ -298,15 +298,13 @@ pub const DELETE_BACKWARD_CHAR_DOC: &str = "(delete-backward-char): Delete the c
          (define-key nil \"<backspace>\" 'delete-backward-char)";
 
 primitive!(delete_backward_char, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf
-        .write()
-        .expect("Failed to acquire a write lock on buffer");
-    let point = buf.text.cursor_pos_1d();
-    let happened = delete_range(&mut buf, point.saturating_sub(1), point);
-    // Dropped before reporting: the echo area is a lock of its own, and the
-    // canonical order puts it before any individual buffer.
-    drop(buf);
+    let happened = ctx.with_current_buffer_mut(|buf| {
+        let point = buf.text.cursor_pos_1d();
+        delete_range(buf, point.saturating_sub(1), point)
+    });
+    // Reported outside: the echo area is a lock of its own, and the canonical
+    // order puts it before any individual buffer. The guard used to be `drop`ped
+    // by hand for this; the closure ending is what does it now.
     Ok(edited(ctx, happened))
 });
 
@@ -317,17 +315,15 @@ pub const FORWARD_CHAR_DOC: &str = "(forward-char &optional N): Move point forwa
          (forward-char 4) ; move forward 4 characters";
 
 primitive!(forward_char, args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf
-        .write()
-        .expect("Failed to acquire a write lock on buffer");
-    let step = repeat_count(args)?;
-    // Moves by character *offset*, so it crosses line boundaries the way C-f
-    // does. It used to move within the line only, which meant point simply
-    // stopped at the end of a line and would not advance past it.
-    let target = buf.text.cursor_pos_1d() + step;
-    goto_offset(&mut buf.text, target);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let step = repeat_count(args)?;
+        // Moves by character *offset*, so it crosses line boundaries the way C-f
+        // does. It used to move within the line only, which meant point simply
+        // stopped at the end of a line and would not advance past it.
+        let target = buf.text.cursor_pos_1d() + step;
+        goto_offset(&mut buf.text, target);
+        Ok(ELispExp::nil())
+    })
 });
 
 /// Read an optional repeat count from a primitive's arguments.
@@ -436,14 +432,12 @@ pub const BACKWARD_CHAR_DOC: &str = "(backward-char &optional N): Move point bac
          (backward-char 4) ; move back 4 characters";
 
 primitive!(backward_char, args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf
-        .write()
-        .expect("Failed to acquire a write lock on buffer");
-    let step = repeat_count(args)?;
-    let target = buf.text.cursor_pos_1d().saturating_sub(step);
-    goto_offset(&mut buf.text, target);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let step = repeat_count(args)?;
+        let target = buf.text.cursor_pos_1d().saturating_sub(step);
+        goto_offset(&mut buf.text, target);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const PREVIOUS_LINE_DOC: &str = "(previous-line): Move point up one line in the current buffer, \
@@ -477,28 +471,30 @@ fn move_line<B: BufferTrait>(
     ctx: &EditorState<B>,
     delta: isize,
 ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf
-        .write()
-        .expect("Failed to acquire a write lock on buffer");
-
-    let (line, col) = buf.text.cursor_pos();
+    // Both asked before the buffer is locked. They are other compartments, and
+    // the guarded region should hold exactly the buffer work -- this used to
+    // reach all three of them with the write lock open.
     let continuing = ctx.last_command_is("next-line") || ctx.last_command_is("previous-line");
-    let goal = match (continuing, ctx.goal_column()) {
-        (true, Some(goal)) => goal,
-        _ => col,
-    };
-    ctx.set_goal_column(Some(goal));
+    let remembered = ctx.goal_column();
+    let goal = ctx.with_current_buffer_mut(|buf| {
+        let (line, col) = buf.text.cursor_pos();
+        let goal = match (continuing, remembered) {
+            (true, Some(goal)) => goal,
+            _ => col,
+        };
 
-    let last_line = buf.text.line_count().saturating_sub(1);
-    let target = if delta < 0 {
-        line.saturating_sub(delta.unsigned_abs())
-    } else {
-        (line + delta as usize).min(last_line)
-    };
-    // `cursor_move` clamps the column to the line, so a short line in the
-    // middle of a run does not disturb the goal we are steering by.
-    buf.text.cursor_move(target, goal);
+        let last_line = buf.text.line_count().saturating_sub(1);
+        let target = if delta < 0 {
+            line.saturating_sub(delta.unsigned_abs())
+        } else {
+            (line + delta as usize).min(last_line)
+        };
+        // `cursor_move` clamps the column to the line, so a short line in the
+        // middle of a run does not disturb the goal we are steering by.
+        buf.text.cursor_move(target, goal);
+        goal
+    });
+    ctx.set_goal_column(Some(goal));
     Ok(ELispExp::nil())
 }
 
@@ -512,11 +508,11 @@ pub const BEGINNING_OF_LINE_DOC: &str = "(beginning-of-line): Move point to the 
          (define-key nil \"C-a\" 'beginning-of-line)";
 
 primitive!(beginning_of_line, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let (line, _) = buf.text.cursor_pos();
-    buf.text.cursor_move(line, 0);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let (line, _) = buf.text.cursor_pos();
+        buf.text.cursor_move(line, 0);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const END_OF_LINE_DOC: &str = "(end-of-line): Move point just past the last character of the \
@@ -525,12 +521,12 @@ pub const END_OF_LINE_DOC: &str = "(end-of-line): Move point just past the last 
          (define-key nil \"C-e\" 'end-of-line)";
 
 primitive!(end_of_line, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let (line, _) = buf.text.cursor_pos();
-    let end = line_length(&buf.text, line);
-    buf.text.cursor_move(line, end);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let (line, _) = buf.text.cursor_pos();
+        let end = line_length(&buf.text, line);
+        buf.text.cursor_move(line, end);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const FORWARD_WORD_DOC: &str = "(forward-word &optional N): Move point forward past the end of \
@@ -540,11 +536,11 @@ pub const FORWARD_WORD_DOC: &str = "(forward-word &optional N): Move point forwa
          (define-key nil \"M-f\" 'forward-word)";
 
 primitive!(forward_word, args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let target = word_forward(&buf.text, buf.text.cursor_pos_1d(), repeat_count(args)?);
-    goto_offset(&mut buf.text, target);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let target = word_forward(&buf.text, buf.text.cursor_pos_1d(), repeat_count(args)?);
+        goto_offset(&mut buf.text, target);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const BACKWARD_WORD_DOC: &str = "(backward-word &optional N): Move point back to the beginning \
@@ -553,11 +549,11 @@ pub const BACKWARD_WORD_DOC: &str = "(backward-word &optional N): Move point bac
          (define-key nil \"M-b\" 'backward-word)";
 
 primitive!(backward_word, args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let target = word_backward(&buf.text, buf.text.cursor_pos_1d(), repeat_count(args)?);
-    goto_offset(&mut buf.text, target);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let target = word_backward(&buf.text, buf.text.cursor_pos_1d(), repeat_count(args)?);
+        goto_offset(&mut buf.text, target);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const FORWARD_PARAGRAPH_DOC: &str = "(forward-paragraph): Move point to the blank line that \
@@ -567,12 +563,12 @@ pub const FORWARD_PARAGRAPH_DOC: &str = "(forward-paragraph): Move point to the 
          (define-key nil \"M-n\" 'forward-paragraph)";
 
 primitive!(forward_paragraph, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let (line, _) = buf.text.cursor_pos();
-    let target = paragraph_forward(&buf.text, line);
-    buf.text.cursor_move(target, 0);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let (line, _) = buf.text.cursor_pos();
+        let target = paragraph_forward(&buf.text, line);
+        buf.text.cursor_move(target, 0);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const BACKWARD_PARAGRAPH_DOC: &str = "(backward-paragraph): Move point to the blank line that \
@@ -581,12 +577,12 @@ pub const BACKWARD_PARAGRAPH_DOC: &str = "(backward-paragraph): Move point to th
          (define-key nil \"M-p\" 'backward-paragraph)";
 
 primitive!(backward_paragraph, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let (line, _) = buf.text.cursor_pos();
-    let target = paragraph_backward(&buf.text, line);
-    buf.text.cursor_move(target, 0);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let (line, _) = buf.text.cursor_pos();
+        let target = paragraph_backward(&buf.text, line);
+        buf.text.cursor_move(target, 0);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const BEGINNING_OF_BUFFER_DOC: &str = "(beginning-of-buffer): Move point to the very start of \
@@ -595,10 +591,10 @@ pub const BEGINNING_OF_BUFFER_DOC: &str = "(beginning-of-buffer): Move point to 
          (define-key nil \"M-<\" 'beginning-of-buffer)";
 
 primitive!(beginning_of_buffer, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    buf.text.cursor_move(0, 0);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        buf.text.cursor_move(0, 0);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const END_OF_BUFFER_DOC: &str = "(end-of-buffer): Move point to the very end of the buffer.\n\n\
@@ -606,11 +602,11 @@ pub const END_OF_BUFFER_DOC: &str = "(end-of-buffer): Move point to the very end
          (define-key nil \"M->\" 'end-of-buffer)";
 
 primitive!(end_of_buffer, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let end = buf.text.len();
-    goto_offset(&mut buf.text, end);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let end = buf.text.len();
+        goto_offset(&mut buf.text, end);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const GOTO_LINE_DOC: &str = "(goto-line N): Move point to the beginning of line N, counting \
@@ -635,14 +631,14 @@ primitive!(goto_line, args, _env, ctx, {
             });
         }
     };
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    // 1-based for the user, 0-based inside, and clamped so a number past the
-    // end lands on the last line rather than failing.
-    let last = buf.text.line_count().saturating_sub(1);
-    let line = (requested.max(1.0) as usize - 1).min(last);
-    buf.text.cursor_move(line, 0);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        // 1-based for the user, 0-based inside, and clamped so a number past the
+        // end lands on the last line rather than failing.
+        let last = buf.text.line_count().saturating_sub(1);
+        let line = (requested.max(1.0) as usize - 1).min(last);
+        buf.text.cursor_move(line, 0);
+        Ok(ELispExp::nil())
+    })
 });
 
 // ---------------------------------------------------------------------------
@@ -668,12 +664,11 @@ pub const DELETE_CHAR_DOC: &str = "(delete-char &optional N): Delete N character
          (define-key nil \"C-d\" 'delete-char)";
 
 primitive!(delete_char, args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let from = buf.text.cursor_pos_1d();
-    let to = from + repeat_count(args)?;
-    let happened = delete_range(&mut buf, from, to);
-    drop(buf);
+    let count = repeat_count(args)?;
+    let happened = ctx.with_current_buffer_mut(|buf| {
+        let from = buf.text.cursor_pos_1d();
+        delete_range(buf, from, from + count)
+    });
     Ok(edited(ctx, happened))
 });
 
@@ -687,20 +682,20 @@ pub const KILL_LINE_DOC: &str = "(kill-line): Delete from point to the end of th
 
 primitive!(kill_line, _args, env, ctx, {
     let killed = {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf.write().expect("write lock on buffer");
-        let from = buf.text.cursor_pos_1d();
-        let (line, _) = buf.text.cursor_pos();
-        let end_of_line = buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line));
-        // At the end of a line there is nothing left to kill on it, so the
-        // newline goes instead -- which is what makes repeated C-k swallow a
-        // paragraph rather than stalling on every line ending.
-        let to = if from == end_of_line {
-            from + 1
-        } else {
-            end_of_line
-        };
-        cut_out(&mut buf, from, to)
+        ctx.with_current_buffer_mut(|buf| {
+            let from = buf.text.cursor_pos_1d();
+            let (line, _) = buf.text.cursor_pos();
+            let end_of_line = buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line));
+            // At the end of a line there is nothing left to kill on it, so the
+            // newline goes instead -- which is what makes repeated C-k swallow a
+            // paragraph rather than stalling on every line ending.
+            let to = if from == end_of_line {
+                from + 1
+            } else {
+                end_of_line
+            };
+            cut_out(buf, from, to)
+        })
     };
     ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
@@ -713,13 +708,13 @@ pub const KILL_WHOLE_LINE_DOC: &str = "(kill-whole-line): Delete the entire line
 
 primitive!(kill_whole_line, _args, env, ctx, {
     let killed = {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf.write().expect("write lock on buffer");
-        let (line, _) = buf.text.cursor_pos();
-        let from = buf.text.cursor_2d_to_1d(line, 0);
-        let to =
-            (buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line)) + 1).min(buf.text.len());
-        cut_out(&mut buf, from, to)
+        ctx.with_current_buffer_mut(|buf| {
+            let (line, _) = buf.text.cursor_pos();
+            let from = buf.text.cursor_2d_to_1d(line, 0);
+            let to = (buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line)) + 1)
+                .min(buf.text.len());
+            cut_out(buf, from, to)
+        })
     };
     ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
@@ -733,13 +728,14 @@ pub const KILL_WORD_DOC: &str = "(kill-word &optional N): Delete forward to the 
          (define-key nil \"M-d\" 'kill-word)";
 
 primitive!(kill_word, args, env, ctx, {
-    let killed = {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf.write().expect("write lock on buffer");
+    // Read before the buffer is locked. It can fail, and a `?` inside the
+    // closure would return from the closure rather than from the primitive.
+    let count = repeat_count(args)?;
+    let killed = ctx.with_current_buffer_mut(|buf| {
         let from = buf.text.cursor_pos_1d();
-        let to = word_forward(&buf.text, from, repeat_count(args)?);
-        cut_out(&mut buf, from, to)
-    };
+        let to = word_forward(&buf.text, from, count);
+        cut_out(buf, from, to)
+    });
     ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
 });
@@ -753,13 +749,12 @@ pub const BACKWARD_KILL_WORD_DOC: &str = "(backward-kill-word &optional N): Dele
          (define-key nil \"M-<backspace>\" 'backward-kill-word)";
 
 primitive!(backward_kill_word, args, env, ctx, {
-    let killed = {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf.write().expect("write lock on buffer");
+    let count = repeat_count(args)?;
+    let killed = ctx.with_current_buffer_mut(|buf| {
         let to = buf.text.cursor_pos_1d();
-        let from = word_backward(&buf.text, to, repeat_count(args)?);
-        cut_out(&mut buf, from, to)
-    };
+        let from = word_backward(&buf.text, to, count);
+        cut_out(buf, from, to)
+    });
     ctx.kill(killed, Direction::Backward, &env);
     Ok(ELispExp::nil())
 });
@@ -771,13 +766,13 @@ pub const KILL_PARAGRAPH_DOC: &str = "(kill-paragraph): Delete forward to the en
 
 primitive!(kill_paragraph, _args, env, ctx, {
     let killed = {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf.write().expect("write lock on buffer");
-        let from = buf.text.cursor_pos_1d();
-        let (line, _) = buf.text.cursor_pos();
-        let target_line = paragraph_forward(&buf.text, line);
-        let to = buf.text.cursor_2d_to_1d(target_line, 0);
-        cut_out(&mut buf, from, to)
+        ctx.with_current_buffer_mut(|buf| {
+            let from = buf.text.cursor_pos_1d();
+            let (line, _) = buf.text.cursor_pos();
+            let target_line = paragraph_forward(&buf.text, line);
+            let to = buf.text.cursor_2d_to_1d(target_line, 0);
+            cut_out(buf, from, to)
+        })
     };
     ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
@@ -791,13 +786,13 @@ pub const BACKWARD_KILL_PARAGRAPH_DOC: &str = "(backward-kill-paragraph): Delete
 
 primitive!(backward_kill_paragraph, _args, env, ctx, {
     let killed = {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf.write().expect("write lock on buffer");
-        let to = buf.text.cursor_pos_1d();
-        let (line, _) = buf.text.cursor_pos();
-        let target_line = paragraph_backward(&buf.text, line);
-        let from = buf.text.cursor_2d_to_1d(target_line, 0);
-        cut_out(&mut buf, from, to)
+        ctx.with_current_buffer_mut(|buf| {
+            let to = buf.text.cursor_pos_1d();
+            let (line, _) = buf.text.cursor_pos();
+            let target_line = paragraph_backward(&buf.text, line);
+            let from = buf.text.cursor_2d_to_1d(target_line, 0);
+            cut_out(buf, from, to)
+        })
     };
     ctx.kill(killed, Direction::Backward, &env);
     Ok(ELispExp::nil())
@@ -817,7 +812,7 @@ pub const UNDO_DOC: &str = "(undo): Undo the most recent group of changes in the
          (define-key nil \"C-/\" 'undo)";
 
 primitive!(undo, _args, _env, ctx, {
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    ctx.with_current_buffer_mut(|buf| {
         // Split borrow: the history and the text it describes are two fields
         // of the same buffer, and undo needs to write both.
         let Buffer { text, undo, .. } = buf;
@@ -842,7 +837,7 @@ pub const REDO_DOC: &str = "(redo): Redo the most recently undone group of chang
          (define-key nil \"M-_\" 'redo)";
 
 primitive!(redo, _args, _env, ctx, {
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    ctx.with_current_buffer_mut(|buf| {
         let Buffer { text, undo, .. } = buf;
         match undo.redo(text) {
             Some(point) => {
@@ -867,7 +862,7 @@ pub const UNDO_BOUNDARY_DOC: &str = "(undo-boundary): End the current undo group
          (self-insert \"b\") ; (undo) removes only b";
 
 primitive!(undo_boundary, _args, _env, ctx, {
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| buf.undo.boundary());
+    ctx.with_current_buffer_mut(|buf| buf.undo.boundary());
     Ok(ELispExp::nil())
 });
 
@@ -891,7 +886,7 @@ primitive!(set_undo_limit, args, _env, ctx, {
             });
         }
     };
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| buf.undo.set_limit(limit));
+    ctx.with_current_buffer_mut(|buf| buf.undo.set_limit(limit));
     Ok(ELispExp::nil())
 });
 
@@ -913,11 +908,11 @@ pub const LINE_NUMBER_AT_POINT_DOC: &str = "(line-number-at-point): Return the n
          (let ((here (line-number-at-point))) (revert-something) (goto-line here))";
 
 primitive!(line_number_at_point, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    let point = buf.text.cursor_pos_1d();
-    let line = buf.text.cursor_1d_to_2d(point).0;
-    Ok(ELispExp::number(line as f64 + 1.0))
+    ctx.with_current_buffer(|buf| {
+        let point = buf.text.cursor_pos_1d();
+        let line = buf.text.cursor_1d_to_2d(point).0;
+        Ok(ELispExp::number(line as f64 + 1.0))
+    })
 });
 
 pub const CURRENT_LINE_DOC: &str = "(current-line): Return the text of the line point is on in the \
@@ -932,17 +927,17 @@ pub const CURRENT_LINE_DOC: &str = "(current-line): Return the text of the line 
          (current-line) => \"src/\"";
 
 primitive!(current_line, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    let point = buf.text.cursor_pos_1d();
-    let line = buf.text.cursor_1d_to_2d(point).0;
-    let text = buf
-        .text
-        .get_lines(line, line + 1)
-        .into_iter()
-        .next()
-        .unwrap_or_default();
-    Ok(ELispExp::string(text))
+    ctx.with_current_buffer(|buf| {
+        let point = buf.text.cursor_pos_1d();
+        let line = buf.text.cursor_1d_to_2d(point).0;
+        let text = buf
+            .text
+            .get_lines(line, line + 1)
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        Ok(ELispExp::string(text))
+    })
 });
 
 pub const POINT_DOC: &str = "(point): Return the position of point in the current buffer, as a \
@@ -951,9 +946,7 @@ pub const POINT_DOC: &str = "(point): Return the position of point in the curren
          (point) => 42";
 
 primitive!(point, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    Ok(ELispExp::number(buf.text.cursor_pos_1d() as f64))
+    ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.cursor_pos_1d() as f64)))
 });
 
 pub const POINT_MIN_DOC: &str = "(point-min): Return the first position in the current buffer, \
@@ -968,9 +961,7 @@ pub const POINT_MAX_DOC: &str = "(point-max): Return the position just past the 
          (goto-char (point-max))   ; to the end";
 
 primitive!(point_max, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    Ok(ELispExp::number(buf.text.len() as f64))
+    ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.len() as f64)))
 });
 
 pub const GOTO_CHAR_DOC: &str = "(goto-char POSITION): Move point to POSITION, a character offset \
@@ -998,20 +989,17 @@ primitive!(goto_char, args, _env, ctx, {
             });
         }
     };
-    Ok(ELispExp::number(ctx.mutate_buffer(
-        ctx.get_current_buffer(),
-        |buf| {
-            // Clamped at both ends: a negative offset is the beginning, and
-            // anything past the text is the end. A position outside the buffer
-            // is almost always one computed before an edit, and putting point
-            // somewhere real is more useful than refusing.
-            let target = requested.max(0.0) as usize;
-            let target = target.min(buf.text.len());
-            let (line, col) = buf.text.cursor_1d_to_2d(target);
-            buf.text.cursor_move(line, col);
-            target as f64
-        },
-    )))
+    Ok(ELispExp::number(ctx.with_current_buffer_mut(|buf| {
+        // Clamped at both ends: a negative offset is the beginning, and
+        // anything past the text is the end. A position outside the buffer
+        // is almost always one computed before an edit, and putting point
+        // somewhere real is more useful than refusing.
+        let target = requested.max(0.0) as usize;
+        let target = target.min(buf.text.len());
+        let (line, col) = buf.text.cursor_1d_to_2d(target);
+        buf.text.cursor_move(line, col);
+        target as f64
+    })))
 });
 
 pub const FORWARD_SEXP_DOC: &str = "(forward-sexp &optional N): Move point forward over N \
@@ -1029,18 +1017,18 @@ pub const FORWARD_SEXP_DOC: &str = "(forward-sexp &optional N): Move point forwa
 primitive!(forward_sexp, args, _env, ctx, {
     // Before the write lock: this reads the buffer to find its mode.
     let table = ctx.current_syntax_table();
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let from = buf.text.cursor_pos_1d();
-    let target = sexp::forward(
-        &buf.text,
-        &table,
-        buf.scan_resume(from),
-        from,
-        repeat_count(args)?,
-    );
-    goto_offset(&mut buf.text, target);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let from = buf.text.cursor_pos_1d();
+        let target = sexp::forward(
+            &buf.text,
+            &table,
+            buf.scan_resume(from),
+            from,
+            repeat_count(args)?,
+        );
+        goto_offset(&mut buf.text, target);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const BACKWARD_SEXP_DOC: &str = "(backward-sexp &optional N): Move point back over N balanced \
@@ -1052,16 +1040,16 @@ pub const BACKWARD_SEXP_DOC: &str = "(backward-sexp &optional N): Move point bac
 
 primitive!(backward_sexp, args, _env, ctx, {
     let table = ctx.current_syntax_table();
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let target = sexp::backward(
-        &buf.text,
-        &table,
-        buf.text.cursor_pos_1d(),
-        repeat_count(args)?,
-    );
-    goto_offset(&mut buf.text, target);
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let target = sexp::backward(
+            &buf.text,
+            &table,
+            buf.text.cursor_pos_1d(),
+            repeat_count(args)?,
+        );
+        goto_offset(&mut buf.text, target);
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const KILL_SEXP_DOC: &str = "(kill-sexp &optional N): Delete forward over N balanced \
@@ -1073,19 +1061,12 @@ pub const KILL_SEXP_DOC: &str = "(kill-sexp &optional N): Delete forward over N 
 
 primitive!(kill_sexp, args, env, ctx, {
     let table = ctx.current_syntax_table();
-    let killed = {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf.write().expect("write lock on buffer");
+    let count = repeat_count(args)?;
+    let killed = ctx.with_current_buffer_mut(|buf| {
         let from = buf.text.cursor_pos_1d();
-        let to = sexp::forward(
-            &buf.text,
-            &table,
-            buf.scan_resume(from),
-            from,
-            repeat_count(args)?,
-        );
-        cut_out(&mut buf, from, to)
-    };
+        let to = sexp::forward(&buf.text, &table, buf.scan_resume(from), from, count);
+        cut_out(buf, from, to)
+    });
     ctx.kill(killed, Direction::Forward, &env);
     Ok(ELispExp::nil())
 });
@@ -1099,13 +1080,12 @@ pub const BACKWARD_KILL_SEXP_DOC: &str = "(backward-kill-sexp &optional N): Dele
 
 primitive!(backward_kill_sexp, args, env, ctx, {
     let table = ctx.current_syntax_table();
-    let killed = {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf.write().expect("write lock on buffer");
+    let count = repeat_count(args)?;
+    let killed = ctx.with_current_buffer_mut(|buf| {
         let to = buf.text.cursor_pos_1d();
-        let from = sexp::backward(&buf.text, &table, to, repeat_count(args)?);
-        cut_out(&mut buf, from, to)
-    };
+        let from = sexp::backward(&buf.text, &table, to, count);
+        cut_out(buf, from, to)
+    });
     ctx.kill(killed, Direction::Backward, &env);
     Ok(ELispExp::nil())
 });
@@ -1119,13 +1099,13 @@ pub const UP_LIST_DOC: &str = "(up-list): Move point past the end of the list it
 
 primitive!(up_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let point = buf.text.cursor_pos_1d();
-    if let Some(found) = sexp::enclosing(&buf.text, &table, buf.scan_resume(point), point) {
-        goto_offset(&mut buf.text, found.end);
-    }
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let point = buf.text.cursor_pos_1d();
+        if let Some(found) = sexp::enclosing(&buf.text, &table, buf.scan_resume(point), point) {
+            goto_offset(&mut buf.text, found.end);
+        }
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const BACKWARD_UP_LIST_DOC: &str = "(backward-up-list): Move point to the beginning of the \
@@ -1137,13 +1117,13 @@ pub const BACKWARD_UP_LIST_DOC: &str = "(backward-up-list): Move point to the be
 
 primitive!(backward_up_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let point = buf.text.cursor_pos_1d();
-    if let Some(found) = sexp::enclosing(&buf.text, &table, buf.scan_resume(point), point) {
-        goto_offset(&mut buf.text, found.start);
-    }
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let point = buf.text.cursor_pos_1d();
+        if let Some(found) = sexp::enclosing(&buf.text, &table, buf.scan_resume(point), point) {
+            goto_offset(&mut buf.text, found.start);
+        }
+        Ok(ELispExp::nil())
+    })
 });
 
 pub const DOWN_LIST_DOC: &str = "(down-list): Move point just inside the next list that opens \
@@ -1155,13 +1135,13 @@ pub const DOWN_LIST_DOC: &str = "(down-list): Move point just inside the next li
 
 primitive!(down_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    let point = buf.text.cursor_pos_1d();
-    if let Some(at) = sexp::down(&buf.text, &table, buf.scan_resume(point), point) {
-        goto_offset(&mut buf.text, at);
-    }
-    Ok(ELispExp::nil())
+    ctx.with_current_buffer_mut(|buf| {
+        let point = buf.text.cursor_pos_1d();
+        if let Some(at) = sexp::down(&buf.text, &table, buf.scan_resume(point), point) {
+            goto_offset(&mut buf.text, at);
+        }
+        Ok(ELispExp::nil())
+    })
 });
 // ---------------------------------------------------------------------------
 // Indentation
@@ -1211,12 +1191,10 @@ pub const CURRENT_INDENTATION_DOC: &str = "(current-indentation &optional LINE):
          (current-indentation) => 4";
 
 primitive!(current_indentation, args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf
-        .read()
-        .expect("Failed to acquire read lock on current buffer");
-    let line = line_argument(args, &buf.text);
-    Ok(ELispExp::number(indentation_of(&buf.text, line) as f64))
+    ctx.with_current_buffer(|buf| {
+        let line = line_argument(args, &buf.text);
+        Ok(ELispExp::number(indentation_of(&buf.text, line) as f64))
+    })
 });
 
 pub const PREVIOUS_INDENTATION_DOC: &str = "(previous-indentation): The indentation of the nearest \
@@ -1230,18 +1208,16 @@ pub const PREVIOUS_INDENTATION_DOC: &str = "(previous-indentation): The indentat
          (previous-indentation) => 4";
 
 primitive!(previous_indentation, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf
-        .read()
-        .expect("Failed to acquire read lock on current buffer");
-    let mut line = buf.text.cursor_pos().0;
-    while line > 0 {
-        line -= 1;
-        if !is_blank(&buf.text, line) {
-            return Ok(ELispExp::number(indentation_of(&buf.text, line) as f64));
+    ctx.with_current_buffer(|buf| {
+        let mut line = buf.text.cursor_pos().0;
+        while line > 0 {
+            line -= 1;
+            if !is_blank(&buf.text, line) {
+                return Ok(ELispExp::number(indentation_of(&buf.text, line) as f64));
+            }
         }
-    }
-    Ok(ELispExp::number(0.0))
+        Ok(ELispExp::number(0.0))
+    })
 });
 
 pub const INDENT_LINE_TO_DOC: &str = "(indent-line-to COLUMN): Replace the whitespace at the start \
@@ -1264,23 +1240,26 @@ primitive!(indent_line_to, args, _env, ctx, {
     };
     let column = column.max(0.0) as usize;
 
-    let happened = {
-        let buf = ctx.get_current_buffer();
-        let mut buf = buf.write().expect("write lock on buffer");
+    // `None` when the line already has that indentation, `Some(false)` when
+    // the buffer refused the change, `Some(true)` when it happened. Three
+    // outcomes rather than a `bool`, because two of them used to `return` out
+    // of the primitive from inside the guarded region -- which a closure
+    // cannot do, and which had to `drop` the guard by hand to avoid holding it
+    // across `edited`.
+    let outcome = ctx.with_current_buffer_mut(|buf| {
         let (line, _) = buf.text.cursor_pos();
         let start = buf.text.cursor_2d_to_1d(line, 0);
         let width = indentation_of(&buf.text, line);
         if width == column {
-            return Ok(ELispExp::nil());
+            return None;
         }
 
         let point = buf.text.cursor_pos_1d();
-        if !delete_range(&mut buf, start, start + width) {
-            drop(buf);
-            return Ok(edited(ctx, false));
+        if !delete_range(buf, start, start + width) {
+            return Some(false);
         }
         let padding: String = " ".repeat(column);
-        insert_text(&mut buf, start, &padding);
+        insert_text(buf, start, &padding);
 
         // Where point ends up. Inside the indentation it has no character of
         // its own to keep, so it goes to the end of the new one; past it, it
@@ -1293,12 +1272,14 @@ primitive!(indent_line_to, args, _env, ctx, {
         let target = target.min(buf.text.len());
         let (line, col) = buf.text.cursor_1d_to_2d(target);
         buf.text.cursor_move(line, col);
-        true
-    };
-    Ok(if happened {
-        ELispExp::t()
-    } else {
-        ELispExp::nil()
+        Some(true)
+    });
+    // Out here, with the buffer's lock given back: `edited` puts a message in
+    // the echo area, which is another compartment.
+    Ok(match outcome {
+        None => ELispExp::nil(),
+        Some(false) => edited(ctx, false),
+        Some(true) => ELispExp::t(),
     })
 });
 
@@ -1311,9 +1292,5 @@ pub const CURRENT_COLUMN_DOC: &str = "(current-column): The column point is on, 
          (progn (goto-char open) (current-column))";
 
 primitive!(current_column, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf
-        .read()
-        .expect("Failed to acquire read lock on current buffer");
-    Ok(ELispExp::number(buf.text.cursor_pos().1 as f64))
+    ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.cursor_pos().1 as f64)))
 });

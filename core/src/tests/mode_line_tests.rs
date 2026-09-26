@@ -22,8 +22,7 @@ mod tests {
 
     fn editor_with(text: &str) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             b.text.cursor_move(0, 0);
             b.is_modified = false;

@@ -55,13 +55,11 @@ mod tests {
     }
 
     fn in_mode(ctx: &Ctx, mode: &str) {
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| b.current_mode = mode.into());
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = mode.into());
     }
 
     fn typing(ctx: &Ctx, text: &str, at: usize) {
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             let (line, col) = b.text.cursor_1d_to_2d(at);
             b.text.cursor_move(line, col);
@@ -70,21 +68,13 @@ mod tests {
     }
 
     fn contents(ctx: &Ctx) -> String {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.to_string())
             .expect("*scratch*")
-            .read()
-            .expect("read lock")
-            .text
-            .to_string()
     }
 
     fn point(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
             .expect("*scratch*")
-            .read()
-            .expect("read lock")
-            .text
-            .cursor_pos_1d()
     }
 
     fn number(exp: &LispExp<Ctx>) -> f64 {

@@ -117,12 +117,12 @@ fn parse_answer<B: BufferTrait>(
 
 /// The characters of the current buffer between two offsets.
 fn text_between<B: BufferTrait>(ctx: &EditorState<B>, start: usize, end: usize) -> String {
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    let end = end.min(buf.text.len());
-    (start.min(end)..end)
-        .filter_map(|at| buf.text.at(at))
-        .collect()
+    ctx.with_current_buffer(|buf| {
+        let end = end.min(buf.text.len());
+        (start.min(end)..end)
+            .filter_map(|at| buf.text.at(at))
+            .collect()
+    })
 }
 
 /// Put TEXT where the region was, and leave point after it.
@@ -136,25 +136,25 @@ fn replace_region<B: BufferTrait>(
     end: usize,
     text: &str,
 ) -> bool {
-    let buf = ctx.get_current_buffer();
-    let mut buf = buf.write().expect("write lock on buffer");
-    // No `read_only` check here, deliberately. The refusal lives at the two
-    // doors and this goes through them, so asking again would be a second
-    // copy of the rule -- and a second copy is one that can disagree. What is
-    // needed instead is to notice they refused, so that point does not travel
-    // to the end of text that was never inserted: in a read-only buffer point
-    // moves freely, and it should stay exactly where the user put it.
-    // Both doors report a refusal the same way and both refuse for the same
-    // one reason, so either answering false means the buffer is protected.
-    // They cannot disagree between these two lines: the write lock is held
-    // across both, so there is no window in which half the replacement lands.
-    if !delete_range(&mut buf, start, end) || !insert_text(&mut buf, start, text) {
-        return false;
-    }
-    let target = (start + text.chars().count()).min(buf.text.len());
-    let (line, col) = buf.text.cursor_1d_to_2d(target);
-    buf.text.cursor_move(line, col);
-    true
+    ctx.with_current_buffer_mut(|buf| {
+        // No `read_only` check here, deliberately. The refusal lives at the two
+        // doors and this goes through them, so asking again would be a second
+        // copy of the rule -- and a second copy is one that can disagree. What is
+        // needed instead is to notice they refused, so that point does not travel
+        // to the end of text that was never inserted: in a read-only buffer point
+        // moves freely, and it should stay exactly where the user put it.
+        // Both doors report a refusal the same way and both refuse for the same
+        // one reason, so either answering false means the buffer is protected.
+        // They cannot disagree between these two lines: the write lock is held
+        // across both, so there is no window in which half the replacement lands.
+        if !delete_range(buf, start, end) || !insert_text(buf, start, text) {
+            return false;
+        }
+        let target = (start + text.chars().count()).min(buf.text.len());
+        let (line, col) = buf.text.cursor_1d_to_2d(target);
+        buf.text.cursor_move(line, col);
+        true
+    })
 }
 
 /// The longest text every candidate begins with.
@@ -267,11 +267,7 @@ fn mode_argument<B: BufferTrait>(
 }
 
 fn current_mode<B: BufferTrait>(ctx: &EditorState<B>) -> String {
-    ctx.get_current_buffer()
-        .read()
-        .expect("read lock on buffer")
-        .current_mode
-        .clone()
+    ctx.with_current_buffer(|buf| buf.current_mode.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -334,16 +330,11 @@ primitive!(buffer_words, args, _env, ctx, {
         _ => 3,
     };
 
-    let Some(handle) = (match buffer {
-        Some(name) => ctx.get_buffer(&name),
-        None => Some(ctx.get_current_buffer()),
-    }) else {
-        return Ok(ELispExp::nil());
-    };
-
-    let mut words: Vec<String> = {
-        let buf = handle.read().expect("read lock on buffer");
-        let mut words = Vec::new();
+    // Named or current, one shape: the name is resolved first so the two
+    // cases meet at a single accessor.
+    let name = buffer.unwrap_or_else(|| ctx.get_current_buffer_name());
+    let Some(mut words) = ctx.with_buffer(&name, |buf| {
+        let mut words: Vec<String> = Vec::new();
         let mut current = String::new();
         for at in 0..buf.text.len() {
             match buf.text.at(at) {
@@ -363,6 +354,8 @@ primitive!(buffer_words, args, _env, ctx, {
             words.push(current);
         }
         words
+    }) else {
+        return Ok(ELispExp::nil());
     };
     words.sort();
     words.dedup();
@@ -404,23 +397,23 @@ primitive!(bounds_of_thing_at_point, args, _env, ctx, {
         }
     };
 
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    let point = buf.text.cursor_pos_1d();
-    let len = buf.text.len();
-
-    // Backwards from point, then forwards. Both ends, rather than stopping at
-    // point, because completing in the middle of a word should replace the
-    // whole word -- typing `for` inside `ward` and completing should not leave
-    // `forward` next to a stray `ward`.
-    let mut start = point.min(len);
-    while start > 0 && buf.text.at(start - 1).is_some_and(belongs) {
-        start -= 1;
-    }
-    let mut end = point.min(len);
-    while end < len && buf.text.at(end).is_some_and(belongs) {
-        end += 1;
-    }
+    let (start, end) = ctx.with_current_buffer(|buf| {
+        let point = buf.text.cursor_pos_1d();
+        let len = buf.text.len();
+        // Backwards from point, then forwards. Both ends, rather than stopping
+        // at point, because completing in the middle of a word should replace
+        // the whole word -- typing `for` inside `ward` and completing should
+        // not leave `forward` next to a stray `ward`.
+        let mut start = point.min(len);
+        while start > 0 && buf.text.at(start - 1).is_some_and(belongs) {
+            start -= 1;
+        }
+        let mut end = point.min(len);
+        while end < len && buf.text.at(end).is_some_and(belongs) {
+            end += 1;
+        }
+        (start, end)
+    });
     if start == end {
         return Ok(ELispExp::nil());
     }

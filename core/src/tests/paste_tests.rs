@@ -46,19 +46,11 @@ mod tests {
     }
 
     fn contents(ctx: &Ctx) -> String {
-        ctx.get_current_buffer()
-            .read()
-            .expect("read lock")
-            .text
-            .to_string()
+        ctx.with_current_buffer(|b| b.text.to_string())
     }
 
     fn point(ctx: &Ctx) -> usize {
-        ctx.get_current_buffer()
-            .read()
-            .expect("read lock")
-            .text
-            .cursor_pos_1d()
+        ctx.with_current_buffer(|b| b.text.cursor_pos_1d())
     }
 
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, c: char) {
@@ -171,11 +163,7 @@ mod tests {
     // text: the count is what the user was looking at.
 
     fn line_count(ctx: &Ctx) -> usize {
-        ctx.get_current_buffer()
-            .read()
-            .expect("read lock")
-            .text
-            .line_count()
+        ctx.with_current_buffer(|b| b.text.line_count())
     }
 
     #[test]
@@ -228,8 +216,7 @@ mod tests {
         // rewrote its argument would be a worse surprise than the bug.
         let (ctx, env) = editor();
         let _ = &env;
-        let buffer = ctx.get_current_buffer();
-        ctx.mutate_buffer(buffer, |buf| {
+        ctx.with_current_buffer_mut(|buf| {
             crate::primitives::edits::insert_at_point(buf, "one\rtwo")
         });
         assert_eq!(contents(&ctx), "one\rtwo");

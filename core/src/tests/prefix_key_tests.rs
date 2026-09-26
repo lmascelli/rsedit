@@ -19,8 +19,7 @@ mod tests {
 
     fn editor_with(text: &str) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             b.text.cursor_move(0, 0);
             b.is_modified = false;
@@ -29,21 +28,13 @@ mod tests {
     }
 
     fn text_of(ctx: &Ctx) -> String {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.to_string())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .to_string()
     }
 
     fn point_1d(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos_1d()
     }
 
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode, modifiers: KeyModifiers) {
@@ -75,23 +66,15 @@ mod tests {
 
         press(&ctx, &env, KeyCode::Char('x'), ctrl());
         assert!(
-            ctx.get_buffer("*scratch*")
-                .expect("*scratch*")
-                .read()
-                .unwrap()
-                .mark
-                .is_none(),
+            ctx.with_buffer("*scratch*", |b| b.mark.is_none())
+                .expect("*scratch*"),
             "the first key of a sequence must not run anything"
         );
 
         press(&ctx, &env, KeyCode::Char('m'), plain());
         assert!(
-            ctx.get_buffer("*scratch*")
-                .expect("*scratch*")
-                .read()
-                .unwrap()
-                .mark
-                .is_some(),
+            ctx.with_buffer("*scratch*", |b| b.mark.is_some())
+                .expect("*scratch*"),
             "the second key completes it"
         );
     }

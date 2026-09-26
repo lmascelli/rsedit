@@ -300,7 +300,7 @@ mod tests {
         press(&ctx, &env, KeyCode::Tab);
 
         assert_eq!(windows(&ctx), before);
-        assert!(ctx.get_buffer("*Completions*").is_none());
+        assert!(!ctx.has_buffer("*Completions*"));
     }
 
     /// And setting the variable back is how it is turned off again -- the
@@ -554,11 +554,11 @@ mod tests {
         press(&ctx, &env, KeyCode::Tab);
 
         press(&ctx, &env, KeyCode::Esc);
-        assert!(ctx.get_buffer("*Minibuffer*").is_some(), "still prompting");
+        assert!(ctx.has_buffer("*Minibuffer*"), "still prompting");
 
         press(&ctx, &env, KeyCode::Esc);
         assert!(
-            ctx.get_buffer("*Minibuffer*").is_none(),
+            !ctx.has_buffer("*Minibuffer*"),
             "the second Escape is the one the prompt sees"
         );
     }
@@ -598,7 +598,7 @@ mod tests {
         );
 
         assert_eq!(windows(&ctx), 1);
-        assert!(ctx.get_buffer("*Minibuffer*").is_some());
+        assert!(ctx.has_buffer("*Minibuffer*"));
     }
 
     // ---------------- the cases that are not a choice ----------------

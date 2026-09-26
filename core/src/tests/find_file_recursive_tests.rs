@@ -237,7 +237,7 @@ mod tests {
         );
         assert_eq!(answer, LispExp::string("one\ntwo\n".to_string()));
         // Nothing to close afterwards: the point of this over `find-file'.
-        assert!(ctx.get_buffer("notes").is_none());
+        assert!(!ctx.has_buffer("notes"));
     }
 
     #[test]

@@ -15,11 +15,11 @@ use crate::{
     editor::create_global_env,
     input::{KeyCode, KeyEvent, KeyModifiers},
     lisp::{EvalError, Parser, eval, measure},
+    managers::Buffers,
     modes::{SyntaxTable, sexp},
     ui::*,
 };
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -53,23 +53,27 @@ pub(super) fn cost(report: &mut Report) {
     let mut costs = Vec::new();
     for lines in SIZES {
         let (state, env) = create_global_env::<GapBuffer>().expect("global env must build");
-        let scratch = state
-            .get_buffer("*scratch*")
-            .expect("*scratch* buffer must exist");
         if lines > 1 {
             let text = text_of_lines(lines);
-            state.mutate_buffer(scratch.clone(), |b| b.text = GapBuffer::from(text.as_str()));
+            state
+                .with_buffer_mut("*scratch*", |b| b.text = GapBuffer::from(text.as_str()))
+                .expect("*scratch* buffer must exist");
         }
         // One keystroke outside the measurement, so any first-use lazy setup is
         // not billed to the document size that happens to be measured first.
         state.handle_key_event(char_event('a'), &env);
 
-        let before = scratch.read().unwrap().text.len();
+        let length = || {
+            state
+                .with_buffer("*scratch*", |b| b.text.len())
+                .expect("*scratch* buffer must exist")
+        };
+        let before = length();
         let (_, spent) = measure(state.fuel_meter(), || {
             state.handle_key_event(char_event('a'), &env);
         });
         assert_eq!(
-            scratch.read().unwrap().text.len() - before,
+            length() - before,
             1,
             "the keystroke did not reach the buffer at {lines} lines -- the measurement \
              would be timing a cheap failure path instead of the work it claims to"
@@ -520,12 +524,12 @@ fn layout(report: &mut Report, calibration: f64) {
         }),
     };
 
-    let mut buffers = HashMap::new();
+    let mut buffers = Buffers::default();
     for id in 1..=4 {
         let name = format!("buf{id}");
         buffers.insert(
-            name.clone(),
-            Arc::new(RwLock::new(Buffer {
+            &name.clone(),
+            Buffer {
                 text: GapBuffer::from("some buffer content\n"),
                 name,
                 current_mode: "fundamental".into(),
@@ -539,7 +543,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 scan: Default::default(),
                 syntax: Default::default(),
                 read_only: false,
-            })),
+            },
         );
     }
 
@@ -613,10 +617,12 @@ fn command_path(report: &mut Report, calibration: f64) {
     const N: usize = 20_000;
 
     let (state, env) = create_global_env::<GapBuffer>().expect("global env must build");
-    let scratch = state
-        .get_buffer("*scratch*")
-        .expect("*scratch* buffer must exist");
-    let before = scratch.read().unwrap().text.len();
+    let length = || {
+        state
+            .with_buffer("*scratch*", |b| b.text.len())
+            .expect("*scratch* buffer must exist")
+    };
+    let before = length();
 
     let start = Instant::now();
     for _ in 0..N {
@@ -628,7 +634,7 @@ fn command_path(report: &mut Report, calibration: f64) {
     // happily average real insertions with the far cheaper `OutOfFuel` failure
     // path and report a flatteringly small number -- which is exactly what it
     // did before fuel was refilled per command.
-    let inserted = scratch.read().unwrap().text.len() - before;
+    let inserted = length() - before;
     let starved = state
         .get_logs()
         .iter()
@@ -677,17 +683,14 @@ fn concurrency(report: &mut Report) {
     for name in NAMES {
         state.new_buffer(name, None, None);
     }
-    let handle = |name: &str| {
-        state
-            .get_buffer(name)
-            .unwrap_or_else(|| panic!("{name} must exist"))
-    };
     // Replaced wholesale rather than emptied a character at a time: deleting
     // backwards through a gap buffer moves the gap on every step, so clearing
     // 60,000 characters that way took close to two minutes.
     let reset = || {
         for name in NAMES {
-            state.mutate_buffer(handle(name), |b| b.text = GapBuffer::default());
+            state
+                .with_buffer_mut(name, |b| b.text = GapBuffer::default())
+                .unwrap_or_else(|| panic!("{name} must exist"));
         }
     };
 
@@ -697,9 +700,8 @@ fn concurrency(report: &mut Report) {
         reset();
         let start = Instant::now();
         for name in NAMES {
-            let buf = handle(name);
             for _ in 0..WRITES {
-                state.mutate_buffer(buf.clone(), |b| b.text.insert('x'));
+                state.with_buffer_mut(name, |b| b.text.insert('x'));
             }
         }
         sequential = sequential.min(start.elapsed());
@@ -718,11 +720,10 @@ fn concurrency(report: &mut Report) {
                 let ready = ready.clone();
                 let go = go.clone();
                 thread::spawn(move || {
-                    let buf = state.get_buffer(name).expect("buffer must exist");
                     ready.wait();
                     go.lock().expect("channel mutex").recv().expect("released");
                     for _ in 0..WRITES {
-                        state.mutate_buffer(buf.clone(), |b| b.text.insert('x'));
+                        state.with_buffer_mut(name, |b| b.text.insert('x'));
                     }
                 })
             })
@@ -741,7 +742,7 @@ fn concurrency(report: &mut Report) {
 
     let intact = NAMES
         .into_iter()
-        .all(|name| handle(name).read().unwrap().text.len() == WRITES);
+        .all(|name| state.with_buffer(name, |b| b.text.len()) == Some(WRITES));
     let speedup = ratio(concurrent.as_secs_f64(), sequential.as_secs_f64());
     let write_ns = per_unit_ns(sequential, (WRITES * 3) as u64);
 

@@ -50,16 +50,13 @@ primitive!(set_mark, args, _env, ctx, {
             });
         }
     };
-    Ok(ELispExp::number(ctx.mutate_buffer(
-        ctx.get_current_buffer(),
-        |buf| {
-            let at = at
-                .unwrap_or_else(|| buf.text.cursor_pos_1d())
-                .min(buf.text.len());
-            buf.mark = Some(Mark::new(at));
-            at as f64
-        },
-    )))
+    Ok(ELispExp::number(ctx.with_current_buffer_mut(|buf| {
+        let at = at
+            .unwrap_or_else(|| buf.text.cursor_pos_1d())
+            .min(buf.text.len());
+        buf.mark = Some(Mark::new(at));
+        at as f64
+    })))
 });
 
 pub const DEACTIVATE_MARK_DOC: &str = "(deactivate-mark): Stop the region being in force, so it is no \
@@ -68,7 +65,7 @@ pub const DEACTIVATE_MARK_DOC: &str = "(deactivate-mark): Stop the region being 
          back to it.";
 
 primitive!(deactivate_mark, _args, _env, ctx, {
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    ctx.with_current_buffer_mut(|buf| {
         if let Some(mark) = buf.mark.as_mut() {
             mark.active = false;
         }
@@ -82,12 +79,10 @@ pub const MARK_DOC: &str = "(mark): Return the position of the mark in the curre
          to act on.";
 
 primitive!(mark, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    Ok(match buf.mark {
+    Ok(ctx.with_current_buffer(|buf| match buf.mark {
         Some(mark) => ELispExp::number(mark.at.min(buf.text.len()) as f64),
         None => ELispExp::nil(),
-    })
+    }))
 });
 
 pub const USE_REGION_P_DOC: &str = "(use-region-p): Return t if there is an active region in the \
@@ -95,12 +90,10 @@ pub const USE_REGION_P_DOC: &str = "(use-region-p): Return t if there is an acti
          ask before operating on a region.";
 
 primitive!(use_region_p, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    Ok(match region_of(&buf) {
+    Ok(ctx.with_current_buffer(|buf| match region_of(buf) {
         Some(_) => ELispExp::symbol("t".into()),
         None => ELispExp::nil(),
-    })
+    }))
 });
 
 pub const REGION_BEGINNING_DOC: &str = "(region-beginning): Return the position of the start of the \
@@ -108,9 +101,10 @@ pub const REGION_BEGINNING_DOC: &str = "(region-beginning): Return the position 
          if the mark is not active.";
 
 primitive!(region_beginning, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    Ok(ELispExp::number(require_region(&buf)?.0 as f64))
+    // The closure answers with the `Result` and the `?` happens out here:
+    // inside, it would return from the closure rather than from the primitive.
+    let start = ctx.with_current_buffer(|buf| require_region(buf).map(|region| region.0))?;
+    Ok(ELispExp::number(start as f64))
 });
 
 pub const REGION_END_DOC: &str = "(region-end): Return the position of the end of the region -- \
@@ -118,9 +112,8 @@ pub const REGION_END_DOC: &str = "(region-end): Return the position of the end o
          is not active.";
 
 primitive!(region_end, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let buf = buf.read().expect("read lock on buffer");
-    Ok(ELispExp::number(require_region(&buf)?.1 as f64))
+    let end = ctx.with_current_buffer(|buf| require_region(buf).map(|region| region.1))?;
+    Ok(ELispExp::number(end as f64))
 });
 
 pub const EXCHANGE_POINT_AND_MARK_DOC: &str = "(exchange-point-and-mark): Put point where the mark \
@@ -130,7 +123,7 @@ pub const EXCHANGE_POINT_AND_MARK_DOC: &str = "(exchange-point-and-mark): Put po
          most of what a mark is for.";
 
 primitive!(exchange_point_and_mark, _args, _env, ctx, {
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    ctx.with_current_buffer_mut(|buf| {
         let Some(mark) = buf.mark else {
             return Err(EvalError::RuntimeMessage(
                 "No mark set in this buffer".into(),
@@ -151,7 +144,7 @@ pub const MARK_WHOLE_BUFFER_DOC: &str = "(mark-whole-buffer): Put point at the b
          buffer and the mark at the end, making the whole buffer the region.";
 
 primitive!(mark_whole_buffer, _args, _env, ctx, {
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    ctx.with_current_buffer_mut(|buf| {
         buf.mark = Some(Mark::new(buf.text.len()));
         buf.text.cursor_move(0, 0);
     });
@@ -169,7 +162,7 @@ pub const KILL_REGION_DOC: &str = "(kill-region): Delete the region and save it 
          (define-key nil \"C-w\" 'kill-region)";
 
 primitive!(kill_region, _args, env, ctx, {
-    let killed = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let killed = ctx.with_current_buffer_mut(|buf| {
         let (start, end) = require_region(buf)?;
         let text = text_between(&buf.text, start, end);
         // Only what actually left the buffer reaches the ring. Saving the text
@@ -192,7 +185,7 @@ pub const KILL_RING_SAVE_DOC: &str = "(kill-ring-save): Save the region to the k
          (define-key nil \"M-w\" 'kill-ring-save)";
 
 primitive!(kill_ring_save, _args, env, ctx, {
-    let text = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let text = ctx.with_current_buffer_mut(|buf| {
         let (start, end) = require_region(buf)?;
         let text = text_between(&buf.text, start, end);
         // Copying is not an edit, so nothing else would deactivate the mark --
@@ -254,7 +247,7 @@ primitive!(yank, _args, _env, ctx, {
     let Some(text) = ctx.current_kill() else {
         return Ok(ELispExp::nil());
     };
-    let inserted = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let inserted = ctx.with_current_buffer_mut(|buf| {
         let at = buf.text.cursor_pos_1d();
         edits::insert_text(buf, at, &text).then_some(at)
     });
@@ -281,7 +274,7 @@ primitive!(yank_pop, _args, _env, ctx, {
     let Some(text) = ctx.rotate_kill_ring() else {
         return Ok(ELispExp::nil());
     };
-    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let happened = ctx.with_current_buffer_mut(|buf| {
         // Out then in, through the same editing layer as everything else, so
         // one `yank-pop` is one undo step like any other command. The second
         // step is not attempted if the first was refused, which would leave
@@ -329,7 +322,7 @@ pub const KEYBOARD_QUIT_DOC: &str = "(keyboard-quit): Abandon whatever is half-f
 
 primitive!(keyboard_quit, _args, _env, ctx, {
     ctx.abandon_pending_input();
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    ctx.with_current_buffer_mut(|buf| {
         if let Some(mark) = buf.mark.as_mut() {
             mark.active = false;
         }

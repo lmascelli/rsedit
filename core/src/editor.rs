@@ -11,6 +11,7 @@ use crate::{
     lisp::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
+    managers::{BufferRemoved, Buffers, Hit, MouseDrag, Scrolled, WindowRemoved, Windows},
     minibuffer::install_minibuffer,
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     modes::prescan::Prescanner,
@@ -23,7 +24,6 @@ use crate::{
         RenderableWindowView, Separator, Side, Style, Theme, Window, WindowId,
         extract_buffer_lines, region_highlights,
     },
-    windows::{Hit, MouseDrag, Removed, Scrolled, Windows},
 };
 use std::{
     collections::HashMap,
@@ -183,15 +183,17 @@ pub struct EditorState<B: BufferTrait> {
     /// the syntax highlighting computation
     pub worker_mailbox: Sender<WorkerMessage<B>>,
 
-    pub buffers: Arc<RwLock<HashMap<String, Arc<RwLock<Buffer<B>>>>>>,
+    /// Every buffer the editor holds, which one is current, and which were
+    /// current lately. See [`Buffers`], which says why those are one lock and
+    /// not three.
+    ///
+    /// Private, like [`EditorState::windows`]'s field, and for the same
+    /// reason: the invariant that `current` names a buffer the table holds is
+    /// only an invariant while nothing outside can set one without the other.
+    buffers: Arc<RwLock<Buffers<B>>>,
     /// The echo area's text together with when it was set, in one lock so a
     /// reader can never pair a new message with an old timestamp.
     pub echo_message: Arc<RwLock<EchoMessage>>,
-    /// An `Arc<str>` rather than a `String` because every buffer access starts
-    /// by reading this name, and reading a `String` out of a lock means
-    /// copying it. Sharing it instead makes `get_current_buffer` allocation
-    /// free, on a path that runs several times per keystroke.
-    pub current_buffer_name: Arc<RwLock<Arc<str>>>,
 
     /// A keymap is an association between a KeyEvent and the name of a
     /// function that have to be executed (i.e. self-insert)
@@ -231,23 +233,6 @@ pub struct EditorState<B: BufferTrait> {
     /// written on every keystroke, and a name that is already interned in the
     /// keymap does not need copying to be remembered.
     last_command: Arc<RwLock<Option<Arc<String>>>>,
-
-    /// Buffer names in the order they were last current, most recent first.
-    ///
-    /// # What it is for
-    ///
-    /// Answering "and what should I show instead?". When a buffer is killed,
-    /// every window showing it needs somewhere to point, and `*scratch*` is a
-    /// poor answer when the person had three files open -- they want one of
-    /// the files. That question cannot be answered from the buffer table,
-    /// which is a `HashMap` and has no order at all.
-    ///
-    /// Updated by [`Self::set_current_buffer_name`], which is the one place a
-    /// buffer becomes current, so nothing else has to remember to record
-    /// anything. Names of killed buffers are left in the list rather than
-    /// pruned on every kill; readers skip the ones that are gone, which costs
-    /// a lookup there and saves a scan on a path that runs per keystroke.
-    buffer_recency: Arc<RwLock<Vec<String>>>,
 
     /// How many shell commands are still running.
     ///
@@ -492,13 +477,6 @@ impl<B: BufferTrait> EditorState<B> {
     /// Create a new EditorState environment. Install the default keymaps,
     /// provides a default *scratch* buffer in a base window.
     fn new() -> Self {
-        let mut buffers = HashMap::new();
-        let scratch_name = "*scratch*".to_string();
-        buffers.insert(
-            scratch_name.clone(),
-            Arc::new(RwLock::new(Buffer::new(&scratch_name))),
-        );
-
         let mut keymaps = Keymap::new();
         fill_default_keymaps(&mut keymaps);
 
@@ -508,9 +486,8 @@ impl<B: BufferTrait> EditorState<B> {
         let editor_state = Self {
             running: Arc::new(AtomicBool::new(true)),
             worker_mailbox: sender,
-            buffers: Arc::new(RwLock::new(buffers)),
+            buffers: Arc::new(RwLock::new(Buffers::default())),
             echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
-            current_buffer_name: Arc::new(RwLock::new(Arc::from(scratch_name.as_str()))),
             keymaps: Arc::new(RwLock::new(keymaps)),
             completion_functions: Arc::new(RwLock::new(Vec::new())),
             mode_registry: Arc::new(RwLock::new(HashMap::new())),
@@ -521,7 +498,6 @@ impl<B: BufferTrait> EditorState<B> {
             last_command_form: Arc::new(RwLock::new(None)),
             global_hooks: Arc::new(RwLock::new(HashMap::new())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
-            buffer_recency: Arc::new(RwLock::new(Vec::new())),
             kill_ring: Arc::new(RwLock::new(KillRing::default())),
             pending_clipboard: Arc::new(RwLock::new(None)),
             theme: Arc::new(RwLock::new(Arc::new(Theme::default()))),
@@ -704,12 +680,7 @@ impl<B: BufferTrait> EditorState<B> {
                         .unwrap_or_else(|| "fundamental-mode".into());
                     new_buf.file_path = Some(file_path.to_string());
 
-                    let mut buffers_lock = self
-                        .buffers
-                        .write()
-                        .expect("Failed to get write lock on buffers");
-                    buffers_lock.insert(name.to_string(), Arc::new(RwLock::new(new_buf)));
-
+                    self.buffers_mut(|buffers| buffers.insert(name, new_buf));
                     self.show_in_focused_window(name);
 
                     Some(name.to_string())
@@ -724,11 +695,7 @@ impl<B: BufferTrait> EditorState<B> {
             if let Some(mode_name) = start_mode {
                 new_buf.current_mode = mode_name;
             }
-            let mut buffers_lock = self
-                .buffers
-                .write()
-                .expect("Failed to get write lock on buffers");
-            buffers_lock.insert(name.to_string(), Arc::new(RwLock::new(new_buf)));
+            self.buffers_mut(|buffers| buffers.insert(name, new_buf));
             Some(name.to_string())
         }
     }
@@ -758,10 +725,7 @@ impl<B: BufferTrait> EditorState<B> {
             .or_else(|| self.auto_mode_for(path))
             .unwrap_or_else(|| "fundamental-mode".into());
         new_buf.file_path = Some(path.to_string());
-        self.buffers
-            .write()
-            .expect("Failed to get write lock on buffers")
-            .insert(name.to_string(), Arc::new(RwLock::new(new_buf)));
+        self.buffers_mut(|buffers| buffers.insert(name, new_buf));
         self.show_in_focused_window(name);
         name.to_string()
     }
@@ -771,7 +735,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// buffer named NAME exists, `true` otherwise. Shared by the
     /// `switch-to-buffer` primitive and the built-in minibuffer's cleanup.
     pub(crate) fn switch_to_buffer(&self, name: &str) -> bool {
-        if self.get_buffer(name).is_none() {
+        if !self.has_buffer(name) {
             self.log_diagnostic(&format!("[LOG] buffer {} does not exist.", name));
             return false;
         }
@@ -803,6 +767,75 @@ impl<B: BufferTrait> EditorState<B> {
     /// Change the windows. The same rule applies, and more sharply.
     pub(crate) fn windows_mut<R>(&self, f: impl FnOnce(&mut Windows) -> R) -> R {
         f(&mut self.windows.write().expect("write lock on windows"))
+    }
+
+    // ---------------------------------------------------------------
+    // The buffer compartment
+    // ---------------------------------------------------------------
+
+    /// Ask the buffer table something. Same rules as [`EditorState::windows`].
+    pub(crate) fn buffers<R>(&self, f: impl FnOnce(&Buffers<B>) -> R) -> R {
+        f(&self.buffers.read().expect("read lock on buffers"))
+    }
+
+    /// Change the buffer table -- add one, remove one, move what is current.
+    pub(crate) fn buffers_mut<R>(&self, f: impl FnOnce(&mut Buffers<B>) -> R) -> R {
+        f(&mut self.buffers.write().expect("write lock on buffers"))
+    }
+
+    /// Read the buffer named NAME. `None` when there is no such buffer.
+    ///
+    /// # Why the table's lock is not held while F runs
+    ///
+    /// The handle is cloned out and the table's lock given back *before* the
+    /// buffer's is taken. Holding both would make the table a bottleneck on
+    /// every keystroke: the highlighter and the prescanner walk it from their
+    /// own threads, and a scan that had to wait for whoever was typing -- or a
+    /// keystroke that had to wait for a scan -- is exactly what those threads
+    /// exist to avoid.
+    ///
+    /// The closure gets a locked buffer and cannot keep it. That is the whole
+    /// difference from the `get_buffer` this replaced, which handed back an
+    /// `Arc` and left every caller to remember which lock to take and when to
+    /// let it go.
+    pub(crate) fn with_buffer<R>(&self, name: &str, f: impl FnOnce(&Buffer<B>) -> R) -> Option<R> {
+        let handle = self.buffers(|buffers| buffers.handle(name))?;
+        let guard = handle.read().expect("read lock on buffer");
+        Some(f(&guard))
+    }
+
+    /// Change the buffer named NAME. `None` when there is no such buffer.
+    pub(crate) fn with_buffer_mut<R>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&mut Buffer<B>) -> R,
+    ) -> Option<R> {
+        let handle = self.buffers(|buffers| buffers.handle(name))?;
+        let mut guard = handle.write().expect("write lock on buffer");
+        Some(f(&mut guard))
+    }
+
+    /// Read the current buffer.
+    ///
+    /// Infallible, unlike [`EditorState::with_buffer`]: there is always a
+    /// current buffer, and [`Buffers`] is what makes that true rather than
+    /// hopeful.
+    pub(crate) fn with_current_buffer<R>(&self, f: impl FnOnce(&Buffer<B>) -> R) -> R {
+        let handle = self.buffers(|buffers| buffers.current_handle());
+        let guard = handle.read().expect("read lock on buffer");
+        f(&guard)
+    }
+
+    /// Change the current buffer.
+    pub(crate) fn with_current_buffer_mut<R>(&self, f: impl FnOnce(&mut Buffer<B>) -> R) -> R {
+        let handle = self.buffers(|buffers| buffers.current_handle());
+        let mut guard = handle.write().expect("write lock on buffer");
+        f(&mut guard)
+    }
+
+    /// Whether a buffer named NAME exists.
+    pub(crate) fn has_buffer(&self, name: &str) -> bool {
+        self.buffers(|buffers| buffers.contains(name))
     }
 
     /// Show the buffer named NAME in the focused window, and make it current.
@@ -868,15 +901,13 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// False when nothing changed, so a caller can tell a no-op from a scroll.
     pub(crate) fn recenter_focused_window(&self, where_to: f64) -> bool {
-        let Some(buffer) = self
-            .focused_window_buffer()
-            .and_then(|n| self.get_buffer(&n))
-        else {
+        let Some(name) = self.focused_window_buffer() else {
             return false;
         };
-        let (line_count, point_line) = {
-            let buf = buffer.read().expect("read lock on buffer");
+        let Some((line_count, point_line)) = self.with_buffer(&name, |buf| {
             (buf.text.line_count(), buf.text.cursor_pos().0)
+        }) else {
+            return false;
         };
         self.windows_mut(|windows| windows.recenter_focused(where_to, line_count, point_line))
     }
@@ -889,16 +920,14 @@ impl<B: BufferTrait> EditorState<B> {
     /// the end and asked to go forward, or the beginning and asked to go back
     /// -- so the caller can say so rather than leaving the key looking broken.
     pub(crate) fn scroll_focused_window(&self, amount: isize) -> bool {
-        let Some(buffer) = self
-            .focused_window_buffer()
-            .and_then(|n| self.get_buffer(&n))
-        else {
+        let Some(name) = self.focused_window_buffer() else {
             return false;
         };
-        let (line_count, point_line, point_column) = {
-            let buf = buffer.read().expect("read lock on buffer");
+        let Some((line_count, point_line, point_column)) = self.with_buffer(&name, |buf| {
             let (line, column) = buf.text.cursor_pos();
             (buf.text.line_count(), line, column)
+        }) else {
+            return false;
         };
         // The window lock is let go before point is touched. Moving point is
         // a change to a *buffer*, which is why the compartment names a line
@@ -910,7 +939,7 @@ impl<B: BufferTrait> EditorState<B> {
             return false;
         };
         if let Some(line) = drag_point_to {
-            self.mutate_buffer(buffer, |buf| buf.text.cursor_move(line, point_column));
+            self.with_buffer_mut(&name, |buf| buf.text.cursor_move(line, point_column));
         }
         true
     }
@@ -930,9 +959,9 @@ impl<B: BufferTrait> EditorState<B> {
         // buffer current and putting point back where it was -- and it is done
         // out here, after the lock is given back, because both touch buffers.
         match self.windows_mut(|windows| windows.remove(id)) {
-            Removed::No => false,
-            Removed::Yes => true,
-            Removed::Refocus(survivor) => {
+            WindowRemoved::No => false,
+            WindowRemoved::Yes => true,
+            WindowRemoved::Refocus(survivor) => {
                 self.follow_focus(survivor);
                 true
             }
@@ -1488,13 +1517,7 @@ impl<B: BufferTrait> EditorState<B> {
             }
         }
 
-        let current_mode = {
-            let buffer = self.get_current_buffer();
-            let buffer = buffer
-                .read()
-                .expect("Failed to acquire read lock on current_buffer");
-            buffer.current_mode.clone()
-        };
+        let current_mode = self.with_current_buffer(|buf| buf.current_mode.clone());
 
         // The mode's own keymap wins, then the global one -- and a mode that
         // binds a prefix keeps the sequence alive even when only the global
@@ -1661,13 +1684,7 @@ impl<B: BufferTrait> EditorState<B> {
         }
 
         // Handle the post-command hooks
-        let current_mode_name = {
-            let buf_arc = self.get_current_buffer();
-            let buf_lock = buf_arc
-                .read()
-                .expect("Failed to acquire read lock on current buffer");
-            buf_lock.current_mode.clone()
-        };
+        let current_mode_name = self.with_current_buffer(|buf| buf.current_mode.clone());
         // Before `post-command-hook', and only for the command that typed a
         // character. This is where electric-pair and anything else that
         // reacts to typing hangs; running it after the general hook would put
@@ -1739,14 +1756,9 @@ impl<B: BufferTrait> EditorState<B> {
         let Some(name) = self.windows(|windows| windows.buffer_of(window)) else {
             return false;
         };
-        let Some(buffer) = self.get_buffer(&name) else {
+        let Some(line_count) = self.with_buffer(&name, |buf| buf.text.line_count()) else {
             return false;
         };
-        let line_count = buffer
-            .read()
-            .expect("Failed to acquire read lock on buffer")
-            .text
-            .line_count();
         self.windows_mut(|windows| windows.scroll_by(window, lines, line_count))
     }
 
@@ -2052,14 +2064,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// none. Returns `false` if no buffer named NAME exists, `true`
     /// otherwise.
     pub fn close_buffer(&self, name: &str, env: &Arc<Env<EditorState<B>>>) -> bool {
-        let Some(buffer) = self.get_buffer(name) else {
+        let Some(closing_mode) = self.with_buffer(name, |buf| buf.current_mode.clone()) else {
             return false;
         };
-        let closing_mode = buffer
-            .read()
-            .expect("Failed to acquire read lock on buffer")
-            .current_mode
-            .clone();
 
         // Detach NAME from wherever it's currently displayed.
         //
@@ -2097,9 +2104,9 @@ impl<B: BufferTrait> EditorState<B> {
         // buffers" panic, taking the editor down with whatever was unsaved in
         // the other windows.
         //
-        // Worked out before the layout lock is taken: `most_recent_buffer`
-        // reads `buffer_recency` and the buffer table, and taking those while
-        // holding the layout would invert the canonical lock order.
+        // Worked out before the window lock is taken: `most_recent_buffer`
+        // reads the buffer compartment, and taking that while holding the
+        // windows would invert the canonical lock order.
         let replacement = self
             .most_recent_buffer(name)
             .unwrap_or_else(|| "*scratch*".to_string());
@@ -2111,31 +2118,22 @@ impl<B: BufferTrait> EditorState<B> {
             })
         });
 
+        // Removing it and settling what is current are one acquisition. They
+        // used to be four -- remove, re-add `*scratch*` if that emptied the
+        // table, read the current name, then set it -- and between any two of
+        // them the current name could be read by another thread while it
+        // named the buffer that had just gone. That read is the panic
+        // described above.
+        if let BufferRemoved::Current(successor) = self.buffers_mut(|buffers| buffers.remove(name))
         {
-            let mut buffers = self
-                .buffers
-                .write()
-                .expect("Failed to acquire write lock on buffers");
-            buffers.remove(name);
-            if buffers.is_empty() {
-                buffers.insert(
-                    "*scratch*".to_string(),
-                    Arc::new(RwLock::new(Buffer::new("*scratch*"))),
-                );
+            // The compartment picked the most recent survivor. Prefer the one
+            // the windows were just repointed at, when it is still there, so
+            // that what is current and what is on screen agree -- them
+            // disagreeing is how the panic above was reached in the first
+            // place.
+            if replacement != successor {
+                self.set_current_buffer_name(&replacement);
             }
-        }
-
-        let current = self.current_buffer_name_shared();
-        if &*current == name || self.get_buffer(&current).is_none() {
-            // The same buffer the windows were repointed at, so that what is
-            // current and what is on screen agree. They disagreeing is how the
-            // panic above was reached in the first place.
-            let fallback = if self.get_buffer(&replacement).is_some() {
-                replacement
-            } else {
-                "*scratch*".to_string()
-            };
-            self.set_current_buffer_name(&fallback);
         }
 
         self.run_hook(&closing_mode, "after-close-hook", env);
@@ -2270,7 +2268,7 @@ impl<B: BufferTrait> EditorState<B> {
                 // Unlike a tiled window, a float is not auto-scrolled to follow the
                 // cursor; its scroll offsets are whatever whoever opened it set.
                 let cursor_rel_pos = is_focused
-                    .then(|| buffers.get(&float.window.buffer_name))
+                    .then(|| buffers.handle(&float.window.buffer_name))
                     .flatten()
                     .map(|buf| {
                         let (c_line, c_col) = buf
@@ -2580,18 +2578,13 @@ impl<B: BufferTrait> EditorState<B> {
     /// Taken once, when a command starts. See [`Invocation`] for why it is not
     /// read again later.
     pub(crate) fn capture_invocation(&self) -> Invocation {
-        let buffer = self.get_current_buffer();
-        let buffer = buffer
-            .read()
-            .expect("Failed to acquire read lock on current buffer");
-        Invocation {
-            prefix_arg: self.prefix_argument(),
-            region: crate::buffer::mark::region_bounds(
-                buffer.mark,
-                buffer.text.cursor_pos_1d(),
-                buffer.text.len(),
-            ),
-        }
+        // The prefix argument is read *before* the buffer is locked: two
+        // compartments, never held together.
+        let prefix_arg = self.prefix_argument();
+        let region = self.with_current_buffer(|buf| {
+            crate::buffer::mark::region_bounds(buf.mark, buf.text.cursor_pos_1d(), buf.text.len())
+        });
+        Invocation { prefix_arg, region }
     }
 
     /// Answer every argument the editor can answer itself, in order, and
@@ -2694,10 +2687,7 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Whether a minibuffer prompt is currently open.
     pub(crate) fn minibuffer_is_open(&self) -> bool {
-        self.buffers
-            .read()
-            .expect("Failed to acquire read lock on buffers")
-            .contains_key("*Minibuffer*")
+        self.has_buffer("*Minibuffer*")
     }
 
     // ---------------------------------------------------------------
@@ -2963,15 +2953,17 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Every live buffer's name, sorted. Used for buffer-name completion.
     pub(crate) fn buffer_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .buffers
-            .read()
-            .expect("Failed to acquire read lock on buffers")
-            .keys()
-            .cloned()
-            .collect();
-        names.sort_unstable();
-        names
+        self.buffers(|buffers| buffers.names())
+    }
+
+    /// Every live buffer's name with the focused window's at the head.
+    ///
+    /// For the background walkers, which both want to reach what is on screen
+    /// before what is not. The focused window is asked *before* the table is
+    /// taken: two compartments, never held together.
+    pub(crate) fn buffer_names_focused_first(&self) -> Vec<String> {
+        let focused = self.focused_window_buffer();
+        self.buffers(|buffers| buffers.names_with_first(focused.as_deref()))
     }
 
     /// Register NAME as a command taking SPECS.
@@ -3084,13 +3076,7 @@ impl<B: BufferTrait> EditorState<B> {
         // below. Windows come before buffers in the ordering, so holding both
         // would be legal -- but every other path here copies out and lets go,
         // and the one that does not is the one that eventually deadlocks.
-        let Some(buffer) = self.get_buffer(buffer_name) else {
-            return;
-        };
-        let mut buf = buffer
-            .write()
-            .expect("Failed to acquire write lock on buffer");
-        goto_offset(&mut buf.text, offset);
+        self.with_buffer_mut(buffer_name, |buf| goto_offset(&mut buf.text, offset));
     }
 
     /// What window ID is showing, whether it is tiled or floating.
@@ -3109,35 +3095,17 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// The current buffer's name without copying it.
     pub(crate) fn current_buffer_name_shared(&self) -> Arc<str> {
-        self.current_buffer_name
-            .read()
-            .expect("Failed to acquire read lock on current_buffer_name")
-            .clone()
+        self.buffers(|buffers| buffers.current_name())
     }
 
-    /// Set the name of the current buffer
+    /// Set the name of the current buffer.
+    ///
+    /// Silently does nothing when there is no such buffer, which is the
+    /// refusal that keeps the invariant: it is no longer possible from
+    /// anywhere in the editor to leave the current name pointing at a buffer
+    /// the table does not hold.
     pub(crate) fn set_current_buffer_name(&self, name: &str) {
-        *self
-            .current_buffer_name
-            .write()
-            .expect("Failed to acquire write lock on current_buffer_name") = Arc::from(name);
-        self.record_buffer_use(name);
-    }
-
-    /// Move NAME to the front of the recency list.
-    fn record_buffer_use(&self, name: &str) {
-        let mut recency = self
-            .buffer_recency
-            .write()
-            .expect("Failed to acquire write lock on buffer_recency");
-        if recency.first().is_some_and(|first| first == name) {
-            // Already the most recent, which is the common case by far: this
-            // runs whenever a buffer becomes current, `with-current-buffer'
-            // included, so it is worth not touching the list at all.
-            return;
-        }
-        recency.retain(|existing| existing != name);
-        recency.insert(0, name.to_string());
+        self.buffers_mut(|buffers| buffers.make_current(name));
     }
 
     /// The most recently current buffer that still exists and is not EXCEPT.
@@ -3146,14 +3114,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// itself -- there is always `*scratch*`, but falling back to it is a
     /// policy this does not get to make.
     pub(crate) fn most_recent_buffer(&self, except: &str) -> Option<String> {
-        let recency = self
-            .buffer_recency
-            .read()
-            .expect("Failed to acquire read lock on buffer_recency");
-        recency
-            .iter()
-            .find(|name| name.as_str() != except && self.get_buffer(name).is_some())
-            .cloned()
+        self.buffers(|buffers| buffers.most_recent(except))
     }
 
     /// Make NAME the current buffer without showing it, and give back whatever
@@ -3168,44 +3129,7 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// Returns `None` when there is no such buffer, having changed nothing.
     pub(crate) fn set_current_buffer(&self, name: &str) -> Option<Arc<str>> {
-        self.get_buffer(name)?;
-        let previous = self.current_buffer_name_shared();
-        self.set_current_buffer_name(name);
-        Some(previous)
-    }
-
-    /// Returns an Arc reference to the current buffer
-    pub(crate) fn get_current_buffer(&self) -> Arc<RwLock<Buffer<B>>> {
-        self.buffers
-            .read()
-            .expect("Failed to acquire read lock on buffers")
-            .get(&*self.current_buffer_name_shared())
-            .expect("Corruption in the hashmap of buffers")
-            .clone()
-    }
-
-    pub(crate) fn get_buffer(&self, name: &str) -> Option<Arc<RwLock<Buffer<B>>>> {
-        if let Some(buffer_arc) = self
-            .buffers
-            .read()
-            .expect("Failed to acquire read lock on buffers")
-            .get(name)
-        {
-            Some(buffer_arc.clone())
-        } else {
-            None
-        }
-    }
-
-    /// Apply the operation OP to the buffer BUF
-    pub fn mutate_buffer<F, R>(&self, buffer: Arc<RwLock<Buffer<B>>>, op: F) -> R
-    where
-        F: FnOnce(&mut Buffer<B>) -> R,
-    {
-        let mut guard = buffer
-            .write()
-            .expect("Failed to acquire write lock on current buffer");
-        op(&mut *guard)
+        self.buffers_mut(|buffers| buffers.make_current(name))
     }
 
     /// The syntax table for MODE, or the default one when it has none.
@@ -3224,12 +3148,9 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// The syntax table in force in the current buffer.
     pub(crate) fn current_syntax_table(&self) -> SyntaxTable {
-        let mode = self
-            .get_current_buffer()
-            .read()
-            .expect("Failed to acquire read lock on buffer")
-            .current_mode
-            .clone();
+        // The buffer's lock is let go before the registry's is taken: two
+        // compartments, one at a time.
+        let mode = self.with_current_buffer(|buf| buf.current_mode.clone());
         self.syntax_table(&mode)
     }
 }

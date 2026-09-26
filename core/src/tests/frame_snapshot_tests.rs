@@ -111,9 +111,6 @@ mod tests {
         let float_id = state.get_focused_window_id();
         assert_ne!(float_id, WindowId(0), "the float must have taken focus");
 
-        let scratch = state
-            .get_buffer("*scratch*")
-            .expect("*scratch* buffer must exist");
         let stop = Arc::new(AtomicBool::new(false));
 
         // The thread that makes this test bite: focus moves between the tiled
@@ -142,7 +139,7 @@ mod tests {
             let stop = stop.clone();
             thread::spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
-                    state.mutate_buffer(scratch.clone(), |b| {
+                    state.with_buffer_mut("*scratch*", |b| {
                         b.text.insert('x');
                         b.text.insert('\n');
                     });

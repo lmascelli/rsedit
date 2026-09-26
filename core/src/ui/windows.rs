@@ -1,10 +1,7 @@
 use crate::ELispExp;
 use crate::buffer::{Buffer, BufferTrait, mark::region_bounds};
+use crate::managers::Buffers;
 use crate::ui::Face;
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Orientation {
@@ -717,7 +714,7 @@ impl LayoutNode {
         &mut self,
         rect: Rect,
         focus: Focus,
-        buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
+        buffers: &Buffers<B>,
         mode_line_format: &str,
         out_views: &mut Vec<RenderableWindowView>,
         out_separators: &mut Vec<Rect>,
@@ -742,7 +739,7 @@ impl LayoutNode {
                 // rect, so scrolling and the cursor agree with what is drawn.
                 // A window with only one row keeps it for text: a status line
                 // with nothing under it says nothing useful.
-                let mode_line = buffers.get(&win.buffer_name).and_then(|buffer| {
+                let mode_line = buffers.handle(&win.buffer_name).and_then(|buffer| {
                     (win.show_mode_line && rect.height >= 2).then(|| {
                         expand_mode_line(
                             mode_line_format,
@@ -789,7 +786,7 @@ impl LayoutNode {
                 // search visible in whichever window is showing the file.
 
                 let follows_points = is_focused || !focus.tiled;
-                if let Some(buf) = buffers.get(&win.buffer_name) {
+                if let Some(buf) = buffers.handle(&win.buffer_name) {
                     let (c_line, c_col, c_offset) = {
                         let buf = buf.read().expect("Failed to acquire read lock on buffer");
                         let (line, col) = buf.text.cursor_pos();
@@ -930,9 +927,9 @@ impl LayoutNode {
 pub fn overlay_highlights<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
-    buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
+    buffers: &Buffers<B>,
 ) -> Vec<Highlight> {
-    let Some(buf) = buffers.get(&win.buffer_name) else {
+    let Some(buf) = buffers.handle(&win.buffer_name) else {
         return Vec::new();
     };
     let buf = buf
@@ -991,9 +988,9 @@ pub fn overlay_highlights<B: BufferTrait>(
 pub fn region_highlights<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
-    buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
+    buffers: &Buffers<B>,
 ) -> Vec<Highlight> {
-    let Some(buf) = buffers.get(&win.buffer_name) else {
+    let Some(buf) = buffers.handle(&win.buffer_name) else {
         return Vec::new();
     };
     let buf = buf
@@ -1115,10 +1112,10 @@ fn position_in_buffer(line: usize, lines: usize) -> String {
 pub fn extract_buffer_lines<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
-    buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
+    buffers: &Buffers<B>,
 ) -> Vec<String> {
     let mut visible_lines = Vec::new();
-    if let Some(buf) = buffers.get(&win.buffer_name) {
+    if let Some(buf) = buffers.handle(&win.buffer_name) {
         let lines = buf
             .read()
             .expect("Failed to acquire read lock for buffer")
@@ -1147,9 +1144,9 @@ pub fn extract_buffer_lines<B: BufferTrait>(
 pub fn syntax_highlights<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
-    buffers: &HashMap<String, Arc<RwLock<Buffer<B>>>>,
+    buffers: &Buffers<B>,
 ) -> Vec<Highlight> {
-    let Some(buf) = buffers.get(&win.buffer_name) else {
+    let Some(buf) = buffers.handle(&win.buffer_name) else {
         return Vec::new();
     };
     let buf = buf

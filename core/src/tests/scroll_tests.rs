@@ -42,8 +42,7 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
         let text: String = (0..lines).map(|n| format!("line {n}\n")).collect();
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text.as_str());
             b.text.cursor_move(0, 0);
         });
@@ -61,13 +60,8 @@ mod tests {
     }
 
     fn point_line(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos().0)
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos()
-            .0
     }
 
     fn press(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode, modifiers: KeyModifiers) {
@@ -190,25 +184,15 @@ mod tests {
         let (ctx, env) = editor_showing(200);
         run("(forward-char 4)", &env, &ctx);
         let column = ctx
-            .get_buffer("*scratch*")
-            .unwrap()
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos()
-            .1;
+            .with_buffer("*scratch*", |b| b.text.cursor_pos().1)
+            .expect("*scratch*");
         assert_eq!(column, 4);
 
         run("(scroll-up-command)", &env, &ctx);
 
         let after = ctx
-            .get_buffer("*scratch*")
-            .unwrap()
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos()
-            .1;
+            .with_buffer("*scratch*", |b| b.text.cursor_pos().1)
+            .expect("*scratch*");
         assert_eq!(after, 4);
     }
 
@@ -289,8 +273,7 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
         let text: String = (0..200).map(|n| format!("line {n}\n")).collect();
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text.as_str());
             b.text.cursor_move(0, 0);
         });

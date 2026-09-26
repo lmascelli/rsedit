@@ -61,11 +61,7 @@ mod tests {
     }
 
     fn contents(ctx: &Ctx) -> String {
-        ctx.get_current_buffer()
-            .read()
-            .expect("read lock")
-            .text
-            .to_string()
+        ctx.with_current_buffer(|b| b.text.to_string())
     }
 
     /// The list depth at the end of the buffer: 0 when every list is closed.

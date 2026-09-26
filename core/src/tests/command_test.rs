@@ -274,12 +274,15 @@ mod tests {
     #[test]
     fn ordinary_typing_still_reaches_the_buffer() {
         let (ctx, env) = setup();
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        let before = scratch.read().unwrap().text.len();
+        let length = || {
+            ctx.with_buffer("*scratch*", |b| b.text.len())
+                .expect("*scratch*")
+        };
+        let before = length();
         for c in "abc".chars() {
             ctx.handle_key_event(key(c), &env);
         }
-        assert_eq!(scratch.read().unwrap().text.len() - before, 3);
+        assert_eq!(length() - before, 3);
     }
 
     /// Regression test for a bug this routing fixed on the way past.
@@ -714,11 +717,11 @@ mod tests {
     fn kill_buffer_is_reachable_by_name() {
         let (ctx, env) = setup();
         eval_str(r#"(buffer-create "doomed")"#, &env, &ctx).expect("a buffer");
-        assert!(ctx.get_buffer("doomed").is_some());
+        assert!(ctx.has_buffer("doomed"));
 
         eval_str(r#"(kill-buffer "doomed")"#, &env, &ctx).expect("kill");
 
-        assert!(ctx.get_buffer("doomed").is_none());
+        assert!(!ctx.has_buffer("doomed"));
     }
 
     /// Reachable from `M-x`, which `close-buffer` never was -- it is a plain
@@ -750,7 +753,7 @@ mod tests {
         }
         eval_str("(minibuffer-confirm)", &env, &ctx).expect("confirm");
 
-        assert!(ctx.get_buffer("doomed").is_none());
+        assert!(!ctx.has_buffer("doomed"));
     }
 
     /// Answering the prompt with nothing kills the buffer you are in, which is
@@ -768,7 +771,7 @@ mod tests {
         eval_str("(execute-extended-command \"kill-buffer\")", &env, &ctx).expect("M-x");
         eval_str("(minibuffer-confirm)", &env, &ctx).expect("confirm");
 
-        assert!(ctx.get_buffer("here").is_none());
+        assert!(!ctx.has_buffer("here"));
     }
 
     #[test]
@@ -787,7 +790,7 @@ mod tests {
         ctx.handle_key_event(key('k'), &env);
         eval_str("(minibuffer-confirm)", &env, &ctx).expect("take the default");
 
-        assert!(ctx.get_buffer("here").is_none());
+        assert!(!ctx.has_buffer("here"));
     }
 
     /// `C-q` is `quoted-insert` in Emacs and `C-s` is `isearch-forward`. Both

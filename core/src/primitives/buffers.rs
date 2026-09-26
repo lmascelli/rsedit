@@ -1,6 +1,4 @@
 use super::*;
-use crate::buffer::Buffer;
-use std::sync::{Arc, RwLock};
 
 pub const CURRENT_BUFFER_DOC: &str = "(current-buffer): Return the name of the current buffer, as a \
          string. Unlike real Emacs Lisp's `current-buffer`, which returns a \
@@ -56,7 +54,7 @@ primitive!(buffer_create, args, _env, ctx, {
                 });
             }
         };
-        if ctx.get_buffer(&name).is_none() {
+        if !ctx.has_buffer(&name) {
             ctx.new_buffer(&name, None, mode);
         }
         Ok(ELispExp::string(name))
@@ -87,7 +85,7 @@ primitive!(set_buffer_read_only, args, _env, ctx, {
         });
     }
     let flag = args[0].is_truthy();
-    ctx.mutate_buffer(ctx.get_current_buffer(), |buf| buf.read_only = flag);
+    ctx.with_current_buffer_mut(|buf| buf.read_only = flag);
     Ok(args[0].clone())
 });
 
@@ -97,8 +95,7 @@ pub const BUFFER_READ_ONLY_P_DOC: &str = "(buffer-read-only-p): Return t if the 
          (buffer-read-only-p) => nil";
 
 primitive!(buffer_read_only_p, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let read_only = buf.read().expect("read lock on buffer").read_only;
+    let read_only = ctx.with_current_buffer(|buf| buf.read_only);
     Ok(if read_only {
         ELispExp::t()
     } else {
@@ -163,13 +160,9 @@ pub const BUFFER_STRING_DOC: &str = "(buffer-string): Return the entire contents
          (buffer-string) => \"line one\\nline two\\n\"";
 
 primitive!(buffer_string, _args, _env, ctx, {
-    let buf = ctx.get_current_buffer();
-    let content = buf
-        .read()
-        .expect("Failed to acquire read lock on current buffer")
-        .text
-        .to_string();
-    Ok(ELispExp::string(content))
+    Ok(ELispExp::string(
+        ctx.with_current_buffer(|buf| buf.text.to_string()),
+    ))
 });
 
 pub const BUFFER_SUBSTRING_DOC: &str = "(buffer-substring START END): Return the text of the \
@@ -198,17 +191,13 @@ primitive!(buffer_substring, args, _env, ctx, {
     };
     let (from, to) = (bound(&args[0])?, bound(&args[1])?);
 
-    let buf = ctx.get_current_buffer();
-    let buf = buf
-        .read()
-        .expect("Failed to acquire read lock on current buffer");
-    let end = from.max(to).min(buf.text.len());
-    let start = from.min(to).min(end);
-    Ok(ELispExp::string(
+    Ok(ELispExp::string(ctx.with_current_buffer(|buf| {
+        let end = from.max(to).min(buf.text.len());
+        let start = from.min(to).min(end);
         (start..end)
             .filter_map(|at| buf.text.at(at))
-            .collect::<String>(),
-    ))
+            .collect::<String>()
+    })))
 });
 
 pub const CLEAR_BUFFER_DOC: &str = "(clear-buffer): Delete the entire contents of the current buffer. \
@@ -219,7 +208,7 @@ pub const CLEAR_BUFFER_DOC: &str = "(clear-buffer): Delete the entire contents o
          (buffer-string) => \"\"";
 
 primitive!(clear_buffer, _args, _env, ctx, {
-    let happened = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let happened = ctx.with_current_buffer_mut(|buf| {
         // Through the recording layer rather than straight to `clear`, so that
         // emptying a buffer is undoable like any other deletion. The layer
         // still uses `clear` underneath for a whole-buffer range, so this
@@ -317,44 +306,32 @@ pub const MAJOR_MODE_DOC: &str = "(major-mode &optional BUFFER): The major mode 
          (get (major-mode) 'keywords)";
 
 primitive!(major_mode, args, _env, ctx, {
-    let handle = match args.first() {
-        None => Some(ctx.get_current_buffer()),
-        Some(exp) if exp.is_nil() => Some(ctx.get_current_buffer()),
-        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => ctx.get_buffer(name),
-        Some(other) => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "String naming a buffer".into(),
-                got: other.clone(),
-            });
-        }
-    };
-    let Some(handle) = handle else {
+    let name = buffer_argument(args, ctx)?;
+    let Some(mode) = ctx.with_buffer(&name, |buf| buf.current_mode.clone()) else {
         return Ok(ELispExp::nil());
     };
-    let mode = handle
-        .read()
-        .expect("Failed to acquire read lock on buffer")
-        .current_mode
-        .clone();
     Ok(ELispExp::symbol(mode))
 });
 
-/// A buffer handle, as the accessors below hand one around.
-type BufferHandle<B> = Arc<RwLock<Buffer<B>>>;
-
-/// The buffer NAME refers to, or the current one when it is omitted.
+/// The name of the buffer NAME refers to, or of the current one when it is
+/// omitted.
 ///
 /// Every per-buffer accessor takes its argument the same way -- `major-mode`,
 /// `buffer-modified-p`, `buffer-file-name` -- so that a listing can ask all of
 /// them about the same name without any of them being the odd one out.
+///
+/// A *name* rather than a handle. Whether a buffer by that name exists is then
+/// answered by the accessor that goes looking, one lock later, instead of
+/// here: there is no point resolving it twice, and a handle resolved here
+/// could go stale before its caller used it.
 fn buffer_argument<B: BufferTrait>(
     args: &[ELispExp<B>],
     ctx: &EditorState<B>,
-) -> Result<Option<BufferHandle<B>>, EvalError<EditorState<B>>> {
+) -> Result<String, EvalError<EditorState<B>>> {
     match args.first() {
-        None => Ok(Some(ctx.get_current_buffer())),
-        Some(exp) if exp.is_nil() => Ok(Some(ctx.get_current_buffer())),
-        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => Ok(ctx.get_buffer(name)),
+        None => Ok(ctx.get_current_buffer_name()),
+        Some(exp) if exp.is_nil() => Ok(ctx.get_current_buffer_name()),
+        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => Ok(name.to_string()),
         Some(other) => Err(EvalError::WrongArgumentType {
             expected: "String naming a buffer".into(),
             got: other.clone(),
@@ -371,13 +348,8 @@ pub const BUFFER_MODIFIED_P_DOC: &str = "(buffer-modified-p &optional BUFFER): t
          (if (buffer-modified-p \"notes.txt\") (message \"unsaved\"))";
 
 primitive!(buffer_modified_p, args, _env, ctx, {
-    let Some(handle) = buffer_argument(args, ctx)? else {
-        return Ok(ELispExp::nil());
-    };
-    let modified = handle
-        .read()
-        .expect("Failed to acquire read lock on buffer")
-        .is_modified;
+    let name = buffer_argument(args, ctx)?;
+    let modified = ctx.with_buffer(&name, |buf| buf.is_modified) == Some(true);
     Ok(if modified {
         ELispExp::t()
     } else {
@@ -395,14 +367,10 @@ pub const BUFFER_FILE_NAME_DOC: &str = "(buffer-file-name &optional BUFFER): The
          (buffer-file-name) => \"/home/user/notes.txt\"";
 
 primitive!(buffer_file_name, args, _env, ctx, {
-    let Some(handle) = buffer_argument(args, ctx)? else {
-        return Ok(ELispExp::nil());
-    };
-    let path = handle
-        .read()
-        .expect("Failed to acquire read lock on buffer")
-        .file_path
-        .clone();
+    let name = buffer_argument(args, ctx)?;
+    let path = ctx
+        .with_buffer(&name, |buf| buf.file_path.clone())
+        .flatten();
     Ok(match path {
         Some(path) => ELispExp::string(path),
         None => ELispExp::nil(),

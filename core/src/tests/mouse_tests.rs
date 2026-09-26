@@ -19,8 +19,8 @@ mod tests {
     use crate::editor::{DEFAULT_INIT_LISP, EditorState, create_global_env};
     use crate::input::{KeyModifiers, MouseButton, MouseEvent, MouseKind};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use crate::managers::Hit;
     use crate::ui::Rect;
-    use crate::windows::Hit;
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
@@ -49,8 +49,7 @@ mod tests {
         // a test that wants to click has to say so too.
         run("(setq mouse-mode t)", &env, &ctx);
         let text: String = (0..lines).map(|n| format!("line {n}\n")).collect();
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text.as_str());
             b.text.cursor_move(0, 0);
         });
@@ -87,12 +86,8 @@ mod tests {
     }
 
     fn point(ctx: &Ctx) -> (usize, usize) {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos())
             .expect("*scratch*")
-            .read()
-            .expect("read lock")
-            .text
-            .cursor_pos()
     }
 
     /// The rows of text the sole window has, and the row its status line is on.
@@ -392,13 +387,14 @@ mod tests {
 
     /// (mark, point) as offsets, and whether the region is live.
     fn region(ctx: &Ctx) -> (Option<usize>, usize, bool) {
-        let buffer = ctx.get_buffer("*scratch*").expect("*scratch*");
-        let buf = buffer.read().expect("read lock");
-        (
-            buf.mark.as_ref().map(|mark| mark.at),
-            buf.text.cursor_pos_1d(),
-            buf.mark.as_ref().is_some_and(|mark| mark.active),
-        )
+        ctx.with_buffer("*scratch*", |buf| {
+            (
+                buf.mark.as_ref().map(|mark| mark.at),
+                buf.text.cursor_pos_1d(),
+                buf.mark.as_ref().is_some_and(|mark| mark.active),
+            )
+        })
+        .expect("*scratch*")
     }
 
     #[test]

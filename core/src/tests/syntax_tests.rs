@@ -26,8 +26,7 @@ mod tests {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             b.text.cursor_move(0, 0);
             b.is_modified = false;
@@ -498,7 +497,7 @@ mod tests {
             ctx,
         )
         .expect("defining the grammar");
-        ctx.mutate_buffer(ctx.get_buffer("*scratch*").expect("*scratch*"), |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.current_mode = "toy".into();
         });
     }
@@ -512,15 +511,14 @@ mod tests {
     }
 
     fn line_faces(ctx: &Ctx, line: usize) -> Vec<(usize, usize, String)> {
-        ctx.get_buffer("*scratch*")
-            .expect("*scratch*")
-            .read()
-            .unwrap()
-            .syntax
-            .spans(line)
-            .iter()
-            .map(|span| (span.start, span.end, span.face.name().to_string()))
-            .collect()
+        ctx.with_buffer("*scratch*", |b| {
+            b.syntax
+                .spans(line)
+                .iter()
+                .map(|span| (span.start, span.end, span.face.name().to_string()))
+                .collect()
+        })
+        .expect("*scratch*")
     }
 
     #[test]
@@ -558,21 +556,19 @@ mod tests {
         colour_fully(&ctx);
 
         let before = ctx
-            .get_buffer("*scratch*")
-            .expect("*scratch*")
-            .read()
-            .unwrap()
-            .version;
+            .with_buffer("*scratch*", |b| b.version)
+            .expect("*scratch*");
         eval_str("(progn (goto-char 8) (self-insert \"x\"))", &env, &ctx).expect("edit");
 
-        let buffer = ctx.get_buffer("*scratch*").expect("*scratch*");
-        let buf = buffer.read().unwrap();
-        assert!(buf.version > before, "an edit must bump the version");
-        assert!(
-            buf.syntax.valid_to() <= 1,
-            "nothing from the edited line on is trusted, got {}",
-            buf.syntax.valid_to()
-        );
+        ctx.with_buffer("*scratch*", |buf| {
+            assert!(buf.version > before, "an edit must bump the version");
+            assert!(
+                buf.syntax.valid_to() <= 1,
+                "nothing from the edited line on is trusted, got {}",
+                buf.syntax.valid_to()
+            );
+        })
+        .expect("*scratch*")
     }
 
     /// Clearing instead would flash the rest of the file to plain text on
@@ -643,12 +639,8 @@ mod tests {
         ctx.store_turn(&turn, coloured);
 
         assert_eq!(
-            ctx.get_buffer("*scratch*")
-                .expect("*scratch*")
-                .read()
-                .unwrap()
-                .syntax
-                .valid_to(),
+            ctx.with_buffer("*scratch*", |b| b.syntax.valid_to())
+                .expect("*scratch*"),
             0,
             "nothing computed from the old text may be stored against the new"
         );
@@ -671,12 +663,8 @@ mod tests {
 
         ctx.highlight_one_turn();
         assert!(
-            ctx.get_buffer("*scratch*")
+            ctx.with_buffer("*scratch*", |b| b.syntax.valid_to())
                 .expect("*scratch*")
-                .read()
-                .unwrap()
-                .syntax
-                .valid_to()
                 < chunk + 42,
             "one turn should not have finished the whole file"
         );
@@ -715,12 +703,8 @@ mod tests {
         colour_fully(&ctx);
 
         assert_eq!(
-            ctx.get_buffer("*scratch*")
-                .expect("*scratch*")
-                .read()
-                .unwrap()
-                .syntax
-                .distinct_states(),
+            ctx.with_buffer("*scratch*", |b| b.syntax.distinct_states())
+                .expect("*scratch*"),
             2,
             "six lines, but only two states: inside the comment and outside it"
         );
@@ -836,11 +820,8 @@ mod tests {
         .expect("find-file");
 
         assert_eq!(
-            ctx.get_buffer("rsedit-syntax-auto-mode.toy")
-                .expect("the opened buffer")
-                .read()
-                .unwrap()
-                .current_mode,
+            ctx.with_buffer("rsedit-syntax-auto-mode.toy", |b| b.current_mode.clone())
+                .expect("rsedit-syntax-auto-mode.toy"),
             "toy"
         );
         let _ = std::fs::remove_file(&path);

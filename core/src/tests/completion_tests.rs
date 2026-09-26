@@ -417,12 +417,8 @@ mod tests {
     }
 
     fn minibuffer_text(ctx: &Ctx) -> String {
-        ctx.get_buffer("*Minibuffer*")
-            .expect("the prompt must be open")
-            .read()
-            .unwrap()
-            .text
-            .to_string()
+        ctx.with_buffer("*Minibuffer*", |b| b.text.to_string())
+            .expect("*Minibuffer*")
     }
 
     /// The whole point of the `f` spec: Tab at a command's file-name argument

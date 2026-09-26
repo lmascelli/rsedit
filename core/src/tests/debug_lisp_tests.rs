@@ -140,7 +140,7 @@ mod tests {
         ctx.handle_key_event(key, &env);
 
         assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
-        assert!(ctx.get_buffer("*Backtrace*").is_none());
+        assert!(!ctx.has_buffer("*Backtrace*"));
     }
 
     #[test]

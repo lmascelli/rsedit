@@ -52,7 +52,7 @@ mod tests {
     fn assert_no_dangling(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
         for name in shown(ctx, env) {
             assert!(
-                ctx.get_buffer(&name).is_some(),
+                ctx.has_buffer(&name),
                 "window is showing {name:?}, which is not a live buffer"
             );
         }
@@ -91,7 +91,7 @@ mod tests {
         );
         // Reaching here at all is most of the test -- the old code panicked
         // inside `get_current_buffer` on the way.
-        assert!(ctx.get_buffer(&ctx.get_current_buffer_name()).is_some());
+        assert!(ctx.has_buffer(&ctx.get_current_buffer_name()));
         assert_no_dangling(&ctx, &env);
     }
 
@@ -238,6 +238,6 @@ mod tests {
             &ctx,
         );
         assert_ne!(ctx.get_current_buffer_name(), "first");
-        assert!(ctx.get_buffer(&ctx.get_current_buffer_name()).is_some());
+        assert!(ctx.has_buffer(&ctx.get_current_buffer_name()));
     }
 }

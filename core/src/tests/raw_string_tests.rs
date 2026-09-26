@@ -76,11 +76,7 @@ mod tests {
     }
 
     fn contents(ctx: &Ctx) -> String {
-        ctx.get_current_buffer()
-            .read()
-            .expect("read lock")
-            .text
-            .to_string()
+        ctx.with_current_buffer(|b| b.text.to_string())
     }
 
     /// The list depth at the end of the buffer: 0 when every list is closed.
@@ -404,11 +400,11 @@ fn push_call_frame(&self, frame: &str) %BODY%
             env,
             ctx,
         );
-        let handle = ctx.get_current_buffer();
-        let mut buffer = handle.write().expect("write lock");
-        buffer.text = GapBuffer::from(source);
-        buffer.text.cursor_move(0, 0);
-        buffer.version += 1;
+        ctx.with_current_buffer_mut(|buffer| {
+            buffer.text = GapBuffer::from(source);
+            buffer.text.cursor_move(0, 0);
+            buffer.version += 1;
+        })
     }
 
     #[test]

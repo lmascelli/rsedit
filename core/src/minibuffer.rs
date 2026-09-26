@@ -48,8 +48,7 @@ fn setq<B: BufferTrait>(env: &Env<EditorState<B>>, name: &str, val: ELispExp<B>)
 /// marking the buffer modified) after clearing it. Not a primitive --
 /// purely an internal helper for `minibuffer-complete`'s Tab-cycling.
 fn set_minibuffer_content<B: BufferTrait>(ctx: &EditorState<B>, content: &str) {
-    let buf = ctx.get_current_buffer();
-    ctx.mutate_buffer(buf, |buf| {
+    ctx.with_current_buffer_mut(|buf| {
         while buf.text.cursor_pos() != (0, 0) {
             buf.text.delete();
         }
@@ -94,12 +93,7 @@ const MINIBUFFER_CONFIRM_DOC: &str = "(minibuffer-confirm): Called when the user
          calls it with the minibuffer's final contents as its one argument.";
 
 primitive!(minibuffer_confirm, _args, env, ctx, {
-    let input = ctx
-        .get_current_buffer()
-        .read()
-        .expect("Failed to acquire read lock on current buffer")
-        .text
-        .to_string();
+    let input = ctx.with_current_buffer(|buf| buf.text.to_string());
     let on_confirm = env.get_variable("*minibuffer-on-confirm*");
 
     ctx.close_buffer("*Minibuffer*", &env);
@@ -160,12 +154,7 @@ primitive!(minibuffer_choose_completion, args, _env, ctx, {
 });
 
 primitive!(minibuffer_complete, _args, env, ctx, {
-    let current = ctx
-        .get_current_buffer()
-        .read()
-        .expect("Failed to acquire read lock on current buffer")
-        .text
-        .to_string();
+    let current = ctx.with_current_buffer(|buf| buf.text.to_string());
 
     let completions = env.get_variable("*minibuffer-completions*");
     let index = match env.get_variable("*minibuffer-completion-index*") {

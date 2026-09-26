@@ -59,12 +59,8 @@ mod tests {
     }
 
     fn text_of(ctx: &Ctx, name: &str) -> String {
-        ctx.get_buffer(name)
+        ctx.with_buffer(name, |b| b.text.to_string())
             .unwrap_or_else(|| panic!("no buffer called {name}"))
-            .read()
-            .expect("read lock")
-            .text
-            .to_string()
     }
 
     fn started(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> String {
@@ -229,7 +225,7 @@ mod tests {
         );
         run(&format!(r#"(close-buffer "{name}")"#), &env, &ctx);
         settle(&ctx);
-        assert!(ctx.get_buffer(&name).is_none());
+        assert!(!ctx.has_buffer(&name));
     }
 
     #[test]

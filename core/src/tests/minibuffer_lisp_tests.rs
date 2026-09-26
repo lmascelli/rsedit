@@ -69,7 +69,7 @@ mod tests {
             LispExp::string("hi".into())
         );
         assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
-        assert!(ctx.get_buffer("*Minibuffer*").is_none());
+        assert!(!ctx.has_buffer("*Minibuffer*"));
     }
 
     #[test]
@@ -190,7 +190,7 @@ mod tests {
         eval_str("(minibuffer-confirm)", &env, &ctx).unwrap();
 
         assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
-        assert!(ctx.get_buffer("*Minibuffer*").is_none());
+        assert!(!ctx.has_buffer("*Minibuffer*"));
         assert_eq!(
             eval_str("probe", &env, &ctx).unwrap(),
             LispExp::number(42.0)
@@ -225,7 +225,7 @@ mod tests {
         // as it does for a valid expression, and the echo area explains
         // what happened instead of staying silent.
         assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
-        assert!(ctx.get_buffer("*Minibuffer*").is_none());
+        assert!(!ctx.has_buffer("*Minibuffer*"));
         assert_eq!(ctx.get_echo_message(), "(1 2 3) !! UnvalidFunctionCall");
     }
 }

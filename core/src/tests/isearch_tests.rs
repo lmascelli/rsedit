@@ -23,8 +23,7 @@ mod tests {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             b.text.cursor_move(0, 0);
             b.is_modified = false;
@@ -35,25 +34,17 @@ mod tests {
     /// Point in `*scratch*` -- the buffer being searched, which is *not* the
     /// current buffer while a prompt is open.
     fn point(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos_1d()
     }
 
     fn mark_of(ctx: &Ctx) -> Option<(usize, bool)> {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.mark.map(|mark| (mark.at, mark.active)))
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .mark
-            .map(|mark| (mark.at, mark.active))
     }
 
     fn goto(ctx: &Ctx, offset: usize) {
-        ctx.mutate_buffer(ctx.get_buffer("*scratch*").expect("*scratch*"), |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             let (line, col) = b.text.cursor_1d_to_2d(offset);
             b.text.cursor_move(line, col);
         });
@@ -262,11 +253,8 @@ mod tests {
 
         assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
         assert_eq!(
-            ctx.get_buffer("*Minibuffer*")
-                .expect("the prompt")
-                .read()
-                .unwrap()
-                .current_mode,
+            ctx.with_buffer("*Minibuffer*", |b| b.current_mode.clone())
+                .expect("*scratch*"),
             "isearch-mode",
             "the prompt must carry the keymap and hook that make it a search"
         );
@@ -531,7 +519,7 @@ mod tests {
             &ctx,
         )
         .expect("open a second buffer");
-        ctx.mutate_buffer(ctx.get_buffer("notes").expect("notes"), |b| {
+        ctx.with_buffer_mut("notes", |b| {
             b.text = GapBuffer::from("find the needle here");
             b.text.cursor_move(0, 0);
         });
@@ -546,12 +534,8 @@ mod tests {
             "the prompt must hand the buffer back, not drop you in *scratch*"
         );
         assert_eq!(
-            ctx.get_buffer("notes")
-                .expect("notes")
-                .read()
-                .unwrap()
-                .text
-                .cursor_pos_1d(),
+            ctx.with_buffer("notes", |b| b.text.cursor_pos_1d())
+                .expect("notes"),
             15,
             "and the match must have been found in it"
         );

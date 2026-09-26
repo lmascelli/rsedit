@@ -619,8 +619,7 @@ mod tests {
             "punctuation",
             "*scratch* is not in toy mode"
         );
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| b.current_mode = "toy".into());
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
         assert_eq!(class("(syntax-class \"+\")", &env, &ctx), "symbol");
     }
 }

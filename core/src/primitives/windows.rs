@@ -143,7 +143,7 @@ primitive!(display_buffer_at_bottom, args, _env, ctx, {
             got: args[1].clone(),
         });
     };
-    if ctx.get_buffer(&name).is_none() {
+    if !ctx.has_buffer(&name) {
         ctx.log_diagnostic(&format!("[LOG] buffer {name} does not exist."));
         return Ok(ELispExp::nil());
     }

@@ -62,8 +62,7 @@ mod tests {
 
     /// Put `text` in *scratch* with point at offset `at`.
     fn typing(ctx: &Ctx, text: &str, at: usize) {
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             let (line, col) = b.text.cursor_1d_to_2d(at);
             b.text.cursor_move(line, col);
@@ -77,21 +76,13 @@ mod tests {
     }
 
     fn contents(ctx: &Ctx) -> String {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.to_string())
             .expect("*scratch*")
-            .read()
-            .expect("read lock")
-            .text
-            .to_string()
     }
 
     fn point(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
             .expect("*scratch*")
-            .read()
-            .expect("read lock")
-            .text
-            .cursor_pos_1d()
     }
 
     fn echo(ctx: &Ctx) -> String {
@@ -522,11 +513,8 @@ mod tests {
         define_source(&env, &ctx, "capf-many", 0, 2, &["abcd", "abzz"]);
         use_sources(&env, &ctx, &["capf-many"]);
         let modified = || {
-            ctx.get_buffer("*scratch*")
+            ctx.with_buffer("*scratch*", |b| b.is_modified)
                 .expect("*scratch*")
-                .read()
-                .expect("read lock")
-                .is_modified
         };
         assert!(!modified(), "the harness starts unmodified");
 
@@ -575,8 +563,7 @@ mod tests {
         // not, and has to be able to say it first.
         let (ctx, env) = plain();
         run("(make-mode 'toy)", &env, &ctx);
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| b.current_mode = "toy".into());
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
         typed(&ctx, "ab");
 
         run(
@@ -612,8 +599,7 @@ mod tests {
         run("(completion-at-point)", &env, &ctx);
         assert_eq!(contents(&ctx), "ab", "*scratch* is not in toy mode");
 
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| b.current_mode = "toy".into());
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
         run("(completion-at-point)", &env, &ctx);
         assert_eq!(contents(&ctx), "abcd");
     }
@@ -753,8 +739,7 @@ mod tests {
             "*scratch* is not in toy mode"
         );
 
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| b.current_mode = "toy".into());
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
         assert_eq!(
             strings(&run("(get (major-mode) 'keywords)", &env, &ctx)),
             vec!["begin"]
@@ -781,8 +766,7 @@ mod tests {
             "a buffer nobody gave a mode is in the default one"
         );
 
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| b.current_mode = "toy".into());
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
         assert_eq!(
             run("(major-mode)", &env, &ctx),
             LispExp::symbol("toy".into())
@@ -1068,8 +1052,7 @@ mod tests {
             &env,
             &ctx,
         );
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| b.current_mode = "toy".into());
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
         typed(&ctx, "zzzbeg");
         run(
             "(set-completion-functions nil '(capf-mode-keywords))",
@@ -1156,8 +1139,7 @@ mod tests {
         assert!(declared.contains(&"unsafe".to_string()), "got {declared:?}");
         assert!(declared.contains(&"usize".to_string()), "got {declared:?}");
 
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| b.current_mode = "rust-mode".into());
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "rust-mode".into());
         typed(&ctx, "unsaf");
         run(
             "(set-completion-functions nil '(capf-mode-keywords))",

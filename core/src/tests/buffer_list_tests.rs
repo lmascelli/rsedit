@@ -248,7 +248,7 @@ mod tests {
             &env,
             &ctx,
         );
-        assert!(ctx.get_buffer("spare").is_none());
+        assert!(!ctx.has_buffer("spare"));
         assert!(
             !listing(&env, &ctx).contains("spare"),
             "and the list redrew"
@@ -278,7 +278,7 @@ mod tests {
             &ctx,
         );
         assert!(
-            ctx.get_buffer("precious").is_some(),
+            ctx.has_buffer("precious"),
             "the question is still open, so nothing has been killed"
         );
     }
@@ -300,7 +300,7 @@ mod tests {
             &env,
             &ctx,
         );
-        assert!(ctx.get_buffer("*Buffer List*").is_some());
+        assert!(ctx.has_buffer("*Buffer List*"));
     }
 
     // ----------------------------------------------------------------

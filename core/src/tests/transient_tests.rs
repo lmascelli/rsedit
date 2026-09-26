@@ -25,8 +25,7 @@ mod tests {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
-        let scratch = ctx.get_buffer("*scratch*").expect("*scratch*");
-        ctx.mutate_buffer(scratch, |b| {
+        ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             b.text.cursor_move(0, 0);
             b.is_modified = false;
@@ -62,21 +61,13 @@ mod tests {
     }
 
     fn text_of(ctx: &Ctx) -> String {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.to_string())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .to_string()
     }
 
     fn point(ctx: &Ctx) -> usize {
-        ctx.get_buffer("*scratch*")
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
             .expect("*scratch*")
-            .read()
-            .unwrap()
-            .text
-            .cursor_pos_1d()
     }
 
     /// What the frame says a transient map is offering.
@@ -398,12 +389,8 @@ mod tests {
         press(&ctx, &env, KeyCode::Char('h'));
 
         assert_eq!(
-            ctx.get_buffer("*scratch*")
-                .expect("*scratch*")
-                .read()
-                .unwrap()
-                .mark
-                .map(|m| m.at),
+            ctx.with_buffer("*scratch*", |b| b.mark.map(|m| m.at))
+                .expect("*scratch*"),
             Some(5),
             "the two-key sequence must have completed"
         );

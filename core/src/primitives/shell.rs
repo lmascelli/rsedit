@@ -68,12 +68,12 @@ fn shell_invocation(command: &str) -> Command {
 /// Several commands may be running at once, and one buffer between them would
 /// interleave their lines into something neither of them said.
 fn free_output_name<B: BufferTrait>(ctx: &EditorState<B>) -> String {
-    if ctx.get_buffer(OUTPUT_BUFFER).is_none() {
+    if !ctx.has_buffer(OUTPUT_BUFFER) {
         return OUTPUT_BUFFER.to_string();
     }
     for n in 2.. {
         let candidate = format!("{OUTPUT_BUFFER}<{n}>");
-        if ctx.get_buffer(&candidate).is_none() {
+        if !ctx.has_buffer(&candidate) {
             return candidate;
         }
     }
@@ -83,17 +83,14 @@ fn free_output_name<B: BufferTrait>(ctx: &EditorState<B>) -> String {
 /// Append `text` to the buffer called `name`, read-only or not.
 ///
 /// The buffer is read-only so that nobody types into a transcript. The flag is
-/// turned off and back on *inside* one `mutate_buffer` call, so the write lock
-/// is held across the whole of it and there is no moment when the buffer is
-/// both visible and writable. `dired` does the same thing from Lisp, where it
-/// cannot hold a lock and has to trust that nothing runs in between.
+/// turned off and back on *inside* one `with_buffer_mut` call, so the write
+/// lock is held across the whole of it and there is no moment when the buffer
+/// is both visible and writable. `dired` does the same thing from Lisp, where
+/// it cannot hold a lock and has to trust that nothing runs in between.
 fn append<B: BufferTrait>(ctx: &EditorState<B>, name: &str, text: &str) {
-    let Some(handle) = ctx.get_buffer(name) else {
-        // The user killed the output buffer while the command was running,
-        // which is a perfectly reasonable thing to have done.
-        return;
-    };
-    let written = ctx.mutate_buffer(handle, |buf| {
+    // `None` when the user killed the output buffer while the command was
+    // running, which is a perfectly reasonable thing to have done.
+    let written = ctx.with_buffer_mut(name, |buf| {
         let was_read_only = buf.read_only;
         buf.read_only = false;
         let at = buf.text.len();
@@ -106,7 +103,7 @@ fn append<B: BufferTrait>(ctx: &EditorState<B>, name: &str, text: &str) {
         buf.read_only = was_read_only;
         written
     });
-    if !written {
+    if written == Some(false) {
         ctx.log_diagnostic(&format!("Could not append shell output to {name}"));
     }
 }
@@ -218,9 +215,7 @@ primitive!(shell_command_start, args, _env, ctx, {
     let name = free_output_name(ctx);
     ctx.new_buffer(&name, None, Some(mode));
     append(ctx, &name, &format!("$ {command}\n"));
-    if let Some(handle) = ctx.get_buffer(&name) {
-        ctx.mutate_buffer(handle, |buf| buf.read_only = true);
-    }
+    ctx.with_buffer_mut(&name, |buf| buf.read_only = true);
 
     // Counted *before* the task is sent, not inside it: the worker may not
     // reach it for a moment, and a frame drawn in that moment would decide

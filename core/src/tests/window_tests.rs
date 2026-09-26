@@ -1,7 +1,7 @@
 //! Splitting the frame, closing windows, and moving between them.
 #[cfg(test)]
 mod tests {
-    use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
+    use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyCode, KeyEvent, KeyModifiers};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
@@ -420,12 +420,8 @@ mod tests {
         press(&ctx, &env, KeyCode::Char('b'), plain());
 
         let text_of = |name: &str| {
-            ctx.get_buffer(name)
-                .expect("the buffer")
-                .read()
-                .unwrap()
-                .text
-                .to_string()
+            ctx.with_buffer(name, |b| b.text.to_string())
+                .unwrap_or_else(|| panic!("no buffer called {name}"))
         };
         assert_eq!(
             text_of("other"),

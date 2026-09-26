@@ -409,7 +409,7 @@ mod tests {
         compilation_with("$ make\nno/such/file.rs:3:1: bad\n", &env, &ctx);
         run("(goto-line 2) (compilation-goto)", &env, &ctx);
         // Still in the compilation buffer; nothing was opened.
-        assert!(ctx.get_buffer("file.rs").is_none());
+        assert!(!ctx.has_buffer("file.rs"));
     }
 
     #[test]

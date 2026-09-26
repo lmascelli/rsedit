@@ -87,7 +87,7 @@ primitive!(make_overlay, args, _env, ctx, {
     // Clamped to the buffer, so a caller working from stale offsets marks
     // something wrong rather than nothing at all -- and never marks past the
     // end, where there is no text to draw over.
-    let made = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let made = ctx.with_current_buffer_mut(|buf| {
         let limit = buf.text.len();
         buf.overlays
             .add(start.min(limit), end.min(limit), face, priority, category)
@@ -118,7 +118,7 @@ primitive!(delete_overlay, args, _env, ctx, {
             });
         }
     };
-    let removed = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| buf.overlays.remove(id));
+    let removed = ctx.with_current_buffer_mut(|buf| buf.overlays.remove(id));
     Ok(if removed {
         ELispExp::t()
     } else {
@@ -149,9 +149,8 @@ primitive!(remove_overlays, args, _env, ctx, {
             });
         }
     };
-    let removed = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
-        buf.overlays.remove_category(category.as_deref())
-    });
+    let removed =
+        ctx.with_current_buffer_mut(|buf| buf.overlays.remove_category(category.as_deref()));
     Ok(ELispExp::number(removed as f64))
 });
 
@@ -166,7 +165,7 @@ pub const OVERLAYS_AT_DOC: &str = "(overlays-at POSITION): The handles of the ov
 
 primitive!(overlays_at, args, _env, ctx, {
     let position = position(args.first().unwrap_or(&ELispExp::Number(0.0)))?;
-    let found = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let found = ctx.with_current_buffer(|buf| {
         buf.overlays
             .at(position)
             .into_iter()
@@ -191,7 +190,7 @@ primitive!(overlay_face, args, _env, ctx, {
             });
         }
     };
-    let face = ctx.mutate_buffer(ctx.get_current_buffer(), |buf| {
+    let face = ctx.with_current_buffer(|buf| {
         buf.overlays
             .iter()
             .find(|overlay| overlay.id == id)

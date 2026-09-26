@@ -106,10 +106,7 @@ impl<B: BufferTrait> EditorState<B> {
         turn: &Turn,
         coloured: Vec<(usize, SyntaxState, Vec<crate::modes::SyntaxSpan>)>,
     ) {
-        let Some(buffer) = self.get_buffer(&turn.buffer) else {
-            return;
-        };
-        self.mutate_buffer(buffer, |buf| {
+        self.with_buffer_mut(&turn.buffer, |buf| {
             // Checked here, not only when the lines were read: the text may
             // have changed while this turn was being computed, and spans from
             // the old text would be painted at columns that have moved.
@@ -128,22 +125,9 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// The next chunk of work, or nothing when every buffer is up to date.
     fn next_highlight_turn(&self) -> Option<Turn> {
-        let focused = self.focused_window_buffer();
-        let names: Vec<String> = {
-            let buffers = self
-                .buffers
-                .read()
-                .expect("Failed to acquire read lock on buffers");
-            // The focused buffer first, then the rest in whatever order they
-            // are held -- the point is only that what is on screen is not last.
-            focused
-                .iter()
-                .cloned()
-                .chain(buffers.keys().cloned())
-                .collect()
-        };
-
-        for name in names {
+        // The focused buffer first, then the rest in whatever order they are
+        // held -- the point is only that what is on screen is not last.
+        for name in self.buffer_names_focused_first() {
             if let Some(turn) = self.turn_for(&name) {
                 return Some(turn);
             }
@@ -168,17 +152,13 @@ impl<B: BufferTrait> EditorState<B> {
     /// Getting that order wrong would put the registry in the path of every
     /// frame, forever, for a file that is fully coloured.
     pub(crate) fn colouring_behind(&self, name: &str) -> bool {
-        let Some(buffer) = self.get_buffer(name) else {
-            return false;
-        };
-        let (mode, behind) = {
-            let buf = buffer
-                .read()
-                .expect("Failed to acquire read lock on buffer for highlighting");
+        let Some((mode, behind)) = self.with_buffer(name, |buf| {
             (
                 buf.current_mode.clone(),
                 buf.syntax.valid_to() < buf.text.line_count(),
             )
+        }) else {
+            return false;
         };
         if !behind {
             return false;
@@ -204,14 +184,11 @@ impl<B: BufferTrait> EditorState<B> {
     /// it is the honest reflection of that, and it stops as soon as the work
     /// does.
     pub(crate) fn colouring_pending(&self) -> bool {
-        let names: Vec<String> = self
-            .buffers
-            .read()
-            .expect("Failed to acquire read lock on buffers")
-            .keys()
-            .cloned()
-            .collect();
-        names.iter().any(|name| self.colouring_behind(name))
+        // The names are copied out and the table let go before any buffer is
+        // locked: `colouring_behind` takes one per name.
+        self.buffer_names()
+            .iter()
+            .any(|name| self.colouring_behind(name))
     }
 
     /// One buffer's next chunk, if it has one.
@@ -219,16 +196,11 @@ impl<B: BufferTrait> EditorState<B> {
         if !self.colouring_behind(name) {
             return None;
         }
+        // The grammar is read from the mode registry, which is a different
+        // lock -- so the buffer's is released first. Cloned rather than
+        // borrowed because the lexing happens with neither held.
+        let mode = self.with_buffer(name, |buf| buf.current_mode.clone())?;
         let grammar = {
-            let buffer = self.get_buffer(name)?;
-            let buf = buffer
-                .read()
-                .expect("Failed to acquire read lock on buffer for highlighting");
-            let mode = buf.current_mode.clone();
-            // The grammar is read from the mode registry, which is a different
-            // lock -- so the buffer's is released first. Cloned rather than
-            // borrowed because the lexing happens with neither held.
-            drop(buf);
             let registry = self
                 .mode_registry
                 .read()
@@ -236,34 +208,32 @@ impl<B: BufferTrait> EditorState<B> {
             registry.get(&mode).map(|mode| mode.grammar.clone())?
         };
 
-        let buffer = self.get_buffer(name)?;
-        let buf = buffer
-            .read()
-            .expect("Failed to acquire read lock on buffer for highlighting");
-        let line_count = buf.text.line_count();
-        let first_line = buf.syntax.valid_to();
-        // Re-checked rather than assumed from `colouring_behind` above: the
-        // buffer lock was released in between, so the text may have been
-        // coloured, shortened, or emptied since.
-        if first_line >= line_count {
-            return None;
-        }
-        // The state entering the first line of this chunk. At the top of the
-        // buffer that is the empty state; anywhere else it is what the previous
-        // line left behind, which is in the cache because lines are only ever
-        // recorded in order.
-        let entering = match first_line.checked_sub(1) {
-            None => SyntaxState::new(),
-            Some(previous) => buf.syntax.state_at(previous).unwrap_or_default(),
-        };
-        let last_line = (first_line + LINES_PER_TURN).min(line_count);
-        Some(Turn {
-            buffer: name.to_string(),
-            version: buf.version,
-            first_line,
-            lines: buf.text.get_lines(first_line, last_line),
-            entering,
-            grammar,
-        })
+        self.with_buffer(name, |buf| {
+            let line_count = buf.text.line_count();
+            let first_line = buf.syntax.valid_to();
+            // Re-checked rather than assumed from `colouring_behind` above: the
+            // buffer lock was released in between, so the text may have been
+            // coloured, shortened, or emptied since.
+            if first_line >= line_count {
+                return None;
+            }
+            // The state entering the first line of this chunk. At the top of the
+            // buffer that is the empty state; anywhere else it is what the previous
+            // line left behind, which is in the cache because lines are only ever
+            // recorded in order.
+            let entering = match first_line.checked_sub(1) {
+                None => SyntaxState::new(),
+                Some(previous) => buf.syntax.state_at(previous).unwrap_or_default(),
+            };
+            let last_line = (first_line + LINES_PER_TURN).min(line_count);
+            Some(Turn {
+                buffer: name.to_string(),
+                version: buf.version,
+                first_line,
+                lines: buf.text.get_lines(first_line, last_line),
+                entering,
+                grammar,
+            })
+        })?
     }
 }

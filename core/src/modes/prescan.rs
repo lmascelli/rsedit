@@ -123,14 +123,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// Answers nothing when the buffer has moved on since the turn was planned,
     /// so that work is not done against text nobody will accept.
     pub(crate) fn run_prescan(&self, turn: &PrescanTurn) -> Option<Vec<(usize, Resume)>> {
-        let buffer = self.get_buffer(&turn.buffer)?;
-        let buf = buffer
-            .read()
-            .expect("Failed to acquire read lock on buffer for prescanning");
-        if buf.version != turn.version || buf.current_mode != turn.mode {
-            return None;
-        }
-        Some(checkpoints_of(turn, &buf.text))
+        self.with_buffer(&turn.buffer, |buf| {
+            if buf.version != turn.version || buf.current_mode != turn.mode {
+                return None;
+            }
+            Some(checkpoints_of(turn, &buf.text))
+        })?
     }
 
     /// Store what a turn produced, if the buffer still looks the way it did.
@@ -139,10 +137,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// own: the rule only matters when the buffer changes *between* the two,
     /// which a test inside one call could not arrange.
     pub(crate) fn store_prescan(&self, turn: &PrescanTurn, scanned: Vec<(usize, Resume)>) {
-        let Some(buffer) = self.get_buffer(&turn.buffer) else {
-            return;
-        };
-        self.mutate_buffer(buffer, |buf| {
+        self.with_buffer_mut(&turn.buffer, |buf| {
             // Checked again here: the lock was released between the scanning
             // and this, and the text may have been edited or the buffer put
             // into another mode in that window.
@@ -168,21 +163,9 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// The next chunk of work, or nothing when every buffer is up to date.
     fn next_prescan_turn(&self) -> Option<PrescanTurn> {
-        let focused = self.focused_window_buffer();
-        let names: Vec<String> = {
-            let buffers = self
-                .buffers
-                .read()
-                .expect("Failed to acquire read lock on buffers");
-            // The focused buffer first: it is the one whose motions somebody is
-            // waiting on.
-            focused
-                .iter()
-                .cloned()
-                .chain(buffers.keys().cloned())
-                .collect()
-        };
-        for name in names {
+        // The focused buffer first: it is the one whose motions somebody is
+        // waiting on.
+        for name in self.buffer_names_focused_first() {
             if let Some(turn) = self.prescan_turn_for(&name) {
                 return Some(turn);
             }
@@ -192,43 +175,35 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// One buffer's next chunk, if it has one.
     pub(crate) fn prescan_turn_for(&self, name: &str) -> Option<PrescanTurn> {
-        let mode = {
-            let buffer = self.get_buffer(name)?;
-            let buf = buffer
-                .read()
-                .expect("Failed to acquire read lock on buffer for prescanning");
-            buf.current_mode.clone()
-        };
+        let mode = self.with_buffer(name, |buf| buf.current_mode.clone())?;
         // The table comes from the mode registry, a different lock, so the
         // buffer's is released before this is asked for.
         let table = self.syntax_table(&mode);
 
-        let buffer = self.get_buffer(name)?;
-        let buf = buffer
-            .read()
-            .expect("Failed to acquire read lock on buffer for prescanning");
-        // Re-read rather than carried over from above: the lock was released in
-        // between and the buffer may have been put into another mode.
-        if buf.current_mode != mode {
-            return None;
-        }
-        let line_count = buf.text.line_count();
-        let (first_index, from) = buf.scan.frontier_for(&mode, buf.version);
-        if checkpoint_line(first_index) >= line_count {
-            return None;
-        }
-        let start_line = match first_index.checked_sub(1) {
-            None => 0,
-            Some(previous) => checkpoint_line(previous),
-        };
-        Some(PrescanTurn {
-            buffer: name.to_string(),
-            version: buf.version,
-            mode,
-            table,
-            first_index,
-            from: from.cloned(),
-            last_line: (start_line + LINES_PER_TURN).min(line_count),
-        })
+        self.with_buffer(name, |buf| {
+            // Re-read rather than carried over from above: the lock was released in
+            // between and the buffer may have been put into another mode.
+            if buf.current_mode != mode {
+                return None;
+            }
+            let line_count = buf.text.line_count();
+            let (first_index, from) = buf.scan.frontier_for(&mode, buf.version);
+            if checkpoint_line(first_index) >= line_count {
+                return None;
+            }
+            let start_line = match first_index.checked_sub(1) {
+                None => 0,
+                Some(previous) => checkpoint_line(previous),
+            };
+            Some(PrescanTurn {
+                buffer: name.to_string(),
+                version: buf.version,
+                mode,
+                table,
+                first_index,
+                from: from.cloned(),
+                last_line: (start_line + LINES_PER_TURN).min(line_count),
+            })
+        })?
     }
 }

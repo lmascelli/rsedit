@@ -57,11 +57,11 @@ mod tests {
             env,
             ctx,
         );
-        let handle = ctx.get_current_buffer();
-        let mut buf = handle.write().expect("write lock");
-        buf.text = GapBuffer::from(source);
-        buf.text.cursor_move(0, 0);
-        buf.version += 1;
+        ctx.with_current_buffer_mut(|buf| {
+            buf.text = GapBuffer::from(source);
+            buf.text.cursor_move(0, 0);
+            buf.version += 1;
+        })
     }
 
     /// Run prescan turns until the buffer is fully checkpointed.
@@ -120,36 +120,37 @@ mod tests {
         warm(&ctx, "big");
 
         let table = ctx.syntax_table("rust-mode");
-        let handle = ctx.get_buffer("big").expect("the buffer is there");
-        let buf = handle.read().expect("read lock");
-        let mut resumed = 0;
-        // A stride that is not a factor of anything, so the positions tried are
-        // not all at the same place in a line or a construct.
-        for pos in (0..buf.text.len()).step_by(37) {
-            let shortcut = buf.scan_resume(pos);
-            if shortcut.is_some() {
-                resumed += 1;
+        ctx.with_buffer("big", |buf| {
+            let mut resumed = 0;
+            // A stride that is not a factor of anything, so the positions tried are
+            // not all at the same place in a line or a construct.
+            for pos in (0..buf.text.len()).step_by(37) {
+                let shortcut = buf.scan_resume(pos);
+                if shortcut.is_some() {
+                    resumed += 1;
+                }
+                assert_eq!(
+                    sexp::context_at(&buf.text, &table, shortcut, pos),
+                    sexp::context_at(&buf.text, &table, None, pos),
+                    "the context at {pos} must not depend on where the scan started"
+                );
+                assert_eq!(
+                    sexp::enclosing(&buf.text, &table, shortcut, pos),
+                    sexp::enclosing(&buf.text, &table, None, pos),
+                    "the enclosing list at {pos} must not depend on where the scan started"
+                );
+                assert_eq!(
+                    sexp::forward(&buf.text, &table, shortcut, pos, 1),
+                    sexp::forward(&buf.text, &table, None, pos, 1),
+                    "forward-sexp from {pos} must not depend on where the scan started"
+                );
             }
-            assert_eq!(
-                sexp::context_at(&buf.text, &table, shortcut, pos),
-                sexp::context_at(&buf.text, &table, None, pos),
-                "the context at {pos} must not depend on where the scan started"
+            assert!(
+                resumed > 0,
+                "the test proves nothing unless some of those scans actually resumed"
             );
-            assert_eq!(
-                sexp::enclosing(&buf.text, &table, shortcut, pos),
-                sexp::enclosing(&buf.text, &table, None, pos),
-                "the enclosing list at {pos} must not depend on where the scan started"
-            );
-            assert_eq!(
-                sexp::forward(&buf.text, &table, shortcut, pos, 1),
-                sexp::forward(&buf.text, &table, None, pos, 1),
-                "forward-sexp from {pos} must not depend on where the scan started"
-            );
-        }
-        assert!(
-            resumed > 0,
-            "the test proves nothing unless some of those scans actually resumed"
-        );
+        })
+        .expect("big")
     }
 
     #[test]
@@ -168,29 +169,30 @@ mod tests {
         warm(&ctx, "str");
 
         let table = ctx.syntax_table("rust-mode");
-        let handle = ctx.get_buffer("str").expect("the buffer is there");
-        let buf = handle.read().expect("read lock");
-        let inside = buf.text.cursor_2d_to_1d(LINES_PER_CHECKPOINT + 3, 2);
-        let found = sexp::context_at(&buf.text, &table, buf.scan_resume(inside), inside);
-        assert!(
-            found.string_start.is_some(),
-            "a position deep inside the string is inside the string"
-        );
-        assert_eq!(
-            found,
-            sexp::context_at(&buf.text, &table, None, inside),
-            "and the resumed answer is the answer"
-        );
-        assert_eq!(
-            sexp::context_at(
-                &buf.text,
-                &table,
-                buf.scan_resume(buf.text.len()),
-                buf.text.len()
-            ),
-            sexp::context_at(&buf.text, &table, None, buf.text.len()),
-            "and the file still balances the same way at the end"
-        );
+        ctx.with_buffer("str", |buf| {
+            let inside = buf.text.cursor_2d_to_1d(LINES_PER_CHECKPOINT + 3, 2);
+            let found = sexp::context_at(&buf.text, &table, buf.scan_resume(inside), inside);
+            assert!(
+                found.string_start.is_some(),
+                "a position deep inside the string is inside the string"
+            );
+            assert_eq!(
+                found,
+                sexp::context_at(&buf.text, &table, None, inside),
+                "and the resumed answer is the answer"
+            );
+            assert_eq!(
+                sexp::context_at(
+                    &buf.text,
+                    &table,
+                    buf.scan_resume(buf.text.len()),
+                    buf.text.len()
+                ),
+                sexp::context_at(&buf.text, &table, None, buf.text.len()),
+                "and the file still balances the same way at the end"
+            );
+        })
+        .expect("str")
     }
 
     #[test]
@@ -201,19 +203,20 @@ mod tests {
         rust_buffer("moved", &source(), &env, &ctx);
         warm(&ctx, "moved");
 
-        let handle = ctx.get_buffer("moved").expect("the buffer is there");
-        let buf = handle.read().expect("read lock");
-        let end = buf.text.len();
-        let resume = buf.scan_resume(end).expect("a warm cache has a checkpoint");
-        assert!(
-            resume.offset() > 0,
-            "a scan asked about the end of the file starts well down it"
-        );
-        let line = buf.text.cursor_1d_to_2d(resume.offset()).0;
-        assert!(
-            buf.text.line_count() - line <= LINES_PER_CHECKPOINT + 1,
-            "and within one checkpoint interval of the question"
-        );
+        ctx.with_buffer("moved", |buf| {
+            let end = buf.text.len();
+            let resume = buf.scan_resume(end).expect("a warm cache has a checkpoint");
+            assert!(
+                resume.offset() > 0,
+                "a scan asked about the end of the file starts well down it"
+            );
+            let line = buf.text.cursor_1d_to_2d(resume.offset()).0;
+            assert!(
+                buf.text.line_count() - line <= LINES_PER_CHECKPOINT + 1,
+                "and within one checkpoint interval of the question"
+            );
+        })
+        .expect("moved")
     }
 
     // ----------------------------------------------------------------
@@ -226,30 +229,30 @@ mod tests {
         rust_buffer("edited", &source(), &env, &ctx);
         warm(&ctx, "edited");
 
-        let handle = ctx.get_buffer("edited").expect("the buffer is there");
-        let before = handle.read().expect("read lock").scan.checkpoints();
+        let before = ctx
+            .with_buffer("edited", |b| b.scan.checkpoints())
+            .expect("the buffer is there");
         assert!(
             before >= 3,
             "the fixture needs several checkpoints, got {before}"
         );
 
         // An edit three checkpoints down.
-        let at = {
-            let buf = handle.read().expect("read lock");
-            buf.text.cursor_2d_to_1d(checkpoint_line(2) + 1, 0)
-        };
+        let at = ctx
+            .with_buffer("edited", |buf| {
+                buf.text.cursor_2d_to_1d(checkpoint_line(2) + 1, 0)
+            })
+            .expect("the buffer is there");
         run(&format!("(goto-char {at}) (self-insert \"x\")"), &env, &ctx);
 
-        let buf = handle.read().expect("read lock");
+        let after = ctx
+            .with_buffer("edited", |buf| buf.scan.checkpoints())
+            .expect("the buffer is there");
         assert_eq!(
-            buf.scan.checkpoints(),
-            3,
+            after, 3,
             "the three checkpoints at or above the edited line survive it"
         );
-        assert!(
-            buf.scan.checkpoints() < before,
-            "and the ones below it did not"
-        );
+        assert!(after < before, "and the ones below it did not");
     }
 
     #[test]
@@ -262,26 +265,28 @@ mod tests {
         warm(&ctx, "stale");
 
         let table = ctx.syntax_table("rust-mode");
-        let handle = ctx.get_buffer("stale").expect("the buffer is there");
-        let depth_before = {
-            let buf = handle.read().expect("read lock");
-            let end = buf.text.len();
-            sexp::context_at(&buf.text, &table, buf.scan_resume(end), end).depth
-        };
+        let depth_before = ctx
+            .with_buffer("stale", |buf| {
+                let end = buf.text.len();
+                sexp::context_at(&buf.text, &table, buf.scan_resume(end), end).depth
+            })
+            .expect("the buffer is there");
         assert_eq!(depth_before, 0, "the fixture balances to begin with");
 
         // An opener near the top, above every checkpoint but the first.
-        let at = {
-            let buf = handle.read().expect("read lock");
-            buf.text.cursor_2d_to_1d(2, 0)
-        };
+        let at = ctx
+            .with_buffer("stale", |buf| buf.text.cursor_2d_to_1d(2, 0))
+            .expect("the buffer is there");
         run(&format!("(goto-char {at}) (self-insert \"(\")"), &env, &ctx);
 
-        let buf = handle.read().expect("read lock");
-        let end = buf.text.len();
+        let depth = ctx
+            .with_buffer("stale", |buf| {
+                let end = buf.text.len();
+                sexp::context_at(&buf.text, &table, buf.scan_resume(end), end).depth
+            })
+            .expect("the buffer is there");
         assert_eq!(
-            sexp::context_at(&buf.text, &table, buf.scan_resume(end), end).depth,
-            1,
+            depth, 1,
             "the new opener is seen, whatever the cache had worked out before it"
         );
     }
@@ -308,10 +313,9 @@ mod tests {
         run("(goto-char 0) (self-insert \"(\")", &env, &ctx);
         ctx.store_prescan(&turn, scanned);
 
-        let handle = ctx.get_buffer("moved-on").expect("the buffer is there");
         assert_eq!(
-            handle.read().expect("read lock").scan.checkpoints(),
-            0,
+            ctx.with_buffer("moved-on", |b| b.scan.checkpoints()),
+            Some(0),
             "nothing computed from the old text was kept"
         );
     }
@@ -325,8 +329,8 @@ mod tests {
     /// buffer, from a checkpoint taken under the table of a language the text
     /// is no longer being read as.
     fn remode(ctx: &Ctx, name: &str, mode: &str) {
-        let handle = ctx.get_buffer(name).expect("the buffer is there");
-        handle.write().expect("write lock").current_mode = mode.to_string();
+        ctx.with_buffer_mut(name, |b| b.current_mode = mode.to_string())
+            .expect("the buffer is there");
     }
 
     #[test]
@@ -348,10 +352,9 @@ mod tests {
         remode(&ctx, "remoded", "other-mode");
         ctx.store_prescan(&turn, scanned);
 
-        let handle = ctx.get_buffer("remoded").expect("the buffer is there");
         assert_eq!(
-            handle.read().expect("read lock").scan.checkpoints(),
-            0,
+            ctx.with_buffer("remoded", |b| b.scan.checkpoints()),
+            Some(0),
             "nothing computed under the old table was kept"
         );
     }
@@ -364,20 +367,20 @@ mod tests {
         warm(&ctx, "switched");
         assert!(
             {
-                let handle = ctx.get_buffer("switched").expect("the buffer is there");
-                let buf = handle.read().expect("read lock");
-                buf.scan_resume(buf.text.len()).is_some()
+                ctx.with_buffer("switched", |buf| buf.scan_resume(buf.text.len()).is_some())
+                    .expect("edited")
             },
             "there is a shortcut to lose in the first place"
         );
 
         remode(&ctx, "switched", "plain-mode");
-        let handle = ctx.get_buffer("switched").expect("the buffer is there");
-        let buf = handle.read().expect("read lock");
-        assert!(
-            buf.scan_resume(buf.text.len()).is_none(),
-            "the mode changed, so what was worked out under the old one is refused"
-        );
+        ctx.with_buffer("switched", |buf| {
+            assert!(
+                buf.scan_resume(buf.text.len()).is_none(),
+                "the mode changed, so what was worked out under the old one is refused"
+            );
+        })
+        .expect("switched")
     }
 
     // ----------------------------------------------------------------
@@ -392,16 +395,16 @@ mod tests {
         let (ctx, env) = editor();
         rust_buffer("exact", &source(), &env, &ctx);
         warm(&ctx, "exact");
-        let handle = ctx.get_buffer("exact").expect("the buffer is there");
-        let at = {
-            let buf = handle.read().expect("read lock");
-            assert!(buf.scan.checkpoints() >= 2);
-            buf.text.cursor_2d_to_1d(checkpoint_line(1), 0)
-        };
+        let at = ctx
+            .with_buffer("exact", |buf| {
+                assert!(buf.scan.checkpoints() >= 2);
+                buf.text.cursor_2d_to_1d(checkpoint_line(1), 0)
+            })
+            .expect("the buffer is there");
         run(&format!("(goto-char {at}) (self-insert \"x\")"), &env, &ctx);
         assert_eq!(
-            handle.read().expect("read lock").scan.checkpoints(),
-            2,
+            ctx.with_buffer("exact", |b| b.scan.checkpoints()),
+            Some(2),
             "the checkpoint entering the edited line is one of the survivors"
         );
     }
