@@ -36,10 +36,6 @@ impl<B: BufferTrait> EditorState<B> {
         self.commands_mut(|commands| commands.read_prefix_argument(event))
     }
 
-    // ---------------------------------------------------------------
-    // The command compartment
-    // ---------------------------------------------------------------
-
     /// Install a keymap that is consulted before every other until it goes
     /// away. See [`TransientKeymap`].
     pub(crate) fn set_transient_keymap(&self, map: TransientKeymap<B>) {
@@ -61,14 +57,6 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn transient_keymap_active(&self) -> bool {
         self.modes(|modes| modes.transient_active())
     }
-
-    // -----------------------------------------------------------------------
-    // Completion sources
-    // -----------------------------------------------------------------------
-    //
-    // A list per mode and one global list, reached through the five methods
-    // below so that no caller has to know there are two places. `nil` means
-    // the global list everywhere, exactly as it does in `define-key`.
 
     /// Say that COMMAND may be repeated by pressing KEYS on its own afterwards.
     ///

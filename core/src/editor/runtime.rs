@@ -78,4 +78,52 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn set_goal_column(&self, col: Option<usize>) {
         self.runtime_mut(|runtime| runtime.set_goal_column(col));
     }
+
+    /// Open a fresh Lisp execution budget for one top-level command -- a
+    /// keystroke, a hook run, a config file being loaded.
+    ///
+    /// What counts as "one command" is editor *policy*, which is why this lives
+    /// here rather than in `FuelMeter`: only the editor knows a keystroke is one
+    /// unit of work. Nesting is safe -- the meter tracks depth and only the
+    /// outermost scope refills -- so a command that re-enters the evaluator, via
+    /// the Lisp-callable `eval-file` primitive for instance, keeps spending the
+    /// budget it already has instead of quietly being handed a new one.
+    pub(crate) fn begin_command(&self) -> FuelScope {
+        // The meter is cloned out and the lock given straight back: a metered
+        // scope lasts a whole command, and holding this lock for that long
+        // would be holding it across the interpreter.
+        self.runtime(|runtime| runtime.fuel()).begin()
+    }
+
+    /// The execution meter behind [`Self::begin_command`].
+    ///
+    /// Exposed for `lisp::measure`, which needs the meter to hold a scope of
+    /// its own for the duration of a measurement.
+    pub(crate) fn fuel_meter(&self) -> Arc<FuelMeter> {
+        self.runtime(|runtime| runtime.fuel())
+    }
+
+    /// Set how much fuel a fresh command receives, and top the current thread's
+    /// remaining fuel up to it. Exposed so the `set-command-fuel` primitive --
+    /// and tests that want a deliberately tiny budget -- can reach it.
+    pub(crate) fn set_fuel_budget(&self, budget: u32) {
+        self.runtime(|runtime| runtime.fuel()).set_budget(budget);
+    }
+
+    /// Return the call stack captured at the point of the most recent
+    /// uncaught error, innermost (deepest) call first -- or an empty list
+    /// if nothing has errored since the last `clear_backtrace`. See
+    /// `LispContext::push_call_frame` for the capture protocol and its
+    /// tail-call caveat.
+    pub fn backtrace(&self) -> Vec<String> {
+        self.runtime(|runtime| runtime.backtrace())
+    }
+
+    /// Discard the captured backtrace, so the next error starts from a
+    /// clean stack instead of stacking on top of a stale one. Callers that
+    /// catch and report an error (a key handler, `eval_file`, ...) should
+    /// call this once they're done reading `backtrace()`.
+    pub fn clear_backtrace(&self) {
+        self.runtime_mut(|runtime| runtime.clear_backtrace());
+    }
 }

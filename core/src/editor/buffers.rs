@@ -91,10 +91,6 @@ impl<B: BufferTrait> EditorState<B> {
         true
     }
 
-    // ---------------------------------------------------------------
-    // The window compartment
-    // ---------------------------------------------------------------
-
     /// Read the buffer named NAME. `None` when there is no such buffer.
     ///
     /// # Why the table's lock is not held while F runs
@@ -173,10 +169,6 @@ impl<B: BufferTrait> EditorState<B> {
         // holding them would invert the two.
         self.set_current_buffer_name(name);
     }
-
-    // ---------------------------------------------------------------
-    // Splitting, closing and cycling through windows
-    // ---------------------------------------------------------------
 
     /// Close the buffer named NAME: detach it from whatever window is
     /// showing it (a floating window is removed outright and focus
@@ -269,10 +261,6 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn minibuffer_is_open(&self) -> bool {
         self.has_buffer("*Minibuffer*")
     }
-
-    // ---------------------------------------------------------------
-    // What the previous command was, and where vertical movement is aiming
-    // ---------------------------------------------------------------
 
     /// Every live buffer's name, sorted. Used for buffer-name completion.
     pub(crate) fn buffer_names(&self) -> Vec<String> {

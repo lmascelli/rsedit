@@ -88,4 +88,10 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn yank_to_replace(&self) -> Option<(usize, usize)> {
         self.kill_yank(|kills| kills.yank_to_replace())
     }
+
+    /// Roll "this command" into "the previous command" for the flags that a
+    /// command needs to ask about its predecessor.
+    pub(super) fn roll_over_command_flags(&self) {
+        self.kill_yank_mut(|kills| kills.roll_over());
+    }
 }

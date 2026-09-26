@@ -146,30 +146,6 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    /// Open a fresh Lisp execution budget for one top-level command -- a
-    /// keystroke, a hook run, a config file being loaded.
-    ///
-    /// What counts as "one command" is editor *policy*, which is why this lives
-    /// here rather than in `FuelMeter`: only the editor knows a keystroke is one
-    /// unit of work. Nesting is safe -- the meter tracks depth and only the
-    /// outermost scope refills -- so a command that re-enters the evaluator, via
-    /// the Lisp-callable `eval-file` primitive for instance, keeps spending the
-    /// budget it already has instead of quietly being handed a new one.
-    pub(crate) fn begin_command(&self) -> FuelScope {
-        // The meter is cloned out and the lock given straight back: a metered
-        // scope lasts a whole command, and holding this lock for that long
-        // would be holding it across the interpreter.
-        self.runtime(|runtime| runtime.fuel()).begin()
-    }
-
-    /// The execution meter behind [`Self::begin_command`].
-    ///
-    /// Exposed for `lisp::measure`, which needs the meter to hold a scope of
-    /// its own for the duration of a measurement.
-    pub(crate) fn fuel_meter(&self) -> Arc<FuelMeter> {
-        self.runtime(|runtime| runtime.fuel())
-    }
-
     // ---------------------------------------------------------------
     // Argument collection for a command in flight
     // ---------------------------------------------------------------
@@ -262,21 +238,6 @@ impl<B: BufferTrait> EditorState<B> {
         self.commands(|commands| commands.last_was(name))
     }
 
-    // ---------------------------------------------------------------
-    // Faces and the theme
-    // ---------------------------------------------------------------
-
-    /// Roll "this command" into "the previous command" for the flags that a
-    /// command needs to ask about its predecessor.
-    fn roll_over_command_flags(&self) {
-        self.kill_yank_mut(|kills| kills.roll_over());
-    }
-
-    /// Register FUNCTION to run under HOOK_NAME in every major mode.
-    pub(crate) fn add_global_hook(&self, hook_name: &str, function: ELispExp<B>) {
-        self.modes_mut(|modes| modes.add_global_hook(hook_name, function));
-    }
-
     /// The last command as a runnable form, for `repeat`.
     pub(crate) fn last_command_form(&self) -> Option<ELispExp<B>> {
         self.commands(|commands| commands.last_form())
@@ -312,12 +273,5 @@ impl<B: BufferTrait> EditorState<B> {
     /// Every command name, sorted, for M-x completion.
     pub(crate) fn command_names(&self) -> Vec<String> {
         self.commands(|commands| commands.names())
-    }
-
-    /// Set how much fuel a fresh command receives, and top the current thread's
-    /// remaining fuel up to it. Exposed so the `set-command-fuel` primitive --
-    /// and tests that want a deliberately tiny budget -- can reach it.
-    pub(crate) fn set_fuel_budget(&self, budget: u32) {
-        self.runtime(|runtime| runtime.fuel()).set_budget(budget);
     }
 }

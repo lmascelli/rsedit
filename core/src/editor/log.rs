@@ -28,23 +28,6 @@ impl<B: BufferTrait> EditorState<B> {
         self.log.read().expect("read lock on log").lines()
     }
 
-    /// Return the call stack captured at the point of the most recent
-    /// uncaught error, innermost (deepest) call first -- or an empty list
-    /// if nothing has errored since the last `clear_backtrace`. See
-    /// `LispContext::push_call_frame` for the capture protocol and its
-    /// tail-call caveat.
-    pub fn backtrace(&self) -> Vec<String> {
-        self.runtime(|runtime| runtime.backtrace())
-    }
-
-    /// Discard the captured backtrace, so the next error starts from a
-    /// clean stack instead of stacking on top of a stale one. Callers that
-    /// catch and report an error (a key handler, `eval_file`, ...) should
-    /// call this once they're done reading `backtrace()`.
-    pub fn clear_backtrace(&self) {
-        self.runtime_mut(|runtime| runtime.clear_backtrace());
-    }
-
     /// Convenience for error-reporting call sites: returns a
     /// `" | backtrace: a -> b -> c"` suffix (innermost call first)
     /// describing the frames captured at the point of the most recent

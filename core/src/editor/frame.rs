@@ -325,8 +325,4 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn theme(&self) -> Arc<Theme> {
         self.runtime(|runtime| runtime.theme())
     }
-
-    // ---------------------------------------------------------------
-    // The kill ring
-    // ---------------------------------------------------------------
 }

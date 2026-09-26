@@ -1,3 +1,33 @@
+//! The editor facade, and how it is laid out across this directory.
+//!
+//! [`EditorState`] owns one handle per compartment (see [`crate::managers`])
+//! and nothing else that matters. Its own methods are spread over the files
+//! here, under one rule:
+//!
+//! > A file named after a compartment holds that compartment's facade -- the
+//! > methods that forward to it -- plus any coordination that spans several.
+//! > A method that forwards to exactly one compartment lives in that
+//! > compartment's file, whatever it is called.
+//!
+//! So `buffers.rs`, `windows.rs`, `commands.rs`, `modes.rs`, `kill_yank.rs`,
+//! `runtime.rs` and `log.rs` each pair with the manager of the same name. The
+//! rest are named after a *concern* rather than a compartment, because what
+//! they do spans several by nature: `keys.rs` resolves a keystroke,
+//! `mouse.rs` turns a pointer event into a command, `frame.rs` composes what
+//! the renderer draws, `boot.rs` brings an editor into existence and
+//! `settings.rs` reads the Lisp variables.
+//!
+//! # Why the forwarders are not just removed
+//!
+//! They look like duplication -- `is_command` forwarding to
+//! `Commands::is_command` -- and mostly they rename: `Commands::specs` and
+//! `Commands::names` are unambiguous because the type says what they are
+//! about, where `EditorState` needs `command_specs` and `command_names`
+//! because it has buffer names and window ids too. Collapsing the two layers
+//! would make one naming scheme serve both, and would put "which compartment
+//! holds this" into every call site -- so that moving a field between
+//! compartments edited every caller instead of one forwarder.
+
 use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
@@ -43,13 +73,13 @@ use std::{
 pub(crate) mod boot;
 mod buffers;
 mod commands;
-mod diagnostics;
 mod frame;
 mod keys;
-mod kill_ring;
+mod kill_yank;
+mod log;
 mod modes;
 mod mouse;
-mod session;
+mod runtime;
 mod settings;
 mod windows;
 

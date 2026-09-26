@@ -4,6 +4,13 @@
 use super::*;
 
 impl<B: BufferTrait> EditorState<B> {
+    // -----------------------------------------------------------------------
+    // Completion sources
+    // -----------------------------------------------------------------------
+    //
+    // A list per mode and one global list, reached through the five methods
+    // below so that no caller has to know there are two places. `nil` means
+    // the global list everywhere, exactly as it does in `define-key`.
     /// Every completion source to try in MODE, most specific first.
     ///
     /// The mode's own sources come before the global ones because a mode knows
@@ -82,5 +89,10 @@ impl<B: BufferTrait> EditorState<B> {
         // compartments, one at a time.
         let mode = self.with_current_buffer(|buf| buf.current_mode.clone());
         self.syntax_table(&mode)
+    }
+
+    /// Register FUNCTION to run under HOOK_NAME in every major mode.
+    pub(crate) fn add_global_hook(&self, hook_name: &str, function: ELispExp<B>) {
+        self.modes_mut(|modes| modes.add_global_hook(hook_name, function));
     }
 }
