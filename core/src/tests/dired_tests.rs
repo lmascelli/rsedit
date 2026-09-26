@@ -1413,4 +1413,79 @@ mod tests {
             prompt_title(&ctx)
         );
     }
+
+    // -----------------------------------------------------------------------
+    // The order of a listing
+    // -----------------------------------------------------------------------
+
+    /// The entries of a listing, without the header or the `..` line.
+    fn entries(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> Vec<String> {
+        listing(env, ctx)
+            .lines()
+            .skip(2)
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.trim().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_listing_is_alphabetical_by_default() {
+        let sandbox = Sandbox::new("sort-name");
+        sandbox.dir("mid");
+        sandbox.file("aaa.txt", "");
+        sandbox.file("zzz.txt", "");
+        let (ctx, env) = setup();
+        run(&format!(r#"(dired "{}")"#, sandbox.lisp()), &env, &ctx);
+        assert_eq!(entries(&env, &ctx), vec!["aaa.txt", "mid/", "zzz.txt"]);
+    }
+
+    /// Directories first when asked, each run still alphabetical. What you
+    /// want when you are navigating rather than looking for a name: the
+    /// directories are the way onward, and they are otherwise scattered.
+    #[test]
+    fn dired_sort_type_puts_the_directories_first() {
+        let sandbox = Sandbox::new("sort-type");
+        sandbox.dir("zeta");
+        sandbox.dir("alpha");
+        sandbox.file("aaa.txt", "");
+        sandbox.file("zzz.txt", "");
+        let (ctx, env) = setup();
+        run("(setq dired-sort 'type)", &env, &ctx);
+        run(&format!(r#"(dired "{}")"#, sandbox.lisp()), &env, &ctx);
+        assert_eq!(
+            entries(&env, &ctx),
+            vec!["alpha/", "zeta/", "aaa.txt", "zzz.txt"]
+        );
+    }
+
+    /// Read on every redraw, so changing it takes effect at the next `g`
+    /// rather than at the next restart.
+    #[test]
+    fn changing_dired_sort_shows_at_the_next_redraw() {
+        let sandbox = Sandbox::new("sort-redraw");
+        sandbox.dir("later");
+        sandbox.file("earlier.txt", "");
+        let (ctx, env) = setup();
+        run(&format!(r#"(dired "{}")"#, sandbox.lisp()), &env, &ctx);
+        assert_eq!(entries(&env, &ctx), vec!["earlier.txt", "later/"]);
+
+        run("(setq dired-sort 'type)", &env, &ctx);
+        run("(dired-refresh)", &env, &ctx);
+        assert_eq!(entries(&env, &ctx), vec!["later/", "earlier.txt"]);
+    }
+
+    /// An unknown order is refused rather than quietly meaning one of them:
+    /// a typo in a config line should say so, not reorder the listing.
+    #[test]
+    fn an_unknown_order_is_an_error() {
+        let sandbox = Sandbox::new("sort-bogus");
+        sandbox.file("a.txt", "");
+        let (ctx, env) = setup();
+        let outcome = eval_str(
+            &format!(r#"(list-dir "{}" 'sideways)"#, sandbox.lisp()),
+            &env,
+            &ctx,
+        );
+        assert!(outcome.is_err(), "got {outcome:?}");
+    }
 }

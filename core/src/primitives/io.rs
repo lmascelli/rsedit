@@ -331,30 +331,62 @@ pub(crate) fn last_component(path: &str) -> String {
 /// `.` and `..` are not listed. They are always there, they are never what
 /// somebody is looking for, and they would sit at the top of every listing.
 pub(crate) fn directory_entries(directory: &str) -> Result<Vec<String>, std::io::Error> {
-    let mut names = Vec::new();
+    directory_entries_ordered(directory, false)
+}
+
+/// The same, with directories gathered before files when DIRS_FIRST.
+///
+/// Ordered here rather than by the caller because the answer is already in
+/// hand: `file_type` has been asked for anyway, to decide the trailing
+/// separator. A caller sorting afterwards would have to work out what each
+/// entry is all over again -- a `stat` and an evaluation apiece from Lisp,
+/// which is the cost that made `find-file-recursive` unusable on a large tree.
+///
+/// Reading the separator back off the name would be cheaper still and is
+/// wrong: which character it is depends on the platform, and `dired--visit`
+/// already declines to do it for that reason. The separator is there to be
+/// read by a person.
+pub(crate) fn directory_entries_ordered(
+    directory: &str,
+    dirs_first: bool,
+) -> Result<Vec<String>, std::io::Error> {
+    let mut names: Vec<(bool, String)> = Vec::new();
     for entry in std::fs::read_dir(expand_path(directory))? {
         let entry = entry?;
         let mut name = entry.file_name().to_string_lossy().to_string();
         // `file_type` rather than `metadata`, so a symlink to a directory is
         // reported as the link it is instead of failing when it dangles.
-        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir {
             name.push(std::path::MAIN_SEPARATOR);
         }
-        names.push(name);
+        // `false` sorts before `true`, so the flag is "is this a file" when
+        // directories are wanted first, and a constant when they are not.
+        names.push((dirs_first && !is_dir, name));
     }
     names.sort();
-    Ok(names)
+    Ok(names.into_iter().map(|(_, name)| name).collect())
 }
 
-pub const LIST_DIR_DOC: &str = "(list-dir &optional DIRECTORY): Return the names of everything in \
-         DIRECTORY -- the current directory if it is omitted -- as a sorted list of strings, with \
-         a \"/\" after each subdirectory. `.' and `..' are not included, and a leading \"~\" is \
-         expanded to the home directory.\n\n\
+pub const LIST_DIR_DOC: &str = "(list-dir &optional DIRECTORY ORDER): Return the names of \
+         everything in DIRECTORY -- the current directory if it is omitted -- as a sorted list of \
+         strings, with a \"/\" after each subdirectory. `.' and `..' are not included, and a \
+         leading \"~\" is expanded to the home directory.\n\n\
+         ORDER is 'name for one alphabetical run, which is the default, or 'type for the \
+         subdirectories first and then the files, each run alphabetical. Ordering is done here \
+         rather than by the caller because what each entry is has already been asked of the \
+         filesystem; sorting afterwards means asking again, once per entry.\n\n\
          Returns nil (logging a diagnostic) if the directory can't be read.\n\n\
          Example:\n\
-         (list-dir \"/etc\") => (\"hosts\" \"ssh/\" ...)";
+         (list-dir \"/etc\" 'type) => (\"ssh/\" \"hosts\" ...)";
 
 primitive!(list_dir, args, _env, ctx, {
+    if args.len() > 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
     let directory = match args.first() {
         None => ".".to_string(),
         Some(exp) if exp.is_nil() => ".".to_string(),
@@ -366,7 +398,19 @@ primitive!(list_dir, args, _env, ctx, {
             });
         }
     };
-    match directory_entries(&directory) {
+    let dirs_first = match args.get(1) {
+        None => false,
+        Some(exp) if exp.is_nil() => false,
+        Some(ELispExp::Symbol(order)) if order.as_str() == "type" => true,
+        Some(ELispExp::Symbol(order)) if order.as_str() == "name" => false,
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "'name or 'type".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    match directory_entries_ordered(&directory, dirs_first) {
         Ok(names) => Ok(ELispExp::proper_list(
             names.into_iter().map(ELispExp::string).collect(),
         )),

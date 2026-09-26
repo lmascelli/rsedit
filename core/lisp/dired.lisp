@@ -55,6 +55,18 @@
 (defconst dired-buffer-name "*dired*"
   "The one buffer every listing is shown in. See the module header.")
 
+(defconst dired-sort 'name
+  "How a listing is ordered: 'name or 'type.
+
+'name is one alphabetical run, which is what `ls' gives and what a listing has
+always shown here. 'type puts the subdirectories first and then the files, each
+run still alphabetical -- which is what you want when you are navigating rather
+than looking for a particular name, because the directories are the way onward
+and they are otherwise scattered through the list.
+
+Read on every redraw, so `(setq dired-sort 'type)' takes effect at the next
+`g' without reopening anything.")
+
 ;; ---------------------------------------------------------------------------
 ;; Paths
 ;; ---------------------------------------------------------------------------
@@ -131,7 +143,11 @@ through, so nothing else, command or keystroke or line of Lisp, gets in."
   ;; shows no way out of itself reads as a dead end. `list-dir' leaves it out
   ;; on purpose, so it is put back here.
   (insert "  ..\n")
-  (mapc (lambda (entry) (insert "  " entry "\n")) (list-dir directory))
+  ;; `list-dir' does the ordering. It has already asked the filesystem what
+  ;; each entry is -- that is where the trailing separator comes from -- so
+  ;; sorting here would mean asking again, once per entry, from Lisp.
+  (mapc (lambda (entry) (insert "  " entry "\n"))
+        (list-dir directory dired-sort))
   (set-buffer-read-only t))
 
 (defun dired--show (directory)

@@ -4,14 +4,6 @@
 * Working in progress.
 
 * Fixes todo
-- [ ] Mouse support: scrolling until the cursor goes out of the current view don't really
-      move it so that after a keyboard move the view jumps back were it was and it's
-      confusing.
-- [ ] Is there a lock problem in log_diagnostic and enable_log_file? Try to learn something
-      from it.
-- [ ] Floating windows are drawn below window separators.
-- [ ] Sometimes find file recursively doesn't work or anyway does not produce any completion.
-      Inspect it please.
 
 * Macro todo 
 - [ ] Module dependency system (with functions like provide and requires) with a cached module
