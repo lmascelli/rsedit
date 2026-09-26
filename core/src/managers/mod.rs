@@ -25,6 +25,7 @@ mod commands;
 mod kill_yank;
 mod log;
 mod modes;
+mod runtime;
 mod windows;
 
 pub use buffers::{Buffers, Removed as BufferRemoved, SCRATCH};
@@ -32,6 +33,7 @@ pub use commands::Commands;
 pub use kill_yank::KillYank;
 pub use log::Log;
 pub use modes::Modes;
+pub use runtime::Runtime;
 pub use windows::{
     DRAG_SCROLL_INTERVAL, Hit, MouseDrag, Removed as WindowRemoved, Scrolled, Windows,
 };

@@ -12,7 +12,7 @@ use crate::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
     managers::{
-        BufferRemoved, Buffers, Commands, Hit, KillYank, Log, Modes, MouseDrag, Scrolled,
+        BufferRemoved, Buffers, Commands, Hit, KillYank, Log, Modes, MouseDrag, Runtime, Scrolled,
         WindowRemoved, Windows,
     },
     minibuffer::install_minibuffer,
@@ -258,18 +258,6 @@ pub struct EditorState<B: BufferTrait> {
     /// lock and not seven.
     kill_yank: Arc<RwLock<KillYank>>,
 
-    /// How each face is drawn. One theme for the whole editor -- a per-buffer
-    /// theme would mean two windows on the same file disagreeing about what a
-    /// keyword looks like.
-    /// How each face is drawn. One theme for the whole editor.
-    ///
-    /// `Arc<Theme>` inside the lock, not a bare `Theme`: every frame takes a
-    /// copy, and now that the face set is open a theme is a heap-allocated
-    /// `Vec` rather than a fixed array -- so copying one per frame would mean
-    /// allocating per frame. Sharing it costs a refcount, and changing it
-    /// (`set-face`, which happens when configuration is read) makes a new one.
-    theme: Arc<RwLock<Arc<Theme>>>,
-
     /// Keys pressed so far that do not yet make a complete binding.
     ///
     /// On the editor rather than on a mode, because a mode keymap is consulted
@@ -281,36 +269,23 @@ pub struct EditorState<B: BufferTrait> {
     /// and a clear rather than an allocation on the keystroke path.
     pending_keys: Arc<RwLock<Vec<KeyEvent>>>,
 
-    /// Column that repeated vertical movement is aiming for.
-    ///
-    /// Moving down through a short line and back up must return to the
-    /// column you started from, so the target column is remembered rather
-    /// than re-read from the cursor -- which a short line would have clamped.
-    goal_column: Arc<RwLock<Option<usize>>>,
-
-    /// Execution budget for Lisp evaluation.
-    fuel: Arc<FuelMeter>,
     /// Diagnostics, and the file they are mirrored to when one is enabled.
     /// See [`Log`].
     log: Arc<RwLock<Log>>,
 
-    /// The incremental search currently running, between one keystroke and the
-    /// next. See `crate::search::Isearch`.
-    isearch: Arc<RwLock<Option<Isearch>>>,
-
-    /// The call stack, as maintained by `LispContext::push_call_frame` /
-    /// `pop_call_frame` (see their docs for the exact protocol). Frozen at
-    /// its state at the moment of the most recent uncaught error until
-    /// something calls `clear_backtrace` -- typically whoever caught that
-    /// error, once it's done reporting it.
-    call_stack: Arc<RwLock<Vec<String>>>,
+    /// The execution budget, the call stack, the theme, where vertical
+    /// movement is aiming and the search in progress. See [`Runtime`] -- which
+    /// is candid about grouping by lifetime rather than by a shared invariant.
+    runtime: Arc<RwLock<Runtime>>,
 }
 
 impl<B: BufferTrait> LispContext for EditorState<B> {
     fn consume_fuel(&self, amount: u32) -> Result<(), EvalError<EditorState<B>>> {
         // The meter reports a host-agnostic `Exhausted`; naming it as a Lisp
         // error is the host's job, which is the point of the split.
-        self.fuel.consume(amount).map_err(|_| EvalError::OutOfFuel)
+        self.runtime(|runtime| runtime.fuel())
+            .consume(amount)
+            .map_err(|_| EvalError::OutOfFuel)
     }
 
     fn log_diagnostic(&self, msg: &str) {
@@ -330,39 +305,27 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
     fn begin_unwind(&self) {
         // Roughly a hundredth of a command's budget: ample for closing a file
         // or restoring a variable, far too little to hide a runaway loop.
-        self.fuel.grant(100_000);
+        self.runtime(|runtime| runtime.fuel()).grant(100_000);
     }
 
     fn begin_thread_evaluation(&self) {
-        self.fuel.arm_thread();
+        self.runtime(|runtime| runtime.fuel()).arm_thread();
     }
 
     fn push_call_frame(&self, frame: &str) {
-        self.call_stack
-            .write()
-            .expect("Failed to acquire write lock on call_stack")
-            .push(frame.to_string());
+        self.runtime_mut(|runtime| runtime.push_call_frame(frame));
     }
 
     fn pop_call_frame(&self) {
-        self.call_stack
-            .write()
-            .expect("Failed to acquire write lock on call_stack")
-            .pop();
+        self.runtime_mut(|runtime| runtime.pop_call_frame());
     }
 
     fn call_frame_depth(&self) -> usize {
-        self.call_stack
-            .read()
-            .expect("Failed to acquire read lock on call_stack")
-            .len()
+        self.runtime(|runtime| runtime.call_frame_depth())
     }
 
     fn truncate_call_frames(&self, depth: usize) {
-        self.call_stack
-            .write()
-            .expect("Failed to acquire write lock on call_stack")
-            .truncate(depth);
+        self.runtime_mut(|runtime| runtime.truncate_call_frames(depth));
     }
 }
 
@@ -397,13 +360,11 @@ impl<B: BufferTrait> EditorState<B> {
             commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
             kill_yank: Arc::new(RwLock::new(KillYank::default())),
-            theme: Arc::new(RwLock::new(Arc::new(Theme::default()))),
             pending_keys: Arc::new(RwLock::new(Vec::new())),
-            goal_column: Arc::new(RwLock::new(None)),
-            fuel: Arc::new(FuelMeter::new(DEFAULT_FUEL)),
+            runtime: Arc::new(RwLock::new(Runtime::new(Arc::new(FuelMeter::new(
+                DEFAULT_FUEL,
+            ))))),
             log: Arc::new(RwLock::new(Log::default())),
-            isearch: Arc::new(RwLock::new(None)),
-            call_stack: Arc::new(RwLock::new(Vec::new())),
         };
         BackgroundScheduler::spawn(receiver, editor_state.clone());
         // Colouring runs from here on, a bounded chunk at a time. Started at
@@ -1115,10 +1076,7 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Start, or continue, an incremental search.
     pub(crate) fn begin_isearch(&self, session: Isearch) {
-        *self
-            .isearch
-            .write()
-            .expect("Failed to acquire write lock on isearch") = Some(session);
+        self.runtime_mut(|runtime| runtime.begin_isearch(session));
     }
 
     /// Take the running search *out* of the editor, leaving none behind.
@@ -1131,19 +1089,13 @@ impl<B: BufferTrait> EditorState<B> {
     /// [`Self::begin_isearch`] when the search continues, and simply drops it
     /// when it does not.
     pub(crate) fn take_isearch(&self) -> Option<Isearch> {
-        self.isearch
-            .write()
-            .expect("Failed to acquire write lock on isearch")
-            .take()
+        self.runtime_mut(|runtime| runtime.take_isearch())
     }
 
     /// Whether an incremental search is running. Only for reporting -- anything
     /// that acts on the session takes it.
     pub(crate) fn isearch_active(&self) -> bool {
-        self.isearch
-            .read()
-            .expect("Failed to acquire read lock on isearch")
-            .is_some()
+        self.runtime(|runtime| runtime.isearch_active())
     }
 
     /// The argument waiting for the next command, if any.
@@ -2184,13 +2136,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// `LispContext::push_call_frame` for the capture protocol and its
     /// tail-call caveat.
     pub fn backtrace(&self) -> Vec<String> {
-        let mut frames = self
-            .call_stack
-            .read()
-            .expect("Failed to acquire read lock on call_stack")
-            .clone();
-        frames.reverse();
-        frames
+        self.runtime(|runtime| runtime.backtrace())
     }
 
     /// Discard the captured backtrace, so the next error starts from a
@@ -2198,10 +2144,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// catch and report an error (a key handler, `eval_file`, ...) should
     /// call this once they're done reading `backtrace()`.
     pub fn clear_backtrace(&self) {
-        self.call_stack
-            .write()
-            .expect("Failed to acquire write lock on call_stack")
-            .clear();
+        self.runtime_mut(|runtime| runtime.clear_backtrace());
     }
 
     /// Convenience for error-reporting call sites: returns a
@@ -2265,16 +2208,29 @@ impl<B: BufferTrait> EditorState<B> {
     /// outermost scope refills -- so a command that re-enters the evaluator, via
     /// the Lisp-callable `eval-file` primitive for instance, keeps spending the
     /// budget it already has instead of quietly being handed a new one.
-    pub(crate) fn begin_command(&self) -> FuelScope<'_> {
-        self.fuel.begin()
+    pub(crate) fn begin_command(&self) -> FuelScope {
+        // The meter is cloned out and the lock given straight back: a metered
+        // scope lasts a whole command, and holding this lock for that long
+        // would be holding it across the interpreter.
+        self.runtime(|runtime| runtime.fuel()).begin()
+    }
+
+    /// Ask the runtime something. Same rules as [`EditorState::windows`].
+    pub(crate) fn runtime<R>(&self, f: impl FnOnce(&Runtime) -> R) -> R {
+        f(&self.runtime.read().expect("read lock on runtime"))
+    }
+
+    /// Change it.
+    pub(crate) fn runtime_mut<R>(&self, f: impl FnOnce(&mut Runtime) -> R) -> R {
+        f(&mut self.runtime.write().expect("write lock on runtime"))
     }
 
     /// The execution meter behind [`Self::begin_command`].
     ///
     /// Exposed for `lisp::measure`, which needs the meter to hold a scope of
     /// its own for the duration of a measurement.
-    pub(crate) fn fuel_meter(&self) -> &FuelMeter {
-        &self.fuel
+    pub(crate) fn fuel_meter(&self) -> Arc<FuelMeter> {
+        self.runtime(|runtime| runtime.fuel())
     }
 
     // ---------------------------------------------------------------
@@ -2388,34 +2344,21 @@ impl<B: BufferTrait> EditorState<B> {
     /// The compiled-in defaults rather than a snapshot taken at startup, so
     /// this means the same thing however many themes have been applied since.
     pub(crate) fn reset_theme(&self) {
-        *self
-            .theme
-            .write()
-            .expect("Failed to acquire write lock on theme") = Arc::new(Theme::default());
+        self.runtime_mut(|runtime| runtime.reset_theme());
     }
 
     pub(crate) fn set_face_style(&self, face: Face, style: Style) {
         // Copy-on-write: whatever frames are already holding keep the theme
         // they were composed under, and the next one picks this up.
-        let mut theme = self
-            .theme
-            .write()
-            .expect("Failed to acquire write lock on theme");
-        Arc::make_mut(&mut theme).set(face, style);
+        self.runtime_mut(|runtime| runtime.set_face_style(face, style));
     }
 
     pub(crate) fn face_style(&self, face: Face) -> Style {
-        self.theme
-            .read()
-            .expect("Failed to acquire read lock on theme")
-            .style(face)
+        self.runtime(|runtime| runtime.face_style(face))
     }
 
     pub(crate) fn theme(&self) -> Arc<Theme> {
-        self.theme
-            .read()
-            .expect("Failed to acquire read lock on theme")
-            .clone()
+        self.runtime(|runtime| runtime.theme())
     }
 
     // ---------------------------------------------------------------
@@ -2548,17 +2491,11 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     pub(crate) fn goal_column(&self) -> Option<usize> {
-        *self
-            .goal_column
-            .read()
-            .expect("Failed to acquire read lock on goal_column")
+        self.runtime(|runtime| runtime.goal_column())
     }
 
     pub(crate) fn set_goal_column(&self, col: Option<usize>) {
-        *self
-            .goal_column
-            .write()
-            .expect("Failed to acquire write lock on goal_column") = col;
+        self.runtime_mut(|runtime| runtime.set_goal_column(col));
     }
 
     /// Every live buffer's name, sorted. Used for buffer-name completion.
@@ -2608,7 +2545,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// remaining fuel up to it. Exposed so the `set-command-fuel` primitive --
     /// and tests that want a deliberately tiny budget -- can reach it.
     pub(crate) fn set_fuel_budget(&self, budget: u32) {
-        self.fuel.set_budget(budget);
+        self.runtime(|runtime| runtime.fuel()).set_budget(budget);
     }
 
     /// Get the ID of the current focused window

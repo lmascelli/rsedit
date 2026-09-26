@@ -57,12 +57,17 @@ thread_local! {
 /// RAII rather than paired begin/end calls so that an early return or a `?`
 /// cannot leave the depth stuck above zero, which would permanently prevent
 /// any further refill.
+///
+/// It borrows nothing. The scope's whole state is the thread-local depth, so
+/// the guard never touches the meter again after `begin` has read the budget
+/// off it -- and a tether to the meter would have meant a host could not keep
+/// one behind a lock, which is exactly where a host's state usually lives.
 #[must_use = "the metered scope ends as soon as this guard is dropped"]
-pub struct FuelScope<'a> {
-    _meter: &'a FuelMeter,
+pub struct FuelScope {
+    _private: (),
 }
 
-impl Drop for FuelScope<'_> {
+impl Drop for FuelScope {
     fn drop(&mut self) {
         DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
     }
@@ -106,14 +111,14 @@ impl FuelMeter {
 
     /// Open a metered scope, refilling this thread's budget if it is the
     /// outermost one. Nested calls only deepen the count.
-    pub fn begin(&self) -> FuelScope<'_> {
+    pub fn begin(&self) -> FuelScope {
         DEPTH.with(|depth| {
             if depth.get() == 0 {
                 FUEL.set(self.budget.load(Ordering::Relaxed));
             }
             depth.set(depth.get() + 1);
         });
-        FuelScope { _meter: self }
+        FuelScope { _private: () }
     }
 
     /// Arm the calling thread's budget without opening a scope, for a freshly

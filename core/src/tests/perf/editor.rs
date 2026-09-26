@@ -69,7 +69,7 @@ pub(super) fn cost(report: &mut Report) {
                 .expect("*scratch* buffer must exist")
         };
         let before = length();
-        let (_, spent) = measure(state.fuel_meter(), || {
+        let (_, spent) = measure(&state.fuel_meter(), || {
             state.handle_key_event(char_event('a'), &env);
         });
         assert_eq!(

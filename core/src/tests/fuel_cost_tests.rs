@@ -54,7 +54,7 @@ mod tests {
     fn cost(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> u64 {
         let ast = Parser::new(src).next().expect("source must parse");
         let (outcome, spent) =
-            crate::lisp::measure(ctx.fuel_meter(), || eval(&ast, env.clone(), ctx));
+            crate::lisp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), ctx));
         outcome.unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"));
         spent
     }
@@ -221,7 +221,7 @@ mod tests {
             .next()
             .expect("source must parse");
         let (outcome, spent) =
-            crate::lisp::measure(ctx.fuel_meter(), || eval(&ast, env.clone(), &ctx));
+            crate::lisp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), &ctx));
         assert!(outcome.is_ok());
         assert!(
             spent >= 5000,
