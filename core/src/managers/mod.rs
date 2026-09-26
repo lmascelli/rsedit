@@ -21,10 +21,12 @@
 //!   consequences outside its own fields -- a buffer to repoint, a window to
 //!   refocus -- it returns an enum saying so and lets the facade act.
 mod buffers;
+mod commands;
 mod modes;
 mod windows;
 
 pub use buffers::{Buffers, Removed as BufferRemoved, SCRATCH};
+pub use commands::Commands;
 pub use modes::Modes;
 pub use windows::{
     DRAG_SCROLL_INTERVAL, Hit, MouseDrag, Removed as WindowRemoved, Scrolled, Windows,

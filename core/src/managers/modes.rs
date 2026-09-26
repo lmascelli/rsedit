@@ -71,6 +71,13 @@ pub struct Modes<B: BufferTrait> {
     transient: Option<TransientKeymap<B>>,
     /// Which commands offer to repeat, and with which key.
     repeat_keys: HashMap<String, KeyEvent>,
+    /// Hooks that run in every major mode, keyed by hook name.
+    ///
+    /// The global half of `MajorMode::hooks`, and here for the same reason
+    /// `global_keymap` and `global_completions` are: the two halves are merged
+    /// on every read, so keeping them apart meant every reader knowing there
+    /// were two places and taking them in the right order.
+    global_hooks: HashMap<String, Vec<ELispExp<B>>>,
 }
 
 impl<B: BufferTrait> Modes<B> {
@@ -82,6 +89,7 @@ impl<B: BufferTrait> Modes<B> {
             auto_modes: Vec::new(),
             transient: None,
             repeat_keys: HashMap::new(),
+            global_hooks: HashMap::new(),
         }
     }
 
@@ -269,5 +277,44 @@ impl<B: BufferTrait> Modes<B> {
     /// The key that repeats COMMAND, if it has one.
     pub fn repeat_key(&self, command: &str) -> Option<KeyEvent> {
         self.repeat_keys.get(command).cloned()
+    }
+
+    // ------------------------------------------------------------------
+    // Hooks
+    // ------------------------------------------------------------------
+
+    /// Register FUNCTION to run under HOOK_NAME in every major mode.
+    pub fn add_global_hook(&mut self, hook_name: &str, function: ELispExp<B>) {
+        self.global_hooks
+            .entry(hook_name.to_string())
+            .or_default()
+            .push(function);
+    }
+
+    /// Everything registered under HOOK_NAME for MODE: the mode's own first,
+    /// then the ones registered for every mode.
+    ///
+    /// A mode-specific hook is the more specific statement about this buffer,
+    /// so it gets to act before anything general reacts to the result.
+    ///
+    /// Copied out, and the caller must let this lock go before running any of
+    /// them. A hook can call `add-hook`, `define-key`, `make-mode` or
+    /// `add-syntax-rule`, every one of which wants this lock on the write
+    /// side -- which is not a race but a hang, every time, on one thread,
+    /// from ordinary user Lisp.
+    pub fn hooks_for(&self, mode: &str, hook_name: &str) -> Vec<ELispExp<B>> {
+        let mut hooks: Vec<ELispExp<B>> = self
+            .registry
+            .get(mode)
+            .and_then(|mode| mode.hooks.get(hook_name))
+            .cloned()
+            .unwrap_or_default();
+        hooks.extend(
+            self.global_hooks
+                .get(hook_name)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        hooks
     }
 }

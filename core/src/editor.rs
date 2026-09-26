@@ -1,9 +1,9 @@
 use crate::{
     ELispExp,
     buffer::{Buffer, BufferTrait},
-    commands::{ArgSpec, CommandRegistry, Invocation, PendingCommand, PrefixArg},
+    commands::{ArgSpec, Invocation, PrefixArg},
     input::{
-        KeyCode, KeyEvent, Keymap, MouseButton, MouseEvent, MouseKind, OnUnbound, TransientKeymap,
+        KeyEvent, Keymap, MouseButton, MouseEvent, MouseKind, OnUnbound, TransientKeymap,
         describe_keys, fill_default_keymaps,
     },
     isearch::install_isearch,
@@ -11,7 +11,9 @@ use crate::{
     lisp::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
-    managers::{BufferRemoved, Buffers, Hit, Modes, MouseDrag, Scrolled, WindowRemoved, Windows},
+    managers::{
+        BufferRemoved, Buffers, Commands, Hit, Modes, MouseDrag, Scrolled, WindowRemoved, Windows,
+    },
     minibuffer::install_minibuffer,
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     modes::prescan::Prescanner,
@@ -26,7 +28,6 @@ use crate::{
     },
 };
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::Write,
     path::PathBuf,
@@ -231,24 +232,10 @@ pub struct EditorState<B: BufferTrait> {
     /// leave focus naming a window the layout has already removed.
     windows: Arc<RwLock<Windows>>,
 
-    /// Which named functions the user may invoke by name, and what arguments
-    /// the editor collects for each. See `crate::commands`.
-    commands: Arc<RwLock<CommandRegistry>>,
-
-    /// Commands whose arguments are still being collected, innermost last.
-    /// See `crate::commands::PendingCommand`.
-    pending_commands: Arc<RwLock<Vec<PendingCommand<ELispExp<B>>>>>,
-
-    /// Name of the command that ran immediately before the current one.
-    ///
-    /// Emacs' `last-command`. A command that wants to know whether it is a
-    /// repeat of itself needs this: vertical movement uses it to decide
-    /// whether a goal column is still in play, and appending kills (#20) will
-    /// want it too.
-    /// Held as the symbol's own `Arc` rather than a fresh `String`: this is
-    /// written on every keystroke, and a name that is already interned in the
-    /// keymap does not need copying to be remembered.
-    last_command: Arc<RwLock<Option<Arc<String>>>>,
+    /// What can be invoked by name, what is part-way through being invoked,
+    /// and what was invoked last. See [`Commands`], which says why those are
+    /// one lock and not five.
+    commands: Arc<RwLock<Commands<B>>>,
 
     /// How many shell commands are still running.
     ///
@@ -264,29 +251,6 @@ pub struct EditorState<B: BufferTrait> {
     /// A count rather than a flag because several commands can run at once,
     /// each into a buffer of its own.
     shell_commands: Arc<AtomicUsize>,
-
-    /// Hooks that run in every major mode, keyed by hook name.
-    ///
-    /// A mode's own hooks live on the mode (see `MajorMode::hooks`), which is
-    /// right for anything that is about *this kind of buffer*. Some things are
-    /// not: the completion strip has to redraw after any command that changed
-    /// what was typed, and what the buffer's mode happens to be has nothing to
-    /// do with it. Registering such a hook in every mode separately would work
-    /// until somebody defined a mode afterwards.
-    ///
-    /// Reached from Lisp as `(add-hook nil HOOK FUNCTION)` -- nil meaning
-    /// everywhere, the same way it does in `define-key`.
-    global_hooks: Arc<RwLock<HashMap<String, Vec<ELispExp<B>>>>>,
-
-    /// The last command as a form that can be evaluated again, which is what
-    /// `repeat` re-runs.
-    ///
-    /// Separate from `last_command` because that holds a *name*, and a name is
-    /// not enough to run anything: the keymaps store `(self-insert "a")`, and
-    /// the character is in the form rather than in the name. Stored after the
-    /// `call-interactively` rewrite, so what is kept is the form that actually
-    /// ran -- which means repeating a command that prompts, prompts again.
-    last_command_form: Arc<RwLock<Option<ELispExp<B>>>>,
 
     /// Killed and copied text, shared by every buffer so that a kill in one
     /// can be yanked into another.
@@ -319,15 +283,6 @@ pub struct EditorState<B: BufferTrait> {
     /// allocating per frame. Sharing it costs a refcount, and changing it
     /// (`set-face`, which happens when configuration is read) makes a new one.
     theme: Arc<RwLock<Arc<Theme>>>,
-
-    /// The argument being built for the next command, and whether the digit
-    /// keys are still being read into it.
-    ///
-    /// Two fields because "there is an argument" and "digits still extend it"
-    /// are different: after `C-u 4 C-x`, the four is still the next command's
-    /// argument, but the `4` in a following `C-x 4 f` belongs to the key
-    /// sequence, not to the number.
-    prefix_arg: Arc<RwLock<(Option<PrefixArg>, bool)>>,
 
     /// Keys pressed so far that do not yet make a complete binding.
     ///
@@ -475,16 +430,11 @@ impl<B: BufferTrait> EditorState<B> {
             echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
             modes: Arc::new(RwLock::new(Modes::new(keymaps))),
             windows: Arc::new(RwLock::new(Windows::default())),
-            commands: Arc::new(RwLock::new(CommandRegistry::new())),
-            pending_commands: Arc::new(RwLock::new(Vec::new())),
-            last_command: Arc::new(RwLock::new(None)),
-            last_command_form: Arc::new(RwLock::new(None)),
-            global_hooks: Arc::new(RwLock::new(HashMap::new())),
+            commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
             kill_ring: Arc::new(RwLock::new(KillRing::default())),
             pending_clipboard: Arc::new(RwLock::new(None)),
             theme: Arc::new(RwLock::new(Arc::new(Theme::default()))),
-            prefix_arg: Arc::new(RwLock::new((None, false))),
             pending_keys: Arc::new(RwLock::new(Vec::new())),
             last_command_killed: Arc::new(AtomicBool::new(false)),
             this_command_killed: Arc::new(AtomicBool::new(false)),
@@ -1046,42 +996,22 @@ impl<B: BufferTrait> EditorState<B> {
     /// when no argument is being built, which is how you can still type the
     /// number four into a buffer.
     fn read_prefix_argument(&self, event: &KeyEvent) -> bool {
-        let mut state = self
-            .prefix_arg
-            .write()
-            .expect("Failed to acquire write lock on prefix_arg");
-        let (arg, reading) = &mut *state;
+        self.commands_mut(|commands| commands.read_prefix_argument(event))
+    }
 
-        // C-u: start an argument, or multiply the one being built by four.
-        if event.modifiers.ctrl && !event.modifiers.alt && event.code == KeyCode::Char('u') {
-            *arg = Some(match (*arg, *reading) {
-                (Some(PrefixArg::Raw(times)), true) => PrefixArg::Raw(times + 1),
-                _ => PrefixArg::Raw(1),
-            });
-            *reading = true;
-            return true;
-        }
+    // ---------------------------------------------------------------
+    // The command compartment
+    // ---------------------------------------------------------------
 
-        if *reading
-            && let KeyCode::Char(c) = event.code
-            && !event.modifiers.ctrl
-            && !event.modifiers.alt
-        {
-            if let Some(digit) = c.to_digit(10) {
-                arg.get_or_insert(PrefixArg::Raw(1)).push_digit(digit);
-                return true;
-            }
-            // A minus is only a sign, and only before any digits.
-            if c == '-' && matches!(*arg, Some(PrefixArg::Raw(_))) {
-                *arg = Some(PrefixArg::Negative);
-                return true;
-            }
-        }
+    /// Ask the commands something. Same rules as [`EditorState::windows`].
+    pub(crate) fn commands<R>(&self, f: impl FnOnce(&Commands<B>) -> R) -> R {
+        f(&self.commands.read().expect("read lock on commands"))
+    }
 
-        // Whatever this key is, it is not part of the argument -- so the
-        // argument is finished, even though it has not been used yet.
-        *reading = false;
-        false
+    /// Change them -- register one, take a prefix argument, push an argument
+    /// onto the pending stack.
+    pub(crate) fn commands_mut<R>(&self, f: impl FnOnce(&mut Commands<B>) -> R) -> R {
+        f(&mut self.commands.write().expect("write lock on commands"))
     }
 
     // ---------------------------------------------------------------
@@ -1264,10 +1194,7 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// The argument waiting for the next command, if any.
     pub(crate) fn prefix_argument(&self) -> Option<PrefixArg> {
-        self.prefix_arg
-            .read()
-            .expect("Failed to acquire read lock on prefix_arg")
-            .0
+        self.commands(|commands| commands.prefix_argument())
     }
 
     /// Abandon whatever is half-finished: a key sequence, a prefix argument.
@@ -1311,10 +1238,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// anything consumed it: an argument belongs to exactly one command, and
     /// one that errors must not leave its argument for the next.
     pub(crate) fn clear_prefix_argument(&self) {
-        *self
-            .prefix_arg
-            .write()
-            .expect("Failed to acquire write lock on prefix_arg") = (None, false);
+        self.commands_mut(|commands| commands.clear_prefix_argument());
     }
 
     /// Add EVENT to the sequence being typed, and say what to run.
@@ -1563,10 +1487,7 @@ impl<B: BufferTrait> EditorState<B> {
         // repeat the repeating rather than the thing repeated, and every press
         // after that would too.
         if this_command.as_deref().map(String::as_str) != Some("repeat") {
-            *self
-                .last_command_form
-                .write()
-                .expect("Failed to acquire write lock on last_command_form") = Some(ast);
+            self.commands_mut(|commands| commands.set_last_form(Some(ast)));
         }
         self.install_repeat_keymap(this_command.as_deref().map(String::as_str));
         self.set_last_command(this_command);
@@ -1877,24 +1798,11 @@ impl<B: BufferTrait> EditorState<B> {
         // callback into the interpreter. Lisp can re-enter the editor through
         // any primitive, so a lock held across `eval` is a lock offered to
         // arbitrary code.
-        let mut hooks: Vec<ELispExp<B>> = self.modes(|modes| {
-            modes
-                .get(mode_name)
-                .and_then(|mode| mode.hooks.get(hook_name))
-                .cloned()
-                .unwrap_or_default()
-        });
-        // The mode's own first, then the ones registered for every mode. A
-        // mode-specific hook is the more specific statement about this buffer,
-        // so it gets to act before anything general reacts to the result.
-        hooks.extend(
-            self.global_hooks
-                .read()
-                .expect("Failed to acquire read lock on global hooks")
-                .get(hook_name)
-                .cloned()
-                .unwrap_or_default(),
-        );
+        // One acquisition for both halves. The mode's own hooks and the ones
+        // registered for every mode used to be two locks read in sequence; they
+        // are one compartment now, so a hook added to one half between the two
+        // reads can no longer produce a list that was never true at any instant.
+        let hooks = self.modes(|modes| modes.hooks_for(mode_name, hook_name));
 
         for hook in hooks {
             let hook_call = ELispExp::form(vec![hook.clone()]);
@@ -2419,10 +2327,7 @@ impl<B: BufferTrait> EditorState<B> {
         remaining: Vec<ArgSpec>,
         invocation: Invocation,
     ) {
-        self.pending_commands
-            .write()
-            .expect("Failed to acquire write lock on pending_commands")
-            .push(PendingCommand::new(name, remaining, invocation));
+        self.commands_mut(|commands| commands.push_pending(name, remaining, invocation));
     }
 
     /// Everything the editor can answer on the user's behalf, as it stands now.
@@ -2449,20 +2354,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// kinds, and two code paths that both maintain the pending stack would
     /// have to agree about it forever.
     pub(crate) fn fill_answerable_args(&self) -> Option<ArgSpec> {
-        let mut stack = self
-            .pending_commands
-            .write()
-            .expect("Failed to acquire write lock on pending_commands");
-        let pending = stack.last_mut()?;
-        while let Some(spec) = pending.remaining.first() {
-            if spec.prompts() {
-                return Some(spec.clone());
-            }
-            let values = answer_spec::<B>(spec, &pending.invocation);
-            pending.remaining.remove(0);
-            pending.collected.extend(values);
-        }
-        None
+        self.commands_mut(|commands| commands.fill_answerable_args())
     }
 
     /// How far through its arguments the innermost pending command is:
@@ -2474,26 +2366,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// on the answer -- and with two arguments, no hint of which one is being
     /// asked for.
     pub(crate) fn pending_progress(&self) -> Option<(String, usize, usize)> {
-        let stack = self
-            .pending_commands
-            .read()
-            .expect("Failed to acquire read lock on pending_commands");
-        let pending = stack.last()?;
-        let done = pending.collected.len();
-        Some((
-            pending.name.clone(),
-            done + 1,
-            done + pending.remaining.len(),
-        ))
+        self.commands(|commands| commands.pending_progress())
     }
 
     /// The argument the innermost pending command is waiting on.
     pub(crate) fn pending_current_spec(&self) -> Option<ArgSpec> {
-        self.pending_commands
-            .read()
-            .expect("Failed to acquire read lock on pending_commands")
-            .last()
-            .and_then(|pending| pending.current().cloned())
+        self.commands(|commands| commands.pending_current_spec())
     }
 
     /// Record VALUE as the innermost pending command's next argument.
@@ -2502,26 +2380,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// one's: the specs after this may be a mix of answerable and prompted,
     /// and only one place should know how to walk them.
     pub(crate) fn accept_pending_arg(&self, value: ELispExp<B>) {
-        let mut stack = self
-            .pending_commands
-            .write()
-            .expect("Failed to acquire write lock on pending_commands");
-        let Some(pending) = stack.last_mut() else {
-            return;
-        };
-        if !pending.remaining.is_empty() {
-            pending.remaining.remove(0);
-        }
-        pending.collected.push(value);
+        self.commands_mut(|commands| commands.accept_pending_arg(value));
     }
 
     /// Remove and return the innermost pending command.
     pub(crate) fn take_pending_command(&self) -> Option<(String, Vec<ELispExp<B>>)> {
-        self.pending_commands
-            .write()
-            .expect("Failed to acquire write lock on pending_commands")
-            .pop()
-            .map(|pending| (pending.name, pending.collected))
+        self.commands_mut(|commands| commands.take_pending())
     }
 
     /// Drop every pending command.
@@ -2531,10 +2395,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// path other than confirm or cancel. Without this, that orphan would be
     /// fed the *next* command's input.
     pub(crate) fn clear_pending_commands(&self) {
-        self.pending_commands
-            .write()
-            .expect("Failed to acquire write lock on pending_commands")
-            .clear();
+        self.commands_mut(|commands| commands.clear_pending());
     }
 
     /// Whether a minibuffer prompt is currently open.
@@ -2553,12 +2414,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// handing out a copy of the name would allocate on a path that runs
     /// between a key being pressed and the character appearing.
     pub(crate) fn last_command_is(&self, name: &str) -> bool {
-        self.last_command
-            .read()
-            .expect("Failed to acquire read lock on last_command")
-            .as_deref()
-            .map(String::as_str)
-            == Some(name)
+        self.commands(|commands| commands.last_was(name))
     }
 
     // ---------------------------------------------------------------
@@ -2766,27 +2622,16 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Register FUNCTION to run under HOOK_NAME in every major mode.
     pub(crate) fn add_global_hook(&self, hook_name: &str, function: ELispExp<B>) {
-        self.global_hooks
-            .write()
-            .expect("Failed to acquire write lock on global hooks")
-            .entry(hook_name.to_string())
-            .or_default()
-            .push(function);
+        self.modes_mut(|modes| modes.add_global_hook(hook_name, function));
     }
 
     /// The last command as a runnable form, for `repeat`.
     pub(crate) fn last_command_form(&self) -> Option<ELispExp<B>> {
-        self.last_command_form
-            .read()
-            .expect("Failed to acquire read lock on last_command_form")
-            .clone()
+        self.commands(|commands| commands.last_form())
     }
 
     pub(crate) fn set_last_command(&self, name: Option<Arc<String>>) {
-        *self
-            .last_command
-            .write()
-            .expect("Failed to acquire write lock on last_command") = name;
+        self.commands_mut(|commands| commands.set_last_name(name));
     }
 
     pub(crate) fn goal_column(&self) -> Option<usize> {
@@ -2823,10 +2668,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Idempotent by name: re-registering replaces the previous specs, so a
     /// user can change how an existing command prompts without restarting.
     pub(crate) fn register_command(&self, name: &str, specs: Vec<ArgSpec>) {
-        self.commands
-            .write()
-            .expect("Failed to acquire write lock on commands")
-            .insert(name.to_string(), specs);
+        self.commands_mut(|commands| commands.register(name, specs));
     }
 
     /// The arguments to collect for NAME, or `None` if it is not a command.
@@ -2837,31 +2679,16 @@ impl<B: BufferTrait> EditorState<B> {
     /// mean holding this lock across `eval` -- exactly the reentrancy that
     /// deadlocked `run_hook`.
     pub(crate) fn command_specs(&self, name: &str) -> Option<Vec<ArgSpec>> {
-        self.commands
-            .read()
-            .expect("Failed to acquire read lock on commands")
-            .get(name)
-            .cloned()
+        self.commands(|commands| commands.specs(name))
     }
 
     pub(crate) fn is_command(&self, name: &str) -> bool {
-        self.commands
-            .read()
-            .expect("Failed to acquire read lock on commands")
-            .contains_key(name)
+        self.commands(|commands| commands.is_command(name))
     }
 
     /// Every command name, sorted, for M-x completion.
     pub(crate) fn command_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .commands
-            .read()
-            .expect("Failed to acquire read lock on commands")
-            .keys()
-            .cloned()
-            .collect();
-        names.sort_unstable();
-        names
+        self.commands(|commands| commands.names())
     }
 
     /// Set how much fuel a fresh command receives, and top the current thread's
@@ -2995,43 +2822,6 @@ impl<B: BufferTrait> EditorState<B> {
         // compartments, one at a time.
         let mode = self.with_current_buffer(|buf| buf.current_mode.clone());
         self.syntax_table(&mode)
-    }
-}
-
-/// What the editor hands a command for an argument it answers itself.
-///
-/// One spec can produce more than one value -- `r` is the region's *two* ends,
-/// exactly as `interactive "r"` is in Emacs -- so this returns a list rather
-/// than a value.
-fn answer_spec<B: BufferTrait>(spec: &ArgSpec, invocation: &Invocation) -> Vec<ELispExp<B>> {
-    match spec {
-        // `p`: a plain count, and one when the user asked for nothing. This is
-        // what makes `(forward-char)` and `C-u 4 C-f` the same code path.
-        ArgSpec::Count => vec![ELispExp::number(
-            invocation.prefix_arg.map(|arg| arg.count()).unwrap_or(1) as f64,
-        )],
-        // `P`: the argument as given, so a command can tell "no argument" from
-        // "the argument 1", and a bare `C-u` from `C-u 4`. A bare `C-u` is a
-        // one-element list, as in Emacs, which is why `p` and `P` both exist.
-        ArgSpec::RawCount => vec![match invocation.prefix_arg {
-            None => ELispExp::nil(),
-            Some(PrefixArg::Raw(times)) => {
-                ELispExp::proper_list(vec![ELispExp::number(4i32.saturating_pow(times) as f64)])
-            }
-            Some(PrefixArg::Number(n)) => ELispExp::number(n as f64),
-            Some(PrefixArg::Negative) => ELispExp::symbol("-".into()),
-        }],
-        // `r`: start then end. `call-interactively` refuses the command before
-        // this is reached when there is no region, so the fallback is
-        // unreachable rather than a silent default.
-        ArgSpec::Region => {
-            let (start, end) = invocation.region.unwrap_or((0, 0));
-            vec![ELispExp::number(start as f64), ELispExp::number(end as f64)]
-        }
-        prompted => {
-            debug_assert!(prompted.prompts(), "an unprompted spec with no answer");
-            Vec::new()
-        }
     }
 }
 
