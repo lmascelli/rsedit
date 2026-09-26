@@ -7,12 +7,13 @@ use crate::{
         describe_keys, fill_default_keymaps,
     },
     isearch::install_isearch,
-    kill_ring::{Direction, KillRing},
+    kill_ring::Direction,
     lisp::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
     managers::{
-        BufferRemoved, Buffers, Commands, Hit, Modes, MouseDrag, Scrolled, WindowRemoved, Windows,
+        BufferRemoved, Buffers, Commands, Hit, KillYank, Modes, MouseDrag, Scrolled, WindowRemoved,
+        Windows,
     },
     minibuffer::install_minibuffer,
     modes::highlighter::{Highlighter, TURN_INTERVAL},
@@ -252,25 +253,10 @@ pub struct EditorState<B: BufferTrait> {
     /// each into a buffer of its own.
     shell_commands: Arc<AtomicUsize>,
 
-    /// Killed and copied text, shared by every buffer so that a kill in one
-    /// can be yanked into another.
-    kill_ring: Arc<RwLock<KillRing>>,
-
-    /// Text waiting to be handed to the *system* clipboard, or `None` when
-    /// there is nothing outstanding.
-    ///
-    /// # Why the editor cannot just do it
-    ///
-    /// Putting text in the system clipboard means writing an OSC 52 escape to
-    /// the terminal, and the editor does not own the terminal -- it does not
-    /// know it has one. So a kill leaves the text here, [`Self::snapshot`]
-    /// *takes* it onto the frame, and the renderer -- the one part that does
-    /// own stdout -- emits it. Same shape as everything else the renderer
-    /// draws, arrived at for the same reason.
-    ///
-    /// Taken rather than read, so one kill sends one escape however many
-    /// frames get drawn afterwards.
-    pending_clipboard: Arc<RwLock<Option<String>>>,
+    /// Killed text, what a yank put where, and whether the command before
+    /// this one did either. See [`KillYank`], which says why those are one
+    /// lock and not seven.
+    kill_yank: Arc<RwLock<KillYank>>,
 
     /// How each face is drawn. One theme for the whole editor -- a per-buffer
     /// theme would mean two windows on the same file disagreeing about what a
@@ -294,26 +280,6 @@ pub struct EditorState<B: BufferTrait> {
     /// the common case -- a single key that is a whole binding -- costs a push
     /// and a clear rather than an allocation on the keystroke path.
     pending_keys: Arc<RwLock<Vec<KeyEvent>>>,
-
-    /// Whether the command *before* this one killed, and whether this one has.
-    ///
-    /// A pair rather than one flag because the question -- "is this kill
-    /// continuing a run?" -- is asked during a command about the one before
-    /// it, so the answer has to be settled before the command runs and
-    /// recorded while it does. `handle_key_event` rolls the second into the
-    /// first between commands, exactly as it does for `last_command`.
-    ///
-    /// Deliberately *not* rolled over inside a single Lisp function: two
-    /// `(kill-line)` calls in one `defun` append into one entry, which is what
-    /// Emacs does too and what makes a Lisp-driven kill loop useful.
-    last_command_killed: Arc<AtomicBool>,
-    this_command_killed: Arc<AtomicBool>,
-
-    /// Where the last yank put its text, so `yank-pop` knows what to replace,
-    /// and whether the previous command was that yank.
-    last_yank: Arc<RwLock<Option<(usize, usize)>>>,
-    last_command_yanked: Arc<AtomicBool>,
-    this_command_yanked: Arc<AtomicBool>,
 
     /// Column that repeated vertical movement is aiming for.
     ///
@@ -432,15 +398,9 @@ impl<B: BufferTrait> EditorState<B> {
             windows: Arc::new(RwLock::new(Windows::default())),
             commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
-            kill_ring: Arc::new(RwLock::new(KillRing::default())),
-            pending_clipboard: Arc::new(RwLock::new(None)),
+            kill_yank: Arc::new(RwLock::new(KillYank::default())),
             theme: Arc::new(RwLock::new(Arc::new(Theme::default()))),
             pending_keys: Arc::new(RwLock::new(Vec::new())),
-            last_command_killed: Arc::new(AtomicBool::new(false)),
-            this_command_killed: Arc::new(AtomicBool::new(false)),
-            last_yank: Arc::new(RwLock::new(None)),
-            last_command_yanked: Arc::new(AtomicBool::new(false)),
-            this_command_yanked: Arc::new(AtomicBool::new(false)),
             goal_column: Arc::new(RwLock::new(None)),
             fuel: Arc::new(FuelMeter::new(DEFAULT_FUEL)),
             logs: Arc::new(RwLock::new(Vec::new())),
@@ -2469,32 +2429,20 @@ impl<B: BufferTrait> EditorState<B> {
     /// continued kill joins onto, so a backward kill does not assemble its
     /// text inside out.
     pub(crate) fn kill(&self, text: String, direction: Direction, env: &Arc<Env<Self>>) {
-        let continuing = self.last_command_killed.load(Ordering::Relaxed);
-        self.this_command_killed.store(true, Ordering::Relaxed);
-        let mut ring = self
-            .kill_ring
-            .write()
-            .expect("Failed to acquire write lock on kill_ring");
-        if continuing {
-            ring.append(text, direction);
-        } else {
-            ring.push(text);
-        }
-        // The system clipboard gets whatever the ring now holds, not the
-        // fragment that just arrived: a run of `C-k` is one kill as far as the
-        // user is concerned, and sending each line on its own would leave the
-        // clipboard holding the last line of a passage they meant to take
-        // whole. `current` is the entry `yank` would insert, which is exactly
-        // the promise the clipboard should be making.
-        if Self::clipboard_sync_enabled(env)
-            && let Some(current) = ring.current()
-        {
-            *self
-                .pending_clipboard
-                .write()
-                .expect("Failed to acquire write lock on pending_clipboard") =
-                Some(current.to_string());
-        }
+        // Asked before the lock is taken. It is a Lisp variable, and no
+        // compartment may be holding a lock when the interpreter is touched.
+        let to_clipboard = Self::clipboard_sync_enabled(env);
+        self.kill_yank_mut(|kills| kills.kill(text, direction, to_clipboard));
+    }
+
+    /// Ask the kill ring something. Same rules as [`EditorState::windows`].
+    pub(crate) fn kill_yank<R>(&self, f: impl FnOnce(&KillYank) -> R) -> R {
+        f(&self.kill_yank.read().expect("read lock on kill_yank"))
+    }
+
+    /// Change it -- kill, yank, rotate, or roll the flags over.
+    pub(crate) fn kill_yank_mut<R>(&self, f: impl FnOnce(&mut KillYank) -> R) -> R {
+        f(&mut self.kill_yank.write().expect("write lock on kill_yank"))
     }
 
     /// Whether killed text should also reach the system clipboard.
@@ -2514,61 +2462,36 @@ impl<B: BufferTrait> EditorState<B> {
     /// is what stops a redraw of an unchanged frame from re-sending the same
     /// escape.
     pub(crate) fn take_pending_clipboard(&self) -> Option<String> {
-        self.pending_clipboard
-            .write()
-            .expect("Failed to acquire write lock on pending_clipboard")
-            .take()
+        self.kill_yank_mut(|kills| kills.take_pending_clipboard())
     }
 
     /// What `yank` would insert, if anything.
     pub(crate) fn current_kill(&self) -> Option<String> {
-        self.kill_ring
-            .read()
-            .expect("Failed to acquire read lock on kill_ring")
-            .current()
-            .map(str::to_string)
+        self.kill_yank(|kills| kills.current())
     }
 
     /// The entry N kills back, without moving the ring.
     pub(crate) fn nth_kill(&self, n: usize) -> Option<String> {
-        self.kill_ring
-            .read()
-            .expect("Failed to acquire read lock on kill_ring")
-            .nth(n)
-            .map(str::to_string)
+        self.kill_yank(|kills| kills.nth(n))
     }
 
     /// Step the ring back one entry and return what is now current.
     pub(crate) fn rotate_kill_ring(&self) -> Option<String> {
-        self.kill_ring
-            .write()
-            .expect("Failed to acquire write lock on kill_ring")
-            .rotate()
-            .map(str::to_string)
+        self.kill_yank_mut(|kills| kills.rotate())
     }
 
     pub(crate) fn set_kill_ring_max(&self, max: usize) {
-        self.kill_ring
-            .write()
-            .expect("Failed to acquire write lock on kill_ring")
-            .set_max(max);
+        self.kill_yank_mut(|kills| kills.set_max(max));
     }
 
     pub(crate) fn kill_ring_len(&self) -> usize {
-        self.kill_ring
-            .read()
-            .expect("Failed to acquire read lock on kill_ring")
-            .len()
+        self.kill_yank(|kills| kills.len())
     }
 
     /// Remember that a yank put LEN characters at AT, so `yank-pop` knows what
     /// to take back out.
     pub(crate) fn note_yank(&self, at: usize, len: usize) {
-        self.this_command_yanked.store(true, Ordering::Relaxed);
-        *self
-            .last_yank
-            .write()
-            .expect("Failed to acquire write lock on last_yank") = Some((at, len));
+        self.kill_yank_mut(|kills| kills.note_yank(at, len));
     }
 
     /// What the previous command yanked, if the previous command was a yank.
@@ -2577,24 +2500,13 @@ impl<B: BufferTrait> EditorState<B> {
     /// meaningful directly after one; anything else in between and there is
     /// nothing it would be safe to remove.
     pub(crate) fn yank_to_replace(&self) -> Option<(usize, usize)> {
-        if !self.last_command_yanked.load(Ordering::Relaxed) {
-            return None;
-        }
-        *self
-            .last_yank
-            .read()
-            .expect("Failed to acquire read lock on last_yank")
+        self.kill_yank(|kills| kills.yank_to_replace())
     }
 
     /// Roll "this command" into "the previous command" for the flags that a
     /// command needs to ask about its predecessor.
     fn roll_over_command_flags(&self) {
-        for (last, this) in [
-            (&self.last_command_killed, &self.this_command_killed),
-            (&self.last_command_yanked, &self.this_command_yanked),
-        ] {
-            last.store(this.swap(false, Ordering::Relaxed), Ordering::Relaxed);
-        }
+        self.kill_yank_mut(|kills| kills.roll_over());
     }
 
     /// Note that a shell command has started.
