@@ -16,7 +16,8 @@
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
-    use crate::editor::{DEFAULT_INIT_LISP, EditorState, create_global_env};
+    use crate::editor::boot::DEFAULT_INIT_LISP;
+    use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyModifiers, MouseButton, MouseEvent, MouseKind};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
     use crate::managers::Hit;

@@ -11,7 +11,7 @@
 //! This editor's own source is the example. `create_global_env` holds the
 //! default init.lisp in a raw string, and one of its comments reads
 //! `; typing "(" gives you "()"`. That `(` opened a list that never closed, so
-//! `core/src/editor.rs` reported whole-file depth 1 for a file that balances --
+//! `core/src/editor/mod.rs` reported whole-file depth 1 for a file that balances --
 //! and electric-pair, which refuses to pair when the buffer already balances,
 //! paired everywhere in it.
 //!
@@ -419,7 +419,7 @@ fn push_call_frame(&self, frame: &str) %BODY%
         // not, and it is nearly always the table missing a construct again.
         let (ctx, env) = editor();
         for (name, source) in [
-            ("editor.rs", include_str!("../editor.rs")),
+            ("editor/mod.rs", include_str!("../editor/mod.rs")),
             ("modes.rs", include_str!("../primitives/modes.rs")),
             ("sexp.rs", include_str!("../modes/sexp.rs")),
             ("shell.rs", include_str!("../primitives/shell.rs")),
