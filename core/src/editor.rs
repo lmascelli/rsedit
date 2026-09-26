@@ -12,8 +12,8 @@ use crate::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
     managers::{
-        BufferRemoved, Buffers, Commands, Hit, KillYank, Modes, MouseDrag, Scrolled, WindowRemoved,
-        Windows,
+        BufferRemoved, Buffers, Commands, Hit, KillYank, Log, Modes, MouseDrag, Scrolled,
+        WindowRemoved, Windows,
     },
     minibuffer::install_minibuffer,
     modes::highlighter::{Highlighter, TURN_INTERVAL},
@@ -199,10 +199,10 @@ fn echo_timeout<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Option<Durati
 /// render and where.
 #[derive(Clone)]
 pub struct EditorState<B: BufferTrait> {
-    pub running: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
     /// A channel that is used to send work to a worker thread like
     /// the syntax highlighting computation
-    pub worker_mailbox: Sender<WorkerMessage<B>>,
+    worker_mailbox: Sender<WorkerMessage<B>>,
 
     /// Every buffer the editor holds, which one is current, and which were
     /// current lately. See [`Buffers`], which says why those are one lock and
@@ -214,7 +214,7 @@ pub struct EditorState<B: BufferTrait> {
     buffers: Arc<RwLock<Buffers<B>>>,
     /// The echo area's text together with when it was set, in one lock so a
     /// reader can never pair a new message with an old timestamp.
-    pub echo_message: Arc<RwLock<EchoMessage>>,
+    echo_message: Arc<RwLock<EchoMessage>>,
 
     /// What a mode is, what keys do, and where completions come from: the
     /// registry, the global keymap, the global completion list, the file-name
@@ -290,10 +290,10 @@ pub struct EditorState<B: BufferTrait> {
 
     /// Execution budget for Lisp evaluation.
     fuel: Arc<FuelMeter>,
-    /// Here the lisp VM will output its logs
-    logs: Arc<RwLock<Vec<String>>>,
-    /// If some, is the file where the logs will be written into
-    log_file: Option<Arc<RwLock<File>>>,
+    /// Diagnostics, and the file they are mirrored to when one is enabled.
+    /// See [`Log`].
+    log: Arc<RwLock<Log>>,
+
     /// The incremental search currently running, between one keystroke and the
     /// next. See `crate::search::Isearch`.
     isearch: Arc<RwLock<Option<Isearch>>>,
@@ -314,17 +314,15 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
     }
 
     fn log_diagnostic(&self, msg: &str) {
-        let mut lock = self
-            .logs
-            .write()
-            .expect("Failed to get the write lock on logs");
-        lock.push(msg.into());
-
-        if let Some(log_file) = &self.log_file {
-            log_file
-                .write()
-                .expect("Failed to acquire write lock on log_file")
-                .write_all(&format!("{msg}\n").into_bytes())
+        // The sink comes back out with the lock, and the write happens with it
+        // given back: a disk write inside the lock every diagnostic takes is a
+        // queue everything else logging has to wait in, and diagnostics are
+        // logged from the worker thread as well as this one.
+        let sink = self.log.write().expect("write lock on log").record(msg);
+        if let Some(file) = sink {
+            file.write()
+                .expect("Failed to acquire write lock on log file")
+                .write_all(format!("{msg}\n").as_bytes())
                 .expect("Failed to write into log file");
         }
     }
@@ -403,8 +401,7 @@ impl<B: BufferTrait> EditorState<B> {
             pending_keys: Arc::new(RwLock::new(Vec::new())),
             goal_column: Arc::new(RwLock::new(None)),
             fuel: Arc::new(FuelMeter::new(DEFAULT_FUEL)),
-            logs: Arc::new(RwLock::new(Vec::new())),
-            log_file: None,
+            log: Arc::new(RwLock::new(Log::default())),
             isearch: Arc::new(RwLock::new(None)),
             call_stack: Arc::new(RwLock::new(Vec::new())),
         };
@@ -432,25 +429,22 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Enable writing logs to the specified file.
-    pub fn enable_log_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
-        let mut log_file = File::create(path)?;
+    /// Start mirroring diagnostics to a file at PATH, writing out everything
+    /// logged so far first.
+    ///
+    /// `&self` rather than `&mut self`: the file used to be the one field here
+    /// not behind a lock, which meant enabling it needed exclusive access to
+    /// the whole editor -- and, because `EditorState` is `Clone`, that a clone
+    /// made afterwards was the only one that mirrored anything.
+    pub fn enable_log_file<P: AsRef<std::path::Path>>(&self, path: P) -> std::io::Result<()> {
         // TODO(uncertain) maybe this is an unwanted change, i don't know if it's better to be
         // able to enable the writing of the logs only at specific times and maybe disable it
         // to get only some logs.
-
-        // Write the previous unwritten log messages
-        for msg in self
-            .logs
-            .read()
-            .expect("Failed to acquire read lock on logs")
-            .iter()
-        {
-            log_file.write_all(&format!("[LOG] {msg}\n").into_bytes())?;
-        }
-        // _TODO
-
-        self.log_file.replace(Arc::new(RwLock::new(log_file)));
-        Ok(())
+        let file = File::create(path)?;
+        self.log
+            .write()
+            .expect("write lock on log")
+            .enable_file(file)
     }
 
     /// Eval a lisp file in the editor context. First it look for the file as an
@@ -2160,6 +2154,16 @@ impl<B: BufferTrait> EditorState<B> {
             .min()
     }
 
+    /// Send a task to the worker thread, and say whether it was accepted.
+    ///
+    /// The mailbox used to be a public field, so anything could post work to
+    /// the background scheduler. It is a method now for the same reason the
+    /// rest of the state is: there is exactly one queue, and the count of what
+    /// is in flight has to be kept in step with it -- see `begin_shell_command`.
+    pub(crate) fn send_to_worker(&self, message: WorkerMessage<B>) -> bool {
+        self.worker_mailbox.send(message).is_ok()
+    }
+
     /// Set the echo message to be MSG, and start its timeout running.
     pub fn set_echo_message(&self, msg: &str) {
         *self
@@ -2171,10 +2175,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Return every diagnostic logged so far via `log_diagnostic`, oldest
     /// first.
     pub fn get_logs(&self) -> Vec<String> {
-        self.logs
-            .read()
-            .expect("Failed to acquire read lock on logs")
-            .clone()
+        self.log.read().expect("read lock on log").lines()
     }
 
     /// Return the call stack captured at the point of the most recent

@@ -11,7 +11,7 @@ type BufferType = GapBuffer;
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
-    let (mut state, env) = match create_global_env::<BufferType>() {
+    let (state, env) = match create_global_env::<BufferType>() {
         Ok((state, env)) => (state, env),
         Err(err) => {
             eprintln!("{:?}", err);

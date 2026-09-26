@@ -86,7 +86,7 @@ mod tests {
     }
 
     fn echo(ctx: &Ctx) -> String {
-        ctx.echo_message.read().expect("read lock").text.clone()
+        ctx.get_echo_message()
     }
 
     fn strings(exp: &LispExp<Ctx>) -> Vec<String> {

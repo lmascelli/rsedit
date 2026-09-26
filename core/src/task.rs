@@ -19,7 +19,6 @@ pub enum WorkerMessage<B: BufferTrait> {
         task: Box<dyn ScheduledTask<B>>,
         interval: Duration,
     },
-    Shutdown,
 }
 
 pub struct Job<B: BufferTrait> {
@@ -61,7 +60,13 @@ impl BackgroundScheduler {
                         });
                     }
 
-                    Ok(WorkerMessage::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
+                    // The channel closing is what ends this thread: the last
+                    // `EditorState` going away drops the sender. There was a
+                    // `Shutdown` message here too, unreachable because nothing
+                    // could construct one -- which only went unnoticed while
+                    // the mailbox was a public field and the compiler had to
+                    // assume some caller outside might.
+                    Err(RecvTimeoutError::Disconnected) => {
                         break;
                     }
 

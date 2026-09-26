@@ -221,14 +221,10 @@ primitive!(shell_command_start, args, _env, ctx, {
     // reach it for a moment, and a frame drawn in that moment would decide
     // nothing was running and go back to sleep until a key was pressed.
     ctx.begin_shell_command();
-    if ctx
-        .worker_mailbox
-        .send(WorkerMessage::RunNow(Box::new(ShellTask {
-            child,
-            buffer: name.clone(),
-        })))
-        .is_err()
-    {
+    if !ctx.send_to_worker(WorkerMessage::RunNow(Box::new(ShellTask {
+        child,
+        buffer: name.clone(),
+    }))) {
         ctx.finish_shell_command();
         ctx.set_echo_message("The background worker has gone");
         return Ok(ELispExp::nil());
