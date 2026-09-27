@@ -1,9 +1,5 @@
 ;;; rust-mode --- colouring for Rust source.
 ;;;
-;;; A language module: a `make-mode', a grammar, and an `add-auto-mode' so
-;;; files of the right name open in it. Nothing here is special to Rust as far
-;;; as the editor is concerned -- copy the shape for another language.
-;;;
 ;;; Two things are worth knowing before writing one of these.
 ;;;
 ;;; The regexp engine has no lookahead, no lookbehind and no backreferences --

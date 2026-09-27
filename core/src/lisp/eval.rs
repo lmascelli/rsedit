@@ -1,5 +1,5 @@
 //!
-//! Add a genaral description of the eval system here
+//! TODO(doc) Add a genaral description of the eval system here
 //!
 
 // ========================================================================== //
@@ -91,8 +91,6 @@ fn eval_step<T: LispContext>(
     env: Arc<Env<T>>,
     ctx: &T,
 ) -> Result<EvalStep<T>, EvalError<T>> {
-    // Taken here and nowhere else, so that every nested evaluation starts
-    // without it. See `YIELD_PERMITTED`.
     let permitted = take_yield_permission();
     let step = eval_step_permitted(exp, env, ctx, permitted);
     // A tail call is the same statement continued: the body that granted this

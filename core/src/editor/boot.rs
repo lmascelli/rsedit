@@ -42,7 +42,12 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; without it, missing exactly that feature and nothing else.
 (eval-file "rust-mode")   ; colouring for Rust source
 (eval-file "risp-mode")   ; colouring and indentation for this editor's own Lisp
+(eval-file "cc-mode")     ; colouring for C/C++ source
 (eval-file "dired")       ; a directory in a buffer (C-x d)
+;; Makes dired sort directory entries by type (folders, files).
+(setq dired-sort 'type)
+
+
 (eval-file "completion")  ; Tab shows every candidate at once, in a strip
 (eval-file "clipboard")   ; kills also go to the system clipboard
 (eval-file "electric-pair") ; typing "(" gives you "()"

@@ -2,16 +2,25 @@
 #+title: rsedit
 
 * Working in progress.
+- [ ] Update the documentation in the doc folder for the base lisp interpreter. Make it in 
+      typst format so it can be updated without regenerating it every time from scratch.
+- [ ] History features for minibuffer prompts. history-previous and history-next commands
+      that can be bound to C-p or C-n when the minibuffer is in an insert state.
 
 * Fixes todo
+- [ ] In the base lisp interpreter there are both a Frame and a FiberState structs. Are there
+      both necessary at this point or they are redundant structures?
+- [ ] Yield is an variant of the Error enum, shouldn't it better suit in the LispExp enum? The 
+      same is maybe not valid for throw because it at least represent something related to an
+      error.
+- [ ] All completions sources where it is possible should be filled asynchronously in the same
+      loop where syntax-highlight sits. Still not sure of how this has been implemented.
+- [ ] Mouse movements: when a selection is active every mouse click change the section end.
+      Instead single clicking outside the selection should cancel the current one and double
+      clicking should start a new one.
 
 * Macro todo 
 - [ ] Module dependency system (with functions like provide and requires) with a cached module
       table so that the same dependency is not loaded twice.
-- [ ] Line numbers and decorator column for thing like breakpoint symbols or lsp warning
-- [ ] Sort by type in dired mode (configurable via a lisp variable)
-- [ ] All completions sources where it is possible should be filled asynchronously in the same
-      loop where syntax-highlight sits.
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
-
