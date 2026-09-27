@@ -97,6 +97,7 @@ mod shell;
 mod theme;
 mod ui;
 mod windows;
+mod workers;
 
 pub fn install_primitives<B: BufferTrait>(
     state: &EditorState<B>,
@@ -170,6 +171,23 @@ pub fn install_primitives<B: BufferTrait>(
         commands::command_execute_prompt,
         [] as [&str; 0],
         commands::COMMAND_EXECUTE_PROMPT_DOC
+    );
+    // Background workers. Plain functions rather than commands: a worker is
+    // defined by a module at load time, not run from M-x.
+    insert_fn!(
+        "define-worker",
+        workers::define_worker,
+        workers::DEFINE_WORKER_DOC
+    );
+    insert_fn!(
+        "stop-worker",
+        workers::stop_worker,
+        workers::STOP_WORKER_DOC
+    );
+    insert_fn!(
+        "running-workers",
+        workers::running_workers,
+        workers::RUNNING_WORKERS_DOC
     );
     insert_fn!(
         "all-buffer-names",

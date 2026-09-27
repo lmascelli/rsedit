@@ -24,6 +24,7 @@ mod symbol_tests;
 mod fiber_tests;
 mod fuel;
 mod thread_tests;
+mod yield_tests;
 // Handshake
 mod handshake;
 // Performance lives in `crate::tests::perf`, which measures the interpreter and

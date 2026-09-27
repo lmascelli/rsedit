@@ -217,4 +217,30 @@
   (message (if display-line-numbers "line numbers on" "line numbers off")))
 (register-command "toggle-line-numbers" nil)
 
+;; Background workers. `define-worker' runs a fiber on the same timer syntax
+;; colouring runs on, resuming it once per turn:
+;;
+;;   (define-worker 'indexer
+;;     (fiber (while t
+;;              (if (index--stale-p) (index--one-chunk))
+;;              (yield))))
+;;
+;; The `yield' is the whole contract: it is where the worker is willing to be
+;; put down, and everything between two of them is one turn's work. A turn has
+;; its own budget -- `worker-fuel' -- separate from the one commands run under,
+;; so nothing you type can cut a worker short and no worker can spend your
+;; budget. A turn that never reaches a `yield' is stopped and the worker
+;; retired, because the thread it holds is the one colouring runs on.
+;;
+;; `M-x list-workers' says which are running; `stop-worker' retires one.
+;; Defining a worker over an existing name replaces it, so re-evaluating a
+;; module leaves one worker rather than two.
+(defun list-workers ()
+  "Show which background workers are running."
+  (let ((names (running-workers)))
+    (if (null names)
+        (message "No workers running")
+        (message "Workers: %s" names))))
+(register-command "list-workers" nil)
+
 (log "End of the common-keymaps.lisp")

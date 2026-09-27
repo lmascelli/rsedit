@@ -293,6 +293,23 @@ impl<T: LispContext> LispExp<T> {
         if value { Self::t() } else { Self::nil() }
     }
 
+    /// Whether this is a fiber with nothing left to run, or `None` when it is
+    /// not a fiber at all.
+    ///
+    /// Here rather than reached for through `SharedFiber` by whoever wants to
+    /// know, so that a caller outside the interpreter -- the editor's worker
+    /// scheduler is the one -- does not have to be handed the lock to ask a
+    /// yes-or-no question. A poisoned lock reads as finished: a fiber whose
+    /// state cannot be read is not one anything should carry on resuming.
+    pub fn fiber_is_done(&self) -> Option<bool> {
+        match self {
+            LispExp::Fiber(fiber) => {
+                Some(fiber.0.read().map(|state| state.is_done).unwrap_or(true))
+            }
+            _ => None,
+        }
+    }
+
     pub fn is_nil(&self) -> bool {
         match self {
             LispExp::Symbol(s) => s.as_str() == "nil",

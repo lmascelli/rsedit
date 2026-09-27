@@ -31,6 +31,7 @@ use crate::{
     search::Isearch,
     ui::{Face, Style, Theme},
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct Runtime {
@@ -44,6 +45,37 @@ pub struct Runtime {
     /// error until something clears it.
     call_stack: Vec<String>,
     theme: Arc<Theme>,
+    /// Which run of each named background worker is the live one.
+    ///
+    /// # Why a number and not a list of live workers
+    ///
+    /// A worker is a job already sitting in the scheduler's list, and the
+    /// scheduler is on another thread; there is no handle to reach in and
+    /// remove one. What there is, is the job's own answer each turn to
+    /// "should I run again" -- so stopping a worker means arranging for it to
+    /// say no.
+    ///
+    /// A counter does that with no channel and no cancellation flag per
+    /// worker. Each turn a job compares the number it was born with against
+    /// the number here; defining a worker of the same name again, or stopping
+    /// one, bumps it, and the old job retires the next time it wakes. That is
+    /// also what makes re-evaluating a Lisp module safe: redefining a worker
+    /// replaces it rather than adding a second copy of it.
+    ///
+    /// A name with no entry has never had a worker.
+    workers: HashMap<String, WorkerSlot>,
+}
+
+/// What is known about one worker name.
+///
+/// `issued` only ever goes up, including when a worker is stopped -- that is
+/// what makes the retirement stick. Reusing a number would bring a job that
+/// had already been told to stop back to life the next time a worker of the
+/// same name was defined.
+#[derive(Clone, Copy, Debug, Default)]
+struct WorkerSlot {
+    issued: u64,
+    running: bool,
 }
 
 impl Runtime {
@@ -54,7 +86,73 @@ impl Runtime {
             fuel,
             call_stack: Vec::new(),
             theme: Arc::new(Theme::default()),
+            workers: HashMap::new(),
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Background workers
+    // ------------------------------------------------------------------
+
+    /// Retire whatever worker is running under NAME and hand out the number
+    /// the replacement should be born with.
+    ///
+    /// One operation rather than a stop and a start, because the two cannot be
+    /// allowed to interleave: between them a third caller would see a name
+    /// with no live generation and start a worker that the second half then
+    /// retired.
+    pub fn next_worker_generation(&mut self, name: &str) -> u64 {
+        let slot = self.workers.entry(name.to_string()).or_default();
+        slot.issued += 1;
+        slot.running = true;
+        slot.issued
+    }
+
+    /// Retire whatever worker is running under NAME. True when there was one.
+    ///
+    /// The retirement is not immediate: the job finds out the next time it
+    /// wakes, which is at most one turn away. Nothing waits for that -- a
+    /// caller that did would be blocking the command thread on the worker
+    /// thread, which is the arrangement this whole mechanism exists to avoid.
+    pub fn stop_worker(&mut self, name: &str) -> bool {
+        match self.workers.get_mut(name) {
+            Some(slot) if slot.running => {
+                slot.issued += 1;
+                slot.running = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Record that the worker born as GENERATION of NAME has stopped of its
+    /// own accord -- its program finished, or it spent its allowance.
+    ///
+    /// Ignored when the generation is not the live one, which is the case
+    /// that matters: a worker that was replaced and is only now waking up to
+    /// notice must not report the *replacement* as having stopped.
+    pub fn retire_worker(&mut self, name: &str, generation: u64) {
+        if let Some(slot) = self.workers.get_mut(name)
+            && slot.issued == generation
+        {
+            slot.running = false;
+        }
+    }
+
+    /// Whether GENERATION is still the live run of NAME.
+    pub fn worker_is_current(&self, name: &str, generation: u64) -> bool {
+        self.workers
+            .get(name)
+            .is_some_and(|slot| slot.running && slot.issued == generation)
+    }
+
+    /// The names with a worker running, in no particular order.
+    pub fn running_workers(&self) -> Vec<String> {
+        self.workers
+            .iter()
+            .filter(|(_, slot)| slot.running)
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     // ------------------------------------------------------------------

@@ -161,6 +161,29 @@ pub fn remaining() -> u32 {
     FUEL.get()
 }
 
+/// Set the calling thread's remaining fuel to exactly AMOUNT, whether that
+/// raises it or lowers it.
+///
+/// # Why this is not [`FuelMeter::grant`]
+///
+/// `grant` only ever raises, because it exists for a cleanup that must run
+/// after the budget is spent. This is for the opposite case: a host that runs
+/// *repeated, short* pieces of work on a thread of its own, and wants each one
+/// bounded by its own small allowance rather than by the editor-sized budget
+/// the thread would otherwise carry. Raising-only cannot express that -- the
+/// first turn would be handed `DEFAULT_FUEL` and a runaway one would hold the
+/// thread for a second.
+///
+/// # Why it is a free function
+///
+/// It sets a thread-local and reads no meter, so taking `&self` would be a
+/// parameter that exists only to look symmetrical -- and it would mean holding
+/// whatever lock the meter lives behind to touch state the meter does not own.
+/// [`remaining`] above is a free function for the same reason.
+pub fn set_remaining(amount: u32) {
+    FUEL.set(amount);
+}
+
 /// Run `body` with an effectively unlimited budget and report how much fuel it
 /// spent, alongside its result.
 ///

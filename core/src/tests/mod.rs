@@ -59,3 +59,4 @@ mod transient_tests;
 mod undo_tests;
 mod window_point_tests;
 mod window_tests;
+mod worker_tests;

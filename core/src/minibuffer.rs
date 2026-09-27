@@ -367,6 +367,20 @@ primitive!(minibuffer_read, args, env, ctx, {
             got: args.len(),
         });
     }
+    // A prompt is a conversation with whoever is at the keyboard, and a
+    // background worker is not talking to them. One opened from a worker's
+    // turn would be a window over a command nobody started, and the keystroke
+    // that answered it would arrive in the middle of whatever the user was
+    // actually doing -- so this is refused where it can still be reported as
+    // an error, rather than half-working somewhere confusing.
+    //
+    // A worker that genuinely needs an answer asks for it the way anything
+    // else asynchronous does: it leaves something for a command to find.
+    if crate::worker::in_worker() {
+        return Err(EvalError::RuntimeMessage(
+            "minibuffer-read: a background worker cannot open a prompt".into(),
+        ));
+    }
     let read_fn = env
         .get_variable("*minibuffer-read-function*")
         .ok_or_else(|| EvalError::UnboundVariable("*minibuffer-read-function*".into()))?;

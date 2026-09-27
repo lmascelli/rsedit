@@ -58,6 +58,11 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; mode with `add-completion-function'.
 (eval-file "completion-at-point")
 
+;; How much work one background worker turn may do before it is stopped. See
+;; `define-worker'. Raising it lets a worker do more per turn at the cost of
+;; how long colouring can be kept waiting behind it.
+;; (setq worker-fuel 200000)
+
 ;; Line numbers down the left edge. Off, because a gutter costs columns and
 ;; not everybody wants one; `M-x toggle-line-numbers' turns it on for a look,
 ;; and 'relative numbers each line by its distance from point instead.

@@ -12,6 +12,7 @@ pub(crate) mod primitives;
 pub mod search;
 pub(crate) mod task;
 pub mod ui;
+pub(crate) mod worker;
 pub type ELispExp<B> = lisp::LispExp<editor::EditorState<B>>;
 
 pub use crate::{
