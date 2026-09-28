@@ -228,15 +228,42 @@ mod tests {
     fn list_dir_expands_a_tilde() {
         let sandbox = Sandbox::new("tilde-list");
         sandbox.file("in-home.txt");
-        // The editor is built *before* `HOME` is redirected: booting one
-        // creates a config directory, and a sandbox with one in it would make
-        // this assert on the editor's own housekeeping rather than the listing.
         let (ctx, env) = setup();
         let _home = HomeAs::directory(&sandbox.0);
 
         let listed = eval_str(r#"(list-dir "~")"#, &env, &ctx).expect("list-dir");
 
         assert_eq!(strings(&listed), vec!["in-home.txt"]);
+    }
+
+    /// Building an editor must not write anything into `HOME`.
+    ///
+    /// # What this is really guarding
+    ///
+    /// `HOME` is process-wide and the test runner is threaded, so the moment
+    /// one test points it at a sandbox, *every* concurrently running test's
+    /// editor sees that sandbox as the home directory. A boot that creates
+    /// its configuration directory therefore creates it inside somebody
+    /// else's fixture -- and the test that fails is the one holding the
+    /// sandbox, not the one that wrote into it, which is why this was such a
+    /// confusing intermittent failure of `list_dir_expands_a_tilde` above.
+    ///
+    /// This does the damaging thing on purpose -- redirects `HOME` and *then*
+    /// boots -- so that the guarantee is checked rather than the timing.
+    #[test]
+    fn building_an_editor_does_not_write_into_home() {
+        let sandbox = Sandbox::new("home-untouched");
+        sandbox.file("only-this.txt");
+        let _home = HomeAs::directory(&sandbox.0);
+
+        let (ctx, env) = setup();
+        let listed = eval_str(r#"(list-dir "~")"#, &env, &ctx).expect("list-dir");
+
+        assert_eq!(
+            strings(&listed),
+            vec!["only-this.txt"],
+            "an editor built under a redirected HOME left something behind"
+        );
     }
 
     #[test]

@@ -223,6 +223,55 @@ impl<B: BufferTrait> EditorState<B> {
     }
 }
 
+/// Where this installation's `init.lisp` lives: `$HOME/.config/rsedit` on
+/// Unix, `%APPDATA%/rsedit` on Windows, or an empty path when the variable
+/// that names the home directory is not set.
+///
+/// # Why the environment is read here and the path built somewhere else
+///
+/// So that the arithmetic can be tested without touching the environment.
+/// `HOME` is process-wide and the test runner is threaded, so a test that
+/// checks this by setting it is a test that every other test can see -- which
+/// is the shape of the bug this split was made to fix, not a way to check it.
+fn user_config_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    let root = std::env::var("APPDATA").ok().map(PathBuf::from);
+    #[cfg(not(target_os = "windows"))]
+    let root = std::env::var("HOME")
+        .ok()
+        .map(|home| PathBuf::from(home).join(".config"));
+
+    // # Why a test build never looks at `HOME`
+    //
+    // Building an editor *creates* this directory and then evaluates what is
+    // in it. Under the real `HOME` that means `cargo test` writing into the
+    // developer's own configuration and then running it, so the suite's
+    // behaviour depends on whose machine it is on.
+    //
+    // Worse, it is not even a stable `HOME`. Several tests redirect the
+    // variable at a sandbox to check path expansion, and the redirection is
+    // process-wide while the test runner is threaded -- so an editor built by
+    // *any* concurrent test landed its configuration directory inside
+    // whichever sandbox happened to be installed at that instant. The symptom
+    // was a listing of a two-file sandbox that occasionally had a `.config/`
+    // in it, failing in whichever test was unlucky rather than in the one
+    // that caused it.
+    //
+    // A fixed directory of this process's own removes both: no test can write
+    // into another test's sandbox, and no test reads a configuration that a
+    // person wrote.
+    #[cfg(test)]
+    let root = {
+        let _ = root;
+        Some(std::env::temp_dir().join(format!("rsedit-test-config-{}", std::process::id())))
+    };
+
+    match root {
+        Some(root) => root.join("rsedit").join("init.lisp"),
+        None => PathBuf::new(),
+    }
+}
+
 pub fn create_global_env<B: BufferTrait>()
 -> Result<(EditorState<B>, Arc<Env<EditorState<B>>>), EvalError<EditorState<B>>> {
     let editor_state = EditorState::new();
@@ -318,22 +367,7 @@ pub fn create_global_env<B: BufferTrait>()
     // and if found not found create it and the path
     // then evaluate it
 
-    let mut user_config_path = PathBuf::new();
-
-    #[cfg(target_os = "windows")]
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        user_config_path.push(appdata);
-        user_config_path.push("rsedit");
-        user_config_path.push("init.lisp");
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    if let Ok(appdata) = std::env::var("HOME") {
-        user_config_path.push(appdata);
-        user_config_path.push(".config");
-        user_config_path.push("rsedit");
-        user_config_path.push("init.lisp");
-    }
+    let user_config_path = user_config_path();
 
     if !user_config_path.as_os_str().is_empty() && !user_config_path.exists() {
         if let Some(parent_dir) = user_config_path.parent() {
