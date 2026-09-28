@@ -9,6 +9,7 @@ pub use syntax::{
 };
 pub mod prescan;
 pub mod sexp;
+pub mod watcher;
 
 /// A major mode is a collection of rules that apply to a specific
 /// kind of buffers like specific programming language, special text

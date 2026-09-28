@@ -220,6 +220,22 @@
   (message (if display-line-numbers "line numbers on" "line numbers off")))
 (register-command "toggle-line-numbers" nil)
 
+;; Files that change underneath you. A background job compares each open
+;; file's timestamp and length against what they were when the editor last read
+;; or wrote it, a few files at a time:
+;;
+;;   (setq watch-files nil)          ; off; t or unset is on
+;;   (setq watch-file-interval 10)   ; seconds; read once, at startup
+;;
+;; A buffer with nothing unsaved is reloaded silently -- switch branches and
+;; the windows are already showing the new text. A buffer with unsaved edits is
+;; never touched: it is marked, and `C-x C-s' asks before writing over whatever
+;; arrived. `M-x revert-buffer' rereads deliberately, asking first if there is
+;; anything to lose.
+;;
+;; Turn it off if a network filesystem is misbehaving -- the check is a `stat',
+;; and a `stat' on a dead mount blocks the thread that also colours syntax.
+
 ;; Background workers. `define-worker' runs a fiber on the same timer syntax
 ;; colouring runs on, resuming it once per turn:
 ;;

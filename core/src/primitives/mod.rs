@@ -855,6 +855,22 @@ pub fn install_primitives<B: BufferTrait>(
         [] as [&str; 0],
         io::SAVE_BUFFER_DOC
     );
+    insert_fn!(
+        "save-buffer--overwrite",
+        io::save_buffer_overwrite,
+        io::SAVE_BUFFER_OVERWRITE_DOC
+    );
+    insert_cmd!(
+        "revert-buffer",
+        io::revert_buffer,
+        [] as [&str; 0],
+        io::REVERT_BUFFER_DOC
+    );
+    insert_fn!(
+        "revert-buffer--reread",
+        io::revert_buffer_reread,
+        io::REVERT_BUFFER_REREAD_DOC
+    );
     insert_cmd!(
         "write-file",
         io::write_file,

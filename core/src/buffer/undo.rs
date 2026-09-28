@@ -167,6 +167,15 @@ impl Default for UndoHistory {
 }
 
 impl UndoHistory {
+    /// How many groups this history keeps.
+    ///
+    /// A setting rather than history, which is the distinction that matters
+    /// when a buffer's contents are replaced wholesale: the history goes and
+    /// the limit stays.
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
     pub fn set_limit(&mut self, limit: usize) {
         self.limit = limit;
         self.trim();

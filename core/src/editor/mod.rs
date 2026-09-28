@@ -30,7 +30,7 @@
 
 use crate::{
     ELispExp,
-    buffer::{Buffer, BufferTrait},
+    buffer::{Buffer, BufferTrait, FileStamp},
     commands::{ArgSpec, Invocation, PrefixArg},
     input::{
         KeyEvent, Keymap, MouseButton, MouseEvent, MouseKind, OnUnbound, TransientKeymap,
@@ -48,6 +48,7 @@ use crate::{
     minibuffer::install_minibuffer,
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     modes::prescan::Prescanner,
+    modes::watcher::{FileWatcher, watch_interval},
     modes::{MajorMode, SyntaxTable},
     primitives::{edits::goto_offset, install_primitives},
     search::Isearch,

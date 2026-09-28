@@ -27,6 +27,10 @@ impl<B: BufferTrait> EditorState<B> {
                         .or_else(|| self.auto_mode_for(file_path))
                         .unwrap_or_else(|| "fundamental-mode".into());
                     new_buf.file_path = Some(file_path.to_string());
+                    // Taken *after* the read, so that a file rewritten while
+                    // it was being read is noticed on the next check rather
+                    // than stamped as though we had seen the new version.
+                    new_buf.file_stamp = FileStamp::of(file_path);
 
                     self.buffers_mut(|buffers| buffers.insert(name, new_buf));
                     self.show_in_focused_window(name);

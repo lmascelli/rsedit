@@ -68,6 +68,11 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; how long colouring can be kept waiting behind it.
 ;; (setq worker-fuel 200000)
 
+;; Files changing underneath you: a clean buffer is reloaded, a modified one is
+;; flagged and `C-x C-s' asks. See common-keymaps.lisp.
+;; (setq watch-files nil)
+;; (setq watch-file-interval 10)
+
 ;; Line numbers down the left edge. Off, because a gutter costs columns and
 ;; not everybody wants one; `M-x toggle-line-numbers' turns it on for a look,
 ;; and 'relative numbers each line by its distance from point instead.
@@ -483,6 +488,16 @@ pub fn create_global_env<B: BufferTrait>()
             }
         }
     }
+
+    // The third background job, scheduled here rather than beside the other
+    // two: it looks *outwards*, at whether the files the buffers came from are
+    // still what they were, and both the interval it runs at and the switch
+    // that turns it off are settings -- which means it needs the environment,
+    // and the environment does not exist until here.
+    let _ = editor_state.send_to_worker(WorkerMessage::Schedule {
+        task: Box::new(FileWatcher::new(env.clone())),
+        interval: watch_interval(&env),
+    });
 
     editor_state.eval_file(
         user_config_path

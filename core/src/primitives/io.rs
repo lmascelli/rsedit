@@ -124,21 +124,47 @@ pub const SAVE_BUFFER_DOC: &str = "(save-buffer): Write the current buffer's con
          Example:\n\
          (define-key nil \"C-x C-s\" 'save-buffer)";
 
-primitive!(save_buffer, _args, _env, ctx, {
+primitive!(save_buffer, _args, env, ctx, {
     // What to write is taken under the lock; the write itself happens with
     // the lock given back, because a slow disk must not stop every other
     // thread reading the buffer.
-    let Some((path, content)) = ctx.with_current_buffer(|buf| {
+    let Some((path, content, stale)) = ctx.with_current_buffer(|buf| {
         buf.file_path
             .as_ref()
-            .map(|path| (path.to_string(), buf.text.to_string()))
+            .map(|path| (path.to_string(), buf.text.to_string(), buf.stale))
     }) else {
         ctx.log_diagnostic("No file associated with this buffer");
         return Ok(ELispExp::nil());
     };
+
+    // The moment the watcher's flag is for. Somebody else wrote this file
+    // since it was read, so writing now replaces their work with a version
+    // that never saw it -- and the save is where that can still be stopped,
+    // which is why noticing the change did not prompt at the time.
+    if stale {
+        return eval(
+            &ELispExp::form(vec![
+                ELispExp::symbol("yes-or-no".into()),
+                ELispExp::string(format!(
+                    "{path} changed on disk since you read it. Overwrite it?"
+                )),
+                quoted(ELispExp::symbol("save-buffer--overwrite".into())),
+            ]),
+            env,
+            ctx,
+        );
+    }
     match std::fs::write(&path, content) {
         Ok(_) => {
-            ctx.with_current_buffer_mut(|buf| buf.is_modified = false);
+            // Stamped after the write, or the file we just made would differ
+            // from what we remember of it and the editor would report a
+            // conflict with itself on the next check.
+            let stamp = crate::buffer::FileStamp::of(&path);
+            ctx.with_current_buffer_mut(|buf| {
+                buf.is_modified = false;
+                buf.file_stamp = stamp;
+                buf.stale = false;
+            });
             ctx.log_diagnostic(&format!("Wrote {}", path));
             Ok(ELispExp::nil())
         }
@@ -148,6 +174,74 @@ primitive!(save_buffer, _args, _env, ctx, {
         }
     }
 });
+
+pub const REVERT_BUFFER_DOC: &str = "(revert-buffer): Read the current buffer's file again, \
+         throwing away anything unsaved. Returns t if it was read, nil otherwise.\n\n\
+         Asks first when there is something to lose -- typing `yes' -- and simply reads when \
+         there is not. The undo history, the mark and any overlays go with the old text: all \
+         three describe positions in text that no longer exists, and undoing back into a state \
+         the file never had would be worse than not being able to undo. Point stays roughly where \
+         it was, clamped into the new contents.\n\n\
+         Most of the time nothing has to run this. A buffer with no unsaved edits is reloaded on \
+         its own when the file changes -- see `watch-files' -- and this is the way to do it \
+         deliberately, or to abandon edits in favour of what is on disk.\n\n\
+         Example:\n\
+         (revert-buffer)";
+
+primitive!(revert_buffer, _args, env, ctx, {
+    let Some((path, modified)) =
+        ctx.with_current_buffer(|buf| buf.file_path.clone().map(|path| (path, buf.is_modified)))
+    else {
+        ctx.set_echo_message("No file associated with this buffer");
+        return Ok(ELispExp::nil());
+    };
+    if !modified {
+        return Ok(ELispExp::boolean(reread(ctx, &path)));
+    }
+    // There is something to lose, so the answer has to be spelled out. The
+    // read happens in the callback, not here -- a question does not return an
+    // answer, it says what to do with each one.
+    eval(
+        &ELispExp::form(vec![
+            ELispExp::symbol("yes-or-no".into()),
+            ELispExp::string(format!("Discard your changes and reread {path}?")),
+            quoted(ELispExp::symbol("revert-buffer--reread".into())),
+        ]),
+        env,
+        ctx,
+    )
+});
+
+pub const REVERT_BUFFER_REREAD_DOC: &str = "(revert-buffer--reread): Read the current buffer's \
+         file again with no questions. Not called directly -- it is what `revert-buffer' does \
+         once its question has been answered.";
+
+primitive!(revert_buffer_reread, _args, _env, ctx, {
+    let Some(path) = ctx.with_current_buffer(|buf| buf.file_path.clone()) else {
+        return Ok(ELispExp::nil());
+    };
+    Ok(ELispExp::boolean(reread(ctx, &path)))
+});
+
+/// Replace the current buffer's text with what is in PATH.
+fn reread<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> bool {
+    // Read with no lock held, for the reason every other file operation here
+    // does it: a slow disk must not stop the threads walking the buffer.
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(why) => {
+            ctx.set_echo_message(&format!("Cannot read {path}: {why}"));
+            return false;
+        }
+    };
+    let stamp = crate::buffer::FileStamp::of(path);
+    ctx.with_current_buffer_mut(|buf| {
+        buf.adopt_text(&text);
+        buf.file_stamp = stamp;
+    });
+    ctx.set_echo_message(&format!("Reverted to {path}"));
+    true
+}
 
 pub const WRITE_FILE_DOC: &str = "(write-file PATH): Write the current buffer to PATH and visit \
          it from now on. Returns PATH, or nil if nothing was written.\n\n\
@@ -200,9 +294,12 @@ primitive!(write_file, args, _env, ctx, {
 
     // Only now, with the bytes safely down.
     let mode = ctx.auto_mode_for(&path);
+    let stamp = crate::buffer::FileStamp::of(&path);
     ctx.with_current_buffer_mut(|buf| {
         buf.file_path = Some(path.clone());
         buf.is_modified = false;
+        buf.file_stamp = stamp;
+        buf.stale = false;
         if let Some(mode) = mode {
             buf.current_mode = mode;
         }
@@ -1238,6 +1335,33 @@ primitive!(data_directory, args, _env, ctx, {
     Ok(ELispExp::string(path.display().to_string()))
 });
 
+pub const SAVE_BUFFER_OVERWRITE_DOC: &str = "(save-buffer--overwrite): Write the current buffer \
+         over its file, asking nothing. Not called directly -- it is what `save-buffer' does once \
+         a conflict has been confirmed.";
+
+primitive!(save_buffer_overwrite, _args, _env, ctx, {
+    let Some((path, content)) = ctx.with_current_buffer(|buf| {
+        buf.file_path
+            .as_ref()
+            .map(|path| (path.to_string(), buf.text.to_string()))
+    }) else {
+        return Ok(ELispExp::nil());
+    };
+    match std::fs::write(&path, content) {
+        Ok(()) => {
+            let stamp = crate::buffer::FileStamp::of(&path);
+            ctx.with_current_buffer_mut(|buf| {
+                buf.is_modified = false;
+                buf.file_stamp = stamp;
+                buf.stale = false;
+            });
+            ctx.log_diagnostic(&format!("Wrote {path}"));
+        }
+        Err(why) => ctx.log_diagnostic(&format!("Failed to save: {why}")),
+    }
+    Ok(ELispExp::nil())
+});
+
 // ---------------------------------------------------------------------------
 // Leaving without losing anything
 // ---------------------------------------------------------------------------
@@ -1300,7 +1424,12 @@ fn write_buffer<B: BufferTrait>(ctx: &EditorState<B>, name: &str) -> bool {
     };
     match std::fs::write(&path, content) {
         Ok(()) => {
-            ctx.with_buffer_mut(name, |buf| buf.is_modified = false);
+            let stamp = crate::buffer::FileStamp::of(&path);
+            ctx.with_buffer_mut(name, |buf| {
+                buf.is_modified = false;
+                buf.file_stamp = stamp;
+                buf.stale = false;
+            });
             ctx.log_diagnostic(&format!("Wrote {path}"));
             true
         }

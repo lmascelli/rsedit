@@ -1,11 +1,13 @@
 // implementors
 mod buffer_trait;
 pub use buffer_trait::BufferTrait;
+pub mod disk;
 pub mod gap_buffer;
 pub mod mark;
 pub mod overlay;
 pub mod scan;
 pub mod syntax;
+pub use disk::{FileStamp, OnDisk};
 pub use mark::Mark;
 pub use overlay::{Overlay, OverlayTable};
 pub use scan::ScanCache;
@@ -60,6 +62,33 @@ pub struct Buffer<B: BufferTrait> {
     /// What has been worked out about colouring this buffer. See
     /// [`crate::buffer::syntax::SyntaxCache`].
     pub syntax: syntax::SyntaxCache,
+    /// What the file this buffer is visiting looked like when it was last
+    /// read or written *by this editor*.
+    ///
+    /// `None` for a buffer visiting no file, and for one whose file was not
+    /// there when it was opened. See [`crate::buffer::disk`] for why it is a
+    /// stamp rather than a hash.
+    ///
+    /// # Why writing has to record it too
+    ///
+    /// Because saving changes the file, and a stamp taken only at read time
+    /// would then differ from what is on disk the instant the buffer is
+    /// saved -- so every save would look like somebody else's write, and the
+    /// editor would report a conflict with itself.
+    pub file_stamp: Option<FileStamp>,
+    /// Whether the file has been seen to differ from [`Self::file_stamp`] in a
+    /// way that could not be taken silently.
+    ///
+    /// Set by the worker that watches open files when it finds a change it
+    /// must not act on -- because the buffer has unsaved edits, or because the
+    /// file has gone. Cleared by reading the file again, by saving over it, or
+    /// by being told to stop worrying.
+    ///
+    /// It exists so that the *next* save can ask. A buffer silently written
+    /// over somebody else's work is the loss this whole mechanism is for, and
+    /// the moment to catch it is the save, not the instant the change is
+    /// noticed -- which is why this is a flag rather than a prompt.
+    pub stale: bool,
     /// Whether this buffer refuses to have its text changed.
     ///
     /// # Why the flag lives here and is checked at the doors
@@ -96,6 +125,8 @@ impl<B: BufferTrait> Buffer<B> {
             version: 0,
             scan: scan::ScanCache::default(),
             syntax: syntax::SyntaxCache::default(),
+            file_stamp: None,
+            stale: false,
             read_only: false,
         }
     }
@@ -112,6 +143,50 @@ impl<B: BufferTrait> Buffer<B> {
         self.scan.resume_for(&self.current_mode, self.version, line)
     }
 
+    /// Replace everything in this buffer with TEXT, as though it had just been
+    /// read from the file.
+    ///
+    /// # Why this is one method and not six statements at the call site
+    ///
+    /// Because six statements is six chances to forget one, and the ones that
+    /// are easy to forget are the ones whose absence is invisible until much
+    /// later. A revert that did not bump the version would leave the
+    /// highlighter storing colours computed from the *old* text at offsets in
+    /// the new one; a revert that did not clear the overlays would leave a
+    /// diagnostic pinned to a line that has moved; a revert that did not clamp
+    /// point could leave it past the end of a file that got shorter.
+    ///
+    /// # What it deliberately throws away
+    ///
+    /// The undo history, the mark and the overlays. All three describe
+    /// *positions in text that no longer exists*, and keeping them would mean
+    /// keeping a promise the buffer can no longer honour -- undoing back into
+    /// a state the file never had is worse than not being able to undo.
+    ///
+    /// The mode is kept, because the file is still the same file. So is the
+    /// undo history's configured limit, which is a setting rather than
+    /// history.
+    pub fn adopt_text(&mut self, text: &str) {
+        self.text = B::from(text);
+        self.version = self.version.wrapping_add(1);
+        // From line zero: every line is new.
+        self.syntax.invalidate_from(self.version, 0);
+        self.scan.invalidate_from(self.version, 0);
+        self.overlays = OverlayTable::default();
+        self.mark = None;
+        let limit = self.undo.limit();
+        self.undo = UndoHistory::default();
+        self.undo.set_limit(limit);
+        // Clamped rather than reset: coming back to roughly where you were is
+        // the point of reverting a file you are reading, and the top of the
+        // buffer is where you were not.
+        let point = self.text.cursor_pos_1d().min(self.text.len());
+        let (line, column) = self.text.cursor_1d_to_2d(point);
+        self.text.cursor_move(line, column);
+        self.is_modified = false;
+        self.stale = false;
+    }
+
     pub fn from_text(name: &str, text: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -126,6 +201,8 @@ impl<B: BufferTrait> Buffer<B> {
             version: 0,
             scan: scan::ScanCache::default(),
             syntax: syntax::SyntaxCache::default(),
+            file_stamp: None,
+            stale: false,
             read_only: false,
         }
     }
