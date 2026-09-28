@@ -2339,6 +2339,35 @@ fn primitive_resume<T: LispContext>(
     }
 }
 
+const FIBER_DONE_P_DOC: &str = "(fiber-done-p FIBER): t when FIBER has nothing left to run, nil \
+                 while it still has. Signals if FIBER is not a fiber.\n\n\
+                 What a scheduler asks so it can stop resuming one. A fiber that is merely \
+                 *suspended* is not done -- it is in the middle of a form, waiting to be resumed \
+                 -- so this is the only honest way to tell a finished task from a parked one; \
+                 `resume\' answering nil cannot, since a fiber may perfectly well yield nil.\n\n\
+                 Example:\n\
+                 (while (not (fiber-done-p task)) (resume task))";
+
+fn primitive_fiber_done_p<T: LispContext>(
+    args: &[LispExp<T>],
+    _env: Arc<Env<T>>,
+    _ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    let Some(exp) = args.first() else {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: 0,
+        });
+    };
+    match exp.fiber_is_done() {
+        Some(done) => Ok(LispExp::boolean(done)),
+        None => Err(EvalError::WrongArgumentType {
+            expected: "Fiber".into(),
+            got: exp.clone(),
+        }),
+    }
+}
+
 // -------------------------------- CONSTRUCTOR --------------------------------
 pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     // ------------------------------- Functions  ------------------------------
@@ -2386,6 +2415,10 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     env.set_function(
         "reset".into(),
         LispExp::primitive(primitive_reset, Some(RESET_DOC.into())),
+    );
+    env.set_function(
+        "fiber-done-p".into(),
+        LispExp::primitive(primitive_fiber_done_p, Some(FIBER_DONE_P_DOC.into())),
     );
     env.set_function(
         "resume".into(),

@@ -463,6 +463,29 @@ mod tests {
     }
 
     #[test]
+    fn fiber_done_p_tells_a_finished_fiber_from_a_parked_one() {
+        // The distinction a scheduler cannot make any other way: `resume`
+        // answering nil means nothing, because a fiber may perfectly well
+        // yield nil.
+        let (env, ctx) = setup();
+        run(r#"(setq f (fiber (progn (yield) nil)))"#, &env, &ctx);
+        assert!(run("(fiber-done-p f)", &env, &ctx).is_nil(), "not started");
+        assert!(run("(resume f)", &env, &ctx).is_nil(), "yielded nil");
+        assert!(
+            run("(fiber-done-p f)", &env, &ctx).is_nil(),
+            "suspended, which is not finished"
+        );
+        run("(resume f)", &env, &ctx);
+        assert_eq!(run("(fiber-done-p f)", &env, &ctx), LispExp::t());
+    }
+
+    #[test]
+    fn fiber_done_p_refuses_anything_that_is_not_a_fiber() {
+        let (env, ctx) = setup();
+        assert!(try_run("(fiber-done-p 1)", &env, &ctx).is_err());
+    }
+
+    #[test]
     fn a_fiber_is_worth_the_value_of_its_last_form() {
         // The value has to survive being handed back out through every block
         // the suspension was recorded in. A block with nothing left to run is
@@ -527,5 +550,48 @@ mod tests {
         );
         run("(resume outer)", &env, &ctx);
         assert_eq!(ctx.lines(), vec!["inner", "outer"]);
+    }
+    #[test]
+    fn the_documented_cooperative_scheduler_runs() {
+        // The scheduler in `doc/lisp-fibers.typ`, evaluated. Documentation
+        // that has never been run is documentation that is wrong somewhere,
+        // and the place it is wrong is always the example.
+        let (env, ctx) = setup();
+        run(
+            r#"
+            (setq scheduler--tasks nil)
+
+            (defun spawn-task (f)
+              (setq scheduler--tasks (append scheduler--tasks (list f))))
+
+            (defun scheduler-tick ()
+              (let ((live nil))
+                (mapc (lambda (f)
+                        (resume f)
+                        (if (fiber-done-p f) nil (setq live (append live (list f)))))
+                      scheduler--tasks)
+                (setq scheduler--tasks live)
+                (length live)))
+            "#,
+            &env,
+            &ctx,
+        );
+        // Two tasks of different lengths, each logging which turn it is on.
+        run(
+            r#"(spawn-task (fiber (progn (log "a1") (yield) (log "a2"))))
+               (spawn-task (fiber (progn (log "b1") (yield) (log "b2") (yield) (log "b3"))))"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(run("(scheduler-tick)", &env, &ctx), number(2.0));
+        assert_eq!(ctx.lines(), vec!["a1", "b1"]);
+        assert_eq!(
+            run("(scheduler-tick)", &env, &ctx),
+            number(1.0),
+            "the shorter task finished and was retired"
+        );
+        assert_eq!(ctx.lines(), vec!["a1", "b1", "a2", "b2"]);
+        assert_eq!(run("(scheduler-tick)", &env, &ctx), number(0.0));
+        assert_eq!(ctx.lines(), vec!["a1", "b1", "a2", "b2", "b3"]);
     }
 }
