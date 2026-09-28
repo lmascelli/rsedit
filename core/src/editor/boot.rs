@@ -110,6 +110,7 @@ impl<B: BufferTrait> EditorState<B> {
                 DEFAULT_FUEL,
             ))))),
             log: Arc::new(RwLock::new(Log::default())),
+            history: Arc::new(RwLock::new(History::default())),
         };
         BackgroundScheduler::spawn(receiver, editor_state.clone());
         // Colouring runs from here on, a bounded chunk at a time. Started at

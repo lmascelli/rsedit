@@ -36,6 +36,7 @@
 //! body takes, copy what you need out and let go first.
 mod buffers;
 mod commands;
+mod history;
 mod kill_yank;
 mod log;
 mod modes;
@@ -44,10 +45,12 @@ mod windows;
 
 pub use buffers::{Buffers, Removed as BufferRemoved, SCRATCH};
 pub use commands::Commands;
+pub use history::{DEFAULT_HISTORY_LENGTH, History, Recalled};
 pub use kill_yank::KillYank;
 pub use log::Log;
 pub use modes::Modes;
 pub use runtime::Runtime;
 pub use windows::{
-    DRAG_SCROLL_INTERVAL, Hit, MouseDrag, Removed as WindowRemoved, Scrolled, Windows,
+    ClickCount, DOUBLE_CLICK_INTERVAL, DRAG_SCROLL_INTERVAL, Hit, MouseDrag,
+    Removed as WindowRemoved, Scrolled, Windows,
 };

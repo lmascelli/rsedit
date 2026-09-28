@@ -25,6 +25,11 @@ impl<B: BufferTrait> EditorState<B> {
         self.windows(|windows| windows.hit_test(x, y))
     }
 
+    /// Record a left button going down, and say whether it completes a pair.
+    fn register_click(&self, x: isize, y: isize) -> ClickCount {
+        self.windows_mut(|windows| windows.register_click(x, y))
+    }
+
     pub(crate) fn take_mouse_drag(&self) -> Option<MouseDrag> {
         self.windows_mut(|windows| windows.take_drag())
     }
@@ -209,8 +214,15 @@ impl<B: BufferTrait> EditorState<B> {
                 },
             ) => {
                 self.set_mouse_drag(Some(MouseDrag::Text { window, at: (x, y) }));
+                // One press or the second of a pair, decided here because
+                // only the editor keeps the first one -- a terminal reports
+                // presses and nothing else. See `Windows::register_click`.
+                let command = match self.register_click(x, y) {
+                    ClickCount::Single => "mouse-set-point",
+                    ClickCount::Double => "mouse-start-selection",
+                };
                 Some(mouse_form(
-                    "mouse-set-point",
+                    command,
                     &[window.0 as f64, line as f64, column as f64],
                 ))
             }

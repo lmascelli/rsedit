@@ -44,23 +44,63 @@ fn number_arg<B: BufferTrait>(
     }
 }
 
-pub const MOUSE_SET_POINT_DOC: &str = "(mouse-set-point WINDOW LINE COLUMN): Focus WINDOW and put \
-         point at LINE and COLUMN in it. Returns t, or nil if there is no such window.\n\n\
-         What a left click runs. LINE and COLUMN are buffer coordinates -- the window's scroll \
-         has already been added by the time this is called -- and both are clamped to the \
+pub const MOUSE_SET_POINT_DOC: &str = "(mouse-set-point WINDOW LINE COLUMN): Focus WINDOW, put \
+         point at LINE and COLUMN in it, and end any selection. Returns t, or nil if there is no \
+         such window.\n\n\
+         What a single left click runs. LINE and COLUMN are buffer coordinates -- the window's \
+         scroll has already been added by the time this is called -- and both are clamped to the \
          buffer, so clicking past the end of a short line lands at its end rather than \
          nowhere.\n\n\
          The window is focused first and point set afterwards, in that order: focusing a window \
          restores the point it remembered, and the click has to win over it.\n\n\
+         The selection ends because a click says where the cursor goes, not where a region \
+         stops. See `mouse-start-selection' for the one that does the other thing.\n\n\
          Example:\n\
          (mouse-set-point 0 12 4)";
 
 primitive!(mouse_set_point, args, _env, ctx, {
+    Ok(ELispExp::boolean(click_at(args, ctx, Selecting::No)?))
+});
+
+pub const MOUSE_START_SELECTION_DOC: &str = "(mouse-start-selection WINDOW LINE COLUMN): Focus WINDOW, put point at LINE and COLUMN, and \
+         begin a selection there. Returns t, or nil if there is no such window.\n\n\
+         What a double left click runs. The region starts empty and grows as point moves, \
+         whether it is moved by dragging or from the keyboard -- so a double click is the \
+         mouse's way of saying `set-mark\', in the place where a single click says `goto\'.\n\n\
+         Rebind the double click if you would rather it did something else -- selecting the word \
+         under the pointer is the obvious other choice, and `bounds-of-thing-at-point\' is what \
+         a Lisp command would use to do it.\n\n\
+         Example:\n\
+         (mouse-start-selection 0 12 4)";
+
+primitive!(mouse_start_selection, args, _env, ctx, {
+    Ok(ELispExp::boolean(click_at(args, ctx, Selecting::Yes)?))
+});
+
+/// Whether the click that lands here begins a region or ends one.
+#[derive(Clone, Copy, PartialEq)]
+enum Selecting {
+    Yes,
+    No,
+}
+
+/// Focus a window, move point, and either start a selection or end one.
+///
+/// # Why both clicks go through one function
+///
+/// They differ in a single line, and everything before it -- the window, the
+/// clamping, the order the two happen in -- is the part that is easy to get
+/// subtly wrong. Two copies of it would agree until one of them was fixed.
+fn click_at<B: BufferTrait>(
+    args: &[ELispExp<B>],
+    ctx: &EditorState<B>,
+    selecting: Selecting,
+) -> Result<bool, EvalError<EditorState<B>>> {
     let window = number_arg(args, 0)?.max(0.0) as usize;
     let line = number_arg(args, 1)?.max(0.0) as usize;
     let column = number_arg(args, 2)?.max(0.0) as usize;
     if !ctx.select_window(WindowId(window)) {
-        return Ok(ELispExp::nil());
+        return Ok(false);
     }
     ctx.with_current_buffer_mut(|buf| {
         // Clamped against the buffer rather than against the window: the
@@ -69,9 +109,32 @@ primitive!(mouse_set_point, args, _env, ctx, {
         let line = line.min(buf.text.line_count().saturating_sub(1));
         let column = column.min(edits::line_length(&buf.text, line));
         buf.text.cursor_move(line, column);
+        match selecting {
+            // Set *after* point has moved, so the region is anchored where the
+            // click landed rather than where the cursor used to be.
+            Selecting::Yes => buf.mark = Some(Mark::new(buf.text.cursor_pos_1d())),
+            // # Why a click ends the selection
+            //
+            // A region is the span between the mark and point, so moving
+            // point moves one end of it. Without this, every click while a
+            // selection was up dragged that end to wherever you clicked --
+            // including a click far away, which left a selection stretching
+            // across half the file that nobody asked for. Clicking somewhere
+            // is how you say "not there, here", and the selection is the
+            // clearest casualty of it.
+            //
+            // Deactivated rather than forgotten: `exchange-point-and-mark'
+            // can still go back to it, which is exactly what an inactive mark
+            // is for.
+            Selecting::No => {
+                if let Some(mark) = buf.mark.as_mut() {
+                    mark.active = false;
+                }
+            }
+        }
     });
-    Ok(ELispExp::symbol("t".into()))
-});
+    Ok(true)
+}
 
 pub const MOUSE_SCROLL_DOC: &str = "(mouse-scroll WINDOW NOTCHES): Scroll WINDOW by NOTCHES of \
          the wheel, positive being towards the end of the buffer. Returns t if the view moved.\n\n\

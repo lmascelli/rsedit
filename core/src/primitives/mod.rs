@@ -323,6 +323,12 @@ pub fn install_primitives<B: BufferTrait>(
         mouse::MOUSE_SET_POINT_DOC
     );
     insert_cmd!(
+        "mouse-start-selection",
+        mouse::mouse_start_selection,
+        [] as [&str; 0],
+        mouse::MOUSE_START_SELECTION_DOC
+    );
+    insert_cmd!(
         "mouse-drag-to",
         mouse::mouse_drag_to,
         [] as [&str; 0],

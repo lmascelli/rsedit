@@ -23,6 +23,7 @@ mod frame_snapshot_tests;
 mod fuel_cost_tests;
 mod fuel_tests;
 mod fuzzy_tests;
+mod history_tests;
 mod home_guard;
 mod hooks_tests;
 mod indent_tests;

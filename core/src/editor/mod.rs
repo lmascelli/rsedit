@@ -42,8 +42,8 @@ use crate::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
     managers::{
-        BufferRemoved, Buffers, Commands, Hit, KillYank, Log, Modes, MouseDrag, Runtime, Scrolled,
-        WindowRemoved, Windows,
+        BufferRemoved, Buffers, ClickCount, Commands, History, Hit, KillYank, Log, Modes,
+        MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
     },
     minibuffer::install_minibuffer,
     modes::highlighter::{Highlighter, TURN_INTERVAL},
@@ -205,6 +205,10 @@ pub struct EditorState<B: BufferTrait> {
     /// See [`Log`].
     log: Arc<RwLock<Log>>,
 
+    /// What has been typed at each prompt before, and where a walk back
+    /// through one has got to. See [`History`].
+    history: Arc<RwLock<History>>,
+
     /// The execution budget, the call stack, the theme, where vertical
     /// movement is aiming and the search in progress. See [`Runtime`] -- which
     /// is candid about grouping by lifetime rather than by a shared invariant.
@@ -346,5 +350,15 @@ impl<B: BufferTrait> EditorState<B> {
     /// Change it.
     pub(crate) fn runtime_mut<R>(&self, f: impl FnOnce(&mut Runtime) -> R) -> R {
         f(&mut self.runtime.write().expect("write lock on runtime"))
+    }
+
+    /// Ask what has been typed at a prompt before.
+    pub(crate) fn history<R>(&self, f: impl FnOnce(&History) -> R) -> R {
+        f(&self.history.read().expect("read lock on history"))
+    }
+
+    /// Add to it, or walk through it.
+    pub(crate) fn history_mut<R>(&self, f: impl FnOnce(&mut History) -> R) -> R {
+        f(&mut self.history.write().expect("write lock on history"))
     }
 }

@@ -91,6 +91,11 @@ mod tests {
             .expect("*scratch*")
     }
 
+    fn point_offset(ctx: &Ctx) -> usize {
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
+            .expect("*scratch*")
+    }
+
     /// The rows of text the sole window has, and the row its status line is on.
     fn text_rows(ctx: &Ctx) -> usize {
         ctx.windows(|windows| {
@@ -891,5 +896,138 @@ mod tests {
         run("(mouse-mode-toggle)", &env, &ctx);
         click(&ctx, &env, 4, 3);
         assert_eq!(point(&ctx), (3, 4), "on again, and clicking works");
+    }
+    // ----------------------------------------------------------------
+    // Clicks and the selection
+    // ----------------------------------------------------------------
+
+    /// Whether a region is in force, and what it covers.
+    fn selection(ctx: &Ctx) -> Option<(usize, usize)> {
+        ctx.with_buffer("*scratch*", |b| {
+            crate::buffer::mark::region_bounds(b.mark, b.text.cursor_pos_1d(), b.text.len())
+        })
+        .expect("*scratch*")
+    }
+
+    /// Press, drag to another cell, release -- a selection made with the
+    /// mouse, the ordinary way.
+    fn drag_select(ctx: &Ctx, env: &Arc<Env<Ctx>>, from: (u16, u16), to: (u16, u16)) {
+        click(ctx, env, from.0, from.1);
+        ctx.handle_mouse_event(
+            MouseEvent {
+                kind: MouseKind::Drag(MouseButton::Left),
+                column: to.0,
+                row: to.1,
+                modifiers: KeyModifiers::default(),
+            },
+            env,
+        );
+        ctx.handle_mouse_event(
+            MouseEvent {
+                kind: MouseKind::Up(MouseButton::Left),
+                column: to.0,
+                row: to.1,
+                modifiers: KeyModifiers::default(),
+            },
+            env,
+        );
+    }
+
+    #[test]
+    fn a_click_somewhere_else_ends_the_selection_rather_than_stretching_it() {
+        // The bug this fixes: a region is the span between the mark and
+        // point, so a click that only moved point dragged one end of it to
+        // wherever you clicked. Clicking across the file left a selection
+        // spanning half of it that nobody had asked for.
+        let (ctx, env) = editor(20);
+        drag_select(&ctx, &env, (0, 1), (4, 1));
+        assert!(selection(&ctx).is_some(), "the drag made a selection");
+
+        click(&ctx, &env, 2, 8);
+        assert_eq!(selection(&ctx), None, "and the click ended it");
+        assert_eq!(point(&ctx), (8, 2), "leaving point where it landed");
+    }
+
+    #[test]
+    fn a_click_inside_the_selection_ends_it_too() {
+        // A region is mark-to-point, so there is no version of "keep the
+        // selection" that also moves the cursor. Ending it everywhere is the
+        // answer that never surprises: the click always means what it looks
+        // like it means.
+        let (ctx, env) = editor(20);
+        drag_select(&ctx, &env, (0, 1), (6, 1));
+        click(&ctx, &env, 3, 1);
+        assert_eq!(selection(&ctx), None);
+        assert_eq!(point(&ctx), (1, 3));
+    }
+
+    #[test]
+    fn the_mark_is_only_deactivated_and_not_forgotten() {
+        // An inactive mark is a place to go back to. `exchange-point-and-mark'
+        // still works after a click, which is what tells "ended" from
+        // "erased".
+        let (ctx, env) = editor(20);
+        drag_select(&ctx, &env, (0, 1), (4, 1));
+        click(&ctx, &env, 2, 8);
+        let mark = ctx
+            .with_buffer("*scratch*", |b| b.mark)
+            .expect("*scratch*")
+            .expect("a mark is still remembered");
+        assert!(!mark.active);
+    }
+
+    #[test]
+    fn a_double_click_starts_a_new_selection() {
+        // Two presses in the same cell inside the double-click window. The
+        // region starts empty and grows as point moves, so a double click is
+        // the mouse's way of saying `set-mark'.
+        let (ctx, env) = editor(20);
+        click(&ctx, &env, 2, 3);
+        click(&ctx, &env, 2, 3);
+        assert_eq!(
+            selection(&ctx),
+            Some((point_offset(&ctx), point_offset(&ctx))),
+            "an empty region anchored where the click landed"
+        );
+        // And it grows from there rather than from wherever point used to be.
+        run("(forward-char) (forward-char)", &env, &ctx);
+        let (start, end) = selection(&ctx).expect("still selecting");
+        assert_eq!(end - start, 2);
+    }
+
+    #[test]
+    fn a_second_click_somewhere_else_is_not_a_double() {
+        // The cell has to match. Two deliberate clicks in different places
+        // are two clicks, and reading them as a gesture would start a
+        // selection every time somebody moved the cursor twice quickly.
+        let (ctx, env) = editor(20);
+        click(&ctx, &env, 2, 3);
+        click(&ctx, &env, 5, 3);
+        assert_eq!(selection(&ctx), None);
+    }
+
+    #[test]
+    fn a_third_click_starts_a_fresh_pair_rather_than_completing_a_second() {
+        // Three presses are a pair and then a single. Without forgetting the
+        // first pair, presses two and three would read as a second double and
+        // the click that was meant to dismiss the selection would remake it.
+        let (ctx, env) = editor(20);
+        click(&ctx, &env, 2, 3);
+        click(&ctx, &env, 2, 3);
+        assert!(selection(&ctx).is_some(), "the pair started a selection");
+        click(&ctx, &env, 2, 3);
+        assert_eq!(selection(&ctx), None, "the third press is a single click");
+    }
+
+    #[test]
+    fn a_drag_still_selects_from_where_the_button_went_down() {
+        // The click that begins a drag now deactivates the mark, so the first
+        // drag event has to set a fresh one -- at the click, not at wherever
+        // point happened to be before it.
+        let (ctx, env) = editor(20);
+        run("(goto-line 15)", &env, &ctx);
+        drag_select(&ctx, &env, (0, 2), (5, 2));
+        let (start, end) = selection(&ctx).expect("the drag made a selection");
+        assert_eq!(end - start, 5, "five characters of line 2, not a jump");
     }
 }

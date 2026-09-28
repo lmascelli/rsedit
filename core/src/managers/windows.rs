@@ -29,13 +29,31 @@
 use crate::ui::{
     Division, FloatingWindow, LayoutNode, Orientation, Rect, Side, SplitPath, Window, WindowId,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How often a drag held outside its window scrolls it.
 ///
 /// Fast enough to feel continuous, slow enough that a line is still a unit you
 /// can stop on.
 pub const DRAG_SCROLL_INTERVAL: Duration = Duration::from_millis(60);
+
+/// How long after a click a second one in the same cell counts as a double.
+///
+/// Four hundred milliseconds, a little under Emacs' `double-click-time`. Long
+/// enough not to demand a fast hand, short enough that two deliberate clicks
+/// in the same place -- which is how you put the cursor back where it already
+/// is -- are not mistaken for one gesture.
+pub const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+
+/// Whether a press is on its own or the second of a pair.
+///
+/// An enum rather than a count, because two is as far as this goes and a
+/// number invites a caller to wonder what three means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClickCount {
+    Single,
+    Double,
+}
 
 /// What the pointer is over.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,6 +162,20 @@ pub struct Windows {
     /// job now.
     next_id: usize,
     drag: Option<MouseDrag>,
+    /// When and where the last left button went down, for telling a second
+    /// click of a pair from a first.
+    ///
+    /// # Why the editor counts clicks itself
+    ///
+    /// A terminal does not report one. It sends a button-down per press and
+    /// nothing else, so "this is the second press in the same place" is
+    /// something only somebody keeping the first press can know -- and that
+    /// has to be the editor, because a frontend that worked it out would be a
+    /// frontend each new one had to work out again, differently.
+    ///
+    /// Cleared rather than kept once a pair is complete, so three presses are
+    /// a pair and then a single rather than two overlapping pairs.
+    last_click: Option<(Instant, isize, isize)>,
 }
 
 impl Default for Windows {
@@ -154,6 +186,7 @@ impl Default for Windows {
             focused: WindowId(0),
             next_id: 1,
             drag: None,
+            last_click: None,
         }
     }
 }
@@ -219,6 +252,29 @@ impl Windows {
 
     pub fn take_drag(&mut self) -> Option<MouseDrag> {
         self.drag.take()
+    }
+
+    /// Record a left button going down at (X, Y), and say whether it is the
+    /// second of a pair.
+    ///
+    /// The same cell, not merely nearby: a terminal reports whole cells, so a
+    /// hand steady enough to double-click is a hand that lands on the same
+    /// one. Allowing a neighbour would make a deliberate click just after a
+    /// previous one -- moving the cursor one character along -- read as a
+    /// double, which is the more annoying mistake of the two.
+    pub fn register_click(&mut self, x: isize, y: isize) -> ClickCount {
+        let now = Instant::now();
+        let doubled = self.last_click.is_some_and(|(when, last_x, last_y)| {
+            last_x == x && last_y == y && now.duration_since(when) <= DOUBLE_CLICK_INTERVAL
+        });
+        // Forgotten on a double so that a third press starts a fresh pair
+        // rather than completing a second one with the press before it.
+        self.last_click = if doubled { None } else { Some((now, x, y)) };
+        if doubled {
+            ClickCount::Double
+        } else {
+            ClickCount::Single
+        }
     }
 
     // ------------------------------------------------------------------
