@@ -89,6 +89,17 @@ pub struct Buffer<B: BufferTrait> {
     /// the moment to catch it is the save, not the instant the change is
     /// noticed -- which is why this is a flag rather than a prompt.
     pub stale: bool,
+    /// The version whose contents were last written to this buffer's
+    /// auto-save file, or `None` when there is no such file.
+    ///
+    /// # Why a version and not a flag
+    ///
+    /// Because "modified" stays true from the first keystroke until the save,
+    /// so a job that wrote every modified buffer every turn would rewrite an
+    /// untouched one forever. The version moves only when the text does, which
+    /// turns "is there anything to write" into an integer comparison -- and
+    /// makes an editor left open overnight cost nothing.
+    pub auto_saved_at: Option<u64>,
     /// Whether this buffer refuses to have its text changed.
     ///
     /// # Why the flag lives here and is checked at the doors
@@ -127,6 +138,7 @@ impl<B: BufferTrait> Buffer<B> {
             syntax: syntax::SyntaxCache::default(),
             file_stamp: None,
             stale: false,
+            auto_saved_at: None,
             read_only: false,
         }
     }
@@ -203,6 +215,7 @@ impl<B: BufferTrait> Buffer<B> {
             syntax: syntax::SyntaxCache::default(),
             file_stamp: None,
             stale: false,
+            auto_saved_at: None,
             read_only: false,
         }
     }

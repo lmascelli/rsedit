@@ -1,5 +1,6 @@
 use super::*;
 use crate::lisp::{call_callable, eval};
+use crate::modes::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::ask;
 
 pub const FIND_FILE_DOC: &str = "(find-file PATH): Open PATH into a buffer, make it current, and \
@@ -112,7 +113,18 @@ primitive!(find_file, args, env, ctx, {
     }
 
     match ctx.new_buffer(&buf_name, Some(&path_str), None) {
-        Some(buf_name) => Ok(ELispExp::string(buf_name)),
+        Some(buf_name) => {
+            // Said on the way in, because nothing else would say it. A
+            // recovery copy nobody is told about is a recovery copy nobody
+            // uses, and the moment it matters is exactly the moment somebody
+            // reopens the file after a crash.
+            if auto_save_path(&path_str, auto_save_directory(&env).as_deref()).exists() {
+                ctx.set_echo_message(
+                    "An auto-save file exists for this -- M-x recover-file to see it",
+                );
+            }
+            Ok(ELispExp::string(buf_name))
+        }
         None => Ok(ELispExp::nil()),
     }
 });
@@ -165,6 +177,10 @@ primitive!(save_buffer, _args, env, ctx, {
                 buf.file_stamp = stamp;
                 buf.stale = false;
             });
+            // The recovery copy has done its job: what it held is now in the
+            // file it was standing in for.
+            let name = ctx.get_current_buffer_name();
+            ctx.discard_auto_save(&name, auto_save_directory(&env).as_deref());
             ctx.log_diagnostic(&format!("Wrote {}", path));
             Ok(ELispExp::nil())
         }
@@ -173,6 +189,74 @@ primitive!(save_buffer, _args, env, ctx, {
             Ok(ELispExp::nil())
         }
     }
+});
+
+pub const RECOVER_FILE_DOC: &str = "(recover-file): Replace the current buffer with what the \
+         auto-saver last wrote for it. Returns t if anything was recovered.\n\n\
+         For after the editor stopped without being asked -- a crash, a lost terminal, a machine \
+         that went down. Everything else in the editor protects work from being *discarded*; this \
+         is the only thing that helps when it was never saved at all.\n\n\
+         Asks first, because the recovered text replaces what is in the buffer now. What comes \
+         back is *not* saved: it is put in the buffer and marked modified, so you can look at it \
+         and decide. `C-x C-s' accepts it and throws the recovery copy away; `M-x revert-buffer' \
+         rejects it and goes back to the file.\n\n\
+         Example:\n\
+         (recover-file)";
+
+primitive!(recover_file, _args, env, ctx, {
+    let Some(path) = ctx.with_current_buffer(|buf| buf.file_path.clone()) else {
+        ctx.set_echo_message("No file associated with this buffer");
+        return Ok(ELispExp::nil());
+    };
+    let copy = auto_save_path(&path, auto_save_directory(&env).as_deref());
+    if !copy.exists() {
+        ctx.set_echo_message(&format!("No auto-save file for {path}"));
+        return Ok(ELispExp::nil());
+    }
+    eval(
+        &ELispExp::form(vec![
+            ELispExp::symbol("yes-or-no".into()),
+            ELispExp::string(format!(
+                "Replace this buffer with the auto-saved {}?",
+                copy.display()
+            )),
+            quoted(ELispExp::symbol("recover-file--adopt".into())),
+        ]),
+        env,
+        ctx,
+    )
+});
+
+pub const RECOVER_FILE_ADOPT_DOC: &str = "(recover-file--adopt): Read the auto-save file into the \
+         current buffer with no questions. Not called directly -- it is what `recover-file' does \
+         once its question has been answered.";
+
+primitive!(recover_file_adopt, _args, env, ctx, {
+    let Some(path) = ctx.with_current_buffer(|buf| buf.file_path.clone()) else {
+        return Ok(ELispExp::nil());
+    };
+    let copy = auto_save_path(&path, auto_save_directory(&env).as_deref());
+    let text = match std::fs::read_to_string(&copy) {
+        Ok(text) => text,
+        Err(why) => {
+            ctx.set_echo_message(&format!("Cannot read {}: {why}", copy.display()));
+            return Ok(ELispExp::nil());
+        }
+    };
+    ctx.with_current_buffer_mut(|buf| {
+        buf.adopt_text(&text);
+        // Modified on purpose. What is in the buffer now is *not* what is in
+        // the file, and saying otherwise would let it be quit away silently --
+        // which is the exact loss this file exists to undo.
+        buf.is_modified = true;
+        // The stamp still describes the real file, which has not been touched,
+        // so the watcher goes on comparing against the right thing.
+    });
+    ctx.set_echo_message(&format!(
+        "Recovered from {} -- save to keep it, revert-buffer to discard it",
+        copy.display()
+    ));
+    Ok(ELispExp::t())
 });
 
 pub const REVERT_BUFFER_DOC: &str = "(revert-buffer): Read the current buffer's file again, \
@@ -256,7 +340,7 @@ pub const WRITE_FILE_DOC: &str = "(write-file PATH): Write the current buffer to
          Example:\n\
          (write-file \"/home/me/notes-v2.txt\")";
 
-primitive!(write_file, args, _env, ctx, {
+primitive!(write_file, args, env, ctx, {
     let Some(ELispExp::String(path_str)) = args.first() else {
         return Err(EvalError::WrongArgumentType {
             expected: "String".into(),
@@ -295,6 +379,9 @@ primitive!(write_file, args, _env, ctx, {
     // Only now, with the bytes safely down.
     let mode = ctx.auto_mode_for(&path);
     let stamp = crate::buffer::FileStamp::of(&path);
+    // Discarded against the *old* path, before the buffer is repointed: the
+    // recovery copy that exists is the one named after where it used to live.
+    ctx.discard_auto_save(&current, auto_save_directory(&env).as_deref());
     ctx.with_current_buffer_mut(|buf| {
         buf.file_path = Some(path.clone());
         buf.is_modified = false;
@@ -1339,7 +1426,7 @@ pub const SAVE_BUFFER_OVERWRITE_DOC: &str = "(save-buffer--overwrite): Write the
          over its file, asking nothing. Not called directly -- it is what `save-buffer' does once \
          a conflict has been confirmed.";
 
-primitive!(save_buffer_overwrite, _args, _env, ctx, {
+primitive!(save_buffer_overwrite, _args, env, ctx, {
     let Some((path, content)) = ctx.with_current_buffer(|buf| {
         buf.file_path
             .as_ref()
@@ -1355,6 +1442,8 @@ primitive!(save_buffer_overwrite, _args, _env, ctx, {
                 buf.file_stamp = stamp;
                 buf.stale = false;
             });
+            let name = ctx.get_current_buffer_name();
+            ctx.discard_auto_save(&name, auto_save_directory(&env).as_deref());
             ctx.log_diagnostic(&format!("Wrote {path}"));
         }
         Err(why) => ctx.log_diagnostic(&format!("Failed to save: {why}")),
@@ -1412,7 +1501,7 @@ fn strings_from<B: BufferTrait>(value: Option<&ELispExp<B>>) -> Vec<String> {
 
 /// Write NAME's buffer to the file it is visiting. False when it has none or
 /// the write failed.
-fn write_buffer<B: BufferTrait>(ctx: &EditorState<B>, name: &str) -> bool {
+fn write_buffer<B: BufferTrait>(ctx: &EditorState<B>, name: &str, directory: Option<&str>) -> bool {
     // Taken under the lock; written with the lock given back, because a slow
     // disk must not stop every other thread reading the buffer.
     let Some(Some((path, content))) = ctx.with_buffer(name, |buf| {
@@ -1430,6 +1519,7 @@ fn write_buffer<B: BufferTrait>(ctx: &EditorState<B>, name: &str) -> bool {
                 buf.file_stamp = stamp;
                 buf.stale = false;
             });
+            ctx.discard_auto_save(name, directory);
             ctx.log_diagnostic(&format!("Wrote {path}"));
             true
         }
@@ -1535,15 +1625,17 @@ primitive!(save_some_buffers_answer, args, env, ctx, {
     let rest: Vec<String> = strings_from(args.get(2));
     let after = args.get(3).cloned().unwrap_or_else(ELispExp::nil);
 
+    let directory = auto_save_directory(&env);
+    let directory = directory.as_deref();
     match action.as_str() {
         "save" => {
-            write_buffer(ctx, &name);
+            write_buffer(ctx, &name, directory);
         }
         "all" => {
             // This one and every one left, with no further questions.
-            write_buffer(ctx, &name);
+            write_buffer(ctx, &name, directory);
             for other in &rest {
-                write_buffer(ctx, other);
+                write_buffer(ctx, other, directory);
             }
             return ask_about(ctx, env, &[], &after);
         }

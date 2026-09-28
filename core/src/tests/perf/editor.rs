@@ -544,6 +544,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 syntax: Default::default(),
                 file_stamp: None,
                 stale: false,
+                auto_saved_at: None,
                 read_only: false,
             },
         );

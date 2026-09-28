@@ -236,6 +236,23 @@
 ;; Turn it off if a network filesystem is misbehaving -- the check is a `stat',
 ;; and a `stat' on a dead mount blocks the thread that also colours syntax.
 
+;; Work that has never been saved. Every half minute, a copy of each modified
+;; file buffer is written beside it as `#name#' -- not a backup of the file,
+;; but a copy of what is in the buffer, for the one loss nothing else covers:
+;; the editor stopping without being asked.
+;;
+;;   (setq auto-save nil)                      ; off; t or unset is on
+;;   (setq auto-save-interval 60)              ; seconds; read once, at startup
+;;   (setq auto-save-directory "~/.cache/rsedit") ; all of them here instead
+;;
+;; With a directory set, the file's path is flattened into the name
+;; (`#!home!me!p!main.rs#') so that two `main.rs' from different directories do
+;; not share one copy.
+;;
+;; Opening a file that has one says so. `M-x recover-file' puts it in the
+;; buffer and marks it modified, so you can look before deciding: `C-x C-s'
+;; keeps it and deletes the copy, `M-x revert-buffer' throws it away.
+
 ;; Background workers. `define-worker' runs a fiber on the same timer syntax
 ;; colouring runs on, resuming it once per turn:
 ;;

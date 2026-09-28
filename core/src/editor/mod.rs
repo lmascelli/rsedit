@@ -46,6 +46,7 @@ use crate::{
         Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
     },
     minibuffer::install_minibuffer,
+    modes::autosave::{AutoSaver, auto_save_directory, auto_save_interval},
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     modes::prescan::Prescanner,
     modes::watcher::{FileWatcher, watch_interval},

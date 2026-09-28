@@ -212,6 +212,25 @@ impl<B: BufferTrait> EditorState<B> {
             return false;
         };
 
+        // # Why a modified buffer keeps its recovery copy
+        //
+        // An auto-save file is thrown away when what it held is safely in the
+        // real file -- on a save, and on killing a buffer with nothing
+        // outstanding. Killing a buffer that *does* have unsaved changes is a
+        // different situation: this editor does not yet ask before that kill,
+        // so the copy left behind is the only remaining trace of the work.
+        //
+        // Deleting it here would turn one un-asked keystroke into a
+        // permanent loss, which is the whole thing this tier exists to
+        // prevent. When `kill-buffer` learns to ask, this can become
+        // unconditional.
+        let unsaved = self
+            .with_buffer(name, |buf| buf.is_modified && buf.file_path.is_some())
+            .unwrap_or(false);
+        if !unsaved {
+            self.discard_auto_save(name, auto_save_directory(env).as_deref());
+        }
+
         // Detach NAME from wherever it's currently displayed.
         //
         // Finding the float and removing it are now one acquisition rather

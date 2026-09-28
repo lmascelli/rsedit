@@ -1,6 +1,7 @@
 use crate::{ELispExp, buffer::BufferTrait, input::Keymap};
 use std::collections::HashMap;
 
+pub mod autosave;
 pub mod highlighter;
 pub mod syntax;
 pub use syntax::{

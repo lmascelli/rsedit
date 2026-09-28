@@ -68,6 +68,12 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; how long colouring can be kept waiting behind it.
 ;; (setq worker-fuel 200000)
 
+;; A copy of unsaved work, written every half minute, for when the editor stops
+;; without being asked. `M-x recover-file' brings it back. See
+;; common-keymaps.lisp.
+;; (setq auto-save nil)
+;; (setq auto-save-directory "~/.cache/rsedit")
+
 ;; Files changing underneath you: a clean buffer is reloaded, a modified one is
 ;; flagged and `C-x C-s' asks. See common-keymaps.lisp.
 ;; (setq watch-files nil)
@@ -497,6 +503,13 @@ pub fn create_global_env<B: BufferTrait>()
     let _ = editor_state.send_to_worker(WorkerMessage::Schedule {
         task: Box::new(FileWatcher::new(env.clone())),
         interval: watch_interval(&env),
+    });
+    // And the fourth: a copy on disk of whatever has not been saved, for the
+    // one loss nothing else in this tier covers -- the editor stopping without
+    // being asked. See `crate::modes::autosave`.
+    let _ = editor_state.send_to_worker(WorkerMessage::Schedule {
+        task: Box::new(AutoSaver::new(env.clone())),
+        interval: auto_save_interval(&env),
     });
 
     editor_state.eval_file(

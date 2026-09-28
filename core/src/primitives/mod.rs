@@ -861,6 +861,17 @@ pub fn install_primitives<B: BufferTrait>(
         io::SAVE_BUFFER_OVERWRITE_DOC
     );
     insert_cmd!(
+        "recover-file",
+        io::recover_file,
+        [] as [&str; 0],
+        io::RECOVER_FILE_DOC
+    );
+    insert_fn!(
+        "recover-file--adopt",
+        io::recover_file_adopt,
+        io::RECOVER_FILE_ADOPT_DOC
+    );
+    insert_cmd!(
         "revert-buffer",
         io::revert_buffer,
         [] as [&str; 0],
