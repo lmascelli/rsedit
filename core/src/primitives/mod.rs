@@ -83,6 +83,7 @@ macro_rules! primitive {
     };
 }
 
+mod ask;
 mod buffers;
 mod commands;
 mod completion;
@@ -136,6 +137,8 @@ pub fn install_primitives<B: BufferTrait>(
             );
         };
     }
+
+    ask::install(env);
 
     // The registry itself. These are plain functions, not commands: they are
     // how Lisp inspects and extends the command set, not things a user runs
@@ -200,7 +203,25 @@ pub fn install_primitives<B: BufferTrait>(
         commands::CALL_INTERACTIVELY_DOC
     );
 
-    insert_cmd!("quit", general::quit, [] as [&str; 0], general::QUIT_DOC);
+    insert_cmd!("quit", io::quit, [] as [&str; 0], io::QUIT_DOC);
+    insert_cmd!(
+        "quit-without-saving",
+        io::quit_without_saving,
+        [] as [&str; 0],
+        io::QUIT_WITHOUT_SAVING_DOC
+    );
+    insert_cmd!(
+        "save-some-buffers",
+        io::save_some_buffers,
+        [] as [&str; 0],
+        io::SAVE_SOME_BUFFERS_DOC
+    );
+    insert_fn!(
+        "save-some-buffers--answer",
+        io::save_some_buffers_answer,
+        io::SAVE_SOME_BUFFERS_ANSWER_DOC
+    );
+    insert_fn!("quit--confirm", io::quit_confirm, io::QUIT_CONFIRM_DOC);
     insert_fn!("eval-file", general::eval_file, general::EVAL_FILE_DOC);
     insert_fn!("define-key", general::define_key, general::DEFINE_KEY_DOC);
     insert_fn!(

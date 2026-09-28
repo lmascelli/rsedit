@@ -1,4 +1,6 @@
 use super::*;
+use crate::lisp::{call_callable, eval};
+use crate::primitives::ask;
 
 pub const FIND_FILE_DOC: &str = "(find-file PATH): Open PATH into a buffer, make it current, and \
          return the buffer's name.\n\n\
@@ -1168,4 +1170,245 @@ primitive!(data_directory, args, _env, ctx, {
         None => base.clone(),
     };
     Ok(ELispExp::string(path.display().to_string()))
+});
+
+// ---------------------------------------------------------------------------
+// Leaving without losing anything
+// ---------------------------------------------------------------------------
+
+/// The buffers a quit has to account for: modified, visiting a file, and not
+/// one of the editor's own read-only views.
+///
+/// # Why only file-visiting ones
+///
+/// Because those are the ones with somewhere to be saved to. Typing a note in
+/// `*scratch*` marks it modified and there is no file it belongs in, so
+/// counting it would mean the editor could never be quit without a prompt
+/// about something the prompt cannot fix. A listing, a backtrace and a manual
+/// page are modified in the same meaningless way and are read-only besides.
+fn unsaved_file_buffers<B: BufferTrait>(ctx: &EditorState<B>) -> Vec<String> {
+    ctx.buffer_names()
+        .into_iter()
+        .filter(|name| {
+            ctx.with_buffer(name, |buf| {
+                buf.is_modified && !buf.read_only && buf.file_path.is_some()
+            })
+            .unwrap_or(false)
+        })
+        .collect()
+}
+
+/// VALUE as `(quote VALUE)`, so that a form built here hands it back whole.
+fn quoted<B: BufferTrait>(value: ELispExp<B>) -> ELispExp<B> {
+    ELispExp::form(vec![ELispExp::symbol("quote".into()), value])
+}
+
+fn names_list<B: BufferTrait>(names: &[String]) -> ELispExp<B> {
+    ELispExp::proper_list(names.iter().map(|n| ELispExp::string(n.clone())).collect())
+}
+
+fn strings_from<B: BufferTrait>(value: Option<&ELispExp<B>>) -> Vec<String> {
+    value
+        .map(|list| {
+            list.iter()
+                .filter_map(|item| match item {
+                    ELispExp::String(text) => Some(text.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Write NAME's buffer to the file it is visiting. False when it has none or
+/// the write failed.
+fn write_buffer<B: BufferTrait>(ctx: &EditorState<B>, name: &str) -> bool {
+    // Taken under the lock; written with the lock given back, because a slow
+    // disk must not stop every other thread reading the buffer.
+    let Some(Some((path, content))) = ctx.with_buffer(name, |buf| {
+        buf.file_path
+            .as_ref()
+            .map(|path| (path.to_string(), buf.text.to_string()))
+    }) else {
+        return false;
+    };
+    match std::fs::write(&path, content) {
+        Ok(()) => {
+            ctx.with_buffer_mut(name, |buf| buf.is_modified = false);
+            ctx.log_diagnostic(&format!("Wrote {path}"));
+            true
+        }
+        Err(why) => {
+            ctx.log_diagnostic(&format!("Failed to save {path}: {why}"));
+            false
+        }
+    }
+}
+
+/// The call that answers one buffer's question.
+fn answer_form<B: BufferTrait>(
+    action: &str,
+    name: &str,
+    rest: &[String],
+    after: &ELispExp<B>,
+) -> ELispExp<B> {
+    ELispExp::form(vec![
+        ELispExp::symbol("save-some-buffers--answer".into()),
+        ELispExp::string(action.to_string()),
+        ELispExp::string(name.to_string()),
+        quoted(names_list(rest)),
+        quoted(after.clone()),
+    ])
+}
+
+pub const SAVE_SOME_BUFFERS_DOC: &str = "(save-some-buffers &optional AFTER): Offer to save each \
+         modified buffer that is visiting a file, one at a time, then call AFTER with no \
+         arguments.\n\n\
+         `y' saves this one, `n' leaves it, `!' saves this one and every one left, and `q' stops \
+         asking. Any other key does nothing, so the question cannot be answered by accident.\n\n\
+         Buffers not visiting a file are passed over: typing in `*scratch*' marks it modified and \
+         there is nowhere to put it, so asking would be a question with no useful answer.\n\n\
+         AFTER runs whether anything was saved or not, and whether or not the questions were \
+         stopped early -- it is where the caller decides what to do about what is left, which is \
+         what `quit' uses it for.\n\n\
+         Example:\n\
+         (save-some-buffers 'quit--confirm)";
+
+primitive!(save_some_buffers, args, env, ctx, {
+    let after = args.first().cloned().unwrap_or_else(ELispExp::nil);
+    let names = unsaved_file_buffers(ctx);
+    ask_about(ctx, env, &names, &after)
+});
+
+/// Ask about the first of NAMES, or run AFTER when there are none left.
+fn ask_about<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: std::sync::Arc<Env<EditorState<B>>>,
+    names: &[String],
+    after: &ELispExp<B>,
+) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
+    let Some((name, rest)) = names.split_first() else {
+        if after.is_truthy() {
+            call_callable(after, &[], env, ctx)?;
+        }
+        return Ok(ELispExp::nil());
+    };
+    // Re-checked rather than trusted: the list was taken before the first
+    // question, and answering one runs arbitrary Lisp -- a hook, a callback --
+    // which may have saved or killed this one in the meantime.
+    let still_unsaved = ctx
+        .with_buffer(name, |buf| buf.is_modified && buf.file_path.is_some())
+        .unwrap_or(false);
+    if !still_unsaved {
+        return ask_about(ctx, env, rest, after);
+    }
+
+    let path = ctx
+        .with_buffer(name, |buf| buf.file_path.clone())
+        .flatten()
+        .unwrap_or_else(|| name.clone());
+    ask::ask_with_keys(
+        ctx,
+        format!("Save {path}? (y, n, ! = all, q = stop)"),
+        vec![
+            ("y", answer_form("save", name, rest, after)),
+            ("n", answer_form("skip", name, rest, after)),
+            ("!", answer_form("all", name, rest, after)),
+            ("q", answer_form("stop", name, rest, after)),
+        ],
+    );
+    Ok(ELispExp::t())
+}
+
+pub const SAVE_SOME_BUFFERS_ANSWER_DOC: &str = "(save-some-buffers--answer ACTION NAME REST AFTER): \
+         Act on one answer and move on. Not called directly -- it is what `save-some-buffers' \
+         binds its keys to.";
+
+primitive!(save_some_buffers_answer, args, env, ctx, {
+    // Before anything else, so that a callback which asks its own question
+    // installs a keymap that this does not then take down again.
+    ctx.clear_transient_keymap();
+
+    let action = match args.first() {
+        Some(ELispExp::String(text)) => text.to_string(),
+        _ => return Ok(ELispExp::nil()),
+    };
+    let name = match args.get(1) {
+        Some(ELispExp::String(text)) => text.to_string(),
+        _ => return Ok(ELispExp::nil()),
+    };
+    let rest: Vec<String> = strings_from(args.get(2));
+    let after = args.get(3).cloned().unwrap_or_else(ELispExp::nil);
+
+    match action.as_str() {
+        "save" => {
+            write_buffer(ctx, &name);
+        }
+        "all" => {
+            // This one and every one left, with no further questions.
+            write_buffer(ctx, &name);
+            for other in &rest {
+                write_buffer(ctx, other);
+            }
+            return ask_about(ctx, env, &[], &after);
+        }
+        "stop" => return ask_about(ctx, env, &[], &after),
+        // "skip", and anything else, leaves it alone.
+        _ => {}
+    }
+    ask_about(ctx, env, &rest, &after)
+});
+
+pub const QUIT_DOC: &str = "(quit): Leave the editor, offering to save anything modified \
+         first.\n\n\
+         Each modified file buffer is offered in turn -- see `save-some-buffers' -- and if any \
+         are still unsaved afterwards, leaving has to be confirmed by typing `yes'. With nothing \
+         modified, it simply quits.\n\n\
+         The confirmation guards the act that cannot be undone rather than each step towards it: \
+         declining to save one buffer is recoverable right up until the editor closes, and that \
+         is the moment worth being sure about. `quit-without-saving' skips all of it.\n\n\
+         Example:\n\
+         (define-key nil \"C-x C-c\" 'quit)";
+
+primitive!(quit, _args, env, ctx, {
+    let names = unsaved_file_buffers(ctx);
+    let after = ELispExp::symbol("quit--confirm".into());
+    ask_about(ctx, env, &names, &after)
+});
+
+pub const QUIT_CONFIRM_DOC: &str = "(quit--confirm): Quit, or ask first if anything is still \
+         unsaved. Not called directly -- `quit' runs it once the offers to save are done.";
+
+primitive!(quit_confirm, _args, env, ctx, {
+    let left = unsaved_file_buffers(ctx);
+    if left.is_empty() {
+        ctx.quit();
+        return Ok(ELispExp::nil());
+    }
+    // Typed in full, because this is the step that loses the work. The
+    // per-buffer questions above are single keys precisely so that the budget
+    // for care can be spent here.
+    let prompt = match left.len() {
+        1 => format!("{} is unsaved. Quit anyway?", left[0]),
+        n => format!("{n} buffers are unsaved. Quit anyway?"),
+    };
+    eval(
+        &ELispExp::form(vec![
+            ELispExp::symbol("yes-or-no".into()),
+            ELispExp::string(prompt),
+            quoted(ELispExp::symbol("quit-without-saving".into())),
+        ]),
+        env,
+        ctx,
+    )
+});
+
+pub const QUIT_WITHOUT_SAVING_DOC: &str = "(quit-without-saving): Stop the editor's main loop at \
+         once, asking nothing and saving nothing.\n\n\
+         What `quit' eventually calls, and the way out for anything that has already done the \
+         asking itself.";
+
+primitive!(quit_without_saving, _args, _env, ctx, {
+    ctx.quit();
+    Ok(ELispExp::nil())
 });

@@ -1,14 +1,5 @@
 use super::*;
 
-pub const QUIT_DOC: &str = "(quit): Stop the editor's main loop.\n\n\
-         Example:\n\
-         (define-key nil \"C-x C-c\" 'quit)";
-
-primitive!(quit, _args, _env, ctx, {
-    ctx.quit();
-    Ok(ELispExp::nil())
-});
-
 pub const EVAL_FILE_DOC: &str = "(eval-file FILE): Evaluate FILE as Lisp. FILE is first looked up as \
          an absolute or relative path; if that fails and FILE has no \
          directory separator or extension, each directory in `lisp-path` is \
