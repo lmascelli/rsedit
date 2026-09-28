@@ -17,7 +17,10 @@ pub type ELispExp<B> = lisp::LispExp<editor::EditorState<B>>;
 
 pub use crate::{
     buffer::BufferTrait,
-    editor::{EditorState, MOUSE_MODE, create_global_env, mouse_mode},
+    editor::{
+        CONFIG_DIR, EditorState, MOUSE_MODE, XDG_CONFIG_HOME, create_global_env,
+        isolate_config_for_tests, mouse_mode,
+    },
     managers::{Buffers, Windows},
 };
 

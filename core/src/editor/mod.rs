@@ -83,7 +83,7 @@ mod runtime;
 mod settings;
 mod windows;
 
-pub use boot::create_global_env;
+pub use boot::{CONFIG_DIR, XDG_CONFIG_HOME, create_global_env, isolate_config_for_tests};
 pub use settings::*;
 
 /// What the echo area is showing, and since when.

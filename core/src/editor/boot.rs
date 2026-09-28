@@ -223,57 +223,154 @@ impl<B: BufferTrait> EditorState<B> {
     }
 }
 
-/// Where this installation's `init.lisp` lives: `$HOME/.config/rsedit` on
-/// Unix, `%APPDATA%/rsedit` on Windows, or an empty path when the variable
-/// that names the home directory is not set.
+/// The name of the variable that names the configuration directory outright.
 ///
-/// # Why the environment is read here and the path built somewhere else
+/// The one override that means the same thing on every platform, which is why
+/// it comes first: an absolute path to the directory holding `init.lisp`, with
+/// nothing joined onto it and no convention to know. It is what a portable
+/// install, a second configuration kept beside the first, and a test suite
+/// that must not touch the person's own files all need.
+pub const CONFIG_DIR: &str = "RSEDIT_CONFIG_DIR";
+
+/// The freedesktop variable, honoured where it means something.
 ///
-/// So that the arithmetic can be tested without touching the environment.
-/// `HOME` is process-wide and the test runner is threaded, so a test that
-/// checks this by setting it is a test that every other test can see -- which
-/// is the shape of the bug this split was made to fix, not a way to check it.
-fn user_config_path() -> PathBuf {
+/// Unix only. It is a Linux and BSD convention rather than a cross-platform
+/// one: Windows has `%APPDATA%`, and preferring somebody else's answer to the
+/// platform's own would put a Windows user's configuration somewhere no
+/// Windows program would look for it.
+pub const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
+
+/// Which candidate root wins, given what the environment says.
+///
+/// # Why this takes its inputs rather than reading them
+///
+/// So that the *precedence* can be tested without touching the environment.
+/// The environment is process-wide and the test runner is threaded, so a test
+/// that checked this by setting a variable would be a test every other test
+/// could see -- which is the shape of the bug this file was last fixed for,
+/// not a way to check it.
+///
+/// `rsedit_dir` is used as given: it names the directory itself. `xdg` is a
+/// *parent* of application directories by specification, so the application's
+/// own name is joined onto it. `platform` is whatever the running system
+/// calls the same place, already complete.
+pub(crate) fn choose_config_dir(
+    rsedit_dir: Option<PathBuf>,
+    xdg: Option<PathBuf>,
+    platform: Option<PathBuf>,
+) -> Option<PathBuf> {
+    rsedit_dir
+        .or_else(|| xdg.map(|xdg| xdg.join("rsedit")))
+        .or(platform)
+}
+
+/// Where this installation keeps its configuration, or `None` when nothing in
+/// the environment says.
+///
+/// Three answers, most specific first:
+///
+/// + `RSEDIT_CONFIG_DIR`, used as given, on every platform.
+/// + `XDG_CONFIG_HOME/rsedit`, on Unix only.
+/// + The platform's own place: `%APPDATA%\rsedit` on Windows,
+///   `$HOME/.config/rsedit` everywhere else.
+///
+/// # Why macOS gets `~/.config` rather than `~/Library/Application Support`
+///
+/// Because that is where somebody configuring a terminal editor on a Mac will
+/// look. Apple's directory is the convention for bundled applications; the
+/// editors a person arrives from -- Emacs under XDG, Neovim, Helix -- all keep
+/// their configuration in `~/.config`, and being the one that does not would
+/// be a correctness nobody asked for.
+fn user_config_dir() -> Option<PathBuf> {
+    let named = std::env::var(CONFIG_DIR).ok().map(PathBuf::from);
+
+    #[cfg(unix)]
+    let xdg = std::env::var(XDG_CONFIG_HOME).ok().map(PathBuf::from);
+    // Set on Windows only by somebody carrying a Unix habit across, and
+    // deliberately not acted on: the platform has its own answer below.
+    #[cfg(not(unix))]
+    let xdg: Option<PathBuf> = None;
+
     #[cfg(target_os = "windows")]
-    let root = std::env::var("APPDATA").ok().map(PathBuf::from);
-    #[cfg(not(target_os = "windows"))]
-    let root = std::env::var("HOME")
+    let platform = std::env::var("APPDATA")
         .ok()
-        .map(|home| PathBuf::from(home).join(".config"));
+        .map(|appdata| PathBuf::from(appdata).join("rsedit"));
+    #[cfg(not(target_os = "windows"))]
+    let platform = std::env::var("HOME")
+        .ok()
+        .map(|home| PathBuf::from(home).join(".config").join("rsedit"));
 
-    // # Why a test build never looks at `HOME`
-    //
-    // Building an editor *creates* this directory and then evaluates what is
-    // in it. Under the real `HOME` that means `cargo test` writing into the
-    // developer's own configuration and then running it, so the suite's
-    // behaviour depends on whose machine it is on.
-    //
-    // Worse, it is not even a stable `HOME`. Several tests redirect the
-    // variable at a sandbox to check path expansion, and the redirection is
-    // process-wide while the test runner is threaded -- so an editor built by
-    // *any* concurrent test landed its configuration directory inside
-    // whichever sandbox happened to be installed at that instant. The symptom
-    // was a listing of a two-file sandbox that occasionally had a `.config/`
-    // in it, failing in whichever test was unlucky rather than in the one
-    // that caused it.
-    //
-    // A fixed directory of this process's own removes both: no test can write
-    // into another test's sandbox, and no test reads a configuration that a
-    // person wrote.
-    #[cfg(test)]
-    let root = {
-        let _ = root;
-        Some(std::env::temp_dir().join(format!("rsedit-test-config-{}", std::process::id())))
-    };
+    choose_config_dir(named, xdg, platform)
+}
 
-    match root {
-        Some(root) => root.join("rsedit").join("init.lisp"),
+/// The `init.lisp` this installation reads and, when it is missing, writes.
+///
+/// An empty path when nothing names a configuration directory, which the
+/// caller reads as "there is none" rather than as somewhere to create one.
+fn user_config_path() -> PathBuf {
+    match user_config_dir() {
+        Some(dir) => dir.join("init.lisp"),
         None => PathBuf::new(),
     }
 }
 
+/// Point this process's configuration at a directory of its own, once.
+///
+/// # Why a test suite needs this at all
+///
+/// Building an editor *creates* its configuration directory and then
+/// evaluates what is in it. Under a person's real `HOME` that means `cargo
+/// test` writing into their configuration and then running it, so the suite's
+/// behaviour depends on whose machine it is on.
+///
+/// Worse, `HOME` is not stable during a run. Several tests redirect it at a
+/// sandbox to check path expansion, and the redirection is process-wide while
+/// the test runner is threaded -- so an editor built by *any* concurrent test
+/// landed its configuration inside whichever sandbox happened to be installed
+/// at that instant. The symptom was a listing of a two-file sandbox that
+/// occasionally had a `.config/` in it, failing in whichever test was unlucky
+/// rather than in the one that caused it.
+///
+/// Naming a directory of this process's own removes both -- and it does so
+/// through [`CONFIG_DIR`], the same door a person would use, so the
+/// resolution above is *exercised* by the suite rather than bypassed by it.
+///
+/// # Why it is public
+///
+/// The binary crate's tests build editors too, and `cfg(test)` is not active
+/// in a library compiled as a dependency, so nothing conditional in here can
+/// reach them. Hidden from the documentation because it is scaffolding rather
+/// than a feature.
+#[doc(hidden)]
+pub fn isolate_config_for_tests() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("rsedit-test-config-{}", std::process::id()));
+        // SAFETY: the environment is a process-wide table, and writing to it
+        // races with any concurrent read. That is why this happens exactly
+        // once and as early as it can -- before the first editor exists, and
+        // so before anything has read `RSEDIT_CONFIG_DIR`. The value is never
+        // changed and never removed, so there is one write in the life of the
+        // process and every later reader sees the same answer.
+        //
+        // The residual is the same one `tests::home_guard` carries: a thread
+        // reading some *other* variable at this instant is racing with this
+        // write, because the table is one table. Doing it first, once, is what
+        // keeps that window as small as it can be made without taking the
+        // environment out of the picture entirely.
+        unsafe { std::env::set_var(CONFIG_DIR, dir) };
+    });
+}
+
 pub fn create_global_env<B: BufferTrait>()
 -> Result<(EditorState<B>, Arc<Env<EditorState<B>>>), EvalError<EditorState<B>>> {
+    // Before anything reads the configuration, which is the whole of the
+    // ordering argument in `isolate_config_for_tests`. The binary crate's
+    // tests cannot be reached from here -- `cfg(test)` is not active in a
+    // library compiled as a dependency -- so they call it themselves.
+    #[cfg(test)]
+    isolate_config_for_tests();
+
     let editor_state = EditorState::new();
     let env = bootstrap_vm(&editor_state)?;
 

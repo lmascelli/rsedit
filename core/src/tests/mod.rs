@@ -9,6 +9,7 @@ mod compile_tests;
 mod completion_at_point_tests;
 mod completion_tests;
 mod completion_ui_tests;
+mod config_path_tests;
 mod dangling_window_tests;
 mod deadlock_tests;
 mod debug_lisp_tests;

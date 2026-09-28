@@ -13,10 +13,10 @@ use rsedit_core::BufferTrait;
 use rsedit_core::ELispExp;
 use rsedit_core::EditorState;
 use rsedit_core::buffer::gap_buffer::GapBuffer;
-use rsedit_core::create_global_env;
 use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
 use rsedit_core::lisp::{Env, LispContext};
 use rsedit_core::ui::{Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Style, Theme};
+use rsedit_core::{create_global_env, isolate_config_for_tests};
 use std::{
     io::{Write, stdout},
     sync::Arc,
@@ -33,6 +33,23 @@ use crate::tui::translate_key;
 
 const COLS: u16 = 80;
 const ROWS: u16 = 24;
+
+/// An editor, with this process's configuration pointed somewhere harmless
+/// first.
+///
+/// # Why these tests have to ask and the library's own do not
+///
+/// Building an editor creates its configuration directory and evaluates what
+/// is in it, so a test suite that does not redirect it writes into the
+/// person's real `~/.config/rsedit` and then runs whatever they keep there.
+/// `rsedit_core` handles that for its own tests inside `create_global_env` --
+/// but `cfg(test)` is not active in a library compiled as a dependency, so
+/// nothing it does conditionally can reach this crate. Hence the explicit
+/// call; it is idempotent, so every test may make it.
+fn editor() -> (EditorState<GapBuffer>, Arc<Env<EditorState<GapBuffer>>>) {
+    isolate_config_for_tests();
+    create_global_env::<GapBuffer>().expect("global env")
+}
 
 /// Render one frame into memory and return the bytes.
 fn frame(state: &EditorState<GapBuffer>, env: &Arc<Env<EditorState<GapBuffer>>>) -> String {
@@ -178,7 +195,7 @@ fn a_key_the_editor_cannot_name_is_refused() {
 /// does.
 #[test]
 fn a_terminal_escape_closes_the_minibuffer() {
-    let (state, env) = create_global_env::<GapBuffer>().expect("global env");
+    let (state, env) = editor();
     env.set_variable("frame-width".into(), ELispExp::number(COLS as f64));
     env.set_variable("frame-height".into(), ELispExp::number(ROWS as f64));
     let ast = rsedit_core::lisp::Parser::new(r#"(minibuffer-read "P:" nil nil nil)"#)
@@ -210,7 +227,7 @@ fn a_terminal_escape_closes_the_minibuffer() {
 /// The character reaches the screen, in every row of its column.
 #[test]
 fn the_rule_between_windows_is_drawn_down_its_whole_column() {
-    let (state, env) = create_global_env::<GapBuffer>().expect("global env");
+    let (state, env) = editor();
     env.set_variable("frame-width".into(), ELispExp::number(COLS as f64));
     env.set_variable("frame-height".into(), ELispExp::number(ROWS as f64));
     let ast = rsedit_core::lisp::Parser::new("(split-window-right)")
@@ -278,7 +295,7 @@ fn the_rule_is_drawn_with_the_window_separator_face() {
 /// `*Minibuffer*` and the question being asked was never shown at all.
 #[test]
 fn a_titled_window_is_labelled_with_its_title() {
-    let (state, env) = create_global_env::<GapBuffer>().expect("global env");
+    let (state, env) = editor();
     env.set_variable("frame-width".into(), ELispExp::number(COLS as f64));
     env.set_variable("frame-height".into(), ELispExp::number(ROWS as f64));
     let ast = rsedit_core::lisp::Parser::new(r#"(minibuffer-read "Find file:" nil nil nil)"#)
@@ -305,7 +322,7 @@ fn a_titled_window_is_labelled_with_its_title() {
 /// instead of at point.
 #[test]
 fn the_cursor_is_placed_after_the_echo_area_not_before_it() {
-    let (state, env) = create_global_env::<GapBuffer>().expect("global env");
+    let (state, env) = editor();
     state.set_echo_message("a message long enough to move the cursor");
 
     let rendered = frame(&state, &env);
@@ -325,7 +342,7 @@ fn the_cursor_is_placed_after_the_echo_area_not_before_it() {
 /// in the right place, so it is never seen skittering across the screen.
 #[test]
 fn the_cursor_is_hidden_while_drawing_and_shown_at_the_end() {
-    let (state, env) = create_global_env::<GapBuffer>().expect("global env");
+    let (state, env) = editor();
     state.set_echo_message("hello");
 
     let rendered = frame(&state, &env);
@@ -809,7 +826,7 @@ fn a_highlight_outside_the_drawn_rows_is_ignored() {
 /// An empty echo area must not change where the cursor lands.
 #[test]
 fn the_cursor_lands_at_point_with_no_echo_message() {
-    let (state, env) = create_global_env::<GapBuffer>().expect("global env");
+    let (state, env) = editor();
     state.set_echo_message("");
 
     let rendered = frame(&state, &env);
