@@ -115,6 +115,17 @@ impl<B: BufferTrait> Commands<B> {
         self.reading_prefix = false;
     }
 
+    /// Whether EVENT is the key that starts a prefix argument.
+    ///
+    /// Read by the reader below and by nothing else on the typing path. It is
+    /// a function rather than a condition written twice because something does
+    /// need to ask separately: a `describe-key' has to be able to say that
+    /// `C-u' is read as an argument, and a second copy of the test is a second
+    /// copy to keep in step.
+    pub fn is_prefix_argument_key(event: &KeyEvent) -> bool {
+        event.modifiers.ctrl && !event.modifiers.alt && event.code == KeyCode::Char('u')
+    }
+
     /// Offer EVENT to the prefix-argument reader, and say whether it was taken.
     ///
     /// Called before the key sequence gets a look, because `C-u` and the digits
@@ -124,7 +135,7 @@ impl<B: BufferTrait> Commands<B> {
     /// number four into a buffer.
     pub fn read_prefix_argument(&mut self, event: &KeyEvent) -> bool {
         // C-u: start an argument, or multiply the one being built by four.
-        if event.modifiers.ctrl && !event.modifiers.alt && event.code == KeyCode::Char('u') {
+        if Self::is_prefix_argument_key(event) {
             self.prefix_arg = Some(match (self.prefix_arg, self.reading_prefix) {
                 (Some(PrefixArg::Raw(times)), true) => PrefixArg::Raw(times + 1),
                 _ => PrefixArg::Raw(1),

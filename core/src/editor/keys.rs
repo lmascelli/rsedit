@@ -3,6 +3,14 @@
 
 use super::*;
 
+/// The variable naming what is waiting to be told the next key sequence.
+///
+/// The arming *is* the variable: one fact in one place, readable and settable
+/// from Lisp like any other, and nil when nothing is capturing. It costs one
+/// variable lookup per keystroke, which is a hash probe beside the three
+/// compartment locks the same keystroke already takes.
+pub const KEY_CAPTURE_FUNCTION: &str = "*key-capture-function*";
+
 /// What the keymaps had to say about the key sequence typed so far.
 ///
 /// Four answers rather than the `(Option<ELispExp>, bool)` pair this replaced.
@@ -34,6 +42,38 @@ impl<B: BufferTrait> EditorState<B> {
     /// number four into a buffer.
     fn read_prefix_argument(&self, event: &KeyEvent) -> bool {
         self.commands_mut(|commands| commands.read_prefix_argument(event))
+    }
+
+    /// The mode of the buffer the keys would be typed into.
+    ///
+    /// Taken before the modes lock, everywhere: buffers come before modes in
+    /// the canonical order.
+    fn keymap_mode(&self) -> String {
+        self.with_current_buffer(|buf| buf.current_mode.clone())
+    }
+
+    /// What KEYS would run if they were typed now, and which map it is from.
+    ///
+    /// The same walk the editor itself does -- see [`Modes::binding_for`] --
+    /// so what this reports and what would happen cannot disagree. `None`
+    /// means nothing would run, which includes a sequence that is only the
+    /// start of a longer one.
+    pub(crate) fn key_binding(&self, keys: &[KeyEvent]) -> Option<Binding<B>> {
+        let mode = self.keymap_mode();
+        self.modes(|modes| modes.binding_for(Some(&mode), keys))
+    }
+
+    /// Whether KEYS is the start of a longer binding.
+    pub(crate) fn key_is_prefix(&self, keys: &[KeyEvent]) -> bool {
+        let mode = self.keymap_mode();
+        self.modes(|modes| modes.is_prefix(Some(&mode), keys))
+    }
+
+    /// Every binding in effect in the current buffer, sorted, each sequence
+    /// once.
+    pub(crate) fn key_bindings(&self) -> Vec<Binding<B>> {
+        let mode = self.keymap_mode();
+        self.modes(|modes| modes.bindings(Some(&mode)))
     }
 
     /// Install a keymap that is consulted before every other until it goes
@@ -206,17 +246,13 @@ impl<B: BufferTrait> EditorState<B> {
 
             // The mode's own keymap wins, then the global one -- and a mode
             // that binds a prefix keeps the sequence alive even when only the
-            // global map completes it.
-            let mode_keymap = modes.mode_keymap(&current_mode);
-            let global = modes.global_keymap();
-            let hit = mode_keymap
-                .and_then(|keymap| keymap.get(&pending))
-                .or_else(|| global.get(&pending))
-                .cloned();
-            let prefix = mode_keymap.is_some_and(|keymap| keymap.is_prefix(&pending))
-                || global.is_prefix(&pending);
+            // global map completes it. The same two calls answer `key-binding`
+            // for a help command, so what is reported and what runs are one
+            // walk rather than two that have to be kept in step.
+            let hit = modes.binding_below_transient(Some(&current_mode), &pending);
+            let prefix = modes.is_prefix_below_transient(Some(&current_mode), &pending);
             match (hit, prefix) {
-                (Some(ast), _) => Bound::Command(ast),
+                (Some(binding), _) => Bound::Command(binding.target),
                 (None, true) => Bound::Prefix,
                 (None, false) => Bound::Unbound,
             }
@@ -248,7 +284,102 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
+    /// Read the next key sequence and hand it to WATCHER instead of running
+    /// it.
+    ///
+    /// # Why this sits on the real resolution path
+    ///
+    /// The question "what does this key do" has exactly one truthful answer,
+    /// and it is the one the editor would have acted on: the transient map
+    /// before the mode's, the mode's before the global one, this buffer's
+    /// mode and not another's. Anything that reconstructs that from the
+    /// keymaps is a second implementation of the precedence rules, and the
+    /// day the order changes it reports the old one -- confidently, with no
+    /// test failing, in the command whose entire job is to be right about it.
+    ///
+    /// So capture does not intercept the keys ahead of resolution. It
+    /// accumulates into the same pending sequence -- so a half-typed `C-x`
+    /// shows in the echo area as it always does -- asks the same two
+    /// questions of the same maps, and diverts only at the very end, in place
+    /// of dispatch.
+    ///
+    /// WATCHER is called as (WATCHER KEYS TARGET SOURCE): KEYS as a binding is
+    /// written, TARGET the form that would have run (quoted, so a caller sees
+    /// what it is rather than what it does) or nil, and SOURCE the name of the
+    /// map it came from, or nil when nothing is bound.
+    fn capture_key_sequence(
+        &self,
+        event: KeyEvent,
+        watcher: ELispExp<B>,
+        env: &Arc<Env<EditorState<B>>>,
+    ) {
+        let mut pending = self
+            .pending_keys
+            .write()
+            .expect("Failed to acquire write lock on pending_keys");
+        pending.push(event);
+        let keys = pending.clone();
+        let described = describe_keys(&keys);
+
+        // `C-u` never reaches a keymap: the argument reader takes it first,
+        // which is exactly what is worth saying about it. Asked through the
+        // reader's own predicate so the two cannot drift.
+        let prefix_argument = keys.len() == 1 && Commands::<B>::is_prefix_argument_key(&keys[0]);
+
+        let binding = if prefix_argument {
+            None
+        } else {
+            self.key_binding(&keys)
+        };
+        if binding.is_none() && !prefix_argument && self.key_is_prefix(&keys) {
+            // Part-way through a sequence: keep the keys and keep waiting,
+            // the same as the editor would.
+            return;
+        }
+        pending.clear();
+        drop(pending);
+
+        // Disarmed before the watcher runs, not after: a watcher that opens a
+        // buffer, prompts, or fails part-way must not leave the next keystroke
+        // captured too.
+        env.set_variable(KEY_CAPTURE_FUNCTION.into(), ELispExp::nil());
+
+        let source = match (&binding, prefix_argument) {
+            (Some(binding), _) => ELispExp::string(binding.source.name().to_string()),
+            (None, true) => ELispExp::string("prefix-argument".to_string()),
+            (None, false) => ELispExp::nil(),
+        };
+        let target = match &binding {
+            // Quoted: the target is a form like `(find-file)`, and what the
+            // watcher wants is the form itself, not the file it would open.
+            Some(binding) => ELispExp::form(vec![
+                ELispExp::symbol("quote".into()),
+                binding.target.clone(),
+            ]),
+            None => ELispExp::nil(),
+        };
+        self.run_command_form(
+            ELispExp::form(vec![
+                ELispExp::symbol("funcall".into()),
+                watcher,
+                ELispExp::string(described),
+                target,
+                source,
+            ]),
+            env,
+        );
+    }
+
     pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
+        // Something is waiting to be told what the next key sequence is
+        // rather than have it run. See `capture_key_sequence`.
+        if let Some(watcher) = env.get_variable(KEY_CAPTURE_FUNCTION)
+            && watcher.is_truthy()
+        {
+            self.capture_key_sequence(event, watcher, env);
+            return;
+        }
+
         // The argument reader gets first refusal. A key it takes is not a
         // command and never reaches a keymap.
         if self.read_prefix_argument(&event) {

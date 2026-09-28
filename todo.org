@@ -9,6 +9,9 @@
 - [ ] primitive for making enter also indent the next line (optinally bound to Enter)
 - [ ] pressing tab with a region selected insert the same indent in the whole region
       but should instead indent it.
+- [ ] line numbers should be a per buffer property
+- [ ] the worker that checks if a file has been modified should have a timeout on
+      the function that checks it so it cannot block the other tasks on the scheduler
 
 
 * Macro todo

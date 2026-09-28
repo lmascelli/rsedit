@@ -48,7 +48,7 @@ pub use commands::Commands;
 pub use history::{DEFAULT_HISTORY_LENGTH, History, Recalled};
 pub use kill_yank::KillYank;
 pub use log::Log;
-pub use modes::Modes;
+pub use modes::{Binding, BindingSource, Modes};
 pub use runtime::Runtime;
 pub use windows::{
     ClickCount, DOUBLE_CLICK_INTERVAL, DRAG_SCROLL_INTERVAL, Hit, MouseDrag,

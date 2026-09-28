@@ -42,10 +42,60 @@
 use crate::{
     ELispExp,
     buffer::BufferTrait,
-    input::{KeyEvent, Keymap, TransientKeymap},
+    input::{KeyEvent, Keymap, TransientKeymap, describe_keys},
     modes::{MajorMode, SyntaxTable},
 };
 use std::collections::HashMap;
+
+/// Which map a binding came from, in the order they are consulted.
+///
+/// Worth carrying beside the binding rather than being worked out again:
+/// "`q' runs `quit-window' *here*, because this buffer is in dired-mode" is
+/// most of what somebody looking a key up wants to know, and the difference
+/// between a binding they can change and one that is about to disappear.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BindingSource {
+    /// A map installed for one question and taken down after it.
+    Transient,
+    /// The current buffer's mode.
+    Mode,
+    /// In force everywhere.
+    Global,
+}
+
+impl BindingSource {
+    /// The name Lisp sees.
+    pub fn name(self) -> &'static str {
+        match self {
+            BindingSource::Transient => "transient",
+            BindingSource::Mode => "mode",
+            BindingSource::Global => "global",
+        }
+    }
+}
+
+/// One binding in effect: what to press, what it runs, and where it is from.
+#[derive(Clone, Debug)]
+pub struct Binding<B: BufferTrait> {
+    pub keys: Vec<KeyEvent>,
+    pub target: ELispExp<B>,
+    pub source: BindingSource,
+}
+
+impl<B: BufferTrait> Binding<B> {
+    fn new(keys: &[KeyEvent], target: ELispExp<B>, source: BindingSource) -> Self {
+        Self {
+            keys: keys.to_vec(),
+            target,
+            source,
+        }
+    }
+
+    /// The keys, spelt the way a binding is written.
+    pub fn described(&self) -> String {
+        describe_keys(&self.keys)
+    }
+}
 
 pub struct Modes<B: BufferTrait> {
     registry: HashMap<String, MajorMode<B>>,
@@ -153,6 +203,113 @@ impl<B: BufferTrait> Modes<B> {
     /// MODE's own keymap, when it has one.
     pub fn mode_keymap(&self, mode: &str) -> Option<&Keymap<B>> {
         self.registry.get(mode).map(|mode| &mode.keymaps)
+    }
+
+    // ------------------------------------------------------------------
+    // Reading the keymaps back
+    // ------------------------------------------------------------------
+    //
+    // Everything below answers a question about the *bindings in effect*,
+    // which is not the same as a question about any one keymap: the transient
+    // map is consulted before the mode's, and the mode's before the global
+    // one, so a sequence in two of them means only what the winner says.
+    //
+    // They are here, beside the resolution the editor actually runs, and not
+    // in whatever asks: a second walk written somewhere else is a second
+    // answer to "what does this key do", and the two would disagree the first
+    // time the order changed.
+
+    /// What KEYS would run right now, and which map it came from.
+    ///
+    /// `None` for a sequence that is bound to nothing -- including one that is
+    /// only a *prefix* of a binding, which runs nothing on its own. Ask
+    /// [`Modes::is_prefix`] to tell those two apart.
+    /// A transient map that refuses what it does not bind is not accounted
+    /// for: this answers what is *bound*, and a refusing map makes everything
+    /// below it unreachable without unbinding any of it. Nothing can ask this
+    /// while such a map is up anyway, since asking means running a command.
+    pub fn binding_for(&self, mode: Option<&str>, keys: &[KeyEvent]) -> Option<Binding<B>> {
+        if let Some(map) = self.transient()
+            && let Some(target) = map.keymap.get(keys)
+        {
+            return Some(Binding::new(keys, target.clone(), BindingSource::Transient));
+        }
+        self.binding_below_transient(mode, keys)
+    }
+
+    /// The mode's keymap, then the global one -- the walk key resolution does
+    /// once the transient map has had its say.
+    ///
+    /// Separate from [`Modes::binding_for`] because resolution has to handle
+    /// the transient map itself: a miss there can mean *refuse the key*, which
+    /// is not a thing a binding lookup can express. Sharing the rest is what
+    /// keeps "what would this key do" and "what this key does" the same walk.
+    pub fn binding_below_transient(
+        &self,
+        mode: Option<&str>,
+        keys: &[KeyEvent],
+    ) -> Option<Binding<B>> {
+        if let Some(keymap) = mode.and_then(|mode| self.mode_keymap(mode))
+            && let Some(target) = keymap.get(keys)
+        {
+            return Some(Binding::new(keys, target.clone(), BindingSource::Mode));
+        }
+        self.global_keymap
+            .get(keys)
+            .map(|target| Binding::new(keys, target.clone(), BindingSource::Global))
+    }
+
+    /// Whether KEYS is the start of a longer binding in any map that is in
+    /// effect -- which is what keeps a half-typed sequence alive.
+    pub fn is_prefix(&self, mode: Option<&str>, keys: &[KeyEvent]) -> bool {
+        self.transient()
+            .is_some_and(|map| map.keymap.is_prefix(keys))
+            || self.is_prefix_below_transient(mode, keys)
+    }
+
+    /// The same question of the mode's keymap and the global one alone.
+    pub fn is_prefix_below_transient(&self, mode: Option<&str>, keys: &[KeyEvent]) -> bool {
+        mode.and_then(|mode| self.mode_keymap(mode))
+            .is_some_and(|keymap| keymap.is_prefix(keys))
+            || self.global_keymap.is_prefix(keys)
+    }
+
+    /// Every binding in effect, each sequence once, attributed to the map that
+    /// wins it. Sorted by key sequence, so two calls answer the same way.
+    ///
+    /// A sequence bound in two maps appears once, under the higher one: what a
+    /// reader wants is what the keys do, and listing the hidden binding beside
+    /// the live one would be listing something that cannot happen.
+    pub fn bindings(&self, mode: Option<&str>) -> Vec<Binding<B>> {
+        // Lowest priority first, so a later insert overwrites a lower map's
+        // claim on the same sequence -- the same order resolution reads them
+        // in, run backwards.
+        let mut found: HashMap<Vec<KeyEvent>, Binding<B>> = HashMap::new();
+        for (keys, target) in self.global_keymap.iter() {
+            found.insert(
+                keys.clone(),
+                Binding::new(keys, target.clone(), BindingSource::Global),
+            );
+        }
+        if let Some(keymap) = mode.and_then(|mode| self.mode_keymap(mode)) {
+            for (keys, target) in keymap.iter() {
+                found.insert(
+                    keys.clone(),
+                    Binding::new(keys, target.clone(), BindingSource::Mode),
+                );
+            }
+        }
+        if let Some(map) = self.transient() {
+            for (keys, target) in map.keymap.iter() {
+                found.insert(
+                    keys.clone(),
+                    Binding::new(keys, target.clone(), BindingSource::Transient),
+                );
+            }
+        }
+        let mut bindings: Vec<Binding<B>> = found.into_values().collect();
+        bindings.sort_by(|a, b| describe_keys(&a.keys).cmp(&describe_keys(&b.keys)));
+        bindings
     }
 
     // ------------------------------------------------------------------

@@ -42,8 +42,8 @@ use crate::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
     managers::{
-        BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit, KillYank, Log,
-        Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
+        Binding, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit,
+        KillYank, Log, Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
     },
     minibuffer::install_minibuffer,
     modes::autosave::{AutoSaver, auto_save_directory, auto_save_interval},
@@ -87,6 +87,7 @@ mod settings;
 mod windows;
 
 pub use boot::{CONFIG_DIR, XDG_CONFIG_HOME, create_global_env, isolate_config_for_tests};
+pub use keys::KEY_CAPTURE_FUNCTION;
 pub use settings::*;
 
 /// What the echo area is showing, and since when.

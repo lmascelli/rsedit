@@ -147,6 +147,23 @@ impl ArgSpec {
         }
     }
 
+    /// The spec written back out, exactly as `parse` would read it again.
+    ///
+    /// Round-trips: `ArgSpec::parse(&spec.code())` is `spec`, which is what
+    /// makes it safe to show a command's declaration to somebody about to
+    /// copy it into their own `defcommand'.
+    pub fn code(&self) -> String {
+        match self {
+            ArgSpec::String { prompt } => format!("s{prompt}"),
+            ArgSpec::Number { prompt } => format!("n{prompt}"),
+            ArgSpec::Buffer { prompt } => format!("b{prompt}"),
+            ArgSpec::File { prompt } => format!("f{prompt}"),
+            ArgSpec::Count => "p".to_string(),
+            ArgSpec::RawCount => "P".to_string(),
+            ArgSpec::Region => "r".to_string(),
+        }
+    }
+
     /// The symbol Lisp sees for this kind, so the prompting code can dispatch
     /// on it without re-parsing the original code string.
     pub fn kind(&self) -> &'static str {

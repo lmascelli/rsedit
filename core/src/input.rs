@@ -184,6 +184,17 @@ impl<B: BufferTrait> Keymap<B> {
         self.prefixes.contains(keys)
     }
 
+    /// Every binding in the map, in no particular order.
+    ///
+    /// The order is a `HashMap`'s and must not be relied on: anything showing
+    /// these to somebody sorts them, and anything comparing two maps compares
+    /// sets. What this exists for is the questions a keymap could not answer
+    /// before it -- what is bound where, and what continues a prefix -- which
+    /// are asked by help commands and by nothing on the typing path.
+    pub fn iter(&self) -> impl Iterator<Item = (&Vec<KeyEvent>, &ELispExp<B>)> {
+        self.bindings.iter()
+    }
+
     pub fn len(&self) -> usize {
         self.bindings.len()
     }

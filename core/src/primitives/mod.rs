@@ -89,6 +89,7 @@ mod commands;
 mod completion;
 pub(crate) mod edits;
 mod general;
+mod help;
 pub(crate) mod io;
 mod modes;
 pub(crate) mod mouse;
@@ -225,6 +226,29 @@ pub fn install_primitives<B: BufferTrait>(
     insert_fn!("quit--confirm", io::quit_confirm, io::QUIT_CONFIRM_DOC);
     insert_fn!("eval-file", general::eval_file, general::EVAL_FILE_DOC);
     insert_fn!("define-key", general::define_key, general::DEFINE_KEY_DOC);
+    // What the editor can be asked about itself. See `primitives::help`.
+    insert_fn!("key-binding", help::key_binding, help::KEY_BINDING_DOC);
+    insert_fn!(
+        "keys-with-prefix",
+        help::keys_with_prefix,
+        help::KEYS_WITH_PREFIX_DOC
+    );
+    insert_fn!(
+        "keymap-bindings",
+        help::keymap_bindings,
+        help::KEYMAP_BINDINGS_DOC
+    );
+    insert_fn!("where-is", help::where_is, help::WHERE_IS_DOC);
+    insert_fn!(
+        "command-specs",
+        help::command_specs,
+        help::COMMAND_SPECS_DOC
+    );
+    insert_fn!(
+        "read-key-sequence",
+        help::read_key_sequence,
+        help::READ_KEY_SEQUENCE_DOC
+    );
     insert_fn!(
         "define-repeat-key",
         general::define_repeat_key,
@@ -237,17 +261,6 @@ pub fn install_primitives<B: BufferTrait>(
         general::REPEAT_DOC
     );
     insert_fn!("log", general::log, general::LOG_DOC);
-    insert_fn!(
-        "all-functions",
-        general::all_functions,
-        general::ALL_FUNCTIONS_DOC
-    );
-    insert_fn!("all-macros", general::all_macros, general::ALL_MACROS_DOC);
-    insert_fn!(
-        "all-variables",
-        general::all_variables,
-        general::ALL_VARIABLES_DOC
-    );
     insert_fn!(
         "string-match",
         general::string_match,
