@@ -81,6 +81,7 @@ mod kill_yank;
 mod log;
 mod modes;
 mod mouse;
+mod replace;
 mod runtime;
 mod settings;
 mod windows;

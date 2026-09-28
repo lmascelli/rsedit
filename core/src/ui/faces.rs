@@ -117,6 +117,8 @@ impl Face {
     pub const LINE_NUMBER: Face = Face(11);
     /// The number of the line point is on.
     pub const LINE_NUMBER_CURRENT: Face = Face(12);
+    /// The match a replace is currently offering.
+    pub const REPLACE_MATCH: Face = Face(13);
 
     /// The faces the editor names itself, with the ids they are interned at.
     ///
@@ -126,7 +128,7 @@ impl Face {
     /// The order and the constants above have to agree, and
     /// `built_in_faces_are_interned_at_their_own_ids` in the tests is what
     /// checks they do.
-    pub const BUILT_IN: [(Face, &'static str); 13] = [
+    pub const BUILT_IN: [(Face, &'static str); 14] = [
         (Face::DEFAULT, "default"),
         (Face::REGION, "region"),
         (Face::MODE_LINE, "mode-line"),
@@ -140,6 +142,7 @@ impl Face {
         (Face::BUILTIN, "builtin"),
         (Face::LINE_NUMBER, "line-number"),
         (Face::LINE_NUMBER_CURRENT, "line-number-current"),
+        (Face::REPLACE_MATCH, "replace-match"),
     ];
 
     /// The face called NAME, defining it if nothing has named it yet.
@@ -471,6 +474,16 @@ impl Default for Theme {
         // Present but receding: numbers are read when looked for and ignored
         // the rest of the time, which is what dimming them says.
         theme.set(Face::LINE_NUMBER, Style::fg(Color::BRIGHT_BLACK));
+        // Reverse video, for the reason the region uses it: the one thing the
+        // eye must not miss is what is about to be changed, and reverse needs
+        // no colour decision to be visible on any background.
+        theme.set(
+            Face::REPLACE_MATCH,
+            Style {
+                reverse: true,
+                ..Style::plain()
+            },
+        );
         // Bold and otherwise unstyled, for the reason the region uses reverse
         // video: "where you are" has to stand out against a background this
         // code cannot know, and weight needs no colour decision to do it.

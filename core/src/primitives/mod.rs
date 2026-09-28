@@ -94,6 +94,7 @@ mod modes;
 pub(crate) mod mouse;
 mod overlays;
 mod region;
+mod replace;
 mod shell;
 mod theme;
 mod ui;
@@ -860,6 +861,73 @@ pub fn install_primitives<B: BufferTrait>(
         io::save_buffer_overwrite,
         io::SAVE_BUFFER_OVERWRITE_DOC
     );
+    // Replace. The verbs are plain functions -- a view calls them, not a
+    // person -- and only the four entry points are commands.
+    insert_cmd!(
+        "query-replace",
+        replace::query_replace,
+        ["sReplace: ", "sWith: "],
+        replace::QUERY_REPLACE_DOC
+    );
+    insert_cmd!(
+        "query-replace-regexp",
+        replace::query_replace_regexp,
+        ["sReplace regexp: ", "sWith: "],
+        replace::QUERY_REPLACE_REGEXP_DOC
+    );
+    insert_cmd!(
+        "replace-string",
+        replace::replace_string,
+        ["sReplace: ", "sWith: "],
+        replace::REPLACE_STRING_DOC
+    );
+    insert_cmd!(
+        "replace-regexp",
+        replace::replace_regexp,
+        ["sReplace regexp: ", "sWith: "],
+        replace::REPLACE_REGEXP_DOC
+    );
+    insert_fn!(
+        "replace-this",
+        replace::replace_this,
+        replace::REPLACE_THIS_DOC
+    );
+    insert_fn!(
+        "replace-skip",
+        replace::replace_skip,
+        replace::REPLACE_SKIP_DOC
+    );
+    insert_fn!(
+        "replace-rest",
+        replace::replace_rest,
+        replace::REPLACE_REST_DOC
+    );
+    insert_fn!(
+        "replace-back",
+        replace::replace_back,
+        replace::REPLACE_BACK_DOC
+    );
+    insert_fn!(
+        "replace-done",
+        replace::replace_done,
+        replace::REPLACE_DONE_DOC
+    );
+    insert_fn!(
+        "replace-abandon",
+        replace::replace_abandon,
+        replace::REPLACE_ABANDON_DOC
+    );
+    insert_fn!(
+        "replace-match",
+        replace::replace_match,
+        replace::REPLACE_MATCH_DOC
+    );
+    insert_fn!(
+        "replace-count",
+        replace::replace_count,
+        replace::REPLACE_COUNT_DOC
+    );
+
     insert_cmd!(
         "recover-file",
         io::recover_file,

@@ -144,11 +144,29 @@
 (define-key nil "C-s" 'isearch-forward)
 (define-key nil "C-r" 'isearch-backward)
 (define-key nil "C-M-s" 'isearch-forward-regexp)
+
+;; Replace. `M-%' is Emacs' key for it and there is no reason to differ.
+;;
+;;   y   replace this one        !   replace this and all the rest
+;;   n   leave it                ^   take back the last one
+;;   q   stop
+;;
+;; Anything else stops and then does what it normally does, so carrying on
+;; typing abandons it. In the region when the mark is active, from point
+;; onwards otherwise. `M-x replace-string' does the lot without asking.
+;;
+;; The keys above are the built-in way of asking; `*replace-read-function*'
+;; replaces it with something else entirely, which then drives the same
+;; `replace-this'/`replace-skip'/`replace-rest' verbs.
+(define-key nil "M-%" 'query-replace)
+(define-key nil "C-M-%" 'query-replace-regexp)
 (define-key nil "C-M-r" 'isearch-backward-regexp)
 
 ;; Whether searching ignores case. Emacs' name, Emacs' default -- and it is
 ;; also set from Rust, so searching behaves the same with no configuration
-;; loaded at all.
+;; loaded at all. Read by the incremental search and by replace alike; a
+;; folded replace still puts the replacement in with the casing of what it
+;; replaced, which is `case-replace'.
 (setq case-fold-search t)
 
 ;; Structural motion, over balanced expressions rather than over words. What

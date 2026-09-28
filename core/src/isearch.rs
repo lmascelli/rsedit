@@ -70,7 +70,10 @@ const PROMPT_BUFFER: &str = "*Minibuffer*";
 ///
 /// Unbound counts as on, so a `.lisp` file that failed to load cannot turn case
 /// folding off by omission.
-fn case_fold<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
+///
+/// Shared with replace rather than copied there: one variable that two
+/// commands read differently would be worse than either default.
+pub(crate) fn case_fold<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     match env.get_variable(CASE_FOLD) {
         Some(value) => value.is_truthy(),
         None => true,

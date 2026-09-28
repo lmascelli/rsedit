@@ -28,7 +28,7 @@
 //! not have to keep this compartment's lock open while it runs.
 use crate::{
     lisp::FuelMeter,
-    search::Isearch,
+    search::{Isearch, Replace},
     ui::{Face, Style, Theme},
 };
 use std::collections::HashMap;
@@ -40,6 +40,12 @@ pub struct Runtime {
     /// The incremental search currently running, between one keystroke and the
     /// next.
     isearch: Option<Isearch>,
+    /// The replace in progress, between one answer and the next.
+    ///
+    /// Beside the search rather than folded into it: the two are the same
+    /// *kind* of thing -- a question being asked of the buffer across several
+    /// commands -- and neither is ever asked while the other is.
+    replace: Option<Replace>,
     fuel: Arc<FuelMeter>,
     /// Innermost call last. Frozen at the state of the most recent uncaught
     /// error until something clears it.
@@ -83,6 +89,7 @@ impl Runtime {
         Self {
             goal_column: None,
             isearch: None,
+            replace: None,
             fuel,
             call_stack: Vec::new(),
             theme: Arc::new(Theme::default()),
@@ -195,6 +202,28 @@ impl Runtime {
 
     pub fn isearch_active(&self) -> bool {
         self.isearch.is_some()
+    }
+
+    // ------------------------------------------------------------------
+    // The replace in progress
+    // ------------------------------------------------------------------
+
+    pub fn begin_replace(&mut self, session: Replace) {
+        self.replace = Some(session);
+    }
+
+    /// The session, to be read. `None` when none is running.
+    pub fn replace(&self) -> Option<&Replace> {
+        self.replace.as_ref()
+    }
+
+    /// The session, to be advanced.
+    pub fn replace_mut(&mut self) -> Option<&mut Replace> {
+        self.replace.as_mut()
+    }
+
+    pub fn take_replace(&mut self) -> Option<Replace> {
+        self.replace.take()
     }
 
     // ------------------------------------------------------------------
