@@ -78,6 +78,29 @@ impl<B: BufferTrait> EditorState<B> {
         name.to_string()
     }
 
+    /// Rename OLD to NEW everywhere it is known. False when there is no such
+    /// buffer, or when NEW already belongs to a different one.
+    ///
+    /// # Why this is on the facade
+    ///
+    /// Because it spans two compartments, which is the facade's whole job. The
+    /// table can move the entry and fix what is current; it cannot touch the
+    /// windows, because a compartment does not reach another one. So the
+    /// verdict comes back and this finishes it -- and finishes it *before*
+    /// anything else can run, which is what stops a window being observed
+    /// naming a buffer that no longer exists under that name.
+    pub(crate) fn rename_buffer(&self, old: &str, new: &str) -> bool {
+        if self.buffers_mut(|buffers| buffers.rename(old, new)) == BufferRenamed::No {
+            return false;
+        }
+        // The buffer's own idea of its name, which the table deliberately left
+        // alone: taking a buffer's lock while holding the table's would put
+        // the table in the way of whatever is already writing to it.
+        self.with_buffer_mut(new, |buf| buf.name = new.to_string());
+        self.windows_mut(|windows| windows.rename_buffer(old, new));
+        true
+    }
+
     /// Make the buffer named NAME the one shown in the focused window and
     /// the current buffer. Returns `false` (logging a diagnostic) if no
     /// buffer named NAME exists, `true` otherwise. Shared by the

@@ -43,7 +43,7 @@ mod modes;
 mod runtime;
 mod windows;
 
-pub use buffers::{Buffers, Removed as BufferRemoved, SCRATCH};
+pub use buffers::{Buffers, Removed as BufferRemoved, Renamed as BufferRenamed, SCRATCH};
 pub use commands::Commands;
 pub use history::{DEFAULT_HISTORY_LENGTH, History, Recalled};
 pub use kill_yank::KillYank;

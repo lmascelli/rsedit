@@ -855,6 +855,12 @@ pub fn install_primitives<B: BufferTrait>(
         [] as [&str; 0],
         io::SAVE_BUFFER_DOC
     );
+    insert_cmd!(
+        "write-file",
+        io::write_file,
+        ["fWrite file: "],
+        io::WRITE_FILE_DOC
+    );
 
     // Asking about the filesystem, and changing it. Plain functions, not
     // commands: `M-x delete-file` would be a command whose prompt is the only

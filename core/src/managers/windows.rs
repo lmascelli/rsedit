@@ -254,6 +254,27 @@ impl Windows {
         self.drag.take()
     }
 
+    /// Repoint every window showing OLD at NEW.
+    ///
+    /// A window holds the *name* of what it shows, so a buffer that has been
+    /// renamed leaves every window that was showing it naming something the
+    /// table no longer holds -- which is the dangling state that once took the
+    /// editor down. Every one of them, tiled and floating, because more than
+    /// one window may be showing the same buffer and fixing only the focused
+    /// one leaves the others exactly as broken.
+    pub fn rename_buffer(&mut self, old: &str, new: &str) {
+        self.root.each_window_mut(&mut |window| {
+            if window.buffer_name == old {
+                new.clone_into(&mut window.buffer_name);
+            }
+        });
+        for float in self.floating.iter_mut() {
+            if float.window.buffer_name == old {
+                new.clone_into(&mut float.window.buffer_name);
+            }
+        }
+    }
+
     /// Record a left button going down at (X, Y), and say whether it is the
     /// second of a pair.
     ///

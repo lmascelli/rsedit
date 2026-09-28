@@ -200,6 +200,57 @@ impl<B: BufferTrait> Buffers<B> {
         self.recency.insert(0, name.to_string());
     }
 
+    /// Rename OLD to NEW, and say whether the rest of the editor has work to
+    /// do about it.
+    ///
+    /// Refused when there is no such buffer, and refused when NEW already
+    /// belongs to a different one -- a table keyed by name cannot hold two of
+    /// them, so the alternative to refusing is losing one. Picking a free name
+    /// is the caller's job, and it has a better answer than this file could
+    /// invent: `buffer_name_for` already knows how to make a file's name
+    /// unique, which is where `name<2>` comes from.
+    ///
+    /// Renaming to the name it already has is allowed and does nothing, so a
+    /// caller does not have to check first.
+    ///
+    /// # What this deliberately does not do
+    ///
+    /// Touch the buffer. Its own `name` field is the caller's to set, for the
+    /// reason nothing in this file reads a buffer's text: taking a buffer's
+    /// lock while holding the table's would put the table in the way of
+    /// whatever is already writing to that buffer, which is exactly the
+    /// serialisation `handle` exists to avoid.
+    ///
+    /// And windows. A window holds the *name* of what it shows, so every one
+    /// showing OLD is now pointing at nothing -- which is the dangling state
+    /// this compartment's whole doc comment is about. Fixing it needs the
+    /// windows compartment, so this says so and the facade does it.
+    pub fn rename(&mut self, old: &str, new: &str) -> Renamed {
+        if old == new {
+            return Renamed::Yes;
+        }
+        if self.table.contains_key(new) {
+            return Renamed::No;
+        }
+        let Some(handle) = self.table.remove(old) else {
+            return Renamed::No;
+        };
+        self.table.insert(new.to_string(), handle);
+        for remembered in self.recency.iter_mut() {
+            if remembered == old {
+                *remembered = new.to_string();
+            }
+        }
+        // Moved here rather than left for the caller: `current` naming a key
+        // the table does not hold is the one state this compartment promises
+        // cannot be observed, and leaving it wrong for even one statement is
+        // the bug the promise is about.
+        if &*self.current == old {
+            self.current = Arc::from(new);
+        }
+        Renamed::Yes
+    }
+
     /// Remove NAME, and say what the caller must now do about what is current.
     ///
     /// A fresh `*scratch*` is made when that emptied the table, because an
@@ -235,6 +286,17 @@ impl<B: BufferTrait> Buffers<B> {
         self.record_use(&successor);
         Removed::Current(successor)
     }
+}
+
+/// What [`Buffers::rename`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Renamed {
+    /// No such buffer, or the new name belongs to a different one. Nothing
+    /// changed.
+    No,
+    /// Renamed. Every window showing the old name must now be repointed --
+    /// see the method's note on why that is not done here.
+    Yes,
 }
 
 /// What [`Buffers::remove`] did.

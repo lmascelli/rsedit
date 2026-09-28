@@ -97,6 +97,9 @@
 (define-key nil "C-x h" 'mark-whole-buffer)
 (define-key nil "C-x C-f" 'find-file)
 (define-key nil "C-x C-s" 'save-buffer)
+;; Save as: write somewhere else and visit that from now on. The old file is
+;; left alone -- this writes a copy rather than moving anything.
+(define-key nil "C-x C-w" 'write-file)
 (define-key nil "C-x C-c" 'quit)
 (define-key nil "C-x k" 'kill-buffer)
 

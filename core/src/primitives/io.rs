@@ -149,6 +149,72 @@ primitive!(save_buffer, _args, _env, ctx, {
     }
 });
 
+pub const WRITE_FILE_DOC: &str = "(write-file PATH): Write the current buffer to PATH and visit \
+         it from now on. Returns PATH, or nil if nothing was written.\n\n\
+         What \"save as\" means: the text goes to the new file, later `save-buffer\'s go there \
+         too, and the buffer is renamed after it -- with `<2>\' appended if that name is taken, \
+         the same way `find-file\' makes two `mod.rs\' tell each other apart. The mode is \
+         reconsidered from the new name, so saving a scratch buffer as `x.rs\' colours it.\n\n\
+         The old file, if there was one, is left exactly as it is. This does not move a file; it \
+         writes a copy and stops looking at the original.\n\n\
+         Refused, writing nothing, when another buffer is already visiting PATH -- two buffers \
+         over one file is how one of them silently loses its work.\n\n\
+         Example:\n\
+         (write-file \"/home/me/notes-v2.txt\")";
+
+primitive!(write_file, args, _env, ctx, {
+    let Some(ELispExp::String(path_str)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+        });
+    };
+    let path = expand_path(path_str);
+    let current = ctx.get_current_buffer_name();
+
+    // What the buffer should be called once it lives at this path -- and, on
+    // the way, whether anybody is already there.
+    let new_name = match buffer_name_for(ctx, &path) {
+        // A buffer is already visiting this exact file. If it is this one,
+        // `write-file` to the path it already has is just a save, and there is
+        // nothing to rename.
+        Err(existing) if existing == current => current.clone(),
+        Err(existing) => {
+            ctx.set_echo_message(&format!("{existing} is already visiting {path}"));
+            return Ok(ELispExp::nil());
+        }
+        Ok(name) => name,
+    };
+
+    // Taken under the lock, written with the lock given back: a slow disk must
+    // not stop every other thread reading the buffer.
+    let content = ctx.with_current_buffer(|buf| buf.text.to_string());
+    if let Err(why) = std::fs::write(&path, content) {
+        // Nothing has been changed yet, deliberately: a failed write leaves
+        // the buffer visiting whatever it was visiting before, so the next
+        // `C-x C-s` still goes somewhere that works.
+        ctx.set_echo_message(&format!("Failed to write {path}: {why}"));
+        ctx.log_diagnostic(&format!("write-file: {path}: {why}"));
+        return Ok(ELispExp::nil());
+    }
+
+    // Only now, with the bytes safely down.
+    let mode = ctx.auto_mode_for(&path);
+    ctx.with_current_buffer_mut(|buf| {
+        buf.file_path = Some(path.clone());
+        buf.is_modified = false;
+        if let Some(mode) = mode {
+            buf.current_mode = mode;
+        }
+    });
+    if new_name != current {
+        ctx.rename_buffer(&current, &new_name);
+    }
+    ctx.set_echo_message(&format!("Wrote {path}"));
+    ctx.log_diagnostic(&format!("Wrote {path}"));
+    Ok(ELispExp::string(path))
+});
+
 // ---------------------------------------------------------------------------
 // Paths, listings, and what file-name completion is built out of
 // ---------------------------------------------------------------------------

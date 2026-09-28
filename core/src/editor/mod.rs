@@ -42,8 +42,8 @@ use crate::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
     },
     managers::{
-        BufferRemoved, Buffers, ClickCount, Commands, History, Hit, KillYank, Log, Modes,
-        MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
+        BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit, KillYank, Log,
+        Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
     },
     minibuffer::install_minibuffer,
     modes::highlighter::{Highlighter, TURN_INTERVAL},
