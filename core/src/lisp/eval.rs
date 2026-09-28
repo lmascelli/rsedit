@@ -120,12 +120,20 @@ fn run_statements<T: LispContext, F>(
     env: &Arc<Env<T>>,
     ctx: &T,
     permitted: bool,
+    carried: LispExp<T>,
     frame_at: F,
 ) -> Result<LispExp<T>, EvalError<T>>
 where
     F: Fn(usize) -> Frame<T>,
 {
-    let mut last = LispExp::nil();
+    // CARRIED is what the block is worth if it has nothing left to run, which
+    // is the ordinary case while a suspension is being finished: the form that
+    // yielded was this block's last, so the block's value is whatever the
+    // frames inside it produced. Starting from nil instead throws that away --
+    // `(fiber (progn (yield) 7))` answered nil on its second resume, because
+    // the outer block, having nothing left to do, said so over the top of the
+    // 7 that had just been computed inside it.
+    let mut last = carried;
     for (index, form) in forms.iter().enumerate().skip(from) {
         if permitted {
             grant_yield_permission();
@@ -166,6 +174,9 @@ fn eval_body_step<T: LispContext>(
         &env,
         ctx,
         permitted,
+        // Nothing is being finished here: this is a body running for the first
+        // time, and an empty one is worth nil.
+        LispExp::nil(),
         |resume_from| Frame::Body {
             forms: forms.to_vec(),
             from: resume_from,
@@ -193,11 +204,16 @@ pub fn resume_frames<T: LispContext>(
     let mut outer = frames.into_iter();
     while let Some(frame) = outer.next() {
         let finished = match frame {
+            // What the frames inside this one came to is carried in: a block
+            // whose last form was the one that yielded has nothing left to
+            // run, and is worth exactly that.
             Frame::Body { forms, from, env } => {
-                run_statements(&forms, from, &env, ctx, true, |resume_from| Frame::Body {
-                    forms: forms.clone(),
-                    from: resume_from,
-                    env: env.clone(),
+                run_statements(&forms, from, &env, ctx, true, last.clone(), |resume_from| {
+                    Frame::Body {
+                        forms: forms.clone(),
+                        from: resume_from,
+                        env: env.clone(),
+                    }
                 })
             }
             Frame::While {
@@ -205,7 +221,7 @@ pub fn resume_frames<T: LispContext>(
                 forms,
                 from,
                 env,
-            } => run_while(&condition, &forms, from, &env, ctx),
+            } => run_while(&condition, &forms, from, &env, ctx, last.clone()),
         };
         match finished {
             Ok(value) => last = value,
@@ -231,6 +247,7 @@ fn run_while<T: LispContext>(
     from: usize,
     env: &Arc<Env<T>>,
     ctx: &T,
+    carried: LispExp<T>,
 ) -> Result<LispExp<T>, EvalError<T>> {
     let frame_at = |resume_from: usize| Frame::While {
         condition: condition.clone(),
@@ -238,14 +255,15 @@ fn run_while<T: LispContext>(
         from: resume_from,
         env: env.clone(),
     };
-    let mut last = run_statements(forms, from, env, ctx, true, frame_at)?;
+    let mut last = run_statements(forms, from, env, ctx, true, carried, frame_at)?;
     loop {
         // The condition is not a statement: there is nowhere to come back to
         // in the middle of deciding whether to go round again.
         if eval(condition, env.clone(), ctx)?.is_nil() {
             return Ok(last);
         }
-        last = run_statements(forms, 0, env, ctx, true, frame_at)?;
+        // A fresh iteration, so nothing is carried into it.
+        last = run_statements(forms, 0, env, ctx, true, LispExp::nil(), frame_at)?;
     }
 }
 
@@ -443,7 +461,14 @@ fn eval_special_form_or_call_step<T: LispContext>(
                     }
                 }
             }
-            Ok(EvalStep::Done(run_while(condition, body, 0, &env, ctx)?))
+            Ok(EvalStep::Done(run_while(
+                condition,
+                body,
+                0,
+                &env,
+                ctx,
+                LispExp::nil(),
+            )?))
         }
 
         "spawn" => {
@@ -507,19 +532,23 @@ fn eval_special_form_or_call_step<T: LispContext>(
         "fiber" => {
             if args.is_empty() {
                 return Ok(EvalStep::Done(LispExp::fiber(FiberState {
-                    body: vec![],
-                    env: env.clone(),
+                    pending: Vec::new(),
                     is_done: true,
-                    pending: Vec::new(),
                 })));
-            } else {
-                Ok(EvalStep::Done(LispExp::fiber(FiberState {
-                    body: args.to_vec(),
-                    env: Env::new_child(&env),
-                    is_done: false,
-                    pending: Vec::new(),
-                })))
             }
+            // One frame, holding the whole body: a fiber that has not been
+            // started yet is a fiber suspended before its first form, which
+            // is a position like any other. A child environment, so the
+            // variables it binds are its own and do not leak into whatever
+            // made it.
+            Ok(EvalStep::Done(LispExp::fiber(FiberState {
+                pending: vec![Frame::Body {
+                    forms: args.to_vec(),
+                    from: 0,
+                    env: Env::new_child(&env),
+                }],
+                is_done: false,
+            })))
         }
 
         "setq" => {

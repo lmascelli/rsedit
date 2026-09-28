@@ -439,10 +439,18 @@ mod tests {
     // ----------------------------------------------------------------
 
     #[test]
-    fn a_fiber_that_never_yields_still_runs_one_form_per_resume() {
-        // The behaviour every fiber had before this existed. Suspension is an
-        // addition, not a replacement: a body of three forms is still three
-        // resumes.
+    fn a_fiber_that_never_yields_runs_to_the_end_in_one_resume() {
+        // A fiber's body is a `progn`, and `yield` is the only thing that
+        // stops it.
+        //
+        // # What this replaced
+        //
+        // The body used to run one top-level form per resume, which was a
+        // second way of suspending -- invisible in the source, and redundant
+        // the moment `yield` existed. A body of three forms suspended twice
+        // with no yield anywhere in sight, and explaining what a fiber does
+        // meant explaining two rules that did the same job. Anything that
+        // wants the old stepping now writes the yields it meant.
         let (env, ctx) = setup();
         run(
             r#"(setq f (fiber (log "a") (log "b") (log "c")))"#,
@@ -450,17 +458,28 @@ mod tests {
             &ctx,
         );
         run("(resume f)", &env, &ctx);
-        assert_eq!(ctx.lines(), vec!["a"]);
-        run("(resume f)", &env, &ctx);
-        run("(resume f)", &env, &ctx);
         assert_eq!(ctx.lines(), vec!["a", "b", "c"]);
         assert!(run("(resume f)", &env, &ctx).is_nil());
     }
 
     #[test]
-    fn a_suspended_form_finishes_before_the_next_one_starts() {
-        // The two ways a fiber can stop, in one fiber: it yields twice inside
-        // its first form and only then moves on to its second.
+    fn a_fiber_is_worth_the_value_of_its_last_form() {
+        // The value has to survive being handed back out through every block
+        // the suspension was recorded in. A block with nothing left to run is
+        // worth what the blocks inside it came to, not nil -- which is what
+        // this answered before the value was carried outwards.
+        let (env, ctx) = setup();
+        run(r#"(setq f (fiber (progn (yield) 7)))"#, &env, &ctx);
+        run("(resume f)", &env, &ctx);
+        assert_eq!(run("(resume f)", &env, &ctx), number(7.0));
+    }
+
+    #[test]
+    fn a_suspended_form_finishes_before_the_rest_of_the_body_runs() {
+        // Two yields inside the first form of a two-form body. The third
+        // resume finishes that form *and* runs the second, because nothing
+        // separates them any more -- which is the point: a fiber stops where
+        // it says it stops, and nowhere else.
         let (env, ctx) = setup();
         run(
             r#"(setq f (fiber (progn (yield 1) (yield 2) (log "end of first"))
@@ -471,9 +490,8 @@ mod tests {
         assert_eq!(run("(resume f)", &env, &ctx), number(1.0));
         assert_eq!(run("(resume f)", &env, &ctx), number(2.0));
         run("(resume f)", &env, &ctx);
-        assert_eq!(ctx.lines(), vec!["end of first"]);
-        run("(resume f)", &env, &ctx);
         assert_eq!(ctx.lines(), vec!["end of first", "second"]);
+        assert!(run("(resume f)", &env, &ctx).is_nil());
     }
 
     #[test]

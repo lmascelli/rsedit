@@ -150,20 +150,27 @@ impl<T: LispContext> PartialEq for Frame<T> {
     }
 }
 
+/// A suspendable program: the stack of blocks it still has to finish.
+///
+/// # Why there is nothing else in here
+///
+/// There used to be two more fields -- the top-level forms the fiber was made
+/// from, and the environment to run them in -- alongside the stack. They were
+/// the same thing said twice: "the forms from index 0 of this body, in this
+/// environment" is exactly what a [`Frame::Body`] says, so a freshly-made
+/// fiber is a stack with one frame on it and `resume` needs only one path
+/// instead of two.
+///
+/// What is left is the whole of a coroutine's state. `pending` is where it is;
+/// `is_done` is whether there is anywhere left to be. Everything else -- the
+/// variables it can see, the loop it is inside, the function it is part-way
+/// through -- is inside the frames, because that is what a frame is.
 #[derive(Debug)]
 pub struct FiberState<T: LispContext> {
-    pub body: Vec<LispExp<T>>,
-    pub env: Arc<Env<T>>,
-    pub is_done: bool,
-    /// Where this fiber stopped, when it stopped in the middle of a form.
-    ///
-    /// Empty for a fiber that has never yielded, which is every fiber the
-    /// editor had before `(yield)` existed -- so `resume` still means "run the
-    /// next form of the body" for those, and means "carry on from where you
-    /// were" for the rest. The two are not alternatives: a fiber whose third
-    /// form yields twice resumes twice inside that form and then goes on to
-    /// the fourth.
+    /// Innermost block first. Empty means the program has not been started or
+    /// has finished; `is_done` tells those two apart.
     pub pending: Vec<Frame<T>>,
+    pub is_done: bool,
 }
 
 #[derive(Clone, Debug)]

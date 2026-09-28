@@ -17,8 +17,11 @@ pub fn bootstrap_vm<T: LispContext>(ctx: &T) -> Result<Arc<Env<T>>, EvalError<T>
             ;; Test structural scoping & primitives
             (setq verify-math (- (+ 5 5) 2)) ;; 8
             
-            ;; Test Fiber allocation & step execution
-            (setq verify-fiber (fiber 100 200))
+            ;; Test Fiber allocation & suspension: the first `resume' has to
+            ;; stop at the `yield' and hand its value back, leaving the 200
+            ;; for a second one. A fiber that ran straight through would
+            ;; answer 200 here, and one that never resumed would answer nil.
+            (setq verify-fiber (fiber (yield 100) 200))
             (setq fiber-step (resume verify-fiber))
             
             ;; Return validation status

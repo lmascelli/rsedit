@@ -29,11 +29,17 @@ mod tests {
     fn test_fiber_basic_yielding() {
         let (env, mut ctx) = setup_fiber_env();
 
-        // Create a fiber that yields three distinct numbers
+        // Three steps, with a `yield` between them saying so.
+        //
+        // The yields used to be implicit: a fiber's body ran one top-level
+        // form per `resume`. That was a second way of suspending, invisible
+        // in the source, and it stopped being worth its confusion the moment
+        // `yield` existed -- a body of three forms suspended twice with no
+        // yield anywhere in sight.
         let script = r#"
-            (setq my-task (fiber 
-                10.0 
-                20.0 
+            (setq my-task (fiber
+                (yield 10.0)
+                (yield 20.0)
                 30.0))
         "#;
         eval_script(script, env.clone(), &mut ctx).unwrap();
@@ -63,11 +69,11 @@ mod tests {
         // The fiber uses a `let` block, but because `fiber` captures its environment
         // exactly like a lambda, the `counter` variable should persist across yields!
         let script = r#"
-            (setq counter-task 
+            (setq counter-task
                 (let ((counter 0))
-                    (fiber 
-                        (setq counter (+ counter 1))
-                        (setq counter (+ counter 10))
+                    (fiber
+                        (yield (setq counter (+ counter 1)))
+                        (yield (setq counter (+ counter 10)))
                         (setq counter (+ counter 100)))))
         "#;
 
@@ -107,8 +113,8 @@ mod tests {
 
         // Create two completely independent fibers
         let script = r#"
-            (setq task-a (fiber "A1" "A2"))
-            (setq task-b (fiber "B1" "B2"))
+            (setq task-a (fiber (yield "A1") "A2"))
+            (setq task-b (fiber (yield "B1") "B2"))
         "#;
         eval_script(script, env.clone(), &mut ctx).unwrap();
 

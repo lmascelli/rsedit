@@ -1,7 +1,6 @@
 use crate::lisp::SharedAtom;
 use crate::lisp::{
-    Env, EvalError, Frame, LispContext, LispExp, Parser, bind_lambda_args, eval,
-    grant_yield_permission, resume_frames,
+    Env, EvalError, LispContext, LispExp, Parser, bind_lambda_args, eval, resume_frames,
 };
 use std::sync::{Arc, RwLock};
 
@@ -2247,38 +2246,19 @@ fn primitive_reset<T: LispContext>(
 
 const RESUME_DOC: &str = "(resume FIBER): Carry FIBER on from wherever it stopped, and return \
                  the value it stopped with. Returns nil once FIBER has nothing left to run.\n\n\
-                 A fiber stops in one of two places. If its last `resume\' reached a `yield\', it \
-                 stops *inside* a form and the next `resume\' picks up at that exact spot, with \
-                 its variables as it left them; otherwise it stops at the end of a top-level form \
-                 of its body, and the next `resume\' runs the one after it.\n\n\
+                 A fiber runs until it reaches a `yield\' or until its body is finished, \
+                 whichever comes first. A `yield\' stops it *inside* a form, and the next \
+                 `resume\' picks up at that exact spot with its variables as it left them.\n\n\
+                 The body is a `progn\': `(fiber A B C)\' runs all three in one `resume\' unless \
+                 one of them yields. Put a `yield\' between them to stop after each.\n\n\
                  An error inside a fiber ends it: the position it stopped at is gone, so there is \
                  nothing left to come back to, and `resume\' would otherwise silently restart it \
                  somewhere it had already been.\n\n\
                  Example:\n\
-                 (setq f (fiber (progn (log \"a\") (yield 1) (log \"b\") 2)))\n\
+                 (setq f (fiber (log \"a\") (yield 1) (log \"b\") 2))\n\
                  (resume f) ; logs \"a\", => 1\n\
                  (resume f) ; logs \"b\", => 2\n\
                  (resume f) => nil ; fiber is done";
-
-/// What a `resume` found to do, taken out from under the fiber's lock.
-///
-/// # Why anything is taken out at all
-///
-/// This used to call `eval` with the fiber's write lock still held, which was
-/// survivable while a fiber could only run one whole form to completion. It is
-/// not survivable now: a fiber that yields runs arbitrary Lisp, and the first
-/// thing that Lisp does that touches its own fiber -- `(resume f)` on itself,
-/// or a worker asking whether it is finished -- deadlocks on a lock nobody can
-/// see. So the lock answers one question, is dropped, and is taken again to
-/// record the answer.
-enum Next<T: LispContext> {
-    /// Carry on from a recorded position.
-    Suspended(Vec<Frame<T>>),
-    /// Start the next top-level form of the body.
-    Form(LispExp<T>, Arc<Env<T>>),
-    /// Nothing left.
-    Finished,
-}
 
 fn primitive_resume<T: LispContext>(
     args: &[LispExp<T>],
@@ -2298,57 +2278,60 @@ fn primitive_resume<T: LispContext>(
         };
     };
 
-    let next = {
+    // # Why the stack is taken out rather than borrowed
+    //
+    // Running it means running arbitrary Lisp, and this used to do that with
+    // the fiber's write lock still held. That was survivable while a fiber
+    // could only run one whole form to completion; it is not now. The first
+    // thing that Lisp does that reaches its own fiber -- `(resume f)' on
+    // itself, or asking whether it has finished -- deadlocks on a lock nobody
+    // can see. So the lock answers one question, is dropped, and is taken
+    // again to record the answer.
+    //
+    // Taking it also leaves the fiber holding *nothing* while it runs, which
+    // is the honest state: a second `resume' arriving from another thread
+    // finds an empty stack and does nothing, rather than starting the same
+    // program a second time alongside the first.
+    let frames = {
         let mut fiber = shared_fiber
             .0
             .write()
             .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
-
         if fiber.is_done {
-            Next::Finished
-        } else if !fiber.pending.is_empty() {
-            // A recorded position wins over the next unstarted form: the fiber
-            // is in the middle of something, and the form it is in the middle
-            // of has already been taken off the body.
-            Next::Suspended(std::mem::take(&mut fiber.pending))
-        } else if fiber.body.is_empty() {
-            fiber.is_done = true;
-            Next::Finished
-        } else {
-            Next::Form(fiber.body.remove(0), fiber.env.clone())
+            return Ok(LispExp::nil());
         }
+        std::mem::take(&mut fiber.pending)
     };
+    if frames.is_empty() {
+        let mut fiber = shared_fiber
+            .0
+            .write()
+            .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
+        fiber.is_done = true;
+        return Ok(LispExp::nil());
+    }
 
-    let outcome = match next {
-        Next::Finished => return Ok(LispExp::nil()),
-        Next::Suspended(frames) => resume_frames(frames, ctx),
-        Next::Form(form, env) => {
-            // The one grant that starts a fiber running. Everything inside
-            // passes the permission on only where it can record a way back --
-            // see `Frame`.
-            grant_yield_permission();
-            eval(&form, env, ctx)
-        }
-    };
+    let outcome = resume_frames(frames, ctx);
 
     let mut fiber = shared_fiber
         .0
         .write()
         .map_err(|_| EvalError::UncorrectFunctionDefinition)?;
     match outcome {
+        // Suspended again: the new stack is where it stopped.
         Err(EvalError::Yielded { value, frames }) => {
             fiber.pending = frames;
             Ok(value)
         }
+        // Nothing left on the stack, so nothing left to come back to.
         Ok(value) => {
-            if fiber.body.is_empty() {
-                fiber.is_done = true;
-            }
+            fiber.is_done = true;
             Ok(value)
         }
         Err(other) => {
-            // See the docstring: the position is gone, so there is nothing to
-            // come back to.
+            // See the docstring: unwinding destroyed the position, so there is
+            // no coming back. Resuming again would restart the program
+            // somewhere it had already been.
             fiber.is_done = true;
             fiber.pending.clear();
             Err(other)
