@@ -32,6 +32,10 @@ pub enum EvalError<T: LispContext> {
     DolistInvalidBinding,
     DotimesInvalidBinding,
     DefvarNameMustBeASymbol,
+    /// `(defvar x 1 whatever)` -- the third form is documentation and nothing
+    /// else, so anything but a string literal there is a mistake rather than a
+    /// thing to ignore.
+    DefvarDocMustBeAString,
     BackquoteNotOneArgument,
     OutOfFuel,
     ConditionCaseInvalidVariable,

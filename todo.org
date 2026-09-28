@@ -2,25 +2,27 @@
 #+title: rsedit
 
 * Working in progress.
-- [ ] Update the documentation in the doc folder for the base lisp interpreter. Make it in 
-      typst format so it can be updated without regenerating it every time from scratch.
-- [ ] History features for minibuffer prompts. history-previous and history-next commands
-      that can be bound to C-p or C-n when the minibuffer is in an insert state.
+
 
 * Fixes todo
-- [ ] In the base lisp interpreter there are both a Frame and a FiberState structs. Are there
-      both necessary at this point or they are redundant structures?
-- [ ] Yield is an variant of the Error enum, shouldn't it better suit in the LispExp enum? The 
-      same is maybe not valid for throw because it at least represent something related to an
-      error.
-- [ ] All completions sources where it is possible should be filled asynchronously in the same
-      loop where syntax-highlight sits. Still not sure of how this has been implemented.
-- [ ] Mouse movements: when a selection is active every mouse click change the section end.
-      Instead single clicking outside the selection should cancel the current one and double
-      clicking should start a new one.
+- [ ] Better handling from tui input (C-_ is seen has C-S-7)
+- [ ] primitive for making enter also indent the next line (optinally bound to Enter)
+- [ ] pressing tab with a region selected insert the same indent in the whole region
+      but should instead indent it.
 
-* Macro todo 
+
+* Macro todo
+- [ ] Finding things across files occur (matches in this buffer, in a buffer, RET to jump)
+      then project-wide grep. You already have the compilation-buffer navigation pattern
+      (next-error/compilation-goto), so occur and grep can reuse that entire mechanism
+      — they're the same "list of places, jump to one" shape. And a project grep over
+      a large tree is the second obvious worker.
+- [ ] Keyboard macros, registers and bookmarks
+- [ ] rectangle commands
+- [ ] narrow-to-region
+- [ ] multiple cursors
 - [ ] Module dependency system (with functions like provide and requires) with a cached module
       table so that the same dependency is not loaded twice.
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
+- [ ] Lisp bytecode interpreter

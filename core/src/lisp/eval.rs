@@ -9,8 +9,9 @@
 // ========================================================================== //
 
 use super::{
-    Env, EvalError, FiberState, Frame, Lambda, LispContext, LispExp, bind_lambda_args,
-    condition_matches, data_to_form, error_data, error_symbol, parse_lambda_params,
+    Env, EvalError, FiberState, Frame, Lambda, LispContext, LispExp, VARIABLE_DOCUMENTATION,
+    bind_lambda_args, condition_matches, data_to_form, error_data, error_symbol,
+    parse_lambda_params,
 };
 use std::{cell::Cell, collections::HashMap, sync::Arc};
 
@@ -912,9 +913,24 @@ fn eval_special_form_or_call_step<T: LispContext>(
             }
         }
 
+        // (defvar NAME [VALUE [DOCSTRING]])
+        //
         // `defvar` only seeds the variable the first time it runs (a
         // later evaluation of the same `defvar` form is a no-op);
         // `defconst` always (re)initializes it.
+        //
+        // # Why the docstring does not follow that rule
+        //
+        // The value rule exists so that re-loading a module does not throw
+        // away a setting the user has since changed. A docstring is not a
+        // setting -- it describes the definition in front of you -- so it is
+        // stored every time, and editing one and re-evaluating the file shows
+        // the new text rather than the text from the first load.
+        //
+        // It is taken literally, never evaluated, exactly as `defun' takes
+        // its own; and it goes on the *symbol*, under
+        // [`VARIABLE_DOCUMENTATION`], not on the binding, so a `let' that
+        // shadows the variable does not shadow what it means.
         "defvar" | "defconst" => {
             if args.is_empty() {
                 Err(EvalError::DefvarNameMustBeASymbol)
@@ -924,6 +940,22 @@ fn eval_special_form_or_call_step<T: LispContext>(
                 } else {
                     return Err(EvalError::DefunNameMustBeASymbol);
                 };
+                // Checked before anything is stored, so a malformed form
+                // takes effect nowhere rather than half-way: a docstring
+                // that was quietly dropped is the whole reason this arm
+                // reads past the value at all.
+                if args.len() > 3 {
+                    return Err(EvalError::WrongNumberOfArguments {
+                        expected: 3,
+                        got: args.len(),
+                    });
+                }
+                if let Some(doc) = args.get(2) {
+                    let LispExp::String(_) = doc else {
+                        return Err(EvalError::DefvarDocMustBeAString);
+                    };
+                    env.put_property(&name, VARIABLE_DOCUMENTATION, doc.clone());
+                }
                 if args.len() < 2 {
                     Ok(EvalStep::Done(LispExp::symbol(name)))
                 } else {

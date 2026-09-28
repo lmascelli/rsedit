@@ -13,7 +13,7 @@ mod types;
 mod utils;
 
 pub use context::LispContext;
-pub use environment::Env;
+pub use environment::{Env, VARIABLE_DOCUMENTATION};
 pub use error::EvalError;
 pub use eval::{eval, grant_yield_permission, resume_frames};
 pub use fuel::{DEFAULT_FUEL, Exhausted, FuelMeter, FuelScope, measure, set_remaining};

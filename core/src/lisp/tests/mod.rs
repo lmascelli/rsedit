@@ -15,6 +15,7 @@ mod parser_tests;
 // Eval tests
 mod backtrace_tests;
 mod base_env_tests;
+mod documentation_tests;
 mod eval_tests;
 mod lexical_context;
 mod lisp_core_compliance_tests;

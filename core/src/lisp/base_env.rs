@@ -1,6 +1,7 @@
 use crate::lisp::SharedAtom;
 use crate::lisp::{
-    Env, EvalError, LispContext, LispExp, Parser, bind_lambda_args, eval, resume_frames,
+    Env, EvalError, LispContext, LispExp, Parser, VARIABLE_DOCUMENTATION, bind_lambda_args, eval,
+    resume_frames,
 };
 use std::sync::{Arc, RwLock};
 
@@ -403,6 +404,57 @@ fn primitive_function_doc<T: LispContext>(
             err
         }
     }
+}
+
+const VARIABLE_DOC_DOC: &str = "(variable-doc SYMBOL): Return the documentation string \
+                 `defvar\' or `defconst\' was given for SYMBOL, or \"Undocumented variable\" if it \
+                 is bound and has none. Returns nil for a name that is neither bound nor \
+                 documented.\n\n\
+                 The documentation belongs to the symbol rather than to the binding, so a `let\' \
+                 that shadows a variable does not shadow what it means, and a variable can be \
+                 documented before it has any value at all.\n\n\
+                 The same string is readable as an ordinary property: (get SYMBOL \
+                 \'variable-documentation).\n\n\
+                 Example:\n\
+                 (defvar fill-column 70 \"Where lines are wrapped.\")\n\
+                 (variable-doc \'fill-column) => \"Where lines are wrapped.\"";
+
+fn primitive_variable_doc<T: LispContext>(
+    args: &[LispExp<T>],
+    env: Arc<Env<T>>,
+    ctx: &T,
+) -> Result<LispExp<T>, EvalError<T>> {
+    if args.len() != 1 {
+        let err = Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+        ctx.log_diagnostic(&format!("{err:?}"));
+        return err;
+    }
+    let LispExp::Symbol(name) = &args[0] else {
+        let err = Err(EvalError::WrongArgumentType {
+            expected: "Symbol".into(),
+            got: args[0].clone(),
+        });
+        ctx.log_diagnostic(&format!("{err:?}"));
+        return err;
+    };
+    // The property first, and on its own: a documented variable that has not
+    // been given a value yet -- `(defvar x nil "...")' aside, `(defvar x)'
+    // binds nothing -- still has documentation, and answering "Undocumented"
+    // because nothing is bound would be answering a different question.
+    if let Some(doc) = env.get_property(name, VARIABLE_DOCUMENTATION) {
+        return Ok(doc);
+    }
+    if env.get_variable(name).is_some() {
+        return Ok(LispExp::string("Undocumented variable".to_string()));
+    }
+    ctx.log_diagnostic(&format!(
+        "{} names neither a bound nor a documented variable",
+        name.as_str()
+    ));
+    Ok(nil!())
 }
 
 // --------------------------------- Symbols -----------------------------------
@@ -2402,6 +2454,10 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     env.set_function(
         "function-doc".into(),
         LispExp::primitive(primitive_function_doc, Some(FUNCTION_DOC_DOC.into())),
+    );
+    env.set_function(
+        "variable-doc".into(),
+        LispExp::primitive(primitive_variable_doc, Some(VARIABLE_DOC_DOC.into())),
     );
     // Multithreading
     env.set_function(

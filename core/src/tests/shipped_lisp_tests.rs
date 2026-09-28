@@ -89,6 +89,36 @@ mod tests {
     }
 
     #[test]
+    fn the_docstrings_the_modules_already_carry_are_readable() {
+        // Every `defvar' and `defconst' in these files was written with a
+        // docstring, and until `defvar' learned to keep one they were all
+        // being parsed and thrown away. This is the test that says they
+        // arrived: pick module-level variables from three different files
+        // and read back what their definitions say.
+        let (ctx, env) = loaded();
+        for (name, expected_start) in [
+            ("manpage-buffer-name", "The one buffer pages are shown in"),
+            (
+                "buffer-list-buffer-name",
+                "The buffer the listing is shown in",
+            ),
+            ("compilation-window-height", "How tall the window showing"),
+        ] {
+            let ast = Parser::new(&format!("(variable-doc '{name})"))
+                .next()
+                .expect("source must parse");
+            let answer = eval(&ast, env.clone(), &ctx).expect("variable-doc must not fail");
+            let LispExp::String(doc) = &answer else {
+                panic!("{name} should have a docstring, got {answer:?}");
+            };
+            assert!(
+                doc.starts_with(expected_start),
+                "{name}'s documentation should be its own: {doc:?}"
+            );
+        }
+    }
+
+    #[test]
     fn rust_mode_asks_for_its_quotes_to_be_left_alone() {
         // Set in electric-pair.lisp, read through the symbol property table.
         // Rust's lifetimes -- `'a` -- are why: pairing that quote turns every

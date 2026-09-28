@@ -12,6 +12,15 @@ use std::{
 /// Properties, by symbol name and then by key.
 type PropertyTable<T> = RwLock<HashMap<String, HashMap<String, LispExp<T>>>>;
 
+/// The property a variable's docstring is kept under.
+///
+/// A docstring needs no storage of its own: it is a fact about a symbol, and
+/// the property table is already exactly that -- global, unscoped, and owned
+/// by the root. Emacs' name for the same property, so `(get 'x
+/// 'variable-documentation)' reads what `defvar' wrote there, in this Lisp for
+/// the same reason it does in that one.
+pub const VARIABLE_DOCUMENTATION: &str = "variable-documentation";
+
 /// Which of an environment's three name spaces to walk.
 ///
 /// A parameter rather than three near-identical recursive functions: the walk
