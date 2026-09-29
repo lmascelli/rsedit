@@ -25,6 +25,7 @@ mod frame_snapshot_tests;
 mod fuel_cost_tests;
 mod fuel_tests;
 mod fuzzy_tests;
+mod help_lisp_tests;
 mod help_tests;
 mod history_tests;
 mod home_guard;

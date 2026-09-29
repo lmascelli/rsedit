@@ -167,6 +167,26 @@ mod tests {
         assert_eq!(run(r#"(key-binding "C-x C-")"#, &env, &ctx), LispExp::nil());
     }
 
+    #[test]
+    fn a_binding_can_be_taken_apart_by_the_lisp_that_receives_it() {
+        // A keymap stores *syntax* -- the form the key will evaluate -- and
+        // syntax is not a list as far as Lisp is concerned: `car` and `listp`
+        // know cons cells and answer nil for a form. Handed over unconverted,
+        // a binding could be printed and never read, so a caller asking which
+        // command a key runs would get the characters `(insert)` with no way
+        // to reach the symbol inside them.
+        let (ctx, env) = editor();
+        run(r#"(define-key nil "C-c 4" 'insert)"#, &env, &ctx);
+        assert!(
+            !run(r#"(listp (nth 1 (key-binding "C-c 4")))"#, &env, &ctx).is_nil(),
+            "a binding's target should arrive as a list"
+        );
+        assert_eq!(
+            run(r#"(car (nth 1 (key-binding "C-c 4")))"#, &env, &ctx),
+            LispExp::symbol("insert".into())
+        );
+    }
+
     // ----------------------------------------------------------------
     // The whole table
     // ----------------------------------------------------------------

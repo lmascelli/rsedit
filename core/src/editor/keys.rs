@@ -11,6 +11,21 @@ use super::*;
 /// compartment locks the same keystroke already takes.
 pub const KEY_CAPTURE_FUNCTION: &str = "*key-capture-function*";
 
+/// The variable naming the key that opens help -- and, half-way through a
+/// sequence, asks what the prefix so far continues with.
+///
+/// Read only when a sequence turns out to be bound to nothing, which is the
+/// one moment it can matter. Nothing on the typing path pays for it.
+pub const HELP_KEY: &str = "help-key";
+
+/// What `help-key` is when nothing has said otherwise.
+const DEFAULT_HELP_KEY: &str = "C-h";
+
+/// The function asked to describe a prefix. Absent when no help module is
+/// loaded, and then a prefix followed by the help key is undefined like any
+/// other unbound sequence -- the feature is missing, not broken.
+const DESCRIBE_PREFIX: &str = "describe-prefix-keys";
+
 /// What the keymaps had to say about the key sequence typed so far.
 ///
 /// Four answers rather than the `(Option<ELispExp>, bool)` pair this replaced.
@@ -28,6 +43,31 @@ enum Bound<B: BufferTrait> {
     Refused,
     /// Bound to nothing. Say so.
     Unbound,
+}
+
+/// What is to be done once a key sequence has resolved.
+///
+/// The `Option<ELispExp>` this replaced could say "run this" and "do nothing"
+/// and had nowhere to put the third case: a sequence bound to nothing is not
+/// always a mistake -- `C-x` followed by the help key is a *question*, and
+/// answering it needs the sequence, the prefix it was reaching past, and the
+/// key that ended it, none of which survived being flattened to `None`.
+enum Dispatch<B: BufferTrait> {
+    /// Run this.
+    Run(ELispExp<B>),
+    /// Nothing to do, and nothing to say.
+    Nothing,
+    /// Bound to nothing. The caller decides whether that is a question or a
+    /// mistake, because telling them apart needs the environment.
+    Unbound {
+        /// The whole sequence, spelt as a binding is written.
+        described: String,
+        /// The sequence without its last key, when that much *is* a live
+        /// prefix. `None` when the sequence was going nowhere from the start.
+        prefix: Option<String>,
+        /// The key that ended it.
+        last: KeyEvent,
+    },
 }
 
 impl<B: BufferTrait> EditorState<B> {
@@ -200,7 +240,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Letting `C-x` through any of them would silently end the undo group
     /// being typed into, and split a run of kills into two ring entries --
     /// neither of which looks like a key-handling bug when you go looking.
-    fn resolve_key_sequence(&self, event: KeyEvent) -> Option<ELispExp<B>> {
+    fn resolve_key_sequence(&self, event: KeyEvent) -> Dispatch<B> {
         let mut pending = self
             .pending_keys
             .write()
@@ -266,22 +306,58 @@ impl<B: BufferTrait> EditorState<B> {
         // Everything the keymaps had to say, said, and the lock given back --
         // so reporting, which writes the echo area, happens under none of it.
         let described = describe_keys(&pending);
+        // The sequence without its last key, when that much leads somewhere.
+        // Worked out here, while the keys are still to hand: this is what
+        // makes `C-x` followed by the help key answerable as a question about
+        // `C-x` rather than reported as a sequence that means nothing.
+        let reaching_past = match (&bound, pending.len()) {
+            (Bound::Unbound, len) if len >= 2 => {
+                let prefix = pending[..len - 1].to_vec();
+                let mode = self.with_current_buffer(|buf| buf.current_mode.clone());
+                self.modes(|modes| modes.is_prefix(Some(&mode), &prefix))
+                    .then(|| describe_keys(&prefix))
+            }
+            _ => None,
+        };
+        let last = pending.last().cloned();
         if !matches!(bound, Bound::Prefix) {
             pending.clear();
         }
         drop(pending);
 
         match bound {
-            Bound::Command(ast) => Some(ast),
+            Bound::Command(ast) => Dispatch::Run(ast),
             // Nothing to say: the sequence is in `pending_input`, which the
             // frame carries and which does not expire the way a message does.
-            Bound::Prefix | Bound::Refused => None,
-            Bound::Unbound => {
-                self.set_echo_message(&format!("{described} is undefined"));
-                self.log_diagnostic(&format!("[INFO] Keymap not bound {described}"));
-                None
-            }
+            Bound::Prefix | Bound::Refused => Dispatch::Nothing,
+            Bound::Unbound => match last {
+                Some(last) => Dispatch::Unbound {
+                    described,
+                    prefix: reaching_past,
+                    last,
+                },
+                None => Dispatch::Nothing,
+            },
         }
+    }
+
+    /// Whether KEY is the one that opens help, as `help-key` says.
+    ///
+    /// Asked only about a sequence that turned out to be bound to nothing, so
+    /// the variable is read on a mistyped key and never on a typed one.
+    /// Its *last* key, so that a help prefix of more than one key -- `C-c h`,
+    /// which is what somebody moves it to when their terminal sends Backspace
+    /// as `C-h` -- still has a single key to press half-way through a
+    /// sequence. A sequence that is already going nowhere cannot be made
+    /// worse by it, and that is the only time this is asked.
+    fn is_help_key(&self, key: &KeyEvent, env: &Arc<Env<EditorState<B>>>) -> bool {
+        let spelling = match env.get_variable(HELP_KEY) {
+            Some(ELispExp::String(text)) => text.to_string(),
+            _ => DEFAULT_HELP_KEY.to_string(),
+        };
+        crate::primitives::parse_key_sequence(&spelling)
+            .and_then(|keys| keys.last().cloned())
+            .is_some_and(|help| &help == key)
     }
 
     /// Read the next key sequence and hand it to WATCHER instead of running
@@ -342,7 +418,7 @@ impl<B: BufferTrait> EditorState<B> {
         // Disarmed before the watcher runs, not after: a watcher that opens a
         // buffer, prompts, or fails part-way must not leave the next keystroke
         // captured too.
-        env.set_variable(KEY_CAPTURE_FUNCTION.into(), ELispExp::nil());
+        env.set_root_variable(KEY_CAPTURE_FUNCTION.into(), ELispExp::nil());
 
         let source = match (&binding, prefix_argument) {
             (Some(binding), _) => ELispExp::string(binding.source.name().to_string()),
@@ -352,16 +428,26 @@ impl<B: BufferTrait> EditorState<B> {
         let target = match &binding {
             // Quoted: the target is a form like `(find-file)`, and what the
             // watcher wants is the form itself, not the file it would open.
+            // As *data*, for the reason `binding_form` gives: a keymap holds
+            // syntax, and syntax cannot be taken apart by the Lisp receiving
+            // it.
             Some(binding) => ELispExp::form(vec![
                 ELispExp::symbol("quote".into()),
-                binding.target.clone(),
+                crate::lisp::form_to_data(&binding.target),
             ]),
             None => ELispExp::nil(),
         };
         self.run_command_form(
             ELispExp::form(vec![
                 ELispExp::symbol("funcall".into()),
-                watcher,
+                // Quoted like the target below it, and for a nearer reason:
+                // a watcher named by a symbol -- `(read-key-sequence
+                // 'describe-this)` -- would otherwise be *evaluated*, and a
+                // function's name is not a variable, so the call would fail
+                // with the symbol reported as unbound. A lambda passed by
+                // value survives either way, which is exactly how this
+                // manages to work in testing and not in use.
+                ELispExp::form(vec![ELispExp::symbol("quote".into()), watcher]),
                 ELispExp::string(described),
                 target,
                 source,
@@ -389,8 +475,36 @@ impl<B: BufferTrait> EditorState<B> {
         // A key may be the whole of a binding, the start of a longer one, or
         // neither. Deciding which comes first, and two of the three answers
         // return before anything below runs -- see `resolve_key_sequence`.
-        let Some(mut ast) = self.resolve_key_sequence(event.clone()) else {
-            return;
+        let mut ast = match self.resolve_key_sequence(event.clone()) {
+            Dispatch::Run(ast) => ast,
+            Dispatch::Nothing => return,
+            Dispatch::Unbound {
+                described,
+                prefix,
+                last,
+            } => {
+                // A prefix followed by the help key is a question -- "what
+                // does `C-x` go on to?" -- and the answer is a command in
+                // whatever help module is loaded. With none loaded there is
+                // no such function and the sequence is undefined like any
+                // other, which is the feature being absent rather than broken.
+                if let Some(prefix) = prefix
+                    && self.is_help_key(&last, env)
+                    && env.get_function(DESCRIBE_PREFIX).is_some()
+                {
+                    self.run_command_form(
+                        ELispExp::form(vec![
+                            ELispExp::symbol(DESCRIBE_PREFIX.into()),
+                            ELispExp::string(prefix),
+                        ]),
+                        env,
+                    );
+                } else {
+                    self.set_echo_message(&format!("{described} is undefined"));
+                    self.log_diagnostic(&format!("[INFO] Keymap not bound {described}"));
+                }
+                return;
+            }
         };
 
         if let ELispExp::Lambda(ref lambda) = ast {

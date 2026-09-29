@@ -24,6 +24,13 @@ use crate::editor::KEY_CAPTURE_FUNCTION;
 use crate::managers::BindingSource;
 
 /// A binding as Lisp sees one: (KEYS TARGET SOURCE).
+///
+/// TARGET goes through `form_to_data` because a keymap stores *syntax* -- the
+/// form the key will evaluate -- and syntax is not a list as far as Lisp is
+/// concerned: `car` and `listp` know cons cells, and a `Form` answers nil to
+/// both. Handed over as it is stored, a binding could only be printed, never
+/// taken apart, so a caller asking which command a key runs would get the
+/// characters `(find-file)` and no way to reach the symbol inside them.
 fn binding_form<B: BufferTrait>(
     keys: String,
     target: ELispExp<B>,
@@ -31,7 +38,7 @@ fn binding_form<B: BufferTrait>(
 ) -> ELispExp<B> {
     ELispExp::proper_list(vec![
         ELispExp::string(keys),
-        target,
+        crate::lisp::form_to_data(&target),
         ELispExp::string(source.name().to_string()),
     ])
 }
@@ -255,6 +262,9 @@ primitive!(read_key_sequence, args, env, ctx, {
         });
     }
     let _ = ctx;
-    env.set_variable(KEY_CAPTURE_FUNCTION.into(), args[0].clone());
+    // The root, not here: this is read on a *later* keystroke, and a binding
+    // made in the calling function's scope is gone by then -- silently, with
+    // the capture simply never happening.
+    env.set_root_variable(KEY_CAPTURE_FUNCTION.into(), args[0].clone());
     Ok(ELispExp::t())
 });

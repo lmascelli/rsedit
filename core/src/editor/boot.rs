@@ -54,6 +54,7 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 (eval-file "buffer-list")  ; C-x b to switch, C-x C-b for the whole list
 (eval-file "shell")       ; M-! runs a command and shows what it said
 (eval-file "manpage")     ; C-h m, and K on a word
+(eval-file "help")        ; C-h f, C-h k, C-h b -- the editor describing itself
 (eval-file "compile")     ; C-c c, and M-g n to walk what it complained about
 (eval-file "theme")       ; C-c t to choose how faces are drawn
 

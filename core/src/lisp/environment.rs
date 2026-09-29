@@ -196,6 +196,27 @@ impl<T: LispContext> Env<T> {
         map.insert(name, val);
     }
 
+    /// The root of this chain.
+    fn root(&self) -> &Env<T> {
+        let mut env = self;
+        while let Some(parent) = env.parent.as_deref() {
+            env = parent;
+        }
+        env
+    }
+
+    /// Bind NAME in the root, where it outlives the call that bound it.
+    ///
+    /// [`Env::set_variable`] binds *here*, which is what a `setq` inside a
+    /// function should do. A binding that is a mode of operation rather than
+    /// a local -- something the host turns on now and reads back on a later
+    /// keystroke -- must not go away when the function that turned it on
+    /// returns, and there is no way to notice that it did: the variable is
+    /// simply nil again, as though nothing had been asked for.
+    pub fn set_root_variable(&self, name: String, val: LispExp<T>) {
+        self.root().set_variable(name, val);
+    }
+
     pub fn set_function(&self, name: String, val: LispExp<T>) {
         let mut map = self
             .functions

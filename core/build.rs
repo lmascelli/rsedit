@@ -15,6 +15,7 @@ fn main() {
         "debug.lisp",
         "dired.lisp",
         "electric-pair.lisp",
+        "help.lisp",
         "indent.lisp",
         "manpage.lisp",
         "minibuffer.lisp",

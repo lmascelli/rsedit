@@ -11,7 +11,7 @@ use crate::{
 /// A part that fails to parse fails the whole sequence rather than being
 /// dropped. Silently binding `C-x` when `"C-x C-"` was written would define a
 /// prefix that swallows the real binding underneath it.
-fn parse_key_sequence(seq: &str) -> Option<Vec<KeyEvent>> {
+pub(crate) fn parse_key_sequence(seq: &str) -> Option<Vec<KeyEvent>> {
     let parts: Vec<&str> = seq.split_whitespace().collect();
     if parts.is_empty() {
         return None;

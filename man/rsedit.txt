@@ -30,10 +30,28 @@ MODULES
     electric-pair       closing delimiters that type themselves
     shell               M-! and its output buffer
     manpage             this
+    help                C-h f, C-h k, C-h b -- the editor describing itself
     compile             C-c c, and jumping to what it complained about
     theme               C-c t, and how faces are drawn
     rust-mode           colouring for Rust
     risp-mode           colouring and indentation for rsedit's own Lisp
+
+FINDING YOUR WAY
+    C-h f names a function, C-h v a variable, C-h k a key -- press it and be
+    told what it would have done. C-h b lists every binding in effect, C-h a
+    searches every name there is, and C-h ? lists the help keys themselves.
+
+    Half-way through a prefix, the help key says where the prefix goes: C-x
+    C-h lists everything C-x leads to.
+
+    All of it is answered by the editor rather than by a table written down
+    beside it, so a page is right about the buffer you are in -- the mode's
+    binding where a mode has one, and the transient map's while a question
+    is being asked.
+
+    The prefix is the variable `help-key'. On a terminal that still sends
+    Backspace as C-h, (setq help-key "C-c h") and (install-help-keys) move
+    the whole tree.
 
 SEE ALSO
     buffers, windows, overlays, compile, themes, completion, modes, keymaps
