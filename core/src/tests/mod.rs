@@ -66,6 +66,7 @@ mod theme_system_tests;
 mod theme_tests;
 mod transient_tests;
 mod undo_tests;
+mod verb_tests;
 mod watcher_tests;
 mod window_point_tests;
 mod window_tests;

@@ -145,6 +145,26 @@
 (define-key nil "C-r" 'isearch-backward)
 (define-key nil "C-M-s" 'isearch-forward-regexp)
 
+;; The small verbs: case, whitespace, lines, transposition, zapping. Emacs'
+;; keys, because these are the ones most fingers already know -- and because
+;; every one of them is a verb rather than a mode, so there is nothing to learn
+;; beyond where it is.
+;;
+;; `duplicate-line' is left unbound: it is wanted often enough to exist and not
+;; often enough to spend a key on, and `C-c' is yours to put it under.
+(define-key nil "M-u" 'upcase-word)
+(define-key nil "M-l" 'downcase-word)
+(define-key nil "M-c" 'capitalize-word)
+(define-key nil "M-\\" 'delete-horizontal-space)
+(define-key nil "M-<space>" 'just-one-space)
+(define-key nil "C-x C-o" 'delete-blank-lines)
+(define-key nil "M-m" 'back-to-indentation)
+(define-key nil "M-^" 'join-line)
+(define-key nil "C-t" 'transpose-chars)
+(define-key nil "M-t" 'transpose-words)
+(define-key nil "C-x C-t" 'transpose-lines)
+(define-key nil "M-z" 'zap-to-char)
+
 ;; Commenting. `M-;' comments the region out, or the line when there is no
 ;; region, and takes the comments off again when everything in the scope is
 ;; already one. What a comment looks like comes from the mode -- see

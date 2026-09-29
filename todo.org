@@ -18,6 +18,10 @@
 - [ ] line numbers should be a per buffer property
 - [ ] the worker that checks if a file has been modified should have a timeout on
       the function that checks it so it cannot block the other tasks on the scheduler
+- [ ] I've seen that the modules commands, debug, common-keymaps, indent and minibuffer
+      are not indipendent. Modules that provide indipendent features should be able to
+      be loaded indipendently. Maybe some of the common feature between those are to be
+      embedded in the base editor.
 
 
 * Macro todo
@@ -36,3 +40,4 @@
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 - [ ] Lisp bytecode interpreter
+- [ ] A manual of the editor

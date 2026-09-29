@@ -172,7 +172,7 @@ pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str
 /// the second while holding the first would put an ordering between them that
 /// nothing else in the editor respects -- so every kill command drops the
 /// buffer first and saves afterwards.
-fn cut_out<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) -> String {
+pub(crate) fn cut_out<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) -> String {
     let start = from.min(to);
     let end = from.max(to).min(buf.text.len());
     if start >= end {
@@ -375,7 +375,7 @@ pub(crate) fn goto_offset<B: BufferTrait>(text: &mut B, offset: usize) {
 
 /// Characters that make up a word. Matches what most modes mean by one
 /// without needing a syntax table yet.
-fn is_word_char(c: char) -> bool {
+pub(crate) fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
@@ -392,7 +392,7 @@ fn is_blank_line<B: BufferTrait>(text: &B, line: usize) -> bool {
 /// Factored out so `forward-word` and `kill-word` agree by construction: a
 /// deletion that computed its own target could drift from the movement it is
 /// supposed to mirror.
-fn word_forward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
+pub(crate) fn word_forward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
     let len = text.len();
     let mut pos = from;
     for _ in 0..count {
@@ -407,7 +407,7 @@ fn word_forward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
 }
 
 /// Offset `count` words back of `from`.
-fn word_backward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
+pub(crate) fn word_backward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
     let mut pos = from;
     for _ in 0..count {
         while pos > 0 && !text.at(pos - 1).map(is_word_char).unwrap_or(false) {

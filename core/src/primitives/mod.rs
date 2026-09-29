@@ -100,6 +100,7 @@ mod replace;
 mod shell;
 mod theme;
 mod ui;
+mod verbs;
 mod windows;
 mod workers;
 
@@ -273,6 +274,90 @@ pub fn install_primitives<B: BufferTrait>(
         "delete-region",
         edits::delete_region,
         edits::DELETE_REGION_DOC
+    );
+    // The small verbs. See `primitives::verbs`.
+    insert_cmd!(
+        "upcase-word",
+        verbs::upcase_word,
+        [] as [&str; 0],
+        verbs::UPCASE_WORD_DOC
+    );
+    insert_cmd!(
+        "downcase-word",
+        verbs::downcase_word,
+        [] as [&str; 0],
+        verbs::DOWNCASE_WORD_DOC
+    );
+    insert_cmd!(
+        "capitalize-word",
+        verbs::capitalize_word,
+        [] as [&str; 0],
+        verbs::CAPITALIZE_WORD_DOC
+    );
+    insert_cmd!(
+        "delete-horizontal-space",
+        verbs::delete_horizontal_space,
+        [] as [&str; 0],
+        verbs::DELETE_HORIZONTAL_SPACE_DOC
+    );
+    insert_cmd!(
+        "just-one-space",
+        verbs::just_one_space,
+        [] as [&str; 0],
+        verbs::JUST_ONE_SPACE_DOC
+    );
+    insert_cmd!(
+        "delete-blank-lines",
+        verbs::delete_blank_lines,
+        [] as [&str; 0],
+        verbs::DELETE_BLANK_LINES_DOC
+    );
+    insert_cmd!(
+        "back-to-indentation",
+        verbs::back_to_indentation,
+        [] as [&str; 0],
+        verbs::BACK_TO_INDENTATION_DOC
+    );
+    insert_cmd!(
+        "join-line",
+        verbs::join_line,
+        [] as [&str; 0],
+        verbs::JOIN_LINE_DOC
+    );
+    insert_cmd!(
+        "duplicate-line",
+        verbs::duplicate_line,
+        [] as [&str; 0],
+        verbs::DUPLICATE_LINE_DOC
+    );
+    insert_cmd!(
+        "transpose-lines",
+        verbs::transpose_lines,
+        [] as [&str; 0],
+        verbs::TRANSPOSE_LINES_DOC
+    );
+    insert_cmd!(
+        "transpose-chars",
+        verbs::transpose_chars,
+        [] as [&str; 0],
+        verbs::TRANSPOSE_CHARS_DOC
+    );
+    insert_cmd!(
+        "transpose-words",
+        verbs::transpose_words,
+        [] as [&str; 0],
+        verbs::TRANSPOSE_WORDS_DOC
+    );
+    insert_cmd!(
+        "zap-to-char",
+        verbs::zap_to_char,
+        [] as [&str; 0],
+        verbs::ZAP_TO_CHAR_DOC
+    );
+    insert_fn!(
+        "zap-to-char--do",
+        verbs::zap_to_char_do,
+        verbs::ZAP_TO_CHAR_DO_DOC
     );
     // What the editor can be asked about itself. See `primitives::help`.
     insert_fn!("key-binding", help::key_binding, help::KEY_BINDING_DOC);
