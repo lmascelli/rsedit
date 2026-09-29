@@ -57,6 +57,7 @@ mod repeat_tests;
 mod replace_tests;
 mod risp_mode_tests;
 mod scan_cache_tests;
+mod scan_tests;
 mod scroll_tests;
 mod sexp_tests;
 mod shell_tests;

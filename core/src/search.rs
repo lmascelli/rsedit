@@ -190,6 +190,250 @@ impl Pattern {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Scanning for every match
+// ---------------------------------------------------------------------------
+//
+// # Why this is not `search_forward` in a loop
+//
+// `search_forward` answers "where is the next one" and is called once per
+// keystroke, which is what it is shaped for. On the regexp path it stringifies
+// the whole text *every time it is called* -- see the comment there -- so
+// asking it for every match in a buffer costs a pass over the buffer per
+// match. On a file with a thousand hits that is a thousand passes, and the
+// cost grows with the square of the file.
+//
+// Scanning is the other question, and it is asked by things that mean to walk
+// everything: occur, grep, a linter reading its own output. One pass, one
+// stringification, and the line each match is on worked out as the pass goes
+// by rather than by searching backwards for a newline afterwards.
+
+/// One match, with where it sits in the text it was found in.
+///
+/// Offsets are in *characters*, because that is what the rest of the editor
+/// means by a position -- `goto-char` takes one, and a match reported in bytes
+/// would land in the middle of a letter in any file that is not ASCII.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    /// Character offsets of the match in the whole text.
+    pub start: usize,
+    pub end: usize,
+    /// Line the match begins on, counting from 1 -- the numbering `goto-line`
+    /// takes, so the two compose.
+    pub line: usize,
+    /// Character column the match begins at, counting from 0, like
+    /// `current-column`.
+    pub column: usize,
+    /// The whole line the match begins on, without its newline. What a view
+    /// shows, so that showing one costs no further reading of the text.
+    pub line_text: String,
+    /// What each group captured, group 0 being the whole match. Empty for a
+    /// literal pattern, which has none.
+    pub groups: Vec<Option<String>>,
+}
+
+impl Found {
+    /// Where the match starts within [`Found::line_text`], in characters.
+    ///
+    /// The same number as [`Found::column`], named for what a view does with
+    /// it: highlight the match inside the line it is showing.
+    pub fn in_line(&self) -> usize {
+        self.column
+    }
+
+    /// Where the match ends within [`Found::line_text`], clamped to it.
+    ///
+    /// A match may run past the end of its first line -- a regexp with a `\n`
+    /// in it, or `(?s).` -- and a view highlighting the line it shows must not
+    /// be handed an end beyond the text it has.
+    pub fn end_in_line(&self) -> usize {
+        let length = self.line_text.chars().count();
+        (self.column + (self.end - self.start)).min(length)
+    }
+}
+
+/// What a scan found, and whether it stopped before the end.
+///
+/// `truncated` is not a detail: a caller that ignores it shows a partial list
+/// as though it were everything, which is how a search comes to quietly not
+/// find what is there. The same shape `directory-files-recursive` answers in,
+/// for the same reason.
+#[derive(Clone, Debug, Default)]
+pub struct Scan {
+    pub found: Vec<Found>,
+    pub truncated: bool,
+}
+
+/// Walks a string once, converting byte offsets into character offsets, lines
+/// and columns as it goes.
+///
+/// The whole reason a scan is linear. Matches arrive in increasing order, so
+/// the cursor only ever moves forward: across a whole file it counts each
+/// character exactly once, where asking "which line is byte N on" per match
+/// would re-count the file from the start every time.
+struct Cursor<'a> {
+    haystack: &'a str,
+    byte: usize,
+    chars: usize,
+    line: usize,
+    /// Byte offset of the first character of the line the cursor is on.
+    line_start: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn new(haystack: &'a str) -> Self {
+        Self {
+            haystack,
+            byte: 0,
+            chars: 0,
+            line: 1,
+            line_start: 0,
+        }
+    }
+
+    /// Advance to BYTE, which must be at or after the cursor.
+    fn advance_to(&mut self, byte: usize) {
+        for (at, c) in self.haystack[self.byte..byte].char_indices() {
+            self.chars += 1;
+            if c == '\n' {
+                self.line += 1;
+                self.line_start = self.byte + at + c.len_utf8();
+            }
+        }
+        self.byte = byte;
+    }
+
+    /// Characters between the start of this line and the cursor.
+    fn column(&self) -> usize {
+        self.haystack[self.line_start..self.byte].chars().count()
+    }
+
+    /// The line the cursor is on, without its newline.
+    fn line_text(&self) -> &'a str {
+        let rest = &self.haystack[self.line_start..];
+        match rest.find('\n') {
+            Some(at) => &rest[..at],
+            None => rest,
+        }
+    }
+}
+
+impl Pattern {
+    /// Every match in HAYSTACK, in order, at most LIMIT of them.
+    ///
+    /// Matches do not overlap: the scan resumes at the end of the one it just
+    /// found, and one character past an *empty* match -- a pattern like `x*`
+    /// matches the empty string at every position, and a loop that did not
+    /// step past it would stay there for ever. The same rule the replace loop
+    /// follows, for the same reason.
+    pub fn scan(&self, haystack: &str, limit: usize) -> Scan {
+        let mut scan = Scan::default();
+        if limit == 0 || haystack.is_empty() {
+            return scan;
+        }
+        let mut cursor = Cursor::new(haystack);
+        // The line whose text was last built, so that twenty matches on one
+        // line do not cost twenty walks to its end.
+        let mut cached: Option<(usize, String)> = None;
+        let mut at = 0usize;
+        while at <= haystack.len() {
+            let Some((start, end, groups)) = self.next_match(haystack, at) else {
+                break;
+            };
+            if scan.found.len() >= limit {
+                scan.truncated = true;
+                break;
+            }
+            cursor.advance_to(start);
+            let column = cursor.column();
+            let line = cursor.line;
+            let line_text = match &cached {
+                Some((cached_line, text)) if *cached_line == line => text.clone(),
+                _ => {
+                    let text = cursor.line_text().to_string();
+                    cached = Some((line, text.clone()));
+                    text
+                }
+            };
+            let start_chars = cursor.chars;
+            let end_chars = start_chars + haystack[start..end].chars().count();
+            scan.found.push(Found {
+                start: start_chars,
+                end: end_chars,
+                line,
+                column,
+                line_text,
+                groups,
+            });
+            // Past this match, and past *something* when it was empty.
+            at = if end > start {
+                end
+            } else {
+                match haystack[end..].chars().next() {
+                    Some(c) => end + c.len_utf8(),
+                    None => break,
+                }
+            };
+        }
+        scan
+    }
+
+    /// The next match at or after byte FROM, as (start, end, groups) in bytes.
+    fn next_match(
+        &self,
+        haystack: &str,
+        from: usize,
+    ) -> Option<(usize, usize, Vec<Option<String>>)> {
+        match self {
+            Pattern::Regex(regex) => {
+                // `captures_at` rather than a slice, so `^` and a look-behind
+                // still see what came before the resume point.
+                let captures = regex.captures_at(haystack, from)?;
+                let whole = captures.get(0)?;
+                Some((
+                    whole.start(),
+                    whole.end(),
+                    captures
+                        .iter()
+                        .map(|group| group.map(|m| m.as_str().to_string()))
+                        .collect(),
+                ))
+            }
+            Pattern::Literal { chars, fold } => {
+                let mut at = from;
+                while at <= haystack.len() {
+                    if !haystack.is_char_boundary(at) {
+                        at += 1;
+                        continue;
+                    }
+                    if let Some(end) = literal_at(&haystack[at..], chars, *fold) {
+                        return Some((at, at + end, Vec::new()));
+                    }
+                    match haystack[at..].chars().next() {
+                        Some(c) => at += c.len_utf8(),
+                        None => break,
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+/// The byte length of CHARS at the start of TEXT, or `None` if it is not there.
+fn literal_at(text: &str, chars: &[char], fold: bool) -> Option<usize> {
+    let mut walked = text.chars();
+    let mut bytes = 0;
+    for &wanted in chars {
+        let got = walked.next()?;
+        if !chars_equal(got, wanted, fold) {
+            return None;
+        }
+        bytes += got.len_utf8();
+    }
+    Some(bytes)
+}
+
 /// Whether CHARS appears at offset AT.
 fn matches_at<B: BufferTrait>(text: &B, at: usize, chars: &[char], fold: bool) -> bool {
     chars.iter().enumerate().all(|(offset, &wanted)| {

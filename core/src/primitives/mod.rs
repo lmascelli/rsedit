@@ -97,6 +97,7 @@ pub(crate) mod mouse;
 mod overlays;
 mod region;
 mod replace;
+mod scan;
 mod shell;
 mod theme;
 mod ui;
@@ -275,6 +276,8 @@ pub fn install_primitives<B: BufferTrait>(
         edits::delete_region,
         edits::DELETE_REGION_DOC
     );
+    // Finding every match rather than the next one. See `primitives::scan`.
+    insert_fn!("scan-buffer", scan::scan_buffer, scan::SCAN_BUFFER_DOC);
     // The small verbs. See `primitives::verbs`.
     insert_cmd!(
         "upcase-word",
