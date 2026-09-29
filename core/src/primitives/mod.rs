@@ -106,6 +106,11 @@ pub fn install_primitives<B: BufferTrait>(
     state: &EditorState<B>,
     env: &std::sync::Arc<Env<EditorState<B>>>,
 ) {
+    // Every primitive's docstring must begin with its own call --
+    // `(name ARGS): what it does` -- because a primitive has no parameter
+    // list anything can read, so that first line *is* the signature the help
+    // commands show. `tests::doc_faithfulness_tests` checks it over every
+    // primitive there is, along with the docstring simply being there.
     macro_rules! insert_fn {
         ($name:literal, $func:path) => {
             env.set_function($name.into(), ELispExp::primitive($func, None));
@@ -994,7 +999,11 @@ pub fn install_primitives<B: BufferTrait>(
         ui::make_floating_window,
         ui::MAKE_FLOATING_WINDOW_DOC
     );
-    insert_fn!("close-floating-window", ui::close_floating_window);
+    insert_fn!(
+        "close-floating-window",
+        ui::close_floating_window,
+        ui::CLOSE_FLOATING_WINDOW_DOC
+    );
     insert_fn!(
         "switch-to-buffer",
         buffers::switch_to_buffer,

@@ -16,6 +16,7 @@ mod deadlock_tests;
 mod debug_lisp_tests;
 mod deletion_tests;
 mod dired_tests;
+mod doc_faithfulness_tests;
 mod echo_tests;
 mod edit_protection_tests;
 mod electric_pair_tests;

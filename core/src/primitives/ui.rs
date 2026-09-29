@@ -59,6 +59,17 @@ primitive!(make_floating_window, args, _env, ctx, {
     }
 });
 
+pub const CLOSE_FLOATING_WINDOW_DOC: &str = "(close-floating-window): Close the floating window \
+         opened most recently and give focus back to whatever had it before that one opened. \
+         Returns nil.\n\n\
+         Does nothing when no floating window is open, so a command that ends one can call it \
+         without first asking whether there is one.\n\n\
+         The most recent rather than a named one: floating windows are a stack -- a backtrace \
+         over a completion strip -- and closing one out of order would leave the one above it \
+         with nothing underneath.\n\n\
+         Example:\n\
+         (close-floating-window)";
+
 primitive!(close_floating_window, _args, _env, ctx, {
     // TODO(improve) this still always closes the most-recently-opened
     // floating window rather than a specific one by name/id. Focus

@@ -5,6 +5,12 @@
 
 
 * Fixes todo
+- [ ] Opening the manual minibuffer C-h m and pressing tab multiple times slow down the
+      editor very much. This bring me some questions: how can i inspect the keymap bound
+      in a buffer opened in a floating window? what completion candidate function uses
+      the manual minibuffer? does it works on the ui thread?
+- [ ] If there floating window opened and the focus is moved to an other window, there
+      is no way to refocus it.
 - [ ] Better handling from tui input (C-_ is seen has C-S-7)
 - [ ] primitive for making enter also indent the next line (optinally bound to Enter)
 - [ ] pressing tab with a region selected insert the same indent in the whole region
@@ -20,12 +26,12 @@
       (next-error/compilation-goto), so occur and grep can reuse that entire mechanism
       — they're the same "list of places, jump to one" shape. And a project grep over
       a large tree is the second obvious worker.
-- [ ] Keyboard macros, registers and bookmarks
 - [ ] rectangle commands
+- [ ] Keyboard macros, registers and bookmarks
 - [ ] narrow-to-region
-- [ ] multiple cursors
 - [ ] Module dependency system (with functions like provide and requires) with a cached module
       table so that the same dependency is not loaded twice.
+- [ ] multiple cursors
 - [ ] LSP integration
 - [ ] Integrated terminal emulation
 - [ ] Lisp bytecode interpreter

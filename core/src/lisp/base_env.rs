@@ -1439,6 +1439,21 @@ fn primitive_eq_impl<T: LispContext>(args: &[LispExp<T>]) -> Result<LispExp<T>, 
     Ok(LispExp::boolean(is_eq))
 }
 
+const EQ_DOC: &str = "(eq A B): Return t if A and B are the same object, nil otherwise.\n\n\
+                 A number, a symbol and nil are compared by value; everything else is compared by \
+                 identity, so two lists with the same elements are not `eq' unless they are the \
+                 same list. Sharing a tail is not enough either. `equal' is the structural \
+                 comparison.\n\n\
+                 Example:\n\
+                 (eq 'a 'a)         => t\n\
+                 (eq '(1) '(1))     => nil\n\
+                 (equal '(1) '(1))  => t";
+
+const EQL_DOC: &str = "(eql A B): The same comparison as `eq'. Both names exist so that \
+                 code carried over from other Lisps reads unchanged.\n\n\
+                 Example:\n\
+                 (eql 2 2) => t";
+
 fn primitive_eq<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
@@ -1526,6 +1541,17 @@ fn primitive_consp<T: LispContext>(
     Ok(LispExp::boolean(is_cons))
 }
 
+const LISTP_DOC: &str = "(listp OBJECT): Return t if OBJECT is a list -- a cons cell or \
+                 nil, the empty list -- and nil otherwise.\n\n\
+                 A *form* is not a list to this predicate. The two look alike when printed and \
+                 are different things: a form is syntax waiting to be evaluated, and it has no \
+                 `car'. Anything handing a form to Lisp as data converts it first, which is why \
+                 a binding read back with `key-binding' can be taken apart.\n\n\
+                 Example:\n\
+                 (listp '(1 2)) => t\n\
+                 (listp nil)    => t\n\
+                 (listp \"ab\")   => nil";
+
 fn primitive_listp<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
@@ -1600,6 +1626,15 @@ fn primitive_symbolp<T: LispContext>(
     Ok(LispExp::boolean(matches!(&args[0], LispExp::Symbol(_))))
 }
 
+const FUNCTIONP_DOC: &str = "(functionp OBJECT): Return t if OBJECT can be called: a \
+                 lambda, a primitive, or a symbol naming either. nil otherwise.\n\n\
+                 The function namespace's half of `boundp', which asks the same thing of the \
+                 variable one. A name can be bound in one, in both, or in neither.\n\n\
+                 Example:\n\
+                 (functionp 'car)          => t\n\
+                 (functionp (lambda () 1)) => t\n\
+                 (functionp 'no-such-fn)   => nil";
+
 fn primitive_functionp<T: LispContext>(
     args: &[LispExp<T>],
     env: Arc<Env<T>>,
@@ -1658,6 +1693,15 @@ fn primitive_zerop<T: LispContext>(
     Ok(LispExp::boolean(expect_number(&args[0])? == 0.0))
 }
 
+const ATOM_DOC: &str = "(atom OBJECT): Return t if OBJECT is not a cons cell, nil if it \
+                 is. Everything that is not a list is an atom, including nil.\n\n\
+                 Not to be confused with `make-atom', which builds a mutable box shared between \
+                 threads.\n\n\
+                 Example:\n\
+                 (atom 1)      => t\n\
+                 (atom nil)    => t\n\
+                 (atom '(1 2)) => nil";
+
 fn primitive_atom_predicate<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
@@ -1674,6 +1718,30 @@ fn primitive_atom_predicate<T: LispContext>(
 }
 
 // --------------------------------- Math --------------------------------------
+
+const SUM_DOC: &str = "(+ &rest NUMBERS): Return the sum of NUMBERS. With no arguments, \
+                 returns 0.\n\n\
+                 Example:\n\
+                 (+ 1 2 3) => 6\n\
+                 (+)       => 0";
+
+const SUBTRACTION_DOC: &str = "(- NUMBER &rest SUBTRAHENDS): Subtract each of \
+                 SUBTRAHENDS from NUMBER. With a single argument, negates it.\n\n\
+                 Example:\n\
+                 (- 10 3 2) => 5\n\
+                 (- 5)      => -5";
+
+const MOD_DOC: &str = "(mod NUMBER DIVISOR): Return the remainder of dividing NUMBER by \
+                 DIVISOR. Signals on a DIVISOR of zero. `%' is the same function under its other \
+                 name.\n\n\
+                 Example:\n\
+                 (mod 7 3) => 1\n\
+                 (% 7 3)   => 1";
+
+const PERCENT_DOC: &str = "(% NUMBER DIVISOR): Return the remainder of dividing NUMBER by \
+                 DIVISOR. The same function as `mod', under the name C and its descendants use.\n\n\
+                 Example:\n\
+                 (% 7 3) => 1";
 
 fn primitive_sum<T: LispContext>(
     args: &[LispExp<T>],
@@ -2403,6 +2471,16 @@ fn primitive_format<T: LispContext>(
 
 // -------------------------------- MULTI-THREADING ----------------------------
 
+const MAKE_ATOM_DOC: &str = "(make-atom VALUE): Return a new atom holding VALUE -- a box \
+                 that several threads may read and write safely.\n\n\
+                 Read it with `deref' and replace what is in it with `reset'. This is the only \
+                 mutable thing that crosses a thread boundary; everything else a thread touches \
+                 is its own.\n\n\
+                 Example:\n\
+                 (setq counter (make-atom 0))\n\
+                 (reset counter 1)\n\
+                 (deref counter) => 1";
+
 fn primitive_make_atom<T: LispContext>(
     args: &[LispExp<T>],
     _env: Arc<Env<T>>,
@@ -2681,7 +2759,7 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     // Multithreading
     env.set_function(
         "make-atom".into(),
-        LispExp::primitive(primitive_make_atom, None),
+        LispExp::primitive(primitive_make_atom, Some(MAKE_ATOM_DOC.into())),
     );
     env.set_function(
         "deref".into(),
@@ -2706,8 +2784,14 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     // 5 unchanged, and `mod` doesn't follow Elisp's "result takes the sign of
     // the divisor" rule for a negative divisor. Documenting them now would
     // just describe the bugs as if they were the intended behavior.
-    env.set_function("+".into(), LispExp::primitive(primitive_sum, None));
-    env.set_function("-".into(), LispExp::primitive(primitive_subtraction, None));
+    env.set_function(
+        "+".into(),
+        LispExp::primitive(primitive_sum, Some(SUM_DOC.into())),
+    );
+    env.set_function(
+        "-".into(),
+        LispExp::primitive(primitive_subtraction, Some(SUBTRACTION_DOC.into())),
+    );
     env.set_function(
         "=".into(),
         LispExp::primitive(primitive_compare, Some(COMPARE_DOC.into())),
@@ -2720,8 +2804,16 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
         "/".into(),
         LispExp::primitive(primitive_div, Some(DIV_DOC.into())),
     );
-    env.set_function("mod".into(), LispExp::primitive(primitive_mod, None));
-    env.set_function("%".into(), LispExp::primitive(primitive_mod, None));
+    env.set_function(
+        "mod".into(),
+        LispExp::primitive(primitive_mod, Some(MOD_DOC.into())),
+    );
+    env.set_function(
+        "%".into(),
+        // Its own docstring, naming `%': a reader asking about `%' is shown
+        // the call they typed rather than the other spelling of it.
+        LispExp::primitive(primitive_mod, Some(PERCENT_DOC.into())),
+    );
     env.set_function(
         "1+".into(),
         LispExp::primitive(primitive_1plus, Some(N_1PLUS_DOC.into())),
@@ -2866,8 +2958,14 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     // `fboundp` (so `(functionp 'car)` is t), but this implementation only
     // recognizes already-callable values, so it always says nil for a quoted
     // symbol.
-    env.set_function("eq".into(), LispExp::primitive(primitive_eq, None));
-    env.set_function("eql".into(), LispExp::primitive(primitive_eql, None));
+    env.set_function(
+        "eq".into(),
+        LispExp::primitive(primitive_eq, Some(EQ_DOC.into())),
+    );
+    env.set_function(
+        "eql".into(),
+        LispExp::primitive(primitive_eql, Some(EQL_DOC.into())),
+    );
     env.set_function(
         "equal".into(),
         LispExp::primitive(primitive_equal, Some(EQUAL_DOC.into())),
@@ -2884,7 +2982,10 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
         "consp".into(),
         LispExp::primitive(primitive_consp, Some(CONSP_DOC.into())),
     );
-    env.set_function("listp".into(), LispExp::primitive(primitive_listp, None));
+    env.set_function(
+        "listp".into(),
+        LispExp::primitive(primitive_listp, Some(LISTP_DOC.into())),
+    );
     env.set_function(
         "stringp".into(),
         LispExp::primitive(primitive_stringp, Some(STRINGP_DOC.into())),
@@ -2899,7 +3000,7 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
     );
     env.set_function(
         "functionp".into(),
-        LispExp::primitive(primitive_functionp, None),
+        LispExp::primitive(primitive_functionp, Some(FUNCTIONP_DOC.into())),
     );
     env.set_function(
         "vectorp".into(),
@@ -2912,7 +3013,7 @@ pub fn setup_base_env<T: LispContext>(env: std::sync::Arc<Env<T>>) {
 
     env.set_function(
         "atom".into(),
-        LispExp::primitive(primitive_atom_predicate, None),
+        LispExp::primitive(primitive_atom_predicate, Some(ATOM_DOC.into())),
     );
 
     // ------------------------------- Strings ------------------------------
