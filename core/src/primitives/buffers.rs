@@ -1,4 +1,5 @@
 use super::*;
+use crate::lisp::{Lambda, eval};
 
 pub const CURRENT_BUFFER_DOC: &str = "(current-buffer): Return the name of the current buffer, as a \
          string. Unlike real Emacs Lisp's `current-buffer`, which returns a \
@@ -105,7 +106,12 @@ primitive!(buffer_read_only_p, _args, _env, ctx, {
 
 pub const CLOSE_BUFFER_DOC: &str = "(close-buffer &optional BUFFER-OR-NAME): Close the buffer named \
          BUFFER-OR-NAME (a string or symbol), or the current buffer if no \
-         argument is given. Detaches it from whatever window is showing \
+         argument is given.\n\n\
+         A buffer visiting a file with unsaved changes is *not* closed: it asks first, and \
+         closes when the question is answered -- so this returns nil in that case, because the \
+         buffer is still there. A buffer with nowhere to save to is closed without a question, \
+         which is what keeps `*scratch*' and every listing from asking about work that does not \
+         exist. `kill-buffer-without-saving' skips the question altogether. Detaches it from whatever window is showing \
          it -- a tiled window falls back to *scratch*, a floating window \
          is removed and focus returns to whatever was focused before it \
          opened -- runs that buffer's major mode's after-close-hook, and \
@@ -123,6 +129,10 @@ pub const KILL_BUFFER_DOC: &str = "(kill-buffer &optional BUFFER-OR-NAME): Emacs
          named BUFFER-OR-NAME, or the current buffer when the name is omitted or empty.\n\n\
          Answering the prompt with nothing kills the buffer you are in, which is what the key is \
          reached for nine times in ten.\n\n\
+         A buffer visiting a file with unsaved changes is asked about before it goes -- typed \
+         in full, because there is nothing to undo afterwards -- and killed when the answer \
+         arrives. Until then it is still there, which is why this returns nil rather than t \
+         when it asks. Buffers with no file behind them are killed without a question.\n\n\
          The same function as `close-buffer', under both names: one is what Emacs calls it and \
          the other is what this editor called it first, and two implementations would eventually \
          be two behaviours.\n\n\
@@ -130,12 +140,17 @@ pub const KILL_BUFFER_DOC: &str = "(kill-buffer &optional BUFFER-OR-NAME): Emacs
          (kill-buffer)\n\
          (kill-buffer \"*Messages*\")";
 
-primitive!(close_buffer, args, env, ctx, {
-    let target = match args.first() {
+/// Which buffer a close command was asked about.
+///
+/// An empty answer is not the buffer called "": the prompt is offered with a
+/// default of "this one", and Return without typing is how that default is
+/// taken.
+fn close_target<B: BufferTrait>(
+    args: &[ELispExp<B>],
+    ctx: &EditorState<B>,
+) -> Result<String, EvalError<EditorState<B>>> {
+    Ok(match args.first() {
         None => ctx.get_current_buffer_name(),
-        // An empty answer is not the buffer called "": the prompt was offered
-        // with a default of "this one", and Return without typing is how that
-        // default is taken.
         Some(ELispExp::String(name)) if name.is_empty() => ctx.get_current_buffer_name(),
         Some(exp) if exp.is_nil() => ctx.get_current_buffer_name(),
         Some(ELispExp::String(name)) => name.to_string(),
@@ -146,7 +161,62 @@ primitive!(close_buffer, args, env, ctx, {
                 got: other.clone(),
             });
         }
-    };
+    })
+}
+
+primitive!(close_buffer, args, env, ctx, {
+    let target = close_target(args, ctx)?;
+    if crate::primitives::io::has_unsaved_work(ctx, &target) {
+        // The question is asked and this command is over: the answer arrives
+        // later, in another command, and closes the buffer then. See
+        // `primitives::ask` for why nothing here can wait for it.
+        //
+        // A lambda with the name already in it, rather than a note of which
+        // buffer was being asked about kept somewhere: two questions open at
+        // once would be two lambdas, where a slot would be one of them
+        // overwriting the other.
+        let kill = ELispExp::lambda(Lambda {
+            params: Vec::new(),
+            optionals: Vec::new(),
+            rest: None,
+            body: vec![ELispExp::form(vec![
+                ELispExp::symbol("kill-buffer-without-saving".into()),
+                ELispExp::string(target.clone()),
+            ])],
+            env: env.clone(),
+            doc: None,
+        });
+        eval(
+            &ELispExp::form(vec![
+                ELispExp::symbol("yes-or-no".into()),
+                ELispExp::string(format!("{target} is unsaved. Kill it anyway?")),
+                ELispExp::form(vec![ELispExp::symbol("quote".into()), kill]),
+            ]),
+            env,
+            ctx,
+        )?;
+        // Not killed -- not yet, and perhaps not at all. A caller told `t`
+        // here would go on to act as though the buffer were gone.
+        return Ok(ELispExp::nil());
+    }
+    Ok(if ctx.close_buffer(&target, &env) {
+        ELispExp::t()
+    } else {
+        ELispExp::nil()
+    })
+});
+
+pub const KILL_BUFFER_WITHOUT_SAVING_DOC: &str = "(kill-buffer-without-saving &optional \
+         BUFFER-OR-NAME): Close the buffer, asking nothing and saving nothing. Returns t if \
+         there was one to close.\n\n\
+         What `kill-buffer' calls once its question has been answered, and the way out for \
+         anything that has already done the asking itself -- the same arrangement as `quit' and \
+         `quit-without-saving'.\n\n\
+         Example:\n\
+         (kill-buffer-without-saving \"notes.txt\")";
+
+primitive!(kill_buffer_without_saving, args, env, ctx, {
+    let target = close_target(args, ctx)?;
     Ok(if ctx.close_buffer(&target, &env) {
         ELispExp::t()
     } else {

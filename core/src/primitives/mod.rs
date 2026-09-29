@@ -1161,6 +1161,12 @@ pub fn install_primitives<B: BufferTrait>(
         ["bKill buffer: "],
         buffers::KILL_BUFFER_DOC
     );
+    insert_cmd!(
+        "kill-buffer-without-saving",
+        buffers::kill_buffer_without_saving,
+        ["bKill buffer without saving: "],
+        buffers::KILL_BUFFER_WITHOUT_SAVING_DOC
+    );
     insert_fn!(
         "buffer-string",
         buffers::buffer_string,

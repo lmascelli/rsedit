@@ -1468,13 +1468,27 @@ primitive!(save_buffer_overwrite, _args, env, ctx, {
 fn unsaved_file_buffers<B: BufferTrait>(ctx: &EditorState<B>) -> Vec<String> {
     ctx.buffer_names()
         .into_iter()
-        .filter(|name| {
-            ctx.with_buffer(name, |buf| {
-                buf.is_modified && !buf.read_only && buf.file_path.is_some()
-            })
-            .unwrap_or(false)
-        })
+        .filter(|name| has_unsaved_work(ctx, name))
         .collect()
+}
+
+/// Whether killing the buffer called NAME would lose something.
+///
+/// Three conditions, and each one is there to stop a question nobody wants.
+/// *Modified*, or there is nothing to lose. *Not read-only*, or the change
+/// cannot have come from the user. *Visiting a file*, because a buffer with
+/// nowhere to be saved to cannot be rescued by answering `no' -- `*scratch*`
+/// and every help and listing buffer are modified constantly, and asking
+/// about them is what teaches people to answer without reading.
+///
+/// Shared with `kill-buffer` rather than written twice: "has this work been
+/// lost" must mean one thing, or quitting and closing would disagree about
+/// which buffers matter.
+pub(crate) fn has_unsaved_work<B: BufferTrait>(ctx: &EditorState<B>, name: &str) -> bool {
+    ctx.with_buffer(name, |buf| {
+        buf.is_modified && !buf.read_only && buf.file_path.is_some()
+    })
+    .unwrap_or(false)
 }
 
 /// VALUE as `(quote VALUE)`, so that a form built here hands it back whole.

@@ -387,6 +387,191 @@ mod tests {
         assert_eq!(run("answered", &env, &ctx), LispExp::symbol("no".into()));
     }
 
+    // ----------------------------------------------------------------
+    // Killing a buffer, which is the other way work goes missing
+    // ----------------------------------------------------------------
+
+    /// Whether a buffer of that name is still in the list.
+    fn alive(name: &str, ctx: &Ctx, env: &Arc<Env<Ctx>>) -> bool {
+        run("(all-buffer-names)", env, ctx)
+            .iter()
+            .any(|item| matches!(&item, LispExp::String(text) if text.as_str() == name))
+    }
+
+    #[test]
+    fn killing_a_modified_file_buffer_asks_before_discarding_it() {
+        // The hole this closes: `C-x k' on a file with unsaved changes used
+        // to answer `t' and throw the work away, with the same keystroke that
+        // closes a help buffer.
+        let sandbox = Sandbox::new("kill-asks");
+        let path = sandbox.file("notes.txt", "one\n");
+        let (ctx, env) = editor();
+        let name = open_and_dirty(&path, "more", &env, &ctx);
+
+        assert_eq!(
+            run("(kill-buffer)", &env, &ctx),
+            LispExp::nil(),
+            "nil, because the buffer is still there"
+        );
+        assert!(alive(&name, &ctx, &env), "the buffer should still exist");
+        assert!(
+            typed_question(&ctx, &env).contains("unsaved"),
+            "the question should be up: {:?}",
+            typed_question(&ctx, &env)
+        );
+    }
+
+    #[test]
+    fn answering_yes_kills_it_and_answering_no_keeps_it() {
+        let sandbox = Sandbox::new("kill-answers");
+        let (ctx, env) = editor();
+
+        let path = sandbox.file("kept.txt", "one\n");
+        let kept = open_and_dirty(&path, "more", &env, &ctx);
+        run(&format!(r#"(kill-buffer "{kept}")"#), &env, &ctx);
+        answer("no", &ctx, &env);
+        assert!(alive(&kept, &ctx, &env), "`no' should keep the buffer");
+
+        let path = sandbox.file("gone.txt", "one\n");
+        let gone = open_and_dirty(&path, "more", &env, &ctx);
+        run(&format!(r#"(kill-buffer "{gone}")"#), &env, &ctx);
+        answer("yes", &ctx, &env);
+        assert!(!alive(&gone, &ctx, &env), "`yes' should kill the buffer");
+    }
+
+    #[test]
+    fn the_question_is_about_the_buffer_it_was_asked_about() {
+        // The name rides in the callback, so asking about one buffer from
+        // inside another cannot kill the wrong one -- which is what a note of
+        // "the buffer being asked about" kept in a slot would risk.
+        let sandbox = Sandbox::new("kill-elsewhere");
+        let path = sandbox.file("elsewhere.txt", "one\n");
+        let (ctx, env) = editor();
+        let target = open_and_dirty(&path, "more", &env, &ctx);
+        run(
+            r#"(buffer-create "*here*") (switch-to-buffer "*here*")"#,
+            &env,
+            &ctx,
+        );
+
+        run(&format!(r#"(kill-buffer "{target}")"#), &env, &ctx);
+        assert!(
+            typed_question(&ctx, &env).contains(&target),
+            "the question should name {target}: {:?}",
+            typed_question(&ctx, &env)
+        );
+        answer("yes", &ctx, &env);
+        assert!(!alive(&target, &ctx, &env));
+        assert!(
+            alive("*here*", &ctx, &env),
+            "the other buffer should be untouched"
+        );
+    }
+
+    #[test]
+    fn a_saved_file_buffer_is_killed_without_a_question() {
+        let sandbox = Sandbox::new("kill-saved");
+        let path = sandbox.file("saved.txt", "one\n");
+        let (ctx, env) = editor();
+        let name = open_and_dirty(&path, "more", &env, &ctx);
+        run("(save-buffer)", &env, &ctx);
+        assert_eq!(run("(kill-buffer)", &env, &ctx), LispExp::t());
+        assert!(!alive(&name, &ctx, &env));
+    }
+
+    #[test]
+    fn a_buffer_with_nowhere_to_save_to_is_killed_without_a_question() {
+        // `*scratch*`, every help page, every listing: modified constantly and
+        // rescuable by nothing, so a question about them is the one that
+        // teaches people to answer without reading.
+        let (ctx, env) = editor();
+        run(
+            r#"(buffer-create "*notes*") (switch-to-buffer "*notes*") (insert "typed")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(run(r#"(kill-buffer "*notes*")"#, &env, &ctx), LispExp::t());
+        assert!(!alive("*notes*", &ctx, &env));
+        assert_eq!(
+            typed_question(&ctx, &env),
+            "",
+            "nothing should have been asked"
+        );
+    }
+
+    #[test]
+    fn a_read_only_buffer_is_killed_without_a_question() {
+        // The change cannot have come from the user, so there is nothing of
+        // theirs to lose.
+        let sandbox = Sandbox::new("kill-read-only");
+        let path = sandbox.file("locked.txt", "one\n");
+        let (ctx, env) = editor();
+        let name = open_and_dirty(&path, "more", &env, &ctx);
+        run("(set-buffer-read-only t)", &env, &ctx);
+        assert_eq!(run("(kill-buffer)", &env, &ctx), LispExp::t());
+        assert!(!alive(&name, &ctx, &env));
+    }
+
+    #[test]
+    fn the_escape_hatch_kills_without_asking_anything() {
+        let sandbox = Sandbox::new("kill-forced");
+        let path = sandbox.file("forced.txt", "one\n");
+        let (ctx, env) = editor();
+        let name = open_and_dirty(&path, "more", &env, &ctx);
+        assert_eq!(
+            run("(kill-buffer-without-saving)", &env, &ctx),
+            LispExp::t()
+        );
+        assert!(!alive(&name, &ctx, &env));
+        assert_eq!(
+            typed_question(&ctx, &env),
+            "",
+            "nothing should have been asked"
+        );
+    }
+
+    #[test]
+    fn cancelling_the_question_keeps_the_buffer() {
+        // Backing out of a question about something irreversible means not
+        // doing it -- the same rule `yes-or-no' states.
+        let sandbox = Sandbox::new("kill-cancelled");
+        let path = sandbox.file("cancelled.txt", "one\n");
+        let (ctx, env) = editor();
+        let name = open_and_dirty(&path, "more", &env, &ctx);
+        run("(kill-buffer)", &env, &ctx);
+        run("(minibuffer-cancel)", &env, &ctx);
+        assert!(alive(&name, &ctx, &env));
+    }
+
+    #[test]
+    fn quitting_and_killing_agree_about_which_buffers_matter() {
+        // One definition of "this work would be lost", shared. Two would
+        // eventually disagree, and the disagreement would be invisible until
+        // a buffer nobody was warned about went missing.
+        let sandbox = Sandbox::new("kill-agrees");
+        let path = sandbox.file("shared.txt", "one\n");
+        let (ctx, env) = editor();
+        let name = open_and_dirty(&path, "more", &env, &ctx);
+        run(
+            r#"(buffer-create "*ignored*") (switch-to-buffer "*ignored*") (insert "typed")"#,
+            &env,
+            &ctx,
+        );
+
+        // `quit` offers to save exactly the buffers `kill-buffer` asks about.
+        run("(quit)", &env, &ctx);
+        assert!(
+            question(&ctx, &env).contains(&name),
+            "quit should offer {name}: {:?}",
+            question(&ctx, &env)
+        );
+        assert!(
+            !question(&ctx, &env).contains("*ignored*"),
+            "quit should not offer a buffer with no file"
+        );
+        press('n', &ctx, &env);
+    }
+
     #[test]
     fn a_question_asked_from_inside_an_answer_does_not_disturb_the_first() {
         // The callbacks ride in the form the keymap is bound to, so nothing is
