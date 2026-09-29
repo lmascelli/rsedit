@@ -1,14 +1,10 @@
 #+author: Leonardo Mascelli
 #+title: rsedit
 
-* Working in progress.
+* Work in progress.
 
 
 * Fixes todo
-- [ ] Opening the manual minibuffer C-h m and pressing tab multiple times slow down the
-      editor very much. This bring me some questions: how can i inspect the keymap bound
-      in a buffer opened in a floating window? what completion candidate function uses
-      the manual minibuffer? does it works on the ui thread?
 - [ ] If there floating window opened and the focus is moved to an other window, there
       is no way to refocus it.
 - [ ] Better handling from tui input (C-_ is seen has C-S-7)
@@ -35,9 +31,24 @@
 - [ ] Keyboard macros, registers and bookmarks
 - [ ] narrow-to-region
 - [ ] Module dependency system (with functions like provide and requires) with a cached module
-      table so that the same dependency is not loaded twice.
+      table so that the same dependency is not loaded twice. Following that a module that
+      aggregate the main useful modules and the common keymaps must be added to provide a
+      simpler way to initialize a tipical configuration.
 - [ ] multiple cursors
-- [ ] LSP integration
+- [ ] LSP integration: for the moment, just warning and compilation errors, completions
+      and code actions must be supported. The server for a given language can be configued
+      and the configuration stored in the major mode variables with a convenction that this
+      module can follow. As usual the module is lisp but every sharable functionality and
+      features that have performace need must be implemented in Rust.
+- [ ] An eshell like mode, where it is possible to both read from stdin/stderr associated
+      to a shell process. A mark to the end of the buffer is kept so that commands can be
+      obtained when pressing enter and be send to stdin. It must have a configurable
+      history where duplicates entries can be deleted. It also must support bash, Windows's
+      cmd and powershell and be configurable for other shells. Detail on how to do that and
+      their possible complications must be discussed. The spawned process must be handled in
+      a separate thread and the handle returned to the lisp environment. Also lisp expression
+      should be evalued, if this makes the module too complex maybe consider adding some special
+      syntax that consent distinguish between a lisp expression and a shell command.
 - [ ] Integrated terminal emulation
 - [ ] Lisp bytecode interpreter
 - [ ] A manual of the editor

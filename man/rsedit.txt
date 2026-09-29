@@ -30,6 +30,7 @@ MODULES
     electric-pair       closing delimiters that type themselves
     shell               M-! and its output buffer
     manpage             this
+    occur               M-s o, M-s g, and the lists M-g n walks
     help                C-h f, C-h k, C-h b -- the editor describing itself
     compile             C-c c, and jumping to what it complained about
     theme               C-c t, and how faces are drawn

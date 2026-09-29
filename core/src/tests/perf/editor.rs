@@ -546,6 +546,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 stale: false,
                 auto_saved_at: None,
                 read_only: false,
+                data: Default::default(),
             },
         );
     }

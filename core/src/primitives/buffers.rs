@@ -90,6 +90,107 @@ primitive!(set_buffer_read_only, args, _env, ctx, {
     Ok(args[0].clone())
 });
 
+// ---------------------------------------------------------------------------
+// Things hung on a buffer
+// ---------------------------------------------------------------------------
+//
+// The Lisp front door to [`crate::buffer::Buffer::data`]. A module that needs
+// to remember something about one buffer has had two choices until now: a
+// global keyed by the buffer's name, which is wrong the moment the buffer is
+// renamed and still there after it is killed, or the buffer's own text, which
+// only works when the value is something you would have shown anyway.
+//
+// What goes in is an ordinary Lisp value, held in the same table Rust
+// attaches typed values to, and freed with the buffer like everything else in
+// it.
+
+/// The name a Lisp value is filed under inside the buffer's table.
+///
+/// Prefixed so that a Lisp key and a Rust one cannot collide: a module
+/// putting `"results"` and a Rust feature attaching its own `"results"` are
+/// two different things, and the one that looked second would find a value of
+/// a type it did not expect.
+fn lisp_key(key: &str) -> String {
+    format!("lisp:{key}")
+}
+
+fn data_key<B: BufferTrait>(args: &[ELispExp<B>]) -> Result<String, EvalError<EditorState<B>>> {
+    match args.first() {
+        Some(ELispExp::String(key)) | Some(ELispExp::Symbol(key)) => Ok(lisp_key(key)),
+        other => Err(EvalError::WrongArgumentType {
+            expected: "String or Symbol".into(),
+            got: other.cloned().unwrap_or_else(ELispExp::nil),
+        }),
+    }
+}
+
+/// Which buffer a data command was asked about: the named one, or this one.
+fn data_buffer<B: BufferTrait>(args: &[ELispExp<B>], index: usize, ctx: &EditorState<B>) -> String {
+    match args.get(index) {
+        Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),
+        Some(ELispExp::Symbol(name)) => name.to_string(),
+        _ => ctx.get_current_buffer_name(),
+    }
+}
+
+pub const BUFFER_PUT_DOC: &str = "(buffer-put KEY VALUE &optional BUFFER): Remember VALUE against \
+         BUFFER -- the current one when it is omitted -- under KEY. Returns VALUE.\n\n\
+         What `put' is for a symbol, this is for a buffer, and the difference is what it is \
+         for: a symbol property is global and outlives everything, while this **goes when the \
+         buffer goes**. That is the whole point. A module that kept `compilation--output-of-x' \
+         in a global would still be holding it long after the buffer was killed, and would be \
+         holding it under the wrong name the moment somebody renamed one.\n\n\
+         A VALUE of nil removes the entry rather than storing nil, so putting nil and never \
+         putting are the same state -- which is what `buffer-get' answering nil for both \
+         already implies.\n\n\
+         Returns nil, and logs, when there is no buffer called BUFFER.\n\n\
+         Example:\n\
+         (buffer-put 'occur-pattern \"TODO\")\n\
+         (buffer-get 'occur-pattern) => \"TODO\"";
+
+primitive!(buffer_put, args, _env, ctx, {
+    if args.len() < 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let key = data_key(args)?;
+    let value = args[1].clone();
+    let name = data_buffer(args, 2, ctx);
+    let stored = ctx.with_buffer_mut(&name, |buf| {
+        if value.is_nil() {
+            buf.forget_data(&key);
+        } else {
+            buf.put_data(&key, value.clone());
+        }
+    });
+    if stored.is_none() {
+        ctx.log_diagnostic(&format!("buffer-put: no buffer called {name}"));
+        return Ok(ELispExp::nil());
+    }
+    Ok(args[1].clone())
+});
+
+pub const BUFFER_GET_DOC: &str = "(buffer-get KEY &optional BUFFER): What was remembered against \
+         BUFFER -- the current one when it is omitted -- under KEY, or nil.\n\n\
+         nil for a key nothing was put under, for a buffer that does not exist, and for a \
+         buffer that was killed and made again: what is attached to a buffer dies with it.\n\n\
+         Example:\n\
+         (buffer-get 'occur-pattern)";
+
+primitive!(buffer_get, args, _env, ctx, {
+    let key = data_key(args)?;
+    let name = data_buffer(args, 1, ctx);
+    Ok(ctx
+        .with_buffer(&name, |buf| {
+            buf.data::<ELispExp<B>>(&key)
+                .cloned()
+                .unwrap_or_else(ELispExp::nil)
+        })
+        .unwrap_or_else(ELispExp::nil))
+});
+
 pub const BUFFER_READ_ONLY_P_DOC: &str = "(buffer-read-only-p): Return t if the current buffer \
          refuses text changes, nil otherwise. See `set-buffer-read-only'.\n\n\
          Example:\n\

@@ -189,6 +189,19 @@ pub struct EditorState<B: BufferTrait> {
     /// each into a buffer of its own.
     shell_commands: Arc<AtomicUsize>,
 
+    /// How many searches are writing results into a buffer, for the same
+    /// reason as the count above it: a search of a directory runs on the
+    /// worker and its results appear without anybody pressing a key.
+    scans: Arc<AtomicUsize>,
+
+    /// The buffer whose result set `next-error` walks, if any.
+    ///
+    /// Session state rather than buffer state, which is the whole point:
+    /// `M-g n` is pressed *in the file being fixed*, not in the listing, so
+    /// the answer cannot be read off the buffer it is asked in. The set
+    /// itself lives on its own buffer; this is only which one is current.
+    current_results: Arc<RwLock<Option<String>>>,
+
     /// Killed text, what a yank put where, and whether the command before
     /// this one did either. See [`KillYank`], which says why those are one
     /// lock and not seven.

@@ -19,6 +19,7 @@ fn main() {
         "indent.lisp",
         "manpage.lisp",
         "minibuffer.lisp",
+        "occur.lisp",
         "risp-mode.lisp",
         "rust-mode.lisp",
         "shell.lisp",

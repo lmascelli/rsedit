@@ -1070,7 +1070,7 @@ fn bool_exp<B: BufferTrait>(yes: bool) -> ELispExp<B> {
 /// So the *mechanism* is here because it has to be, and the *list* arrives
 /// from Lisp on every call. The caller still decides what is uninteresting;
 /// this only knows how to not look.
-fn walk_files(
+pub(crate) fn walk_files(
     root: &std::path::Path,
     prune: &std::collections::HashSet<String>,
     suffixes: &[String],

@@ -1,6 +1,7 @@
 mod autosave_tests;
 mod balance_point_tests;
 mod buffer_conformance_tests;
+mod buffer_data_tests;
 mod buffer_list_tests;
 mod bug_fix_tests;
 mod char_quote_tests;
@@ -55,6 +56,7 @@ mod region_tests;
 mod repeat_key_tests;
 mod repeat_tests;
 mod replace_tests;
+mod results_tests;
 mod risp_mode_tests;
 mod scan_cache_tests;
 mod scan_tests;

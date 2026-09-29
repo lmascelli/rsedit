@@ -145,6 +145,13 @@
 (define-key nil "C-r" 'isearch-backward)
 (define-key nil "C-M-s" 'isearch-forward-regexp)
 
+;; Walking a list of places -- a search's, a compilation's, anything that
+;; attached one. Built in rather than a module's, so that whichever list was
+;; made last is the one these walk and no producer depends on another's module
+;; being loaded.
+(define-key nil "M-g n" 'next-error)
+(define-key nil "M-g p" 'previous-error)
+
 ;; The small verbs: case, whitespace, lines, transposition, zapping. Emacs'
 ;; keys, because these are the ones most fingers already know -- and because
 ;; every one of them is a verb rather than a mode, so there is nothing to learn

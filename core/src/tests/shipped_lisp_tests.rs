@@ -23,7 +23,7 @@ mod tests {
     /// The modules `create_global_env` writes into a fresh init.lisp, in order.
     /// Order is the whole point: each is written against what the ones above it
     /// define.
-    const SHIPPED: [(&str, &str); 17] = [
+    const SHIPPED: [(&str, &str); 18] = [
         ("commands", include_str!("../../lisp/commands.lisp")),
         ("debug", include_str!("../../lisp/debug.lisp")),
         (
@@ -45,6 +45,7 @@ mod tests {
         ("shell", include_str!("../../lisp/shell.lisp")),
         ("manpage", include_str!("../../lisp/manpage.lisp")),
         ("help", include_str!("../../lisp/help.lisp")),
+        ("occur", include_str!("../../lisp/occur.lisp")),
         ("compile", include_str!("../../lisp/compile.lisp")),
         ("theme", include_str!("../../lisp/theme.lisp")),
     ];

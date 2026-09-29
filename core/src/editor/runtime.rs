@@ -71,6 +71,51 @@ impl<B: BufferTrait> EditorState<B> {
         self.shell_commands.load(Ordering::Relaxed)
     }
 
+    /// Note that a search has started writing into a buffer.
+    ///
+    /// A second counter beside the shell's rather than one shared with it,
+    /// because `shell-command-running-p` answers a question people ask -- "is
+    /// my build still going" -- and a search of a directory is not an answer
+    /// to it. What the two share is the *consequence*: the renderer has to
+    /// keep waking while either is writing, since neither waits for a key.
+    pub(crate) fn begin_scan(&self) {
+        self.scans.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Note that one has finished. Called from the worker thread, after the
+    /// last of its results is in the buffer.
+    pub(crate) fn finish_scan(&self) {
+        let _ = self
+            .scans
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                Some(n.saturating_sub(1))
+            });
+    }
+
+    pub(crate) fn scans_running(&self) -> usize {
+        self.scans.load(Ordering::Relaxed)
+    }
+
+    /// Which buffer's results `next-error` walks, or `None`.
+    pub(crate) fn current_results(&self) -> Option<String> {
+        self.current_results
+            .read()
+            .expect("Failed to acquire read lock on current_results")
+            .clone()
+    }
+
+    /// Say which listing is the one being walked.
+    ///
+    /// Set by whatever made it, so that the list you just asked for is the
+    /// list `M-g n` walks -- which is what somebody who has just run a search
+    /// means by "the next one".
+    pub(crate) fn set_current_results(&self, name: Option<String>) {
+        *self
+            .current_results
+            .write()
+            .expect("Failed to acquire write lock on current_results") = name;
+    }
+
     pub(crate) fn goal_column(&self) -> Option<usize> {
         self.runtime(|runtime| runtime.goal_column())
     }

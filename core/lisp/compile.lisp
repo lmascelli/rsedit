@@ -53,12 +53,13 @@ while working, and the file you jumped to is what deserves the room.")
         ;; A Python traceback.
         ("File \"([^\"]+)\", line ([0-9]+)" 1 2 nil)))
 
-(defconst compilation-here-priority 20
+(defconst compilation-mark-priority 20
   "Priority of the mark on the location being visited.
 
 Above `manpage-emphasis-priority', which is 10: a compilation buffer has no
 emphasis of its own, and the number says which wins if anything ever puts both
-in one buffer.")
+in one buffer. The same height the built-in navigation puts its own marks at,
+because they are the same mark -- see the faces at the foot of this file.")
 
 ;; Which buffer `M-g n' walks. Asked from another buffer, so it cannot be read
 ;; off the screen the way the command can.
@@ -103,23 +104,23 @@ the first to match decides, so the more specific ones come first in
 
 By category, so the previous mark goes when this one arrives -- which is what
 makes a list of forty errors legible: exactly one line is ever marked."
-  (remove-overlays 'compilation-here)
+  (remove-overlays 'results-here)
   (let ((start (progn (beginning-of-line) (point)))
         (end (progn (end-of-line) (point))))
     (goto-char start)
     (if (< start end)
-        (make-overlay start end 'compilation-here compilation-here-priority
-                      'compilation-here))))
+        (make-overlay start end 'results-here compilation-mark-priority
+                      'results-here))))
 
 (defun compilation--mark-target ()
   "Mark the line point is on in the file that was jumped to."
-  (remove-overlays 'compilation-target)
+  (remove-overlays 'results-target)
   (let ((start (progn (beginning-of-line) (point)))
         (end (progn (end-of-line) (point))))
     (goto-char start)
     (if (< start end)
-        (make-overlay start end 'compilation-target compilation-here-priority
-                      'compilation-target))))
+        (make-overlay start end 'results-target compilation-mark-priority
+                      'results-target))))
 
 (defun compilation--visit (location)
   "Open LOCATION -- (FILE LINE COLUMN) -- in a window beside this one.
@@ -161,7 +162,12 @@ buffer at all: you read the next complaint without going back for it."
   "Open what the cursor's line names. Bound to RET in compilation-mode."
   (let ((location (compilation--location-here)))
     (if location
-        (compilation--visit location)
+        (progn
+          ;; This listing is the one being walked now, so that `M-g n' from
+          ;; the file carries on from the line just opened rather than from
+          ;; whatever was searched for last.
+          (compilation--rebuild (current-buffer))
+          (compilation--visit location))
         (message "No file and line on this line"))))
 
 ;; ---------------------------------------------------------------------------
@@ -194,31 +200,58 @@ point where it started."
   "Move to the previous line naming a location. Bound to p."
   (if (not (compilation--step -1)) (message "No earlier one")))
 
-(defun compilation--in-buffer (step)
-  "Take STEP in the compilation buffer and open what it lands on.
+;; ---------------------------------------------------------------------------
+;; Joining the list everything else is walked with
+;; ---------------------------------------------------------------------------
+;;
+;; `next-error' and `previous-error' are built in, and they walk a *result
+;; set* -- the same one a search attaches to its listing. A compilation has one
+;; complication a search does not: its output is still arriving, so the list
+;; grows while you are walking it. That is what `results-refresh' is for. The
+;; function below is registered against the compilation buffer and called
+;; before each step, so `M-g n' sees what the compiler has said since the last
+;; time you asked.
+;;
+;; Rebuilding means parsing the buffer again, which is a parse per line of
+;; output -- for a compilation, a few hundred lines. The alternative is
+;; parsing on every line as it arrives, which is the same work done more often
+;; and at a worse moment.
 
-Run from wherever you are, which is why the buffer has to be remembered rather
-than read off the screen: the screen in front of you is the file you are
-fixing."
-  (if (null compilation--buffer)
-      (message "Nothing has been compiled yet")
-      (let ((here (current-buffer))
-            (window (selected-window)))
-        (switch-to-buffer compilation--buffer)
-        (if (compilation--step step)
-            (compilation-goto)
-            (progn
-              (message "No more")
-              (select-window window)
-              (switch-to-buffer here))))))
+(defun compilation--entries ()
+  "Every location this buffer names, in the shape a result set takes.
 
-(defcommand next-error () nil
-  "Go to the next thing the compilation complained about. Bound to M-g n."
-  (compilation--in-buffer 1))
+(KIND SOURCE LINE COLUMN) is all a compiler's complaint can say; the rest of an
+entry -- the offset, the text of the line, where the match sits in it -- is for
+things that searched text, and is left off."
+  (let ((line 1)
+        (last (progn (end-of-buffer) (line-number-at-point)))
+        (entries nil))
+    (while (<= line last)
+      (goto-line line)
+      (let ((location (compilation--parse (current-line))))
+        (if location
+            (setq entries
+                  (cons (list "file"
+                              (nth 0 location)
+                              (if (nth 1 location) (string-to-number (nth 1 location)) 1)
+                              (if (nth 2 location)
+                                  (- (string-to-number (nth 2 location)) 1)
+                                  0))
+                        entries))))
+      (setq line (+ line 1)))
+    (reverse entries)))
 
-(defcommand previous-error () nil
-  "Go to the previous thing the compilation complained about. Bound to M-g p."
-  (compilation--in-buffer -1))
+(defun compilation--rebuild (buffer)
+  "Attach what BUFFER complains about, as a result set. The refresher."
+  (with-current-buffer
+   buffer
+   (lambda ()
+     (let ((here (point)))
+       (results-put (or (compilation--command-here) "compilation")
+                    buffer
+                    (compilation--entries)
+                    buffer)
+       (goto-char here)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Running it
@@ -251,7 +284,13 @@ anywhere."
         nil
         (progn
           (setq compilation--buffer name)
-          (remove-overlays 'compilation-here)
+          (remove-overlays 'results-here)
+          ;; The list starts empty and grows as the compiler talks. Attached
+          ;; now so that `M-g n' has something to walk from the first
+          ;; complaint, and given a refresher so that what it walks is what
+          ;; has arrived rather than what had arrived when this was attached.
+          (results-put command name nil name)
+          (buffer-put 'results-refresh 'compilation--rebuild name)
           (display-buffer-at-bottom name compilation-window-height)))))
 
 (defcommand compilation-recompile () nil
@@ -266,8 +305,10 @@ anywhere."
 ;; ---------------------------------------------------------------------------
 
 (define-key nil "C-c c" 'compile)
-(define-key nil "M-g n" 'next-error)
-(define-key nil "M-g p" 'previous-error)
+;; `M-g n' and `M-g p' are bound in common-keymaps.lisp: they walk whatever
+;; list was made last -- a compilation, a search, anything that attached one --
+;; and binding them here would make every other producer of a list depend on
+;; this module being loaded.
 
 (define-key 'compilation-mode "<ret>" 'compilation-goto)
 (define-key 'compilation-mode "n" 'compilation-next)
@@ -284,7 +325,7 @@ anywhere."
 ;; The two marks. Backgrounds rather than foregrounds: the text under them is
 ;; already coloured by the rules above, and a background says "you are here"
 ;; without arguing with what the text is.
-(set-face 'compilation-here nil "bright-black")
-(set-face 'compilation-target nil "bright-black")
+(set-face 'results-here nil "bright-black")
+(set-face 'results-target nil "bright-black")
 
 (log "compile loaded")

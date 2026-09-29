@@ -15,6 +15,7 @@ pub mod undo;
 pub use undo::UndoHistory;
 
 use crate::input::KeyEvent;
+use std::any::Any;
 use std::collections::HashMap;
 
 pub struct Buffer<B: BufferTrait> {
@@ -119,6 +120,44 @@ pub struct Buffer<B: BufferTrait> {
     /// Point still moves freely. Reading a read-only buffer is the entire
     /// point of having one.
     pub read_only: bool,
+    /// Things other parts of the editor have hung on this buffer, by name.
+    ///
+    /// # What this is for
+    ///
+    /// Some features need somewhere to keep what they worked out *about one
+    /// buffer*: a list of search results shown in it, a parsed table, the
+    /// state of a view. Until now there were two places to put that, and each
+    /// is wrong in its own way -- a global keyed by buffer name, which goes
+    /// stale the moment the buffer is renamed and is still there after it is
+    /// killed; or the buffer's own text, which works only when the value is
+    /// something you would have displayed anyway.
+    ///
+    /// This is the third place, and it has the property the other two lack:
+    /// **the value lives exactly as long as the buffer does**. Killing a
+    /// buffer drops it from the table it lives in, which drops this map,
+    /// which runs each value's own destructor. Nothing has to remember to
+    /// clean up, because there is nothing separate to clean.
+    ///
+    /// # Why `dyn Any` and not a field per feature
+    ///
+    /// So that a feature can attach whatever it likes without `Buffer`
+    /// growing a field for it, and while knowing nothing about the other
+    /// features that do. The alternative considered was a raw pointer cast
+    /// back on demand, and it would have defeated the purpose: a raw pointer
+    /// has no destructor, so dropping the buffer would free the *pointer* and
+    /// leak everything behind it, and a cast with no type tag is undefined
+    /// behaviour rather than a refusal when it is wrong. `Box<dyn Any>`
+    /// carries the concrete type's `Drop`, and `downcast_ref` checks.
+    ///
+    /// Keyed by name, the way overlays are keyed by category: two features
+    /// attach to one buffer without knowing about each other, and a feature
+    /// replaces its own entry by putting to the same name.
+    ///
+    /// Not cleared by [`Buffer::adopt_text`], unlike the undo history and the
+    /// overlays. Those describe positions in text that no longer exists; an
+    /// attachment describes whatever its owner says it does, and only its
+    /// owner knows whether a reverted file invalidates it.
+    pub data: HashMap<String, Box<dyn Any + Send + Sync>>,
 }
 
 impl<B: BufferTrait> Buffer<B> {
@@ -140,7 +179,41 @@ impl<B: BufferTrait> Buffer<B> {
             stale: false,
             auto_saved_at: None,
             read_only: false,
+            data: HashMap::new(),
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Things hung on this buffer
+    // ------------------------------------------------------------------
+
+    /// Attach VALUE under KEY, replacing whatever was there.
+    ///
+    /// Returns nothing: a caller that wanted the old value can ask for it
+    /// first, and handing back a `Box<dyn Any>` that nobody downcasts would
+    /// be a value quietly going nowhere.
+    pub fn put_data<T: Any + Send + Sync>(&mut self, key: &str, value: T) {
+        self.data.insert(key.to_string(), Box::new(value));
+    }
+
+    /// What is attached under KEY, if it is a `T`.
+    ///
+    /// `None` both when nothing is there and when what is there is something
+    /// else. The two are not worth telling apart: a caller asking for its own
+    /// key with its own type is asking "is mine there", and a caller asking
+    /// about somebody else's has no business with either answer.
+    pub fn data<T: Any + Send + Sync>(&self, key: &str) -> Option<&T> {
+        self.data.get(key)?.downcast_ref::<T>()
+    }
+
+    /// The same, to be changed in place.
+    pub fn data_mut<T: Any + Send + Sync>(&mut self, key: &str) -> Option<&mut T> {
+        self.data.get_mut(key)?.downcast_mut::<T>()
+    }
+
+    /// Remove whatever is attached under KEY. True when there was something.
+    pub fn forget_data(&mut self, key: &str) -> bool {
+        self.data.remove(key).is_some()
     }
 
     /// Where a scan of this buffer that will be asked about POS may carry on
@@ -217,6 +290,7 @@ impl<B: BufferTrait> Buffer<B> {
             stale: false,
             auto_saved_at: None,
             read_only: false,
+            data: HashMap::new(),
         }
     }
 }

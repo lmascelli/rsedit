@@ -97,6 +97,7 @@ pub(crate) mod mouse;
 mod overlays;
 mod region;
 mod replace;
+pub(crate) mod results;
 mod scan;
 mod shell;
 mod theme;
@@ -278,6 +279,60 @@ pub fn install_primitives<B: BufferTrait>(
     );
     // Finding every match rather than the next one. See `primitives::scan`.
     insert_fn!("scan-buffer", scan::scan_buffer, scan::SCAN_BUFFER_DOC);
+    // Lists of places, and walking them. See `primitives::results`.
+    insert_fn!("occur--scan", results::occur_scan, results::OCCUR_SCAN_DOC);
+    insert_fn!("grep--scan", results::grep_scan, results::GREP_SCAN_DOC);
+    insert_cmd!(
+        "next-error",
+        results::next_error,
+        [] as [&str; 0],
+        results::NEXT_ERROR_DOC
+    );
+    insert_cmd!(
+        "previous-error",
+        results::previous_error,
+        [] as [&str; 0],
+        results::PREVIOUS_ERROR_DOC
+    );
+    insert_fn!(
+        "results-count",
+        results::results_count,
+        results::RESULTS_COUNT_DOC
+    );
+    insert_fn!(
+        "results-entry",
+        results::results_entry,
+        results::RESULTS_ENTRY_DOC
+    );
+    insert_fn!(
+        "results-state",
+        results::results_state,
+        results::RESULTS_STATE_DOC
+    );
+    insert_fn!(
+        "results-visit",
+        results::results_visit,
+        results::RESULTS_VISIT_DOC
+    );
+    insert_fn!(
+        "results-buffer",
+        results::results_buffer,
+        results::RESULTS_BUFFER_DOC
+    );
+    insert_cmd!(
+        "results-select",
+        results::results_select,
+        [] as [&str; 0],
+        results::RESULTS_SELECT_DOC
+    );
+    insert_fn!(
+        "results-put",
+        results::results_put,
+        results::RESULTS_PUT_DOC
+    );
+    // Remembering something about one buffer, for as long as it exists.
+    insert_fn!("buffer-put", buffers::buffer_put, buffers::BUFFER_PUT_DOC);
+    insert_fn!("buffer-get", buffers::buffer_get, buffers::BUFFER_GET_DOC);
     // The small verbs. See `primitives::verbs`.
     insert_cmd!(
         "upcase-word",

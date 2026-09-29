@@ -301,7 +301,10 @@ impl<B: BufferTrait> EditorState<B> {
         // colouring for the same reason: it is short enough to read as live
         // and long enough to cost nothing.
         let shell = (self.shell_commands_running() > 0).then_some(TURN_INTERVAL);
-        [self.echo_expiry_in(env), colouring, shell]
+        // A search writing into a listing is the same situation: results
+        // arrive from the worker and nobody has pressed a key.
+        let scanning = (self.scans_running() > 0).then_some(TURN_INTERVAL);
+        [self.echo_expiry_in(env), colouring, shell, scanning]
             .into_iter()
             .flatten()
             .min()

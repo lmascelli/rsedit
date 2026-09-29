@@ -55,6 +55,7 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 (eval-file "shell")       ; M-! runs a command and shows what it said
 (eval-file "manpage")     ; C-h m, and K on a word
 (eval-file "help")        ; C-h f, C-h k, C-h b -- the editor describing itself
+(eval-file "occur")       ; M-s o and M-s g, and the lists M-g n walks
 (eval-file "compile")     ; C-c c, and M-g n to walk what it complained about
 (eval-file "theme")       ; C-c t to choose how faces are drawn
 
@@ -116,6 +117,8 @@ impl<B: BufferTrait> EditorState<B> {
             windows: Arc::new(RwLock::new(Windows::default())),
             commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
+            scans: Arc::new(AtomicUsize::new(0)),
+            current_results: Arc::new(RwLock::new(None)),
             kill_yank: Arc::new(RwLock::new(KillYank::default())),
             pending_keys: Arc::new(RwLock::new(Vec::new())),
             runtime: Arc::new(RwLock::new(Runtime::new(Arc::new(FuelMeter::new(
