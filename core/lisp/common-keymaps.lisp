@@ -145,6 +145,18 @@
 (define-key nil "C-r" 'isearch-backward)
 (define-key nil "C-M-s" 'isearch-forward-regexp)
 
+;; Commenting. `M-;' comments the region out, or the line when there is no
+;; region, and takes the comments off again when everything in the scope is
+;; already one. What a comment looks like comes from the mode -- see
+;; `set-comment-syntax' -- so this key does the right thing in Rust, C and this
+;; editor's own Lisp without knowing about any of them.
+;;
+;; `comment-indent' starts a comment *beside* the code rather than instead of
+;; it, and is left unbound: it is wanted far less often than the toggle, and
+;; the key most fingers reach for is this one.
+(define-key nil "M-;" 'comment-dwim)
+(define-key nil "C-x C-;" 'comment-line)
+
 ;; Replace. `M-%' is Emacs' key for it and there is no reason to differ.
 ;;
 ;;   y   replace this one        !   replace this and all the rest

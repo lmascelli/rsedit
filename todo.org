@@ -21,6 +21,7 @@
 
 
 * Macro todo
+- [ ] Enhance mode system: major mode switch and minor modes
 - [ ] Finding things across files occur (matches in this buffer, in a buffer, RET to jump)
       then project-wide grep. You already have the compilation-buffer navigation pattern
       (next-error/compilation-goto), so occur and grep can reuse that entire mechanism

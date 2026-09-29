@@ -6,6 +6,7 @@ mod bug_fix_tests;
 mod char_quote_tests;
 mod clipboard_tests;
 mod command_test;
+mod comment_tests;
 mod compile_tests;
 mod completion_at_point_tests;
 mod completion_tests;

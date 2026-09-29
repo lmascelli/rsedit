@@ -241,6 +241,34 @@ primitive!(insert, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
+pub const DELETE_REGION_DOC: &str = "(delete-region FROM TO): Delete the text between FROM and TO \
+         without putting it on the kill ring. Returns t if the buffer changed.\n\n\
+         The counterpart of `insert', and the piece Lisp was missing: without it a module could \
+         only remove text one character at a time. `kill-region' is the version that saves what \
+         it removed for `yank'.\n\n\
+         Example:\n\
+         (delete-region (point-min) (point-max))  ; empty the buffer";
+
+primitive!(delete_region, args, _env, ctx, {
+    let (from, to) = match (args.first(), args.get(1)) {
+        (Some(ELispExp::Number(from)), Some(ELispExp::Number(to))) => {
+            (*from as usize, *to as usize)
+        }
+        _ => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "two positions".into(),
+                got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+            });
+        }
+    };
+    let changed = ctx.with_current_buffer_mut(|buf| {
+        let end = from.max(to).min(buf.text.len());
+        let start = from.min(to).min(end);
+        start < end && delete_range(buf, start, end)
+    });
+    Ok(ELispExp::boolean(changed))
+});
+
 pub const INSERT_PASTED_TEXT_DOC: &str = "(insert-pasted-text STRING): Insert STRING at point as a \
          single bracketed paste. Returns t if the buffer changed.\n\n\
          This is what a paste from the system clipboard runs, and the reason it is not just \

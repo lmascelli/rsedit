@@ -86,6 +86,7 @@ macro_rules! primitive {
 mod ask;
 mod buffers;
 mod commands;
+mod comments;
 mod completion;
 pub(crate) mod edits;
 mod general;
@@ -231,6 +232,48 @@ pub fn install_primitives<B: BufferTrait>(
     insert_fn!("quit--confirm", io::quit_confirm, io::QUIT_CONFIRM_DOC);
     insert_fn!("eval-file", general::eval_file, general::EVAL_FILE_DOC);
     insert_fn!("define-key", general::define_key, general::DEFINE_KEY_DOC);
+    // Comments, and the span deletion Lisp was missing. See
+    // `primitives::comments`.
+    insert_cmd!(
+        "comment-dwim",
+        comments::comment_dwim,
+        [] as [&str; 0],
+        comments::COMMENT_DWIM_DOC
+    );
+    insert_cmd!(
+        "comment-line",
+        comments::comment_line,
+        [] as [&str; 0],
+        comments::COMMENT_LINE_DOC
+    );
+    insert_cmd!(
+        "comment-indent",
+        comments::comment_indent,
+        [] as [&str; 0],
+        comments::COMMENT_INDENT_DOC
+    );
+    insert_cmd!(
+        "comment-region",
+        comments::comment_region,
+        ["r"],
+        comments::COMMENT_REGION_DOC
+    );
+    insert_cmd!(
+        "uncomment-region",
+        comments::uncomment_region,
+        ["r"],
+        comments::UNCOMMENT_REGION_DOC
+    );
+    insert_fn!(
+        "comment-syntax",
+        comments::comment_syntax,
+        comments::COMMENT_SYNTAX_DOC
+    );
+    insert_fn!(
+        "delete-region",
+        edits::delete_region,
+        edits::DELETE_REGION_DOC
+    );
     // What the editor can be asked about itself. See `primitives::help`.
     insert_fn!("key-binding", help::key_binding, help::KEY_BINDING_DOC);
     insert_fn!(
