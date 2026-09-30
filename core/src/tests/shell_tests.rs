@@ -214,6 +214,85 @@ mod tests {
     }
 
     #[test]
+    fn a_slow_command_does_not_hold_back_another_commands_output() {
+        // What was actually serialised, and what was not.
+        //
+        // The *processes* were always concurrent: `spawn' returns as soon as
+        // the child exists, so two commands have always run at the same time.
+        // What queued was the *reading* -- one task read one pipe to the end
+        // on the shared thread, and every other command's output sat in its
+        // pipe until that finished. So a `git status' started during a build
+        // really did run, and its output really did not appear for as long as
+        // the build lasted; and a command writing more than a pipe will hold
+        // would have blocked part-way through, waiting for a reader that was
+        // busy with somebody else.
+        let (ctx, env) = editor();
+        let slow = started(r#"(shell-command-start "sleep 1; echo slow")"#, &env, &ctx);
+        let quick = started(r#"(shell-command-start "echo quick")"#, &env, &ctx);
+        // The exit trailer in each buffer, rather than the output. The first
+        // line of a buffer is the command itself -- `$ echo quick' -- so
+        // looking for what a command will print finds what it was asked to
+        // print, and reports it as finished before it has started. The
+        // trailer is written by the reader, and only when the pipe is closed,
+        // so it means what this needs it to mean.
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while !text_of(&ctx, &quick).contains("--- exited") {
+            assert!(
+                Instant::now() < deadline,
+                "the quick command was not read until the slow one had been: {:?}",
+                text_of(&ctx, &quick)
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !text_of(&ctx, &slow).contains("--- exited"),
+            "and it got there while the slow one was still going: {:?}",
+            text_of(&ctx, &slow)
+        );
+        settle(&ctx);
+    }
+
+    #[test]
+    fn a_command_does_not_hold_up_the_editors_other_background_work() {
+        // The failure this prevents is the one that was actually there: a
+        // `cargo build' read on the shared thread stopped syntax colouring,
+        // the file watcher, the auto-saver and every Lisp worker until the
+        // build finished.
+        //
+        // A background job stands in for all of them, because it is the one
+        // that can be *watched* -- it reports when it is done, and the report
+        // arriving while the command is still running is the whole assertion.
+        let (ctx, env) = editor();
+        run(
+            "(setq job-finished nil)
+             (defun quick-job () t)
+             (defun quick-done (name ok) (setq job-finished t))",
+            &env,
+            &ctx,
+        );
+        started(r#"(shell-command-start "sleep 1")"#, &env, &ctx);
+        run(
+            "(background-call 'quick 'quick-job nil 'quick-done)",
+            &env,
+            &ctx,
+        );
+        let deadline = Instant::now() + Duration::from_millis(700);
+        while run("job-finished", &env, &ctx).is_nil() {
+            assert!(
+                Instant::now() < deadline,
+                "the job waited for the shell command, which is the bug"
+            );
+            ctx.run_owed_callbacks(&env);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !run("(shell-command-running-p)", &env, &ctx).is_nil(),
+            "and it got there while the command was still going"
+        );
+        settle(&ctx);
+    }
+
+    #[test]
     fn killing_the_output_buffer_mid_command_is_allowed() {
         // A perfectly reasonable thing to have done, and the worker must not
         // panic when it finds the buffer gone.

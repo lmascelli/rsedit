@@ -180,6 +180,10 @@ const MINIBUFFER_COMPLETE_DOC: &str = "(minibuffer-complete): Called when the us
          *minibuffer-on-change* with the current input to compute completion \
          candidates and shows the first one; further presses (as long as the \
          input hasn't changed since) cycle through the rest.\n\n\
+         The candidate function is asked once per distinct input, whichever way the candidates \
+         are presented. Pressing Tab again cannot change the answer, and a candidate function \
+         may be expensive -- the manual's walks every page installed -- so asking again would \
+         be paying for the same list twice, on the thread that draws.\n\n\
          If *completion-read-function* is set, it is called instead of cycling, with the \
          candidate list and the symbol `minibuffer-choose-completion' -- which it calls with \
          whichever candidate the user picked. Setting that variable is how a module replaces \
@@ -204,6 +208,10 @@ primitive!(minibuffer_choose_completion, args, _env, ctx, {
     set_minibuffer_content(ctx, value);
     Ok(args[0].clone())
 });
+
+/// The input the candidate list in `*minibuffer-completions*` was computed
+/// for, so that a second Tab on the same input does not ask again.
+const ASKED_ABOUT: &str = "*minibuffer-completions-for*";
 
 primitive!(minibuffer_complete, _args, env, ctx, {
     let current = ctx.with_current_buffer(|buf| buf.text.to_string());
@@ -230,14 +238,34 @@ primitive!(minibuffer_complete, _args, env, ctx, {
     if let Some(present) = env.get_variable("*completion-read-function*")
         && present.is_truthy()
     {
-        let candidates = match env.get_variable("*minibuffer-on-change*") {
-            Some(on_change) if on_change.is_truthy() => call_callable(
-                &on_change,
-                &[ELispExp::string(current.clone())],
-                env.clone(),
-                ctx,
-            )?,
-            _ => ELispExp::nil(),
+        // Asked again only when the input has changed since the last time.
+        //
+        // Pressing Tab a second time cannot change what the answer is, and a
+        // candidate function may be expensive -- the manual's lists every page
+        // installed. This used to ask on every press, so holding Tab down
+        // walked a directory once per keystroke, on the thread that draws.
+        let asked_about = match env.get_variable(ASKED_ABOUT) {
+            Some(ELispExp::String(text)) => Some(text.to_string()),
+            _ => None,
+        };
+        let known = env
+            .get_variable("*minibuffer-completions*")
+            .filter(|_| asked_about.as_deref() == Some(current.as_str()));
+        let candidates = match known {
+            Some(known) => known,
+            None => {
+                let fresh = match env.get_variable("*minibuffer-on-change*") {
+                    Some(on_change) if on_change.is_truthy() => call_callable(
+                        &on_change,
+                        &[ELispExp::string(current.clone())],
+                        env.clone(),
+                        ctx,
+                    )?,
+                    _ => ELispExp::nil(),
+                };
+                setq(&env, ASKED_ABOUT, ELispExp::string(current.clone()));
+                fresh
+            }
         };
         setq(&env, "*minibuffer-completions*", candidates.clone());
         call_callable(
@@ -502,6 +530,44 @@ fn centred(
     (x, y, width, height)
 }
 
+/// The function a module registers to be told that candidates have changed.
+///
+/// The same shape as `*completion-read-function*`, which is the established
+/// way a presenter attaches itself: a module that shows candidates sets this,
+/// a module whose candidates are built in the background calls
+/// `completion-invalidate`, and neither has to have been loaded for the other
+/// to work.
+const COMPLETION_INVALIDATED: &str = "*completion-invalidated-function*";
+
+const COMPLETION_INVALIDATE_DOC: &str = "(completion-invalidate): Say that the completion \
+         candidates may have changed, whoever is showing them.\n\n\
+         For a module whose candidate list is built in the background -- the manual's list of \
+         pages is the one in the tree. The list it handed out a moment ago was the truth at the \
+         time and is now short, and there is no other way for whatever is showing it to find \
+         that out: nothing was typed.\n\n\
+         Two things happen. The answer remembered for the current input is forgotten, so the \
+         next Tab asks the candidate function again rather than repeating what it was told. And \
+         if `*completion-invalidated-function*' is set -- a presenter registers itself there, as \
+         it does with `*completion-read-function*' -- it is called with no arguments, so a \
+         list already on screen can redraw with what there is now.\n\n\
+         Safe with no prompt open and with no presenter loaded: it is a signal, and nobody \
+         having to hear it is a normal state of affairs.\n\n\
+         This is the call a background job's ON-PROGRESS makes -- see `background-call'. It is \
+         made on the thread that runs commands, which is what makes redrawing from it safe.";
+
+primitive!(completion_invalidate, _args, env, ctx, {
+    // Forgotten rather than recomputed: recomputing here would call the
+    // candidate function whether or not anybody was going to look, and the
+    // whole reason this exists is that the candidate function is expensive.
+    setq(&env, ASKED_ABOUT, ELispExp::nil());
+    if let Some(presenter) = env.get_variable(COMPLETION_INVALIDATED)
+        && presenter.is_truthy()
+    {
+        call_callable(&presenter, &[], env.clone(), ctx)?;
+    }
+    Ok(ELispExp::nil())
+});
+
 const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL &optional MODE): \
          Read a line of input from the user via a minibuffer prompt. PROMPT \
          is shown as the window's title. ON-CONFIRM is called with the final \
@@ -589,6 +655,13 @@ pub fn install_minibuffer<B: BufferTrait>(
     env.set_function(
         "minibuffer-read".into(),
         ELispExp::primitive(minibuffer_read, Some(MINIBUFFER_READ_DOC.into())),
+    );
+    env.set_function(
+        "completion-invalidate".into(),
+        ELispExp::primitive(
+            completion_invalidate,
+            Some(COMPLETION_INVALIDATE_DOC.into()),
+        ),
     );
     env.set_function(
         "history-previous".into(),

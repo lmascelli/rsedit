@@ -39,7 +39,8 @@ use crate::{
     isearch::install_isearch,
     kill_ring::Direction,
     lisp::{
-        DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm, eval,
+        DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm,
+        call_callable, eval,
     },
     managers::{
         Binding, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit,
@@ -72,6 +73,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod background;
 pub(crate) mod boot;
 mod buffers;
 mod commands;
@@ -189,10 +191,11 @@ pub struct EditorState<B: BufferTrait> {
     /// each into a buffer of its own.
     shell_commands: Arc<AtomicUsize>,
 
-    /// How many searches are writing results into a buffer, for the same
-    /// reason as the count above it: a search of a directory runs on the
-    /// worker and its results appear without anybody pressing a key.
-    scans: Arc<AtomicUsize>,
+    /// How much work on the worker is changing what is on screen, for the
+    /// same reason as the count above it: a search of a directory and a
+    /// background call building an index both run without anybody pressing a
+    /// key, and the renderer has to come back and look.
+    background_work: Arc<AtomicUsize>,
 
     /// The buffer whose result set `next-error` walks, if any.
     ///
@@ -201,6 +204,10 @@ pub struct EditorState<B: BufferTrait> {
     /// the answer cannot be read off the buffer it is asked in. The set
     /// itself lives on its own buffer; this is only which one is current.
     current_results: Arc<RwLock<Option<String>>>,
+
+    /// Calls that background jobs have asked for and the command thread has
+    /// not made yet. See [`background`], which says why they wait.
+    owed: Arc<RwLock<Vec<background::OwedCallback<B>>>>,
 
     /// Killed text, what a yank put where, and whether the command before
     /// this one did either. See [`KillYank`], which says why those are one

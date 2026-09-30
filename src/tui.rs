@@ -760,8 +760,11 @@ pub fn tui_main<B: BufferTrait>(
             && !poll(remaining)?
         {
             // The timer expired rather than an event arriving, so whatever the
-            // editor was waiting on is now due.
-            state.drag_scroll_tick(&env);
+            // editor was waiting on is now due: a selection dragged past the
+            // edge of its window, a callback a background job left for the
+            // thread that runs commands. What they are is the editor's
+            // business -- this only has to say that the wait is over.
+            state.tick(&env);
             dirty = true;
             continue;
         }

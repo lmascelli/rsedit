@@ -1,4 +1,5 @@
 mod autosave_tests;
+mod background_tests;
 mod balance_point_tests;
 mod buffer_conformance_tests;
 mod buffer_data_tests;
@@ -10,6 +11,7 @@ mod command_test;
 mod comment_tests;
 mod compile_tests;
 mod completion_at_point_tests;
+mod completion_cost_tests;
 mod completion_tests;
 mod completion_ui_tests;
 mod config_path_tests;

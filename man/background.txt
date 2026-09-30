@@ -1,0 +1,156 @@
+NAME
+    background - work that must not happen on the thread that draws
+
+DESCRIPTION
+    Anything that may take longer than a frame is a background job. Walking
+    a directory tree for manual pages, searching a project, building an
+    index: done where a command is done, each of those is the editor
+    stopping. Done in the background and reported carelessly, each is a
+    mode being changed underneath itself by another thread.
+
+    A job is started by one call that names what to do and what to do when
+    it is done.
+
+        (background-call NAME JOB &optional ON-PROGRESS ON-DONE INTERVAL)
+        (stop-worker NAME)
+        (running-workers)
+        (completion-invalidate)
+
+THE TWO SHAPES
+    JOB is either a function of no arguments, run once, or a `fiber',
+    resumed a turn at a time. A fiber is the shape to use whenever the work
+    divides, because each (yield) in it is a progress point and there is
+    nowhere else progress could be reported from.
+
+        (background-call 'manpage-index
+                         (fiber (let ((left manpage-path))
+                                  (while left
+                                    (manpage--index-one (car left))
+                                    (setq left (cdr left))
+                                    (yield))))
+                         'manpage--index-progress
+                         'manpage--index-done)
+
+    A `while' rather than a `dolist', and that is not a matter of taste: a
+    (yield) is only legal where the evaluator can record a way back to it,
+    which is a body statement or a form of a `while'. A `dolist' body is
+    not one of those, and a yield there is refused -- so a fiber is
+    written as a loop that walks its own list.
+
+    ON-PROGRESS is called with NAME after every turn but the last. ON-DONE
+    is called once, with NAME and t if the job reached its end or nil if it
+    was stopped -- either way, because a mode that is never told stays
+    waiting for ever.
+
+WHICH THREAD RUNS WHAT
+    The job runs on the background thread. Both callbacks run on the thread
+    that runs commands, between commands.
+
+    That division is the whole of the arrangement. A job runs while you are
+    typing: half-way through an insertion, inside a hook that is walking a
+    list it is also changing. Anything it calls sees the editor in whatever
+    state the command in progress has left it in, and no amount of care in
+    the thing being called fixes that, because it is not the callee's
+    fault.
+
+    A callback queued to the command thread runs where a keystroke would
+    run, with the same locks free and the same invariants holding. So a
+    callback may do anything a command may do, and a job may not.
+
+    The price is that a callback is not immediate. It is at most one pass
+    of the event loop away -- the same delay a keystroke has.
+
+THE RULE
+    1.  Anything that may take longer than a frame is a background job, and
+        a job is started by one call that names what to do and what to do
+        when it is done.
+
+    2.  A job never draws. It changes state; the renderer notices. There is
+        no other order that works, because the thread that draws is not the
+        thread the job is on.
+
+    3.  A job never assumes the editor stood still. The buffer may be gone,
+        the variable may have been set again, the version it read may be
+        two edits old. It re-checks before it stores, and what it cannot
+        re-check it does not keep.
+
+    4.  Progress is a signal, not a redraw. A job says there is more now;
+        what more means is the mode's business.
+
+    5.  The mode keeps itself consistent. Which is a fair thing to ask only
+        because the signal arrives somewhere a mode can answer it.
+
+    6.  Errors are logged, never raised. The command that started the job
+        returned long ago; there is nobody to raise to.
+
+    7.  A job is superseded, not duplicated. Starting one under a name that
+        has one retires the old, and the old one's queued callbacks are
+        dropped rather than delivered against the new one's state.
+
+WHAT THE CALLBACKS ARE GIVEN
+    The name the job ran under, and nothing else.
+
+    Not what it produced, deliberately. Between the turn that produced
+    something and the callback that reports it, the buffer may have been
+    killed and the variable set again -- so a callback that was handed a
+    result would be handed a result about a world that no longer exists. A
+    callback looks up what it needs, and finds either the current answer or
+    nothing.
+
+SAYING THE CANDIDATES CHANGED
+    The one signal common enough to be a primitive.
+
+    A module whose completion candidates are built in the background calls
+    `completion-invalidate' from its ON-PROGRESS. That forgets the answer
+    remembered for the current input, so the next Tab asks again, and calls
+    `*completion-invalidated-function*' if a presenter has registered one,
+    so a list already on screen redraws with what there is now.
+
+    Neither module has to have been loaded for the other to work, which is
+    the point of it going through the editor rather than through a call
+    from one to the other.
+
+WHICH THREAD, AND WHY THERE IS MORE THAN ONE
+    One rule decides it:
+
+        The shared thread may only run work that is guaranteed to return.
+
+    A fiber's turn is guaranteed to return, because `worker-fuel' cuts it
+    off whether it wants to stop or not. A chunk of syntax colouring is
+    the same. Any number of those share one thread and take turns on a
+    timer, and a turn costs nothing.
+
+    Reading a child process's output is not guaranteed to return. Nor is
+    walking a directory tree. These take as long as the system takes, and
+    no budget shortens them -- so each gets a thread of its own, started
+    and then forgotten about.
+
+    The rule is not decoration. `M-x compile' on a long build used to hold
+    the shared thread for the whole build: colouring stopped, the file
+    watcher stopped, the auto-saver stopped, and every worker and every
+    background job stopped until the build finished. A second command
+    started meanwhile did run -- a process begins the moment it is
+    spawned -- but nothing read its output, so it printed into a pipe
+    nobody was emptying and showed nothing until the build was over.
+
+    So: if the work can be written as turns, write it as turns and it
+    costs a fiber. If it blocks, it is a thread, and in Lisp that means
+    `shell-command-start' -- which is the only door to blocking work that
+    Lisp has, deliberately.
+
+WORKERS ARE THE OTHER HALF
+    `define-worker' starts something that goes on for the life of the
+    session -- syntax colouring, watching files for changes. A job
+    finishes. They share a namespace and a retirement mechanism on purpose,
+    so that `stop-worker' and `running-workers' mean one thing, and a name
+    cannot be both.
+
+    Each turn of either gets `worker-fuel' to spend, separately from the
+    budget commands run under: nothing the user does can cut a turn short,
+    and a turn that runs past its allowance is stopped and the job retired,
+    because a turn that never ends holds the thread syntax colouring and
+    the prescanner also run on.
+
+SEE ALSO
+    define-worker, stop-worker, running-workers, background-call,
+    completion-invalidate, yield, fiber

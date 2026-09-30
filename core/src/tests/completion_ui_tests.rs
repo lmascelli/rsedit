@@ -158,6 +158,54 @@ mod tests {
         );
     }
 
+    // ---------------- the list changing underneath ----------------
+
+    #[test]
+    fn a_strip_redraws_when_the_candidates_are_invalidated() {
+        // The case a completion list built in the background puts the strip
+        // in: nothing was typed, and the answer changed anyway. `post-command
+        // -hook' cannot see it -- it compares against what was typed, and
+        // that is the same -- so there has to be a way of saying so, and this
+        // is it being said from the other side.
+        let (ctx, env) = with_module();
+        run(r#"(setq *test-names* '("alpha" "beta"))"#, &env, &ctx);
+        run(
+            r#"(progn (setq *test-answer* nil)
+                      (minibuffer-read "Pick:"
+                        (lambda (input) (setq *test-answer* input))
+                        (lambda (input) (fuzzy-filter input *test-names*))
+                        nil))"#,
+            &env,
+            &ctx,
+        );
+        press(&ctx, &env, KeyCode::Tab);
+        assert!(strip(&env, &ctx).contains("alpha"));
+        assert!(
+            !strip(&env, &ctx).contains("alpaca"),
+            "not yet, it has not been found"
+        );
+
+        // A background job finding another one, and saying so.
+        run(r#"(setq *test-names* '("alpha" "beta" "alpaca"))"#, &env, &ctx);
+        run("(completion-invalidate)", &env, &ctx);
+        assert!(
+            strip(&env, &ctx).contains("alpaca"),
+            "the strip shows what there is now: {}",
+            strip(&env, &ctx)
+        );
+    }
+
+    #[test]
+    fn invalidating_with_no_strip_open_changes_nothing() {
+        // It is a signal, and nobody having to hear it is the normal state of
+        // affairs -- including for the whole of a session in which no prompt
+        // is ever opened.
+        let (ctx, env) = with_module();
+        let before = windows(&ctx);
+        run("(completion-invalidate)", &env, &ctx);
+        assert_eq!(windows(&ctx), before, "no strip is conjured out of nothing");
+    }
+
     // ---------------- narrowing as you type ----------------
 
     #[test]

@@ -191,7 +191,7 @@ impl<B: BufferTrait> ImmediateTask<B> for TreeSearch {
         for relative in paths {
             // The buffer going away is the user saying stop.
             if !state.has_buffer(&self.buffer) {
-                state.finish_scan();
+                state.finish_background_work();
                 return;
             }
             if found >= self.limit {
@@ -223,7 +223,7 @@ impl<B: BufferTrait> ImmediateTask<B> for TreeSearch {
             );
         }
         finish(state, &self.buffer, found);
-        state.finish_scan();
+        state.finish_background_work();
     }
 }
 
@@ -394,14 +394,14 @@ primitive!(grep_scan, args, env, ctx, {
     // Counted before the task is sent, as the shell command's is: the worker
     // may not reach it for a moment, and a frame drawn in that moment would
     // decide nothing was running and go back to sleep until a key was pressed.
-    ctx.begin_scan();
+    ctx.begin_background_work();
     if !ctx.send_to_worker(WorkerMessage::RunNow(Box::new(TreeSearch {
         pattern,
         root,
         buffer: buffer.clone(),
         limit: DEFAULT_LIMIT,
     }))) {
-        ctx.finish_scan();
+        ctx.finish_background_work();
         ctx.set_echo_message("The background worker has gone");
         return Ok(ELispExp::nil());
     }

@@ -71,29 +71,31 @@ impl<B: BufferTrait> EditorState<B> {
         self.shell_commands.load(Ordering::Relaxed)
     }
 
-    /// Note that a search has started writing into a buffer.
+    /// Note that something on the worker has started changing what is on
+    /// screen -- a search filling a listing, a background call building an
+    /// index.
     ///
     /// A second counter beside the shell's rather than one shared with it,
     /// because `shell-command-running-p` answers a question people ask -- "is
     /// my build still going" -- and a search of a directory is not an answer
     /// to it. What the two share is the *consequence*: the renderer has to
-    /// keep waking while either is writing, since neither waits for a key.
-    pub(crate) fn begin_scan(&self) {
-        self.scans.fetch_add(1, Ordering::Relaxed);
+    /// keep waking while either is working, since neither waits for a key.
+    pub(crate) fn begin_background_work(&self) {
+        self.background_work.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Note that one has finished. Called from the worker thread, after the
     /// last of its results is in the buffer.
-    pub(crate) fn finish_scan(&self) {
+    pub(crate) fn finish_background_work(&self) {
         let _ = self
-            .scans
+            .background_work
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                 Some(n.saturating_sub(1))
             });
     }
 
-    pub(crate) fn scans_running(&self) -> usize {
-        self.scans.load(Ordering::Relaxed)
+    pub(crate) fn background_work_running(&self) -> usize {
+        self.background_work.load(Ordering::Relaxed)
     }
 
     /// Which buffer's results `next-error` walks, or `None`.

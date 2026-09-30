@@ -364,6 +364,33 @@ the first candidate and make the key appear to do nothing."
                   (setq *completion--index* 0)
                   (completion--draw))))))))
 
+(defun completion-reconsider ()
+  "Ask for the candidates again and redraw the strip, if one is open.
+
+Registered on `*completion-invalidated-function*', so this is what
+`completion-invalidate' reaches -- and a module whose candidates are built in
+the background calls that without knowing this file exists.
+
+Different from `completion--refresh', which is the *typing* case: it asks
+whether what was typed has changed and does nothing when it has not. Here
+nothing was typed and the answer has changed anyway, because the list the
+candidates came from grew while the strip was showing them.
+
+The selection is kept where it is rather than reset to the first candidate.
+Everything the strip was offering is still being offered -- a list only grows
+this way -- so moving the selection would be taking the user back to the top
+of a list they were part-way down, for no reason they could see."
+  (if *completion--window*
+      (let ((text (completion--current-text)))
+        (completion--narrow text)
+        (setq *completion--pattern* text)
+        ;; A list that has grown can still have shrunk under the cursor -- a
+        ;; rebuild, not an append -- so the selection is clamped rather than
+        ;; assumed to be in range.
+        (if (>= *completion--index* (length *completion--items*))
+            (setq *completion--index* 0))
+        (completion--draw))))
+
 (defun completion-next ()
   "Select the next candidate, wrapping round at the end."
   (completion--move 1))
@@ -447,6 +474,12 @@ literal repeated in two modules is one rename away from being wrong in one of
 them.")
 
 (setq *completion-read-function* 'completion--present)
+
+;; And how a module says the candidates have changed underneath it. The same
+;; arrangement as the line above: the editor calls this if it is set and does
+;; nothing if it is not, so `completion-invalidate' is safe to call from a
+;; module that has never heard of this one.
+(setq *completion-invalidated-function* 'completion-reconsider)
 
 ;; How candidates are narrowed, everywhere at once. `completion-at-point'
 ;; consults this before presenting, and the strip uses the same function as you

@@ -33,6 +33,9 @@
 //! to nothing else.
 use crate::buffer::BufferTrait;
 use regex::{Regex, RegexBuilder};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// One match, in character offsets, together with what its groups captured.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -432,6 +435,62 @@ fn literal_at(text: &str, chars: &[char], fold: bool) -> Option<usize> {
         bytes += got.len_utf8();
     }
     Some(bytes)
+}
+
+// ---------------------------------------------------------------------------
+// Compiling the same pattern twice
+// ---------------------------------------------------------------------------
+
+/// A regular expression, compiled once per pattern rather than once per call.
+///
+/// # Why this exists
+///
+/// Building a `Regex` is not cheap: it parses the pattern and builds an
+/// automaton, and for a short pattern on this machine that is about seven
+/// tenths of a millisecond. That is nothing at all if it happens when a mode
+/// declares its grammar, and it is a freeze if it happens in a loop.
+///
+/// It was happening in a loop. `string-match` compiled its argument on every
+/// call, and the modules call it per *element*: the manual's completion source
+/// strips the extension off every page it found, so listing four thousand
+/// pages cost four thousand compilations -- 2.7 seconds, on the thread that
+/// draws, for every press of Tab. With this cache the same four thousand calls
+/// take twenty milliseconds.
+///
+/// # Why a thread-local, and why it is allowed to be crude
+///
+/// Thread-local so that matching costs no lock: Lisp runs on the command
+/// thread and on the worker, and a shared cache would put those two in each
+/// other's way on the hottest call there is.
+///
+/// Cleared wholesale when it grows past [`CACHE_LIMIT`] rather than evicting
+/// by age. Patterns come from module source, so the real set is tens of them
+/// and the limit is never reached; the limit exists only so that a program
+/// *generating* patterns -- `(string-match (concat "^" input) ...)` in a loop
+/// -- cannot grow it without bound. Throwing the lot away costs one
+/// recompilation each for the patterns still in use, which is the same
+/// recompilation this cache exists to avoid doing every time, so the worst
+/// case is the behaviour it replaced.
+pub fn compiled(pattern: &str) -> Result<Arc<Regex>, String> {
+    CACHE.with(|cache| {
+        if let Some(found) = cache.borrow().get(pattern) {
+            return Ok(found.clone());
+        }
+        let compiled = Arc::new(Regex::new(pattern).map_err(|why| why.to_string())?);
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert(pattern.to_string(), compiled.clone());
+        Ok(compiled)
+    })
+}
+
+/// How many compiled patterns one thread keeps. See [`compiled`].
+const CACHE_LIMIT: usize = 512;
+
+thread_local! {
+    static CACHE: RefCell<HashMap<String, Arc<Regex>>> = RefCell::new(HashMap::new());
 }
 
 /// Whether CHARS appears at offset AT.

@@ -301,10 +301,16 @@ impl<B: BufferTrait> EditorState<B> {
         // colouring for the same reason: it is short enough to read as live
         // and long enough to cost nothing.
         let shell = (self.shell_commands_running() > 0).then_some(TURN_INTERVAL);
-        // A search writing into a listing is the same situation: results
-        // arrive from the worker and nobody has pressed a key.
-        let scanning = (self.scans_running() > 0).then_some(TURN_INTERVAL);
-        [self.echo_expiry_in(env), colouring, shell, scanning]
+        // Work on the worker that changes what is on screen is the same
+        // situation: results arrive and nobody has pressed a key.
+        let background = (self.background_work_running() > 0).then_some(TURN_INTERVAL);
+        // A callback a job has already left is not something to wait for: it
+        // is something to do, and the loop does it the moment it is told the
+        // wait is over. Zero rather than the interval, because the work is
+        // ready now and a mode waiting to be told its list grew should not
+        // spend a frame's worth of time not knowing.
+        let owed = self.callbacks_owed().then_some(Duration::ZERO);
+        [self.echo_expiry_in(env), colouring, shell, background, owed]
             .into_iter()
             .flatten()
             .min()

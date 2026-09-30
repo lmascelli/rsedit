@@ -176,7 +176,12 @@ pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND): Run CO
          they mean at a prompt.\n\n\
          Each call gets a buffer of its own -- `*Shell Output*', then `*Shell Output*<2>' -- \
          because two commands sharing one would interleave their lines into something neither \
-         of them said. The buffer is read-only; killing it while the command runs is allowed, \
+         of them said. Each is also *read* on a thread of its own, which is not the same claim: \
+         the processes always ran at once, but their output used to be read one command at a \
+         time, so a `git status' started during a build produced nothing visible until the \
+         build ended -- and a command writing more than a pipe will hold would stop part way, \
+         waiting for a reader busy with somebody else. Reading on a thread each also keeps \
+         syntax colouring and every other background job going while a long command runs. The buffer is read-only; killing it while the command runs is allowed, \
          and the rest of the output is then dropped.\n\n\
          MODE, if given, is the major mode the output buffer is put in, so a module can give the \
          transcript keys and colouring of its own -- which is the whole of how `compile' differs \

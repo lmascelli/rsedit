@@ -279,6 +279,13 @@ pub fn install_primitives<B: BufferTrait>(
     );
     // Finding every match rather than the next one. See `primitives::scan`.
     insert_fn!("scan-buffer", scan::scan_buffer, scan::SCAN_BUFFER_DOC);
+    // Work that must not happen on the thread that draws. See `worker`, which
+    // states the rule the whole editor follows for it.
+    insert_fn!(
+        "background-call",
+        workers::background_call,
+        workers::BACKGROUND_CALL_DOC
+    );
     // Lists of places, and walking them. See `primitives::results`.
     insert_fn!("occur--scan", results::occur_scan, results::OCCUR_SCAN_DOC);
     insert_fn!("grep--scan", results::grep_scan, results::GREP_SCAN_DOC);

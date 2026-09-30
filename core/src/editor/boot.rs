@@ -117,8 +117,9 @@ impl<B: BufferTrait> EditorState<B> {
             windows: Arc::new(RwLock::new(Windows::default())),
             commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
-            scans: Arc::new(AtomicUsize::new(0)),
+            background_work: Arc::new(AtomicUsize::new(0)),
             current_results: Arc::new(RwLock::new(None)),
+            owed: Arc::new(RwLock::new(Vec::new())),
             kill_yank: Arc::new(RwLock::new(KillYank::default())),
             pending_keys: Arc::new(RwLock::new(Vec::new())),
             runtime: Arc::new(RwLock::new(Runtime::new(Arc::new(FuelMeter::new(

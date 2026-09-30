@@ -495,7 +495,10 @@ primitive!(string_match, args, _env, ctx, {
             });
         }
     };
-    let compiled = match regex::Regex::new(&pattern) {
+    // Compiled once per pattern rather than once per call. The modules call
+    // this per element -- per file, per line of output -- and compiling a
+    // pattern costs a hundred times what matching one does.
+    let compiled = match crate::search::compiled(&pattern) {
         Ok(compiled) => compiled,
         Err(why) => {
             ctx.log_diagnostic(&format!("{pattern:?} is not a regular expression: {why}"));

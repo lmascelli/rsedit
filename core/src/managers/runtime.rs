@@ -153,6 +153,27 @@ impl Runtime {
             .is_some_and(|slot| slot.running && slot.issued == generation)
     }
 
+    /// Whether GENERATION is still the *newest* run of NAME -- true even
+    /// after it has stopped.
+    ///
+    /// # Why this is not the same question as the one above
+    ///
+    /// [`Self::worker_is_current`] asks "should this job take another turn",
+    /// and a job that has finished must be told no. This asks "does this job
+    /// still speak for its name", and a job that has finished is exactly the
+    /// one entitled to say so: the callback it owes is the announcement that
+    /// it *has* finished, queued a moment before it retired itself.
+    ///
+    /// Answering that with `worker_is_current` would drop every one of those,
+    /// which is the whole of what a caller waits for. The only thing that
+    /// silences a finished job is a *newer* one under the same name, and a
+    /// newer one is what bumps `issued`.
+    pub fn worker_is_latest(&self, name: &str, generation: u64) -> bool {
+        self.workers
+            .get(name)
+            .is_some_and(|slot| slot.issued == generation)
+    }
+
     /// The names with a worker running, in no particular order.
     pub fn running_workers(&self) -> Vec<String> {
         self.workers

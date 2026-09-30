@@ -55,4 +55,5 @@ FINDING YOUR WAY
     the whole tree.
 
 SEE ALSO
-    buffers, windows, overlays, compile, themes, completion, modes, keymaps
+    buffers, windows, overlays, compile, themes, completion, modes,
+    keymaps, background
