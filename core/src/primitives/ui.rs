@@ -5,12 +5,18 @@ pub const MAKE_FLOATING_WINDOW_DOC: &str = "(make-floating-window BUFFER-NAME X 
          major mode MODE (a symbol; defaults to fundamental-mode if \
          omitted), open it in a new bordered floating window positioned \
          at (X, Y) with the given WIDTH and HEIGHT (and optional TITLE \
-         string), give that window focus, and return t. Closing the \
+         string), give that window focus, and return its id. Closing the \
          floating window (e.g. via close-buffer or \
          close-floating-window) restores focus to whatever window was \
          focused before this call. Not a standard Elisp primitive.\n\n\
+         The id is what `select-window' takes, so a module can give its window focus again \
+         after something else has taken it -- which is the only way to, since `selected-window' \
+         answers about the window that has focus now, and this one by then does not.\n\n\
+         `other-window' reaches a floating window too, so one left by accident can be returned \
+         to with `C-x o' without anything having remembered anything.\n\n\
          Example:\n\
-         (make-floating-window \"*Minibuffer*\" 0 20 80 1 \"Find file\" 'minibuffer-mode)";
+         (setq popup (make-floating-window \"*Notes*\" 4 4 40 10 \"Notes\"))\n\
+         (select-window popup)";
 
 primitive!(make_floating_window, args, _env, ctx, {
     if args.len() < 5 {
@@ -39,7 +45,7 @@ primitive!(make_floating_window, args, _env, ctx, {
                 _ => None,
             });
 
-            ctx.open_floating_window(
+            let id = ctx.open_floating_window(
                 buf_name,
                 *x as isize,
                 *y as isize,
@@ -49,7 +55,10 @@ primitive!(make_floating_window, args, _env, ctx, {
                 mode,
             );
 
-            Ok(ELispExp::t())
+            // An id rather than `t`, and still truthy either way: nothing in
+            // this Lisp is false but nil, so a caller written as
+            // `(if (make-floating-window ...) ...)` reads the same.
+            Ok(id.into())
         } else {
             Err(EvalError::WrongArgumentType {
                 expected: "String, Number, Number, Number, Number".into(),

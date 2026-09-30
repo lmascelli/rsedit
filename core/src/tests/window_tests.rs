@@ -269,6 +269,165 @@ mod tests {
         assert_eq!(focused_index(&ctx, &env), 0, "and round again");
     }
 
+    // ---------------- cycling into a floating window ----------------
+
+    #[test]
+    fn cycling_reaches_a_floating_window_and_comes_back() {
+        // The bug: focus could be taken off a float -- by a click, by a
+        // command selecting the window it came from, by `other-window' itself
+        // -- and nothing ever gave it back. The float stayed drawn and
+        // unusable, because the walk was over the tiled layout alone and a
+        // float is not in it.
+        let (ctx, env) = editor();
+        let tiled_window = ctx.get_focused_window_id();
+        let float = eval_str(
+            r#"(make-floating-window "*Float*" 4 4 40 6 "Probe")"#,
+            &env,
+            &ctx,
+        )
+        .expect("a float");
+        assert_eq!(
+            ctx.get_focused_window_id(),
+            id_of(&float),
+            "opening one focuses it"
+        );
+
+        eval_str("(other-window)", &env, &ctx).expect("next");
+        assert_eq!(
+            ctx.get_focused_window_id(),
+            tiled_window,
+            "and cycling leaves it, which was always possible"
+        );
+        eval_str("(other-window)", &env, &ctx).expect("next");
+        assert_eq!(
+            ctx.get_focused_window_id(),
+            id_of(&float),
+            "and cycling comes back to it, which was not"
+        );
+    }
+
+    #[test]
+    fn a_float_is_reached_after_the_tiled_windows() {
+        // Order, not merely reachability: the floats come last and oldest
+        // first, so the walk goes along the frame and then up the stack the
+        // way the screen is drawn.
+        let (ctx, env) = editor();
+        eval_str("(split-window-below)", &env, &ctx).expect("split");
+        let top = ctx.get_focused_window_id();
+        eval_str("(other-window)", &env, &ctx).expect("next");
+        let bottom = ctx.get_focused_window_id();
+        eval_str("(other-window)", &env, &ctx).expect("next");
+        assert_eq!(ctx.get_focused_window_id(), top, "two tiled windows");
+
+        let first = id_of(&eval_str(r#"(make-floating-window "*A*" 1 1 10 3)"#, &env, &ctx).unwrap());
+        let second =
+            id_of(&eval_str(r#"(make-floating-window "*B*" 2 2 10 3)"#, &env, &ctx).unwrap());
+        // Back to the first tiled window, from wherever opening the floats
+        // left us, and then all the way round.
+        eval_str(&format!("(select-window {})", top.0), &env, &ctx).expect("select");
+        let mut walk = vec![ctx.get_focused_window_id()];
+        for _ in 0..3 {
+            eval_str("(other-window)", &env, &ctx).expect("next");
+            walk.push(ctx.get_focused_window_id());
+        }
+        assert_eq!(
+            walk,
+            vec![top, bottom, first, second],
+            "the cycle visits the tiled windows and then the floats"
+        );
+        // And where the cycle *starts*, which the walk above cannot show:
+        // [top bottom first second] and [first second top bottom] are the
+        // same cycle, so stepping round one is stepping round the other.
+        // Anything that lists windows rather than walking them can tell the
+        // difference, so the list says which it is.
+        assert_eq!(
+            ctx.windows(|windows| windows.all_ids()),
+            vec![top, bottom, first, second],
+            "tiled in layout order, then the floats oldest first"
+        );
+    }
+
+    #[test]
+    fn one_tiled_window_and_a_float_still_cycle() {
+        // The sharpest form of it. With nothing split, the walk had one
+        // window in it, `other-window' answered "there is only one window"
+        // and did nothing at all -- so a float opened over an unsplit frame
+        // was the one you could never leave, and once left never return to.
+        let (ctx, env) = editor();
+        assert_eq!(windows(&ctx), 1);
+        let only = ctx.get_focused_window_id();
+        let float = id_of(
+            &eval_str(r#"(make-floating-window "*Float*" 4 4 40 6)"#, &env, &ctx).expect("a float"),
+        );
+        assert!(
+            eval_str("(other-window)", &env, &ctx)
+                .expect("next")
+                .is_truthy(),
+            "there are two windows to move between, one of them floating"
+        );
+        assert_eq!(ctx.get_focused_window_id(), only);
+        eval_str("(other-window)", &env, &ctx).expect("next");
+        assert_eq!(ctx.get_focused_window_id(), float);
+    }
+
+    #[test]
+    fn counting_windows_still_means_how_the_frame_is_divided() {
+        // The other question, and it must not move: `count-windows' is what
+        // decides whether a window may be closed and what `C-x 1' undoes, and
+        // a prompt drawn over the top divides nothing.
+        let (ctx, env) = editor();
+        eval_str("(split-window-below)", &env, &ctx).expect("split");
+        let before = eval_str("(count-windows)", &env, &ctx).expect("count");
+        eval_str(r#"(make-floating-window "*Float*" 4 4 40 6)"#, &env, &ctx).expect("a float");
+        assert_eq!(
+            eval_str("(count-windows)", &env, &ctx).expect("count"),
+            before,
+            "a float is not one of the frame's divisions"
+        );
+    }
+
+    #[test]
+    fn a_float_answers_with_an_id_that_can_be_selected_again() {
+        // The other half of the same gap, for a module rather than a person:
+        // `selected-window' answers about the window that has focus now, so a
+        // module that let go of its float had nothing left to name it by.
+        let (ctx, env) = editor();
+        let tiled_window = ctx.get_focused_window_id();
+        let float = eval_str(
+            r#"(setq popup (make-floating-window "*Notes*" 4 4 40 10 "Notes"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("a float");
+        assert!(
+            matches!(float, LispExp::Number(_)),
+            "an id, not t: {float:?}"
+        );
+        eval_str(&format!("(select-window {})", tiled_window.0), &env, &ctx).expect("away");
+        assert_eq!(ctx.get_focused_window_id(), tiled_window);
+
+        assert!(
+            eval_str("(select-window popup)", &env, &ctx)
+                .expect("back")
+                .is_truthy(),
+            "the id it gave out is one it will take back"
+        );
+        assert_eq!(ctx.get_focused_window_id(), id_of(&float));
+        assert_eq!(
+            ctx.get_current_buffer_name(),
+            "*Notes*",
+            "and selecting it makes its buffer current, as for any window"
+        );
+    }
+
+    /// A window id as the editor holds it, out of what Lisp answered.
+    fn id_of(exp: &LispExp<Ctx>) -> crate::ui::WindowId {
+        match exp {
+            LispExp::Number(n) => (*n as usize).into(),
+            other => panic!("expected a window id, got {other:?}"),
+        }
+    }
+
     #[test]
     fn a_negative_count_walks_the_other_way() {
         let (ctx, env) = editor();

@@ -169,7 +169,13 @@ pub const OTHER_WINDOW_DOC: &str = "(other-window &optional N): Move focus N win
          wrapping round at the end. A negative N moves the other way. \
          Returns nil when there is only one window.\n\n\
          Windows are ordered as they are laid out -- left to right, top to \
-         bottom -- so cycling walks the frame the way it looks.\n\n\
+         bottom -- so cycling walks the frame the way it looks. Floating windows come after \
+         the tiled ones, oldest first, which is up the stack in the order they are drawn.\n\n\
+         A floating window is in the cycle because otherwise it is a window focus can be \
+         taken off and never given back: a prompt, a completion strip or a module's popup \
+         left behind by a click or by `other-window' itself, still drawn and no longer usable. \
+         `count-windows' still counts only the tiled ones, which is the other question -- how \
+         many windows the frame is divided into -- and a float divides nothing.\n\n\
          Example:\n\
          (define-key nil \"C-x o\" 'other-window)";
 

@@ -567,10 +567,17 @@ impl Windows {
     /// A negative count goes the other way, which is what lets one command
     /// serve `C-x o` and a reversed `C-x o` alike.
     pub fn focus_other(&mut self, count: isize) -> Option<WindowId> {
-        let ids = self.root.window_ids();
+        let ids = self.all_ids();
         if ids.len() < 2 {
             return None;
         }
+        // `unwrap_or` can only be reached by focus pointing at a window that
+        // is no longer in either list, which nothing here leaves behind --
+        // every removal moves focus. Starting from the beginning is the
+        // recovery, not the normal path, and it used to *be* the normal path
+        // for a focused float: floats were not in this list, so the walk
+        // began from wherever the first tiled window was rather than from
+        // where you actually were.
         let here = ids.iter().position(|id| *id == self.focused).unwrap_or(0) as isize;
         // `rem_euclid` rather than `%`, so a negative count wraps round to the
         // end instead of producing a negative index.
@@ -578,6 +585,32 @@ impl Windows {
         let landed = ids[there];
         self.focused = landed;
         Some(landed)
+    }
+
+    /// Every window there is: the tiled ones in layout order, then the floats
+    /// in the order they were opened.
+    ///
+    /// # Why the floats are in it
+    ///
+    /// Because a float that focus has left is otherwise unreachable. Focus
+    /// can be taken off one by anything -- a click, a command that selects
+    /// the window it came from, `other-window` itself -- and with the floats
+    /// left out of this list nothing ever gave it back. A prompt, a strip or
+    /// a module's popup simply sat there, drawn and unusable, until it was
+    /// closed by whatever else knew how.
+    ///
+    /// Tiled first because that is where the work is, and floats after
+    /// because they arrived later; within the floats, oldest first, so the
+    /// walk goes up the stack in the order the screen shows it.
+    ///
+    /// This is deliberately not what [`Self::count`] counts. That answers
+    /// "how many windows is the frame divided into", which is what decides
+    /// whether a window may be closed and what `C-x 1` undoes -- and a prompt
+    /// drawn over the top divides nothing.
+    pub fn all_ids(&self) -> Vec<WindowId> {
+        let mut ids = self.root.window_ids();
+        ids.extend(self.floating.iter().map(|float| float.window.id));
+        ids
     }
 
     /// Point the focused window at BUFFER. The caller makes it current.

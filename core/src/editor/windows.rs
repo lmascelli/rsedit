@@ -159,6 +159,11 @@ impl<B: BufferTrait> EditorState<B> {
     /// focused before this call. Shared by the `make-floating-window`
     /// primitive and the built-in minibuffer, so both open a floating
     /// window exactly the same way.
+    ///
+    /// Returns the new window's id, so that whatever opened it can select it
+    /// again. It used to return nothing, which left a module with no name for
+    /// the window it had just made: `selected-window` answers only while the
+    /// float still has focus, and after that there was nothing to ask.
     pub(crate) fn open_floating_window(
         &self,
         buf_name: &str,
@@ -168,7 +173,7 @@ impl<B: BufferTrait> EditorState<B> {
         height: usize,
         title: Option<String>,
         mode: Option<String>,
-    ) {
+    ) -> WindowId {
         let previous_focused_window_id = self.get_focused_window_id();
         self.new_buffer(buf_name, None, mode);
 
@@ -197,6 +202,7 @@ impl<B: BufferTrait> EditorState<B> {
         // it a second time would work today and rot the moment the two
         // disagree about what "the buffer of window N" means.
         self.set_focused_window_id(new_id);
+        new_id
     }
 
     /// Scroll WINDOW by LINES, towards the end of the buffer when positive.
