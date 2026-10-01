@@ -120,8 +120,6 @@ impl<B: BufferTrait> EditorState<B> {
             shell_commands: Arc::new(AtomicUsize::new(0)),
             background_work: Arc::new(AtomicUsize::new(0)),
             current_results: Arc::new(RwLock::new(None)),
-            macros: Arc::new(RwLock::new(Macros::default())),
-            command_errors: Arc::new(AtomicUsize::new(0)),
             owed: Arc::new(RwLock::new(Vec::new())),
             kill_yank: Arc::new(RwLock::new(KillYank::default())),
             pending_keys: Arc::new(RwLock::new(Vec::new())),

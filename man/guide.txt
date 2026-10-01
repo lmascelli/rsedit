@@ -1,0 +1,56 @@
+NAME
+    guide - start here
+
+DESCRIPTION
+    This is a text editor with a Lisp interpreter inside it. Almost
+    everything above the bare mechanics is written in that Lisp, in files you
+    can read and change, and the parts that are not are the parts that have
+    to work before any of it loads.
+
+    If you have used Emacs, the keys are its keys and you can skip to
+    `rsedit'. If you have not, read `first-steps' and then come back.
+
+THE GUIDE
+    Read a page with C-h m and its name. These are meant in this order.
+
+        first-steps       the screen, moving, typing, saving, undoing
+        editing           the editing vocabulary, and the kill ring
+        files             opening, saving, directories, going back
+        searching         finding things, and replacing them
+        getting-help      how to ask the editor about itself
+        completion        Tab, and M-x
+        keymaps           what a key is, and how to change one
+        modes             what a buffer is being edited *as*
+        configuration     making it yours
+        writing-commands  when a setting is not enough
+
+THE REFERENCE
+    What a doc string cannot say: how the pieces fit, and why they are the
+    shape they are.
+
+        rsedit            the editor's own shape, and the help tree
+        buffers           what is being edited
+        windows           what shows a buffer
+        keymaps           how a key becomes a command
+        modes             what colouring and keys a buffer gets
+        completion        how candidates are found and shown
+        macros            record what you pressed, press it again
+        rectangles        blocks of text, cut by column
+        overlays          a face on one particular span
+        virtual-text      text shown and not in the buffer
+        themes            how the colours are chosen
+        compile           running a build, and jumping to its complaints
+        background        work that must not happen on the drawing thread
+
+    Every command and every variable also documents itself. C-h f names a
+    function, C-h v a variable, C-h k a key, C-h a searches all of them.
+    Those are always right about the editor you are running, which a page
+    cannot promise.
+
+IF YOU ONLY REMEMBER ONE THING
+    C-g gets you out. A prompt you did not mean to open, a search you have
+    finished with, a half-typed key sequence, a selection you want rid of --
+    C-g, and you are back.
+
+SEE ALSO
+    first-steps, rsedit, getting-help

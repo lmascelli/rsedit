@@ -1,0 +1,129 @@
+NAME
+    writing-commands - when a setting is not enough
+
+DESCRIPTION
+    A command is a function the editor knows how to ask for the arguments of.
+    That is the whole of the difference: an ordinary function you call from
+    Lisp, and a command you can also reach from M-x and bind to a key.
+
+        (defcommand insert-date () nil
+          "Insert today's date."
+          (insert (shell-command-to-string "date +%Y-%m-%d")))
+
+    Then M-x insert-date works, C-h f insert-date shows that description, and
+
+        (define-key nil "C-c d" 'insert-date)
+
+    puts it on a key.
+
+ARGUMENTS
+    A command says what its arguments are and the editor collects them. One
+    code per parameter:
+
+        "sPROMPT"       a string
+        "nPROMPT"       a number
+        "bPROMPT"       a buffer name, with completion
+        "fPROMPT"       a file name, with completion
+        "p"             the numeric prefix argument -- C-u 5 and so on
+        "r"             the region, as two arguments
+
+    So:
+
+        (defcommand surround (before after) ("sBefore: " "sAfter: ")
+          "Put BEFORE and AFTER around the region."
+          (let ((start (region-beginning)) (end (region-end)))
+            (goto-char end) (insert after)
+            (goto-char start) (insert before)))
+
+    nil means a command with no arguments. The editor checks the codes against
+    the parameters when the command is defined, so the two cannot drift apart.
+
+    Calling a command from Lisp is a plain call and prompts for nothing, which
+    is what makes commands usable as building blocks.
+
+WHAT YOU HAVE TO WORK WITH
+    C-h a is the real answer, but the shapes are these.
+
+    Where you are, and moving:
+
+        (point)  (goto-char N)  (point-min)  (point-max)
+        (line-number-at-point)  (goto-line N)
+        (beginning-of-line)  (end-of-line)  (forward-char N)
+
+    Reading and changing text:
+
+        (buffer-substring FROM TO)  (buffer-string)  (current-line)
+        (insert TEXT)  (delete-region FROM TO)
+
+    The selection:
+
+        (region-beginning)  (region-end)  (mark)  (set-mark)
+
+    Buffers:
+
+        (current-buffer)  (buffer-name)  (all-buffer-names)
+        (switch-to-buffer NAME)  (with-current-buffer NAME FUNCTION)
+
+    Saying something:
+
+        (message "format %s" value)   in the echo area
+        (log "...")                   in the message buffer
+
+ASKING A QUESTION
+    `minibuffer-read' puts up a prompt and calls you back:
+
+        (minibuffer-read "Which? " 'on-confirm 'on-change 'on-cancel)
+
+    ON-CHANGE, if given, is asked for completion candidates. A command with
+    argument codes does not need this -- the editor does it for you -- and
+    this is for a question that is not an argument.
+
+    `yes-or-no' asks a yes-or-no question the same way. Both return before the
+    answer arrives, because a prompt is a conversation and not a pause: the
+    editor keeps drawing, and your work carries on in the callback.
+
+MARKING SOMETHING
+    Colouring is patterns over the text and cannot say "this span, because of
+    something that happened". An overlay can:
+
+        (make-overlay START END 'error 10 'my-checker)
+        (remove-overlays 'my-checker)
+
+    The last argument is a category, and clearing by category is how a
+    producer replaces its own marks without keeping a handle for each. See
+    `overlays'.
+
+    To show text that is *not* in the buffer -- a hint, a preview -- see
+    `virtual-text'.
+
+WORK THAT TAKES TIME
+    Anything that might take longer than a frame does not belong on the thread
+    that draws. One call starts it:
+
+        (background-call 'my-index (fiber ...) 'on-progress 'on-done)
+
+    and the two callbacks run between commands, where it is safe to change
+    what a mode is showing. See `background', which states the rule the whole
+    editor follows for this.
+
+    `shell-command-start' runs a program and appends its output as it arrives,
+    each on a thread of its own.
+
+AT A MOMENT
+        (add-hook nil "post-command-hook" 'my-function)
+        (add-hook 'rust-mode "post-self-insert-hook" 'my-function)
+
+    nil means every mode. post-self-insert-hook runs after a character is
+    typed; post-command-hook after every command.
+
+TRYING IT
+    M-: evaluates an expression. C-h e shows everything the editor has said,
+    including the backtrace of anything that failed. A function redefined with
+    M-: takes effect at once, so the loop is: change the file, evaluate the
+    definition, press the key.
+
+KEYS
+    M-:                     eval-expression-prompt
+
+SEE ALSO
+    configuration, keymaps, overlays, virtual-text, background

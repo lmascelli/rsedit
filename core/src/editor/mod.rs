@@ -44,7 +44,7 @@ use crate::{
     },
     managers::{
         Binding, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit,
-        KillYank, Log, Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
+        KillYank, Log, Macros, Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
     },
     minibuffer::install_minibuffer,
     modes::autosave::{AutoSaver, auto_save_directory, auto_save_interval},
@@ -81,6 +81,7 @@ mod frame;
 mod keys;
 mod kill_yank;
 mod log;
+mod macros;
 mod modes;
 mod mouse;
 mod replace;
@@ -204,6 +205,27 @@ pub struct EditorState<B: BufferTrait> {
     /// the answer cannot be read off the buffer it is asked in. The set
     /// itself lives on its own buffer; this is only which one is current.
     current_results: Arc<RwLock<Option<String>>>,
+
+    /// The keyboard macro being recorded, the last one finished, and the
+    /// counter one can insert. See [`Macros`], which says why those are one
+    /// lock and not four.
+    macros: Arc<RwLock<Macros>>,
+
+    /// How many commands have failed.
+    ///
+    /// # Why the editor counts them
+    ///
+    /// A keyboard macro replays its keys one at a time, and must stop at the
+    /// first one that fails: a macro that carries on past an error is how a
+    /// macro does damage, since every key after it is being pressed in a state
+    /// the recording never saw.
+    ///
+    /// Nothing else answers that question. `run_command_form` reports a
+    /// failure and returns -- there is nobody to return it *to*, a keystroke
+    /// having no caller -- so the replay compares this before and after each
+    /// key. A count rather than a flag, so that nothing has to remember to
+    /// clear it.
+    command_errors: Arc<AtomicUsize>,
 
     /// Calls that background jobs have asked for and the command thread has
     /// not made yet. See [`background`], which says why they wait.

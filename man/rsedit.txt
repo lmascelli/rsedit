@@ -55,5 +55,7 @@ FINDING YOUR WAY
     the whole tree.
 
 SEE ALSO
-    buffers, windows, overlays, compile, themes, completion, modes,
-    keymaps, background, rectangles, virtual-text
+    guide, first-steps, editing, files, searching, getting-help,
+    completion, keymaps, modes, configuration, writing-commands,
+    buffers, windows, overlays, compile, themes, background, rectangles,
+    virtual-text, macros

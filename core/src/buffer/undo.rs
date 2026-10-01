@@ -80,6 +80,47 @@ thread_local! {
     /// dispatched per thread -- the background scheduler and `(spawn ...)`
     /// each run their own -- and because reading it must cost nothing.
     static CURRENT: Cell<Command> = const { Cell::new(NO_COMMAND) };
+
+    /// How many callers have asked for the stamp above to be held still.
+    ///
+    /// See [`OneGroup`]. Beside `CURRENT` and thread-local for the same
+    /// reason: whose command this is, is a question about this thread.
+    static PINNED: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Holds the current command's stamp still for as long as it is alive, so
+/// that every edit made under it lands in one undo group however many
+/// commands make them.
+///
+/// # What this is for
+///
+/// A keyboard macro. Replaying one runs the commands it recorded, each
+/// through the ordinary path -- which is what makes a replay indistinguishable
+/// from typing the keys, and which would therefore leave fifty undo groups
+/// behind a fifty-command macro. Taking that back is fifty presses of `C-x u`,
+/// and nobody who ran a macro meant to undo a fiftieth of it.
+///
+/// So the replay says "all of this is one thing I did" by holding the stamp,
+/// and the history's existing rule -- a group closes at the first edit under a
+/// different stamp -- does the rest. Nothing in the history had to learn about
+/// macros.
+///
+/// RAII rather than a pair of calls, so a replay that ends by propagating an
+/// error cannot leave the stamp pinned for everything typed afterwards.
+/// Nesting is counted, so a macro that calls a macro is still one group.
+pub(crate) struct OneGroup;
+
+impl OneGroup {
+    pub(crate) fn begin() -> Self {
+        PINNED.with(|pinned| pinned.set(pinned.get() + 1));
+        OneGroup
+    }
+}
+
+impl Drop for OneGroup {
+    fn drop(&mut self) {
+        PINNED.with(|pinned| pinned.set(pinned.get().saturating_sub(1)));
+    }
 }
 
 /// Announce that a new command is about to run on this thread.
@@ -90,6 +131,11 @@ thread_local! {
 /// decided here rather than at the call site: this is the only place that sees
 /// both.
 pub(crate) fn begin_command(amalgamating_kind: bool) {
+    // Somebody is holding the stamp still -- see [`OneGroup`]. The commands
+    // running under it are a macro's, and they are one thing the user did.
+    if PINNED.with(|pinned| pinned.get()) > 0 {
+        return;
+    }
     CURRENT.with(|current| {
         let previous = current.get();
         current.set(Command {

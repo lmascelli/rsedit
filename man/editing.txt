@@ -1,0 +1,149 @@
+NAME
+    editing - the vocabulary
+
+DESCRIPTION
+    The editor's commands are built out of two halves: a *unit* of text and
+    something to do to it. Learn the units and the rest follows, because the
+    same letter means the same unit wherever it appears.
+
+        f  b            forward, backward
+        a  e            start, end
+        d  k            delete, kill
+        w               word, with Meta
+        <none>          character, with Control
+
+    So C-f is a character forward, M-f is a word forward, C-d deletes a
+    character, M-d kills a word. C-k kills to the end of the line because k
+    is kill and there is no unit letter.
+
+UNITS
+    Characters, words, lines, paragraphs and balanced expressions.
+
+        C-f  C-b        character
+        M-f  M-b        word
+        C-n  C-p        line
+        M-}  M-{        paragraph
+        C-M-f  C-M-b    balanced expression -- over a bracket, across it
+
+    A balanced expression is whatever the mode says one is. In Lisp it is a
+    form, in C a bracketed group. C-M-d goes down into one, C-M-u up out of
+    it.
+
+KILLING
+    Killing is cutting, and what you kill goes on the kill ring:
+
+        C-k             to the end of the line
+        M-d             the word in front
+        M-<backspace>   the word behind
+        C-M-k           the expression in front
+        C-w             the region
+        M-w             copy the region, killing nothing
+
+    Consecutive kills join into one entry, so three C-k presses yank back as
+    three lines. Anything that is not a kill ends the run.
+
+    C-y puts the last kill back. M-y immediately after replaces it with the
+    one before, again and again, round the ring. M-x set-kill-ring-max
+    changes how many it keeps.
+
+THE REGION
+    C-<space> sets the mark; the text between it and the cursor is the
+    region. C-x C-x swaps the two ends, which is how you check what you have
+    selected. C-x h selects everything.
+
+    Any edit deactivates the mark. That is deliberate: a selection that
+    survived an edit would be a selection over text that had moved.
+
+    C-x <space> makes the selection a *rectangle* -- the columns the lines
+    have in common rather than the ragged run from one corner to the other.
+    See `rectangles'.
+
+WHOLE LINES
+        C-o             open a blank line above
+        C-x C-o         delete blank lines around here
+        C-x C-t         swap this line with the one above
+        M-^             join this line to the one above
+        M-m             go to the first non-blank character
+
+CASE
+        M-u  M-l        upcase, downcase the word in front
+        M-c             capitalise it
+
+SPACE
+        M-<space>       collapse the space here to one
+        M-\             delete every space here
+
+TRANSPOSING
+        C-t             swap the characters either side of the cursor
+        M-t             swap the words
+        C-x C-t         swap the lines
+
+    Each leaves the cursor past what it moved, so pressing it again moves the
+    same thing on another step.
+
+ZAPPING
+    M-z and a character kills everything up to and including the next one of
+    those. M-z ) deletes forward to the end of a call.
+
+COMMENTS
+    M-; comments the region out, or the line when nothing is selected, and
+    takes the comments off again when everything in the scope already has
+    one. What a comment looks like comes from the mode, so the same key does
+    the right thing in Rust, C and this editor's own Lisp.
+
+    C-x C-; does one line whatever is selected.
+
+REPEATING
+    C-x z repeats the last command, and pressing z again repeats it again.
+
+    A number before a command means "do it that many times": C-u 20 C-f goes
+    forward twenty characters, and C-u 5 then a character inserts five of
+    them. C-u on its own means four.
+
+    For anything longer than that, record what you did and press it again --
+    see `macros'.
+
+KEYS
+    C-f                     forward-char
+    C-b                     backward-char
+    M-f                     forward-word
+    M-b                     backward-word
+    C-M-f                   forward-sexp
+    C-M-b                   backward-sexp
+    C-M-d                   down-list
+    C-M-u                   backward-up-list
+    M-}                     forward-paragraph
+    M-{                     backward-paragraph
+    C-d                     electric-pair-delete-forward
+    M-d                     kill-word
+    M-<backspace>           backward-kill-word
+    C-M-k                   kill-sexp
+    C-M-<backspace>         backward-kill-sexp
+    C-k                     kill-line
+    C-w                     kill-region
+    M-w                     kill-ring-save
+    C-y                     yank
+    M-y                     yank-pop
+    C-<space>               set-mark
+    C-x C-x                 exchange-point-and-mark
+    C-x h                   mark-whole-buffer
+    C-x <space>             rectangle-mark-mode
+    C-o                     open-line-above
+    C-x C-o                 delete-blank-lines
+    M-^                     join-line
+    M-m                     back-to-indentation
+    M-u                     upcase-word
+    M-l                     downcase-word
+    M-c                     capitalize-word
+    M-<space>               just-one-space
+    M-\                     delete-horizontal-space
+    C-t                     transpose-chars
+    M-t                     transpose-words
+    C-x C-t                 transpose-lines
+    M-z                     zap-to-char
+    M-;                     comment-dwim
+    C-x C-;                 comment-line
+    C-x z                   repeat
+
+SEE ALSO
+    first-steps, rectangles, macros, searching

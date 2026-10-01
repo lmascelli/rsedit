@@ -1,0 +1,82 @@
+NAME
+    modes - what a buffer is being edited as
+
+DESCRIPTION
+    Every buffer has one major mode. It decides three things: how the text is
+    coloured, which keys mean something other than what they usually mean, and
+    what counts as a comment.
+
+    C-h M says what the current buffer's mode is and what it does.
+
+WHICH MODE A BUFFER GETS
+    From its file's name. A .rs file gives you rust-mode; .c, .h, .cpp, .hpp,
+    .cc, .cxx and .hxx give cpp-mode; .lisp and .risp give risp-mode, which is
+    this editor's own Lisp. Anything else is fundamental-mode, which colours
+    nothing and takes no keys of its own.
+
+    A buffer that is not a file gets the mode whatever made it asked for: a
+    directory listing is dired-mode, a compilation's output is
+    compilation-mode, a manual page is manpage-mode.
+
+WHAT COLOURING IS
+    A list of patterns over the text, each saying "this shape is a keyword"
+    or "this shape is a string". It is not a parser: a mode can say that a
+    word in a list is a keyword and cannot say anything about what the code
+    means.
+
+    That is a deliberate limit, and the thing that fills the gap is an
+    *overlay* -- a face on one particular span, put there by something that
+    knows why. A search marks its matches that way, and so does a
+    compilation's current complaint. See `overlays'.
+
+    Colour arrives a chunk at a time on a background thread, so a large file
+    opens as plain text and fills in rather than making you wait.
+
+MODES THAT SHIP
+        fundamental-mode    no colouring, no keys of its own
+        rust-mode           .rs
+        cpp-mode            .c, .h, .cpp, .hpp, .cc, .cxx, .hxx
+        risp-mode           .lisp, .risp -- this editor's own Lisp
+        dired-mode          a directory listing
+        compilation-mode    a build's output
+        shell-output-mode   a command's output
+        occur-mode          a list of matches
+        manpage-mode        a manual page
+        help-mode           an answer from the help system
+        buffer-list-mode    the list of buffers
+        minibuffer-mode     a prompt
+        isearch-mode        a search in progress
+        completion-mode     the strip of candidates
+        theme-list-mode     the list of themes
+        backtrace-mode      where an error came from
+
+    Each is a .lisp file you can read, and taking one out of your
+    configuration removes exactly that feature.
+
+MODE KEYS
+    A mode's keys are consulted before the global ones, so a listing can use
+    plain letters. Nearly all of them agree on four:
+
+        n  p            down and up a line
+        q               put this away
+        g               build it again, where that means anything
+
+    A key the mode does not bind falls through to the global map, which is why
+    C-x C-f works in a directory listing.
+
+HOOKS
+    A mode runs its hooks at two moments, and anything can add to them:
+
+        (add-hook 'rust-mode "post-command-hook" 'my-function)
+
+    post-self-insert-hook runs after a character is typed -- which is where
+    auto-pairing lives -- and post-command-hook after every command. nil
+    instead of a mode name means every mode.
+
+WRITING ONE
+    A mode is `make-mode', some `add-syntax-rule' calls, some `define-key'
+    calls, and an `add-auto-mode' saying which file names it claims.
+    rust-mode.lisp is a hundred and thirty lines of it and is the one to copy.
+
+SEE ALSO
+    keymaps, overlays, themes, configuration

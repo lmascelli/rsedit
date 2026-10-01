@@ -1,0 +1,78 @@
+NAME
+    keymaps - how a key becomes a command
+
+DESCRIPTION
+    A key is looked for in three places, in order: the keymap a question has
+    put up, then the buffer's mode, then the global map. The first that has it
+    wins, which is why n means "down a line" in a directory listing and
+    inserts an n everywhere else.
+
+    C-h k says which of the three answered, so a key that does something
+    surprising tells you what took it.
+
+WRITING A KEY
+    Modifiers first, then the key's name.
+
+        C-f             Control and f
+        M-f             Meta -- Alt, or Escape first -- and f
+        C-M-f           both
+        C-x C-f         two keys, one after the other
+        <ret> <tab>     keys with no character: also <esc>, <space>,
+                        <backspace>, <up>, <down>, <left>, <right>
+
+    A sequence is those separated by spaces. The same spelling is what the
+    editor prints back at you, so what C-h k shows you is what you can write.
+
+BINDING ONE
+    In your configuration:
+
+        (define-key nil "C-c w" 'my-command)         ; everywhere
+        (define-key 'rust-mode "C-c b" 'cargo-build)  ; in one mode
+
+    nil means the global map. A symbol names a mode, and the binding only
+    applies in a buffer in that mode.
+
+    The command may take arguments: the editor collects them when the key is
+    pressed, so C-x C-f asks for a file name without the binding having to say
+    how. See `writing-commands'.
+
+PREFIXES
+    C-x, C-h, C-c, M-g, M-s, C-x r and C-x C-k are prefixes: a key after them
+    completes the sequence. Half-way through one, the echo area shows what you
+    have pressed so far, C-h lists where it goes, and C-g abandons it.
+
+    C-c is the one left mostly empty on purpose: it is where your own bindings
+    go. Three are taken -- C-c c compiles, C-c ! runs the region through a
+    shell command, C-c t lists the themes -- and the rest of the letters are
+    yours. C-x C-h and C-c C-h list what is actually there, which is a better
+    answer than this page can be.
+
+QUESTIONS THAT TAKE THE KEYBOARD
+    Some things put up a keymap that is consulted before everything else: a
+    query-replace asking y or n, a completion strip offering candidates, the
+    repeat key after a command that has one.
+
+    There are two kinds. A *question* swallows keys it does not recognise, so
+    a half-finished replace cannot be walked away from by pressing something
+    unrelated -- every one of them binds an answer meaning stop, and C-g is
+    always one. An *offer* lets a key it does not recognise through, and goes
+    away: after C-x o a bare o moves to the next window, and anything else
+    does what it always did.
+
+REPEATING
+    C-x z repeats the last command, and z repeats it again. Some commands
+    offer a shorter repeat of their own -- after C-x o, o.
+
+FINDING A KEY
+        C-h k           what does this key do
+        C-h b           every key in effect here
+        C-h w           where is this command bound
+        C-x C-h         where does C-x go
+
+MOVING A KEY YOU DISLIKE
+    There is nothing special about the keys the editor ships with. They are
+    `define-key' calls in a file you can read -- common-keymaps.lisp -- and a
+    line in your own configuration overrides any of them.
+
+SEE ALSO
+    modes, configuration, getting-help, macros

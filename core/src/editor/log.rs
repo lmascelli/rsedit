@@ -54,6 +54,11 @@ impl<B: BufferTrait> EditorState<B> {
     /// same shape `take_backtrace_suffix` produces) if no such hook is
     /// defined yet, e.g. during early boot before `debug.lisp` has loaded.
     pub fn report_error(&self, message: &str, env: &Arc<Env<Self>>) {
+        // Counted first, so that a `report-error` hook which itself fails
+        // cannot stop the failure that called this from being noticed. The one
+        // reader is a keyboard macro, which has to stop at the first key that
+        // did not work -- see `EditorState::replay_keys`.
+        self.note_command_error();
         let frames = self.backtrace();
         self.clear_backtrace();
 

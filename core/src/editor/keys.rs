@@ -462,6 +462,11 @@ impl<B: BufferTrait> EditorState<B> {
         if let Some(watcher) = env.get_variable(KEY_CAPTURE_FUNCTION)
             && watcher.is_truthy()
         {
+            // Recorded although it runs no command, which is the whole reason
+            // a macro records keys rather than commands: `zap-to-char' reads
+            // its character this way, and a recorder watching commands would
+            // replay it as a wait for a character that never arrives.
+            self.record_keys(std::slice::from_ref(&event), None);
             self.capture_key_sequence(event, watcher, env);
             return;
         }
@@ -469,14 +474,29 @@ impl<B: BufferTrait> EditorState<B> {
         // The argument reader gets first refusal. A key it takes is not a
         // command and never reaches a keymap.
         if self.read_prefix_argument(&event) {
+            // Also recorded, and also not a command: without this a macro
+            // would replay `C-u 5 C-n' as a bare `C-n'.
+            self.record_keys(std::slice::from_ref(&event), None);
             return;
         }
+
+        // The keys of the sequence this one completes, read before resolving
+        // it -- which is what consumes them. A recorder wants the whole
+        // sequence rather than one key at a time, so that `C-x )' is one thing
+        // to leave out rather than two.
+        let mut sequence = self.pending_key_events();
+        sequence.push(event.clone());
 
         // A key may be the whole of a binding, the start of a longer one, or
         // neither. Deciding which comes first, and two of the three answers
         // return before anything below runs -- see `resolve_key_sequence`.
         let mut ast = match self.resolve_key_sequence(event.clone()) {
-            Dispatch::Run(ast) => ast,
+            Dispatch::Run(ast) => {
+                self.record_keys(&sequence, command_named_by(&ast).as_deref());
+                ast
+            }
+            // Only part of a sequence: its keys are still pending and will
+            // arrive with the one that completes it.
             Dispatch::Nothing => return,
             Dispatch::Unbound {
                 described,
@@ -500,6 +520,11 @@ impl<B: BufferTrait> EditorState<B> {
                         env,
                     );
                 } else {
+                    // Recorded even though it does nothing: a macro should do
+                    // what was pressed, and leaving a mistake out would make
+                    // the replay differ from the recording in a way nothing
+                    // says.
+                    self.record_keys(&sequence, None);
                     self.set_echo_message(&format!("{described} is undefined"));
                     self.log_diagnostic(&format!("[INFO] Keymap not bound {described}"));
                 }
@@ -569,5 +594,35 @@ impl<B: BufferTrait> EditorState<B> {
             ]),
             env,
         );
+    }
+}
+
+impl<B: BufferTrait> EditorState<B> {
+    /// The keys of the sequence part-way through being typed.
+    ///
+    /// Cloned out rather than lent: the one caller is on the keystroke path
+    /// and is about to take the same lock again to resolve the sequence.
+    fn pending_key_events(&self) -> Vec<KeyEvent> {
+        self.pending_keys
+            .read()
+            .expect("read lock on pending_keys")
+            .clone()
+    }
+}
+
+/// The command a key's binding names, if it names one.
+///
+/// The same shapes `run_command_form` recognises -- a bare symbol, or a form
+/// whose head is one -- because they are the same question asked for a
+/// different reason: that one routes the command, this one decides whether a
+/// recorder should keep the keys that ran it.
+fn command_named_by<B: BufferTrait>(ast: &ELispExp<B>) -> Option<String> {
+    match ast {
+        ELispExp::Symbol(name) => Some(name.to_string()),
+        ELispExp::Form(items) => items.first().and_then(|head| match head {
+            ELispExp::Symbol(name) => Some(name.to_string()),
+            _ => None,
+        }),
+        _ => None,
     }
 }

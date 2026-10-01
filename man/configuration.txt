@@ -1,0 +1,91 @@
+NAME
+    configuration - making it yours
+
+DESCRIPTION
+    The editor reads one file when it starts: init.lisp, in a directory it
+    works out like this, most specific first.
+
+        $RSEDIT_CONFIG_DIR          used as given, on any system
+        $XDG_CONFIG_HOME/rsedit     on Unix
+        ~/.config/rsedit            everywhere but Windows
+        %APPDATA%\rsedit            on Windows
+
+    If there is none, one is written for you with every module listed and a
+    comment on each. Read it before you change it: it is the shortest
+    description of what the editor is made of.
+
+    init.lisp is this editor's own Lisp, which is close enough to Emacs Lisp
+    to read and not the same language. M-: evaluates an expression without
+    restarting, which is how you try a line before keeping it.
+
+THE FOUR THINGS YOU WILL WRITE
+    A setting:
+
+        (setq case-fold-search nil)        ; searching minds capitals
+        (setq tab-width 8)                 ; what a Tab is worth
+
+    A key:
+
+        (define-key nil "C-c w" 'whitespace-cleanup)
+        (define-key 'rust-mode "C-c b" 'cargo-build)
+
+    A command of your own:
+
+        (defcommand insert-date () nil
+          "Insert today's date."
+          (insert (shell-command-to-string "date +%Y-%m-%d")))
+
+    Something to happen at a moment:
+
+        (add-hook 'rust-mode "post-command-hook" 'my-function)
+
+    C-h v on any variable says what it is for and what it is set to now, which
+    is a better list of settings than this page could keep.
+
+MODULES
+    Each feature above the mechanics is a file, loaded by a line in
+    init.lisp:
+
+        (eval-file "completion")   ; Tab shows every candidate at once
+        (eval-file "dired")        ; a directory in a buffer
+        (eval-file "shell")        ; M-! runs a command
+
+    Comment one out and the editor comes up without exactly that feature and
+    nothing else. None of them needs any other, so the order is only the
+    order you want them in -- except that `commands' defines `defcommand' and
+    `debug' defines `message', so those two come first.
+
+    They are installed beside the editor and you can read all of them. The one
+    to read first is rust-mode.lisp, which is a whole mode in a hundred and
+    thirty lines.
+
+    Your own file goes in the same directory and is loaded the same way.
+
+COLOURS
+    C-c t lists the themes; Return on one applies it. To fix a choice:
+
+        (eval-file "theme")
+        (select-theme 'monochrome)
+
+    Or set one face at a time, which is what a theme is made of:
+
+        (set-face 'keyword "bright-magenta")
+
+    See `themes' for what the faces are and how a terminal's palette is dealt
+    with.
+
+THINGS WORTH TURNING ON
+        (toggle-line-numbers)              ; also M-x
+        (mouse-mode-toggle)                ; if your terminal reports one
+        (eval-file "clipboard")            ; kills also go to the system one
+
+WHEN IT WILL NOT LOAD
+    A module that fails to load says so and the editor comes up anyway, which
+    is the point of them being separate. C-h e shows everything the editor has
+    said, including what went wrong and where.
+
+    M-: evaluates one expression, so a line that does not work can be tried
+    until it does without restarting.
+
+SEE ALSO
+    keymaps, modes, themes, writing-commands, guide

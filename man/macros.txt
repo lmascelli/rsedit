@@ -1,0 +1,91 @@
+NAME
+    macros - record what you pressed, and press it again
+
+DESCRIPTION
+    Do the thing once, with C-x ( first. Then do it again as often as you
+    like.
+
+        C-x (        start recording      C-x )   stop
+        C-x e        stop, if recording, and run it
+        C-u N C-x e  run it N times
+        C-x C-k C-i  insert the counter
+        C-x C-k C-c  set the counter
+
+    Recording is not a rehearsal: the keys are recorded *and* obeyed, which
+    is what makes a macro something you get by doing the job once rather
+    than by writing it down. M-x kmacro-cancel-macro throws a recording
+    away; what it did stays done, which undo is for.
+
+WHAT IS RECORDED
+    Keys. Not commands, and the difference shows up in three places.
+
+    A command that reads a character of its own -- M-z, zap-to-char --
+    takes that character without a second command running. A recorder
+    watching commands would replay M-z as a wait for a character that never
+    arrives.
+
+    C-u and the digits after it are taken by the prefix-argument reader and
+    never reach a keymap, so C-u 3 C-f would replay as a bare C-f.
+
+    And a key that has been rebound since means the new thing. A macro is a
+    shorthand for pressing keys, not a frozen program.
+
+    A paste is not recorded. The terminal reports one as a paste rather
+    than as the keys it looks like -- which is what stops a pasted bracket
+    being auto-paired -- and there is no key to record. A macro recorded
+    over a paste replays without it.
+
+WHERE IT GOES
+    One slot: the macro you recorded last. C-x e runs it.
+
+    To keep one, give it a name:
+
+        (define-kbd-macro 'tidy-line "C-a C-k C-y")
+        (define-key nil "C-c t" 'tidy-line)
+
+    which makes an ordinary command -- M-x finds it, describe-function
+    explains it, where-is finds its key. `kbd-macro-keys' prints the last
+    macro in exactly that syntax, so saving one is copying a line into your
+    configuration. There is no macro file format and nothing to load.
+
+    Calling a macro from inside another is what a *named* macro is for. A
+    key bound to kmacro-call-macro would call whatever the last macro is by
+    then, which while recording is the one being recorded.
+
+THE COUNTER
+    A number a macro can insert, which advances each time it is inserted:
+
+        C-x (  C-x C-k C-i  C-n C-a  C-x )      then  C-u 9 C-x e
+
+    numbers ten lines. C-x C-k C-c sets it; starting a recording sets it to
+    zero. kmacro-insert-counter takes a width, so (kmacro-insert-counter 3)
+    gives 007 and a numbered list sorts the way it reads.
+
+    It advances when inserted rather than once per repetition, so a macro
+    that puts the number in twice gets two different numbers.
+
+UNDO
+    One step per repetition. A fifty-command macro undoes in one press, and
+    a macro run twenty times can be walked back a repetition at a time --
+    nobody who ran a macro meant to undo a fiftieth of it.
+
+WHEN IT STOPS
+    At the first key that fails. Every key after a failure would be pressed
+    in a state the recording never saw, which is how a macro does damage
+    rather than merely not working. Remaining repetitions are abandoned
+    too, and the echo area says so.
+
+    Nothing else can interrupt one. The keys are replayed inside a single
+    command, on the thread that would have delivered a C-g, so a replay
+    runs to its end or to its failure. A macro that calls itself is stopped
+    by a limit on how deeply replays may nest.
+
+    That limit is not a tidiness measure. Each level of replay is a real
+    call through the key handler, so a self-calling macro grows the call
+    stack, and the stack runs out long before the execution budget does --
+    the first version of this aborted the editor rather than reporting
+    anything.
+
+SEE ALSO
+    keymaps, (kmacro-start-macro), (kmacro-call-macro),
+    (define-kbd-macro), (kbd-macro-keys), (kmacro-insert-counter)

@@ -184,6 +184,29 @@
 (define-key nil "M-;" 'comment-dwim)
 (define-key nil "C-x C-;" 'comment-line)
 
+;; Keyboard macros. `C-x (' starts recording, `C-x )' stops, `C-x e' runs it --
+;; and `C-x e' stops a recording first if one is running, since wanting to run
+;; the macro is why you stopped.
+;;
+;;   C-x (        start recording      C-x )   stop
+;;   C-x e        run it; C-u N C-x e  runs it N times
+;;   C-x C-k C-i  insert the counter   C-x C-k C-c  set the counter
+;;
+;; What is recorded is the keys, so a macro does whatever they mean when it is
+;; replayed, and a command that reads a character of its own -- `M-z' -- records
+;; the character too. A recording that went wrong is abandoned with `M-x
+;; kmacro-cancel-macro'; what it did while recording stays done, which `undo' is
+;; for.
+;;
+;; `(define-kbd-macro 'name "C-a C-k C-y")' in your configuration makes a macro
+;; a command you have on every start -- `kbd-macro-keys' prints the last one in
+;; exactly that syntax.
+(define-key nil "C-x (" 'kmacro-start-macro)
+(define-key nil "C-x )" 'kmacro-end-macro)
+(define-key nil "C-x e" 'kmacro-end-and-call-macro)
+(define-key nil "C-x C-k C-i" 'kmacro-insert-counter)
+(define-key nil "C-x C-k C-c" 'kmacro-set-counter)
+
 ;; Rectangles -- blocks of text, the columns a run of lines have in common.
 ;;
 ;; `C-x SPC' draws the region as the block point and the mark are opposite

@@ -37,6 +37,10 @@ THE TWO SHAPES
     not one of those, and a yield there is refused -- so a fiber is
     written as a loop that walks its own list.
 
+    `fiber' and `yield' are special forms of the interpreter rather than
+    functions, so C-h f does not find them. This page is their
+    documentation.
+
     ON-PROGRESS is called with NAME after every turn but the last. ON-DONE
     is called once, with NAME and t if the job reached its end or nil if it
     was stopped -- either way, because a mode that is never told stays
@@ -110,7 +114,7 @@ SAYING THE CANDIDATES CHANGED
     the point of it going through the editor rather than through a call
     from one to the other.
 
-WHICH THREAD, AND WHY THERE IS MORE THAN ONE
+WHY THERE IS MORE THAN ONE THREAD
     One rule decides it:
 
         The shared thread may only run work that is guaranteed to return.
@@ -152,5 +156,5 @@ WORKERS ARE THE OTHER HALF
     the prescanner also run on.
 
 SEE ALSO
-    define-worker, stop-worker, running-workers, background-call,
-    completion-invalidate, yield, fiber
+    macros, (define-worker), (stop-worker), (running-workers),
+    (background-call), (completion-invalidate)

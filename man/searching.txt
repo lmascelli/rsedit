@@ -1,0 +1,83 @@
+NAME
+    searching - finding things, and replacing them
+
+DESCRIPTION
+    C-s searches forward as you type: each character narrows the search and
+    the view follows it. C-s again goes to the next match, C-r turns round
+    and goes back.
+
+        C-s             search forward, typing as you go
+        C-r             search backward
+        <ret>           stop here, leaving the cursor at the match
+        C-g             stop, and go back to where you started
+
+    The matches are all marked, not just the one you are on, so you can see
+    how many there are before deciding.
+
+    Whether case matters is the variable `case-fold-search', which is on by
+    default -- so a lower-case search finds capitals too. (setq
+    case-fold-search nil) in your configuration turns it off. Replacing reads
+    the same variable, so the two always agree.
+
+PATTERNS
+    C-M-s and C-M-r search for a regular expression instead of for text.
+
+REPLACING
+    M-% asks what to replace and what with, then stops at each match and asks
+    what to do about it:
+
+        y               replace this one
+        n               leave it
+        !               replace this one and every one after it
+        ^               take back the last one
+        <ret>           stop here
+
+    C-M-% does the same for a pattern. M-x replace-string and M-x
+    replace-regexp do it everywhere without asking, which is what you want
+    once you are sure.
+
+    Replacing starts where the cursor is and goes forward, so to do a whole
+    buffer go to the top first.
+
+EVERY MATCH AT ONCE
+    M-s o lists every line in this buffer matching what you ask for, in a
+    window of its own.
+
+        <ret>           go to that line
+        o               go to it, keeping the listing in view
+        n  p            down and up the list
+        q               close the listing
+
+    M-s g does the same across a directory tree rather than one buffer, and
+    searches the files as they are on disk -- except for the ones you have
+    open and modified, which it searches as you have them.
+
+    Both fill in as they go rather than making you wait for the whole answer,
+    and a large tree is cut off rather than read to the end.
+
+WALKING THE RESULTS
+    M-g n goes to the next thing in the current list of places, and M-g p to
+    the one before -- from wherever you are, without going back to the
+    listing. The same two keys walk a compilation's complaints; see
+    `compile'.
+
+KEYS
+    C-s                     isearch-forward
+    C-r                     isearch-backward
+    C-M-s                   isearch-forward-regexp
+    C-M-r                   isearch-backward-regexp
+    M-%                     query-replace
+    C-M-%                   query-replace-regexp
+    M-s o                   occur
+    M-s g                   grep
+    M-g n                   next-error
+    M-g p                   previous-error
+
+KEYS IN OCCUR MODE
+    <ret>                   occur-goto
+    o                       occur-show
+    n                       next-line
+    p                       previous-line
+
+SEE ALSO
+    editing, compile, first-steps

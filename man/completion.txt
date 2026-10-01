@@ -1,0 +1,60 @@
+NAME
+    completion - Tab, and finishing what you started typing
+
+DESCRIPTION
+    Tab at a prompt completes. What it offers depends on what is being asked
+    for: a file name completes over the directory, a buffer name over the
+    buffers, a command name over the commands, a manual page over the pages.
+
+    With the completion module loaded -- it is, unless you took it out -- Tab
+    shows every candidate at once in a strip across the bottom rather than
+    cycling through them one at a time.
+
+        <tab>           show the candidates
+        C-n  C-p        move through them
+        <left> <right>  the same
+        <ret>           take the one selected
+        C-g             put the strip away
+
+    Typing narrows the strip as you go. Backspacing widens it again.
+
+MATCHING THE MIDDLE
+    Candidates match anywhere in the name, not only at the start, and are
+    ordered by how well they match. M-x cap finds capitalize-word; M-x rect
+    finds the rectangle commands. This is what makes M-x usable without
+    remembering which word a command's name starts with.
+
+IN A BUFFER RATHER THAN A PROMPT
+    C-M-i -- also M-<tab> -- completes the word you are typing in an ordinary
+    buffer, from the words already in it and in your other buffers. There is
+    no index and nothing to keep up to date; it reads what is there.
+
+WHAT ASKS FOR WHAT
+    A command declares what its arguments are, and the editor collects them:
+    a file name, a buffer name, a line number, a string, the region. So a
+    command bound to a key and the same command from M-x ask the same
+    questions in the same way, and a command you write gets the same prompts
+    for nothing. See `writing-commands'.
+
+HISTORY
+    A prompt remembers what you typed into it before.
+
+        C-p  M-p        the previous thing
+        C-n  M-n        the next
+        <up> <down>     the same
+
+    Each kind of prompt has its own history, so file names and search terms
+    do not get mixed up.
+
+REPLACING THE STRIP
+    The strip is a module and the editor works without it -- Tab then cycles
+    through candidates in the prompt itself. Anything that sets
+    `*completion-read-function*' takes over presenting candidates, and the
+    minibuffer neither knows nor cares what it does with them.
+
+KEYS
+    C-M-i                   completion-at-point
+    M-<tab>                 completion-at-point
+
+SEE ALSO
+    first-steps, files, writing-commands

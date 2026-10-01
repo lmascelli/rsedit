@@ -1,0 +1,160 @@
+NAME
+    first-steps - the first fifteen minutes
+
+DESCRIPTION
+    Keys are written the way the editor writes them. C-f means hold Control
+    and press f. M-f means Meta and f -- which on most keyboards is Alt, and
+    failing that is Escape pressed and released first. C-x C-f is two of
+    them, one after the other.
+
+    Nothing here needs a mouse, though one works if your terminal reports it:
+    M-x mouse-mode-toggle.
+
+WHAT IS ON THE SCREEN
+    The text you are editing, and a bar across the bottom of each window
+    saying which buffer it is and whether it has unsaved changes. The last
+    line of the screen is the echo area, where the editor says things and
+    asks questions.
+
+    A *buffer* is some text the editor is holding. A *window* is a view onto
+    one. They are different things on purpose: two windows can show one
+    buffer, and a buffer needs no window at all.
+
+MOVING
+    One character, one word, one line, one screen, one buffer:
+
+        C-f  C-b        forward and back one character
+        M-f  M-b        forward and back one word
+        C-n  C-p        down and up one line
+        C-a  C-e        start and end of the line
+        M-<  M->        start and end of the buffer
+        C-v  M-v        forward and back one screenful
+        M-g g           go to a line by number
+
+    The arrow keys work too. C-l puts the line you are on in the middle of
+    the window, which is what you want after jumping somewhere.
+
+TYPING AND TAKING IT BACK
+    Type to insert. Backspace deletes what is behind you, C-d what is in
+    front.
+
+        C-/             undo -- also C-x u, also C-_
+        C-?             redo
+
+    Undo goes back a command at a time, not a character at a time: a run of
+    typing undoes as a word or two rather than as twenty presses.
+
+KILLING AND YANKING
+    Cutting is called killing, and what you killed goes on the kill ring
+    rather than into a clipboard with room for one thing.
+
+        C-k             kill to the end of the line
+        M-d             kill the word in front
+        C-y             yank -- put back the last thing killed
+        M-y             after a yank, reach further back in the ring
+
+    Kill twice in a row and the two join, so C-k C-k C-k takes three lines
+    and C-y brings all three back.
+
+SELECTING
+    C-<space> puts the mark where you are. Move, and the text between the
+    mark and the cursor is the region, shown highlighted.
+
+        C-w             kill the region
+        M-w             copy it without killing it
+        C-x h           select the whole buffer
+
+    Any edit ends the selection, so a region never outlives the text under
+    it.
+
+FILES
+        C-x C-f         open a file, or make one
+        C-x C-s         save this buffer
+        C-x C-c         quit
+
+    Quitting asks about anything unsaved rather than losing it.
+
+WINDOWS AND BUFFERS
+        C-x 2           split this window across
+        C-x 3           split it down
+        C-x o           go to another window
+        C-x 0           close this window
+        C-x 1           close every window but this one
+        C-x b           switch to another buffer
+        C-x C-b         list every buffer
+
+    Closing a window does not kill the buffer it was showing, and killing a
+    buffer does not close the window. C-x k kills a buffer.
+
+DOING THINGS BY NAME
+    M-x and a command's name runs it. Tab completes, and you can type the
+    middle of a name rather than its beginning -- M-x cap finds
+    capitalize-word. Everything a key does has a name, and most names have
+    no key.
+
+ASKING THE EDITOR
+        C-h k           press a key, and be told what it does
+        C-h f           a function, by name
+        C-h a           search everything for a word
+        C-h b           every key in effect right now
+        C-h m           read a page of this manual
+        C-h ?           what else C-h can do
+
+    C-h k is the one to reach for. It answers about the editor you are
+    running rather than about the editor somebody wrote about.
+
+WHEN SOMETHING GOES WRONG
+    C-g. It cancels a prompt, a search, a half-typed key sequence, a
+    selection and a question you did not mean to ask.
+
+    If the editor said something you missed, C-h e shows everything it has
+    said.
+
+KEYS
+    C-f                     forward-char
+    C-b                     backward-char
+    C-n                     next-line
+    C-p                     previous-line
+    M-f                     forward-word
+    M-b                     backward-word
+    C-a                     beginning-of-line
+    C-e                     end-of-line
+    M-<                     beginning-of-buffer
+    M->                     end-of-buffer
+    C-v                     scroll-up-command
+    M-v                     scroll-down-command
+    M-g g                   goto-line
+    C-l                     recenter
+    C-/                     undo
+    C-x u                   undo
+    C-?                     redo
+    C-k                     kill-line
+    M-d                     kill-word
+    C-y                     yank
+    M-y                     yank-pop
+    C-<space>               set-mark
+    C-w                     kill-region
+    M-w                     kill-ring-save
+    C-x h                   mark-whole-buffer
+    C-x C-f                 find-file
+    C-x C-s                 save-buffer
+    C-x C-c                 quit
+    C-x 2                   split-window-below
+    C-x 3                   split-window-right
+    C-x o                   other-window
+    C-x 0                   delete-window
+    C-x 1                   delete-other-windows
+    C-x b                   switch-to-buffer-prompt
+    C-x C-b                 buffer-list
+    C-x k                   kill-buffer
+    M-x                     command-execute-prompt
+    C-h k                   describe-key
+    C-h f                   describe-function
+    C-h a                   apropos
+    C-h b                   describe-bindings
+    C-h m                   manpage-prompt
+    C-h e                   switch-to-messages
+    C-g                     keyboard-quit
+
+SEE ALSO
+    guide, editing, files, getting-help

@@ -1,0 +1,78 @@
+NAME
+    files - opening, saving, and going back
+
+DESCRIPTION
+    Opening a file reads it into a buffer. From then on you are editing the
+    buffer, and the file on disk is whatever it was until you save.
+
+        C-x C-f         open a file, or make one
+        C-x C-s         save this buffer
+        C-x C-w         save it somewhere else, and edit that from now on
+        C-x C-c         quit, asking about anything unsaved
+
+    The prompt completes with Tab. Typing a directory and then Tab lists what
+    is in it.
+
+A FILE THAT IS NOT THERE
+    C-x C-f on a name that does not exist gives you an empty buffer with that
+    name. Nothing is written until you save, so this is also how you decide
+    *not* to make a file: kill the buffer and nothing happened.
+
+GOING BACK
+        M-x revert-buffer       read the file again, losing your changes
+        M-x recover-file        read what was auto-saved instead
+
+    The editor auto-saves a buffer with unsaved changes to a file beside no
+    one's work but its own, and offers it to recover-file. An ordinary save
+    throws that copy away, because it has nothing left to protect.
+
+WHEN THE FILE CHANGES UNDER YOU
+    Something else writing the file you are editing -- a build, a branch
+    switch, another editor -- is noticed, and the buffer says so in its bar.
+    Nothing is read in behind your back: what you do about it is yours, and
+    revert-buffer is how.
+
+DIRECTORIES
+    C-x d lists a directory in a buffer you can move around in.
+
+        <ret>           open what the cursor is on
+        o               open it in a window beside the listing
+        ^               up to the parent directory
+        g               list it again
+        D               delete the file
+        R               rename it
+        n  p            down and up a line
+        q               close the listing
+
+    o reuses the window it opened last, so walking a directory does not slice
+    the frame into eight. C-x C-r searches a directory tree for a file by
+    name rather than listing it a level at a time.
+
+QUITTING WITH WORK UNSAVED
+    C-x C-c asks about each modified file. M-x save-some-buffers asks without
+    quitting, and M-x quit-without-saving does not ask at all -- which is
+    there so that the asking version can be the one on the key.
+
+KEYS
+    C-x C-f                 find-file
+    C-x C-s                 save-buffer
+    C-x C-w                 write-file
+    C-x C-c                 quit
+    C-x d                   dired
+    C-x C-r                 dired-find-recursive
+    C-x k                   kill-buffer
+    C-x b                   switch-to-buffer-prompt
+    C-x C-b                 buffer-list
+
+KEYS IN DIRED MODE
+    <ret>                   dired-find-file
+    o                       dired-find-file-other-window
+    ^                       dired-up-directory
+    g                       dired-refresh
+    D                       dired-delete-file
+    R                       dired-rename-file
+    n                       next-line
+    p                       previous-line
+
+SEE ALSO
+    first-steps, buffers, completion

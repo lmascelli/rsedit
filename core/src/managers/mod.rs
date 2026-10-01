@@ -38,6 +38,7 @@ mod buffers;
 mod commands;
 mod history;
 mod kill_yank;
+mod macros;
 mod log;
 mod modes;
 mod runtime;
@@ -47,6 +48,7 @@ pub use buffers::{Buffers, Removed as BufferRemoved, Renamed as BufferRenamed, S
 pub use commands::Commands;
 pub use history::{DEFAULT_HISTORY_LENGTH, History, Recalled};
 pub use kill_yank::KillYank;
+pub use macros::Macros;
 pub use log::Log;
 pub use modes::{Binding, BindingSource, Modes};
 pub use runtime::Runtime;

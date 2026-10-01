@@ -91,6 +91,7 @@ mod completion;
 pub(crate) mod edits;
 mod general;
 mod help;
+mod macros;
 pub(crate) mod io;
 mod modes;
 pub(crate) mod mouse;
@@ -278,6 +279,75 @@ pub fn install_primitives<B: BufferTrait>(
         "delete-region",
         edits::delete_region,
         edits::DELETE_REGION_DOC
+    );
+    // Recording keys and pressing them again. See `primitives::macros`, and
+    // `managers::macros` for why a macro is keys rather than commands.
+    insert_cmd!(
+        "kmacro-start-macro",
+        macros::kmacro_start_macro,
+        [] as [&str; 0],
+        macros::KMACRO_START_MACRO_DOC
+    );
+    insert_cmd!(
+        "kmacro-end-macro",
+        macros::kmacro_end_macro,
+        [] as [&str; 0],
+        macros::KMACRO_END_MACRO_DOC
+    );
+    insert_cmd!(
+        "kmacro-cancel-macro",
+        macros::kmacro_cancel_macro,
+        [] as [&str; 0],
+        macros::KMACRO_CANCEL_MACRO_DOC
+    );
+    insert_cmd!(
+        "kmacro-call-macro",
+        macros::kmacro_call_macro,
+        ["p"],
+        macros::KMACRO_CALL_MACRO_DOC
+    );
+    insert_cmd!(
+        "kmacro-end-and-call-macro",
+        macros::kmacro_end_and_call_macro,
+        ["p"],
+        macros::KMACRO_END_AND_CALL_MACRO_DOC
+    );
+    insert_cmd!(
+        "kmacro-insert-counter",
+        macros::kmacro_insert_counter,
+        [] as [&str; 0],
+        macros::KMACRO_INSERT_COUNTER_DOC
+    );
+    insert_cmd!(
+        "kmacro-set-counter",
+        macros::kmacro_set_counter,
+        ["nSet macro counter to: "],
+        macros::KMACRO_SET_COUNTER_DOC
+    );
+    insert_fn!(
+        "kmacro-counter",
+        macros::kmacro_counter,
+        macros::KMACRO_COUNTER_DOC
+    );
+    insert_fn!(
+        "kmacro-recording-p",
+        macros::kmacro_recording_p,
+        macros::KMACRO_RECORDING_P_DOC
+    );
+    insert_fn!(
+        "kbd-macro-keys",
+        macros::kbd_macro_keys,
+        macros::KBD_MACRO_KEYS_DOC
+    );
+    insert_fn!(
+        "define-kbd-macro",
+        macros::define_kbd_macro,
+        macros::DEFINE_KBD_MACRO_DOC
+    );
+    insert_fn!(
+        "kmacro-call-keys",
+        macros::kmacro_call_keys,
+        macros::KMACRO_CALL_KEYS_DOC
     );
     // Which command's prompt is up, for anything that has to know -- a
     // preview, a mode line. See `primitives::commands`.

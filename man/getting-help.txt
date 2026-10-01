@@ -1,0 +1,99 @@
+NAME
+    getting-help - asking the editor about itself
+
+DESCRIPTION
+    Every command, every function and every variable in this editor carries
+    its own description, and the help commands read those rather than a list
+    written down beside them. So the answers are about the editor you are
+    running: a key you rebound reports what you rebound it to, and a module
+    you did not load is simply absent rather than described.
+
+    Everything starts with C-h.
+
+        C-h k           press a key, and be told what it runs
+        C-h f           a function or command, by name
+        C-h v           a variable, by name
+        C-h b           every key in effect in this buffer
+        C-h M           what this buffer's mode is and does
+        C-h a           search every description for a word
+        C-h w           where a command is bound, if anywhere
+        C-h m           read a page of this manual
+        C-h e           everything the editor has said
+        C-h ?           what else C-h can do
+
+    C-h k is the one to reach for. It tells you the command, what it does and
+    which keymap the binding came from -- so a key that does something
+    surprising says which mode took it.
+
+PART WAY THROUGH A KEY
+    C-h after a prefix lists where that prefix goes: C-x C-h for everything
+    under C-x, C-x r C-h for the rectangle keys. Useful when you know roughly
+    where a command lives and not what it is called.
+
+THE HELP BUFFER
+    Answers go in a buffer you can move around in, and it remembers where you
+    have been.
+
+        <ret>           follow the name under the cursor
+        K               the same
+        l               back to the previous answer
+        n  p            down and up a line
+        q               close it
+
+    So C-h f on a command, Return on a function it mentions, l to come back.
+
+WHEN YOU DO NOT KNOW THE NAME
+    C-h a and a word searches everything -- command names, function names,
+    variable names and their descriptions. C-h a rectangle finds the
+    rectangle commands whether or not you knew any of them were called that.
+
+    M-x also matches the middle of a name rather than only the start, so M-x
+    rect offers them too.
+
+READING THIS MANUAL
+    C-h m asks for a page name and completes over every page there is, this
+    editor's own first and the system's after. K on a word in a page opens the
+    page or the function it names.
+
+        n  p            down and up a line
+        K               open what the cursor is on
+        q               close the page
+
+    `guide' is the index of the editor's own pages.
+
+MOVING THE HELP KEY
+    On a terminal that sends Backspace as C-h, put this in your
+    configuration:
+
+        (setq help-key "C-c h")
+        (install-help-keys)
+
+    which moves the whole tree, including the prefix listing.
+
+KEYS
+    C-h k                   describe-key
+    C-h f                   describe-function
+    C-h v                   describe-variable
+    C-h b                   describe-bindings
+    C-h M                   describe-mode
+    C-h a                   apropos
+    C-h w                   where-is-command
+    C-h m                   manpage-prompt
+    C-h e                   switch-to-messages
+    C-h ?                   help-for-help
+    C-h C-h                 help-for-help
+
+KEYS IN HELP MODE
+    <ret>                   help-follow
+    K                       help-follow
+    l                       help-back
+    n                       next-line
+    p                       previous-line
+
+KEYS IN MANPAGE MODE
+    K                       manpage-at-point
+    n                       next-line
+    p                       previous-line
+
+SEE ALSO
+    guide, rsedit, keymaps
