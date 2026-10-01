@@ -54,6 +54,7 @@ mod prefix_arg_tests;
 mod prefix_key_tests;
 mod quit_safety_tests;
 mod raw_string_tests;
+mod rectangle_tests;
 mod region_tests;
 mod repeat_key_tests;
 mod repeat_tests;

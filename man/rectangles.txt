@@ -1,0 +1,88 @@
+NAME
+    rectangles - blocks of text, cut by column
+
+DESCRIPTION
+    The region between point and the mark is a ragged run: from the middle
+    of one line, through whole lines, to the middle of a later one. A
+    rectangle is the other thing those two positions describe -- the block
+    of columns the lines have in common.
+
+    Two corners, and the block between them.
+
+        C-x SPC   select rectangularly, or stop
+        C-x r k   cut the block out        C-x r y   put it back here
+        C-x r M-w copy it                  C-x r d   delete it, keeping none
+        C-x r o   open a block of spaces   C-x r c   blank the block out
+        C-x r t   replace it with a string, on every line
+
+    The commands work whether or not C-x SPC is on: two corners are two
+    corners. What the mode changes is what is *drawn* -- the same two
+    columns on every line, rather than the ragged run -- which is how you
+    see the block before you cut it. Any edit ends it, as any edit ends a
+    region.
+
+COLUMNS ARE CHARACTERS
+    Nothing in this editor expands a tab: a tab is drawn in one cell like
+    any other character. So a character column and a screen column are the
+    same number, and a block cut by column is the block that was drawn. An
+    editor that expanded tabs would have to choose between the two; this
+    one does not have the choice to make.
+
+SHORT LINES
+    A rectangle is a pair of columns applied to a run of lines, and nothing
+    says every line reaches them. A line that stops before the left edge is
+    still one of the block's lines -- leaving it out would change the
+    block's height depending on its contents, and a block yanked back
+    elsewhere would have its lines out of step.
+
+    What happens to it depends on which direction the text is going.
+
+    Taking text out -- kill, copy, delete -- takes what is there and leaves
+    the line's length alone. A line that does not reach contributes an
+    empty line to the block and is not touched.
+
+    Putting text in -- open, yank, string -- fills the line out with spaces
+    to the left edge first. A column that does not exist yet is exactly
+    what those commands were asked to fill.
+
+    Clearing is the exception, and deliberately: there was nothing there to
+    blank, so nothing is written. Padding the line would lengthen it in
+    order to erase text that was never there.
+
+NO WIDTH
+    A block with its two corners in the same column is a position on every
+    line rather than a span. Nothing is cut and nothing is replaced, but
+    C-x r o still opens nothing and C-x r t still inserts:
+
+        C-x SPC, move straight down, C-x r t "> "
+
+    is how a passage is prefixed by hand.
+
+WHERE THE BLOCK IS KEPT
+    Not on the kill ring. A rectangle is a shape, and the ring holds text:
+    put one on the ring and every C-y becomes a question about what shape
+    it is holding, and a block copied out of a shell transcript is
+    indistinguishable from the lines it is made of.
+
+    So C-x r k fills a slot of its own and C-x r y reads it; C-y yanks
+    whatever was killed before, untouched. One shape in, the same shape
+    out.
+
+    A slot, not a ring: there is no yank-pop for rectangles to walk, so a
+    second ring would be rotation state kept in step with nothing. A second
+    rectangle kill replaces the first.
+
+WHERE POINT ENDS UP
+    At the block's top-left corner, after every command that changes the
+    buffer. That is where the block begins, and so where the next thing you
+    do to it starts from.
+
+    C-x r M-w is the exception, and has to be: it changes nothing, so the
+    mark survives it, and moving point to the corner would move it onto the
+    mark and leave a selection with no size. M-w leaves point alone for the
+    same reason.
+
+SEE ALSO
+    buffers, (rectangle-mark-mode), (kill-rectangle), (yank-rectangle),
+    (open-rectangle), (clear-rectangle), (string-rectangle),
+    (rectangle-bounds), (killed-rectangle)

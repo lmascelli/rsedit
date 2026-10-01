@@ -95,6 +95,7 @@ pub(crate) mod io;
 mod modes;
 pub(crate) mod mouse;
 mod overlays;
+mod rectangle;
 mod region;
 mod replace;
 pub(crate) mod results;
@@ -276,6 +277,67 @@ pub fn install_primitives<B: BufferTrait>(
         "delete-region",
         edits::delete_region,
         edits::DELETE_REGION_DOC
+    );
+    // Blocks of text. See `primitives::rectangle`, and `rectangle` for the
+    // arithmetic of saying which characters a pair of columns covers when the
+    // lines are not all long enough.
+    insert_cmd!(
+        "rectangle-mark-mode",
+        rectangle::rectangle_mark_mode,
+        [] as [&str; 0],
+        rectangle::RECTANGLE_MARK_MODE_DOC
+    );
+    insert_cmd!(
+        "kill-rectangle",
+        rectangle::kill_rectangle,
+        [] as [&str; 0],
+        rectangle::KILL_RECTANGLE_DOC
+    );
+    insert_cmd!(
+        "delete-rectangle",
+        rectangle::delete_rectangle,
+        [] as [&str; 0],
+        rectangle::DELETE_RECTANGLE_DOC
+    );
+    insert_cmd!(
+        "copy-rectangle-as-kill",
+        rectangle::copy_rectangle_as_kill,
+        [] as [&str; 0],
+        rectangle::COPY_RECTANGLE_AS_KILL_DOC
+    );
+    insert_cmd!(
+        "yank-rectangle",
+        rectangle::yank_rectangle,
+        [] as [&str; 0],
+        rectangle::YANK_RECTANGLE_DOC
+    );
+    insert_cmd!(
+        "open-rectangle",
+        rectangle::open_rectangle,
+        [] as [&str; 0],
+        rectangle::OPEN_RECTANGLE_DOC
+    );
+    insert_cmd!(
+        "clear-rectangle",
+        rectangle::clear_rectangle,
+        [] as [&str; 0],
+        rectangle::CLEAR_RECTANGLE_DOC
+    );
+    insert_cmd!(
+        "string-rectangle",
+        rectangle::string_rectangle,
+        ["sString rectangle: "],
+        rectangle::STRING_RECTANGLE_DOC
+    );
+    insert_fn!(
+        "rectangle-bounds",
+        rectangle::rectangle_bounds,
+        rectangle::RECTANGLE_BOUNDS_DOC
+    );
+    insert_fn!(
+        "killed-rectangle",
+        rectangle::killed_rectangle,
+        rectangle::KILLED_RECTANGLE_DOC
     );
     // Finding every match rather than the next one. See `primitives::scan`.
     insert_fn!("scan-buffer", scan::scan_buffer, scan::SCAN_BUFFER_DOC);

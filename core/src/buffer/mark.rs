@@ -21,11 +21,32 @@ pub struct Mark {
     /// Whether the region is in force: highlighted, and used by the commands
     /// that operate on a region.
     pub active: bool,
+    /// Whether the region between this mark and point is a *rectangle*: the
+    /// columns the lines have in common, rather than the ragged run from one
+    /// corner to the other.
+    ///
+    /// # Why it lives on the mark
+    ///
+    /// Because it is a property of the selection, not of the buffer. Every
+    /// edit deactivates the mark, so an edit ends rectangle mode by the same
+    /// act that ends the region -- there is no second thing to remember to
+    /// turn off, and no way for a buffer to be left in a mode whose selection
+    /// has gone.
+    ///
+    /// It changes what is *drawn* and nothing else. The rectangle commands
+    /// work from point and the mark whether or not this is set, because two
+    /// corners are two corners; this is how you see which block they make
+    /// before you cut it.
+    pub rectangle: bool,
 }
 
 impl Mark {
     pub fn new(at: usize) -> Self {
-        Self { at, active: true }
+        Self {
+            at,
+            active: true,
+            rectangle: false,
+        }
     }
 }
 
@@ -41,4 +62,23 @@ pub fn region_bounds(mark: Option<Mark>, point: usize, len: usize) -> Option<(us
     let start = mark.at.min(point).min(len);
     let end = mark.at.max(point).min(len);
     Some((start, end))
+}
+
+/// The two corners of the rectangle between MARK and POINT, as (line, column)
+/// pairs, or `None` when there is no active mark.
+///
+/// Separate from [`region_bounds`] because the two answer different
+/// questions about the same pair of positions -- a run of offsets, or a block
+/// of columns -- and neither is derivable from the other without the buffer
+/// they came from.
+pub fn rectangle_corners<B: crate::buffer::BufferTrait>(
+    mark: Option<Mark>,
+    text: &B,
+) -> Option<crate::rectangle::Rectangle> {
+    let mark = mark.filter(|mark| mark.active)?;
+    let point = text.cursor_pos_1d();
+    Some(crate::rectangle::Rectangle::between(
+        text.cursor_1d_to_2d(mark.at.min(text.len())),
+        text.cursor_1d_to_2d(point),
+    ))
 }

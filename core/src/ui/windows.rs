@@ -1,3 +1,4 @@
+use crate::rectangle::Rectangle;
 use crate::ELispExp;
 use crate::buffer::{Buffer, BufferTrait, mark::region_bounds};
 use crate::managers::Buffers;
@@ -1257,17 +1258,38 @@ pub fn region_highlights<B: BufferTrait>(
     let last_visible = win.scroll_y + rect.height;
     let mut highlights = Vec::new();
 
+    // A rectangular mark selects the columns the lines have in common, so
+    // every line is drawn with the same two edges and a line too short to
+    // reach them is drawn with none. It is the one thing that makes a
+    // rectangle usable before it is cut: the ragged run drawn otherwise is
+    // not the block the commands would take.
+    let rectangle = buf
+        .mark
+        .filter(|mark| mark.active && mark.rectangle)
+        .map(|_| Rectangle::between((start_line, start_col), (end_line, end_col)));
+
     for line in start_line.max(first_visible)..=end_line.min(last_visible.saturating_sub(1)) {
-        // A line in the middle of the region is selected from its first
-        // character to its last; only the two ends of the region are partial.
-        let from = if line == start_line { start_col } else { 0 };
-        let to = if line == end_line {
-            end_col
+        let (from, to): (usize, usize) = if let Some(rectangle) = rectangle {
+            // Clamped to the line, so a line that stops short of the left
+            // edge is drawn with nothing rather than with a highlight hanging
+            // past its end.
+            let width = line_width(&buf.text, line);
+            (rectangle.left.min(width), rectangle.right.min(width))
         } else {
-            // One past the last character, so the newline shows as selected --
-            // which is how a multi-line selection reads as covering whole
-            // lines rather than stopping raggedly at each line's end.
-            line_width(&buf.text, line) + 1
+            // A line in the middle of the region is selected from its first
+            // character to its last; only the two ends of the region are
+            // partial.
+            let from = if line == start_line { start_col } else { 0 };
+            let to = if line == end_line {
+                end_col
+            } else {
+                // One past the last character, so the newline shows as
+                // selected -- which is how a multi-line selection reads as
+                // covering whole lines rather than stopping raggedly at each
+                // line's end.
+                line_width(&buf.text, line) + 1
+            };
+            (from, to)
         };
 
         let from = from.saturating_sub(win.scroll_x);

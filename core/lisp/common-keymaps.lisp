@@ -184,6 +184,32 @@
 (define-key nil "M-;" 'comment-dwim)
 (define-key nil "C-x C-;" 'comment-line)
 
+;; Rectangles -- blocks of text, the columns a run of lines have in common.
+;;
+;; `C-x SPC' draws the region as the block point and the mark are opposite
+;; corners of, so you can see what you are about to cut. The commands work
+;; either way: two corners are two corners, and the mode is how you see them.
+;;
+;;   C-x r k   cut the block out        C-x r y   put it back here
+;;   C-x r M-w copy it                  C-x r d   delete it, keeping nothing
+;;   C-x r o   open a block of spaces   C-x r c   blank the block out
+;;   C-x r t   replace it with a string, on every line
+;;
+;; A killed rectangle is kept apart from the kill ring, so `C-y' is never a
+;; question about what shape it is holding; `C-x r y' is how a block comes
+;; back.
+;;
+;; `C-x r' is where Emacs keeps these, and also where it keeps registers. The
+;; rectangle half is what exists here; the letters registers use are free.
+(define-key nil "C-x <space>" 'rectangle-mark-mode)
+(define-key nil "C-x r k" 'kill-rectangle)
+(define-key nil "C-x r d" 'delete-rectangle)
+(define-key nil "C-x r M-w" 'copy-rectangle-as-kill)
+(define-key nil "C-x r y" 'yank-rectangle)
+(define-key nil "C-x r o" 'open-rectangle)
+(define-key nil "C-x r c" 'clear-rectangle)
+(define-key nil "C-x r t" 'string-rectangle)
+
 ;; Replace. `M-%' is Emacs' key for it and there is no reason to differ.
 ;;
 ;;   y   replace this one        !   replace this and all the rest

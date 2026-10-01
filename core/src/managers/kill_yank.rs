@@ -52,6 +52,22 @@ pub struct KillYank {
     yanked_last: bool,
     yanked_this: bool,
     last_yank: Option<(usize, usize)>,
+    /// The last rectangle killed or copied, one string per line, or `None`
+    /// when none has been.
+    ///
+    /// # Why a rectangle is not on the ring
+    ///
+    /// Because a rectangle is a shape, and the ring holds text. Put one on
+    /// the ring and every yank has to ask what shape it is holding --
+    /// `C-y` after a rectangle kill would insert a block, and a block copied
+    /// out of a shell transcript would be indistinguishable from the lines it
+    /// is made of. One shape in and the same shape out is the whole reason
+    /// this is a separate slot.
+    ///
+    /// A slot and not a ring of its own: there is no `yank-pop` for
+    /// rectangles to walk, and a second ring would be a second lot of
+    /// rotation state to keep in step with nothing.
+    rectangle: Option<Vec<String>>,
 }
 
 impl KillYank {
@@ -123,6 +139,25 @@ impl KillYank {
 
     pub fn is_empty(&self) -> bool {
         self.ring.len() == 0
+    }
+
+    // ------------------------------------------------------------------
+    // Rectangles
+    // ------------------------------------------------------------------
+
+    /// Save LINES as the killed rectangle, replacing whatever was there.
+    ///
+    /// Replacing rather than accumulating: a run of `C-k` is one kill because
+    /// the user meant one passage, and there is no equivalent for rectangles
+    /// -- two rectangle kills in a row are two rectangles, and joining them
+    /// would produce a block that was never on the screen.
+    pub fn set_rectangle(&mut self, lines: Vec<String>) {
+        self.rectangle = Some(lines);
+    }
+
+    /// The killed rectangle, or `None` if nothing has been killed as one.
+    pub fn rectangle(&self) -> Option<Vec<String>> {
+        self.rectangle.clone()
     }
 
     // ------------------------------------------------------------------

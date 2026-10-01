@@ -10,6 +10,7 @@ pub(crate) mod minibuffer;
 pub(crate) mod modes;
 pub(crate) mod primitives;
 pub mod results;
+pub mod rectangle;
 pub mod search;
 pub(crate) mod task;
 pub mod ui;
