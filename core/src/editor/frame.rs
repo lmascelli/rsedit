@@ -137,6 +137,12 @@ impl<B: BufferTrait> EditorState<B> {
                 let is_focused = float.window.id == focused_window_id;
                 // Unlike a tiled window, a float is not auto-scrolled to follow the
                 // cursor; its scroll offsets are whatever whoever opened it set.
+                // Composed first: a float's rows go through the same mapping
+                // a tiled window's do, because a prompt can carry virtual text
+                // as readily as a file can -- and a float that drew its own
+                // way would be the second coordinate system this exists to
+                // avoid.
+                let layout = compose_layout(&float.window, &float.rect, &buffers);
                 let cursor_rel_pos = is_focused
                     .then(|| buffers.handle(&float.window.buffer_name))
                     .flatten()
@@ -146,11 +152,24 @@ impl<B: BufferTrait> EditorState<B> {
                             .expect("Failed to acquire read lock on buffer")
                             .text
                             .cursor_pos();
+                        let c_screen = layout
+                            .row_of_line(c_line)
+                            .map(|(_, row)| row.to_screen(c_col))
+                            .unwrap_or(c_col);
                         (
-                            c_col.saturating_sub(float.window.scroll_x),
+                            c_screen.saturating_sub(float.window.scroll_x),
                             c_line.saturating_sub(float.window.scroll_y),
                         )
                     });
+                let mut highlights = layout::place(
+                    &layout,
+                    region_highlights(&float.window, &float.rect, &buffers),
+                    float.window.scroll_x,
+                    float.rect.width,
+                );
+                highlights.extend(
+                    layout.virtual_highlights(float.window.scroll_x, float.rect.width),
+                );
 
                 views.push(RenderableWindowView {
                     rect: float.rect,
@@ -158,8 +177,8 @@ impl<B: BufferTrait> EditorState<B> {
                     title: float.title.clone(),
                     is_focused,
                     cursor_rel_pos,
-                    lines: extract_buffer_lines(&float.window, &float.rect, &buffers),
-                    highlights: region_highlights(&float.window, &float.rect, &buffers),
+                    lines: layout.visible_text(float.window.scroll_x, float.rect.width),
+                    highlights,
                     // A float says what it is on its border, so a status line
                     // would be a second answer to the same question.
                     mode_line: None,

@@ -49,6 +49,7 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 
 
 (eval-file "completion")  ; Tab shows every candidate at once, in a strip
+(eval-file "preview")     ; C-x r t shows its replacement before you commit to it
 (eval-file "clipboard")   ; kills also go to the system clipboard
 (eval-file "electric-pair") ; typing "(" gives you "()"
 (eval-file "buffer-list")  ; C-x b to switch, C-x C-b for the whole list

@@ -1,4 +1,5 @@
 use crate::rectangle::Rectangle;
+use crate::ui::layout::{self, BufferHighlight, Layout};
 use crate::ELispExp;
 use crate::buffer::{Buffer, BufferTrait, mark::region_bounds};
 use crate::managers::Buffers;
@@ -1029,6 +1030,12 @@ impl LayoutNode {
                     ..rect
                 };
 
+                // Composed before the scroll is reconciled, because what has
+                // to stay visible is the cursor's *screen* column, and that is
+                // a question about the row it is on rather than about the
+                // buffer. Composed from `scroll_y`, which the block below may
+                // then change -- so it is composed again afterwards if it did.
+                let mut layout = compose_layout(win, &rect, buffers);
                 if let Some((c_line, c_col, c_offset, _)) = point_and_size
                     && follows_points
                 {
@@ -1057,28 +1064,49 @@ impl LayoutNode {
                     win.point = Some(c_offset);
 
                     if point_moved || resized {
+                        let scrolled_from = win.scroll_y;
                         if c_line < win.scroll_y {
                             win.scroll_y = c_line;
                         } else if c_line >= win.scroll_y + rect.height {
                             win.scroll_y = c_line - rect.height + 1;
                         }
 
-                        if c_col < win.scroll_x {
-                            win.scroll_x = c_col;
-                        } else if c_col >= win.scroll_x + rect.width {
-                            win.scroll_x = c_col - rect.width + 1;
+                        // A vertical scroll changes which lines the rows
+                        // show, so the layout composed above is of the wrong
+                        // rows. Re-composed rather than adjusted: adjusting it
+                        // would be a second implementation of composing.
+                        if win.scroll_y != scrolled_from {
+                            layout = compose_layout(win, &rect, buffers);
+                        }
+
+                        // The screen column, not the buffer column. With
+                        // anything drawn on the row that is not in the buffer,
+                        // the two differ, and it is the screen column that has
+                        // to be on the screen.
+                        let c_screen = layout
+                            .row_of_line(c_line)
+                            .map(|(_, row)| row.to_screen(c_col))
+                            .unwrap_or(c_col);
+                        if c_screen < win.scroll_x {
+                            win.scroll_x = c_screen;
+                        } else if c_screen >= win.scroll_x + rect.width {
+                            win.scroll_x = c_screen - rect.width + 1;
                         }
                     }
 
                     if is_focused {
+                        let c_screen = layout
+                            .row_of_line(c_line)
+                            .map(|(_, row)| row.to_screen(c_col))
+                            .unwrap_or(c_col);
                         cursor_rel_pos = Some((
-                            c_col.saturating_sub(win.scroll_x),
+                            c_screen.saturating_sub(win.scroll_x),
                             c_line.saturating_sub(win.scroll_y),
                         ));
                     }
                 }
 
-                let lines = extract_buffer_lines(win, &rect, buffers);
+                let lines = layout.visible_text(win.scroll_x, rect.width);
                 // Syntax first, then the region: the renderer draws later
                 // entries over earlier ones, and a selection has to stay
                 // visible on top of coloured text.
@@ -1087,9 +1115,19 @@ impl LayoutNode {
                 // an overlay wins over colouring -- a diagnostic has to be
                 // visible on a keyword -- and the selection wins over
                 // everything, which is what the eye depends on.
-                let mut highlights = syntax_highlights(win, &rect, buffers);
-                highlights.extend(overlay_highlights(win, &rect, buffers));
-                highlights.extend(region_highlights(win, &rect, buffers));
+                let mut in_buffer = syntax_highlights(win, &rect, buffers);
+                in_buffer.extend(overlay_highlights(win, &rect, buffers));
+                in_buffer.extend(region_highlights(win, &rect, buffers));
+                // Placed on the rows, scrolled and clipped in one go. The
+                // three producers above answer in buffer columns and know
+                // nothing about what is drawn on a row -- which is what stops
+                // there being three places for the mapping to be forgotten.
+                let mut highlights =
+                    layout::place(&layout, in_buffer, win.scroll_x, rect.width);
+                // Last, so a hint's own face is drawn over the colouring the
+                // row around it has -- it is not part of that text and should
+                // not be coloured as though it were.
+                highlights.extend(layout.virtual_highlights(win.scroll_x, rect.width));
 
                 // After the scroll reconciliation above, which is what
                 // decides which lines these number.
@@ -1178,7 +1216,7 @@ pub fn overlay_highlights<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
     buffers: &Buffers<B>,
-) -> Vec<Highlight> {
+) -> Vec<BufferHighlight> {
     let Some(buf) = buffers.handle(&win.buffer_name) else {
         return Vec::new();
     };
@@ -1218,16 +1256,13 @@ pub fn overlay_highlights<B: BufferTrait>(
                 // as covering whole lines rather than stopping raggedly.
                 line_width(&buf.text, line) + 1
             };
-            let row = line - first_line;
-            let start_col = from.saturating_sub(win.scroll_x);
-            let end_col = to.saturating_sub(win.scroll_x).min(rect.width);
-            if start_col >= end_col {
-                continue;
-            }
-            highlights.push(Highlight {
-                row,
-                start_col,
-                end_col,
+            // Buffer columns, left where they are: the scroll, the mapping
+            // through whatever is drawn on the row, and the clipping are all
+            // `layout::place`'s, which is the one place that knows them.
+            highlights.push(BufferHighlight {
+                line,
+                start: from,
+                end: to,
                 face: overlay.face,
             });
         }
@@ -1239,7 +1274,7 @@ pub fn region_highlights<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
     buffers: &Buffers<B>,
-) -> Vec<Highlight> {
+) -> Vec<BufferHighlight> {
     let Some(buf) = buffers.handle(&win.buffer_name) else {
         return Vec::new();
     };
@@ -1292,15 +1327,10 @@ pub fn region_highlights<B: BufferTrait>(
             (from, to)
         };
 
-        let from = from.saturating_sub(win.scroll_x);
-        let to = to.saturating_sub(win.scroll_x).min(rect.width);
-        if from >= to {
-            continue;
-        }
-        highlights.push(Highlight {
-            row: line - win.scroll_y,
-            start_col: from,
-            end_col: to,
+        highlights.push(BufferHighlight {
+            line,
+            start: from,
+            end: to,
             face: Face::REGION,
         });
     }
@@ -1380,26 +1410,26 @@ fn position_in_buffer(line: usize, lines: usize) -> String {
     format!("{}%", (line * 100) / (lines - 1))
 }
 
-pub fn extract_buffer_lines<B: BufferTrait>(
+/// The rows WIN is showing, composed out of its buffer and whatever virtual
+/// text sits in the lines on screen.
+///
+/// Returns an empty layout for a window whose buffer has gone, which is the
+/// An empty layout for a window whose buffer has gone: one naming a buffer
+/// that is not there draws blank rather than refusing to draw.
+pub fn compose_layout<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
     buffers: &Buffers<B>,
-) -> Vec<String> {
-    let mut visible_lines = Vec::new();
-    if let Some(buf) = buffers.handle(&win.buffer_name) {
-        let lines = buf
-            .read()
-            .expect("Failed to acquire read lock for buffer")
-            .text
-            .get_lines(win.scroll_y, win.scroll_y + rect.height);
-
-        for line in lines {
-            let chopped: String = line.chars().skip(win.scroll_x).take(rect.width).collect();
-            visible_lines.push(chopped);
-        }
-    }
-    visible_lines
+) -> Layout {
+    let Some(buf) = buffers.handle(&win.buffer_name) else {
+        return Layout::default();
+    };
+    let buf = buf
+        .read()
+        .expect("Failed to acquire read lock on buffer for composing");
+    Layout::compose(&buf.text, &buf.virtual_text, win.scroll_y, rect.height)
 }
+
 
 /// The syntax colouring of WIN's buffer, as spans within the rows it is
 /// showing.
@@ -1416,7 +1446,7 @@ pub fn syntax_highlights<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
     buffers: &Buffers<B>,
-) -> Vec<Highlight> {
+) -> Vec<BufferHighlight> {
     let Some(buf) = buffers.handle(&win.buffer_name) else {
         return Vec::new();
     };
@@ -1428,15 +1458,10 @@ pub fn syntax_highlights<B: BufferTrait>(
     for row in 0..rect.height {
         let line = win.scroll_y + row;
         for span in buf.syntax.spans(line) {
-            let start = span.start.saturating_sub(win.scroll_x);
-            let end = span.end.saturating_sub(win.scroll_x).min(rect.width);
-            if start >= end {
-                continue;
-            }
-            highlights.push(Highlight {
-                row,
-                start_col: start,
-                end_col: end,
+            highlights.push(BufferHighlight {
+                line,
+                start: span.start,
+                end: span.end,
                 face: span.face,
             });
         }

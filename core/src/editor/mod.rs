@@ -58,7 +58,7 @@ use crate::{
     ui::{
         ComposeSettings, Division, Face, FloatingWindow, Focus, FrameSnapshot, GutterSpec,
         LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,
-        Window, WindowId, extract_buffer_lines, region_highlights,
+        Window, WindowId, compose_layout, layout, region_highlights,
     },
 };
 use std::{

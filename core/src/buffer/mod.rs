@@ -5,11 +5,13 @@ pub mod disk;
 pub mod gap_buffer;
 pub mod mark;
 pub mod overlay;
+pub mod virtual_text;
 pub mod scan;
 pub mod syntax;
 pub use disk::{FileStamp, OnDisk};
 pub use mark::Mark;
 pub use overlay::{Overlay, OverlayTable};
+pub use virtual_text::{VirtualText, VirtualTextTable};
 pub use scan::ScanCache;
 pub mod undo;
 pub use undo::UndoHistory;
@@ -38,6 +40,16 @@ pub struct Buffer<B: BufferTrait> {
     /// the two doors adjust them. That is the whole of what makes them
     /// interesting, and the reason they are a table rather than a `Vec`.
     pub overlays: OverlayTable,
+
+    /// Text shown in a window at positions in this buffer, without being in
+    /// it: an inlay hint, a preview of what a command would insert. See
+    /// [`crate::buffer::virtual_text`], and [`crate::ui::layout`] for how a
+    /// row that is longer on screen than it is in the buffer is drawn and
+    /// clicked on.
+    ///
+    /// Beside the overlays rather than part of them because it is anchored at
+    /// a point, and an overlay with no width is one the overlay table deletes.
+    pub virtual_text: VirtualTextTable,
 
     /// Where the mark is, when this buffer has one. The region is the text
     /// between it and point -- see [`crate::buffer::mark::region_bounds`].
@@ -172,6 +184,7 @@ impl<B: BufferTrait> Buffer<B> {
             undo: UndoHistory::default(),
             mark: None,
             overlays: OverlayTable::default(),
+            virtual_text: VirtualTextTable::default(),
             version: 0,
             scan: scan::ScanCache::default(),
             syntax: syntax::SyntaxCache::default(),
@@ -243,7 +256,8 @@ impl<B: BufferTrait> Buffer<B> {
     ///
     /// # What it deliberately throws away
     ///
-    /// The undo history, the mark and the overlays. All three describe
+    /// The undo history, the mark, the overlays and the virtual text. All of
+    /// them describe
     /// *positions in text that no longer exists*, and keeping them would mean
     /// keeping a promise the buffer can no longer honour -- undoing back into
     /// a state the file never had is worse than not being able to undo.
@@ -258,6 +272,9 @@ impl<B: BufferTrait> Buffer<B> {
         self.syntax.invalidate_from(self.version, 0);
         self.scan.invalidate_from(self.version, 0);
         self.overlays = OverlayTable::default();
+        // For the same reason as the overlays, and more plainly: a hint says
+        // what a position in the old text meant.
+        self.virtual_text = VirtualTextTable::default();
         self.mark = None;
         let limit = self.undo.limit();
         self.undo = UndoHistory::default();
@@ -283,6 +300,7 @@ impl<B: BufferTrait> Buffer<B> {
             undo: UndoHistory::default(),
             mark: None,
             overlays: OverlayTable::default(),
+            virtual_text: VirtualTextTable::default(),
             version: 0,
             scan: scan::ScanCache::default(),
             syntax: syntax::SyntaxCache::default(),

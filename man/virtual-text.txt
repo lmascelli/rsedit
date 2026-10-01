@@ -1,0 +1,96 @@
+NAME
+    virtual-text - text shown in a window and not in the buffer
+
+DESCRIPTION
+    An inlay hint from a language server -- a parameter name, an inferred
+    type -- shown where it would go if it had been written. A preview of
+    what a command is about to insert, before it has inserted anything.
+    Anything the reader should see at a position in the text without the
+    text having changed.
+
+        (make-virtual-text POSITION TEXT &optional FACE PRIORITY CATEGORY)
+        (clear-virtual-text &optional CATEGORY)
+        (delete-virtual-text HANDLE)
+        (virtual-text-at POSITION)
+
+    The text is drawn in front of the character at POSITION, pushing the
+    rest of the line to the right. The buffer is not modified: nothing
+    reaches the undo history, nothing is marked unsaved, and saving writes
+    the file as it was. Inserting the text for real and taking it out again
+    would do all three, and all three are invisible at the time and wrong
+    much later.
+
+NOT AN OVERLAY
+    An overlay puts a face on characters that are already there. This has
+    no characters -- it sits between two of them, so it is anchored at a
+    point rather than over a span.
+
+    That is also why it is not a field on an overlay. An overlay with no
+    width is deleted by the overlay table, which keeps only those whose
+    start is before their end; that rule is what stops a highlight
+    lingering after everything it covered has gone, and a point has nothing
+    for it to be true of.
+
+NOTHING KNOWS WHAT IT IS FOR
+    There is no hint, no diagnostic and no blame in the editor. Those are
+    CATEGORY names a producer chooses, exactly as `isearch' is a category
+    of overlay, and the whole of what the editor does with one is let that
+    producer replace its own batch in a single call:
+
+        (clear-virtual-text 'lsp-hints)
+
+    which still works after the module that made them has been reloaded,
+    and which loose handles do not.
+
+    A mechanism that understood the difference between a hint and a preview
+    would be one that had to be taught about the next kind.
+
+WHERE POINT GOES
+    Point is never inside it. Virtual text is not somewhere the cursor can
+    be, so moving across the position it sits at steps over it in one go,
+    and clicking it puts point on the character it is in front of -- the
+    one it is about.
+
+    The cursor is drawn *after* text anchored at its column, because the
+    text comes before that column and the cursor is on the character.
+
+AT THE END OF A LINE
+    Give the position of that line's newline, which `(line-end-position)'
+    is. A line's last column and the column its newline occupies are
+    different positions, and the second is the one that means "after
+    everything".
+
+MOVING WITH THE TEXT
+    Typing before it carries it along. Typing exactly where it sits pushes
+    it along with the character it was in front of, rather than leaving it
+    in front of what was just typed. Deleting the text it sat in front of
+    leaves it where that text began.
+
+    It is never dropped. A producer whose text has ended up somewhere wrong
+    says so by clearing its category and placing it again -- which is what
+    a language server does after every edit in any case.
+
+    Reverting a buffer takes it down, for the same reason reverting clears
+    the overlays: it describes a position in text that no longer exists.
+
+WHAT IT COSTS
+    Two coordinate systems. A row showing virtual text is wider than the
+    line it came from, so a buffer column and a screen column are no longer
+    the same number, and five things have to ask rather than assume: what
+    is drawn, where the cursor goes, how far the window scrolls sideways to
+    keep it visible, where a highlight's columns land, and which character
+    a click is on.
+
+    All five go through one mapping, per row, so there is one place to get
+    it right rather than five places to forget it.
+
+ROWS
+    A row is one row of the screen and records which buffer line it came
+    from. Today that is always one row per line. The five callers are
+    written against rows rather than lines so that a decoration occupying a
+    row of its own, or a long line wrapped across two, is a new kind of
+    producer rather than a third coordinate system.
+
+SEE ALSO
+    overlays, buffers, windows, (make-virtual-text),
+    (clear-virtual-text), (pending-command)

@@ -5,6 +5,7 @@
 //! command machinery, so a binding can be replaced from Lisp.
 
 use super::*;
+use crate::ui::layout::Layout;
 
 /// A command form with numeric arguments, built rather than parsed.
 ///
@@ -56,7 +57,34 @@ impl<B: BufferTrait> EditorState<B> {
     /// not scroll the window after the pointer, which is a separate feature
     /// and a worse one to get subtly wrong.
     fn position_in(&self, window: WindowId, x: isize, y: isize) -> Option<(usize, usize)> {
-        self.windows(|windows| windows.position_in(window, x, y))
+        let (line, screen_column) = self.windows(|windows| windows.position_in(window, x, y))?;
+        Some((line, self.buffer_column(window, line, screen_column)))
+    }
+
+    /// Which buffer column SCREEN_COLUMN is on, for LINE in WINDOW.
+    ///
+    /// The two differ as soon as anything is drawn on the row that is not in
+    /// the buffer -- an inlay hint, a preview. The compartment that knows the
+    /// geometry cannot reach the buffer and the one that holds the buffer does
+    /// not know the geometry, so the translation happens here, which reaches
+    /// both.
+    ///
+    /// One row is composed, not the window's worth: a click is one row, and
+    /// composing the rest would be work for a question nobody asked. The two
+    /// locks are taken in the canonical order and each given back before the
+    /// next -- windows, then buffers.
+    fn buffer_column(&self, window: WindowId, line: usize, screen_column: usize) -> usize {
+        let Some(name) = self.windows(|windows| windows.buffer_of(window)) else {
+            return screen_column;
+        };
+        self.with_buffer(&name, |buf| {
+            let layout = Layout::compose(&buf.text, &buf.virtual_text, line, 1);
+            layout
+                .row(0)
+                .map(|row| row.to_buffer(screen_column))
+                .unwrap_or(screen_column)
+        })
+        .unwrap_or(screen_column)
     }
 
     /// Which way a drag that has left its window wants the view to move, if it
@@ -223,7 +251,11 @@ impl<B: BufferTrait> EditorState<B> {
                 };
                 Some(mouse_form(
                     command,
-                    &[window.0 as f64, line as f64, column as f64],
+                    &[
+                        window.0 as f64,
+                        line as f64,
+                        self.buffer_column(window, line, column) as f64,
+                    ],
                 ))
             }
             (MouseKind::Down(MouseButton::Left), Hit::Separator { path, orientation }) => {

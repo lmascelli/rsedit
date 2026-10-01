@@ -56,4 +56,4 @@ FINDING YOUR WAY
 
 SEE ALSO
     buffers, windows, overlays, compile, themes, completion, modes,
-    keymaps, background, rectangles
+    keymaps, background, rectangles, virtual-text

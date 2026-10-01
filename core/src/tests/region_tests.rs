@@ -664,20 +664,28 @@ mod tests {
         // The editor's own table, rather than one built for the occasion: the
         // renderer takes a `Buffers` now, and a second one assembled here
         // would be a different set of buffers than the editor has.
+        let window = crate::ui::Window {
+            scroll_x,
+            scroll_y,
+            ..crate::ui::Window::new(0, "*scratch*")
+        };
+        let rect = crate::ui::Rect {
+            x: 0,
+            y: 0,
+            width: 20,
+            height,
+        };
+        // Composed and then placed, which is the pair of calls the renderer
+        // makes: `region_highlights` answers in buffer columns and the layout
+        // puts them on the rows. Doing only the first here would test a
+        // coordinate system nothing draws in.
         ctx.buffers(|buffers| {
-            crate::ui::region_highlights(
-                &crate::ui::Window {
-                    scroll_x,
-                    scroll_y,
-                    ..crate::ui::Window::new(0, "*scratch*")
-                },
-                &crate::ui::Rect {
-                    x: 0,
-                    y: 0,
-                    width: 20,
-                    height,
-                },
-                buffers,
+            let layout = crate::ui::compose_layout(&window, &rect, buffers);
+            crate::ui::layout::place(
+                &layout,
+                crate::ui::region_highlights(&window, &rect, buffers),
+                scroll_x,
+                rect.width,
             )
         })
     }

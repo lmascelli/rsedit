@@ -539,6 +539,7 @@ fn layout(report: &mut Report, calibration: f64) {
                 undo: Default::default(),
                 mark: None,
                 overlays: Default::default(),
+                virtual_text: Default::default(),
                 version: 0,
                 scan: Default::default(),
                 syntax: Default::default(),

@@ -49,13 +49,23 @@ CATEGORIES
         (remove-overlays 'isearch)
 
 WHAT THEY ARE NOT
-    An overlay carries a face and a priority and nothing else. Emacs'
-    before-string, invisible and overlay keymaps would need renderer and
-    input support this editor does not have, so they are not accepted rather
-    than being stored and quietly ignored.
+    An overlay carries a face and a priority and nothing else. It says
+    something about characters that are already there.
+
+    Text that is *not* there -- an inlay hint, a preview of what a command
+    would insert -- is virtual text, which is its own thing and not a field
+    on this one. It is anchored at a point rather than over a span, and an
+    overlay with no width is one this table deletes: that rule is what stops
+    a highlight lingering after everything it covered has gone. See
+    `virtual-text'.
+
+    Emacs' invisible and overlay keymaps would still need renderer and input
+    support this editor does not have, so they are not accepted rather than
+    being stored and quietly ignored.
 
     The mark is not an overlay, though it could be. It is deactivated by
     every edit precisely so that it never needs adjusting for one.
 
 SEE ALSO
-    buffers, windows, (make-overlay), (set-face), (list-faces)
+    virtual-text, buffers, windows, (make-overlay), (set-face),
+    (list-faces)

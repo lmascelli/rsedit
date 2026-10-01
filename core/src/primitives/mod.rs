@@ -104,6 +104,7 @@ mod shell;
 mod theme;
 mod ui;
 mod verbs;
+mod virtual_text;
 mod windows;
 mod workers;
 
@@ -277,6 +278,36 @@ pub fn install_primitives<B: BufferTrait>(
         "delete-region",
         edits::delete_region,
         edits::DELETE_REGION_DOC
+    );
+    // Which command's prompt is up, for anything that has to know -- a
+    // preview, a mode line. See `primitives::commands`.
+    insert_fn!(
+        "pending-command",
+        commands::pending_command,
+        commands::PENDING_COMMAND_DOC
+    );
+    // Text shown in a window that is not in the buffer: a hint, a preview.
+    // See `primitives::virtual_text`, and `ui::layout` for how a row that is
+    // wider on screen than it is in the buffer is drawn and clicked on.
+    insert_fn!(
+        "make-virtual-text",
+        virtual_text::make_virtual_text,
+        virtual_text::MAKE_VIRTUAL_TEXT_DOC
+    );
+    insert_fn!(
+        "clear-virtual-text",
+        virtual_text::clear_virtual_text,
+        virtual_text::CLEAR_VIRTUAL_TEXT_DOC
+    );
+    insert_fn!(
+        "delete-virtual-text",
+        virtual_text::delete_virtual_text,
+        virtual_text::DELETE_VIRTUAL_TEXT_DOC
+    );
+    insert_fn!(
+        "virtual-text-at",
+        virtual_text::virtual_text_at,
+        virtual_text::VIRTUAL_TEXT_AT_DOC
     );
     // Blocks of text. See `primitives::rectangle`, and `rectangle` for the
     // arithmetic of saying which characters a pair of columns covers when the

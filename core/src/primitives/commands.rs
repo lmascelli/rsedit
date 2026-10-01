@@ -491,3 +491,21 @@ primitive!(command_execute_prompt, _args, env, ctx, {
         ctx,
     )
 });
+
+pub const PENDING_COMMAND_DOC: &str = "(pending-command): The name of the command whose arguments          are being collected, as a string, or nil when none is.\n\n\
+         A command declared with arguments is run in two halves: the prompt goes up, and the \
+         command runs when it has been answered. This is how anything watching can tell which \
+         command the prompt in front of it belongs to -- which is what a preview needs, since it \
+         has to show what *that* command would do and nothing else.\n\n\
+         A fact about the editor rather than about any particular command: nothing here knows \
+         which commands are worth previewing, and a preview asks about the one it cares about by \
+         name.\n\n\
+         Example:\n\
+         (if (equal (pending-command) \"string-rectangle\") (my-preview))";
+
+primitive!(pending_command, _args, _env, ctx, {
+    Ok(match ctx.pending_progress() {
+        Some((name, _, _)) => ELispExp::string(name),
+        None => ELispExp::nil(),
+    })
+});

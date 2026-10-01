@@ -58,10 +58,21 @@ pub enum ClickCount {
 /// What the pointer is over.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Hit {
-    /// Inside a tiled window's text. LINE and COLUMN are buffer coordinates
-    /// with the window's scroll already added; COLUMN may be past the end of
-    /// its line, which the command clamps against the buffer rather than the
-    /// geometry -- the screen has no opinion about how long a line is.
+    /// Inside a tiled window's text.
+    ///
+    /// LINE is a buffer line, with the window's vertical scroll added.
+    ///
+    /// COLUMN is a **screen** column, with the horizontal scroll added, and is
+    /// not a buffer column: a row that shows virtual text is wider than its
+    /// line, so the two differ. Translating is
+    /// [`Row::to_buffer`](crate::ui::layout::Row::to_buffer), and it needs the
+    /// buffer -- which this compartment does not reach. So the answer is in
+    /// the coordinates this compartment actually has, and `editor/mouse.rs`,
+    /// which reaches both, maps it before a command sees it.
+    ///
+    /// It may be past the end of the row, which the command clamps against the
+    /// buffer rather than the geometry -- the screen has no opinion about how
+    /// long a line is.
     Text {
         window: WindowId,
         line: usize,
@@ -404,8 +415,12 @@ impl Windows {
         })
     }
 
-    /// Where in WINDOW's buffer the cell (X, Y) is, clamped to what the window
-    /// is showing.
+    /// Which line and **screen** column the cell (X, Y) is on, clamped to what
+    /// the window is showing.
+    ///
+    /// A screen column, for the reason [`Hit::Text`] gives: the mapping to a
+    /// buffer column needs the buffer, and the caller in `editor/mouse.rs`
+    /// does it.
     ///
     /// Clamped rather than refused because this answers a *drag*, and a drag
     /// that leaves the window is a perfectly ordinary way to select to its
