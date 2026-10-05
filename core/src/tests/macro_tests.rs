@@ -179,7 +179,11 @@ mod tests {
         press("C-x ( C-f C-x )", &env, &ctx);
         press("C-x ( C-f C-f", &env, &ctx);
         assert!(!run("(kmacro-cancel-macro)", &env, &ctx).is_nil());
-        assert_eq!(recorded(&ctx, &env), "C-f", "the one before it is still there");
+        assert_eq!(
+            recorded(&ctx, &env),
+            "C-f",
+            "the one before it is still there"
+        );
     }
 
     #[test]
@@ -283,7 +287,11 @@ mod tests {
         // which is the one being recorded.
         let (ctx, env) = editor();
         with_text("one\ntwo\nthree", &ctx);
-        run(r#"(define-kbd-macro 'kill-a-line "C-a C-k C-k")"#, &env, &ctx);
+        run(
+            r#"(define-kbd-macro 'kill-a-line "C-a C-k C-k")"#,
+            &env,
+            &ctx,
+        );
         run(r#"(define-key nil "C-c k" 'kill-a-line)"#, &env, &ctx);
 
         press("C-x ( C-c k C-x )", &env, &ctx);
@@ -380,7 +388,11 @@ mod tests {
         // working.
         let (ctx, env) = editor();
         with_text("abc", &ctx);
-        run(r#"(defcommand boom () nil "Fails." (no-such-function))"#, &env, &ctx);
+        run(
+            r#"(defcommand boom () nil "Fails." (no-such-function))"#,
+            &env,
+            &ctx,
+        );
         run(r#"(define-key nil "C-c b" 'boom)"#, &env, &ctx);
         press("C-x ( C-f C-c b C-f C-x )", &env, &ctx);
         run("(goto-char 0)", &env, &ctx);
@@ -490,7 +502,11 @@ mod tests {
         let (ctx, env) = editor();
         with_text("", &ctx);
         run("(kmacro-set-counter 0)", &env, &ctx);
-        run("(kmacro-insert-counter) (insert \"-\") (kmacro-insert-counter)", &env, &ctx);
+        run(
+            "(kmacro-insert-counter) (insert \"-\") (kmacro-insert-counter)",
+            &env,
+            &ctx,
+        );
         assert_eq!(text(&ctx), "0-1");
     }
 
@@ -515,5 +531,4 @@ mod tests {
         press("C-x )", &env, &ctx);
         assert!(run("(kmacro-recording-p)", &env, &ctx).is_nil());
     }
-
 }

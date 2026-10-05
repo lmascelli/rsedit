@@ -275,9 +275,7 @@ primitive!(kmacro_insert_counter, args, _env, ctx, {
         crate::primitives::edits::insert_text(buf, at, &text)
     });
     if !inserted {
-        return Err(EvalError::RuntimeMessage(
-            "This buffer is read-only".into(),
-        ));
+        return Err(EvalError::RuntimeMessage("This buffer is read-only".into()));
     }
     Ok(ELispExp::string(text))
 });
@@ -307,6 +305,6 @@ pub const KMACRO_COUNTER_DOC: &str = "(kmacro-counter): The macro counter's curr
 
 primitive!(kmacro_counter, _args, _env, ctx, {
     Ok(ELispExp::number(
-        ctx.macros(|macros| macros.counter()) as f64,
+        ctx.macros(|macros| macros.counter()) as f64
     ))
 });

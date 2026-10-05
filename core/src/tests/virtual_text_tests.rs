@@ -64,9 +64,7 @@ mod tests {
 
     /// The layout the renderer composes, to ask about directly.
     fn layout(ctx: &Ctx) -> Layout {
-        ctx.with_current_buffer(|buf| {
-            Layout::compose(&buf.text, &buf.virtual_text, 0, H)
-        })
+        ctx.with_current_buffer(|buf| Layout::compose(&buf.text, &buf.virtual_text, 0, H))
     }
 
     // ----------------------------------------------------------------
@@ -94,7 +92,11 @@ mod tests {
         let (ctx, env) = editor();
         with_text("one\ntwo", &ctx);
         ctx.with_current_buffer_mut(|buf| buf.is_modified = false);
-        run(r#"(make-virtual-text 0 "hint") (clear-virtual-text)"#, &env, &ctx);
+        run(
+            r#"(make-virtual-text 0 "hint") (clear-virtual-text)"#,
+            &env,
+            &ctx,
+        );
         assert!(
             !ctx.with_current_buffer(|buf| buf.is_modified),
             "nothing was modified"
@@ -179,7 +181,11 @@ mod tests {
     fn the_two_directions_are_inverse_outside_the_virtual_text() {
         let (ctx, env) = editor();
         with_text("abcdef", &ctx);
-        run(r#"(make-virtual-text 3 "XX") (make-virtual-text 0 "Y")"#, &env, &ctx);
+        run(
+            r#"(make-virtual-text 3 "XX") (make-virtual-text 0 "Y")"#,
+            &env,
+            &ctx,
+        );
         let layout = layout(&ctx);
         let (_, row) = layout.row_of_line(0).expect("a row");
         for column in 0..=6 {

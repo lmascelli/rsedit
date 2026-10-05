@@ -1,28 +1,5 @@
 //! One frame's worth of state, captured for the UI to draw.
 //!
-//! # Why this exists
-//!
-//! Rendering used to reach into `EditorState` field by field: it took
-//! the layout, then the focused window's id, then `buffers` -- releasing and
-//! re-acquiring `buffers` three more times for the floating windows -- and then,
-//! after all of that had finished and every lock had been dropped, it read
-//! `echo_message`. Six-plus acquisitions across five locks, with gaps between
-//! them. (Three of those five are one lock now -- see `crate::managers::Windows` -- but
-//! the lesson was about the gaps, and the gaps are what this fixes.)
-//!
-//! That is not a hypothetical problem. `BackgroundScheduler` already runs on its
-//! own thread with a clone of `EditorState`, and the `(spawn ...)` special form
-//! evaluates on more. Anything they mutate between two of those acquisitions
-//! produces a frame assembled from two different instants: a floating window
-//! whose `lines` were extracted under one acquisition and whose cursor position
-//! was computed under the next, reporting a cursor at a position that no longer
-//! exists in the text just captured.
-//!
-//! So capture is now one operation. Every lock is taken once, in a fixed order,
-//! held for the whole capture -- which is pure in-memory work -- and released
-//! before a single byte reaches the terminal. Drawing then touches no shared
-//! state at all.
-//!
 //! # The rule for adding to it
 //!
 //! A new renderable feature adds a **field to this struct**, populated inside
@@ -51,10 +28,13 @@ pub struct FrameSnapshot {
     /// Tiled windows first, in layout order, then floating windows in the order
     /// they should be drawn -- later entries paint over earlier ones.
     pub views: Vec<RenderableWindowView>,
+
     /// The rules between windows sitting side by side, in draw order.
     pub separators: Vec<Separator>,
+
     /// Text for the echo area, or empty when there is nothing to show.
     pub echo_message: String,
+
     /// Input the editor is part-way through reading -- a key sequence begun, a
     /// prefix argument being built -- or empty when it is waiting for nothing.
     ///
@@ -64,6 +44,7 @@ pub struct FrameSnapshot {
     /// expiring it would leave the editor waiting for a key with nothing on
     /// screen to say so.
     pub pending_input: String,
+
     /// What a transient keymap is offering or asking, or empty when none is
     /// installed -- `[o]` while `C-x o o o` is live, a question while one is
     /// being asked.
@@ -81,6 +62,7 @@ pub struct FrameSnapshot {
     /// Shown *instead of* `echo_message`: the two compete for one row, and
     /// this is the one the editor is waiting on.
     pub prompt: String,
+
     /// How each face should be drawn, as it stood at capture time.
     ///
     /// Carried in the frame rather than looked up by the renderer for the same
@@ -88,15 +70,18 @@ pub struct FrameSnapshot {
     /// means a frame is self-describing -- a snapshot kept for comparison still
     /// knows the colours it was composed under.
     pub theme: std::sync::Arc<Theme>,
+
     /// Which window had focus at capture time. `views` already carries
     /// `is_focused` per window; this is here for renderers that need to know
     /// even when the focused window is not currently visible.
     pub focused_window_id: WindowId,
+
     /// Frame size the capture was composed for. A renderer that finds the
     /// terminal has since been resized knows this snapshot is stale rather than
     /// drawing a mis-sized frame.
     pub width: usize,
     pub height: usize,
+
     /// Whether colouring is still being worked out, so this frame will be
     /// superseded without anybody touching the keyboard.
     ///
@@ -116,6 +101,7 @@ pub struct FrameSnapshot {
     /// and no message about to expire, the renderer blocks indefinitely, as it
     /// did before.
     pub colouring_pending: bool,
+
     /// Text the editor owes to the *system* clipboard, or `None` when it owes
     /// nothing.
     ///

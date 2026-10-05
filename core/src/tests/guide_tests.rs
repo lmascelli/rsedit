@@ -47,11 +47,17 @@ mod tests {
         ("editing", include_str!("../../../man/editing.txt")),
         ("files", include_str!("../../../man/files.txt")),
         ("searching", include_str!("../../../man/searching.txt")),
-        ("getting-help", include_str!("../../../man/getting-help.txt")),
+        (
+            "getting-help",
+            include_str!("../../../man/getting-help.txt"),
+        ),
         ("completion", include_str!("../../../man/completion.txt")),
         ("keymaps", include_str!("../../../man/keymaps.txt")),
         ("modes", include_str!("../../../man/modes.txt")),
-        ("configuration", include_str!("../../../man/configuration.txt")),
+        (
+            "configuration",
+            include_str!("../../../man/configuration.txt"),
+        ),
         (
             "writing-commands",
             include_str!("../../../man/writing-commands.txt"),
@@ -64,7 +70,10 @@ mod tests {
         ("themes", include_str!("../../../man/themes.txt")),
         ("background", include_str!("../../../man/background.txt")),
         ("rectangles", include_str!("../../../man/rectangles.txt")),
-        ("virtual-text", include_str!("../../../man/virtual-text.txt")),
+        (
+            "virtual-text",
+            include_str!("../../../man/virtual-text.txt"),
+        ),
         ("macros", include_str!("../../../man/macros.txt")),
     ];
 
@@ -140,9 +149,9 @@ mod tests {
                         // `^[A-Z][A-Z0-9 ]*$`, which a hyphen fails -- so a
                         // heading written the obvious way would be read as
                         // body text by the very mode these pages are for.
-                        heading => heading.strip_prefix("KEYS IN ").map(|mode| {
-                            Some(mode.trim().to_lowercase().replace(' ', "-"))
-                        }),
+                        heading => heading
+                            .strip_prefix("KEYS IN ")
+                            .map(|mode| Some(mode.trim().to_lowercase().replace(' ', "-"))),
                     };
                     continue;
                 }
@@ -231,7 +240,12 @@ mod tests {
                 ));
             }
         }
-        assert!(wrong.is_empty(), "{} wrong:\n{}", wrong.len(), wrong.join("\n"));
+        assert!(
+            wrong.is_empty(),
+            "{} wrong:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
     }
 
     #[test]
@@ -322,8 +336,7 @@ mod tests {
                 // looking like body text that happens to shout.
                 let mut characters = line.chars();
                 let heading = characters.next().is_some_and(|c| c.is_ascii_uppercase())
-                    && characters
-                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ' ');
+                    && characters.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ' ');
                 assert!(
                     heading,
                     "{page}:{} is at the left margin and `manpage-mode' would \

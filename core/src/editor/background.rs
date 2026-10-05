@@ -94,12 +94,8 @@ impl<B: BufferTrait> EditorState<B> {
     /// it would be keeping is the one the user is typing on. Whatever arrives
     /// while this is running is run next time, a frame later.
     pub fn run_owed_callbacks(&self, env: &Arc<Env<EditorState<B>>>) -> bool {
-        let owed: Vec<OwedCallback<B>> = std::mem::take(
-            &mut *self
-                .owed
-                .write()
-                .expect("write lock on owed callbacks"),
-        );
+        let owed: Vec<OwedCallback<B>> =
+            std::mem::take(&mut *self.owed.write().expect("write lock on owed callbacks"));
         if owed.is_empty() {
             return false;
         }
@@ -113,9 +109,9 @@ impl<B: BufferTrait> EditorState<B> {
             // The question is "is this still the newest", not "is this still
             // running": a job that has finished is precisely the one whose
             // callback has to be delivered.
-            if !self.runtime(|runtime| {
-                runtime.worker_is_latest(&callback.name, callback.generation)
-            }) {
+            if !self
+                .runtime(|runtime| runtime.worker_is_latest(&callback.name, callback.generation))
+            {
                 continue;
             }
             ran = true;

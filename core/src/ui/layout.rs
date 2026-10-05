@@ -249,12 +249,7 @@ impl Layout {
 }
 
 /// Compose one row out of its line and whatever sits inside it.
-fn compose_row(
-    line: usize,
-    text: &str,
-    line_start: usize,
-    virtual_text: &VirtualTextTable,
-) -> Row {
+fn compose_row(line: usize, text: &str, line_start: usize, virtual_text: &VirtualTextTable) -> Row {
     let line_width = text.chars().count();
     // The newline's own offset is in range, so virtual text at the end of a
     // line is placed by anchoring it there.

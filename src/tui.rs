@@ -13,10 +13,12 @@ use crossterm::{
 use rsedit_core::BufferTrait;
 use rsedit_core::ELispExp;
 use rsedit_core::EditorState;
-use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind};
-use rsedit_core::lisp::{Env, LispContext};
 use rsedit_core::mouse_mode;
-use rsedit_core::ui::{Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Style, Theme};
+use rsedit_core::{
+    Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, RenderableWindowView, Style, Theme,
+};
+use rsedit_core::{Env, LispContext};
+use rsedit_core::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 use std::{
     io::{Write, stdout},
     sync::Arc,
@@ -499,7 +501,7 @@ pub(crate) fn base64_encode(bytes: &[u8]) -> String {
 /// so a highlight can never disagree with what was drawn underneath it.
 fn draw_highlight<W: Write>(
     out: &mut W,
-    view: &rsedit_core::ui::RenderableWindowView,
+    view: &RenderableWindowView,
     highlight: &Highlight,
     theme: &Theme,
     depth: ColorDepth,

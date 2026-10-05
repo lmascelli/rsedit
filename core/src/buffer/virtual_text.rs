@@ -135,9 +135,7 @@ impl VirtualTextTable {
         let before = self.entries.len();
         match category {
             None => self.entries.clear(),
-            Some(category) => self
-                .entries
-                .retain(|entry| &*entry.category != category),
+            Some(category) => self.entries.retain(|entry| &*entry.category != category),
         }
         before - self.entries.len()
     }

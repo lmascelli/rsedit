@@ -167,9 +167,8 @@ impl<B: BufferTrait> EditorState<B> {
                     float.window.scroll_x,
                     float.rect.width,
                 );
-                highlights.extend(
-                    layout.virtual_highlights(float.window.scroll_x, float.rect.width),
-                );
+                highlights
+                    .extend(layout.virtual_highlights(float.window.scroll_x, float.rect.width));
 
                 views.push(RenderableWindowView {
                     rect: float.rect,

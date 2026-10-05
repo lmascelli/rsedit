@@ -319,7 +319,8 @@ mod tests {
         eval_str("(other-window)", &env, &ctx).expect("next");
         assert_eq!(ctx.get_focused_window_id(), top, "two tiled windows");
 
-        let first = id_of(&eval_str(r#"(make-floating-window "*A*" 1 1 10 3)"#, &env, &ctx).unwrap());
+        let first =
+            id_of(&eval_str(r#"(make-floating-window "*A*" 1 1 10 3)"#, &env, &ctx).unwrap());
         let second =
             id_of(&eval_str(r#"(make-floating-window "*B*" 2 2 10 3)"#, &env, &ctx).unwrap());
         // Back to the first tiled window, from wherever opening the floats

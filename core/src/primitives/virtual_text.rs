@@ -134,8 +134,7 @@ primitive!(clear_virtual_text, args, _env, ctx, {
             });
         }
     };
-    let gone = ctx
-        .with_current_buffer_mut(|buf| buf.virtual_text.clear(category.as_deref()));
+    let gone = ctx.with_current_buffer_mut(|buf| buf.virtual_text.clear(category.as_deref()));
     Ok(ELispExp::number(gone as f64))
 });
 
@@ -156,9 +155,9 @@ primitive!(delete_virtual_text, args, _env, ctx, {
         return Ok(ELispExp::nil());
     }
     let id = *id as usize;
-    Ok(ELispExp::boolean(
-        ctx.with_current_buffer_mut(|buf| buf.virtual_text.remove(id)),
-    ))
+    Ok(ELispExp::boolean(ctx.with_current_buffer_mut(|buf| {
+        buf.virtual_text.remove(id)
+    })))
 });
 
 pub const VIRTUAL_TEXT_AT_DOC: &str = "(virtual-text-at POSITION): The virtual text shown at \

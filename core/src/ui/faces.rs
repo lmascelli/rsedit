@@ -30,14 +30,7 @@
 //! user renders it. An ANSI palette index in this file would break that -- it
 //! is not a colour, it is a terminal's encoding of one.
 //!
-//! # Scaling past this
-//!
-//! Faces are a closed enum, so a *mode* cannot invent one of its own the way
-//! Emacs lets it. That is the deliberate limit of "basic": the set here covers
-//! the region and everything syntax highlighting (#22) needs, and adding to it
-//! is a variant plus a default. Going further means interning face names as
-//! symbols and making [`Theme`] a map -- worth doing when a mode actually needs
-//! a face nothing else has, and not before.
+
 
 /// A thing that can be drawn differently, named rather than coloured.
 ///
@@ -186,8 +179,7 @@ impl Face {
     /// The name Lisp uses for this face, in `set-face` and `add-syntax-rule`.
     ///
     /// One mapping, used by both, so a face a syntax rule can name is a face a
-    /// theme can style. They used to be separate lists, and `region` was in
-    /// neither.
+    /// theme can style.
     pub fn name(self) -> std::sync::Arc<str> {
         FACE_NAMES
             .read()
@@ -216,12 +208,6 @@ impl Face {
 }
 
 /// A colour a face asks for.
-///
-/// A plain colour, deliberately: not a palette index, not an enum of "named or
-/// exact". A palette index is one terminal's encoding, and a two-case request
-/// makes the editor decide something the renderer is better placed to answer.
-/// Everything here is a *suggestion*, and every renderer answers it the same
-/// way -- by drawing the nearest thing it can.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color {
     pub r: u8,
@@ -253,13 +239,6 @@ impl Color {
 
     /// Parse a colour as Lisp writes it: `"#rgb"`, `"#rrggbb"`, or one of the
     /// names in [`NAMED_COLORS`].
-    ///
-    /// A name is shorthand for a specific colour, not a reference to a palette
-    /// slot -- there is nothing in this crate that could resolve such a
-    /// reference, and pretending otherwise would be a promise the editor
-    /// cannot keep. It still tends to reach the user's own palette, because a
-    /// terminal that cannot show the exact value falls back to the nearest
-    /// slot, which for a conventional colour is the slot of the same name.
     pub fn parse(text: &str) -> Option<Color> {
         if let Some(hex) = text.strip_prefix('#') {
             return match hex.len() {
@@ -325,8 +304,7 @@ pub struct Style {
     pub underline: bool,
     /// Swap foreground and background. The one attribute that needs no colour
     /// decision, and therefore the only one that is legible on every terminal
-    /// and in every scheme -- including monochrome, and including whichever of
-    /// light or dark the user happens to run.
+    /// and in every scheme.
     pub reverse: bool,
 }
 
@@ -484,9 +462,6 @@ impl Default for Theme {
                 ..Style::plain()
             },
         );
-        // Bold and otherwise unstyled, for the reason the region uses reverse
-        // video: "where you are" has to stand out against a background this
-        // code cannot know, and weight needs no colour decision to do it.
         theme.set(
             Face::LINE_NUMBER_CURRENT,
             Style {

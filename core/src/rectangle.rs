@@ -131,6 +131,10 @@ pub fn spans<B: BufferTrait>(text: &B, rect: &Rectangle) -> Vec<Span> {
 pub fn text_of<B: BufferTrait>(text: &B, rect: &Rectangle) -> Vec<String> {
     spans(text, rect)
         .into_iter()
-        .map(|span| (span.start..span.end).filter_map(|at| text.at(at)).collect())
+        .map(|span| {
+            (span.start..span.end)
+                .filter_map(|at| text.at(at))
+                .collect()
+        })
         .collect()
 }

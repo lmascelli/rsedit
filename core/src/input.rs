@@ -38,16 +38,7 @@ pub enum MouseKind {
     ScrollDown,
 }
 
-/// The mouse, in terminal cells.
-///
-/// # Why this carries no buffer position
-///
-/// A frontend knows where the pointer is on the screen and nothing else. Which
-/// window that cell belongs to, and which character of which line it is,
-/// depends on the layout and on how far each window is scrolled -- facts the
-/// editor has and a terminal does not. So the frontend reports the cell and
-/// the editor does the arithmetic, which is the same division of labour that
-/// keeps the core headless.
+/// The mouse, in cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MouseEvent {
     pub kind: MouseKind,
@@ -208,19 +199,6 @@ impl<B: BufferTrait> Keymap<B> {
 /// can handle the typing of letters, digits and most of symbols.
 pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
     // -------------------------------- EDITOR ---------------------------------
-    //
-    // `C-q` used to quit here and `C-s` used to save. Both are Emacs keys that
-    // mean something else -- `quoted-insert` and `isearch-forward` -- and
-    // `C-s` was worse than merely wrong: `common-keymaps.lisp` binds it to
-    // incremental search, so this one was shadowed and did nothing except
-    // decide what happened with no configuration loaded. The commands they ran
-    // are reached by `C-x C-c` and `C-x C-s`, which is where an Emacs user
-    // looks for them.
-
-    // M-x is bound here rather than in a `.lisp` file because it is the only
-    // way to reach a command by name: without it the command system exists but
-    // is unreachable, which is not something a configuration file should be
-    // able to take away.
     keymaps.insert_key(
         KeyEvent {
             code: KeyCode::Char('x'),
@@ -272,7 +250,7 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
     for c in ' '..='~' {
         let event = KeyEvent {
             code: KeyCode::Char(c),
-            modifiers: KeyModifiers::default(), // No modifiers (Ctrl/Alt off)
+            modifiers: KeyModifiers::default(),
         };
         keymaps.insert_key(
             event,
@@ -285,15 +263,10 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
 }
 
 // ---------------------------------------------------------------------------
-// Keymaps that last for a moment
+// Transient keymaps
 // ---------------------------------------------------------------------------
 
 /// What a transient keymap does with a key it does not bind.
-///
-/// The two answers are genuinely different features wearing the same
-/// mechanism, and getting them the wrong way round is maddening in both
-/// directions -- so the choice is made once, where the map is installed, rather
-/// than guessed at per key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OnUnbound {
     /// Swallow it. The map stays up until one of its own keys takes it down.
@@ -304,6 +277,7 @@ pub enum OnUnbound {
     /// answer meaning "stop" -- `C-g` included, since a modal map takes that
     /// too.
     Refuse,
+
     /// Dismiss the map, and let the key through to the keymaps underneath as
     /// though the map had never been there.
     ///
@@ -312,6 +286,7 @@ pub enum OnUnbound {
     /// that other thing to happen. Swallowing it would make the convenience
     /// cost more than it saves.
     Release,
+
     /// Hand the key on, and stay up.
     ///
     /// For a map that is a *filter*: the completion strip binds `C-n`, `C-p`,

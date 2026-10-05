@@ -12,10 +12,10 @@ use crossterm::{
 use rsedit_core::BufferTrait;
 use rsedit_core::ELispExp;
 use rsedit_core::EditorState;
-use rsedit_core::buffer::gap_buffer::GapBuffer;
-use rsedit_core::input::{KeyCode, KeyEvent, KeyModifiers};
-use rsedit_core::lisp::{Env, LispContext};
-use rsedit_core::ui::{Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Style, Theme};
+use rsedit_core::GapBuffer;
+use rsedit_core::{Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Style, Theme};
+use rsedit_core::{Env, LispContext};
+use rsedit_core::{KeyCode, KeyEvent, KeyModifiers};
 use rsedit_core::{create_global_env, isolate_config_for_tests};
 use std::{
     io::{Write, stdout},
@@ -198,10 +198,10 @@ fn a_terminal_escape_closes_the_minibuffer() {
     let (state, env) = editor();
     env.set_variable("frame-width".into(), ELispExp::number(COLS as f64));
     env.set_variable("frame-height".into(), ELispExp::number(ROWS as f64));
-    let ast = rsedit_core::lisp::Parser::new(r#"(minibuffer-read "P:" nil nil nil)"#)
+    let ast = rsedit_core::Parser::new(r#"(minibuffer-read "P:" nil nil nil)"#)
         .next()
         .expect("source must parse");
-    rsedit_core::lisp::eval(&ast, env.clone(), &state).expect("prompt must open");
+    rsedit_core::eval(&ast, env.clone(), &state).expect("prompt must open");
     assert!(
         frame(&state, &env).contains("P:"),
         "the prompt should be on screen to begin with"
@@ -230,10 +230,10 @@ fn the_rule_between_windows_is_drawn_down_its_whole_column() {
     let (state, env) = editor();
     env.set_variable("frame-width".into(), ELispExp::number(COLS as f64));
     env.set_variable("frame-height".into(), ELispExp::number(ROWS as f64));
-    let ast = rsedit_core::lisp::Parser::new("(split-window-right)")
+    let ast = rsedit_core::Parser::new("(split-window-right)")
         .next()
         .expect("source must parse");
-    rsedit_core::lisp::eval(&ast, env.clone(), &state).expect("split must work");
+    rsedit_core::eval(&ast, env.clone(), &state).expect("split must work");
 
     let snapshot = state.snapshot(&env, COLS as usize, ROWS as usize);
     let rule = snapshot.separators.first().expect("a rule must be there");
@@ -261,7 +261,7 @@ fn the_rule_is_drawn_with_the_window_separator_face() {
     theme.set(Face::WINDOW_SEPARATOR, Style::fg(Color::BLUE));
 
     let snapshot = FrameSnapshot {
-        separators: vec![rsedit_core::ui::Separator {
+        separators: vec![rsedit_core::Separator {
             rect: Rect {
                 x: 4,
                 y: 0,
@@ -298,10 +298,10 @@ fn a_titled_window_is_labelled_with_its_title() {
     let (state, env) = editor();
     env.set_variable("frame-width".into(), ELispExp::number(COLS as f64));
     env.set_variable("frame-height".into(), ELispExp::number(ROWS as f64));
-    let ast = rsedit_core::lisp::Parser::new(r#"(minibuffer-read "Find file:" nil nil nil)"#)
+    let ast = rsedit_core::Parser::new(r#"(minibuffer-read "Find file:" nil nil nil)"#)
         .next()
         .expect("source must parse");
-    rsedit_core::lisp::eval(&ast, env.clone(), &state).expect("prompt must open");
+    rsedit_core::eval(&ast, env.clone(), &state).expect("prompt must open");
 
     let rendered = frame(&state, &env);
     assert!(
@@ -386,7 +386,7 @@ fn frame_at_depth(
     depth: ColorDepth,
 ) -> String {
     let snapshot = FrameSnapshot {
-        views: vec![rsedit_core::ui::RenderableWindowView {
+        views: vec![rsedit_core::RenderableWindowView {
             rect: Rect {
                 x: 0,
                 y: 0,
@@ -487,7 +487,7 @@ fn a_highlight_past_the_end_of_a_line_is_padded_with_spaces() {
 #[test]
 fn a_mode_line_is_drawn_below_the_text_as_a_bar() {
     let snapshot = FrameSnapshot {
-        views: vec![rsedit_core::ui::RenderableWindowView {
+        views: vec![rsedit_core::RenderableWindowView {
             rect: Rect {
                 x: 0,
                 y: 0,
@@ -527,8 +527,8 @@ fn a_mode_line_is_drawn_below_the_text_as_a_bar() {
 /// feature that needs it arrives.
 #[test]
 fn an_unfocused_window_uses_the_inactive_mode_line_face() {
-    fn window(name: &str, y: isize, focused: bool) -> rsedit_core::ui::RenderableWindowView {
-        rsedit_core::ui::RenderableWindowView {
+    fn window(name: &str, y: isize, focused: bool) -> rsedit_core::RenderableWindowView {
+        rsedit_core::RenderableWindowView {
             rect: Rect {
                 x: 0,
                 y,
@@ -868,7 +868,7 @@ fn frame_with_float() -> String {
         .collect();
     let snapshot = FrameSnapshot {
         views: vec![
-            rsedit_core::ui::RenderableWindowView {
+            rsedit_core::RenderableWindowView {
                 rect: Rect {
                     x: 0,
                     y: 0,
@@ -885,7 +885,7 @@ fn frame_with_float() -> String {
                 has_border: false,
                 ..Default::default()
             },
-            rsedit_core::ui::RenderableWindowView {
+            rsedit_core::RenderableWindowView {
                 rect: Rect {
                     x: 10,
                     y: 1,
@@ -1055,7 +1055,7 @@ use crossterm::event::{
     MouseButton as CrossMouseButton, MouseEvent as CrossMouseEvent,
     MouseEventKind as CrossMouseKind,
 };
-use rsedit_core::input::{MouseButton, MouseKind};
+use rsedit_core::{MouseButton, MouseKind};
 
 fn terminal_mouse(kind: CrossMouseKind, column: u16, row: u16) -> CrossMouseEvent {
     CrossMouseEvent {
@@ -1158,7 +1158,7 @@ fn modifiers_are_carried_across_a_click() {
 #[test]
 fn a_floating_window_is_drawn_over_the_rule_it_covers() {
     let snapshot = FrameSnapshot {
-        separators: vec![rsedit_core::ui::Separator {
+        separators: vec![rsedit_core::Separator {
             rect: Rect {
                 x: 4,
                 y: 0,
@@ -1170,7 +1170,7 @@ fn a_floating_window_is_drawn_over_the_rule_it_covers() {
             ch: '#',
             face: Face::WINDOW_SEPARATOR,
         }],
-        views: vec![rsedit_core::ui::RenderableWindowView {
+        views: vec![rsedit_core::RenderableWindowView {
             rect: Rect {
                 x: 2,
                 y: 0,
@@ -1219,13 +1219,13 @@ fn a_floating_window_is_drawn_over_the_rule_it_covers() {
 /// has its own tests, and the bug this guards against -- numbers painted over
 /// the first characters of every line -- is one only a renderer can commit.
 fn frame_with_gutter(mode_line: Option<&str>) -> String {
-    use rsedit_core::ui::{Face, GutterCell};
+    use rsedit_core::{Face, GutterCell};
     let cell = |text: &str, face| GutterCell {
         text: text.into(),
         face,
     };
     let snapshot = FrameSnapshot {
-        views: vec![rsedit_core::ui::RenderableWindowView {
+        views: vec![rsedit_core::RenderableWindowView {
             rect: Rect {
                 x: 4,
                 y: 0,

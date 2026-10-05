@@ -61,7 +61,7 @@ impl<B: BufferTrait> EditorState<B> {
         // the rest of the session.
         let _ = self
             .shell_commands
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                 Some(n.saturating_sub(1))
             });
     }
@@ -89,7 +89,7 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn finish_background_work(&self) {
         let _ = self
             .background_work
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                 Some(n.saturating_sub(1))
             });
     }

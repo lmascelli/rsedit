@@ -1,9 +1,9 @@
-use crate::rectangle::Rectangle;
-use crate::ui::layout::{self, BufferHighlight, Layout};
 use crate::ELispExp;
 use crate::buffer::{Buffer, BufferTrait, mark::region_bounds};
 use crate::managers::Buffers;
+use crate::rectangle::Rectangle;
 use crate::ui::Face;
+use crate::ui::layout::{self, BufferHighlight, Layout};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Orientation {
@@ -71,9 +71,12 @@ pub struct Focus {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Window {
     pub id: WindowId,
+
     pub buffer_name: String,
+
     pub scroll_x: usize,
     pub scroll_y: usize,
+
     /// How many rows of text this window had the last time a frame was
     /// composed, or 0 if it has never been on screen.
     ///
@@ -91,6 +94,7 @@ pub struct Window {
     /// frame decided, which is exactly what the user is looking at when they
     /// press the key.
     pub text_height: usize,
+
     /// The rectangle this window was last drawn in, status line included, or a
     /// zero-sized one if it has never been on screen.
     ///
@@ -110,6 +114,7 @@ pub struct Window {
     /// Zero-sized until the first frame, which is exactly what makes a window
     /// that has never been drawn impossible to click on.
     pub rect: Rect,
+
     /// Whether this window draws a status line along its bottom row.
     ///
     /// True for a window somebody is working in, which is all of them but one
@@ -119,6 +124,7 @@ pub struct Window {
     /// deliberately. A caller asking for six rows should get six rows of what
     /// it asked to show.
     pub show_mode_line: bool,
+
     /// Where point was, last time this window's view was tracking it.
     ///
     /// # Why a window remembers a point
@@ -140,6 +146,7 @@ pub struct Window {
     /// a new window is to adopt the point already there rather than drag it to
     /// the top of the file.
     pub point: Option<usize>,
+
     /// How many columns this window gave to its gutter, last time a frame was
     /// composed. Zero when it draws none.
     ///
@@ -192,31 +199,13 @@ impl Window {
 }
 
 /// How a split shares its space between its two children.
-///
-/// # Why this is one value and not two fields
-///
-/// A window that must be exactly six rows -- a strip of completions, a
-/// compilation log -- cannot be described by a fraction: six rows of a
-/// twenty-four-row frame is a quarter, and the same quarter is nine rows on a
-/// taller terminal. Resizing the terminal would silently resize a popup that
-/// was sized to its contents.
-///
-/// Adding a `fixed: Option<usize>` beside `ratio` would express it, and would
-/// also express *both at once*, which means every reader has to decide which
-/// wins and they will not all decide the same way. One value, two shapes: a
-/// split divides one way or the other and there is nothing to reconcile.
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Division {
     /// The first child takes this fraction of the space; the second takes what
     /// is left.
     Ratio(f32),
-    /// The second child is exactly this many rows (stacked) or columns (side by
-    /// side), and the first takes what is left.
-    ///
-    /// The second rather than the first, because the fixed one is always the
-    /// thing being added -- a strip appears below what was already there, and
-    /// what was already there gives up the space.
-    SecondFixed(usize),
+
     /// The first child is exactly this many rows (stacked) or columns (side by
     /// side), and the second takes what is left.
     ///
@@ -230,23 +219,23 @@ pub enum Division {
     /// This is also what Emacs' `split-window-right SIZE` means: SIZE is the
     /// width the left window keeps.
     FirstFixed(usize),
+
+    /// The second child is exactly this many rows (stacked) or columns (side by
+    /// side), and the first takes what is left.
+    ///
+    /// The second rather than the first, because the fixed one is always the
+    /// thing being added -- a strip appears below what was already there, and
+    /// what was already there gives up the space.
+    SecondFixed(usize),
 }
 
 impl Division {
     /// How much of TOTAL the first child gets.
-    ///
-    /// The second child is never given more than there is, and the first is
-    /// never left with nothing to draw in when the frame is too small to honour
-    /// the request -- a zero-height window renders as nothing at all, and the
-    /// buffer the user was working in is the wrong one to make disappear.
     fn first_share(&self, total: usize) -> usize {
         match self {
             Division::Ratio(ratio) => ((total as f32) * ratio).round() as usize,
-            Division::SecondFixed(size) => total.saturating_sub(*size).max(total.min(1)),
-            // Clamped so the *other* child keeps a column when there is one to
-            // spare, for the reason the arm above clamps the other way: a
-            // window with no width renders as nothing at all.
             Division::FirstFixed(size) => (*size).min(total.saturating_sub(1)).max(total.min(1)),
+            Division::SecondFixed(size) => total.saturating_sub(*size).max(total.min(1)),
         }
     }
 }
@@ -283,9 +272,6 @@ pub struct FloatingWindow {
 /// plain text is what almost every row is, and a list of exceptions is both
 /// smaller and easier for a renderer to ignore than a parallel array of
 /// attributes.
-///
-/// The region is the first thing to use this. Syntax highlighting (#22) is the
-/// next, and adds entries here rather than a second mechanism.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Highlight {
     /// Row within the window, 0 being its first drawn line.
@@ -320,18 +306,6 @@ pub struct ComposeSettings<'a> {
 }
 
 /// One cell of a window's gutter -- the columns to the left of its text.
-///
-/// # Why this carries a face rather than the renderer choosing one
-///
-/// The line the cursor is on is numbered differently from the rest, and which
-/// line that is, is a question about the buffer. A renderer told only the
-/// strings would have to work it back out from `cursor_rel_pos`, and every
-/// renderer would have to work it out the same way. Composition knows the
-/// answer already, so it says it.
-///
-/// It is also the shape the gutter's other job wants. Breakpoints and
-/// diagnostics are a glyph and a colour in the same columns, and a cell that
-/// is already text-plus-face needs nothing added to carry one.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct GutterCell {
     /// Exactly [`RenderableWindowView::gutter_width`] characters, padded, so a
@@ -478,8 +452,7 @@ pub fn gutter_cells(
 /// built from these can outlive the locks it was captured under.
 ///
 /// `Default` is a window of nothing, nowhere -- there so that a caller who
-/// cares about two fields is not made to write the other ten. Chiefly the
-/// renderer's tests, for the reason [`FrameSnapshot`] spells out.
+/// cares about two fields is not made to write the other ten.
 ///
 /// [`FrameSnapshot`]: crate::ui::FrameSnapshot
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -610,15 +583,6 @@ pub fn split_rects(
 }
 
 impl LayoutNode {
-    /// The window with this id, to be changed.
-    ///
-    /// Named as the mutable partner of [`LayoutNode::window`] so that the two
-    /// are read together. They were not always: this one used to return the
-    /// first leaf it reached whatever id was asked for, which with one window
-    /// on screen is the right answer every time -- and with two meant
-    /// `find-file` and `switch-to-buffer` replaced the buffer in the leftmost
-    /// window rather than the focused one. The file opened in the window you
-    /// were not looking at.
     /// Every window in this subtree, in layout order.
     ///
     /// Added for the one job that has to touch all of them rather than one by
@@ -634,7 +598,6 @@ impl LayoutNode {
         }
     }
 
-    /// The window with ID, if the tree holds one.
     /// The window with this id, to be read. See [`LayoutNode::window_mut`].
     pub fn window(&self, id: WindowId) -> Option<&Window> {
         match self {
@@ -1122,8 +1085,7 @@ impl LayoutNode {
                 // three producers above answer in buffer columns and know
                 // nothing about what is drawn on a row -- which is what stops
                 // there being three places for the mapping to be forgotten.
-                let mut highlights =
-                    layout::place(&layout, in_buffer, win.scroll_x, rect.width);
+                let mut highlights = layout::place(&layout, in_buffer, win.scroll_x, rect.width);
                 // Last, so a hint's own face is drawn over the colouring the
                 // row around it has -- it is not part of that text and should
                 // not be coloured as though it were.
@@ -1416,11 +1378,7 @@ fn position_in_buffer(line: usize, lines: usize) -> String {
 /// Returns an empty layout for a window whose buffer has gone, which is the
 /// An empty layout for a window whose buffer has gone: one naming a buffer
 /// that is not there draws blank rather than refusing to draw.
-pub fn compose_layout<B: BufferTrait>(
-    win: &Window,
-    rect: &Rect,
-    buffers: &Buffers<B>,
-) -> Layout {
+pub fn compose_layout<B: BufferTrait>(win: &Window, rect: &Rect, buffers: &Buffers<B>) -> Layout {
     let Some(buf) = buffers.handle(&win.buffer_name) else {
         return Layout::default();
     };
@@ -1429,7 +1387,6 @@ pub fn compose_layout<B: BufferTrait>(
         .expect("Failed to acquire read lock on buffer for composing");
     Layout::compose(&buf.text, &buf.virtual_text, win.scroll_y, rect.height)
 }
-
 
 /// The syntax colouring of WIN's buffer, as spans within the rows it is
 /// showing.

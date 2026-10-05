@@ -306,8 +306,7 @@ impl<B: BufferTrait> BackgroundJob<B> {
                 true,
             ),
             JobBody::Steps(fiber) => {
-                let call =
-                    ELispExp::form(vec![ELispExp::symbol("resume".into()), fiber.clone()]);
+                let call = ELispExp::form(vec![ELispExp::symbol("resume".into()), fiber.clone()]);
                 let result = eval(&call, self.env.clone(), state);
                 // `None` would mean the job was given something that is not a
                 // fiber, which `background-call` refuses -- so it cannot
@@ -334,10 +333,7 @@ impl<B: BufferTrait> BackgroundJob<B> {
                 // The command that asked for this returned long ago. A fiber
                 // has already retired itself -- an error inside one ends it,
                 // because the position it stopped at is gone.
-                state.log_diagnostic(&format!(
-                    "[ERROR] background job {}: {error:?}",
-                    self.name
-                ));
+                state.log_diagnostic(&format!("[ERROR] background job {}: {error:?}", self.name));
                 Some(Outcome::Stopped)
             }
         }
@@ -393,7 +389,6 @@ impl<B: BufferTrait> ScheduledTask<B> for BackgroundJob<B> {
 }
 
 pub struct LispWorker<B: BufferTrait> {
-
     name: String,
     /// Which run of `name` this is. Compared against the editor's answer every
     /// turn, so that redefining or stopping a worker retires this one.

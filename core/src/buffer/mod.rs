@@ -5,14 +5,14 @@ pub mod disk;
 pub mod gap_buffer;
 pub mod mark;
 pub mod overlay;
-pub mod virtual_text;
 pub mod scan;
 pub mod syntax;
+pub mod virtual_text;
 pub use disk::{FileStamp, OnDisk};
 pub use mark::Mark;
 pub use overlay::{Overlay, OverlayTable};
-pub use virtual_text::{VirtualText, VirtualTextTable};
 pub use scan::ScanCache;
+pub use virtual_text::{VirtualText, VirtualTextTable};
 pub mod undo;
 pub use undo::UndoHistory;
 

@@ -500,11 +500,7 @@ mod tests {
     #[test]
     fn starting_a_job_names_it_and_listing_finds_it() {
         let (ctx, env) = editor();
-        run(
-            "(defun slow-work () (fiber (while t (yield))))",
-            &env,
-            &ctx,
-        );
+        run("(defun slow-work () (fiber (while t (yield))))", &env, &ctx);
         assert_eq!(
             run("(background-call 'named (slow-work) nil nil)", &env, &ctx),
             LispExp::symbol("named".into()),

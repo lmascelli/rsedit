@@ -186,7 +186,11 @@ mod tests {
         );
 
         // A background job finding another one, and saying so.
-        run(r#"(setq *test-names* '("alpha" "beta" "alpaca"))"#, &env, &ctx);
+        run(
+            r#"(setq *test-names* '("alpha" "beta" "alpaca"))"#,
+            &env,
+            &ctx,
+        );
         run("(completion-invalidate)", &env, &ctx);
         assert!(
             strip(&env, &ctx).contains("alpaca"),

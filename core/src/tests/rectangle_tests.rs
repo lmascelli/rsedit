@@ -131,7 +131,11 @@ mod tests {
         let (ctx, env) = editor();
         marked(&["abcdef", "ghijkl", "mnopqr"], (0, 2), (2, 4), &env, &ctx);
         assert_eq!(
-            lines_of(&run("(copy-rectangle-as-kill) (killed-rectangle)", &env, &ctx)),
+            lines_of(&run(
+                "(copy-rectangle-as-kill) (killed-rectangle)",
+                &env,
+                &ctx
+            )),
             vec!["cd", "ij", "op"]
         );
     }
@@ -144,7 +148,11 @@ mod tests {
         let (ctx, env) = editor();
         marked(&["abcdef", "ghijkl", "mnopqr"], (2, 4), (0, 2), &env, &ctx);
         assert_eq!(
-            lines_of(&run("(copy-rectangle-as-kill) (killed-rectangle)", &env, &ctx)),
+            lines_of(&run(
+                "(copy-rectangle-as-kill) (killed-rectangle)",
+                &env,
+                &ctx
+            )),
             vec!["cd", "ij", "op"]
         );
     }
@@ -154,7 +162,9 @@ mod tests {
         let (ctx, env) = editor();
         marked(&["abcdef", "ghijkl", "mnopqr"], (0, 2), (2, 4), &env, &ctx);
         assert_eq!(
-            run("(rectangle-bounds)", &env, &ctx).iter().collect::<Vec<_>>(),
+            run("(rectangle-bounds)", &env, &ctx)
+                .iter()
+                .collect::<Vec<_>>(),
             vec![
                 LispExp::number(1.0),
                 LispExp::number(3.0),
@@ -219,12 +229,20 @@ mod tests {
         let (ctx, env) = editor();
         marked(&["abcdef", "gh", "mnopqr"], (0, 3), (2, 5), &env, &ctx);
         assert_eq!(
-            lines_of(&run("(copy-rectangle-as-kill) (killed-rectangle)", &env, &ctx)),
+            lines_of(&run(
+                "(copy-rectangle-as-kill) (killed-rectangle)",
+                &env,
+                &ctx
+            )),
             vec!["de", "", "pq"],
             "three lines, one of them empty"
         );
         run("(kill-rectangle)", &env, &ctx);
-        assert_eq!(text(&ctx), "abcf\ngh\nmnor", "and the short line is untouched");
+        assert_eq!(
+            text(&ctx),
+            "abcf\ngh\nmnor",
+            "and the short line is untouched"
+        );
     }
 
     #[test]
@@ -270,7 +288,11 @@ mod tests {
         marked(&["abcdef", "ghijkl"], (0, 2), (1, 4), &env, &ctx);
         run("(kill-rectangle)", &env, &ctx);
         assert_eq!(text(&ctx), "abef\nghkl");
-        run("(goto-line 1) (beginning-of-line) (yank-rectangle)", &env, &ctx);
+        run(
+            "(goto-line 1) (beginning-of-line) (yank-rectangle)",
+            &env,
+            &ctx,
+        );
         assert_eq!(text(&ctx), "cdabef\nijghkl");
     }
 
@@ -387,10 +409,11 @@ mod tests {
         let (ctx, env) = editor();
         marked(&["abcdef", "ghijkl"], (0, 2), (1, 4), &env, &ctx);
         assert!(!run("(rectangle-mark-mode)", &env, &ctx).is_nil(), "on");
+        assert!(ctx.with_current_buffer(|buf| buf.mark.is_some_and(|mark| mark.rectangle)));
         assert!(
-            ctx.with_current_buffer(|buf| buf.mark.is_some_and(|mark| mark.rectangle))
+            run("(rectangle-mark-mode)", &env, &ctx).is_nil(),
+            "off again"
         );
-        assert!(run("(rectangle-mark-mode)", &env, &ctx).is_nil(), "off again");
         assert!(
             ctx.with_current_buffer(|buf| buf.mark.is_some_and(|mark| mark.active)),
             "and the selection is still there, which is what `C-x SPC' twice should leave"
@@ -403,8 +426,9 @@ mod tests {
         run(r#"(insert "abcdef")"#, &env, &ctx);
         assert!(!run("(rectangle-mark-mode)", &env, &ctx).is_nil());
         assert!(
-            ctx.with_current_buffer(|buf| buf.mark.is_some_and(|mark| mark.active
-                && mark.rectangle)),
+            ctx.with_current_buffer(|buf| buf
+                .mark
+                .is_some_and(|mark| mark.active && mark.rectangle)),
             "so `C-x SPC' can begin a selection as well as change one"
         );
     }

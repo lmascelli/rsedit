@@ -141,8 +141,8 @@ pub const RECTANGLE_BOUNDS_DOC: &str = "(rectangle-bounds): The block between po
          For a module that wants to say something about the block without cutting it.";
 
 primitive!(rectangle_bounds, _args, _env, ctx, {
-    Ok(ctx.with_current_buffer(|buf| {
-        match rectangle_corners(buf.mark, &buf.text) {
+    Ok(
+        ctx.with_current_buffer(|buf| match rectangle_corners(buf.mark, &buf.text) {
             None => ELispExp::nil(),
             Some(rect) => ELispExp::proper_list(vec![
                 ELispExp::number(rect.top as f64 + 1.0),
@@ -150,8 +150,8 @@ primitive!(rectangle_bounds, _args, _env, ctx, {
                 ELispExp::number(rect.left as f64),
                 ELispExp::number(rect.right as f64),
             ]),
-        }
-    }))
+        }),
+    )
 });
 
 // ---------------------------------------------------------------------------
@@ -319,15 +319,14 @@ pub const OPEN_RECTANGLE_DOC: &str = "(open-rectangle): Fill the block between p
 primitive!(open_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
     let filling = " ".repeat(rect.width());
-    let height = ctx
-        .with_current_buffer_mut(|buf| {
-            let lines = spans(&buf.text, &rect).len();
-            each_line(buf, &rect, |buf, span| {
-                insert_at_edge(buf, span, &filling);
-            });
-            go_to_corner(buf, &rect);
-            lines
+    let height = ctx.with_current_buffer_mut(|buf| {
+        let lines = spans(&buf.text, &rect).len();
+        each_line(buf, &rect, |buf, span| {
+            insert_at_edge(buf, span, &filling);
         });
+        go_to_corner(buf, &rect);
+        lines
+    });
     Ok(ELispExp::number(height as f64))
 });
 
@@ -345,25 +344,24 @@ pub const CLEAR_RECTANGLE_DOC: &str = "(clear-rectangle): Replace the block betw
 
 primitive!(clear_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
-    let height = ctx
-        .with_current_buffer_mut(|buf| {
-            let lines = spans(&buf.text, &rect).len();
-            each_line(buf, &rect, |buf, span| {
-                // `insert_text` at the span's own start, not `insert_at_edge`:
-                // that is the whole of why this is the one command that does
-                // not pad a short line. Going through the edge would fill the
-                // line out to a column in order to blank something that was
-                // never written there.
-                if span.is_empty() {
-                    return;
-                }
-                let width = span.end - span.start;
-                let _ = delete_range(buf, span.start, span.end);
-                let _ = insert_text(buf, span.start, &" ".repeat(width));
-            });
-            go_to_corner(buf, &rect);
-            lines
+    let height = ctx.with_current_buffer_mut(|buf| {
+        let lines = spans(&buf.text, &rect).len();
+        each_line(buf, &rect, |buf, span| {
+            // `insert_text` at the span's own start, not `insert_at_edge`:
+            // that is the whole of why this is the one command that does
+            // not pad a short line. Going through the edge would fill the
+            // line out to a column in order to blank something that was
+            // never written there.
+            if span.is_empty() {
+                return;
+            }
+            let width = span.end - span.start;
+            let _ = delete_range(buf, span.start, span.end);
+            let _ = insert_text(buf, span.start, &" ".repeat(width));
         });
+        go_to_corner(buf, &rect);
+        lines
+    });
     Ok(ELispExp::number(height as f64))
 });
 
@@ -389,17 +387,16 @@ primitive!(string_rectangle, args, _env, ctx, {
     };
     let content = text.to_string();
     let rect = ctx.with_current_buffer(require_rectangle)?;
-    let height = ctx
-        .with_current_buffer_mut(|buf| {
-            let lines = spans(&buf.text, &rect).len();
-            each_line(buf, &rect, |buf, span| {
-                if !span.is_empty() {
-                    let _ = delete_range(buf, span.start, span.end);
-                }
-                insert_at_edge(buf, span, &content);
-            });
-            go_to_corner(buf, &rect);
-            lines
+    let height = ctx.with_current_buffer_mut(|buf| {
+        let lines = spans(&buf.text, &rect).len();
+        each_line(buf, &rect, |buf, span| {
+            if !span.is_empty() {
+                let _ = delete_range(buf, span.start, span.end);
+            }
+            insert_at_edge(buf, span, &content);
         });
+        go_to_corner(buf, &rect);
+        lines
+    });
     Ok(ELispExp::number(height as f64))
 });
