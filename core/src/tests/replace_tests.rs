@@ -23,7 +23,7 @@ mod tests {
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyCode, KeyEvent, KeyModifiers};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
-    use crate::search::Casing;
+    use crate::text::search::Casing;
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;

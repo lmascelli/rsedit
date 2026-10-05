@@ -37,7 +37,7 @@
 //! setting the interpreter holds, so the *answer* is passed in to
 //! [`KillYank::kill`] rather than asked for here. No compartment takes an
 //! `Env`.
-use crate::kill_ring::{Direction, KillRing};
+use crate::text::kill_ring::{Direction, KillRing};
 
 #[derive(Default)]
 pub struct KillYank {

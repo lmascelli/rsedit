@@ -31,29 +31,10 @@
 use super::*;
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
 use crate::lisp::{Lambda, call_callable, eval};
-
-/// VALUE, wrapped so that evaluating it gives the value back.
-///
-/// The callbacks these primitives are handed are already values -- a lambda, a
-/// symbol naming a function -- and they have to survive being written into a
-/// form that will later be evaluated. `quote` is exactly that: it hands back
-/// its argument untouched.
-fn quoted<B: BufferTrait>(value: &ELispExp<B>) -> ELispExp<B> {
-    ELispExp::form(vec![ELispExp::symbol("quote".into()), value.clone()])
-}
+use crate::primitives::args;
 
 fn nil_or<B: BufferTrait>(value: Option<&ELispExp<B>>) -> ELispExp<B> {
     value.cloned().unwrap_or_else(ELispExp::nil)
-}
-
-fn prompt_arg<B: BufferTrait>(args: &[ELispExp<B>]) -> Result<String, EvalError<EditorState<B>>> {
-    match args.first() {
-        Some(ELispExp::String(text)) => Ok(text.to_string()),
-        other => Err(EvalError::WrongArgumentType {
-            expected: "String".into(),
-            got: other.cloned().unwrap_or_else(ELispExp::nil),
-        }),
-    }
 }
 
 /// The call that answers a one-key question: take the map down, then run
@@ -61,7 +42,7 @@ fn prompt_arg<B: BufferTrait>(args: &[ELispExp<B>]) -> Result<String, EvalError<
 fn answer_form<B: BufferTrait>(callback: &ELispExp<B>) -> ELispExp<B> {
     ELispExp::form(vec![
         ELispExp::symbol("ask--answer".into()),
-        quoted(callback),
+        args::quoted(callback.clone()),
     ])
 }
 
@@ -99,7 +80,7 @@ pub const Y_OR_N_DOC: &str = "(y-or-n PROMPT ON-YES &optional ON-NO): Ask PROMPT
          (y-or-n \"Delete this line?\" 'kill-whole-line)";
 
 primitive!(y_or_n, args, _env, ctx, {
-    let prompt = prompt_arg(args)?;
+    let prompt = args::text(args.first())?;
     let on_yes = nil_or(args.get(1));
     let on_no = nil_or(args.get(2));
     ask_with_keys(
@@ -121,7 +102,7 @@ pub const YES_OR_NO_DOC: &str = "(yes-or-no PROMPT ON-YES &optional ON-NO): Ask 
          (yes-or-no \"Really discard your changes?\" 'revert-buffer)";
 
 primitive!(yes_or_no, args, env, ctx, {
-    let prompt = prompt_arg(args)?;
+    let prompt = args::text(args.first())?;
     let on_yes = nil_or(args.get(1));
     let on_no = nil_or(args.get(2));
 
@@ -135,9 +116,9 @@ primitive!(yes_or_no, args, env, ctx, {
         body: vec![ELispExp::form(vec![
             ELispExp::symbol("ask--typed".into()),
             ELispExp::symbol("answer".into()),
-            quoted(&ELispExp::string(prompt.clone())),
-            quoted(&on_yes),
-            quoted(&on_no),
+            args::quoted(ELispExp::string(prompt.clone())),
+            args::quoted(on_yes.clone()),
+            args::quoted(on_no.clone()),
         ])],
         env: env.clone(),
         doc: None,
@@ -146,11 +127,11 @@ primitive!(yes_or_no, args, env, ctx, {
     let read = ELispExp::form(vec![
         ELispExp::symbol("minibuffer-read".into()),
         ELispExp::string(format!("{prompt} (yes or no)")),
-        quoted(&confirm),
+        args::quoted(confirm.clone()),
         ELispExp::nil(),
         // Cancelling is not an answer, and treating it as one would be the
         // wrong one: `no' is the safe reading of "I did not mean to be here".
-        quoted(&on_no),
+        args::quoted(on_no.clone()),
     ]);
     eval(&read, env.clone(), ctx)
 });
@@ -194,9 +175,9 @@ primitive!(ask_typed, args, env, ctx, {
             return eval(
                 &ELispExp::form(vec![
                     ELispExp::symbol("yes-or-no".into()),
-                    quoted(&prompt),
-                    quoted(&on_yes),
-                    quoted(&on_no),
+                    args::quoted(prompt.clone()),
+                    args::quoted(on_yes.clone()),
+                    args::quoted(on_no.clone()),
                 ]),
                 env.clone(),
                 ctx,
@@ -209,21 +190,18 @@ primitive!(ask_typed, args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub(super) fn install<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B>>>) {
-    env.set_function(
-        "y-or-n".into(),
-        ELispExp::primitive(y_or_n, Some(Y_OR_N_DOC.into())),
-    );
-    env.set_function(
-        "yes-or-no".into(),
-        ELispExp::primitive(yes_or_no, Some(YES_OR_NO_DOC.into())),
-    );
-    env.set_function(
-        "ask--answer".into(),
-        ELispExp::primitive(ask_answer, Some(ASK_ANSWER_DOC.into())),
-    );
-    env.set_function(
-        "ask--typed".into(),
-        ELispExp::primitive(ask_typed, Some(ASK_TYPED_DOC.into())),
-    );
+/// Register this module's primitives: asking a question whose answer decides
+/// what happens next.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+///
+/// None of these is a command: a question is asked *by* something, and there
+/// is nothing for `M-x yes-or-no` to ask about.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.function("y-or-n", y_or_n, Y_OR_N_DOC);
+    into.function("yes-or-no", yes_or_no, YES_OR_NO_DOC);
+    into.function("ask--answer", ask_answer, ASK_ANSWER_DOC);
+    into.function("ask--typed", ask_typed, ASK_TYPED_DOC);
 }

@@ -17,6 +17,7 @@
 use super::*;
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
 use crate::lisp::call_callable;
+use crate::primitives::args;
 
 /// The name of the variable naming the view.
 pub const REPLACE_READ_FUNCTION: &str = "*replace-read-function*";
@@ -35,14 +36,6 @@ fn flag<B: BufferTrait>(
     }
 }
 
-fn string_arg<B: BufferTrait>(args: &[ELispExp<B>], index: usize) -> String {
-    match args.get(index) {
-        Some(ELispExp::String(text)) => text.to_string(),
-        Some(ELispExp::Symbol(text)) => text.to_string(),
-        _ => String::new(),
-    }
-}
-
 /// Start a session and hand it to whoever is asking.
 fn begin<B: BufferTrait>(
     args: &[ELispExp<B>],
@@ -51,8 +44,8 @@ fn begin<B: BufferTrait>(
     regexp: bool,
     interactive: bool,
 ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
-    let source = string_arg(args, 0);
-    let replacement = string_arg(args, 1);
+    let source = args::name_or_empty(args.first());
+    let replacement = args::name_or_empty(args.get(1));
     if let Some(why) = ctx.begin_replace(
         &source,
         &replacement,
@@ -62,7 +55,7 @@ fn begin<B: BufferTrait>(
         // bound from Rust. Replace reads it through the same function rather
         // than deciding for itself -- two commands disagreeing about what one
         // variable means is the surprise worth avoiding here.
-        crate::isearch::case_fold(&env),
+        crate::feature::isearch::case_fold(&env),
         flag(&env, CASE_REPLACE, true),
     ) {
         ctx.set_echo_message(&why);
@@ -291,3 +284,45 @@ pub const REPLACE_COUNT_DOC: &str =
 primitive!(replace_count, _args, _env, ctx, {
     Ok(ELispExp::number(ctx.replace_count() as f64))
 });
+
+/// Register this module's primitives: search and replace.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Replace. The verbs are plain functions -- a view calls them, not a
+    // person -- and only the four entry points are commands.
+    into.command(
+        "query-replace",
+        query_replace,
+        &["sReplace: ", "sWith: "],
+        QUERY_REPLACE_DOC,
+    );
+    into.command(
+        "query-replace-regexp",
+        query_replace_regexp,
+        &["sReplace regexp: ", "sWith: "],
+        QUERY_REPLACE_REGEXP_DOC,
+    );
+    into.command(
+        "replace-string",
+        replace_string,
+        &["sReplace: ", "sWith: "],
+        REPLACE_STRING_DOC,
+    );
+    into.command(
+        "replace-regexp",
+        replace_regexp,
+        &["sReplace regexp: ", "sWith: "],
+        REPLACE_REGEXP_DOC,
+    );
+    into.function("replace-this", replace_this, REPLACE_THIS_DOC);
+    into.function("replace-skip", replace_skip, REPLACE_SKIP_DOC);
+    into.function("replace-rest", replace_rest, REPLACE_REST_DOC);
+    into.function("replace-back", replace_back, REPLACE_BACK_DOC);
+    into.function("replace-done", replace_done, REPLACE_DONE_DOC);
+    into.function("replace-abandon", replace_abandon, REPLACE_ABANDON_DOC);
+    into.function("replace-match", replace_match, REPLACE_MATCH_DOC);
+    into.function("replace-count", replace_count, REPLACE_COUNT_DOC);
+}

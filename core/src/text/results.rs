@@ -20,7 +20,7 @@
 //! remember to tidy up. The alternative, a table of sets keyed by buffer name,
 //! is wrong the moment a buffer is renamed and still holding memory long after
 //! it is killed.
-use crate::search::Found;
+use crate::text::search::Found;
 
 /// The name a result set is attached to its buffer under.
 pub const RESULTS_KEY: &str = "results";

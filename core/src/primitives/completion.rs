@@ -63,7 +63,7 @@ const END_VAR: &str = "*completion-at-point-end*";
 /// match. Unset, the match is a plain prefix.
 const FILTER_HOOK: &str = "*completion-filter-function*";
 
-/// The presenter, shared with the minibuffer -- see `crate::minibuffer`.
+/// The presenter, shared with the minibuffer -- see `crate::feature::minibuffer`.
 const PRESENT_HOOK: &str = "*completion-read-function*";
 
 /// Read a list that may have arrived as data or as syntax.
@@ -117,12 +117,7 @@ fn parse_answer<B: BufferTrait>(
 
 /// The characters of the current buffer between two offsets.
 fn text_between<B: BufferTrait>(ctx: &EditorState<B>, start: usize, end: usize) -> String {
-    ctx.with_current_buffer(|buf| {
-        let end = end.min(buf.text.len());
-        (start.min(end)..end)
-            .filter_map(|at| buf.text.at(at))
-            .collect()
-    })
+    ctx.with_current_buffer(|buf| buf.text.slice(start, end))
 }
 
 /// Put TEXT where the region was, and leave point after it.
@@ -194,12 +189,7 @@ pub const ADD_COMPLETION_FUNCTION_DOC: &str = "(add-completion-function MODE FUN
          (add-completion-function nil 'capf-greeting)";
 
 primitive!(add_completion_function, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let mode = mode_argument(&args[0])?;
     if ctx.add_completion_function(mode.as_deref(), args[1].clone()) {
         Ok(ELispExp::t())
@@ -220,12 +210,7 @@ pub const SET_COMPLETION_FUNCTIONS_DOC: &str = "(set-completion-functions MODE F
          (set-completion-functions nil '(capf-file-name capf-buffer-words))";
 
 primitive!(set_completion_functions, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let mode = mode_argument(&args[0])?;
     if ctx.set_completion_functions(mode.as_deref(), as_list(&args[1])) {
         Ok(ELispExp::t())
@@ -314,17 +299,7 @@ primitive!(buffer_words, args, _env, ctx, {
             got: args.len(),
         });
     }
-    let buffer = match args.first() {
-        None => None,
-        Some(exp) if exp.is_nil() => None,
-        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => Some(name.to_string()),
-        Some(other) => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "String naming a buffer".into(),
-                got: other.clone(),
-            });
-        }
-    };
+    let buffer = args::optional_name(args.first(), "String naming a buffer")?;
     let minimum = match args.get(1) {
         Some(ELispExp::Number(n)) if n.is_finite() && *n >= 1.0 => *n as usize,
         _ => 3,
@@ -376,17 +351,8 @@ pub const BOUNDS_OF_THING_AT_POINT_DOC: &str = "(bounds-of-thing-at-point &optio
          (bounds-of-thing-at-point 'symbol) => (12 18)";
 
 primitive!(bounds_of_thing_at_point, args, _env, ctx, {
-    let wanted = match args.first() {
-        None => "symbol".to_string(),
-        Some(exp) if exp.is_nil() => "symbol".to_string(),
-        Some(ELispExp::Symbol(name)) | Some(ELispExp::String(name)) => name.to_string(),
-        Some(other) => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "Symbol or String".into(),
-                got: other.clone(),
-            });
-        }
-    };
+    let wanted = args::optional_name(args.first(), "Symbol or String")?
+        .unwrap_or_else(|| "symbol".to_string());
     let belongs: fn(char) -> bool = match wanted.as_str() {
         "symbol" => is_symbol_char,
         "filename" => is_file_char,
@@ -705,12 +671,7 @@ pub const FUZZY_FILTER_DOC: &str = "(fuzzy-filter PATTERN CANDIDATES): The candi
          (setq *completion-filter-function* 'fuzzy-filter)";
 
 primitive!(fuzzy_filter, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let pattern = match &args[0] {
         ELispExp::String(text) | ELispExp::Symbol(text) => text.to_string(),
         other if other.is_nil() => String::new(),
@@ -730,7 +691,7 @@ primitive!(fuzzy_filter, args, _env, ctx, {
     // bound *time*, so that a runaway loop is stopped in about a second; a
     // primitive doing n units of work for one unit of fuel is how that
     // guarantee quietly stops holding. Same reasoning as `expect_list` in
-    // `base_env`, which is where this rule is written down.
+    // `lisp::base`, which is where this rule is written down.
     //
     // It costs nothing in practice: twenty thousand candidates against a
     // budget of ten million is a fifth of a percent.
@@ -752,3 +713,49 @@ primitive!(fuzzy_filter, args, _env, ctx, {
         scored.into_iter().map(|(_, _, item)| item).collect(),
     ))
 });
+
+/// Register this module's primitives: completing what has been typed.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Completion at point. The registry of sources and the merge that runs
+    // them are Rust: they are the mechanism, not a policy, and every source
+    // and every presenter is reached through them. What each source actually
+    // knows -- file names, buffer words, the interpreter's own names -- is
+    // Lisp, in `completion-at-point.lisp`, and replaceable one at a time.
+    into.command(
+        "completion-at-point",
+        completion_at_point,
+        &[],
+        COMPLETION_AT_POINT_DOC,
+    );
+    into.function("fuzzy-filter", fuzzy_filter, FUZZY_FILTER_DOC);
+    into.function(
+        "completion-at-point-choose",
+        completion_at_point_choose,
+        COMPLETION_AT_POINT_CHOOSE_DOC,
+    );
+    into.function(
+        "add-completion-function",
+        add_completion_function,
+        ADD_COMPLETION_FUNCTION_DOC,
+    );
+    into.function(
+        "set-completion-functions",
+        set_completion_functions,
+        SET_COMPLETION_FUNCTIONS_DOC,
+    );
+    into.function(
+        "completion-functions",
+        completion_functions,
+        COMPLETION_FUNCTIONS_DOC,
+    );
+    into.function("buffer-words", buffer_words, BUFFER_WORDS_DOC);
+    into.function(
+        "bounds-of-thing-at-point",
+        bounds_of_thing_at_point,
+        BOUNDS_OF_THING_AT_POINT_DOC,
+    );
+}

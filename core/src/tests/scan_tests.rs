@@ -18,7 +18,7 @@ mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
-    use crate::search::Pattern;
+    use crate::text::search::Pattern;
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;

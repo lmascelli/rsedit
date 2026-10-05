@@ -20,11 +20,11 @@
 //!   for ever.
 #[cfg(test)]
 mod tests {
+    use crate::background::worker::{BackgroundJob, DEFAULT_WORKER_FUEL, JobBody};
+    use crate::background::{ImmediateTask, ScheduledTask, WorkerMessage};
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use crate::lisp::{Env, LispExp, Parser, eval};
-    use crate::task::{ImmediateTask, ScheduledTask, WorkerMessage};
-    use crate::worker::{BackgroundJob, DEFAULT_WORKER_FUEL, JobBody};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -628,7 +628,8 @@ mod tests {
 
     impl ImmediateTask<GapBuffer> for WhereAmI {
         fn execute(self: Box<Self>, _state: &Ctx) {
-            *self.0.lock().expect("the probe's slot") = Some(crate::worker::in_worker());
+            *self.0.lock().expect("the probe's slot") =
+                Some(crate::background::worker::in_worker());
         }
     }
 
@@ -663,7 +664,8 @@ mod tests {
 
     impl ScheduledTask<GapBuffer> for WhereAmIEachTurn {
         fn execute(&mut self, _state: &Ctx) -> bool {
-            *self.0.lock().expect("the probe's slot") = Some(crate::worker::in_worker());
+            *self.0.lock().expect("the probe's slot") =
+                Some(crate::background::worker::in_worker());
             false
         }
     }
@@ -703,18 +705,21 @@ mod tests {
         // was the thread the user is typing on -- and the one thing the flag
         // guards, a prompt appearing out of nowhere, is exactly the thing
         // nobody would think to look for there.
-        assert!(!crate::worker::in_worker(), "this thread is the user's");
-        let outer = crate::worker::WorkerTurn::begin();
+        assert!(
+            !crate::background::worker::in_worker(),
+            "this thread is the user's"
+        );
+        let outer = crate::background::worker::WorkerTurn::begin();
         {
-            let _inner = crate::worker::WorkerTurn::begin();
-            assert!(crate::worker::in_worker());
+            let _inner = crate::background::worker::WorkerTurn::begin();
+            assert!(crate::background::worker::in_worker());
         }
         assert!(
-            crate::worker::in_worker(),
+            crate::background::worker::in_worker(),
             "the outer turn has not ended, so the thread has not changed"
         );
         drop(outer);
-        assert!(!crate::worker::in_worker(), "and now it has");
+        assert!(!crate::background::worker::in_worker(), "and now it has");
     }
 
     #[test]
@@ -729,7 +734,10 @@ mod tests {
             assert!(Instant::now() < deadline, "the task never ran");
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(!crate::worker::in_worker(), "this thread is the user's");
+        assert!(
+            !crate::background::worker::in_worker(),
+            "this thread is the user's"
+        );
     }
 
     // ----------------------------------------------------------------

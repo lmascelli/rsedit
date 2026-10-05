@@ -6,12 +6,12 @@
 //! `let*`, `cond`, `and`, `or`, `when`, `unless`, `dolist`, `dotimes`,
 //! `defvar`, `defconst`, `prog1`, `prog2`, `unwind-protect`, `defmacro`,
 //! backquote/unquote/unquote-splicing). None of these tests call
-//! `setup_base_env` from `base_env.rs`, and no environment used below is
+//! `setup_base_env` from `lisp/base/`, and no environment used below is
 //! seeded with anything beyond three tiny, locally-defined primitives
 //! (`+`, `cons`, `eq`) needed to give a few forms (`dolist`, `dotimes`,
 //! `defmacro`) something to compute with. This keeps the suite a pure
 //! check of `lisp.rs`'s own Elisp-compliance, independent of whatever the
-//! "real" standard library in `base_env.rs` does or how it evolves.
+//! "real" standard library in `lisp/base/` does or how it evolves.
 #[cfg(test)]
 mod tests {
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};

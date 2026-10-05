@@ -19,16 +19,17 @@ pub use eval::{eval, grant_yield_permission, resume_frames};
 pub use fuel::{DEFAULT_FUEL, Exhausted, FuelMeter, FuelScope, measure, set_remaining};
 pub use lispexp::LispExp;
 pub use parser::{Parser, ParserError, form_to_data};
-use types::{ConsCell, ConsIter, FiberState, LispPrimitive, SharedAtom, SharedFiber};
-pub use types::{Frame, Lambda};
+use types::{ConsCell, ConsIter, FiberState, SharedAtom, SharedFiber};
+pub use types::{Frame, Lambda, LispPrimitive};
 use utils::{
     bind_lambda_args, condition_matches, data_to_form, error_data, error_symbol,
     parse_lambda_params,
 };
+pub use utils::{exact_arity, some_arguments};
 
-mod base_env;
+mod base;
 mod handshake;
-pub use base_env::{call_callable, lisp_display, setup_base_env};
+pub use base::{call_callable, lisp_display, setup_base_env};
 pub use handshake::bootstrap_vm;
 
 #[cfg(test)]

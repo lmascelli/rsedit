@@ -122,12 +122,7 @@ pub const DISPLAY_BUFFER_AT_BOTTOM_DOC: &str = "(display-buffer-at-bottom BUFFER
          (delete-window w)";
 
 primitive!(display_buffer_at_bottom, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let name = match &args[0] {
         ELispExp::String(name) | ELispExp::Symbol(name) => name.to_string(),
         other => {
@@ -284,3 +279,57 @@ primitive!(select_window, args, _env, ctx, {
         ELispExp::nil()
     })
 });
+
+/// Register this module's primitives: splitting, focusing, resizing and closing windows.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // ---------------------------------------------------------------
+    // Windows
+    // ---------------------------------------------------------------
+    into.command(
+        "split-window-below",
+        split_window_below,
+        &[],
+        SPLIT_WINDOW_BELOW_DOC,
+    );
+    into.command(
+        "split-window-right",
+        split_window_right,
+        &[],
+        SPLIT_WINDOW_RIGHT_DOC,
+    );
+    into.command("delete-window", delete_window, &[], DELETE_WINDOW_DOC);
+    into.command(
+        "delete-other-windows",
+        delete_other_windows,
+        &[],
+        DELETE_OTHER_WINDOWS_DOC,
+    );
+    into.command("other-window", other_window, &["p"], OTHER_WINDOW_DOC);
+    into.function("selected-window", selected_window, SELECTED_WINDOW_DOC);
+    into.function("select-window", select_window, SELECT_WINDOW_DOC);
+    into.function("count-windows", count_windows, COUNT_WINDOWS_DOC);
+    // Moving the view rather than point. Commands, because `C-v` and `M-v` are
+    // keys and because a prefix argument means screenfuls.
+    into.command(
+        "scroll-up-command",
+        scroll_up_command,
+        &["p"],
+        SCROLL_UP_COMMAND_DOC,
+    );
+    into.command(
+        "scroll-down-command",
+        scroll_down_command,
+        &["p"],
+        SCROLL_DOWN_COMMAND_DOC,
+    );
+    into.function(
+        "display-buffer-at-bottom",
+        display_buffer_at_bottom,
+        DISPLAY_BUFFER_AT_BOTTOM_DOC,
+    );
+    into.function("window-buffer", window_buffer, WINDOW_BUFFER_DOC);
+}

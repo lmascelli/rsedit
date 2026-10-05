@@ -17,11 +17,11 @@
 //! colouring, with no error anywhere.
 #[cfg(test)]
 mod tests {
+    use crate::background::ScheduledTask;
+    use crate::background::worker::{DEFAULT_WORKER_FUEL, LispWorker};
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
-    use crate::task::ScheduledTask;
-    use crate::worker::{DEFAULT_WORKER_FUEL, LispWorker};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;

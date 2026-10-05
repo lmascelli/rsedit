@@ -173,3 +173,24 @@ primitive!(reset_faces, _args, _env, ctx, {
     ctx.reset_theme();
     Ok(ELispExp::nil())
 });
+
+/// Register this module's primitives: faces and the colours they are drawn in.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // ---------------------------------------------------------------
+    // Faces and the theme
+    // ---------------------------------------------------------------
+    into.command(
+        "set-face",
+        set_face,
+        &["s:Face: ", "s:Foreground: ", "s:Background: "],
+        SET_FACE_DOC,
+    );
+    into.function("face-style", face_style, FACE_STYLE_DOC);
+    into.function("reset-faces", reset_faces, RESET_FACES_DOC);
+    into.function("list-faces", list_faces, LIST_FACES_DOC);
+    into.function("list-colors", list_colors, LIST_COLORS_DOC);
+}

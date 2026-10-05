@@ -6,7 +6,7 @@
 //! single keys; something with a window asks with buttons; a script does not
 //! ask at all. None of those can be written as a loop that reads an answer --
 //! there is no blocking read here, and a button press is not a read in any
-//! case -- so the loop is turned inside out. [`crate::search::Replace`] holds
+//! case -- so the loop is turned inside out. [`crate::text::search::Replace`] holds
 //! the place in it, and whoever is asking calls one of these per answer.
 //!
 //! That split is the point, and it is the same one `*minibuffer-read-function*`
@@ -27,7 +27,7 @@
 //! or reads a key.
 use super::*;
 use crate::primitives::edits;
-use crate::search::{Pattern, Replace, expand_replacement};
+use crate::text::search::{Pattern, Replace, expand_replacement};
 
 /// The overlay category the current match is marked with.
 ///
@@ -105,11 +105,7 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// The characters between START and END of the current buffer.
     fn matched_text(&self, start: usize, end: usize) -> String {
-        self.with_current_buffer(|buf| {
-            (start..end)
-                .filter_map(|at| buf.text.at(at))
-                .collect::<String>()
-        })
+        self.with_current_buffer(|buf| buf.text.slice(start, end))
     }
 
     /// How many have been replaced so far.

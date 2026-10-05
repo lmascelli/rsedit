@@ -10,6 +10,7 @@
 use super::*;
 use crate::commands::ArgSpec;
 use crate::lisp::call_callable;
+use crate::primitives::args;
 
 /// A Lisp function of (KIND PREFIX) returning completion candidates, consulted
 /// before the built-in ones. Unset by default; bind it to replace how any
@@ -20,16 +21,6 @@ const COMPLETION_HOOK: &str = "*command-arg-completion-function*";
 /// Read a command name from an argument that may be a symbol or a string, so
 /// `(commandp 'find-file)` and `(commandp "find-file")` both work -- M-x has a
 /// string in hand, Lisp code has a symbol.
-fn command_name<B: BufferTrait>(exp: &ELispExp<B>) -> Result<String, EvalError<EditorState<B>>> {
-    match exp {
-        ELispExp::Symbol(name) | ELispExp::String(name) => Ok(name.to_string()),
-        other => Err(EvalError::WrongArgumentType {
-            expected: "Symbol or String".into(),
-            got: other.clone(),
-        }),
-    }
-}
-
 /// `(KIND PROMPT)` for one argument, as Lisp sees it -- already parsed, so the
 /// prompting code dispatches on a symbol instead of re-splitting a string.
 fn spec_to_lisp<B: BufferTrait>(spec: &ArgSpec) -> ELispExp<B> {
@@ -52,13 +43,8 @@ pub const REGISTER_COMMAND_DOC: &str = "(register-command NAME SPECS): Register 
          (register-command 'save-buffer nil)";
 
 primitive!(register_command, args, env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
-    let name = command_name(&args[0])?;
+    exact_arity(args, 2)?;
+    let name = args::name(args.first())?;
 
     // Accept the spec list whether it arrived as data or as syntax.
     //
@@ -120,13 +106,10 @@ pub const COMMANDP_DOC: &str = "(commandp NAME): Return t if NAME (a symbol or s
          (commandp 'car)       => nil";
 
 primitive!(commandp, args, _env, ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
-    Ok(ELispExp::boolean(ctx.is_command(&command_name(&args[0])?)))
+    exact_arity(args, 1)?;
+    Ok(ELispExp::boolean(
+        ctx.is_command(&args::name(args.first())?),
+    ))
 });
 
 pub const COMMAND_ARGS_DOC: &str = "(command-args NAME): Return the arguments the editor collects \
@@ -137,14 +120,9 @@ pub const COMMAND_ARGS_DOC: &str = "(command-args NAME): Return the arguments th
          (command-args 'find-file) => ((file \"Find file: \"))";
 
 primitive!(command_args, args, _env, ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 1)?;
     let specs = ctx
-        .command_specs(&command_name(&args[0])?)
+        .command_specs(&args::name(args.first())?)
         .unwrap_or_default();
     Ok(ELispExp::proper_list(
         specs.iter().map(spec_to_lisp).collect(),
@@ -179,13 +157,8 @@ pub const CALL_INTERACTIVELY_DOC: &str = "(call-interactively COMMAND): Run COMM
          (call-interactively 'find-file)   ; prompts, then opens the file";
 
 primitive!(call_interactively, args, env, ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
-    let name = command_name(&args[0])?;
+    exact_arity(args, 1)?;
+    let name = args::name(args.first())?;
 
     // Anything left on the stack while no prompt is open belongs to a
     // minibuffer that was closed by neither confirm nor cancel.
@@ -427,7 +400,7 @@ pub const EXECUTE_EXTENDED_COMMAND_DOC: &str = "(execute-extended-command NAME):
 
 primitive!(execute_extended_command, args, env, ctx, {
     let name = match args.first() {
-        Some(exp) => command_name(exp)?,
+        Some(exp) => args::name(Some(exp))?,
         None => {
             return Err(EvalError::WrongNumberOfArguments {
                 expected: 1,
@@ -509,3 +482,43 @@ primitive!(pending_command, _args, _env, ctx, {
         None => ELispExp::nil(),
     })
 });
+
+/// Register this module's primitives: the command registry, and running a command by name.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // The registry itself. These are plain functions, not commands: they are
+    // how Lisp inspects and extends the command set, not things a user runs
+    // from M-x.
+    into.function("register-command", register_command, REGISTER_COMMAND_DOC);
+    into.function("commandp", commandp, COMMANDP_DOC);
+    into.function("command-args", command_args, COMMAND_ARGS_DOC);
+    into.function("all-commands", all_commands, ALL_COMMANDS_DOC);
+    into.function(
+        "execute-extended-command",
+        execute_extended_command,
+        EXECUTE_EXTENDED_COMMAND_DOC,
+    );
+    into.function(
+        "command-completions",
+        command_completions,
+        COMMAND_COMPLETIONS_DOC,
+    );
+    into.command(
+        "command-execute-prompt",
+        command_execute_prompt,
+        &[],
+        COMMAND_EXECUTE_PROMPT_DOC,
+    );
+    into.function("all-buffer-names", all_buffer_names, ALL_BUFFER_NAMES_DOC);
+    into.function(
+        "call-interactively",
+        call_interactively,
+        CALL_INTERACTIVELY_DOC,
+    );
+    // Which command's prompt is up, for anything that has to know -- a
+    // preview, a mode line. See `primitives::commands`.
+    into.function("pending-command", pending_command, PENDING_COMMAND_DOC);
+}

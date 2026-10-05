@@ -21,10 +21,11 @@
 //! text that is no longer there -- and, worse, offsets that land somewhere
 //! else entirely when you jump to them.
 use super::*;
+use crate::background::{ImmediateTask, WorkerMessage};
 use crate::lisp::eval;
-use crate::results::{Entry, KIND_BUFFER, KIND_FILE, RESULTS_KEY, Results};
-use crate::search::Pattern;
-use crate::task::{ImmediateTask, WorkerMessage};
+use crate::primitives::args;
+use crate::text::results::{Entry, KIND_BUFFER, KIND_FILE, RESULTS_KEY, Results};
+use crate::text::search::Pattern;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -89,20 +90,6 @@ pub(crate) fn with_results_mut<B: BufferTrait, R>(
 ///
 /// The same door shell output goes through -- a results buffer is read-only
 /// for the same reason a transcript is, and the thing writing it is the thing
-/// that made it read-only.
-fn append<B: BufferTrait>(ctx: &EditorState<B>, name: &str, text: &str) {
-    let written = ctx.with_buffer_mut(name, |buf| {
-        let was_read_only = buf.read_only;
-        buf.read_only = false;
-        let at = buf.text.len();
-        let written = crate::primitives::edits::insert_text(buf, at, text);
-        buf.read_only = was_read_only;
-        written
-    });
-    if written == Some(false) {
-        ctx.log_diagnostic(&format!("Could not write results into {name}"));
-    }
-}
 
 /// The text of the buffer visiting PATH, when one is open and has changes the
 /// file does not.
@@ -167,7 +154,7 @@ fn collect<B: BufferTrait>(
     if stored.is_none() {
         return 0;
     }
-    append(ctx, buffer, &rendered);
+    ctx.append_to_buffer(buffer, &rendered);
     added
 }
 
@@ -246,21 +233,7 @@ fn finish<B: BufferTrait>(ctx: &EditorState<B>, buffer: &str, found: usize) {
         (n, false) => format!("--- {n} matches ---\n"),
         (n, true) => format!("--- {n} matches, and the search stopped early ---\n"),
     };
-    append(ctx, buffer, &trailer);
-}
-
-/// A name no buffer currently has: NAME, then `NAME<2>`, `NAME<3>`...
-fn free_name<B: BufferTrait>(ctx: &EditorState<B>, name: &str) -> String {
-    if !ctx.has_buffer(name) {
-        return name.to_string();
-    }
-    for n in 2.. {
-        let candidate = format!("{name}<{n}>");
-        if !ctx.has_buffer(&candidate) {
-            return candidate;
-        }
-    }
-    unreachable!("the loop above returns")
+    ctx.append_to_buffer(buffer, &trailer);
 }
 
 /// Open the buffer a search will write into, with its header line in place.
@@ -270,35 +243,12 @@ fn open_results<B: BufferTrait>(
     mode: &str,
     results: Results,
 ) -> String {
-    let name = free_name(ctx, name);
+    let name = ctx.free_buffer_name(name);
     ctx.new_buffer(&name, None, Some(mode.to_string()));
-    append(
-        ctx,
-        &name,
-        &format!("{} in {}\n", results.pattern, results.over),
-    );
+    ctx.append_to_buffer(&name, &format!("{} in {}\n", results.pattern, results.over));
     attach(ctx, &name, results);
     ctx.with_buffer_mut(&name, |buf| buf.read_only = true);
     name
-}
-
-fn pattern_arg<B: BufferTrait>(args: &[ELispExp<B>]) -> Result<String, EvalError<EditorState<B>>> {
-    match args.first() {
-        Some(ELispExp::String(text)) => Ok(text.to_string()),
-        other => Err(EvalError::WrongArgumentType {
-            expected: "String".into(),
-            got: other.cloned().unwrap_or_else(ELispExp::nil),
-        }),
-    }
-}
-
-fn mode_arg<B: BufferTrait>(args: &[ELispExp<B>], index: usize, fallback: &str) -> String {
-    match args.get(index) {
-        Some(ELispExp::Symbol(name)) | Some(ELispExp::String(name)) if !name.is_empty() => {
-            name.to_string()
-        }
-        _ => fallback.to_string(),
-    }
 }
 
 pub const OCCUR_SCAN_DOC: &str = "(occur--scan PATTERN &optional REGEXP MODE): Find every line of this \
@@ -321,11 +271,15 @@ pub const OCCUR_SCAN_DOC: &str = "(occur--scan PATTERN &optional REGEXP MODE): F
          (occur--scan \"fn [a-z_]+\" t)";
 
 primitive!(occur_scan, args, env, ctx, {
-    let source_pattern = pattern_arg(args)?;
+    let source_pattern = args::text(args.first())?;
     let regexp = args.get(1).is_some_and(|value| value.is_truthy());
-    let mode = mode_arg(args, 2, "occur-mode");
-    let pattern = Pattern::new(&source_pattern, regexp, crate::isearch::case_fold(&env))
-        .map_err(EvalError::RuntimeMessage)?;
+    let mode = args::name_or(args.get(2), "occur-mode");
+    let pattern = Pattern::new(
+        &source_pattern,
+        regexp,
+        crate::feature::isearch::case_fold(&env),
+    )
+    .map_err(EvalError::RuntimeMessage)?;
     let source = ctx.get_current_buffer_name();
     let text = ctx.with_current_buffer(|buf| buf.text.to_string());
     ctx.consume_fuel(u32::try_from(text.chars().count()).unwrap_or(u32::MAX))?;
@@ -370,15 +324,19 @@ pub const GREP_SCAN_DOC: &str = "(grep--scan PATTERN &optional DIRECTORY REGEXP 
          (grep--scan \"fn [a-z_]+\" \"src\" t)";
 
 primitive!(grep_scan, args, env, ctx, {
-    let source_pattern = pattern_arg(args)?;
+    let source_pattern = args::text(args.first())?;
     let directory = match args.get(1) {
         Some(ELispExp::String(path)) if !path.is_empty() => path.to_string(),
         _ => ".".to_string(),
     };
     let regexp = args.get(2).is_some_and(|value| value.is_truthy());
-    let mode = mode_arg(args, 3, "occur-mode");
-    let pattern = Pattern::new(&source_pattern, regexp, crate::isearch::case_fold(&env))
-        .map_err(EvalError::RuntimeMessage)?;
+    let mode = args::name_or(args.get(3), "occur-mode");
+    let pattern = Pattern::new(
+        &source_pattern,
+        regexp,
+        crate::feature::isearch::case_fold(&env),
+    )
+    .map_err(EvalError::RuntimeMessage)?;
     let root = PathBuf::from(crate::primitives::io::expand_path(&directory));
     if !root.is_dir() {
         ctx.set_echo_message(&format!("{directory} is not a directory"));
@@ -454,8 +412,7 @@ fn mark_line<B: BufferTrait>(ctx: &EditorState<B>, category: &str) {
         buf.overlays.remove_category(Some(category));
         let point = buf.text.cursor_pos_1d();
         let line = buf.text.cursor_1d_to_2d(point).0;
-        let start = buf.text.cursor_2d_to_1d(line, 0);
-        let end = start + crate::primitives::edits::line_length(&buf.text, line);
+        let (start, end) = crate::primitives::edits::line_bounds(&buf.text, line);
         if end > start {
             buf.overlays
                 .add(start, end, face, MARK_PRIORITY, category.into());
@@ -890,3 +847,23 @@ primitive!(results_put, args, _env, ctx, {
     ctx.set_current_results(Some(buffer));
     Ok(ELispExp::number(count as f64))
 });
+
+/// Register this module's primitives: lists of places, and walking them.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Lists of places, and walking them. See `primitives::results`.
+    into.function("occur--scan", occur_scan, OCCUR_SCAN_DOC);
+    into.function("grep--scan", grep_scan, GREP_SCAN_DOC);
+    into.command("next-error", next_error, &[], NEXT_ERROR_DOC);
+    into.command("previous-error", previous_error, &[], PREVIOUS_ERROR_DOC);
+    into.function("results-count", results_count, RESULTS_COUNT_DOC);
+    into.function("results-entry", results_entry, RESULTS_ENTRY_DOC);
+    into.function("results-state", results_state, RESULTS_STATE_DOC);
+    into.function("results-visit", results_visit, RESULTS_VISIT_DOC);
+    into.function("results-buffer", results_buffer, RESULTS_BUFFER_DOC);
+    into.command("results-select", results_select, &[], RESULTS_SELECT_DOC);
+    into.function("results-put", results_put, RESULTS_PUT_DOC);
+}

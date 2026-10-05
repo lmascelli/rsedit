@@ -74,10 +74,10 @@ pub fn region_bounds(mark: Option<Mark>, point: usize, len: usize) -> Option<(us
 pub fn rectangle_corners<B: crate::buffer::BufferTrait>(
     mark: Option<Mark>,
     text: &B,
-) -> Option<crate::rectangle::Rectangle> {
+) -> Option<crate::text::rectangle::Rectangle> {
     let mark = mark.filter(|mark| mark.active)?;
     let point = text.cursor_pos_1d();
-    Some(crate::rectangle::Rectangle::between(
+    Some(crate::text::rectangle::Rectangle::between(
         text.cursor_1d_to_2d(mark.at.min(text.len())),
         text.cursor_1d_to_2d(point),
     ))

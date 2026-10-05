@@ -31,7 +31,6 @@
 //! is not a colour, it is a terminal's encoding of one.
 //!
 
-
 /// A thing that can be drawn differently, named rather than coloured.
 ///
 /// # Why this is an interned name and not an enum

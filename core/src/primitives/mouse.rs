@@ -238,3 +238,30 @@ primitive!(mouse_resize, args, _env, ctx, {
         ELispExp::nil()
     })
 });
+
+/// Register this module's primitives: clicks, drags and the wheel.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // A command rather than a plain function, because it is one: the renderer
+    // runs it when the terminal reports a bracketed paste, and it wants the
+    // undo grouping and the `post-command-hook' that being a command brings.
+    into.command("mouse-set-point", mouse_set_point, &[], MOUSE_SET_POINT_DOC);
+    into.command(
+        "mouse-start-selection",
+        mouse_start_selection,
+        &[],
+        MOUSE_START_SELECTION_DOC,
+    );
+    into.command("mouse-drag-to", mouse_drag_to, &[], MOUSE_DRAG_TO_DOC);
+    into.command("mouse-resize", mouse_resize, &[], MOUSE_RESIZE_DOC);
+    into.command(
+        "mouse-mode-toggle",
+        mouse_mode_toggle,
+        &[],
+        MOUSE_MODE_TOGGLE_DOC,
+    );
+    into.command("mouse-scroll", mouse_scroll, &[], MOUSE_SCROLL_DOC);
+}

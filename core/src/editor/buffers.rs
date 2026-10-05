@@ -173,6 +173,55 @@ impl<B: BufferTrait> EditorState<B> {
         self.buffers(|buffers| buffers.contains(name))
     }
 
+    /// Append TEXT to the buffer called NAME, read-only or not. False when
+    /// there is no such buffer, or the write was refused.
+    ///
+    /// # Why the flag goes down and up inside one call
+    ///
+    /// A transcript is read-only so that nobody types into it, and appending
+    /// to one therefore has to turn that off. Done inside a single
+    /// `with_buffer_mut` the write lock is held across the whole of it, so
+    /// there is no moment when the buffer is both visible and writable.
+    /// `dired` does the same from Lisp, where it cannot hold a lock and has to
+    /// trust that nothing runs in between.
+    ///
+    /// Here rather than in the two primitives that wanted it -- a shell
+    /// command's output and a search's results -- which held the same thirteen
+    /// lines each, differing only in the wording of the complaint.
+    pub(crate) fn append_to_buffer(&self, name: &str, text: &str) -> bool {
+        self.with_buffer_mut(name, |buf| {
+            let was_read_only = buf.read_only;
+            buf.read_only = false;
+            let at = buf.text.len();
+            // Cannot fail here -- the only thing `insert_text` refuses is a
+            // read-only buffer, and the flag was just cleared under this same
+            // lock. Checked rather than discarded so that if it ever grows
+            // another reason to refuse, the text going missing is reported
+            // instead of silently not appearing.
+            let written = crate::primitives::edits::insert_text(buf, at, text);
+            buf.read_only = was_read_only;
+            written
+        }) == Some(true)
+    }
+
+    /// STEM, or `STEM<2>`, `STEM<3>` -- the first that no buffer is using.
+    ///
+    /// What makes a second `M-!` or a second `occur` open a buffer of its own
+    /// rather than writing into the first one's. The two callers spelt this out
+    /// separately, one of them with its stem baked in.
+    pub(crate) fn free_buffer_name(&self, stem: &str) -> String {
+        if !self.has_buffer(stem) {
+            return stem.to_string();
+        }
+        for n in 2.. {
+            let candidate = format!("{stem}<{n}>");
+            if !self.has_buffer(&candidate) {
+                return candidate;
+            }
+        }
+        unreachable!("the loop above returns")
+    }
+
     /// Show the buffer named NAME in the focused window, and make it current.
     ///
     /// # Why this is a method and not five lines at each call site
@@ -329,7 +378,7 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// The current buffer's name without copying it.
-    pub(crate) fn current_buffer_name_shared(&self) -> Arc<str> {
+    fn current_buffer_name_shared(&self) -> Arc<str> {
         self.buffers(|buffers| buffers.current_name())
     }
 

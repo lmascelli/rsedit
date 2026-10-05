@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::lisp::base_env::setup_base_env;
+    use crate::lisp::base::setup_base_env;
     use crate::lisp::{Env, EvalError, LispContext, LispExp, Parser, eval};
     use std::sync::Arc;
 

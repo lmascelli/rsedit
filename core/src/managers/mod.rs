@@ -15,8 +15,13 @@
 //!   together by anything but the facade.
 //! - **It hands out no guards.** State is reached through a closure, so a lock
 //!   cannot outlive the question that needed it.
-//! - **It knows nothing of Lisp.** No compartment takes an `Env`, so no
-//!   compartment can be holding a lock when user code re-enters the editor.
+//! - **It never evaluates.** No compartment takes an `Env`, so no compartment
+//!   can be holding a lock when user code re-enters the editor. It may *store*
+//!   a Lisp value -- a command's body, a mode's hook -- because storing one is
+//!   no different from storing a string; what it may not do is hand one to the
+//!   interpreter. The rule used to read "it knows nothing of Lisp", which its
+//!   own next sentence contradicted: `Commands` and `Modes` are full of
+//!   `ELispExp`, and have to be.
 //! - **It answers with a verdict, not a side effect.** Where an operation has
 //!   consequences outside its own fields -- a buffer to repoint, a window to
 //!   refocus -- it returns an enum saying so and lets the facade act.

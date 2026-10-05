@@ -13,7 +13,7 @@
 //! No care in the callback fixes that, because the callback is not what is
 //! wrong. So a job does not call; it leaves a note saying what should be
 //! called, and the note is read where a keystroke would be read. See
-//! [`crate::worker::BackgroundJob`] for the rule this is the machinery for.
+//! [`crate::background::worker::BackgroundJob`] for the rule this is the machinery for.
 //!
 //! # Why it is a field and not a compartment
 //!

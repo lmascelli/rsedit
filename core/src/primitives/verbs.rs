@@ -25,23 +25,11 @@
 //! carries on from there.
 use super::*;
 use crate::buffer::{Buffer, mark::region_bounds};
-use crate::kill_ring::Direction;
 use crate::primitives::edits::{
-    cut_out, delete_range, goto_offset, insert_text, is_word_char, line_length, word_backward,
+    cut_out, delete_range, goto_offset, insert_text, is_word_char, line_bounds, word_backward,
     word_forward,
 };
-
-/// The half-open offsets of LINE, not counting its newline.
-fn line_bounds<B: BufferTrait>(text: &B, line: usize) -> (usize, usize) {
-    let start = text.cursor_2d_to_1d(line, 0);
-    (start, start + line_length(text, line))
-}
-
-fn between<B: BufferTrait>(text: &B, from: usize, to: usize) -> String {
-    (from..to.min(text.len()))
-        .filter_map(|at| text.at(at))
-        .collect()
-}
+use crate::text::kill_ring::Direction;
 
 /// Replace `[from, to)` with TEXT and put point at POINT.
 ///
@@ -56,7 +44,7 @@ fn replace_span<B: BufferTrait>(
     text: &str,
     point: usize,
 ) -> bool {
-    if between(&buf.text, from, to) == text {
+    if buf.text.slice(from, to) == text {
         goto_offset(&mut buf.text, point);
         return false;
     }
@@ -128,7 +116,7 @@ fn recase<B: BufferTrait>(ctx: &EditorState<B>, casing: Casing) -> ELispExp<B> {
         if from >= to {
             return false;
         }
-        let text = casing.apply(&between(&buf.text, from, to));
+        let text = casing.apply(&buf.text.slice(from, to));
         // A region keeps point where it was; a word leaves point after
         // itself, which is what makes the key repeatable.
         let point = if was_region {
@@ -231,7 +219,7 @@ primitive!(just_one_space, _args, _env, ctx, {
 /// Whether LINE has nothing but whitespace on it.
 fn blank_line<B: BufferTrait>(text: &B, line: usize) -> bool {
     let (from, to) = line_bounds(text, line);
-    between(text, from, to).trim().is_empty()
+    text.slice(from, to).trim().is_empty()
 }
 
 pub const DELETE_BLANK_LINES_DOC: &str = "(delete-blank-lines): On a blank line in a run of them, \
@@ -388,7 +376,7 @@ primitive!(duplicate_line, _args, _env, ctx, {
         let point = buf.text.cursor_pos_1d();
         let line = buf.text.cursor_pos().0;
         let (start, end) = line_bounds(&buf.text, line);
-        let text = between(&buf.text, start, end);
+        let text = buf.text.slice(start, end);
         // Inserted *after* this line's newline where there is one, so the copy
         // is a line rather than the rest of this one.
         let at = (end + 1).min(buf.text.len());
@@ -419,8 +407,8 @@ primitive!(transpose_lines, _args, _env, ctx, {
         let column = buf.text.cursor_pos().1;
         let (above_start, above_end) = line_bounds(&buf.text, line - 1);
         let (start, end) = line_bounds(&buf.text, line);
-        let above = between(&buf.text, above_start, above_end);
-        let here = between(&buf.text, start, end);
+        let above = buf.text.slice(above_start, above_end);
+        let here = buf.text.slice(start, end);
         let swapped = format!("{here}\n{above}");
         // Point follows the text it was in: it was on the lower line, which is
         // now the upper one, at the same column.
@@ -465,7 +453,7 @@ primitive!(transpose_chars, _args, _env, ctx, {
             }
             point - 1
         };
-        let pair = between(&buf.text, first, first + 2);
+        let pair = buf.text.slice(first, first + 2);
         let mut chars = pair.chars();
         let (Some(a), Some(b)) = (chars.next(), chars.next()) else {
             return false;
@@ -504,9 +492,9 @@ primitive!(transpose_words, _args, _env, ctx, {
         if second_start < first_end || second_start >= second_end {
             return false;
         }
-        let first = between(&buf.text, first_start, first_end);
-        let middle = between(&buf.text, first_end, second_start);
-        let second = between(&buf.text, second_start, second_end);
+        let first = buf.text.slice(first_start, first_end);
+        let middle = buf.text.slice(first_end, second_start);
+        let second = buf.text.slice(second_start, second_end);
         let swapped = format!("{second}{middle}{first}");
         replace_span(buf, first_start, second_end, &swapped, second_end)
     });
@@ -585,3 +573,41 @@ primitive!(zap_to_char_do, args, env, ctx, {
         }
     }
 });
+
+/// Register this module's primitives: the transformations a key applies to a word, a line, a region.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // The small verbs. See `primitives::verbs`.
+    into.command("upcase-word", upcase_word, &[], UPCASE_WORD_DOC);
+    into.command("downcase-word", downcase_word, &[], DOWNCASE_WORD_DOC);
+    into.command("capitalize-word", capitalize_word, &[], CAPITALIZE_WORD_DOC);
+    into.command(
+        "delete-horizontal-space",
+        delete_horizontal_space,
+        &[],
+        DELETE_HORIZONTAL_SPACE_DOC,
+    );
+    into.command("just-one-space", just_one_space, &[], JUST_ONE_SPACE_DOC);
+    into.command(
+        "delete-blank-lines",
+        delete_blank_lines,
+        &[],
+        DELETE_BLANK_LINES_DOC,
+    );
+    into.command(
+        "back-to-indentation",
+        back_to_indentation,
+        &[],
+        BACK_TO_INDENTATION_DOC,
+    );
+    into.command("join-line", join_line, &[], JOIN_LINE_DOC);
+    into.command("duplicate-line", duplicate_line, &[], DUPLICATE_LINE_DOC);
+    into.command("transpose-lines", transpose_lines, &[], TRANSPOSE_LINES_DOC);
+    into.command("transpose-chars", transpose_chars, &[], TRANSPOSE_CHARS_DOC);
+    into.command("transpose-words", transpose_words, &[], TRANSPOSE_WORDS_DOC);
+    into.command("zap-to-char", zap_to_char, &[], ZAP_TO_CHAR_DOC);
+    into.function("zap-to-char--do", zap_to_char_do, ZAP_TO_CHAR_DO_DOC);
+}

@@ -151,16 +151,6 @@ impl<B: BufferTrait> Modes<B> {
         self.registry.get(name)
     }
 
-    pub fn contains(&self, name: &str) -> bool {
-        self.registry.contains_key(name)
-    }
-
-    pub fn names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.registry.keys().cloned().collect();
-        names.sort_unstable();
-        names
-    }
-
     pub fn insert(&mut self, name: &str, mode: MajorMode<B>) {
         self.registry.insert(name.to_string(), mode);
     }
@@ -192,6 +182,11 @@ impl<B: BufferTrait> Modes<B> {
     // Keymaps
     // ------------------------------------------------------------------
 
+    /// Only a test reads the whole map: the editor resolves a key through
+    /// [`Self::resolve`], which is the same question asked the way the editor
+    /// asks it. Compiled only for tests so that it is not mistaken for the
+    /// supported way in.
+    #[cfg(test)]
     pub fn global_keymap(&self) -> &Keymap<B> {
         &self.global_keymap
     }
@@ -201,7 +196,7 @@ impl<B: BufferTrait> Modes<B> {
     }
 
     /// MODE's own keymap, when it has one.
-    pub fn mode_keymap(&self, mode: &str) -> Option<&Keymap<B>> {
+    fn mode_keymap(&self, mode: &str) -> Option<&Keymap<B>> {
         self.registry.get(mode).map(|mode| &mode.keymaps)
     }
 
@@ -331,6 +326,9 @@ impl<B: BufferTrait> Modes<B> {
         self.transient = None;
     }
 
+    /// Compiled only for tests, like the facade method that is its only
+    /// caller: nothing in the editor branches on whether a map is up.
+    #[cfg(test)]
     pub fn transient_active(&self) -> bool {
         self.transient.is_some()
     }

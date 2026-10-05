@@ -89,17 +89,8 @@ primitive!(make_virtual_text, args, _env, ctx, {
             });
         }
     };
-    let category = match args.get(4) {
-        None => DEFAULT_CATEGORY.to_string(),
-        Some(exp) if exp.is_nil() => DEFAULT_CATEGORY.to_string(),
-        Some(ELispExp::Symbol(name)) | Some(ELispExp::String(name)) => name.to_string(),
-        Some(other) => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "Symbol naming a category".into(),
-                got: other.clone(),
-            });
-        }
-    };
+    let category = args::optional_name(args.get(4), "Symbol naming a category")?
+        .unwrap_or_else(|| DEFAULT_CATEGORY.to_string());
     let id = ctx.with_current_buffer_mut(|buf| {
         // Clamped to the buffer, so a caller working from stale offsets puts
         // its text at the end rather than nowhere.
@@ -123,17 +114,7 @@ pub const CLEAR_VIRTUAL_TEXT_DOC: &str = "(clear-virtual-text &optional CATEGORY
          (clear-virtual-text 'lsp-hints)";
 
 primitive!(clear_virtual_text, args, _env, ctx, {
-    let category = match args.first() {
-        None => None,
-        Some(exp) if exp.is_nil() => None,
-        Some(ELispExp::Symbol(name)) | Some(ELispExp::String(name)) => Some(name.to_string()),
-        Some(other) => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "Symbol naming a category, or nil".into(),
-                got: other.clone(),
-            });
-        }
-    };
+    let category = args::optional_name(args.first(), "Symbol naming a category, or nil")?;
     let gone = ctx.with_current_buffer_mut(|buf| buf.virtual_text.clear(category.as_deref()));
     Ok(ELispExp::number(gone as f64))
 });
@@ -192,3 +173,30 @@ primitive!(virtual_text_at, args, _env, ctx, {
         )
     }))
 });
+
+/// Register this module's primitives: text shown in the view that is not in the buffer.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Text shown in a window that is not in the buffer: a hint, a preview.
+    // See `primitives::virtual_text`, and `ui::layout` for how a row that is
+    // wider on screen than it is in the buffer is drawn and clicked on.
+    into.function(
+        "make-virtual-text",
+        make_virtual_text,
+        MAKE_VIRTUAL_TEXT_DOC,
+    );
+    into.function(
+        "clear-virtual-text",
+        clear_virtual_text,
+        CLEAR_VIRTUAL_TEXT_DOC,
+    );
+    into.function(
+        "delete-virtual-text",
+        delete_virtual_text,
+        DELETE_VIRTUAL_TEXT_DOC,
+    );
+    into.function("virtual-text-at", virtual_text_at, VIRTUAL_TEXT_AT_DOC);
+}

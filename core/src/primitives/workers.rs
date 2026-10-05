@@ -1,10 +1,10 @@
 //! Defining, stopping and listing background workers.
 //!
-//! The mechanism is in [`crate::worker`]; this is the door Lisp comes through.
+//! The mechanism is in [`crate::background::worker`]; this is the door Lisp comes through.
 use super::*;
+use crate::background::WorkerMessage;
+use crate::background::worker::{BackgroundJob, DEFAULT_WORKER_FUEL, JobBody, LispWorker};
 use crate::modes::highlighter::TURN_INTERVAL;
-use crate::task::WorkerMessage;
-use crate::worker::{BackgroundJob, DEFAULT_WORKER_FUEL, JobBody, LispWorker};
 use std::time::Duration;
 
 /// A name written as a symbol or a string, which are the same thing here.
@@ -12,10 +12,9 @@ use std::time::Duration;
 /// `'indexer` reads better at a definition and `"indexer"` reads better when
 /// the name was computed, and a mechanism has no business preferring one.
 fn worker_name<B: BufferTrait>(value: Option<&ELispExp<B>>) -> Option<String> {
-    match value {
-        Some(ELispExp::Symbol(name)) | Some(ELispExp::String(name)) => Some(name.to_string()),
-        _ => None,
-    }
+    crate::primitives::args::optional_name(value, "Symbol or String naming a worker")
+        .ok()
+        .flatten()
 }
 
 pub const DEFINE_WORKER_DOC: &str = "(define-worker NAME FIBER &optional INTERVAL): Run FIBER in the \
@@ -131,9 +130,12 @@ primitive!(running_workers, _args, _env, ctx, {
 /// place this mechanism must not do anything it does not have to, and a
 /// worker that wants a different allowance can be defined again.
 fn worker_fuel<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B>>>) -> u32 {
-    match env.get_variable(WORKER_FUEL) {
-        Some(ELispExp::Number(fuel)) if fuel.is_finite() && fuel >= 1.0 => fuel as u32,
-        _ => DEFAULT_WORKER_FUEL,
+    // At least one step, because a worker with no fuel never reaches its own
+    // first `yield` and so never finishes either -- it would be resumed
+    // forever having done nothing.
+    match env.number_at_least(WORKER_FUEL, 1.0) {
+        Some(fuel) => fuel as u32,
+        None => DEFAULT_WORKER_FUEL,
     }
 }
 
@@ -280,4 +282,20 @@ fn optional_callback<B: BufferTrait>(
             got: value.clone(),
         }),
     }
+}
+
+/// Register this module's primitives: background workers and named background jobs.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Background workers. Plain functions rather than commands: a worker is
+    // defined by a module at load time, not run from M-x.
+    into.function("define-worker", define_worker, DEFINE_WORKER_DOC);
+    into.function("stop-worker", stop_worker, STOP_WORKER_DOC);
+    into.function("running-workers", running_workers, RUNNING_WORKERS_DOC);
+    // Work that must not happen on the thread that draws. See `worker`, which
+    // states the rule the whole editor follows for it.
+    into.function("background-call", background_call, BACKGROUND_CALL_DOC);
 }

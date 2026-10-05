@@ -114,3 +114,22 @@ primitive!(recenter, args, _env, ctx, {
     ctx.recenter_focused_window(where_to);
     Ok(ELispExp::nil())
 });
+
+/// Register this module's primitives: what the view is asked to show.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.command("recenter", recenter, &[], RECENTER_DOC);
+    into.function(
+        "make-floating-window",
+        make_floating_window,
+        MAKE_FLOATING_WINDOW_DOC,
+    );
+    into.function(
+        "close-floating-window",
+        close_floating_window,
+        CLOSE_FLOATING_WINDOW_DOC,
+    );
+}

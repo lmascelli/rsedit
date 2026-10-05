@@ -1,6 +1,6 @@
 //! Cutting, filling and moving blocks of text.
 //!
-//! The geometry is in [`crate::rectangle`]; this is the door Lisp comes
+//! The geometry is in [`crate::text::rectangle`]; this is the door Lisp comes
 //! through, and the two rules the commands share.
 //!
 //! # Bottom line first, always
@@ -29,7 +29,7 @@
 use super::*;
 use crate::buffer::{Buffer, Mark, mark::rectangle_corners};
 use crate::primitives::edits::{delete_range, goto_offset, insert_text};
-use crate::rectangle::{Rectangle, Span, spans, text_of};
+use crate::text::rectangle::{Rectangle, Span, spans, text_of};
 
 /// The rectangle between point and the mark, or the error a command should
 /// give when there is no mark.
@@ -400,3 +400,44 @@ primitive!(string_rectangle, args, _env, ctx, {
     });
     Ok(ELispExp::number(height as f64))
 });
+
+/// Register this module's primitives: the column-aligned block two corners describe.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Blocks of text. See `primitives::rectangle`, and `rectangle` for the
+    // arithmetic of saying which characters a pair of columns covers when the
+    // lines are not all long enough.
+    into.command(
+        "rectangle-mark-mode",
+        rectangle_mark_mode,
+        &[],
+        RECTANGLE_MARK_MODE_DOC,
+    );
+    into.command("kill-rectangle", kill_rectangle, &[], KILL_RECTANGLE_DOC);
+    into.command(
+        "delete-rectangle",
+        delete_rectangle,
+        &[],
+        DELETE_RECTANGLE_DOC,
+    );
+    into.command(
+        "copy-rectangle-as-kill",
+        copy_rectangle_as_kill,
+        &[],
+        COPY_RECTANGLE_AS_KILL_DOC,
+    );
+    into.command("yank-rectangle", yank_rectangle, &[], YANK_RECTANGLE_DOC);
+    into.command("open-rectangle", open_rectangle, &[], OPEN_RECTANGLE_DOC);
+    into.command("clear-rectangle", clear_rectangle, &[], CLEAR_RECTANGLE_DOC);
+    into.command(
+        "string-rectangle",
+        string_rectangle,
+        &["sString rectangle: "],
+        STRING_RECTANGLE_DOC,
+    );
+    into.function("rectangle-bounds", rectangle_bounds, RECTANGLE_BOUNDS_DOC);
+    into.function("killed-rectangle", killed_rectangle, KILLED_RECTANGLE_DOC);
+}

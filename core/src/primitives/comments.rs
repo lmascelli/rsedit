@@ -24,7 +24,7 @@
 use super::*;
 use crate::buffer::{Buffer, mark::region_bounds};
 use crate::modes::CommentStyle;
-use crate::primitives::edits::{delete_range, goto_offset, insert_text};
+use crate::primitives::edits::{delete_range, goto_offset, insert_text, line_bounds};
 
 /// One change to make, in offsets taken before any of them were made.
 enum Edit {
@@ -89,15 +89,9 @@ fn apply<B: BufferTrait>(buf: &mut Buffer<B>, edits: &[Edit]) -> bool {
     true
 }
 
-/// The half-open offsets of LINE, not counting its newline.
-fn line_bounds<B: BufferTrait>(text: &B, line: usize) -> (usize, usize) {
-    let start = text.cursor_2d_to_1d(line, 0);
-    (start, start + edits::line_length(text, line))
-}
-
 fn line_text<B: BufferTrait>(text: &B, line: usize) -> String {
     let (start, end) = line_bounds(text, line);
-    (start..end).filter_map(|at| text.at(at)).collect()
+    text.slice(start, end)
 }
 
 /// The lines a comment command works over: the region's, or point's own.
@@ -271,9 +265,7 @@ fn wrap_edits<B: BufferTrait>(
 fn scope_text<B: BufferTrait>(buf: &Buffer<B>, first: usize, last: usize) -> String {
     let (start, _) = line_bounds(&buf.text, first);
     let (_, end) = line_bounds(&buf.text, last);
-    (start..end)
-        .filter_map(|at| buf.text.at(at))
-        .collect::<String>()
+    buf.text.slice(start, end)
 }
 
 /// Take a block comment off the scope, when one is around it.
@@ -523,3 +515,24 @@ primitive!(comment_syntax, _args, _env, ctx, {
         .collect();
     Ok(ELispExp::proper_list(found))
 });
+
+/// Register this module's primitives: commenting and uncommenting.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Comments, and the span deletion Lisp was missing. See
+    // `primitives::comments`.
+    into.command("comment-dwim", comment_dwim, &[], COMMENT_DWIM_DOC);
+    into.command("comment-line", comment_line, &[], COMMENT_LINE_DOC);
+    into.command("comment-indent", comment_indent, &[], COMMENT_INDENT_DOC);
+    into.command("comment-region", comment_region, &["r"], COMMENT_REGION_DOC);
+    into.command(
+        "uncomment-region",
+        uncomment_region,
+        &["r"],
+        UNCOMMENT_REGION_DOC,
+    );
+    into.function("comment-syntax", comment_syntax, COMMENT_SYNTAX_DOC);
+}

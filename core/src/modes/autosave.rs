@@ -31,8 +31,8 @@
 //! modified buffer costs nothing rather than a write every few seconds.
 use crate::{
     BufferTrait, EditorState,
+    background::ScheduledTask,
     lisp::{Env, LispContext},
-    task::ScheduledTask,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -68,19 +68,17 @@ pub const AUTO_SAVE_DIRECTORY: &str = "auto-save-directory";
 /// Unset means on, for the reason the watcher's does: something that protects
 /// you from losing work should not have to be asked for.
 pub fn auto_saving<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
-    match env.get_variable(AUTO_SAVE) {
-        Some(value) => value.is_truthy(),
-        None => true,
-    }
+    env.flag(AUTO_SAVE, true)
 }
 
 /// How often it writes, as Lisp currently has it.
 pub fn auto_save_interval<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Duration {
-    match env.get_variable(AUTO_SAVE_INTERVAL) {
-        Some(crate::ELispExp::Number(seconds)) if seconds.is_finite() && seconds >= 1.0 => {
-            Duration::from_secs_f64(seconds)
-        }
-        _ => DEFAULT_AUTO_SAVE_INTERVAL,
+    // A second is the floor because the point of the floor is that the editor
+    // not spend its time writing: more often than once a second is no longer
+    // insurance against a crash, it is the crash.
+    match env.number_at_least(AUTO_SAVE_INTERVAL, 1.0) {
+        Some(seconds) => Duration::from_secs_f64(seconds),
+        None => DEFAULT_AUTO_SAVE_INTERVAL,
     }
 }
 

@@ -63,12 +63,7 @@ pub const KEY_BINDING_DOC: &str = "(key-binding KEYS): What pressing KEYS would 
          (key-binding \"C-x\") => nil";
 
 primitive!(key_binding, args, _env, ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 1)?;
     let Some(keys) = key_argument(args) else {
         ctx.log_diagnostic(&format!("key-binding: bad key sequence {:?}", args[0]));
         return Ok(ELispExp::nil());
@@ -89,12 +84,7 @@ pub const KEYS_WITH_PREFIX_DOC: &str = "(keys-with-prefix KEYS): Every binding i
          (keys-with-prefix \"C-x\") => ((\"C-x C-f\" (find-file) \"global\") ...)";
 
 primitive!(keys_with_prefix, args, _env, ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 1)?;
     let ELispExp::String(text) = &args[0] else {
         return Err(EvalError::WrongArgumentType {
             expected: "String".into(),
@@ -148,12 +138,7 @@ pub const WHERE_IS_DOC: &str = "(where-is COMMAND): Every key sequence that runs
          (where-is 'find-file) => (\"C-x C-f\")";
 
 primitive!(where_is, args, _env, ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 1)?;
     let name = match &args[0] {
         ELispExp::Symbol(name) | ELispExp::String(name) => name.to_string(),
         other => {
@@ -204,12 +189,7 @@ pub const COMMAND_SPECS_DOC: &str = "(command-specs NAME): The argument specs NA
          (command-specs \"next-line\") => nil";
 
 primitive!(command_specs, args, _env, ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 1)?;
     let name = match &args[0] {
         ELispExp::Symbol(name) | ELispExp::String(name) => name.to_string(),
         other => {
@@ -249,12 +229,7 @@ pub const READ_KEY_SEQUENCE_DOC: &str = "(read-key-sequence FUNCTION): Have the 
                               (message \"%s runs %s (%s)\" keys target source)))";
 
 primitive!(read_key_sequence, args, env, ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 1)?;
     if args[0].is_nil() {
         return Err(EvalError::WrongArgumentType {
             expected: "a function to call with the key sequence".into(),
@@ -268,3 +243,22 @@ primitive!(read_key_sequence, args, env, ctx, {
     env.set_root_variable(KEY_CAPTURE_FUNCTION.into(), args[0].clone());
     Ok(ELispExp::t())
 });
+
+/// Register this module's primitives: the self-documentation commands.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // What the editor can be asked about itself. See `primitives::help`.
+    into.function("key-binding", key_binding, KEY_BINDING_DOC);
+    into.function("keys-with-prefix", keys_with_prefix, KEYS_WITH_PREFIX_DOC);
+    into.function("keymap-bindings", keymap_bindings, KEYMAP_BINDINGS_DOC);
+    into.function("where-is", where_is, WHERE_IS_DOC);
+    into.function("command-specs", command_specs, COMMAND_SPECS_DOC);
+    into.function(
+        "read-key-sequence",
+        read_key_sequence,
+        READ_KEY_SEQUENCE_DOC,
+    );
+}

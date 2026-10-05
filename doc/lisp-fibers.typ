@@ -866,5 +866,5 @@ asking, in its own primitives, whether it is inside a turn.
   [`lisp/error.rs`], [`Yielded`, `YieldNotAllowed`.],
   [`lisp/eval.rs`], [The permission flag, `run_statements`, `eval_body_step`,
     `run_while`, `resume_frames`, the `yield` and `fiber` special forms.],
-  [`lisp/base_env.rs`], [`resume`.],
+  [`lisp/base/fibers.rs`], [`resume`.],
 )

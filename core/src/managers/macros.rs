@@ -190,10 +190,6 @@ impl Macros {
         self.replaying = self.replaying.saturating_sub(1);
     }
 
-    pub fn is_replaying(&self) -> bool {
-        self.replaying > 0
-    }
-
     // ------------------------------------------------------------------
     // The counter
     // ------------------------------------------------------------------

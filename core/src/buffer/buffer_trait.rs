@@ -15,6 +15,31 @@ pub trait BufferTrait:
     fn chars_from(&self, pos: usize) -> impl Iterator<Item = char> + '_ {
         (pos..).map_while(move |i| self.at(i))
     }
+
+    /// The characters in `[from, to)`, as a string.
+    ///
+    /// A stale offset gives a short answer rather than an error: `to` past the
+    /// end stops at the end, and `from` at or past `to` gives nothing. There
+    /// were eleven hand-written copies of this walk, each spelling that
+    /// tolerance slightly differently -- or, in three of them, not at all.
+    ///
+    /// The `min` is for the reader rather than for the machine. `take` already
+    /// stops when the iterator does, so an unclamped `to` would behave the
+    /// same; it is written down so that the bound is visible here and does not
+    /// depend on what `chars_from` happens to be.
+    ///
+    /// On the trait rather than beside one of its callers because it is a
+    /// question about a buffer and nothing else, and because the obvious
+    /// place for it -- next to [`Self::chars_from`], which is the same walk
+    /// without an end -- is here.
+    fn slice(&self, from: usize, to: usize) -> String {
+        let end = to.min(self.len());
+        if from >= end {
+            return String::new();
+        }
+        self.chars_from(from).take(end - from).collect()
+    }
+
     fn at(&self, pos: usize) -> Option<char>;
     fn cursor_pos(&self) -> (usize, usize);
     fn cursor_pos_1d(&self) -> usize;

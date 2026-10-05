@@ -4,6 +4,23 @@
 
 use super::*;
 
+/// Take one off a count of work in flight, and never below zero.
+///
+/// Saturating rather than wrapping: a stray extra call would otherwise take
+/// the count to `usize::MAX` and leave the renderer spinning for the rest of
+/// the session. That is the whole reason this is not a `fetch_sub`, and it was
+/// the whole content of two methods that differed only in which field they
+/// named.
+///
+/// `fetch_update` and not `try_update`, which is the same operation under a
+/// newer name that is still unstable (`atomic_try_update`, rust#135894).
+/// There is no toolchain pinned here, so the build simply failed on stable.
+fn finish_one(counter: &AtomicUsize) {
+    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_sub(1))
+    });
+}
+
 impl<B: BufferTrait> EditorState<B> {
     /// Quit the editor
     pub(crate) fn quit(&self) {
@@ -56,14 +73,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Note that one has finished. Called from the worker thread, after the
     /// last of its output is in the buffer.
     pub(crate) fn finish_shell_command(&self) {
-        // Saturating rather than wrapping: a stray extra call would otherwise
-        // take the count to `usize::MAX` and leave the renderer spinning for
-        // the rest of the session.
-        let _ = self
-            .shell_commands
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                Some(n.saturating_sub(1))
-            });
+        finish_one(&self.shell_commands);
     }
 
     /// How many shell commands are still running.
@@ -87,11 +97,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Note that one has finished. Called from the worker thread, after the
     /// last of its results is in the buffer.
     pub(crate) fn finish_background_work(&self) {
-        let _ = self
-            .background_work
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                Some(n.saturating_sub(1))
-            });
+        finish_one(&self.background_work);
     }
 
     pub(crate) fn background_work_running(&self) -> usize {

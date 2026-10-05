@@ -23,12 +23,26 @@
 //! until it finished -- with a second shell command queued behind it, unable
 //! to start. So the two kinds are now separated by which message carries
 //! them, and the separation is the whole of what the two traits below mean.
+//!
+//! # What is in here
+//!
+//! This file: the two traits that say which kind a piece of work is, the
+//! message that carries it, and the scheduler that runs it. [`worker`]: the
+//! Lisp side, where a fiber becomes a bounded task and a named job becomes
+//! either kind depending on what it was given.
+//!
+//! The rule above is the reason these two are one directory. They were
+//! `task.rs` and `worker.rs` at the root of the crate, next to `search.rs` and
+//! `input.rs`, and nothing said that one of them was the mechanism and the
+//! other its only Lisp-facing user.
+pub mod worker;
+
 use std::{
     sync::mpsc::{Receiver, RecvTimeoutError},
     time::{Duration, Instant},
 };
 
-use crate::{buffer::BufferTrait, editor::EditorState, worker::WorkerTurn};
+use crate::{background::worker::WorkerTurn, buffer::BufferTrait, editor::EditorState};
 
 /// Work that runs to completion, on a thread of its own.
 ///

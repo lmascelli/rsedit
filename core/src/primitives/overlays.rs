@@ -138,17 +138,7 @@ pub const REMOVE_OVERLAYS_DOC: &str = "(remove-overlays &optional CATEGORY): Rem
          (remove-overlays)            ; every overlay in this buffer";
 
 primitive!(remove_overlays, args, _env, ctx, {
-    let category = match args.first() {
-        None => None,
-        Some(exp) if exp.is_nil() => None,
-        Some(ELispExp::Symbol(name)) | Some(ELispExp::String(name)) => Some(name.to_string()),
-        Some(other) => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "Symbol naming a category".into(),
-                got: other.clone(),
-            });
-        }
-    };
+    let category = args::optional_name(args.first(), "Symbol naming a category")?;
     let removed =
         ctx.with_current_buffer_mut(|buf| buf.overlays.remove_category(category.as_deref()));
     Ok(ELispExp::number(removed as f64))
@@ -201,3 +191,16 @@ primitive!(overlay_face, args, _env, ctx, {
         None => ELispExp::nil(),
     })
 });
+
+/// Register this module's primitives: colouring a span of a buffer without changing it.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.function("make-overlay", make_overlay, MAKE_OVERLAY_DOC);
+    into.function("delete-overlay", delete_overlay, DELETE_OVERLAY_DOC);
+    into.function("remove-overlays", remove_overlays, REMOVE_OVERLAYS_DOC);
+    into.function("overlays-at", overlays_at, OVERLAYS_AT_DOC);
+    into.function("overlay-face", overlay_face, OVERLAY_FACE_DOC);
+}

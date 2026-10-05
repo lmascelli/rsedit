@@ -352,7 +352,7 @@ impl UndoHistory {
                     // Capture the text as it is removed -- this is what makes
                     // the corresponding redo possible without having stored a
                     // copy in advance.
-                    let removed: String = (*at..at + len).filter_map(|i| text.at(i)).collect();
+                    let removed = text.slice(*at, at + len);
                     apply_delete(text, *at, at + len);
                     inverse.push(Change::Deleted {
                         at: *at,

@@ -41,7 +41,7 @@
 //! than an invisible failure of everything.
 //!
 //! Work that *cannot* be bounded that way does not come here at all: it gets
-//! a thread of its own. See [`crate::task`], which states the rule.
+//! a thread of its own. See [`crate::background`], which states the rule.
 //!
 //! # The rule, for everything that runs in the background
 //!
@@ -89,8 +89,8 @@
 //! purpose, so that `stop-worker` and `running-workers` mean one thing.
 use crate::{
     BufferTrait, ELispExp, EditorState,
+    background::ScheduledTask,
     lisp::{Env, EvalError, LispContext, call_callable, eval, set_remaining},
-    task::ScheduledTask,
 };
 use std::cell::Cell;
 use std::sync::Arc;
@@ -140,7 +140,7 @@ pub fn in_worker() -> bool {
 ///
 /// # Who holds one
 ///
-/// [`crate::task::BackgroundScheduler`], around every task it drives and
+/// [`crate::background::BackgroundScheduler`], around every task it drives and
 /// every thread it starts; and, inside that, a worker or a background job
 /// around its own turn.
 ///

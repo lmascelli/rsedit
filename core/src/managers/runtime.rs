@@ -28,7 +28,7 @@
 //! not have to keep this compartment's lock open while it runs.
 use crate::{
     lisp::FuelMeter,
-    search::{Isearch, Replace},
+    text::search::{Isearch, Replace},
     ui::{Face, Style, Theme},
 };
 use std::collections::HashMap;

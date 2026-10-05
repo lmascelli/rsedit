@@ -1,7 +1,7 @@
 use super::*;
 use crate::buffer::{Buffer, Mark, undo};
-use crate::kill_ring::Direction;
 use crate::modes::sexp;
+use crate::text::kill_ring::Direction;
 
 // ---------------------------------------------------------------------------
 // The recording editing layer
@@ -48,7 +48,7 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
     let removed: String = if whole_buffer {
         buf.text.to_string()
     } else {
-        (start..end).filter_map(|i| buf.text.at(i)).collect()
+        buf.text.slice(start, end)
     };
     buf.undo.record_delete(start, removed, point);
     buf.mark = deactivated(buf.mark);
@@ -180,7 +180,7 @@ pub(crate) fn cut_out<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usiz
     if start >= end {
         return String::new();
     }
-    let text: String = (start..end).filter_map(|i| buf.text.at(i)).collect();
+    let text = buf.text.slice(start, end);
     // Nothing is killed out of a read-only buffer: a kill that reported the
     // text but left it in place would put it on the ring as though it had been
     // cut, and the next yank would duplicate it.
@@ -454,6 +454,17 @@ pub(crate) fn line_length<B: BufferTrait>(text: &B, line: usize) -> usize {
         .unwrap_or(0)
 }
 
+/// The half-open offsets of LINE, not counting its newline.
+///
+/// Here, and not in the two files that each had their own byte-identical copy,
+/// because it is [`line_length`] and the offset of the line's start, and both
+/// of those live here. A line past the end of the buffer answers with the
+/// clamped offset twice over, so the span is empty rather than invalid.
+pub(crate) fn line_bounds<B: BufferTrait>(text: &B, line: usize) -> (usize, usize) {
+    let start = text.cursor_2d_to_1d(line, 0);
+    (start, start + line_length(text, line))
+}
+
 pub const BACKWARD_CHAR_DOC: &str = "(backward-char &optional N): Move point backward N characters \
          (default 1) in the current buffer, stopping at the beginning of the \
          line.\n\n\
@@ -715,7 +726,7 @@ primitive!(kill_line, _args, env, ctx, {
         ctx.with_current_buffer_mut(|buf| {
             let from = buf.text.cursor_pos_1d();
             let (line, _) = buf.text.cursor_pos();
-            let end_of_line = buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line));
+            let end_of_line = line_bounds(&buf.text, line).1;
             // At the end of a line there is nothing left to kill on it, so the
             // newline goes instead -- which is what makes repeated C-k swallow a
             // paragraph rather than stalling on every line ending.
@@ -740,9 +751,8 @@ primitive!(kill_whole_line, _args, env, ctx, {
     let killed = {
         ctx.with_current_buffer_mut(|buf| {
             let (line, _) = buf.text.cursor_pos();
-            let from = buf.text.cursor_2d_to_1d(line, 0);
-            let to = (buf.text.cursor_2d_to_1d(line, line_length(&buf.text, line)) + 1)
-                .min(buf.text.len());
+            let (from, end_of_line) = line_bounds(&buf.text, line);
+            let to = (end_of_line + 1).min(buf.text.len());
             cut_out(buf, from, to)
         })
     };
@@ -1324,3 +1334,137 @@ pub const CURRENT_COLUMN_DOC: &str = "(current-column): The column point is on, 
 primitive!(current_column, _args, _env, ctx, {
     ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.cursor_pos().1 as f64)))
 });
+
+/// Register this module's primitives: point, insertion, deletion and the undo history.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.function("delete-region", delete_region, DELETE_REGION_DOC);
+    into.function("self-insert", self_insert, SELF_INSERT_DOC);
+    // Not a command: there is no key to bind it to and no argument spec that
+    // could collect arbitrary text. `self-insert` is a command only because
+    // every printable key is bound to it.
+    into.function("insert", insert, INSERT_DOC);
+    into.command(
+        "insert-pasted-text",
+        insert_pasted_text,
+        &[],
+        INSERT_PASTED_TEXT_DOC,
+    );
+    into.command("insert-newline", insert_newline, &[], INSERT_NEWLINE_DOC);
+    into.command(
+        "delete-backward-char",
+        delete_backward_char,
+        &[],
+        DELETE_BACKWARD_CHAR_DOC,
+    );
+    into.command("backward-char", backward_char, &["p"], BACKWARD_CHAR_DOC);
+    into.command("forward-char", forward_char, &["p"], FORWARD_CHAR_DOC);
+    into.command("previous-line", previous_line, &["p"], PREVIOUS_LINE_DOC);
+    into.command("delete-char", delete_char, &["p"], DELETE_CHAR_DOC);
+    into.command("kill-line", kill_line, &[], KILL_LINE_DOC);
+    into.command("kill-whole-line", kill_whole_line, &[], KILL_WHOLE_LINE_DOC);
+    into.command("kill-word", kill_word, &["p"], KILL_WORD_DOC);
+    into.command(
+        "backward-kill-word",
+        backward_kill_word,
+        &["p"],
+        BACKWARD_KILL_WORD_DOC,
+    );
+    into.command("kill-paragraph", kill_paragraph, &[], KILL_PARAGRAPH_DOC);
+    into.command(
+        "backward-kill-paragraph",
+        backward_kill_paragraph,
+        &[],
+        BACKWARD_KILL_PARAGRAPH_DOC,
+    );
+    into.command("undo", undo, &[], UNDO_DOC);
+    into.command("redo", redo, &[], REDO_DOC);
+    into.command("undo-boundary", undo_boundary, &[], UNDO_BOUNDARY_DOC);
+    into.command(
+        "set-undo-limit",
+        set_undo_limit,
+        &["n:Undo limit in bytes: "],
+        SET_UNDO_LIMIT_DOC,
+    );
+    into.command(
+        "beginning-of-line",
+        beginning_of_line,
+        &[],
+        BEGINNING_OF_LINE_DOC,
+    );
+    into.command("end-of-line", end_of_line, &[], END_OF_LINE_DOC);
+    into.command("forward-word", forward_word, &["p"], FORWARD_WORD_DOC);
+    into.command("backward-word", backward_word, &["p"], BACKWARD_WORD_DOC);
+    // Structural motion. `forward-word` and these look alike from the outside
+    // and are not: a word is found by looking at characters, an expression by
+    // lexing the buffer against the mode's syntax table -- a `)` is only a
+    // delimiter when it is not inside a string or a comment.
+    into.command("forward-sexp", forward_sexp, &["p"], FORWARD_SEXP_DOC);
+    into.command("backward-sexp", backward_sexp, &["p"], BACKWARD_SEXP_DOC);
+    into.command("kill-sexp", kill_sexp, &["p"], KILL_SEXP_DOC);
+    into.command(
+        "backward-kill-sexp",
+        backward_kill_sexp,
+        &["p"],
+        BACKWARD_KILL_SEXP_DOC,
+    );
+    into.command("up-list", up_list, &[], UP_LIST_DOC);
+    into.command(
+        "backward-up-list",
+        backward_up_list,
+        &[],
+        BACKWARD_UP_LIST_DOC,
+    );
+    into.command("down-list", down_list, &[], DOWN_LIST_DOC);
+    into.function("current-column", current_column, CURRENT_COLUMN_DOC);
+    into.function(
+        "current-indentation",
+        current_indentation,
+        CURRENT_INDENTATION_DOC,
+    );
+    into.function(
+        "previous-indentation",
+        previous_indentation,
+        PREVIOUS_INDENTATION_DOC,
+    );
+    into.function("indent-line-to", indent_line_to, INDENT_LINE_TO_DOC);
+    into.command(
+        "forward-paragraph",
+        forward_paragraph,
+        &[],
+        FORWARD_PARAGRAPH_DOC,
+    );
+    into.command(
+        "backward-paragraph",
+        backward_paragraph,
+        &[],
+        BACKWARD_PARAGRAPH_DOC,
+    );
+    into.command(
+        "beginning-of-buffer",
+        beginning_of_buffer,
+        &[],
+        BEGINNING_OF_BUFFER_DOC,
+    );
+    into.command("end-of-buffer", end_of_buffer, &[], END_OF_BUFFER_DOC);
+    // The first built-in command that prompts for an argument, so M-x
+    // goto-line asks for the number rather than failing on arity.
+    into.command("goto-line", goto_line, &["nGoto line: "], GOTO_LINE_DOC);
+    into.command("next-line", next_line, &["p"], NEXT_LINE_DOC);
+    // Point as a number. Plain functions rather than commands: nothing is
+    // usefully reached by typing `M-x point', and everything that moves point
+    // by a described amount -- a word, a line -- already is a command.
+    into.function("point", point, POINT_DOC);
+    into.function("point-min", point_min, POINT_MIN_DOC);
+    into.function("point-max", point_max, POINT_MAX_DOC);
+    into.function("goto-char", goto_char, GOTO_CHAR_DOC);
+    into.function(
+        "line-number-at-point",
+        line_number_at_point,
+        LINE_NUMBER_AT_POINT_DOC,
+    );
+    into.function("current-line", current_line, CURRENT_LINE_DOC);
+}

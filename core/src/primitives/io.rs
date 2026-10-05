@@ -1,7 +1,7 @@
 use super::*;
 use crate::lisp::{call_callable, eval};
 use crate::modes::autosave::{auto_save_directory, auto_save_path};
-use crate::primitives::ask;
+use crate::primitives::{args, ask};
 
 pub const FIND_FILE_DOC: &str = "(find-file PATH): Open PATH into a buffer, make it current, and \
          return the buffer's name.\n\n\
@@ -160,7 +160,7 @@ primitive!(save_buffer, _args, env, ctx, {
                 ELispExp::string(format!(
                     "{path} changed on disk since you read it. Overwrite it?"
                 )),
-                quoted(ELispExp::symbol("save-buffer--overwrite".into())),
+                args::quoted(ELispExp::symbol("save-buffer--overwrite".into())),
             ]),
             env,
             ctx,
@@ -220,7 +220,7 @@ primitive!(recover_file, _args, env, ctx, {
                 "Replace this buffer with the auto-saved {}?",
                 copy.display()
             )),
-            quoted(ELispExp::symbol("recover-file--adopt".into())),
+            args::quoted(ELispExp::symbol("recover-file--adopt".into())),
         ]),
         env,
         ctx,
@@ -289,7 +289,7 @@ primitive!(revert_buffer, _args, env, ctx, {
         &ELispExp::form(vec![
             ELispExp::symbol("yes-or-no".into()),
             ELispExp::string(format!("Discard your changes and reread {path}?")),
-            quoted(ELispExp::symbol("revert-buffer--reread".into())),
+            args::quoted(ELispExp::symbol("revert-buffer--reread".into())),
         ]),
         env,
         ctx,
@@ -682,12 +682,7 @@ pub const MATCH_LIST_DOC: &str = "(match-list LIST PATTERN): Return the elements
          (match-list (list-dir \"/etc\") \".conf\")";
 
 primitive!(match_list, args, _env, _ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let ELispExp::String(pattern) = &args[1] else {
         return Err(EvalError::WrongArgumentType {
             expected: "String".into(),
@@ -998,12 +993,7 @@ pub const RENAME_FILE_DOC: &str = "(rename-file FROM TO): Rename FROM to TO, whi
          (rename-file \"draft.txt\" \"archive/draft.txt\")";
 
 primitive!(rename_file, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let from = path_arg(args.first())?;
     let to = path_arg(args.get(1))?;
     let from_path = std::path::Path::new(&from);
@@ -1238,7 +1228,7 @@ primitive!(directory_files_recursive, args, _env, ctx, {
     // for a step-shaped interpreter and wrong for anything returning a list
     // whose length it chose: this hands back twenty thousand paths for three
     // units. The budget is meant to bound *time* -- see `expect_list` in
-    // `base_env`, where the rule is written down -- and a walk that costs
+    // `lisp::base`, where the rule is written down -- and a walk that costs
     // nothing to the meter is a loop of walks that the guard never stops.
     ctx.consume_fuel(u32::try_from(paths.len()).unwrap_or(u32::MAX))?;
     Ok(ELispExp::proper_list(vec![
@@ -1491,11 +1481,6 @@ pub(crate) fn has_unsaved_work<B: BufferTrait>(ctx: &EditorState<B>, name: &str)
     .unwrap_or(false)
 }
 
-/// VALUE as `(quote VALUE)`, so that a form built here hands it back whole.
-fn quoted<B: BufferTrait>(value: ELispExp<B>) -> ELispExp<B> {
-    ELispExp::form(vec![ELispExp::symbol("quote".into()), value])
-}
-
 fn names_list<B: BufferTrait>(names: &[String]) -> ELispExp<B> {
     ELispExp::proper_list(names.iter().map(|n| ELispExp::string(n.clone())).collect())
 }
@@ -1555,8 +1540,8 @@ fn answer_form<B: BufferTrait>(
         ELispExp::symbol("save-some-buffers--answer".into()),
         ELispExp::string(action.to_string()),
         ELispExp::string(name.to_string()),
-        quoted(names_list(rest)),
-        quoted(after.clone()),
+        args::quoted(names_list(rest)),
+        args::quoted(after.clone()),
     ])
 }
 
@@ -1697,7 +1682,7 @@ primitive!(quit_confirm, _args, env, ctx, {
         &ELispExp::form(vec![
             ELispExp::symbol("yes-or-no".into()),
             ELispExp::string(prompt),
-            quoted(ELispExp::symbol("quit-without-saving".into())),
+            args::quoted(ELispExp::symbol("quit-without-saving".into())),
         ]),
         env,
         ctx,
@@ -1713,3 +1698,107 @@ primitive!(quit_without_saving, _args, _env, ctx, {
     ctx.quit();
     Ok(ELispExp::nil())
 });
+
+/// Register this module's primitives: files, the disk, and leaving the editor.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.command("quit", quit, &[], QUIT_DOC);
+    into.command(
+        "quit-without-saving",
+        quit_without_saving,
+        &[],
+        QUIT_WITHOUT_SAVING_DOC,
+    );
+    into.command(
+        "save-some-buffers",
+        save_some_buffers,
+        &[],
+        SAVE_SOME_BUFFERS_DOC,
+    );
+    into.function(
+        "save-some-buffers--answer",
+        save_some_buffers_answer,
+        SAVE_SOME_BUFFERS_ANSWER_DOC,
+    );
+    into.function("quit--confirm", quit_confirm, QUIT_CONFIRM_DOC);
+    into.command("find-file", find_file, &["fFind file: "], FIND_FILE_DOC);
+    into.function("data-directory", data_directory, DATA_DIRECTORY_DOC);
+    into.function("getenv", getenv, GETENV_DOC);
+    into.function("setenv", setenv, SETENV_DOC);
+    into.function("path-separator", path_separator, PATH_SEPARATOR_DOC);
+    into.function("list-dir", list_dir, LIST_DIR_DOC);
+    into.function(
+        "directory-files-recursive",
+        directory_files_recursive,
+        DIRECTORY_FILES_RECURSIVE_DOC,
+    );
+    into.function(
+        "read-file-to-string",
+        read_file_to_string,
+        READ_FILE_TO_STRING_DOC,
+    );
+    into.function("match-list", match_list, MATCH_LIST_DOC);
+    into.function("expand-file-name", expand_file_name, EXPAND_FILE_NAME_DOC);
+    // Shaping a file name, without asking the filesystem anything. In Rust
+    // rather than in a module because what counts as a separator, and what
+    // counts as a root, is a property of the platform -- `/a/b` and `C:\a\b`
+    // are the same shape and share no characters. A module splitting strings on
+    // "/" is writing down one platform's answer and calling it the rule.
+    into.function(
+        "file-name-as-directory",
+        file_name_as_directory,
+        FILE_NAME_AS_DIRECTORY_DOC,
+    );
+    into.function(
+        "directory-file-name",
+        directory_file_name,
+        DIRECTORY_FILE_NAME_DOC,
+    );
+    into.function(
+        "file-name-directory",
+        file_name_directory,
+        FILE_NAME_DIRECTORY_DOC,
+    );
+    into.function(
+        "file-name-nondirectory",
+        file_name_nondirectory,
+        FILE_NAME_NONDIRECTORY_DOC,
+    );
+    into.command("save-buffer", save_buffer, &[], SAVE_BUFFER_DOC);
+    into.function(
+        "save-buffer--overwrite",
+        save_buffer_overwrite,
+        SAVE_BUFFER_OVERWRITE_DOC,
+    );
+    into.command("recover-file", recover_file, &[], RECOVER_FILE_DOC);
+    into.function(
+        "recover-file--adopt",
+        recover_file_adopt,
+        RECOVER_FILE_ADOPT_DOC,
+    );
+    into.command("revert-buffer", revert_buffer, &[], REVERT_BUFFER_DOC);
+    into.function(
+        "revert-buffer--reread",
+        revert_buffer_reread,
+        REVERT_BUFFER_REREAD_DOC,
+    );
+    into.command("write-file", write_file, &["fWrite file: "], WRITE_FILE_DOC);
+    // Asking about the filesystem, and changing it. Plain functions, not
+    // commands: `M-x delete-file` would be a command whose prompt is the only
+    // thing standing between a typo and a deleted file, with no listing in
+    // front of the user saying what is there. What a person reaches for is a
+    // command of the file manager's -- see `dired.lisp` -- which knows what
+    // the cursor is on and asks accordingly.
+    into.function("file-exists-p", file_exists_p, FILE_EXISTS_P_DOC);
+    into.function("file-directory-p", file_directory_p, FILE_DIRECTORY_P_DOC);
+    into.function(
+        "directory-entry-count",
+        directory_entry_count,
+        DIRECTORY_ENTRY_COUNT_DOC,
+    );
+    into.function("delete-file", delete_file, DELETE_FILE_DOC);
+    into.function("rename-file", rename_file, RENAME_FILE_DOC);
+}

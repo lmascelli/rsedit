@@ -1,5 +1,6 @@
 use super::*;
 use crate::modes::{StringStyle, sexp};
+use crate::primitives::args;
 
 pub const MAKE_MODE_DOC: &str = "(make-mode NAME): Register a new, empty major mode named NAME (a \
          symbol) with no keymaps, hooks, or syntax rules of its own. Returns \
@@ -47,12 +48,7 @@ pub const ADD_HOOK_DOC: &str = "(add-hook MODE HOOK FUNCTION): Append the functi
          (add-hook nil \"post-command-hook\" 'something-everywhere)";
 
 primitive!(add_hook, args, _env, ctx, {
-    if args.len() != 3 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 3,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 3)?;
 
     // `nil' for the mode means every mode, the way it does in `define-key'.
     // Checked before the pattern below, because nil *is* a symbol here and
@@ -264,12 +260,7 @@ pub const ADD_AUTO_MODE_DOC: &str = "(add-auto-mode PATTERN MODE): Open a file w
          (add-auto-mode \"\\\\.lisp$\" 'lisp-mode)";
 
 primitive!(add_auto_mode, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let ELispExp::String(pattern) = &args[0] else {
         return Err(EvalError::WrongArgumentType {
             expected: "String".into(),
@@ -334,16 +325,6 @@ fn syntax_class_arg<B: BufferTrait>(
     })
 }
 
-fn string_arg<B: BufferTrait>(exp: &ELispExp<B>) -> Result<String, EvalError<EditorState<B>>> {
-    match exp {
-        ELispExp::String(text) | ELispExp::Symbol(text) => Ok(text.to_string()),
-        other => Err(EvalError::WrongArgumentType {
-            expected: "String".into(),
-            got: other.clone(),
-        }),
-    }
-}
-
 /// Change MODE's table, making one from the default if it has none yet.
 fn with_syntax_table<B: BufferTrait, F>(
     ctx: &EditorState<B>,
@@ -370,14 +351,9 @@ pub const SET_SYNTAX_PAIRS_DOC: &str = "(set-syntax-pairs MODE PAIRS): Declare t
          (set-syntax-pairs 'rust-mode \"()[]{}\")";
 
 primitive!(set_syntax_pairs, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
-    let mode = string_arg(&args[0])?;
-    let pairs = string_arg(&args[1])?;
+    exact_arity(args, 2)?;
+    let mode = args::name(args.first())?;
+    let pairs = args::name(args.get(1))?;
     let answer = with_syntax_table(ctx, &mode, |table| table.set_pairs(&pairs));
     if answer.is_nil() {
         ctx.log_diagnostic(&format!("Mode {mode} does not exist"));
@@ -402,13 +378,8 @@ pub const SET_STRING_SYNTAX_DOC: &str = "(set-string-syntax MODE STYLES): Declar
          (set-string-syntax 'rust-mode '((\\\"r#\\\\\\\"\\\" \\\"\\\\\\\"#\\\") (\\\"r\\\\\\\"\\\" \\\"\\\\\\\"\\\")))";
 
 primitive!(set_string_syntax, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
-    let mode = string_arg(&args[0])?;
+    exact_arity(args, 2)?;
+    let mode = args::name(args.first())?;
     let entries: Vec<ELispExp<B>> = match &args[1] {
         ELispExp::Form(items) => items.to_vec(),
         other if other.is_nil() => Vec::new(),
@@ -425,8 +396,8 @@ primitive!(set_string_syntax, args, _env, ctx, {
                 "a string style needs an opener and a closer".into(),
             ));
         };
-        let opener = string_arg(opener)?;
-        let closer = string_arg(closer)?;
+        let opener = args::name(Some(opener))?;
+        let closer = args::name(Some(closer))?;
         // An empty opener matches everywhere, which would make the whole
         // buffer a string the first time the scanner looked at it; an empty
         // closer would end it immediately and the style would do nothing.
@@ -463,13 +434,8 @@ pub const SET_CHAR_QUOTE_DOC: &str = "(set-char-quote MODE CHAR): Declare the ch
          (set-char-quote \'rust-mode \"\'\")";
 
 primitive!(set_char_quote, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
-    let mode = string_arg(&args[0])?;
+    exact_arity(args, 2)?;
+    let mode = args::name(args.first())?;
     let quote = match &args[1] {
         exp if exp.is_nil() => None,
         ELispExp::String(text) => match text.chars().next() {
@@ -513,14 +479,9 @@ pub const SET_SYNTAX_ENTRY_DOC: &str = "(set-syntax-entry MODE CHARS CLASS): Giv
          (set-syntax-entry 'rust-mode \"'\" 'punctuation)";
 
 primitive!(set_syntax_entry, args, _env, ctx, {
-    if args.len() != 3 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 3,
-            got: args.len(),
-        });
-    }
-    let mode = string_arg(&args[0])?;
-    let chars = string_arg(&args[1])?;
+    exact_arity(args, 3)?;
+    let mode = args::name(args.first())?;
+    let chars = args::name(args.get(1))?;
     let class = syntax_class_arg(&args[2])?;
     let answer = with_syntax_table(ctx, &mode, |table| {
         for c in chars.chars() {
@@ -547,13 +508,8 @@ pub const SET_COMMENT_SYNTAX_DOC: &str = "(set-comment-syntax MODE STYLES): Decl
          (set-comment-syntax 'rust-mode '((\"//\") (\"/*\" \"*/\" t)))";
 
 primitive!(set_comment_syntax, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
-    let mode = string_arg(&args[0])?;
+    exact_arity(args, 2)?;
+    let mode = args::name(args.first())?;
 
     let entries: Vec<ELispExp<B>> = match &args[1] {
         ELispExp::Form(items) => items.to_vec(),
@@ -571,7 +527,7 @@ primitive!(set_comment_syntax, args, _env, ctx, {
                 "a comment style needs at least an opener".into(),
             ));
         };
-        let opener = string_arg(opener)?;
+        let opener = args::name(Some(opener))?;
         if opener.is_empty() {
             // An empty opener matches everywhere, which would make the whole
             // buffer a comment the first time the scanner looked at it.
@@ -584,7 +540,7 @@ primitive!(set_comment_syntax, args, _env, ctx, {
             Some(closer) if closer.is_nil() => CommentStyle::Line { opener },
             Some(closer) => CommentStyle::Block {
                 opener,
-                closer: string_arg(closer)?,
+                closer: args::name(Some(closer))?,
                 nestable: parts.get(2).is_some_and(|nest| !nest.is_nil()),
             },
         });
@@ -621,7 +577,7 @@ primitive!(matching_delimiter, args, _env, ctx, {
             got: args.len(),
         });
     }
-    let text = string_arg(&args[0])?;
+    let text = args::name(args.first())?;
     let Some(c) = text.chars().next() else {
         return Err(EvalError::RuntimeMessage(
             "matching-delimiter wants a character, and was given an empty string".into(),
@@ -630,7 +586,7 @@ primitive!(matching_delimiter, args, _env, ctx, {
     let mode = match args.get(1) {
         None => None,
         Some(exp) if exp.is_nil() => None,
-        Some(exp) => Some(string_arg(exp)?),
+        Some(exp) => Some(args::name(Some(exp))?),
     };
     let mode = match mode {
         Some(mode) => mode,
@@ -662,7 +618,7 @@ primitive!(syntax_class, args, _env, ctx, {
             got: args.len(),
         });
     }
-    let text = string_arg(&args[0])?;
+    let text = args::name(args.first())?;
     let Some(c) = text.chars().next() else {
         return Err(EvalError::RuntimeMessage(
             "syntax-class wants a character, and was given an empty string".into(),
@@ -671,7 +627,7 @@ primitive!(syntax_class, args, _env, ctx, {
     let mode = match args.get(1) {
         None => None,
         Some(exp) if exp.is_nil() => None,
-        Some(exp) => Some(string_arg(exp)?),
+        Some(exp) => Some(args::name(Some(exp))?),
     };
     let mode = match mode {
         Some(mode) => mode,
@@ -791,3 +747,46 @@ primitive!(bounds_of_enclosing_list, args, _env, ctx, {
         None => ELispExp::nil(),
     })
 });
+
+/// Register this module's primitives: major and minor modes, keymaps, hooks and syntax tables.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.function("make-mode", make_mode, MAKE_MODE_DOC);
+    into.function("add-hook", add_hook, ADD_HOOK_DOC);
+    into.function("add-syntax-rule", add_syntax_rule, ADD_SYNTAX_RULE_DOC);
+    into.function(
+        "add-syntax-region",
+        add_syntax_region,
+        ADD_SYNTAX_REGION_DOC,
+    );
+    into.function("add-auto-mode", add_auto_mode, ADD_AUTO_MODE_DOC);
+    into.function("syntax-ppss", syntax_ppss, SYNTAX_PPSS_DOC);
+    into.function("balance-point", balance_point, BALANCE_POINT_DOC);
+    into.function(
+        "bounds-of-enclosing-list",
+        bounds_of_enclosing_list,
+        BOUNDS_OF_ENCLOSING_LIST_DOC,
+    );
+    into.function("set-syntax-pairs", set_syntax_pairs, SET_SYNTAX_PAIRS_DOC);
+    into.function(
+        "set-string-syntax",
+        set_string_syntax,
+        SET_STRING_SYNTAX_DOC,
+    );
+    into.function("set-char-quote", set_char_quote, SET_CHAR_QUOTE_DOC);
+    into.function("set-syntax-entry", set_syntax_entry, SET_SYNTAX_ENTRY_DOC);
+    into.function(
+        "set-comment-syntax",
+        set_comment_syntax,
+        SET_COMMENT_SYNTAX_DOC,
+    );
+    into.function("syntax-class", syntax_class, SYNTAX_CLASS_DOC);
+    into.function(
+        "matching-delimiter",
+        matching_delimiter,
+        MATCHING_DELIMITER_DOC,
+    );
+}

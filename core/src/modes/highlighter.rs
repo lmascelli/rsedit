@@ -26,9 +26,9 @@
 //! at the moment of storing, not merely at the start.
 use crate::{
     BufferTrait, EditorState,
+    background::ScheduledTask,
     buffer::syntax::LINES_PER_TURN,
     modes::{Grammar, SyntaxState, highlight_line},
-    task::ScheduledTask,
 };
 use std::time::Duration;
 

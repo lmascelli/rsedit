@@ -9,7 +9,7 @@
 //! A shell command takes as long as it takes. `git status` is instant, a build
 //! is not, and `tail -f` never finishes at all. Running one on the thread that
 //! reads the keyboard means the editor stops answering until it is done -- so
-//! the command is handed to the background worker (see [`crate::task`]) and the
+//! the command is handed to the background worker (see [`crate::background`]) and the
 //! editor carries on.
 //!
 //! What that costs is the obvious way of reporting completion. The worker is
@@ -26,7 +26,7 @@
 //! come, which means the buffer is also how you tell a slow command from a
 //! stuck one.
 use super::*;
-use crate::task::{ImmediateTask, WorkerMessage};
+use crate::background::{ImmediateTask, WorkerMessage};
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Child, Command, Stdio};
 
@@ -66,48 +66,6 @@ fn shell_invocation(command: &str) -> Command {
 /// A name no buffer currently has: `*Shell Output*`, then `<2>`, `<3>`...
 ///
 /// Several commands may be running at once, and one buffer between them would
-/// interleave their lines into something neither of them said.
-fn free_output_name<B: BufferTrait>(ctx: &EditorState<B>) -> String {
-    if !ctx.has_buffer(OUTPUT_BUFFER) {
-        return OUTPUT_BUFFER.to_string();
-    }
-    for n in 2.. {
-        let candidate = format!("{OUTPUT_BUFFER}<{n}>");
-        if !ctx.has_buffer(&candidate) {
-            return candidate;
-        }
-    }
-    unreachable!("the loop above returns")
-}
-
-/// Append `text` to the buffer called `name`, read-only or not.
-///
-/// The buffer is read-only so that nobody types into a transcript. The flag is
-/// turned off and back on *inside* one `with_buffer_mut` call, so the write
-/// lock is held across the whole of it and there is no moment when the buffer
-/// is both visible and writable. `dired` does the same thing from Lisp, where
-/// it cannot hold a lock and has to trust that nothing runs in between.
-fn append<B: BufferTrait>(ctx: &EditorState<B>, name: &str, text: &str) {
-    // `None` when the user killed the output buffer while the command was
-    // running, which is a perfectly reasonable thing to have done.
-    let written = ctx.with_buffer_mut(name, |buf| {
-        let was_read_only = buf.read_only;
-        buf.read_only = false;
-        let at = buf.text.len();
-        // Cannot fail here -- the only thing `insert_text` refuses is a
-        // read-only buffer, and the flag was just cleared under this same
-        // lock. Checked rather than discarded so that if it ever grows another
-        // reason to refuse, the output going missing is reported instead of
-        // silently not appearing.
-        let written = crate::primitives::edits::insert_text(buf, at, text);
-        buf.read_only = was_read_only;
-        written
-    });
-    if written == Some(false) {
-        ctx.log_diagnostic(&format!("Could not append shell output to {name}"));
-    }
-}
-
 /// Reading one command's output into one buffer, on the worker thread.
 struct ShellTask {
     child: Child,
@@ -120,13 +78,14 @@ impl<B: BufferTrait> ImmediateTask<B> for ShellTask {
         if let Some(stdout) = self.child.stdout.take() {
             for line in BufReader::new(stdout).lines() {
                 match line {
-                    Ok(line) => append(state, &self.buffer, &format!("{line}\n")),
+                    Ok(line) => {
+                        state.append_to_buffer(&self.buffer, &format!("{line}\n"));
+                    }
                     // Output that is not UTF-8. Said once and then dropped:
                     // the alternative is a buffer of replacement characters
                     // that looks like the command's own output.
                     Err(why) => {
-                        append(
-                            state,
+                        state.append_to_buffer(
                             &self.buffer,
                             &format!("[unreadable output: {why}]\n"),
                         );
@@ -146,7 +105,7 @@ impl<B: BufferTrait> ImmediateTask<B> for ShellTask {
                 if !text.ends_with('\n') {
                     text.push('\n');
                 }
-                append(state, &self.buffer, &text);
+                state.append_to_buffer(&self.buffer, &text);
             }
         }
         let status = match self.child.wait() {
@@ -157,7 +116,7 @@ impl<B: BufferTrait> ImmediateTask<B> for ShellTask {
             },
             Err(why) => format!("--- could not be waited for: {why} ---\n"),
         };
-        append(state, &self.buffer, &status);
+        state.append_to_buffer(&self.buffer, &status);
         // Last, and after the trailer is in the buffer: this is what stops the
         // renderer waking up on a timer, and it must not stop before the thing
         // it was waking up to see has been written.
@@ -198,17 +157,8 @@ primitive!(shell_command_start, args, _env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    let mode = match args.get(1) {
-        None => "shell-output-mode".to_string(),
-        Some(exp) if exp.is_nil() => "shell-output-mode".to_string(),
-        Some(ELispExp::Symbol(name)) | Some(ELispExp::String(name)) => name.to_string(),
-        Some(other) => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "Symbol naming a mode".into(),
-                got: other.clone(),
-            });
-        }
-    };
+    let mode = args::optional_name(args.get(1), "Symbol naming a mode")?
+        .unwrap_or_else(|| "shell-output-mode".to_string());
     let child = match shell_invocation(command).spawn() {
         Ok(child) => child,
         Err(why) => {
@@ -217,9 +167,9 @@ primitive!(shell_command_start, args, _env, ctx, {
         }
     };
 
-    let name = free_output_name(ctx);
+    let name = ctx.free_buffer_name(OUTPUT_BUFFER);
     ctx.new_buffer(&name, None, Some(mode));
-    append(ctx, &name, &format!("$ {command}\n"));
+    ctx.append_to_buffer(&name, &format!("$ {command}\n"));
     ctx.with_buffer_mut(&name, |buf| buf.read_only = true);
 
     // Counted *before* the task is sent, not inside it: the worker may not
@@ -412,3 +362,28 @@ primitive!(parse_overstrike, args, _env, _ctx, {
         ELispExp::proper_list(spans),
     ]))
 });
+
+/// Register this module's primitives: running a child process and collecting its output.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.command(
+        "shell-command-start",
+        shell_command_start,
+        &["sShell command: "],
+        SHELL_COMMAND_START_DOC,
+    );
+    into.function(
+        "shell-command-to-string",
+        shell_command_to_string,
+        SHELL_COMMAND_TO_STRING_DOC,
+    );
+    into.function("parse-overstrike", parse_overstrike, PARSE_OVERSTRIKE_DOC);
+    into.function(
+        "shell-command-running-p",
+        shell_command_running_p,
+        SHELL_COMMAND_RUNNING_P_DOC,
+    );
+}

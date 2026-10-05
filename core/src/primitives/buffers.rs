@@ -44,17 +44,7 @@ primitive!(buffer_create, args, _env, ctx, {
                 });
             }
         };
-        let mode = match args.get(1) {
-            None => None,
-            Some(exp) if exp.is_nil() => None,
-            Some(ELispExp::String(mode)) | Some(ELispExp::Symbol(mode)) => Some(mode.to_string()),
-            Some(other) => {
-                return Err(EvalError::WrongArgumentType {
-                    expected: "String or Symbol naming a mode".into(),
-                    got: other.clone(),
-                });
-            }
-        };
+        let mode = args::optional_name(args.get(1), "String or Symbol naming a mode")?;
         if !ctx.has_buffer(&name) {
             ctx.new_buffer(&name, None, mode);
         }
@@ -79,12 +69,7 @@ pub const SET_BUFFER_READ_ONLY_DOC: &str = "(set-buffer-read-only FLAG): Make th
          (set-buffer-read-only t)";
 
 primitive!(set_buffer_read_only, args, _env, ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 1)?;
     let flag = args[0].is_truthy();
     ctx.with_current_buffer_mut(|buf| buf.read_only = flag);
     Ok(args[0].clone())
@@ -347,12 +332,7 @@ pub const BUFFER_SUBSTRING_DOC: &str = "(buffer-substring START END): Return the
          (buffer-substring (point-min) (point)) => \"everything before point\"";
 
 primitive!(buffer_substring, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let bound = |exp: &ELispExp<B>| match exp {
         ELispExp::Number(n) if n.is_finite() && *n >= 0.0 => Ok(*n as usize),
         other => Err(EvalError::WrongArgumentType {
@@ -363,11 +343,7 @@ primitive!(buffer_substring, args, _env, ctx, {
     let (from, to) = (bound(&args[0])?, bound(&args[1])?);
 
     Ok(ELispExp::string(ctx.with_current_buffer(|buf| {
-        let end = from.max(to).min(buf.text.len());
-        let start = from.min(to).min(end);
-        (start..end)
-            .filter_map(|at| buf.text.at(at))
-            .collect::<String>()
+        buf.text.slice(from.min(to), from.max(to))
     })))
 });
 
@@ -438,12 +414,7 @@ pub const WITH_CURRENT_BUFFER_DOC: &str = "(with-current-buffer NAME FUNCTION): 
          (with-current-buffer \"notes.txt\" (lambda () (buffer-string)))";
 
 primitive!(with_current_buffer, args, env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let name = match &args[0] {
         ELispExp::String(name) | ELispExp::Symbol(name) => name.to_string(),
         other => {
@@ -499,15 +470,8 @@ fn buffer_argument<B: BufferTrait>(
     args: &[ELispExp<B>],
     ctx: &EditorState<B>,
 ) -> Result<String, EvalError<EditorState<B>>> {
-    match args.first() {
-        None => Ok(ctx.get_current_buffer_name()),
-        Some(exp) if exp.is_nil() => Ok(ctx.get_current_buffer_name()),
-        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => Ok(name.to_string()),
-        Some(other) => Err(EvalError::WrongArgumentType {
-            expected: "String naming a buffer".into(),
-            got: other.clone(),
-        }),
-    }
+    Ok(args::optional_name(args.first(), "String naming a buffer")?
+        .unwrap_or_else(|| ctx.get_current_buffer_name()))
 }
 
 pub const BUFFER_MODIFIED_P_DOC: &str = "(buffer-modified-p &optional BUFFER): t if BUFFER has \
@@ -547,3 +511,58 @@ primitive!(buffer_file_name, args, _env, ctx, {
         None => ELispExp::nil(),
     })
 });
+
+/// Register this module's primitives: making, naming, killing and switching buffers.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Remembering something about one buffer, for as long as it exists.
+    into.function("buffer-put", buffer_put, BUFFER_PUT_DOC);
+    into.function("buffer-get", buffer_get, BUFFER_GET_DOC);
+    into.function("buffer-substring", buffer_substring, BUFFER_SUBSTRING_DOC);
+    into.function("switch-to-buffer", switch_to_buffer, SWITCH_TO_BUFFER_DOC);
+    into.function("current-buffer", current_buffer, CURRENT_BUFFER_DOC);
+    into.function("buffer-create", buffer_create, BUFFER_CREATE_DOC);
+    into.function("close-buffer", close_buffer, CLOSE_BUFFER_DOC);
+    // The same function under Emacs' name, and *this* is the one registered as
+    // a command: `M-x close-buffer` would be a second way to reach one thing,
+    // named what no Emacs user would look for.
+    into.command(
+        "kill-buffer",
+        close_buffer,
+        &["bKill buffer: "],
+        KILL_BUFFER_DOC,
+    );
+    into.command(
+        "kill-buffer-without-saving",
+        kill_buffer_without_saving,
+        &["bKill buffer without saving: "],
+        KILL_BUFFER_WITHOUT_SAVING_DOC,
+    );
+    into.function("buffer-string", buffer_string, BUFFER_STRING_DOC);
+    into.function("clear-buffer", clear_buffer, CLEAR_BUFFER_DOC);
+    into.function(
+        "with-current-buffer",
+        with_current_buffer,
+        WITH_CURRENT_BUFFER_DOC,
+    );
+    into.function(
+        "set-buffer-read-only",
+        set_buffer_read_only,
+        SET_BUFFER_READ_ONLY_DOC,
+    );
+    into.function(
+        "buffer-read-only-p",
+        buffer_read_only_p,
+        BUFFER_READ_ONLY_P_DOC,
+    );
+    into.function(
+        "buffer-modified-p",
+        buffer_modified_p,
+        BUFFER_MODIFIED_P_DOC,
+    );
+    into.function("buffer-file-name", buffer_file_name, BUFFER_FILE_NAME_DOC);
+    into.function("major-mode", major_mode, MAJOR_MODE_DOC);
+}

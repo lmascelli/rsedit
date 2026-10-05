@@ -1,101 +1,24 @@
-//! The built-in minibuffer: a small, always-available prompt for reading a
-//! single line of input from the user, with optional Tab-completion.
+//! The minibuffer, as Lisp sees it.
 //!
-//! Unlike most editor behavior (which lives in `.lisp` files under
-//! `core/lisp/` and can be freely redefined or omitted), the minibuffer's
-//! read/confirm/cancel/complete mechanics are hardcoded here in Rust: too
-//! much else (M-x, M-:, and eventually find-file prompts, search, ...)
-//! depends on being able to read a line of input for it to be something a
-//! missing or broken Lisp file could silently take out.
+//! Twelve primitives: opening a prompt, answering it, cancelling it,
+//! completing in it, and walking its history. The prompt's mechanics -- what
+//! its contents are, which history ring it files under, what "no prompt open"
+//! means -- are [`crate::feature::minibuffer`], and so is `minibuffer-mode`.
 //!
-//! The public entry point is `minibuffer-read`. What actually renders and
-//! drives the prompt is decided by `*minibuffer-read-function*`, a Lisp
-//! variable naming a function with the same signature as `minibuffer-read`
-//! itself. It defaults to `default-minibuffer-prompt`, a small floating
-//! window docked to the last few lines of the frame. Anything wanting a
-//! fancier minibuffer (a real popup completion list, fuzzy matching, ...)
-//! can rebind it -- every caller of `minibuffer-read` picks that up
-//! automatically -- so *this* mechanism being hardcoded doesn't lock in the
-//! *implementation* it happens to ship with.
+//! # Why every one of these takes its answer as a callback
+//!
+//! The editor never blocks. A prompt opens, the command that opened it
+//! returns, and the answer arrives later -- in another command, when a key is
+//! pressed. So reading a line cannot *return* the line, and what it can do is
+//! say what to do with it.
+use super::*;
 use crate::editor::{
     DEFAULT_MINIBUFFER_HEIGHT, DEFAULT_MINIBUFFER_WIDTH, MINIBUFFER_HEIGHT, MINIBUFFER_WIDTH,
 };
-use crate::{
-    BufferTrait, ELispExp, EditorState,
-    input::{KeyCode, KeyEvent, KeyModifiers},
-    lisp::{Env, EvalError, call_callable},
-    managers::{DEFAULT_HISTORY_LENGTH, Recalled},
-    modes::MajorMode,
-    primitive,
-};
+use crate::feature::minibuffer;
+use crate::lisp::call_callable;
+use crate::managers::Recalled;
 use std::sync::Arc;
-
-/// Set NAME to VAL the way Lisp's `setq` special form does: update an
-/// existing binding wherever it is up the scope chain if one exists,
-/// otherwise declare it fresh in ENV's own scope. `Env::set_variable`
-/// alone always declares fresh *locally* -- correct for a genuinely new
-/// binding, but wrong for a global like `*minibuffer-on-confirm*` mutated
-/// from inside a primitive that was itself called with some nested
-/// per-call environment: it would create a shadow invisible to a later
-/// read from a different frame, rather than updating the global.
-fn setq<B: BufferTrait>(env: &Env<EditorState<B>>, name: &str, val: ELispExp<B>) {
-    if !env.update_variable(name, val.clone()) {
-        env.set_variable(name.to_string(), val);
-    }
-}
-
-/// Replace the minibuffer buffer's contents with CONTENT, character by
-/// character (mirroring what `self-insert` does per character, including
-/// marking the buffer modified) after clearing it. Not a primitive --
-/// purely an internal helper for `minibuffer-complete`'s Tab-cycling.
-fn set_minibuffer_content<B: BufferTrait>(ctx: &EditorState<B>, content: &str) {
-    ctx.with_current_buffer_mut(|buf| {
-        while buf.text.cursor_pos() != (0, 0) {
-            buf.text.delete();
-        }
-        for c in content.chars() {
-            buf.text.insert(c);
-            buf.is_modified = true;
-        }
-    });
-}
-
-/// The name of the Lisp variable holding the key the current prompt's history
-/// is filed under.
-pub const MINIBUFFER_HISTORY_KEY: &str = "*minibuffer-history-key*";
-
-/// The name of the Lisp variable capping how much one prompt remembers.
-pub const HISTORY_LENGTH: &str = "history-length";
-
-/// Which ring the prompt now open is reading and writing.
-///
-/// # Why the prompt's own text is the default
-///
-/// Every prompt in the editor gets a history without a single caller being
-/// changed, which is the whole point: `M-x`, `find-file`, `switch-to-buffer`
-/// and anything a module prompts for are all `minibuffer-read` calls, and a
-/// history that only worked for the ones that opted in would be a history
-/// nobody could rely on.
-///
-/// The cost is that two prompts worded identically share a ring. That is
-/// usually right -- they are usually the same question -- and where it is not,
-/// the caller says so with the optional HISTORY argument.
-fn history_key<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> String {
-    match env.get_variable(MINIBUFFER_HISTORY_KEY) {
-        Some(ELispExp::String(key)) | Some(ELispExp::Symbol(key)) if !key.is_empty() => {
-            key.to_string()
-        }
-        _ => String::new(),
-    }
-}
-
-/// How much one prompt remembers, as Lisp currently has it.
-fn history_length<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> usize {
-    match env.get_variable(HISTORY_LENGTH) {
-        Some(ELispExp::Number(n)) if n.is_finite() && n >= 0.0 => n as usize,
-        _ => DEFAULT_HISTORY_LENGTH,
-    }
-}
 
 const MINIBUFFER_CLEANUP_DOC: &str = "(minibuffer-cleanup): Runs via `minibuffer-mode's \
          after-close-hook once the minibuffer buffer closes, however it \
@@ -110,25 +33,7 @@ const MINIBUFFER_CLEANUP_DOC: &str = "(minibuffer-cleanup): Runs via `minibuffer
          clean slate.";
 
 primitive!(minibuffer_cleanup_primitive, _args, env, ctx, {
-    if let Some(ELispExp::String(previous)) = env.get_variable("*minibuffer-previous-buffer*") {
-        ctx.switch_to_buffer(&previous);
-    }
-    setq(&env, "*minibuffer-on-confirm*", ELispExp::nil());
-    setq(&env, "*minibuffer-on-change*", ELispExp::nil());
-    setq(&env, "*minibuffer-on-cancel*", ELispExp::nil());
-    setq(&env, "*minibuffer-previous-buffer*", ELispExp::nil());
-    setq(&env, "*minibuffer-completions*", ELispExp::nil());
-    setq(
-        &env,
-        "*minibuffer-completion-index*",
-        ELispExp::number(0f64),
-    );
-    setq(&env, MINIBUFFER_HISTORY_KEY, ELispExp::nil());
-    // The entries stay; only the place in them goes. A position into a ring
-    // outlives nothing -- the line it was walking through is gone with the
-    // prompt -- and a stale one would make the next prompt's first `M-p`
-    // continue somebody else's walk.
-    ctx.history_mut(|history| history.end_walk());
+    minibuffer::reset_prompt_state(&env, ctx);
     Ok(ELispExp::nil())
 });
 
@@ -142,8 +47,8 @@ primitive!(minibuffer_confirm, _args, env, ctx, {
 
     // Remembered before the prompt closes, because closing it runs
     // `minibuffer-cleanup`, which is where the key is forgotten.
-    let key = history_key(&env);
-    let limit = history_length(&env);
+    let key = minibuffer::history_key(&env);
+    let limit = minibuffer::history_length(&env);
     if !key.is_empty() {
         ctx.history_mut(|history| history.remember(&key, &input, limit));
     }
@@ -205,7 +110,7 @@ primitive!(minibuffer_choose_completion, args, _env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    set_minibuffer_content(ctx, value);
+    minibuffer::set_minibuffer_content(ctx, value);
     Ok(args[0].clone())
 });
 
@@ -263,11 +168,11 @@ primitive!(minibuffer_complete, _args, env, ctx, {
                     )?,
                     _ => ELispExp::nil(),
                 };
-                setq(&env, ASKED_ABOUT, ELispExp::string(current.clone()));
+                minibuffer::setq(&env, ASKED_ABOUT, ELispExp::string(current.clone()));
                 fresh
             }
         };
-        setq(&env, "*minibuffer-completions*", candidates.clone());
+        minibuffer::setq(&env, "*minibuffer-completions*", candidates.clone());
         call_callable(
             &present,
             &[
@@ -285,22 +190,22 @@ primitive!(minibuffer_complete, _args, env, ctx, {
 
     if still_cycling {
         let next_index = (index + 1) % items.len();
-        setq(
+        minibuffer::setq(
             &env,
             "*minibuffer-completion-index*",
             ELispExp::number(next_index as f64),
         );
         if let Some(ELispExp::String(s)) = items.get(next_index) {
-            set_minibuffer_content(ctx, s.as_str());
+            minibuffer::set_minibuffer_content(ctx, s.as_str());
         }
     } else if let Some(on_change) = env.get_variable("*minibuffer-on-change*") {
         if on_change.is_truthy() {
             let candidates =
                 call_callable(&on_change, &[ELispExp::string(current)], env.clone(), ctx)?;
-            setq(&env, "*minibuffer-completions*", candidates.clone());
-            setq(&env, "*minibuffer-completion-index*", ELispExp::number(0.0));
+            minibuffer::setq(&env, "*minibuffer-completions*", candidates.clone());
+            minibuffer::setq(&env, "*minibuffer-completion-index*", ELispExp::number(0.0));
             if let Some(ELispExp::String(first)) = candidates.iter().next() {
-                set_minibuffer_content(ctx, &first);
+                minibuffer::set_minibuffer_content(ctx, &first);
             }
         }
     }
@@ -334,7 +239,7 @@ fn step_history<B: BufferTrait>(
     env: &Arc<Env<EditorState<B>>>,
     backwards: bool,
 ) -> ELispExp<B> {
-    let key = history_key(env);
+    let key = minibuffer::history_key(env);
     if key.is_empty() {
         return ELispExp::nil();
     }
@@ -351,7 +256,7 @@ fn step_history<B: BufferTrait>(
     });
     match recalled {
         Some(text) => {
-            set_minibuffer_content(ctx, &text);
+            minibuffer::set_minibuffer_content(ctx, &text);
             ELispExp::t()
         }
         // Left exactly as it is. Rewriting the prompt with a copy of itself
@@ -436,22 +341,22 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
         None
     };
 
-    setq(
+    minibuffer::setq(
         &env,
         "*minibuffer-previous-buffer*",
         ELispExp::string(ctx.get_current_buffer_name()),
     );
-    setq(&env, "*minibuffer-on-confirm*", args[1].clone());
-    setq(&env, "*minibuffer-on-change*", args[2].clone());
-    setq(&env, "*minibuffer-on-cancel*", args[3].clone());
-    setq(&env, "*minibuffer-completions*", ELispExp::nil());
-    setq(&env, "*minibuffer-completion-index*", ELispExp::number(0.0));
+    minibuffer::setq(&env, "*minibuffer-on-confirm*", args[1].clone());
+    minibuffer::setq(&env, "*minibuffer-on-change*", args[2].clone());
+    minibuffer::setq(&env, "*minibuffer-on-cancel*", args[3].clone());
+    minibuffer::setq(&env, "*minibuffer-completions*", ELispExp::nil());
+    minibuffer::setq(&env, "*minibuffer-completion-index*", ELispExp::number(0.0));
     // Which ring M-p and M-n will walk. The prompt's own text unless the
     // caller named one, so every prompt in the editor has a history without a
     // single caller having to ask for it.
-    setq(
+    minibuffer::setq(
         &env,
-        MINIBUFFER_HISTORY_KEY,
+        minibuffer::MINIBUFFER_HISTORY_KEY,
         match args.get(5) {
             Some(ELispExp::String(key)) | Some(ELispExp::Symbol(key)) if !key.is_empty() => {
                 ELispExp::string(key.to_string())
@@ -559,7 +464,7 @@ primitive!(completion_invalidate, _args, env, ctx, {
     // Forgotten rather than recomputed: recomputing here would call the
     // candidate function whether or not anybody was going to look, and the
     // whole reason this exists is that the candidate function is expensive.
-    setq(&env, ASKED_ABOUT, ELispExp::nil());
+    minibuffer::setq(&env, ASKED_ABOUT, ELispExp::nil());
     if let Some(presenter) = env.get_variable(COMPLETION_INVALIDATED)
         && presenter.is_truthy()
     {
@@ -604,7 +509,7 @@ primitive!(minibuffer_read, args, env, ctx, {
     //
     // A worker that genuinely needs an answer asks for it the way anything
     // else asynchronous does: it leaves something for a command to find.
-    if crate::worker::in_worker() {
+    if crate::background::worker::in_worker() {
         return Err(EvalError::RuntimeMessage(
             "minibuffer-read: a background worker cannot open a prompt".into(),
         ));
@@ -615,159 +520,71 @@ primitive!(minibuffer_read, args, env, ctx, {
     call_callable(&read_fn, args, env.clone(), ctx)
 });
 
-pub fn install_minibuffer<B: BufferTrait>(
-    editor_state: &EditorState<B>,
-    env: Arc<Env<EditorState<B>>>,
-) {
-    env.set_function(
-        "minibuffer-cleanup".into(),
-        ELispExp::primitive(
-            minibuffer_cleanup_primitive,
-            Some(MINIBUFFER_CLEANUP_DOC.into()),
-        ),
+/// Register this module's primitives: reading a line of input.
+///
+/// Called by [`super::install_primitives`]. These used to be registered by
+/// `install_minibuffer`, beside the mode -- twelve `env.set_function` calls
+/// spelled out in full, which is what a `Registry` is for.
+///
+/// Only the two history commands are commands: the rest answer a prompt that
+/// is already open, and `M-x minibuffer-confirm` with nothing to confirm is
+/// not an offer worth making.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.function(
+        "minibuffer-cleanup",
+        minibuffer_cleanup_primitive,
+        MINIBUFFER_CLEANUP_DOC,
     );
-    env.set_function(
-        "minibuffer-confirm".into(),
-        ELispExp::primitive(minibuffer_confirm, Some(MINIBUFFER_CONFIRM_DOC.into())),
+    into.function(
+        "minibuffer-confirm",
+        minibuffer_confirm,
+        MINIBUFFER_CONFIRM_DOC,
     );
-    env.set_function(
-        "minibuffer-cancel".into(),
-        ELispExp::primitive(minibuffer_cancel, Some(MINIBUFFER_CANCEL_DOC.into())),
+    into.function(
+        "minibuffer-cancel",
+        minibuffer_cancel,
+        MINIBUFFER_CANCEL_DOC,
     );
-    env.set_function(
-        "minibuffer-complete".into(),
-        ELispExp::primitive(minibuffer_complete, Some(MINIBUFFER_COMPLETE_DOC.into())),
+    into.function(
+        "minibuffer-complete",
+        minibuffer_complete,
+        MINIBUFFER_COMPLETE_DOC,
     );
-    env.set_function(
-        "minibuffer-choose-completion".into(),
-        ELispExp::primitive(
-            minibuffer_choose_completion,
-            Some(MINIBUFFER_CHOOSE_COMPLETION_DOC.into()),
-        ),
+    into.function(
+        "minibuffer-choose-completion",
+        minibuffer_choose_completion,
+        MINIBUFFER_CHOOSE_COMPLETION_DOC,
     );
-    env.set_function(
-        "default-minibuffer-prompt".into(),
-        ELispExp::primitive(
-            default_minibuffer_prompt,
-            Some(DEFAULT_MINIBUFFER_PROMPT_DOC.into()),
-        ),
+    into.function(
+        "default-minibuffer-prompt",
+        default_minibuffer_prompt,
+        DEFAULT_MINIBUFFER_PROMPT_DOC,
     );
-    env.set_function(
-        "minibuffer-read".into(),
-        ELispExp::primitive(minibuffer_read, Some(MINIBUFFER_READ_DOC.into())),
+    into.function("minibuffer-read", minibuffer_read, MINIBUFFER_READ_DOC);
+    into.function(
+        "completion-invalidate",
+        completion_invalidate,
+        COMPLETION_INVALIDATE_DOC,
     );
-    env.set_function(
-        "completion-invalidate".into(),
-        ELispExp::primitive(
-            completion_invalidate,
-            Some(COMPLETION_INVALIDATE_DOC.into()),
-        ),
+    into.function(
+        "minibuffer-history",
+        minibuffer_history,
+        MINIBUFFER_HISTORY_DOC,
     );
-    env.set_function(
-        "history-previous".into(),
-        ELispExp::primitive(history_previous, Some(HISTORY_PREVIOUS_DOC.into())),
-    );
-    env.set_function(
-        "history-next".into(),
-        ELispExp::primitive(history_next, Some(HISTORY_NEXT_DOC.into())),
-    );
-    env.set_function(
-        "minibuffer-history".into(),
-        ELispExp::primitive(minibuffer_history, Some(MINIBUFFER_HISTORY_DOC.into())),
-    );
-    env.set_function(
-        "clear-minibuffer-history".into(),
-        ELispExp::primitive(
-            clear_minibuffer_history,
-            Some(CLEAR_MINIBUFFER_HISTORY_DOC.into()),
-        ),
+    into.function(
+        "clear-minibuffer-history",
+        clear_minibuffer_history,
+        CLEAR_MINIBUFFER_HISTORY_DOC,
     );
 
-    // Names the function that actually implements `minibuffer-read`.
-    // Rebind this (`(setq *minibuffer-read-function* 'my-own-prompt)`) to
-    // replace the built-in minibuffer with a custom implementation; see
-    // `minibuffer-read`'s docstring for the required signature.
-    env.set_variable(
-        "*minibuffer-read-function*".into(),
-        ELispExp::symbol("default-minibuffer-prompt".into()),
+    // Commands as well as functions, so that `M-x' reaches them and so that
+    // Lisp can rebind them by name. They take no arguments, so there is
+    // nothing to collect.
+    into.command(
+        "history-previous",
+        history_previous,
+        &[],
+        HISTORY_PREVIOUS_DOC,
     );
-
-    // Registered as commands, not merely as functions, so they can be reached
-    // from `M-x' and rebound by name from Lisp like anything else. They take
-    // no arguments, so there is nothing to collect.
-    editor_state.register_command("history-previous", Vec::new());
-    editor_state.register_command("history-next", Vec::new());
-
-    let mut minibuffer_mode = MajorMode::new("minibuffer-mode");
-    minibuffer_mode.keymaps.insert_key(
-        KeyEvent::new(KeyCode::Enter),
-        ELispExp::symbol("minibuffer-confirm".into()),
-    );
-    minibuffer_mode.keymaps.insert_key(
-        KeyEvent::new(KeyCode::Esc),
-        ELispExp::symbol("minibuffer-cancel".into()),
-    );
-    minibuffer_mode.keymaps.insert_key(
-        KeyEvent::new(KeyCode::Tab),
-        ELispExp::symbol("minibuffer-complete".into()),
-    );
-    // Correcting a typo is part of reading a line of input, so it is bound
-    // here with the rest of the prompt's mechanics rather than left to the
-    // global map -- where it lives in a `.lisp` file that can fail to load.
-    // Without it a mistyped prompt can only be abandoned and started again.
-    minibuffer_mode.keymaps.insert_key(
-        KeyEvent::new(KeyCode::Backspace),
-        ELispExp::symbol("delete-backward-char".into()),
-    );
-    // Recall, bound here with the rest of the prompt's mechanics rather than
-    // in a `.lisp` file that can fail to load. A prompt that has forgotten
-    // what you typed into it a minute ago is one you retype the long path
-    // into, and the way out of a missing module is itself a prompt.
-    //
-    // # Why three spellings, and why none of them needs a condition
-    //
-    // `C-p'/`C-n' are what the hands already do, and in a one-line prompt they
-    // have nothing else to mean. `M-p'/`M-n' are Emacs' own. The arrows are
-    // what somebody who has never used Emacs reaches for.
-    //
-    // All six would collide with the completion strip, which binds `C-n',
-    // `C-p' and the arrows to move through its candidates -- except that the
-    // strip installs a *transient* keymap, and a transient keymap is consulted
-    // before every other (see `resolve_key_sequence`). So while candidates are
-    // showing these are not reached at all, and the moment the strip goes down
-    // they are. Neither side tests for the other, which is the only version of
-    // this that stays true when a third thing wants the same keys.
-    let alt = |ch: char| KeyEvent {
-        code: KeyCode::Char(ch),
-        modifiers: KeyModifiers {
-            alt: true,
-            ..Default::default()
-        },
-    };
-    let ctrl = |ch: char| KeyEvent {
-        code: KeyCode::Char(ch),
-        modifiers: KeyModifiers {
-            ctrl: true,
-            ..Default::default()
-        },
-    };
-    for (key, command) in [
-        (KeyEvent::new(KeyCode::Up), "history-previous"),
-        (KeyEvent::new(KeyCode::Down), "history-next"),
-        (alt('p'), "history-previous"),
-        (alt('n'), "history-next"),
-        (ctrl('p'), "history-previous"),
-        (ctrl('n'), "history-next"),
-    ] {
-        minibuffer_mode
-            .keymaps
-            .insert_key(key, ELispExp::symbol(command.into()));
-    }
-    minibuffer_mode.hooks.insert(
-        "after-close-hook".into(),
-        vec![ELispExp::symbol("minibuffer-cleanup".into())],
-    );
-
-    editor_state.set_mode("minibuffer-mode", minibuffer_mode);
-    let _ = minibuffer_cleanup_primitive(&[], env.clone(), editor_state);
+    into.command("history-next", history_next, &[], HISTORY_NEXT_DOC);
 }

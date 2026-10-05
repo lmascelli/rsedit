@@ -145,12 +145,7 @@ pub const DEFINE_KBD_MACRO_DOC: &str = "(define-kbd-macro NAME KEYS): Make KEYS 
          (define-key nil \"C-c t\" 'tidy-line)";
 
 primitive!(define_kbd_macro, args, env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let name = match &args[0] {
         ELispExp::Symbol(name) | ELispExp::String(name) => name.to_string(),
         other => {
@@ -308,3 +303,64 @@ primitive!(kmacro_counter, _args, _env, ctx, {
         ctx.macros(|macros| macros.counter()) as f64
     ))
 });
+
+/// Register this module's primitives: recording and replaying keystrokes.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Recording keys and pressing them again. See `primitives::macros`, and
+    // `managers::macros` for why a macro is keys rather than commands.
+    into.command(
+        "kmacro-start-macro",
+        kmacro_start_macro,
+        &[],
+        KMACRO_START_MACRO_DOC,
+    );
+    into.command(
+        "kmacro-end-macro",
+        kmacro_end_macro,
+        &[],
+        KMACRO_END_MACRO_DOC,
+    );
+    into.command(
+        "kmacro-cancel-macro",
+        kmacro_cancel_macro,
+        &[],
+        KMACRO_CANCEL_MACRO_DOC,
+    );
+    into.command(
+        "kmacro-call-macro",
+        kmacro_call_macro,
+        &["p"],
+        KMACRO_CALL_MACRO_DOC,
+    );
+    into.command(
+        "kmacro-end-and-call-macro",
+        kmacro_end_and_call_macro,
+        &["p"],
+        KMACRO_END_AND_CALL_MACRO_DOC,
+    );
+    into.command(
+        "kmacro-insert-counter",
+        kmacro_insert_counter,
+        &[],
+        KMACRO_INSERT_COUNTER_DOC,
+    );
+    into.command(
+        "kmacro-set-counter",
+        kmacro_set_counter,
+        &["nSet macro counter to: "],
+        KMACRO_SET_COUNTER_DOC,
+    );
+    into.function("kmacro-counter", kmacro_counter, KMACRO_COUNTER_DOC);
+    into.function(
+        "kmacro-recording-p",
+        kmacro_recording_p,
+        KMACRO_RECORDING_P_DOC,
+    );
+    into.function("kbd-macro-keys", kbd_macro_keys, KBD_MACRO_KEYS_DOC);
+    into.function("define-kbd-macro", define_kbd_macro, DEFINE_KBD_MACRO_DOC);
+    into.function("kmacro-call-keys", kmacro_call_keys, KMACRO_CALL_KEYS_DOC);
+}

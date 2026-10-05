@@ -30,14 +30,15 @@
 
 use crate::{
     ELispExp,
+    background::{BackgroundScheduler, WorkerMessage},
     buffer::{Buffer, BufferTrait, FileStamp},
     commands::{ArgSpec, Invocation, PrefixArg},
+    feature::isearch::install_isearch,
+    feature::minibuffer::install_minibuffer,
     input::{
         KeyEvent, Keymap, MouseButton, MouseEvent, MouseKind, OnUnbound, TransientKeymap,
         describe_keys, fill_default_keymaps,
     },
-    isearch::install_isearch,
-    kill_ring::Direction,
     lisp::{
         DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm,
         call_callable, eval,
@@ -46,15 +47,14 @@ use crate::{
         Binding, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit,
         KillYank, Log, Macros, Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
     },
-    minibuffer::install_minibuffer,
     modes::autosave::{AutoSaver, auto_save_directory, auto_save_interval},
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     modes::prescan::Prescanner,
     modes::watcher::{FileWatcher, watch_interval},
     modes::{MajorMode, SyntaxTable},
     primitives::{edits::goto_offset, install_primitives},
-    search::Isearch,
-    task::{BackgroundScheduler, WorkerMessage},
+    text::kill_ring::Direction,
+    text::search::Isearch,
     ui::{
         ComposeSettings, Division, Face, FloatingWindow, Focus, FrameSnapshot, GutterSpec,
         LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,

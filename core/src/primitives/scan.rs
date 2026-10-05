@@ -5,7 +5,7 @@
 //! `isearch` and `replace` ask "where is the next one" and get on with it.
 //! Occur, grep, a linter reading its own output and anything else that means
 //! to *list* what it found ask a different question, and asking it with
-//! `search-forward` in a loop is quadratic -- see [`crate::search::Pattern::scan`],
+//! `search-forward` in a loop is quadratic -- see [`crate::text::search::Pattern::scan`],
 //! which is the one pass this hands to Lisp.
 //!
 //! # The entry, and why its shape is fixed here
@@ -29,7 +29,7 @@
 //! down in one place so the next producer copies it rather than inventing a
 //! ninth field.
 use super::*;
-use crate::search::{Found, Pattern, Scan};
+use crate::text::search::{Found, Pattern, Scan};
 
 /// What a scan answers when it was asked about a buffer.
 ///
@@ -113,7 +113,7 @@ primitive!(scan_buffer, args, env, ctx, {
         Some(ELispExp::Symbol(name)) => name.to_string(),
         _ => ctx.get_current_buffer_name(),
     };
-    let pattern = Pattern::new(&pattern, regexp, crate::isearch::case_fold(&env))
+    let pattern = Pattern::new(&pattern, regexp, crate::feature::isearch::case_fold(&env))
         .map_err(EvalError::RuntimeMessage)?;
     let Some(haystack) = ctx.with_buffer(&source, |buf| buf.text.to_string()) else {
         ctx.log_diagnostic(&format!("scan-buffer: no buffer called {source}"));
@@ -127,3 +127,13 @@ primitive!(scan_buffer, args, env, ctx, {
     let scan = pattern.scan(&haystack, limit);
     Ok(answer(KIND_BUFFER, &source, &scan))
 });
+
+/// Register this module's primitives: the syntax scanner's cache.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // Finding every match rather than the next one. See `primitives::scan`.
+    into.function("scan-buffer", scan_buffer, SCAN_BUFFER_DOC);
+}

@@ -1,7 +1,7 @@
 use crate::ELispExp;
 use crate::buffer::{Buffer, BufferTrait, mark::region_bounds};
 use crate::managers::Buffers;
-use crate::rectangle::Rectangle;
+use crate::text::rectangle::Rectangle;
 use crate::ui::Face;
 use crate::ui::layout::{self, BufferHighlight, Layout};
 

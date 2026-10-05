@@ -1,5 +1,5 @@
 ;; Commands built on top of the built-in minibuffer (see
-;; `core/src/minibuffer.rs` -- the read/confirm/cancel/complete mechanics
+;; `core/src/feature/minibuffer.rs` -- the read/confirm/cancel/complete mechanics
 ;; themselves are hardcoded in Rust, not defined here).
 
 ;; M-x lives in commands.lisp, which defines the command registry's Lisp

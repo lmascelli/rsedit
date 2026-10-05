@@ -31,7 +31,7 @@ impl<B: BufferTrait> EditorState<B> {
         self.windows_mut(|windows| windows.register_click(x, y))
     }
 
-    pub(crate) fn take_mouse_drag(&self) -> Option<MouseDrag> {
+    fn take_mouse_drag(&self) -> Option<MouseDrag> {
         self.windows_mut(|windows| windows.take_drag())
     }
 

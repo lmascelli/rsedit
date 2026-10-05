@@ -1,7 +1,7 @@
 //! The mark, the region, and the kill ring.
 use super::*;
 use crate::buffer::{Buffer, Mark, mark::region_bounds};
-use crate::kill_ring::Direction;
+use crate::text::kill_ring::Direction;
 
 /// The active region in the current buffer, as an ordered offset pair.
 fn region_of<B: BufferTrait>(buf: &Buffer<B>) -> Option<(usize, usize)> {
@@ -18,13 +18,6 @@ fn require_region<B: BufferTrait>(
     region_of(buf).ok_or_else(|| {
         EvalError::RuntimeMessage("The mark is not set now, so there is no region".into())
     })
-}
-
-/// The text between two offsets.
-fn text_between<B: BufferTrait>(text: &B, from: usize, to: usize) -> String {
-    (from..to.min(text.len()))
-        .filter_map(|i| text.at(i))
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +157,7 @@ pub const KILL_REGION_DOC: &str = "(kill-region): Delete the region and save it 
 primitive!(kill_region, _args, env, ctx, {
     let killed = ctx.with_current_buffer_mut(|buf| {
         let (start, end) = require_region(buf)?;
-        let text = text_between(&buf.text, start, end);
+        let text = buf.text.slice(start, end);
         // Only what actually left the buffer reaches the ring. Saving the text
         // of a refused kill would offer a later `yank' a copy of something
         // that is still there.
@@ -187,7 +180,7 @@ pub const KILL_RING_SAVE_DOC: &str = "(kill-ring-save): Save the region to the k
 primitive!(kill_ring_save, _args, env, ctx, {
     let text = ctx.with_current_buffer_mut(|buf| {
         let (start, end) = require_region(buf)?;
-        let text = text_between(&buf.text, start, end);
+        let text = buf.text.slice(start, end);
         // Copying is not an edit, so nothing else would deactivate the mark --
         // but leaving the region highlighted after a copy would suggest the
         // next command still applies to it.
@@ -330,3 +323,47 @@ primitive!(keyboard_quit, _args, _env, ctx, {
     ctx.set_echo_message("Quit");
     Ok(ELispExp::nil())
 });
+
+/// Register this module's primitives: point, the mark, and what lies between them.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    // ---------------------------------------------------------------
+    // The mark, the region, and the kill ring
+    // ---------------------------------------------------------------
+    into.command("set-mark", set_mark, &[], SET_MARK_DOC);
+    into.command("keyboard-quit", keyboard_quit, &[], KEYBOARD_QUIT_DOC);
+    into.command("deactivate-mark", deactivate_mark, &[], DEACTIVATE_MARK_DOC);
+    into.command(
+        "exchange-point-and-mark",
+        exchange_point_and_mark,
+        &[],
+        EXCHANGE_POINT_AND_MARK_DOC,
+    );
+    into.command(
+        "mark-whole-buffer",
+        mark_whole_buffer,
+        &[],
+        MARK_WHOLE_BUFFER_DOC,
+    );
+    into.command("kill-region", kill_region, &[], KILL_REGION_DOC);
+    into.command("kill-ring-save", kill_ring_save, &[], KILL_RING_SAVE_DOC);
+    into.command("yank", yank, &[], YANK_DOC);
+    into.command("yank-pop", yank_pop, &[], YANK_POP_DOC);
+    into.command(
+        "set-kill-ring-max",
+        set_kill_ring_max,
+        &["n:Kill ring size: "],
+        SET_KILL_RING_MAX_DOC,
+    );
+    // Predicates and accessors rather than things to run from M-x.
+    into.function("mark", mark, MARK_DOC);
+    into.function("use-region-p", use_region_p, USE_REGION_P_DOC);
+    into.function("region-beginning", region_beginning, REGION_BEGINNING_DOC);
+    into.function("region-end", region_end, REGION_END_DOC);
+    into.function("kill-new", kill_new, KILL_NEW_DOC);
+    into.function("current-kill", current_kill, CURRENT_KILL_DOC);
+    into.function("kill-ring-length", kill_ring_length, KILL_RING_LENGTH_DOC);
+}

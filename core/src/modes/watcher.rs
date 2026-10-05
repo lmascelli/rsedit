@@ -39,9 +39,9 @@
 //! left alone, exactly as though it had been modified all along.
 use crate::{
     BufferTrait, EditorState,
+    background::ScheduledTask,
     buffer::{FileStamp, OnDisk, disk::compare},
     lisp::{Env, LispContext},
-    task::ScheduledTask,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -69,11 +69,13 @@ pub const WATCH_FILE_INTERVAL: &str = "watch-file-interval";
 
 /// How often the watcher looks, as Lisp currently has it.
 pub fn watch_interval<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Duration {
-    match env.get_variable(WATCH_FILE_INTERVAL) {
-        Some(crate::ELispExp::Number(seconds)) if seconds.is_finite() && seconds >= 0.1 => {
-            Duration::from_secs_f64(seconds)
-        }
-        _ => DEFAULT_WATCH_INTERVAL,
+    // A tenth of a second, and not the auto-saver's one second: looking at a
+    // handful of modification times is cheap enough that somebody who wants it
+    // to feel immediate may have that, and the cost of being wrong is a little
+    // idle `stat`ting rather than a disk write.
+    match env.number_at_least(WATCH_FILE_INTERVAL, 0.1) {
+        Some(seconds) => Duration::from_secs_f64(seconds),
+        None => DEFAULT_WATCH_INTERVAL,
     }
 }
 
@@ -85,10 +87,7 @@ pub fn watch_interval<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Duratio
 /// reason to turn it off is a filesystem that is misbehaving, and that usually
 /// stops.
 pub fn watching<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
-    match env.get_variable(WATCH_FILES) {
-        Some(value) => value.is_truthy(),
-        None => true,
-    }
+    env.flag(WATCH_FILES, true)
 }
 
 /// Looks at a few open files each turn, forever.

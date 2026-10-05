@@ -5,6 +5,44 @@
 use super::{Env, EvalError, Lambda, LispContext, LispExp};
 use std::sync::Arc;
 
+/// Fail unless there are exactly COUNT arguments.
+///
+/// The six lines this replaces appeared forty-five times in `lisp/base/`
+/// alone and a further fifty-eight across the editor's primitives, which is a
+/// hundred-odd chances to write `expected: 2` above a body that reads
+/// `args[2]`. The check is the same check everywhere; only the number differs,
+/// and that is the argument.
+///
+/// Only for the primitives whose arity is *exact*. One with optional arguments
+/// has a range, not a count, and says so itself -- there is no `at_most` here
+/// because the ones that would use it each want a different message about which
+/// argument was the surplus.
+pub fn exact_arity<T: LispContext>(args: &[LispExp<T>], count: usize) -> Result<(), EvalError<T>> {
+    if args.len() != count {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: count,
+            got: args.len(),
+        });
+    }
+    Ok(())
+}
+
+/// Fail when there are no arguments at all.
+///
+/// The variadic primitives -- `+`, `max`, `concat`, the comparisons -- accept
+/// any number from one upwards, so an arity check is only ever a check that
+/// there is *something*, and all twenty of them spelled it `expected: 1, got:
+/// 0` by hand.
+pub fn some_arguments<T: LispContext>(args: &[LispExp<T>]) -> Result<(), EvalError<T>> {
+    if args.is_empty() {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: 0,
+        });
+    }
+    Ok(())
+}
+
 /// The inverse: reconstitute a form `eval` can dispatch on from a data
 /// list. Only reached when data is evaluated — `(eval (list '+ 1 2))`,
 /// and macro expansions.

@@ -21,11 +21,12 @@ type PropertyTable<T> = RwLock<HashMap<String, HashMap<String, LispExp<T>>>>;
 /// the same reason it does in that one.
 pub const VARIABLE_DOCUMENTATION: &str = "variable-documentation";
 
-/// Which of an environment's three name spaces to walk.
+/// Which of an environment's three name spaces an operation is about.
 ///
-/// A parameter rather than three near-identical recursive functions: the walk
-/// is the interesting part and it is the same walk, and duplicating it is how
-/// the three drift apart later.
+/// A parameter rather than three near-identical copies of each operation: the
+/// walk, the clone and the released lock are the interesting part and they are
+/// the same in all three, and duplicating them is how the three drift apart
+/// later.
 #[derive(Clone, Copy)]
 enum Namespace {
     Variables,
@@ -110,21 +111,83 @@ impl<T: LispContext> Env<T> {
         table.get(symbol)?.get(key).cloned()
     }
 
+    /// The table one namespace is kept in, here.
+    fn table(&self, namespace: Namespace) -> &RwLock<HashMap<String, LispExp<T>>> {
+        match namespace {
+            Namespace::Variables => &self.variables,
+            Namespace::Functions => &self.functions,
+            Namespace::Macros => &self.macros,
+        }
+    }
+
+    /// NAME's binding in one namespace, here or in the nearest parent that has
+    /// one.
+    ///
+    /// Iterative rather than recursive, and one function rather than three:
+    /// what makes a variable lookup different from a function lookup is which
+    /// of three fields it reads, and nothing else -- the walk, the clone, the
+    /// released lock and the `None` at the end were written out three times.
+    ///
+    /// The lock is dropped before stepping to the parent, for the reason
+    /// [`Self::collect_names`] gives: a chain of read locks held at once is a
+    /// lock order nothing else in the editor uses.
+    fn lookup(&self, namespace: Namespace, name: &str) -> Option<LispExp<T>> {
+        let mut env = self;
+        loop {
+            let found = env
+                .table(namespace)
+                .read()
+                .expect("Failed to acquire read lock on env")
+                .get(name)
+                .cloned();
+            if found.is_some() {
+                return found;
+            }
+            env = env.parent.as_deref()?;
+        }
+    }
+
+    /// Bind NAME in one namespace, here.
+    fn bind(&self, namespace: Namespace, name: String, val: LispExp<T>) {
+        self.table(namespace)
+            .write()
+            .expect("Failed to acquire write lock on env")
+            .insert(name, val);
+    }
+
     pub fn get_variable(&self, name: &str) -> Option<LispExp<T>> {
-        if let Some(val) = self
-            .variables
-            .read()
-            .expect("Failed to acquire read lock on env")
-            .get(name)
-        {
-            return Some(val.clone());
-        }
+        self.lookup(Namespace::Variables, name)
+    }
 
-        if let Some(parent) = &self.parent {
-            return parent.get_variable(name);
+    /// NAME's value as a number, if it is one and is at least FLOOR.
+    ///
+    /// Every setting the host reads out of Lisp is a setting Lisp may have set
+    /// to a string, or to a negative, or to an infinity -- `(/ 1.0 0)` is a
+    /// number and `Duration::from_secs_f64` panics on it. Seven readers each
+    /// wrote the same three guards by hand, which is seven chances to leave
+    /// `is_finite` out of one.
+    ///
+    /// FLOOR is a parameter and not a constant here because the floors differ
+    /// and the difference is meaningful: a watcher interval of 0.1s is
+    /// reasonable and an auto-save interval of 0.1s is not. Each caller keeps
+    /// its own, where a reader of that caller can see it.
+    pub fn number_at_least(&self, name: &str, floor: f64) -> Option<f64> {
+        match self.get_variable(name) {
+            Some(LispExp::Number(n)) if n.is_finite() && n >= floor => Some(n),
+            _ => None,
         }
+    }
 
-        None
+    /// NAME as a switch, with DEFAULT for "Lisp never said".
+    ///
+    /// Unbound is *not* the same as nil, and the distinction is the whole
+    /// reason this takes a default: a `.lisp` file that failed to load must not
+    /// be able to turn auto-saving off by omission.
+    pub fn flag(&self, name: &str, default: bool) -> bool {
+        match self.get_variable(name) {
+            Some(value) => value.is_truthy(),
+            None => default,
+        }
     }
 
     pub fn update_variable(&self, name: &str, val: LispExp<T>) -> bool {
@@ -147,53 +210,19 @@ impl<T: LispContext> Env<T> {
     }
 
     pub fn get_function(&self, name: &str) -> Option<LispExp<T>> {
-        if let Some(val) = self
-            .functions
-            .read()
-            .expect("Failed to acquire read lock on env")
-            .get(name)
-        {
-            return Some(val.clone());
-        }
-
-        if let Some(parent) = &self.parent {
-            return parent.get_function(name);
-        }
-
-        None
+        self.lookup(Namespace::Functions, name)
     }
 
     pub fn get_macro(&self, name: &str) -> Option<LispExp<T>> {
-        if let Some(val) = self
-            .macros
-            .read()
-            .expect("Failed to acquire read lock on env")
-            .get(name)
-        {
-            return Some(val.clone());
-        }
-
-        if let Some(parent) = &self.parent {
-            return parent.get_macro(name);
-        }
-
-        None
+        self.lookup(Namespace::Macros, name)
     }
 
     pub fn set_macro(&self, name: String, val: LispExp<T>) {
-        let mut map = self
-            .macros
-            .write()
-            .expect("Failed to acquire write lock on env");
-        map.insert(name, val);
+        self.bind(Namespace::Macros, name, val);
     }
 
     pub fn set_variable(&self, name: String, val: LispExp<T>) {
-        let mut map = self
-            .variables
-            .write()
-            .expect("Failed to acquire write lock on env");
-        map.insert(name, val);
+        self.bind(Namespace::Variables, name, val);
     }
 
     /// The root of this chain.
@@ -218,11 +247,7 @@ impl<T: LispContext> Env<T> {
     }
 
     pub fn set_function(&self, name: String, val: LispExp<T>) {
-        let mut map = self
-            .functions
-            .write()
-            .expect("Failed to acquire write lock on env");
-        map.insert(name, val);
+        self.bind(Namespace::Functions, name, val);
     }
 
     /// Every variable name visible from here, sorted, each once.
@@ -266,13 +291,9 @@ impl<T: LispContext> Env<T> {
     /// call would mean holding a read lock on every environment in the chain
     /// at once, in an order nothing else in the editor takes them in.
     fn collect_names(&self, namespace: Namespace, into: &mut Vec<String>) {
-        let map = match namespace {
-            Namespace::Variables => &self.variables,
-            Namespace::Functions => &self.functions,
-            Namespace::Macros => &self.macros,
-        };
         into.extend(
-            map.read()
+            self.table(namespace)
+                .read()
                 .expect("Failed to acquire read lock on env")
                 .keys()
                 .cloned(),

@@ -230,12 +230,7 @@ pub const DEFINE_REPEAT_KEY_DOC: &str = "(define-repeat-key COMMAND KEY): Say th
          (define-repeat-key 'other-window \"o\")   ; C-x o o o cycles windows";
 
 primitive!(define_repeat_key, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let command = match &args[0] {
         ELispExp::Symbol(name) | ELispExp::String(name) => name.to_string(),
         other => {
@@ -420,12 +415,7 @@ pub const REGEXP_OPT_DOC: &str = "(regexp-opt WORDS): Return a regular expressio
          (regexp-opt '(\\\"fn\\\" \\\"let\\\")) => \\\"(?:fn|let)\\\"";
 
 primitive!(regexp_opt, args, _env, _ctx, {
-    if args.len() != 1 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 1,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 1)?;
     let words: Vec<ELispExp<B>> = match &args[0] {
         ELispExp::Form(items) => items.to_vec(),
         other if other.is_nil() => Vec::new(),
@@ -471,12 +461,7 @@ pub const STRING_MATCH_DOC: &str = "(string-match REGEXP STRING): Match REGEXP a
          => (\\\"main.rs:42\\\" \\\"main.rs\\\" \\\"42\\\")";
 
 primitive!(string_match, args, _env, ctx, {
-    if args.len() != 2 {
-        return Err(EvalError::WrongNumberOfArguments {
-            expected: 2,
-            got: args.len(),
-        });
-    }
+    exact_arity(args, 2)?;
     let pattern = match &args[0] {
         ELispExp::String(text) => text.to_string(),
         other => {
@@ -498,7 +483,7 @@ primitive!(string_match, args, _env, ctx, {
     // Compiled once per pattern rather than once per call. The modules call
     // this per element -- per file, per line of output -- and compiling a
     // pattern costs a hundred times what matching one does.
-    let compiled = match crate::search::compiled(&pattern) {
+    let compiled = match crate::text::search::compiled(&pattern) {
         Ok(compiled) => compiled,
         Err(why) => {
             ctx.log_diagnostic(&format!("{pattern:?} is not a regular expression: {why}"));
@@ -520,3 +505,38 @@ primitive!(string_match, args, _env, ctx, {
         .collect();
     Ok(ELispExp::proper_list(groups))
 });
+
+/// Register this module's primitives: the odds and ends that belong to no one feature.
+///
+/// Called by [`super::install_primitives`]. Here rather than there because a
+/// primitive's name, its implementation and its argument spec are one fact in
+/// three pieces, and they were two files apart.
+pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.function("eval-file", eval_file, EVAL_FILE_DOC);
+    into.function("define-key", define_key, DEFINE_KEY_DOC);
+    into.function(
+        "define-repeat-key",
+        define_repeat_key,
+        DEFINE_REPEAT_KEY_DOC,
+    );
+    into.command("repeat", repeat, &[], REPEAT_DOC);
+    into.function("log", log, LOG_DOC);
+    into.function("string-match", string_match, STRING_MATCH_DOC);
+    into.function("regexp-opt", regexp_opt, REGEXP_OPT_DOC);
+    into.function("all-logs", all_logs, ALL_LOGS_DOC);
+    into.function("backtrace", backtrace, BACKTRACE_DOC);
+    into.function("set-echo-message", set_echo_message, SET_ECHO_MESSAGE_DOC);
+    // A keymap that is a question. Not commands: `M-x set-transient-keymap`
+    // would put the editor into a state whose way out is in an argument the
+    // user was never asked for.
+    into.function(
+        "set-transient-keymap",
+        set_transient_keymap,
+        SET_TRANSIENT_KEYMAP_DOC,
+    );
+    into.function(
+        "clear-transient-keymap",
+        clear_transient_keymap,
+        CLEAR_TRANSIENT_KEYMAP_DOC,
+    );
+}

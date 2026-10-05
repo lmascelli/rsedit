@@ -104,7 +104,7 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Whether KEYS is the start of a longer binding.
-    pub(crate) fn key_is_prefix(&self, keys: &[KeyEvent]) -> bool {
+    fn key_is_prefix(&self, keys: &[KeyEvent]) -> bool {
         let mode = self.keymap_mode();
         self.modes(|modes| modes.is_prefix(Some(&mode), keys))
     }
@@ -133,7 +133,12 @@ impl<B: BufferTrait> EditorState<B> {
         self.modes(|modes| modes.transient_message())
     }
 
-    /// Whether a transient keymap is installed. Only for reporting.
+    /// Whether a transient keymap is installed. Only for reporting -- and
+    /// only a test does the reporting, so it is compiled only for tests:
+    /// the editor itself never branches on this, because a transient map that
+    /// is up resolves keys and one that is not does not, and that is already
+    /// the answer.
+    #[cfg(test)]
     pub(crate) fn transient_keymap_active(&self) -> bool {
         self.modes(|modes| modes.transient_active())
     }

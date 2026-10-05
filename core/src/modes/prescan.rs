@@ -40,13 +40,13 @@
 //! plausible shape.
 use crate::{
     BufferTrait, EditorState,
+    background::ScheduledTask,
     buffer::scan::checkpoint_line,
     buffer::syntax::LINES_PER_TURN,
     modes::{
         SyntaxTable,
         sexp::{Resume, Scan},
     },
-    task::ScheduledTask,
 };
 
 /// Walks whichever buffer's scan has fallen behind, a chunk at a time, forever.
