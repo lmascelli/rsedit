@@ -1299,7 +1299,9 @@ primitive!(indent_line_to, args, _env, ctx, {
             return Some(false);
         }
         let padding: String = " ".repeat(column);
-        insert_text(buf, start, &padding);
+        if !insert_text(buf, start, &padding) {
+            return Some(false);
+        }
 
         // Where point ends up. Inside the indentation it has no character of
         // its own to keep, so it goes to the end of the new one; past it, it

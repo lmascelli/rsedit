@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod test {
-    use crate::lisp::{Parser, ParserError, Token};
+    use crate::lisp::{Parser, Token, parser::ParserError};
 
     // ==========================================
     // LEXER TESTS

@@ -152,13 +152,16 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// Exposed for `lisp::measure`, which needs the meter to hold a scope of
     /// its own for the duration of a measurement.
+    #[cfg(test)]
     pub(crate) fn fuel_meter(&self) -> Arc<FuelMeter> {
         self.runtime(|runtime| runtime.fuel())
     }
 
     /// Set how much fuel a fresh command receives, and top the current thread's
-    /// remaining fuel up to it. Exposed so the `set-command-fuel` primitive --
-    /// and tests that want a deliberately tiny budget -- can reach it.
+    /// remaining fuel up to it. Only tests reach it today, to ask for a
+    /// deliberately tiny budget; a `set-command-fuel` primitive would be the
+    /// first caller outside them.
+    #[cfg(test)]
     pub(crate) fn set_fuel_budget(&self, budget: u32) {
         self.runtime(|runtime| runtime.fuel()).set_budget(budget);
     }

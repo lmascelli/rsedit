@@ -217,8 +217,9 @@ command does not have one."
   ;; is ten million units spent deciding what the files are called -- the whole
   ;; fuel budget, before anything is matched against anything.
   (let ((name (file-name-nondirectory file)))
-    (let ((found (string-match "^[^.]+" name)))
-      (if found (car found) name))))
+    (if (string-match "^[^.]+" name)
+        (match-string 0 name)
+        name)))
 
 (defun manpage-candidates (input)
   "Manual page names matching INPUT, best first.

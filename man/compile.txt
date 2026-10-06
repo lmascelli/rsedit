@@ -18,8 +18,8 @@ DESCRIPTION
 LOCATIONS
     A line names a place when one of `compilation-patterns' matches it. Each
     entry is (REGEXP FILE-GROUP LINE-GROUP COLUMN-GROUP), where the groups
-    index what `string-match' returns -- 0 is the whole match, so the first
-    capture is 1. A nil column group means the format has no column.
+    are numbered as `match-string' takes them -- 0 is the whole match, so the
+    first capture is 1. A nil column group means the format has no column.
 
     Recognised out of the box: path:line:col (gcc, clang, rustc, most
     linters), path:line (make and older tools), rustc's indented "--> " line,

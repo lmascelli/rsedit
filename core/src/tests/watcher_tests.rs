@@ -438,6 +438,103 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
+    // Where point ends up
+    //
+    // A reload replaces the text wholesale, and a fresh text starts with its
+    // cursor at the top -- so a reload that asked where point was *after*
+    // swapping the text in sent every reader back to line one. These pin the
+    // promise instead: same line and column, clamped to the new text.
+    // ----------------------------------------------------------------
+
+    fn point(ctx: &Ctx, name: &str) -> (usize, usize) {
+        ctx.with_buffer(name, |buf| buf.text.cursor_pos())
+            .expect("the buffer exists")
+    }
+
+    fn put_point(ctx: &Ctx, name: &str, line: usize, column: usize) {
+        ctx.with_buffer_mut(name, |buf| buf.text.cursor_move(line, column));
+        assert_eq!(point(ctx, name), (line, column), "the test's own setup");
+    }
+
+    #[test]
+    fn a_reload_keeps_point_where_it_was() {
+        let sandbox = Sandbox::new("point-kept");
+        let path = sandbox.file("a.txt", "zero\none\ntwo\nthree\n");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        put_point(&ctx, &name, 2, 2);
+
+        sandbox.rewrite("a.txt", "ZERO\nONE\nTWO\nTHREE\n");
+        sweep(&ctx);
+        assert_eq!(text(&ctx, &name), "ZERO\nONE\nTWO\nTHREE\n");
+        assert_eq!(point(&ctx, &name), (2, 2), "not back at the top");
+    }
+
+    #[test]
+    fn a_reload_keeps_the_line_when_text_above_it_changed_length() {
+        // The usual shape of an edit made elsewhere: something above point
+        // grew. Same line and column is where the reader was; the same offset
+        // would be somewhere on the line before.
+        let sandbox = Sandbox::new("point-line");
+        let path = sandbox.file("a.txt", "a\nb\nc\nd\n");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        put_point(&ctx, &name, 3, 0);
+
+        sandbox.rewrite("a.txt", "a much longer first line\nb\nc\nd\n");
+        sweep(&ctx);
+        assert_eq!(point(&ctx, &name), (3, 0));
+    }
+
+    #[test]
+    fn a_reload_clamps_a_column_past_the_end_of_its_now_shorter_line() {
+        let sandbox = Sandbox::new("point-column");
+        let path = sandbox.file("a.txt", "zero\na long line here\ntwo\n");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        put_point(&ctx, &name, 1, 12);
+
+        sandbox.rewrite("a.txt", "zero\nshort\ntwo\n");
+        sweep(&ctx);
+        assert_eq!(point(&ctx, &name), (1, 5), "the end of that line");
+    }
+
+    #[test]
+    fn a_reload_that_shortened_the_file_past_point_lands_at_its_end() {
+        let sandbox = Sandbox::new("point-end");
+        let path = sandbox.file("a.txt", "0\n1\n2\n3\n4\n5\n");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        put_point(&ctx, &name, 5, 1);
+
+        sandbox.rewrite("a.txt", "0\n1");
+        sweep(&ctx);
+        let end = ctx.with_buffer(&name, |buf| buf.text.len()).unwrap();
+        assert_eq!(
+            ctx.with_buffer(&name, |buf| buf.text.cursor_pos_1d())
+                .unwrap(),
+            end,
+            "saturated to the end, not reset to the start"
+        );
+    }
+
+    #[test]
+    fn revert_buffer_keeps_point_where_it_was() {
+        // The same promise by the deliberate path, which shares the
+        // mechanism but not the call site.
+        let sandbox = Sandbox::new("point-revert");
+        let path = sandbox.file("a.txt", "zero\none\ntwo\n");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        put_point(&ctx, &name, 1, 2);
+        sandbox.rewrite("a.txt", "ZERO\nONE\nTWO\n");
+
+        run("(revert-buffer)", &env, &ctx);
+        assert_eq!(text(&ctx, &name), "ZERO\nONE\nTWO\n");
+        assert_eq!(point(&ctx, &name), (1, 2));
+    }
+
+    // ----------------------------------------------------------------
     // The window between reading the file and using what was read
     // ----------------------------------------------------------------
 

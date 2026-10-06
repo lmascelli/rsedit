@@ -67,17 +67,26 @@ do\"."
     (goto-char here)
     (indent-line-to column)))
 
-(defun indent-region ()
-  "Indent every line the region touches, and leave the region in place.
+;; ---------------------------------------------------------------------------
+;; Regions
+;; ---------------------------------------------------------------------------
+;;
+;; Everything below works on a region by line *number*, not by position:
+;; indenting a line changes every offset below it, so a loop that remembered
+;; where the region ended would be indenting the wrong text by the third line.
+;;
+;; And everything puts the region back when it is done, because it cannot be
+;; preserved -- every edit deactivates the mark at the chokepoint, so it is
+;; gone by the second line. Putting it back is what makes pressing Tab twice
+;; work on the same block.
 
-Walked by line *number*, not by position: indenting a line changes every offset
-below it, so a loop that remembered where the region ended would be indenting
-the wrong text by the third line.
+(defun indent--region-lines ()
+  "The first and last line numbers the region covers, as (FROM TO).
 
-The region is re-established at the end rather than preserved, because it
-cannot be preserved -- every edit deactivates the mark at the chokepoint, so it
-is gone by the second line. Putting it back is what makes pressing Tab twice
-work on the same block."
+A region that ends at the very start of a line does not cover that line. That is
+what selecting whole lines from the left margin produces -- the end lands at
+column 0 of the line *after* the last one meant -- and shifting a line nobody
+selected is the surprise this rule exists to avoid."
   ;; Both ends first, before anything moves. The region is the span between
   ;; mark and point, so `(goto-char (region-beginning))' collapses it -- and
   ;; `region-end' then answers with the mark rather than the end that was
@@ -85,15 +94,123 @@ work on the same block."
   (let* ((start (region-beginning))
          (end (region-end))
          (from (progn (goto-char start) (line-number-at-point)))
-         (to (progn (goto-char end) (line-number-at-point))))
-    (dotimes (n (+ 1 (- to from)))
-      (goto-line (+ from n))
-      (indent-line))
-    (goto-line from)
-    (beginning-of-line)
-    (set-mark)
-    (goto-line to)
-    (end-of-line)))
+         (to (progn
+               (goto-char end)
+               (if (and (> end start) (= (current-column) 0))
+                   (- (line-number-at-point) 1)
+                   (line-number-at-point)))))
+    (list from (max from to))))
+
+(defun indent--reselect (from to)
+  "Make lines FROM to TO the region again, whole."
+  (goto-line from)
+  (beginning-of-line)
+  (set-mark)
+  (goto-line to)
+  (end-of-line))
+
+(defun indent--text-column ()
+  "The column this line's text starts at, or nil if the line is blank.
+
+Columns rather than `current-indentation''s characters, so that a line indented
+with a literal tab is shifted from where it *looks* indented to, not from one."
+  (back-to-indentation)
+  (let ((column (current-column))
+        (here (point)))
+    (end-of-line)
+    (if (= here (point)) nil column)))
+
+(defun indent-rigidly-lines (from to amount)
+  "Shift lines FROM to TO by AMOUNT columns, keeping their shape.
+
+Every line moves by the same amount, so whatever the indentation inside the
+block said -- this is nested under that -- still says it afterwards. A
+negative AMOUNT moves left and stops at the margin: a line with less
+indentation than that goes to column 0 rather than taking the others with it.
+
+Blank lines are left alone. Shifting one would only give it trailing
+whitespace."
+  (dotimes (n (+ 1 (- to from)))
+    (goto-line (+ from n))
+    (let ((column (indent--text-column)))
+      (when column
+        (indent-line-to (max 0 (+ column amount)))))))
+
+(defvar indent-region-style 'auto
+  "What Tab does to a region: `reindent', `shift' or `auto'.
+
+  reindent  put every line where the mode's `indent-function' says
+  shift     move the block right by one `indent-width', keeping its shape
+  auto      reindent in a mode that has an `indent-function', shift in one
+            that does not
+
+`auto' is the default because reindenting without a rule means matching the
+line above, and applied line by line that *flattens* a block: each line copies
+the one before it, so a nested body lands at the same column as its header.
+
+A mode can have its own: (put 'rust-mode 'indent-region-style 'shift).")
+
+(defun indent--region-style ()
+  "Whether Tab reindents or shifts the region here: `reindent' or `shift'."
+  (let ((style (or (get (major-mode) 'indent-region-style) indent-region-style)))
+    (cond
+     ((eq style 'reindent) 'reindent)
+     ((eq style 'shift) 'shift)
+     ;; `auto', and anything not understood -- a typo should get the sensible
+     ;; behaviour rather than an error on every Tab.
+     ((get (major-mode) 'indent-function) 'reindent)
+     (t 'shift))))
+
+(defun indent-region ()
+  "Indent every line the region touches, and leave the region in place.
+
+Reindent each line, or shift the block as a whole, as `indent-region-style'
+says."
+  (let* ((lines (indent--region-lines))
+         (from (nth 0 lines))
+         (to (nth 1 lines)))
+    (if (eq (indent--region-style) 'reindent)
+        (dotimes (n (+ 1 (- to from)))
+          (goto-line (+ from n))
+          (indent-line))
+        (indent-rigidly-lines from to (indent-width)))
+    (indent--reselect from to)))
+
+(defun indent--shift (direction)
+  "Shift the region, or the current line, by one `indent-width' in DIRECTION.
+
+DIRECTION is 1 for right and -1 for left. Without a region the line point is on
+is the block, and point keeps its place in the text."
+  (let ((amount (* direction (indent-width))))
+    (if (use-region-p)
+        (let* ((lines (indent--region-lines))
+               (from (nth 0 lines))
+               (to (nth 1 lines)))
+          (indent-rigidly-lines from to amount)
+          (indent--reselect from to))
+        ;; Point is put back before the line moves, so that `indent-line-to''s
+        ;; own rule -- point keeps the character it was on -- applies to where
+        ;; the user was rather than to wherever measuring the line left it. A
+        ;; blank line still shifts here, unlike in a region: it is the line
+        ;; the user asked about, not one swept up with the others.
+        (let* ((here (point))
+               (column (or (indent--text-column) (current-indentation))))
+          (goto-char here)
+          (indent-line-to (max 0 (+ column amount)))))))
+
+(defcommand indent-rigidly-right () nil
+  "Shift the region -- or the line -- right by one `indent-width'.
+
+Unlike Tab this never asks the mode where the lines belong: the block moves as
+it is."
+  (indent--shift 1))
+
+(defcommand indent-rigidly-left () nil
+  "Shift the region -- or the line -- left by one `indent-width'.
+
+Lines stop at the margin rather than holding the rest back, so a block whose
+lines are indented by different amounts still moves as far as it can."
+  (indent--shift -1))
 
 (defcommand indent-for-tab-command () nil
   "Indent the region, or the line, or fall back to `tab-always-indent'.
@@ -229,5 +346,65 @@ no line above the first one and the second form would quietly do nothing there."
       (insert "\n"))
     (goto-char start)
     (indent-line)))
+
+;; ---------------------------------------------------------------------------
+;; Enter
+;; ---------------------------------------------------------------------------
+
+(defvar electric-indent-mode t
+  "Whether Enter indents the line it opens, as `newline-and-indent' does.
+
+On by default, as in Emacs. (setq electric-indent-mode nil) makes Enter a plain
+newline.
+
+A variable rather than a binding to change, because the binding is not the
+user's to keep track of -- `<ret>' is bound to `newline' once, in this file,
+and this decides what that means. Read at every keystroke, so setting it takes
+effect at once.")
+
+(defun indent--delete-trailing-space ()
+  "Delete the spaces and tabs just before point, on this line only.
+
+What Enter leaves behind on a line whose indentation it opened from: pressing it
+on an indented blank line would otherwise leave that line made of nothing but
+spaces."
+  (let* ((end (point))
+         (start (progn (beginning-of-line) (point)))
+         (gap (string-match-p "[ \t]+$" (buffer-substring start end))))
+    (goto-char end)
+    (when gap
+      (delete-region (+ start gap) end))))
+
+(defcommand newline-and-indent () nil
+  "Insert a newline, and indent the new line the way its mode wants.
+
+The indentation comes from the same place Tab's does -- the mode's
+`indent-function', or the line above -- so a mode that teaches Tab where its
+lines go has taught Enter as well.
+
+Whitespace just before point goes first. Splitting `foo   |bar' should not leave
+`foo   ' behind, and Enter on an indented blank line should not leave a line of
+spaces above the new one. Text after point keeps its place: the newline carries
+it to the new line, and `indent-line-to' replaces whatever whitespace it brought
+with the indentation that line should have."
+  (indent--delete-trailing-space)
+  (insert-newline)
+  (indent-line))
+
+(defcommand newline () nil
+  "What Enter does: `newline-and-indent' if `electric-indent-mode' is on, a
+plain newline if it is not.
+
+Asked at every keystroke rather than when the key was bound, so setting the
+variable takes effect immediately and needs no rebinding."
+  (if electric-indent-mode
+      (newline-and-indent)
+      (insert-newline)))
+
+;; Bound here rather than in common-keymaps.lisp, beside Tab, because of what
+;; happens when this file is not loaded. Without it the binding would name a
+;; command that does not exist and Enter would stop working altogether; with
+;; it here, Enter simply stays the built-in `insert-newline'.
+(define-key nil "<ret>" 'newline)
 
 (log "End of the indent.lisp")

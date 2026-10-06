@@ -49,7 +49,7 @@ mod modes;
 mod runtime;
 mod windows;
 
-pub use buffers::{Buffers, Removed as BufferRemoved, Renamed as BufferRenamed, SCRATCH};
+pub use buffers::{Buffers, Removed as BufferRemoved, Renamed as BufferRenamed};
 pub use commands::Commands;
 pub use history::{DEFAULT_HISTORY_LENGTH, History, Recalled};
 pub use kill_yank::KillYank;
@@ -57,7 +57,4 @@ pub use log::Log;
 pub use macros::Macros;
 pub use modes::{Binding, BindingSource, Modes};
 pub use runtime::Runtime;
-pub use windows::{
-    ClickCount, DOUBLE_CLICK_INTERVAL, DRAG_SCROLL_INTERVAL, Hit, MouseDrag,
-    Removed as WindowRemoved, Scrolled, Windows,
-};
+pub use windows::{ClickCount, Hit, MouseDrag, Removed as WindowRemoved, Scrolled, Windows};

@@ -78,6 +78,12 @@ pub fn translate_key(key_event: crossterm::event::KeyEvent) -> Option<KeyEvent> 
         CrossKeyCode::Backspace => KeyCode::Backspace,
         CrossKeyCode::Enter => KeyCode::Enter,
         CrossKeyCode::Tab => KeyCode::Tab,
+        // Shift-Tab is a key of its own to a terminal. To the editor it is Tab
+        // with Shift held, which is how a binding names it: `S-<tab>`.
+        CrossKeyCode::BackTab => {
+            modifiers.shift = true;
+            KeyCode::Tab
+        }
         CrossKeyCode::Esc => KeyCode::Esc,
         _ => return None,
     };

@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::lisp::fuel::Exhausted;
     use crate::lisp::*;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, RwLock};

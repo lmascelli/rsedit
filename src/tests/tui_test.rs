@@ -1,26 +1,14 @@
 use crate::tests::tui_test::ColorDepth::TrueColor;
-use crossterm::event::{
-    Event, KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers, poll, read,
-};
-use crossterm::{
-    QueueableCommand, cursor, execute,
-    style::{
-        Attribute, Color as CrossColor, Print, SetAttribute, SetBackgroundColor, SetForegroundColor,
-    },
-    terminal,
-};
-use rsedit_core::BufferTrait;
+use crossterm::event::{KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers};
+use crossterm::style::Color as CrossColor;
 use rsedit_core::ELispExp;
 use rsedit_core::EditorState;
+use rsedit_core::Env;
 use rsedit_core::GapBuffer;
+use rsedit_core::KeyCode;
 use rsedit_core::{Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Style, Theme};
-use rsedit_core::{Env, LispContext};
-use rsedit_core::{KeyCode, KeyEvent, KeyModifiers};
 use rsedit_core::{create_global_env, isolate_config_for_tests};
-use std::{
-    io::{Write, stdout},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use crate::tests::tui_test::ColorDepth::Ansi16;
 use crate::tests::tui_test::ColorDepth::Ansi256;
@@ -177,6 +165,21 @@ fn a_shifted_letter_arrives_as_the_capital() {
 
     assert_eq!(event.code, KeyCode::Char('A'));
     assert!(!event.modifiers.shift, "the shift was spent on the capital");
+}
+
+/// A terminal reports Shift-Tab as a key of its own. The editor has no such
+/// key: it is Tab with Shift held, which is what `S-<tab>` binds.
+#[test]
+fn shift_tab_arrives_as_tab_with_shift_held() {
+    for modifiers in [CrossModifiers::NONE, CrossModifiers::SHIFT] {
+        let event = translate_key(terminal_key(CrossKeyCode::BackTab, modifiers))
+            .expect("Shift-Tab translates");
+        assert_eq!(event.code, KeyCode::Tab);
+        assert!(
+            event.modifiers.shift,
+            "whether or not the terminal also said so"
+        );
+    }
 }
 
 /// A key with no name in the editor is refused, not guessed at. The caller

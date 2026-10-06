@@ -36,7 +36,7 @@ while working, and the file you jumped to is what deserves the room.")
 ;; What counts as a location, and which group is which.
 ;;
 ;; Each entry is (REGEXP FILE-GROUP LINE-GROUP COLUMN-GROUP), where the groups
-;; are indices into what `string-match' returns -- 0 being the whole match, so
+;; are group numbers as `match-string' takes them -- 0 being the whole match, so
 ;; the first capture is 1. A nil column group means the format has no column.
 ;;
 ;; A list rather than one pattern because compilers do not agree, and a list is
@@ -69,9 +69,10 @@ because they are the same mark -- see the faces at the foot of this file.")
 ;; Reading a line as a location
 ;; ---------------------------------------------------------------------------
 
-(defun compilation--group (groups index)
-  "Element INDEX of GROUPS, or nil if INDEX is nil or it did not take part."
-  (if (null index) nil (nth index groups)))
+(defun compilation--group (line index)
+  "Group INDEX of the last match against LINE, or nil if INDEX is nil or the
+group did not take part."
+  (if (null index) nil (match-string index line)))
 
 (defun compilation--parse (line)
   "(FILE LINE COLUMN) for LINE, or nil if it names no place.
@@ -82,12 +83,11 @@ the first to match decides, so the more specific ones come first in
   (let ((found nil))
     (mapc (lambda (pattern)
             (if (null found)
-                (let ((groups (string-match (nth 0 pattern) line)))
-                  (if groups
-                      (setq found
-                            (list (compilation--group groups (nth 1 pattern))
-                                  (compilation--group groups (nth 2 pattern))
-                                  (compilation--group groups (nth 3 pattern))))))))
+                (if (string-match (nth 0 pattern) line)
+                    (setq found
+                          (list (compilation--group line (nth 1 pattern))
+                                (compilation--group line (nth 2 pattern))
+                                (compilation--group line (nth 3 pattern)))))))
           compilation-patterns)
     found))
 

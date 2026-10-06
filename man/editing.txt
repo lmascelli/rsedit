@@ -73,6 +73,33 @@ SPACE
         M-<space>       collapse the space here to one
         M-\             delete every space here
 
+INDENTING
+    <tab> indents the line the way its mode wants, or matches the line above
+    in a mode with no rule of its own. On a line that is already right it
+    inserts spaces instead -- `tab-always-indent' changes that.
+
+    With a region, <tab> works on every line it touches. A mode with a rule
+    puts each line where the rule says; a mode without one shifts the block
+    right by one tab width and keeps its shape. `indent-region-style' chooses
+    otherwise -- 'reindent or 'shift always, globally or for one mode:
+
+        (setq indent-region-style 'shift)
+        (put 'risp-mode 'indent-region-style 'shift)
+
+    S-<tab> shifts the region, or the line, back left; lines stop at the
+    margin rather than holding the others back. The region stays selected, so
+    pressing either again moves the same block on another step.
+
+    A region that ends at the very start of a line leaves that line alone,
+    which is what selecting whole lines from the margin wants.
+
+    <ret> indents the new line as <tab> would, and drops any spaces left at
+    the end of the line it came from. For a plain newline instead:
+
+        (setq electric-indent-mode nil)
+
+    M-x newline-and-indent indents once, whatever the setting.
+
 TRANSPOSING
         C-t             swap the characters either side of the cursor
         M-t             swap the words
@@ -128,6 +155,9 @@ KEYS
     C-x C-x                 exchange-point-and-mark
     C-x h                   mark-whole-buffer
     C-x <space>             rectangle-mark-mode
+    <tab>                   indent-for-tab-command
+    S-<tab>                 indent-rigidly-left
+    <ret>                   newline
     C-o                     open-line-above
     C-x C-o                 delete-blank-lines
     M-^                     join-line

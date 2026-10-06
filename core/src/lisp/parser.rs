@@ -203,7 +203,7 @@ impl<'source> Parser<'source> {
                         self.lexer_state = ParserLexerState::Default;
                         return Ok(Some(Token::Symbol(token_string)));
                     }
-                    '\n' | '\r' => {}
+                    '\r' => {}
                     _ => {
                         self.token.push(*c);
                     }

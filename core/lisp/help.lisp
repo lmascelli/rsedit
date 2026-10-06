@@ -282,7 +282,7 @@ the bindings in effect *there* are not the ones anybody asked about."
   (let ((functions nil)
         (variables nil))
     (mapc (lambda (name)
-            (when (string-match pattern name)
+            (when (string-match-p pattern name)
               (setq functions
                     (append functions
                             (list (concat "  " (help--pad name 28)
@@ -290,7 +290,7 @@ the bindings in effect *there* are not the ones anybody asked about."
                                            (function-doc (help--symbol name)))))))))
           (all-functions))
     (mapc (lambda (name)
-            (when (string-match pattern name)
+            (when (string-match-p pattern name)
               (setq variables
                     (append variables
                             (list (concat "  " (help--pad name 28)

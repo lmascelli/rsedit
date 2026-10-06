@@ -23,7 +23,8 @@ pub(crate) fn parse_key_sequence(seq: &str) -> Option<Vec<KeyEvent>> {
     Some(keys)
 }
 
-/// Parse one key: optional `C-`, `M-` or `C-M-` modifiers, then a key name.
+/// Parse one key: optional `C-`, `M-`, `C-M-` or `S-` modifiers, then a key
+/// name.
 fn parse_key(seq: &str) -> Option<KeyEvent> {
     let mut modifiers = KeyModifiers::default();
     let mut chars = seq.chars().peekable();
@@ -42,12 +43,22 @@ fn parse_key(seq: &str) -> Option<KeyEvent> {
     } else if let Some(rest) = seq.strip_prefix("M-") {
         modifiers.alt = true;
         chars = rest.chars().peekable();
+    } else if let Some(rest) = seq.strip_prefix("S-") {
+        // For keys that are not characters -- `S-<tab>`. A shifted character
+        // arrives as its own character, so `S-a` parses but never fires.
+        modifiers.shift = true;
+        chars = rest.chars().peekable();
     }
 
     let key_code = match chars.collect::<String>().as_str() {
         "<ret>" | "<Return>" => KeyCode::Enter,
         "<esc>" | "<Escape>" => KeyCode::Esc,
         "tab" | "<tab>" | "<Tab>" => KeyCode::Tab,
+        // What terminals call Shift-Tab, accepted under that name too.
+        "<backtab>" => {
+            modifiers.shift = true;
+            KeyCode::Tab
+        }
         "<backspace>" => KeyCode::Backspace,
         // Spelt out because a bare space is impossible to see in a key name,
         // and `C-<space>` is how `set-mark` is bound.
@@ -95,6 +106,7 @@ mod help;
 pub(crate) mod io;
 mod isearch;
 mod macros;
+mod match_data;
 mod minibuffer;
 mod modes;
 pub(crate) mod mouse;
@@ -198,6 +210,7 @@ pub fn install_primitives<B: BufferTrait>(
     io::install(&into);
     isearch::install(&into);
     macros::install(&into);
+    match_data::install(&into);
     minibuffer::install(&into);
     modes::install(&into);
     mouse::install(&into);

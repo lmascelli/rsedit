@@ -85,14 +85,14 @@ mod tests {
         // A cache that answered from a stale entry, or that cached failures
         // as successes, would show up here first.
         let (ctx, env) = editor();
-        assert_eq!(
-            run(r#"(string-match "(unclosed" "text")"#, &env, &ctx),
-            LispExp::nil()
-        );
+        let refused =
+            r#"(condition-case nil (string-match "(unclosed" "text") (invalid-regexp 'refused))"#;
+        assert_eq!(run(refused, &env, &ctx), LispExp::symbol("refused".into()));
         assert!(!run(r#"(string-match "^te" "text")"#, &env, &ctx).is_nil());
         assert_eq!(
-            run(r#"(string-match "(unclosed" "text")"#, &env, &ctx),
-            LispExp::nil()
+            run(refused, &env, &ctx),
+            LispExp::symbol("refused".into()),
+            "refused the second time too, not answered from the cache"
         );
     }
 

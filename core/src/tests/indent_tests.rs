@@ -441,21 +441,312 @@ mod tests {
         assert_eq!(contents(&ctx), "    foo\n    bar        ");
     }
 
+    // -----------------------------------------------------------------------
+    // Tab on a region
+    //
+    // Two meanings, chosen by the mode. With an `indent-function' every line
+    // goes where the rule says. Without one the only rule is "match the line
+    // above", and applied line by line that flattens a block -- each line
+    // copies the one before, so a nested body ends up level with its header.
+    // That was the bug: Tab on a region pulled every line to the same column.
+    // Without a rule, the block now moves right as a whole instead.
+    // -----------------------------------------------------------------------
+
+    fn select(ctx: &Ctx, env: &Arc<Env<Ctx>>, from: usize, to: usize) {
+        run(
+            &format!("(goto-char {from}) (set-mark) (goto-char {to})"),
+            env,
+            ctx,
+        );
+        assert_eq!(run("(use-region-p)", env, ctx), LispExp::t());
+    }
+
+    fn key(ctx: &Ctx, env: &Arc<Env<Ctx>>, code: KeyCode, shift: bool) {
+        ctx.handle_key_event(
+            KeyEvent {
+                code,
+                modifiers: KeyModifiers {
+                    shift,
+                    ..Default::default()
+                },
+            },
+            env,
+        );
+    }
+
     #[test]
-    fn tab_indents_the_region_and_leaves_it_in_place() {
+    fn tab_on_a_region_with_no_rule_shifts_it_and_keeps_its_shape() {
         let (ctx, env) = editor();
-        typing(&ctx, "        head\na\nb\nc", 13);
-        run("(set-mark) (goto-char 17)", &env, &ctx);
+        let text = "        head\na\n    b\nc";
+        typing(&ctx, text, 0);
+        // From the start of `a' to the middle of `b': two lines.
+        select(&ctx, &env, 13, 18);
         run("(indent-for-tab-command)", &env, &ctx);
         assert_eq!(
             contents(&ctx),
-            "        head\n        a\n        b\n        c"
+            "        head\n    a\n        b\nc",
+            "each line moved by one indent-width; nothing copied the line above"
         );
+    }
+
+    #[test]
+    fn tab_leaves_the_region_in_place_so_a_second_tab_shifts_again() {
+        let (ctx, env) = editor();
+        typing(&ctx, "a\nb\nc", 0);
+        select(&ctx, &env, 0, 3);
+        run("(indent-for-tab-command)", &env, &ctx);
         assert_eq!(
             run("(use-region-p)", &env, &ctx),
             LispExp::t(),
-            "the region survives, so a second Tab works on the same block"
+            "the region survives"
         );
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(contents(&ctx), "        a\n        b\nc");
+    }
+
+    #[test]
+    fn a_region_ending_at_the_start_of_a_line_does_not_take_that_line() {
+        // Selecting whole lines from the margin ends the region at column 0 of
+        // the line after; that line was not meant.
+        let (ctx, env) = editor();
+        typing(&ctx, "a\nb\nc", 0);
+        select(&ctx, &env, 0, 4);
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    a\n    b\nc");
+    }
+
+    #[test]
+    fn blank_lines_in_a_shifted_region_stay_blank() {
+        let (ctx, env) = editor();
+        typing(&ctx, "a\n\nb", 0);
+        select(&ctx, &env, 0, 4);
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    a\n\n    b", "no trailing whitespace");
+    }
+
+    #[test]
+    fn a_mode_with_a_rule_reindents_the_region_instead() {
+        let (ctx, env) = editor();
+        run(
+            "(make-mode 'always-three)
+             (defun three () 3)
+             (put 'always-three 'indent-function 'three)",
+            &env,
+            &ctx,
+        );
+        in_mode(&ctx, "always-three");
+        typing(&ctx, "a\n        b\nc", 0);
+        select(&ctx, &env, 0, 13);
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(contents(&ctx), "   a\n   b\n   c");
+    }
+
+    #[test]
+    fn shift_tab_moves_the_region_left_and_stops_at_the_margin() {
+        let (ctx, env) = editor();
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("loading common-keymaps.lisp");
+        typing(&ctx, "        a\n  b\n      c", 0);
+        select(&ctx, &env, 0, 22);
+        key(&ctx, &env, KeyCode::Tab, true);
+        assert_eq!(
+            contents(&ctx),
+            "    a\nb\n  c",
+            "the short line stopped at 0 without holding the others back"
+        );
+        assert_eq!(run("(use-region-p)", &env, &ctx), LispExp::t());
+    }
+
+    #[test]
+    fn shifting_without_a_region_moves_the_line_and_keeps_point_on_its_text() {
+        let (ctx, env) = editor();
+        typing(&ctx, "    foo\nbar", 6);
+        run("(indent-rigidly-left)", &env, &ctx);
+        assert_eq!(contents(&ctx), "foo\nbar");
+        assert_eq!(point(&ctx), 2, "still before the second `o'");
+        run("(indent-rigidly-right) (indent-rigidly-right)", &env, &ctx);
+        assert_eq!(contents(&ctx), "        foo\nbar");
+        assert_eq!(point(&ctx), 10);
+    }
+
+    #[test]
+    fn shifting_a_region_by_key_is_one_undo_step() {
+        let (ctx, env) = editor();
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("loading common-keymaps.lisp");
+        typing(&ctx, "a\nb\nc", 0);
+        select(&ctx, &env, 0, 5);
+        key(&ctx, &env, KeyCode::Tab, false);
+        assert_eq!(contents(&ctx), "    a\n    b\n    c");
+        run("(undo)", &env, &ctx);
+        assert_eq!(contents(&ctx), "a\nb\nc", "three lines, one step");
+    }
+
+    #[test]
+    fn shift_tab_has_a_name_that_survives_the_round_trip() {
+        // `S-<tab>' is what a binding writes and what `describe-key' should
+        // say back; `<backtab>' is the terminal's name, accepted as the same.
+        let shift_tab = KeyEvent {
+            code: KeyCode::Tab,
+            modifiers: KeyModifiers {
+                shift: true,
+                ..Default::default()
+            },
+        };
+        let parse = |spelling| crate::primitives::parse_key_sequence(spelling);
+        assert_eq!(parse("S-<tab>"), Some(vec![shift_tab.clone()]));
+        assert_eq!(parse("<backtab>"), Some(vec![shift_tab.clone()]));
+        assert_ne!(
+            parse("<tab>"),
+            Some(vec![shift_tab.clone()]),
+            "Tab is not Shift-Tab"
+        );
+        assert_eq!(crate::input::describe_keys(&[shift_tab]), "S-<tab>");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enter
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn newline_and_indent_matches_the_line_above() {
+        let (ctx, env) = editor();
+        typing(&ctx, "    foo", 7);
+        run("(newline-and-indent)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    foo\n    ");
+        assert_eq!(point(&ctx), 12, "at the end of the new indentation");
+    }
+
+    #[test]
+    fn newline_and_indent_asks_the_mode_where_the_line_goes() {
+        let (ctx, env) = editor();
+        run(
+            "(make-mode 'always-three)
+             (defun three () 3)
+             (put 'always-three 'indent-function 'three)",
+            &env,
+            &ctx,
+        );
+        in_mode(&ctx, "always-three");
+        typing(&ctx, "foo", 3);
+        run("(newline-and-indent)", &env, &ctx);
+        assert_eq!(contents(&ctx), "foo\n   ");
+    }
+
+    #[test]
+    fn newline_and_indent_in_a_lisp_indents_the_body() {
+        let (ctx, env) = editor();
+        lisp_indenting(&ctx, &env);
+        typing(&ctx, "(defun f ()", 11);
+        run("(newline-and-indent)", &env, &ctx);
+        assert_eq!(contents(&ctx), "(defun f ()\n  ");
+    }
+
+    #[test]
+    fn newline_and_indent_splits_a_line_without_leaving_whitespace_behind() {
+        let (ctx, env) = editor();
+        // Point between the spaces and `bar'.
+        typing(&ctx, "    foo   bar", 10);
+        run("(newline-and-indent)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    foo\n    bar");
+        assert_eq!(point(&ctx), 12, "before `bar', which came along");
+    }
+
+    #[test]
+    fn newline_and_indent_on_an_indented_blank_line_leaves_it_empty() {
+        let (ctx, env) = editor();
+        typing(&ctx, "    foo\n    ", 12);
+        run("(newline-and-indent)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    foo\n\n    ");
+    }
+
+    #[test]
+    fn enter_indents_until_electric_indent_mode_is_turned_off() {
+        let (ctx, env) = editor();
+        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
+            .expect("loading common-keymaps.lisp");
+        typing(&ctx, "    foo", 7);
+        key(&ctx, &env, KeyCode::Enter, false);
+        assert_eq!(
+            contents(&ctx),
+            "    foo\n    ",
+            "on by default, as in Emacs"
+        );
+
+        run("(setq electric-indent-mode nil)", &env, &ctx);
+        key(&ctx, &env, KeyCode::Enter, false);
+        assert_eq!(
+            contents(&ctx),
+            "    foo\n    \n",
+            "off: a plain newline, with no rebinding needed"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // indent-region-style
+    // -----------------------------------------------------------------------
+
+    fn a_mode_with_a_rule(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
+        run(
+            "(make-mode 'always-three)
+             (defun three () 3)
+             (put 'always-three 'indent-function 'three)",
+            env,
+            ctx,
+        );
+        in_mode(ctx, "always-three");
+    }
+
+    #[test]
+    fn shift_style_shifts_even_where_the_mode_has_a_rule() {
+        let (ctx, env) = editor();
+        a_mode_with_a_rule(&ctx, &env);
+        run("(setq indent-region-style 'shift)", &env, &ctx);
+        typing(&ctx, "a\n  b", 0);
+        select(&ctx, &env, 0, 6);
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    a\n      b");
+    }
+
+    #[test]
+    fn reindent_style_reindents_even_where_the_mode_has_no_rule() {
+        // Which, with no rule, means matching the line above -- the flattening
+        // `auto' exists to avoid. Asked for, so given.
+        let (ctx, env) = editor();
+        run("(setq indent-region-style 'reindent)", &env, &ctx);
+        typing(&ctx, "    head\na\n        b", 9);
+        select(&ctx, &env, 9, 20);
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    head\n    a\n    b");
+    }
+
+    #[test]
+    fn a_mode_can_choose_its_own_style() {
+        let (ctx, env) = editor();
+        a_mode_with_a_rule(&ctx, &env);
+        run(
+            "(put 'always-three 'indent-region-style 'shift)",
+            &env,
+            &ctx,
+        );
+        typing(&ctx, "a\n  b", 0);
+        select(&ctx, &env, 0, 6);
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(
+            contents(&ctx),
+            "    a\n      b",
+            "the mode's own choice wins over `auto'"
+        );
+    }
+
+    #[test]
+    fn a_style_nobody_understands_behaves_as_auto() {
+        let (ctx, env) = editor();
+        run("(setq indent-region-style 'shfit)", &env, &ctx);
+        typing(&ctx, "a\n  b", 0);
+        select(&ctx, &env, 0, 6);
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    a\n      b", "no rule here, so shifted");
     }
 
     #[test]

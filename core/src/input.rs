@@ -88,6 +88,11 @@ fn describe_key(key: &KeyEvent) -> String {
     if key.modifiers.alt {
         out.push_str("M-");
     }
+    // Only ever set on a key that is not a character: a frontend folds Shift
+    // into the character itself, so `A` is never spelt `S-a`.
+    if key.modifiers.shift {
+        out.push_str("S-");
+    }
     out.push_str(&match key.code {
         KeyCode::Char(' ') => "<space>".to_string(),
         KeyCode::Char(c) => c.to_string(),

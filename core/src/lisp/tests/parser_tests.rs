@@ -4,7 +4,7 @@ mod test {
     // PARSER TESTS
     // ==========================================
 
-    use crate::lisp::{LispExp, Parser, ParserError};
+    use crate::lisp::{LispExp, Parser, parser::ParserError};
 
     #[test]
     fn test_parse_primitives() {

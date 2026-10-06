@@ -147,18 +147,11 @@ impl FuelMeter {
     /// Set the budget future scopes receive, and top the current thread's
     /// remaining fuel up to it -- so code that knows it will be expensive can
     /// raise its own ceiling as its first act rather than having to restart.
+    #[cfg(test)]
     pub fn set_budget(&self, budget: u32) {
         self.budget.store(budget, Ordering::Relaxed);
         FUEL.set(budget);
     }
-}
-
-/// Steps left in the calling thread's current scope.
-///
-/// Exposed so that a host can *count* the work an evaluation did, rather than
-/// only be told when it ran out. See [`measure`].
-pub fn remaining() -> u32 {
-    FUEL.get()
 }
 
 /// Set the calling thread's remaining fuel to exactly AMOUNT, whether that
@@ -179,7 +172,6 @@ pub fn remaining() -> u32 {
 /// It sets a thread-local and reads no meter, so taking `&self` would be a
 /// parameter that exists only to look symmetrical -- and it would mean holding
 /// whatever lock the meter lives behind to touch state the meter does not own.
-/// [`remaining`] above is a free function for the same reason.
 pub fn set_remaining(amount: u32) {
     FUEL.set(amount);
 }
@@ -206,6 +198,7 @@ pub fn set_remaining(amount: u32) {
 ///
 /// The thread's real remaining fuel is saved and restored, so measuring cannot
 /// hand the surrounding scope a larger budget than it started with.
+#[cfg(test)]
 pub fn measure<T, F: FnOnce() -> T>(meter: &FuelMeter, body: F) -> (T, u64) {
     let saved = FUEL.get();
     let scope = meter.begin();

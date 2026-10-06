@@ -15,10 +15,12 @@ mod utils;
 pub use context::LispContext;
 pub use environment::{Env, VARIABLE_DOCUMENTATION};
 pub use error::EvalError;
-pub use eval::{eval, grant_yield_permission, resume_frames};
-pub use fuel::{DEFAULT_FUEL, Exhausted, FuelMeter, FuelScope, measure, set_remaining};
+pub use eval::{eval, resume_frames};
+#[cfg(test)]
+pub use fuel::measure;
+pub use fuel::{DEFAULT_FUEL, FuelMeter, FuelScope, set_remaining};
 pub use lispexp::LispExp;
-pub use parser::{Parser, ParserError, form_to_data};
+pub use parser::{Parser, form_to_data};
 use types::{ConsCell, ConsIter, FiberState, SharedAtom, SharedFiber};
 pub use types::{Frame, Lambda, LispPrimitive};
 use utils::{

@@ -7,7 +7,6 @@
 #[cfg(test)]
 mod tests {
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval, setup_base_env};
-    use std::sync::Arc;
 
     fn eval_str(source: &str) -> Result<LispExp<()>, EvalError<()>> {
         let env = Env::new_root();

@@ -11,13 +11,13 @@ use super::EvalError;
 pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static {
     /// Consumes a given amount of execution ticks.
     /// Returns `Err(EvalError::OutOfFuel)` if the host-defined budget is exhausted.
-    fn consume_fuel(&self, amount: u32) -> Result<(), EvalError<Self>> {
+    fn consume_fuel(&self, _amount: u32) -> Result<(), EvalError<Self>> {
         Ok(())
     }
 
     /// Allows the VM to bubble up non-fatal diagnostic logs, trace statements,
     /// or debugging notices to the host without knowing how the host presents them.
-    fn log_diagnostic(&self, msg: &str) {}
+    fn log_diagnostic(&self, _msg: &str) {}
 
     /// Called by the evaluator immediately before running `unwind-protect`
     /// cleanup forms.

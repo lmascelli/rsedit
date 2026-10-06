@@ -54,4 +54,27 @@ these should be what breaks."
   (and (<= (length suffix) (length s))
        (string= suffix (substring s (- (length s) (length suffix))))))
 
+(defmacro save-match-data (&rest body)
+  "Run BODY, then put the match data back the way it was.
+
+For a function that matches on somebody else's behalf. `string-match' records
+where its groups landed for `match-string' to read later, and a caller holding
+a match it has not read yet loses it to any function in between that matches
+too -- with no sign at the point it reads the wrong groups. Wrapping the inner
+matching in this is the convention, in Emacs and here.
+
+The match data is put back however BODY ends, an error included.
+
+Example:
+  (defun name-of (file)
+    (save-match-data
+      (when (string-match \"([^/]+)$\" file)
+        (match-string 1 file))))"
+  ;; No gensym in this Lisp, so the saved data lives under a name nobody's BODY
+  ;; is going to use. BODY could only see it by naming it.
+  `(let ((save-match-data--saved (match-data)))
+     (unwind-protect
+         (progn ,@body)
+       (set-match-data save-match-data--saved))))
+
 (log "End of the commands.lisp")

@@ -53,14 +53,6 @@ enum Piece {
     Virtual { width: usize },
 }
 
-impl Piece {
-    fn width(&self) -> usize {
-        match self {
-            Piece::Text { width, .. } | Piece::Virtual { width } => *width,
-        }
-    }
-}
-
 /// One row of a window, composed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
@@ -84,11 +76,6 @@ impl Row {
             pieces: vec![Piece::Text { from: 0, width }],
             faces: Vec::new(),
         }
-    }
-
-    /// How many screen columns the row occupies.
-    pub fn width(&self) -> usize {
-        self.pieces.iter().map(Piece::width).sum()
     }
 
     /// Where buffer column COLUMN is drawn.

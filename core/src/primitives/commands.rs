@@ -282,13 +282,13 @@ fn convert_arg<B: BufferTrait>(spec: &ArgSpec, input: &str) -> ELispExp<B> {
     }
 }
 
-/// One argument confirmed. Records it, then either prompts for the next or --
-/// this being the last -- applies the command.
-///
-/// This is the link in the chain, and it is a primitive rather than a Lisp
-/// closure because collecting a command's arguments is the mechanism by which
-/// commands work at all: it has to be present whether or not any `.lisp` file
-/// loaded.
+// One argument confirmed. Records it, then either prompts for the next or --
+// this being the last -- applies the command.
+//
+// This is the link in the chain, and it is a primitive rather than a Lisp
+// closure because collecting a command's arguments is the mechanism by which
+// commands work at all: it has to be present whether or not any `.lisp` file
+// loaded.
 primitive!(command_arg_confirm, args, env, ctx, {
     let input = match args.first() {
         Some(ELispExp::String(s)) => s.to_string(),
@@ -310,18 +310,18 @@ primitive!(command_arg_confirm, args, env, ctx, {
     advance_pending(env, ctx)
 });
 
-/// The prompt was cancelled, so the command is abandoned. Nothing is applied:
-/// a half-collected argument list must never reach a command.
+// The prompt was cancelled, so the command is abandoned. Nothing is applied:
+// a half-collected argument list must never reach a command.
 primitive!(command_arg_cancel, _args, _env, ctx, {
     ctx.take_pending_command();
     Ok(ELispExp::nil())
 });
 
-/// Completion candidates for the argument currently being prompted for.
-///
-/// The kind comes from the pending command rather than being captured when the
-/// prompt opened, which is what lets one primitive serve every argument without
-/// needing a closure to partially apply it.
+// Completion candidates for the argument currently being prompted for.
+//
+// The kind comes from the pending command rather than being captured when the
+// prompt opened, which is what lets one primitive serve every argument without
+// needing a closure to partially apply it.
 primitive!(command_arg_complete, args, env, ctx, {
     let prefix = match args.first() {
         Some(ELispExp::String(s)) => s.to_string(),

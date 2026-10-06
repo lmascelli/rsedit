@@ -10,9 +10,8 @@ pub mod syntax;
 pub mod virtual_text;
 pub use disk::{FileStamp, OnDisk};
 pub use mark::Mark;
-pub use overlay::{Overlay, OverlayTable};
-pub use scan::ScanCache;
-pub use virtual_text::{VirtualText, VirtualTextTable};
+pub use overlay::OverlayTable;
+pub use virtual_text::VirtualTextTable;
 pub mod undo;
 pub use undo::UndoHistory;
 
@@ -266,6 +265,9 @@ impl<B: BufferTrait> Buffer<B> {
     /// undo history's configured limit, which is a setting rather than
     /// history.
     pub fn adopt_text(&mut self, text: &str) {
+        // Taken before the text is replaced: a fresh `B` starts with its cursor
+        // at the top, so asking afterwards would always answer line zero.
+        let (line, column) = self.text.cursor_pos();
         self.text = B::from(text);
         self.version = self.version.wrapping_add(1);
         // From line zero: every line is new.
@@ -281,9 +283,11 @@ impl<B: BufferTrait> Buffer<B> {
         self.undo.set_limit(limit);
         // Clamped rather than reset: coming back to roughly where you were is
         // the point of reverting a file you are reading, and the top of the
-        // buffer is where you were not.
-        let point = self.text.cursor_pos_1d().min(self.text.len());
-        let (line, column) = self.text.cursor_1d_to_2d(point);
+        // buffer is where you were not. By line and column rather than by
+        // offset, so that text changed *above* point -- the usual shape of an
+        // edit made elsewhere -- does not shift you onto a different line.
+        // `cursor_move` clamps both: a column past its line's end lands on
+        // that end, a line past the last lands at the end of the text.
         self.text.cursor_move(line, column);
         self.is_modified = false;
         self.stale = false;

@@ -55,8 +55,10 @@ construction.")
 
 (defun theme--name-of (file)
   "The theme name a file is called, or nil if it is not a theme file."
-  (let ((found (string-match "^(.+)\\.lisp$" (file-name-nondirectory file))))
-    (if found (nth 1 found) nil)))
+  (let ((name (file-name-nondirectory file)))
+    (if (string-match "^(.+)\\.lisp$" name)
+        (match-string 1 name)
+        nil)))
 
 (defun available-themes ()
   "The names of every theme installed, sorted.

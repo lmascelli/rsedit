@@ -42,6 +42,7 @@ mod layering_tests;
 mod line_number_tests;
 mod macro_tests;
 mod manpage_tests;
+mod match_data_tests;
 mod minibuffer_lisp_tests;
 mod mode_line_tests;
 mod mouse_tests;

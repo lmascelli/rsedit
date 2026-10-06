@@ -16,6 +16,8 @@ WRITING A KEY
         C-f             Control and f
         M-f             Meta -- Alt, or Escape first -- and f
         C-M-f           both
+        S-<tab>         Shift, for a key with no character -- a shifted
+                        letter is just the capital
         C-x C-f         two keys, one after the other
         <ret> <tab>     keys with no character: also <esc>, <space>,
                         <backspace>, <up>, <down>, <left>, <right>

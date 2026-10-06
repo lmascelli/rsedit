@@ -67,12 +67,6 @@ impl Rectangle {
     pub fn width(&self) -> usize {
         self.right - self.left
     }
-
-    /// How many lines tall. Never zero -- a rectangle within one line is one
-    /// line tall.
-    pub fn height(&self) -> usize {
-        self.bottom - self.top + 1
-    }
 }
 
 /// Where one line's part of a rectangle is, in buffer offsets.

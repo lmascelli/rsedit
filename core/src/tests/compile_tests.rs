@@ -165,47 +165,6 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // The regex primitive underneath
-    // ----------------------------------------------------------------
-
-    #[test]
-    fn string_match_returns_the_whole_match_then_its_groups() {
-        let (ctx, env) = editor();
-        let answer = run(
-            r#"(string-match "([a-z.]+):([0-9]+)" "see src/main.rs:42 there")"#,
-            &env,
-            &ctx,
-        );
-        let parts: Vec<String> = answer
-            .iter()
-            .map(|p| text_of(&p).expect("a group"))
-            .collect();
-        assert_eq!(parts, vec!["main.rs:42", "main.rs", "42"]);
-    }
-
-    #[test]
-    fn a_group_that_did_not_take_part_is_nil_and_keeps_its_place() {
-        // So that "group 3 is the column" is right whether or not group 2 was
-        // there.
-        let (ctx, env) = editor();
-        let answer = run(r#"(string-match "(a)|(b)" "b")"#, &env, &ctx);
-        let parts: Vec<Option<String>> = answer.iter().map(|p| text_of(&p)).collect();
-        assert_eq!(parts, vec![Some("b".into()), None, Some("b".into())]);
-    }
-
-    #[test]
-    fn no_match_is_nil() {
-        let (ctx, env) = editor();
-        assert!(run(r#"(string-match "zzz" "abc")"#, &env, &ctx).is_nil());
-    }
-
-    #[test]
-    fn a_pattern_that_does_not_compile_is_reported_rather_than_fatal() {
-        let (ctx, env) = editor();
-        assert!(run(r#"(string-match "(unclosed" "abc")"#, &env, &ctx).is_nil());
-    }
-
-    // ----------------------------------------------------------------
     // Walking
     // ----------------------------------------------------------------
 

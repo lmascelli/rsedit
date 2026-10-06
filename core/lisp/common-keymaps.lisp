@@ -279,6 +279,12 @@
 ;; line is already indented. See indent.lisp.
 (define-key nil "tab" 'indent-for-tab-command)
 
+;; Shift-Tab: move the region -- or the line -- one `indent-width' to the left,
+;; keeping its shape. The way back from a Tab that shifted a block right.
+(define-key nil "S-<tab>" 'indent-rigidly-left)
+
+;; Enter is bound in indent.lisp, beside the command it runs. See there.
+
 ;; C-g abandons a half-typed key sequence or prefix argument, and ends the
 ;; region. It does not interrupt a running command -- that is roadmap #24.
 (define-key nil "C-g" 'keyboard-quit)

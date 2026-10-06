@@ -560,15 +560,6 @@ pub enum Direction {
     Backward,
 }
 
-impl Direction {
-    pub fn reversed(self) -> Self {
-        match self {
-            Direction::Forward => Direction::Backward,
-            Direction::Backward => Direction::Forward,
-        }
-    }
-}
-
 /// An incremental search part-way through.
 ///
 /// # Why the editor holds this rather than a loop holding it
