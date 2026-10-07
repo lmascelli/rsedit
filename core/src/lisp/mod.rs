@@ -9,6 +9,7 @@ mod eval;
 mod fuel;
 mod lispexp;
 mod parser;
+mod source_map;
 mod types;
 mod utils;
 
@@ -21,6 +22,7 @@ pub use fuel::measure;
 pub use fuel::{DEFAULT_FUEL, FuelMeter, FuelScope, set_remaining};
 pub use lispexp::LispExp;
 pub use parser::{Parser, form_to_data};
+pub use source_map::{Location, SourceMap};
 use types::{ConsCell, ConsIter, FiberState, SharedAtom, SharedFiber};
 pub use types::{Frame, Lambda, LispPrimitive};
 use utils::{
