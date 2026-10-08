@@ -12,6 +12,7 @@ mod tests {
 // Parser tests
 mod lexer_tests;
 mod parser_tests;
+mod source_map_tests;
 // Eval tests
 mod backtrace_tests;
 mod base_env_tests;

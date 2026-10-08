@@ -4,8 +4,9 @@
 //!                    +----------------------------------------+
 //! ========================================================================== //
 
-use super::{LispContext, LispExp};
+use super::{LispContext, LispExp, Location, SourceMap};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Token {
@@ -59,12 +60,60 @@ pub enum ParserError {
     MalformedDottedList,
 }
 
+/// The characters of the text, one of lookahead, together with the line and
+/// column of the next one.
+///
+/// It has the two methods the lexer calls on the iterator it replaces, so the
+/// state machine reads exactly as it did; only `next` learned to count.
+struct Source<'source> {
+    chars: std::iter::Peekable<std::str::Chars<'source>>,
+    line: u32,
+    column: u32,
+}
+
+impl<'source> Source<'source> {
+    fn new(text: &'source str, first_line: u32) -> Self {
+        Self {
+            chars: text.chars().peekable(),
+            line: first_line,
+            column: 1,
+        }
+    }
+
+    fn peek(&mut self) -> Option<&char> {
+        self.chars.peek()
+    }
+
+    fn next(&mut self) -> Option<char> {
+        let c = self.chars.next()?;
+        if c == '\n' {
+            self.line += 1;
+            self.column = 1;
+        } else {
+            self.column += 1;
+        }
+        Some(c)
+    }
+}
+
+/// What a parser in debug mode records its forms with.
+struct Located {
+    map: Arc<SourceMap>,
+    file: Arc<str>,
+}
+
 pub struct Parser<'source> {
-    source: std::iter::Peekable<std::str::Chars<'source>>,
+    source: Source<'source>,
     token: String,
     current_token: Token,
     parens_stack: Vec<Token>,
     lexer_state: ParserLexerState,
+    /// Debug mode: the table forms are recorded in, and the name of the text.
+    /// `None` in the nominal mode, which then records nothing.
+    located: Option<Located>,
+    /// Where the source stood just after `current_token` was read. Kept only
+    /// in debug mode.
+    current_end: (u32, u32),
 }
 
 /// Convert a form produced by the reader into the data it denotes.
@@ -85,12 +134,36 @@ pub fn form_to_data<T: LispContext>(exp: &LispExp<T>) -> LispExp<T> {
 impl<'source> Parser<'source> {
     pub fn new(source: &'source str) -> Self {
         Self {
-            source: source.chars().peekable(),
+            source: Source::new(source, 1),
             token: String::new(),
             current_token: Token::Uninitialized,
             parens_stack: Vec::new(),
             lexer_state: ParserLexerState::Default,
+            located: None,
+            current_end: (1, 1),
         }
+    }
+
+    /// A parser for debug mode: every list it reads is recorded in MAP as
+    /// found in FILE, at the line and column of its `(`.
+    ///
+    /// FIRST_LINE is the number of the text's first line: 1 for a text read
+    /// as it is, 0 for one a caller has prefixed with a line of its own -- the
+    /// `(progn` `eval_file` wraps a file in -- so that the file's lines keep
+    /// their numbers.
+    pub fn with_source_map(
+        source: &'source str,
+        map: Arc<SourceMap>,
+        file: &str,
+        first_line: u32,
+    ) -> Self {
+        let mut parser = Self::new(source);
+        parser.source = Source::new(source, first_line);
+        parser.located = Some(Located {
+            map,
+            file: file.into(),
+        });
+        parser
     }
 
     pub(super) fn next_token(&mut self) -> Result<Option<Token>, ParserError> {
@@ -486,7 +559,20 @@ impl<'source> Parser<'source> {
         } else {
             Token::Void
         };
+        if self.located.is_some() {
+            self.current_end = (self.source.line, self.source.column);
+        }
         Ok(())
+    }
+
+    fn paren_location(&self) -> Option<Location> {
+        let located = self.located.as_ref()?;
+        let (line, column) = self.current_end;
+        Some(Location {
+            file: located.file.clone(),
+            line,
+            column: column - 1,
+        })
     }
 
     fn parse_list<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
@@ -594,8 +680,14 @@ impl<'source> Parser<'source> {
                 Ok(LispExp::number(number))
             }
             Token::LParen => {
+                let opened_at = self.paren_location();
                 self.advance_token()?;
-                Ok(self.parse_list()?)
+                let list = self.parse_list()?;
+                if let (Some(at), Some(located), LispExp::Form(form)) =
+                    (opened_at, &self.located, &list) {
+                    located.map.record(form, at);
+                }
+                Ok(list)
             }
             Token::LSquared => {
                 self.advance_token()?;

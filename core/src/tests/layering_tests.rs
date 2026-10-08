@@ -52,6 +52,7 @@ mod tests {
         ("lisp/handshake.rs", include_str!("../lisp/handshake.rs")),
         ("lisp/lispexp.rs", include_str!("../lisp/lispexp.rs")),
         ("lisp/parser.rs", include_str!("../lisp/parser.rs")),
+        ("lisp/source_map.rs", include_str!("../lisp/source_map.rs")),
         ("lisp/types.rs", include_str!("../lisp/types.rs")),
         ("lisp/utils.rs", include_str!("../lisp/utils.rs")),
     ];
