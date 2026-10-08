@@ -6,7 +6,8 @@
 //                 |  Context that can embed the interpreter  |
 //                 +------------------------------------------+
 // ========================================================================== //
-use super::EvalError;
+use super::{EvalError, Location, SourceMap};
+use std::sync::Arc;
 
 pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'static {
     /// Consumes a given amount of execution ticks.
@@ -75,6 +76,7 @@ pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'stat
     /// evaluation, all but the last form in a body, and any nested
     /// `eval`/`funcall` performed by a primitive) is captured correctly.
     fn push_call_frame(&self, _frame: &str) {}
+    
     /// Pop the most recently pushed frame, undoing one `push_call_frame`.
     fn pop_call_frame(&self) {}
 
@@ -91,7 +93,54 @@ pub trait LispContext: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'stat
     fn call_frame_depth(&self) -> usize {
         0
     }
+    
     /// Pop frames until exactly `depth` remain (a no-op if already at or
     /// below `depth`).
     fn truncate_call_frames(&self, _depth: usize) {}
+    
+    // ------------------------------------------------------------------
+    // Debug mode: where an error happened
+    // ------------------------------------------------------------------
+
+    /// The table of where forms were read, when the host is in debug mode;
+    /// `None`, the default, in the nominal mode.
+    ///
+    /// The evaluator asks for it only on the way out of a failed evaluation,
+    /// never while evaluation succeeds, so a host in the nominal mode pays
+    /// nothing for debug mode existing -- and a host that never has one pays
+    /// nothing at all, since this default inlines to `None`.
+    fn source_map(&self) -> Option<Arc<SourceMap>> {
+        None
+    }
+
+    /// Debug mode: an error is leaving the form read at AT.
+    ///
+    /// Called by every evaluation the error passes through, innermost first,
+    /// for each form that has a location. The first describes where the error
+    /// happened; the ones after it are the forms enclosing that one.
+    ///
+    /// The intended protocol: keep the location as an *entry of its own on
+    /// the call stack*, pushed on top of the frames the failure has left
+    /// standing, counted by `call_frame_depth` and removed by
+    /// `truncate_call_frames` like any frame; and ignore this call while such
+    /// an entry is already the innermost one, which is how the later, outer,
+    /// forms are told apart from the first.
+    ///
+    /// Being on the stack rather than beside it is what lets it go exactly
+    /// when the error is handled. A `condition-case` truncates to the depth it
+    /// saw *before* its body ran, which removes the entry; an `unwind-protect`
+    /// truncates to the depth it saw *after* its body failed, which keeps it
+    /// for the error the protect goes on to propagate. A field beside the
+    /// stack could not be cleared by one and kept by the other: when the body
+    /// pushed no frames, both truncate to the same depth.
+    fn note_error_origin(&self, _at: &Location) {}
+
+    /// Debug mode: a call that failed was made by the form read at AT.
+    ///
+    /// Called once for each call whose frame the failure leaves standing,
+    /// innermost first. The host gives AT to the innermost frame that has no
+    /// call site yet -- which is always the frame of this call, since the
+    /// calls inside it failed, and were noted, before it did -- skipping the
+    /// entry `note_error_origin` keeps.
+    fn note_call_site(&self, _at: &Location) {}
 }

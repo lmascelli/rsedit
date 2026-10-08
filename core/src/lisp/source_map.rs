@@ -27,10 +27,13 @@ pub struct Location {
     /// The file the text was read from, or a name in angle brackets for text
     /// that has none: `<eval-string>`, `<M-:>`.
     pub file: Arc<str>,
-    /// Counting from 1.
+    /// Where the `(` is. Counting from 1.
     pub line: u32,
     /// Counting from 1, in characters.
     pub column: u32,
+    /// Where the `)` is. Counting from 1.
+    pub end_line: u32,
+    pub end_column: u32,
 }
 
 /// `file:line:column`, the shape compilers print and `next-error` reads.

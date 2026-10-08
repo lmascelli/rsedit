@@ -114,6 +114,7 @@ pub struct Parser<'source> {
     /// Where the source stood just after `current_token` was read. Kept only
     /// in debug mode.
     current_end: (u32, u32),
+    list_end: (u32, u32),
 }
 
 /// Convert a form produced by the reader into the data it denotes.
@@ -141,6 +142,7 @@ impl<'source> Parser<'source> {
             lexer_state: ParserLexerState::Default,
             located: None,
             current_end: (1, 1),
+            list_end: (1, 1),
         }
     }
 
@@ -565,14 +567,16 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    fn paren_location(&self) -> Option<Location> {
-        let located = self.located.as_ref()?;
+    /// Debug mode: where the `(` or `)` that is `current_token` was, as
+    /// (line, column); `None` in the nominal mode.
+    ///
+    /// The lexer hands a parenthesis over the moment it consumes it, so the
+    /// source stands one character past it -- on the same line, since a
+    /// parenthesis is not a newline.
+    fn paren_position(&self) -> Option<(u32, u32)> {
+        self.located.as_ref()?;
         let (line, column) = self.current_end;
-        Some(Location {
-            file: located.file.clone(),
-            line,
-            column: column - 1,
-        })
+        Some((line, column - 1))
     }
 
     fn parse_list<T: LispContext>(&mut self) -> Result<LispExp<T>, ParserError> {
@@ -580,6 +584,9 @@ impl<'source> Parser<'source> {
         while self.current_token != Token::Void {
             match self.current_token {
                 Token::RParen => {
+                    if let Some(end) = self.paren_position() {
+                        self.list_end = end;
+                    }
                     self.advance_token()?;
                     return Ok(LispExp::form(list));
                 }
@@ -680,12 +687,19 @@ impl<'source> Parser<'source> {
                 Ok(LispExp::number(number))
             }
             Token::LParen => {
-                let opened_at = self.paren_location();
+                let opened_at = self.paren_position();
                 self.advance_token()?;
                 let list = self.parse_list()?;
-                if let (Some(at), Some(located), LispExp::Form(form)) =
+                if let (Some((line, column)), Some(located), LispExp::Form(form)) =
                     (opened_at, &self.located, &list) {
-                    located.map.record(form, at);
+                    let (end_line, end_column) = self.list_end;
+                    located.map.record(form, Location {
+                        file: located.file.clone(),
+                        line,
+                        column,
+                        end_line,
+                        end_column,
+                    });
                 }
                 Ok(list)
             }
