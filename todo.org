@@ -10,11 +10,6 @@
 - [ ] pressing tab with a region selected insert the same indent in the whole region
       but should instead indent it.
 - [ ] line numbers should be a per buffer property
-- [ ] the worker that checks if a file has been modified should have a timeout on
-      the function that checks it so it cannot block the other tasks on the scheduler.
-      Moreover, when the file is reverted the cursor goes back to the start of the file,
-      instead it should stay in the position where it was saturating to the end of the file
-      if the outer edits changed it.
 - [ ] I've seen that the modules commands, debug, common-keymaps, indent and minibuffer
       are not indipendent. Modules that provide indipendent features should be able to
       be loaded indipendently. Maybe some of the common feature between those are to be
