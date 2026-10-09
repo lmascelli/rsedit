@@ -59,6 +59,16 @@ pub(crate) fn set_minibuffer_content<B: BufferTrait>(ctx: &EditorState<B>, conte
 /// is filed under.
 pub(crate) const MINIBUFFER_HISTORY_KEY: &str = "*minibuffer-history-key*";
 
+/// The name of the Lisp variable holding the input the candidate list in
+/// `*minibuffer-completions*` was computed for, so that a second Tab on the
+/// same input does not ask again.
+///
+/// It vouches for that list, so it goes wherever the list goes. Kept past the
+/// prompt that set it, it vouched for the nil the list is reset to -- and the
+/// next prompt's first Tab on the same input, which for a prompt nobody has
+/// typed into yet is the empty string, was answered "No completions".
+pub(crate) const MINIBUFFER_COMPLETIONS_FOR: &str = "*minibuffer-completions-for*";
+
 /// The name of the Lisp variable capping how much one prompt remembers.
 pub(crate) const HISTORY_LENGTH: &str = "history-length";
 
@@ -113,6 +123,7 @@ pub(crate) fn reset_prompt_state<B: BufferTrait>(
     setq(env, "*minibuffer-on-cancel*", ELispExp::nil());
     setq(env, "*minibuffer-previous-buffer*", ELispExp::nil());
     setq(env, "*minibuffer-completions*", ELispExp::nil());
+    setq(env, MINIBUFFER_COMPLETIONS_FOR, ELispExp::nil());
     setq(env, "*minibuffer-completion-index*", ELispExp::number(0f64));
     setq(env, MINIBUFFER_HISTORY_KEY, ELispExp::nil());
     // The entries stay; only the place in them goes. A position into a ring

@@ -44,17 +44,24 @@
 `file-name-directory' is both the test and the answer: it returns nil for text
 with no separator in it, which is exactly \"this is not a path\", and it is the
 only test that is right on every platform -- a module comparing against \"/\"
-would be writing down one operating system's answer and calling it the rule."
+would be writing down one operating system's answer and calling it the rule.
+
+A directory with nothing in it -- or none there at all, which is what the word
+after `and/' in a comment names -- gets nil, the answer of a source with nothing
+to offer. Claiming the span with an empty list instead shut out every source
+completing the word at point, because the first source to answer fixes the
+region."
   (let ((bounds (bounds-of-thing-at-point 'filename)))
     (if bounds
         (let* ((start (nth 0 bounds))
                (end (nth 1 bounds))
                (text (buffer-substring start end))
-               (directory (file-name-directory text)))
-          (if directory
+               (directory (file-name-directory text))
+               (entries (if directory (list-dir directory) nil)))
+          (if entries
               (list start end
                     (mapcar (lambda (entry) (concat directory entry))
-                            (list-dir directory))))))))
+                            entries)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; The language of the buffer

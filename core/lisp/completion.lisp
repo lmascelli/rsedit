@@ -85,6 +85,9 @@
 ;; by the minibuffer. Given a value here because a presenter may also be called
 ;; directly -- by the minibuffer, or by a test -- and reading a variable that
 ;; nothing has set yet is an error rather than nil.
+;;
+;; Set only for as long as the presenter is being called, so it is read as the
+;; strip opens and never afterwards: by the next keystroke it is nil again.
 (setq *completion-at-point-start* nil)
 
 ;; ---------------------------------------------------------------------------

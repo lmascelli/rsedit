@@ -608,13 +608,47 @@ mod tests {
     fn the_cache_refuses_a_line_out_of_order() {
         let mut cache = crate::buffer::syntax::SyntaxCache::default();
 
-        assert!(cache.record(0, &vec![], Vec::new()).is_ok());
+        assert!(cache.record(0, &vec![], Vec::new(), &vec![]).is_ok());
         assert!(
-            cache.record(5, &vec![], Vec::new()).is_err(),
+            cache.record(5, &vec![], Vec::new(), &vec![]).is_err(),
             "line 5 cannot be recorded while lines 1..5 are unknown"
         );
         assert_eq!(cache.valid_to(), 1);
-        assert!(cache.record(1, &vec![], Vec::new()).is_ok());
+        assert!(cache.record(1, &vec![], Vec::new(), &vec![]).is_ok());
+    }
+
+    /// The same rule for the state: a line is entered in the state the line
+    /// above it left, and one lexed from any other start is refused.
+    #[test]
+    fn the_cache_refuses_a_line_entered_in_the_wrong_state() {
+        let mut cache = crate::buffer::syntax::SyntaxCache::default();
+
+        // Line 0 opens region 0 and leaves it open.
+        assert!(cache.record(0, &vec![], Vec::new(), &vec![0]).is_ok());
+        assert_eq!(cache.frontier(), &vec![0]);
+        assert!(
+            cache.record(1, &vec![], Vec::new(), &vec![]).is_err(),
+            "line 1 is entered inside the region line 0 opened"
+        );
+        assert!(cache.record(1, &vec![0], Vec::new(), &vec![]).is_ok());
+        assert_eq!(cache.frontier(), &vec![], "and line 1 closed it");
+    }
+
+    /// Untrusting from a line puts the frontier back to the state that line is
+    /// entered in -- which the lines above it decided, and the edit did not
+    /// touch.
+    #[test]
+    fn untrusting_a_line_starts_again_from_the_state_it_is_entered_in() {
+        let mut cache = crate::buffer::syntax::SyntaxCache::default();
+        cache.record(0, &vec![], Vec::new(), &vec![0]).expect("line 0");
+        cache.record(1, &vec![0], Vec::new(), &vec![0]).expect("line 1");
+        cache.record(2, &vec![0], Vec::new(), &vec![]).expect("line 2");
+        assert_eq!(cache.frontier(), &vec![]);
+
+        cache.invalidate_from(1, 2);
+
+        assert_eq!(cache.valid_to(), 2);
+        assert_eq!(cache.frontier(), &vec![0], "line 2 is entered inside");
     }
 
     /// The rule that stops stale colour being painted at columns that have
@@ -674,6 +708,199 @@ mod tests {
             (faced[0].0, faced[0].2.as_str()),
             (0, "comment"),
             "and it should still be inside the comment opened on line 0"
+        );
+    }
+
+    /// The same join, where it matters: the last line of the first turn is
+    /// the one that closes the comment. The cache keeps the state *entering*
+    /// each line, and a turn that started from the state entering the line
+    /// above -- rather than the state that line left behind -- carried the
+    /// comment straight on into code.
+    #[test]
+    fn a_region_closing_on_the_last_line_of_a_turn_ends_there() {
+        let chunk = crate::buffer::syntax::LINES_PER_TURN;
+        let mut text = String::new();
+        for line in 0..chunk - 2 {
+            text.push_str(&format!("line {line}\n"));
+        }
+        text.push_str("/* open\n");
+        text.push_str("close */\n");
+        text.push_str("fn after\n");
+
+        let (ctx, env) = editor_with(&text);
+        define_toy(&ctx, &env);
+        colour_fully(&ctx);
+
+        assert_eq!(
+            line_faces(&ctx, chunk - 1),
+            vec![(0, 8, "comment".to_string())]
+        );
+        assert_eq!(
+            line_faces(&ctx, chunk),
+            vec![(0, 2, "keyword".to_string())],
+            "the comment closed on the line before, so this one is code"
+        );
+    }
+
+    /// An edit has the same join in it: the turn that recolours an edited line
+    /// starts at that line, in the state the line above it left.
+    #[test]
+    fn an_edit_below_a_closed_region_does_not_reopen_it() {
+        let (ctx, env) = editor_with("/* open\nclose */\nfn after\n");
+        define_toy(&ctx, &env);
+        colour_fully(&ctx);
+        assert_eq!(line_faces(&ctx, 2), vec![(0, 2, "keyword".to_string())]);
+
+        // The end of "fn after": an edit on line 2, below the line that
+        // closes the comment.
+        eval_str(r#"(progn (goto-char 25) (self-insert " "))"#, &env, &ctx).expect("edit");
+        colour_fully(&ctx);
+
+        assert_eq!(
+            line_faces(&ctx, 2),
+            vec![(0, 2, "keyword".to_string())],
+            "line 1 closed the comment, so line 2 starts outside it"
+        );
+    }
+
+    /// And the other way round: a line entered inside a region that the line
+    /// above opened.
+    #[test]
+    fn an_edit_below_an_opened_region_stays_inside_it() {
+        let (ctx, env) = editor_with("fn before\n/* open\nfn inside */\n");
+        define_toy(&ctx, &env);
+        colour_fully(&ctx);
+        assert_eq!(line_faces(&ctx, 2), vec![(0, 12, "comment".to_string())]);
+
+        // The end of "fn inside */", on line 2.
+        eval_str(r#"(progn (goto-char 30) (self-insert " "))"#, &env, &ctx).expect("edit");
+        colour_fully(&ctx);
+
+        assert_eq!(
+            line_faces(&ctx, 2),
+            vec![(0, 12, "comment".to_string())],
+            "line 1 opened the comment, so line 2 starts inside it"
+        );
+    }
+
+    /// Undo and redo change the text without going through the two doors an
+    /// edit uses, and they still have to say so. Otherwise the colouring of
+    /// what they changed is never recomputed, and stays wrong until some later
+    /// edit happens to untrust it -- and then only from that edit down.
+    #[test]
+    fn undo_and_redo_recolour_what_they_change() {
+        let (ctx, env) = editor_with("fn one\nfn two\n");
+        define_toy(&ctx, &env);
+        colour_fully(&ctx);
+
+        eval_str(
+            r#"(progn (goto-char 0) (self-insert "/") (self-insert "*"))"#,
+            &env,
+            &ctx,
+        )
+        .expect("edit");
+        colour_fully(&ctx);
+        assert_eq!(line_faces(&ctx, 1), vec![(0, 6, "comment".to_string())]);
+
+        let before = ctx
+            .with_buffer("*scratch*", |b| b.version)
+            .expect("*scratch*");
+        eval_str("(undo)", &env, &ctx).expect("undo");
+        assert_ne!(
+            ctx.with_buffer("*scratch*", |b| b.version)
+                .expect("*scratch*"),
+            before,
+            "undo changed the text, so it has to change the version"
+        );
+        colour_fully(&ctx);
+        assert_eq!(line_faces(&ctx, 0), vec![(0, 2, "keyword".to_string())]);
+        assert_eq!(line_faces(&ctx, 1), vec![(0, 2, "keyword".to_string())]);
+
+        eval_str("(redo)", &env, &ctx).expect("redo");
+        colour_fully(&ctx);
+        assert_eq!(line_faces(&ctx, 0), vec![(0, 8, "comment".to_string())]);
+        assert_eq!(line_faces(&ctx, 1), vec![(0, 6, "comment".to_string())]);
+    }
+
+    /// A grammar is configuration, and configuration changes while files are
+    /// open: `risp-refresh-vocabulary', or a mode's file evaluated again. What
+    /// was coloured under the old grammar has to be redone -- all of it, not
+    /// only from wherever the next edit happens to land.
+    #[test]
+    fn a_grammar_changed_after_colouring_recolours_its_buffers() {
+        let (ctx, env) = editor_with("fn one\nfn two\n");
+        define_toy(&ctx, &env);
+        colour_fully(&ctx);
+
+        eval_str(r#"(add-syntax-rule 'toy "\\btwo\\b" 'type)"#, &env, &ctx).expect("a new rule");
+        colour_fully(&ctx);
+
+        assert_eq!(
+            line_faces(&ctx, 1),
+            vec![(0, 2, "keyword".to_string()), (3, 6, "type".to_string())]
+        );
+    }
+
+    /// The text has not changed, so the version has not either -- which is
+    /// why the cache has to remember which mode it was computed in.
+    #[test]
+    fn a_buffer_put_into_another_mode_is_recoloured_in_it() {
+        let (ctx, env) = editor_with("fn one\n");
+        define_toy(&ctx, &env);
+        // Before anything is coloured, so that the only thing that changes
+        // below is which mode the buffer is in.
+        eval_str(
+            r#"(progn (make-mode 'other) (add-syntax-rule 'other "\\bone\\b" 'type))"#,
+            &env,
+            &ctx,
+        )
+        .expect("another mode");
+        colour_fully(&ctx);
+        assert_eq!(line_faces(&ctx, 0), vec![(0, 2, "keyword".to_string())]);
+
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "other".into());
+        colour_fully(&ctx);
+
+        assert_eq!(line_faces(&ctx, 0), vec![(3, 6, "type".to_string())]);
+    }
+
+    /// A state names regions by their place in the grammar, and remaking a
+    /// mode -- `make-mode' again, the first line of every mode's file --
+    /// empties the grammar. A state from before that can name a region that is
+    /// no longer there, and handing one to the lexer was an index out of
+    /// bounds on the worker thread: colouring, and every other job sharing
+    /// that thread, stopped for the rest of the session.
+    #[test]
+    fn a_remade_mode_does_not_inherit_states_from_its_old_grammar() {
+        let (ctx, env) = editor_with("\"open\nstill\nclose\"\nfn x\n");
+        eval_str(
+            r#"(progn (make-mode 'toy)
+                      (add-syntax-region 'toy "/\\*" "\\*/" 'comment)
+                      (add-syntax-region 'toy "\"" "\"" 'string))"#,
+            &env,
+            &ctx,
+        )
+        .expect("two regions");
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
+        colour_fully(&ctx);
+        assert_eq!(line_faces(&ctx, 1), vec![(0, 5, "string".to_string())]);
+
+        // Made again with only the first of its regions, and then an edit on
+        // line 2 -- inside the old string -- so that the next turn would start
+        // from a state the old grammar left behind.
+        eval_str(
+            r#"(progn (make-mode 'toy) (add-syntax-region 'toy "/\\*" "\\*/" 'comment))"#,
+            &env,
+            &ctx,
+        )
+        .expect("remade");
+        eval_str(r#"(progn (goto-char 13) (self-insert " "))"#, &env, &ctx).expect("edit");
+        colour_fully(&ctx);
+
+        assert!(
+            line_faces(&ctx, 1).is_empty(),
+            "nothing in the new grammar colours that line, got {:?}",
+            line_faces(&ctx, 1)
         );
     }
 

@@ -214,7 +214,11 @@ impl<B: BufferTrait> EditorState<B> {
         }
         self.with_current_buffer_mut(|buf| {
             let Buffer { text, undo, .. } = buf;
-            undo.undo(text);
+            // Below the two doors, like every undo -- so the buffer is told
+            // here what they would have told it. See `edits::changed`.
+            if let Some(applied) = undo.undo(text) {
+                crate::primitives::edits::changed(buf, applied.from);
+            }
         });
         self.seek_next_replace();
         true

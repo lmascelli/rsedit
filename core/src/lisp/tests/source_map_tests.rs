@@ -49,7 +49,8 @@ mod tests {
         // What eval_file reads: the file behind a line of its own.
         let (outer, map) = read_located("(progn\n(a)\n  (b))", 0);
         let body = form(&outer);
-        assert_eq!(map.locate(form(&body[1])), at(1, 1, 2, 6));
+        assert_eq!(map.locate(body), at(0, 1, 2, 6));
+        assert_eq!(map.locate(form(&body[1])), at(1, 1, 1, 3));
         assert_eq!(map.locate(form(&body[2])), at(2, 3, 2, 5));
     }
 

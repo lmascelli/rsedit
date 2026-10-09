@@ -18,7 +18,10 @@ primitive!(make_mode, args, _env, ctx, {
         })
     } else {
         if let Some(ELispExp::Symbol(mode_name)) = args.get(0) {
-            ctx.modes_mut(|modes| modes.insert(mode_name, MajorMode::new(mode_name)));
+            // Through `set_mode` rather than straight into the registry: a mode
+            // made again has a new, empty grammar, and whatever was coloured
+            // under the old one has to hear about it.
+            ctx.set_mode(mode_name, MajorMode::new(mode_name));
             Ok(ELispExp::symbol("t".into()))
         } else {
             Err(EvalError::WrongArgumentType {
@@ -138,8 +141,8 @@ primitive!(add_syntax_rule, args, _env, ctx, {
     let Some(pattern) = compile(ctx, regex_str) else {
         return Ok(ELispExp::nil());
     };
-    Ok(with_mode(ctx, mode_name.as_str(), |mode| {
-        mode.grammar.rules.push(SyntaxRule {
+    Ok(with_grammar(ctx, mode_name.as_str(), |grammar| {
+        grammar.rules.push(SyntaxRule {
             pattern,
             face,
             group,
@@ -199,8 +202,8 @@ primitive!(add_syntax_region, args, _env, ctx, {
     let (Some(begin), Some(end)) = (compile(ctx, begin_str), compile(ctx, end_str)) else {
         return Ok(ELispExp::nil());
     };
-    Ok(with_mode(ctx, mode_name.as_str(), |mode| {
-        mode.grammar.regions.push(SyntaxRegion {
+    Ok(with_grammar(ctx, mode_name.as_str(), |grammar| {
+        grammar.regions.push(SyntaxRegion {
             begin,
             end,
             escape,
@@ -242,6 +245,19 @@ where
     F: FnOnce(&mut crate::modes::MajorMode<B>),
 {
     match ctx.modes_mut(|modes| modes.edit(mode_name, edit)) {
+        true => ELispExp::t(),
+        false => ELispExp::nil(),
+    }
+}
+
+/// The same, for a change to the named mode's grammar -- which has to go
+/// through `edit_grammar`, so that what was coloured under the old grammar is
+/// coloured again under the new one.
+fn with_grammar<B: BufferTrait, F>(ctx: &EditorState<B>, mode_name: &str, edit: F) -> ELispExp<B>
+where
+    F: FnOnce(&mut crate::modes::Grammar),
+{
+    match ctx.edit_grammar(mode_name, edit) {
         true => ELispExp::t(),
         false => ELispExp::nil(),
     }

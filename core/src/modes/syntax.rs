@@ -345,7 +345,16 @@ pub fn highlight_line(
     while pos <= line.len() {
         match state.last().copied() {
             Some(open) => {
-                let region = &grammar.regions[open];
+                // A state names its regions by their place in a grammar, and a
+                // state carried over from another grammar can name one this
+                // grammar does not have. The cache is stamped so that it never
+                // hands one over; this is what stands behind that, because an
+                // index out of bounds here is a panic on the thread every
+                // background job shares, and it would take all of them with it.
+                let Some(region) = grammar.regions.get(open) else {
+                    state.pop();
+                    continue;
+                };
                 match inside_event(region, line, pos, open) {
                     Some(Event::Skip(_, resume)) => pos = resume,
                     Some(Event::Open(id, _, resume)) => {

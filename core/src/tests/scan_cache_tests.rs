@@ -291,6 +291,36 @@ mod tests {
         );
     }
 
+    /// Undo is an edit too, though it reaches the text below the doors every
+    /// other edit goes through. It used to move the text without moving the
+    /// version, and every checkpoint below what it changed went on being
+    /// offered as a shortcut through text that was no longer there.
+    #[test]
+    fn an_undo_does_not_leave_a_stale_answer_behind() {
+        let (ctx, env) = editor();
+        rust_buffer("undone", &source(), &env, &ctx);
+        let table = ctx.syntax_table("rust-mode");
+        let depth_at_end = |ctx: &Ctx| {
+            ctx.with_buffer("undone", |buf| {
+                let end = buf.text.len();
+                sexp::context_at(&buf.text, &table, buf.scan_resume(end), end).depth
+            })
+            .expect("the buffer is there")
+        };
+
+        // An opener near the top, and the whole file checkpointed with it in.
+        let at = ctx
+            .with_buffer("undone", |buf| buf.text.cursor_2d_to_1d(2, 0))
+            .expect("the buffer is there");
+        run(&format!("(goto-char {at}) (self-insert \"(\")"), &env, &ctx);
+        warm(&ctx, "undone");
+        assert_eq!(depth_at_end(&ctx), 1, "the opener is open at the end");
+
+        run("(undo)", &env, &ctx);
+
+        assert_eq!(depth_at_end(&ctx), 0, "taken back, the file balances again");
+    }
+
     // ----------------------------------------------------------------
     // What the worker refuses to store
     // ----------------------------------------------------------------

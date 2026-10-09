@@ -51,7 +51,7 @@ use crate::{
     modes::highlighter::{Highlighter, TURN_INTERVAL},
     modes::prescan::Prescanner,
     modes::watcher::{FileWatcher, watch_interval},
-    modes::{MajorMode, SyntaxTable},
+    modes::{Grammar, MajorMode, SyntaxTable},
     primitives::{edits::goto_offset, install_primitives},
     text::kill_ring::Direction,
     text::search::Isearch,
@@ -67,7 +67,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, RwLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc::Sender,
     },
     time::{Duration, Instant},
@@ -160,6 +160,24 @@ pub struct EditorState<B: BufferTrait> {
     /// patterns, the transient keymap and the repeat keys. See [`Modes`],
     /// which says why those are one lock and not eight.
     modes: Arc<RwLock<Modes<B>>>,
+
+    /// How many times a grammar in the registry above has changed.
+    ///
+    /// # Why it exists
+    ///
+    /// A colouring is stamped with this, so that one computed under a grammar
+    /// that has since changed is recomputed -- see
+    /// [`crate::buffer::syntax::SyntaxCache::describes`]. Nothing about the
+    /// text changes when a rule is added, so nothing else would notice.
+    ///
+    /// # Why beside the registry and not in it
+    ///
+    /// Every frame asks every buffer whether its colouring is behind, and a
+    /// counter here answers that without taking the registry's lock. It is
+    /// only ever moved *under* that lock, though, after the grammar has
+    /// changed, and read under it alongside the grammar it describes -- so
+    /// the highlighter never pairs a grammar with the wrong edition.
+    grammar_epoch: Arc<AtomicU64>,
     /// Every window the frame has: the tiled tree, the floats drawn over it,
     /// which one has focus, the next id to hand out and what a held mouse
     /// button is doing. See [`Windows`], which says why those are one lock and

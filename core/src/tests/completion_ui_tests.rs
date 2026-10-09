@@ -11,7 +11,7 @@
 //! module.
 #[cfg(test)]
 mod tests {
-    use crate::buffer::gap_buffer::GapBuffer;
+    use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyCode, KeyEvent, KeyModifiers};
     use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
@@ -195,6 +195,172 @@ mod tests {
         assert!(
             strip(&env, &ctx).contains("alpaca"),
             "the strip shows what there is now: {}",
+            strip(&env, &ctx)
+        );
+    }
+
+    // ---------------- completing in a buffer ----------------
+
+    /// The editor with the strip loaded and SOURCE as the only completion
+    /// source, and *scratch* holding TEXT with point at its end.
+    fn completing_in_buffer(text: &str) -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = with_module();
+        run(
+            r#"(progn (defun capf-test ()
+                        (let ((bounds (bounds-of-thing-at-point 'symbol)))
+                          (if bounds
+                              (list (nth 0 bounds) (nth 1 bounds)
+                                    (list "abcd" "abce" "xyz")))))
+                      (set-completion-functions nil '(capf-test)))"#,
+            &env,
+            &ctx,
+        );
+        ctx.with_buffer_mut("*scratch*", |b| {
+            b.text = GapBuffer::from(text);
+            let (line, col) = b.text.cursor_1d_to_2d(text.chars().count());
+            b.text.cursor_move(line, col);
+        });
+        (ctx, env)
+    }
+
+    fn scratch(ctx: &Ctx) -> String {
+        ctx.with_buffer("*scratch*", |b| b.text.to_string())
+            .expect("*scratch*")
+    }
+
+    #[test]
+    fn choosing_in_a_buffer_replaces_the_word() {
+        let (ctx, env) = completing_in_buffer("ab");
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(windows(&ctx), 2, "the strip opened");
+
+        press(&ctx, &env, KeyCode::Enter);
+
+        assert_eq!(scratch(&ctx), "abcd");
+    }
+
+    /// Typing narrows the strip -- and the characters typed are part of the
+    /// word the choice replaces, not something to leave behind after it.
+    #[test]
+    fn choosing_after_narrowing_in_a_buffer_replaces_what_was_typed_too() {
+        let (ctx, env) = completing_in_buffer("ab");
+        run("(completion-at-point)", &env, &ctx);
+
+        press(&ctx, &env, KeyCode::Char('e'));
+        assert!(
+            !strip(&env, &ctx).contains("abcd"),
+            "narrowed by what was typed, got {:?}",
+            strip(&env, &ctx)
+        );
+        press(&ctx, &env, KeyCode::Enter);
+
+        assert_eq!(scratch(&ctx), "abce");
+    }
+
+    /// `tab-always-indent' set to `complete' -- Emacs' default for programming
+    /// modes, and offered in `indent.lisp' -- runs `completion-at-point' from
+    /// inside `indent-for-tab-command'. The strip it opens still has to know
+    /// where the word began, to narrow as you type and to put the choice there.
+    #[test]
+    fn a_tab_that_completes_puts_the_choice_where_the_word_was() {
+        let (ctx, env) = completing_in_buffer("ab");
+        eval_str(include_str!("../../lisp/indent.lisp"), &env, &ctx).expect("indent.lisp");
+        run(
+            r#"(progn (setq tab-always-indent 'complete)
+                      (define-key nil "tab" 'indent-for-tab-command))"#,
+            &env,
+            &ctx,
+        );
+
+        press(&ctx, &env, KeyCode::Tab);
+        assert_eq!(windows(&ctx), 2, "the strip opened");
+        press(&ctx, &env, KeyCode::Char('e'));
+        assert!(
+            !strip(&env, &ctx).contains("abcd"),
+            "narrowed by what was typed, got {:?}",
+            strip(&env, &ctx)
+        );
+        press(&ctx, &env, KeyCode::Enter);
+
+        assert_eq!(scratch(&ctx), "abce");
+    }
+
+    /// A completion in a buffer put away without a choice must leave nothing
+    /// behind for the next strip to take as its own. A prompt's strip that
+    /// inherited the word's start as its anchor read the prompt from the wrong
+    /// place -- and, the word having started further in than anything typed in
+    /// the prompt, closed itself on the first keystroke.
+    #[test]
+    fn an_abandoned_completion_in_a_buffer_does_not_follow_a_prompt() {
+        let (ctx, env) = completing_in_buffer("some words ab");
+        run("(completion-at-point)", &env, &ctx);
+        assert_eq!(windows(&ctx), 2, "the strip opened");
+        press(&ctx, &env, KeyCode::Esc);
+        assert_eq!(windows(&ctx), 1, "and was put away");
+
+        prompt_filtering(&["alpha", "beta", "gamma"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        press(&ctx, &env, KeyCode::Char('b'));
+
+        assert_eq!(windows(&ctx), 2, "the prompt's strip is still up");
+        let shown = strip(&env, &ctx);
+        assert!(
+            shown.contains("beta") && !shown.contains("alpha"),
+            "narrowed by what was typed into the prompt, got {shown:?}"
+        );
+    }
+
+    // ---------------- one prompt's answer is not the next one's ----------------
+
+    /// What Tab was last asked about is remembered, so that a second Tab on the
+    /// same input does not ask the candidate function again. That memory is a
+    /// fact about *one* prompt: the list it vouches for is cleared when the
+    /// prompt closes. Kept past that, it made the next prompt's first Tab -- on
+    /// the same text, which for a prompt nobody has typed into yet is the empty
+    /// string -- be answered with the cleared list. "No completions", from a
+    /// prompt that had plenty.
+    #[test]
+    fn the_first_tab_in_a_new_prompt_asks_that_prompt() {
+        let (ctx, env) = with_module();
+        prompt_offering(&["alpha", "beta"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        assert!(strip(&env, &ctx).contains("alpha"));
+
+        // Put the strip away, then the prompt.
+        press(&ctx, &env, KeyCode::Esc);
+        press(&ctx, &env, KeyCode::Esc);
+        assert_eq!(windows(&ctx), 1, "the strip is gone");
+        assert!(!ctx.minibuffer_is_open(), "and so is the prompt");
+
+        prompt_offering(&["gamma", "delta"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+
+        assert_eq!(windows(&ctx), 2, "a strip under the new prompt");
+        let shown = strip(&env, &ctx);
+        assert!(
+            shown.contains("gamma") && shown.contains("delta"),
+            "the new prompt's candidates, got {shown:?}"
+        );
+    }
+
+    /// The same, asked about one prompt opened twice: `M-x', put away, and
+    /// `M-x' again.
+    #[test]
+    fn a_prompt_opened_again_offers_its_candidates_again() {
+        let (ctx, env) = with_module();
+        prompt_offering(&["alpha", "beta"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        press(&ctx, &env, KeyCode::Esc);
+        press(&ctx, &env, KeyCode::Esc);
+        assert!(!ctx.minibuffer_is_open());
+
+        prompt_offering(&["alpha", "beta"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+
+        assert_eq!(windows(&ctx), 2, "a strip under the prompt");
+        assert!(
+            strip(&env, &ctx).contains("alpha"),
+            "got {:?}",
             strip(&env, &ctx)
         );
     }

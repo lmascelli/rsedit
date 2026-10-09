@@ -115,8 +115,8 @@ primitive!(minibuffer_choose_completion, args, _env, ctx, {
 });
 
 /// The input the candidate list in `*minibuffer-completions*` was computed
-/// for, so that a second Tab on the same input does not ask again.
-const ASKED_ABOUT: &str = "*minibuffer-completions-for*";
+/// for. See [`minibuffer::MINIBUFFER_COMPLETIONS_FOR`].
+const ASKED_ABOUT: &str = minibuffer::MINIBUFFER_COMPLETIONS_FOR;
 
 primitive!(minibuffer_complete, _args, env, ctx, {
     let current = ctx.with_current_buffer(|buf| buf.text.to_string());
@@ -350,6 +350,7 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
     minibuffer::setq(&env, "*minibuffer-on-change*", args[2].clone());
     minibuffer::setq(&env, "*minibuffer-on-cancel*", args[3].clone());
     minibuffer::setq(&env, "*minibuffer-completions*", ELispExp::nil());
+    minibuffer::setq(&env, ASKED_ABOUT, ELispExp::nil());
     minibuffer::setq(&env, "*minibuffer-completion-index*", ELispExp::number(0.0));
     // Which ring M-p and M-n will walk. The prompt's own text unless the
     // caller named one, so every prompt in the editor has a history without a

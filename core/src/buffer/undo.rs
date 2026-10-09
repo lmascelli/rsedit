@@ -177,6 +177,40 @@ pub struct Group {
     pub point: usize,
 }
 
+impl Group {
+    /// The earliest offset any of these changes touches.
+    ///
+    /// Every change, applied or inverted, leaves the text before its own
+    /// offset alone, so nothing before the smallest of them moves.
+    fn earliest(&self) -> usize {
+        self.changes
+            .iter()
+            .map(|change| match change {
+                Change::Inserted { at, .. } | Change::Deleted { at, .. } => *at,
+            })
+            .min()
+            .unwrap_or(self.point)
+    }
+}
+
+/// What undoing or redoing a group did, for the caller that has to tell the
+/// rest of the buffer.
+///
+/// # Why the caller has to be told
+///
+/// Undo and redo write to the text below the two doors every other edit goes
+/// through -- they have to, or replaying history would record itself as new
+/// history -- and the doors are also where the buffer's version moves and its
+/// colouring and scan caches are told what changed. So the caller does that,
+/// and needs to know from where.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Applied {
+    /// Where point should go.
+    pub point: usize,
+    /// The earliest offset the group touched. Nothing before it changed.
+    pub from: usize,
+}
+
 /// How much deleted text to keep before dropping the oldest history.
 ///
 /// Only deletions carry text, so this bounds the one part of the history that
@@ -308,28 +342,34 @@ impl UndoHistory {
             .unwrap_or(0)
     }
 
-    /// Undo the most recent group. Returns where point should go, or `None`
-    /// when there is nothing left to undo.
-    pub fn undo<B: BufferTrait>(&mut self, text: &mut B) -> Option<usize> {
+    /// Undo the most recent group. Returns where point should go and where
+    /// the text began to change, or `None` when there is nothing left to undo.
+    pub fn undo<B: BufferTrait>(&mut self, text: &mut B) -> Option<Applied> {
         self.boundary();
         let group = self.done.pop()?;
         self.bytes = self
             .bytes
             .saturating_sub(group.changes.iter().map(Change::weight).sum());
-        let point = group.point;
+        let applied = Applied {
+            point: group.point,
+            from: group.earliest(),
+        };
         let inverse = self.apply_inverse(text, group);
         self.undone.push(inverse);
-        Some(point)
+        Some(applied)
     }
 
     /// Redo the most recently undone group.
-    pub fn redo<B: BufferTrait>(&mut self, text: &mut B) -> Option<usize> {
+    pub fn redo<B: BufferTrait>(&mut self, text: &mut B) -> Option<Applied> {
         let group = self.undone.pop()?;
-        let point = group.point;
+        let applied = Applied {
+            point: group.point,
+            from: group.earliest(),
+        };
         let inverse = self.apply_inverse(text, group);
         self.bytes += inverse.changes.iter().map(Change::weight).sum::<usize>();
         self.done.push(inverse);
-        Some(point)
+        Some(applied)
     }
 
     /// Apply the inverse of `group` to the text, and return the group that

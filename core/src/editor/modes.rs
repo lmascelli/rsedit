@@ -70,8 +70,42 @@ impl<B: BufferTrait> EditorState<B> {
         self.modes(|modes| modes.auto_mode_for(path))
     }
 
+    /// Define MODE_NAME as MODE, replacing whatever was defined under it.
+    ///
+    /// A replacement brings its own grammar -- usually an empty one, since
+    /// `make-mode` is the first line of every mode's file -- so this is a
+    /// grammar change as far as anything already coloured is concerned.
     pub fn set_mode(&self, mode_name: &str, mode: MajorMode<B>) {
-        self.modes_mut(|modes| modes.insert(mode_name, mode));
+        self.modes_mut(|modes| {
+            modes.insert(mode_name, mode);
+            self.grammar_changed();
+        });
+    }
+
+    /// Change MODE's grammar. False when there is no such mode.
+    ///
+    /// Every grammar change goes through here or [`Self::set_mode`], because
+    /// each has to move [`Self::grammar_epoch`] -- and move it while the
+    /// registry is still locked, so that nothing reading the grammar can see
+    /// the new one with the old edition or the other way round.
+    pub(crate) fn edit_grammar(&self, mode: &str, edit: impl FnOnce(&mut Grammar)) -> bool {
+        self.modes_mut(|modes| {
+            let found = modes.edit(mode, |found| edit(&mut found.grammar));
+            if found {
+                self.grammar_changed();
+            }
+            found
+        })
+    }
+
+    /// Which edition of the grammars is in force. See the field it reads.
+    pub(crate) fn grammar_epoch(&self) -> u64 {
+        self.grammar_epoch.load(Ordering::Relaxed)
+    }
+
+    /// Called with the registry's write lock held, by the two functions above.
+    fn grammar_changed(&self) {
+        self.grammar_epoch.fetch_add(1, Ordering::Relaxed);
     }
 
     //--------------------------------------------------------------------------

@@ -20,15 +20,19 @@
 //! to store. A worker that lexed under the lock would block every keystroke for
 //! as long as it ran, which is the entire thing this design exists to avoid.
 //!
-//! **Never store a result for a version that has moved on.** The buffer can
-//! change while the work is in flight, and spans computed from the old text
-//! describe columns that no longer mean anything. The version is checked again
-//! at the moment of storing, not merely at the start.
+//! **Never store a result for a version that has moved on** -- nor for a
+//! *mode* or a *grammar* that has. The buffer can change while the work is in
+//! flight, and spans computed from the old text describe columns that no
+//! longer mean anything. The version is checked again at the moment of
+//! storing, not merely at the start. And neither a mode switch nor a rule
+//! added to a grammar touches the text, so the cache also remembers which
+//! mode and which edition of the grammars it was computed under, and a cache
+//! that describes another is coloured again from the top.
 use crate::{
     BufferTrait, EditorState,
     background::ScheduledTask,
     buffer::syntax::LINES_PER_TURN,
-    modes::{Grammar, SyntaxState, highlight_line},
+    modes::{Grammar, SyntaxSpan, SyntaxState, highlight_line},
 };
 use std::time::Duration;
 
@@ -56,6 +60,10 @@ impl<B: BufferTrait> ScheduledTask<B> for Highlighter {
 pub(crate) struct Turn {
     pub buffer: String,
     pub version: u64,
+    /// The mode the buffer was in, and the edition of the grammars `grammar`
+    /// was read at -- what the cache is stamped with when this is stored.
+    pub mode: String,
+    pub grammar_epoch: u64,
     /// The line the first of `lines` sits at.
     pub first_line: usize,
     pub lines: Vec<String>,
@@ -63,16 +71,31 @@ pub(crate) struct Turn {
     pub grammar: Grammar,
 }
 
+/// One line as a turn coloured it, with the states either side of it.
+///
+/// The state *leaving* the line is carried as well as the one entering it,
+/// because it is the one the next line -- and, for the last line of a turn,
+/// the next turn -- has to start from.
+pub(crate) struct ColouredLine {
+    pub line: usize,
+    pub entering: SyntaxState,
+    pub spans: Vec<SyntaxSpan>,
+    pub leaving: SyntaxState,
+}
+
 impl Turn {
     /// Colour the lines, off any lock.
-    pub(crate) fn run(&self) -> Vec<(usize, SyntaxState, Vec<crate::modes::SyntaxSpan>)> {
+    pub(crate) fn run(&self) -> Vec<ColouredLine> {
         let mut out = Vec::with_capacity(self.lines.len());
         let mut state = self.entering.clone();
         for (offset, line) in self.lines.iter().enumerate() {
-            let entering = state.clone();
-            let (spans, leaving) = highlight_line(&self.grammar, line, &entering);
-            out.push((self.first_line + offset, entering, spans));
-            state = leaving;
+            let (spans, leaving) = highlight_line(&self.grammar, line, &state);
+            out.push(ColouredLine {
+                line: self.first_line + offset,
+                entering: std::mem::replace(&mut state, leaving.clone()),
+                spans,
+                leaving,
+            });
         }
         out
     }
@@ -101,20 +124,33 @@ impl<B: BufferTrait> EditorState<B> {
     /// rule it enforces only matters when the buffer changes *between* the two,
     /// and a test that had to arrange that inside one call could not arrange it
     /// at all.
-    pub(crate) fn store_turn(
-        &self,
-        turn: &Turn,
-        coloured: Vec<(usize, SyntaxState, Vec<crate::modes::SyntaxSpan>)>,
-    ) {
+    pub(crate) fn store_turn(&self, turn: &Turn, coloured: Vec<ColouredLine>) {
         self.with_buffer_mut(&turn.buffer, |buf| {
             // Checked here, not only when the lines were read: the text may
             // have changed while this turn was being computed, and spans from
-            // the old text would be painted at columns that have moved.
-            if buf.version != turn.version {
+            // the old text would be painted at columns that have moved. The
+            // mode likewise -- a turn lexed with another mode's grammar is not
+            // this buffer's colouring whatever the text says.
+            if buf.version != turn.version || buf.current_mode != turn.mode {
                 return;
             }
-            for (line, entering, spans) in coloured {
-                if buf.syntax.record(line, &entering, spans).is_err() {
+            if !buf.syntax.describes(&turn.mode, turn.grammar_epoch) {
+                // The cache was computed in another mode, or under a grammar
+                // that has changed since. `turn_for` started this turn from the
+                // top for that reason, and only a turn from the top can be the
+                // beginning of the colouring that replaces it.
+                if turn.first_line != 0 {
+                    return;
+                }
+                buf.syntax
+                    .restamp(turn.version, &turn.mode, turn.grammar_epoch);
+            }
+            for line in coloured {
+                if buf
+                    .syntax
+                    .record(line.line, &line.entering, line.spans, &line.leaving)
+                    .is_err()
+                {
                     // Somebody else advanced the cache past this line. Whatever
                     // they wrote is at least as fresh as this, so it stands.
                     break;
@@ -151,11 +187,17 @@ impl<B: BufferTrait> EditorState<B> {
     /// too, and is only worth asking about a buffer that is actually behind.
     /// Getting that order wrong would put the registry in the path of every
     /// frame, forever, for a file that is fully coloured.
+    ///
+    /// "Caught up" includes "under the grammar there is now". The edition of
+    /// the grammars is a counter beside the registry rather than in it, which
+    /// is what lets that be asked without the registry's lock.
     pub(crate) fn colouring_behind(&self, name: &str) -> bool {
+        let grammar_epoch = self.grammar_epoch();
         let Some((mode, behind)) = self.with_buffer(name, |buf| {
             (
                 buf.current_mode.clone(),
-                buf.syntax.valid_to() < buf.text.line_count(),
+                !buf.syntax.describes(&buf.current_mode, grammar_epoch)
+                    || buf.syntax.valid_to() < buf.text.line_count(),
             )
         }) else {
             return false;
@@ -197,30 +239,46 @@ impl<B: BufferTrait> EditorState<B> {
         // The grammar is read from the mode registry, which is a different
         // lock -- so the buffer's is released first. Cloned rather than
         // borrowed because the lexing happens with neither held.
+        //
+        // The edition is read under the same lock as the grammar, and a
+        // grammar is only ever changed with the edition moved under that lock
+        // too (see `EditorState::edit_grammar`), so the two always agree.
         let mode = self.with_buffer(name, |buf| buf.current_mode.clone())?;
-        let grammar = self.modes(|modes| modes.get(&mode).map(|mode| mode.grammar.clone()))?;
+        let (grammar, grammar_epoch) = self.modes(|modes| {
+            modes
+                .get(&mode)
+                .map(|found| (found.grammar.clone(), self.grammar_epoch()))
+        })?;
 
         self.with_buffer(name, |buf| {
+            // Re-read rather than carried over from above: the lock was
+            // released in between and the buffer may have been put into
+            // another mode.
+            if buf.current_mode != mode {
+                return None;
+            }
             let line_count = buf.text.line_count();
-            let first_line = buf.syntax.valid_to();
+            // Where to carry on from, and the state the first line of this
+            // chunk is entered in: what the cache has reached, when what it
+            // holds was computed in this mode under this grammar, and the top
+            // of the buffer in the empty state when it was not.
+            let (first_line, entering) = if buf.syntax.describes(&mode, grammar_epoch) {
+                (buf.syntax.valid_to(), buf.syntax.frontier().clone())
+            } else {
+                (0, SyntaxState::new())
+            };
             // Re-checked rather than assumed from `colouring_behind` above: the
             // buffer lock was released in between, so the text may have been
             // coloured, shortened, or emptied since.
             if first_line >= line_count {
                 return None;
             }
-            // The state entering the first line of this chunk. At the top of the
-            // buffer that is the empty state; anywhere else it is what the previous
-            // line left behind, which is in the cache because lines are only ever
-            // recorded in order.
-            let entering = match first_line.checked_sub(1) {
-                None => SyntaxState::new(),
-                Some(previous) => buf.syntax.state_at(previous).unwrap_or_default(),
-            };
             let last_line = (first_line + LINES_PER_TURN).min(line_count);
             Some(Turn {
                 buffer: name.to_string(),
                 version: buf.version,
+                mode,
+                grammar_epoch,
                 first_line,
                 lines: buf.text.get_lines(first_line, last_line),
                 entering,

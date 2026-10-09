@@ -49,15 +49,37 @@ use super::*;
 use crate::lisp::call_callable;
 use crate::primitives::edits::{delete_range, edited, insert_text};
 
-/// Where the region being completed is recorded between offering the
-/// candidates and hearing which one was chosen.
+/// Where the text being completed begins, while a presenter is being handed
+/// the candidates -- and only for that long.
+///
+/// It is how a presenter tells a completion in a buffer from one in a prompt,
+/// and it asks once, as it opens. So this is set just before the presenter is
+/// called and put back to nil the moment it returns. Left set, the next
+/// prompt's strip took a word's start in some buffer as its own, read the
+/// prompt's text from the wrong place, and closed itself on the first key.
+const START_VAR: &str = "*completion-at-point-start*";
+
+/// The text a choice replaces, between offering the candidates and hearing
+/// which one was chosen: `(START END LENGTH)`, LENGTH being how long the buffer
+/// was when they were offered.
 ///
 /// Variables rather than a field, for the reason the minibuffer keeps
 /// `*minibuffer-completions*` in one: a presenter may be a Lisp module that
 /// takes several keystrokes to make up its mind, so the state has to outlive
 /// this call and be visible to anyone debugging it.
-const START_VAR: &str = "*completion-at-point-start*";
-const END_VAR: &str = "*completion-at-point-end*";
+///
+/// Bound at the root of the environment, because outliving this call means
+/// outliving the caller's too. `indent-for-tab-command` completes from inside
+/// its own body, and a region bound there was gone by the time anything chose.
+///
+/// # Why the length
+///
+/// The keystrokes a presenter waits through can be typed into the word itself
+/// -- typing narrows the strip -- and END is where the word ended before them.
+/// The buffer has grown or shrunk by exactly what was typed, so END is carried
+/// forward by the difference. Without that, typing `e` after `ab` and then
+/// choosing `abce` left `abcee`.
+const REGION_VAR: &str = "*completion-at-point-region*";
 
 /// A Lisp function of (PATTERN CANDIDATES) returning the candidates that
 /// match. Unset, the match is a plain prefix.
@@ -407,6 +429,9 @@ pub const COMPLETION_AT_POINT_DOC: &str = "(completion-at-point): Complete the t
          (define-key nil \"C-M-i\" 'completion-at-point)";
 
 primitive!(completion_at_point, _args, env, ctx, {
+    // A new completion, so whatever the last one left for a late answer to
+    // fill in no longer describes anything anybody is choosing for.
+    env.set_root_variable(REGION_VAR.into(), ELispExp::nil());
     let mode = current_mode(ctx);
     let sources = ctx.completion_sources(&mode);
 
@@ -487,9 +512,17 @@ primitive!(completion_at_point, _args, env, ctx, {
             if let Some(present) = env.get_variable(PRESENT_HOOK)
                 && present.is_truthy()
             {
-                env.set_variable(START_VAR.into(), ELispExp::number(start as f64));
-                env.set_variable(END_VAR.into(), ELispExp::number(end as f64));
-                call_callable(
+                let length = ctx.with_current_buffer(|buf| buf.text.len());
+                env.set_root_variable(
+                    REGION_VAR.into(),
+                    ELispExp::proper_list(vec![
+                        ELispExp::number(start as f64),
+                        ELispExp::number(end as f64),
+                        ELispExp::number(length as f64),
+                    ]),
+                );
+                env.set_root_variable(START_VAR.into(), ELispExp::number(start as f64));
+                let presented = call_callable(
                     &present,
                     &[
                         ELispExp::proper_list(unique),
@@ -497,7 +530,11 @@ primitive!(completion_at_point, _args, env, ctx, {
                     ],
                     env.clone(),
                     ctx,
-                )?;
+                );
+                // Put back whether or not the presenter succeeded: see
+                // START_VAR for what it costs to leave it set.
+                env.set_root_variable(START_VAR.into(), ELispExp::nil());
+                presented?;
                 return Ok(ELispExp::t());
             }
             // No presenter: fill in as far as the candidates agree, which is
@@ -516,7 +553,9 @@ primitive!(completion_at_point, _args, env, ctx, {
 });
 
 pub const COMPLETION_AT_POINT_CHOOSE_DOC: &str = "(completion-at-point-choose VALUE): Put VALUE \
-         where the text `completion-at-point' offered to complete was. Returns VALUE.\n\n\
+         where the text `completion-at-point' offered to complete was -- along with whatever \
+         has been typed into it since, which is what typing to narrow the candidates does. \
+         Returns VALUE.\n\n\
          This is the symbol handed to `*completion-read-function*' as the thing to call when the \
          user picks a candidate, so that a presenter needs to know nothing about buffers or \
          about where the candidates came from -- the same presenter serves this and the \
@@ -529,20 +568,28 @@ primitive!(completion_at_point_choose, args, env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    let (Some(start), Some(end)) = (
-        env.get_variable(START_VAR).as_ref().and_then(position),
-        env.get_variable(END_VAR).as_ref().and_then(position),
+    let region = env
+        .get_variable(REGION_VAR)
+        .map(|region| as_list(&region))
+        .unwrap_or_default();
+    let (Some(start), Some(end), Some(offered_length)) = (
+        region.first().and_then(position),
+        region.get(1).and_then(position),
+        region.get(2).and_then(position),
     ) else {
         // Nothing is offering a completion, so there is nowhere to put this.
         // Inserting at point anyway would edit a buffer nobody asked to edit.
         ctx.log_diagnostic("completion-at-point-choose called with no completion in progress");
         return Ok(ELispExp::nil());
     };
+    // Carried forward over whatever was typed into the word since the
+    // candidates were offered -- see REGION_VAR.
+    let length = ctx.with_current_buffer(|buf| buf.text.len());
+    let end = (end + length).saturating_sub(offered_length).max(start);
     if !replace_region(ctx, start, end, &value) {
         return Ok(edited(ctx, false));
     }
-    env.set_variable(START_VAR.into(), ELispExp::nil());
-    env.set_variable(END_VAR.into(), ELispExp::nil());
+    env.set_root_variable(REGION_VAR.into(), ELispExp::nil());
     Ok(args[0].clone())
 });
 

@@ -77,13 +77,65 @@ pub fn eval<T: LispContext>(
     let mut current_env = env;
 
     loop {
-        match eval_step(&current_exp, current_env.clone(), ctx)? {
-            EvalStep::Done(result) => return Ok(result),
-            EvalStep::TailCall(next_exp, next_env) => {
+        match eval_step(&current_exp, current_env.clone(), ctx) {
+            Ok(EvalStep::Done(result)) => return Ok(result),
+            Ok(EvalStep::TailCall(next_exp, next_env)) => {
                 current_exp = next_exp;
                 current_env = next_env;
             }
+            Err(error) => {
+                note_error_origin(&current_exp, &error, ctx);
+                return Err(error);
+            }
         }
+    }
+}
+
+/// Debug mode: tell the host that ERROR is leaving EXP, if EXP is a form
+/// whose place in the source is known.
+///
+/// Every evaluation an error passes through calls this on its way out,
+/// innermost first; the host keeps the first location it is given -- see
+/// `LispContext::note_error_origin`. A form with no location (a macro's
+/// expansion, a list built at run time) is skipped, so the error is placed at
+/// the nearest enclosing form that has one.
+///
+/// Only failures are noted. A `throw` and a `yield` leave forms too, but they
+/// are control transfers on their way to whoever expects them, not errors.
+///
+/// `#[cold]` and out of line: it runs only once evaluation has already
+/// failed, and keeping it out of `eval` keeps the loop every evaluation runs
+/// exactly as small as it was.
+#[cold]
+#[inline(never)]
+fn note_error_origin<T: LispContext>(exp: &LispExp<T>, error: &EvalError<T>, ctx: &T) {
+    match error {
+        EvalError::Throw { .. } | EvalError::Yielded { .. } => { return; }
+        _ => ()
+    }
+    if let LispExp::Form(form) = exp {
+        if let Some(at) = ctx.source_map().and_then(|map| map.locate(form)) {
+                ctx.note_error_origin(&at);
+        }
+    }
+}
+
+/// Debug mode: tell the host that the call made by FORM failed with ERROR,
+/// leaving its frame standing.
+///
+/// Called right after a call whose frame was pushed has failed -- see
+/// `LispContext::note_call_site`. A `yield` is skipped because a suspended
+/// call pops its frame (see `pop_unless_failed`): there is no frame left to
+/// place.
+#[cold]
+#[inline(never)]
+fn note_call_site<T: LispContext>(form: &Arc<Vec<LispExp<T>>>, error: &EvalError<T>, ctx: &T) {
+    if let EvalError::Yielded { .. } = error {
+        return;
+    }
+    
+    if let Some(at) = ctx.source_map().and_then(|map| map.locate(form)) {
+        ctx.note_call_site(&at);
     }
 }
 

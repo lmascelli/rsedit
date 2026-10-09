@@ -98,7 +98,13 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
 /// version without invalidating the colouring -- or the other way round --
 /// would be a bug that only showed up on screen, minutes later, as colour that
 /// would not settle.
-fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
+///
+/// And from undo and redo, which change the text below the doors and so have
+/// to say so themselves. They did not: an undo left the colouring and the
+/// scan checkpoints describing text that was gone, under a version that said
+/// nothing had happened, until a later edit happened to untrust them -- and
+/// then only from that edit down.
+pub(crate) fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     buf.version = buf.version.wrapping_add(1);
     let line = buf.text.cursor_1d_to_2d(at.min(buf.text.len())).0;
     buf.syntax.invalidate_from(buf.version, line);
@@ -857,9 +863,10 @@ primitive!(undo, _args, _env, ctx, {
         // of the same buffer, and undo needs to write both.
         let Buffer { text, undo, .. } = buf;
         match undo.undo(text) {
-            Some(point) => {
-                goto_offset(text, point);
+            Some(applied) => {
+                goto_offset(text, applied.point);
                 buf.is_modified = true;
+                changed(buf, applied.from);
                 Ok(ELispExp::symbol("t".into()))
             }
             None => Ok(ELispExp::nil()),
@@ -880,9 +887,10 @@ primitive!(redo, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
         let Buffer { text, undo, .. } = buf;
         match undo.redo(text) {
-            Some(point) => {
-                goto_offset(text, point);
+            Some(applied) => {
+                goto_offset(text, applied.point);
                 buf.is_modified = true;
+                changed(buf, applied.from);
                 Ok(ELispExp::symbol("t".into()))
             }
             None => Ok(ELispExp::nil()),

@@ -424,6 +424,40 @@ mod tests {
         assert_eq!(point(&ctx), 4);
     }
 
+    /// The region a presenter answers about has to outlive the call that
+    /// recorded it, and that call is not always made from the top level:
+    /// `indent-for-tab-command' makes it from inside its own body. Bound in
+    /// the caller's frame, the region went away with that frame, and the
+    /// choice found "no completion in progress" -- or, worse, the region the
+    /// previous completion had left behind.
+    #[test]
+    fn a_completion_started_inside_a_function_can_still_be_answered() {
+        let (ctx, env) = plain();
+        typed(&ctx, "ab");
+        define_source(&env, &ctx, "capf-many", 0, 2, &["abcd", "abce"]);
+        use_sources(&env, &ctx, &["capf-many"]);
+        run(
+            "(setq *seen-start* nil) (setq *choose* nil)\
+             (defun present (items choose)\
+               (setq *seen-start* *completion-at-point-start*)\
+               (setq *choose* choose))\
+             (setq *completion-read-function* 'present)\
+             (defun my-tab () (completion-at-point))",
+            &env,
+            &ctx,
+        );
+
+        run("(my-tab)", &env, &ctx);
+        assert_eq!(
+            run("*seen-start*", &env, &ctx),
+            LispExp::number(0.0),
+            "the presenter can see where the region begins"
+        );
+
+        run("(funcall *choose* \"abce\")", &env, &ctx);
+        assert_eq!(contents(&ctx), "abce");
+    }
+
     #[test]
     fn choosing_with_nothing_in_progress_does_not_edit_the_buffer() {
         // The presenter is a module and may answer late -- after the user gave
@@ -1095,6 +1129,29 @@ mod tests {
             "text with no separator in it is not a path: {:?}",
             echo(&ctx)
         );
+    }
+
+    /// Something shaped like a path that names no directory there is -- the
+    /// word after `and/` in a comment, the end of a URL -- is not a path this
+    /// source can complete. Claiming its span anyway, with nothing in it, shut
+    /// out every source that completes the word at point: the first source to
+    /// answer fixes the region, and a different region is passed over.
+    #[test]
+    fn a_path_to_nowhere_leaves_the_word_to_the_others() {
+        let (ctx, env) = with_sources();
+        run(
+            "(defun capf-test-words ()\
+               (let ((bounds (bounds-of-thing-at-point 'symbol)))\
+                 (if bounds (list (nth 0 bounds) (nth 1 bounds) (list \"order\")))))\
+             (set-completion-functions nil '(capf-file-name capf-test-words))",
+            &env,
+            &ctx,
+        );
+
+        typed(&ctx, "rsedit-no-such-directory/or");
+        run("(completion-at-point)", &env, &ctx);
+
+        assert_eq!(contents(&ctx), "rsedit-no-such-directory/order");
     }
 
     #[test]

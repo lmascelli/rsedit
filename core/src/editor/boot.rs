@@ -115,6 +115,7 @@ impl<B: BufferTrait> EditorState<B> {
             buffers: Arc::new(RwLock::new(Buffers::default())),
             echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
             modes: Arc::new(RwLock::new(Modes::new(keymaps))),
+            grammar_epoch: Arc::new(AtomicU64::new(0)),
             windows: Arc::new(RwLock::new(Windows::default())),
             commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
