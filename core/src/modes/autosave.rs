@@ -32,8 +32,8 @@
 use crate::{
     BufferTrait, EditorState,
     background::ScheduledTask,
-    lisp::{Env, LispContext},
 };
+use risp::{Env, LispContext};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;

@@ -59,10 +59,10 @@ use crate::{
     BufferTrait, ELispExp, EditorState,
     buffer::{Buffer, Mark},
     input::{KeyCode, KeyEvent, KeyModifiers},
-    lisp::Env,
     modes::MajorMode,
     text::search::{Direction, Isearch, Match, Pattern},
 };
+use risp::Env;
 use std::sync::Arc;
 
 /// The Lisp variable that decides whether searching ignores case.

@@ -10,7 +10,7 @@
 //! # Why this file exists
 //!
 //! The six-line arity guard at the top of a hundred primitives was replaced by
-//! one call to `lisp::exact_arity`, and the replacement was *ablated* to check
+//! one call to `risp::exact_arity`, and the replacement was *ablated* to check
 //! the suite would notice if it went wrong: `!=` was changed to `<`, so that
 //! every one of those primitives would accept any number of surplus arguments.
 //! All 1929 tests passed.
@@ -27,8 +27,8 @@ mod tests {
     use crate::{
         buffer::gap_buffer::GapBuffer,
         editor::create_global_env,
-        lisp::{EvalError, Parser, eval},
     };
+    use risp::{EvalError, Parser, eval};
 
     /// Evaluate SOURCE in a fresh editor and say what went wrong, if anything.
     fn outcome(source: &str) -> Result<(), String> {
@@ -141,10 +141,10 @@ mod setting_tests {
     use crate::{
         buffer::gap_buffer::GapBuffer,
         editor::{EditorState, create_global_env},
-        lisp::{Env, Parser, eval},
         modes::autosave::{AUTO_SAVE_INTERVAL, auto_save_interval},
         modes::watcher::{WATCH_FILE_INTERVAL, watch_interval},
     };
+    use risp::{Env, Parser, eval};
     use std::sync::Arc;
 
     /// A fresh editor with NAME bound to whatever SOURCE evaluates to.
@@ -245,8 +245,8 @@ mod shape_tests {
     use crate::{
         buffer::gap_buffer::GapBuffer,
         editor::create_global_env,
-        lisp::{LispExp, Parser, eval},
     };
+    use risp::{LispExp, Parser, eval};
 
     type Value = LispExp<crate::editor::EditorState<GapBuffer>>;
 
@@ -497,7 +497,7 @@ mod registration_tests {
         ] {
             assert!(
                 installed.iter().any(|name| name == primitive),
-                "`{primitive}` is missing, so lisp::base::{module}::install is not being \
+                "`{primitive}` is missing, so risp::base::{module}::install is not being \
                  called from setup_base_env"
             );
         }

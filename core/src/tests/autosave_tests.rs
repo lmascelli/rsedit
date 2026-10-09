@@ -20,7 +20,7 @@
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::modes::autosave::auto_save_path;
     use std::path::PathBuf;
     use std::sync::Arc;

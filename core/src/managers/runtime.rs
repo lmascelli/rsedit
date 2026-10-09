@@ -27,10 +27,10 @@
 //! handed out by clone, so a caller that wants to open a metered scope does
 //! not have to keep this compartment's lock open while it runs.
 use crate::{
-    lisp::FuelMeter,
     text::search::{Isearch, Replace},
     ui::{Face, Style, Theme},
 };
+use risp::FuelMeter;
 use std::collections::HashMap;
 use std::sync::Arc;
 

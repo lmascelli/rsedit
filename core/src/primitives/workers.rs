@@ -254,7 +254,7 @@ primitive!(background_call, args, env, ctx, {
     Ok(ELispExp::symbol(name.as_str().into()))
 });
 
-/// Whether VALUE is something [`call_callable`](crate::lisp::call_callable)
+/// Whether VALUE is something [`call_callable`](risp::call_callable)
 /// could call.
 ///
 /// A symbol is accepted without asking whether it names a function yet: a

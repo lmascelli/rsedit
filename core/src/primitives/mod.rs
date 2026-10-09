@@ -1,10 +1,12 @@
 use crate::{
     BufferTrait, ELispExp, EditorState,
     input::{KeyCode, KeyEvent, KeyModifiers, Keymap, OnUnbound, TransientKeymap},
-    lisp::{Env, EvalError, LispContext, LispPrimitive, exact_arity},
-    modes::{CommentStyle, MajorMode, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxTable},
+        modes::{CommentStyle, MajorMode, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxTable},
     ui::Face,
 };
+
+use risp::{Env, EvalError, LispContext, LispPrimitive, exact_arity};
+
 
 /// Parse a whole binding: one or more keys, separated by spaces.
 ///

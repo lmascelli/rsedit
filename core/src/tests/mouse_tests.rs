@@ -19,7 +19,7 @@ mod tests {
     use crate::editor::boot::DEFAULT_INIT_LISP;
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyModifiers, MouseButton, MouseEvent, MouseKind};
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::managers::Hit;
     use crate::ui::Rect;
     use std::sync::Arc;

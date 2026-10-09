@@ -1,5 +1,5 @@
 use super::*;
-use crate::lisp::{Lambda, eval};
+use risp::{Lambda, eval};
 
 pub const CURRENT_BUFFER_DOC: &str = "(current-buffer): Return the name of the current buffer, as a \
          string. Unlike real Emacs Lisp's `current-buffer`, which returns a \
@@ -433,7 +433,7 @@ primitive!(with_current_buffer, args, env, ctx, {
     // and the buffer is put back either way. An error that escaped here would
     // strand every later command on whatever buffer this one happened to be
     // visiting.
-    let result = crate::lisp::call_callable(&args[1], &[], env.clone(), ctx);
+    let result = risp::call_callable(&args[1], &[], env.clone(), ctx);
     ctx.set_current_buffer(&previous);
     result
 });

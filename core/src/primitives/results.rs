@@ -22,7 +22,7 @@
 //! else entirely when you jump to them.
 use super::*;
 use crate::background::{ImmediateTask, WorkerMessage};
-use crate::lisp::eval;
+use risp::eval;
 use crate::primitives::args;
 use crate::text::results::{Entry, KIND_BUFFER, KIND_FILE, RESULTS_KEY, Results};
 use crate::text::search::Pattern;
@@ -789,11 +789,11 @@ primitive!(results_put, args, _env, ctx, {
     }
     let pattern = match &args[0] {
         ELispExp::String(text) => text.to_string(),
-        other => crate::lisp::lisp_display(other),
+        other => risp::lisp_display(other),
     };
     let over = match &args[1] {
         ELispExp::String(text) => text.to_string(),
-        other => crate::lisp::lisp_display(other),
+        other => risp::lisp_display(other),
     };
     let buffer = match args.get(3) {
         Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),

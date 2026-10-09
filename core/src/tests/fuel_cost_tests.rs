@@ -13,7 +13,7 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
@@ -54,7 +54,7 @@ mod tests {
     fn cost(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> u64 {
         let ast = Parser::new(src).next().expect("source must parse");
         let (outcome, spent) =
-            crate::lisp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), ctx));
+            risp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), ctx));
         outcome.unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"));
         spent
     }
@@ -163,9 +163,9 @@ mod tests {
         );
         let total = each * 20_000;
         assert!(
-            total < u64::from(crate::lisp::DEFAULT_FUEL),
+            total < u64::from(risp::DEFAULT_FUEL),
             "naming 20,000 pages costs {total} of {} -- it used to be over the whole budget",
-            crate::lisp::DEFAULT_FUEL
+            risp::DEFAULT_FUEL
         );
     }
 
@@ -221,7 +221,7 @@ mod tests {
             .next()
             .expect("source must parse");
         let (outcome, spent) =
-            crate::lisp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), &ctx));
+            risp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), &ctx));
         assert!(outcome.is_ok());
         assert!(
             spent >= 5000,

@@ -20,10 +20,10 @@
 use crate::{
     BufferTrait, ELispExp, EditorState,
     input::{KeyCode, KeyEvent, KeyModifiers},
-    lisp::Env,
     managers::DEFAULT_HISTORY_LENGTH,
     modes::MajorMode,
 };
+use risp::Env;
 use std::sync::Arc;
 /// Set NAME to VAL the way Lisp's `setq` special form does: update an
 /// existing binding wherever it is up the scope chain if one exists,

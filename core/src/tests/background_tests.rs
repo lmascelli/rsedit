@@ -24,7 +24,7 @@ mod tests {
     use crate::background::{ImmediateTask, ScheduledTask, WorkerMessage};
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use crate::lisp::{Env, LispExp, Parser, eval};
+    use risp::{Env, LispExp, Parser, eval};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 

@@ -8,9 +8,9 @@ mod tests {
     use crate::{
         buffer::{BufferTrait, gap_buffer::GapBuffer},
         editor::{EditorState, create_global_env},
-        lisp::{Env, LispExp, Parser, eval},
         ui::{FrameSnapshot, WindowId},
     };
+    use risp::{Env, LispExp, Parser, eval};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;

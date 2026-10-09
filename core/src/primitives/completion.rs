@@ -46,7 +46,7 @@
 //! is passed over, because two sources completing different spans of text
 //! cannot both be right.
 use super::*;
-use crate::lisp::call_callable;
+use risp::call_callable;
 use crate::primitives::edits::{delete_range, edited, insert_text};
 
 /// Where the text being completed begins, while a presenter is being handed
@@ -738,7 +738,7 @@ primitive!(fuzzy_filter, args, _env, ctx, {
     // bound *time*, so that a runaway loop is stopped in about a second; a
     // primitive doing n units of work for one unit of fuel is how that
     // guarantee quietly stops holding. Same reasoning as `expect_list` in
-    // `lisp::base`, which is where this rule is written down.
+    // `risp::base`, which is where this rule is written down.
     //
     // It costs nothing in practice: twenty thousand candidates against a
     // budget of ten million is a fifth of a percent.

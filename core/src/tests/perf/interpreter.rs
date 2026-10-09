@@ -7,7 +7,7 @@
 use super::metrics::{per_unit_ns, ratio, time_fastest, x_ref};
 use super::report::{Report, Row};
 use super::suite::{Bench, SHAPE_TOLERANCE, Scaling};
-use crate::lisp::{LispExp, Parser};
+use risp::{LispExp, Parser};
 
 /// Iterations per scaling measurement. Large enough that the per-unit cost
 /// dominates the fixed setup, small enough that four sizes stay quick.

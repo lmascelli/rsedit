@@ -11,8 +11,8 @@ mod tests {
         buffer::{BufferTrait, gap_buffer::GapBuffer},
         editor::create_global_env,
         input::{KeyCode, KeyEvent, KeyModifiers},
-        lisp::{EvalError, Parser, eval},
     };
+    use risp::{EvalError, Parser, eval};
 
     fn char_event(c: char) -> KeyEvent {
         KeyEvent {

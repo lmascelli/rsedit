@@ -17,7 +17,7 @@
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::text::search::Pattern;
     use std::sync::Arc;
 
@@ -372,11 +372,11 @@ mod tests {
         // A primitive that scanned a megabyte for one unit would let a loop
         // do unbounded work inside a budget meant to bound it.
         let (ctx, env) = editor(&"x".repeat(5_000));
-        let (_, cheap) = crate::lisp::measure(&ctx.fuel_meter(), || {
+        let (_, cheap) = risp::measure(&ctx.fuel_meter(), || {
             run(r#"(scan-buffer "needle")"#, &env, &ctx)
         });
         let (ctx, env) = editor(&"x".repeat(50_000));
-        let (_, dear) = crate::lisp::measure(&ctx.fuel_meter(), || {
+        let (_, dear) = risp::measure(&ctx.fuel_meter(), || {
             run(r#"(scan-buffer "needle")"#, &env, &ctx)
         });
         assert!(

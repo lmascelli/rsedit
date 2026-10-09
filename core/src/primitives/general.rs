@@ -215,7 +215,7 @@ primitive!(repeat, _args, env, ctx, {
     // already running inside a command, so it inherits that command's undo
     // group and hooks. Re-entering the dispatcher would open a second one
     // inside the first.
-    crate::lisp::eval(&form, env.clone(), ctx)
+    risp::eval(&form, env.clone(), ctx)
 });
 
 pub const DEFINE_REPEAT_KEY_DOC: &str = "(define-repeat-key COMMAND KEY): Say that after COMMAND \

@@ -14,11 +14,11 @@ use crate::{
     },
     editor::create_global_env,
     input::{KeyCode, KeyEvent, KeyModifiers},
-    lisp::{EvalError, Parser, eval, measure},
     managers::Buffers,
     modes::{SyntaxTable, sexp},
     ui::*,
 };
+use risp::{EvalError, Parser, eval, measure};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};

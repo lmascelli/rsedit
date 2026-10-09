@@ -19,7 +19,7 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::primitives::io::{
         as_directory, directory_part, expand_path, expand_path_in, last_component,
         without_trailing_separator,

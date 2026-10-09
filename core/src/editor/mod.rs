@@ -39,10 +39,6 @@ use crate::{
         KeyEvent, Keymap, MouseButton, MouseEvent, MouseKind, OnUnbound, TransientKeymap,
         describe_keys, fill_default_keymaps,
     },
-    lisp::{
-        DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm,
-        call_callable, eval,
-    },
     managers::{
         Binding, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit,
         KillYank, Log, Macros, Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
@@ -61,6 +57,12 @@ use crate::{
         Window, WindowId, compose_layout, layout, region_highlights,
     },
 };
+
+use risp::{
+    DEFAULT_FUEL, Env, EvalError, FuelMeter, FuelScope, LispContext, Parser, bootstrap_vm,
+    call_callable, eval,
+};
+
 use std::{
     fs::{self, File},
     io::Write,

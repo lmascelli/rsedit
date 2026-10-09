@@ -4,7 +4,7 @@
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::modes::{Grammar, SyntaxRegion, SyntaxRule, SyntaxState, highlight_line};
     use crate::ui::Face;
     use regex::Regex;

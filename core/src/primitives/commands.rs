@@ -9,7 +9,7 @@
 //! Lisp versus a resumable state machine in Rust.
 use super::*;
 use crate::commands::ArgSpec;
-use crate::lisp::call_callable;
+use risp::call_callable;
 use crate::primitives::args;
 
 /// A Lisp function of (KIND PREFIX) returning completion candidates, consulted

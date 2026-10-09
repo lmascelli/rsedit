@@ -179,7 +179,7 @@ primitive!(define_kbd_macro, args, env, ctx, {
     ]);
     env.set_function(
         name.clone(),
-        ELispExp::lambda(crate::lisp::Lambda {
+        ELispExp::lambda(risp::Lambda {
             params: Vec::new(),
             optionals: Vec::new(),
             rest: None,

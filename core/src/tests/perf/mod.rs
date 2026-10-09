@@ -61,7 +61,7 @@ mod report;
 #[cfg(test)]
 mod suite {
     use super::{editor, interpreter, metrics, report};
-    use crate::lisp::{Env, EvalError, FuelMeter, LispContext, LispExp, Parser, eval, measure};
+    use risp::{Env, EvalError, FuelMeter, LispContext, LispExp, Parser, eval, measure};
     use report::{Kind, Report};
     use std::sync::Arc;
 
@@ -112,7 +112,7 @@ mod suite {
     impl Bench {
         pub fn new() -> Self {
             let env = Env::new_root();
-            crate::lisp::setup_base_env(env.clone());
+            risp::setup_base_env(env.clone());
             Self {
                 ctx: Meter::new(),
                 env,

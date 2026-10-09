@@ -438,7 +438,7 @@ impl<B: BufferTrait> EditorState<B> {
             // it.
             Some(binding) => ELispExp::form(vec![
                 ELispExp::symbol("quote".into()),
-                crate::lisp::form_to_data(&binding.target),
+                risp::form_to_data(&binding.target),
             ]),
             None => ELispExp::nil(),
         };

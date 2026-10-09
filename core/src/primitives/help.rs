@@ -38,7 +38,7 @@ fn binding_form<B: BufferTrait>(
 ) -> ELispExp<B> {
     ELispExp::proper_list(vec![
         ELispExp::string(keys),
-        crate::lisp::form_to_data(&target),
+        risp::form_to_data(&target),
         ELispExp::string(source.name().to_string()),
     ])
 }

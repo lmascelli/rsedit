@@ -22,7 +22,7 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::create_global_env;
-    use crate::lisp::{Parser, eval};
+    use risp::{Parser, eval};
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;

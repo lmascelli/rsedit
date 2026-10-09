@@ -242,7 +242,7 @@ primitive!(insert, args, _env, ctx, {
     for arg in args {
         match arg {
             ELispExp::String(s) => text.push_str(s),
-            other => text.push_str(&crate::lisp::lisp_display(other)),
+            other => text.push_str(&risp::lisp_display(other)),
         }
     }
     let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, &text));

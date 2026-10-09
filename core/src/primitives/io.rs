@@ -1,5 +1,5 @@
 use super::*;
-use crate::lisp::{call_callable, eval};
+use risp::{call_callable, eval};
 use crate::modes::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::{args, ask};
 
@@ -80,7 +80,7 @@ primitive!(find_file, args, env, ctx, {
     // entirely -- it never learns.
     if path.is_dir() {
         return match env.get_variable("*open-directory-callback*") {
-            Some(callback) if callback.is_truthy() => crate::lisp::call_callable(
+            Some(callback) if callback.is_truthy() => risp::call_callable(
                 &callback,
                 &[ELispExp::string(path_str.clone())],
                 env.clone(),
@@ -1228,7 +1228,7 @@ primitive!(directory_files_recursive, args, _env, ctx, {
     // for a step-shaped interpreter and wrong for anything returning a list
     // whose length it chose: this hands back twenty thousand paths for three
     // units. The budget is meant to bound *time* -- see `expect_list` in
-    // `lisp::base`, where the rule is written down -- and a walk that costs
+    // `risp::base`, where the rule is written down -- and a walk that costs
     // nothing to the meter is a loop of walks that the guard never stops.
     ctx.consume_fuel(u32::try_from(paths.len()).unwrap_or(u32::MAX))?;
     Ok(ELispExp::proper_list(vec![

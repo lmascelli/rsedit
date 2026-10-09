@@ -150,7 +150,7 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// The execution meter behind [`Self::begin_command`].
     ///
-    /// Exposed for `lisp::measure`, which needs the meter to hold a scope of
+    /// Exposed for `risp::measure`, which needs the meter to hold a scope of
     /// its own for the duration of a measurement.
     #[cfg(test)]
     pub(crate) fn fuel_meter(&self) -> Arc<FuelMeter> {

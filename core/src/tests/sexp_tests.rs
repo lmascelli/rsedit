@@ -17,7 +17,7 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::modes::sexp::{self, Context};
     use crate::modes::{CommentStyle, SyntaxClass, SyntaxTable};
     use std::sync::Arc;

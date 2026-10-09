@@ -5,7 +5,7 @@ mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyCode, KeyEvent, KeyModifiers};
-    use crate::lisp::{Env, EvalError, LispExp, Parser, eval};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::primitives::io::{expand_path, file_completions, split_for_completion};
     use crate::tests::home_guard::guard::HomeAs;
     use std::path::PathBuf;

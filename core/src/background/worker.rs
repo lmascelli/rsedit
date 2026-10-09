@@ -90,8 +90,8 @@
 use crate::{
     BufferTrait, ELispExp, EditorState,
     background::ScheduledTask,
-    lisp::{Env, EvalError, LispContext, call_callable, eval, set_remaining},
 };
+use risp::{Env, EvalError, LispContext, call_callable, eval, set_remaining};
 use std::cell::Cell;
 use std::sync::Arc;
 

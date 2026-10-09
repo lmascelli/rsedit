@@ -16,7 +16,7 @@
 //! the minibuffer has a built-in prompt.
 use super::*;
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
-use crate::lisp::call_callable;
+use risp::call_callable;
 use crate::primitives::args;
 
 /// The name of the variable naming the view.

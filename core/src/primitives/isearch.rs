@@ -33,7 +33,7 @@ fn begin<B: BufferTrait>(
     let reader = env
         .get_function("minibuffer-read")
         .ok_or_else(|| EvalError::UndefinedFunction("minibuffer-read".into()))?;
-    crate::lisp::call_callable(
+    risp::call_callable(
         &reader,
         &[
             ELispExp::string(prompt),

@@ -49,7 +49,6 @@
 
 // -- the interpreter, and the text it has no knowledge of ---------------------
 pub(crate) mod buffer;
-pub(crate) mod lisp;
 pub(crate) mod text;
 
 // -- what the editor takes in, and what a name can mean ----------------------
@@ -77,7 +76,7 @@ pub mod tests;
 /// Spelled out once here because every primitive in the crate takes a slice of
 /// these, and `LispExp<EditorState<B>>` written out in full at each of them
 /// would say nothing the name does not.
-pub type ELispExp<B> = lisp::LispExp<editor::EditorState<B>>;
+pub type ELispExp<B> = risp::LispExp<editor::EditorState<B>>;
 
 pub use crate::{
     buffer::{BufferTrait, gap_buffer::GapBuffer},
@@ -86,10 +85,10 @@ pub use crate::{
         isolate_config_for_tests, mouse_mode,
     },
     input::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind},
-    lisp::{Env, LispContext, Parser, eval},
     managers::{Buffers, Windows},
     ui::{
         Color, Face, FrameSnapshot, GutterCell, Highlight, NAMED_COLORS, Rect,
         RenderableWindowView, Separator, Style, Theme,
     },
 };
+pub use risp::{Env, LispContext, Parser, eval};

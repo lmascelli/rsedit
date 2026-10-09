@@ -41,8 +41,8 @@ use crate::{
     BufferTrait, EditorState,
     background::ScheduledTask,
     buffer::{FileStamp, OnDisk, disk::compare},
-    lisp::{Env, LispContext},
 };
+use risp::{Env, LispContext};
 use std::sync::Arc;
 use std::time::Duration;
 
