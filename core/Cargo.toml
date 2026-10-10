@@ -6,6 +6,3 @@ edition = "2024"
 [dependencies]
 risp = {  git = "https://github.com/lmascelli/risp.git", branch = "main" }
 regex = "*"
-
-[patch."https://github.com/lmascelli/risp.git"]
-risp = { path = "../../risp" }

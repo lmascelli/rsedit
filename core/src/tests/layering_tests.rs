@@ -8,14 +8,13 @@
 //! noticed is a reader who happened to look. A directory makes the layer
 //! visible; this makes it fail.
 //!
-//! Three boundaries are checked, and they are the three that carry weight:
+//! The editor's internal boundaries are checked here. The interpreter now has
+//! its own repository, so its dependency boundary is enforced by Cargo instead.
 //!
 //! - `text/` knows nothing of the editor *or* the interpreter. It is the layer
 //!   that makes searching and rectangles testable against a bare
 //!   [`crate::buffer::BufferTrait`], and reachable from a program that is not
 //!   an editor.
-//! - `lisp/` knows nothing of the editor. Its context is a type parameter, which
-//!   is what lets the interpreter be used and tested on its own.
 //! - `ui/` knows nothing of `editor/`. It describes what to draw; a renderer is
 //!   written against that description, not against this crate's internals.
 //!
@@ -36,67 +35,6 @@ mod tests {
         ("text/rectangle.rs", include_str!("../text/rectangle.rs")),
         ("text/results.rs", include_str!("../text/results.rs")),
         ("text/search.rs", include_str!("../text/search.rs")),
-    ];
-
-    /// Every file under `lisp/`.
-    const LISP: &[(&str, &str)] = &[
-        ("lisp/mod.rs", include_str!("../lisp/mod.rs")),
-        ("lisp/context.rs", include_str!("../lisp/context.rs")),
-        (
-            "lisp/environment.rs",
-            include_str!("../lisp/environment.rs"),
-        ),
-        ("lisp/error.rs", include_str!("../lisp/error.rs")),
-        ("lisp/eval.rs", include_str!("../lisp/eval.rs")),
-        ("lisp/fuel.rs", include_str!("../lisp/fuel.rs")),
-        ("lisp/handshake.rs", include_str!("../lisp/handshake.rs")),
-        ("lisp/lispexp.rs", include_str!("../lisp/lispexp.rs")),
-        ("lisp/parser.rs", include_str!("../lisp/parser.rs")),
-        ("lisp/source_map.rs", include_str!("../lisp/source_map.rs")),
-        ("lisp/types.rs", include_str!("../lisp/types.rs")),
-        ("lisp/utils.rs", include_str!("../lisp/utils.rs")),
-    ];
-
-    /// Every file under `lisp/base/`: the primitives this Lisp has of its own.
-    ///
-    /// Its own list rather than entries in [`LISP`], because it is its own
-    /// directory with its own `mod.rs` to count against -- and because the one
-    /// boundary that matters most is here: a *primitive* that reached for an
-    /// editor would be the easiest of these mistakes to make, and the hardest to
-    /// see.
-    const LISP_BASE: &[(&str, &str)] = &[
-        ("lisp/base/mod.rs", include_str!("../lisp/base/mod.rs")),
-        ("lisp/base/atoms.rs", include_str!("../lisp/base/atoms.rs")),
-        (
-            "lisp/base/comparisons.rs",
-            include_str!("../lisp/base/comparisons.rs"),
-        ),
-        (
-            "lisp/base/fibers.rs",
-            include_str!("../lisp/base/fibers.rs"),
-        ),
-        (
-            "lisp/base/functions.rs",
-            include_str!("../lisp/base/functions.rs"),
-        ),
-        (
-            "lisp/base/inspect.rs",
-            include_str!("../lisp/base/inspect.rs"),
-        ),
-        ("lisp/base/lists.rs", include_str!("../lisp/base/lists.rs")),
-        ("lisp/base/math.rs", include_str!("../lisp/base/math.rs")),
-        (
-            "lisp/base/predicates.rs",
-            include_str!("../lisp/base/predicates.rs"),
-        ),
-        (
-            "lisp/base/strings.rs",
-            include_str!("../lisp/base/strings.rs"),
-        ),
-        (
-            "lisp/base/symbols.rs",
-            include_str!("../lisp/base/symbols.rs"),
-        ),
     ];
 
     /// Every file under `ui/`.
@@ -140,6 +78,7 @@ mod tests {
             "EditorState",
             "crate::editor",
             "crate::lisp",
+            "risp::",
             "LispExp",
             "Env<",
         ] {
@@ -150,26 +89,6 @@ mod tests {
                  knows what a buffer is for. Something here needing the editor or the \
                  interpreter belongs in `primitives/` or beside its caller -- see \
                  text/mod.rs.",
-            );
-        }
-    }
-
-    #[test]
-    fn the_interpreter_knows_nothing_of_the_editor() {
-        for forbidden in ["EditorState", "crate::editor", "crate::buffer", "crate::ui"] {
-            assert_never_names(
-                LISP_BASE,
-                forbidden,
-                "A primitive in `lisp/base/` is one that would mean the same thing in a Lisp \
-                 with no editor behind it. One that needs a buffer or a window belongs in \
-                 `crate::primitives` -- see lisp/base/mod.rs.",
-            );
-            assert_never_names(
-                LISP,
-                forbidden,
-                "The interpreter's context is a type parameter `T: LispContext`, and that \
-                 is what lets it be built and tested without an editor. A primitive that \
-                 needs one is an *editor* primitive and belongs in `primitives/`.",
             );
         }
     }
@@ -195,18 +114,12 @@ mod tests {
     /// plus the `mod.rs` itself is how many files there are. A new file shows up
     /// here as a count that no longer matches, which is the reminder to add it.
     ///
-    /// Two kinds of declaration are not counted, and both are directories rather
-    /// than files: a `mod tests` -- a directory's own tests are allowed to name
-    /// whatever they test against, and `lisp/tests/` builds editors -- and a
-    /// sub-directory that has a list of its own, which `lisp/base` does.
+    /// A sub-directory with a list of its own is counted separately.
     #[test]
     fn every_file_in_each_checked_directory_is_listed() {
-        for (files, directory, sub_directories) in [
-            (TEXT, "text", &[][..]),
-            (LISP, "lisp", &["base"][..]),
-            (LISP_BASE, "lisp/base", &[][..]),
-            (UI, "ui", &[][..]),
-        ] {
+        for (files, directory, sub_directories) in
+            [(TEXT, "text", &[] as &[&str]), (UI, "ui", &[] as &[&str])]
+        {
             let (_, root) = files
                 .iter()
                 .find(|(path, _)| path.ends_with("mod.rs"))
