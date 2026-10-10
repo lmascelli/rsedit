@@ -1,97 +1,87 @@
-//! Measurement primitives shared by both reports.
-//!
-//! Two kinds of number are taken here, and the difference between them is the
-//! organising idea of this whole suite:
-//!
-//! * **Cost** -- fuel units. One per reduction step, plus one per element for
-//!   primitives that walk a list. Exact integers, identical on every machine,
-//!   reproducible to the unit. Assertions are made on these.
-//! * **Time** -- wall clock. A property of the machine as much as of the code.
-//!   These are tracked and compared against the previous run; only complexity
-//!   *classes* are asserted on, never absolute durations.
+//! Measurement primitives for the isolated performance suite.
 use std::time::{Duration, Instant};
 
-/// Timed samples taken per measurement.
-const SAMPLES: usize = 7;
+const SAMPLES: usize = 9;
 
-/// Time `f` and return the **fastest** of [`SAMPLES`] runs.
-///
-/// Minimum rather than mean or median, because interference on a shared machine
-/// is one-sided: a descheduled sample, a page fault, a competing process or a
-/// frequency dip only ever *adds* time, never removes it. The fastest run is
-/// therefore the sample least polluted by anything that is not the code under
-/// test. It is also markedly steadier run to run -- moving these benchmarks
-/// from median to minimum cut their observed spread from 1.57x to 0.40x.
-///
-/// The first call is discarded as a warm-up, which pays for first-touch page
-/// faults, lazily built state and cold branch predictors once rather than
-/// charging them to whichever size happens to be measured first.
-pub(crate) fn time_fastest<F: FnMut()>(mut f: F) -> Duration {
-    f();
-    (0..SAMPLES)
-        .map(|_| {
-            let start = Instant::now();
-            f();
-            start.elapsed()
-        })
-        .min()
-        .expect("SAMPLES is non-zero")
+/// Summary of repeated measurements. Deltas and ratios use the median; the
+/// range is shown so readers can see how stable the samples were.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Measurement {
+    pub min: Duration,
+    pub median: Duration,
+    pub max: Duration,
 }
 
-/// Nanoseconds of `total` attributable to one unit of work.
-pub(crate) fn per_unit_ns(total: Duration, units: u64) -> f64 {
-    total.as_secs_f64() * 1e9 / units.max(1) as f64
+impl Measurement {
+    pub fn as_secs_f64(self) -> f64 {
+        self.median.as_secs_f64()
+    }
+
+    pub fn ns_per_unit(self, units: u64) -> f64 {
+        self.median.as_secs_f64() * 1e9 / units.max(1) as f64
+    }
+
+    pub fn ns_range_per_unit(self, units: u64) -> (f64, f64) {
+        let units = units.max(1) as f64;
+        (
+            self.min.as_secs_f64() * 1e9 / units,
+            self.max.as_secs_f64() * 1e9 / units,
+        )
+    }
+
+    pub fn display_ns_per_unit(self, units: u64, label: &str) -> String {
+        let (min, max) = self.ns_range_per_unit(units);
+        format!("{:.2} {label} [{min:.2}–{max:.2}]", self.ns_per_unit(units))
+    }
+
+    pub fn display_ms(self) -> String {
+        let min = self.min.as_secs_f64() * 1e3;
+        let median = self.median.as_secs_f64() * 1e3;
+        let max = self.max.as_secs_f64() * 1e3;
+        format!("{median:.2} ms [{min:.2}–{max:.2}]")
+    }
 }
 
-/// `large / small`, guarded against a denominator too small for the clock to
-/// have resolved.
-///
-/// Fed two measurements of the same operation at two sizes, the result names
-/// the complexity class: ~2x for linear when the size doubles, ~4x for
-/// quadratic. Fed two different operations, it is their relative cost.
+fn summarize(mut samples: Vec<Duration>) -> Measurement {
+    samples.sort_unstable();
+    Measurement {
+        min: samples[0],
+        median: samples[samples.len() / 2],
+        max: *samples.last().expect("samples are non-empty"),
+    }
+}
+
+/// Run a timing sample repeatedly and return its median plus observed range.
+/// The first invocation is a warm-up and is excluded from the result.
+pub(crate) fn time_median<F: FnMut()>(mut f: F) -> Measurement {
+    repeat_elapsed(|| {
+        let start = Instant::now();
+        f();
+        start.elapsed()
+    })
+}
+
+/// Repeat a workload that returns its own timed interval. This lets benchmarks
+/// create a fresh fixture and validate it outside the measured interval.
+pub(crate) fn repeat_elapsed<F: FnMut() -> Duration>(mut sample: F) -> Measurement {
+    let _ = sample();
+    summarize((0..SAMPLES).map(|_| sample()).collect())
+}
+
+/// Repeat two related measurements from the same fresh fixture per sample.
+pub(crate) fn repeat_pair<F: FnMut() -> (Duration, Duration)>(
+    mut sample: F,
+) -> (Measurement, Measurement) {
+    let _ = sample();
+    let (left, right): (Vec<_>, Vec<_>) = (0..SAMPLES).map(|_| sample()).unzip();
+    (summarize(left), summarize(right))
+}
+
+pub(crate) fn per_unit_ns(total: Measurement, units: u64) -> f64 {
+    total.ns_per_unit(units)
+}
+
+/// `large / small`, using the median duration from each measurement.
 pub(crate) fn ratio(large: f64, small: f64) -> f64 {
     large / small.max(f64::EPSILON)
-}
-
-/// Time for one round of a fixed, machine-independent integer workload.
-///
-/// Every wall-clock figure in the timing report is also expressed as a multiple
-/// of this, which is what makes a slowdown legible. If one benchmark moved and
-/// this did not, the code got slower. If everything moved together with this,
-/// the *machine* was slower -- a loaded runner, a different build profile, a
-/// thermally throttled laptop -- and nothing about the code changed at all.
-///
-/// It is a good yardstick for CPU-bound work and a poor one for anything
-/// dominated by allocation or cache misses, which is why the report says so
-/// rather than presenting the normalised column as a hardware-free truth.
-pub(crate) fn calibration_ns() -> f64 {
-    const ROUNDS: u64 = 2_000_000;
-
-    let elapsed = time_fastest(|| {
-        // A chained multiply-xorshift: each round depends on the previous one,
-        // so it cannot be vectorised or hoisted, and `black_box` stops the
-        // whole loop being deleted as dead.
-        let mut x: u64 = 0x243F_6A88_85A3_08D3;
-        for _ in 0..ROUNDS {
-            x = x
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            x ^= x >> 33;
-        }
-        std::hint::black_box(x);
-    });
-    per_unit_ns(elapsed, ROUNDS)
-}
-
-/// A cost expressed as a multiple of the calibration round, at a precision that
-/// stays readable across the four orders of magnitude these costs span.
-pub(crate) fn x_ref(ns: f64, calibration: f64) -> String {
-    let n = ns / calibration.max(f64::EPSILON);
-    if n >= 100.0 {
-        format!("{n:.0} x ref")
-    } else if n >= 10.0 {
-        format!("{n:.1} x ref")
-    } else {
-        format!("{n:.2} x ref")
-    }
 }
