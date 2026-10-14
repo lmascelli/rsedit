@@ -59,6 +59,8 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 (eval-file "occur")       ; M-s o and M-s g, and the lists M-g n walks
 (eval-file "compile")     ; C-c c, and M-g n to walk what it complained about
 (eval-file "theme")       ; C-c t to choose how faces are drawn
+(eval-file "vim")         ; M-x vim-mode enables modal editing in this buffer
+;; (vim-mode t)           ; start the initial buffer in Normal state
 
 ;; Where completions come from, for C-M-i in a buffer. The command is built in
 ;; and works without this; what this adds is the five sources it asks. Take one

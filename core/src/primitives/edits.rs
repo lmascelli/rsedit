@@ -249,6 +249,16 @@ primitive!(insert, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
+pub const UNDO_JOIN_DOC: &str = "(undo-join): Let this command's subsequent edits continue the \
+    current buffer's open undo group. Used for a logical edit spanning several keystrokes. \
+    Does nothing when there is no open group; call before editing.";
+
+primitive!(undo_join, args, _env, ctx, {
+    exact_arity(args, 0)?;
+    ctx.with_current_buffer_mut(|buf| buf.undo.join_previous_command());
+    Ok(ELispExp::nil())
+});
+
 pub const DELETE_REGION_DOC: &str = "(delete-region FROM TO): Delete the text between FROM and TO \
          without putting it on the kill ring. Returns t if the buffer changed.\n\n\
          The counterpart of `insert', and the piece Lisp was missing: without it a module could \
@@ -1351,6 +1361,7 @@ primitive!(current_column, _args, _env, ctx, {
 /// primitive's name, its implementation and its argument spec are one fact in
 /// three pieces, and they were two files apart.
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.function("undo-join", undo_join, UNDO_JOIN_DOC);
     into.function("delete-region", delete_region, DELETE_REGION_DOC);
     into.function("self-insert", self_insert, SELF_INSERT_DOC);
     // Not a command: there is no key to bind it to and no argument spec that

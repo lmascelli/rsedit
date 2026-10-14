@@ -1,0 +1,200 @@
+NAME
+    vim - modal editing in Risp
+
+SYNOPSIS
+    M-x vim-mode
+    (eval-file "vim")
+    (vim-mode t)
+    (vim-mode-disable)
+
+DESCRIPTION
+    vim.lisp adds modal editing without replacing the buffer's major mode.
+    Syntax highlighting, indentation, language hooks, minibuffers and the
+    editor's save/quit checks continue to use their existing implementations.
+
+    The default init loads the module but does not enable it. For an existing
+    init, load "vim" after "commands", "debug" and "common-keymaps".
+    Loading "indent" and "electric-pair" also gives Insert mode their usual
+    indentation and pairing. M-x vim-mode toggles the current buffer; the
+    optional Lisp argument t enables it explicitly. vim-mode-disable restores
+    the previous local keymap. Each buffer has its own state and pending input.
+
+    Escape, C-[ and Normal C-g/C-c cancel incomplete input or return to Normal.
+    The mode line shows NORMAL, INSERT, REPLACE, VISUAL, V-LINE or V-BLOCK.
+    Custom mode-line-format strings can include %s for this buffer-local label.
+
+NORMAL MOTIONS
+    h j k l             Left, down, up, right; arrow keys also work.
+    Space, Backspace    Right, left, within the line.
+    w b e               Next word, previous word, end of word.
+    W B E               The same with whitespace-separated WORDS.
+    ge                  End of the preceding word.
+    0 ^ $               Beginning, first nonblank, last character of line.
+    _                   First nonblank on the current line.
+    |                   Column COUNT, counting from one.
+    gg G                First/last line, or the specified numbered line.
+    + - Return          First nonblank on the next/previous line.
+    { }                 Paragraph backward/forward.
+    %                   Matching (), [] or {} delimiter.
+    f F t T CHARACTER   Find or stop before a character on this line.
+    ; ,                 Repeat that find in the same/opposite direction.
+    C-d C-u             Down/up half a frame.
+    C-f C-b             Down/up approximately one frame.
+    C-e C-y             Scroll down/up by lines.
+
+    Counts compose with motions and operators: 3w, 2dd, d3w and 2d3w.
+    Vertical motions keep the desired column through short lines.
+    Horizontal motions stay on the current line. Normal point sits on the
+    last character rather than beyond it, except on an empty line.
+
+EDITING
+    i a I A             Insert before/after point, first nonblank, end of line.
+    o O                 Open an indented line below/above and enter Insert.
+    R                   Replace until Escape; Backspace restores the previous
+                        overwritten character within the replacement run.
+    d c y MOTION        Delete, change or yank the motion's range.
+    dd cc yy            Operate on complete lines, optionally counted.
+    x X s               Delete forward/backward characters; substitute forward.
+    D C S Y             Delete/change to EOL; change/yank complete lines.
+    r CHARACTER         Replace COUNT characters without entering Insert.
+    p P                 Put after/before point, preserving register shape.
+    J                   Join lines, removing indentation at the join.
+    > < = MOTION        Shift right/left or reindent; >>, << and == act on lines.
+    gU gu g~ MOTION     Uppercase, lowercase or toggle case; gUU/guu act on lines.
+    ~                   Toggle case for COUNT characters or the selection.
+    u C-r               Undo, redo; counts repeat the operation.
+    .                   Repeat the last edit at the new location. A supplied
+                        count replaces the saved count for counted operations.
+
+    Insert uses native self-insert, so Unicode typing and language hooks work.
+    Insert C-w deletes the preceding word, C-u to the beginning of the line,
+    and C-h deletes backwards. Bracketed paste remains one edit and does not
+    run auto-pairing. A complete Insert/Replace session, including a leading
+    change operator, undoes as one operation. Dot also captures paste and
+    auto-pairing. Counted i/a/I/A repeat the inserted text on Escape.
+
+TEXT OBJECTS
+    i/a w W             Inner/around word or WORD.
+    i/a ( ) b           Inner/around parentheses.
+    i/a [ ]             Inner/around brackets.
+    i/a { } B           Inner/around braces.
+    i/a < >             Inner/around angle brackets.
+    i/a " ' `           Inner/around a pair of quotes on the current line.
+    i/a p               Inner/around paragraph.
+
+    Objects work after an operator and in Visual mode: ciw, daW, di(, yi",
+    viw. Delimiter objects select the enclosing nested pair.
+
+VISUAL
+    v V C-v             Character, line, block selection.
+    o                   Exchange the active end and anchor.
+    gv                  Restore the most recently saved Visual selection.
+    Escape              Leave Visual mode.
+    d c y p P           Delete/change/yank or replace the selection with a put.
+    > < = gU gu g~ ~     Transform character/line selections.
+    u U                 Lowercase/uppercase character/line selections.
+
+    Both endpoint characters are included. Line selections cover complete
+    lines. Blocks support delete, yank, put and change; a single-line change
+    inserts the replacement on each selected row when you leave Insert.
+    Block puts pad short lines and create missing lines.
+
+REGISTERS AND MACROS
+    "a COMMAND          Use register a. Named registers are shared by buffers.
+    "A COMMAND          Append to register a.
+    "_ COMMAND          Black-hole register: discard without updating registers
+                        or the kill ring.
+    "0p                 Put the most recent yank, retained across deletions.
+    "1p ... "9p         Put older line/multiline deletions.
+    "-p                 Put the most recent small deletion.
+    qa ... q            Record a keyboard macro into register a.
+    qA ... q            Append to that macro.
+    @a @@               Execute register a / the most recently executed macro.
+
+    The unnamed register is selected by default. Text registers remember
+    character, line or block shape. Kills/yanks also go through the editor's
+    kill ring and its configured clipboard output. Macros record physical
+    input, including Insert, Escape and prompt input, and support counts.
+
+SEARCH AND MARKS
+    /PATTERN Return     Regex search forward.
+    ?PATTERN Return     Regex search backward.
+    n N                 Repeat in the same/opposite direction.
+    * #                 Search for the word at point, forward/backward.
+    m a                 Save a buffer-local mark a.
+    ` a, ' a            Jump exactly / to the mark's first nonblank on its line.
+
+    Lowercase marks are local; uppercase marks include the buffer name.
+    Searches wrap unless vim-search-wrap is nil. Empty / or ? repeats the
+    existing pattern. Search motions and mark jumps can follow operators.
+    Regex syntax is the editor's Rust regex syntax, not Vim's regex dialect.
+    Marks are character offsets; edits do not track or relocate them.
+
+EX COMMANDS
+    :w, :write          Save through the editor's existing save command.
+    :w PATH             Write and visit PATH.
+    :q, :quit           Quit through the editor's unsaved-work checks.
+    :wq, :x, ZZ         Save, then quit when saving completed successfully.
+    :q!, ZQ             Quit without saving.
+    :e, :e PATH         Prompt for/open a file.
+    :b NAME, :bd        Switch buffer / invoke the kill-buffer prompt.
+    :split, :vsplit     Split the window horizontally/vertically.
+    :only, :close       Keep only this window / close this window.
+    :NUMBER             Go to that line.
+    :set number         Absolute line numbers.
+    :set relativenumber Relative line numbers.
+    :set nonumber       Hide line numbers.
+    :set ignorecase     Case-insensitive searches.
+    :set noignorecase   Case-sensitive searches.
+    :set wrapscan       Wrap searches.
+    :set nowrapscan     Stop at buffer boundaries.
+    :help               Open this manual page.
+
+    :s/PATTERN/REPLACEMENT/FLAGS
+        Replace the first match on the current line; g replaces every match.
+        i/I force case-insensitive/sensitive matching for this substitution.
+        & expands the complete match; \1 through \9 expand capture groups;
+        \& is a literal ampersand and \n/\r insert a newline. The delimiter
+        can be any character, and escaped delimiters are accepted.
+
+    :%s/.../.../g        Substitute throughout the buffer.
+    :2,5s/.../.../g      Substitute on numbered lines 2 through 5.
+    :'<,'>s/.../.../g    Substitute on lines of the saved Visual selection.
+
+    Substitution is one undo operation. Invalid expressions and unsupported
+    flags report an error. It does not implement Vim's confirmation flag c.
+
+WINDOWS
+    C-w s/v             Split below/right.
+    C-w w               Select the next window.
+    C-w o/c             Keep only this window / close this window.
+    C-w h/j/k/l         Currently cycle windows; directional focus is absent.
+    z followed by key   Recenter the current window.
+    K                   Look up the word using the editor's manual support.
+
+SETTINGS AND EXTENSION
+    vim-shift-width     Spaces added/removed by > and <; default 4.
+    vim-search-wrap     Wrap at buffer boundaries; default t.
+    vim-normal-map      Local keymap for Normal and Visual.
+    vim-insert-map      Local keymap for Insert.
+    vim-replace-map     Local keymap for Replace.
+
+    Normal consumes unsupported printable keys instead of inserting them.
+    Other unbound keys can still reach major/global bindings, including M-x.
+    Transient prompts keep priority over the modal maps.
+
+    The generic Rust support exposed to Risp is set-local-keymap, the <char>
+    keymap fallback, inclusive set-mark, undo-join, pre-command-hook, %s and
+    string-diff. The command parser, motions, operators, registers and state
+    transitions are in vim.lisp.
+
+LIMITS
+    This is an extensive Vim-style mode, not full Vim compatibility. It does
+    not provide Vimscript, arbitrary Ex addresses, :global, folds, jumplists,
+    marks that track edits, Insert C-o, all screen-relative motions or native
+    clipboard reads. Use the terminal's paste command for external text.
+    Block I/A, multiline block insert replication, full Replace count behavior
+    and every Visual/Ex combination are not implemented. Dot records editing
+    commands and Insert/Replace sessions, but does not replay Ex substitutions.
+    = depends on the optional indent module. Window paging uses frame height;
+    z variants currently recenter instead of selecting top/bottom placement.

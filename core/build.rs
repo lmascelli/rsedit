@@ -24,6 +24,7 @@ fn main() {
         "rust-mode.lisp",
         "shell.lisp",
         "theme.lisp",
+        "vim.lisp",
     ];
 
     for file in &LISP_FILES {

@@ -1,7 +1,6 @@
 use crate::ELispExp;
 use crate::buffer::{Buffer, BufferTrait, mark::region_bounds};
 use crate::managers::Buffers;
-use crate::text::rectangle::Rectangle;
 use crate::ui::Face;
 use crate::ui::layout::{self, BufferHighlight, Layout};
 
@@ -1263,7 +1262,10 @@ pub fn region_highlights<B: BufferTrait>(
     let rectangle = buf
         .mark
         .filter(|mark| mark.active && mark.rectangle)
-        .map(|_| Rectangle::between((start_line, start_col), (end_line, end_col)));
+        .and_then(|mark| crate::buffer::mark::rectangle_corners(Some(mark), &buf.text));
+    let (start_line, end_line) = rectangle
+        .map(|rectangle| (rectangle.top, rectangle.bottom))
+        .unwrap_or((start_line, end_line));
 
     for line in start_line.max(first_visible)..=end_line.min(last_visible.saturating_sub(1)) {
         let (from, to): (usize, usize) = if let Some(rectangle) = rectangle {
@@ -1316,6 +1318,7 @@ fn line_width<B: BufferTrait>(text: &B, line: usize) -> usize {
 /// |--------|----------------------------------------------|
 /// | `%b`   | buffer name                                  |
 /// | `%f`   | file path, or the buffer name when unvisited |
+/// | `%s`   | buffer-local mode-line-state string          |
 /// | `%m`   | major mode                                   |
 /// | `%l`   | line number, counting from one               |
 /// | `%c`   | column, counting from zero as Emacs does     |
@@ -1341,6 +1344,13 @@ pub fn expand_mode_line<B: BufferTrait>(format: &str, buffer: &Buffer<B>) -> Str
             Some('b') => out.push_str(&buffer.name),
             Some('f') => out.push_str(buffer.file_path.as_deref().unwrap_or(&buffer.name)),
             Some('m') => out.push_str(&buffer.current_mode),
+            Some('s') => {
+                if let Some(crate::ELispExp::String(state)) =
+                    buffer.data::<crate::ELispExp<B>>("lisp:mode-line-state")
+                    {
+                        out.push_str(state);
+                    }
+            }
             Some('l') => out.push_str(&(line + 1).to_string()),
             Some('c') => out.push_str(&column.to_string()),
             Some('p') => out.push_str(&position_in_buffer(line, lines)),

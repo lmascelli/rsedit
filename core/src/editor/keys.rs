@@ -88,8 +88,22 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// Taken before the modes lock, everywhere: buffers come before modes in
     /// the canonical order.
-    fn keymap_mode(&self) -> String {
-        self.with_current_buffer(|buf| buf.current_mode.clone())
+    fn keymap_modes(&self) -> Vec<String> {
+        self.with_current_buffer(|buf| {
+            let mut names = Vec::with_capacity(2);
+            if let Some(ELispExp::Symbol(name) | ELispExp::String(name)) =
+                buf.data::<ELispExp<B>>("lisp:local-keymap")
+                && name.as_str() != "nil"
+            { names.push(name.to_string()); }
+            names.push(buf.current_mode.clone());
+            names
+        })
+    }
+
+    /// Explicit buffer-local bindings may claim the argument reader's keys.
+    fn local_key_claims(&self, event: &KeyEvent) -> bool {
+        self.key_binding(std::slice::from_ref(event))
+            .is_some_and(|binding| binding.source == crate::managers::BindingSource::Local)
     }
 
     /// What KEYS would run if they were typed now, and which map it is from.
@@ -99,21 +113,24 @@ impl<B: BufferTrait> EditorState<B> {
     /// means nothing would run, which includes a sequence that is only the
     /// start of a longer one.
     pub(crate) fn key_binding(&self, keys: &[KeyEvent]) -> Option<Binding<B>> {
-        let mode = self.keymap_mode();
-        self.modes(|modes| modes.binding_for(Some(&mode), keys))
+        let names = self.keymap_modes();
+        let modes: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.modes(|registry| registry.binding_for(&modes, keys))
     }
 
     /// Whether KEYS is the start of a longer binding.
     fn key_is_prefix(&self, keys: &[KeyEvent]) -> bool {
-        let mode = self.keymap_mode();
-        self.modes(|modes| modes.is_prefix(Some(&mode), keys))
+        let names = self.keymap_modes();
+        let modes: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.modes(|registry| registry.is_prefix(&modes, keys))
     }
 
     /// Every binding in effect in the current buffer, sorted, each sequence
     /// once.
     pub(crate) fn key_bindings(&self) -> Vec<Binding<B>> {
-        let mode = self.keymap_mode();
-        self.modes(|modes| modes.bindings(Some(&mode)))
+        let names = self.keymap_modes();
+        let modes: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.modes(|registry| registry.bindings(&modes))
     }
 
     /// Install a keymap that is consulted before every other until it goes
@@ -254,7 +271,8 @@ impl<B: BufferTrait> EditorState<B> {
 
         // Asked before the modes are taken: buffers come before modes in the
         // canonical order.
-        let current_mode = self.with_current_buffer(|buf| buf.current_mode.clone());
+        let names = self.keymap_modes();
+        let current_modes: Vec<&str> = names.iter().map(String::as_ref).collect();
 
         // One acquisition answers the whole question -- the transient map, the
         // mode's keymap and the global one. It used to be three locks and an
@@ -289,13 +307,8 @@ impl<B: BufferTrait> EditorState<B> {
                 }
             }
 
-            // The mode's own keymap wins, then the global one -- and a mode
-            // that binds a prefix keeps the sequence alive even when only the
-            // global map completes it. The same two calls answer `key-binding`
-            // for a help command, so what is reported and what runs are one
-            // walk rather than two that have to be kept in step.
-            let hit = modes.binding_below_transient(Some(&current_mode), &pending);
-            let prefix = modes.is_prefix_below_transient(Some(&current_mode), &pending);
+            let hit = modes.binding_below_transient(&current_modes, &pending);
+            let prefix = modes.is_prefix_below_transient(&current_modes, &pending);
             match (hit, prefix) {
                 (Some(binding), _) => Bound::Command(binding.target),
                 (None, true) => Bound::Prefix,
@@ -318,8 +331,9 @@ impl<B: BufferTrait> EditorState<B> {
         let reaching_past = match (&bound, pending.len()) {
             (Bound::Unbound, len) if len >= 2 => {
                 let prefix = pending[..len - 1].to_vec();
-                let mode = self.with_current_buffer(|buf| buf.current_mode.clone());
-                self.modes(|modes| modes.is_prefix(Some(&mode), &prefix))
+                let names = self.keymap_modes();
+                let current_modes: Vec<&str> = names.iter().map(String::as_str).collect();
+                self.modes(|modes| modes.is_prefix(&current_modes, &prefix))
                     .then(|| describe_keys(&prefix))
             }
             _ => None,
@@ -405,7 +419,9 @@ impl<B: BufferTrait> EditorState<B> {
         // `C-u` never reaches a keymap: the argument reader takes it first,
         // which is exactly what is worth saying about it. Asked through the
         // reader's own predicate so the two cannot drift.
-        let prefix_argument = keys.len() == 1 && Commands::<B>::is_prefix_argument_key(&keys[0]);
+        let prefix_argument = keys.len() == 1
+            && Commands::<B>::is_prefix_argument_key(&keys[0])
+            && !self.local_key_claims(&keys[0]);
 
         let binding = if prefix_argument {
             None
@@ -478,7 +494,9 @@ impl<B: BufferTrait> EditorState<B> {
 
         // The argument reader gets first refusal. A key it takes is not a
         // command and never reaches a keymap.
-        if self.read_prefix_argument(&event) {
+        if !(Commands::<B>::is_prefix_argument_key(&event) && self.local_key_claims(&event))
+            && self.read_prefix_argument(&event)
+        {
             // Also recorded, and also not a command: without this a macro
             // would replay `C-u 5 C-n' as a bare `C-n'.
             self.record_keys(std::slice::from_ref(&event), None);

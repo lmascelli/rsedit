@@ -52,7 +52,7 @@ fn key_argument<B: BufferTrait>(args: &[ELispExp<B>]) -> Option<Vec<KeyEvent>> {
 
 pub const KEY_BINDING_DOC: &str = "(key-binding KEYS): What pressing KEYS would run in the \
          current buffer, as (KEYS TARGET SOURCE), or nil when it would run nothing.\n\n\
-         SOURCE is \"transient\", \"mode\" or \"global\" -- which map the binding came from, and \
+         SOURCE is \"transient\", \"local\", \"mode\" or \"global\" -- which map the binding came from, and \
          so whether it is in force everywhere or only here.\n\n\
          nil for a sequence that is only the *start* of a binding: `C-x' runs nothing on its \
          own. Ask `keys-with-prefix' to tell a prefix from a key bound to nothing at all.\n\n\

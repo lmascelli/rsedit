@@ -123,6 +123,7 @@ primitive!(rectangle_mark_mode, _args, _env, ctx, {
                 buf.mark = Some(Mark {
                     at,
                     active: true,
+                    inclusive: false,
                     rectangle: true,
                 });
                 true

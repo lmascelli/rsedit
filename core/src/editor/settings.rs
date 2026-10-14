@@ -36,7 +36,7 @@ pub const DEFAULT_MINIBUFFER_HEIGHT: f64 = 3.0;
 pub const MODE_LINE_FORMAT: &str = "mode-line-format";
 
 /// What a window's status line says when nothing sets [`MODE_LINE_FORMAT`].
-pub const DEFAULT_MODE_LINE_FORMAT: &str = " %* %b   %m   L%l C%c   %p ";
+pub const DEFAULT_MODE_LINE_FORMAT: &str = " %* %b   %m %s  L%l C%c   %p ";
 
 pub const MOUSE_MODE: &str = "mouse-mode";
 

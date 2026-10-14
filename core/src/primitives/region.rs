@@ -27,6 +27,7 @@ fn require_region<B: BufferTrait>(
 pub const SET_MARK_DOC: &str = "(set-mark &optional POSITION): Put the mark at POSITION (default \
          point) and activate it, so the text between mark and point becomes \
          the region. Returns the mark's position.\n\n\
+         With INCLUSIVE non-nil, include the characters at both endpoints.\n\n\
          Any edit deactivates the mark, so a region never survives a change \
          to the text under it.\n\n\
          Example:\n\
@@ -47,7 +48,9 @@ primitive!(set_mark, args, _env, ctx, {
         let at = at
             .unwrap_or_else(|| buf.text.cursor_pos_1d())
             .min(buf.text.len());
-        buf.mark = Some(Mark::new(at));
+        let mut mark = Mark::new(at);
+        mark.inclusive = args.get(1).is_some_and(|value| value.is_truthy());
+        buf.mark = Some(mark);
         at as f64
     })))
 });

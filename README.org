@@ -30,3 +30,19 @@ cargo run -- path/to/file.txt
     I/O: Ctrl+S to save the current buffer.
 
     Exit: Ctrl+Q to quit.
+
+** Vim mode
+
+The optional =vim.lisp= module implements modal editing in Risp. The default
+init loads it; run =M-x vim-mode= to enable it in the current buffer, or
+=(vim-mode t)= from your configuration. An existing init needs
+=(eval-file "vim")= after =commands=, =debug= and =common-keymaps=.
+
+Normal, Insert, Replace and character/line/block Visual modes support counted
+motions and operators, text objects, registers, keyboard macros, searches,
+undo/redo, dot repetition and common Ex commands, including ranged regex
+substitutions. The language's major mode and syntax hooks remain active.
+
+See the =vim= manual page (=M-x rsedit-man=, then =vim=) for keybindings,
+settings and the supported compatibility scope. =M-x vim-mode-disable=
+restores the previous local keymap.

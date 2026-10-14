@@ -27,6 +27,32 @@ primitive!(eval_file, args, env, ctx, {
     }
 });
 
+pub const SET_LOCAL_KEYMAP_DOC: &str = "(set-local-keymap MODE): Layer MODE's keymap above the \
+    current buffer's major mode and the global map, below transient maps. MODE names a \
+    registered mode, or nil to remove the layer. Syntax and hooks still use the major mode. \
+    The setting belongs to this buffer and is readable as (buffer-get 'local-keymap).";
+
+primitive!(set_local_keymap, args, _env, ctx, {
+    exact_arity(args, 1)?;
+    if !args[0].is_nil() {
+        let name = args::name(args.first())?;
+        if !ctx.modes(|modes| modes.get(&name).is_some()) {
+            return Err(EvalError::RuntimeMessage(format!(
+                "Unknown keymap mode: {name}"
+            )));
+        }
+    }
+    ctx.with_current_buffer_mut(|buf| {
+        if args[0].is_nil() {
+            buf.forget_data("lisp:local-keymap");
+        } else {
+            buf.put_data("lisp:local-keymap", args[0].clone());
+        }
+    });
+    ctx.abandon_pending_input();
+    Ok(args[0].clone())
+});
+
 pub const DEFINE_KEY_DOC: &str = "(define-key MODE KEY COMMAND): Bind KEY (an Emacs-style key sequence \
          string, e.g. \"C-x\" or \"<ret>\") to COMMAND. MODE is either nil, \
          binding KEY globally, or a mode name symbol/string, binding KEY only \
@@ -35,6 +61,10 @@ pub const DEFINE_KEY_DOC: &str = "(define-key MODE KEY COMMAND): Bind KEY (an Em
          expression to evaluate. Returns t on success, nil (logging a \
          diagnostic) if MODE names an unknown mode or KEY isn't a recognized \
          key sequence.\n\n\
+         The special KEY \"<char>\" installs a character fallback: COMMAND must be a \
+         function name, lambda or nil (to remove it). It receives the unmodified character \
+         as a one-character string. Explicit bindings and prefixes win in the same map.\n\n\
+
          Example:\n\
          (define-key nil \"C-n\" 'next-line)          ; global binding\n\
          (define-key 'lisp-mode \"<ret>\" 'insert-newline) ; mode-local binding\n\
@@ -66,6 +96,26 @@ primitive!(define_key, args, env, ctx, {
                     });
                 }
             };
+
+            if key_str.as_str() == "<char>" {
+                if !ast.is_nil() && !matches!(ast, ELispExp::Symbol(_) | ELispExp::Lambda(_)) {
+                    return Err(EvalError::WrongArgumentType {
+                        expected: "Function name, lambda or nil for <char>".into(),
+                        got: ast.clone(),
+                    });
+                }
+                let bound = ctx.modes_mut(|modes| match &mode_name {
+                    Some(name) => {
+                        modes.edit(name, |mode| mode.keymaps.set_character_handler(ast.clone()))
+                    }
+                    None => {
+                        modes.global_keymap_mut().set_character_handler(ast.clone());
+                        true
+                    }
+                });
+                return Ok(ELispExp::boolean(bound));
+            }
+
             let actual_ast = command_ast(ast, &env);
             if let Some(keys) = parse_key_sequence(key_str) {
                 if let Some(mode_name) = mode_name {
@@ -452,6 +502,7 @@ primitive!(regexp_opt, args, _env, _ctx, {
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("eval-file", eval_file, EVAL_FILE_DOC);
     into.function("define-key", define_key, DEFINE_KEY_DOC);
+    into.function("set-local-keymap", set_local_keymap, SET_LOCAL_KEYMAP_DOC);
     into.function(
         "define-repeat-key",
         define_repeat_key,

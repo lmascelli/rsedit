@@ -69,7 +69,7 @@ fn parse_key(seq: &str) -> Option<KeyEvent> {
         "<down>" => KeyCode::Down,
         "<left>" => KeyCode::Left,
         "<right>" => KeyCode::Right,
-        s if s.len() == 1 => KeyCode::Char(
+        s if s.chars().count() == 1 => KeyCode::Char(
             s.chars()
                 .next()
                 .expect(&format!("Failed to interpret the sequence {seq}")),

@@ -65,6 +65,8 @@ impl<B: BufferTrait> EditorState<B> {
 
         let outcome = {
             let _command = self.begin_command();
+            let mode = self.with_current_buffer(|buf| buf.current_mode.clone());
+            self.run_hook(&mode, "pre-command-hook", env);
             eval(&ast, env.clone(), self)
         };
         // Before the error check, so a command that fails still consumes its

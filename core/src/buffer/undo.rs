@@ -324,6 +324,11 @@ impl UndoHistory {
         }
     }
 
+    /// Let this command continue the open group without ordinary typing's cap.
+    pub fn join_previous_command(&mut self) {
+        self.open_epoch = current_command().epoch;
+    }
+
     /// How many characters the open group has inserted so far, for deciding
     /// whether a run of self-inserts has grown long enough to break up.
     pub fn open_insert_len(&self) -> usize {

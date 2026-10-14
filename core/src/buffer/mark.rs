@@ -21,6 +21,8 @@ pub struct Mark {
     /// Whether the region is in force: highlighted, and used by the commands
     /// that operate on a region.
     pub active: bool,
+    /// Include the character at both endpoints, as modal selections do.
+    pub inclusive: bool,
     /// Whether the region between this mark and point is a *rectangle*: the
     /// columns the lines have in common, rather than the ragged run from one
     /// corner to the other.
@@ -45,6 +47,7 @@ impl Mark {
         Self {
             at,
             active: true,
+            inclusive: false,
             rectangle: false,
         }
     }
@@ -60,7 +63,11 @@ impl Mark {
 pub fn region_bounds(mark: Option<Mark>, point: usize, len: usize) -> Option<(usize, usize)> {
     let mark = mark.filter(|mark| mark.active)?;
     let start = mark.at.min(point).min(len);
-    let end = mark.at.max(point).min(len);
+    let end = mark
+        .at
+        .max(point)
+        .saturating_add(usize::from(mark.inclusive))
+        .min(len);
     Some((start, end))
 }
 
@@ -77,8 +84,11 @@ pub fn rectangle_corners<B: crate::buffer::BufferTrait>(
 ) -> Option<crate::text::rectangle::Rectangle> {
     let mark = mark.filter(|mark| mark.active)?;
     let point = text.cursor_pos_1d();
-    Some(crate::text::rectangle::Rectangle::between(
+
+    let mut rectangle = crate::text::rectangle::Rectangle::between(
         text.cursor_1d_to_2d(mark.at.min(text.len())),
         text.cursor_1d_to_2d(point),
-    ))
+    );
+    rectangle.right = rectangle.right.saturating_add(usize::from(mark.inclusive));
+    Some(rectangle)
 }

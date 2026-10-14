@@ -57,6 +57,8 @@ use std::collections::HashMap;
 pub enum BindingSource {
     /// A map installed for one question and taken down after it.
     Transient,
+    /// A buffer-local map layered above its major mode.
+    Local,
     /// The current buffer's mode.
     Mode,
     /// In force everywhere.
@@ -68,6 +70,7 @@ impl BindingSource {
     pub fn name(self) -> &'static str {
         match self {
             BindingSource::Transient => "transient",
+            BindingSource::Local => "local",
             BindingSource::Mode => "mode",
             BindingSource::Global => "global",
         }
@@ -223,13 +226,13 @@ impl<B: BufferTrait> Modes<B> {
     /// for: this answers what is *bound*, and a refusing map makes everything
     /// below it unreachable without unbinding any of it. Nothing can ask this
     /// while such a map is up anyway, since asking means running a command.
-    pub fn binding_for(&self, mode: Option<&str>, keys: &[KeyEvent]) -> Option<Binding<B>> {
+    pub fn binding_for(&self, modes: &[&str], keys: &[KeyEvent]) -> Option<Binding<B>> {
         if let Some(map) = self.transient()
             && let Some(target) = map.keymap.get(keys)
         {
             return Some(Binding::new(keys, target.clone(), BindingSource::Transient));
         }
-        self.binding_below_transient(mode, keys)
+        self.binding_below_transient(modes, keys)
     }
 
     /// The mode's keymap, then the global one -- the walk key resolution does
@@ -241,32 +244,40 @@ impl<B: BufferTrait> Modes<B> {
     /// keeps "what would this key do" and "what this key does" the same walk.
     pub fn binding_below_transient(
         &self,
-        mode: Option<&str>,
+        modes: &[&str],
         keys: &[KeyEvent],
     ) -> Option<Binding<B>> {
-        if let Some(keymap) = mode.and_then(|mode| self.mode_keymap(mode))
-            && let Some(target) = keymap.get(keys)
-        {
-            return Some(Binding::new(keys, target.clone(), BindingSource::Mode));
+        for (index, mode) in modes.iter().enumerate() {
+            if let Some(keymap) = self.mode_keymap(mode)
+                && let Some(target) = keymap.binding(keys)
+            {
+                let source = if index + 1 < modes.len() {
+                    BindingSource::Local
+                } else {
+                    BindingSource::Mode
+                };
+                return Some(Binding::new(keys, target, source));
+            }
         }
         self.global_keymap
-            .get(keys)
-            .map(|target| Binding::new(keys, target.clone(), BindingSource::Global))
+            .binding(keys)
+            .map(|target| Binding::new(keys, target, BindingSource::Global))
     }
 
     /// Whether KEYS is the start of a longer binding in any map that is in
     /// effect -- which is what keeps a half-typed sequence alive.
-    pub fn is_prefix(&self, mode: Option<&str>, keys: &[KeyEvent]) -> bool {
+    pub fn is_prefix(&self, modes: &[&str], keys: &[KeyEvent]) -> bool {
         self.transient()
             .is_some_and(|map| map.keymap.is_prefix(keys))
-            || self.is_prefix_below_transient(mode, keys)
+            || self.is_prefix_below_transient(modes, keys)
     }
 
     /// The same question of the mode's keymap and the global one alone.
-    pub fn is_prefix_below_transient(&self, mode: Option<&str>, keys: &[KeyEvent]) -> bool {
-        mode.and_then(|mode| self.mode_keymap(mode))
-            .is_some_and(|keymap| keymap.is_prefix(keys))
-            || self.global_keymap.is_prefix(keys)
+    pub fn is_prefix_below_transient(&self, modes: &[&str], keys: &[KeyEvent]) -> bool {
+        modes.iter().any(|mode| {
+            self.mode_keymap(mode)
+                .is_some_and(|keymap| keymap.is_prefix(keys))
+        }) || self.global_keymap.is_prefix(keys)
     }
 
     /// Every binding in effect, each sequence once, attributed to the map that
@@ -275,7 +286,7 @@ impl<B: BufferTrait> Modes<B> {
     /// A sequence bound in two maps appears once, under the higher one: what a
     /// reader wants is what the keys do, and listing the hidden binding beside
     /// the live one would be listing something that cannot happen.
-    pub fn bindings(&self, mode: Option<&str>) -> Vec<Binding<B>> {
+    pub fn bindings(&self, modes: &[&str]) -> Vec<Binding<B>> {
         // Lowest priority first, so a later insert overwrites a lower map's
         // claim on the same sequence -- the same order resolution reads them
         // in, run backwards.
@@ -286,12 +297,17 @@ impl<B: BufferTrait> Modes<B> {
                 Binding::new(keys, target.clone(), BindingSource::Global),
             );
         }
-        if let Some(keymap) = mode.and_then(|mode| self.mode_keymap(mode)) {
-            for (keys, target) in keymap.iter() {
-                found.insert(
-                    keys.clone(),
-                    Binding::new(keys, target.clone(), BindingSource::Mode),
-                );
+        for (index, mode) in modes.iter().enumerate().rev()
+        {
+            if let Some(keymap) = self.mode_keymap(mode) {
+                let source = if index + 1 < modes.len() {
+                    BindingSource::Local
+                } else {
+                    BindingSource::Mode
+                };
+                for (keys, target) in keymap.iter() {
+                    found.insert(keys.clone(), Binding::new(keys, target.clone(), source));
+                }
             }
         }
         if let Some(map) = self.transient() {
@@ -302,7 +318,14 @@ impl<B: BufferTrait> Modes<B> {
                 );
             }
         }
-        let mut bindings: Vec<Binding<B>> = found.into_values().collect();
+        // A character fallback in a higher map can override an explicit
+        // binding below it. Attribute each listed key through the same walk
+        // used for dispatch, including those generated bindings.
+        let mut bindings: Vec<Binding<B>> = found
+            .into_values()
+            .filter_map(|binding| self.binding_for(modes, &binding.keys))
+            .collect();
+
         bindings.sort_by(|a, b| describe_keys(&a.keys).cmp(&describe_keys(&b.keys)));
         bindings
     }

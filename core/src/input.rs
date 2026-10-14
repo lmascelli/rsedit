@@ -133,6 +133,7 @@ fn describe_key(key: &KeyEvent) -> String {
 pub struct Keymap<B: BufferTrait> {
     bindings: HashMap<Vec<KeyEvent>, ELispExp<B>>,
     prefixes: HashSet<Vec<KeyEvent>>,
+    character_handler: Option<ELispExp<B>>,
 }
 
 impl<B: BufferTrait> Default for Keymap<B> {
@@ -140,6 +141,7 @@ impl<B: BufferTrait> Default for Keymap<B> {
         Self {
             bindings: HashMap::new(),
             prefixes: HashSet::new(),
+            character_handler: None,
         }
     }
 }
@@ -149,6 +151,39 @@ impl<B: BufferTrait> Keymap<B> {
         Self::default()
     }
 
+    /// A fallback for unmodified characters, including Unicode. Explicit
+    /// bindings and prefixes in this map take precedence.
+    pub fn set_character_handler(&mut self, handler: ELispExp<B>) {
+        self.character_handler = (!handler.is_nil()).then_some(handler);
+    }
+    
+    pub fn binding(&self, keys: &[KeyEvent]) -> Option<ELispExp<B>> {
+        if let Some(binding) = self.get(keys) {
+            return Some(binding.clone());
+        }
+        let [event] = keys else {
+            return None;
+        };
+        let KeyCode::Char(c) = event.code else {
+            return None;
+        };
+        if event.modifiers.ctrl || event.modifiers.alt || self.is_prefix(keys) {
+            return None;
+        }
+        let handler = self.character_handler.as_ref()?;
+        Some(match handler {
+            ELispExp::Symbol(name) => ELispExp::form(vec![
+                ELispExp::symbol(name.to_string()),
+                ELispExp::string(c.to_string()),
+            ]),
+            other => ELispExp::form(vec![
+                ELispExp::symbol("funcall".into()),
+                ELispExp::form(vec![ELispExp::symbol("quote".into()), other.clone()]),
+                ELispExp::string(c.to_string()),
+            ]),
+        })
+    }
+    
     /// Bind KEYS to AST, and register every proper prefix of KEYS.
     ///
     /// *Proper*: the sequence itself is not registered. Nothing observable

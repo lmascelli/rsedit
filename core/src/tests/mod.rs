@@ -84,3 +84,4 @@ mod window_point_tests;
 mod window_tests;
 mod worker_tests;
 mod write_file_tests;
+mod vim_tests;
