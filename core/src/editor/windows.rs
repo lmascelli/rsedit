@@ -173,9 +173,10 @@ impl<B: BufferTrait> EditorState<B> {
         height: usize,
         title: Option<String>,
         mode: Option<String>,
+        env: &Arc<Env<EditorState<B>>>,
     ) -> WindowId {
         let previous_focused_window_id = self.get_focused_window_id();
-        self.new_buffer(buf_name, None, mode);
+        self.new_buffer(buf_name, None, mode, env);
 
         // The id and the push are one acquisition rather than two, which is
         // what a single lock over the five old fields buys: no other thread

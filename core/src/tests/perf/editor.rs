@@ -579,7 +579,7 @@ fn concurrency(report: &mut Report) {
     let (sequential, concurrent) = repeat_pair(|| {
         let (state, _env) = create_global_env::<GapBuffer>().expect("global env must build");
         for name in NAMES {
-            state.new_buffer(name, None, None);
+            state.new_buffer(name, None, None, &_env);
         }
 
         let start = Instant::now();

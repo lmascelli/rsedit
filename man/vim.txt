@@ -6,6 +6,7 @@ SYNOPSIS
     (eval-file "vim")
     (vim-mode t)
     (vim-mode-disable)
+    (global-vim-mode t)
 
 DESCRIPTION
     vim.lisp adds modal editing without replacing the buffer's major mode.
@@ -13,15 +14,68 @@ DESCRIPTION
     editor's save/quit checks continue to use their existing implementations.
 
     The default init loads the module but does not enable it. For an existing
-    init, load "vim" after "commands", "debug" and "common-keymaps".
-    Loading "indent" and "electric-pair" also gives Insert mode their usual
+    init, load "vim" after "commands", "debug" and "common-keymaps". Loading
+    "indent" and "electric-pair" also gives Insert mode their usual
     indentation and pairing. M-x vim-mode toggles the current buffer; the
-    optional Lisp argument t enables it explicitly. vim-mode-disable restores
-    the previous local keymap. Each buffer has its own state and pending input.
+    optional Lisp argument t enables it explicitly; zero or negative disables
+    it. vim-mode-disable restores the previous local keymap. Each buffer has
+    its own state and pending input. Enabling an already active mode preserves
+    Insert, Visual and pending operators. Interactive commands accept the raw
+    Emacs prefix argument; without one they toggle.
 
-    Escape, C-[ and Normal C-g/C-c cancel incomplete input or return to Normal.
-    The mode line shows NORMAL, INSERT, REPLACE, VISUAL, V-LINE or V-BLOCK.
-    Custom mode-line-format strings can include %s for this buffer-local label.
+    Escape, C-[ and Normal C-g/C-c cancel incomplete input or return to
+    Normal. The mode line shows NORMAL, INSERT, REPLACE, VISUAL, V-LINE or
+    V-BLOCK. Custom mode-line-format strings can include %s for this
+    buffer-local label.
+
+AUTOMATIC ACTIVATION
+    Enable Vim in existing and future eligible buffers:
+
+        (global-vim-mode t)
+
+    Or enable it only in selected major modes, without enabling the global
+    mode:
+
+        (setq vim-mode-modes '(rust-mode risp-mode))
+        (vim-mode-refresh)
+
+    Rules use exact major-mode symbols. Changing the major mode re-evaluates
+    the policy; merely switching buffers does not initialize Vim again.
+    Changing the visited filename with write-file also re-evaluates
+    eligibility. Use vim-mode-refresh after changing policy settings to update
+    existing buffers; newly created buffers always use the current settings.
+
+    Automatic activation requires all of these:
+
+        global-vim-mode is enabled, or the mode is in vim-mode-modes;
+        the mode is absent from vim-mode-excluded-modes;
+        vim-mode-predicate is nil or returns non-nil in that buffer;
+        the buffer is not the active *Minibuffer*.
+
+    By default the predicate accepts file buffers, ordinary buffer names and
+    *scratch*. Other names beginning with * are treated as service buffers.
+    The exclusion list also protects help, dired, completion, results, shell
+    output and other built-in service modes. Customize it to opt such a mode
+    in; adapt the predicate too if its buffer has a service name.
+
+    To accept only buffers visiting files:
+
+        (setq vim-mode-predicate (lambda () (buffer-file-name)))
+        (vim-mode-refresh)
+
+    Explicit vim-mode/vim-mode-enable and vim-mode-disable choices take
+    precedence for that buffer, including after major-mode changes. To clear
+    the manual preference and use automatic rules again, run vim-mode-auto.
+
+    (global-vim-mode -1) disables global activation. Buffers enabled solely by
+    it are restored; manually enabled buffers and modes in vim-mode-modes
+    remain enabled. Refreshes preserve active Insert/Visual sessions, pending
+    operators, the current buffer and window focus.
+
+    This is a globalized buffer-local mode, following Emacs's approach. The
+    global keymap and language major mode stay in place. The lifecycle hooks
+    are generic Rust facilities; the eligibility rules and activation are
+    Risp.
 
 NORMAL MOTIONS
     h j k l             Left, down, up, right; arrow keys also work.
@@ -42,25 +96,29 @@ NORMAL MOTIONS
     C-f C-b             Down/up approximately one frame.
     C-e C-y             Scroll down/up by lines.
 
-    Counts compose with motions and operators: 3w, 2dd, d3w and 2d3w.
-    Vertical motions keep the desired column through short lines.
-    Horizontal motions stay on the current line. Normal point sits on the
-    last character rather than beyond it, except on an empty line.
+    Counts compose with motions and operators: 3w, 2dd, d3w and 2d3w. Vertical
+    motions keep the desired column through short lines. Horizontal motions
+    stay on the current line. Normal point sits on the last character rather
+    than beyond it, except on an empty line.
 
 EDITING
-    i a I A             Insert before/after point, first nonblank, end of line.
+    i a I A             Insert before/after point, first nonblank, end of
+                        line.
     o O                 Open an indented line below/above and enter Insert.
     R                   Replace until Escape; Backspace restores the previous
                         overwritten character within the replacement run.
     d c y MOTION        Delete, change or yank the motion's range.
     dd cc yy            Operate on complete lines, optionally counted.
-    x X s               Delete forward/backward characters; substitute forward.
+    x X s               Delete forward/backward characters; substitute
+                        forward.
     D C S Y             Delete/change to EOL; change/yank complete lines.
     r CHARACTER         Replace COUNT characters without entering Insert.
     p P                 Put after/before point, preserving register shape.
     J                   Join lines, removing indentation at the join.
-    > < = MOTION        Shift right/left or reindent; >>, << and == act on lines.
-    gU gu g~ MOTION     Uppercase, lowercase or toggle case; gUU/guu act on lines.
+    > < = MOTION        Shift right/left or reindent; >>, << and == act on
+                        lines.
+    gU gu g~ MOTION     Uppercase, lowercase or toggle case; gUU/guu act on
+                        lines.
     ~                   Toggle case for COUNT characters or the selection.
     u C-r               Undo, redo; counts repeat the operation.
     .                   Repeat the last edit at the new location. A supplied
@@ -90,19 +148,21 @@ VISUAL
     o                   Exchange the active end and anchor.
     gv                  Restore the most recently saved Visual selection.
     Escape              Leave Visual mode.
-    d c y p P           Delete/change/yank or replace the selection with a put.
+    d c y p P           Delete/change/yank or replace the selection with a
+                        put.
     > < = gU gu g~ ~     Transform character/line selections.
     u U                 Lowercase/uppercase character/line selections.
 
     Both endpoint characters are included. Line selections cover complete
     lines. Blocks support delete, yank, put and change; a single-line change
-    inserts the replacement on each selected row when you leave Insert.
-    Block puts pad short lines and create missing lines.
+    inserts the replacement on each selected row when you leave Insert. Block
+    puts pad short lines and create missing lines.
 
 REGISTERS AND MACROS
     "a COMMAND          Use register a. Named registers are shared by buffers.
     "A COMMAND          Append to register a.
-    "_ COMMAND          Black-hole register: discard without updating registers
+    "_ COMMAND          Black-hole register: discard without updating
+                        registers
                         or the kill ring.
     "0p                 Put the most recent yank, retained across deletions.
     "1p ... "9p         Put older line/multiline deletions.
@@ -122,7 +182,8 @@ SEARCH AND MARKS
     n N                 Repeat in the same/opposite direction.
     * #                 Search for the word at point, forward/backward.
     m a                 Save a buffer-local mark a.
-    ` a, ' a            Jump exactly / to the mark's first nonblank on its line.
+    ` a, ' a            Jump exactly / to the mark's first nonblank on its
+                        line.
 
     Lowercase marks are local; uppercase marks include the buffer name.
     Searches wrap unless vim-search-wrap is nil. Empty / or ? repeats the
@@ -175,6 +236,9 @@ WINDOWS
 SETTINGS AND EXTENSION
     vim-shift-width     Spaces added/removed by > and <; default 4.
     vim-search-wrap     Wrap at buffer boundaries; default t.
+    vim-mode-modes      Major modes selected independently of the global mode.
+    vim-mode-excluded-modes  Modes excluded from automatic activation.
+    vim-mode-predicate  Per-buffer eligibility function; vim-default-buffer-p.
     vim-normal-map      Local keymap for Normal and Visual.
     vim-insert-map      Local keymap for Insert.
     vim-replace-map     Local keymap for Replace.
@@ -195,6 +259,7 @@ LIMITS
     clipboard reads. Use the terminal's paste command for external text.
     Block I/A, multiline block insert replication, full Replace count behavior
     and every Visual/Ex combination are not implemented. Dot records editing
-    commands and Insert/Replace sessions, but does not replay Ex substitutions.
+    commands and Insert/Replace sessions, but does not replay Ex
+    substitutions.
     = depends on the optional indent module. Window paging uses frame height;
     z variants currently recenter instead of selecting top/bottom placement.

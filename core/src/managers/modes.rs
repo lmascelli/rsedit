@@ -463,10 +463,24 @@ impl<B: BufferTrait> Modes<B> {
 
     /// Register FUNCTION to run under HOOK_NAME in every major mode.
     pub fn add_global_hook(&mut self, hook_name: &str, function: ELispExp<B>) {
-        self.global_hooks
-            .entry(hook_name.to_string())
-            .or_default()
-            .push(function);
+        let hooks = self.global_hooks.entry(hook_name.to_string()).or_default();
+        if !hooks.contains(&function) {
+            hooks.push(function);
+        }
+    }
+
+    pub fn remove_hook(&mut self, mode: Option<&str>, hook: &str, function: &ELispExp<B>) -> bool {
+        if let Some(mode) = mode {
+            return self.edit(mode, |mode| {
+                if let Some(hooks) = mode.hooks.get_mut(hook) {
+                    hooks.retain(|entry| entry != function);
+                }
+            });
+        }
+        if let Some(hooks) = self.global_hooks.get_mut(hook) {
+            hooks.retain(|entry| entry != function);
+        }
+        true
     }
 
     /// Everything registered under HOOK_NAME for MODE: the mode's own first,

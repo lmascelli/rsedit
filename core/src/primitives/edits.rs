@@ -355,24 +355,39 @@ primitive!(delete_backward_char, _args, _env, ctx, {
 });
 
 pub const FORWARD_CHAR_DOC: &str = "(forward-char &optional N): Move point forward N characters (default \
-         1) in the current buffer.\n\n\
+         1) in the current buffer. Negative N moves backward; zero does nothing. \
+         Movement crosses newlines and stops at the buffer boundaries.\n\n\
          Example:\n\
          (forward-char)   ; move forward 1 character\n\
          (forward-char 4) ; move forward 4 characters";
 
 primitive!(forward_char, args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
-        let step = repeat_count(args)?;
+        let step = movement_count(args)?;
         // Moves by character *offset*, so it crosses line boundaries the way C-f
         // does. It used to move within the line only, which meant point simply
         // stopped at the end of a line and would not advance past it.
-        let target = buf.text.cursor_pos_1d() + step;
+        let target = buf.text.cursor_pos_1d().saturating_add_signed(step);
         goto_offset(&mut buf.text, target);
         Ok(ELispExp::nil())
     })
 });
 
-/// Read an optional repeat count from a primitive's arguments.
+/// Read an optional signed movement count, preserving reverse directions.
+fn movement_count<B: BufferTrait>(
+    args: &[ELispExp<B>],
+) -> Result<isize, EvalError<EditorState<B>>> {
+    match args.first() {
+        None => Ok(1),
+        Some(ELispExp::Number(n)) if n.is_finite() => Ok(n.floor() as isize),
+        Some(other) => Err(EvalError::WrongArgumentType {
+            expected: "finite Number".into(),
+            got: other.clone(),
+        }),
+    }
+}
+
+/// Read a nonnegative repeat count for editing primitives.
 fn repeat_count<B: BufferTrait>(args: &[ELispExp<B>]) -> Result<usize, EvalError<EditorState<B>>> {
     match args.first() {
         None => Ok(1),
@@ -414,6 +429,9 @@ pub(crate) fn word_forward<B: BufferTrait>(text: &B, from: usize, count: usize) 
     let len = text.len();
     let mut pos = from;
     for _ in 0..count {
+        if pos >= len {
+            break;
+        }
         while pos < len && !text.at(pos).map(is_word_char).unwrap_or(false) {
             pos += 1;
         }
@@ -428,6 +446,9 @@ pub(crate) fn word_forward<B: BufferTrait>(text: &B, from: usize, count: usize) 
 pub(crate) fn word_backward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
     let mut pos = from;
     for _ in 0..count {
+        if pos == 0 {
+            break;
+        }
         while pos > 0 && !text.at(pos - 1).map(is_word_char).unwrap_or(false) {
             pos -= 1;
         }
@@ -482,38 +503,38 @@ pub(crate) fn line_bounds<B: BufferTrait>(text: &B, line: usize) -> (usize, usiz
 }
 
 pub const BACKWARD_CHAR_DOC: &str = "(backward-char &optional N): Move point backward N characters \
-         (default 1) in the current buffer, stopping at the beginning of the \
-         line.\n\n\
+         (default 1) in the current buffer. Negative N moves forward; zero does nothing. \
+         Movement crosses newlines and stops at the buffer boundaries.\n\n\
          Example:\n\
          (backward-char)   ; move back 1 character\n\
          (backward-char 4) ; move back 4 characters";
 
 primitive!(backward_char, args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
-        let step = repeat_count(args)?;
-        let target = buf.text.cursor_pos_1d().saturating_sub(step);
+        let step = movement_count(args)?.saturating_neg();
+        let target = buf.text.cursor_pos_1d().saturating_add_signed(step);
         goto_offset(&mut buf.text, target);
         Ok(ELispExp::nil())
     })
 });
 
-pub const PREVIOUS_LINE_DOC: &str = "(previous-line): Move point up one line in the current buffer, \
+pub const PREVIOUS_LINE_DOC: &str = "(previous-line &optional N): Move point up N lines (default 1) in the current buffer, \
          keeping the same column (clamped to that line's length), stopping at \
-         the first line.\n\n\
+         the first line. Negative N moves down; zero does nothing.\n\n\
          Example:\n\
          (define-key nil \"<up>\" 'previous-line)";
 
 primitive!(previous_line, args, _env, ctx, {
-    move_line(ctx, -(repeat_count(args)? as isize))
+    move_line(ctx, movement_count(args)?.saturating_neg())
 });
 
-pub const NEXT_LINE_DOC: &str = "(next-line): Move point down one line in the current buffer, keeping \
-         the same column.\n\n\
+pub const NEXT_LINE_DOC: &str = "(next-line &optional N): Move point down N lines (default 1) in the current buffer, keeping \
+         the same column. Negative N moves up; zero does nothing.\n\n\
          Example:\n\
          (define-key nil \"<down>\" 'next-line)";
 
 primitive!(next_line, args, _env, ctx, {
-    move_line(ctx, repeat_count(args)? as isize)
+    move_line(ctx, movement_count(args)?)
 });
 
 /// Move point one line up or down, keeping the column the user is aiming for.
@@ -544,7 +565,7 @@ fn move_line<B: BufferTrait>(
         let target = if delta < 0 {
             line.saturating_sub(delta.unsigned_abs())
         } else {
-            (line + delta as usize).min(last_line)
+            line.saturating_add(delta as usize).min(last_line)
         };
         // `cursor_move` clamps the column to the line, so a short line in the
         // middle of a run does not disturb the goal we are steering by.
@@ -588,59 +609,87 @@ primitive!(end_of_line, _args, _env, ctx, {
 
 pub const FORWARD_WORD_DOC: &str = "(forward-word &optional N): Move point forward past the end of \
          the next N words (default 1). A word is a run of letters, digits or \
-         underscores; anything between words is skipped.\n\n\
+         underscores; anything between words is skipped. Negative N moves backward; zero does nothing.\n\n\
          Example:\n\
          (define-key nil \"M-f\" 'forward-word)";
 
 primitive!(forward_word, args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
-        let target = word_forward(&buf.text, buf.text.cursor_pos_1d(), repeat_count(args)?);
+        let count = movement_count(args)?;
+        let from = buf.text.cursor_pos_1d();
+        let target = if count < 0 {
+            word_backward(&buf.text, from, count.unsigned_abs())
+        } else {
+            word_forward(&buf.text, from, count as usize)
+        };
         goto_offset(&mut buf.text, target);
         Ok(ELispExp::nil())
     })
 });
 
 pub const BACKWARD_WORD_DOC: &str = "(backward-word &optional N): Move point back to the beginning \
-         of the Nth previous word (default 1).\n\n\
+         of the Nth previous word (default 1). Negative N moves forward; zero does nothing.\n\n\
          Example:\n\
          (define-key nil \"M-b\" 'backward-word)";
 
 primitive!(backward_word, args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
-        let target = word_backward(&buf.text, buf.text.cursor_pos_1d(), repeat_count(args)?);
+        let count = movement_count(args)?;
+        let from = buf.text.cursor_pos_1d();
+        let target = if count < 0 {
+            word_forward(&buf.text, from, count.unsigned_abs())
+        } else {
+            word_backward(&buf.text, from, count as usize)
+        };
         goto_offset(&mut buf.text, target);
         Ok(ELispExp::nil())
     })
 });
 
-pub const FORWARD_PARAGRAPH_DOC: &str = "(forward-paragraph): Move point to the blank line that \
-         ends the current paragraph, or to the end of the buffer. Paragraphs \
-         are separated by blank lines.\n\n\
+pub const FORWARD_PARAGRAPH_DOC: &str = "(forward-paragraph &optional N): Move point forward N \
+         paragraphs (default 1), stopping on a blank separator line or the last line. \
+         Negative N moves backward; zero does nothing. Paragraphs are separated by blank lines.\n\n\
          Example:\n\
          (define-key nil \"M-n\" 'forward-paragraph)";
 
-primitive!(forward_paragraph, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let (line, _) = buf.text.cursor_pos();
-        let target = paragraph_forward(&buf.text, line);
-        buf.text.cursor_move(target, 0);
-        Ok(ELispExp::nil())
-    })
+primitive!(forward_paragraph, args, _env, ctx, {
+    move_paragraph(ctx, movement_count(args)?)
 });
 
-pub const BACKWARD_PARAGRAPH_DOC: &str = "(backward-paragraph): Move point to the blank line that \
-         begins the current paragraph, or to the beginning of the buffer.\n\n\
+pub const BACKWARD_PARAGRAPH_DOC: &str = "(backward-paragraph &optional N): Move point backward N \
+         paragraphs (default 1), stopping on a blank separator line or the first line. \
+         Negative N moves forward; zero does nothing.\n\n\
          Example:\n\
          (define-key nil \"M-p\" 'backward-paragraph)";
 
-primitive!(backward_paragraph, _args, _env, ctx, {
+primitive!(backward_paragraph, args, _env, ctx, {
+    move_paragraph(ctx, movement_count(args)?.saturating_neg())
+});
+
+fn move_paragraph<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    delta: isize,
+) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
+    if delta == 0 {
+        return Ok(ELispExp::nil());
+    }
     ctx.with_current_buffer_mut(|buf| {
-        let (line, _) = buf.text.cursor_pos();
-        let target = paragraph_backward(&buf.text, line);
-        buf.text.cursor_move(target, 0);
+        let mut line = buf.text.cursor_pos().0;
+        for _ in 0..delta.unsigned_abs() {
+            let target = if delta < 0 {
+                paragraph_backward(&buf.text, line)
+            } else {
+                paragraph_forward(&buf.text, line)
+            };
+            if target == line {
+                break;
+            }
+            line = target;
+        }
+        buf.text.cursor_move(line, 0);
         Ok(ELispExp::nil())
     })
-});
+}
 
 pub const BEGINNING_OF_BUFFER_DOC: &str = "(beginning-of-buffer): Move point to the very start of \
          the buffer.\n\n\
@@ -1062,7 +1111,7 @@ primitive!(goto_char, args, _env, ctx, {
 
 pub const FORWARD_SEXP_DOC: &str = "(forward-sexp &optional N): Move point forward over N \
          balanced expressions (default 1) -- a list, a string or an atom, together with any \
-         prefix character in front of it.\n\n\
+         prefix character in front of it. Negative N moves backward; zero does nothing.\n\n\
          What counts as a delimiter, a string or a comment is the buffer's own: see \
          `set-syntax-pairs' and `set-comment-syntax'. A mode that declared nothing still gets \
          brackets, double quotes and backslash, so this works in any buffer.\n\n\
@@ -1077,13 +1126,18 @@ primitive!(forward_sexp, args, _env, ctx, {
     let table = ctx.current_syntax_table();
     ctx.with_current_buffer_mut(|buf| {
         let from = buf.text.cursor_pos_1d();
-        let target = sexp::forward(
-            &buf.text,
-            &table,
-            buf.scan_resume(from),
-            from,
-            repeat_count(args)?,
-        );
+        let count = movement_count(args)?;
+        let target = if count < 0 {
+            sexp::backward(&buf.text, &table, from, count.unsigned_abs())
+        } else {
+            sexp::forward(
+                &buf.text,
+                &table,
+                buf.scan_resume(from),
+                from,
+                count as usize,
+            )
+        };
         goto_offset(&mut buf.text, target);
         Ok(ELispExp::nil())
     })
@@ -1092,19 +1146,27 @@ primitive!(forward_sexp, args, _env, ctx, {
 pub const BACKWARD_SEXP_DOC: &str = "(backward-sexp &optional N): Move point back over N balanced \
          expressions (default 1), landing on the first character of the Nth previous one -- the \
          prefix included, so point ends before the quote in `'foo' rather than after it.\n\n\
-         At the beginning of the enclosing list it does nothing.\n\n\
+         At the beginning of the enclosing list it does nothing. Negative N moves forward; \
+         zero does nothing.\n\n\
          Example:\n\
          (define-key nil \\\"C-M-b\\\" 'backward-sexp)";
 
 primitive!(backward_sexp, args, _env, ctx, {
     let table = ctx.current_syntax_table();
     ctx.with_current_buffer_mut(|buf| {
-        let target = sexp::backward(
-            &buf.text,
-            &table,
-            buf.text.cursor_pos_1d(),
-            repeat_count(args)?,
-        );
+        let from = buf.text.cursor_pos_1d();
+        let count = movement_count(args)?;
+        let target = if count < 0 {
+            sexp::forward(
+                &buf.text,
+                &table,
+                buf.scan_resume(from),
+                from,
+                count.unsigned_abs(),
+            )
+        } else {
+            sexp::backward(&buf.text, &table, from, count as usize)
+        };
         goto_offset(&mut buf.text, target);
         Ok(ELispExp::nil())
     })
@@ -1455,13 +1517,13 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.command(
         "forward-paragraph",
         forward_paragraph,
-        &[],
+        &["p"],
         FORWARD_PARAGRAPH_DOC,
     );
     into.command(
         "backward-paragraph",
         backward_paragraph,
-        &[],
+        &["p"],
         BACKWARD_PARAGRAPH_DOC,
     );
     into.command(

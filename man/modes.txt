@@ -65,13 +65,56 @@ MODE KEYS
     C-x C-f works in a directory listing.
 
 HOOKS
-    A mode runs its hooks at two moments, and anything can add to them:
+    Hooks are functions called without arguments, in registration order:
 
         (add-hook 'rust-mode "post-command-hook" 'my-function)
 
-    post-self-insert-hook runs after a character is typed -- which is where
-    auto-pairing lives -- and post-command-hook after every command. nil
-    instead of a mode name means every mode.
+    nil instead of a mode name means every mode. Each event runs its
+    mode-specific callbacks before global callbacks. add-hook ignores
+    duplicate registrations in the same scope; remove-hook takes the same
+    three arguments. Errors are logged and do not prevent the remaining
+    callbacks from running.
+
+    pre-command-hook runs before a command; post-command-hook after it.
+    post-self-insert-hook runs after a character is typed, for auto-pairing.
+
+BUFFER LIFECYCLE
+    Every newly allocated buffer runs these events, in this order:
+
+        buffer-created-hook             Buffer and major mode are available.
+        major-mode-hook                 Setup for that major mode.
+        after-change-major-mode-hook    General setup after mode callbacks.
+        find-file-hook                  File visits only, including new files.
+
+    Callbacks see the new buffer as current. Creating a hidden buffer does not
+    display it or change window focus. File text and path are already
+    available for file visits; producers of generated buffers may populate
+    them later. Re-selecting, re-opening or buffer-create on an existing
+    buffer does not run initialization again. A replacement *scratch* after
+    closing the last buffer is a new allocation and receives these hooks too.
+
+        (defun my-rust-setup () (buffer-put 'my-setting 4))
+        (add-hook 'rust-mode "major-mode-hook" 'my-rust-setup)
+        (add-hook nil "find-file-hook" 'my-file-setup)
+
+    (set-major-mode 'rust-mode) selects a registered mode for the current
+    buffer, invalidates its syntax caches, then runs major-mode-hook and
+    after-change-major-mode-hook. Selecting the same mode is a no-op.
+    write-file uses this path when a new filename selects a different mode.
+    After a successful write-file changes the visited path, it also runs
+    after-set-visited-file-name-hook, with the final name and mode available.
+
+    This follows Emacs's distinction between mode setup and file visits.
+    rsedit uses (add-hook MODE "major-mode-hook" FUNCTION) where Emacs would
+    use a variable such as rust-mode-hook. It matches exact mode names; there
+    is no derived-mode inheritance or buffer-local hook variable. Unlike
+    Emacs, set-major-mode retains buffer-local metadata. The initial *scratch*
+    predates init.lisp; use a globalized mode's refresh to cover existing
+    buffers.
+
+    Vim uses these generic events to implement global-vim-mode and selection
+    by major mode in Risp. A globalized mode applies buffer-local keymaps to
+    eligible buffers, keeping minibuffers and service buffer commands usable.
 
 WRITING ONE
     A mode is `make-mode', some `add-syntax-rule' calls, some `define-key'

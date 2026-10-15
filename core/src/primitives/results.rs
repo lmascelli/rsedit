@@ -28,6 +28,7 @@ use crate::text::results::{Entry, KIND_BUFFER, KIND_FILE, RESULTS_KEY, Results};
 use crate::text::search::Pattern;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// How many matches a search collects before it stops looking.
 const DEFAULT_LIMIT: usize = 10_000;
@@ -242,9 +243,10 @@ fn open_results<B: BufferTrait>(
     name: &str,
     mode: &str,
     results: Results,
+    env: &Arc<Env<EditorState<B>>>,
 ) -> String {
     let name = ctx.free_buffer_name(name);
-    ctx.new_buffer(&name, None, Some(mode.to_string()));
+    ctx.new_buffer(&name, None, Some(mode.to_string()), env);
     ctx.append_to_buffer(&name, &format!("{} in {}\n", results.pattern, results.over));
     attach(ctx, &name, results);
     ctx.with_buffer_mut(&name, |buf| buf.read_only = true);
@@ -289,6 +291,7 @@ primitive!(occur_scan, args, env, ctx, {
         "*Occur*",
         &mode,
         Results::new(&source_pattern, &source),
+        &env,
     );
     let found = collect(
         ctx,
@@ -348,6 +351,7 @@ primitive!(grep_scan, args, env, ctx, {
         "*Grep*",
         &mode,
         Results::new(&source_pattern, &root.to_string_lossy()),
+        &env,
     );
     // Counted before the task is sent, as the shell command's is: the worker
     // may not reach it for a moment, and a frame drawn in that moment would

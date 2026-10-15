@@ -18,7 +18,7 @@ pub const MAKE_FLOATING_WINDOW_DOC: &str = "(make-floating-window BUFFER-NAME X 
          (setq popup (make-floating-window \"*Notes*\" 4 4 40 10 \"Notes\"))\n\
          (select-window popup)";
 
-primitive!(make_floating_window, args, _env, ctx, {
+primitive!(make_floating_window, args, env, ctx, {
     if args.len() < 5 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 5,
@@ -53,6 +53,7 @@ primitive!(make_floating_window, args, _env, ctx, {
                 *h as usize,
                 title,
                 mode,
+                &env,
             );
 
             // An id rather than `t`, and still truthy either way: nothing in

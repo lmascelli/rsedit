@@ -16,6 +16,7 @@ impl<B: BufferTrait> EditorState<B> {
         name: &str,
         path: Option<&str>,
         start_mode: Option<String>,
+        env: &Arc<Env<EditorState<B>>>,
     ) -> Option<String> {
         if let Some(file_path) = path {
             match std::fs::read_to_string(file_path) {
@@ -34,6 +35,7 @@ impl<B: BufferTrait> EditorState<B> {
 
                     self.buffers_mut(|buffers| buffers.insert(name, new_buf));
                     self.show_in_focused_window(name);
+                    self.initialize_buffer(name, true, env);
 
                     Some(name.to_string())
                 }
@@ -48,6 +50,7 @@ impl<B: BufferTrait> EditorState<B> {
                 new_buf.current_mode = mode_name;
             }
             self.buffers_mut(|buffers| buffers.insert(name, new_buf));
+            self.initialize_buffer(name, false, env);
             Some(name.to_string())
         }
     }
@@ -71,6 +74,7 @@ impl<B: BufferTrait> EditorState<B> {
         name: &str,
         path: &str,
         start_mode: Option<String>,
+        env: &Arc<Env<EditorState<B>>>,
     ) -> String {
         let mut new_buf = Buffer::new(name);
         new_buf.current_mode = start_mode
@@ -79,7 +83,34 @@ impl<B: BufferTrait> EditorState<B> {
         new_buf.file_path = Some(path.to_string());
         self.buffers_mut(|buffers| buffers.insert(name, new_buf));
         self.show_in_focused_window(name);
+        self.initialize_buffer(name, true, env);
         name.to_string()
+    }
+
+    /// Lisp sees the completed buffer, in its own context, without changing
+    /// any window. No buffer or manager lock is held while callbacks run.
+    /// Called once per allocation, never when selecting an existing buffer.
+    pub(crate) fn initialize_buffer(
+        &self,
+        name: &str,
+        visiting_file: bool,
+        env: &Arc<Env<EditorState<B>>>,
+    ) {
+        self.run_buffer_hook(name, "buffer-created-hook", env);
+        self.run_buffer_hook(name, "major-mode-hook", env);
+        self.run_buffer_hook(name, "after-change-major-mode-hook", env);
+        if visiting_file {
+            self.run_buffer_hook(name, "find-file-hook", env);
+        }
+    }
+
+    pub(crate) fn run_buffer_hook(&self, name: &str, hook: &str, env: &Arc<Env<EditorState<B>>>) {
+        let Some(previous) = self.set_current_buffer(name) else {
+            return; // An earlier callback may have closed the new buffer.
+        };
+        let mode = self.with_current_buffer(|buf| buf.current_mode.clone());
+        self.run_hook(&mode, hook, env);
+        self.set_current_buffer(&previous);
     }
 
     /// Rename OLD to NEW everywhere it is known. False when there is no such
@@ -336,6 +367,7 @@ impl<B: BufferTrait> EditorState<B> {
         // them the current name could be read by another thread while it
         // named the buffer that had just gone. That read is the panic
         // described above.
+        let last_buffer = self.buffers(|buffers| buffers.names().len() == 1);
         if let BufferRemoved::Current(successor) = self.buffers_mut(|buffers| buffers.remove(name))
         {
             // The compartment picked the most recent survivor. Prefer the one
@@ -346,6 +378,10 @@ impl<B: BufferTrait> EditorState<B> {
             if replacement != successor {
                 self.set_current_buffer_name(&replacement);
             }
+        }
+
+        if last_buffer {
+            self.initialize_buffer("*scratch*", false, env);
         }
 
         self.run_hook(&closing_mode, "after-close-hook", env);
@@ -413,6 +449,6 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// Returns `None` when there is no such buffer, having changed nothing.
     pub(crate) fn set_current_buffer(&self, name: &str) -> Option<Arc<str>> {
-        self.buffers_mut(|buffers| buffers.make_current(name))
+        self.buffers_mut(|buffers| buffers.bind_current(name))
     }
 }

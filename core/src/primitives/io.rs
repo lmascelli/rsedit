@@ -104,7 +104,7 @@ primitive!(find_file, args, env, ctx, {
     };
 
     if !path.exists() {
-        let name = ctx.new_file_buffer(&buf_name, &path_str, None);
+        let name = ctx.new_file_buffer(&buf_name, &path_str, None, &env);
         // Said out loud, because an empty buffer for a file that does not
         // exist looks exactly like an empty buffer for one that does -- and
         // the difference matters when the reason is a typo in the path.
@@ -112,7 +112,7 @@ primitive!(find_file, args, env, ctx, {
         return Ok(ELispExp::string(name));
     }
 
-    match ctx.new_buffer(&buf_name, Some(&path_str), None) {
+    match ctx.new_buffer(&buf_name, Some(&path_str), None, &env) {
         Some(buf_name) => {
             // Said on the way in, because nothing else would say it. A
             // recovery copy nobody is told about is a recovery copy nobody
@@ -378,6 +378,8 @@ primitive!(write_file, args, env, ctx, {
 
     // Only now, with the bytes safely down.
     let mode = ctx.auto_mode_for(&path);
+    let visited_file_changed =
+        ctx.with_current_buffer(|buf| buf.file_path.as_deref() != Some(path.as_str()));
     let stamp = crate::buffer::FileStamp::of(&path);
     // Discarded against the *old* path, before the buffer is repointed: the
     // recovery copy that exists is the one named after where it used to live.
@@ -387,12 +389,15 @@ primitive!(write_file, args, env, ctx, {
         buf.is_modified = false;
         buf.file_stamp = stamp;
         buf.stale = false;
-        if let Some(mode) = mode {
-            buf.current_mode = mode;
-        }
     });
     if new_name != current {
         ctx.rename_buffer(&current, &new_name);
+    }
+    if let Some(mode) = mode {
+        ctx.change_major_mode(&new_name, &mode, &env);
+    }
+    if visited_file_changed {
+        ctx.run_buffer_hook(&new_name, "after-set-visited-file-name-hook", &env);
     }
     ctx.set_echo_message(&format!("Wrote {path}"));
     ctx.log_diagnostic(&format!("Wrote {path}"));

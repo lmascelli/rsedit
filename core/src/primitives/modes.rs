@@ -2,6 +2,35 @@ use super::*;
 use crate::modes::{StringStyle, sexp};
 use crate::primitives::args;
 
+pub const REMOVE_HOOK_DOC: &str = "(remove-hook MODE HOOK FUNCTION): Remove FUNCTION from HOOK \
+         in MODE, or from the global hooks when MODE is nil. Uses the same arguments as \
+         add-hook. Returns t for a known mode (even when FUNCTION was absent), nil for an \
+         unknown mode. Removing a mode's callback does not remove a global callback.";
+
+primitive!(remove_hook, args, _env, ctx, {
+    exact_arity(args, 3)?;
+    let mode = crate::primitives::args::optional_name(args.first(), "Mode or nil")?;
+    let (ELispExp::String(hook), ELispExp::Symbol(function)) = (&args[1], &args[2]) else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String, Symbol".into(),
+            got: args[1].clone(),
+        });
+    };
+    Ok(
+        if ctx.modes_mut(|modes| {
+            modes.remove_hook(
+                mode.as_deref(),
+                hook,
+                &ELispExp::symbol(function.to_string()),
+            )
+        }) {
+            ELispExp::t()
+        } else {
+            ELispExp::nil()
+        },
+    )
+});
+
 pub const MAKE_MODE_DOC: &str = "(make-mode NAME): Register a new, empty major mode named NAME (a \
          symbol) with no keymaps, hooks, or syntax rules of its own. Returns \
          t. rsedit's own simplified alternative to Emacs's \
@@ -33,7 +62,7 @@ primitive!(make_mode, args, _env, ctx, {
 });
 
 pub const ADD_HOOK_DOC: &str = "(add-hook MODE HOOK FUNCTION): Append the function named FUNCTION to \
-         the list of functions run for HOOK (a string, e.g. \
+         the list of functions run for HOOK, unless already present (a string, e.g. \
          \"post-command-hook\") in major mode MODE. Returns t, or nil \
          (logging a diagnostic) if MODE names an unknown mode.\n\n\
          MODE may be nil, meaning every mode -- the same way nil means the global keymap in \
@@ -75,10 +104,11 @@ primitive!(add_hook, args, _env, ctx, {
         // which is a compartment of its own.
         let added = ctx.modes_mut(|modes| {
             modes.edit(mode_name.as_str(), |mode| {
-                mode.hooks
-                    .entry(hook_name.to_string())
-                    .or_default()
-                    .push(ELispExp::symbol(func_name.to_string()));
+                let hooks = mode.hooks.entry(hook_name.to_string()).or_default();
+                let function = ELispExp::symbol(func_name.to_string());
+                if !hooks.contains(&function) {
+                    hooks.push(function);
+                }
             })
         });
         if added {
@@ -772,6 +802,7 @@ primitive!(bounds_of_enclosing_list, args, _env, ctx, {
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("make-mode", make_mode, MAKE_MODE_DOC);
     into.function("add-hook", add_hook, ADD_HOOK_DOC);
+    into.function("remove-hook", remove_hook, REMOVE_HOOK_DOC);
     into.function("add-syntax-rule", add_syntax_rule, ADD_SYNTAX_RULE_DOC);
     into.function(
         "add-syntax-region",

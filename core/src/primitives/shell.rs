@@ -150,7 +150,7 @@ pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND): Run CO
          (shell-command-start \"git status --short\") => \"*Shell Output*\"\n\
          (shell-command-start \"cargo build\" \'compilation-mode)";
 
-primitive!(shell_command_start, args, _env, ctx, {
+primitive!(shell_command_start, args, env, ctx, {
     let Some(ELispExp::String(command)) = args.first() else {
         return Err(EvalError::WrongArgumentType {
             expected: "String".into(),
@@ -168,7 +168,7 @@ primitive!(shell_command_start, args, _env, ctx, {
     };
 
     let name = ctx.free_buffer_name(OUTPUT_BUFFER);
-    ctx.new_buffer(&name, None, Some(mode));
+    ctx.new_buffer(&name, None, Some(mode), &env);
     ctx.append_to_buffer(&name, &format!("$ {command}\n"));
     ctx.with_buffer_mut(&name, |buf| buf.read_only = true);
 

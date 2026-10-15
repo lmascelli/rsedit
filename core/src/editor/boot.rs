@@ -61,6 +61,10 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 (eval-file "theme")       ; C-c t to choose how faces are drawn
 (eval-file "vim")         ; M-x vim-mode enables modal editing in this buffer
 ;; (vim-mode t)           ; start the initial buffer in Normal state
+;; (global-vim-mode t)    ; existing and future text/code buffers
+;; Or only selected major modes, even without global-vim-mode:
+;; (setq vim-mode-modes '(rust-mode risp-mode))
+;; (vim-mode-refresh)     ; also apply changed settings to existing buffers
 
 ;; Where completions come from, for C-M-i in a buffer. The command is built in
 ;; and works without this; what this adds is the five sources it asks. Take one

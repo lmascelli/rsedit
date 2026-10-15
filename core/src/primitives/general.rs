@@ -49,7 +49,11 @@ primitive!(set_local_keymap, args, _env, ctx, {
             buf.put_data("lisp:local-keymap", args[0].clone());
         }
     });
-    ctx.abandon_pending_input();
+    // A lifecycle hook may install a map in a hidden buffer while the user
+    // has a partial key sequence in the focused one.
+    if ctx.focused_window_buffer().as_deref() == Some(ctx.get_current_buffer_name().as_str()) {
+        ctx.abandon_pending_input();
+    }
     Ok(args[0].clone())
 });
 

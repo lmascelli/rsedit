@@ -15,6 +15,15 @@
 (defvar vim-recording-register nil "Register receiving a keyboard macro.")
 (defvar vim-last-macro-register nil "Register last executed by @.")
 (defvar vim--replaying nil "Internal guard against replacing dot during replay.")
+(defvar global-vim-mode nil "Whether to enable Vim automatically in eligible buffers.")
+(defvar vim-mode-modes nil "Major modes that enable Vim even when global-vim-mode is nil.")
+(defvar vim-mode-excluded-modes
+  '(minibuffer-mode completion-mode dired-mode help-mode manpage-mode
+    backtrace-mode buffer-list-mode theme-list-mode shell-output-mode occur-mode compilation-mode)
+  "Major modes excluded from automatic activation. Manual vim-mode still works.")
+(defvar vim-mode-predicate 'vim-default-buffer-p
+  "Function called without arguments in each buffer to decide automatic eligibility.
+Nil accepts all buffers outside vim-mode-excluded-modes, except the minibuffer.")
 
 (defun vim--min (a b) (if (< a b) a b))
 (defun vim--max (a b) (if (> a b) a b))
@@ -67,26 +76,77 @@
                     (t "NORMAL")))
   (set-echo-message (concat "-- " (buffer-get 'mode-line-state) " --")))
 
-(defcommand vim-mode (&optional enabled) nil
-  "Toggle Vim editing in the current buffer. Pass t to enable or nil to toggle.
-Use vim-mode-disable to turn it off explicitly. New buffers remain independent."
-  (if (or enabled (not (vim--state)))
-      (progn
-        (when (not (vim--state))
+(defun vim--enable ()
+  "Enable once, preserving an active Insert/Visual session on subsequent calls."
+  (if (vim--state)
+      (let ((map (cond ((eq (vim--state) 'insert) 'vim-insert-map)
+                       ((eq (vim--state) 'replace) 'vim-replace-map)
+                       (t 'vim-normal-map))))
+        ;; A major-mode hook may have installed a new underlying local map.
+        (when (not (eq (buffer-get 'local-keymap) map))
           (buffer-put 'vim-saved-keymap (buffer-get 'local-keymap))
-          (buffer-put 'vim-saved-mode-line-state (buffer-get 'mode-line-state)))
-        (vim--reset) (deactivate-mark) (vim--set-state 'normal) (vim--clamp))
-      (vim-mode-disable)))
-(defcommand vim-mode-disable () nil
-  "Disable Vim editing in this buffer and restore its previous local keymap."
+          (set-local-keymap map)))
+      (progn
+        (buffer-put 'vim-saved-keymap (buffer-get 'local-keymap))
+        (buffer-put 'vim-saved-mode-line-state (buffer-get 'mode-line-state))
+        (vim--reset) (deactivate-mark) (vim--set-state 'normal) (vim--clamp))))
+(defun vim--disable ()
   (when (vim--state)
     (when (member (vim--state) '(insert replace)) (vim--finish-insert))
-    (set-local-keymap (buffer-get 'vim-saved-keymap))
+    (when (member (buffer-get 'local-keymap) '(vim-normal-map vim-insert-map vim-replace-map))
+      (set-local-keymap (buffer-get 'vim-saved-keymap)))
     (buffer-put 'mode-line-state (buffer-get 'vim-saved-mode-line-state))
     (dolist (key '(vim-state vim-anchor vim-insert-before vim-insert-action vim-insert-start))
       (buffer-put key nil))
     (remove-overlays 'vim-selection)
     (vim--reset) (deactivate-mark) (set-echo-message "Vim mode disabled")))
+
+(defcommand vim-mode (&optional enabled) ("P")
+  "Toggle Vim in this buffer. t/positive enables, zero/negative disables, nil toggles.
+This explicit buffer preference survives automatic refreshes and major-mode changes.
+Use vim-mode-auto to return the buffer to the automatic policy."
+  (if (if enabled (if (numberp enabled) (> enabled 0) t) (not (vim--state)))
+      (progn (buffer-put 'vim-mode-override 'enabled) (vim--enable))
+      (vim-mode-disable)))
+(defcommand vim-mode-enable () nil
+  "Enable Vim explicitly without resetting its current editing state."
+  (vim-mode t))
+(defcommand vim-mode-disable () nil
+  "Disable Vim explicitly in this buffer and restore its previous local keymap."
+  (buffer-put 'vim-mode-override 'disabled)
+  (vim--disable))
+(defun vim-default-buffer-p ()
+  "Accept file buffers, ordinary named buffers and *scratch*, excluding service buffers."
+  (or (buffer-file-name) (string= (current-buffer) "*scratch*")
+      (not (string-prefix-p "*" (current-buffer)))))
+(defun vim--apply-policy ()
+  "Apply the automatic policy in the current buffer, respecting manual overrides."
+  (let ((preference (buffer-get 'vim-mode-override)))
+    (cond ((eq preference 'enabled) (vim--enable))
+          ((eq preference 'disabled) (vim--disable))
+          ((and (not (string= (current-buffer) "*Minibuffer*"))
+                (or global-vim-mode (member (major-mode) vim-mode-modes))
+                (not (member (major-mode) vim-mode-excluded-modes))
+                (or (not vim-mode-predicate) (funcall vim-mode-predicate)))
+           (vim--enable))
+          (t (vim--disable)))))
+(defcommand vim-mode-refresh () nil
+  "Reapply current Vim policy to every existing buffer, retaining manual preferences."
+  (dolist (name (all-buffer-names))
+    (when (major-mode name)
+      (with-current-buffer name (lambda () (vim--apply-policy))))))
+(defcommand vim-mode-auto () nil
+  "Clear this buffer's manual preference and apply the current automatic Vim policy."
+  (buffer-put 'vim-mode-override nil)
+  (vim--apply-policy))
+(defcommand global-vim-mode (&optional enabled) ("P")
+  "Toggle automatic Vim activation in existing and future eligible buffers.
+t/positive enables, zero/negative disables, nil toggles. Major modes listed in
+vim-mode-modes remain enabled independently; manual per-buffer choices take precedence."
+  (setq global-vim-mode
+    (if enabled (if (numberp enabled) (> enabled 0) t) (not global-vim-mode)))
+  (vim-mode-refresh)
+  global-vim-mode)
 (defcommand vim-normal-state () nil
   "Finish insertion or Visual mode, or cancel an unfinished Vim command."
   (when (member (vim--state) '(insert replace)) (vim--finish-insert))
@@ -1002,4 +1062,6 @@ Use vim-mode-disable to turn it off explicitly. New buffers remain independent."
 (define-key 'vim-insert-map "C-u" '(delete-region (vim--bol (point)) (point)))
 (add-hook nil "pre-command-hook" 'vim--pre-command)
 (add-hook nil "post-command-hook" 'vim--post-command)
+(add-hook nil "after-change-major-mode-hook" 'vim--apply-policy)
+(add-hook nil "after-set-visited-file-name-hook" 'vim--apply-policy)
 (log "End of vim.lisp")

@@ -4,6 +4,24 @@
 use super::*;
 
 impl<B: BufferTrait> EditorState<B> {
+    /// Select a buffer's major mode, retaining buffer-local metadata. Hooks
+    /// run only on a real change, after releasing the buffer's lock.
+    pub(crate) fn change_major_mode(&self, name: &str, mode: &str, env: &Arc<Env<EditorState<B>>>) {
+        let changed = self.with_buffer_mut(name, |buf| {
+            if buf.current_mode == mode {
+                return false;
+            }
+            buf.current_mode = mode.to_string();
+            buf.syntax.invalidate_from(buf.version, 0);
+            buf.scan.invalidate_from(buf.version, 0);
+            true
+        });
+        if changed == Some(true) {
+            self.run_buffer_hook(name, "major-mode-hook", env);
+            self.run_buffer_hook(name, "after-change-major-mode-hook", env);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Completion sources
     // -----------------------------------------------------------------------

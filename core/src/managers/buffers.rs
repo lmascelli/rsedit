@@ -179,12 +179,19 @@ impl<B: BufferTrait> Buffers<B> {
     /// refusal is the invariant: it is not possible from outside this file to
     /// leave `current` naming a buffer the table does not hold.
     pub fn make_current(&mut self, name: &str) -> Option<Arc<str>> {
+        let previous = self.bind_current(name)?;
+        self.record_use(name);
+        Some(previous)
+    }
+
+    /// Rebind a Lisp callback's current buffer without recording a user visit.
+    /// Hidden initialization and policy sweeps must not reorder buffer history.
+    pub fn bind_current(&mut self, name: &str) -> Option<Arc<str>> {
         if !self.table.contains_key(name) {
             return None;
         }
         let previous = self.current.clone();
         self.current = Arc::from(name);
-        self.record_use(name);
         Some(previous)
     }
 
@@ -192,8 +199,8 @@ impl<B: BufferTrait> Buffers<B> {
     fn record_use(&mut self, name: &str) {
         if self.recency.first().is_some_and(|first| first == name) {
             // Already the most recent, which is the common case by far: this
-            // runs whenever a buffer becomes current, `with-current-buffer'
-            // included, so it is worth not touching the list at all.
+            // runs whenever a buffer is selected, so it is worth not touching
+            // the list at all.
             return;
         }
         self.recency.retain(|existing| existing != name);

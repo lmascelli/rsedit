@@ -127,6 +127,10 @@ REPEATING
     forward twenty characters, and C-u 5 then a character inserts five of
     them. C-u on its own means four.
 
+    Negative movement counts reverse direction: C-u - 2 C-n goes up two
+    lines, and (next-line -1) moves up one line. This applies to character,
+    line, word, paragraph and balanced-expression motions. Zero moves nowhere.
+
     For anything longer than that, record what you did and press it again --
     see `macros'.
 

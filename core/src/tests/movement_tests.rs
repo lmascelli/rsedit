@@ -352,4 +352,85 @@ mod tests {
             "M-g alone is a prefix, not a command"
         );
     }
+
+    #[test]
+    fn negative_character_counts_reverse_direction_across_unicode_and_newlines() {
+        let (ctx, env) = editor_with("a🌍\nbé");
+        eval_str("(goto-char 4) (forward-char -3)", &env, &ctx).unwrap();
+        assert_eq!(point_1d(&ctx), 1);
+        eval_str("(backward-char -3)", &env, &ctx).unwrap();
+        assert_eq!(point_1d(&ctx), 4);
+        eval_str("(forward-char 0) (backward-char 0)", &env, &ctx).unwrap();
+        assert_eq!(point_1d(&ctx), 4);
+    }
+    #[test]
+    fn negative_line_counts_reverse_both_vertical_commands() {
+        let (ctx, env) = editor_with("abcdef\nx\nuvwxyz");
+        eval_str("(goto-line 3) (forward-char 4) (next-line -2)", &env, &ctx).unwrap();
+        assert_eq!(point(&ctx), (0, 4));
+        eval_str("(previous-line -2)", &env, &ctx).unwrap();
+        assert_eq!(point(&ctx), (2, 4));
+        eval_str("(next-line 0) (previous-line 0)", &env, &ctx).unwrap();
+        assert_eq!(point(&ctx), (2, 4));
+    }
+    #[test]
+    fn negative_word_counts_reverse_direction() {
+        let (ctx, env) = editor_with("one two three");
+        eval_str("(end-of-buffer) (forward-word -2)", &env, &ctx).unwrap();
+        assert_eq!(point_1d(&ctx), 4);
+        eval_str("(backward-word -2)", &env, &ctx).unwrap();
+        assert_eq!(point_1d(&ctx), 13);
+        eval_str("(forward-word 0) (backward-word 0)", &env, &ctx).unwrap();
+        assert_eq!(point_1d(&ctx), 13);
+    }
+    #[test]
+    fn negative_paragraph_counts_reverse_direction() {
+        let (ctx, env) = editor_with("one\n\ntwo\n\nthree");
+        eval_str("(goto-line 5) (forward-paragraph -2)", &env, &ctx).unwrap();
+        assert_eq!(point(&ctx), (1, 0));
+        eval_str("(backward-paragraph -2)", &env, &ctx).unwrap();
+        assert_eq!(point(&ctx), (4, 0));
+        eval_str(
+            "(forward-char 2) (forward-paragraph 0) (backward-paragraph 0)",
+            &env,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(point(&ctx), (4, 2));
+    }
+    #[test]
+    fn negative_sexp_counts_reverse_direction() {
+        let (ctx, env) = editor_with("(one) (two) (three)");
+        eval_str("(end-of-buffer) (forward-sexp -2)", &env, &ctx).unwrap();
+        assert_eq!(point_1d(&ctx), 6);
+        eval_str("(backward-sexp -2)", &env, &ctx).unwrap();
+        assert_eq!(point_1d(&ctx), 19);
+        eval_str("(forward-sexp 0) (backward-sexp 0)", &env, &ctx).unwrap();
+        assert_eq!(point_1d(&ctx), 19);
+    }
+    #[test]
+    fn extreme_positive_and_negative_movement_counts_clamp_without_overflow() {
+        let (ctx, env) = editor_with("one\ntwo");
+        env.set_variable("huge-step".into(), LispExp::number(1e300));
+        env.set_variable("negative-huge-step".into(), LispExp::number(-1e300));
+        for command in [
+            "forward-char",
+            "backward-char",
+            "next-line",
+            "previous-line",
+            "forward-word",
+            "backward-word",
+            "forward-paragraph",
+            "backward-paragraph",
+        ] {
+            eval_str("(goto-char 2)", &env, &ctx).unwrap();
+            eval_str(
+                &format!("({command} negative-huge-step) ({command} huge-step)"),
+                &env,
+                &ctx,
+            )
+            .unwrap();
+            assert!(point_1d(&ctx) <= 7, "{command} must stay within the buffer");
+        }
+    }
 }

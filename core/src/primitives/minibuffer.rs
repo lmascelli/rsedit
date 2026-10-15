@@ -384,7 +384,7 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
         sized(&env, MINIBUFFER_HEIGHT, DEFAULT_MINIBUFFER_HEIGHT),
     );
 
-    ctx.open_floating_window("*Minibuffer*", x, y, width, height, title, Some(mode));
+    ctx.open_floating_window("*Minibuffer*", x, y, width, height, title, Some(mode), &env);
 
     Ok(ELispExp::t())
 });

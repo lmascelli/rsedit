@@ -175,25 +175,28 @@ mod tests {
         assert_eq!(ctx.prefix_argument(), None);
     }
 
-    /// A negative count is currently *floored to zero* by `repeat_count`, so
-    /// `C-u - C-f` moves nowhere rather than moving backwards as it would in
-    /// Emacs. Pinned here so the limitation is a decision on the record rather
-    /// than something nobody noticed: reversing direction on a negative count
-    /// means teaching each command what its opposite is, which is a change to
-    /// the commands and not to this machinery.
+    /// Signed prefix counts must reach movement primitives without being clamped.
     #[test]
-    fn a_negative_count_currently_does_nothing() {
+    fn a_negative_count_reverses_movement_and_is_consumed() {
         let (ctx, env) = editor_with("alpha beta");
         eval_str("(forward-char 3)", &env, &ctx).expect("move in a bit");
-        assert_eq!(point_1d(&ctx), 3);
-
         keys(&ctx, &env, "^u-^f");
-        assert_eq!(
-            point_1d(&ctx),
-            3,
-            "a negative count is floored to zero, so nothing moves"
-        );
-        assert_eq!(ctx.prefix_argument(), None, "and it is still consumed");
+        assert_eq!(point_1d(&ctx), 2, "negative forward-char moves backward");
+        assert_eq!(ctx.prefix_argument(), None, "the count is consumed");
+        keys(&ctx, &env, "^u-2^b");
+        assert_eq!(point_1d(&ctx), 4, "negative backward-char moves forward");
+        assert_eq!(ctx.prefix_argument(), None);
+    }
+
+    #[test]
+    fn negative_vertical_prefix_counts_reverse_direction() {
+        let (ctx, env) = editor_with("zero\none\ntwo\nthree");
+        eval_str("(goto-line 4)", &env, &ctx).unwrap();
+        keys(&ctx, &env, "^u-2^n");
+        assert_eq!(point_1d(&ctx), 5, "next-line -2 goes up two lines");
+        assert_eq!(ctx.prefix_argument(), None);
+        keys(&ctx, &env, "^u-2^p");
+        assert_eq!(point_1d(&ctx), 13, "previous-line -2 goes down two lines");
     }
 
     /// A prefix argument survives a prefix *key*: the two are independent

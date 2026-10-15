@@ -16,18 +16,20 @@ pub const BUFFER_CREATE_DOC: &str = "(buffer-create NAME &optional MODE): Create
          if it does. Does not switch to it or change what any window is displaying; see \
          `switch-to-buffer'. Returns NAME as a string.\n\n\
          MODE, if given, is the major mode the buffer opens in, and therefore which \
-         keymap answers keys typed into it; it defaults to `fundamental'. A buffer that \
+         keymap answers keys typed into it; it defaults to `fundamental-mode'. A buffer that \
          is a *view* of something -- a directory listing, a backtrace -- needs this: its \
          mode is the whole of what makes its keys mean what they mean, and there is no \
          file name for `add-auto-mode' to key on.\n\n\
          An existing buffer keeps the mode it has. Re-creating a buffer is how a view is \
          refreshed, and a refresh that quietly reset the mode would take the keymap away \
          from the very buffer being refreshed.\n\n\
+         A new buffer runs buffer-created-hook, major-mode-hook and \
+         after-change-major-mode-hook with that buffer current, without displaying it.\n\n\
          Example:\n\
          (buffer-create \"*Messages*\")\n\
          (buffer-create \"*dired*\" 'dired-mode)";
 
-primitive!(buffer_create, args, _env, ctx, {
+primitive!(buffer_create, args, env, ctx, {
     if args.is_empty() || args.len() > 2 {
         Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -46,7 +48,7 @@ primitive!(buffer_create, args, _env, ctx, {
         };
         let mode = args::optional_name(args.get(1), "String or Symbol naming a mode")?;
         if !ctx.has_buffer(&name) {
-            ctx.new_buffer(&name, None, mode);
+            ctx.new_buffer(&name, None, mode, &env);
         }
         Ok(ELispExp::string(name))
     }
@@ -406,7 +408,8 @@ pub const WITH_CURRENT_BUFFER_DOC: &str = "(with-current-buffer NAME FUNCTION): 
          no arguments while NAME is the current buffer, then make whatever was current before \
          current again -- whether FUNCTION returned or signalled. Returns what FUNCTION returned.\n\n\
          The buffer is made current without being *shown*: no window changes, so this is for code \
-         that wants to act on a buffer rather than take the user to it.\n\n\
+         that wants to act on a buffer rather than take the user to it. Buffer \
+         selection history is not changed by this temporary context.\n\n\
          Signals if there is no buffer called NAME.\n\n\
          Unlike Emacs Lisp's macro of the same name, this takes a function rather than a body, \
          because a primitive receives its arguments already evaluated. Wrap the body in a lambda:\n\n\
@@ -452,6 +455,32 @@ primitive!(major_mode, args, _env, ctx, {
     let Some(mode) = ctx.with_buffer(&name, |buf| buf.current_mode.clone()) else {
         return Ok(ELispExp::nil());
     };
+    Ok(ELispExp::symbol(mode))
+});
+
+pub const SET_MAJOR_MODE_DOC: &str = "(set-major-mode MODE): Select a registered major mode for \
+         the current buffer. Returns MODE; signals for an unknown mode. A real change \
+         invalidates syntax caches and runs major-mode-hook, then \
+         after-change-major-mode-hook, in that buffer. Buffer-local metadata is retained. \
+         Selecting the current mode again does not run hooks.\n\n\
+         write-file also runs after-set-visited-file-name-hook after changing the \
+         visited path, once the final name and major mode are set.\n\n\
+         Creation runs buffer-created-hook, major-mode-hook, \
+         after-change-major-mode-hook, then find-file-hook for file visits (including new \
+         files). Reopening an existing buffer does not run these hooks. \
+         Mode-specific callbacks precede global callbacks at each step.\n\n\
+         Example: (add-hook 'rust-mode \"major-mode-hook\" 'my-rust-setup)";
+
+primitive!(set_major_mode, args, env, ctx, {
+    exact_arity(args, 1)?;
+    let mode = crate::primitives::args::name(args.first())?;
+    if !ctx.modes(|modes| modes.get(&mode).is_some()) {
+        return Err(EvalError::RuntimeMessage(format!(
+            "No such major mode: {mode}"
+        )));
+    }
+    let name = ctx.get_current_buffer_name();
+    ctx.change_major_mode(&name, &mode, &env);
     Ok(ELispExp::symbol(mode))
 });
 
@@ -565,4 +594,5 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     );
     into.function("buffer-file-name", buffer_file_name, BUFFER_FILE_NAME_DOC);
     into.function("major-mode", major_mode, MAJOR_MODE_DOC);
+    into.function("set-major-mode", set_major_mode, SET_MAJOR_MODE_DOC);
 }

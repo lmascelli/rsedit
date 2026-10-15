@@ -46,3 +46,23 @@ substitutions. The language's major mode and syntax hooks remain active.
 See the =vim= manual page (=M-x rsedit-man=, then =vim=) for keybindings,
 settings and the supported compatibility scope. =M-x vim-mode-disable=
 restores the previous local keymap.
+
+To enable Vim automatically in existing and future text/code buffers:
+
+#+begin_src lisp
+(global-vim-mode t)
+#+end_src
+
+Or enable it only for selected major modes:
+
+#+begin_src lisp
+(setq vim-mode-modes '(rust-mode risp-mode))
+(vim-mode-refresh)
+#+end_src
+
+Service buffers and minibuffers are excluded by default. =vim-mode-predicate=
+and =vim-mode-excluded-modes= customize automatic eligibility. Manual choices
+in each buffer take precedence; =vim-mode-auto= returns to automatic policy.
+The generic =buffer-created-hook=, =major-mode-hook=,
+=after-change-major-mode-hook= and =find-file-hook= support other buffer
+setup, and =set-major-mode= applies a new mode and its hooks.

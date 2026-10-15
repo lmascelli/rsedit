@@ -644,6 +644,426 @@ mod tests {
         assert_eq!(
             run("(nth 2 (assoc \"x\" (keymap-bindings)))", &env, &ctx),
             LispExp::string("local".into())
+         );
+     }
+
+    #[test]
+    fn negative_upward_motions_work_for_k_and_the_up_arrow_with_counts() {
+        for code in [KeyCode::Char('k'), KeyCode::Up] {
+            let (ctx, env) = editor("zero\none\ntwo\nthree");
+            keys(&ctx, &env, "Gll2");
+            ctx.handle_key_event(KeyEvent::new(code), &env);
+            assert_eq!(point(&ctx), 7, "two lines up, preserving column two");
+        }
+    }
+    #[test]
+    fn negative_page_motions_move_up_and_positive_ones_move_down() {
+        let content = (1..=60)
+            .map(|i| format!("line{i:02}\n"))
+            .collect::<String>();
+        for (key, start, count, expected) in [
+            ('b', 40, 1, 18),
+            ('b', 50, 2, 6),
+            ('u', 40, 1, 28),
+            ('u', 40, 2, 16),
+            ('f', 10, 1, 32),
+            ('d', 10, 1, 22),
+        ] {
+            let (ctx, env) = editor(&content);
+            run(&format!("(goto-line {start})"), &env, &ctx);
+            if count > 1 {
+                keys(&ctx, &env, &count.to_string());
+            }
+            ctrl(&ctx, &env, key);
+            assert_eq!(
+                run("(line-number-at-point)", &env, &ctx),
+                LispExp::number(expected as f64),
+                "C-{key}, count {count}"
+            );
+        }
+    }
+    #[test]
+    fn negative_upward_motion_preserves_goal_column_across_a_short_line() {
+        let (ctx, env) = editor("abcdef\nx\nabcdef");
+        keys(&ctx, &env, "G4lkk");
+        assert_eq!(point(&ctx), 4);
+        keys(&ctx, &env, "jj");
+        assert_eq!(point(&ctx), 13);
+    }
+    #[test]
+    fn negative_upward_motion_composes_with_operators_and_visual_selection() {
+        let (ctx, env) = editor("a\nb\nc\nd");
+        keys(&ctx, &env, "Gdk");
+        assert_eq!(text(&ctx), "a\nb");
+        let (ctx, env) = editor("a\nb\nc\nd");
+        keys(&ctx, &env, "Gvk");
+        assert_eq!(run("(region-beginning)", &env, &ctx), LispExp::number(4.0));
+        assert_eq!(run("(region-end)", &env, &ctx), LispExp::number(7.0));
+    }
+    
+    #[test]
+    fn global_vim_applies_to_existing_and_future_buffers_without_moving_focus() {
+        let (ctx, env) = editor("abc");
+        run(
+            r#"(vim-mode-auto)
+               (buffer-create "existing")
+               (global-vim-mode t)
+               (buffer-create "future")"#,
+            &env,
+            &ctx,
+        );
+        for name in ["*scratch*", "existing", "future"] {
+            assert_eq!(
+                run(&format!("(buffer-get 'vim-state {name:?})"), &env, &ctx),
+                LispExp::symbol("normal".into())
+            );
+        }
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        assert_eq!(ctx.focused_window_buffer().as_deref(), Some("*scratch*"));
+        keys(&ctx, &env, "l");
+        assert_eq!(point(&ctx), 1);
+        assert_eq!(text(&ctx), "abc");
+        run("(global-vim-mode -1)", &env, &ctx);
+        for name in ["*scratch*", "existing", "future"] {
+            assert!(run(&format!("(buffer-get 'vim-state {name:?})"), &env, &ctx).is_nil());
+        }
+    }
+
+    #[test]
+    fn automatic_vim_excludes_service_modes_and_internal_buffers() {
+        let (ctx, env) = editor("");
+        run(
+            r#"(make-mode 'help-mode)
+               (make-mode 'dired-mode)
+               (global-vim-mode t)
+               (buffer-create "directory" 'dired-mode)
+               (buffer-create "help" 'help-mode)
+               (buffer-create "*internal*")
+               (buffer-create "notes")"#,
+            &env,
+            &ctx,
+        );
+        for name in ["directory", "help", "*internal*"] {
+            assert!(run(&format!("(buffer-get 'vim-state {name:?})"), &env, &ctx).is_nil());
+        }
+        assert_eq!(
+            run("(buffer-get 'vim-state \"notes\")", &env, &ctx),
+            LispExp::symbol("normal".into())
+        );
+        // Even a custom prompt mode must keep its own typing map.
+        run(
+            r#"(setq vim-mode-excluded-modes nil vim-mode-predicate nil)
+               (make-floating-window "*Minibuffer*" 0 0 30 5 "Prompt" 'fundamental-mode)"#,
+            &env,
+            &ctx,
+        );
+        assert!(run("(vim--state)", &env, &ctx).is_nil());
+        keys(&ctx, &env, "hello");
+        assert_eq!(text(&ctx), "hello");
+    }
+
+    #[test]
+    fn explicit_buffer_choices_override_global_policy_until_returned_to_auto() {
+        let (ctx, env) = editor("abc");
+        // The initial buffer was enabled manually by editor().
+        run(
+            r#"(global-vim-mode t)
+               (buffer-create "auto")
+               (switch-to-buffer "auto")
+               (vim-mode-disable)
+               (vim-mode-refresh)"#,
+            &env,
+            &ctx,
+        );
+        assert!(run("(vim--state)", &env, &ctx).is_nil());
+        run("(vim-mode-auto)", &env, &ctx);
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("normal".into())
+        );
+        run("(global-vim-mode -1)", &env, &ctx);
+        assert!(run("(vim--state)", &env, &ctx).is_nil());
+        run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("normal".into())
+        );
+        run("(vim-mode-auto)", &env, &ctx);
+        assert!(run("(vim--state)", &env, &ctx).is_nil());
+    }
+
+    #[test]
+    fn mode_policy_tracks_major_mode_changes_and_restores_previous_local_map() {
+        let (ctx, env) = editor("");
+        run(
+            r#"(make-mode 'code-mode)
+               (make-mode 'previous-map)
+               (setq vim-mode-modes '(code-mode))
+               (buffer-create "code")
+               (switch-to-buffer "code")
+               (set-local-keymap 'previous-map)
+               (set-major-mode 'code-mode)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("normal".into())
+        );
+        keys(&ctx, &env, "iabc");
+        run("(set-major-mode 'code-mode) (vim-mode-refresh)", &env, &ctx);
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("insert".into())
+        );
+        run("(set-major-mode 'fundamental-mode)", &env, &ctx);
+        assert!(run("(vim--state)", &env, &ctx).is_nil());
+        assert_eq!(
+            run("(buffer-get 'local-keymap)", &env, &ctx),
+            LispExp::symbol("previous-map".into())
+        );
+        assert_eq!(text(&ctx), "abc");
+        run("(set-major-mode 'code-mode)", &env, &ctx);
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("normal".into())
+        );
+    }
+
+    #[test]
+    fn global_refresh_and_reenable_preserve_insert_visual_and_pending_operator() {
+        let (ctx, env) = editor("one two three");
+        keys(&ctx, &env, "iX");
+        run(
+            r#"(global-vim-mode t) (vim-mode-enable) (buffer-create "background")
+               (switch-to-buffer "background") (switch-to-buffer "*scratch*")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("insert".into())
+        );
+        keys(&ctx, &env, "Y");
+        esc(&ctx, &env);
+        keys(&ctx, &env, "0vl");
+        let region = run("(list (region-beginning) (region-end))", &env, &ctx);
+        run("(vim-mode-refresh)", &env, &ctx);
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("visual".into())
+        );
+        assert_eq!(
+            run("(list (region-beginning) (region-end))", &env, &ctx),
+            region
+        );
+        esc(&ctx, &env);
+        keys(&ctx, &env, "0d");
+        run(r#"(buffer-create "another-background")"#, &env, &ctx);
+        keys(&ctx, &env, "w");
+        assert_eq!(text(&ctx), "two three");
+    }
+
+    #[test]
+    fn installing_a_hidden_vim_map_preserves_the_focused_buffers_key_prefix() {
+        let (ctx, env) = editor("abc");
+        run(
+            r#"(global-vim-mode t)
+               (define-key nil "C-x z" '(buffer-put 'prefix-ran t))"#,
+            &env,
+            &ctx,
+        );
+        ctrl(&ctx, &env, 'x');
+        run(r#"(buffer-create "hidden")"#, &env, &ctx);
+        keys(&ctx, &env, "z");
+        assert_eq!(run("(buffer-get 'prefix-ran)", &env, &ctx), LispExp::t());
+        assert_eq!(text(&ctx), "abc");
+    }
+
+    #[test]
+    fn custom_predicate_can_restrict_automatic_vim_to_file_buffers() {
+        let (ctx, env) = editor("");
+        let path =
+            std::env::temp_dir().join(format!("rsedit-vim-policy-{}.new", std::process::id()));
+        run(
+            r#"(vim-mode-auto)
+               (setq vim-mode-predicate (lambda () (buffer-file-name)))
+               (global-vim-mode t)
+               (buffer-create "notes")"#,
+            &env,
+            &ctx,
+        );
+        assert!(run("(buffer-get 'vim-state \"*scratch*\")", &env, &ctx).is_nil());
+        assert!(run("(buffer-get 'vim-state \"notes\")", &env, &ctx).is_nil());
+        run(
+            &format!("(find-file {:?})", path.to_str().unwrap()),
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("normal".into())
+        );
+        keys(&ctx, &env, "iabc");
+        run(
+            &format!("(find-file {:?})", path.to_str().unwrap()),
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("insert".into())
+        );
+        assert_eq!(text(&ctx), "abc");
+    }
+
+    #[test]
+    fn per_mode_policy_survives_global_disable_and_can_be_refreshed() {
+        let (ctx, env) = editor("");
+        run(
+            r#"(make-mode 'code-mode)
+               (setq vim-mode-modes '(code-mode))
+               (buffer-create "code" 'code-mode)
+               (global-vim-mode t) (global-vim-mode 0)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(buffer-get 'vim-state \"code\")", &env, &ctx),
+            LispExp::symbol("normal".into())
+        );
+        run("(setq vim-mode-modes nil) (vim-mode-refresh)", &env, &ctx);
+        assert!(run("(buffer-get 'vim-state \"code\")", &env, &ctx).is_nil());
+        run("(vim-mode 0)", &env, &ctx);
+        assert!(run("(vim--state)", &env, &ctx).is_nil());
+    }
+
+    #[test]
+    fn replacement_scratch_receives_automatic_vim_after_last_buffer_is_closed() {
+        let (ctx, env) = editor("");
+        run(
+            r#"(global-vim-mode t) (close-buffer "*scratch*")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("normal".into())
+        );
+        keys(&ctx, &env, "iabc");
+        assert_eq!(text(&ctx), "abc");
+    }
+
+    #[test]
+    fn visiting_a_file_after_save_as_refreshes_policy_without_changing_major_mode() {
+        let (ctx, env) = editor("abc");
+        let path = std::env::temp_dir().join(format!(
+            "rsedit-vim-save-policy-{}.unknown",
+            std::process::id()
+        ));
+        run(
+            r#"(vim-mode-auto)
+               (setq vim-mode-predicate (lambda () (buffer-file-name)))
+               (global-vim-mode t)"#,
+            &env,
+            &ctx,
+        );
+        assert!(run("(vim--state)", &env, &ctx).is_nil());
+        run(
+            &format!("(write-file {:?})", path.to_str().unwrap()),
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(major-mode)", &env, &ctx),
+            LispExp::symbol("fundamental-mode".into())
+        );
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("normal".into())
+        );
+        keys(&ctx, &env, "iX");
+        run(
+            &format!("(write-file {:?})", path.to_str().unwrap()),
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("insert".into())
+        );
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn major_mode_hooks_can_replace_the_map_under_an_active_vim_session() {
+        let (ctx, env) = editor("abc");
+        run(
+            r#"(make-mode 'code-mode)
+               (make-mode 'code-map)
+               (defun code-setup () (set-local-keymap 'code-map))
+               (add-hook 'code-mode "major-mode-hook" 'code-setup)"#,
+            &env,
+            &ctx,
+        );
+        keys(&ctx, &env, "iX");
+        run("(set-major-mode 'code-mode)", &env, &ctx);
+        assert_eq!(
+            run("(vim--state)", &env, &ctx),
+            LispExp::symbol("insert".into())
+        );
+        assert_eq!(
+            run("(buffer-get 'local-keymap)", &env, &ctx),
+            LispExp::symbol("vim-insert-map".into())
+        );
+        esc(&ctx, &env);
+        run("(vim-mode-disable)", &env, &ctx);
+        assert_eq!(
+            run("(buffer-get 'local-keymap)", &env, &ctx),
+            LispExp::symbol("code-map".into())
+        );
+    }
+
+    #[test]
+    fn interactive_global_toggle_honors_negative_prefix_argument() {
+        let (ctx, env) = editor("");
+        run(
+            r#"(vim-mode-auto)
+               (define-key nil "M-v" 'global-vim-mode)"#,
+            &env,
+            &ctx,
+        );
+        let mut toggle = KeyEvent::new(KeyCode::Char('v'));
+        toggle.modifiers.alt = true;
+        ctx.handle_key_event(toggle.clone(), &env);
+        assert_eq!(run("global-vim-mode", &env, &ctx), LispExp::t());
+        ctrl(&ctx, &env, '-');
+        ctx.handle_key_event(toggle, &env);
+        assert!(run("global-vim-mode", &env, &ctx).is_nil());
+        assert!(run("(vim--state)", &env, &ctx).is_nil());
+    }
+    #[test]
+    fn hidden_initialization_and_global_refresh_preserve_buffer_selection_history() {
+        let (ctx, env) = editor("");
+        run(
+            r#"(buffer-create "z-last-visited")
+               (switch-to-buffer "z-last-visited")
+               (switch-to-buffer "*scratch*")
+               (buffer-create "a-hidden")
+               (global-vim-mode t) (vim-mode-refresh)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            ctx.most_recent_buffer("*scratch*").as_deref(),
+            Some("z-last-visited")
+        );
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        run(r#"(close-buffer "*scratch*")"#, &env, &ctx);
+        assert_eq!(ctx.get_current_buffer_name(), "z-last-visited");
+        assert_eq!(
+            ctx.focused_window_buffer().as_deref(),
+            Some("z-last-visited")
         );
     }
 }
