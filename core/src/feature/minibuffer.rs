@@ -43,6 +43,10 @@ pub(crate) fn setq<B: BufferTrait>(env: &Env<EditorState<B>>, name: &str, val: E
 /// character (mirroring what `self-insert` does per character, including
 /// marking the buffer modified) after clearing it. Not a primitive --
 /// purely an internal helper for `minibuffer-complete`'s Tab-cycling.
+///
+/// Below the doors, so it says what they would have: see `edits::changed`.
+/// It did not, and was the one change to a buffer's text that left its
+/// version where it was.
 pub(crate) fn set_minibuffer_content<B: BufferTrait>(ctx: &EditorState<B>, content: &str) {
     ctx.with_current_buffer_mut(|buf| {
         while buf.text.cursor_pos() != (0, 0) {
@@ -52,6 +56,7 @@ pub(crate) fn set_minibuffer_content<B: BufferTrait>(ctx: &EditorState<B>, conte
             buf.text.insert(c);
             buf.is_modified = true;
         }
+        crate::primitives::edits::changed(buf, 0);
     });
 }
 

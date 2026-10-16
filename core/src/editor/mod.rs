@@ -56,7 +56,7 @@ use crate::{
         LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,
         Window, WindowId, compose_layout, layout, region_highlights,
     },
-    work::WorkManager,
+    work::{Topic, WorkManager},
 };
 
 use risp::{
@@ -95,6 +95,7 @@ mod work;
 pub use boot::{CONFIG_DIR, XDG_CONFIG_HOME, create_global_env, isolate_config_for_tests};
 pub use keys::KEY_CAPTURE_FUNCTION;
 pub use settings::*;
+pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED};
 
 /// What the echo area is showing, and since when.
 ///
@@ -190,6 +191,13 @@ pub struct EditorState<B: BufferTrait> {
     /// changed, and read under it alongside the grammar it describes -- so
     /// the highlighter never pairs a grammar with the wrong edition.
     grammar_epoch: Arc<AtomicU64>,
+    /// Emitted when a grammar or a syntax table changes: the editor's
+    /// `syntax-changed`, resolved once. See [`work::SYNTAX_CHANGED`].
+    ///
+    /// Not the epoch above, though it moves with it for a grammar: a syntax
+    /// table is the other lexer's, and changing one must not make every
+    /// buffer's colouring look out of date.
+    syntax_changed: Topic,
     /// Every window the frame has: the tiled tree, the floats drawn over it,
     /// which one has focus, the next id to hand out and what a held mouse
     /// button is doing. See [`Windows`], which says why those are one lock and

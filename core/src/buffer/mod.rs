@@ -16,6 +16,7 @@ pub mod undo;
 pub use undo::UndoHistory;
 
 use crate::input::KeyEvent;
+use crate::work::Topic;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -64,6 +65,14 @@ pub struct Buffer<B: BufferTrait> {
     /// Bumped in `edits::insert_text` and `edits::delete_range` -- the only two
     /// doors into the text, which is the same property undo depends on.
     pub version: u64,
+    /// Emitted at every change to the text, beside the version: what wakes the
+    /// work that has to look at it again. See [`crate::work::topic`].
+    ///
+    /// A topic of its own until the buffer joins an editor, which hands it the
+    /// editor's `buffer-changed` -- see `managers::Buffers::insert`. So this
+    /// module says that the text changed without knowing who listens: an
+    /// atomic increment, cheap enough under the buffer's own lock.
+    pub changed: Topic,
     /// What has been worked out about reading this buffer as balanced
     /// expressions. See [`crate::buffer::scan::ScanCache`].
     ///
@@ -192,6 +201,7 @@ impl<B: BufferTrait> Buffer<B> {
             auto_saved_at: None,
             read_only: false,
             data: HashMap::new(),
+            changed: Topic::detached(),
         }
     }
 
@@ -291,6 +301,7 @@ impl<B: BufferTrait> Buffer<B> {
         self.text.cursor_move(line, column);
         self.is_modified = false;
         self.stale = false;
+        self.changed.emit();
     }
 
     pub fn from_text(name: &str, text: &str) -> Self {
@@ -313,6 +324,7 @@ impl<B: BufferTrait> Buffer<B> {
             auto_saved_at: None,
             read_only: false,
             data: HashMap::new(),
+            changed: Topic::detached(),
         }
     }
 }

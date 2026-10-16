@@ -128,15 +128,21 @@ impl<B: BufferTrait> EditorState<B> {
         let (sender, receiver) = std::sync::mpsc::channel();
         // Made before the editor, so the WorkManager's reports can go to it.
         let log = Arc::new(RwLock::new(Log::default()));
+        // And the WorkManager before the compartments, so the topics they
+        // emit are its own.
+        let work = work_manager(&log);
+        let buffers = Buffers::new(work.topic(BUFFER_CHANGED));
+        let syntax_changed = work.topic(SYNTAX_CHANGED);
 
         let editor_state = Self {
             running: Arc::new(AtomicBool::new(true)),
             worker_mailbox: sender,
-            work: work_manager(&log),
-            buffers: Arc::new(RwLock::new(Buffers::default())),
+            work,
+            buffers: Arc::new(RwLock::new(buffers)),
             echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
             modes: Arc::new(RwLock::new(Modes::new(keymaps))),
             grammar_epoch: Arc::new(AtomicU64::new(0)),
+            syntax_changed,
             windows: Arc::new(RwLock::new(Windows::default())),
             commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),

@@ -41,6 +41,7 @@
 //! end of, and keeping it one-way is what stops the two compartments needing
 //! each other's locks.
 use crate::buffer::{Buffer, BufferTrait};
+use crate::work::Topic;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -57,30 +58,40 @@ pub struct Buffers<B: BufferTrait> {
     /// window show now that what it showed is gone", so it is allowed to name
     /// buffers that no longer exist -- the reader skips them.
     recency: Vec<String>,
+    /// What every buffer in the table emits when its text changes: in the
+    /// editor, its `buffer-changed`. Handed to each buffer as it comes in, so
+    /// that no buffer can be in the table and change without saying so,
+    /// whoever made it.
+    changed: Topic,
 }
 
 /// The name of the buffer that exists before anything else does.
 pub const SCRATCH: &str = "*scratch*";
 
+/// A table whose buffers emit a topic nobody listens to: for what needs a
+/// table but no editor.
 impl<B: BufferTrait> Default for Buffers<B> {
     fn default() -> Self {
-        // Never empty, and never empty from the first instant: an editor with
-        // no buffers has no answer to "what is current", and every path here
-        // is written on the assumption that there is one.
-        let mut table = HashMap::new();
-        table.insert(
-            SCRATCH.to_string(),
-            Arc::new(RwLock::new(Buffer::new(SCRATCH))),
-        );
-        Self {
-            table,
-            current: Arc::from(SCRATCH),
-            recency: vec![SCRATCH.to_string()],
-        }
+        Self::new(Topic::detached())
     }
 }
 
 impl<B: BufferTrait> Buffers<B> {
+    /// A table holding `*scratch*`, whose buffers emit CHANGED.
+    pub fn new(changed: Topic) -> Self {
+        // Never empty, and never empty from the first instant: an editor with
+        // no buffers has no answer to "what is current", and every path here
+        // is written on the assumption that there is one.
+        let mut buffers = Self {
+            table: HashMap::new(),
+            current: Arc::from(SCRATCH),
+            recency: vec![SCRATCH.to_string()],
+            changed,
+        };
+        buffers.insert(SCRATCH, Buffer::new(SCRATCH));
+        buffers
+    }
+
     // ------------------------------------------------------------------
     // Handles, for the accessors on the facade
     // ------------------------------------------------------------------
@@ -168,9 +179,14 @@ impl<B: BufferTrait> Buffers<B> {
     // ------------------------------------------------------------------
 
     /// Add BUFFER under NAME, replacing anything already there.
-    pub fn insert(&mut self, name: &str, buffer: Buffer<B>) {
+    ///
+    /// The buffer is handed this table's topic, which is then emitted: a
+    /// buffer that has just come in is text nothing has looked at yet.
+    pub fn insert(&mut self, name: &str, mut buffer: Buffer<B>) {
+        buffer.changed = self.changed.clone();
         self.table
             .insert(name.to_string(), Arc::new(RwLock::new(buffer)));
+        self.changed.emit();
     }
 
     /// Make NAME current, and answer what was current before.
@@ -276,10 +292,7 @@ impl<B: BufferTrait> Buffers<B> {
         }
         self.recency.retain(|existing| existing != name);
         if self.table.is_empty() {
-            self.table.insert(
-                SCRATCH.to_string(),
-                Arc::new(RwLock::new(Buffer::new(SCRATCH))),
-            );
+            self.insert(SCRATCH, Buffer::new(SCRATCH));
         }
         if &*self.current != name {
             return Removed::Yes;

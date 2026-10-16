@@ -29,6 +29,13 @@ pub struct Topics {
 #[derive(Clone)]
 pub struct Topic(Arc<Inner>);
 
+/// [`Topic::detached`].
+impl Default for Topic {
+    fn default() -> Self {
+        Self::detached()
+    }
+}
+
 struct Inner {
     name: String,
     count: AtomicU64,
@@ -74,6 +81,17 @@ impl Topics {
 }
 
 impl Topic {
+    /// A topic in no registry: it counts, and wakes nobody. What a buffer has
+    /// until it joins an editor, which gives it the editor's own. Nameless,
+    /// since nothing can look it up.
+    pub fn detached() -> Self {
+        Topic(Arc::new(Inner {
+            name: String::new(),
+            count: AtomicU64::new(0),
+            nudge: Arc::new(|| {}),
+        }))
+    }
+
     /// Say that something this topic stands for has changed.
     pub fn emit(&self) {
         // Release, paired with the Acquire in `count`: whatever was changed

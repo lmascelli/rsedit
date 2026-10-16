@@ -268,21 +268,9 @@ fn compile<B: BufferTrait>(ctx: &EditorState<B>, source: &str) -> Option<regex::
     }
 }
 
-/// Apply EDIT to the named mode, answering t or nil the way the rest of the
-/// mode primitives do.
-fn with_mode<B: BufferTrait, F>(ctx: &EditorState<B>, mode_name: &str, edit: F) -> ELispExp<B>
-where
-    F: FnOnce(&mut crate::modes::MajorMode<B>),
-{
-    match ctx.modes_mut(|modes| modes.edit(mode_name, edit)) {
-        true => ELispExp::t(),
-        false => ELispExp::nil(),
-    }
-}
-
-/// The same, for a change to the named mode's grammar -- which has to go
-/// through `edit_grammar`, so that what was coloured under the old grammar is
-/// coloured again under the new one.
+/// Apply EDIT to the named mode's grammar, answering t or nil the way the rest
+/// of the mode primitives do. Through `edit_grammar`, so that what was coloured
+/// under the old grammar is coloured again under the new one.
 fn with_grammar<B: BufferTrait, F>(ctx: &EditorState<B>, mode_name: &str, edit: F) -> ELispExp<B>
 where
     F: FnOnce(&mut crate::modes::Grammar),
@@ -371,7 +359,9 @@ fn syntax_class_arg<B: BufferTrait>(
     })
 }
 
-/// Change MODE's table, making one from the default if it has none yet.
+/// Change MODE's table, making one from the default if it has none yet --
+/// through `edit_syntax_table`, so that what was scanned under the old table
+/// is scanned again under the new one.
 fn with_syntax_table<B: BufferTrait, F>(
     ctx: &EditorState<B>,
     mode_name: &str,
@@ -380,9 +370,7 @@ fn with_syntax_table<B: BufferTrait, F>(
 where
     F: FnOnce(&mut SyntaxTable),
 {
-    with_mode(ctx, mode_name, |mode| {
-        edit(mode.syntax_table.get_or_insert_with(SyntaxTable::default));
-    })
+    ELispExp::boolean(ctx.edit_syntax_table(mode_name, edit))
 }
 
 pub const SET_SYNTAX_PAIRS_DOC: &str = "(set-syntax-pairs MODE PAIRS): Declare the delimiters that \

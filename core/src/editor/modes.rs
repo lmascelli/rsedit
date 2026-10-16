@@ -14,6 +14,9 @@ impl<B: BufferTrait> EditorState<B> {
             buf.current_mode = mode.to_string();
             buf.syntax.invalidate_from(buf.version, 0);
             buf.scan.invalidate_from(buf.version, 0);
+            // The text is the same, but what it means is not: everything
+            // worked out about it is to be worked out again.
+            buf.changed.emit();
             true
         });
         if changed == Some(true) {
@@ -105,12 +108,36 @@ impl<B: BufferTrait> EditorState<B> {
     /// Every grammar change goes through here or [`Self::set_mode`], because
     /// each has to move [`Self::grammar_epoch`] -- and move it while the
     /// registry is still locked, so that nothing reading the grammar can see
-    /// the new one with the old edition or the other way round.
+    /// the new one with the old edition or the other way round. And each emits
+    /// `syntax-changed`.
     pub(crate) fn edit_grammar(&self, mode: &str, edit: impl FnOnce(&mut Grammar)) -> bool {
         self.modes_mut(|modes| {
             let found = modes.edit(mode, |found| edit(&mut found.grammar));
             if found {
                 self.grammar_changed();
+            }
+            found
+        })
+    }
+
+    /// Change MODE's syntax table, making one from the default if it has none
+    /// yet. False when there is no such mode.
+    ///
+    /// Every syntax table change goes through here, as every grammar change
+    /// goes through [`Self::edit_grammar`], so that `syntax-changed` is
+    /// emitted: what was scanned under the old table is out of date. The
+    /// grammar epoch does not move -- no colouring depends on the table.
+    pub(crate) fn edit_syntax_table(
+        &self,
+        mode: &str,
+        edit: impl FnOnce(&mut SyntaxTable),
+    ) -> bool {
+        self.modes_mut(|modes| {
+            let found = modes.edit(mode, |found| {
+                edit(found.syntax_table.get_or_insert_with(SyntaxTable::default))
+            });
+            if found {
+                self.syntax_changed.emit();
             }
             found
         })
@@ -124,6 +151,7 @@ impl<B: BufferTrait> EditorState<B> {
     /// Called with the registry's write lock held, by the two functions above.
     fn grammar_changed(&self) {
         self.grammar_epoch.fetch_add(1, Ordering::Relaxed);
+        self.syntax_changed.emit();
     }
 
     //--------------------------------------------------------------------------

@@ -10,16 +10,17 @@
 //! ```text
 //!   lisp/        the interpreter. Knows nothing of editors: no buffer, no
 //!                point, no window. Its context is a type parameter.
+//!   work/        where asynchronous work runs: the WorkManager and its
+//!                scheduler. Knows nothing of editors either: the state a job
+//!                works on is a type parameter. Replacing background/, below.
 //!   buffer/      text storage, and BufferTrait -- the only thing anything
-//!                else is allowed to assume about it.
+//!                else is allowed to assume about it. A buffer emits a topic
+//!                of work/ when its text changes, not knowing who listens.
 //!   text/        what can be worked out about text with nothing but
 //!                BufferTrait: searching, rectangles, the kill ring, lists of
 //!                places.
 //!   input.rs     keys, mouse events and keymaps: the vocabulary the editor
 //!   commands.rs  takes input in, and the registry of what a name can mean.
-//!   work/        where asynchronous work runs: the WorkManager and its
-//!                scheduler. Knows nothing of editors: the state a job works
-//!                on is a type parameter. Replacing background/, below.
 //!   managers/    the editor's state, in compartments, each under one lock.
 //!   editor/      EditorState: the facade over those compartments, and the
 //!                only thing that may hold two of their locks at once.

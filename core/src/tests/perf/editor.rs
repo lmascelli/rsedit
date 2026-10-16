@@ -456,6 +456,7 @@ fn layout(report: &mut Report) {
                 auto_saved_at: None,
                 read_only: false,
                 data: Default::default(),
+                changed: Default::default(),
             },
         );
     }

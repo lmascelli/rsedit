@@ -104,6 +104,9 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
 /// scan checkpoints describing text that was gone, under a version that said
 /// nothing had happened, until a later edit happened to untrust them -- and
 /// then only from that edit down.
+///
+/// Last, it emits the buffer's `buffer-changed`: the same single place, so no
+/// edit can change the text without waking what waits for it.
 pub(crate) fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     buf.version = buf.version.wrapping_add(1);
     let line = buf.text.cursor_1d_to_2d(at.min(buf.text.len())).0;
@@ -115,6 +118,7 @@ pub(crate) fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     // believed another would be wrong in a way that only showed up as one
     // command in ten behaving strangely.
     buf.scan.invalidate_from(buf.version, line);
+    buf.changed.emit();
 }
 
 /// A mark that survives an edit, but no longer defines a region.
