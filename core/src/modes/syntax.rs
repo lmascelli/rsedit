@@ -41,6 +41,7 @@
 use crate::ui::Face;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// A run of characters to draw with a face, in **character columns** within its
 /// line.
@@ -160,9 +161,30 @@ pub struct SyntaxTable {
     /// from the first lifetime; `Escape` would eat the closing quote of
     /// `"it's"`, since escapes are honoured inside strings too.
     char_quote: Option<char>,
+    /// Which edition of a table this is. See [`SyntaxTable::edition`].
+    edition: u64,
 }
 
 impl SyntaxTable {
+    /// Which edition of a table this is: 0 for the default table, and for
+    /// every change made to one a number no table has had before.
+    ///
+    /// Two tables with the same edition are the same table, which is what lets
+    /// a scan checkpoint say which table it was computed with and be refused
+    /// under any other -- see [`crate::buffer::scan::ScanCache`]. The mode
+    /// alone cannot say it: a mode's table changes under it, one
+    /// `set-syntax-pairs` from a module being loaded again.
+    pub fn edition(&self) -> u64 {
+        self.edition
+    }
+
+    /// Called by every change: from here the table is an edition nobody has
+    /// seen.
+    fn changed(&mut self) {
+        static EDITIONS: AtomicU64 = AtomicU64::new(1);
+        self.edition = EDITIONS.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn class_of(&self, c: char) -> SyntaxClass {
         if let Some(class) = self.classes.get(&c) {
             return *class;
@@ -194,6 +216,7 @@ impl Default for SyntaxTable {
             strings: Vec::new(),
             string_starts: HashSet::new(),
             char_quote: None,
+            edition: 0,
         }
     }
 }
@@ -208,11 +231,13 @@ impl SyntaxTable {
                 self.classes.insert(*close, SyntaxClass::Close(*open));
             }
         }
+        self.changed();
     }
 
     /// Declare the character that encloses a single literal character.
     pub fn set_char_quote(&mut self, c: Option<char>) {
         self.char_quote = c;
+        self.changed();
     }
 
     /// How long the character literal beginning at `at` is, if there is one.
@@ -243,6 +268,7 @@ impl SyntaxTable {
 
     pub fn set_class(&mut self, c: char, class: SyntaxClass) {
         self.classes.insert(c, class);
+        self.changed();
     }
 
     /// Declare the multi-character string forms this language has.
@@ -252,6 +278,7 @@ impl SyntaxTable {
             .filter_map(|style| style.opener.chars().next())
             .collect();
         self.strings = strings;
+        self.changed();
     }
 
     pub fn strings(&self) -> &[StringStyle] {
@@ -273,6 +300,7 @@ impl SyntaxTable {
             })
             .collect();
         self.comments = comments;
+        self.changed();
     }
 
     pub fn comments(&self) -> &[CommentStyle] {

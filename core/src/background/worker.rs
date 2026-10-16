@@ -2,9 +2,9 @@
 //!
 //! # What a worker is
 //!
-//! A fiber that the editor resumes on a timer, on the thread the syntax
-//! highlighter and the prescanner already share. It is written as an ordinary
-//! loop that says `(yield)` where it is willing to be put down:
+//! A fiber that the editor resumes on a timer, on the thread the file watcher
+//! and the auto-saver already share. It is written as an ordinary loop that
+//! says `(yield)` where it is willing to be put down:
 //!
 //! ```lisp
 //! (define-worker 'indexer
@@ -35,10 +35,10 @@
 //!
 //! What the allowance is for is the other direction. A `(while t)` with no
 //! `(yield)` in it would hold this thread for as long as the process lives,
-//! and take colouring, prescanning, file watching and every other worker down
-//! with it. So a turn that runs past its own allowance ends, is reported
-//! once, and the worker is retired -- a visible failure of one worker rather
-//! than an invisible failure of everything.
+//! and take file watching, auto-saving and every other worker down with it.
+//! So a turn that runs past its own allowance ends, is reported once, and the
+//! worker is retired -- a visible failure of one worker rather than an
+//! invisible failure of everything.
 //!
 //! Work that *cannot* be bounded that way does not come here at all: it gets
 //! a thread of its own. See [`crate::background`], which states the rule.

@@ -164,24 +164,22 @@ impl<B: BufferTrait> EditorState<B> {
         // and `shutdown` is what breaks it.
         editor_state.work.start(editor_state.clone());
         BackgroundScheduler::spawn(receiver, editor_state.clone());
-        // Colouring runs from here on, a bounded chunk at a time. Started at
-        // construction rather than when a grammar is first defined, because a
-        // job that has nothing to do costs one comparison per turn and a job
-        // that was never started costs a file with no colour and no
-        // explanation.
-        let _ = editor_state.worker_mailbox.send(WorkerMessage::Schedule {
-            task: Box::new(Highlighter),
-            interval: TURN_INTERVAL,
-        });
+        // Colouring runs from here on, a bounded chunk at a time, whenever a
+        // buffer or a grammar changes. Started at construction rather than
+        // when a grammar is first defined, because a job waiting for a change
+        // costs nothing and a job that was never started costs a file with no
+        // colour and no explanation.
+        editor_state
+            .work
+            .submit(Highlighter::spec(), Box::new(Highlighter));
         // And the other lexer over the same text: the balanced-expression scan
         // that `forward-sexp', the indenter and `syntax-ppss' read. Same
-        // interval and same bargain -- what it has worked out makes a motion
+        // topics and same bargain -- what it has worked out makes a motion
         // cheap, and what it has not yet reached makes one scan from the top,
         // which is what every motion did before this job existed.
-        let _ = editor_state.worker_mailbox.send(WorkerMessage::Schedule {
-            task: Box::new(Prescanner),
-            interval: TURN_INTERVAL,
-        });
+        editor_state
+            .work
+            .submit(Prescanner::spec(), Box::new(Prescanner));
 
         editor_state
     }

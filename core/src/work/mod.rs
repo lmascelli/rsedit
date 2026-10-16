@@ -5,8 +5,9 @@
 //! the scheduler's *core* -- the contract a job is written against, the
 //! queues, deadlines and topics, the rule that picks the next step, the
 //! measurements and reports -- and the [`WorkManager`] built around it, with
-//! its executor, its registry and the dedicated threads. Every editor has one;
-//! no work runs on it yet. The jobs move to it in the next steps of the plan.
+//! its executor, its registry and the dedicated threads. Every editor has one,
+//! and colours and prescans on it; the other jobs move to it in the next steps
+//! of the plan.
 //!
 //! # What the core is not
 //!

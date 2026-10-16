@@ -311,8 +311,9 @@ impl<B: BufferTrait> EditorState<B> {
         env: &Arc<Env<EditorState<B>>>,
         frame: &FrameSnapshot,
     ) -> Option<Duration> {
-        // One more turn is the soonest new colour can appear, so it is the
-        // longest this may sleep without being late for it.
+        // Colour arrives a step of the highlighter at a time, as fast as it
+        // can colour. Coming back every interval shows it as it lands, at a
+        // rate that reads as live and costs a frame now and then.
         let colouring = frame.colouring_pending.then_some(TURN_INTERVAL);
         // Output from a running command arrives without anybody pressing a
         // key, so the renderer has to come back and look. Same interval as

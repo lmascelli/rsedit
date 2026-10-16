@@ -707,7 +707,7 @@ primitive!(syntax_ppss, args, _env, ctx, {
             }
             _ => buf.text.cursor_pos_1d(),
         };
-        sexp::context_at(&buf.text, &table, buf.scan_resume(pos), pos)
+        sexp::context_at(&buf.text, &table, buf.scan_resume(pos, &table), pos)
     });
     let offset = |at: Option<usize>| {
         at.map(|at| ELispExp::number(at as f64))
@@ -746,7 +746,7 @@ primitive!(balance_point, args, _env, ctx, {
             }
             _ => buf.text.cursor_pos_1d(),
         };
-        sexp::balance_point(&buf.text, &table, buf.scan_resume(pos), pos)
+        sexp::balance_point(&buf.text, &table, buf.scan_resume(pos, &table), pos)
     });
     Ok(match found {
         Some(at) => ELispExp::number(at as f64),
@@ -771,7 +771,7 @@ primitive!(bounds_of_enclosing_list, args, _env, ctx, {
             }
             _ => buf.text.cursor_pos_1d(),
         };
-        sexp::enclosing(&buf.text, &table, buf.scan_resume(pos), pos)
+        sexp::enclosing(&buf.text, &table, buf.scan_resume(pos, &table), pos)
     });
     Ok(match found {
         Some(found) => ELispExp::proper_list(vec![

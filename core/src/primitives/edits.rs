@@ -1137,7 +1137,7 @@ primitive!(forward_sexp, args, _env, ctx, {
             sexp::forward(
                 &buf.text,
                 &table,
-                buf.scan_resume(from),
+                buf.scan_resume(from, &table),
                 from,
                 count as usize,
             )
@@ -1164,7 +1164,7 @@ primitive!(backward_sexp, args, _env, ctx, {
             sexp::forward(
                 &buf.text,
                 &table,
-                buf.scan_resume(from),
+                buf.scan_resume(from, &table),
                 from,
                 count.unsigned_abs(),
             )
@@ -1188,7 +1188,13 @@ primitive!(kill_sexp, args, env, ctx, {
     let count = repeat_count(args)?;
     let killed = ctx.with_current_buffer_mut(|buf| {
         let from = buf.text.cursor_pos_1d();
-        let to = sexp::forward(&buf.text, &table, buf.scan_resume(from), from, count);
+        let to = sexp::forward(
+            &buf.text,
+            &table,
+            buf.scan_resume(from, &table),
+            from,
+            count,
+        );
         cut_out(buf, from, to)
     });
     ctx.kill(killed, Direction::Forward, &env);
@@ -1225,7 +1231,9 @@ primitive!(up_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();
     ctx.with_current_buffer_mut(|buf| {
         let point = buf.text.cursor_pos_1d();
-        if let Some(found) = sexp::enclosing(&buf.text, &table, buf.scan_resume(point), point) {
+        if let Some(found) =
+            sexp::enclosing(&buf.text, &table, buf.scan_resume(point, &table), point)
+        {
             goto_offset(&mut buf.text, found.end);
         }
         Ok(ELispExp::nil())
@@ -1243,7 +1251,9 @@ primitive!(backward_up_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();
     ctx.with_current_buffer_mut(|buf| {
         let point = buf.text.cursor_pos_1d();
-        if let Some(found) = sexp::enclosing(&buf.text, &table, buf.scan_resume(point), point) {
+        if let Some(found) =
+            sexp::enclosing(&buf.text, &table, buf.scan_resume(point, &table), point)
+        {
             goto_offset(&mut buf.text, found.start);
         }
         Ok(ELispExp::nil())
@@ -1261,7 +1271,7 @@ primitive!(down_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();
     ctx.with_current_buffer_mut(|buf| {
         let point = buf.text.cursor_pos_1d();
-        if let Some(at) = sexp::down(&buf.text, &table, buf.scan_resume(point), point) {
+        if let Some(at) = sexp::down(&buf.text, &table, buf.scan_resume(point, &table), point) {
             goto_offset(&mut buf.text, at);
         }
         Ok(ELispExp::nil())

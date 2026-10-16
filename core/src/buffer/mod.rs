@@ -238,16 +238,23 @@ impl<B: BufferTrait> Buffer<B> {
         self.data.remove(key).is_some()
     }
 
-    /// Where a scan of this buffer that will be asked about POS may carry on
-    /// from, or nothing when it has to start at the top.
+    /// Where a scan of this buffer with TABLE that will be asked about POS may
+    /// carry on from, or nothing when it has to start at the top.
     ///
-    /// Here rather than at each call site because the three things that decide
-    /// it -- the version, the mode and the line POS is on -- all live on the
-    /// buffer, and a caller that read two of them and forgot the third would
-    /// get a plausible answer computed under the wrong table.
-    pub fn scan_resume(&self, pos: usize) -> Option<&crate::modes::sexp::Resume> {
+    /// Here rather than at each call site because three of the four things
+    /// that decide it -- the version, the mode and the line POS is on -- live
+    /// on the buffer, and a caller that read two of them and forgot the third
+    /// would get a plausible answer computed under the wrong table. The fourth
+    /// is the table the caller is about to scan with: a checkpoint is only a
+    /// shortcut for a scan with the table it was taken with.
+    pub fn scan_resume(
+        &self,
+        pos: usize,
+        table: &crate::modes::SyntaxTable,
+    ) -> Option<&crate::modes::sexp::Resume> {
         let line = self.text.cursor_1d_to_2d(pos.min(self.text.len())).0;
-        self.scan.resume_for(&self.current_mode, self.version, line)
+        self.scan
+            .resume_for(&self.current_mode, self.version, table.edition(), line)
     }
 
     /// Replace everything in this buffer with TEXT, as though it had just been

@@ -1,17 +1,23 @@
 //! The background job that colours buffers, and the rule for accepting what it
 //! produces.
 //!
-//! # Why a scheduled job rather than one fired per edit
+//! # Why one job, woken by changes, rather than one fired per edit
 //!
 //! A job per edit has to be short, or the editor stutters -- and "short" is a
 //! hope rather than a property, because it depends on the file. A single job
-//! that wakes on a timer and does a *bounded* amount of work each time is
-//! responsive by construction: whatever it did not finish is simply what it
-//! starts with next time.
+//! that does a *bounded* amount of work each step is responsive by
+//! construction: whatever it did not finish is simply what it starts with on
+//! the next step.
 //!
 //! It also coalesces for free. Twenty keystrokes in a second do not queue
 //! twenty jobs; they move the same boundary backwards twenty times, and the
-//! next turn picks up wherever it now is.
+//! next step picks up wherever it now is.
+//!
+//! It runs on the WorkManager -- see [`crate::work`] -- in the high class, and
+//! sleeps until a buffer or a grammar changes: `buffer-changed` and
+//! `syntax-changed` wake it, and while some buffer is behind each step answers
+//! `Continue`. An editor with nothing to colour does no work at all, where it
+//! used to wake every 40 ms to find that out.
 //!
 //! # The two rules that keep it honest
 //!
@@ -30,26 +36,50 @@
 //! that describes another is coloured again from the top.
 use crate::{
     BufferTrait, EditorState,
-    background::ScheduledTask,
     buffer::syntax::LINES_PER_TURN,
+    editor::{BUFFER_CHANGED, SYNTAX_CHANGED},
     modes::{Grammar, SyntaxSpan, SyntaxState, highlight_line},
+    work::{Class, Job, JobError, Spec, Step, StepContext},
 };
 use std::time::Duration;
 
-/// How often the highlighter wakes.
+/// How often the renderer looks again while something changes the screen
+/// behind its back -- colour arriving, a shell command's output, a background
+/// job -- and how long a Lisp worker waits when it names no interval.
 ///
-/// Short enough that colour follows typing without a visible lag, long enough
-/// that a burst of keystrokes is one turn's work rather than twenty.
+/// It was the highlighter's own interval, when the highlighter woke on a
+/// timer. It now wakes when something changes, and this is what is left:
+/// short enough that colour follows typing without a visible lag, long enough
+/// that a burst of keystrokes is one frame's work rather than twenty.
 pub const TURN_INTERVAL: Duration = Duration::from_millis(40);
 
-/// Colours whichever buffer most needs it, a chunk at a time, forever.
+/// Colours whichever buffer most needs it, a chunk at a time, for as long as
+/// one is behind -- then waits for the next change.
 pub struct Highlighter;
 
-impl<B: BufferTrait> ScheduledTask<B> for Highlighter {
-    fn execute(&mut self, state: &EditorState<B>) -> bool {
-        state.highlight_one_turn();
-        // Never finishes: there is always another edit coming.
-        true
+impl Highlighter {
+    /// How it is scheduled: in the high class, since colour is what the user
+    /// is looking at, and woken by any change to a buffer or a grammar.
+    pub(crate) fn spec() -> Spec {
+        Spec::new("highlighter")
+            .class(Class::High)
+            .unit("lines")
+            .on(BUFFER_CHANGED)
+            .on(SYNTAX_CHANGED)
+    }
+}
+
+impl<B: BufferTrait> Job<EditorState<B>> for Highlighter {
+    fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
+        match cx.state.highlight_one_turn() {
+            // Lines coloured: there may be more.
+            Some((buffer, lines)) => {
+                cx.worked(lines as u64, &buffer);
+                Ok(Step::Continue)
+            }
+            // Nothing behind: asleep until the next change.
+            None => Ok(Step::Wait),
+        }
     }
 }
 
@@ -103,18 +133,18 @@ impl Turn {
 
 impl<B: BufferTrait> EditorState<B> {
     /// Find a buffer whose colouring has fallen behind and advance it by at
-    /// most [`LINES_PER_TURN`] lines.
+    /// most [`LINES_PER_TURN`] lines: which buffer, and how many lines, or
+    /// nothing when every buffer is up to date.
     ///
     /// The focused buffer first: it is the one being looked at, and colour
     /// arriving where nobody is reading is worth less than colour arriving
     /// where they are.
-    pub(crate) fn highlight_one_turn(&self) {
-        let Some(turn) = self.next_highlight_turn() else {
-            return;
-        };
+    pub(crate) fn highlight_one_turn(&self) -> Option<(String, usize)> {
+        let turn = self.next_highlight_turn()?;
         let coloured = turn.run();
-
+        let lines = coloured.len();
         self.store_turn(&turn, coloured);
+        Some((turn.buffer, lines))
     }
 
     /// Store what a turn produced, if the buffer still looks the way it did

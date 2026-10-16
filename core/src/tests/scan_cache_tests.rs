@@ -19,8 +19,10 @@ mod tests {
     use crate::buffer::scan::{LINES_PER_CHECKPOINT, ScanCache, checkpoint_line};
     use crate::editor::{EditorState, create_global_env};
     use risp::{Env, EvalError, LispExp, Parser, eval};
-    use crate::modes::sexp;
+    use crate::modes::{SyntaxTable, sexp};
+    use crate::work::Place;
     use std::sync::Arc;
+    use std::time::Duration;
 
     type Ctx = EditorState<GapBuffer>;
 
@@ -64,23 +66,16 @@ mod tests {
         })
     }
 
-    /// Run prescan turns until the buffer is fully checkpointed.
-    ///
-    /// Bounded, because a loop that never ends is how a test reports a bug as a
-    /// hang. The background worker is running too and may do some of this; both
-    /// go through `record`, which refuses anything out of order, so they cannot
-    /// between them write a checkpoint neither computed.
+    /// Let the prescanner checkpoint the buffer, the way the editor does: by
+    /// running its WorkManager, which in a test runs only when told to. A
+    /// second of it, on a clock that moves when it is told to, is more than
+    /// the event delay and every turn the prescanner asks for.
     fn warm(ctx: &Ctx, name: &str) {
-        for _ in 0..1000 {
-            let Some(turn) = ctx.prescan_turn_for(name) else {
-                return;
-            };
-            let Some(scanned) = ctx.run_prescan(&turn) else {
-                return;
-            };
-            ctx.store_prescan(&turn, scanned);
-        }
-        panic!("{name} never finished prescanning");
+        ctx.work().run_for(ctx, Duration::from_secs(1));
+        assert!(
+            ctx.prescan_turn_for(name).is_none(),
+            "{name} never finished prescanning"
+        );
     }
 
     /// A file long enough to hold several checkpoints, with every construct
@@ -125,7 +120,7 @@ mod tests {
             // A stride that is not a factor of anything, so the positions tried are
             // not all at the same place in a line or a construct.
             for pos in (0..buf.text.len()).step_by(37) {
-                let shortcut = buf.scan_resume(pos);
+                let shortcut = buf.scan_resume(pos, &table);
                 if shortcut.is_some() {
                     resumed += 1;
                 }
@@ -171,7 +166,8 @@ mod tests {
         let table = ctx.syntax_table("rust-mode");
         ctx.with_buffer("str", |buf| {
             let inside = buf.text.cursor_2d_to_1d(LINES_PER_CHECKPOINT + 3, 2);
-            let found = sexp::context_at(&buf.text, &table, buf.scan_resume(inside), inside);
+            let found =
+                sexp::context_at(&buf.text, &table, buf.scan_resume(inside, &table), inside);
             assert!(
                 found.string_start.is_some(),
                 "a position deep inside the string is inside the string"
@@ -185,7 +181,7 @@ mod tests {
                 sexp::context_at(
                     &buf.text,
                     &table,
-                    buf.scan_resume(buf.text.len()),
+                    buf.scan_resume(buf.text.len(), &table),
                     buf.text.len()
                 ),
                 sexp::context_at(&buf.text, &table, None, buf.text.len()),
@@ -203,9 +199,12 @@ mod tests {
         rust_buffer("moved", &source(), &env, &ctx);
         warm(&ctx, "moved");
 
+        let table = ctx.syntax_table("rust-mode");
         ctx.with_buffer("moved", |buf| {
             let end = buf.text.len();
-            let resume = buf.scan_resume(end).expect("a warm cache has a checkpoint");
+            let resume = buf
+                .scan_resume(end, &table)
+                .expect("a warm cache has a checkpoint");
             assert!(
                 resume.offset() > 0,
                 "a scan asked about the end of the file starts well down it"
@@ -268,7 +267,7 @@ mod tests {
         let depth_before = ctx
             .with_buffer("stale", |buf| {
                 let end = buf.text.len();
-                sexp::context_at(&buf.text, &table, buf.scan_resume(end), end).depth
+                sexp::context_at(&buf.text, &table, buf.scan_resume(end, &table), end).depth
             })
             .expect("the buffer is there");
         assert_eq!(depth_before, 0, "the fixture balances to begin with");
@@ -282,7 +281,7 @@ mod tests {
         let depth = ctx
             .with_buffer("stale", |buf| {
                 let end = buf.text.len();
-                sexp::context_at(&buf.text, &table, buf.scan_resume(end), end).depth
+                sexp::context_at(&buf.text, &table, buf.scan_resume(end, &table), end).depth
             })
             .expect("the buffer is there");
         assert_eq!(
@@ -303,7 +302,7 @@ mod tests {
         let depth_at_end = |ctx: &Ctx| {
             ctx.with_buffer("undone", |buf| {
                 let end = buf.text.len();
-                sexp::context_at(&buf.text, &table, buf.scan_resume(end), end).depth
+                sexp::context_at(&buf.text, &table, buf.scan_resume(end, &table), end).depth
             })
             .expect("the buffer is there")
         };
@@ -395,22 +394,129 @@ mod tests {
         run("(make-mode 'plain-mode)", &env, &ctx);
         rust_buffer("switched", &source(), &env, &ctx);
         warm(&ctx, "switched");
+        let table = ctx.syntax_table("rust-mode");
         assert!(
             {
-                ctx.with_buffer("switched", |buf| buf.scan_resume(buf.text.len()).is_some())
-                    .expect("edited")
+                ctx.with_buffer("switched", |buf| {
+                    buf.scan_resume(buf.text.len(), &table).is_some()
+                })
+                .expect("edited")
             },
             "there is a shortcut to lose in the first place"
         );
 
         remode(&ctx, "switched", "plain-mode");
+        let table = ctx.syntax_table("plain-mode");
         ctx.with_buffer("switched", |buf| {
             assert!(
-                buf.scan_resume(buf.text.len()).is_none(),
+                buf.scan_resume(buf.text.len(), &table).is_none(),
                 "the mode changed, so what was worked out under the old one is refused"
             );
         })
         .expect("switched")
+    }
+
+    // ----------------------------------------------------------------
+    // What a change of syntax table does to it
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn every_change_to_a_table_is_a_new_edition() {
+        let default = SyntaxTable::default();
+        assert_eq!(
+            default.edition(),
+            SyntaxTable::default().edition(),
+            "two default tables are the same table"
+        );
+        assert_eq!(
+            default.clone().edition(),
+            default.edition(),
+            "and so is a copy"
+        );
+        let mut changed = default.clone();
+        changed.set_pairs("<>");
+        let first = changed.edition();
+        assert_ne!(first, default.edition());
+        changed.set_char_quote(Some('\''));
+        assert_ne!(
+            changed.edition(),
+            first,
+            "each change is an edition of its own"
+        );
+        let mut other = SyntaxTable::default();
+        other.set_pairs("<>");
+        assert_ne!(
+            other.edition(),
+            first,
+            "an edition names one table's history: the same change to another is another"
+        );
+    }
+
+    #[test]
+    fn a_syntax_table_change_retires_the_checkpoints_taken_with_the_old_one() {
+        // The text and the mode stay the same: only the table moves, which
+        // used to leave every checkpoint looking as good as new.
+        let (ctx, env) = editor();
+        // A `<` the new table will open a list at, and never close.
+        let text = format!("const A: bool = 1 < 2;\n{}", source());
+        rust_buffer("retabled", &text, &env, &ctx);
+        warm(&ctx, "retabled");
+        let old = ctx.syntax_table("rust-mode");
+
+        run(r#"(set-syntax-pairs 'rust-mode "<>")"#, &env, &ctx);
+        let new = ctx.syntax_table("rust-mode");
+        assert_ne!(old.edition(), new.edition());
+        ctx.with_buffer("retabled", |buf| {
+            let end = buf.text.len();
+            assert!(
+                buf.scan_resume(end, &new).is_none(),
+                "nothing taken with the old table is offered to a scan with the new one"
+            );
+            assert_eq!(
+                sexp::context_at(&buf.text, &new, None, end).depth,
+                1,
+                "and with the new one the file no longer balances"
+            );
+        })
+        .expect("retabled");
+
+        // `syntax-changed` woke the prescanner, which scans again.
+        warm(&ctx, "retabled");
+        ctx.with_buffer("retabled", |buf| {
+            let end = buf.text.len();
+            let shortcut = buf.scan_resume(end, &new);
+            assert!(
+                shortcut.is_some(),
+                "the new table has checkpoints of its own"
+            );
+            assert_eq!(
+                sexp::context_at(&buf.text, &new, shortcut, end),
+                sexp::context_at(&buf.text, &new, None, end),
+                "which answer what a scan from the top answers"
+            );
+        })
+        .expect("retabled");
+    }
+
+    #[test]
+    fn the_prescanner_sleeps_once_every_buffer_is_scanned() {
+        // Woken by changes rather than by a clock: with nothing behind, it
+        // waits, and running the editor's work takes no step at all.
+        let (ctx, env) = editor();
+        rust_buffer("idle", &source(), &env, &ctx);
+        warm(&ctx, "idle");
+        let prescanner = ctx
+            .work()
+            .jobs()
+            .into_iter()
+            .find(|job| job.name == "prescanner")
+            .expect("the editor runs a prescanner");
+        assert_eq!(prescanner.place, Place::Waiting);
+        assert_eq!(
+            ctx.work().run_for(&ctx, Duration::from_secs(10)),
+            0,
+            "ten idle seconds, and not one step"
+        );
     }
 
     // ----------------------------------------------------------------
@@ -443,10 +549,10 @@ mod tests {
     fn a_checkpoint_is_refused_out_of_order() {
         // Each carries on from the one before it, so one written out of order
         // would be a state reached from somewhere nobody can name.
+        let table = SyntaxTable::default();
         let mut cache = ScanCache::default();
-        cache.reset(1, "rust-mode");
+        cache.reset(1, "rust-mode", table.edition());
         let text = GapBuffer::from("(a (b c))");
-        let table = crate::modes::SyntaxTable::default();
         let scan = sexp::Scan::<GapBuffer>::begin(&text, &table, 0, None, 1);
         assert!(
             cache.record(1, scan.snapshot()).is_err(),
@@ -458,22 +564,31 @@ mod tests {
 
     #[test]
     fn a_cache_from_another_version_offers_nothing() {
+        let table = SyntaxTable::default();
         let mut cache = ScanCache::default();
-        cache.reset(1, "rust-mode");
+        cache.reset(1, "rust-mode", table.edition());
         let text = GapBuffer::from("(a (b c))");
-        let table = crate::modes::SyntaxTable::default();
         let scan = sexp::Scan::<GapBuffer>::begin(&text, &table, 0, None, 1);
         cache
             .record(0, scan.snapshot())
             .expect("the first checkpoint");
-        assert!(cache.resume_for("rust-mode", 1, 1000).is_some());
+        let edition = table.edition();
+        assert!(cache.resume_for("rust-mode", 1, edition, 1000).is_some());
         assert!(
-            cache.resume_for("rust-mode", 2, 1000).is_none(),
+            cache.resume_for("rust-mode", 2, edition, 1000).is_none(),
             "another version describes other text"
         );
         assert!(
-            cache.resume_for("other-mode", 1, 1000).is_none(),
+            cache.resume_for("other-mode", 1, edition, 1000).is_none(),
             "another mode reads it with another table"
+        );
+        let mut changed = table.clone();
+        changed.set_pairs("<>");
+        assert!(
+            cache
+                .resume_for("rust-mode", 1, changed.edition(), 1000)
+                .is_none(),
+            "and so does another edition of the same mode's table"
         );
     }
 
@@ -482,7 +597,7 @@ mod tests {
         // The guard that makes a stale or ill-fitting snapshot cost a full scan
         // rather than a wrong answer.
         let text = GapBuffer::from("(a (b c)) (d)");
-        let table = crate::modes::SyntaxTable::default();
+        let table = SyntaxTable::default();
         let mut ahead = sexp::Scan::<GapBuffer>::begin(&text, &table, 0, None, 1);
         ahead.run_to(11);
         let snapshot = ahead.snapshot();

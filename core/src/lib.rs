@@ -72,9 +72,9 @@ pub(crate) mod primitives;
 pub(crate) mod background;
 pub(crate) mod ui;
 // The scheduler that replaces `background`, one piece at a time: see
-// `doc/workmanager.typ`. Every editor builds a WorkManager, but no work runs
-// on it until the jobs move, in the next steps -- so until then the compiler
-// would call most of it dead code, and its re-exports unused.
+// `doc/workmanager.typ`. Every editor colours and prescans on a WorkManager;
+// the rest of its work moves in the next steps, and until then the compiler
+// would call much of the WorkManager dead code, and its re-exports unused.
 #[allow(dead_code, unused_imports)]
 pub(crate) mod work;
 

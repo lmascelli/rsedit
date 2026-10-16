@@ -10,10 +10,10 @@
 //! keystroke path, in the middle of evaluating Lisp, to make a cache work.
 //!
 //! So the shape is the highlighter's, for the highlighter's reasons: a job that
-//! wakes on a timer and does a bounded amount of work, and readers that take
-//! whatever has been worked out and scan the rest themselves. A reader is never
-//! wrong for want of a checkpoint; it is only slower, which is what it was
-//! before this existed.
+//! does a bounded amount of work a step, woken when a buffer or a syntax table
+//! changes, and readers that take whatever has been worked out and scan the
+//! rest themselves. A reader is never wrong for want of a checkpoint; it is
+//! only slower, which is what it was before this existed.
 //!
 //! # Where this departs from the highlighter, and why
 //!
@@ -37,26 +37,48 @@
 //! storing, so the text may have been edited or the buffer put into another
 //! mode in between. A checkpoint is a state reached under one syntax table;
 //! stored under another it is not a shortcut but a wrong answer with a
-//! plausible shape.
+//! plausible shape. So every checkpoint is also stamped with the edition of
+//! the table it was taken with, and a reader scanning with any other table is
+//! not offered it.
 use crate::{
     BufferTrait, EditorState,
-    background::ScheduledTask,
     buffer::scan::checkpoint_line,
     buffer::syntax::LINES_PER_TURN,
+    editor::{BUFFER_CHANGED, SYNTAX_CHANGED},
     modes::{
         SyntaxTable,
         sexp::{Resume, Scan},
     },
+    work::{Class, Job, JobError, Spec, Step, StepContext},
 };
 
-/// Walks whichever buffer's scan has fallen behind, a chunk at a time, forever.
+/// Walks whichever buffer's scan has fallen behind, a chunk at a time, for as
+/// long as one is behind -- then waits for the next change.
 pub struct Prescanner;
 
-impl<B: BufferTrait> ScheduledTask<B> for Prescanner {
-    fn execute(&mut self, state: &EditorState<B>) -> bool {
-        state.prescan_one_turn();
-        // Never finishes, for the reason the highlighter never does.
-        true
+impl Prescanner {
+    /// How it is scheduled: in the high class like the highlighter, since a
+    /// motion is waiting on what it works out, and woken by the same two
+    /// topics -- an edit moves the text under the checkpoints, and a syntax
+    /// table change moves the lexer that took them.
+    pub(crate) fn spec() -> Spec {
+        Spec::new("prescanner")
+            .class(Class::High)
+            .unit("lines")
+            .on(BUFFER_CHANGED)
+            .on(SYNTAX_CHANGED)
+    }
+}
+
+impl<B: BufferTrait> Job<EditorState<B>> for Prescanner {
+    fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
+        match cx.state.prescan_one_turn() {
+            Some((buffer, lines)) => {
+                cx.worked(lines as u64, &buffer);
+                Ok(Step::Continue)
+            }
+            None => Ok(Step::Wait),
+        }
     }
 }
 
@@ -73,6 +95,8 @@ pub(crate) struct PrescanTurn {
     pub(crate) first_index: usize,
     /// The checkpoint before it, which this one carries on from.
     pub(crate) from: Option<Resume>,
+    /// The line it carries on from: where that checkpoint is, or the top.
+    pub(crate) first_line: usize,
     /// The line this turn stops at, whatever it has reached.
     pub(crate) last_line: usize,
 }
@@ -107,15 +131,17 @@ pub(crate) fn checkpoints_of<B: BufferTrait>(turn: &PrescanTurn, text: &B) -> Ve
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Advance one buffer's scan by at most [`LINES_PER_TURN`] lines.
-    pub(crate) fn prescan_one_turn(&self) {
-        let Some(turn) = self.next_prescan_turn() else {
-            return;
-        };
-        let Some(scanned) = self.run_prescan(&turn) else {
-            return;
-        };
-        self.store_prescan(&turn, scanned);
+    /// Advance one buffer's scan by at most [`LINES_PER_TURN`] lines: which
+    /// buffer, and how many lines the turn covered, or nothing when every
+    /// buffer is up to date.
+    pub(crate) fn prescan_one_turn(&self) -> Option<(String, usize)> {
+        let turn = self.next_prescan_turn()?;
+        // A buffer that moved on since the turn was planned is not scanned:
+        // the next turn plans against what it is now.
+        if let Some(scanned) = self.run_prescan(&turn) {
+            self.store_prescan(&turn, scanned);
+        }
+        Some((turn.buffer, turn.last_line - turn.first_line))
     }
 
     /// Run a turn: take the read lock, scan, give it back.
@@ -144,12 +170,16 @@ impl<B: BufferTrait> EditorState<B> {
             if buf.version != turn.version || buf.current_mode != turn.mode {
                 return;
             }
-            if buf.scan.version() != turn.version || buf.scan.mode() != turn.mode {
+            let table = turn.table.edition();
+            if buf.scan.version() != turn.version
+                || buf.scan.mode() != turn.mode
+                || buf.scan.table() != table
+            {
                 // The cache describes something else. This turn started from
                 // index 0 -- `frontier_for` says so in the same case -- so
                 // clearing it is what makes the indices below mean what the
                 // turn thought they meant.
-                buf.scan.reset(turn.version, &turn.mode);
+                buf.scan.reset(turn.version, &turn.mode, table);
             }
             for (index, resume) in scanned {
                 if buf.scan.record(index, resume).is_err() {
@@ -187,7 +217,7 @@ impl<B: BufferTrait> EditorState<B> {
                 return None;
             }
             let line_count = buf.text.line_count();
-            let (first_index, from) = buf.scan.frontier_for(&mode, buf.version);
+            let (first_index, from) = buf.scan.frontier_for(&mode, buf.version, table.edition());
             if checkpoint_line(first_index) >= line_count {
                 return None;
             }
@@ -199,10 +229,11 @@ impl<B: BufferTrait> EditorState<B> {
                 buffer: name.to_string(),
                 version: buf.version,
                 mode,
-                table,
                 first_index,
                 from: from.cloned(),
+                first_line: start_line,
                 last_line: (start_line + LINES_PER_TURN).min(line_count),
+                table,
             })
         })?
     }

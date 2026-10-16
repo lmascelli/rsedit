@@ -193,7 +193,10 @@ mod tests {
         // in the buffer unseen until some key was pressed.
         let (ctx, env) = editor();
         assert!(run("(shell-command-running-p)", &env, &ctx).is_nil());
-        started(r#"(shell-command-start "echo x")"#, &env, &ctx);
+        // A command that lasts. `echo` could be over before the question
+        // below was asked, and on a loaded machine about once in a hundred
+        // runs it was: the count had gone up and come down again.
+        started(r#"(shell-command-start "sleep 0.5")"#, &env, &ctx);
         // Counted before the task is sent, so this is true the instant the
         // primitive returns rather than once the worker gets round to it.
         assert!(!run("(shell-command-running-p)", &env, &ctx).is_nil());

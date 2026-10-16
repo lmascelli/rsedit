@@ -291,7 +291,7 @@ fn sexp_scan(report: &mut Report) {
     // The cache the worker would have built, built here directly: this measures
     // what a warm cache is worth, not how long the worker takes to warm it.
     let mut cache = ScanCache::default();
-    cache.reset(1, "fundamental-mode");
+    cache.reset(1, "fundamental-mode", table.edition());
     let mut scan = sexp::Scan::begin(&text, &table, usize::MAX, None, 1);
     let mut index = 0;
     while checkpoint_line(index) < LINES {
@@ -302,8 +302,14 @@ fn sexp_scan(report: &mut Report) {
             .expect("checkpoints are built in order");
         index += 1;
     }
-    let resume_at =
-        |pos: usize| cache.resume_for("fundamental-mode", 1, text.cursor_1d_to_2d(pos).0);
+    let resume_at = |pos: usize| {
+        cache.resume_for(
+            "fundamental-mode",
+            1,
+            table.edition(),
+            text.cursor_1d_to_2d(pos).0,
+        )
+    };
 
     let cold = time_median(|| {
         assert_eq!(sexp::context_at(&text, &table, None, deep).depth, 0);

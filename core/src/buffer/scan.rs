@@ -72,6 +72,14 @@ pub struct ScanCache {
     /// looks like a right one. Changing a buffer's mode does not touch its
     /// text, so nothing else here would notice.
     mode: String,
+    /// The edition of the syntax table they were computed with: see
+    /// [`crate::modes::SyntaxTable::edition`].
+    ///
+    /// For the same reason as the mode, and because the mode is not enough: a
+    /// mode's table can change while the buffer stays in it, and checkpoints
+    /// taken with the old table looked, to the version and the mode, as good
+    /// as new.
+    table: u64,
     /// `points[i]` enters line `checkpoint_line(i)`.
     points: Vec<Resume>,
     /// How many of `points` describe the current version of the text.
@@ -81,6 +89,11 @@ pub struct ScanCache {
 impl ScanCache {
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// The edition of the syntax table these were computed with.
+    pub fn table(&self) -> u64 {
+        self.table
     }
 
     /// How many checkpoints currently describe the text.
@@ -96,10 +109,12 @@ impl ScanCache {
         }
     }
 
-    /// Forget everything: another version entirely, or another mode.
-    pub fn reset(&mut self, version: u64, mode: &str) {
+    /// Forget everything: another version entirely, another mode or another
+    /// edition of its syntax table.
+    pub fn reset(&mut self, version: u64, mode: &str, table: u64) {
         self.version = version;
         mode.clone_into(&mut self.mode);
+        self.table = table;
         self.points.clear();
         self.valid = 0;
     }
@@ -136,14 +151,15 @@ impl ScanCache {
     }
 
     /// The checkpoint a scan that will be asked about LINE may carry on from,
-    /// when the cache describes this exact text in this exact mode.
+    /// when the cache describes this exact text, in this exact mode, scanned
+    /// with this edition of its table.
     ///
-    /// The version and the mode are checked here rather than trusted from the
-    /// caller because this is the one place a wrong answer could get in, and
-    /// the cost of refusing is a full scan -- the behaviour that existed before
-    /// there was a cache at all.
-    pub fn resume_for(&self, mode: &str, version: u64, line: usize) -> Option<&Resume> {
-        if version != self.version || mode != self.mode {
+    /// The three are checked here rather than trusted from the caller because
+    /// this is the one place a wrong answer could get in, and the cost of
+    /// refusing is a full scan -- the behaviour that existed before there was
+    /// a cache at all.
+    pub fn resume_for(&self, mode: &str, version: u64, table: u64, line: usize) -> Option<&Resume> {
+        if version != self.version || mode != self.mode || table != self.table {
             return None;
         }
         // The checkpoint entering the largest multiple of the interval at or
@@ -160,12 +176,13 @@ impl ScanCache {
     /// What the next turn of the worker should carry on from: the index to
     /// compute, and the snapshot to start it from.
     ///
-    /// Starts over when the cache describes another version or another mode,
-    /// rather than reporting a frontier reached under a table that is no longer
-    /// in force. The worker's store step resets the cache in the same case, so
-    /// the two agree about what index 0 means.
-    pub fn frontier_for(&self, mode: &str, version: u64) -> (usize, Option<&Resume>) {
-        if version != self.version || mode != self.mode {
+    /// Starts over when the cache describes another version, another mode or
+    /// another edition of the table, rather than reporting a frontier reached
+    /// under a table that is no longer in force. The worker's store step
+    /// resets the cache in the same case, so the two agree about what index 0
+    /// means.
+    pub fn frontier_for(&self, mode: &str, version: u64, table: u64) -> (usize, Option<&Resume>) {
+        if version != self.version || mode != self.mode || table != self.table {
             return (0, None);
         }
         (

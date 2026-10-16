@@ -150,10 +150,10 @@ pub struct EditorState<B: BufferTrait> {
     /// Where asynchronous work runs: the scheduler and its executor, the
     /// dedicated threads and what watches them. See [`crate::work`].
     ///
-    /// It takes over from the mailbox above one job at a time, and until the
-    /// first moves nothing runs on it. In this crate's own tests it is in
-    /// manual mode: nothing runs unless the test drives it, so no test is
-    /// raced by a thread it did not ask for.
+    /// It takes over from the mailbox above one job at a time: colouring and
+    /// the prescanner run on it, the rest still goes through the mailbox. In
+    /// this crate's own tests it is in manual mode: nothing runs unless the
+    /// test drives it, so no test is raced by a thread it did not ask for.
     work: WorkManager<EditorState<B>>,
 
     /// Every buffer the editor holds, which one is current, and which were

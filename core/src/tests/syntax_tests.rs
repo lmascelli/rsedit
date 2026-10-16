@@ -7,8 +7,10 @@ mod tests {
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::modes::{Grammar, SyntaxRegion, SyntaxRule, SyntaxState, highlight_line};
     use crate::ui::Face;
+    use crate::work::Place;
     use regex::Regex;
     use std::sync::Arc;
+    use std::time::Duration;
 
     type Ctx = EditorState<GapBuffer>;
 
@@ -496,12 +498,13 @@ mod tests {
         });
     }
 
-    /// Colour the whole buffer by turning the worker's crank directly, rather
-    /// than sleeping and hoping the background thread got there.
+    /// Colour the whole buffer the way the editor does: by running its
+    /// WorkManager, which in a test runs only when told to -- no sleeping and
+    /// hoping a background thread got there. A second of it, on a clock that
+    /// moves when it is told to, is more than the event delay and every turn
+    /// the highlighter asks for.
     fn colour_fully(ctx: &Ctx) {
-        for _ in 0..50 {
-            ctx.highlight_one_turn();
-        }
+        ctx.work().run_for(ctx, Duration::from_secs(1));
     }
 
     fn line_faces(ctx: &Ctx, line: usize) -> Vec<(usize, usize, String)> {
@@ -858,10 +861,33 @@ mod tests {
         colour_fully(&ctx);
         assert_eq!(line_faces(&ctx, 0), vec![(0, 2, "keyword".to_string())]);
 
-        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "other".into());
+        eval_str("(set-major-mode 'other)", &env, &ctx).expect("into the other mode");
         colour_fully(&ctx);
 
         assert_eq!(line_faces(&ctx, 0), vec![(3, 6, "type".to_string())]);
+    }
+
+    #[test]
+    fn the_highlighter_sleeps_once_every_buffer_is_coloured() {
+        // Woken by changes rather than by a clock: with nothing behind, it
+        // waits, and running the editor's work takes no step at all. It used to
+        // wake every 40 ms, for the life of the session, to find that out.
+        let (ctx, env) = editor_with("fn one\nfn two\n");
+        define_toy(&ctx, &env);
+        colour_fully(&ctx);
+        let highlighter = ctx
+            .work()
+            .jobs()
+            .into_iter()
+            .find(|job| job.name == "highlighter")
+            .expect("the editor runs a highlighter");
+        assert_eq!(highlighter.place, Place::Waiting);
+        assert!(highlighter.steps > 0, "and it did colour");
+        assert_eq!(
+            ctx.work().run_for(&ctx, Duration::from_secs(10)),
+            0,
+            "ten idle seconds, and not one step"
+        );
     }
 
     /// A state names regions by their place in the grammar, and remaking a
