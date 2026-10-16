@@ -24,6 +24,7 @@ mod tests {
     use crate::modes::autosave::auto_save_path;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::time::Duration;
 
     type Ctx = EditorState<GapBuffer>;
 
@@ -441,5 +442,61 @@ mod tests {
             "rescued work"
         );
         assert_eq!(sandbox.copy_beside("a.txt"), None);
+    }
+    // ----------------------------------------------------------------
+    // On its own schedule
+    // ----------------------------------------------------------------
+
+    /// SPAN of the editor's work, the clock moved for it rather than waited.
+    fn wait(ctx: &Ctx, span: Duration) {
+        ctx.work().run_for(ctx, span);
+    }
+
+    #[test]
+    fn the_auto_saver_writes_on_its_own_every_interval() {
+        let sandbox = Sandbox::new("own-schedule");
+        let path = sandbox.file("a.txt", "on disk");
+        let (ctx, env) = editor();
+        open(&path, &env, &ctx);
+        run(r#"(insert "UNSAVED ")"#, &env, &ctx);
+
+        wait(&ctx, Duration::from_secs(29));
+        assert_eq!(
+            sandbox.copy_beside("a.txt"),
+            None,
+            "its first write is half a minute in"
+        );
+        wait(&ctx, Duration::from_secs(2));
+        assert_eq!(
+            sandbox.copy_beside("a.txt").as_deref(),
+            Some("UNSAVED on disk")
+        );
+    }
+
+    #[test]
+    fn a_changed_interval_counts_from_the_next_write() {
+        // It used to be read once, before init.lisp had been read, so setting
+        // it there never did anything.
+        let sandbox = Sandbox::new("rhythm");
+        let path = sandbox.file("a.txt", "on disk");
+        let (ctx, env) = editor();
+        open(&path, &env, &ctx);
+        run(r#"(setq auto-save-interval 5) (insert "one ")"#, &env, &ctx);
+        wait(&ctx, Duration::from_secs(31));
+        assert_eq!(sandbox.copy_beside("a.txt").as_deref(), Some("one on disk"));
+
+        run(r#"(insert "two ")"#, &env, &ctx);
+        wait(&ctx, Duration::from_secs(3));
+        assert_eq!(
+            sandbox.copy_beside("a.txt").as_deref(),
+            Some("one on disk"),
+            "not yet: five seconds from the last write"
+        );
+        wait(&ctx, Duration::from_secs(2));
+        assert_eq!(
+            sandbox.copy_beside("a.txt").as_deref(),
+            Some("one two on disk"),
+            "five seconds, not thirty"
+        );
     }
 }

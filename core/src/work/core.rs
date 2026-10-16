@@ -30,6 +30,17 @@ use super::options::Options;
 use super::report::{Reporter, Rule};
 use super::topic::{Topic, Topics};
 
+/// The furthest ahead a deadline is ever set: a year. A job asleep for longer
+/// is asleep for good, as far as anybody can tell, and an `Instant` much
+/// further out may not exist -- adding `Duration::MAX` to one panics, and here
+/// that would happen on the executor's thread, outside any step.
+const FURTHEST: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+
+/// SPAN after NOW, but no further than [`FURTHEST`].
+fn later(now: Instant, span: Duration) -> Instant {
+    now + span.min(FURTHEST)
+}
+
 /// Where a job is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
@@ -242,7 +253,7 @@ impl<C: 'static> Core<C> {
             .collect();
         let (place, deadline) = match spec.start {
             Start::Now => (Place::Ready, None),
-            Start::After(delay) => (Place::Sleeping, Some(now + delay)),
+            Start::After(delay) => (Place::Sleeping, Some(later(now, delay))),
         };
         if place == Place::Ready {
             self.queue(spec.class).push_back(id);
@@ -633,7 +644,7 @@ impl<C: 'static> Core<C> {
             Step::Sleep(span) => {
                 record.job = Some(job);
                 record.place = Place::Sleeping;
-                record.deadline = Some(now + span);
+                record.deadline = Some(later(now, span));
             }
             Step::Wait if record.subscriptions.is_empty() => {
                 let name = record.spec.name.clone();
@@ -646,7 +657,7 @@ impl<C: 'static> Core<C> {
                 record.job = Some(job);
                 record.place = Place::Waiting;
                 record.deadline = match step {
-                    Step::WaitAtMost(span) => Some(now + span),
+                    Step::WaitAtMost(span) => Some(later(now, span)),
                     _ => None,
                 };
                 // Events that arrived during the step mature from now.

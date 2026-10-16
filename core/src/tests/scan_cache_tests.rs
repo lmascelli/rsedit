@@ -512,10 +512,18 @@ mod tests {
             .find(|job| job.name == "prescanner")
             .expect("the editor runs a prescanner");
         assert_eq!(prescanner.place, Place::Waiting);
+        let steps = prescanner.steps;
+        ctx.work().run_for(&ctx, Duration::from_secs(10));
+        let after = ctx
+            .work()
+            .jobs()
+            .into_iter()
+            .find(|job| job.name == "prescanner")
+            .map(|job| job.steps);
         assert_eq!(
-            ctx.work().run_for(&ctx, Duration::from_secs(10)),
-            0,
-            "ten idle seconds, and not one step"
+            after,
+            Some(steps),
+            "ten idle seconds, and not one step of its own"
         );
     }
 

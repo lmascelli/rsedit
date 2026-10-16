@@ -533,29 +533,26 @@ pub fn create_global_env<B: BufferTrait>()
         }
     }
 
-    // The third background job, scheduled here rather than beside the other
-    // two: it looks *outwards*, at whether the files the buffers came from are
-    // still what they were, and both the interval it runs at and the switch
-    // that turns it off are settings -- which means it needs the environment,
-    // and the environment does not exist until here.
-    let _ = editor_state.send_to_worker(WorkerMessage::Schedule {
-        task: Box::new(FileWatcher::new(env.clone())),
-        interval: watch_interval(&env),
-    });
-    // And the fourth: a copy on disk of whatever has not been saved, for the
-    // one loss nothing else in this tier covers -- the editor stopping without
-    // being asked. See `crate::modes::autosave`.
-    let _ = editor_state.send_to_worker(WorkerMessage::Schedule {
-        task: Box::new(AutoSaver::new(env.clone())),
-        interval: auto_save_interval(&env),
-    });
-
     editor_state.eval_file(
         user_config_path
             .to_str()
             .expect("Failed to retrieve a valid String from user_config_path"),
         env.clone(),
     )?;
+
+    // The third background job, submitted here rather than beside the other
+    // two: it looks *outwards*, at whether the files the buffers came from are
+    // still what they were, and both how often it looks and the switch that
+    // turns it off are settings. So it needs the environment, and comes after
+    // `init.lisp`, so that what that says counts from the first look and not
+    // only from the second. It reads both again at every step.
+    let watcher = FileWatcher::new(env.clone());
+    editor_state.work.submit(watcher.spec(), Box::new(watcher));
+    // And the fourth: a copy on disk of whatever has not been saved, for the
+    // one loss nothing else in this tier covers -- the editor stopping without
+    // being asked. Its settings, likewise. See `crate::modes::autosave`.
+    let saver = AutoSaver::new(env.clone());
+    editor_state.work.submit(saver.spec(), Box::new(saver));
 
     Ok((editor_state, env))
 }

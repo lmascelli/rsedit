@@ -3,9 +3,11 @@
 //! # What is worth testing here, and how
 //!
 //! The worker runs on a timer on another thread, which is exactly the shape a
-//! test cannot wait on without being a race. So these do not wait: they drive
-//! the turn the scheduler would drive, one call at a time, and check what one
-//! turn decided.
+//! test cannot wait on without being a race. So these do not wait: most drive
+//! the turn the job takes, one call at a time, and check what one turn
+//! decided. The last few drive the job itself, through the editor's
+//! WorkManager -- which in a test runs only when told to, on a clock that
+//! moves when told to -- to check when it looks.
 //!
 //! The decisions are asymmetric on purpose, and the asymmetry is the whole
 //! feature. A buffer with nothing unsaved is reloaded silently, because that
@@ -628,10 +630,114 @@ mod tests {
         // file between the user and their next colour update. The cursor comes
         // back so the next turn carries on where this one stopped.
         let (ctx, _env) = editor();
-        let next = ctx.watch_files_turn(0);
+        let (next, looked_at) = ctx.watch_files_turn(0);
         assert!(
             next <= crate::modes::watcher::FILES_PER_TURN,
             "a turn advanced the cursor by more than its batch: {next}"
+        );
+        assert!(looked_at <= crate::modes::watcher::FILES_PER_TURN);
+    }
+
+    // ----------------------------------------------------------------
+    // On its own schedule
+    // ----------------------------------------------------------------
+
+    /// SPAN of the editor's work, the clock moved for it rather than waited.
+    fn wait(ctx: &Ctx, span: Duration) {
+        ctx.work().run_for(ctx, span);
+    }
+
+    fn looks(ctx: &Ctx) -> u64 {
+        ctx.work()
+            .jobs()
+            .iter()
+            .find(|job| job.name == "file-watcher")
+            .map(|job| job.steps)
+            .expect("the editor runs a file watcher")
+    }
+
+    #[test]
+    fn the_watcher_looks_on_its_own_every_interval() {
+        let sandbox = Sandbox::new("own-schedule");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        sandbox.rewrite("a.txt", "after");
+
+        wait(&ctx, Duration::from_millis(2900));
+        assert_eq!(
+            text(&ctx, &name),
+            "before",
+            "its first look is three seconds in"
+        );
+        wait(&ctx, Duration::from_millis(200));
+        assert_eq!(text(&ctx, &name), "after");
+    }
+
+    #[test]
+    fn a_changed_interval_counts_from_the_next_look() {
+        // It used to be read once, when the job was scheduled -- before
+        // init.lisp had been read, so setting it there never did anything.
+        let (ctx, env) = editor();
+        run("(setq watch-file-interval 10)", &env, &ctx);
+        wait(&ctx, Duration::from_millis(3100));
+        assert_eq!(looks(&ctx), 1, "the first, at the interval it started with");
+        wait(&ctx, Duration::from_millis(9800));
+        assert_eq!(looks(&ctx), 1, "then ten seconds, not three");
+        wait(&ctx, Duration::from_millis(200));
+        assert_eq!(looks(&ctx), 2);
+    }
+
+    #[test]
+    fn switched_off_it_is_parked_and_switched_on_it_carries_on() {
+        let sandbox = Sandbox::new("parked");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        run("(setq watch-files nil)", &env, &ctx);
+        sandbox.rewrite("a.txt", "after");
+
+        wait(&ctx, Duration::from_secs(7));
+        assert_eq!(
+            text(&ctx, &name),
+            "before",
+            "switched off, it looks at nothing"
+        );
+        run("(setq watch-files t)", &env, &ctx);
+        wait(&ctx, Duration::from_secs(4));
+        assert_eq!(
+            text(&ctx, &name),
+            "after",
+            "and switched on, with no restart"
+        );
+    }
+
+    #[test]
+    fn an_interval_too_long_for_the_clock_does_not_stop_the_watcher() {
+        // A number Lisp accepts and a `Duration` cannot hold. Converting it was
+        // safe only while nothing read it after the editor had booted.
+        let (ctx, env) = editor();
+        run(
+            "(setq watch-file-interval 100000000000000000000000000)",
+            &env,
+            &ctx,
+        );
+        assert!(
+            matches!(run("watch-file-interval", &env, &ctx), LispExp::Number(n) if n > 1e25),
+            "the setting really is a number that large"
+        );
+        wait(&ctx, Duration::from_millis(3100));
+        assert_eq!(
+            looks(&ctx),
+            1,
+            "it looked, and is still there to look again"
+        );
+        assert!(
+            !ctx.get_logs()
+                .iter()
+                .any(|line| line.contains("[BKG] panic")),
+            "{:?}",
+            ctx.get_logs()
         );
     }
 }

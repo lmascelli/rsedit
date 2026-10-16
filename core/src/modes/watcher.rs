@@ -18,13 +18,14 @@
 //! # Why a few files per turn
 //!
 //! Because `stat` is a syscall into a filesystem, and a filesystem can hang.
-//! This runs on the thread that also colours syntax and pre-scans expressions,
-//! so an unbounded sweep would put every open file between the user and their
-//! next colour update. Bounding the batch bounds the damage to
-//! [`FILES_PER_TURN`] stalls per turn instead of one per open buffer.
+//! This runs on the WorkManager's executor, which also colours syntax and
+//! pre-scans expressions, so an unbounded sweep would put every open file
+//! between the user and their next colour update. Bounding the batch bounds
+//! the damage to [`FILES_PER_TURN`] stalls per turn instead of one per open
+//! buffer.
 //!
 //! It does not bound the damage from *one* hung file, and nothing here can:
-//! a `stat` on a dead network mount blocks this thread for as long as it
+//! a `stat` on a dead network mount blocks the executor for as long as it
 //! blocks. The honest mitigations are to turn the watcher off
 //! (`watch-files`), or to give file work a thread of its own -- which is a
 //! different design, and one worth making deliberately rather than arriving at
@@ -39,8 +40,8 @@
 //! left alone, exactly as though it had been modified all along.
 use crate::{
     BufferTrait, EditorState,
-    background::ScheduledTask,
     buffer::{FileStamp, OnDisk, disk::compare},
+    work::{Job, JobError, Spec, Start, Step, StepContext},
 };
 use risp::{Env, LispContext};
 use std::sync::Arc;
@@ -61,10 +62,10 @@ pub const WATCH_FILES: &str = "watch-files";
 
 /// The name of the Lisp variable holding how often it looks, in seconds.
 ///
-/// Read once, when the job is scheduled: the scheduler holds an interval per
-/// job and there is no message that changes one. Changing it takes effect next
-/// time the editor starts, which is the honest thing to say about a setting
-/// nobody changes twice.
+/// Read at every step, as the sleep that follows it: a change counts from the
+/// next look. It used to be read once, when the job was scheduled -- before
+/// `init.lisp` had been evaluated, so the one place anybody sets it was the
+/// one place it could not be set.
 pub const WATCH_FILE_INTERVAL: &str = "watch-file-interval";
 
 /// How often the watcher looks, as Lisp currently has it.
@@ -74,7 +75,9 @@ pub fn watch_interval<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Duratio
     // to feel immediate may have that, and the cost of being wrong is a little
     // idle `stat`ting rather than a disk write.
     match env.number_at_least(WATCH_FILE_INTERVAL, 0.1) {
-        Some(seconds) => Duration::from_secs_f64(seconds),
+        // A number too large for a `Duration` is a very long time -- not a
+        // reason to panic in the middle of a step and stop watching for good.
+        Some(seconds) => Duration::try_from_secs_f64(seconds).unwrap_or(Duration::MAX),
         None => DEFAULT_WATCH_INTERVAL,
     }
 }
@@ -100,8 +103,9 @@ pub fn watching<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
 /// per turn to fix an unfairness nobody can perceive.
 ///
 /// It carries the environment for the same reason a Lisp worker does: the
-/// scheduler holds an `EditorState` and no environment, and the setting that
-/// switches this off lives in the environment. `Env` crosses threads already.
+/// scheduler holds an `EditorState` and no environment, and the settings that
+/// switch this off and pace it live in the environment. `Env` crosses threads
+/// already.
 pub struct FileWatcher<B: BufferTrait> {
     next: usize,
     env: Arc<Env<EditorState<B>>>,
@@ -111,17 +115,29 @@ impl<B: BufferTrait> FileWatcher<B> {
     pub fn new(env: Arc<Env<EditorState<B>>>) -> Self {
         Self { next: 0, env }
     }
+
+    /// How it is scheduled: in the normal class, first looking one interval
+    /// from now -- nothing it could find has had time to change.
+    pub(crate) fn spec(&self) -> Spec {
+        Spec::new("file-watcher")
+            .unit("buffers")
+            .start(Start::After(watch_interval(&self.env)))
+    }
 }
 
-impl<B: BufferTrait> ScheduledTask<B> for FileWatcher<B> {
-    fn execute(&mut self, state: &EditorState<B>) -> bool {
-        // Asked every turn rather than once at the start, so that the setting
-        // means something after the editor has booted.
+impl<B: BufferTrait> Job<EditorState<B>> for FileWatcher<B> {
+    fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
+        // Asked every step rather than once at the start, so that the setting
+        // means something after the editor has booted. Switched off, the job
+        // is parked rather than ended: switching it back on needs no restart.
         if watching(&self.env) {
-            self.next = state.watch_files_turn(self.next);
+            let (next, looked_at) = cx.state.watch_files_turn(self.next);
+            self.next = next;
+            cx.worked(looked_at as u64, "open buffers");
         }
-        // Never finishes: there is always another write coming.
-        true
+        // The interval too: `(setq watch-file-interval 10)` counts from the
+        // next look, not from the next time the editor starts.
+        Ok(Step::Sleep(watch_interval(&self.env)))
     }
 }
 
@@ -157,11 +173,11 @@ pub(crate) struct FileCheck {
 
 impl<B: BufferTrait> EditorState<B> {
     /// Look at up to [`FILES_PER_TURN`] buffers, starting at FROM, and answer
-    /// where the next turn should start.
-    pub(crate) fn watch_files_turn(&self, from: usize) -> usize {
+    /// where the next turn should start and how many it looked at.
+    pub(crate) fn watch_files_turn(&self, from: usize) -> (usize, usize) {
         let names = self.buffer_names();
         if names.is_empty() {
-            return 0;
+            return (0, 0);
         }
         let start = from % names.len();
         let count = FILES_PER_TURN.min(names.len());
@@ -171,7 +187,7 @@ impl<B: BufferTrait> EditorState<B> {
                 self.store_file_check(check);
             }
         }
-        (start + count) % names.len()
+        ((start + count) % names.len(), count)
     }
 
     /// Compare one buffer against its file, and decide -- touching nothing.

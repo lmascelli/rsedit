@@ -883,10 +883,18 @@ mod tests {
             .expect("the editor runs a highlighter");
         assert_eq!(highlighter.place, Place::Waiting);
         assert!(highlighter.steps > 0, "and it did colour");
+        let steps = highlighter.steps;
+        ctx.work().run_for(&ctx, Duration::from_secs(10));
+        let after = ctx
+            .work()
+            .jobs()
+            .into_iter()
+            .find(|job| job.name == "highlighter")
+            .map(|job| job.steps);
         assert_eq!(
-            ctx.work().run_for(&ctx, Duration::from_secs(10)),
-            0,
-            "ten idle seconds, and not one step"
+            after,
+            Some(steps),
+            "ten idle seconds, and not one step of its own"
         );
     }
 

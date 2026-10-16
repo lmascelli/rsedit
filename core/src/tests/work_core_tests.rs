@@ -222,6 +222,35 @@ mod tests {
     }
 
     #[test]
+    fn a_wait_too_long_for_the_clock_is_a_year_not_a_crash() {
+        // `Instant + Duration::MAX` panics, and the core adds a job's answer to
+        // the clock outside the step, where a panic would take the executor
+        // down with every job on it. A sleep, a bounded wait and a delayed
+        // start all land a year out instead.
+        let mut h = harness();
+        let (sleeper, _) = Scripted::new(&h, &[Step::Sleep(Duration::MAX)]);
+        let (waiter, _) = Scripted::new(&h, &[Step::WaitAtMost(Duration::MAX)]);
+        let (late, late_trace) = Scripted::new(&h, &[]);
+        h.core.submit(Spec::new("sleeper"), Box::new(sleeper));
+        h.core.submit(Spec::new("waiter").on("t"), Box::new(waiter));
+        h.core.submit(
+            Spec::new("late").start(Start::After(Duration::MAX)),
+            Box::new(late),
+        );
+
+        h.run_for(ms(10));
+        let year = Duration::from_secs(365 * 24 * 60 * 60);
+        let wakeup = h.core.next_wakeup().expect("each is due some time");
+        assert_eq!(wakeup.duration_since(h.start), year);
+        let places: Vec<Place> = h.core.info().iter().map(|job| job.place).collect();
+        assert_eq!(places, [Place::Sleeping, Place::Waiting, Place::Sleeping]);
+        assert!(
+            wakes(&late_trace).is_empty(),
+            "and the late one is not due yet"
+        );
+    }
+
+    #[test]
     fn a_sleep_counts_from_the_end_of_the_step() {
         let mut h = harness();
         let (job, trace) = Scripted::new(&h, &[Step::Sleep(ms(10)), Step::Sleep(ms(10))]);

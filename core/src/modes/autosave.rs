@@ -31,7 +31,7 @@
 //! modified buffer costs nothing rather than a write every few seconds.
 use crate::{
     BufferTrait, EditorState,
-    background::ScheduledTask,
+    work::{Job, JobError, Spec, Start, Step, StepContext},
 };
 use risp::{Env, LispContext};
 use std::path::{Path, PathBuf};
@@ -48,15 +48,19 @@ pub const DEFAULT_AUTO_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 /// How many buffers one turn may write.
 ///
 /// Smaller than the watcher's batch because the work is bigger: a `stat` is a
-/// syscall, a write is a file. This runs on the thread that also colours
-/// syntax, and a turn that wrote twenty buffers would be twenty writes between
-/// the user and their next colour update.
+/// syscall, a write is a file. This runs on the WorkManager's executor, which
+/// also colours syntax, and a turn that wrote twenty buffers would be twenty
+/// writes between the user and their next colour update.
 pub const BUFFERS_PER_TURN: usize = 4;
 
 /// The name of the Lisp variable that turns auto-saving off.
 pub const AUTO_SAVE: &str = "auto-save";
 
 /// The name of the Lisp variable holding how often it writes, in seconds.
+///
+/// Read at every step, as the sleep that follows it: a change counts from the
+/// next write. It used to be read once, before `init.lisp` had been evaluated,
+/// and so was never what `init.lisp` said.
 pub const AUTO_SAVE_INTERVAL: &str = "auto-save-interval";
 
 /// The name of the Lisp variable naming one directory for every auto-save
@@ -77,7 +81,9 @@ pub fn auto_save_interval<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Dur
     // not spend its time writing: more often than once a second is no longer
     // insurance against a crash, it is the crash.
     match env.number_at_least(AUTO_SAVE_INTERVAL, 1.0) {
-        Some(seconds) => Duration::from_secs_f64(seconds),
+        // A number too large for a `Duration` is a very long time, for the
+        // reason the watcher's is.
+        Some(seconds) => Duration::try_from_secs_f64(seconds).unwrap_or(Duration::MAX),
         None => DEFAULT_AUTO_SAVE_INTERVAL,
     }
 }
@@ -153,16 +159,27 @@ impl<B: BufferTrait> AutoSaver<B> {
     pub fn new(env: Arc<Env<EditorState<B>>>) -> Self {
         Self { next: 0, env }
     }
+
+    /// How it is scheduled: in the normal class, first writing one interval
+    /// from now -- what was typed before then is not worth a copy yet.
+    pub(crate) fn spec(&self) -> Spec {
+        Spec::new("auto-saver")
+            .unit("files")
+            .start(Start::After(auto_save_interval(&self.env)))
+    }
 }
 
-impl<B: BufferTrait> ScheduledTask<B> for AutoSaver<B> {
-    fn execute(&mut self, state: &EditorState<B>) -> bool {
+impl<B: BufferTrait> Job<EditorState<B>> for AutoSaver<B> {
+    fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
+        // Switched off, it is parked rather than ended, as the watcher is.
         if auto_saving(&self.env) {
             let directory = auto_save_directory(&self.env);
-            self.next = state.auto_save_turn(self.next, directory.as_deref());
+            let (next, written) = cx.state.auto_save_turn(self.next, directory.as_deref());
+            self.next = next;
+            cx.worked(written as u64, "auto-save files");
         }
-        // Never finishes: there is always more typing coming.
-        true
+        // Re-read at every step: see `AUTO_SAVE_INTERVAL`.
+        Ok(Step::Sleep(auto_save_interval(&self.env)))
     }
 }
 
@@ -179,21 +196,23 @@ pub(crate) struct AutoSave {
 
 impl<B: BufferTrait> EditorState<B> {
     /// Auto-save up to [`BUFFERS_PER_TURN`] buffers, starting at FROM, and
-    /// answer where the next turn should start.
-    pub(crate) fn auto_save_turn(&self, from: usize, directory: Option<&str>) -> usize {
+    /// answer where the next turn should start and how many copies it wrote.
+    pub(crate) fn auto_save_turn(&self, from: usize, directory: Option<&str>) -> (usize, usize) {
         let names = self.buffer_names();
         if names.is_empty() {
-            return 0;
+            return (0, 0);
         }
         let start = from % names.len();
         let count = BUFFERS_PER_TURN.min(names.len());
+        let mut written = 0;
         for step in 0..count {
             let name = &names[(start + step) % names.len()];
             if let Some(pending) = self.auto_save_for(name, directory) {
                 self.write_auto_save(pending);
+                written += 1;
             }
         }
-        (start + count) % names.len()
+        ((start + count) % names.len(), written)
     }
 
     /// What NAME needs written, or `None` when it needs nothing.
