@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -86,6 +86,9 @@ struct Registry {
     /// One namespace for jobs and threads: a name means one thing, and
     /// stopping it by name stops whichever it is.
     names: HashMap<String, WorkId>,
+    /// The newest work submitted under each name, until it is stopped: kept
+    /// after it finishes, unlike `names`. See [`WorkManager::is_latest`].
+    latest: HashMap<String, WorkId>,
     /// The jobs, with what the executor last published about them.
     jobs: BTreeMap<WorkId, WorkInfo>,
     threads: BTreeMap<WorkId, Dedicated>,
@@ -113,6 +116,7 @@ impl Registry {
         }
         if let Some(job) = self.jobs.remove(&id) {
             self.forget_name(&job.name, id);
+            self.silence(&job.name, id);
             let _ = inbox.send(Msg::Cancel(id));
             return Withdrawn::Job;
         }
@@ -122,6 +126,7 @@ impl Registry {
         thread.asked.get_or_insert_with(Instant::now);
         let (name, stop) = (thread.name.clone(), thread.stop.clone());
         self.forget_name(&name, id);
+        self.silence(&name, id);
         Withdrawn::Thread(name, stop)
     }
 
@@ -139,6 +144,13 @@ impl Registry {
             self.names.remove(name);
         }
     }
+
+    /// ID has been stopped: it is no longer the latest under NAME, if it was.
+    fn silence(&mut self, name: &str, id: WorkId) {
+        if self.latest.get(name) == Some(&id) {
+            self.latest.remove(name);
+        }
+    }
 }
 
 /// What every clone of a WorkManager shares.
@@ -149,6 +161,8 @@ struct Shared<C: 'static> {
     topics: Arc<Topics>,
     /// Where the report lines go: in the editor, its log.
     log: Box<dyn Fn(&str) + Send + Sync>,
+    /// Called after every step: see [`WorkManager::after_step`].
+    after_step: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// Set while a nudge is in the inbox, unread: what makes a burst of
     /// emissions one wake-up.
     nudged: Arc<AtomicBool>,
@@ -201,6 +215,7 @@ impl<C: Send + 'static> WorkManager<C> {
                 options,
                 topics,
                 log,
+                after_step: OnceLock::new(),
                 nudged,
                 inbox,
                 registry: Mutex::default(),
@@ -280,6 +295,7 @@ impl<C: Send + 'static> WorkManager<C> {
             let taken = shared.inbox.send(Msg::Submit(id, spec, job)).is_ok();
             if taken {
                 registry.names.insert(info.name.clone(), id);
+                registry.latest.insert(info.name.clone(), id);
                 registry.jobs.insert(id, info);
             }
             (taken, replaced)
@@ -310,6 +326,7 @@ impl<C: Send + 'static> WorkManager<C> {
             });
             let started = started.map(|handle| {
                 registry.names.insert(name.to_string(), id);
+                registry.latest.insert(name.to_string(), id);
                 registry.threads.insert(
                     id,
                     Dedicated {
@@ -368,6 +385,32 @@ impl<C: Send + 'static> WorkManager<C> {
             .expect("work registry")
             .withdraw_named(name, &shared.inbox);
         shared.finish(withdrawn)
+    }
+
+    /// Have HOOK called after every step, on the thread that took it: how the
+    /// host hears that a job may have changed something it shows, without
+    /// asking. HOOK runs between two steps, so it must be quick and must not
+    /// wait: in the editor it raises a flag and, the first time, sends the
+    /// renderer a message.
+    ///
+    /// Set once, and before the work it is for starts; a second call is
+    /// ignored and answers false.
+    pub fn after_step(&self, hook: impl Fn() + Send + Sync + 'static) -> bool {
+        self.shared.after_step.set(Box::new(hook)).is_ok()
+    }
+
+    /// Whether ID is the newest work submitted under NAME, and has not been
+    /// stopped -- which stays true after it has finished.
+    ///
+    /// What the editor asks before it delivers a callback a job queued: the
+    /// job may have finished since, and its ON-DONE is exactly the call that
+    /// must still be made, but a newer job under the name, or a stop, silences
+    /// it. Answered by the registry, which changes in one step with the work
+    /// it describes, so that two submissions under one name, or a submission
+    /// and a stop, can never leave it naming the wrong one.
+    pub fn is_latest(&self, name: &str, id: WorkId) -> bool {
+        let registry = self.shared.registry.lock().expect("work registry");
+        registry.latest.get(name) == Some(&id)
     }
 
     /// The topic called NAME, made on first use. See [`Topics::get`].
@@ -594,6 +637,19 @@ impl<C: 'static> Shared<C> {
         }
     }
 
+    /// Call the hook set with [`WorkManager::after_step`], if there is one:
+    /// guarded like a step, since it is the host's code on the executor.
+    fn stepped(&self) {
+        if let Some(hook) = self.after_step.get()
+            && let Err(payload) = catch_unwind(AssertUnwindSafe(hook))
+        {
+            (self.log)(&format!(
+                "[BKG] panic: the after-step hook: {}",
+                panic_message(&*payload)
+            ));
+        }
+    }
+
     /// Join the dedicated threads that have finished, and report those still
     /// running `stuck-step` after they were asked to stop.
     fn reap(&self) {
@@ -739,6 +795,11 @@ impl<C: 'static> Executor<C> {
         shared.nudged.swap(false, Ordering::AcqRel);
         let stepped = self.core.run_once(state);
         self.settle(shared);
+        // After the registry has heard who left, so that whoever the hook
+        // wakes finds a job that has finished listed as gone.
+        if stepped {
+            shared.stepped();
+        }
         stepped
     }
 

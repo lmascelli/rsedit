@@ -89,7 +89,10 @@ pub struct StepContext<'a, C> {
     pub state: &'a C,
     /// Why this step is happening.
     pub woken_by: Wake,
+    /// The job's own number: what it was given when it was submitted.
+    pub id: WorkId,
     pub(crate) worked: Option<Worked>,
+    pub(crate) topics: Option<Vec<String>>,
 }
 
 /// How much a step did, and on what. See [`StepContext::worked`].
@@ -111,6 +114,21 @@ impl<C> StepContext<'_, C> {
             units,
             on: on.to_string(),
         });
+    }
+
+    /// From the end of this step, be woken by TOPICS instead of the topics
+    /// the job had: those it was submitted with, or those an earlier step
+    /// named here. They hold until a later step names others. What a Lisp
+    /// `(yield '(wait buffer-changed))` comes down to.
+    ///
+    /// A topic the job was not already subscribed to counts as changed, and
+    /// a waiting job is woken for it, `event-delay` later. The step that named
+    /// it may have looked at the state just before an emission, and the core
+    /// has no count from the start of the step to tell: so the job looks once
+    /// more rather than sleep on work it has to do. Naming the same topics as
+    /// before costs nothing.
+    pub fn subscribe<S: Into<String>>(&mut self, topics: impl IntoIterator<Item = S>) {
+        self.topics = Some(topics.into_iter().map(Into::into).collect());
     }
 }
 

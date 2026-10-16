@@ -36,8 +36,9 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// # Why one capture rather than field-by-field reads
     ///
-    /// See [`FrameSnapshot`]. The short version: `BackgroundScheduler` and
-    /// `(spawn ...)` already mutate this state from other threads, so a
+    /// See [`FrameSnapshot`]. The short version: the WorkManager's jobs, the
+    /// threads of shell commands and `(spawn ...)` already mutate this state
+    /// from other threads, so a
     /// renderer that reads six locks at six different instants can compose a
     /// frame that never existed.
     ///
@@ -55,6 +56,10 @@ impl<B: BufferTrait> EditorState<B> {
         screen_width: usize,
         screen_height: usize,
     ) -> FrameSnapshot {
+        // First of all, before anything is read: whatever the jobs changed up
+        // to here is in this frame, and a step that ends while it is being
+        // composed raises the flag again, to be drawn in the next one.
+        self.background_change.taken();
         // Read *before* the first editor lock is taken. The environment has
         // locks of its own, and taking one while holding an editor lock would
         // add an edge to the ordering below that nothing else respects.
@@ -289,9 +294,17 @@ impl<B: BufferTrait> EditorState<B> {
     /// # Why the renderer asks rather than decides
     ///
     /// Almost everything on screen changes because the user did something, so a
-    /// renderer can draw, block on input, and be right. Two things do not: an
-    /// echo message that expires on a timer, and colour that arrives from the
-    /// highlighter's thread. A renderer blocked on input sleeps through both.
+    /// renderer can draw, block on input, and be right. A few things do not:
+    /// an echo message that expires on a timer, colour that arrives from the
+    /// highlighter, output from a shell command, and anything else a job in
+    /// the background changes. A renderer blocked on input sleeps through all
+    /// of them.
+    ///
+    /// The last is the one a timer cannot cover, since nothing says when a
+    /// job will next change something. So a host that waits for input also
+    /// registers [`Self::on_background_change`], which wakes it when a step
+    /// ends -- and then asks here, like at any other wake-up, and is told how
+    /// long until that change should be drawn.
     ///
     /// Which of those are outstanding, and how soon each matters, are questions
     /// about the editor, not about drawing -- so they are answered here and the
@@ -323,16 +336,26 @@ impl<B: BufferTrait> EditorState<B> {
         // Work on the worker that changes what is on screen is the same
         // situation: results arrive and nobody has pressed a key.
         let background = (self.background_work_running() > 0).then_some(TURN_INTERVAL);
+        // A job on the WorkManager has changed something since the frame was
+        // composed: draw it, a turn after the last frame at the soonest.
+        let stepped = self.background_change.due_in();
         // A callback a job has already left is not something to wait for: it
         // is something to do, and the loop does it the moment it is told the
         // wait is over. Zero rather than the interval, because the work is
         // ready now and a mode waiting to be told its list grew should not
         // spend a frame's worth of time not knowing.
         let owed = self.callbacks_owed().then_some(Duration::ZERO);
-        [self.echo_expiry_in(env), colouring, shell, background, owed]
-            .into_iter()
-            .flatten()
-            .min()
+        [
+            self.echo_expiry_in(env),
+            colouring,
+            shell,
+            background,
+            stepped,
+            owed,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// Set the echo message to be MSG, and start its timeout running.

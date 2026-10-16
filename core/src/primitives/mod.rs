@@ -107,6 +107,7 @@ mod general;
 mod help;
 pub(crate) mod io;
 mod isearch;
+pub(crate) mod lisp_job;
 mod macros;
 mod match_data;
 mod minibuffer;

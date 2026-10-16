@@ -13,7 +13,7 @@
 //! No care in the callback fixes that, because the callback is not what is
 //! wrong. So a job does not call; it leaves a note saying what should be
 //! called, and the note is read where a keystroke would be read. See
-//! [`crate::background::worker::BackgroundJob`] for the rule this is the machinery for.
+//! [`crate::primitives::lisp_job`] for the rule this is the machinery for.
 //!
 //! # Why it is a field and not a compartment
 //!
@@ -26,25 +26,25 @@ use super::*;
 
 /// One call a job has asked for, waiting for the command thread.
 pub(crate) struct OwedCallback<B: BufferTrait> {
-    /// The job that asked, so that a job superseded since can be dropped.
+    /// The job that asked, so that one replaced or stopped since can be
+    /// dropped.
     name: String,
-    generation: u64,
+    id: WorkId,
     function: ELispExp<B>,
     args: Vec<ELispExp<B>>,
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Note that the job born as GENERATION of NAME wants FUNCTION called
-    /// with ARGS.
+    /// Note that job ID, running under NAME, wants FUNCTION called with ARGS.
     ///
-    /// Called from the worker thread. It does not call anything, take a lock
-    /// anyone is holding, or wake anybody: the renderer is already awake
-    /// while a job is running, and [`Self::callbacks_owed`] keeps it awake
-    /// for the moment between the last turn and the drain.
+    /// Called from the executor. It does not call anything, take a lock
+    /// anyone is holding, or wake anybody itself: the step it is called from
+    /// wakes the renderer when it ends, and [`Self::callbacks_owed`] tells
+    /// the renderer, once awake, that there is something to do now.
     pub(crate) fn owe_callback(
         &self,
         name: &str,
-        generation: u64,
+        id: WorkId,
         function: ELispExp<B>,
         args: Vec<ELispExp<B>>,
     ) {
@@ -53,7 +53,7 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("write lock on owed callbacks")
             .push(OwedCallback {
                 name: name.to_string(),
-                generation,
+                id,
                 function,
                 args,
             });
@@ -62,9 +62,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// Whether anything is waiting to be run.
     ///
     /// Asked by [`Self::next_redraw_in`]. A job that has queued its last
-    /// callback and then finished has taken the editor's count of running
-    /// work to zero, and without this the renderer would decide there was
-    /// nothing left to wait for and sleep on the note.
+    /// callback has finished, and nothing else would tell a renderer that
+    /// there is still something to do for it: without this the renderer
+    /// would draw the frame its step changed and sleep on the note.
     pub fn callbacks_owed(&self) -> bool {
         !self
             .owed
@@ -101,17 +101,15 @@ impl<B: BufferTrait> EditorState<B> {
         }
         let mut ran = false;
         for callback in owed {
-            // Dropped rather than run when a newer job has taken the name.
-            // Running it would tell a mode that the job it is now waiting for
-            // had finished, with the previous job's half-built state as the
-            // evidence.
+            // Dropped rather than run when a newer job has taken the name, or
+            // the job was stopped. Running it would tell a mode that the job
+            // it is now waiting for had finished, with the previous job's
+            // half-built state as the evidence.
             //
-            // The question is "is this still the newest", not "is this still
-            // running": a job that has finished is precisely the one whose
-            // callback has to be delivered.
-            if !self
-                .runtime(|runtime| runtime.worker_is_latest(&callback.name, callback.generation))
-            {
+            // The question is "does this job still speak for its name", not
+            // "is it still running": a job that has finished is precisely the
+            // one whose callback has to be delivered.
+            if !self.work.is_latest(&callback.name, callback.id) {
                 continue;
             }
             ran = true;

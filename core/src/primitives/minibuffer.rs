@@ -510,7 +510,7 @@ primitive!(minibuffer_read, args, env, ctx, {
     //
     // A worker that genuinely needs an answer asks for it the way anything
     // else asynchronous does: it leaves something for a command to find.
-    if crate::background::worker::in_worker() {
+    if crate::editor::in_worker() {
         return Err(EvalError::RuntimeMessage(
             "minibuffer-read: a background worker cannot open a prompt".into(),
         ));

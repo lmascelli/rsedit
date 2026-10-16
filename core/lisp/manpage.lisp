@@ -320,10 +320,11 @@ up somewhere around 4,500 names."
 (defun manpage--index-fiber (for-path)
   "A fiber that fills `manpage--names' for FOR-PATH, a directory at a time.
 
-One directory per `(yield)', which is what makes the list grow visibly rather
+One directory per `yield', which is what makes the list grow visibly rather
 than appearing whole at the end: a yield is a progress point, and the progress
 callback is what tells a prompt that has the list open that there is more of
-it.
+it. It yields `continue': the next directory as soon as the job's turn comes
+round, rather than a plain yield's pause, since there is nothing to wait for.
 
 FOR-PATH is carried rather than read from `manpage-path' each time round,
 because they can stop being the same thing: the user may set the path while
@@ -344,7 +345,7 @@ longer the answer to any question."
              (setq left (cdr left))
              ;; Published as it grows, not at the end.
              (setq manpage--names gathered)
-             (yield)))))))
+             (yield 'continue)))))))
 
 (defun manpage--index-progress (name)
   "Another directory's worth of page names is in the list.

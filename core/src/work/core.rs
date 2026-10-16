@@ -541,10 +541,13 @@ impl<C: 'static> Core<C> {
         let mut cx = StepContext {
             state,
             woken_by,
+            id,
             worked: None,
+            topics: None,
         };
         let result = catch_unwind(AssertUnwindSafe(|| job.step(&mut cx)));
         let worked = cx.worked.take();
+        let topics = cx.topics.take();
         let ended = self.clock.now();
         let took = ended.saturating_duration_since(started);
 
@@ -561,7 +564,10 @@ impl<C: 'static> Core<C> {
             return;
         }
         match result {
-            Ok(Ok(step)) => self.apply(id, job, step, ended),
+            Ok(Ok(step)) => {
+                let fresh = topics.is_some_and(|names| self.resubscribe(id, names));
+                self.apply(id, job, step, ended, fresh);
+            }
             Ok(Err(JobError(message))) => {
                 self.reporter
                     .always(format!("[BKG] error: {name}: {message}"));
@@ -611,12 +617,19 @@ impl<C: 'static> Core<C> {
         self.load.record(started, started + took, name);
 
         if took > self.options.long_step() {
+            // A job may say how much it did without saying on what: a Lisp
+            // job counts the fuel it spent, and has no file to name.
+            let on = |on: &str| match on {
+                "" => String::new(),
+                on => format!(" on {on}"),
+            };
             let what = match worked {
-                Some(Worked { units, on }) if units > 0 => format!(
-                    " on {on} ({units} {unit}, {} ms each)",
-                    took.as_millis() / u128::from(units)
+                Some(Worked { units, on: what }) if units > 0 => format!(
+                    "{} ({units} {unit}, {} each)",
+                    on(&what),
+                    per_unit(took, units)
                 ),
-                Some(Worked { on, .. }) => format!(" on {on}"),
+                Some(Worked { on: what, .. }) => on(&what),
                 None => String::new(),
             };
             let line = format!("[BKG] long step: {name}, {} ms{what}", took.as_millis());
@@ -625,8 +638,47 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Put job ID back where its answer STEP says.
-    fn apply(&mut self, id: WorkId, job: Box<dyn Job<C>>, step: Step, now: Instant) {
+    /// Make NAMES the topics of job ID, as its step asked: a topic it already
+    /// had keeps the count it last saw, a new one starts from now. True when
+    /// one of them is new -- see [`StepContext::subscribe`] for why that
+    /// counts as a change.
+    fn resubscribe(&mut self, id: WorkId, names: Vec<String>) -> bool {
+        let topics = &self.topics;
+        let Some(record) = self.jobs.get_mut(&id) else {
+            return false;
+        };
+        let mut old = std::mem::take(&mut record.subscriptions);
+        let mut fresh = false;
+        for name in names {
+            if record
+                .subscriptions
+                .iter()
+                .any(|subscription| subscription.topic.name() == name)
+            {
+                continue;
+            }
+            let subscription = match old
+                .iter()
+                .position(|subscription| subscription.topic.name() == name)
+            {
+                Some(at) => old.swap_remove(at),
+                None => {
+                    fresh = true;
+                    let topic = topics.get(&name);
+                    Subscription {
+                        seen: topic.count(),
+                        topic,
+                    }
+                }
+            };
+            record.subscriptions.push(subscription);
+        }
+        fresh
+    }
+
+    /// Put job ID back where its answer STEP says. FRESH: the step named a
+    /// topic the job did not have, which counts as a change.
+    fn apply(&mut self, id: WorkId, job: Box<dyn Job<C>>, step: Step, now: Instant, fresh: bool) {
         let delay = self.options.event_delay();
         let record = self
             .jobs
@@ -661,7 +713,7 @@ impl<C: 'static> Core<C> {
                     _ => None,
                 };
                 // Events that arrived during the step mature from now.
-                record.event_due = record.has_unseen_events().then(|| now + delay);
+                record.event_due = (fresh || record.has_unseen_events()).then(|| now + delay);
             }
             Step::Done => self.leave(id, job, Exit::Finished),
         }
@@ -722,6 +774,19 @@ impl<C: 'static> Core<C> {
                 .report("executor", Rule::Load, share, line, now);
         }
         self.reporter.tick(now, self.options.summary_every());
+    }
+}
+
+/// TOOK shared out over UNITS, at least one: in milliseconds, or in micro- or
+/// nanoseconds when there is less than a millisecond each. A line of colour
+/// costs milliseconds; a step of fuel costs a fraction of a microsecond, and
+/// "0 ms each" would say nothing.
+fn per_unit(took: Duration, units: u64) -> String {
+    let each = took.as_nanos() / u128::from(units);
+    match each {
+        1_000_000.. => format!("{} ms", each / 1_000_000),
+        1_000.. => format!("{} µs", each / 1_000),
+        _ => format!("{each} ns"),
     }
 }
 

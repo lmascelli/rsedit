@@ -476,6 +476,158 @@ mod tests {
         assert_eq!(at(&h), Some(ms(20)), "the event matures first");
     }
 
+    /// A job that names its topics from inside its steps, as a Lisp job does
+    /// with `(yield '(wait ...))`: each step subscribes to the topics of its
+    /// plan, if it has any, and answers the plan's step.
+    struct Resubscribing {
+        plan: VecDeque<(Option<Vec<&'static str>>, Step)>,
+        then: (Option<Vec<&'static str>>, Step),
+        trace: Arc<Mutex<Trace>>,
+        clock: Arc<ManualClock>,
+        start: Instant,
+    }
+
+    impl Resubscribing {
+        fn new(
+            h: &Harness,
+            plan: Vec<(Option<Vec<&'static str>>, Step)>,
+            then: (Option<Vec<&'static str>>, Step),
+        ) -> (Self, Arc<Mutex<Trace>>) {
+            let trace = Arc::new(Mutex::new(Trace::default()));
+            let job = Self {
+                plan: plan.into(),
+                then,
+                trace: trace.clone(),
+                clock: h.clock.clone(),
+                start: h.start,
+            };
+            (job, trace)
+        }
+    }
+
+    impl Job<()> for Resubscribing {
+        fn step(&mut self, cx: &mut StepContext<'_, ()>) -> Result<Step, JobError> {
+            let at = crate::work::Clock::now(&*self.clock) - self.start;
+            self.trace.lock().unwrap().steps.push((cx.woken_by, at));
+            let (topics, step) = self.plan.pop_front().unwrap_or_else(|| self.then.clone());
+            if let Some(topics) = topics {
+                cx.subscribe(topics);
+            }
+            Ok(step)
+        }
+
+        fn exit(&mut self, _state: &(), why: Exit) {
+            self.trace.lock().unwrap().exits.push(why);
+        }
+    }
+
+    #[test]
+    fn a_step_names_the_topics_that_wake_it_from_then_on() {
+        let mut h = harness();
+        let mine = h.topics.get("mine");
+        let other = h.topics.get("other");
+        let (job, trace) = Resubscribing::new(
+            &h,
+            vec![(Some(vec!["mine"]), Step::Wait)],
+            (Some(vec!["mine"]), Step::Wait),
+        );
+        h.core
+            .submit(Spec::new("listener").on("other"), Box::new(job));
+
+        h.run_for(ms(1_000));
+        assert_eq!(
+            wakes(&trace),
+            [Wake::Start, Wake::Event],
+            "a topic it did not have counts as changed: one more look, then it waits"
+        );
+        assert_eq!(times(&trace)[1], ms(20), "event-delay after the step");
+
+        other.emit();
+        h.run_for(ms(1_000));
+        assert_eq!(
+            wakes(&trace).len(),
+            2,
+            "the topic it was submitted with is gone"
+        );
+        mine.emit();
+        h.run_for(ms(1_000));
+        assert_eq!(wakes(&trace).len(), 3, "and the one it named wakes it");
+    }
+
+    #[test]
+    fn naming_the_topics_it_has_costs_no_step() {
+        // The steady state of a Lisp job that always waits the same way.
+        let mut h = harness();
+        let mine = h.topics.get("mine");
+        let (job, trace) = Resubscribing::new(&h, vec![], (Some(vec!["mine", "mine"]), Step::Wait));
+        h.core.submit(Spec::new("steady").on("mine"), Box::new(job));
+
+        h.run_for(ms(1_000));
+        assert_eq!(
+            wakes(&trace),
+            [Wake::Start],
+            "nothing new, so nothing to look at"
+        );
+        mine.emit();
+        h.run_for(ms(1_000));
+        assert_eq!(wakes(&trace), [Wake::Start, Wake::Event]);
+    }
+
+    #[test]
+    fn an_event_during_the_step_that_resubscribes_is_not_lost() {
+        // The count a topic it keeps was last seen at is from before the step,
+        // as for any job: an emission while it ran still wakes it.
+        let mut h = harness();
+        let mine = h.topics.get("mine");
+        struct EmitsThenWaits(Topic, Arc<Mutex<usize>>);
+        impl Job<()> for EmitsThenWaits {
+            fn step(&mut self, cx: &mut StepContext<'_, ()>) -> Result<Step, JobError> {
+                let mut steps = self.1.lock().unwrap();
+                *steps += 1;
+                if *steps == 1 {
+                    self.0.emit();
+                }
+                cx.subscribe(["mine"]);
+                Ok(Step::Wait)
+            }
+        }
+        let steps = Arc::new(Mutex::new(0));
+        h.core.submit(
+            Spec::new("racer").on("mine"),
+            Box::new(EmitsThenWaits(mine.clone(), steps.clone())),
+        );
+        h.run_for(ms(1_000));
+        assert_eq!(*steps.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn subscribing_to_nothing_and_waiting_fails_the_job() {
+        let mut h = harness();
+        let (job, trace) = Resubscribing::new(&h, vec![], (Some(vec![]), Step::Wait));
+        h.core.submit(Spec::new("deaf").on("mine"), Box::new(job));
+        h.run_for(ms(100));
+        assert_eq!(exits(&trace), [Exit::Failed]);
+    }
+
+    #[test]
+    fn a_step_knows_its_own_number() {
+        let mut h = harness();
+        struct Numbered(Arc<Mutex<Option<WorkId>>>);
+        impl Job<()> for Numbered {
+            fn step(&mut self, cx: &mut StepContext<'_, ()>) -> Result<Step, JobError> {
+                *self.0.lock().unwrap() = Some(cx.id);
+                Ok(Step::Done)
+            }
+        }
+        let seen = Arc::new(Mutex::new(None));
+        let id = h
+            .core
+            .submit(Spec::new("numbered"), Box::new(Numbered(seen.clone())))
+            .expect("taken");
+        h.turn();
+        assert_eq!(*seen.lock().unwrap(), Some(id));
+    }
+
     // -- stopping -------------------------------------------------------------
 
     #[test]
@@ -594,6 +746,45 @@ mod tests {
             reports[0].starts_with("[BKG] summary: highlighter, ")
                 && reports[0].ends_with("long steps in the last 10 s (worst 90 ms)"),
             "{reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_long_step_counted_in_something_cheap_gives_a_cost_that_says_something() {
+        // A Lisp job counts fuel, which costs a fraction of a microsecond a
+        // step, and names no file: "0 ms each on" would say nothing at all.
+        let mut h = harness();
+        let (job, _) = Scripted::new(&h, &[Step::Done]);
+        h.core.submit(
+            Spec::new("manpage-index").unit("fuel"),
+            Box::new(job.taking(ms(50)).working(200_000, "")),
+        );
+        assert!(h.turn());
+        assert_eq!(
+            h.reports(),
+            ["[BKG] long step: manpage-index, 50 ms (200000 fuel, 250 ns each)"]
+        );
+
+        let (job, _) = Scripted::new(&h, &[Step::Done]);
+        h.core.submit(
+            Spec::new("indexer").unit("files"),
+            Box::new(job.taking(ms(45)).working(9, "src")),
+        );
+        assert!(h.turn());
+        assert_eq!(
+            h.reports(),
+            ["[BKG] long step: indexer, 45 ms on src (9 files, 5 ms each)"]
+        );
+
+        let (job, _) = Scripted::new(&h, &[Step::Done]);
+        h.core.submit(
+            Spec::new("scanner").unit("lines"),
+            Box::new(job.taking(ms(42)).working(4_200, "big.c")),
+        );
+        assert!(h.turn());
+        assert_eq!(
+            h.reports(),
+            ["[BKG] long step: scanner, 42 ms on big.c (4200 lines, 10 µs each)"]
         );
     }
 

@@ -40,6 +40,7 @@ mod indent_tests;
 mod isearch_tests;
 mod layering_tests;
 mod line_number_tests;
+mod lisp_job_tests;
 mod log_tests;
 mod macro_tests;
 mod manpage_tests;

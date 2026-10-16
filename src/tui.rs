@@ -1,7 +1,7 @@
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
     KeyCode as CrossKeyCode, KeyEventKind, KeyModifiers as CrossModifiers,
-    MouseButton as CrossMouseButton, MouseEventKind as CrossMouseKind, poll, read,
+    MouseButton as CrossMouseButton, MouseEventKind as CrossMouseKind, read,
 };
 use crossterm::{
     QueueableCommand, cursor, execute,
@@ -21,7 +21,10 @@ use rsedit_core::{Env, LispContext};
 use rsedit_core::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind};
 use std::{
     io::{Write, stdout},
-    sync::Arc,
+    sync::{
+        Arc,
+        mpsc::{self, RecvTimeoutError, Sender},
+    },
 };
 
 /// A crossterm mouse event as the editor's own.
@@ -677,6 +680,46 @@ fn draw_window_border<W: Write>(
     Ok(())
 }
 
+/// What wakes the event loop.
+enum Wakeup {
+    /// An event read from the terminal, or the error reading ended with.
+    Terminal(std::io::Result<Event>),
+    /// A job in the background has changed something since the last frame
+    /// was composed: ask the editor again how long to wait.
+    Background,
+}
+
+/// Read the terminal on a thread of its own, sending what it reads to SINK.
+///
+/// # Why a thread
+///
+/// The loop waits for two things at once: the terminal, and the work in the
+/// background. crossterm can wait for the first with a timeout, but nothing
+/// can cut that wait short from another thread -- so a file the watcher
+/// reloaded stayed as it was on screen until a key was pressed. A thread that
+/// does nothing but read turns the terminal into messages, and the loop waits
+/// on one channel for both.
+///
+/// crossterm has one reader of events, and this thread holds it while it
+/// waits, so nothing else may ask for an event -- nothing else does. The
+/// thread is never joined: it ends at its first error, or at the first event
+/// after the loop has gone, and at exit it is still waiting and goes with the
+/// process.
+fn read_terminal(sink: Sender<Wakeup>) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("terminal input".into())
+        .spawn(move || {
+            loop {
+                let event = read();
+                let failed = event.is_err();
+                if sink.send(Wakeup::Terminal(event)).is_err() || failed {
+                    break;
+                }
+            }
+        })
+        .map(drop)
+}
+
 pub fn tui_main<B: BufferTrait>(
     state: &EditorState<B>,
     env: Arc<Env<EditorState<B>>>,
@@ -709,6 +752,17 @@ pub fn tui_main<B: BufferTrait>(
     // reporting the mouse to an editor that has stopped listening.
     let mut capturing = false;
 
+    // Everything the loop waits for arrives here: what the terminal sends,
+    // read on a thread of its own, and word from the editor that a job has
+    // changed something.
+    let (wakeups, inbox) = mpsc::channel();
+    read_terminal(wakeups.clone())?;
+    state.on_background_change(move || {
+        // Only a message: the loop composes the frame, on its own thread, and
+        // the editor says when. Nothing to do if the loop has gone.
+        let _ = wakeups.send(Wakeup::Background);
+    });
+
     // Whether anything has happened that the screen does not already show.
     //
     // # Why the loop is not simply "draw, then wait"
@@ -723,12 +777,20 @@ pub fn tui_main<B: BufferTrait>(
     // So an event that changed nothing leaves this false, and the next pass
     // goes straight back to waiting without composing or drawing anything.
     let mut dirty = true;
+    // Whether the next frame is drawn even if it is the frame already on
+    // screen: after anything the user did, as it always has been, so that a
+    // key is all it takes to repaint a terminal something else has scribbled
+    // on. A frame composed because time passed -- a job's step, colour
+    // arriving, a message expiring -- is drawn only if it differs: a watcher
+    // that finds nothing changed every few seconds, or a worker that wakes to
+    // look every 40 ms, must not repaint an idle screen.
+    let mut forced = true;
     let (cols, rows) = terminal::size()?;
     let mut frame = state.snapshot(&env, cols as usize, rows as usize);
 
     while state.is_running() {
         // Before the frame rather than after: a capture switched on here is on
-        // for the click that comes with this loop's `read`.
+        // for the click that comes with this loop's wait.
         let wanted = mouse_mode(&env);
         if wanted != capturing {
             if wanted {
@@ -742,47 +804,71 @@ pub fn tui_main<B: BufferTrait>(
             let (cols, rows) = terminal::size()?;
             // Capture, then draw. Two steps on purpose: the capture holds locks
             // and does no I/O, the draw does I/O and holds no locks.
-            frame = state.snapshot(&env, cols as usize, rows as usize);
-            render_frame(&frame, depth)?;
+            let next = state.snapshot(&env, cols as usize, rows as usize);
+            // A frame carrying text for the clipboard is always drawn: the
+            // capture took the text from the editor, and this is its only
+            // way out.
+            if forced || next != frame || next.clipboard.is_some() {
+                render_frame(&next, depth)?;
+            }
+            frame = next;
             dirty = false;
+            forced = false;
         }
 
         // Some things change the screen without the user doing anything -- an
         // echo message expiring on its timer, colour arriving from the
-        // highlighter's thread -- and blocking on `read` alone sleeps straight
-        // through them. Which of those are outstanding is a question about the
-        // editor, so it answers it; this loop only has to wait no longer than
-        // it is told and redraw when nothing arrives.
+        // highlighter, a file the watcher reloaded -- and waiting for the
+        // terminal alone sleeps straight through them. Which of those are
+        // outstanding is a question about the editor, so it answers it; this
+        // loop only has to wait no longer than it is told and redraw when
+        // nothing arrives. A job that changes something sends a message as
+        // well, which ends the wait early so the question can be asked again.
         //
         // Still event-driven: with nothing pending the answer is `None` and
-        // this blocks indefinitely, so an idle editor wakes for nothing at all.
-        // The soonest of the things the editor has asked to be woken for: a
-        // message going stale, colour arriving from the highlighter, or a
-        // selection being dragged past the edge of its window. A pointer held
-        // still sends nothing, so that last one can only be a timer.
+        // this waits indefinitely, so an idle editor wakes for nothing at all.
+        // A pointer held still sends nothing, so a selection dragged past the
+        // edge of its window can only be a timer too.
         let wake = [state.next_redraw_in(&env, &frame), state.drag_scroll_in()]
             .into_iter()
             .flatten()
             .min();
-        if let Some(remaining) = wake
-            && !poll(remaining)?
-        {
-            // The timer expired rather than an event arriving, so whatever the
-            // editor was waiting on is now due: a selection dragged past the
-            // edge of its window, a callback a background job left for the
-            // thread that runs commands. What they are is the editor's
-            // business -- this only has to say that the wait is over.
-            state.tick(&env);
-            dirty = true;
-            continue;
-        }
+        let wakeup = match wake {
+            Some(remaining) => match inbox.recv_timeout(remaining) {
+                Ok(wakeup) => wakeup,
+                // The timer expired rather than anything arriving, so
+                // whatever the editor was waiting on is now due: a selection
+                // dragged past the edge of its window, a callback a background
+                // job left for the thread that runs commands, a frame for
+                // what a job changed. What they are is the editor's business
+                // -- this only has to say that the wait is over.
+                Err(RecvTimeoutError::Timeout) => {
+                    state.tick(&env);
+                    dirty = true;
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+            },
+            // Not while the editor holds the sender it was given above.
+            None => match inbox.recv() {
+                Ok(wakeup) => wakeup,
+                Err(_) => break,
+            },
+        };
 
-        match read()? {
+        let event = match wakeup {
+            // Back to the top, where the editor says how long until the
+            // change should be drawn.
+            Wakeup::Background => continue,
+            Wakeup::Terminal(event) => event?,
+        };
+        match event {
             Event::Key(key_event) => match translate_key(key_event) {
                 Some(event) => {
                     if key_event.kind == KeyEventKind::Press {
                         state.handle_key_event(event, &env);
                         dirty = true;
+                        forced = true;
                     }
                 }
                 None => state.log_diagnostic(&format!(
@@ -794,11 +880,13 @@ pub fn tui_main<B: BufferTrait>(
             Event::Resize(width, height) => {
                 state.resize(env.clone(), width as usize, height as usize);
                 dirty = true;
+                forced = true;
             }
 
             Event::Paste(text) => {
                 state.handle_paste(text, &env);
                 dirty = true;
+                forced = true;
             }
 
             Event::Mouse(mouse_event) => {
@@ -809,6 +897,7 @@ pub fn tui_main<B: BufferTrait>(
                     && state.handle_mouse_event(event, &env)
                 {
                     dirty = true;
+                    forced = true;
                 }
             }
 

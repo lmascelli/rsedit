@@ -365,24 +365,29 @@
 ;; buffer and marks it modified, so you can look before deciding: `C-x C-s'
 ;; keeps it and deletes the copy, `M-x revert-buffer' throws it away.
 
-;; Background workers. `define-worker' runs a fiber on the same timer syntax
-;; colouring runs on, resuming it once per turn:
+;; Background workers. `define-worker' runs a fiber on the scheduler syntax
+;; colouring runs on, resuming it once per step:
 ;;
 ;;   (define-worker 'indexer
 ;;     (fiber (while t
-;;              (if (index--stale-p) (index--one-chunk))
-;;              (yield))))
+;;              (if (index--stale-p)
+;;                  (progn (index--one-chunk) (yield 'continue))
+;;                (yield '(wait buffer-changed))))))
 ;;
 ;; The `yield' is the whole contract: it is where the worker is willing to be
-;; put down, and everything between two of them is one turn's work. A turn has
-;; its own budget -- `worker-fuel' -- separate from the one commands run under,
-;; so nothing you type can cut a worker short and no worker can spend your
-;; budget. A turn that never reaches a `yield' is stopped and the worker
-;; retired, because the thread it holds is the one colouring runs on.
+;; put down, and everything between two of them is one step's work. What it
+;; yields says when the next step comes -- at once, after a sleep, or when an
+;; event it names is emitted; a plain (yield) waits 40 ms. See `define-worker'
+;; for the table. A step has its own budget -- `worker-fuel' -- separate from
+;; the one commands run under, so nothing you type can cut a worker short and
+;; no worker can spend your budget. A step that never reaches a `yield' is
+;; stopped and the worker with it, because the thread it holds is the one
+;; colouring runs on.
 ;;
-;; `M-x list-workers' says which are running; `stop-worker' retires one.
-;; Defining a worker over an existing name replaces it, so re-evaluating a
-;; module leaves one worker rather than two.
+;; `M-x list-workers' says which are running; `stop-worker' stops one, and
+;; `(work-list)' shows everything the scheduler is running, the editor's own
+;; work included. Defining a worker over an existing name replaces it, so
+;; re-evaluating a module leaves one worker rather than two.
 (defun list-workers ()
   "Show which background workers are running."
   (let ((names (running-workers)))

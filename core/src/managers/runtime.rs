@@ -29,9 +29,10 @@
 use crate::{
     text::search::{Isearch, Replace},
     ui::{Face, Style, Theme},
+    work::WorkId,
 };
 use risp::FuelMeter;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub struct Runtime {
@@ -51,37 +52,16 @@ pub struct Runtime {
     /// error until something clears it.
     call_stack: Vec<String>,
     theme: Arc<Theme>,
-    /// Which run of each named background worker is the live one.
+    /// The newest job Lisp started under each name, so that
+    /// `running-workers` can tell Lisp's work from the editor's own in the
+    /// WorkManager's list: a name is Lisp's while the job running under it
+    /// is the one recorded here.
     ///
-    /// # Why a number and not a list of live workers
-    ///
-    /// A worker is a job already sitting in the scheduler's list, and the
-    /// scheduler is on another thread; there is no handle to reach in and
-    /// remove one. What there is, is the job's own answer each turn to
-    /// "should I run again" -- so stopping a worker means arranging for it to
-    /// say no.
-    ///
-    /// A counter does that with no channel and no cancellation flag per
-    /// worker. Each turn a job compares the number it was born with against
-    /// the number here; defining a worker of the same name again, or stopping
-    /// one, bumps it, and the old job retires the next time it wakes. That is
-    /// also what makes re-evaluating a Lisp module safe: redefining a worker
-    /// replaces it rather than adding a second copy of it.
-    ///
-    /// A name with no entry has never had a worker.
-    workers: HashMap<String, WorkerSlot>,
-}
-
-/// What is known about one worker name.
-///
-/// `issued` only ever goes up, including when a worker is stopped -- that is
-/// what makes the retirement stick. Reusing a number would bring a job that
-/// had already been told to stop back to life the next time a worker of the
-/// same name was defined.
-#[derive(Clone, Copy, Debug, Default)]
-struct WorkerSlot {
-    issued: u64,
-    running: bool,
+    /// Only that. Which job a queued callback may still speak for is the
+    /// WorkManager's registry's to say, since it changes in one step with the
+    /// work it describes: see `WorkManager::is_latest`. Between them they took
+    /// the place of a generation counter per name, which did both.
+    lisp_jobs: HashMap<String, WorkId>,
 }
 
 impl Runtime {
@@ -93,92 +73,29 @@ impl Runtime {
             fuel,
             call_stack: Vec::new(),
             theme: Arc::new(Theme::default()),
-            workers: HashMap::new(),
+            lisp_jobs: HashMap::new(),
         }
     }
 
     // ------------------------------------------------------------------
-    // Background workers
+    // Lisp jobs
     // ------------------------------------------------------------------
 
-    /// Retire whatever worker is running under NAME and hand out the number
-    /// the replacement should be born with.
-    ///
-    /// One operation rather than a stop and a start, because the two cannot be
-    /// allowed to interleave: between them a third caller would see a name
-    /// with no live generation and start a worker that the second half then
-    /// retired.
-    pub fn next_worker_generation(&mut self, name: &str) -> u64 {
-        let slot = self.workers.entry(name.to_string()).or_default();
-        slot.issued += 1;
-        slot.running = true;
-        slot.issued
+    /// Job ID was started from Lisp, under NAME.
+    pub fn adopt_lisp_job(&mut self, name: &str, id: WorkId) {
+        self.lisp_jobs.insert(name.to_string(), id);
     }
 
-    /// Retire whatever worker is running under NAME. True when there was one.
+    /// The names under which a job Lisp started is among RUNNING, the jobs
+    /// the WorkManager lists, in no particular order.
     ///
-    /// The retirement is not immediate: the job finds out the next time it
-    /// wakes, which is at most one turn away. Nothing waits for that -- a
-    /// caller that did would be blocking the command thread on the worker
-    /// thread, which is the arrangement this whole mechanism exists to avoid.
-    pub fn stop_worker(&mut self, name: &str) -> bool {
-        match self.workers.get_mut(name) {
-            Some(slot) if slot.running => {
-                slot.issued += 1;
-                slot.running = false;
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Record that the worker born as GENERATION of NAME has stopped of its
-    /// own accord -- its program finished, or it spent its allowance.
-    ///
-    /// Ignored when the generation is not the live one, which is the case
-    /// that matters: a worker that was replaced and is only now waking up to
-    /// notice must not report the *replacement* as having stopped.
-    pub fn retire_worker(&mut self, name: &str, generation: u64) {
-        if let Some(slot) = self.workers.get_mut(name)
-            && slot.issued == generation
-        {
-            slot.running = false;
-        }
-    }
-
-    /// Whether GENERATION is still the live run of NAME.
-    pub fn worker_is_current(&self, name: &str, generation: u64) -> bool {
-        self.workers
-            .get(name)
-            .is_some_and(|slot| slot.running && slot.issued == generation)
-    }
-
-    /// Whether GENERATION is still the *newest* run of NAME -- true even
-    /// after it has stopped.
-    ///
-    /// # Why this is not the same question as the one above
-    ///
-    /// [`Self::worker_is_current`] asks "should this job take another turn",
-    /// and a job that has finished must be told no. This asks "does this job
-    /// still speak for its name", and a job that has finished is exactly the
-    /// one entitled to say so: the callback it owes is the announcement that
-    /// it *has* finished, queued a moment before it retired itself.
-    ///
-    /// Answering that with `worker_is_current` would drop every one of those,
-    /// which is the whole of what a caller waits for. The only thing that
-    /// silences a finished job is a *newer* one under the same name, and a
-    /// newer one is what bumps `issued`.
-    pub fn worker_is_latest(&self, name: &str, generation: u64) -> bool {
-        self.workers
-            .get(name)
-            .is_some_and(|slot| slot.issued == generation)
-    }
-
-    /// The names with a worker running, in no particular order.
-    pub fn running_workers(&self) -> Vec<String> {
-        self.workers
+    /// Two starts under one name on two threads at once can record the one
+    /// that lost: then the name is missing from this answer until the next
+    /// start under it. Nothing else depends on it.
+    pub fn lisp_jobs_among(&self, running: &HashSet<WorkId>) -> Vec<String> {
+        self.lisp_jobs
             .iter()
-            .filter(|(_, slot)| slot.running)
+            .filter(|(_, id)| running.contains(id))
             .map(|(name, _)| name.clone())
             .collect()
     }

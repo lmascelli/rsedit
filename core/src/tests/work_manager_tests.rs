@@ -382,6 +382,98 @@ mod tests {
         assert_eq!(t.work.submit(Spec::new("late"), late), None);
     }
 
+    #[test]
+    fn the_latest_under_a_name_outlives_its_work_until_something_takes_the_name() {
+        // What a queued callback is checked against: a job that finished
+        // still speaks for its name, one replaced or stopped does not.
+        let (work, _) = manual();
+        let (job, _) = scripted(&[]);
+        let first = work.submit(Spec::new("index"), job).unwrap();
+        assert!(work.is_latest("index", first));
+        work.run_until_idle(&());
+        assert!(work.jobs().is_empty(), "it has finished");
+        assert!(
+            work.is_latest("index", first),
+            "and still speaks for the name"
+        );
+
+        let (job, _) = scripted(&[Step::Sleep(ms(10))]);
+        let second = work.submit(Spec::new("index"), job).unwrap();
+        assert!(!work.is_latest("index", first), "a newer one took the name");
+        assert!(work.is_latest("index", second));
+        assert!(work.cancel_named("index"));
+        assert!(
+            !work.is_latest("index", second),
+            "and a stopped one is silent"
+        );
+        assert!(!work.is_latest("never", second), "a name is its own");
+    }
+
+    // -- the hook after a step -----------------------------------------------
+
+    #[test]
+    fn the_hook_is_called_after_every_step_and_only_then() {
+        let (work, _) = manual();
+        let steps = Arc::new(Mutex::new(0));
+        assert!(work.after_step({
+            let steps = steps.clone();
+            move || *steps.lock().unwrap() += 1
+        }));
+        assert!(!work.after_step(|| {}), "set once: the second is refused");
+        let (job, _) = scripted(&[Step::Continue, Step::Sleep(ms(10))]);
+        work.submit(Spec::new("three"), job).unwrap();
+
+        work.run_until_idle(&());
+        assert_eq!(*steps.lock().unwrap(), 2, "two steps so far, two calls");
+        work.run_for(&(), ms(100));
+        assert_eq!(*steps.lock().unwrap(), 3);
+        work.run_for(&(), ms(100));
+        assert_eq!(*steps.lock().unwrap(), 3, "no step, no call");
+    }
+
+    #[test]
+    fn the_hook_finds_a_finished_job_gone_from_the_registry() {
+        // Whoever the hook wakes looks at the state: a job that has just
+        // finished must not still be listed.
+        let (work, _) = manual();
+        let listed = Arc::new(Mutex::new(Vec::new()));
+        work.after_step({
+            let (work, listed) = (work.clone(), listed.clone());
+            move || listed.lock().unwrap().push(work.jobs().len())
+        });
+        let (job, _) = scripted(&[]);
+        work.submit(Spec::new("brief"), job).unwrap();
+        work.run_until_idle(&());
+        assert_eq!(*listed.lock().unwrap(), [0]);
+    }
+
+    #[test]
+    fn a_hook_that_panics_is_logged_and_the_work_goes_on() {
+        let (work, lines) = manual();
+        work.after_step(|| panic!("the host fell over"));
+        let (job, trace) = scripted(&[Step::Continue]);
+        work.submit(Spec::new("survivor"), job).unwrap();
+        work.run_until_idle(&());
+        assert_eq!(exits(&trace), [Exit::Finished], "both steps ran");
+        assert!(lines.contain("[BKG] panic: the after-step hook: the host fell over"));
+    }
+
+    #[test]
+    fn on_a_threaded_manager_the_hook_runs_on_the_executor() {
+        let t = threaded();
+        let (tell, told) = mpsc::channel();
+        t.work.after_step(move || {
+            let _ = tell.send(std::thread::current().name().map(str::to_string));
+        });
+        let (job, _) = scripted(&[]);
+        t.work.submit(Spec::new("brief"), job).unwrap();
+        let name = told.recv_timeout(PATIENCE).expect("the hook was called");
+        assert!(
+            name.is_some_and(|name| name.ends_with(" executor")),
+            "called from the executor's thread"
+        );
+    }
+
     // -- dedicated threads ----------------------------------------------------
 
     #[test]

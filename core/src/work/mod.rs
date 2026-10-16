@@ -6,8 +6,9 @@
 //! queues, deadlines and topics, the rule that picks the next step, the
 //! measurements and reports -- and the [`WorkManager`] built around it, with
 //! its executor, its registry and the dedicated threads. Every editor has one,
-//! and colours and prescans on it; the other jobs move to it in the next steps
-//! of the plan.
+//! and every one of its jobs runs on it: colouring, the prescanner, the file
+//! watcher, the auto-saver and the jobs Lisp starts. Shell commands and
+//! searches move to its dedicated threads in the next steps of the plan.
 //!
 //! # What the core is not
 //!

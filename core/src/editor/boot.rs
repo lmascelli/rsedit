@@ -72,10 +72,12 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; mode with `add-completion-function'.
 (eval-file "completion-at-point")
 
-;; How much work one background worker turn may do before it is stopped. See
-;; `define-worker'. Raising it lets a worker do more per turn at the cost of
-;; how long colouring can be kept waiting behind it.
+;; How much work one step of a background worker may do before it is stopped.
+;; See `define-worker'. Raising it lets a worker do more per step at the cost
+;; of how long colouring can be kept waiting behind it.
 ;; (setq worker-fuel 200000)
+;; The scheduler that runs them can be tuned too: see `work-option'.
+;; (set-work-option 'high-steps 4)
 
 ;; A copy of unsaved work, written every half minute, for when the editor stops
 ;; without being asked. `M-x recover-file' brings it back. See
@@ -133,11 +135,18 @@ impl<B: BufferTrait> EditorState<B> {
         let work = work_manager(&log);
         let buffers = Buffers::new(work.topic(BUFFER_CHANGED));
         let syntax_changed = work.topic(SYNTAX_CHANGED);
+        // Every step may have changed the screen, so every step says so.
+        let background_change = Arc::new(work::BackgroundChange::default());
+        work.after_step({
+            let change = background_change.clone();
+            move || change.raise()
+        });
 
         let editor_state = Self {
             running: Arc::new(AtomicBool::new(true)),
             worker_mailbox: sender,
             work,
+            background_change,
             buffers: Arc::new(RwLock::new(buffers)),
             echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
             modes: Arc::new(RwLock::new(Modes::new(keymaps))),

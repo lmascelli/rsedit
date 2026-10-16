@@ -31,7 +31,8 @@
 //!                the file watcher).
 //!   feature/     the two features whose mechanics could not be left to a
 //!                .lisp file: the minibuffer and incremental search.
-//!   background/  which thread work runs on, and the one rule that decides.
+//!   background/  the threads the work that blocks still gets -- a shell
+//!                command, a search -- until they move to work/ too.
 //!   ui/          a description of what to draw. Draws nothing: there is no
 //!                terminal, no window system and no crossterm in here.
 //! ```
@@ -72,9 +73,11 @@ pub(crate) mod primitives;
 pub(crate) mod background;
 pub(crate) mod ui;
 // The scheduler that replaces `background`, one piece at a time: see
-// `doc/workmanager.typ`. Every editor colours and prescans on a WorkManager;
-// the rest of its work moves in the next steps, and until then the compiler
-// would call much of the WorkManager dead code, and its re-exports unused.
+// `doc/workmanager.typ`. Every job of the editor's runs on a WorkManager --
+// colouring, the prescanner, the file watcher, the auto-saver and every Lisp
+// job. Shell commands and searches move to its dedicated threads in the next
+// steps, and until then the compiler would call that half of it dead code,
+// and its re-exports unused.
 #[allow(dead_code, unused_imports)]
 pub(crate) mod work;
 

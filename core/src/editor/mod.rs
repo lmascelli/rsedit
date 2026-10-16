@@ -56,7 +56,7 @@ use crate::{
         LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,
         Window, WindowId, compose_layout, layout, region_highlights,
     },
-    work::{Topic, WorkManager},
+    work::{Topic, WorkId, WorkManager},
 };
 
 use risp::{
@@ -95,7 +95,7 @@ mod work;
 pub use boot::{CONFIG_DIR, XDG_CONFIG_HOME, create_global_env, isolate_config_for_tests};
 pub use keys::KEY_CAPTURE_FUNCTION;
 pub use settings::*;
-pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED};
+pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED, WorkerTurn, in_worker};
 
 /// What the echo area is showing, and since when.
 ///
@@ -150,11 +150,18 @@ pub struct EditorState<B: BufferTrait> {
     /// Where asynchronous work runs: the scheduler and its executor, the
     /// dedicated threads and what watches them. See [`crate::work`].
     ///
-    /// It takes over from the mailbox above one job at a time: colouring and
-    /// the prescanner run on it, the rest still goes through the mailbox. In
-    /// this crate's own tests it is in manual mode: nothing runs unless the
-    /// test drives it, so no test is raced by a thread it did not ask for.
+    /// It takes over from the mailbox above one job at a time: colouring, the
+    /// prescanner, the file watcher, the auto-saver and every Lisp job run on
+    /// it, and only shell commands and searches still go through the mailbox.
+    /// In this crate's own tests it is in manual mode: nothing runs unless
+    /// the test drives it, so no test is raced by a thread it did not ask
+    /// for.
     work: WorkManager<EditorState<B>>,
+
+    /// Whether a job has changed the screen since the last snapshot, and how
+    /// the host is told. Raised by the WorkManager after every step; see
+    /// [`EditorState::on_background_change`].
+    background_change: Arc<work::BackgroundChange>,
 
     /// Every buffer the editor holds, which one is current, and which were
     /// current lately. See [`Buffers`], which says why those are one lock and
@@ -231,9 +238,10 @@ pub struct EditorState<B: BufferTrait> {
     shell_commands: Arc<AtomicUsize>,
 
     /// How much work on the worker is changing what is on screen, for the
-    /// same reason as the count above it: a search of a directory and a
-    /// background call building an index both run without anybody pressing a
-    /// key, and the renderer has to come back and look.
+    /// same reason as the count above it: a search of a directory runs
+    /// without anybody pressing a key, and the renderer has to come back and
+    /// look. A job on the WorkManager needs no count: the end of each of its
+    /// steps tells the host itself.
     background_work: Arc<AtomicUsize>,
 
     /// The buffer whose result set `next-error` walks, if any.

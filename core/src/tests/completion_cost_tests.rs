@@ -252,22 +252,25 @@ mod tests {
         );
     }
 
-    /// Run turns and drain callbacks until the background index build has
-    /// finished, the way the event loop would.
+    /// Take the build's steps and drain callbacks until the background index
+    /// build has finished, the way the event loop would.
     ///
-    /// A test cannot simply sleep: the callback that marks the list complete
-    /// runs on the thread that runs commands, which here is this one, and
-    /// nothing runs it unless something asks.
+    /// A test cannot simply sleep: the editor's work runs only when the test
+    /// drives it, and the callback that marks the list complete runs on the
+    /// thread that runs commands, which here is this one -- nothing runs it
+    /// unless something asks.
     fn settle(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
+        // Each drive lets a second of the editor's time pass, which is many
+        // of the build's steps; a build that is still going after a thousand
+        // of them is one that never ends.
+        for _ in 0..1_000 {
+            ctx.work().run_for(ctx, Duration::from_secs(1));
             ctx.run_owed_callbacks(env);
             if run("manpage--building-for", env, ctx).is_nil() {
                 return;
             }
-            assert!(Instant::now() < deadline, "the index build never finished");
-            std::thread::sleep(Duration::from_millis(2));
         }
+        panic!("the index build never finished");
     }
 
     #[test]

@@ -265,6 +265,8 @@ mod tests {
         // A background job stands in for all of them, because it is the one
         // that can be *watched* -- it reports when it is done, and the report
         // arriving while the command is still running is the whole assertion.
+        // The job's steps are taken by this test, which is how the editor's
+        // work runs in tests; the command runs on a thread of its own.
         let (ctx, env) = editor();
         run(
             "(setq job-finished nil)
@@ -285,6 +287,7 @@ mod tests {
                 Instant::now() < deadline,
                 "the job waited for the shell command, which is the bug"
             );
+            ctx.work().run_until_idle(&ctx);
             ctx.run_owed_callbacks(&env);
             std::thread::sleep(Duration::from_millis(5));
         }

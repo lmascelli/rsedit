@@ -1,30 +1,33 @@
-//! Background jobs: where their callbacks run, and what is dropped.
+//! Background jobs: where their callbacks run, what is dropped, and how the
+//! host hears that the screen changed.
 //!
-//! # What is worth testing here, and what cannot be
+//! # How these run
 //!
-//! The same shape as `worker_tests`, for the same reason: a job runs on the
-//! scheduler's thread on a timer, which is what a test cannot wait on without
-//! being a race. So most of these drive the turns the scheduler would drive --
-//! `ScheduledTask::execute`, one call per turn -- and then drain the callback
-//! queue the way the event loop drains it.
+//! As in `worker_tests`: the editor's WorkManager is in manual mode, so a job
+//! started with `background-call` takes its steps when the test drives it,
+//! and then the test drains the callback queue the way the event loop drains
+//! it.
 //!
 //! What that arrangement is *for* is the thing worth pinning down, because
 //! every part of it is silent when wrong:
 //!
-//! - A callback run on the worker thread looks exactly like one run on the
+//! - A callback run on the executor looks exactly like one run on the
 //!   command thread, until the day it runs half-way through a command and
 //!   corrupts something once a month.
 //! - A superseded job's callback looks exactly like the new job's, until it
 //!   reports the old job's half-built state as the new one's answer.
 //! - A job that dies without saying so looks exactly like one still working,
 //!   for ever.
+//! - A change nobody tells the renderer about looks exactly like no change,
+//!   until a key is pressed.
 #[cfg(test)]
 mod tests {
-    use crate::background::worker::{BackgroundJob, DEFAULT_WORKER_FUEL, JobBody};
-    use crate::background::{ImmediateTask, ScheduledTask, WorkerMessage};
+    use crate::background::{ImmediateTask, WorkerMessage};
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
+    use crate::modes::highlighter::TURN_INTERVAL;
     use risp::{Env, LispExp, Parser, eval};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -48,37 +51,27 @@ mod tests {
         }
     }
 
-    /// A job built the way `background-call` builds one, handed back so a test
-    /// can take its turns itself instead of waiting for the scheduler.
-    fn job(
-        name: &str,
-        body: JobBody<GapBuffer>,
-        on_progress: Option<&str>,
-        on_done: Option<&str>,
-        env: &Arc<Env<Ctx>>,
-        ctx: &Ctx,
-    ) -> BackgroundJob<GapBuffer> {
-        let generation = ctx.runtime_mut(|runtime| runtime.next_worker_generation(name));
-        BackgroundJob::new(
-            name.to_string(),
-            generation,
-            body,
-            on_progress.map(|f| LispExp::symbol(f.into())),
-            on_done.map(|f| LispExp::symbol(f.into())),
-            env.clone(),
-            DEFAULT_WORKER_FUEL,
-        )
+    /// Take the steps that are due now.
+    fn steps_due(ctx: &Ctx) -> usize {
+        ctx.work().run_until_idle(ctx)
     }
 
-    fn once(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> JobBody<GapBuffer> {
-        JobBody::Once(run(src, env, ctx))
+    /// Let SPAN of the editor's time pass, taking every step that falls due.
+    fn wait(ctx: &Ctx, span: Duration) -> usize {
+        ctx.work().run_for(ctx, span)
     }
 
-    fn steps(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> JobBody<GapBuffer> {
-        JobBody::Steps(run(src, env, ctx))
+    fn running(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> Vec<String> {
+        run("(running-workers)", env, ctx)
+            .iter()
+            .map(|name| match name {
+                LispExp::String(name) => name.to_string(),
+                other => panic!("a name, not {other:?}"),
+            })
+            .collect()
     }
 
-    /// A fiber that takes three turns and then finishes.
+    /// A fiber that takes three steps and then finishes.
     ///
     /// A `while` walking a counter rather than the `dotimes` anyone would
     /// reach for first, because a `dotimes` body is not a position a
@@ -88,17 +81,6 @@ mod tests {
     const COUNTING_FIBER: &str =
         "(fiber (let ((left 3)) (while (> left 0) (setq left (- left 1)) (yield))))";
 
-    /// Run turns until the job says it is finished, or fail. The scheduler's
-    /// loop, minus the waiting.
-    fn take_turns(job: &mut BackgroundJob<GapBuffer>, ctx: &Ctx) -> usize {
-        for turn in 1..=1000 {
-            if !job.execute(ctx) {
-                return turn;
-            }
-        }
-        panic!("the job never finished");
-    }
-
     // ----------------------------------------------------------------
     // Which thread the callback runs on
     // ----------------------------------------------------------------
@@ -106,7 +88,7 @@ mod tests {
     #[test]
     fn the_job_runs_where_it_is_driven_and_the_callback_does_not() {
         // The division the whole arrangement rests on. The job's own work
-        // happens during the turn; the callback happens when the command
+        // happens during the step; the callback happens when the command
         // thread gets round to it, and *not before* -- which is the part that
         // cannot be seen by looking at the result afterwards, because by then
         // both have happened.
@@ -114,22 +96,16 @@ mod tests {
         run(
             "(setq worked nil) (setq told nil)
              (defun the-work () (setq worked t))
-             (defun the-callback (name finished) (setq told name))",
+             (defun the-callback (name finished) (setq told name))
+             (background-call 'reporting 'the-work nil 'the-callback)",
             &env,
             &ctx,
         );
-        let mut job = job(
-            "reporting",
-            once("'the-work", &env, &ctx),
-            None,
-            Some("the-callback"),
-            &env,
-            &ctx,
-        );
-        job.execute(&ctx);
+        assert!(run("worked", &env, &ctx).is_nil(), "nothing has run yet");
+        steps_due(&ctx);
         assert!(
             !run("worked", &env, &ctx).is_nil(),
-            "the turn should have done the work"
+            "the step should have done the work"
         );
         assert!(
             run("told", &env, &ctx).is_nil(),
@@ -152,22 +128,16 @@ mod tests {
         run(
             "(setq outcome 'unset)
              (defun the-work () 1)
-             (defun the-callback (name finished) (setq outcome finished))",
+             (defun the-callback (name finished) (setq outcome finished))
+             (background-call 'finishing 'the-work nil 'the-callback)",
             &env,
             &ctx,
         );
-        let mut job = job(
-            "finishing",
-            once("'the-work", &env, &ctx),
-            None,
-            Some("the-callback"),
-            &env,
-            &ctx,
-        );
-        take_turns(&mut job, &ctx);
+        steps_due(&ctx);
         ctx.run_owed_callbacks(&env);
-        assert!(
-            !run("outcome", &env, &ctx).is_nil(),
+        assert_eq!(
+            run("outcome", &env, &ctx),
+            LispExp::t(),
             "a job that returned reached its end"
         );
     }
@@ -180,30 +150,42 @@ mod tests {
         run(
             "(setq outcome 'unset)
              (defun the-work () (this-function-does-not-exist))
-             (defun the-callback (name finished) (setq outcome (list name finished)))",
+             (defun the-callback (name finished) (setq outcome (list name finished)))
+             (background-call 'failing 'the-work nil 'the-callback)",
             &env,
             &ctx,
         );
-        let mut job = job(
-            "failing",
-            once("'the-work", &env, &ctx),
-            None,
-            Some("the-callback"),
-            &env,
-            &ctx,
-        );
-        take_turns(&mut job, &ctx);
+        steps_due(&ctx);
         ctx.run_owed_callbacks(&env);
-        let outcome = run("outcome", &env, &ctx);
-        let parts: Vec<LispExp<Ctx>> = outcome.iter().collect();
         assert_eq!(
-            parts.first(),
-            Some(&LispExp::string("failing".into())),
-            "it is told, {outcome:?}"
+            run("outcome", &env, &ctx),
+            run(r#"(list "failing" nil)"#, &env, &ctx),
+            "it is told, and told that the job did not reach its end"
+        );
+    }
+
+    #[test]
+    fn a_job_that_spends_its_allowance_says_it_did_not_finish() {
+        let (ctx, env) = editor();
+        run(
+            "(setq outcome 'unset) (setq worker-fuel 5000)
+             (defun the-callback (name finished) (setq outcome (list name finished)))
+             (background-call 'endless (fiber (while t (setq x 1))) nil 'the-callback)",
+            &env,
+            &ctx,
+        );
+        steps_due(&ctx);
+        ctx.run_owed_callbacks(&env);
+        assert_eq!(
+            run("outcome", &env, &ctx),
+            run(r#"(list "endless" nil)"#, &env, &ctx)
         );
         assert!(
-            parts.get(1).is_some_and(|finished| finished.is_nil()),
-            "and told that the job did not reach its end: {outcome:?}"
+            ctx.get_logs()
+                .iter()
+                .any(|line| line.contains("[BKG] error: endless: a step ran past its allowance")),
+            "{:?}",
+            ctx.get_logs()
         );
     }
 
@@ -218,30 +200,22 @@ mod tests {
         // is nothing else to write and nothing else to register.
         let (ctx, env) = editor();
         run(
-            "(setq progress 0) (setq done 0)
-             (defun on-progress (name) (setq progress (+ progress 1)))
-             (defun on-done (name finished) (setq done (+ done 1)))",
+            &format!(
+                "(setq progress 0) (setq done 0)
+                 (defun on-progress (name) (setq progress (+ progress 1)))
+                 (defun on-done (name finished) (setq done (+ done 1)))
+                 (background-call 'streaming {COUNTING_FIBER} 'on-progress 'on-done)"
+            ),
             &env,
             &ctx,
         );
-        let mut job = job(
-            "streaming",
-            steps(COUNTING_FIBER, &env, &ctx),
-            Some("on-progress"),
-            Some("on-done"),
-            &env,
-            &ctx,
-        );
-        let turns = take_turns(&mut job, &ctx);
-        assert_eq!(
-            turns, 4,
-            "three yields and the turn that found the fiber done"
-        );
+        steps_due(&ctx);
+        wait(&ctx, Duration::from_secs(1));
         ctx.run_owed_callbacks(&env);
         assert_eq!(
             number("progress", &env, &ctx),
-            (turns - 1) as f64,
-            "one per turn except the one that finished ({turns} turns)"
+            3.0,
+            "three yields, and then the step that found the fiber done"
         );
         assert_eq!(number("done", &env, &ctx), 1.0, "and done exactly once");
     }
@@ -252,19 +226,12 @@ mod tests {
         run(
             "(setq progress 0)
              (defun the-work () 1)
-             (defun on-progress (name) (setq progress (+ progress 1)))",
+             (defun on-progress (name) (setq progress (+ progress 1)))
+             (background-call 'one-shot 'the-work 'on-progress nil)",
             &env,
             &ctx,
         );
-        let mut job = job(
-            "one-shot",
-            once("'the-work", &env, &ctx),
-            Some("on-progress"),
-            None,
-            &env,
-            &ctx,
-        );
-        take_turns(&mut job, &ctx);
+        steps_due(&ctx);
         ctx.run_owed_callbacks(&env);
         assert_eq!(
             number("progress", &env, &ctx),
@@ -274,7 +241,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // Being superseded
+    // Being superseded, and being stopped
     // ----------------------------------------------------------------
 
     #[test]
@@ -285,31 +252,24 @@ mod tests {
         // *previous* job's half-built state as the evidence.
         let (ctx, env) = editor();
         run(
-            "(setq heard nil)
-             (defun on-progress (name) (setq heard (cons 'progress heard)))
-             (defun on-done (name finished) (setq heard (cons 'done heard)))",
+            &format!(
+                "(setq heard nil)
+                 (defun on-progress (name) (setq heard (cons 'progress heard)))
+                 (defun on-done (name finished) (setq heard (cons 'done heard)))
+                 (background-call 'shared-name {COUNTING_FIBER} 'on-progress 'on-done)"
+            ),
             &env,
             &ctx,
         );
-        let mut first = job(
-            "shared-name",
-            steps(COUNTING_FIBER, &env, &ctx),
-            Some("on-progress"),
-            Some("on-done"),
-            &env,
-            &ctx,
-        );
-        assert!(first.execute(&ctx), "one turn, with more to come");
-        assert!(ctx.callbacks_owed(), "which queued its progress");
+        steps_due(&ctx);
+        assert!(ctx.callbacks_owed(), "one step, which queued its progress");
 
         // The replacement, started before the queue was drained -- which is
         // the ordinary case, since the drain happens between commands and the
-        // replacement is started by one.
-        let _second = job(
-            "shared-name",
-            steps("(fiber (while t (yield)))", &env, &ctx),
-            Some("on-progress"),
-            Some("on-done"),
+        // replacement is started by one. It reports nothing of its own, so
+        // that anything heard is the first job's.
+        run(
+            "(background-call 'shared-name (fiber (while t (yield))) nil nil)",
             &env,
             &ctx,
         );
@@ -317,19 +277,62 @@ mod tests {
             !ctx.run_owed_callbacks(&env),
             "the first job's queued progress is dropped rather than delivered"
         );
-        assert!(
-            run("heard", &env, &ctx).is_nil(),
-            "so nothing heard from it"
-        );
-        assert!(
-            !first.execute(&ctx),
-            "and the job itself stops at its next turn"
-        );
+        wait(&ctx, Duration::from_secs(1));
         ctx.run_owed_callbacks(&env);
         assert!(
             run("heard", &env, &ctx).is_nil(),
-            "including its done, which belongs to the job that replaced it"
+            "and it took no more steps, and did not say it was done"
         );
+        assert_eq!(running(&ctx, &env), ["shared-name"], "the replacement runs");
+    }
+
+    #[test]
+    fn a_stopped_job_is_not_heard_from_again() {
+        // `stop-worker` is the other way a job is silenced, and the same
+        // rule holds: whoever stopped it knows, and needs no ON-DONE.
+        let (ctx, env) = editor();
+        run(
+            &format!(
+                "(setq heard nil)
+                 (defun on-progress (name) (setq heard (cons 'progress heard)))
+                 (defun on-done (name finished) (setq heard (cons 'done heard)))
+                 (background-call 'stoppable {COUNTING_FIBER} 'on-progress 'on-done)"
+            ),
+            &env,
+            &ctx,
+        );
+        steps_due(&ctx);
+        assert!(ctx.callbacks_owed(), "one step, which queued its progress");
+        assert_eq!(run("(stop-worker 'stoppable)", &env, &ctx), LispExp::t());
+        assert!(
+            !ctx.run_owed_callbacks(&env),
+            "its queued progress went with it, at once"
+        );
+        wait(&ctx, Duration::from_secs(1));
+        assert!(
+            !ctx.callbacks_owed(),
+            "and when it heard, it left without queueing an ON-DONE at all"
+        );
+        assert!(run("heard", &env, &ctx).is_nil());
+    }
+
+    #[test]
+    fn a_job_closed_by_shutdown_is_not_reported_done() {
+        // The editor is going: nobody is left to tell, and a mode told that
+        // its index finished when it was cut off would believe it.
+        let (ctx, env) = editor();
+        run(
+            &format!(
+                "(defun on-done (name finished) nil)
+                 (background-call 'cut-off {COUNTING_FIBER} nil 'on-done)"
+            ),
+            &env,
+            &ctx,
+        );
+        steps_due(&ctx);
+        ctx.shutdown(Duration::from_secs(1));
+        assert!(!ctx.callbacks_owed());
+        assert!(running(&ctx, &env).is_empty());
     }
 
     #[test]
@@ -338,27 +341,20 @@ mod tests {
         // wrong is invisible: a job that has stopped is not a job that has
         // been replaced. Asking "is it still running" at the drain would
         // silence every done callback there is, since a job queues its done
-        // and then stops.
+        // and then leaves.
         let (ctx, env) = editor();
         run(
             "(setq told nil)
-             (defun on-done (name finished) (setq told t))",
+             (defun on-done (name finished) (setq told t))
+             (background-call 'brief (lambda () 1) nil 'on-done)",
             &env,
             &ctx,
         );
-        let mut job = job(
-            "brief",
-            once("(lambda () 1)", &env, &ctx),
-            None,
-            Some("on-done"),
-            &env,
-            &ctx,
-        );
-        take_turns(&mut job, &ctx);
-        assert_eq!(
-            ctx.runtime(|runtime| runtime.running_workers()).len(),
-            0,
-            "it has retired itself"
+        steps_due(&ctx);
+        assert!(running(&ctx, &env).is_empty(), "it has finished");
+        assert!(
+            run("(stop-worker 'brief)", &env, &ctx).is_nil(),
+            "and there is nothing left to stop"
         );
         ctx.run_owed_callbacks(&env);
         assert!(
@@ -367,61 +363,8 @@ mod tests {
         );
     }
 
-    // ----------------------------------------------------------------
-    // The queue, and the renderer
-    // ----------------------------------------------------------------
-
     #[test]
-    fn the_renderer_is_asked_to_come_back_while_a_callback_is_owed() {
-        // The window this closes: a job queues its last callback and then
-        // stops, taking the count of running work to zero. A renderer that
-        // asked in that instant would be told there was nothing to wait for
-        // and would sleep until a key was pressed, with the callback still
-        // sitting there.
-        let (ctx, env) = editor();
-        run(
-            "(defun the-work () 1) (defun on-done (name finished) nil)",
-            &env,
-            &ctx,
-        );
-        let frame = ctx.snapshot(&env, 80, 24);
-        // Not `None`: a newly started editor has a message in the echo area
-        // and is already waiting for it to expire. What matters is that it is
-        // willing to wait, rather than having something to do now.
-        assert_ne!(
-            ctx.next_redraw_in(&env, &frame),
-            Some(Duration::ZERO),
-            "nothing is owed yet, so the editor may sleep"
-        );
-        let mut job = job(
-            "waking",
-            once("'the-work", &env, &ctx),
-            None,
-            Some("on-done"),
-            &env,
-            &ctx,
-        );
-        take_turns(&mut job, &ctx);
-        assert_eq!(
-            ctx.background_work_running(),
-            0,
-            "nothing is running any more"
-        );
-        assert_eq!(
-            ctx.next_redraw_in(&env, &frame),
-            Some(Duration::ZERO),
-            "but there is something to do, so the wait is over"
-        );
-        ctx.run_owed_callbacks(&env);
-        assert_ne!(
-            ctx.next_redraw_in(&env, &frame),
-            Some(Duration::ZERO),
-            "and once it is done there is nothing to come back for"
-        );
-    }
-
-    #[test]
-    fn a_callback_may_start_another_job_and_it_goes_to_the_worker_like_any_other() {
+    fn a_callback_may_start_another_job_and_it_goes_to_the_work_like_any_other() {
         // Chaining two jobs is the ordinary way of doing work in stages, and
         // the thing worth checking is that the second stage does not simply
         // happen here: a callback runs on the thread that draws, and a stage
@@ -432,30 +375,25 @@ mod tests {
              (defun stage-two () (setq stages (cons 'two stages)))
              (defun stage-one () (setq stages (cons 'one stages)))
              (defun after-one (name finished)
-               (background-call 'chained-two 'stage-two nil nil))",
+               (background-call 'chained-two 'stage-two nil nil))
+             (background-call 'chained-one 'stage-one nil 'after-one)",
             &env,
             &ctx,
         );
-        let mut first = job(
-            "chained-one",
-            once("'stage-one", &env, &ctx),
-            None,
-            Some("after-one"),
-            &env,
-            &ctx,
-        );
-        take_turns(&mut first, &ctx);
+        steps_due(&ctx);
         ctx.run_owed_callbacks(&env);
         assert_eq!(
             run("stages", &env, &ctx).iter().count(),
             1,
-            "the second stage was posted, not run here"
+            "the second stage was submitted, not run here"
         );
-        assert!(
-            ctx.runtime(|runtime| runtime.running_workers())
-                .contains(&"chained-two".to_string()),
+        assert_eq!(
+            running(&ctx, &env),
+            ["chained-two"],
             "and it is running under its own name"
         );
+        steps_due(&ctx);
+        assert_eq!(run("stages", &env, &ctx).iter().count(), 2);
     }
 
     #[test]
@@ -464,32 +402,24 @@ mod tests {
         run(
             "(setq reached nil)
              (defun bad-callback (name finished) (no-such-function))
-             (defun good-callback (name finished) (setq reached t))",
+             (defun good-callback (name finished) (setq reached t))
+             (background-call 'bad (lambda () 1) nil 'bad-callback)
+             (background-call 'good (lambda () 1) nil 'good-callback)",
             &env,
             &ctx,
         );
-        let mut bad = job(
-            "bad",
-            once("(lambda () 1)", &env, &ctx),
-            None,
-            Some("bad-callback"),
-            &env,
-            &ctx,
-        );
-        let mut good = job(
-            "good",
-            once("(lambda () 1)", &env, &ctx),
-            None,
-            Some("good-callback"),
-            &env,
-            &ctx,
-        );
-        take_turns(&mut bad, &ctx);
-        take_turns(&mut good, &ctx);
+        steps_due(&ctx);
         ctx.run_owed_callbacks(&env);
         assert!(
             !run("reached", &env, &ctx).is_nil(),
             "one broken callback does not take down the ones behind it"
+        );
+        assert!(
+            ctx.get_logs()
+                .iter()
+                .any(|line| line.contains("the callback of background job bad failed")),
+            "{:?}",
+            ctx.get_logs()
         );
     }
 
@@ -506,20 +436,26 @@ mod tests {
             LispExp::symbol("named".into()),
             "it answers with the name, the way define-worker does"
         );
-        assert!(
-            ctx.runtime(|runtime| runtime.running_workers())
-                .contains(&"named".to_string()),
-            "and a job and a worker are listed in one place"
+        run(
+            "(define-worker 'worker (fiber (while t (yield))))",
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            running(&ctx, &env),
+            ["named", "worker"],
+            "a job and a worker are listed in one place"
         );
         assert!(
             !run("(stop-worker 'named)", &env, &ctx).is_nil(),
             "and stopped by one call"
         );
+        assert_eq!(running(&ctx, &env), ["worker"]);
     }
 
     #[test]
     fn a_job_that_is_neither_a_fiber_nor_a_function_is_refused_at_the_door() {
-        // Refused here rather than discovered a turn later on another thread,
+        // Refused here rather than discovered a step later on another thread,
         // where the only way to report it is a line in a log nobody is
         // reading.
         let (ctx, env) = editor();
@@ -540,70 +476,24 @@ mod tests {
                 "{bad} names a callback that could never be called"
             );
         }
-    }
-
-    #[test]
-    fn a_job_posted_for_real_reaches_the_worker_and_comes_back() {
-        // The one test that does wait, because the thing it is checking is
-        // the plumbing between the two threads and there is nothing else to
-        // check it with: the primitive really posts, the scheduler really
-        // takes turns, and the callback really arrives on this thread.
-        let (ctx, env) = editor();
-        run(
-            "(setq gathered nil) (setq finished nil)
-             (defun gather ()
-               (fiber (let ((left 3))
-                        (while (> left 0)
-                          (setq gathered (cons left gathered))
-                          (setq left (- left 1))
-                          (yield)))))
-             (defun gather-progress (name) nil)
-             (defun gather-done (name finished-p) (setq finished t))",
-            &env,
-            &ctx,
-        );
-        run(
-            "(background-call 'real (gather) 'gather-progress 'gather-done 1)",
-            &env,
-            &ctx,
-        );
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while run("finished", &env, &ctx).is_nil() {
-            assert!(Instant::now() < deadline, "the job never reported back");
-            ctx.run_owed_callbacks(&env);
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        assert_eq!(
-            run("gathered", &env, &ctx).iter().count(),
-            3,
-            "and it did its work a turn at a time"
-        );
+        assert!(running(&ctx, &env).is_empty());
     }
 
     #[test]
     fn a_job_cannot_open_a_prompt() {
         // The same refusal a worker gets, for the same reason and through the
         // same flag: a minibuffer put up by a job is a window nobody is
-        // typing into, over a command nobody started. Worth its own test
-        // rather than resting on the worker's, because the two set the flag
-        // in two places and a job is the one a module is likely to reach for.
+        // typing into, over a command nobody started.
         let (ctx, env) = editor();
         run(
             "(setq asked nil) (setq outcome 'unset)
              (defun nosy () (minibuffer-read \"Why?:\" nil nil nil) (setq asked t))
-             (defun on-done (name finished) (setq outcome finished))",
+             (defun on-done (name finished) (setq outcome finished))
+             (background-call 'nosy 'nosy nil 'on-done)",
             &env,
             &ctx,
         );
-        let mut job = job(
-            "nosy",
-            once("'nosy", &env, &ctx),
-            None,
-            Some("on-done"),
-            &env,
-            &ctx,
-        );
-        take_turns(&mut job, &ctx);
+        steps_due(&ctx);
         assert!(run("asked", &env, &ctx).is_nil(), "the prompt was refused");
         assert!(
             ctx.get_logs()
@@ -620,6 +510,153 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
+    // Telling the host the screen changed
+    // ----------------------------------------------------------------
+
+    /// An editor whose host counts how often it is told to look.
+    fn watched() -> (Ctx, Arc<Env<Ctx>>, Arc<AtomicUsize>) {
+        let (ctx, env) = editor();
+        let told = Arc::new(AtomicUsize::new(0));
+        ctx.on_background_change({
+            let told = told.clone();
+            move || {
+                told.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        (ctx, env, told)
+    }
+
+    /// Whether the editor wants a frame for what the jobs changed: soon, at
+    /// most a turn away. Its other reasons to wake -- the welcome message
+    /// expiring -- are seconds away.
+    fn wants_a_frame_soon(ctx: &Ctx, env: &Arc<Env<Ctx>>, frame: &crate::FrameSnapshot) -> bool {
+        ctx.next_redraw_in(env, frame)
+            .is_some_and(|wait| wait <= TURN_INTERVAL)
+    }
+
+    #[test]
+    fn a_step_tells_the_host_once_until_it_looks_again() {
+        let (ctx, env, told) = watched();
+        // The editor's own jobs take their first steps, and the snapshot
+        // takes in whatever they did.
+        steps_due(&ctx);
+        let frame = ctx.snapshot(&env, 80, 24);
+        let before = told.load(Ordering::SeqCst);
+        assert!(
+            !wants_a_frame_soon(&ctx, &env, &frame),
+            "nothing since the frame"
+        );
+
+        run(
+            "(setq counter 0)
+             (define-worker 'busy
+               (fiber (let ((left 5))
+                        (while (> left 0)
+                          (setq counter (+ counter 1))
+                          (setq left (- left 1))
+                          (yield 'continue)))))",
+            &env,
+            &ctx,
+        );
+        steps_due(&ctx);
+        assert_eq!(number("counter", &env, &ctx), 5.0);
+        assert_eq!(
+            told.load(Ordering::SeqCst),
+            before + 1,
+            "five steps, one message: the host has not looked in between"
+        );
+        assert!(
+            wants_a_frame_soon(&ctx, &env, &frame),
+            "and once awake it is told to draw within a turn"
+        );
+
+        let frame = ctx.snapshot(&env, 80, 24);
+        assert!(
+            !wants_a_frame_soon(&ctx, &env, &frame),
+            "the snapshot has it, so there is nothing more to draw"
+        );
+        run(
+            "(define-worker 'again (fiber (yield 'continue)))",
+            &env,
+            &ctx,
+        );
+        steps_due(&ctx);
+        assert_eq!(
+            told.load(Ordering::SeqCst),
+            before + 2,
+            "a step after the snapshot is news again"
+        );
+    }
+
+    #[test]
+    fn the_frame_for_a_change_waits_a_turn_after_the_last_one() {
+        // A job colouring a large file takes a step every millisecond or so;
+        // a frame for each would repaint the terminal continuously. So the
+        // wait is a turn counted from the last snapshot: what is measured
+        // here is bounded by the real time around it, which is all a test
+        // can know about a clock it does not drive.
+        let (ctx, env, _told) = watched();
+        steps_due(&ctx);
+        let before = Instant::now();
+        let frame = ctx.snapshot(&env, 80, 24);
+        run("(define-worker 'one (fiber (yield 'continue)))", &env, &ctx);
+        steps_due(&ctx);
+        let wait = ctx
+            .next_redraw_in(&env, &frame)
+            .expect("there is a change to draw");
+        let since = before.elapsed();
+        assert!(wait <= TURN_INTERVAL, "{wait:?}");
+        assert!(
+            wait >= TURN_INTERVAL.saturating_sub(since),
+            "a turn after the frame, less what has passed since: {wait:?} after {since:?}"
+        );
+        std::thread::sleep(TURN_INTERVAL);
+        assert_eq!(
+            ctx.next_redraw_in(&env, &frame),
+            Some(Duration::ZERO),
+            "and at once when the last frame is older than a turn"
+        );
+    }
+
+    #[test]
+    fn a_file_the_watcher_reloads_tells_the_host() {
+        // The case that showed the need: a file changed on disk is reloaded
+        // by the watcher, and the screen went on showing the old text until a
+        // key was pressed.
+        let (ctx, env, told) = watched();
+        let dir = std::env::temp_dir().join(format!(
+            "rsedit-watch-redraw-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        let path = dir.join("notes.txt");
+        std::fs::write(&path, "first\n").expect("write");
+        run(&format!(r#"(find-file "{}")"#, path.display()), &env, &ctx);
+        wait(&ctx, Duration::from_secs(4));
+        let frame = ctx.snapshot(&env, 80, 24);
+        let before = told.load(Ordering::SeqCst);
+
+        // Bigger as well as later, so the change shows however coarse the
+        // file system's clock is.
+        std::fs::write(&path, "second, from somewhere else\n").expect("rewrite");
+        wait(&ctx, Duration::from_secs(4));
+        let text = ctx.with_current_buffer(|buf| buf.text.to_string());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            text, "second, from somewhere else\n",
+            "the watcher reloaded it"
+        );
+        assert!(
+            told.load(Ordering::SeqCst) > before,
+            "and the host was told"
+        );
+        assert!(wants_a_frame_soon(&ctx, &env, &frame));
+        let fresh = ctx.snapshot(&env, 80, 24);
+        assert_ne!(fresh, frame, "and the next frame shows it");
+    }
+
+    // ----------------------------------------------------------------
     // Which thread a task believes it is on
     // ----------------------------------------------------------------
 
@@ -628,8 +665,7 @@ mod tests {
 
     impl ImmediateTask<GapBuffer> for WhereAmI {
         fn execute(self: Box<Self>, _state: &Ctx) {
-            *self.0.lock().expect("the probe's slot") =
-                Some(crate::background::worker::in_worker());
+            *self.0.lock().expect("the probe's slot") = Some(crate::editor::in_worker());
         }
     }
 
@@ -639,7 +675,7 @@ mod tests {
         // up a prompt nobody is typing into, and a task with a thread of its
         // own is further from the command thread than anything else here --
         // so it is the case most in need of the flag and the one most easily
-        // left out, now that the scheduler sets it rather than each task.
+        // left out.
         let (ctx, _env) = editor();
         let answer = Arc::new(Mutex::new(None));
         assert!(
@@ -657,69 +693,26 @@ mod tests {
         }
     }
 
-    /// The same probe, as a scheduled task that never sets the flag itself --
-    /// which is what the highlighter, the prescanner, the file watcher and
-    /// the auto-saver all are.
-    struct WhereAmIEachTurn(Arc<Mutex<Option<bool>>>);
-
-    impl ScheduledTask<GapBuffer> for WhereAmIEachTurn {
-        fn execute(&mut self, _state: &Ctx) -> bool {
-            *self.0.lock().expect("the probe's slot") =
-                Some(crate::background::worker::in_worker());
-            false
-        }
-    }
-
-    #[test]
-    fn a_scheduled_task_that_never_says_so_itself_is_still_off_the_command_thread() {
-        // Two of the four scheduled tasks the editor ships -- the file
-        // watcher and the auto-saver -- hold an environment and run Lisp, and
-        // neither ever set this flag. A hook of theirs calling
-        // `minibuffer-read' would therefore have put up a prompt from the
-        // background, which is precisely what the flag exists to refuse. The
-        // scheduler saying it once covers every task, including the ones that
-        // do not know the flag exists.
-        let (ctx, _env) = editor();
-        let answer = Arc::new(Mutex::new(None));
-        assert!(ctx.send_to_worker(WorkerMessage::Schedule {
-            task: Box::new(WhereAmIEachTurn(answer.clone())),
-            interval: Duration::from_millis(1),
-        }));
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if let Some(seen) = *answer.lock().expect("the probe's slot") {
-                assert!(seen, "a scheduled task is not on the command thread either");
-                return;
-            }
-            assert!(Instant::now() < deadline, "the task never ran");
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
-
     #[test]
     fn an_inner_turn_ending_does_not_make_the_thread_the_command_thread() {
-        // Two hold one at once and always will: the scheduler around
-        // everything it drives, and the job around its own turn. If the inner
-        // one cleared the flag instead of restoring it, everything the
-        // scheduler ran *after* the first job's first turn would believe it
-        // was the thread the user is typing on -- and the one thing the flag
-        // guards, a prompt appearing out of nowhere, is exactly the thing
-        // nobody would think to look for there.
-        assert!(
-            !crate::background::worker::in_worker(),
-            "this thread is the user's"
-        );
-        let outer = crate::background::worker::WorkerTurn::begin();
+        // Two can hold one at once: a step taken by hand inside something
+        // that already holds one. If the inner one cleared the flag instead
+        // of restoring it, everything after would believe it was the thread
+        // the user is typing on -- and the one thing the flag guards, a prompt
+        // appearing out of nowhere, is exactly the thing nobody would think to
+        // look for there.
+        assert!(!crate::editor::in_worker(), "this thread is the user's");
+        let outer = crate::editor::WorkerTurn::begin();
         {
-            let _inner = crate::background::worker::WorkerTurn::begin();
-            assert!(crate::background::worker::in_worker());
+            let _inner = crate::editor::WorkerTurn::begin();
+            assert!(crate::editor::in_worker());
         }
         assert!(
-            crate::background::worker::in_worker(),
+            crate::editor::in_worker(),
             "the outer turn has not ended, so the thread has not changed"
         );
         drop(outer);
-        assert!(!crate::background::worker::in_worker(), "and now it has");
+        assert!(!crate::editor::in_worker(), "and now it has");
     }
 
     #[test]
@@ -734,10 +727,7 @@ mod tests {
             assert!(Instant::now() < deadline, "the task never ran");
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(
-            !crate::background::worker::in_worker(),
-            "this thread is the user's"
-        );
+        assert!(!crate::editor::in_worker(), "this thread is the user's");
     }
 
     // ----------------------------------------------------------------
