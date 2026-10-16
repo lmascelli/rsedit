@@ -105,6 +105,18 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 
 "#;
 
+/// The editor's WorkManager, its reports going to LOG: manual in this crate's
+/// own tests, with an executor thread everywhere else.
+fn work_manager<B: BufferTrait>(log: &Arc<RwLock<Log>>) -> WorkManager<EditorState<B>> {
+    let log = log.clone();
+    let report = move |line: &str| Log::append(&log, line);
+    if cfg!(test) {
+        WorkManager::manual(report)
+    } else {
+        WorkManager::threaded(report)
+    }
+}
+
 impl<B: BufferTrait> EditorState<B> {
     /// Create a new EditorState environment. Install the default keymaps,
     /// provides a default *scratch* buffer in a base window.
@@ -114,10 +126,13 @@ impl<B: BufferTrait> EditorState<B> {
 
         // Create a secondary worker thread and the communication channels with it.
         let (sender, receiver) = std::sync::mpsc::channel();
+        // Made before the editor, so the WorkManager's reports can go to it.
+        let log = Arc::new(RwLock::new(Log::default()));
 
         let editor_state = Self {
             running: Arc::new(AtomicBool::new(true)),
             worker_mailbox: sender,
+            work: work_manager(&log),
             buffers: Arc::new(RwLock::new(Buffers::default())),
             echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
             modes: Arc::new(RwLock::new(Modes::new(keymaps))),
@@ -135,9 +150,13 @@ impl<B: BufferTrait> EditorState<B> {
             runtime: Arc::new(RwLock::new(Runtime::new(Arc::new(FuelMeter::new(
                 DEFAULT_FUEL,
             ))))),
-            log: Arc::new(RwLock::new(Log::default())),
+            log,
             history: Arc::new(RwLock::new(History::default())),
         };
+        // The executor's copy of the state, which could not exist before the
+        // state did. A copy is a cycle -- the state holds the WorkManager --
+        // and `shutdown` is what breaks it.
+        editor_state.work.start(editor_state.clone());
         BackgroundScheduler::spawn(receiver, editor_state.clone());
         // Colouring runs from here on, a bounded chunk at a time. Started at
         // construction rather than when a grammar is first defined, because a

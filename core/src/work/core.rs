@@ -68,6 +68,14 @@ struct Behind {
     longest: Option<(String, Duration)>,
 }
 
+/// A job that has left, owed its `exit`.
+struct Leaving<C: 'static> {
+    id: WorkId,
+    name: String,
+    job: Box<dyn Job<C>>,
+    why: Exit,
+}
+
 /// One job and everything the core keeps about it.
 struct Record<C> {
     spec: Spec,
@@ -168,7 +176,10 @@ pub struct Core<C: 'static> {
     high_streak: u64,
     /// Jobs that have left and are owed their `exit`, which needs the state
     /// the next turn brings.
-    leaving: Vec<(String, Box<dyn Job<C>>, Exit)>,
+    leaving: Vec<Leaving<C>>,
+    /// Jobs whose `exit` has been called, for whoever keeps a list of the
+    /// jobs outside the core: see [`Core::take_departed`].
+    departed: Vec<WorkId>,
     reporter: Reporter,
     load: Load,
     closed: bool,
@@ -186,6 +197,7 @@ impl<C: 'static> Core<C> {
             normal: VecDeque::new(),
             high_streak: 0,
             leaving: Vec::new(),
+            departed: Vec::new(),
             reporter: Reporter::default(),
             load: Load::default(),
             closed: false,
@@ -198,14 +210,23 @@ impl<C: 'static> Core<C> {
     /// next turn. `None` once the core has shut down: the job is not taken, and
     /// its `exit` is not called -- the caller knows it was refused.
     pub fn submit(&mut self, spec: Spec, job: Box<dyn Job<C>>) -> Option<WorkId> {
+        let id = WorkId::next();
+        self.submit_as(id, spec, job).then_some(id)
+    }
+
+    /// [`Self::submit`], under a number the caller has already handed out.
+    ///
+    /// For the WorkManager, which answers `submit` at once with the number and
+    /// passes the job on to the executor's thread: the number has to exist
+    /// before the core sees the job. False when the core has shut down.
+    pub(crate) fn submit_as(&mut self, id: WorkId, spec: Spec, job: Box<dyn Job<C>>) -> bool {
         if self.closed {
-            return None;
+            return false;
         }
         if let Some(&old) = self.names.get(&spec.name) {
             self.cancel(old);
         }
         let now = self.clock.now();
-        let id = WorkId::next();
         let subscriptions = spec
             .topics
             .iter()
@@ -244,7 +265,7 @@ impl<C: 'static> Core<C> {
                 longest: Duration::ZERO,
             },
         );
-        Some(id)
+        true
     }
 
     /// Stop the job ID. It leaves on the next turn, as [`Exit::Cancelled`],
@@ -261,7 +282,12 @@ impl<C: 'static> Core<C> {
         // A job taking a step is not here to take: `run_step` finds its record
         // gone when the step ends, and makes it leave then.
         if let Some(job) = record.job.take() {
-            self.leaving.push((record.spec.name, job, Exit::Cancelled));
+            self.leaving.push(Leaving {
+                id,
+                name: record.spec.name,
+                job,
+                why: Exit::Cancelled,
+            });
         }
         true
     }
@@ -277,9 +303,14 @@ impl<C: 'static> Core<C> {
     /// Every job leaves, as [`Exit::Shutdown`], and nothing is taken after.
     pub fn shutdown(&mut self, state: &C) {
         self.closed = true;
-        for (_, mut record) in std::mem::take(&mut self.jobs) {
+        for (id, mut record) in std::mem::take(&mut self.jobs) {
             if let Some(job) = record.job.take() {
-                self.leaving.push((record.spec.name, job, Exit::Shutdown));
+                self.leaving.push(Leaving {
+                    id,
+                    name: record.spec.name,
+                    job,
+                    why: Exit::Shutdown,
+                });
             }
         }
         self.names.clear();
@@ -369,6 +400,12 @@ impl<C: 'static> Core<C> {
     /// The report lines written since the last call, oldest first.
     pub fn take_reports(&mut self) -> Vec<String> {
         self.reporter.take()
+    }
+
+    /// The jobs that have left since the last call, their `exit` already
+    /// called: what a list of the jobs kept outside the core drops.
+    pub fn take_departed(&mut self) -> Vec<WorkId> {
+        std::mem::take(&mut self.departed)
     }
 
     /// Every job the core holds, in the order they were submitted.
@@ -504,7 +541,12 @@ impl<C: 'static> Core<C> {
 
         // Cancelled while it ran: nothing to come back to.
         if !self.jobs.contains_key(&id) {
-            self.leaving.push((name, job, Exit::Cancelled));
+            self.leaving.push(Leaving {
+                id,
+                name,
+                job,
+                why: Exit::Cancelled,
+            });
             return;
         }
         match result {
@@ -620,13 +662,24 @@ impl<C: 'static> Core<C> {
             if self.names.get(&record.spec.name) == Some(&id) {
                 self.names.remove(&record.spec.name);
             }
-            self.leaving.push((record.spec.name, job, why));
+            self.leaving.push(Leaving {
+                id,
+                name: record.spec.name,
+                job,
+                why,
+            });
         }
     }
 
     /// Call `exit` on every job that left.
     fn flush_leaving(&mut self, state: &C) {
-        for (name, mut job, why) in std::mem::take(&mut self.leaving) {
+        for Leaving {
+            id,
+            name,
+            mut job,
+            why,
+        } in std::mem::take(&mut self.leaving)
+        {
             // Guarded like a step: an `exit` that panics must not take the
             // scheduler down with it.
             if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.exit(state, why))) {
@@ -635,6 +688,7 @@ impl<C: 'static> Core<C> {
                     panic_message(&*payload)
                 ));
             }
+            self.departed.push(id);
         }
     }
 
@@ -661,7 +715,7 @@ impl<C: 'static> Core<C> {
 }
 
 /// What a panic said, when it said it with a string.
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
         .map(|message| message.to_string())

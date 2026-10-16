@@ -22,6 +22,7 @@
 //! own lock for the same reason: two threads may be writing to it at once, and
 //! that is the only thing they need to agree about.
 use std::{
+    collections::VecDeque,
     fs::File,
     io::Write,
     sync::{Arc, RwLock},
@@ -29,7 +30,7 @@ use std::{
 
 #[derive(Default)]
 pub struct Log {
-    lines: Vec<String>,
+    lines: VecDeque<String>,
     /// Where a copy goes, once somebody asks for one.
     ///
     /// Shared rather than owned so that [`Log::record`] can hand it out and
@@ -38,9 +39,14 @@ pub struct Log {
 }
 
 impl Log {
+    /// How many lines the list keeps. Past it the oldest goes: a long session
+    /// must not grow with every diagnostic (AVV-4), and the file, when there
+    /// is one, already has them all.
+    pub const MAX_LINES: usize = 10_000;
+
     /// Every diagnostic logged so far, oldest first.
     pub fn lines(&self) -> Vec<String> {
-        self.lines.clone()
+        self.lines.iter().cloned().collect()
     }
 
     /// Record MSG, and answer with the sink it should also be written to.
@@ -50,8 +56,39 @@ impl Log {
     /// enabled, which is the ordinary case.
     #[must_use = "the message still has to reach the file"]
     pub fn record(&mut self, msg: &str) -> Option<Arc<RwLock<File>>> {
-        self.lines.push(msg.to_string());
+        if self.lines.len() == Self::MAX_LINES {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(msg.to_string());
         self.file.clone()
+    }
+
+    /// Record MSG in LOG and write it to the file, when one is enabled: the
+    /// whole of logging a diagnostic, for whoever holds the compartment rather
+    /// than the editor. The WorkManager's executor is one: it must not hold an
+    /// editor, or the editor would hold itself.
+    ///
+    /// The sink comes back out with the lock, and the write happens with it
+    /// given back: a disk write inside the lock every diagnostic takes is a
+    /// queue everything else logging has to wait in, and diagnostics are
+    /// logged from the worker threads as well as the command thread.
+    pub fn append(log: &RwLock<Log>, msg: &str) {
+        let sink = log.write().expect("write lock on log").record(msg);
+        if let Some(file) = sink {
+            Log::write_to(&file, msg);
+        }
+    }
+
+    /// Write MSG to SINK, the file [`Log::record`] handed back.
+    ///
+    /// A write that fails is dropped, never a panic (AVV-3). With the disk
+    /// full, the first attempt to save produces exactly a diagnostic, and that
+    /// diagnostic used to close the editor. The line is in the list already;
+    /// the file just has a gap.
+    pub fn write_to(sink: &RwLock<File>, msg: &str) {
+        if let Ok(mut file) = sink.write() {
+            let _ = file.write_all(format!("{msg}\n").as_bytes());
+        }
     }
 
     /// Start mirroring to FILE, first writing out everything logged so far.

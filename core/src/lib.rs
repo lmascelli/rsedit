@@ -17,6 +17,9 @@
 //!                places.
 //!   input.rs     keys, mouse events and keymaps: the vocabulary the editor
 //!   commands.rs  takes input in, and the registry of what a name can mean.
+//!   work/        where asynchronous work runs: the WorkManager and its
+//!                scheduler. Knows nothing of editors: the state a job works
+//!                on is a type parameter. Replacing background/, below.
 //!   managers/    the editor's state, in compartments, each under one lock.
 //!   editor/      EditorState: the facade over those compartments, and the
 //!                only thing that may hold two of their locks at once.
@@ -68,9 +71,9 @@ pub(crate) mod primitives;
 pub(crate) mod background;
 pub(crate) mod ui;
 // The scheduler that replaces `background`, one piece at a time: see
-// `doc/workmanager.typ`. Nothing uses it yet -- the WorkManager that wires it
-// into the editor is the next step -- so until then the compiler would call
-// all of it dead code, and its re-exports unused.
+// `doc/workmanager.typ`. Every editor builds a WorkManager, but no work runs
+// on it until the jobs move, in the next steps -- so until then the compiler
+// would call most of it dead code, and its re-exports unused.
 #[allow(dead_code, unused_imports)]
 pub(crate) mod work;
 

@@ -10,12 +10,12 @@
 //! > compartment's file, whatever it is called.
 //!
 //! So `buffers.rs`, `windows.rs`, `commands.rs`, `modes.rs`, `kill_yank.rs`,
-//! `runtime.rs` and `log.rs` each pair with the manager of the same name. The
-//! rest are named after a *concern* rather than a compartment, because what
-//! they do spans several by nature: `keys.rs` resolves a keystroke,
-//! `mouse.rs` turns a pointer event into a command, `frame.rs` composes what
-//! the renderer draws, `boot.rs` brings an editor into existence and
-//! `settings.rs` reads the Lisp variables.
+//! `runtime.rs` and `log.rs` each pair with the manager of the same name, and
+//! `work.rs` with the WorkManager in [`crate::work`]. The rest are named after
+//! a *concern* rather than a compartment, because what they do spans several
+//! by nature: `keys.rs` resolves a keystroke, `mouse.rs` turns a pointer event
+//! into a command, `frame.rs` composes what the renderer draws, `boot.rs`
+//! brings an editor into existence and `settings.rs` reads the Lisp variables.
 //!
 //! # Why the forwarders are not just removed
 //!
@@ -56,6 +56,7 @@ use crate::{
         LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,
         Window, WindowId, compose_layout, layout, region_highlights,
     },
+    work::WorkManager,
 };
 
 use risp::{
@@ -65,7 +66,6 @@ use risp::{
 
 use std::{
     fs::{self, File},
-    io::Write,
     path::PathBuf,
     sync::{
         Arc, RwLock,
@@ -90,6 +90,7 @@ mod replace;
 mod runtime;
 mod settings;
 mod windows;
+mod work;
 
 pub use boot::{CONFIG_DIR, XDG_CONFIG_HOME, create_global_env, isolate_config_for_tests};
 pub use keys::KEY_CAPTURE_FUNCTION;
@@ -144,6 +145,15 @@ pub struct EditorState<B: BufferTrait> {
     /// A channel that is used to send work to a worker thread like
     /// the syntax highlighting computation
     worker_mailbox: Sender<WorkerMessage<B>>,
+
+    /// Where asynchronous work runs: the scheduler and its executor, the
+    /// dedicated threads and what watches them. See [`crate::work`].
+    ///
+    /// It takes over from the mailbox above one job at a time, and until the
+    /// first moves nothing runs on it. In this crate's own tests it is in
+    /// manual mode: nothing runs unless the test drives it, so no test is
+    /// raced by a thread it did not ask for.
+    work: WorkManager<EditorState<B>>,
 
     /// Every buffer the editor holds, which one is current, and which were
     /// current lately. See [`Buffers`], which says why those are one lock and
@@ -291,17 +301,7 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
     }
 
     fn log_diagnostic(&self, msg: &str) {
-        // The sink comes back out with the lock, and the write happens with it
-        // given back: a disk write inside the lock every diagnostic takes is a
-        // queue everything else logging has to wait in, and diagnostics are
-        // logged from the worker thread as well as this one.
-        let sink = self.log.write().expect("write lock on log").record(msg);
-        if let Some(file) = sink {
-            file.write()
-                .expect("Failed to acquire write lock on log file")
-                .write_all(format!("{msg}\n").as_bytes())
-                .expect("Failed to write into log file");
-        }
+        Log::append(&self.log, msg);
     }
 
     fn begin_unwind(&self) {
