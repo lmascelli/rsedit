@@ -82,6 +82,7 @@ mod virtual_text_tests;
 mod watcher_tests;
 mod window_point_tests;
 mod window_tests;
+mod work_core_tests;
 mod worker_tests;
 mod write_file_tests;
 mod vim_tests;

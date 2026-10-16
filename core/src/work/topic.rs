@@ -1,0 +1,93 @@
+//! Topics: events as counters.
+//!
+//! A topic carries no data. Emitting one says "go and look", and what the job
+//! looks at -- the state -- is the source of truth: see `doc/workmanager.typ`,
+//! "Gli eventi". So an emission is an atomic increment, cheap enough to make
+//! with a buffer's lock held, and a burst of emissions is one number that grew
+//! rather than a queue of messages to deliver.
+//!
+//! A job is subscribed to a topic when the topic's count has grown past the
+//! last value the job saw. The core records that value just before each step,
+//! which is what makes an event that arrives *during* the step wake the job
+//! again rather than vanish.
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+
+/// What an emission calls besides counting: how a sleeping executor will be
+/// woken. A no-op in the core's own tests, which look at the counts when they
+/// choose to.
+type Nudge = Arc<dyn Fn() + Send + Sync>;
+
+/// The topics, by name.
+pub struct Topics {
+    by_name: RwLock<HashMap<String, Topic>>,
+    nudge: Nudge,
+}
+
+/// One topic. Cheap to clone: every clone is the same counter.
+#[derive(Clone)]
+pub struct Topic(Arc<Inner>);
+
+struct Inner {
+    name: String,
+    count: AtomicU64,
+    nudge: Nudge,
+}
+
+impl Default for Topics {
+    fn default() -> Self {
+        Self::with_nudge(|| {})
+    }
+}
+
+impl Topics {
+    /// Topics whose every emission also calls NUDGE.
+    pub fn with_nudge(nudge: impl Fn() + Send + Sync + 'static) -> Self {
+        Self {
+            by_name: RwLock::new(HashMap::new()),
+            nudge: Arc::new(nudge),
+        }
+    }
+
+    /// The topic called NAME, made on first use.
+    ///
+    /// Resolve a name once and keep the [`Topic`]: emitting through it then
+    /// touches no lock at all.
+    pub fn get(&self, name: &str) -> Topic {
+        if let Some(topic) = self.by_name.read().expect("topics").get(name) {
+            return topic.clone();
+        }
+        self.by_name
+            .write()
+            .expect("topics")
+            .entry(name.to_string())
+            .or_insert_with(|| {
+                Topic(Arc::new(Inner {
+                    name: name.to_string(),
+                    count: AtomicU64::new(0),
+                    nudge: self.nudge.clone(),
+                }))
+            })
+            .clone()
+    }
+}
+
+impl Topic {
+    /// Say that something this topic stands for has changed.
+    pub fn emit(&self) {
+        // Release, paired with the Acquire in `count`: whatever was changed
+        // before the emission is visible to a job that has seen the new count.
+        self.0.count.fetch_add(1, Ordering::Release);
+        (self.0.nudge)();
+    }
+
+    /// How many times the topic has been emitted.
+    pub fn count(&self) -> u64 {
+        self.0.count.load(Ordering::Acquire)
+    }
+
+    pub fn name(&self) -> &str {
+        &self.0.name
+    }
+}

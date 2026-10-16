@@ -67,6 +67,12 @@ pub(crate) mod primitives;
 // -- where work runs, and what the screen is asked to show -------------------
 pub(crate) mod background;
 pub(crate) mod ui;
+// The scheduler that replaces `background`, one piece at a time: see
+// `doc/workmanager.typ`. Nothing uses it yet -- the WorkManager that wires it
+// into the editor is the next step -- so until then the compiler would call
+// all of it dead code, and its re-exports unused.
+#[allow(dead_code, unused_imports)]
+pub(crate) mod work;
 
 #[cfg(test)]
 pub mod tests;
