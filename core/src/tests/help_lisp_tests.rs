@@ -500,4 +500,114 @@ mod tests {
         }
         let _: ELispExp<GapBuffer> = LispExp::nil();
     }
+
+    // ----------------------------------------------------------------
+    // The manual page a name points to
+    // ----------------------------------------------------------------
+
+    /// A directory standing in for the installed pages, gone with the test.
+    struct Pages(std::path::PathBuf);
+
+    impl Drop for Pages {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// One page, `demo`, whose SYNOPSIS lists `insert` and `help-key`, with
+    /// the manual module reading its pages from there.
+    fn demo_pages(test: &str, ctx: &Ctx, env: &Arc<Env<Ctx>>) -> Pages {
+        let dir =
+            std::env::temp_dir().join(format!("rsedit-help-manual-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the pages directory");
+        std::fs::write(
+            dir.join("demo.txt"),
+            "NAME\n    demo - a page for the test\n\nSYNOPSIS\n    (insert &rest STRINGS)\n    \
+             help-key\n\nDESCRIPTION\n    Nothing more.\n",
+        )
+        .expect("the page");
+        env.set_variable(
+            "help-tests--pages".into(),
+            LispExp::string(dir.display().to_string()),
+        );
+        run(
+            "(defun manpage--rsedit-directory () help-tests--pages) (setq manpage--homes nil)",
+            env,
+            ctx,
+        );
+        Pages(dir)
+    }
+
+    fn names(answer: &LispExp<Ctx>) -> Vec<String> {
+        answer
+            .iter()
+            .map(|name| match name {
+                LispExp::String(name) => name.to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_synopsis_reads_as_the_names_it_lists() {
+        let (ctx, env) = editor();
+        env.set_variable(
+            "help-tests--text".into(),
+            LispExp::string(
+                "NAME\n    x - y\n\nSYNOPSIS\n    (insert &rest STRINGS)\n    case-fold-search\n\n    \
+                 (point)\nDESCRIPTION\n    (not-this)\n"
+                    .to_string(),
+            ),
+        );
+        let listed = run("(manpage--synopsis-names help-tests--text)", &env, &ctx);
+        assert_eq!(names(&listed), ["insert", "case-fold-search", "point"]);
+        env.set_variable(
+            "help-tests--text".into(),
+            LispExp::string("NAME\n    x - y\n\nDESCRIPTION\n    (insert)\n".to_string()),
+        );
+        let listed = run("(manpage--synopsis-names help-tests--text)", &env, &ctx);
+        assert!(
+            listed.is_nil(),
+            "a page without a SYNOPSIS lists nothing: {listed:?}"
+        );
+    }
+
+    #[test]
+    fn a_name_a_synopsis_lists_points_to_its_page() {
+        let (ctx, env) = editor();
+        let _pages = demo_pages("listed", &ctx, &env);
+        run(r#"(help-function "insert")"#, &env, &ctx);
+        assert_says(&page(&ctx), "Manual: demo");
+        run(r#"(help-variable "help-key")"#, &env, &ctx);
+        assert_says(&page(&ctx), "Manual: demo");
+    }
+
+    #[test]
+    fn a_name_no_synopsis_lists_has_no_manual_line() {
+        let (ctx, env) = editor();
+        let _pages = demo_pages("unlisted", &ctx, &env);
+        run(r#"(help-function "goto-char")"#, &env, &ctx);
+        let page = page(&ctx);
+        assert!(!page.contains("Manual:"), "{page}");
+    }
+
+    #[test]
+    fn following_the_manual_line_opens_the_page() {
+        let (ctx, env) = editor();
+        let _pages = demo_pages("follow", &ctx, &env);
+        run(r#"(help-function "insert")"#, &env, &ctx);
+        let text = page(&ctx);
+        let at = text.find("Manual: demo").expect("the manual line") + "Manual: ".len();
+        run(
+            &format!("(goto-char {})", text[..at].chars().count() + 1),
+            &env,
+            &ctx,
+        );
+        press('K', false, &ctx, &env);
+        let manual = ctx
+            .with_buffer("*Manual*", |buf| buf.text.to_string())
+            .unwrap_or_default();
+        assert!(manual.contains("demo - a page for the test"), "{manual:?}");
+    }
 }

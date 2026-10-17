@@ -14,55 +14,18 @@
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
-    use crate::editor::boot::DEFAULT_INIT_LISP;
     use crate::editor::{EditorState, create_global_env};
+    use crate::tests::shipped::{default_modules, load_default_modules};
     use risp::{Env, LispExp, Parser, eval};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
 
-    /// The modules `create_global_env` writes into a fresh init.lisp, in order.
-    /// Order is the whole point: each is written against what the ones above it
-    /// define.
-    const SHIPPED: [(&str, &str); 19] = [
-        ("commands", include_str!("../../lisp/commands.lisp")),
-        ("debug", include_str!("../../lisp/debug.lisp")),
-        (
-            "common-keymaps",
-            include_str!("../../lisp/common-keymaps.lisp"),
-        ),
-        ("indent", include_str!("../../lisp/indent.lisp")),
-        ("minibuffer", include_str!("../../lisp/minibuffer.lisp")),
-        ("rust-mode", include_str!("../../lisp/rust-mode.lisp")),
-        ("risp-mode", include_str!("../../lisp/risp-mode.lisp")),
-        ("dired", include_str!("../../lisp/dired.lisp")),
-        ("completion", include_str!("../../lisp/completion.lisp")),
-        ("clipboard", include_str!("../../lisp/clipboard.lisp")),
-        (
-            "electric-pair",
-            include_str!("../../lisp/electric-pair.lisp"),
-        ),
-        ("buffer-list", include_str!("../../lisp/buffer-list.lisp")),
-        ("shell", include_str!("../../lisp/shell.lisp")),
-        ("manpage", include_str!("../../lisp/manpage.lisp")),
-        ("help", include_str!("../../lisp/help.lisp")),
-        ("occur", include_str!("../../lisp/occur.lisp")),
-        ("compile", include_str!("../../lisp/compile.lisp")),
-        ("theme", include_str!("../../lisp/theme.lisp")),
-        ("vim", include_str!("../../lisp/vim.lisp")),
-    ];
-
     fn loaded() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
-        for (name, source) in SHIPPED {
-            let ast = Parser::new(&format!("(progn {source})"))
-                .next()
-                .unwrap_or_else(|why| panic!("{name}.lisp must parse: {why:?}"));
-            eval(&ast, env.clone(), &ctx)
-                .unwrap_or_else(|why| panic!("loading {name}.lisp: {why:?}"));
-        }
+        load_default_modules(&env, &ctx);
         (ctx, env)
     }
 
@@ -72,26 +35,35 @@ mod tests {
     }
 
     #[test]
-    fn every_module_the_default_init_loads_is_copied_beside_the_binary() {
-        // The editor finds its modules in data/lisp beside the binary, and
-        // build.rs copies them there from a list of its own. A module missing
-        // from that list is one the default init.lisp loads and the editor
-        // never finds: `preview' was, so C-x r t had no preview in a built
-        // editor, and the only sign was a line in the log.
-        let build = include_str!("../../build.rs");
-        let loaded: Vec<&str> = DEFAULT_INIT_LISP
-            .lines()
-            .filter_map(|line| line.trim_start().strip_prefix("(eval-file \""))
-            .filter_map(|rest| rest.split('"').next())
-            .collect();
-        assert!(loaded.contains(&"preview"), "the default init: {loaded:?}");
-        let missing: Vec<&str> = loaded
-            .into_iter()
-            .filter(|name| !build.contains(&format!("\"{name}.lisp\"")))
+    fn every_module_the_default_init_loads_is_beside_the_binary() {
+        // The editor finds its modules in data/lisp beside the binary, where
+        // build.rs copies the whole of core/lisp. A module the default
+        // init.lisp loads and the built editor cannot find is a feature that
+        // is missing with nothing but a line in the log to say so.
+        let (ctx, env) = loaded();
+        let LispExp::String(dir) = eval(
+            &Parser::new("(data-directory \"lisp\")")
+                .next()
+                .expect("must parse"),
+            env.clone(),
+            &ctx,
+        )
+        .expect("data-directory must not fail") else {
+            panic!("the data directory beside the test binary is missing");
+        };
+        let modules = default_modules();
+        assert!(modules.contains(&"preview".to_string()), "{modules:?}");
+        let missing: Vec<&String> = modules
+            .iter()
+            .filter(|name| {
+                !std::path::Path::new(&*dir)
+                    .join(format!("{name}.lisp"))
+                    .is_file()
+            })
             .collect();
         assert!(
             missing.is_empty(),
-            "loaded by the default init.lisp, not copied by build.rs: {missing:?}"
+            "loaded by init.lisp, not in {dir}: {missing:?}"
         );
     }
 

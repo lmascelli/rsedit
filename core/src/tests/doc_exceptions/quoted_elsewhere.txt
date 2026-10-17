@@ -1,0 +1,85 @@
+# Names the manual pages and docstrings quote, as `name', that are not the
+# editor's functions or variables and are right not to be: the Lisp's
+# special forms, hooks, symbols a function takes or returns, programs, and
+# Emacs's names where the text compares the two. A name nothing quotes any
+# more is taken out.
+
+# The Lisp's special forms
+dolist
+fiber
+if
+while
+yield
+
+# Hooks, which add-hook takes by name
+post-command-hook
+post-self-insert-hook
+
+# Topics the editor emits
+buffer-changed
+syntax-changed
+
+# Modes, named by make-mode
+dired-mode
+fundamental-mode
+isearch-mode
+manpage-mode
+minibuffer-mode
+occur-mode
+shell-output-mode
+
+# Features, by name
+isearch
+
+# Symbols a function takes, returns or keeps as a property
+auto
+bold
+class
+close
+continue
+escape
+filename
+indent-function
+invalid-regexp
+max-ms
+nil
+open
+overlay
+prefix
+punctuation
+reindent
+results-refresh
+running-ms
+shift
+state
+steps
+symbol
+total-ms
+underline
+
+# Buffers, jobs and themes, by name
+*scratch*
+highlighter
+monochrome-theme
+
+# Words, patterns and names given as examples
+*items*
+and/
+car*
+color
+colour
+compilation--output-of-x
+foo
+link
+no
+target
+x*
+yes
+
+# Programs
+ls
+man
+sort
+
+# Emacs's names, where the text compares the two
+next-screen-context-lines

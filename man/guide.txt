@@ -25,8 +25,8 @@ THE GUIDE
         writing-commands  when a setting is not enough
 
 THE REFERENCE
-    What a doc string cannot say: how the pieces fit, and why they are the
-    shape they are.
+    A page for each part of the editor: what it does, how to use it, and
+    the keys.
 
         rsedit            the editor's own shape, and the help tree
         buffers           what is being edited
@@ -41,6 +41,7 @@ THE REFERENCE
         themes            how the colours are chosen
         compile           running a build, and jumping to its complaints
         background        work that must not happen on the drawing thread
+        vim               modal editing, for those who would rather
 
     Every command and every variable also documents itself. C-h f names a
     function, C-h v a variable, C-h k a key, C-h a searches all of them.

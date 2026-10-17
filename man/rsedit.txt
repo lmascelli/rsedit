@@ -17,25 +17,28 @@ MODULES
     above it define. Comment one out and the editor comes up without it,
     missing exactly that feature and nothing else.
 
-    commands            defcommand, and the command registry's Lisp side
-    debug               message, and the *Messages* buffer
-    common-keymaps      the default bindings
-    indent              what Tab does; a mode plugs its own rule in
-    minibuffer          commands built on the built-in prompt
-    completion          the strip that narrows as you type
-    completion-at-point where completions come from
-    dired               a directory in a buffer, and C-x C-r
-    buffer-list         C-x b, and C-x C-b
-    clipboard           kills also reach the system clipboard
-    electric-pair       closing delimiters that type themselves
-    shell               M-! and its output buffer
-    manpage             this
-    occur               M-s o, M-s g, and the lists M-g n walks
-    help                C-h f, C-h k, C-h b -- the editor describing itself
-    compile             C-c c, and jumping to what it complained about
-    theme               C-c t, and how faces are drawn
-    rust-mode           colouring for Rust
-    risp-mode           colouring and indentation for rsedit's own Lisp
+    commands             defcommand, and the command registry's Lisp side
+    debug                message, and the *Messages* buffer
+    common-keymaps       the default bindings
+    indent               what Tab does; a mode plugs its own rule in
+    minibuffer           commands built on the built-in prompt
+    rust-mode            colouring for Rust
+    risp-mode            colouring and indentation for rsedit's own Lisp
+    cc-mode              colouring for C and C++
+    dired                a directory in a buffer, and C-x C-r
+    completion           the strip that narrows as you type
+    preview              C-x r t shows its replacement before you commit
+    clipboard            kills also reach the system clipboard
+    electric-pair        closing delimiters that type themselves
+    buffer-list          C-x b, and C-x C-b
+    shell                M-! and its output buffer
+    manpage              this
+    help                 C-h f, C-h k, C-h b -- the editor describing itself
+    occur                M-s o, M-s g, and the lists M-g n walks
+    compile              C-c c, and jumping to what it complained about
+    theme                C-c t, and how faces are drawn
+    vim                  modal editing, off until M-x vim-mode
+    completion-at-point  where completions come from
 
 FINDING YOUR WAY
     C-h f names a function, C-h v a variable, C-h k a key -- press it and be
@@ -58,4 +61,4 @@ SEE ALSO
     guide, first-steps, editing, files, searching, getting-help,
     completion, keymaps, modes, configuration, writing-commands,
     buffers, windows, overlays, compile, themes, background, rectangles,
-    virtual-text, macros
+    virtual-text, macros, vim

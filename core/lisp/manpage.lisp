@@ -425,6 +425,7 @@ here."
 For after installing something. The list is otherwise rebuilt only when
 `manpage-path' changes, since nothing else the editor can see makes it wrong."
   (setq manpage--index-announce t)
+  (setq manpage--homes nil)
   (manpage--reindex)
   (message "Looking for manual pages..."))
 
@@ -445,6 +446,55 @@ For after installing something. The list is otherwise rebuilt only when
     (if (null bounds)
         nil
         (list (nth 0 bounds) (nth 1 bounds) (manpage-names)))))
+
+;; ---------------------------------------------------------------------------
+;; Which page is a name's home
+;; ---------------------------------------------------------------------------
+;;
+;; A page lists in its SYNOPSIS the names it documents, one per line:
+;; `(name ARGS)' for a function or a command, `name' alone for a variable.
+;; That page is the name's home, and `C-h f' and `C-h v' point to it.
+
+(defun manpage--synopsis-names (text)
+  "The names the SYNOPSIS of the page TEXT lists, in order; nil without one."
+  (if (not (string-match "\nSYNOPSIS\n" text))
+      nil
+      (let* ((start (match-end 0))
+             (end (if (string-match "\n[^ \n]" text start)
+                      (match-beginning 0)
+                      (length text)))
+             (names nil))
+        (mapc (lambda (line)
+                (if (string-match "[^ ()]+" line)
+                    (setq names (cons (match-string 0 line) names))))
+              (split-string (substring text start end) "\n"))
+        (reverse names))))
+
+(setq manpage--homes nil)
+
+(defun manpage--read-homes ()
+  "An alist from each name an rsedit page's SYNOPSIS lists to that page."
+  (let ((directory (manpage--rsedit-directory))
+        (homes nil))
+    (if (and directory (file-directory-p directory))
+        (mapc (lambda (file)
+                (if (string-match "^(.+)\\.txt$" file)
+                    (let ((page (match-string 1 file))
+                          (text (read-file-to-string
+                                 (concat (file-name-as-directory directory) file))))
+                      (mapc (lambda (name) (setq homes (cons (cons name page) homes)))
+                            (manpage--synopsis-names text)))))
+              (list-dir directory)))
+    homes))
+
+(defun manpage-home (name)
+  "The rsedit manual page whose SYNOPSIS lists NAME, or nil.
+
+NAME is a symbol or a string. This is the page `C-h f' and `C-h v' name as the
+manual of a function or a variable."
+  (if (null manpage--homes)
+      (setq manpage--homes (manpage--read-homes)))
+  (cdr (assoc (if (symbolp name) (symbol-name name) name) manpage--homes)))
 
 ;; ---------------------------------------------------------------------------
 ;; Keys and faces

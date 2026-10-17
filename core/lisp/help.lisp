@@ -151,6 +151,12 @@ there for exactly this reason."
           words)
     out))
 
+(defun help--manual-lines (name)
+  "The lines naming the manual page of NAME, or nil when no page lists it in
+its SYNOPSIS or the `manpage' module is not loaded."
+  (let ((page (and (functionp 'manpage-home) (manpage-home name))))
+    (if page (list "" (concat "Manual: " page)) nil)))
+
 (defun help--function-lines (name)
   "The page for the function NAME."
   (let* ((symbol (help--symbol name))
@@ -175,7 +181,8 @@ there for exactly this reason."
                          "A command. It takes no arguments.")
                      ""))
              nil)
-         (help--lines doc)))))
+         (help--lines doc)
+         (help--manual-lines name)))))
 
 (defun help--variable-lines (name)
   "The page for the variable NAME."
@@ -197,7 +204,8 @@ there for exactly this reason."
                    (format "Value: %s" (symbol-value symbol))
                    "Not set. Whatever reads it will fail until something does.")
                "")
-         (help--lines doc)))))
+         (help--lines doc)
+         (help--manual-lines name)))))
 
 (defun help--key-lines (keys target source)
   "The page for KEYS, which runs TARGET, from the map named SOURCE.
@@ -510,13 +518,15 @@ which is the only way this is reached: there is no key of its own to press."
         (buffer-substring (nth 0 bounds) (nth 1 bounds)))))
 
 (defcommand help-follow () nil
-  "Describe the name under the cursor.
+  "Describe the name under the cursor; on a `Manual:' line, open that page.
 
 A function if it is one, a variable otherwise -- the order a reader expects,
 since a page naming `insert' means the command and a page naming
 `case-fold-search' means the setting."
   (let ((name (help--symbol-at-point)))
     (cond ((null name) (message "Nothing under the cursor"))
+          ((and (functionp 'manpage) (string-prefix-p "Manual: " (current-line)))
+           (manpage name))
           ((functionp (intern name)) (help-function name))
           ((or (boundp (intern name)) (variable-doc (intern name))) (help-variable name))
           (t (message "Nothing known about %s" name)))))

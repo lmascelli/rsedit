@@ -32,52 +32,23 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
+    use crate::tests::shipped::{
+        editor_functions, exceptions, known_names, load_default_modules, man_pages,
+        module_variables, quoted_names,
+    };
     use risp::{Env, LispExp, Parser, eval};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
 
-    /// Every shipped module, in the order init.lisp loads them. The point of
-    /// loading all of them is that the checks below then cover the modules'
-    /// own functions, variables and bindings and not just the Rust ones.
-    const SHIPPED: [(&str, &str); 18] = [
-        ("commands", include_str!("../../lisp/commands.lisp")),
-        ("debug", include_str!("../../lisp/debug.lisp")),
-        (
-            "common-keymaps",
-            include_str!("../../lisp/common-keymaps.lisp"),
-        ),
-        ("indent", include_str!("../../lisp/indent.lisp")),
-        ("minibuffer", include_str!("../../lisp/minibuffer.lisp")),
-        ("rust-mode", include_str!("../../lisp/rust-mode.lisp")),
-        ("risp-mode", include_str!("../../lisp/risp-mode.lisp")),
-        ("cc-mode", include_str!("../../lisp/cc-mode.lisp")),
-        ("dired", include_str!("../../lisp/dired.lisp")),
-        ("completion", include_str!("../../lisp/completion.lisp")),
-        ("clipboard", include_str!("../../lisp/clipboard.lisp")),
-        (
-            "electric-pair",
-            include_str!("../../lisp/electric-pair.lisp"),
-        ),
-        ("buffer-list", include_str!("../../lisp/buffer-list.lisp")),
-        ("shell", include_str!("../../lisp/shell.lisp")),
-        ("manpage", include_str!("../../lisp/manpage.lisp")),
-        ("help", include_str!("../../lisp/help.lisp")),
-        ("occur", include_str!("../../lisp/occur.lisp")),
-        ("compile", include_str!("../../lisp/compile.lisp")),
-    ];
-
+    /// The editor with every module the default init.lisp loads, so that the
+    /// checks below cover the modules' own functions, variables and bindings
+    /// and not just the Rust ones.
     fn loaded() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
-        for (name, source) in SHIPPED {
-            let ast = Parser::new(&format!("(progn {source})"))
-                .next()
-                .unwrap_or_else(|why| panic!("{name}.lisp must parse: {why:?}"));
-            eval(&ast, env.clone(), &ctx)
-                .unwrap_or_else(|why| panic!("loading {name}.lisp: {why:?}"));
-        }
+        load_default_modules(&env, &ctx);
         (ctx, env)
     }
 
@@ -191,13 +162,24 @@ mod tests {
         // most likely to need them explained.
         let (ctx, env) = loaded();
         let (_, lambdas) = primitives_and_lambdas(&env, &ctx);
+        let listed = exceptions(include_str!("doc_exceptions/undocumented.txt"));
         let undocumented: Vec<&String> = lambdas
             .iter()
             .filter(|name| documentation(name, &env, &ctx).is_none())
+            .filter(|name| !listed.contains(name))
+            .collect();
+        let stale: Vec<&String> = listed
+            .iter()
+            .filter(|name| !lambdas.contains(name) || documentation(name, &env, &ctx).is_some())
             .collect();
         assert!(
             undocumented.is_empty(),
             "these module functions have no docstring: {undocumented:?}"
+        );
+        assert!(
+            stale.is_empty(),
+            "doc_exceptions/undocumented.txt lists these, which are documented now or no \
+             longer exist; take them out: {stale:?}"
         );
     }
 
@@ -317,23 +299,7 @@ mod tests {
         // today, and did silently and uselessly for months before `defvar`
         // learned to keep a docstring at all.
         let (ctx, env) = loaded();
-        let mut defined = Vec::new();
-        for (module, source) in SHIPPED {
-            for line in source.lines() {
-                let line = line.trim_start();
-                for opener in ["(defvar ", "(defconst "] {
-                    if let Some(rest) = line.strip_prefix(opener) {
-                        let name: String = rest
-                            .chars()
-                            .take_while(|c| !c.is_whitespace() && *c != ')')
-                            .collect();
-                        if !name.is_empty() {
-                            defined.push((module, name));
-                        }
-                    }
-                }
-            }
-        }
+        let defined = module_variables();
         assert!(
             defined.len() > 20,
             "the modules should define variables to check: {defined:?}"
@@ -349,6 +315,119 @@ mod tests {
         assert!(
             undocumented.is_empty(),
             "these module variables have no docstring: {undocumented:?}"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // What the documentation says
+    // ----------------------------------------------------------------
+
+    /// Every docstring of the editor's own, as (name, text): its functions,
+    /// private ones included, and the variables its modules define.
+    fn docstrings(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = editor_functions(env)
+            .into_iter()
+            .filter_map(|name| documentation(&name, env, ctx).map(|doc| (name, doc)))
+            .collect();
+        for (_, name) in module_variables() {
+            let doc = text(&run(&format!("(variable-doc '{name})"), env, ctx));
+            if doc != "Undocumented variable" && doc != "nil" {
+                out.push((name, doc));
+            }
+        }
+        out
+    }
+
+    /// How long a docstring may be, in characters. What a longer one has to
+    /// say belongs in a manual page, which `C-h f` points to.
+    const DOCSTRING_LIMIT: usize = 1000;
+
+    #[test]
+    fn no_docstring_is_longer_than_the_limit() {
+        let (ctx, env) = loaded();
+        let docstrings = docstrings(&env, &ctx);
+        let listed = exceptions(include_str!("doc_exceptions/long_docstrings.txt"));
+        let long: Vec<&String> = docstrings
+            .iter()
+            .filter(|(_, doc)| doc.chars().count() > DOCSTRING_LIMIT)
+            .map(|(name, _)| name)
+            .collect();
+        let too_long: Vec<&&String> = long
+            .iter()
+            .filter(|name| !listed.contains(**name))
+            .collect();
+        let stale: Vec<&String> = listed.iter().filter(|name| !long.contains(name)).collect();
+        assert!(
+            too_long.is_empty(),
+            "longer than {DOCSTRING_LIMIT} characters; move what they explain to a manual page:\n{}",
+            too_long
+                .iter()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert!(
+            stale.is_empty(),
+            "doc_exceptions/long_docstrings.txt lists these, which are short enough now or no \
+             longer exist; take them out:\n{}",
+            stale
+                .iter()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    #[test]
+    fn every_name_quoted_in_a_page_or_a_docstring_is_known() {
+        // `name' is how a page or a docstring says "this is something you can
+        // look up". Following it to nothing tells the reader the text is
+        // wrong, and from then on they stop following.
+        let (ctx, env) = loaded();
+        let known = known_names(&env, &ctx);
+        let elsewhere = exceptions(include_str!("doc_exceptions/quoted_elsewhere.txt"));
+        let unknown = exceptions(include_str!("doc_exceptions/quoted_unknown.txt"));
+        let mut quoted: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for (page, body) in man_pages() {
+            for name in quoted_names(&body) {
+                quoted.entry(name).or_default().push(format!("page {page}"));
+            }
+        }
+        for (owner, doc) in docstrings(&env, &ctx) {
+            for name in quoted_names(&doc) {
+                quoted.entry(name).or_default().push(owner.clone());
+            }
+        }
+        assert!(quoted.len() > 300, "too few quoted names: {}", quoted.len());
+        let unlisted: Vec<String> = quoted
+            .iter()
+            .filter(|(name, _)| !known.contains(*name))
+            .filter(|(name, _)| !elsewhere.contains(name) && !unknown.contains(name))
+            .map(|(name, by)| {
+                let mut by = by.clone();
+                by.dedup();
+                format!("{name}  # {}", by.join(", "))
+            })
+            .collect();
+        let stale: Vec<&String> = elsewhere
+            .iter()
+            .chain(&unknown)
+            .filter(|name| !quoted.contains_key(*name) || known.contains(*name))
+            .collect();
+        assert!(
+            unlisted.is_empty(),
+            "quoted, and not a name the editor has:\n{}",
+            unlisted.join("\n")
+        );
+        assert!(
+            stale.is_empty(),
+            "the doc_exceptions/quoted_*.txt lists name these, which nothing quotes now or the \
+             editor has; take them out:\n{}",
+            stale
+                .iter()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 }

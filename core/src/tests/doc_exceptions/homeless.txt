@@ -1,0 +1,532 @@
+# Public names that no manual page lists in its SYNOPSIS yet.
+#
+# Checked by guide_tests: a public name is in a page's SYNOPSIS or here, and
+# a name here that has a page now, or no longer exists, is taken out. The
+# list only shrinks: each step of doc/documentazione.typ gives a home to the
+# names of its area.
+
+# -- passo 2: avvio, configurazione, diagnostica
+# lisp/commands.lisp
+defcommand
+save-match-data
+string-prefix-p
+string-suffix-p
+# lisp/debug.lisp
+backtrace-dismiss
+backtrace-show
+message
+messages-buffer-refresh
+report-error
+switch-to-messages
+# primitives/general.rs
+all-logs
+backtrace
+eval-file
+log
+set-echo-message
+
+# -- passo 3: scrivere e modificare
+# lisp/clipboard.lisp
+clipboard-sync-toggle
+# lisp/electric-pair.lisp
+electric-pair-blanks
+electric-pair-delete-backward
+electric-pair-delete-forward
+electric-pair-enable
+electric-pair-post-self-insert
+# lisp/indent.lisp
+electric-indent-mode
+indent-for-tab-command
+indent-line
+indent-region
+indent-region-style
+indent-rigidly-left
+indent-rigidly-lines
+indent-rigidly-right
+indent-width
+lisp-argument-column
+lisp-head-after
+lisp-indent-line
+lisp-indent-under
+newline
+newline-and-indent
+open-line-above
+open-line-below
+# primitives/comments.rs
+comment-dwim
+comment-indent
+comment-line
+comment-region
+comment-syntax
+uncomment-region
+# primitives/edits.rs
+backward-char
+backward-kill-paragraph
+backward-kill-sexp
+backward-kill-word
+backward-paragraph
+backward-sexp
+backward-up-list
+backward-word
+beginning-of-buffer
+beginning-of-line
+current-column
+current-indentation
+current-line
+delete-backward-char
+delete-char
+delete-region
+down-list
+end-of-buffer
+end-of-line
+forward-char
+forward-paragraph
+forward-sexp
+forward-word
+goto-char
+goto-line
+indent-line-to
+insert
+insert-newline
+insert-pasted-text
+kill-line
+kill-paragraph
+kill-sexp
+kill-whole-line
+kill-word
+line-number-at-point
+next-line
+point
+point-max
+point-min
+previous-indentation
+previous-line
+redo
+self-insert
+set-undo-limit
+undo
+undo-boundary
+undo-join
+up-list
+# primitives/macros.rs
+define-kbd-macro
+kbd-macro-keys
+kmacro-call-keys
+kmacro-call-macro
+kmacro-cancel-macro
+kmacro-counter
+kmacro-end-and-call-macro
+kmacro-end-macro
+kmacro-insert-counter
+kmacro-recording-p
+kmacro-set-counter
+kmacro-start-macro
+# primitives/rectangle.rs
+clear-rectangle
+copy-rectangle-as-kill
+delete-rectangle
+kill-rectangle
+killed-rectangle
+open-rectangle
+rectangle-bounds
+rectangle-mark-mode
+string-rectangle
+yank-rectangle
+# primitives/region.rs
+current-kill
+deactivate-mark
+exchange-point-and-mark
+keyboard-quit
+kill-new
+kill-region
+kill-ring-length
+kill-ring-save
+mark
+mark-whole-buffer
+region-beginning
+region-end
+set-kill-ring-max
+set-mark
+use-region-p
+yank
+yank-pop
+# primitives/verbs.rs
+back-to-indentation
+capitalize-word
+delete-blank-lines
+delete-horizontal-space
+downcase-word
+duplicate-line
+join-line
+just-one-space
+transpose-chars
+transpose-lines
+transpose-words
+upcase-word
+zap-to-char
+
+# -- passo 4: file, buffer, finestre
+# lisp/buffer-list.lisp
+buffer-list
+buffer-list-buffer-name
+buffer-list-kill
+buffer-list-mode-width
+buffer-list-name-column
+buffer-list-name-width
+buffer-list-refresh
+buffer-list-select
+switch-to-buffer-candidates
+switch-to-buffer-prompt
+# lisp/dired.lisp
+dired
+dired-buffer-name
+dired-delete-file
+dired-find-file
+dired-find-file-other-window
+dired-find-recursive
+dired-refresh
+dired-rename-file
+dired-sort
+dired-up-directory
+dired-window-width
+find-file-recursive-ignore
+find-file-recursive-limit
+# primitives/ask.rs
+y-or-n
+yes-or-no
+# primitives/buffers.rs
+buffer-create
+buffer-file-name
+buffer-get
+buffer-modified-p
+buffer-put
+buffer-read-only-p
+buffer-string
+buffer-substring
+clear-buffer
+close-buffer
+current-buffer
+kill-buffer
+kill-buffer-without-saving
+major-mode
+set-buffer-read-only
+set-major-mode
+switch-to-buffer
+with-current-buffer
+# primitives/io.rs
+data-directory
+delete-file
+directory-entry-count
+directory-file-name
+directory-files-recursive
+expand-file-name
+file-directory-p
+file-exists-p
+file-name-as-directory
+file-name-directory
+file-name-nondirectory
+find-file
+getenv
+list-dir
+match-list
+path-separator
+quit
+quit-without-saving
+read-file-to-string
+recover-file
+rename-file
+revert-buffer
+save-buffer
+save-some-buffers
+setenv
+write-file
+# primitives/mouse.rs
+mouse-drag-to
+mouse-mode-toggle
+mouse-resize
+mouse-scroll
+mouse-set-point
+mouse-start-selection
+# primitives/ui.rs
+close-floating-window
+make-floating-window
+recenter
+# primitives/windows.rs
+count-windows
+delete-other-windows
+delete-window
+display-buffer-at-bottom
+other-window
+scroll-down-command
+scroll-up-command
+select-window
+selected-window
+split-window-below
+split-window-right
+window-buffer
+
+# -- passo 5: cercare e navigare
+# lisp/compile.lisp
+compilation-mark-priority
+compilation-window-height
+# lisp/occur.lisp
+grep
+grep-in
+grep-kill
+grep-regexp
+occur
+occur-goto
+occur-header-lines
+occur-regexp
+occur-show
+occur-window-height
+# primitives/isearch.rs
+isearch-abort
+isearch-active-p
+isearch-backward
+isearch-backward-regexp
+isearch-exit
+isearch-forward
+isearch-forward-regexp
+isearch-repeat-backward
+isearch-repeat-forward
+isearch-update
+# primitives/match_data.rs
+match-beginning
+match-data
+match-end
+match-string
+set-match-data
+string-match
+string-match-p
+# primitives/replace.rs
+query-replace
+query-replace-regexp
+replace-abandon
+replace-back
+replace-count
+replace-done
+replace-match
+replace-regexp
+replace-rest
+replace-skip
+replace-string
+replace-this
+# primitives/results.rs
+next-error
+previous-error
+results-buffer
+results-count
+results-entry
+results-put
+results-select
+results-state
+results-visit
+# primitives/scan.rs
+scan-buffer
+
+# -- passo 6: prompt, completamento, tasti, aiuto
+# lisp/common-keymaps.lisp
+list-workers
+toggle-line-numbers
+# lisp/completion-at-point.lisp
+capf-buffer-names
+capf-buffer-words
+capf-file-name
+capf-mode-keywords
+capf-symbols
+# lisp/completion.lisp
+completion-abandon
+completion-buffer-name
+completion-choose
+completion-commands-fuzzy
+completion-description
+completion-minibuffer-name
+completion-next
+completion-previous
+completion-reconsider
+completion-value
+# lisp/help.lisp
+apropos
+describe-bindings
+describe-function
+describe-key
+describe-mode
+describe-prefix-keys
+describe-variable
+help-apropos
+help-back
+help-buffer-name
+help-follow
+help-for-help
+help-function
+help-history-length
+help-key
+help-variable
+help-where-is
+install-help-keys
+where-is-command
+# lisp/manpage.lisp
+capf-manpage-names
+manpage
+manpage-at-point
+manpage-buffer-name
+manpage-candidates
+manpage-emphasis-priority
+manpage-home
+manpage-index-job
+manpage-names
+manpage-prompt
+manpage-reindex
+# lisp/minibuffer.lisp
+eval-expression-confirm
+eval-expression-prompt
+# lisp/preview.lisp
+preview-category
+preview-commands
+preview-minibuffer-name
+# primitives/commands.rs
+all-buffer-names
+all-commands
+call-interactively
+command-args
+command-completions
+command-execute-prompt
+commandp
+execute-extended-command
+pending-command
+register-command
+# primitives/completion.rs
+add-completion-function
+bounds-of-thing-at-point
+buffer-words
+completion-at-point
+completion-at-point-choose
+completion-functions
+fuzzy-filter
+set-completion-functions
+# primitives/general.rs
+clear-transient-keymap
+define-key
+define-repeat-key
+regexp-opt
+repeat
+set-local-keymap
+set-transient-keymap
+# primitives/help.rs
+command-specs
+key-binding
+keymap-bindings
+keys-with-prefix
+read-key-sequence
+where-is
+# primitives/minibuffer.rs
+clear-minibuffer-history
+completion-invalidate
+default-minibuffer-prompt
+history-next
+history-previous
+minibuffer-cancel
+minibuffer-choose-completion
+minibuffer-cleanup
+minibuffer-complete
+minibuffer-confirm
+minibuffer-history
+minibuffer-read
+
+# -- passo 7: modi e aspetto
+# lisp/cc-mode.lisp
+cpp-constants
+cpp-keywords
+cpp-types
+# lisp/risp-mode.lisp
+risp-constants
+risp-refresh-vocabulary
+risp-special-forms
+# lisp/rust-mode.lisp
+rust-constants
+rust-keywords
+rust-types
+# lisp/theme.lisp
+theme-list-buffer-name
+theme-list-name-column
+theme-list-refresh
+theme-list-select
+theme-suffix
+# primitives/modes.rs
+add-auto-mode
+add-hook
+add-syntax-region
+add-syntax-rule
+balance-point
+bounds-of-enclosing-list
+make-mode
+matching-delimiter
+remove-hook
+set-char-quote
+set-comment-syntax
+set-string-syntax
+set-syntax-entry
+set-syntax-pairs
+syntax-class
+syntax-ppss
+# primitives/overlays.rs
+delete-overlay
+make-overlay
+overlay-face
+overlays-at
+remove-overlays
+# primitives/theme.rs
+face-style
+list-colors
+list-faces
+reset-faces
+set-face
+# primitives/virtual_text.rs
+clear-virtual-text
+delete-virtual-text
+make-virtual-text
+virtual-text-at
+
+# -- passo 8: estendere l'editor
+# lisp/shell.lisp
+shell-command
+shell-command-kill
+shell-command-on-region
+shell-output-window-height
+# primitives/shell.rs
+parse-overstrike
+shell-command-running-p
+shell-command-start
+shell-command-to-string
+# primitives/workers.rs
+background-call
+define-worker
+emit-event
+running-workers
+set-work-option
+stop-worker
+work-list
+work-option
+work-options
+
+# -- passo 9: vim
+# lisp/vim.lisp
+vim-default-buffer-p
+vim-last-change
+vim-last-find
+vim-last-macro-register
+vim-mode-auto
+vim-mode-enable
+vim-mode-excluded-modes
+vim-mode-modes
+vim-mode-predicate
+vim-mode-refresh
+vim-normal-state
+vim-recording-register
+vim-registers
+vim-search-direction
+vim-search-pattern
+vim-search-regexp
+vim-search-wrap
+vim-shift-width

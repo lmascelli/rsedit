@@ -2,123 +2,46 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    #[allow(non_snake_case)]
-    let LISP_FILES: Vec<&str> = vec![
-        "buffer-list.lisp",
-        "clipboard.lisp",
-        "cc-mode.lisp",
-        "compile.lisp",
-        "commands.lisp",
-        "common-keymaps.lisp",
-        "completion-at-point.lisp",
-        "completion.lisp",
-        "debug.lisp",
-        "dired.lisp",
-        "electric-pair.lisp",
-        "help.lisp",
-        "indent.lisp",
-        "manpage.lisp",
-        "minibuffer.lisp",
-        "occur.lisp",
-        "preview.lisp",
-        "risp-mode.lisp",
-        "rust-mode.lisp",
-        "shell.lisp",
-        "theme.lisp",
-        "vim.lisp",
-    ];
-
-    for file in &LISP_FILES {
-        println!("{}", &format!("cargo::rerun-if-changed=lisp/{file}"));
-    }
-
     let profile_dir = std::env::var("PROFILE").unwrap();
     let manifest_dir = std::env::var("CARGO_WORKSPACE_DIR").unwrap();
-    let target_dir = Path::new(&manifest_dir).join("target").join(profile_dir);
+    let data_dir = Path::new(&manifest_dir)
+        .join("target")
+        .join(profile_dir)
+        .join("data");
 
-    match fs::create_dir(format!("{}/data", target_dir.display())) {
-        Ok(()) => (),
-        Err(e) => match e.kind() {
-            std::io::ErrorKind::AlreadyExists => (),
-            _ => {
-                panic!(
-                    "{} Failed to create the lisp files directory /data",
-                    target_dir.display()
-                );
-            }
-        },
-    }
-    match fs::create_dir(format!("{}/data/lisp", target_dir.display())) {
-        Ok(()) => (),
-        Err(e) => match e.kind() {
-            std::io::ErrorKind::AlreadyExists => (),
-            _ => {
-                panic!(
-                    "{} Failed to create the lisp files directory /data/lisp",
-                    target_dir.display()
-                );
-            }
-        },
-    }
+    // What the editor reads at runtime goes beside the binary, because the
+    // source tree it was built from may not be there when it runs. Each
+    // directory is copied whole: which modules are loaded is init.lisp's
+    // business, and a test checks that every module it loads is here.
+    copy_files(Path::new("lisp"), &data_dir.join("lisp"), "lisp");
 
-    let lisp_dir = target_dir.join("data").join("lisp");
-
-    for file in LISP_FILES {
-        fs::copy(
-            format!("lisp/{file}"),
-            format!("{}/{file}", &lisp_dir.display()),
-        )
-        .expect(&format!("Failed to copy {file}"));
-    }
-
-    // The manual pages, beside the modules and for the same reason: they are
-    // data the editor reads at runtime, so they have to sit next to the binary
-    // rather than in the source tree it was built from.
-    //
-    // Copied wholesale rather than from a list, unlike the Lisp above. A module
-    // that is not loaded is a feature that silently does not exist, which is
-    // worth a list you have to edit; a page that is not copied is a page
-    // `rsedit-man' reports as missing, which says so plainly.
-    // The same for themes: data read at runtime, so it lives beside the
-    // binary rather than in the source tree it was built from.
-    let theme_source = Path::new("../themes");
-    let theme_dir = target_dir.join("data").join("themes");
-    if theme_source.is_dir() {
-        println!("cargo::rerun-if-changed=../themes");
-        let _ = fs::create_dir_all(&theme_dir);
-        for entry in fs::read_dir(theme_source).expect("Failed to read the themes directory") {
-            let entry = entry.expect("Failed to read a theme");
-            let is_theme = entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "lisp");
-            if entry.path().is_file() && is_theme {
-                let name = entry.file_name();
-                fs::copy(entry.path(), theme_dir.join(&name))
-                    .unwrap_or_else(|_| panic!("Failed to copy {}", name.to_string_lossy()));
-            }
+    // The themes and the manual pages are at the project root, outside this
+    // crate, so they are copied when they are there. Of `man/`, only the
+    // pages: its README.md is for whoever writes one.
+    for (source, kind, extension) in [("../themes", "themes", "lisp"), ("../man", "man", "txt")] {
+        let source = Path::new(source);
+        if source.is_dir() {
+            copy_files(source, &data_dir.join(kind), extension);
         }
     }
+}
 
-    let man_source = Path::new("../man");
-    let man_dir = target_dir.join("data").join("man");
-    if man_source.is_dir() {
-        println!("cargo::rerun-if-changed=../man");
-        let _ = fs::create_dir_all(&man_dir);
-        for entry in fs::read_dir(man_source).expect("Failed to read the man directory") {
-            let entry = entry.expect("Failed to read a man page");
-            // Only the pages themselves. README.md explains the format to
-            // whoever writes one and is not a page -- shipping it would put a
-            // `README' in the editor's completion list for manual pages.
-            let is_page = entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "txt");
-            if entry.path().is_file() && is_page {
-                let name = entry.file_name();
-                fs::copy(entry.path(), man_dir.join(&name))
-                    .unwrap_or_else(|_| panic!("Failed to copy {}", name.to_string_lossy()));
-            }
+/// Copies the files of SOURCE named `*.EXTENSION` into DESTINATION, creating
+/// it and its parents.
+fn copy_files(source: &Path, destination: &Path, extension: &str) {
+    println!("cargo::rerun-if-changed={}", source.display());
+    fs::create_dir_all(destination)
+        .unwrap_or_else(|why| panic!("cannot create {}: {why}", destination.display()));
+    let entries = fs::read_dir(source)
+        .unwrap_or_else(|why| panic!("cannot read {}: {why}", source.display()));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|why| panic!("cannot read {}: {why}", source.display()))
+            .path();
+        if path.is_file() && path.extension().is_some_and(|found| found == extension) {
+            let name = path.file_name().expect("a file has a name");
+            fs::copy(&path, destination.join(name))
+                .unwrap_or_else(|why| panic!("cannot copy {}: {why}", path.display()));
         }
     }
 }

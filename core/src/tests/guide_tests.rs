@@ -30,86 +30,23 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use risp::{Env, LispExp, Parser, eval};
+    use crate::tests::shipped::{
+        default_modules, editor_functions, exceptions, is_private, load_default_modules, man_pages,
+        module_variables,
+    };
+    use risp::{Env, LispExp, Parser, VARIABLE_DOCUMENTATION, eval};
     use std::collections::BTreeSet;
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
 
-    /// Every page, as (name, contents).
-    ///
-    /// Included at compile time rather than read from `man/`, so the test
-    /// checks the pages that will be installed rather than whatever happens to
-    /// be on the disk of the machine running it.
-    const PAGES: &[(&str, &str)] = &[
-        ("guide", include_str!("../../../man/guide.txt")),
-        ("first-steps", include_str!("../../../man/first-steps.txt")),
-        ("editing", include_str!("../../../man/editing.txt")),
-        ("files", include_str!("../../../man/files.txt")),
-        ("searching", include_str!("../../../man/searching.txt")),
-        (
-            "getting-help",
-            include_str!("../../../man/getting-help.txt"),
-        ),
-        ("completion", include_str!("../../../man/completion.txt")),
-        ("keymaps", include_str!("../../../man/keymaps.txt")),
-        ("modes", include_str!("../../../man/modes.txt")),
-        (
-            "configuration",
-            include_str!("../../../man/configuration.txt"),
-        ),
-        (
-            "writing-commands",
-            include_str!("../../../man/writing-commands.txt"),
-        ),
-        ("rsedit", include_str!("../../../man/rsedit.txt")),
-        ("buffers", include_str!("../../../man/buffers.txt")),
-        ("windows", include_str!("../../../man/windows.txt")),
-        ("overlays", include_str!("../../../man/overlays.txt")),
-        ("compile", include_str!("../../../man/compile.txt")),
-        ("themes", include_str!("../../../man/themes.txt")),
-        ("background", include_str!("../../../man/background.txt")),
-        ("rectangles", include_str!("../../../man/rectangles.txt")),
-        (
-            "virtual-text",
-            include_str!("../../../man/virtual-text.txt"),
-        ),
-        ("macros", include_str!("../../../man/macros.txt")),
-    ];
-
-    /// The editor with everything a page might mention loaded.
+    /// The editor with every module the default init.lisp loads: everything
+    /// a page might mention.
     fn editor() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
-        for source in [
-            include_str!("../../lisp/commands.lisp"),
-            include_str!("../../lisp/debug.lisp"),
-            include_str!("../../lisp/common-keymaps.lisp"),
-            include_str!("../../lisp/indent.lisp"),
-            include_str!("../../lisp/minibuffer.lisp"),
-            include_str!("../../lisp/completion.lisp"),
-            include_str!("../../lisp/completion-at-point.lisp"),
-            include_str!("../../lisp/clipboard.lisp"),
-            include_str!("../../lisp/electric-pair.lisp"),
-            include_str!("../../lisp/buffer-list.lisp"),
-            include_str!("../../lisp/shell.lisp"),
-            include_str!("../../lisp/compile.lisp"),
-            include_str!("../../lisp/dired.lisp"),
-            include_str!("../../lisp/occur.lisp"),
-            include_str!("../../lisp/manpage.lisp"),
-            include_str!("../../lisp/help.lisp"),
-            include_str!("../../lisp/preview.lisp"),
-            include_str!("../../lisp/theme.lisp"),
-            include_str!("../../lisp/rust-mode.lisp"),
-            include_str!("../../lisp/risp-mode.lisp"),
-            include_str!("../../lisp/cc-mode.lisp"),
-        ] {
-            let ast = Parser::new(&format!("(progn {source})"))
-                .next()
-                .expect("the shipped lisp must parse");
-            eval(&ast, env.clone(), &ctx).expect("loading the shipped lisp");
-        }
+        load_default_modules(&env, &ctx);
         (ctx, env)
     }
 
@@ -122,7 +59,7 @@ mod tests {
 
     /// One claim a page makes about a key.
     struct Claim {
-        page: &'static str,
+        page: String,
         mode: Option<String>,
         keys: String,
         command: String,
@@ -136,7 +73,7 @@ mod tests {
     /// a code example, a blank line -- fails it and is skipped.
     fn claims() -> Vec<Claim> {
         let mut out = Vec::new();
-        for (page, body) in PAGES {
+        for (page, body) in man_pages() {
             let mut mode: Option<Option<String>> = None;
             for line in body.lines() {
                 if !line.starts_with(' ') && !line.trim().is_empty() {
@@ -162,7 +99,7 @@ mod tests {
                     continue;
                 };
                 out.push(Claim {
-                    page,
+                    page: page.clone(),
                     mode: in_block.clone(),
                     keys,
                     command,
@@ -254,9 +191,10 @@ mod tests {
         // `modes' and `keymaps', none of which had been written. A reader
         // following a cross-reference was told the page did not exist, by the
         // manual, about itself.
-        let known: BTreeSet<&str> = PAGES.iter().map(|(name, _)| *name).collect();
+        let pages = man_pages();
+        let known: BTreeSet<&str> = pages.iter().map(|(name, _)| name.as_str()).collect();
         let mut missing = Vec::new();
-        for (page, body) in PAGES {
+        for (page, body) in &pages {
             for named in see_also(body) {
                 // A `(name)` in a SEE ALSO is a function, not a page.
                 if named.starts_with('(') {
@@ -274,8 +212,8 @@ mod tests {
     fn every_function_a_page_points_at_exists() {
         let (ctx, env) = editor();
         let mut missing = Vec::new();
-        for (page, body) in PAGES {
-            for named in see_also(body) {
+        for (page, body) in man_pages() {
+            for named in see_also(&body) {
                 let Some(name) = named.strip_prefix('(').and_then(|n| n.strip_suffix(')')) else {
                     continue;
                 };
@@ -314,7 +252,7 @@ mod tests {
         // `manpage-mode` colours a heading because it is a word alone at the
         // left margin in capitals, and nothing else. A page that put its
         // headings anywhere else would be read as unformatted text.
-        for (page, body) in PAGES {
+        for (page, body) in man_pages() {
             assert!(
                 body.starts_with("NAME\n"),
                 "{page} should begin with a NAME heading"
@@ -351,9 +289,10 @@ mod tests {
     fn the_guide_lists_every_page_there_is() {
         // So that a page written and not listed is a test failure rather than
         // a page nobody finds.
-        let guide = PAGES
+        let pages = man_pages();
+        let guide = &pages
             .iter()
-            .find(|(name, _)| *name == "guide")
+            .find(|(name, _)| name == "guide")
             .expect("the guide")
             .1;
         // The *index* entries, not the whole text. Looking anywhere in the
@@ -366,18 +305,182 @@ mod tests {
             .filter_map(|line| line.split_whitespace().next())
             .collect();
         let mut unlisted = Vec::new();
-        for (page, _) in PAGES {
-            if *page == "guide" {
+        for (page, _) in &pages {
+            if page == "guide" {
                 continue;
             }
-            if !listed.contains(page) {
-                unlisted.push(*page);
+            if !listed.contains(page.as_str()) {
+                unlisted.push(page.as_str());
             }
         }
         assert!(
             unlisted.is_empty(),
             "the guide does not mention: {}",
             unlisted.join(", ")
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // The modules, and the names each page is the home of
+    // ----------------------------------------------------------------
+
+    /// The body of the section HEADING in TEXT: the lines under it, up to the
+    /// next heading.
+    fn section(text: &str, heading: &str) -> String {
+        let mut inside = false;
+        let mut body = String::new();
+        for line in text.lines() {
+            if !line.starts_with(' ') && !line.trim().is_empty() {
+                inside = line.trim() == heading;
+                continue;
+            }
+            if inside {
+                body.push_str(line);
+                body.push('\n');
+            }
+        }
+        body
+    }
+
+    #[test]
+    fn the_module_list_is_the_one_init_lisp_loads() {
+        // A list line is a module name, two spaces or more, and what it adds;
+        // the prose above the list has single spaces between its words.
+        let rsedit = man_pages()
+            .into_iter()
+            .find(|(name, _)| name == "rsedit")
+            .expect("the rsedit page")
+            .1;
+        let listed: Vec<String> = section(&rsedit, "MODULES")
+            .lines()
+            .filter_map(|line| {
+                let (name, what) = line.strip_prefix("    ")?.split_once("  ")?;
+                let is_name = !name.is_empty() && !name.contains(' ');
+                (is_name && !what.trim().is_empty()).then(|| name.to_string())
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            default_modules(),
+            "rsedit.txt's MODULES must list what the default init.lisp loads, in its order"
+        );
+    }
+
+    /// Whether NAME is a function, a macro or a variable of the editor.
+    fn is_defined(name: &str, env: &Arc<Env<Ctx>>) -> bool {
+        env.get_function(name).is_some()
+            || env.get_macro(name).is_some()
+            || env.get_variable(name).is_some()
+            || env.get_property(name, VARIABLE_DOCUMENTATION).is_some()
+    }
+
+    /// The names each page's SYNOPSIS lists, as `manpage--synopsis-names`
+    /// reads them: the reader `C-h f` uses, so the two cannot disagree.
+    fn synopses(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> Vec<(String, Vec<String>)> {
+        man_pages()
+            .into_iter()
+            .map(|(page, text)| {
+                env.set_variable("guide-tests--page".into(), LispExp::string(text));
+                let names = run("(manpage--synopsis-names guide-tests--page)", env, ctx)
+                    .iter()
+                    .map(|name| match name {
+                        LispExp::String(name) => name.to_string(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect();
+                (page, names)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_name_a_synopsis_lists_is_defined() {
+        let (ctx, env) = editor();
+        let synopses = synopses(&env, &ctx);
+        let count: usize = synopses.iter().map(|(_, names)| names.len()).sum();
+        assert!(
+            count >= 10,
+            "the SYNOPSIS sections are not being read: {count} names"
+        );
+        let undefined: Vec<String> = synopses
+            .iter()
+            .flat_map(|(page, names)| {
+                names
+                    .iter()
+                    .filter(|name| !is_defined(name, &env))
+                    .map(move |name| format!("{page}: {name}"))
+            })
+            .collect();
+        assert!(
+            undefined.is_empty(),
+            "a SYNOPSIS lists names, and these are not the editor's (keys go under KEYS):\n  {}",
+            undefined.join("\n  ")
+        );
+    }
+
+    #[test]
+    fn no_name_has_two_homes() {
+        let (ctx, env) = editor();
+        let mut homes: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for (page, names) in synopses(&env, &ctx) {
+            for name in names {
+                homes.entry(name).or_default().push(page.clone());
+            }
+        }
+        let shared: Vec<String> = homes
+            .into_iter()
+            .filter(|(_, pages)| pages.len() > 1)
+            .map(|(name, pages)| format!("{name}: {}", pages.join(", ")))
+            .collect();
+        assert!(
+            shared.is_empty(),
+            "a name is listed in one SYNOPSIS, the page that documents it:\n  {}",
+            shared.join("\n  ")
+        );
+    }
+
+    #[test]
+    fn every_public_name_has_a_home_or_is_listed_as_homeless() {
+        let (ctx, env) = editor();
+        let homed: BTreeSet<String> = synopses(&env, &ctx)
+            .into_iter()
+            .flat_map(|(_, names)| names)
+            .collect();
+        let public: BTreeSet<String> = editor_functions(&env)
+            .into_iter()
+            .chain(module_variables().into_iter().map(|(_, name)| name))
+            .filter(|name| !is_private(name))
+            .collect();
+        assert!(public.len() > 300, "too few public names: {}", public.len());
+        let listed: BTreeSet<String> = exceptions(include_str!("doc_exceptions/homeless.txt"))
+            .into_iter()
+            .collect();
+        let unlisted: Vec<&String> = public
+            .iter()
+            .filter(|name| !homed.contains(*name) && !listed.contains(*name))
+            .collect();
+        let stale: Vec<&String> = listed
+            .iter()
+            .filter(|name| homed.contains(*name) || !public.contains(*name))
+            .collect();
+        assert!(
+            unlisted.is_empty(),
+            "no page lists these in its SYNOPSIS; list each in the page that documents it:\n{}",
+            unlisted
+                .iter()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert!(
+            stale.is_empty(),
+            "doc_exceptions/homeless.txt lists these, which have a page now or no longer \
+             exist; take them out:\n{}",
+            stale
+                .iter()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 }

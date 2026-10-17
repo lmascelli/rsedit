@@ -2,10 +2,10 @@ NAME
     themes - choosing how faces are drawn
 
 SYNOPSIS
-    C-c t                      list what is installed
-    RET                        apply the theme on this line
-    (select-theme 'monochrome) the same, from a configuration file
-    (reset-theme)              back to the shipped appearance
+    (theme-list)
+    (select-theme NAME)
+    (reset-theme)
+    (available-themes)
 
 DESCRIPTION
     A theme is a file under data/themes that puts an alist on a symbol named
@@ -39,6 +39,23 @@ WRITING ONE
     list-faces to see what can be set, and face-style to read how a face is
     drawn now -- it answers in the form set-face takes, so a theme can be
     read out of a running editor and pasted into a file.
+
+EXAMPLES
+    Choose a theme in init.lisp, after the line that loads the module:
+
+        (eval-file "theme")
+        (select-theme 'monochrome)
+
+    Go back to how the editor ships:
+
+        (reset-theme)
+
+KEYS
+    C-c t                   theme-list
+
+KEYS IN THEME LIST MODE
+    <ret>                   theme-list-select
+    g                       theme-list-refresh
 
 SEE ALSO
     rsedit, overlays, (set-face), (face-style), (list-faces)

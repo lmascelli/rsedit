@@ -25,7 +25,3 @@ Review and commit `performance-cost.baseline` and
 `performance-timing.baseline`. Future runs with the same `PERF_MACHINE` label,
 build profile, target and CPU count show deltas against those files. Baselines
 are left untouched unless `PERF_BLESS=1` is set.
-
-When applying both repository patches, merge the `risp` patch first. Then run
-`cargo update -p risp` from the rsedit root before building; the current lockfile
-names the previous `main` commit.

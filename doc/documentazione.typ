@@ -2,8 +2,8 @@
 // come si controlla, e il piano per arrivarci.
 //
 // Il capitolo «Le regole» è permanente: vale per ogni modifica futura.
-// «L'inventario» e «Il piano» fotografano la revisione 58d0b0d e il lavoro che
-// ne segue: si accorciano a ogni passo e spariscono con l'ultimo.
+// «L'inventario» fotografa la revisione 58d0b0d e resta, come termine di
+// confronto, fino all'ultimo passo; «Il piano» si accorcia a ogni passo.
 
 #import "style.typ": *
 
@@ -47,9 +47,9 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: proposta da approvare.* Nessun file di codice è stato toccato. Le
-  misure si riferiscono alla revisione `58d0b0d`. Le domande aperte sono
-  raccolte nel @domande.
+  *Stato: approvato; il passo 1 è fatto.* Le misure dell'inventario si
+  riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
+  @domande.
 ]
 
 #key[
@@ -67,9 +67,9 @@ per arrivarci.
 ]
 
 Il @regole è la parte permanente: vale per ogni modifica futura. Il
-@inventario fotografa lo stato attuale e il @piano propone i passi del
-riordino. Questi due capitoli si accorciano a ogni passo e spariscono con
-l'ultimo.
+@inventario fotografa lo stato di partenza e resta, come termine di
+confronto, fino all'ultimo passo. Il @piano propone i passi del riordino e si
+accorcia man mano che vengono fatti.
 
 // ===========================================================================
 = Le regole <regole>
@@ -105,7 +105,7 @@ l'ultimo.
   [I difetti noti e il lavoro rimandato], [una scheda di `rapporto-problemi.typ`], [`TODO(ID)` nel codice, finché la scheda è aperta],
   [Il comportamento atteso, caso per caso], [i test: il nome dice il comportamento], [---],
   [Come si misurano le prestazioni], [`PERFORMANCE.md`], [---],
-  [Che cos'è rsedit e come si compila], [`README.org`], [per tutto il resto rimanda ai manpage],
+  [Che cos'è rsedit, come si compila, quali documenti ci sono e per chi], [`README.md`], [per tutto il resto rimanda ai manpage e ai documenti],
 )
 
 `todo.org` è la lista personale dell'autore e resta fuori da queste regole.
@@ -314,11 +314,8 @@ della storia sta nel messaggio di commit, che dice che cosa cambia, perché,
 che cosa c'era prima e quale scheda chiude.
 
 #caution[
-  I commit pubblicati finora hanno un messaggio di una riga («editod
-  directories utility»), mentre i messaggi delle patch sono completi. Se le
-  patch si applicano con `git am`, il messaggio resta nella storia; altrimenti
-  la storia tolta dai commenti sopravvive solo nelle decisioni del manuale e
-  nei file di patch. È la domanda 7 del @domande.
+  Per questo le patch si applicano con `git am`, che conserva il loro
+  messaggio di commit (decisione 7 del @domande).
 ]
 
 == I test <regole-test>
@@ -337,18 +334,19 @@ che cosa c'era prima e quale scheda chiude.
   header: ([Copia], [Fonte], [Test]),
   [le sezioni KEYS], [i keymap], [`guide_tests` (esiste)],
   [i SEE ALSO], [la directory `man/` e le funzioni], [`guide_tests` (esiste)],
-  [l'indice di `guide.txt`], [la directory `man/`], [`guide_tests`, che però oggi usa un elenco proprio (@copie): passo 1],
+  [l'indice di `guide.txt`], [la directory `man/`], [`guide_tests` (esiste)],
   [la prima riga delle docstring delle primitive], [il nome della primitiva], [`doc_faithfulness_tests` (esiste)],
-  [la sezione MODULES di `rsedit.txt`], [`DEFAULT_INIT_LISP`], [nuovo, passo 1],
-  [le SYNOPSIS], [i nomi definiti], [nuovo, passo 1],
-  [i nomi citati in pagine e docstring], [i nomi definiti], [nuovo, passo 1],
-  [i rimandi dal codice al manuale], [le etichette typst], [nuovo, passo 1],
+  [la sezione MODULES di `rsedit.txt`], [`DEFAULT_INIT_LISP`], [`guide_tests`],
+  [le SYNOPSIS], [i nomi definiti], [`guide_tests`],
+  [i nomi citati in pagine e docstring], [i nomi definiti], [`doc_faithfulness_tests`],
+  [i rimandi dal codice al manuale], [le etichette typst], [`doc_pointer_tests`],
 )
 
-I test nuovi partono con l'elenco delle eccezioni di oggi --- un nome senza
-pagina, una docstring troppo lunga --- che può solo accorciarsi. Così il
-passo 1 non deve correggere tutto subito, ma nessun passo successivo può
-peggiorare le cose.
+I test partono con l'elenco delle eccezioni di oggi --- un nome senza pagina,
+una docstring troppo lunga --- che può solo accorciarsi. Gli elenchi stanno in
+`core/src/tests/doc_exceptions/`, raggruppati per il passo che li smaltisce, e
+un nome che vi resta dopo essere stato sistemato fa fallire il test. Così
+nessun passo deve correggere tutto subito, e nessuno può peggiorare le cose.
 
 == La lista di controllo di ogni patch <lista>
 
@@ -642,10 +640,10 @@ passaggio: le pagine che lo spiegano davvero sono meno.
   header: ([File], [righe], [Stato], [Destinazione]),
   [`architettura-editor.typ`], [2 642], [Buono fino al lavoro asincrono. Il capitolo «Il lavoro in background» descrive lo scheduler tolto (`BackgroundScheduler`, `RunNow`, `WorkerMessage`, `background/worker.rs`); il log è ancora «nella directory corrente»; ritmi di 40 ms che non esistono più; l'appendice delle primitive è una copia generata e già vecchia.], [il manuale per sviluppatori: capitoli riscritti nella fase C],
   [`workmanager.typ`], [786], [Documento di progetto: si dichiara «da implementare», mentre le patch 1--9 l'hanno implementato; il piano e le decisioni sono storia.], [nel capitolo sul lavoro asincrono, poi si toglie],
-  [`lisp-fibers.typ`], [870], [In inglese. Descrive l'interno del crate `risp`: tutti i suoi percorsi e 16 dei suoi identificatori sono là.], [il repository `risp` (domanda 5)],
+  [`lisp-fibers.typ`], [870], [In inglese. Descrive l'interno del crate `risp`: tutti i suoi percorsi e 16 dei suoi identificatori sono là.], [il repository `risp` (decisione 5)],
   [`rapporto-problemi.typ`], [1 244], [80 schede sulla revisione `08a853d`, nessuna segnata come risolta. Le 29 delle aree LET e INT riguardano l'interprete, ora in `risp`; rimanda ad `architettura-interprete.typ`, spostato in `risp` con `10598fa`. Almeno AVV-1, AVV-3, AVV-4 e BKG-1 sembrano risolte dalle patch.], [aggiornato nel passo 10],
   [`style.typ`], [323], [Gli aiuti condivisi per i diagrammi.], [resta],
-  [`lisp-interpreter.pdf` \ `lisp-interpreter-flow.pdf`], [---], [PDF senza sorgente, dal 24 settembre.], [da togliere (domanda 4)],
+  [`lisp-interpreter.pdf` \ `lisp-interpreter-flow.pdf`], [---], [PDF senza sorgente, dal 24 settembre.], [da togliere (decisione 4)],
   [`README.org`], [---], [Dice `Ctrl+S` per salvare e `Ctrl+Q` per uscire (sono `C-x C-s` e `C-x C-c`; `C-s` cerca); ripete metà della pagina `vim`; rimanda a `M-x rsedit-man`, che non esiste.], [presentazione e compilazione, poi i rimandi],
   [`PERFORMANCE.md`], [---], [Valido, salvo l'ultimo paragrafo, un'istruzione di una volta sola per applicare due patch.], [resta, senza l'ultimo paragrafo],
   [`man/README.md`], [---], [Dice che le pagine sono per argomenti e che la docstring «is the reference»: il contrario della regola nuova.], [riscritto nel passo 1],
@@ -701,7 +699,7 @@ Non sono di documentazione, ma l'inventario li ha fatti emergere.
 
 #figure(
   canvas(height: 3.4cm)[
-    #node(2.0cm, 1.1cm, 3.4cm, 1.4cm, [*A · regole e controlli* \ passo 1])
+    #node(2.0cm, 1.1cm, 3.4cm, 1.4cm, [*A · regole e controlli* \ passo 1, fatto], fill: paper)
     #node(6.1cm, 1.1cm, 3.4cm, 1.4cm, [*B · manpage e docstring* \ passi 2--9, per area], fill: user-fill)
     #node(10.2cm, 1.1cm, 3.4cm, 1.4cm, [*C · codice e commenti* \ passi 10--21, per sottosistema])
     #node(14.2cm, 1.1cm, 3.4cm, 1.4cm, [*D · manuale* \ passo 22], fill: paper)
@@ -721,26 +719,28 @@ codice e i commenti modulo per modulo, infine il manuale. Con una
 precisazione: i perché tolti dal codice nella fase C vanno subito nel
 capitolo del manuale del loro sottosistema, così nessuna informazione resta
 senza casa tra un passo e l'altro. La fase D unisce i capitoli, disegna i
-diagrammi d'insieme e ritira i documenti vecchi (domanda 9).
+diagrammi d'insieme e ritira i documenti vecchi (decisione 9).
 
-== Fase A --- le regole e i controlli (passo 1)
+== Fase A --- le regole e i controlli (passo 1, fatto)
 
-+ Questo documento resta in `doc/` come fonte delle regole; `man/README.md`
-  si riscrive con il modello di pagina del @regole-man.
-+ *Un solo elenco dei moduli.* `build.rs` copia tutti i file di `core/lisp/`,
-  come già fa con `man/`; i test leggono l'elenco da `DEFAULT_INIT_LISP`; un
-  test nuovo confronta con quello la sezione MODULES di `rsedit.txt`.
-+ *Un solo elenco delle pagine.* `guide_tests` confronta il suo elenco con la
-  directory `man/`.
-+ *I test nuovi*, ciascuno con l'elenco delle eccezioni di oggi: le SYNOPSIS
-  (i nomi esistono; un nome ha al più una casa; l'elenco dei nomi senza casa
-  può solo accorciarsi); i nomi citati in pagine e docstring esistono, salvo
-  un elenco di nomi esterni (Emacs, comandi di shell); la lunghezza delle
-  docstring; i rimandi dal codice alle etichette del manuale.
-+ *Il rimando automatico.* `C-h f` e `C-h v` aggiungono «Manual:» con la
-  pagina che elenca il nome nella sua SYNOPSIS (`help.lisp`, `manpage.lisp`).
-+ *Le correzioni minime del @difetti*: `:help` di vim apre la pagina
-  `vim`; la pagina entra nella guida; i test caricano tutti i moduli.
++ `README.md` prende il posto di `README.org`: una presentazione essenziale
+  del progetto, con i documenti e i loro destinatari. `man/README.md`
+  descrive il modello di pagina del @regole-man.
++ *Un solo elenco dei moduli.* `build.rs` copia tutta `core/lisp/`; i test
+  leggono l'elenco da `DEFAULT_INIT_LISP`; `guide_tests` confronta con quello
+  la sezione MODULES di `rsedit.txt`, che ora ha tutti i 22 moduli.
++ *Un solo elenco delle pagine.* I test leggono la directory `man/`.
++ *I test nuovi*, con le eccezioni di oggi in `core/src/tests/doc_exceptions/`:
+  459 nomi senza casa, 30 docstring oltre i 1 000 caratteri, 68 funzioni
+  private di `vim.lisp` senza docstring, 11 nomi citati che l'editor non
+  definisce (5 variabili lette dal Rust e mai dichiarate, 6 nomi sbagliati).
++ *Il rimando automatico.* `C-h f` e `C-h v` mostrano «Manual: pagina», e `K`
+  o `RET` su quella riga apre la pagina.
++ *Le correzioni del @difetti.* `:help` di vim apre la pagina `vim`, che ora
+  è nella guida, in `rsedit.txt` e nei test; tutti i moduli sono controllati.
+  Le SYNOPSIS di `compile`, `themes` e `vim` elencano nomi, e i loro tasti
+  sono passati in sezioni KEYS controllate.
++ Tolti i due PDF orfani e l'ultimo paragrafo di `PERFORMANCE.md`.
 
 == Fase B --- i manpage e le docstring (passi 2--9)
 
@@ -761,7 +761,7 @@ le spieghi. L'elenco dei nomi senza casa si accorcia di conseguenza.
   [6], [prompt, completamento, tasti, aiuto], [`completion`, `keymaps`, `getting-help`], [`minibuffer`, `completion`, `help`, `commands`, il resto di `general`], [`minibuffer`, `completion`, `completion-at-point`, `help`, `manpage`, `preview`, `common-keymaps`],
   [7], [modi e aspetto], [`modes`, `themes`, `overlays`, `virtual-text`], [`modes`, `theme`, `overlays`, `virtual_text`], [`rust-mode`, `risp-mode`, `cc-mode`, `theme`],
   [8], [estendere l'editor], [`writing-commands` \ `background`], [`workers`, `shell`], [`shell`; nuova: `shell`],
-  [9], [vim], [`vim`], [---], [`vim`; la parte vim di `README.org` diventa un rimando],
+  [9], [vim], [`vim`], [---], [`vim`],
 )
 
 == Fase C --- il codice e i commenti (passi 10--21)
@@ -776,7 +776,7 @@ passo comincia con una proposta breve degli spostamenti --- file da dividere,
 unire o rinominare --- che approvi prima della patch. Poi la patch: il
 rustdoc del sottosistema secondo le regole, i commenti classificati, il
 capitolo del manuale con le sue decisioni e i suoi diagrammi, i commenti dei
-test del sottosistema (domanda 8). Il comportamento non cambia: tutti i test
+test del sottosistema (decisione 8). Il comportamento non cambia: tutti i test
 passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
 
 #ref-table(
@@ -818,12 +818,11 @@ I criteri con cui si propongono gli spostamenti:
 - `architettura-editor.typ` diventa il manuale per sviluppatori:
   l'introduzione, i diagrammi d'insieme (strati, thread, ordine dei lock), i
   capitoli scritti nella fase C, le ricette, il glossario.
-- `workmanager.typ` si toglie, assorbito nel passo 11; `lisp-fibers.typ` va
-  nel repository `risp` (domanda 5).
+- `workmanager.typ` si toglie, assorbito nel passo 11.
 - L'appendice generata delle primitive si toglie: è una copia del registro, e
   `C-h a` la sostituisce.
 - Da questo documento escono l'inventario e il piano; restano le regole.
-- I PDF si rigenerano; i due orfani si tolgono (domanda 4).
+- I PDF si rigenerano.
 
 == Come si consegna ogni passo
 
@@ -834,42 +833,25 @@ documenti toccati e con la spiegazione, file per file, di che cosa cambia e
 di dove differisce da questo piano.
 
 // ===========================================================================
-= Da decidere <domande>
+= Le decisioni <domande>
 // ===========================================================================
 
-Per ciascuna domanda c'è la proposta. Le domande da 1 a 4 servono già al
-passo 1; le altre si possono decidere più avanti.
+Le risposte alle domande del passo 0.
 
-+ *Il README dei manpage.* `man/README.md` dice che la docstring «is the
-  reference» e che le pagine sono solo per ciò che una docstring non può
-  dire. *Proposta:* riscriverlo con il modello del @regole-man, che fa delle
-  pagine il riferimento completo.
-+ *La SYNOPSIS come casa dei nomi, e il rimando automatico in `C-h f`.*
-  *Proposta:* sì. L'alternativa, una riga «Manual: …» scritta a mano in ogni
-  docstring, è una copia in più da controllare.
-+ *Un solo elenco dei moduli.* Il commento di `build.rs` difende l'elenco
-  esplicito: un modulo dimenticato nell'elenco è una funzionalità che manca
-  in silenzio. Copiando tutta la directory quel caso non si può più
-  presentare. *Proposta:* copiare tutta la directory, come per `man/`.
-+ *I PDF in git.* *Proposta:* tenerli, perché si leggono su GitHub senza
-  typst, rigenerati nello stesso commit della sorgente; togliere
-  `lisp-interpreter.pdf` e `lisp-interpreter-flow.pdf`, che non hanno
-  sorgente e descrivono codice ora in `risp`.
-+ *`lisp-fibers.typ`.* *Proposta:* spostarlo nel repository `risp`, accanto
-  ad `architettura-interprete.typ`; per chi scrive fiber resta la pagina
-  `background`. Io non posso modificare `risp`: preparo il file, lo sposti tu.
-+ *`workmanager.typ`.* *Proposta:* ciò che è ancora valido confluisce nel
-  capitolo del manuale sul lavoro asincrono (passo 11), e il documento si
-  toglie nella fase D.
-+ *La storia nei commit.* *Proposta:* applicare le patch con `git am`, che
-  conserva il messaggio. Con messaggi propri va bene lo stesso, sapendo che
-  la storia tolta dai commenti resta solo nelle decisioni del manuale e nei
-  file di patch.
-+ *I commenti dei test.* *Proposta:* ripulirli con le stesse regole insieme al
-  sottosistema a cui appartengono, nella fase C, senza riscrivere i test.
-+ *Il manuale scritto durante la fase C.* *Proposta:* sì, come spiegato
-  all'inizio del @piano. La fase D resta, ma diventa assemblaggio e
-  ritiro.
-+ *Le correzioni del @difetti.* *Proposta:* le tre che riguardano codice e
-  test (vim, la guida, i moduli dei test) nel passo 1; quella di
-  `configuration.txt` nel passo 2.
++ *Il README.* `man/README.md` si riscrive con il modello delle pagine. Il
+  README del progetto diventa una descrizione essenziale secondo le pratiche
+  di GitHub, un portfolio sobrio dell'applicazione, con l'elenco dei
+  documenti e dei loro destinatari: `README.md` al posto di `README.org`.
++ *La SYNOPSIS come casa dei nomi*, con il rimando automatico in `C-h f`: sì.
++ *Un solo elenco dei moduli*: `build.rs` copia tutta la directory.
++ *I PDF in git*: restano, rigenerati nello stesso commit della sorgente; i
+  due orfani si tolgono.
++ *`lisp-fibers.typ`*: lo toglie l'autore.
++ *`workmanager.typ`*: ciò che è ancora valido confluisce nel manuale nel
+  passo 11, e il documento si toglie nella fase D.
++ *La storia nei commit*: le patch si applicano con `git am`.
++ *I commenti dei test*: si ripuliscono con le stesse regole insieme al loro
+  sottosistema, nella fase C.
++ *Il manuale scritto durante la fase C*: sì.
++ *Le correzioni dell'inventario*: quelle di codice e test nel passo 1,
+  quella di `configuration.txt` nel passo 2.

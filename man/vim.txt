@@ -2,11 +2,9 @@ NAME
     vim - modal editing in Risp
 
 SYNOPSIS
-    M-x vim-mode
-    (eval-file "vim")
-    (vim-mode t)
+    (vim-mode &optional ENABLED)
     (vim-mode-disable)
-    (global-vim-mode t)
+    (global-vim-mode &optional ENABLED)
 
 DESCRIPTION
     vim.lisp adds modal editing without replacing the buffer's major mode.

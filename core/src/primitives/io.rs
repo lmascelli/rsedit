@@ -1383,8 +1383,8 @@ pub const DATA_DIRECTORY_DOC: &str = "(data-directory &optional KIND): The direc
          With KIND -- a string like \"man\" or \"lisp\" -- the subdirectory of it. These sit \
          beside the executable, put there at build time, because they are read at runtime and \
          the source tree they came from may not be present.\n\n\
-         This is what `lisp-path' is built from, and what `rsedit-man' looks in for the \
-         editor's own manual pages.\n\n\
+         This is what `lisp-path' is built from, and where `manpage' finds the editor's \
+         own manual pages.\n\n\
          Example:\n\
          (data-directory \"man\") => \"/path/to/target/debug/data/man\"";
 

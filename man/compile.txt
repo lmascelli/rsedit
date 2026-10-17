@@ -2,13 +2,11 @@ NAME
     compile - run a build and jump to what it complained about
 
 SYNOPSIS
-    C-c c        run a command, output into a compilation buffer
-    RET          open the place named on this line, beside the output
-    n, p         move between locations in the buffer
-    M-g n, M-g p walk them from anywhere
-    g            run the same command again
-    C-c C-k      stop the command
-    q            put the window away
+    (compile COMMAND)
+    (compilation-goto)
+    (compilation-next)
+    (compilation-previous)
+    (compilation-recompile)
 
 DESCRIPTION
     The running is `shell-command-start', unchanged: asynchronous, output
@@ -52,6 +50,19 @@ MARKS
     line jumped to is marked in the file. Both by overlay category, so the
     previous mark goes when the next arrives and exactly one line is ever
     marked -- which is what makes a list of forty errors legible.
+
+KEYS
+    C-c c                   compile
+    M-g n                   next-error
+    M-g p                   previous-error
+
+KEYS IN COMPILATION MODE
+    <ret>                   compilation-goto
+    n                       compilation-next
+    p                       compilation-previous
+    g                       compilation-recompile
+    C-c C-k                 shell-command-kill
+    q                       delete-window
 
 SEE ALSO
     overlays, buffers, windows, (shell-command-start), (string-match)
