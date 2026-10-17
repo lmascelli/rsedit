@@ -20,6 +20,7 @@ fn main() {
         "manpage.lisp",
         "minibuffer.lisp",
         "occur.lisp",
+        "preview.lisp",
         "risp-mode.lisp",
         "rust-mode.lisp",
         "shell.lisp",

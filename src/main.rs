@@ -1,5 +1,7 @@
 mod tui;
-use rsedit_core::{ELispExp, EditorState, GapBuffer, create_global_env, eval};
+use rsedit_core::{
+    AppDir, DirOptions, ELispExp, EditorState, GapBuffer, app_dir, create_global_env, eval,
+};
 use std::io::{self, IsTerminal};
 use std::time::Duration;
 use tui::tui_main;
@@ -8,6 +10,9 @@ use tui::tui_main;
 mod tests;
 
 type BufferType = GapBuffer;
+
+/// The log's file, in the cache directory.
+const LOG_FILE: &str = "rsedit.log";
 
 /// How long the background work gets to finish once the editor is quitting:
 /// enough for a job's `exit`, and for a shell command to die once killed, and
@@ -38,7 +43,20 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let _shut_down = ShutDownOnExit(&state);
-    state.enable_log_file("rsedit.log")?;
+    // The log goes in the cache directory, made if it is not there yet --
+    // no longer in whatever directory the editor was started from, where it
+    // left a file in every project and, in one that could not be written,
+    // stopped the editor from starting at all.
+    //
+    // TODO: a cache directory that cannot be had, or a log file that cannot
+    // be written in it, is ignored for now: the editor runs without a log
+    // file, and nothing says so. It should say so where the user will see it.
+    if let Ok(cache) = app_dir(DirOptions {
+        dir: AppDir::Cache,
+        create: true,
+    }) {
+        let _ = state.enable_log_file(cache.join(LOG_FILE));
+    }
 
     if let Some(path) = args.get(1).cloned() {
         let ast = ELispExp::form(vec![

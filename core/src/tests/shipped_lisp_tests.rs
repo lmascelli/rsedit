@@ -14,6 +14,7 @@
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
+    use crate::editor::boot::DEFAULT_INIT_LISP;
     use crate::editor::{EditorState, create_global_env};
     use risp::{Env, LispExp, Parser, eval};
     use std::sync::Arc;
@@ -68,6 +69,30 @@ mod tests {
     #[test]
     fn every_shipped_module_loads_in_init_order() {
         loaded();
+    }
+
+    #[test]
+    fn every_module_the_default_init_loads_is_copied_beside_the_binary() {
+        // The editor finds its modules in data/lisp beside the binary, and
+        // build.rs copies them there from a list of its own. A module missing
+        // from that list is one the default init.lisp loads and the editor
+        // never finds: `preview' was, so C-x r t had no preview in a built
+        // editor, and the only sign was a line in the log.
+        let build = include_str!("../../build.rs");
+        let loaded: Vec<&str> = DEFAULT_INIT_LISP
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix("(eval-file \""))
+            .filter_map(|rest| rest.split('"').next())
+            .collect();
+        assert!(loaded.contains(&"preview"), "the default init: {loaded:?}");
+        let missing: Vec<&str> = loaded
+            .into_iter()
+            .filter(|name| !build.contains(&format!("\"{name}.lisp\"")))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "loaded by the default init.lisp, not copied by build.rs: {missing:?}"
+        );
     }
 
     #[test]

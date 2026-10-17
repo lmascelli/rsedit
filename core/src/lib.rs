@@ -14,6 +14,8 @@
 //!                scheduler and its dedicated threads. Knows nothing of
 //!                editors either: the state a job works on is a type
 //!                parameter.
+//!   paths.rs     where the editor keeps what it keeps on disk -- its
+//!                configuration, its cache -- by each system's conventions.
 //!   buffer/      text storage, and BufferTrait -- the only thing anything
 //!                else is allowed to assume about it. A buffer emits a topic
 //!                of work/ when its text changes, not knowing who listens.
@@ -55,6 +57,9 @@
 pub(crate) mod buffer;
 pub(crate) mod text;
 
+// -- where the editor's own directories are ----------------------------------
+pub(crate) mod paths;
+
 // -- what the editor takes in, and what a name can mean ----------------------
 pub(crate) mod commands;
 pub(crate) mod input;
@@ -89,12 +94,13 @@ pub type ELispExp<B> = risp::LispExp<editor::EditorState<B>>;
 
 pub use crate::{
     buffer::{BufferTrait, gap_buffer::GapBuffer},
-    editor::{
-        CONFIG_DIR, EditorState, MOUSE_MODE, XDG_CONFIG_HOME, create_global_env,
-        isolate_config_for_tests, mouse_mode,
-    },
+    editor::{EditorState, MOUSE_MODE, create_global_env, isolate_config_for_tests, mouse_mode},
     input::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind},
     managers::{Buffers, Windows},
+    paths::{
+        AppDir, CACHE_DIR, CONFIG_DIR, DirError, DirOptions, XDG_CACHE_HOME, XDG_CONFIG_HOME,
+        app_dir,
+    },
     ui::{
         Color, Face, FrameSnapshot, GutterCell, Highlight, NAMED_COLORS, Rect,
         RenderableWindowView, Separator, Style, Theme,

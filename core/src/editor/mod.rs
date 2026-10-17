@@ -90,7 +90,7 @@ mod settings;
 mod windows;
 mod work;
 
-pub use boot::{CONFIG_DIR, XDG_CONFIG_HOME, create_global_env, isolate_config_for_tests};
+pub use boot::{create_global_env, isolate_config_for_tests};
 pub use keys::KEY_CAPTURE_FUNCTION;
 pub use settings::*;
 pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED, WorkerTurn, in_worker};

@@ -11,7 +11,7 @@
 //! deciding is a pure one that is.
 #[cfg(test)]
 mod tests {
-    use crate::editor::boot::choose_config_dir;
+    use crate::paths::choose_dir;
     use std::path::PathBuf;
 
     fn path(text: &str) -> Option<PathBuf> {
@@ -23,7 +23,7 @@ mod tests {
         xdg: Option<PathBuf>,
         platform: Option<PathBuf>,
     ) -> Option<String> {
-        choose_config_dir(rsedit_dir, xdg, platform).map(|dir| dir.display().to_string())
+        choose_dir(rsedit_dir, xdg, platform).map(|dir| dir.display().to_string())
     }
 
     #[test]

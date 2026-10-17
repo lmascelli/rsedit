@@ -67,6 +67,8 @@ const OUTPUT_BUFFER: &str = "*Shell Output*";
 /// Long enough for a build to tidy up after `TERM` -- `git` removes its lock
 /// files, `make` its half-written targets -- and short enough that a command
 /// that ignores it is gone before anybody wonders why it has not stopped.
+/// Unix only: elsewhere there is no `TERM` to give it after.
+#[cfg(unix)]
 const GRACE: Duration = Duration::from_secs(2);
 
 /// The most output appended in one go. What is already waiting in the pipe is

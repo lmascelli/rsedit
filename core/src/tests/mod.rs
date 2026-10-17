@@ -1,3 +1,4 @@
+mod app_dir_tests;
 mod autosave_tests;
 mod background_tests;
 mod balance_point_tests;

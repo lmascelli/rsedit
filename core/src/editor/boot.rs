@@ -2,6 +2,7 @@
 //! configures it, and the environment the two are wired into.
 
 use super::*;
+use crate::paths::{AppDir, CACHE_DIR, CONFIG_DIR, DirOptions, app_dir};
 
 /// Create a global EditorState environment and a Lisp environment associated to it.
 /// It installs in the lisp environment all the primitive functions to use the editor.
@@ -284,98 +285,8 @@ impl<B: BufferTrait> EditorState<B> {
     }
 }
 
-/// The name of the variable that names the configuration directory outright.
-///
-/// The one override that means the same thing on every platform, which is why
-/// it comes first: an absolute path to the directory holding `init.lisp`, with
-/// nothing joined onto it and no convention to know. It is what a portable
-/// install, a second configuration kept beside the first, and a test suite
-/// that must not touch the person's own files all need.
-pub const CONFIG_DIR: &str = "RSEDIT_CONFIG_DIR";
-
-/// The freedesktop variable, honoured where it means something.
-///
-/// Unix only. It is a Linux and BSD convention rather than a cross-platform
-/// one: Windows has `%APPDATA%`, and preferring somebody else's answer to the
-/// platform's own would put a Windows user's configuration somewhere no
-/// Windows program would look for it.
-pub const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
-
-/// Which candidate root wins, given what the environment says.
-///
-/// # Why this takes its inputs rather than reading them
-///
-/// So that the *precedence* can be tested without touching the environment.
-/// The environment is process-wide and the test runner is threaded, so a test
-/// that checked this by setting a variable would be a test every other test
-/// could see -- which is the shape of the bug this file was last fixed for,
-/// not a way to check it.
-///
-/// `rsedit_dir` is used as given: it names the directory itself. `xdg` is a
-/// *parent* of application directories by specification, so the application's
-/// own name is joined onto it. `platform` is whatever the running system
-/// calls the same place, already complete.
-pub(crate) fn choose_config_dir(
-    rsedit_dir: Option<PathBuf>,
-    xdg: Option<PathBuf>,
-    platform: Option<PathBuf>,
-) -> Option<PathBuf> {
-    rsedit_dir
-        .or_else(|| xdg.map(|xdg| xdg.join("rsedit")))
-        .or(platform)
-}
-
-/// Where this installation keeps its configuration, or `None` when nothing in
-/// the environment says.
-///
-/// Three answers, most specific first:
-///
-/// + `RSEDIT_CONFIG_DIR`, used as given, on every platform.
-/// + `XDG_CONFIG_HOME/rsedit`, on Unix only.
-/// + The platform's own place: `%APPDATA%\rsedit` on Windows,
-///   `$HOME/.config/rsedit` everywhere else.
-///
-/// # Why macOS gets `~/.config` rather than `~/Library/Application Support`
-///
-/// Because that is where somebody configuring a terminal editor on a Mac will
-/// look. Apple's directory is the convention for bundled applications; the
-/// editors a person arrives from -- Emacs under XDG, Neovim, Helix -- all keep
-/// their configuration in `~/.config`, and being the one that does not would
-/// be a correctness nobody asked for.
-fn user_config_dir() -> Option<PathBuf> {
-    let named = std::env::var(CONFIG_DIR).ok().map(PathBuf::from);
-
-    #[cfg(unix)]
-    let xdg = std::env::var(XDG_CONFIG_HOME).ok().map(PathBuf::from);
-    // Set on Windows only by somebody carrying a Unix habit across, and
-    // deliberately not acted on: the platform has its own answer below.
-    #[cfg(not(unix))]
-    let xdg: Option<PathBuf> = None;
-
-    #[cfg(target_os = "windows")]
-    let platform = std::env::var("APPDATA")
-        .ok()
-        .map(|appdata| PathBuf::from(appdata).join("rsedit"));
-    #[cfg(not(target_os = "windows"))]
-    let platform = std::env::var("HOME")
-        .ok()
-        .map(|home| PathBuf::from(home).join(".config").join("rsedit"));
-
-    choose_config_dir(named, xdg, platform)
-}
-
-/// The `init.lisp` this installation reads and, when it is missing, writes.
-///
-/// An empty path when nothing names a configuration directory, which the
-/// caller reads as "there is none" rather than as somewhere to create one.
-fn user_config_path() -> PathBuf {
-    match user_config_dir() {
-        Some(dir) => dir.join("init.lisp"),
-        None => PathBuf::new(),
-    }
-}
-
-/// Point this process's configuration at a directory of its own, once.
+/// Point this process's configuration, and its cache, at directories of its
+/// own, once.
 ///
 /// # Why a test suite needs this at all
 ///
@@ -394,7 +305,9 @@ fn user_config_path() -> PathBuf {
 ///
 /// Naming a directory of this process's own removes both -- and it does so
 /// through [`CONFIG_DIR`], the same door a person would use, so the
-/// resolution above is *exercised* by the suite rather than bypassed by it.
+/// resolution in `crate::paths` is *exercised* by the suite rather than
+/// bypassed by it. The cache through [`CACHE_DIR`], for the same reason:
+/// what the editor keeps there must not land in the person's either.
 ///
 /// # Why it is public
 ///
@@ -406,7 +319,9 @@ fn user_config_path() -> PathBuf {
 pub fn isolate_config_for_tests() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let dir = std::env::temp_dir().join(format!("rsedit-test-config-{}", std::process::id()));
+        let dir = |what: &str| {
+            std::env::temp_dir().join(format!("rsedit-test-{what}-{}", std::process::id()))
+        };
         // SAFETY: the environment is a process-wide table, and writing to it
         // races with any concurrent read. That is why this happens exactly
         // once and as early as it can -- before the first editor exists, and
@@ -419,7 +334,10 @@ pub fn isolate_config_for_tests() {
         // write, because the table is one table. Doing it first, once, is what
         // keeps that window as small as it can be made without taking the
         // environment out of the picture entirely.
-        unsafe { std::env::set_var(CONFIG_DIR, dir) };
+        unsafe {
+            std::env::set_var(CONFIG_DIR, dir("config"));
+            std::env::set_var(CACHE_DIR, dir("cache"));
+        }
     });
 }
 
@@ -519,30 +437,31 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::string(format!("{}", current_exe_path.display())),
     );
 
-    // Look if there is a init.lisp file in
-    // - LINUX: ~/.config/rsedit/init.lisp
-    // - WINDOW: ~/AppData/Roaming/rsedit/init.lisp
-    // and if found not found create it and the path
-    // then evaluate it
-
-    let user_config_path = user_config_path();
-
-    if !user_config_path.as_os_str().is_empty() && !user_config_path.exists() {
-        if let Some(parent_dir) = user_config_path.parent() {
-            if let Err(err) = fs::create_dir_all(parent_dir) {
-                editor_state.log_diagnostic(&format!(
-                    "[ERROR] Failed to create the user configuration dir {}",
-                    err
-                ));
-            } else {
-                if let Err(err) = fs::write(&user_config_path, DEFAULT_INIT_LISP) {
-                    editor_state.log_diagnostic(&format!(
-                        "[ERROR] Failed to write default user configuration {}",
-                        err
-                    ));
-                }
-            }
+    // The configuration directory, made if it is not there yet, and the
+    // init.lisp in it -- written from the default first, when it is missing.
+    // Where that directory is, on each system, is `crate::paths`'s to say.
+    //
+    // An empty path when there is no directory to be had, which `eval_file`
+    // reads as nothing to evaluate.
+    let user_config_path = match app_dir(DirOptions {
+        dir: AppDir::Config,
+        create: true,
+    }) {
+        Ok(dir) => dir.join("init.lisp"),
+        Err(why) => {
+            editor_state.log_diagnostic(&format!("[ERROR] No configuration: {why}"));
+            PathBuf::new()
         }
+    };
+
+    if !user_config_path.as_os_str().is_empty()
+        && !user_config_path.exists()
+        && let Err(err) = fs::write(&user_config_path, DEFAULT_INIT_LISP)
+    {
+        editor_state.log_diagnostic(&format!(
+            "[ERROR] Failed to write default user configuration {}",
+            err
+        ));
     }
 
     editor_state.eval_file(
