@@ -223,12 +223,29 @@ WHAT IS RUNNING AND HOW IT IS TUNED
         long-step       a step longer than this, in ms, is logged: 40
         late-high       colouring kept waiting this long is logged: 40
         late-normal     any other job kept waiting this long: 200
-        stuck-step      a thread this slow to stop, in ms, is logged: 1000
+        stuck-step      a step, or a thread asked to stop, still going
+                        after this many ms is logged: 1000
         busy-share      a second busier than this percentage: 50
         summary-every   ms between two summaries of a report: 10000
         watchdog-every  ms between two looks of the watchdog: 250
 
     What they report goes to the log, in lines that start with [BKG].
+
+THE WATCHDOG
+    A step that does not end cannot say so: the thread that would report
+    it is the one running it. So a thread of its own looks from outside,
+    every `watchdog-every', and writes what it sees:
+
+        [BKG] stuck step: manpage-index running for 1.0 s
+
+    at `stuck-step', and again each time the step has run twice as long --
+    2 s, 4 s, 8 s -- so a step that never ends is a line now and then, not
+    a line a look. While it runs, `(work-list)' shows its job as running.
+
+    The watchdog also writes the log file, rsedit.log: nothing else that
+    logs a line touches the disk. A line reaches the file within a look of
+    the watchdog, and the last of them as the editor exits -- by a panic
+    too, when the last lines are the ones that say why.
 
 SEE ALSO
     macros, (define-worker), (stop-worker), (running-workers),

@@ -26,11 +26,12 @@
 //!   consequences outside its own fields -- a buffer to repoint, a window to
 //!   refocus -- it returns an enum saying so and lets the facade act.
 //! - **It does nothing slow while holding the lock.** No disk, no network, no
-//!   waiting. `Log::record` appends the line and hands the *file* back for the
-//!   caller to write to, because `log_diagnostic` used to `write_all` with the
-//!   list's write lock still open -- putting a disk write inside a lock that
-//!   every diagnostic in the editor, from the worker thread as well as this
-//!   one, had to queue behind.
+//!   waiting. `Log::record` only appends the line, and `Log::flush` -- the
+//!   watchdog's, every turn -- copies the new lines out and writes them with
+//!   the list's lock given back, because `log_diagnostic` used to `write_all`
+//!   with the list's write lock still open -- putting a disk write inside a
+//!   lock that every diagnostic in the editor, from the executor as well as
+//!   this thread, had to queue behind.
 //!
 //! The first four rules are about *correctness*: each one removes a way for
 //! two pieces of state to be seen disagreeing. The last is about *latency*,

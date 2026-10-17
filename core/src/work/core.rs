@@ -9,6 +9,9 @@
 //! - [`Core::run_once`] is one turn of an executor's loop: jobs that are
 //!   leaving leave, deadlines that passed and events that matured make jobs
 //!   ready, and at most one step runs, measured.
+//! - While a step runs, or a job's `exit`, the core says so in its
+//!   [`Underway`], which other threads read: the watchdog, to report a step
+//!   that does not end, and the registry, to list the job as running.
 //! - The next step comes from the high queue, except that after `high-steps`
 //!   high steps in a row a ready normal job gets its turn. Within a queue,
 //!   jobs take turns.
@@ -19,7 +22,7 @@
 //! says so.
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use super::clock::{Clock, ManualClock};
@@ -118,6 +121,49 @@ impl<C> Record<C> {
     }
 }
 
+/// What a core is running at this moment, for other threads to look at while
+/// it runs -- which is when it cannot answer for itself.
+///
+/// The watchdog reads it to report a step that does not end, and the registry
+/// to list the job taking it as running. Written twice a step, by moves under
+/// a lock nothing else holds for longer than a copy.
+#[derive(Default)]
+pub(crate) struct Underway(Mutex<Option<Current>>);
+
+/// A step, or a job's `exit`, that a core is in the middle of.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Current {
+    /// Counted from the core's first, steps and exits together: what tells
+    /// one step of a job from its next.
+    pub(crate) serial: u64,
+    pub(crate) id: WorkId,
+    pub(crate) name: String,
+    /// The job's `exit`, rather than one of its steps.
+    pub(crate) exit: bool,
+    pub(crate) started: Instant,
+}
+
+impl Underway {
+    /// What is running now, if anything.
+    pub(crate) fn current(&self) -> Option<Current> {
+        self.slot().clone()
+    }
+
+    fn begin(&self, current: Current) {
+        *self.slot() = Some(current);
+    }
+
+    fn end(&self) {
+        self.slot().take();
+    }
+
+    /// Nothing that can panic runs under this lock, but the watchdog reads it
+    /// and must not be the thread that finds out otherwise.
+    fn slot(&self) -> MutexGuard<'_, Option<Current>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// The steps of the last second, for the busy-executor rule.
 ///
 /// A sliding second, measured exactly: the share is the part of each step
@@ -193,6 +239,9 @@ pub struct Core<C: 'static> {
     departed: Vec<WorkId>,
     reporter: Reporter,
     load: Load,
+    underway: Arc<Underway>,
+    /// Steps and exits begun so far: the next one's [`Current::serial`].
+    serial: u64,
     closed: bool,
 }
 
@@ -211,8 +260,29 @@ impl<C: 'static> Core<C> {
             departed: Vec::new(),
             reporter: Reporter::default(),
             load: Load::default(),
+            underway: Arc::default(),
+            serial: 0,
             closed: false,
         }
+    }
+
+    /// Where this core says what it is running, for other threads to read
+    /// while it runs. See [`Underway`].
+    pub(crate) fn underway(&self) -> Arc<Underway> {
+        self.underway.clone()
+    }
+
+    /// Say that the job ID, called NAME, is in a step -- or in its `exit` --
+    /// from STARTED on.
+    fn begin(&mut self, id: WorkId, name: &str, exit: bool, started: Instant) {
+        self.serial += 1;
+        self.underway.begin(Current {
+            serial: self.serial,
+            id,
+            name: name.to_string(),
+            exit,
+            started,
+        });
     }
 
     /// Take JOB, under the name in SPEC.
@@ -545,7 +615,9 @@ impl<C: 'static> Core<C> {
             worked: None,
             topics: None,
         };
+        self.begin(id, &name, false, started);
         let result = catch_unwind(AssertUnwindSafe(|| job.step(&mut cx)));
+        self.underway.end();
         let worked = cx.worked.take();
         let topics = cx.topics.take();
         let ended = self.clock.now();
@@ -744,8 +816,13 @@ impl<C: 'static> Core<C> {
         } in std::mem::take(&mut self.leaving)
         {
             // Guarded like a step: an `exit` that panics must not take the
-            // scheduler down with it.
-            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| job.exit(state, why))) {
+            // scheduler down with it. And watched like one: an `exit` that
+            // never returns holds the executor as surely as a step.
+            let started = self.clock.now();
+            self.begin(id, &name, true, started);
+            let exited = catch_unwind(AssertUnwindSafe(|| job.exit(state, why)));
+            self.underway.end();
+            if let Err(payload) = exited {
                 self.reporter.always(format!(
                     "[BKG] panic: {name} panicked in exit: {}",
                     panic_message(&*payload)

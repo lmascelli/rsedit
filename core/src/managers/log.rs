@@ -10,38 +10,48 @@
 //! logged by another thread is written to neither -- it arrives too late for
 //! the catch-up and too early for the sink.
 //!
-//! # The lock is not held across the write
+//! # Who writes the file
 //!
-//! `log_diagnostic` used to take the write lock on the list and, still holding
-//! it, `write_all` to the file. Every diagnostic in the editor -- and they are
-//! logged from the worker thread as well as the command thread -- put a disk
-//! write inside a lock that everything else logging had to queue behind.
+//! Not whoever logs. [`Log::append`] puts the line in the list and counts it
+//! as not written yet, and that is all: no disk, so logging costs the same on
+//! a full disk or a home directory on the network as anywhere, and nothing
+//! that logs -- a command, a step of the scheduler -- can be held up by it.
 //!
-//! [`Log::record`] appends to the list and hands the caller back the line to
-//! write, so the file write happens with nothing held. The file is behind its
-//! own lock for the same reason: two threads may be writing to it at once, and
-//! that is the only thing they need to agree about.
+//! [`Log::flush`] writes what is owed, and the editor has the WorkManager's
+//! watchdog call it at every turn: a quarter of a second, by default, from a
+//! line being logged to its being in the file, and on a thread that is not
+//! stuck when everything else is -- which is when a log is read. It is
+//! called once more as the editor shuts down.
+//!
+//! `log_diagnostic` used to take the list's lock and, still holding it,
+//! `write_all` to the file, which put a disk write inside a lock every
+//! diagnostic in the editor had to queue behind. The flush writes with the
+//! list's lock given back.
 use std::{
     collections::VecDeque,
     fs::File,
     io::Write,
-    sync::{Arc, RwLock},
+    sync::{Arc, PoisonError, RwLock},
 };
 
 #[derive(Default)]
 pub struct Log {
     lines: VecDeque<String>,
+    /// How many of the newest lines are not in the file yet. Before there is
+    /// a file, all of them: they go in as its history when it is enabled.
+    unwritten: usize,
     /// Where a copy goes, once somebody asks for one.
     ///
-    /// Shared rather than owned so that [`Log::record`] can hand it out and
-    /// let the caller write with this compartment's lock already given back.
+    /// Shared rather than owned so that [`Log::flush`] can take it out and
+    /// write with this compartment's lock given back.
     file: Option<Arc<RwLock<File>>>,
 }
 
 impl Log {
     /// How many lines the list keeps. Past it the oldest goes: a long session
-    /// must not grow with every diagnostic (AVV-4), and the file, when there
-    /// is one, already has them all.
+    /// must not grow with every diagnostic (AVV-4). A line that goes before it
+    /// was written never reaches the file -- which takes more lines than the
+    /// list holds, logged within one turn of the watchdog.
     pub const MAX_LINES: usize = 10_000;
 
     /// Every diagnostic logged so far, oldest first.
@@ -49,45 +59,60 @@ impl Log {
         self.lines.iter().cloned().collect()
     }
 
-    /// Record MSG, and answer with the sink it should also be written to.
-    ///
-    /// The write itself is the caller's, deliberately: see the note above
-    /// about not holding this lock across disk I/O. `None` when no file is
-    /// enabled, which is the ordinary case.
-    #[must_use = "the message still has to reach the file"]
-    pub fn record(&mut self, msg: &str) -> Option<Arc<RwLock<File>>> {
+    /// Record MSG: in the list, and as owed to the file.
+    pub fn record(&mut self, msg: &str) {
         if self.lines.len() == Self::MAX_LINES {
             self.lines.pop_front();
         }
         self.lines.push_back(msg.to_string());
-        self.file.clone()
+        self.unwritten = (self.unwritten + 1).min(self.lines.len());
     }
 
-    /// Record MSG in LOG and write it to the file, when one is enabled: the
-    /// whole of logging a diagnostic, for whoever holds the compartment rather
-    /// than the editor. The WorkManager's executor is one: it must not hold an
-    /// editor, or the editor would hold itself.
+    /// Record MSG in LOG: the whole of logging a diagnostic, for whoever
+    /// holds the compartment rather than the editor. The WorkManager's
+    /// executor is one: it must not hold an editor, or the editor would hold
+    /// itself.
     ///
-    /// The sink comes back out with the lock, and the write happens with it
-    /// given back: a disk write inside the lock every diagnostic takes is a
-    /// queue everything else logging has to wait in, and diagnostics are
-    /// logged from the worker threads as well as the command thread.
+    /// The file is [`Log::flush`]'s.
     pub fn append(log: &RwLock<Log>, msg: &str) {
-        let sink = log.write().expect("write lock on log").record(msg);
-        if let Some(file) = sink {
-            Log::write_to(&file, msg);
-        }
+        log.write().expect("write lock on log").record(msg);
     }
 
-    /// Write MSG to SINK, the file [`Log::record`] handed back.
+    /// Write to the file the lines LOG holds that are not in it yet, oldest
+    /// first. Nothing when there is no file.
+    ///
+    /// The file's lock is taken before the lines are, and held until they are
+    /// written: two flushes at once write in the order the lines were
+    /// logged. The list's lock is held only to copy them out.
     ///
     /// A write that fails is dropped, never a panic (AVV-3). With the disk
     /// full, the first attempt to save produces exactly a diagnostic, and that
-    /// diagnostic used to close the editor. The line is in the list already;
-    /// the file just has a gap.
-    pub fn write_to(sink: &RwLock<File>, msg: &str) {
-        if let Ok(mut file) = sink.write() {
-            let _ = file.write_all(format!("{msg}\n").as_bytes());
+    /// diagnostic used to close the editor. The lines stay in the list; the
+    /// file just has a gap. A poisoned lock is used as it is, for the same
+    /// reason: this runs on the watchdog, which reports everybody else's
+    /// panics and must not have one of its own.
+    pub fn flush(log: &RwLock<Log>) {
+        let file = log
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .file
+            .clone();
+        let Some(file) = file else {
+            return;
+        };
+        let mut file = file.write().unwrap_or_else(PoisonError::into_inner);
+        let text: String = {
+            let mut log = log.write().unwrap_or_else(PoisonError::into_inner);
+            let owed = std::mem::take(&mut log.unwritten);
+            let from = log.lines.len().saturating_sub(owed);
+            log.lines
+                .iter()
+                .skip(from)
+                .map(|line| format!("{line}\n"))
+                .collect()
+        };
+        if !text.is_empty() {
+            let _ = file.write_all(text.as_bytes());
         }
     }
 
@@ -101,6 +126,7 @@ impl Log {
             file.write_all(format!("[LOG] {msg}\n").as_bytes())?;
         }
         self.file = Some(Arc::new(RwLock::new(file)));
+        self.unwritten = 0;
         Ok(())
     }
 }

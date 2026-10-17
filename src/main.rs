@@ -1,5 +1,5 @@
 mod tui;
-use rsedit_core::{ELispExp, GapBuffer, create_global_env, eval};
+use rsedit_core::{ELispExp, EditorState, GapBuffer, create_global_env, eval};
 use std::io::{self, IsTerminal};
 use std::time::Duration;
 use tui::tui_main;
@@ -14,6 +14,19 @@ type BufferType = GapBuffer;
 /// short enough that quitting never feels stuck.
 const SHUTDOWN_WAIT: Duration = Duration::from_millis(500);
 
+/// Shuts the editor's background work down when it goes: when `main` returns,
+/// and when a panic unwinds through it. Either way every job is told, every
+/// dedicated thread is asked to stop -- a shell command does not outlive the
+/// editor -- and the log's last lines reach the file, which a panic is what
+/// they are most likely to be about.
+struct ShutDownOnExit<'a>(&'a EditorState<BufferType>);
+
+impl Drop for ShutDownOnExit<'_> {
+    fn drop(&mut self) {
+        self.0.shutdown(SHUTDOWN_WAIT);
+    }
+}
+
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
@@ -24,6 +37,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
     };
+    let _shut_down = ShutDownOnExit(&state);
     state.enable_log_file("rsedit.log")?;
 
     if let Some(path) = args.get(1).cloned() {
@@ -40,13 +54,9 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let ran = if io::stdin().is_terminal() {
+    if io::stdin().is_terminal() {
         tui_main(&state, env.clone())
     } else {
         Ok(())
-    };
-    // However the loop ended, the background work stops before the process
-    // does: every job is told, and every dedicated thread is asked to stop.
-    state.shutdown(SHUTDOWN_WAIT);
-    ran
+    }
 }

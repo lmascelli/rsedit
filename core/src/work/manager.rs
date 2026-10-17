@@ -5,6 +5,18 @@
 //! what is running, the options, the topics, the dedicated threads and the
 //! watchdog. See `doc/workmanager.typ`, "L'architettura".
 //!
+//! # The watchdog
+//!
+//! A thread of its own, from [`WorkManager::start`] to the end, that wakes
+//! every `watchdog-every` and looks at what nobody else can: the step the
+//! executor is in, which the executor cannot report while it is in it. A step
+//! running `stuck-step` is reported, and again each time it has run twice as
+//! long. It joins the dedicated threads that have finished, and reports those
+//! slow to stop. And it calls the host's [`WorkManager::after_watch`], with
+//! which the editor writes its log file: so a write that blocks holds up the
+//! watchdog and nobody else, and a report reaches the file even when what it
+//! is about is stuck.
+//!
 //! # Two modes
 //!
 //! - **Threaded**, the editor's: an executor thread runs the core on the real
@@ -30,12 +42,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::clock::{Clock, ManualClock, SystemClock};
-use super::core::{Core, Place, WorkInfo, panic_message};
+use super::core::{Core, Current, Place, Underway, WorkInfo, panic_message};
 use super::job::{Job, Spec, Start, WorkId};
 use super::options::Options;
 use super::threads::{Dedicated, Lives, Stop, ThreadInfo, start_thread};
@@ -163,6 +175,9 @@ struct Shared<C: 'static> {
     log: Box<dyn Fn(&str) + Send + Sync>,
     /// Called after every step: see [`WorkManager::after_step`].
     after_step: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Called after every turn of the watchdog: see
+    /// [`WorkManager::after_watch`].
+    after_watch: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// Set while a nudge is in the inbox, unread: what makes a burst of
     /// emissions one wake-up.
     nudged: Arc<AtomicBool>,
@@ -170,11 +185,27 @@ struct Shared<C: 'static> {
     registry: Mutex<Registry>,
     /// The executor, until a thread takes it -- never, in manual mode.
     executor: Mutex<Option<Executor<C>>>,
-    /// In manual mode, the clock the core reads.
-    clock: Option<Arc<ManualClock>>,
+    /// The clock the core reads, which the watchdog times its steps by.
+    clock: Arc<dyn Clock>,
+    /// The same clock, in manual mode, where the test moves it.
+    manual: Option<Arc<ManualClock>>,
+    /// What the executor is running, as it says while it runs.
+    underway: Arc<Underway>,
+    /// What the watchdog has said about it.
+    watching: Mutex<Watching>,
     lives: Arc<Lives>,
     executor_thread: Mutex<Option<JoinHandle<()>>>,
     watchdog: Mutex<Option<JoinHandle<()>>>,
+}
+
+/// What the watchdog has said about the step in progress, so that it says it
+/// again only once the step has run twice as long.
+#[derive(Default)]
+struct Watching {
+    /// Which step it was: [`Current::serial`].
+    serial: Option<u64>,
+    /// How long that step has to run before it is reported again.
+    next: Duration,
 }
 
 impl<C: Send + 'static> WorkManager<C> {
@@ -208,7 +239,8 @@ impl<C: Send + 'static> WorkManager<C> {
             }))
         };
         let options = Arc::new(Options::default());
-        let core = Core::new(options.clone(), topics.clone(), clock);
+        let core = Core::new(options.clone(), topics.clone(), clock.clone());
+        let underway = core.underway();
         Self {
             shared: Arc::new(Shared {
                 instance: INSTANCES.fetch_add(1, Ordering::Relaxed),
@@ -216,6 +248,7 @@ impl<C: Send + 'static> WorkManager<C> {
                 topics,
                 log,
                 after_step: OnceLock::new(),
+                after_watch: OnceLock::new(),
                 nudged,
                 inbox,
                 registry: Mutex::default(),
@@ -224,7 +257,10 @@ impl<C: Send + 'static> WorkManager<C> {
                     inbox: receiver,
                     shut: false,
                 })),
-                clock: manual,
+                clock,
+                manual,
+                underway,
+                watching: Mutex::default(),
                 lives: Arc::default(),
                 executor_thread: Mutex::new(None),
                 watchdog: Mutex::new(None),
@@ -232,15 +268,26 @@ impl<C: Send + 'static> WorkManager<C> {
         }
     }
 
-    /// Start the executor's thread, on STATE.
+    /// Start the executor's thread, on STATE, and the watchdog's.
     ///
     /// Called once the state exists, which in the editor is after the
     /// WorkManager: the state holds it. Work submitted before waits in the
     /// inbox. In manual mode there is no thread to start, and STATE is not
-    /// kept: the test hands one to every call that runs work.
+    /// kept: the test hands one to every call that runs work, and runs the
+    /// watchdog's turns with [`Self::watch_once`].
     pub fn start(&self, state: C) {
-        if self.shared.clock.is_some() {
+        if self.shared.manual.is_some() {
             return;
+        }
+        let unwatched = {
+            let registry = self.shared.registry.lock().expect("work registry");
+            if registry.closed {
+                return;
+            }
+            self.watch()
+        };
+        if let Some(line) = unwatched {
+            (self.shared.log)(&line);
         }
         let Some(executor) = self.shared.executor.lock().expect("executor").take() else {
             return;
@@ -408,6 +455,21 @@ impl<C: Send + 'static> WorkManager<C> {
         self.shared.after_step.set(Box::new(hook)).is_ok()
     }
 
+    /// Have HOOK called at the end of every turn of the watchdog, on its
+    /// thread, and once more at the end of [`Self::shutdown`], on the caller's,
+    /// for the lines `shutdown` itself writes.
+    ///
+    /// What the editor writes its log file with. On the watchdog's thread a
+    /// write that blocks -- a full disk, a home directory on the network --
+    /// holds up nothing else, and what the watchdog reports reaches the file
+    /// even when the thread it reports on is stuck.
+    ///
+    /// Set once, and before the work it is for starts; a second call is
+    /// ignored and answers false.
+    pub fn after_watch(&self, hook: impl Fn() + Send + Sync + 'static) -> bool {
+        self.shared.after_watch.set(Box::new(hook)).is_ok()
+    }
+
     /// Whether work -- a job or a thread -- is running under NAME.
     ///
     /// For whoever names work after something else that must be unique too: a
@@ -448,9 +510,30 @@ impl<C: Send + 'static> WorkManager<C> {
     /// manual mode, at the end of each drive -- and every [`PUBLISH_EVERY`]
     /// while it is busy. A job it has not seen yet is listed as it was
     /// submitted: ready, or sleeping for a delayed start, with no steps.
+    ///
+    /// The job in the middle of a step is listed as running, from what the
+    /// executor says as it starts the step rather than from what it last
+    /// published: a step that does not end is a step after which nothing is
+    /// published again.
     pub fn jobs(&self) -> Vec<WorkInfo> {
+        let stepping = self
+            .shared
+            .underway
+            .current()
+            .filter(|current| !current.exit)
+            .map(|current| current.id);
         let registry = self.shared.registry.lock().expect("work registry");
-        registry.jobs.values().cloned().collect()
+        registry
+            .jobs
+            .values()
+            .cloned()
+            .map(|mut job| {
+                if stepping == Some(job.id) {
+                    job.place = Place::Running;
+                }
+                job
+            })
+            .collect()
     }
 
     /// Every dedicated thread still running, in the order they were started.
@@ -513,6 +596,7 @@ impl<C: Send + 'static> WorkManager<C> {
         }
         let all_finished = shared.lives.wait(within.saturating_sub(started.elapsed()));
         shared.bury(all_finished);
+        shared.watched();
     }
 
     /// Manual mode: turns until no job is ready, applying what each one
@@ -584,6 +668,23 @@ impl<C: Send + 'static> WorkManager<C> {
         self.manual_clock().advance(by);
     }
 
+    /// Manual mode: one turn of the watchdog, here and now -- what its thread
+    /// does every `watchdog-every`. The dedicated threads that have finished
+    /// are joined, a step that has run too long is reported, and the hook set
+    /// with [`Self::after_watch`] is called.
+    ///
+    /// The test's own thread is the executor in manual mode, so a test that
+    /// wants a step to be watched takes it on another: the step runs there,
+    /// the clock is moved and the watchdog looks from here.
+    ///
+    /// # Panics
+    ///
+    /// On a threaded WorkManager, whose watchdog runs by itself.
+    pub fn watch_once(&self) {
+        self.manual_clock();
+        self.shared.watch_turn();
+    }
+
     /// The number in this WorkManager's thread names: `w{instance} ...`.
     pub(crate) fn instance(&self) -> u64 {
         self.shared.instance
@@ -591,7 +692,7 @@ impl<C: Send + 'static> WorkManager<C> {
 
     fn manual_clock(&self) -> &Arc<ManualClock> {
         self.shared
-            .clock
+            .manual
             .as_ref()
             .expect("only a manual WorkManager is driven by hand: this one has an executor thread")
     }
@@ -600,14 +701,15 @@ impl<C: Send + 'static> WorkManager<C> {
         format!("w{} {role}", self.shared.instance)
     }
 
-    /// Start the watchdog, if it is not running: on the first dedicated
-    /// thread, which is all it watches for now. In manual mode there is none,
-    /// and the threads are reaped whenever the test drives the WorkManager.
+    /// Start the watchdog, if it is not running: with the executor, or with
+    /// the first dedicated thread if that comes first. In manual mode there is
+    /// none: the threads are reaped whenever the test drives the WorkManager,
+    /// and the test takes the watchdog's turns itself.
     ///
     /// Called with the registry's lock held, so a failure comes back as the
     /// line to log once the lock is given back.
     fn watch(&self) -> Option<String> {
-        if self.shared.clock.is_some() {
+        if self.shared.manual.is_some() {
             return None;
         }
         let mut watchdog = self.shared.watchdog.lock().expect("watchdog");
@@ -668,6 +770,61 @@ impl<C: 'static> Shared<C> {
                 panic_message(&*payload)
             ));
         }
+    }
+
+    /// Call the hook set with [`WorkManager::after_watch`], if there is one:
+    /// guarded like a step, since it is the host's code on the watchdog.
+    fn watched(&self) {
+        if let Some(hook) = self.after_watch.get()
+            && let Err(payload) = catch_unwind(AssertUnwindSafe(hook))
+        {
+            (self.log)(&format!(
+                "[BKG] panic: the after-watch hook: {}",
+                panic_message(&*payload)
+            ));
+        }
+    }
+
+    /// One turn of the watchdog: join the threads that have finished, report
+    /// a step that has run too long, and hand over to the host's hook last, so
+    /// that what the turn reported is in what the hook writes.
+    fn watch_turn(&self) {
+        self.reap();
+        self.watch_step();
+        self.watched();
+    }
+
+    /// Report the step in progress once it has run `stuck-step`, and again
+    /// each time it has run twice as long as when it was last reported:
+    /// 1 s, 2 s, 4 s, with the default. A turn that comes late reports once,
+    /// for how long the step has run, and the next mark is past that.
+    fn watch_step(&self) {
+        // Never poisoned: what runs under it cannot panic. But this is the
+        // watchdog, which must not be the one to find out otherwise.
+        let mut watching = self.watching.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(current) = self.underway.current() else {
+            *watching = Watching::default();
+            return;
+        };
+        if watching.serial != Some(current.serial) {
+            *watching = Watching {
+                serial: Some(current.serial),
+                next: self.options.stuck_step(),
+            };
+        }
+        let running = self.clock.now().saturating_duration_since(current.started);
+        if running < watching.next {
+            return;
+        }
+        (self.log)(&format!(
+            "[BKG] stuck step: {}",
+            running_for(&current, running)
+        ));
+        let mut next = watching.next.saturating_mul(2);
+        while next <= running {
+            next = next.saturating_mul(2);
+        }
+        watching.next = next;
     }
 
     /// Join the dedicated threads that have finished, and report those still
@@ -756,7 +913,19 @@ impl<C: 'static> Shared<C> {
             if all_finished || handle.is_finished() {
                 self.join("executor".to_string(), handle);
             } else {
-                (self.log)("[BKG] executor abandoned at shutdown: a step is still running");
+                let line = match self.underway.current() {
+                    Some(current) => {
+                        let running = self.clock.now().saturating_duration_since(current.started);
+                        format!(
+                            "[BKG] executor abandoned at shutdown: {}",
+                            running_for(&current, running)
+                        )
+                    }
+                    // Between two steps: what it was doing is not one of
+                    // them, and is not known.
+                    None => "[BKG] executor abandoned at shutdown, between two steps".to_string(),
+                };
+                (self.log)(&line);
             }
         }
         let watchdog = self.watchdog.lock().expect("watchdog").take();
@@ -899,16 +1068,27 @@ fn executor_main<C: 'static>(shared: Arc<Shared<C>>, mut executor: Executor<C>, 
     executor.close(&shared, &state);
 }
 
-/// The watchdog's thread. For now only the half that minds the dedicated
-/// threads: it joins those that have finished, writing a panic to the log,
-/// and reports those slow to stop. Watching the executor's steps, and writing
-/// the log for everybody, come in step 8 of the plan.
+/// The watchdog's thread: a turn every `watchdog-every`, until `shutdown`.
+/// See the module documentation, and [`Shared::watch_turn`] for the turn.
+/// Once it has stopped, `shutdown` calls the hook one last time itself, after
+/// the lines it writes.
 fn watchdog_main<C: 'static>(shared: Arc<Shared<C>>) {
     loop {
         std::thread::park_timeout(shared.options.watchdog_every());
         if shared.registry.lock().expect("work registry").closed {
             break;
         }
-        shared.reap();
+        shared.watch_turn();
     }
+}
+
+/// CURRENT, running for RUNNING, as a report says it:
+/// `highlighter running for 2.0 s`, and `... in its exit`.
+fn running_for(current: &Current, running: Duration) -> String {
+    let exit = if current.exit { " in its exit" } else { "" };
+    format!(
+        "{} running for {:.1} s{exit}",
+        current.name,
+        running.as_secs_f64()
+    )
 }

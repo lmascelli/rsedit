@@ -107,16 +107,24 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 
 "#;
 
-/// The editor's WorkManager, its reports going to LOG: manual in this crate's
-/// own tests, with an executor thread everywhere else.
+/// The editor's WorkManager, its reports going to LOG and its watchdog
+/// writing LOG's file: manual in this crate's own tests, with an executor
+/// thread everywhere else.
 fn work_manager<B: BufferTrait>(log: &Arc<RwLock<Log>>) -> WorkManager<EditorState<B>> {
-    let log = log.clone();
-    let report = move |line: &str| Log::append(&log, line);
-    if cfg!(test) {
+    let report = {
+        let log = log.clone();
+        move |line: &str| Log::append(&log, line)
+    };
+    let work = if cfg!(test) {
         WorkManager::manual(report)
     } else {
         WorkManager::threaded(report)
-    }
+    };
+    // Nothing that logs writes the file: the watchdog does, every turn. See
+    // `managers::log`.
+    let log = log.clone();
+    work.after_watch(move || Log::flush(&log));
+    work
 }
 
 impl<B: BufferTrait> EditorState<B> {

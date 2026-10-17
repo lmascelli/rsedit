@@ -1,14 +1,14 @@
-//! The WorkManager and its scheduler: where asynchronous work will run.
+//! The WorkManager and its scheduler: where asynchronous work runs.
 //!
-//! This replaces `background/` one piece at a time; the design, the decisions
-//! behind it and the plan are in `doc/workmanager.typ`. What is here so far is
-//! the scheduler's *core* -- the contract a job is written against, the
-//! queues, deadlines and topics, the rule that picks the next step, the
-//! measurements and reports -- and the [`WorkManager`] built around it, with
-//! its executor, its registry and the dedicated threads. Every editor has one,
-//! and every one of its jobs runs on it: colouring, the prescanner, the file
-//! watcher, the auto-saver and the jobs Lisp starts. Shell commands and
-//! searches move to its dedicated threads in the next steps of the plan.
+//! The design, the decisions behind it and the plan it was built by are in
+//! `doc/workmanager.typ`. Here are the scheduler's *core* -- the contract a
+//! job is written against, the queues, deadlines and topics, the rule that
+//! picks the next step, the measurements and reports -- and the
+//! [`WorkManager`] built around it, with its executor, its registry, the
+//! dedicated threads and the watchdog. Every editor has one, and all of its
+//! asynchronous work runs on it: colouring, the prescanner, the file watcher,
+//! the auto-saver and the jobs Lisp starts as jobs, shell commands and
+//! searches on dedicated threads.
 //!
 //! # What the core is not
 //!

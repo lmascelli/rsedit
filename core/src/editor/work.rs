@@ -191,9 +191,14 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// Every job leaves with `Exit::Shutdown`, and every dedicated thread is
     /// asked to stop; what has not finished by then is left behind, named in
-    /// the log. For the host to call once, as the editor exits. Nothing calls
-    /// it on its own: the executor's thread holds a copy of the editor, which
-    /// holds the executor, and `Drop` cannot break that cycle.
+    /// the log. Last, whatever the log holds that is not in its file yet is
+    /// written there: the watchdog that writes it every turn has stopped.
+    ///
+    /// For the host to call once, as the editor exits -- also when it exits
+    /// by a panic, or the log loses its last lines, which are the ones that
+    /// say why. Nothing calls it on its own: the executor's thread holds a
+    /// copy of the editor, which holds the executor, and `Drop` cannot break
+    /// that cycle.
     pub fn shutdown(&self, within: Duration) {
         self.work.shutdown(self, within);
     }

@@ -67,7 +67,9 @@ const DEFS: [Def; 9] = [
         min: 1,
         max: 3_600_000,
     },
-    // The watchdog reports a step still running after this long.
+    // The watchdog reports a step still running after this long, and again
+    // each time it has run twice as long; and a dedicated thread still
+    // running this long after it was asked to stop.
     Def {
         name: "stuck-step",
         default: 1_000,

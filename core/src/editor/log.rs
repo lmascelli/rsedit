@@ -5,7 +5,9 @@ use super::*;
 impl<B: BufferTrait> EditorState<B> {
     /// Enable writing logs to the specified file.
     /// Start mirroring diagnostics to a file at PATH, writing out everything
-    /// logged so far first.
+    /// logged so far first. What is logged after is written by the
+    /// WorkManager's watchdog, a turn at a time, and by [`Self::shutdown`]:
+    /// see `managers::log`.
     ///
     /// `&self` rather than `&mut self`: the file used to be the one field here
     /// not behind a lock, which meant enabling it needed exclusive access to
