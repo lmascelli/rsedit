@@ -179,4 +179,23 @@ mod tests {
             "a second error should replace the *Backtrace* window, not stack another one"
         );
     }
+
+    #[test]
+    fn the_messages_buffer_can_be_opened_by_name() {
+        // M-x offers commands only, and the messages that point a reader at
+        // `M-x switch-to-messages' must not point at nothing.
+        let (ctx, env) = setup();
+        let answer = eval_str("(commandp 'switch-to-messages)", &env, &ctx).unwrap();
+        assert!(!answer.is_nil(), "switch-to-messages should be a command");
+    }
+
+    #[test]
+    fn debug_on_error_is_documented() {
+        let (ctx, env) = setup();
+        let doc = eval_str("(variable-doc 'debug-on-error)", &env, &ctx).unwrap();
+        assert!(
+            matches!(&doc, LispExp::String(text) if text.starts_with("Whether a failed command")),
+            "{doc:?}"
+        );
+    }
 }

@@ -31,7 +31,7 @@
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
-    use crate::editor::{EditorState, create_global_env};
+    use crate::editor::{EditorState, SETTINGS, create_global_env};
     use crate::tests::shipped::{
         editor_functions, exceptions, known_names, load_default_modules, man_pages,
         module_variables, quoted_names,
@@ -329,13 +329,41 @@ mod tests {
             .into_iter()
             .filter_map(|name| documentation(&name, env, ctx).map(|doc| (name, doc)))
             .collect();
-        for (_, name) in module_variables() {
+        let settings = SETTINGS.iter().map(|setting| setting.name.to_string());
+        for name in module_variables()
+            .into_iter()
+            .map(|(_, name)| name)
+            .chain(settings)
+        {
             let doc = text(&run(&format!("(variable-doc '{name})"), env, ctx));
             if doc != "Undocumented variable" && doc != "nil" {
                 out.push((name, doc));
             }
         }
         out
+    }
+
+    #[test]
+    fn every_setting_the_editor_reads_is_documented_and_has_a_value() {
+        // So that `C-h v` on one says what it is for and what it is now,
+        // rather than that it is not set and whatever reads it will fail.
+        let (ctx, env) = loaded();
+        assert!(SETTINGS.len() >= 5, "the settings are not registered");
+        let mut wrong = Vec::new();
+        for setting in SETTINGS {
+            let doc = text(&run(
+                &format!("(variable-doc '{})", setting.name),
+                &env,
+                &ctx,
+            ));
+            if doc != setting.doc {
+                wrong.push(format!("{}: documented as {doc:?}", setting.name));
+            }
+            if env.get_variable(setting.name).is_none() {
+                wrong.push(format!("{}: no value", setting.name));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     /// How long a docstring may be, in characters. What a longer one has to

@@ -584,6 +584,16 @@ mod tests {
     }
 
     #[test]
+    fn a_setting_shows_its_value_its_documentation_and_its_page() {
+        let (ctx, env) = editor();
+        let _pages = demo_pages("setting", &ctx, &env);
+        run(r#"(help-variable "echo-message-timeout")"#, &env, &ctx);
+        let page = page(&ctx);
+        assert_says(&page, "Value: 5");
+        assert_says(&page, "How many seconds a message stays in the echo area.");
+    }
+
+    #[test]
     fn a_name_no_synopsis_lists_has_no_manual_line() {
         let (ctx, env) = editor();
         let _pages = demo_pages("unlisted", &ctx, &env);

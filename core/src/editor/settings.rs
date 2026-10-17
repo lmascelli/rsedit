@@ -6,6 +6,77 @@
 //! raising an ordering question.
 
 use super::*;
+use risp::VARIABLE_DOCUMENTATION;
+
+/// A Lisp variable the editor reads, and what `C-h v` says about it.
+pub struct Setting {
+    pub name: &'static str,
+    pub doc: &'static str,
+}
+
+/// The settings the editor reads, with their documentation. Each starts with
+/// a value, set in `create_global_env`, so `C-h v` also shows what it is.
+pub const SETTINGS: &[Setting] = &[
+    Setting {
+        name: ECHO_MESSAGE_TIMEOUT,
+        doc: "How many seconds a message stays in the echo area. Each new message starts the \
+              count again; nil, or anything but a number, keeps a message until another \
+              replaces it.\n\n\
+              Example:\n\
+              \x20 (setq echo-message-timeout nil)",
+    },
+    Setting {
+        name: MODE_LINE_FORMAT,
+        doc: "What the status line at the bottom of each window shows: this text, with each \
+              escape replaced.\n\n\
+              \x20 %b  the buffer's name     %f  the file's path, or the buffer's name\n\
+              \x20 %m  the major mode        %s  the mode's own state, as vim-mode's NORMAL\n\
+              \x20 %l  the line, from 1      %c  the column, from 0\n\
+              \x20 %p  where point is: All, Top, Bot or a percentage\n\
+              \x20 %*  ** when modified, -- when not    %%  a per cent sign\n\n\
+              An unknown escape is shown as written; anything but a string shows the \
+              default.\n\n\
+              Example:\n\
+              \x20 (setq mode-line-format \" %b  L%l C%c \")",
+    },
+    Setting {
+        name: DISPLAY_LINE_NUMBERS,
+        doc: "Whether windows show line numbers down their left edge: nil for none, 'relative \
+              for each line's distance from point, anything else for each line's own number. \
+              A window too narrow to spare the columns shows none. `toggle-line-numbers' turns \
+              them on and off.\n\n\
+              Example:\n\
+              \x20 (setq display-line-numbers 'relative)",
+    },
+    Setting {
+        name: DISPLAY_LINE_NUMBERS_WIDTH,
+        doc: "The fewest digits the line numbers take room for, so that the text does not \
+              shift sideways as the file grows. More are used when a number needs them.",
+    },
+    Setting {
+        name: LISP_PATH,
+        doc: "The directories `eval-file' searches, in order, for a module named without a \
+              directory or an extension: (eval-file \"dired\") loads dired.lisp from the first \
+              one that has it. It starts as the lisp folder of the editor's data directory.\n\n\
+              Example:\n\
+              \x20 (setq lisp-path (cons (expand-file-name \"~/lisp\") lisp-path))",
+    },
+];
+
+/// Gives every setting in [`SETTINGS`] its documentation, where `defvar` puts
+/// a variable's.
+pub fn document_settings<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) {
+    for setting in SETTINGS {
+        env.put_property(
+            setting.name,
+            VARIABLE_DOCUMENTATION,
+            ELispExp::string(setting.doc.to_string()),
+        );
+    }
+}
+
+/// The name of the Lisp variable listing where `eval-file` looks for a module.
+pub const LISP_PATH: &str = "lisp-path";
 
 /// The name of the Lisp variable that arms the echo area's timeout.
 pub const ECHO_MESSAGE_TIMEOUT: &str = "echo-message-timeout";

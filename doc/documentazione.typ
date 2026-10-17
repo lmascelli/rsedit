@@ -230,6 +230,11 @@ Example:
 - Le funzioni private, con `--` nel nome, hanno una riga che dice che cosa
   restituiscono. Un ragionamento interno è un commento `;;`, non una
   docstring.
+- Le impostazioni che il Rust legge --- variabili che nessun modulo
+  dichiara con `defvar` --- hanno la docstring nel registro `SETTINGS` di
+  `editor/settings.rs`, che all'avvio la mette dove la mette `defvar`;
+  il loro valore iniziale si imposta in `create_global_env`, così `C-h v`
+  mostra anche quello. La docstring non ripete il valore iniziale.
 
 == Il rustdoc <regole-rustdoc>
 
@@ -751,10 +756,19 @@ stanno nei commenti del codice dell'area passano nelle pagine e dai commenti
 escono. Le impostazioni dell'area ricevono una docstring, così che `C-h v`
 le spieghi. L'elenco dei nomi senza casa si accorcia di conseguenza.
 
+*Passo 2, fatto.* `configuration` è riscritta sul modello e corretta; la
+pagina nuova `diagnostics` spiega l'area dei messaggi, il log, il file di log
+nella cache, i comandi che falliscono e le righe del watchdog. Il registro
+`SETTINGS` documenta le prime cinque impostazioni (`echo-message-timeout`,
+`mode-line-format`, `display-line-numbers`, `display-line-numbers-width`,
+`lisp-path`), e i passi seguenti vi aggiungono quelle della loro area. I nomi
+di `commands.lisp` passano al passo 8, perché la loro pagina è
+`writing-commands`.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),
-  [2], [avvio, configurazione, diagnostica], [`rsedit`, `guide`, `first-steps`, `configuration`], [da `general.rs`: `eval-file`, `log`, `all-logs`, `backtrace`], [`debug`, `commands`; nuova: `diagnostics` (il log nella cache, `*Messages*`, `C-h e`, il backtrace, le righe del watchdog)],
+  [2], [avvio, configurazione, diagnostica (fatto)], [`rsedit`, `guide`, `first-steps`, `configuration`], [da `general.rs`: `eval-file`, `log`, `all-logs`, `backtrace`], [`debug`, `commands`; nuova: `diagnostics` (il log nella cache, `*Messages*`, `C-h e`, il backtrace, le righe del watchdog)],
   [3], [scrivere e modificare], [`editing`, `rectangles`, `macros`], [`edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`], [`indent`, `electric-pair`, `clipboard`; nuova: `indentation`],
   [4], [file, buffer, finestre], [`files`, `buffers`, `windows`], [`io`, `buffers`, `windows`, `ui`, `mouse`, `ask`], [`dired`, `buffer-list`; nuove: `dired`, `mouse`; le impostazioni `auto-save` e `watch-files`],
   [5], [cercare e navigare], [`searching`, `compile`], [`isearch`, `replace`, `results`, `scan`, `match_data`], [`occur`, `compile`],

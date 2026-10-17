@@ -22,6 +22,7 @@ THE GUIDE
         keymaps           what a key is, and how to change one
         modes             what a buffer is being edited *as*
         configuration     making it yours
+        diagnostics       what the editor says, and where to find it
         writing-commands  when a setting is not enough
 
 THE REFERENCE

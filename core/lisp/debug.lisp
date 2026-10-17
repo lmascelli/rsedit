@@ -1,20 +1,12 @@
-;; Debug helpers.
-;;
-;; `message' is the everyday way to surface something visibly, right now,
-;; from Lisp code you're testing interactively: it shows in the echo area
-;; (the status line at the bottom of the frame) *and* stays in the log, so
-;; it can be reviewed afterwards via `switch-to-messages' (M-l).
-;;
-;; `backtrace' and `all-logs' are lower-level: `backtrace' returns the call
-;; stack captured at the point of the most recent uncaught error (see the
-;; `push_call_frame' docs on `LispContext' in the Rust source for exactly
-;; what it can and can't show), and `all-logs' returns the raw log this
-;; file's `messages-buffer-refresh' renders into a buffer.
+;;; debug --- messages, the log, and what happens when a command fails.
+;;;
+;;; `message' shows a line in the echo area and keeps it in the log,
+;;; `switch-to-messages' shows the log, and `report-error' is what the editor
+;;; calls when a command fails. User manual: the `diagnostics' page.
 
 (defun message (fmt-string &rest args)
-  "Format FMT-STRING with ARGS exactly like `format', show the result in
-the echo area, and append it to the diagnostic log (see
-`switch-to-messages'). Returns the formatted string.
+  "Show FMT-STRING, formatted with ARGS as `format' does, in the echo area, and
+add it to the log. Return the formatted string.
 
 Example:
   (message \"Saved %s\" (current-buffer))"
@@ -24,60 +16,33 @@ Example:
     s))
 
 (defun messages-buffer-refresh ()
-  "Rebuild the *Messages* buffer's content from `all-logs' and switch to
-it, creating the buffer first if it doesn't exist yet. This is a
-snapshot, not a live view -- call again (or M-l) to pick up anything
-logged since."
+  "Show the log, as it is now, in the *Messages* buffer."
   (buffer-create "*Messages*")
   (switch-to-buffer "*Messages*")
   (clear-buffer)
   (mapc (lambda (line) (insert line "\n")) (all-logs)))
 
+;; A `defun' and a `register-command' rather than `defcommand', so that this
+;; file loads without commands.lisp before it.
 (defun switch-to-messages ()
-  "Open the *Messages* buffer, showing the diagnostic log so far."
+  "Show everything the editor has logged, in the *Messages* buffer. The buffer
+is a snapshot: run this again to see what came after."
   (messages-buffer-refresh))
+(register-command "switch-to-messages" nil)
 
-;; Not bound to a key. It was on M-l, which is `downcase-word' in Emacs; the
-;; Emacs way to this buffer is `C-h e', and making `C-h' a prefix here would
-;; break Backspace on every terminal that still sends it as C-h. So it is
-;; reached by name -- `M-x switch-to-messages' -- until there is a help prefix
-;; worth the risk.
-
-;; `report-error' below is the editor's error-reporting hook: whenever a
-;; key-triggered evaluation fails uncaught, the editor calls
-;; (report-error MESSAGE FRAMES) if this function is defined -- MESSAGE a
-;; string describing the failure, FRAMES the call stack captured at the
-;; point of failure (see `backtrace'), innermost call first. Falls back
-;; to plain logging if this function isn't (yet) defined, e.g. during
-;; early boot.
-;;
-;; The default implementation below always echoes the error (via
-;; `message', so it's visible immediately and stays in the log), and --
-;; when `debug-on-error' is non-nil -- also opens a *Backtrace* popup
-;; with the full call stack. `debug-on-error' defaults to nil: day-to-day
-;; mistakes (a mistyped keybinding, a typo you're actively fixing via
-;; M-:) are better served by a quiet echo-area message than an
-;; interrupting popup; turn it on while chasing something gnarlier.
-;; Redefine `report-error' entirely for a different policy -- e.g. always
-;; popping up, or routing errors somewhere else.
-
-(setq debug-on-error nil)
+(defvar debug-on-error nil
+  "Whether a failed command also opens a *Backtrace* window with its call
+stack, besides the message in the echo area.")
 
 (make-mode 'backtrace-mode)
 (setq *backtrace-window-open* nil)
-;; The buffer that was current right before the *first* *Backtrace* popup
-;; of a (possibly replaced-in-place, see `backtrace-show') sequence
-;; opened. `close-floating-window' only restores window *focus*, not
-;; `current-buffer' -- see the comment in `backtrace-dismiss' -- so this
-;; is tracked explicitly, the same way `*minibuffer-previous-buffer*' is
-;; in minibuffer.lisp.
+;; The buffer to go back to when the window closes: `close-floating-window'
+;; gives back the focus, not the current buffer.
 (setq *backtrace-previous-buffer* nil)
 
 (defun backtrace-dismiss ()
-  "Close the *Backtrace* window (q or Escape) and switch back to
-whatever buffer was current before it opened. `close-floating-window'
-alone only restores window focus, not which buffer is \"current\" -- see
-`*backtrace-previous-buffer*' -- so that switch is done explicitly here."
+  "Close the *Backtrace* window and go back to the buffer that was current
+before it opened."
   (close-floating-window)
   (setq *backtrace-window-open* nil)
   (if *backtrace-previous-buffer*
@@ -87,15 +52,12 @@ alone only restores window focus, not which buffer is \"current\" -- see
 (define-key 'backtrace-mode "<Escape>" 'backtrace-dismiss)
 
 (defun backtrace-show (message frames)
-  "Open a *Backtrace* floating window showing MESSAGE and FRAMES (a list
-of call-stack frame-name strings, innermost call first, as returned by
-`backtrace'). Replaces any *Backtrace* window already open rather than
-stacking a new one on top of it. Dismissed with q or Escape."
+  "Show MESSAGE and the call stack FRAMES, innermost call first, in a
+*Backtrace* window, in place of the one already open."
   (if *backtrace-window-open*
       (close-floating-window)
-      ;; Only capture this on the *first* open of a sequence -- on a
-      ;; replace, `(current-buffer)' is already \"*Backtrace*\" itself,
-      ;; which would clobber the real previous buffer.
+      ;; Only for the first window: when one replaces another, the current
+      ;; buffer is the *Backtrace* itself.
       (setq *backtrace-previous-buffer* (current-buffer)))
   (make-floating-window "*Backtrace*" 4 2
                          (max 20 (- frame-width 8))
@@ -105,12 +67,14 @@ stacking a new one on top of it. Dismissed with q or Escape."
   (insert message "\n")
   (if frames
       (mapc (lambda (f) (insert "  at " f "\n")) frames)
-      (insert "  (no call-stack frames captured -- the failure was likely in a tail call; see `backtrace's docstring)")))
+      (insert "  (no frames: the call that failed was the last one in its function)")))
 
 (defun report-error (message frames)
-  "The editor's default error-reporting hook -- see the comment above.
-Always shows MESSAGE via `message'. If `debug-on-error' is non-nil, also
-opens a *Backtrace* window with MESSAGE and FRAMES."
+  "Report a failed command: show MESSAGE in the echo area and, when
+`debug-on-error' is set, its call stack FRAMES in a *Backtrace* window.
+
+The editor calls this when a command fails; redefine it to report failures
+another way."
   (message "Eval Error: %s" message)
   (if debug-on-error
       (backtrace-show message frames)))

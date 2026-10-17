@@ -5,23 +5,8 @@
 //! asked to, making it. Everything that needs one of these places asks here,
 //! so that the conventions of each system are written down once.
 //!
-//! # Where each one is
-//!
-//! Most specific first:
-//!
-//! | | named outright | Unix | then |
-//! |---|---|---|---|
-//! | [`AppDir::Config`] | `$RSEDIT_CONFIG_DIR` | `$XDG_CONFIG_HOME/rsedit` | `~/.config/rsedit`, `%APPDATA%\rsedit` on Windows |
-//! | [`AppDir::Cache`] | `$RSEDIT_CACHE_DIR` | `$XDG_CACHE_HOME/rsedit` | `~/.cache/rsedit`, `%LOCALAPPDATA%\rsedit\cache` on Windows |
-//!
-//! The variable that names a directory outright is used as given, on every
-//! system: it is what a portable install, a second configuration kept beside
-//! the first, and a test suite that must not touch the person's own files all
-//! need. The freedesktop variables are a parent of every application's
-//! directory, so the editor's own name is joined on; they are a Linux and BSD
-//! convention, honoured on Unix only, and ignored when they are empty or not
-//! absolute, as the specification says. A variable that is set but empty
-//! counts as not set.
+//! Where each directory is, and the variables that choose it, is user
+//! documentation: the `configuration` manual page.
 //!
 //! # Why macOS gets `~/.config` and `~/.cache`
 //!
@@ -140,8 +125,8 @@ impl std::error::Error for DirError {
 }
 
 /// The directory OPTIONS asks for, where this system keeps it -- made first,
-/// when it is missing and OPTIONS says to. See the module documentation for
-/// where that is.
+/// when it is missing and OPTIONS says to. Where that is: the `configuration`
+/// manual page.
 ///
 /// ```no_run
 /// use rsedit_core::{AppDir, DirOptions, app_dir};

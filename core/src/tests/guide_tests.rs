@@ -29,7 +29,7 @@
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
-    use crate::editor::{EditorState, create_global_env};
+    use crate::editor::{EditorState, SETTINGS, create_global_env};
     use crate::tests::shipped::{
         default_modules, editor_functions, exceptions, is_private, load_default_modules, man_pages,
         module_variables,
@@ -449,6 +449,7 @@ mod tests {
         let public: BTreeSet<String> = editor_functions(&env)
             .into_iter()
             .chain(module_variables().into_iter().map(|(_, name)| name))
+            .chain(SETTINGS.iter().map(|setting| setting.name.to_string()))
             .filter(|name| !is_private(name))
             .collect();
         assert!(public.len() > 300, "too few public names: {}", public.len());

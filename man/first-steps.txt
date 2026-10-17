@@ -157,4 +157,4 @@ KEYS
     C-g                     keyboard-quit
 
 SEE ALSO
-    guide, editing, files, getting-help
+    guide, editing, files, getting-help, diagnostics

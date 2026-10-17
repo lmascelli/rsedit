@@ -5,26 +5,6 @@
 # list only shrinks: each step of doc/documentazione.typ gives a home to the
 # names of its area.
 
-# -- passo 2: avvio, configurazione, diagnostica
-# lisp/commands.lisp
-defcommand
-save-match-data
-string-prefix-p
-string-suffix-p
-# lisp/debug.lisp
-backtrace-dismiss
-backtrace-show
-message
-messages-buffer-refresh
-report-error
-switch-to-messages
-# primitives/general.rs
-all-logs
-backtrace
-eval-file
-log
-set-echo-message
-
 # -- passo 3: scrivere e modificare
 # lisp/clipboard.lisp
 clipboard-sync-toggle
@@ -328,7 +308,6 @@ scan-buffer
 # -- passo 6: prompt, completamento, tasti, aiuto
 # lisp/common-keymaps.lisp
 list-workers
-toggle-line-numbers
 # lisp/completion-at-point.lisp
 capf-buffer-names
 capf-buffer-words
@@ -489,6 +468,11 @@ make-virtual-text
 virtual-text-at
 
 # -- passo 8: estendere l'editor
+# lisp/commands.lisp
+defcommand
+save-match-data
+string-prefix-p
+string-suffix-p
 # lisp/shell.lisp
 shell-command
 shell-command-kill

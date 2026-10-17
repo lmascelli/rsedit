@@ -55,8 +55,9 @@ at most 78 columns, since a page may be read in a split window.
 - **DESCRIPTION** and the sections after it: what the reader can do and how,
   in the order they would want to do it, limits included. How the code works
   inside belongs in the developer manual.
-- **EXAMPLES**: complete examples that can be pasted into `init.lisp` or
-  `M-:`, each introduced by a sentence.
+- **EXAMPLES**: in every page that is the home of names, complete examples
+  that can be pasted into `init.lisp` or `M-:`, each introduced by a
+  sentence.
 - **KEYS** and **KEYS IN NAME MODE**: one binding per line: the keys, two
   spaces or more, and the command.
 - **SEE ALSO**: other pages by name, and functions as `(name)`.

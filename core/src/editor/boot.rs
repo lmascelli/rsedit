@@ -228,7 +228,7 @@ impl<B: BufferTrait> EditorState<B> {
                             // search for file.lisp in every lisp-path folder
                             // 1. get the lisp-path lists, and check it is a list of strings
                             let mut lisp_path = vec![];
-                            if let Some(lisp_path_list) = env.get_variable("lisp-path") {
+                            if let Some(lisp_path_list) = env.get_variable(LISP_PATH) {
                                 if matches!(lisp_path_list, ELispExp::Cons(_)) {
                                     for ipath in lisp_path_list.iter() {
                                         if let ELispExp::String(path) = &ipath {
@@ -359,7 +359,7 @@ pub fn create_global_env<B: BufferTrait>()
     match std::env::current_exe() {
         Ok(exe_path) => {
             env.set_variable(
-                "lisp-path".into(),
+                LISP_PATH.into(),
                 ELispExp::proper_list(vec![ELispExp::string(format!(
                     "{}/data/lisp",
                     exe_path
@@ -415,6 +415,15 @@ pub fn create_global_env<B: BufferTrait>()
         WINDOW_SEPARATOR.into(),
         ELispExp::string(DEFAULT_WINDOW_SEPARATOR.to_string()),
     );
+
+    // The line-number gutter, off, at the width it has when nothing is said.
+    env.set_variable(DISPLAY_LINE_NUMBERS.into(), ELispExp::nil());
+    env.set_variable(
+        DISPLAY_LINE_NUMBERS_WIDTH.into(),
+        ELispExp::number(DEFAULT_LINE_NUMBER_DIGITS as f64),
+    );
+
+    document_settings(&env);
 
     // Create the fundamental modes:
     // - fundamental-mode to edit base files

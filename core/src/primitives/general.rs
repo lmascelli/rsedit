@@ -1,15 +1,15 @@
 use super::*;
 
-pub const EVAL_FILE_DOC: &str = "(eval-file FILE): Evaluate FILE as Lisp. FILE is first looked up as \
-         an absolute or relative path; if that fails and FILE has no \
-         directory separator or extension, each directory in `lisp-path` is \
-         tried in order for FILE.lisp. Returns a one-element list holding the \
-         result of evaluating the file's contents (wrapped in an implicit \
-         `progn`), or nil (logging a diagnostic) if no matching file was \
-         found.\n\n\
+pub const EVAL_FILE_DOC: &str = "(eval-file FILE): Evaluate the Lisp in FILE, and return a \
+         one-element list holding the value of its last form, or nil when there is nothing to \
+         evaluate.\n\n\
+         FILE is a path, relative to the directory the editor was started in. When no such file \
+         exists and FILE has no directory, extension or dot in it, FILE.lisp is looked for in \
+         each directory of `lisp-path' in turn. A file that is not found is logged; a file that \
+         does not parse is skipped.\n\n\
          Example:\n\
-         (eval-file \"common-keymaps\") ; loads <lisp-path>/common-keymaps.lisp\n\
-         (eval-file \"/home/me/.config/rsedit/extra.lisp\")";
+         (eval-file \"dired\")                          ; dired.lisp, from lisp-path\n\
+         (eval-file (expand-file-name \"~/lisp/mine.lisp\"))";
 
 primitive!(eval_file, args, env, ctx, {
     if args.len() != 1 {
@@ -153,10 +153,10 @@ primitive!(define_key, args, env, ctx, {
     }
 });
 
-pub const LOG_DOC: &str = "(log MESSAGE): Append the string MESSAGE to the editor's diagnostic \
-         log (and to the log file, if one is enabled).\n\n\
+pub const LOG_DOC: &str = "(log MESSAGE): Add the string MESSAGE to the log, without showing \
+         it. It reaches the log file, when there is one, within a moment.\n\n\
          Example:\n\
-         (log \"buffer saved\")";
+         (log \"my-mode: index rebuilt\")";
 
 primitive!(log, args, _env, ctx, {
     if args.len() != 1 {
@@ -177,9 +177,9 @@ primitive!(log, args, _env, ctx, {
     }
 });
 
-pub const ALL_LOGS_DOC: &str = "(all-logs): Return every diagnostic message logged so far -- via \
-         `log', `message', or the editor's own internal error reporting \
-         -- oldest first, as a list of strings.\n\n\
+pub const ALL_LOGS_DOC: &str = "(all-logs): Return the log, oldest line first, as a list of \
+         strings: what `log' and `message' added and what the editor reported itself. The \
+         oldest lines go once there are many.\n\n\
          Example:\n\
          (length (all-logs))";
 
@@ -189,14 +189,10 @@ primitive!(all_logs, _args, _env, ctx, {
     ))
 });
 
-pub const BACKTRACE_DOC: &str = "(backtrace): Return the call stack captured at the point of the \
-         most recent uncaught error, as a list of function-name strings, \
-         innermost (deepest) call first -- or an empty list if nothing has \
-         errored since the backtrace was last reported (every top-level \
-         error handler clears it once it's done reporting). Calls in tail \
-         position are not shown as separate frames, since by the time they \
-         run their caller's frame has already been popped -- see the \
-         `push_call_frame` docs on the `LispContext` trait for why.\n\n\
+pub const BACKTRACE_DOC: &str = "(backtrace): Return the call stack of the most recent failure, \
+         innermost call first, as a list of function names; nil once that failure has been \
+         reported. A call made last in its function is not in the list: by the time it ran, the \
+         function that made it had returned.\n\n\
          Example:\n\
          (backtrace) => (\"eval-string\" \"eval-expression-confirm\" \"funcall\" \"minibuffer-confirm\")";
 

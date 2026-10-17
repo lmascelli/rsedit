@@ -1,0 +1,116 @@
+NAME
+    diagnostics - what the editor says, and where to find it
+
+SYNOPSIS
+    (message FMT-STRING &rest ARGS)
+    (set-echo-message MESSAGE)
+    (log MESSAGE)
+    (all-logs)
+    (switch-to-messages)
+    (messages-buffer-refresh)
+    (report-error MESSAGE FRAMES)
+    (backtrace)
+    (backtrace-show MESSAGE FRAMES)
+    (backtrace-dismiss)
+    echo-message-timeout
+    debug-on-error
+
+DESCRIPTION
+    The editor says things in three places. The echo area, the last line
+    of the screen, shows the latest message for a few seconds. The log
+    keeps every message and every report, in order, and C-h e shows it.
+    The log file, rsedit.log, is a copy of the log on disk, for when the
+    editor is no longer there to ask.
+
+THE ECHO AREA
+    `message' formats a string as `format' does, shows it in the echo area
+    and adds it to the log. `set-echo-message' only shows it. A message
+    stays `echo-message-timeout' seconds, or until the next one replaces
+    it.
+
+THE LOG
+    Everything the editor reports goes in the log: messages, commands that
+    failed, modules that did not load, files reloaded from disk, and the
+    work that runs in the background. The editor's own lines often start
+    with a tag:
+
+        [ERROR]   something failed: a module, a file, a hook
+        [INFO]    something worth knowing happened
+        [BKG]     the background work: a job that failed, or one stuck
+
+    C-h e, or M-x switch-to-messages, shows the log in the *Messages*
+    buffer. The buffer is a snapshot: run it again to see what came after.
+    `log' adds a line without showing it, and `all-logs' returns them all.
+    The log keeps the most recent lines and lets the oldest go.
+
+THE LOG FILE
+    rsedit.log, in the cache directory: the `configuration' page says
+    where that is. It starts again at every start, with the lines the
+    editor logged while starting, marked [LOG], and then follows the log
+    within a quarter of a second. The last lines are written as the editor
+    exits, after a crash too, when they are the ones that say why.
+
+    When the cache directory cannot be made, or the file cannot be
+    written, there is no log file, and the editor starts all the same.
+
+WHEN A COMMAND FAILS
+    The command stops, and the editor calls `report-error' with what went
+    wrong and the call stack. The one in debug.lisp shows "Eval Error:"
+    and the message in the echo area, which also puts them in the log.
+    With `debug-on-error' set it opens a *Backtrace* window too, listing
+    the calls innermost first, and q or Escape closes it. Redefine
+    `report-error' to report failures another way.
+
+    A call made last in its function is not in the stack: by the time it
+    ran, the function that made it had returned.
+
+WHEN A MODULE DOES NOT LOAD
+    The editor starts without it and the log says why. A module that is
+    not there is logged as
+
+        [ERROR] eval_file NAME.lisp was not found in lisp_path
+
+    A module with a syntax error is skipped without a word, for now. Load
+    one you are writing with M-: (eval-file "NAME") and look at what comes
+    back: nil means it was not evaluated.
+
+WHEN THE EDITOR SEEMS STUCK
+    The background work is watched from a thread of its own, and a step
+    that runs too long is reported in the log:
+
+        [BKG] stuck step: manpage-index running for 1.0 s
+
+    again each time it has run twice as long. The `background' page
+    describes the jobs, and (work-list) shows what is running.
+
+EXAMPLES
+    See every failure as it happens, with its call stack:
+
+        (setq debug-on-error t)
+
+    Keep each message until the next one replaces it:
+
+        (setq echo-message-timeout nil)
+
+    Leave a trace from your own code, without a message on the screen:
+
+        (log (format "my-mode: %d buffers" (length (all-buffer-names))))
+
+    The last ten lines of the log, with M-:
+
+        (nthcdr (max 0 (- (length (all-logs)) 10)) (all-logs))
+
+    Report failures in the log only, never on the screen:
+
+        (defun report-error (message frames)
+          (log (concat "failed: " message)))
+
+KEYS
+    C-h e                   switch-to-messages
+
+KEYS IN BACKTRACE MODE
+    q                       backtrace-dismiss
+    <Escape>                backtrace-dismiss
+
+SEE ALSO
+    configuration, background, getting-help, writing-commands

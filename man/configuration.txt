@@ -1,22 +1,46 @@
 NAME
     configuration - making it yours
 
-DESCRIPTION
-    The editor reads one file when it starts: init.lisp, in a directory it
-    works out like this, most specific first.
+SYNOPSIS
+    (eval-file FILE)
+    (toggle-line-numbers)
+    lisp-path
+    display-line-numbers
+    display-line-numbers-width
+    mode-line-format
 
-        $RSEDIT_CONFIG_DIR          used as given, on any system
-        $XDG_CONFIG_HOME/rsedit     on Unix
-        ~/.config/rsedit            everywhere but Windows
+DESCRIPTION
+    The editor reads one file when it starts: init.lisp, in its
+    configuration directory. The first time there is none, and one is
+    written for you, with every module listed and a comment on each. From
+    then on the file is yours, and the editor never writes it again. Read
+    it before you change it: it is the shortest description of what the
+    editor is made of.
+
+    init.lisp is this editor's own Lisp, which is close enough to Emacs
+    Lisp to read and is not the same language. M-: evaluates one
+    expression without restarting, which is how you try a line before
+    keeping it.
+
+WHERE THE FILES ARE
+    The configuration directory is the first of these that applies:
+
+        $RSEDIT_CONFIG_DIR          as given, on any system
+        $XDG_CONFIG_HOME/rsedit     on Unix, when the variable is absolute
+        ~/.config/rsedit            on Unix, macOS included
         %APPDATA%\rsedit            on Windows
 
-    If there is none, one is written for you with every module listed and a
-    comment on each. Read it before you change it: it is the shortest
-    description of what the editor is made of.
+    What the editor can make again, such as its log, goes in the cache
+    directory, found the same way:
 
-    init.lisp is this editor's own Lisp, which is close enough to Emacs Lisp
-    to read and not the same language. M-: evaluates an expression without
-    restarting, which is how you try a line before keeping it.
+        $RSEDIT_CACHE_DIR
+        $XDG_CACHE_HOME/rsedit
+        ~/.cache/rsedit
+        %LOCALAPPDATA%\rsedit\cache
+
+    A variable that is set but empty counts as not set. Both directories
+    are made when they are missing, and deleting the cache loses nothing
+    that matters.
 
 THE FOUR THINGS YOU WILL WRITE
     A setting:
@@ -26,8 +50,8 @@ THE FOUR THINGS YOU WILL WRITE
 
     A key:
 
-        (define-key nil "C-c w" 'whitespace-cleanup)
-        (define-key 'rust-mode "C-c b" 'cargo-build)
+        (define-key nil "C-c d" 'duplicate-line)
+        (define-key 'rust-mode "C-c C-c" 'comment-region)
 
     A command of your own:
 
@@ -39,30 +63,55 @@ THE FOUR THINGS YOU WILL WRITE
 
         (add-hook 'rust-mode "post-command-hook" 'my-function)
 
-    C-h v on any variable says what it is for and what it is set to now, which
-    is a better list of settings than this page could keep.
+    C-h v on a variable says what it is for and what it is set to now, and
+    C-h f does the same for a function.
 
 MODULES
-    Each feature above the mechanics is a file, loaded by a line in
-    init.lisp:
+    Each feature above the mechanics is a module: a file, loaded by a line
+    in init.lisp.
 
         (eval-file "completion")   ; Tab shows every candidate at once
         (eval-file "dired")        ; a directory in a buffer
-        (eval-file "shell")        ; M-! runs a command
 
-    Comment one out and the editor comes up without exactly that feature and
-    nothing else. None of them needs any other, so the order is only the
-    order you want them in -- except that `commands' defines `defcommand' and
-    `debug' defines `message', so those two come first.
+    The order matters. Each module is written against what the ones above
+    it define: `commands' defines `defcommand' and `debug' defines
+    `message', and the others use both. Comment one out and the editor
+    comes up without that feature and nothing else. The `rsedit' page
+    lists them all, in the order they load.
 
-    They are installed beside the editor and you can read all of them. The one
-    to read first is rust-mode.lisp, which is a whole mode in a hundred and
-    thirty lines.
+    Since init.lisp is written once, a module a later version adds does not
+    reach it by itself: add its line by hand.
 
-    Your own file goes in the same directory and is loaded the same way.
+    The modules are installed beside the editor, and you can read all of
+    them. The one to read first is rust-mode.lisp: a whole mode in one
+    short file.
+
+FILES OF YOUR OWN
+    `eval-file' takes a path, relative to the directory the editor was
+    started in, or the name of a module, which it looks for in each
+    directory of `lisp-path' in turn. To keep modules of your own beside
+    init.lisp, put that directory first in the list:
+
+        (setq lisp-path
+              (cons (expand-file-name "~/.config/rsedit") lisp-path))
+        (eval-file "mine")         ; ~/.config/rsedit/mine.lisp
+
+SETTINGS
+    A setting is a variable the editor reads: set it in init.lisp, or with
+    M-: to try it. These are the general ones; the others are described
+    with the feature they belong to.
+
+        display-line-numbers        nil, t, or 'relative
+        display-line-numbers-width  the fewest digits the numbers take
+        mode-line-format            what each window's status line shows
+
+    M-x toggle-line-numbers turns the numbers on and off. They are drawn in
+    the faces `line-number' and `line-number-current', and the status line
+    in `mode-line' and `mode-line-inactive'; `themes' says how to change a
+    face.
 
 COLOURS
-    C-c t lists the themes; Return on one applies it. To fix a choice:
+    C-c t lists the themes, and Return on one applies it. To keep a choice:
 
         (eval-file "theme")
         (select-theme 'monochrome)
@@ -71,21 +120,29 @@ COLOURS
 
         (set-face 'keyword "bright-magenta")
 
-    See `themes' for what the faces are and how a terminal's palette is dealt
-    with.
-
-THINGS WORTH TURNING ON
-        (toggle-line-numbers)              ; also M-x
-        (mouse-mode-toggle)                ; if your terminal reports one
-        (eval-file "clipboard")            ; kills also go to the system one
-
 WHEN IT WILL NOT LOAD
-    A module that fails to load says so and the editor comes up anyway, which
-    is the point of them being separate. C-h e shows everything the editor has
-    said, including what went wrong and where.
+    A module that fails says so in the log, and the editor comes up anyway,
+    which is the point of them being separate. A file with a syntax error
+    is skipped without a word, for now: when a change seems to do nothing,
+    try it with M-: first. C-h e shows everything the editor has said, and
+    the `diagnostics' page says where else to look.
 
-    M-: evaluates one expression, so a line that does not work can be tried
-    until it does without restarting.
+EXAMPLES
+    Number each line by its distance from point, which is what a count
+    before a command wants:
+
+        (setq display-line-numbers 'relative)
+
+    A shorter status line: the buffer, then the line and the column.
+
+        (setq mode-line-format " %b  L%l C%c ")
+
+    A command of your own, on a key of your own:
+
+        (defcommand insert-date () nil
+          "Insert today's date."
+          (insert (shell-command-to-string "date +%Y-%m-%d")))
+        (define-key nil "C-c i" 'insert-date)
 
 SEE ALSO
-    keymaps, modes, themes, writing-commands, guide
+    rsedit, keymaps, modes, themes, writing-commands, diagnostics, guide
