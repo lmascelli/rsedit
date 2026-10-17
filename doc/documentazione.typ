@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; il passo 1 è fatto.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--3 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -235,6 +235,8 @@ Example:
   `editor/settings.rs`, che all'avvio la mette dove la mette `defvar`;
   il loro valore iniziale si imposta in `create_global_env`, così `C-h v`
   mostra anche quello. La docstring non ripete il valore iniziale.
+- Un'impostazione di un modulo si dichiara con `defvar` e la sua docstring,
+  non con un `setq` commentato: così `C-h v` la spiega e i test la vedono.
 
 == Il rustdoc <regole-rustdoc>
 
@@ -765,11 +767,46 @@ nella cache, i comandi che falliscono e le righe del watchdog. Il registro
 di `commands.lisp` passano al passo 8, perché la loro pagina è
 `writing-commands`.
 
+*Passo 3, fatto.* `editing` è riscritta sul modello: muoversi, scrivere, le
+coppie di delimitatori, le righe, i commenti, annullare. Le pagine nuove sono
+due invece di una: `indentation`, come previsto, e `killing`, che prende da
+`editing` il kill ring, la regione e gli appunti di sistema; in una pagina
+sola la SYNOPSIS avrebbe superato i novanta nomi. `rectangles` e `macros`
+seguono il modello, con i tasti nelle sezioni KEYS. Le 107 docstring delle sei
+primitive dell'area e quelle dei tre moduli seguono il modello, e i
+ragionamenti interni delle funzioni private sono diventati commenti `;;`.
+Cinque impostazioni che i moduli assegnavano con `setq` (`tab-width`,
+`tab-always-indent`, `electric-pair-mode`, `electric-pair-skip-self`,
+`clipboard-sync`) sono ora `defvar` con docstring; `clipboard-sync-toggle` è
+un comando. I commenti di `common-keymaps.lisp` che spiegavano all'utente i
+tasti dell'area sono diventati rimandi alle pagine.
+
+Le pagine e le docstring dell'area dicevano cose false, ora corrette:
+
+- `current-column` contava «le colonne, non i caratteri»: conta i caratteri,
+  come `current-indentation`, e un tab vale uno; l'avvertenza in testa a
+  `indent.lisp` era sbagliata allo stesso modo;
+- `C-u 5` seguito da un carattere lo inserisce una volta sola, non cinque;
+- `yank` non mette il mark all'inizio del testo inserito;
+- `transpose-lines` sposta in su la riga corrente, e point con essa;
+- `insert-pasted-text` restituisce sempre nil, non t;
+- `set-mark` prende un secondo argomento, INCLUSIVE, che la firma taceva;
+- `rectangles` diceva che un tab occupa una cella dello schermo (TUI-3 nel
+  rapporto);
+- tre C-k di fila prendono una riga e mezza, non tre righe (`first-steps`);
+- l'esempio di `define-kbd-macro` legava `C-c t`, il tasto dei temi;
+- i commenti dicevano il kill ring «da fare» e `risp-mode` «assente».
+
+I tasti Canc, Inizio, Fine, PagSu e PagGiù e i tasti funzione non arrivano
+all'editor (CMD-2 nel rapporto): `editing` lo dice tra i limiti, e il legame
+di `<delete>` in `electric-pair.lisp` resta senza effetto finché la scheda è
+aperta.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),
   [2], [avvio, configurazione, diagnostica (fatto)], [`rsedit`, `guide`, `first-steps`, `configuration`], [da `general.rs`: `eval-file`, `log`, `all-logs`, `backtrace`], [`debug`, `commands`; nuova: `diagnostics` (il log nella cache, `*Messages*`, `C-h e`, il backtrace, le righe del watchdog)],
-  [3], [scrivere e modificare], [`editing`, `rectangles`, `macros`], [`edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`], [`indent`, `electric-pair`, `clipboard`; nuova: `indentation`],
+  [3], [scrivere e modificare (fatto)], [`editing`, `rectangles`, `macros`], [`edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`], [`indent`, `electric-pair`, `clipboard`; nuove: `indentation`, `killing`],
   [4], [file, buffer, finestre], [`files`, `buffers`, `windows`], [`io`, `buffers`, `windows`, `ui`, `mouse`, `ask`], [`dired`, `buffer-list`; nuove: `dired`, `mouse`; le impostazioni `auto-save` e `watch-files`],
   [5], [cercare e navigare], [`searching`, `compile`], [`isearch`, `replace`, `results`, `scan`, `match_data`], [`occur`, `compile`],
   [6], [prompt, completamento, tasti, aiuto], [`completion`, `keymaps`, `getting-help`], [`minibuffer`, `completion`, `help`, `commands`, il resto di `general`], [`minibuffer`, `completion`, `completion-at-point`, `help`, `manpage`, `preview`, `common-keymaps`],

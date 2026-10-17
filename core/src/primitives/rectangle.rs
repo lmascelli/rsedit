@@ -86,17 +86,9 @@ fn insert_at_edge<B: BufferTrait>(buf: &mut Buffer<B>, span: &Span, content: &st
 // Seeing one
 // ---------------------------------------------------------------------------
 
-pub const RECTANGLE_MARK_MODE_DOC: &str = "(rectangle-mark-mode): Select rectangularly from here \
-         on, or stop doing so. Returns t while it is on.\n\n\
-         The region is drawn as the block point and the mark are opposite corners of -- the \
-         columns the lines have in common -- rather than as the ragged run from one to the \
-         other. Which is what the rectangle commands act on either way: this is how you see the \
-         block before you cut it.\n\n\
-         With no mark set, this sets one here, so `C-x SPC' can begin a selection as well as \
-         change one. Any edit ends it, the way any edit ends a region -- there is nothing to \
-         turn off afterwards.\n\n\
-         Example:\n\
-         (define-key nil \"C-x SPC\" 'rectangle-mark-mode)";
+pub const RECTANGLE_MARK_MODE_DOC: &str = "(rectangle-mark-mode): Show the region as the block of \
+         columns between point and the mark, or stop; with no mark set, set it at point first. \
+         Return t while it is on. Any edit ends it.";
 
 primitive!(rectangle_mark_mode, _args, _env, ctx, {
     Ok(ELispExp::boolean(ctx.with_current_buffer_mut(|buf| {
@@ -132,14 +124,10 @@ primitive!(rectangle_mark_mode, _args, _env, ctx, {
     })))
 });
 
-pub const RECTANGLE_BOUNDS_DOC: &str = "(rectangle-bounds): The block between point and the mark, \
-         as (TOP-LINE BOTTOM-LINE LEFT-COLUMN RIGHT-COLUMN), or nil if the mark is not set.\n\n\
-         Lines count from 1, as everywhere the editor names a line; columns from 0, as \
-         everywhere it names a column. The right column is one past the last one in the block, \
-         so RIGHT minus LEFT is its width -- which can be zero, and usefully so: a rectangle \
-         with no width is a position on every line, which is what `string-rectangle' wants when \
-         it is prefixing a run of lines.\n\n\
-         For a module that wants to say something about the block without cutting it.";
+pub const RECTANGLE_BOUNDS_DOC: &str = "(rectangle-bounds): Return the block between point and \
+         the mark as (TOP-LINE BOTTOM-LINE LEFT-COLUMN RIGHT-COLUMN), or nil when there is no \
+         active mark. Lines count from 1 and columns from 0, and RIGHT-COLUMN is one past the \
+         block, so the width is RIGHT-COLUMN minus LEFT-COLUMN.";
 
 primitive!(rectangle_bounds, _args, _env, ctx, {
     Ok(
@@ -174,17 +162,8 @@ fn cut<B: BufferTrait>(ctx: &EditorState<B>, rect: &Rectangle) -> Vec<String> {
 }
 
 pub const KILL_RECTANGLE_DOC: &str = "(kill-rectangle): Delete the block between point and the \
-         mark and save it, so `yank-rectangle' can put it back. Returns the number of lines.\n\n\
-         Saved where a rectangle is saved, which is not the kill ring: `C-y' after this yanks \
-         whatever was killed before it, and `C-x r y' yanks the block. One shape in and the \
-         same shape out -- a block put on the ring would make every `C-y' a question about what \
-         shape the ring is holding.\n\n\
-         A line too short to reach the block contributes nothing and is still one of its lines, \
-         so the block keeps the height it was cut with and goes back in lined up the way it \
-         came out.\n\n\
-         Point ends at the block's top-left corner.\n\n\
-         Example:\n\
-         (define-key nil \"C-x r k\" 'kill-rectangle)";
+         mark, and keep it for `yank-rectangle', not on the kill ring. Return the number of \
+         lines. Point ends at the top-left corner.";
 
 primitive!(kill_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
@@ -195,24 +174,17 @@ primitive!(kill_rectangle, _args, _env, ctx, {
 });
 
 pub const DELETE_RECTANGLE_DOC: &str = "(delete-rectangle): Delete the block between point and \
-         the mark without saving it. Returns the number of lines.\n\n\
-         The same as `kill-rectangle' but for the saving, which is the difference between `C-x \
-         r d' and `C-x r k' exactly as it is between `C-d' and `C-k'. What was there is still \
-         in the undo history -- this throws away the *rectangle*, not the text.\n\n\
-         Example:\n\
-         (define-key nil \"C-x r d\" 'delete-rectangle)";
+         the mark, keeping nothing. Return the number of lines. Point ends at the top-left \
+         corner.";
 
 primitive!(delete_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
     Ok(ELispExp::number(cut(ctx, &rect).len() as f64))
 });
 
-pub const COPY_RECTANGLE_AS_KILL_DOC: &str = "(copy-rectangle-as-kill): Save the block between \
-         point and the mark without deleting it. Returns the number of lines.\n\n\
-         To `kill-rectangle' what `M-w' is to `C-w'. Saved in the same place, which `C-x r y' \
-         reads and `C-y' does not.\n\n\
-         Example:\n\
-         (define-key nil \"C-x r M-w\" 'copy-rectangle-as-kill)";
+pub const COPY_RECTANGLE_AS_KILL_DOC: &str = "(copy-rectangle-as-kill): Keep the block between \
+         point and the mark for `yank-rectangle', without deleting it. Return the number of \
+         lines.";
 
 primitive!(copy_rectangle_as_kill, _args, _env, ctx, {
     let (rect, taken) = ctx.with_current_buffer(|buf| {
@@ -226,9 +198,8 @@ primitive!(copy_rectangle_as_kill, _args, _env, ctx, {
     Ok(ELispExp::number(height as f64))
 });
 
-pub const KILLED_RECTANGLE_DOC: &str = "(killed-rectangle): The saved rectangle, as a list of \
-         strings one per line, or nil if nothing has been killed or copied as one.\n\n\
-         For a module that wants to look at the block rather than yank it.";
+pub const KILLED_RECTANGLE_DOC: &str = "(killed-rectangle): Return the block kept by the last \
+         rectangle kill or copy, as a list of strings, one per line, or nil when none is kept.";
 
 primitive!(killed_rectangle, _args, _env, ctx, {
     Ok(match ctx.kill_yank(|kill_yank| kill_yank.rectangle()) {
@@ -288,17 +259,9 @@ fn insert_block<B: BufferTrait>(ctx: &EditorState<B>, lines: &[String]) -> usize
     })
 }
 
-pub const YANK_RECTANGLE_DOC: &str = "(yank-rectangle): Put the saved rectangle back, its \
-         top-left corner at point. Returns the number of lines, or nil if nothing is saved.\n\n\
-         The block goes in at point's column on each of the lines below, pushing what is there \
-         to the right rather than replacing it -- so a rectangle moved from one place to \
-         another opens a space of its own width wherever it lands.\n\n\
-         A line too short to reach that column is filled out with spaces first, and the buffer \
-         is given the lines the block needs if it does not have them: a block yanked at the end \
-         of a buffer arrives whole.\n\n\
-         Point does not move.\n\n\
-         Example:\n\
-         (define-key nil \"C-x r y\" 'yank-rectangle)";
+pub const YANK_RECTANGLE_DOC: &str = "(yank-rectangle): Insert the block kept by the last \
+         rectangle kill or copy, its top-left corner at point, pushing the text there to the \
+         right. Return the number of lines, or nil when none is kept. Point does not move.";
 
 primitive!(yank_rectangle, _args, _env, ctx, {
     let Some(lines) = ctx.kill_yank(|kill_yank| kill_yank.rectangle()) else {
@@ -307,15 +270,9 @@ primitive!(yank_rectangle, _args, _env, ctx, {
     Ok(ELispExp::number(insert_block(ctx, &lines) as f64))
 });
 
-pub const OPEN_RECTANGLE_DOC: &str = "(open-rectangle): Fill the block between point and the \
-         mark with spaces, pushing what was there to the right. Returns the number of lines.\n\n\
-         For making room: a column of text moved over to leave space for another, without \
-         having to add the spaces a line at a time.\n\n\
-         A line too short to reach the block is filled out to its left edge, so a ragged run of \
-         lines comes out with the block opened in all of them.\n\n\
-         Point ends at the block's top-left corner.\n\n\
-         Example:\n\
-         (define-key nil \"C-x r o\" 'open-rectangle)";
+pub const OPEN_RECTANGLE_DOC: &str = "(open-rectangle): Fill the block between point and the mark \
+         with spaces, pushing its text to the right. Return the number of lines. Point ends at \
+         the top-left corner.";
 
 primitive!(open_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
@@ -331,17 +288,9 @@ primitive!(open_rectangle, _args, _env, ctx, {
     Ok(ELispExp::number(height as f64))
 });
 
-pub const CLEAR_RECTANGLE_DOC: &str = "(clear-rectangle): Replace the block between point and \
-         the mark with spaces. Returns the number of lines.\n\n\
-         Blanked rather than removed, which is the difference from `delete-rectangle': what was \
-         to the right of the block stays in the column it was in. For a table whose columns \
-         have to keep lining up.\n\n\
-         A line too short to reach the block is left alone rather than padded out to it: there \
-         was nothing there to clear, and filling it with spaces would make the line longer in \
-         order to blank something that was never written.\n\n\
-         Point ends at the block's top-left corner.\n\n\
-         Example:\n\
-         (define-key nil \"C-x r c\" 'clear-rectangle)";
+pub const CLEAR_RECTANGLE_DOC: &str = "(clear-rectangle): Replace the text of the block between \
+         point and the mark with spaces, so that the text to its right keeps its column. Return \
+         the number of lines. Point ends at the top-left corner.";
 
 primitive!(clear_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
@@ -367,17 +316,9 @@ primitive!(clear_rectangle, _args, _env, ctx, {
 });
 
 pub const STRING_RECTANGLE_DOC: &str = "(string-rectangle STRING): Replace the block between \
-         point and the mark with STRING on every line. Returns the number of lines.\n\n\
-         The block goes and STRING takes its place, which need not be the same width -- so this \
-         is also how a run of lines is given the same prefix or the same replacement, and the \
-         text to the right moves to suit.\n\n\
-         With a block of no width -- `C-x SPC' and then straight up or down -- nothing is \
-         replaced and STRING is inserted at that column on every line, which is the ordinary \
-         way to prefix a passage.\n\n\
-         A line too short to reach the column is filled out with spaces first.\n\n\
-         Point ends at the block's top-left corner.\n\n\
-         Example:\n\
-         (define-key nil \"C-x r t\" 'string-rectangle)";
+         point and the mark with STRING on every line; with a block of no width, insert STRING at \
+         that column on every line. Return the number of lines. Point ends at the top-left \
+         corner.";
 
 primitive!(string_rectangle, args, _env, ctx, {
     let Some(ELispExp::String(text)) = args.first() else {

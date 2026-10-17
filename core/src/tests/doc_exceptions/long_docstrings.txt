@@ -3,12 +3,6 @@
 # page, in the step of doc/documentazione.typ for its area; the list only
 # shrinks.
 
-# -- passo 3: scrivere e modificare
-# lisp/electric-pair.lisp
-electric-pair--closed-ahead-p
-# primitives/macros.rs
-kmacro-call-macro
-
 # -- passo 4: file, buffer, finestre
 # primitives/buffers.rs
 buffer-create

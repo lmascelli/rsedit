@@ -347,34 +347,21 @@ fn toggle<B: BufferTrait>(ctx: &EditorState<B>, whole_line: bool) -> ELispExp<B>
     ELispExp::boolean(changed)
 }
 
-pub const COMMENT_DWIM_DOC: &str = "(comment-dwim): Comment the region out, or uncomment it if it \
-         is commented already. With no region, the line point is on.\n\n\
-         Uncommenting happens when *every* line with text on it is a comment; a blank line in \
-         the middle of a region counts as neither, since there is nothing on it to comment.\n\n\
-         The opener goes at the indentation of the least-indented line, so a commented block \
-         keeps its shape rather than turning a nested `if' into a staircase.\n\n\
-         How a comment is spelt comes from the mode -- see `set-comment-syntax' -- so a mode \
-         that has said nothing is told about rather than guessed at. A language with only block \
-         comments gets the scope wrapped in one.\n\n\
-         The region is deactivated by the edit, as it is by every edit in this editor. Use \
-         `comment-line' for the line alone and `comment-indent' for a comment after the code.\n\n\
-         Example:\n\
-         (define-key nil \"M-;\" 'comment-dwim)";
+pub const COMMENT_DWIM_DOC: &str = "(comment-dwim): Comment out the region, or the line when \
+         there is no region; take the comments off instead when every line with text in it is \
+         commented already. The comment opener goes at the indentation of the least indented \
+         line. A mode with only block comments gets the lines wrapped in one.";
 
 primitive!(comment_dwim, _args, _env, ctx, { Ok(toggle(ctx, false)) });
 
-pub const COMMENT_LINE_DOC: &str = "(comment-line): Comment the line point is on, or uncomment it \
-         if it is a comment already. Ignores the region, which is the difference between this \
-         and `comment-dwim'.\n\n\
-         Example:\n\
-         (define-key nil \"C-x C-;\" 'comment-line)";
+pub const COMMENT_LINE_DOC: &str = "(comment-line): Comment out the line point is on, or \
+         uncomment it when it is a comment, whatever the region.";
 
 primitive!(comment_line, _args, _env, ctx, { Ok(toggle(ctx, true)) });
 
-pub const COMMENT_REGION_DOC: &str = "(comment-region FROM TO): Comment out the lines between FROM \
-         and TO, whether or not they are commented already.\n\n\
-         The half of `comment-dwim' that does not decide: useful from Lisp, where the caller \
-         knows which way it wants to go. `uncomment-region' is the other half.\n\n\
+pub const COMMENT_REGION_DOC: &str = "(comment-region FROM TO): Comment out the lines between \
+         FROM and TO, whether or not they are comments already. It needs a mode with line \
+         comments.\n\n\
          Example:\n\
          (comment-region (point-min) (point-max))";
 
@@ -383,9 +370,8 @@ primitive!(comment_region, args, _env, ctx, {
 });
 
 pub const UNCOMMENT_REGION_DOC: &str = "(uncomment-region FROM TO): Take the comment opener off \
-         every commented line between FROM and TO. Lines that are not comments are left alone.\n\n\
-         Example:\n\
-         (uncomment-region (point-min) (point-max))";
+         each commented line between FROM and TO, leaving the others alone. It needs a mode with \
+         line comments.";
 
 primitive!(uncomment_region, args, _env, ctx, {
     Ok(over_region(ctx, args, true))
@@ -429,12 +415,8 @@ fn over_region<B: BufferTrait>(
 }
 
 pub const COMMENT_INDENT_DOC: &str = "(comment-indent): Start a comment at the end of the line \
-         point is on, and put point in it. Returns t.\n\n\
-         For the comment that goes *beside* code rather than instead of it. When the line \
-         already ends in a comment, point goes into that one rather than a second being \
-         started.\n\n\
-         Unbound by default -- `M-;' is `comment-dwim', which is what the key is for most of \
-         the time -- and reached by name until you give it one.\n\n\
+         point is on and put point in it, or go into the comment already there. Return t. It \
+         needs a mode with line comments.\n\n\
          Example:\n\
          (define-key nil \"C-c ;\" 'comment-indent)";
 
@@ -486,12 +468,9 @@ primitive!(comment_indent, _args, _env, ctx, {
     Ok(ELispExp::boolean(done))
 });
 
-pub const COMMENT_SYNTAX_DOC: &str = "(comment-syntax): How this buffer's mode writes comments, in \
-         the shape `set-comment-syntax' takes: a list of (OPENER), (OPENER CLOSER) or \
-         (OPENER CLOSER t) for a nesting one. nil when the mode has said nothing.\n\n\
-         What the comment commands ask before they touch anything, and what anything else \
-         writing its own should ask too -- the alternative is a module with its own table of \
-         languages, which is a table that is wrong about the next one.\n\n\
+pub const COMMENT_SYNTAX_DOC: &str = "(comment-syntax): Return how this buffer's mode writes \
+         comments, the way `set-comment-syntax' takes it: a list of (OPENER), (OPENER CLOSER), or \
+         (OPENER CLOSER t) for one that nests; nil when the mode has said nothing.\n\n\
          Example:\n\
          (comment-syntax) => ((\"//\") (\"/*\" \"*/\" t))";
 

@@ -1,0 +1,142 @@
+NAME
+    killing - the kill ring, the region, and the clipboard
+
+SYNOPSIS
+    (kill-line)
+    (kill-whole-line)
+    (kill-word &optional N)
+    (backward-kill-word &optional N)
+    (kill-sexp &optional N)
+    (backward-kill-sexp &optional N)
+    (kill-paragraph)
+    (backward-kill-paragraph)
+    (kill-region)
+    (kill-ring-save)
+    (kill-new STRING)
+    (yank)
+    (yank-pop)
+    (current-kill &optional N)
+    (kill-ring-length)
+    (set-kill-ring-max N)
+
+    (set-mark &optional POSITION INCLUSIVE)
+    (mark)
+    (exchange-point-and-mark)
+    (mark-whole-buffer)
+    (deactivate-mark)
+    (use-region-p)
+    (region-beginning)
+    (region-end)
+
+    (insert-pasted-text STRING)
+    (clipboard-sync-toggle)
+    clipboard-sync
+
+DESCRIPTION
+    Killing is cutting. What a kill takes goes on the kill ring, which
+    keeps the last sixty things killed, and C-y puts the latest one back.
+    Deleting, with Backspace or C-d, keeps nothing.
+
+    The region is the text between the mark and point: set the mark, move,
+    and the region is what lies between. C-w kills it and M-w copies it.
+
+KILLING
+        C-k             to the end of the line
+        M-d             the word in front
+        M-<backspace>   the word behind
+        C-M-k           the expression in front
+        C-M-<backspace> the expression behind
+        C-w             the region
+        M-w             copy the region, killing nothing
+
+    C-k at the end of a line kills the newline, joining the next line on.
+    M-x kill-whole-line kills the line point is on and its newline, and
+    M-x kill-paragraph and M-x backward-kill-paragraph kill to the end or
+    the start of the paragraph. M-z kills up to a character, as the
+    `editing' page says.
+
+    Kills in a row make one entry: C-k C-k takes a line and its newline,
+    and C-y puts both back. A kill backwards joins at the front, so the
+    text comes back in its order. Any other command ends the run.
+
+YANKING
+    C-y inserts the latest kill at point. M-y, straight after a C-y or
+    another M-y, replaces what was just yanked with the kill before it, and
+    pressing it again goes on round the ring. After anything else M-y says
+    so, rather than replace text it did not put there.
+
+    The ring drops the oldest kill when it is full: M-x set-kill-ring-max
+    changes how many it keeps.
+
+THE REGION
+    C-<space> sets the mark where point is, and the region is drawn in the
+    `region' face, which the `themes' page says how to change. C-x C-x
+    swaps point and the mark, which is how you see where the other end is,
+    and C-x h makes the whole buffer the region.
+
+    Any edit ends the region, and so does C-g; M-w ends it too. The mark
+    stays where it was, so C-x C-x goes back to it and selects again.
+    C-x <space> makes the selection a block of columns: see the
+    `rectangles' page.
+
+    A command of your own asks `use-region-p' whether there is a region to
+    work on, and `region-beginning' and `region-end' give its ends in
+    order.
+
+THE SYSTEM CLIPBOARD
+    Every kill and every copy also goes to the system clipboard, through
+    the terminal: the editor sends the text in an OSC 52 escape. No program
+    has to be installed, and it works over SSH, since the escape travels
+    with the screen to wherever the terminal is. A run of kills sends the
+    whole entry. A terminal that does not know the escape ignores it, and
+    some have to be told to allow it.
+
+    Text from another program comes in through the terminal's own paste
+    key, not C-y, which is the kill ring. The editor asks the terminal for
+    bracketed paste, so a paste arrives as one piece: one undo step, with
+    no brackets paired. The editor never reads the clipboard.
+
+    M-x clipboard-sync-toggle keeps kills out of the clipboard, or lets
+    them in again; it sets `clipboard-sync'.
+
+EXAMPLES
+    Keep more kills:
+
+        (set-kill-ring-max 200)
+
+    Keep killed text inside the editor:
+
+        (setq clipboard-sync nil)
+
+    What C-y would insert, and the kill before that:
+
+        (list (current-kill) (current-kill 1))
+
+    Put the line point is on in the kill ring and the clipboard, without
+    killing it:
+
+        (kill-new (current-line))
+
+    Count the characters in the region, or in the whole buffer when there
+    is none:
+
+        (if (use-region-p)
+            (- (region-end) (region-beginning))
+            (- (point-max) (point-min)))
+
+KEYS
+    C-k                     kill-line
+    M-d                     kill-word
+    M-<backspace>           backward-kill-word
+    C-M-k                   kill-sexp
+    C-M-<backspace>         backward-kill-sexp
+    C-w                     kill-region
+    M-w                     kill-ring-save
+    C-y                     yank
+    M-y                     yank-pop
+    C-<space>               set-mark
+    C-x C-x                 exchange-point-and-mark
+    C-x h                   mark-whole-buffer
+
+SEE ALSO
+    editing, rectangles, first-steps

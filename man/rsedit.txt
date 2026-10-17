@@ -57,7 +57,7 @@ FINDING YOUR WAY
     the whole tree.
 
 SEE ALSO
-    guide, first-steps, editing, files, searching, getting-help,
+    guide, first-steps, editing, killing, files, searching, getting-help,
     completion, keymaps, modes, configuration, diagnostics,
     writing-commands, buffers, windows, overlays, compile, themes,
-    background, rectangles, virtual-text, macros, vim
+    background, indentation, rectangles, virtual-text, macros, vim

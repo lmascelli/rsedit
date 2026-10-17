@@ -53,8 +53,8 @@ KILLING AND YANKING
         C-y             yank -- put back the last thing killed
         M-y             after a yank, reach further back in the ring
 
-    Kill twice in a row and the two join, so C-k C-k C-k takes three lines
-    and C-y brings all three back.
+    Kill twice in a row and the two join, so C-k C-k takes a line and its
+    newline, and C-y brings both back.
 
 SELECTING
     C-<space> puts the mark where you are. Move, and the text between the
@@ -157,4 +157,4 @@ KEYS
     C-g                     keyboard-quit
 
 SEE ALSO
-    guide, editing, files, getting-help, diagnostics
+    guide, editing, killing, files, getting-help, diagnostics

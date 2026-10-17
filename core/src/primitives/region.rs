@@ -24,14 +24,10 @@ fn require_region<B: BufferTrait>(
 // The mark
 // ---------------------------------------------------------------------------
 
-pub const SET_MARK_DOC: &str = "(set-mark &optional POSITION): Put the mark at POSITION (default \
-         point) and activate it, so the text between mark and point becomes \
-         the region. Returns the mark's position.\n\n\
-         With INCLUSIVE non-nil, include the characters at both endpoints.\n\n\
-         Any edit deactivates the mark, so a region never survives a change \
-         to the text under it.\n\n\
-         Example:\n\
-         (define-key nil \"C- \" 'set-mark)";
+pub const SET_MARK_DOC: &str = "(set-mark &optional POSITION INCLUSIVE): Put the mark at \
+         POSITION, point by default, and activate it, so that the text between the mark and point \
+         is the region. Return the position. With INCLUSIVE, the characters at both ends are \
+         inside the region, as in a modal selection.";
 
 primitive!(set_mark, args, _env, ctx, {
     let at = match args.first() {
@@ -55,10 +51,8 @@ primitive!(set_mark, args, _env, ctx, {
     })))
 });
 
-pub const DEACTIVATE_MARK_DOC: &str = "(deactivate-mark): Stop the region being in force, so it is no \
-         longer highlighted and region commands no longer act on it. The \
-         mark's position is kept, so `exchange-point-and-mark' can still go \
-         back to it.";
+pub const DEACTIVATE_MARK_DOC: &str = "(deactivate-mark): End the region without forgetting the \
+         mark, so that `exchange-point-and-mark' can still go back to it.";
 
 primitive!(deactivate_mark, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -69,10 +63,8 @@ primitive!(deactivate_mark, _args, _env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const MARK_DOC: &str = "(mark): Return the position of the mark in the current buffer, or nil \
-         if it has never been set. Returns the position whether or not the \
-         mark is active -- use `use-region-p' to ask whether there is a region \
-         to act on.";
+pub const MARK_DOC: &str = "(mark): Return the position of the mark, or nil if it has never been \
+         set, whether or not the region is active: `use-region-p' says whether it is.";
 
 primitive!(mark, _args, _env, ctx, {
     Ok(ctx.with_current_buffer(|buf| match buf.mark {
@@ -81,9 +73,8 @@ primitive!(mark, _args, _env, ctx, {
     }))
 });
 
-pub const USE_REGION_P_DOC: &str = "(use-region-p): Return t if there is an active region in the \
-         current buffer, nil otherwise. This is the question a command should \
-         ask before operating on a region.";
+pub const USE_REGION_P_DOC: &str = "(use-region-p): Return t when the current buffer has an \
+         active region, nil otherwise.";
 
 primitive!(use_region_p, _args, _env, ctx, {
     Ok(ctx.with_current_buffer(|buf| match region_of(buf) {
@@ -92,9 +83,9 @@ primitive!(use_region_p, _args, _env, ctx, {
     }))
 });
 
-pub const REGION_BEGINNING_DOC: &str = "(region-beginning): Return the position of the start of the \
-         region -- whichever of point and mark comes first. Signals an error \
-         if the mark is not active.";
+pub const REGION_BEGINNING_DOC: &str = "(region-beginning): Return the start of the region: \
+         whichever of point and the mark comes first. Signal an error when there is no active \
+         region.";
 
 primitive!(region_beginning, _args, _env, ctx, {
     // The closure answers with the `Result` and the `?` happens out here:
@@ -103,20 +94,17 @@ primitive!(region_beginning, _args, _env, ctx, {
     Ok(ELispExp::number(start as f64))
 });
 
-pub const REGION_END_DOC: &str = "(region-end): Return the position of the end of the region -- \
-         whichever of point and mark comes last. Signals an error if the mark \
-         is not active.";
+pub const REGION_END_DOC: &str = "(region-end): Return the end of the region: whichever of point \
+         and the mark comes last. Signal an error when there is no active region.";
 
 primitive!(region_end, _args, _env, ctx, {
     let end = ctx.with_current_buffer(|buf| require_region(buf).map(|region| region.1))?;
     Ok(ELispExp::number(end as f64))
 });
 
-pub const EXCHANGE_POINT_AND_MARK_DOC: &str = "(exchange-point-and-mark): Put point where the mark \
-         is and the mark where point was, activating the region. Signals an \
-         error if the mark has never been set.\n\n\
-         This works on an inactive mark too -- going back to where you were is \
-         most of what a mark is for.";
+pub const EXCHANGE_POINT_AND_MARK_DOC: &str = "(exchange-point-and-mark): Swap point and the \
+         mark, and activate the region. It works on a mark that is no longer active too; with no \
+         mark ever set it signals an error.";
 
 primitive!(exchange_point_and_mark, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -136,8 +124,8 @@ primitive!(exchange_point_and_mark, _args, _env, ctx, {
     })
 });
 
-pub const MARK_WHOLE_BUFFER_DOC: &str = "(mark-whole-buffer): Put point at the beginning of the \
-         buffer and the mark at the end, making the whole buffer the region.";
+pub const MARK_WHOLE_BUFFER_DOC: &str = "(mark-whole-buffer): Make the whole buffer the region, \
+         with point at its start and the mark at its end.";
 
 primitive!(mark_whole_buffer, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -151,11 +139,8 @@ primitive!(mark_whole_buffer, _args, _env, ctx, {
 // The kill ring
 // ---------------------------------------------------------------------------
 
-pub const KILL_REGION_DOC: &str = "(kill-region): Delete the region and save it to the kill ring, \
-         from where `yank' puts it back. Signals an error if the mark is not \
-         active.\n\n\
-         Example:\n\
-         (define-key nil \"C-w\" 'kill-region)";
+pub const KILL_REGION_DOC: &str = "(kill-region): Kill the region, putting its text on the kill \
+         ring. Signal an error when there is no active region.";
 
 primitive!(kill_region, _args, env, ctx, {
     let killed = ctx.with_current_buffer_mut(|buf| {
@@ -174,11 +159,9 @@ primitive!(kill_region, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const KILL_RING_SAVE_DOC: &str = "(kill-ring-save): Save the region to the kill ring without \
-         deleting it, and deactivate the mark. Signals an error if the mark is \
-         not active.\n\n\
-         Example:\n\
-         (define-key nil \"M-w\" 'kill-ring-save)";
+pub const KILL_RING_SAVE_DOC: &str = "(kill-ring-save): Put the text of the region on the kill \
+         ring without deleting it, and end the region. Signal an error when there is no active \
+         region.";
 
 primitive!(kill_ring_save, _args, env, ctx, {
     let text = ctx.with_current_buffer_mut(|buf| {
@@ -196,8 +179,10 @@ primitive!(kill_ring_save, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const KILL_NEW_DOC: &str = "(kill-new STRING): Add STRING to the kill ring as the most recent \
-         entry, as if it had been killed. Does nothing for an empty string.";
+pub const KILL_NEW_DOC: &str = "(kill-new STRING): Put STRING on the kill ring as a kill does. An \
+         empty string is ignored.\n\n\
+         Example:\n\
+         (kill-new (current-line))";
 
 primitive!(kill_new, args, env, ctx, {
     match args.first() {
@@ -212,9 +197,9 @@ primitive!(kill_new, args, env, ctx, {
     }
 });
 
-pub const CURRENT_KILL_DOC: &str = "(current-kill &optional N): Return the text N kills back in the \
-         ring (default 0, the most recent) without changing anything, or nil \
-         if the ring does not go back that far.";
+pub const CURRENT_KILL_DOC: &str = "(current-kill &optional N): Return the kill N back in the \
+         ring, 0 by default for the latest, without changing anything; nil when the ring does not \
+         go back that far.";
 
 primitive!(current_kill, args, _env, ctx, {
     let n = match args.first() {
@@ -233,11 +218,8 @@ primitive!(current_kill, args, _env, ctx, {
     })
 });
 
-pub const YANK_DOC: &str = "(yank): Insert the most recent kill at point, and set the mark at the \
-         start of what was inserted so the yanked text is the region. Returns \
-         the text, or nil if the kill ring is empty.\n\n\
-         Example:\n\
-         (define-key nil \"C-y\" 'yank)";
+pub const YANK_DOC: &str = "(yank): Insert the latest kill at point and return it, or return nil \
+         when the kill ring is empty.";
 
 primitive!(yank, _args, _env, ctx, {
     let Some(text) = ctx.current_kill() else {
@@ -254,12 +236,9 @@ primitive!(yank, _args, _env, ctx, {
     Ok(ELispExp::string(text))
 });
 
-pub const YANK_POP_DOC: &str = "(yank-pop): Replace the text just yanked with the kill before it in \
-         the ring, walking back through earlier kills. Only meaningful \
-         directly after a `yank' or another `yank-pop'; signals an error \
-         otherwise, since there would be nothing it could safely remove.\n\n\
-         Example:\n\
-         (define-key nil \"M-y\" 'yank-pop)";
+pub const YANK_POP_DOC: &str = "(yank-pop): Replace the text just yanked with the kill before it \
+         in the ring, and return that. Only straight after a `yank' or another `yank-pop': \
+         otherwise it signals an error.";
 
 primitive!(yank_pop, _args, _env, ctx, {
     let Some((at, len)) = ctx.yank_to_replace() else {
@@ -284,9 +263,8 @@ primitive!(yank_pop, _args, _env, ctx, {
     Ok(ELispExp::string(text))
 });
 
-pub const SET_KILL_RING_MAX_DOC: &str = "(set-kill-ring-max N): Keep at most N entries in the kill \
-         ring, dropping the oldest when it grows past that. The default is \
-         60.";
+pub const SET_KILL_RING_MAX_DOC: &str = "(set-kill-ring-max N): Keep at most N kills in the ring, \
+         dropping the oldest past that.";
 
 primitive!(set_kill_ring_max, args, _env, ctx, {
     match args.first() {
@@ -301,20 +279,15 @@ primitive!(set_kill_ring_max, args, _env, ctx, {
     }
 });
 
-pub const KILL_RING_LENGTH_DOC: &str = "(kill-ring-length): Return how many entries the kill ring \
-         currently holds.";
+pub const KILL_RING_LENGTH_DOC: &str = "(kill-ring-length): Return how many kills the ring holds.";
 
 primitive!(kill_ring_length, _args, _env, ctx, {
     Ok(ELispExp::number(ctx.kill_ring_len() as f64))
 });
 
-pub const KEYBOARD_QUIT_DOC: &str = "(keyboard-quit): Abandon whatever is half-finished -- a key \
-         sequence part-way typed, a prefix argument part-way built, the \
-         region. Returns nil.\n\n\
-         This does not interrupt a command that is already running; that is a \
-         different problem and needs more than a keystroke to solve.\n\n\
-         Example:\n\
-         (define-key nil \"C-g\" 'keyboard-quit)";
+pub const KEYBOARD_QUIT_DOC: &str = "(keyboard-quit): Abandon a key sequence or a prefix argument \
+         typed halfway, end the region, and say \"Quit\". Return nil. It does not stop a command \
+         that is running.";
 
 primitive!(keyboard_quit, _args, _env, ctx, {
     ctx.abandon_pending_input();

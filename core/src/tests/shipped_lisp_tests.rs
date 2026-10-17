@@ -70,7 +70,11 @@ mod tests {
     #[test]
     fn the_commands_the_new_modules_define_are_registered() {
         let (ctx, env) = loaded();
-        for name in ["electric-pair-delete-backward", "insert-pasted-text"] {
+        for name in [
+            "electric-pair-delete-backward",
+            "insert-pasted-text",
+            "clipboard-sync-toggle",
+        ] {
             let ast = Parser::new(&format!("(commandp '{name})"))
                 .next()
                 .expect("source must parse");

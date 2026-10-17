@@ -1,171 +1,302 @@
 NAME
-    editing - the vocabulary
+    editing - moving, typing, and the small verbs
+
+SYNOPSIS
+    (forward-char &optional N)
+    (backward-char &optional N)
+    (next-line &optional N)
+    (previous-line &optional N)
+    (forward-word &optional N)
+    (backward-word &optional N)
+    (forward-paragraph &optional N)
+    (backward-paragraph &optional N)
+    (forward-sexp &optional N)
+    (backward-sexp &optional N)
+    (up-list)
+    (backward-up-list)
+    (down-list)
+    (beginning-of-line)
+    (end-of-line)
+    (beginning-of-buffer)
+    (end-of-buffer)
+    (goto-char POSITION)
+    (goto-line N)
+
+    (point)
+    (point-min)
+    (point-max)
+    (line-number-at-point)
+    (current-line)
+
+    (self-insert STRING)
+    (insert &rest STRINGS)
+    (insert-newline)
+    (delete-char &optional N)
+    (delete-backward-char)
+    (delete-region FROM TO)
+
+    (electric-pair-enable MODE)
+    (electric-pair-post-self-insert)
+    (electric-pair-delete-backward)
+    (electric-pair-delete-forward)
+    electric-pair-mode
+    electric-pair-skip-self
+    electric-pair-blanks
+
+    (open-line-above COUNT)
+    (open-line-below COUNT)
+    (delete-blank-lines)
+    (join-line)
+    (duplicate-line)
+    (transpose-chars)
+    (transpose-words)
+    (transpose-lines)
+    (upcase-word)
+    (downcase-word)
+    (capitalize-word)
+    (just-one-space)
+    (delete-horizontal-space)
+    (zap-to-char)
+
+    (comment-dwim)
+    (comment-line)
+    (comment-indent)
+    (comment-region FROM TO)
+    (uncomment-region FROM TO)
+    (comment-syntax)
+
+    (undo)
+    (redo)
+    (undo-boundary)
+    (undo-join)
+    (set-undo-limit N)
+    (keyboard-quit)
 
 DESCRIPTION
-    The editor's commands are built out of two halves: a *unit* of text and
-    something to do to it. Learn the units and the rest follows, because the
-    same letter means the same unit wherever it appears.
+    The editor's commands are built out of two halves: a unit of text and
+    something to do to it. Learn the units and the rest follows, because
+    the same letter means the same thing wherever it appears.
 
         f  b            forward, backward
         a  e            start, end
         d  k            delete, kill
-        w               word, with Meta
-        <none>          character, with Control
+        Control         a character, or a line
+        Meta            a word, or a paragraph
+        Control-Meta    a balanced expression
 
-    So C-f is a character forward, M-f is a word forward, C-d deletes a
-    character, M-d kills a word. C-k kills to the end of the line because k
-    is kill and there is no unit letter.
+    So C-f is a character forward, M-f a word forward, C-M-f an expression
+    forward. C-d deletes a character, M-d kills a word, C-M-k kills an
+    expression, and C-k kills to the end of the line.
 
-UNITS
-    Characters, words, lines, paragraphs and balanced expressions.
+    Killing is cutting, and what you kill can be put back: the `killing'
+    page is about that, and about the region. The `indentation' page is
+    about Tab and Return.
 
-        C-f  C-b        character
-        M-f  M-b        word
-        C-n  C-p        line
-        M-}  M-{        paragraph
-        C-M-f  C-M-b    balanced expression -- over a bracket, across it
+MOVING
+        C-f  C-b        a character
+        M-f  M-b        a word
+        C-n  C-p        a line, keeping the column
+        C-a  C-e        to the start or the end of the line
+        M-}  M-{        a paragraph
+        M-<  M->        to the start or the end of the buffer
+        C-M-f  C-M-b    a balanced expression
+        M-g g           to a line, by number
 
-    A balanced expression is whatever the mode says one is. In Lisp it is a
-    form, in C a bracketed group. C-M-d goes down into one, C-M-u up out of
+    A word is a run of letters, digits and underscores. A paragraph ends
+    at a blank line. A balanced expression is a list, a string or an atom
+    such as a name or a number, with any prefix in front of it, such as the
+    quote in 'foo.
+
+    What counts as a bracket, a string or a comment comes from the mode:
+    `set-syntax-pairs' and `set-comment-syntax' in the `modes' page. A mode
+    that says nothing still gets the three kinds of bracket, double quotes
+    and backslash. A bracket inside a string or a comment is text, so C-M-f
+    steps over (message "a )") in one move.
+
+    C-M-f stops at the end of the list it is in. C-M-u goes up out of the
+    list, to its opening bracket, and C-M-d down into the next one. M-x
+    up-list goes up and out the other way, past the closing bracket.
+
+COUNTS
+    A number before a command means "do it that many times": C-u 20 C-f
+    goes forward twenty characters, and C-u 3 M-d kills three words. C-u
+    on its own means four, and C-u C-u sixteen. A count reaches the
+    commands that take one: the motions by character, word, line,
+    paragraph and expression, the kills by word and by expression, C-o,
+    and C-x e. The others, and a character you type, happen once.
+
+    For the motions a negative count goes the other way: C-u - 2 C-n goes
+    up two lines, as (next-line -2) does. Zero goes nowhere.
+
+TYPING
+    A character you type inserts itself. A run of typing undoes a word or
+    two at a time, not a character at a time.
+
+    Backspace deletes the character behind point and C-d the one in
+    front. Deleting does not save what it deletes; killing does.
+
+PAIRS
+    Typing an opening bracket inserts the closing one too, with point
+    between them, and typing the closing bracket then steps over the one
+    already there. Deleting either half of an empty pair, with Backspace
+    or C-d, deletes both; a pair with only spaces or tabs inside counts as
+    empty, and one with anything else inside loses only the half deleted.
+    A double quote pairs the same way, and typing the quote that ends a
+    string steps over the one already there.
+
+    No partner is added in front of a word, since typing ( before foo is
+    about to wrap it; nor when the list is already closed further on; nor
+    inside a comment or a string. A closing bracket typed where the list
+    is closed further on goes to that bracket rather than adding one.
+    Pasted text is never paired.
+
+    The pairs are the mode's, the same ones C-M-f follows. Pairing is on in
+    fundamental-mode and rust-mode, and `electric-pair-enable' turns it on
+    in another mode. In rust-mode quotes are not paired, since 'a is a
+    lifetime there. Setting `electric-pair-mode' to nil turns all of it
+    off, and `electric-pair-skip-self' only the stepping over.
+
+LINES
+        C-o             open a blank line above this one
+        C-x C-o         delete the blank lines around here
+        M-^             join this line to the one above
+        C-x C-t         swap this line with the one above
+
+    C-o and M-x open-line-below indent the new line as Tab would. C-x C-o
+    leaves one blank line in a run of them, deletes a blank line on its
+    own, and on a line with text deletes the blank lines after it. M-^
+    leaves one space at the join, or none after an opening bracket or
+    before a closing one. M-x duplicate-line puts a copy of the line below
     it.
 
-KILLING
-    Killing is cutting, and what you kill goes on the kill ring:
-
-        C-k             to the end of the line
-        M-d             the word in front
-        M-<backspace>   the word behind
-        C-M-k           the expression in front
-        C-w             the region
-        M-w             copy the region, killing nothing
-
-    Consecutive kills join into one entry, so three C-k presses yank back as
-    three lines. Anything that is not a kill ends the run.
-
-    C-y puts the last kill back. M-y immediately after replaces it with the
-    one before, again and again, round the ring. M-x set-kill-ring-max
-    changes how many it keeps.
-
-THE REGION
-    C-<space> sets the mark; the text between it and the cursor is the
-    region. C-x C-x swaps the two ends, which is how you check what you have
-    selected. C-x h selects everything.
-
-    Any edit deactivates the mark. That is deliberate: a selection that
-    survived an edit would be a selection over text that had moved.
-
-    C-x <space> makes the selection a *rectangle* -- the columns the lines
-    have in common rather than the ragged run from one corner to the other.
-    See `rectangles'.
-
-WHOLE LINES
-        C-o             open a blank line above
-        C-x C-o         delete blank lines around here
-        C-x C-t         swap this line with the one above
-        M-^             join this line to the one above
-        M-m             go to the first non-blank character
-
-CASE
+CASE AND SPACE
         M-u  M-l        upcase, downcase the word in front
         M-c             capitalise it
+        M-<space>       leave exactly one space here
+        M-\             delete the spaces and tabs around here
 
-SPACE
-        M-<space>       collapse the space here to one
-        M-\             delete every space here
-
-INDENTING
-    <tab> indents the line the way its mode wants, or matches the line above
-    in a mode with no rule of its own. On a line that is already right it
-    inserts spaces instead -- `tab-always-indent' changes that.
-
-    With a region, <tab> works on every line it touches. A mode with a rule
-    puts each line where the rule says; a mode without one shifts the block
-    right by one tab width and keeps its shape. `indent-region-style' chooses
-    otherwise -- 'reindent or 'shift always, globally or for one mode:
-
-        (setq indent-region-style 'shift)
-        (put 'risp-mode 'indent-region-style 'shift)
-
-    S-<tab> shifts the region, or the line, back left; lines stop at the
-    margin rather than holding the others back. The region stays selected, so
-    pressing either again moves the same block on another step.
-
-    A region that ends at the very start of a line leaves that line alone,
-    which is what selecting whole lines from the margin wants.
-
-    <ret> indents the new line as <tab> would, and drops any spaces left at
-    the end of the line it came from. For a plain newline instead:
-
-        (setq electric-indent-mode nil)
-
-    M-x newline-and-indent indents once, whatever the setting.
+    With a region, M-u, M-l and M-c change the whole region instead. Both
+    space commands stay on one line, so they never join two.
 
 TRANSPOSING
-        C-t             swap the characters either side of the cursor
-        M-t             swap the words
-        C-x C-t         swap the lines
+        C-t             swap the characters either side of point
+        M-t             swap the words either side of point
+        C-x C-t         swap this line with the one above
 
-    Each leaves the cursor past what it moved, so pressing it again moves the
-    same thing on another step.
+    C-t and M-t leave point after both, so pressing again carries the same
+    character or word on, one more step forward. C-x C-t moves this line
+    up and point with it, so pressing again moves it up again. At the end
+    of a line C-t swaps the two characters before point, which fixes a typo
+    you have just made.
 
 ZAPPING
-    M-z and a character kills everything up to and including the next one of
-    those. M-z ) deletes forward to the end of a call.
+    M-z and a character kills everything up to and including the next one
+    of that character: M-z ) kills to the end of a call. C-y puts it back.
 
 COMMENTS
-    M-; comments the region out, or the line when nothing is selected, and
-    takes the comments off again when everything in the scope already has
-    one. What a comment looks like comes from the mode, so the same key does
-    the right thing in Rust, C and this editor's own Lisp.
+    M-; comments out the region, or the line when there is no region, and
+    takes the comments off again when every line with text on it already
+    has one. The comment opener goes at the indentation of the least
+    indented line, so the block keeps its shape. C-x C-; does the line
+    point is on, whatever is selected.
 
-    C-x C-; does one line whatever is selected.
+    How a comment is written comes from the mode, from
+    `set-comment-syntax'. In a language with only block comments, M-; and
+    C-x C-; wrap the lines in one. A mode that has said nothing gets a
+    message rather than a guess.
+
+    M-x comment-indent starts a comment at the end of the line, beside the
+    code, or goes into the one already there. `comment-region' and
+    `uncomment-region' go one way only, without deciding: they and
+    comment-indent need a mode with line comments.
+
+UNDOING
+        C-/             undo, also C-_ and C-x u
+        C-?             redo
+        C-g             give up what is half done
+
+    Undo takes back one command at a time, and moves point to where the
+    change was. After an undo a plain u undoes again, and after a redo a
+    plain r redoes again. A new edit after an undo forgets what could have
+    been redone. Some terminals cannot send C-?: there, use M-x redo, or
+    bind it to a key that arrives.
+
+    The history keeps up to a mebibyte of deleted text in each buffer, and
+    lets the oldest changes go past that; M-x set-undo-limit changes it.
+    Code that makes several edits can split them into steps with
+    `undo-boundary'.
+
+    C-g abandons a key sequence typed halfway, a count, and the region. It
+    does not stop a command that is already running.
 
 REPEATING
     C-x z repeats the last command, and pressing z again repeats it again.
+    For anything longer, record what you did and play it back: see the
+    `macros' page.
 
-    A number before a command means "do it that many times": C-u 20 C-f goes
-    forward twenty characters, and C-u 5 then a character inserts five of
-    them. C-u on its own means four.
+LIMITS
+    The Delete, Home, End, Page Up and Page Down keys and the function keys
+    do nothing, and cannot be bound: the editor does not receive them.
+    C-d, C-a, C-e, C-v and M-v do their work.
 
-    Negative movement counts reverse direction: C-u - 2 C-n goes up two
-    lines, and (next-line -1) moves up one line. This applies to character,
-    line, word, paragraph and balanced-expression motions. Zero moves nowhere.
+EXAMPLES
+    Insert text from Lisp, several pieces at once:
 
-    For anything longer than that, record what you did and press it again --
-    see `macros'.
+        (insert "total: " 42 "\n")
+
+    The line point is on, and its number:
+
+        (list (line-number-at-point) (current-line))
+
+    Do something at the end of the buffer and come back:
+
+        (let ((here (point)))
+          (goto-char (point-max))
+          (insert "\n;; end\n")
+          (goto-char here))
+
+    Pair brackets in C as well, but not quotes:
+
+        (electric-pair-enable 'cc-mode)
+        (put 'cc-mode 'electric-pair-inhibit-quotes t)
+
+    Keep every closing bracket you type, even next to one already there:
+
+        (setq electric-pair-skip-self nil)
+
+    Give the commands that have no key one of yours:
+
+        (define-key nil "C-c d" 'duplicate-line)
+        (define-key nil "C-c ;" 'comment-indent)
+
+    Comment out a whole buffer from Lisp:
+
+        (comment-region (point-min) (point-max))
 
 KEYS
     C-f                     forward-char
     C-b                     backward-char
+    C-n                     next-line
+    C-p                     previous-line
     M-f                     forward-word
     M-b                     backward-word
-    C-M-f                   forward-sexp
-    C-M-b                   backward-sexp
-    C-M-d                   down-list
-    C-M-u                   backward-up-list
+    C-a                     beginning-of-line
+    C-e                     end-of-line
     M-}                     forward-paragraph
     M-{                     backward-paragraph
+    M-<                     beginning-of-buffer
+    M->                     end-of-buffer
+    C-M-f                   forward-sexp
+    C-M-b                   backward-sexp
+    C-M-u                   backward-up-list
+    C-M-d                   down-list
+    M-g g                   goto-line
+    M-g M-g                 goto-line
+    <backspace>             electric-pair-delete-backward
     C-d                     electric-pair-delete-forward
-    M-d                     kill-word
-    M-<backspace>           backward-kill-word
-    C-M-k                   kill-sexp
-    C-M-<backspace>         backward-kill-sexp
-    C-k                     kill-line
-    C-w                     kill-region
-    M-w                     kill-ring-save
-    C-y                     yank
-    M-y                     yank-pop
-    C-<space>               set-mark
-    C-x C-x                 exchange-point-and-mark
-    C-x h                   mark-whole-buffer
-    C-x <space>             rectangle-mark-mode
-    <tab>                   indent-for-tab-command
-    S-<tab>                 indent-rigidly-left
-    <ret>                   newline
     C-o                     open-line-above
     C-x C-o                 delete-blank-lines
     M-^                     join-line
-    M-m                     back-to-indentation
     M-u                     upcase-word
     M-l                     downcase-word
     M-c                     capitalize-word
@@ -177,7 +308,12 @@ KEYS
     M-z                     zap-to-char
     M-;                     comment-dwim
     C-x C-;                 comment-line
+    C-/                     undo
+    C-_                     undo
+    C-x u                   undo
+    C-?                     redo
+    C-g                     keyboard-quit
     C-x z                   repeat
 
 SEE ALSO
-    first-steps, rectangles, macros, searching
+    first-steps, killing, indentation, rectangles, macros, searching, modes

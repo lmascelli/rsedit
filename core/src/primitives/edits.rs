@@ -200,12 +200,10 @@ pub(crate) fn cut_out<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usiz
     text
 }
 
-pub const SELF_INSERT_DOC: &str = "(self-insert STRING): Insert the first character of STRING at point \
-         in the current buffer. Unlike Emacs's `self-insert-command`, which \
-         reads the character to insert from `last-command-event`, this takes \
-         the character explicitly as an argument.\n\n\
+pub const SELF_INSERT_DOC: &str = "(self-insert STRING): Insert the first character of STRING at \
+         point. It is what each printable key runs, with its own character.\n\n\
          Example:\n\
-         (self-insert \"a\") ; inserts the character a at point";
+         (self-insert \"a\")";
 
 primitive!(self_insert, args, _env, ctx, {
     if let Some(ELispExp::String(s)) = args.first() {
@@ -225,16 +223,10 @@ primitive!(self_insert, args, _env, ctx, {
     }
 });
 
-pub const INSERT_DOC: &str = "(insert &rest STRINGS): Insert STRINGS at point in the current \
-         buffer, one after another, and return nil. Anything that is not a string is \
-         formatted as `format' would with \"%s\", so a number can be inserted without \
-         converting it first.\n\n\
-         The whole insertion is one edit: one undo step, one entry in the change history, \
-         and one lock on the buffer, however long the text is. This is what \
-         `self-insert' is not -- it takes a single character, so building a line out of it \
-         costs a primitive call and an undo record per character.\n\n\
-         Does nothing (reporting \"Buffer is read-only\") in a read-only buffer -- see \
-         `set-buffer-read-only'.\n\n\
+pub const INSERT_DOC: &str = "(insert &rest STRINGS): Insert STRINGS at point, one after another, \
+         and return nil. Anything that is not a string goes in as `format' writes it with %s. The \
+         whole insertion is one edit and one undo step; a read-only buffer refuses it and says \
+         so.\n\n\
          Example:\n\
          (insert \"total: \" 42 \"\\n\")";
 
@@ -253,9 +245,9 @@ primitive!(insert, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
-pub const UNDO_JOIN_DOC: &str = "(undo-join): Let this command's subsequent edits continue the \
-    current buffer's open undo group. Used for a logical edit spanning several keystrokes. \
-    Does nothing when there is no open group; call before editing.";
+pub const UNDO_JOIN_DOC: &str = "(undo-join): Make the edits this command makes next part of the \
+         open undo group, so that they undo together with the ones before. For a change that \
+         spans several keys: call it before editing. Does nothing when no group is open.";
 
 primitive!(undo_join, args, _env, ctx, {
     exact_arity(args, 0)?;
@@ -264,10 +256,7 @@ primitive!(undo_join, args, _env, ctx, {
 });
 
 pub const DELETE_REGION_DOC: &str = "(delete-region FROM TO): Delete the text between FROM and TO \
-         without putting it on the kill ring. Returns t if the buffer changed.\n\n\
-         The counterpart of `insert', and the piece Lisp was missing: without it a module could \
-         only remove text one character at a time. `kill-region' is the version that saves what \
-         it removed for `yank'.\n\n\
+         without putting it on the kill ring, and return t if the buffer changed.\n\n\
          Example:\n\
          (delete-region (point-min) (point-max))  ; empty the buffer";
 
@@ -291,16 +280,10 @@ primitive!(delete_region, args, _env, ctx, {
     Ok(ELispExp::boolean(changed))
 });
 
-pub const INSERT_PASTED_TEXT_DOC: &str = "(insert-pasted-text STRING): Insert STRING at point as a \
-         single bracketed paste. Returns t if the buffer changed.\n\n\
-         This is what a paste from the system clipboard runs, and the reason it is not just \
-         `insert': a paste is a *command*, so it takes one undo step and one run of \
-         `post-command-hook', and it deliberately does not run `post-self-insert-hook'. \
-         Without that last part every bracket and quote in pasted code would be auto-paired \
-         as though it had been typed.\n\n\
-         Calling it from Lisp pastes exactly as the terminal would, which is how a test -- or \
-         a command that pastes from somewhere else -- gets the same treatment.\n\n\
-         Does nothing (reporting \"Buffer is read-only\") in a read-only buffer.\n\n\
+pub const INSERT_PASTED_TEXT_DOC: &str = "(insert-pasted-text STRING): Insert STRING at point as \
+         one paste, which is what the terminal's paste runs: one command and one undo step, \
+         without `post-self-insert-hook', so nothing in it is paired. A read-only buffer refuses \
+         it.\n\n\
          Example:\n\
          (insert-pasted-text \"fn main() {}\")";
 
@@ -331,8 +314,8 @@ primitive!(insert_pasted_text, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
-pub const INSERT_NEWLINE_DOC: &str = "(insert-newline): Insert a newline character at point in the current \
-         buffer.\n\n\
+pub const INSERT_NEWLINE_DOC: &str = "(insert-newline): Insert a newline at point, without \
+         indenting the new line.\n\n\
          Example:\n\
          (define-key nil \"<ret>\" 'insert-newline)";
 
@@ -341,11 +324,8 @@ primitive!(insert_newline, _args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
-pub const DELETE_BACKWARD_CHAR_DOC: &str = "(delete-backward-char): Delete the character before point in the \
-         current buffer. Unlike Emacs's command of the same name, this takes \
-         no count argument -- it always deletes exactly one character.\n\n\
-         Example:\n\
-         (define-key nil \"<backspace>\" 'delete-backward-char)";
+pub const DELETE_BACKWARD_CHAR_DOC: &str = "(delete-backward-char): Delete the character before \
+         point. It takes no count.";
 
 primitive!(delete_backward_char, _args, _env, ctx, {
     let happened = ctx.with_current_buffer_mut(|buf| {
@@ -358,12 +338,9 @@ primitive!(delete_backward_char, _args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
-pub const FORWARD_CHAR_DOC: &str = "(forward-char &optional N): Move point forward N characters (default \
-         1) in the current buffer. Negative N moves backward; zero does nothing. \
-         Movement crosses newlines and stops at the buffer boundaries.\n\n\
-         Example:\n\
-         (forward-char)   ; move forward 1 character\n\
-         (forward-char 4) ; move forward 4 characters";
+pub const FORWARD_CHAR_DOC: &str = "(forward-char &optional N): Move point forward N characters, \
+         1 by default, across line ends, stopping at the end of the buffer. A negative N moves \
+         back.";
 
 primitive!(forward_char, args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -506,12 +483,9 @@ pub(crate) fn line_bounds<B: BufferTrait>(text: &B, line: usize) -> (usize, usiz
     (start, start + line_length(text, line))
 }
 
-pub const BACKWARD_CHAR_DOC: &str = "(backward-char &optional N): Move point backward N characters \
-         (default 1) in the current buffer. Negative N moves forward; zero does nothing. \
-         Movement crosses newlines and stops at the buffer boundaries.\n\n\
-         Example:\n\
-         (backward-char)   ; move back 1 character\n\
-         (backward-char 4) ; move back 4 characters";
+pub const BACKWARD_CHAR_DOC: &str = "(backward-char &optional N): Move point back N characters, 1 \
+         by default, across line ends, stopping at the start of the buffer. A negative N moves \
+         forward.";
 
 primitive!(backward_char, args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -522,20 +496,16 @@ primitive!(backward_char, args, _env, ctx, {
     })
 });
 
-pub const PREVIOUS_LINE_DOC: &str = "(previous-line &optional N): Move point up N lines (default 1) in the current buffer, \
-         keeping the same column (clamped to that line's length), stopping at \
-         the first line. Negative N moves down; zero does nothing.\n\n\
-         Example:\n\
-         (define-key nil \"<up>\" 'previous-line)";
+pub const PREVIOUS_LINE_DOC: &str = "(previous-line &optional N): Move point up N lines, 1 by \
+         default, keeping its column where the line is long enough, and stopping at the first \
+         line. A negative N moves down.";
 
 primitive!(previous_line, args, _env, ctx, {
     move_line(ctx, movement_count(args)?.saturating_neg())
 });
 
-pub const NEXT_LINE_DOC: &str = "(next-line &optional N): Move point down N lines (default 1) in the current buffer, keeping \
-         the same column. Negative N moves up; zero does nothing.\n\n\
-         Example:\n\
-         (define-key nil \"<down>\" 'next-line)";
+pub const NEXT_LINE_DOC: &str = "(next-line &optional N): Move point down N lines, 1 by default, \
+         keeping its column where the line is long enough. A negative N moves up.";
 
 primitive!(next_line, args, _env, ctx, {
     move_line(ctx, movement_count(args)?)
@@ -584,10 +554,8 @@ fn move_line<B: BufferTrait>(
 // Line, word, paragraph and buffer movement
 // ---------------------------------------------------------------------------
 
-pub const BEGINNING_OF_LINE_DOC: &str = "(beginning-of-line): Move point to the first character of \
-         the current line.\n\n\
-         Example:\n\
-         (define-key nil \"C-a\" 'beginning-of-line)";
+pub const BEGINNING_OF_LINE_DOC: &str = "(beginning-of-line): Move point to the start of the line \
+         it is on.";
 
 primitive!(beginning_of_line, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -597,10 +565,8 @@ primitive!(beginning_of_line, _args, _env, ctx, {
     })
 });
 
-pub const END_OF_LINE_DOC: &str = "(end-of-line): Move point just past the last character of the \
-         current line, before its newline.\n\n\
-         Example:\n\
-         (define-key nil \"C-e\" 'end-of-line)";
+pub const END_OF_LINE_DOC: &str = "(end-of-line): Move point to the end of the line it is on, \
+         before the newline.";
 
 primitive!(end_of_line, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -611,11 +577,9 @@ primitive!(end_of_line, _args, _env, ctx, {
     })
 });
 
-pub const FORWARD_WORD_DOC: &str = "(forward-word &optional N): Move point forward past the end of \
-         the next N words (default 1). A word is a run of letters, digits or \
-         underscores; anything between words is skipped. Negative N moves backward; zero does nothing.\n\n\
-         Example:\n\
-         (define-key nil \"M-f\" 'forward-word)";
+pub const FORWARD_WORD_DOC: &str = "(forward-word &optional N): Move point past the end of the \
+         Nth word after it, 1 by default; a negative N moves back. A word is a run of letters, \
+         digits and underscores.";
 
 primitive!(forward_word, args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -631,10 +595,8 @@ primitive!(forward_word, args, _env, ctx, {
     })
 });
 
-pub const BACKWARD_WORD_DOC: &str = "(backward-word &optional N): Move point back to the beginning \
-         of the Nth previous word (default 1). Negative N moves forward; zero does nothing.\n\n\
-         Example:\n\
-         (define-key nil \"M-b\" 'backward-word)";
+pub const BACKWARD_WORD_DOC: &str = "(backward-word &optional N): Move point back to the start of \
+         the Nth word before it, 1 by default; a negative N moves forward.";
 
 primitive!(backward_word, args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -651,20 +613,16 @@ primitive!(backward_word, args, _env, ctx, {
 });
 
 pub const FORWARD_PARAGRAPH_DOC: &str = "(forward-paragraph &optional N): Move point forward N \
-         paragraphs (default 1), stopping on a blank separator line or the last line. \
-         Negative N moves backward; zero does nothing. Paragraphs are separated by blank lines.\n\n\
-         Example:\n\
-         (define-key nil \"M-n\" 'forward-paragraph)";
+         paragraphs, 1 by default, to the blank line after each, or to the last line. A negative \
+         N moves back.";
 
 primitive!(forward_paragraph, args, _env, ctx, {
     move_paragraph(ctx, movement_count(args)?)
 });
 
-pub const BACKWARD_PARAGRAPH_DOC: &str = "(backward-paragraph &optional N): Move point backward N \
-         paragraphs (default 1), stopping on a blank separator line or the first line. \
-         Negative N moves forward; zero does nothing.\n\n\
-         Example:\n\
-         (define-key nil \"M-p\" 'backward-paragraph)";
+pub const BACKWARD_PARAGRAPH_DOC: &str = "(backward-paragraph &optional N): Move point back N \
+         paragraphs, 1 by default, to the blank line before each, or to the first line. A \
+         negative N moves forward.";
 
 primitive!(backward_paragraph, args, _env, ctx, {
     move_paragraph(ctx, movement_count(args)?.saturating_neg())
@@ -695,10 +653,8 @@ fn move_paragraph<B: BufferTrait>(
     })
 }
 
-pub const BEGINNING_OF_BUFFER_DOC: &str = "(beginning-of-buffer): Move point to the very start of \
-         the buffer.\n\n\
-         Example:\n\
-         (define-key nil \"M-<\" 'beginning-of-buffer)";
+pub const BEGINNING_OF_BUFFER_DOC: &str = "(beginning-of-buffer): Move point to the start of the \
+         buffer.";
 
 primitive!(beginning_of_buffer, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -707,9 +663,7 @@ primitive!(beginning_of_buffer, _args, _env, ctx, {
     })
 });
 
-pub const END_OF_BUFFER_DOC: &str = "(end-of-buffer): Move point to the very end of the buffer.\n\n\
-         Example:\n\
-         (define-key nil \"M->\" 'end-of-buffer)";
+pub const END_OF_BUFFER_DOC: &str = "(end-of-buffer): Move point to the end of the buffer.";
 
 primitive!(end_of_buffer, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -719,9 +673,8 @@ primitive!(end_of_buffer, _args, _env, ctx, {
     })
 });
 
-pub const GOTO_LINE_DOC: &str = "(goto-line N): Move point to the beginning of line N, counting \
-         from 1. Registered as a command, so M-x goto-line prompts for the \
-         number.\n\n\
+pub const GOTO_LINE_DOC: &str = "(goto-line N): Move point to the start of line N, counting from \
+         1; a number past the end goes to the last line. M-x goto-line asks for N.\n\n\
          Example:\n\
          (goto-line 42)";
 
@@ -767,11 +720,8 @@ primitive!(goto_line, args, _env, ctx, {
 // meant the ring could be added to these commands later without renaming them
 // out from under anyone's configuration, which is exactly what happened.
 
-pub const DELETE_CHAR_DOC: &str = "(delete-char &optional N): Delete N characters (default 1) \
-         forward from point, crossing line boundaries. Deletes nothing at the \
-         end of the buffer.\n\n\
-         Example:\n\
-         (define-key nil \"C-d\" 'delete-char)";
+pub const DELETE_CHAR_DOC: &str = "(delete-char &optional N): Delete the N characters after \
+         point, 1 by default, across line ends, without putting them on the kill ring.";
 
 primitive!(delete_char, args, _env, ctx, {
     let count = repeat_count(args)?;
@@ -782,13 +732,9 @@ primitive!(delete_char, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
-pub const KILL_LINE_DOC: &str = "(kill-line): Delete from point to the end of the line. When point \
-         is already at the end of a line, delete the newline instead, joining \
-         the next line onto this one.\n\n\
-         The text is saved to the kill ring, so `yank' puts it back. A run \
-         of kill commands accumulates into one entry.\n\n\
-         Example:\n\
-         (define-key nil \"C-k\" 'kill-line)";
+pub const KILL_LINE_DOC: &str = "(kill-line): Kill from point to the end of the line, or the \
+         newline when point is at the end already, joining the next line on. The text goes on the \
+         kill ring.";
 
 primitive!(kill_line, _args, env, ctx, {
     let killed = {
@@ -811,10 +757,8 @@ primitive!(kill_line, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const KILL_WHOLE_LINE_DOC: &str = "(kill-whole-line): Delete the entire line point is on, \
-         including its newline.\n\n\
-         The text is saved to the kill ring, so `yank' puts it back. A run \
-         of kill commands accumulates into one entry.";
+pub const KILL_WHOLE_LINE_DOC: &str = "(kill-whole-line): Kill the line point is on, with its \
+         newline. The text goes on the kill ring.";
 
 primitive!(kill_whole_line, _args, env, ctx, {
     let killed = {
@@ -829,12 +773,8 @@ primitive!(kill_whole_line, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const KILL_WORD_DOC: &str = "(kill-word &optional N): Delete forward to the end of the Nth next \
-         word (default 1) -- the text `forward-word' would move over.\n\n\
-         The text is saved to the kill ring, so `yank' puts it back. A run \
-         of kill commands accumulates into one entry.\n\n\
-         Example:\n\
-         (define-key nil \"M-d\" 'kill-word)";
+pub const KILL_WORD_DOC: &str = "(kill-word &optional N): Kill forward to the end of the Nth \
+         word, 1 by default: the text `forward-word' would move over. It goes on the kill ring.";
 
 primitive!(kill_word, args, env, ctx, {
     // Read before the buffer is locked. It can fail, and a `?` inside the
@@ -849,13 +789,9 @@ primitive!(kill_word, args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const BACKWARD_KILL_WORD_DOC: &str = "(backward-kill-word &optional N): Delete back to the \
-         beginning of the Nth previous word (default 1) -- the text \
-         `backward-word' would move over.\n\n\
-         The text is saved to the kill ring, so `yank' puts it back. A run \
-         of kill commands accumulates into one entry.\n\n\
-         Example:\n\
-         (define-key nil \"M-<backspace>\" 'backward-kill-word)";
+pub const BACKWARD_KILL_WORD_DOC: &str = "(backward-kill-word &optional N): Kill back to the \
+         start of the Nth word before point, 1 by default: the text `backward-word' would move \
+         over. It goes on the kill ring.";
 
 primitive!(backward_kill_word, args, env, ctx, {
     let count = repeat_count(args)?;
@@ -868,10 +804,8 @@ primitive!(backward_kill_word, args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const KILL_PARAGRAPH_DOC: &str = "(kill-paragraph): Delete forward to the end of the current \
-         paragraph -- the text `forward-paragraph' would move over.\n\n\
-         The text is saved to the kill ring, so `yank' puts it back. A run \
-         of kill commands accumulates into one entry.";
+pub const KILL_PARAGRAPH_DOC: &str = "(kill-paragraph): Kill forward to the end of the paragraph: \
+         the text `forward-paragraph' would move over. It goes on the kill ring.";
 
 primitive!(kill_paragraph, _args, env, ctx, {
     let killed = {
@@ -887,11 +821,9 @@ primitive!(kill_paragraph, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const BACKWARD_KILL_PARAGRAPH_DOC: &str = "(backward-kill-paragraph): Delete back to the \
-         beginning of the current paragraph -- the text `backward-paragraph' \
-         would move over.\n\n\
-         The text is saved to the kill ring, so `yank' puts it back. A run \
-         of kill commands accumulates into one entry.";
+pub const BACKWARD_KILL_PARAGRAPH_DOC: &str = "(backward-kill-paragraph): Kill back to the start \
+         of the paragraph: the text `backward-paragraph' would move over. It goes on the kill \
+         ring.";
 
 primitive!(backward_kill_paragraph, _args, env, ctx, {
     let killed = {
@@ -911,14 +843,9 @@ primitive!(backward_kill_paragraph, _args, env, ctx, {
 // Undo and redo
 // ---------------------------------------------------------------------------
 
-pub const UNDO_DOC: &str = "(undo): Undo the most recent group of changes in the current buffer, \
-         and move point to where that change happened. Returns t if something \
-         was undone, nil if the history is empty.\n\n\
-         A group is one command's worth of editing, except that a run of \
-         ordinary typing amalgamates into groups of about twenty characters \
-         so that undo does not step one keystroke at a time.\n\n\
-         Example:\n\
-         (define-key nil \"C-/\" 'undo)";
+pub const UNDO_DOC: &str = "(undo): Undo the latest group of changes in the current buffer, and \
+         move point to where it was made. Return t, or nil when there is nothing to undo. A group \
+         is one command, or a word or two of typing.";
 
 primitive!(undo, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -937,14 +864,9 @@ primitive!(undo, _args, _env, ctx, {
     })
 });
 
-pub const REDO_DOC: &str = "(redo): Redo the most recently undone group of changes in the current \
-         buffer. Returns t if something was redone, nil if there is nothing to \
-         redo.\n\n\
-         Making a new edit after an undo discards what could have been redone, \
-         which is the usual editor behaviour: history is a stack of undone \
-         changes, not a tree of alternatives.\n\n\
-         Example:\n\
-         (define-key nil \"M-_\" 'redo)";
+pub const REDO_DOC: &str = "(redo): Redo the latest group of changes undone in the current \
+         buffer. Return t, or nil when there is nothing to redo. An edit made after an undo \
+         forgets what that undo took back.";
 
 primitive!(redo, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| {
@@ -961,31 +883,24 @@ primitive!(redo, _args, _env, ctx, {
     })
 });
 
-pub const UNDO_BOUNDARY_DOC: &str = "(undo-boundary): End the current undo group, so that the next \
-         change begins a new one and the two undo separately. Does nothing if \
-         no group is open.\n\n\
-         The editor already places a boundary between commands; this is for a \
-         Lisp function that makes several edits and wants them undone in \
-         steps rather than all at once.\n\n\
+pub const UNDO_BOUNDARY_DOC: &str = "(undo-boundary): End the current undo group, so that the \
+         next change starts a new one and the two undo separately. Does nothing when no group is \
+         open.\n\n\
          Example:\n\
          (self-insert \"a\")\n\
          (undo-boundary)\n\
-         (self-insert \"b\") ; (undo) removes only b";
+         (self-insert \"b\")   ; (undo) takes back only the b";
 
 primitive!(undo_boundary, _args, _env, ctx, {
     ctx.with_current_buffer_mut(|buf| buf.undo.boundary());
     Ok(ELispExp::nil())
 });
 
-pub const SET_UNDO_LIMIT_DOC: &str = "(set-undo-limit N): Keep at most N bytes of deleted text in the \
-         current buffer's undo history, dropping the oldest changes when it \
-         grows past that. The most recent change is always kept, so a single \
-         deletion larger than the limit stays undoable.\n\n\
-         Only deletions carry text, so this bounds the one part of the history \
-         that grows with the size of the document rather than with the number \
-         of edits. The default is one mebibyte.\n\n\
+pub const SET_UNDO_LIMIT_DOC: &str = "(set-undo-limit N): Keep at most N bytes of deleted text in \
+         the current buffer's undo history, letting the oldest changes go past that. The latest \
+         change is kept however large it is.\n\n\
          Example:\n\
-         (set-undo-limit 0) ; keep only the most recent change";
+         (set-undo-limit (* 4 1024 1024))";
 
 primitive!(set_undo_limit, args, _env, ctx, {
     let limit = match args.first() {
@@ -1013,10 +928,9 @@ primitive!(set_undo_limit, args, _env, ctx, {
 // history all are.
 
 pub const LINE_NUMBER_AT_POINT_DOC: &str = "(line-number-at-point): Return the number of the line \
-         point is on in the current buffer, counting from 1 -- the same numbering \
-         `goto-line' takes, so the two compose into \"remember where I was\".\n\n\
+         point is on, counting from 1 as `goto-line' does.\n\n\
          Example:\n\
-         (let ((here (line-number-at-point))) (revert-something) (goto-line here))";
+         (goto-line (+ (line-number-at-point) 10))";
 
 primitive!(line_number_at_point, _args, _env, ctx, {
     ctx.with_current_buffer(|buf| {
@@ -1026,14 +940,8 @@ primitive!(line_number_at_point, _args, _env, ctx, {
     })
 });
 
-pub const CURRENT_LINE_DOC: &str = "(current-line): Return the text of the line point is on in the \
-         current buffer, as a string, without its newline. Returns \"\" in an empty \
-         buffer.\n\n\
-         This is what a buffer that *presents* something reads to find out what the \
-         cursor is on -- a directory listing asking which file is under the cursor \
-         re-reads the line rather than keeping a table of line numbers beside the \
-         buffer, so there is nothing that can fall out of step with what is on \
-         screen.\n\n\
+pub const CURRENT_LINE_DOC: &str = "(current-line): Return the text of the line point is on, \
+         without its newline, or \"\" in an empty buffer.\n\n\
          Example:\n\
          (current-line) => \"src/\"";
 
@@ -1051,38 +959,30 @@ primitive!(current_line, _args, _env, ctx, {
     })
 });
 
-pub const POINT_DOC: &str = "(point): Return the position of point in the current buffer, as a \
-         character offset from the beginning. The first position is 0.\n\n\
-         Example:\n\
-         (point) => 42";
+pub const POINT_DOC: &str = "(point): Return the position of point: the number of characters \
+         before it, so the first position is 0.";
 
 primitive!(point, _args, _env, ctx, {
     ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.cursor_pos_1d() as f64)))
 });
 
-pub const POINT_MIN_DOC: &str = "(point-min): Return the first position in the current buffer, \
-         which is always 0. Present so that code walking a buffer can name both ends rather than \
-         writing one of them as a literal.";
+pub const POINT_MIN_DOC: &str = "(point-min): Return the first position in the buffer, which is \
+         0.";
 
 primitive!(point_min, _args, _env, _ctx, { Ok(ELispExp::number(0.0)) });
 
-pub const POINT_MAX_DOC: &str = "(point-max): Return the position just past the last character of \
-         the current buffer -- the position `point' reaches at the end of the text.\n\n\
-         Example:\n\
-         (goto-char (point-max))   ; to the end";
+pub const POINT_MAX_DOC: &str = "(point-max): Return the position after the last character in the \
+         buffer.";
 
 primitive!(point_max, _args, _env, ctx, {
     ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.len() as f64)))
 });
 
-pub const GOTO_CHAR_DOC: &str = "(goto-char POSITION): Move point to POSITION, a character offset \
-         from the beginning of the buffer, and return where it ended up.\n\n\
-         POSITION is clamped to the buffer rather than refused, so a position \
-         computed before an edit still lands somewhere sensible afterwards \
-         instead of failing.\n\n\
+pub const GOTO_CHAR_DOC: &str = "(goto-char POSITION): Move point to POSITION, a number of \
+         characters from the start of the buffer, and return where it went. A position outside \
+         the buffer goes to its nearer end.\n\n\
          Example:\n\
-         (goto-char 0)             ; to the beginning\n\
-         (goto-char (point-max))   ; to the end";
+         (goto-char (point-max))";
 
 primitive!(goto_char, args, _env, ctx, {
     let requested = match args.first() {
@@ -1113,17 +1013,10 @@ primitive!(goto_char, args, _env, ctx, {
     })))
 });
 
-pub const FORWARD_SEXP_DOC: &str = "(forward-sexp &optional N): Move point forward over N \
-         balanced expressions (default 1) -- a list, a string or an atom, together with any \
-         prefix character in front of it. Negative N moves backward; zero does nothing.\n\n\
-         What counts as a delimiter, a string or a comment is the buffer's own: see \
-         `set-syntax-pairs' and `set-comment-syntax'. A mode that declared nothing still gets \
-         brackets, double quotes and backslash, so this works in any buffer.\n\n\
-         Delimiters inside strings and comments are text, so this steps over \
-         `(message \\\"a )\\\")' in one move. At the end of the enclosing list it does nothing \
-         rather than escaping outwards -- see `up-list' for that.\n\n\
-         Example:\n\
-         (define-key nil \\\"C-M-f\\\" 'forward-sexp)";
+pub const FORWARD_SEXP_DOC: &str = "(forward-sexp &optional N): Move point over the next N \
+         balanced expressions, 1 by default: a list, a string or an atom, with any prefix in \
+         front of it. A negative N moves back. A delimiter in a string or a comment is text, and \
+         at the end of a list this does nothing.";
 
 primitive!(forward_sexp, args, _env, ctx, {
     // Before the write lock: this reads the buffer to find its mode.
@@ -1148,12 +1041,8 @@ primitive!(forward_sexp, args, _env, ctx, {
 });
 
 pub const BACKWARD_SEXP_DOC: &str = "(backward-sexp &optional N): Move point back over N balanced \
-         expressions (default 1), landing on the first character of the Nth previous one -- the \
-         prefix included, so point ends before the quote in `'foo' rather than after it.\n\n\
-         At the beginning of the enclosing list it does nothing. Negative N moves forward; \
-         zero does nothing.\n\n\
-         Example:\n\
-         (define-key nil \\\"C-M-b\\\" 'backward-sexp)";
+         expressions, 1 by default, to the start of the last one, its prefix included: before the \
+         quote of 'foo. A negative N moves forward, and at the start of a list this does nothing.";
 
 primitive!(backward_sexp, args, _env, ctx, {
     let table = ctx.current_syntax_table();
@@ -1176,12 +1065,9 @@ primitive!(backward_sexp, args, _env, ctx, {
     })
 });
 
-pub const KILL_SEXP_DOC: &str = "(kill-sexp &optional N): Delete forward over N balanced \
-         expressions (default 1) -- exactly the text `forward-sexp' would move over.\n\n\
-         The text is saved to the kill ring, so `yank' puts it back. A run of kill commands \
-         accumulates into one entry.\n\n\
-         Example:\n\
-         (define-key nil \\\"C-M-k\\\" 'kill-sexp)";
+pub const KILL_SEXP_DOC: &str = "(kill-sexp &optional N): Kill forward over N balanced \
+         expressions, 1 by default: the text `forward-sexp' would move over. It goes on the kill \
+         ring.";
 
 primitive!(kill_sexp, args, env, ctx, {
     let table = ctx.current_syntax_table();
@@ -1201,12 +1087,9 @@ primitive!(kill_sexp, args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const BACKWARD_KILL_SEXP_DOC: &str = "(backward-kill-sexp &optional N): Delete back over N \
-         balanced expressions (default 1) -- exactly the text `backward-sexp' would move over.\n\n\
-         The text is saved to the kill ring, so `yank' puts it back. A run of kill commands \
-         accumulates into one entry.\n\n\
-         Example:\n\
-         (define-key nil \\\"C-M-<backspace>\\\" 'backward-kill-sexp)";
+pub const BACKWARD_KILL_SEXP_DOC: &str = "(backward-kill-sexp &optional N): Kill back over N \
+         balanced expressions, 1 by default: the text `backward-sexp' would move over. It goes on \
+         the kill ring.";
 
 primitive!(backward_kill_sexp, args, env, ctx, {
     let table = ctx.current_syntax_table();
@@ -1220,12 +1103,10 @@ primitive!(backward_kill_sexp, args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const UP_LIST_DOC: &str = "(up-list): Move point past the end of the list it is inside, \
-         leaving it after the closing delimiter.\n\n\
-         Does nothing at the top level, where there is no list to leave. Unbound by default, as \
-         in Emacs -- reach it with M-x, or bind it yourself.\n\n\
+pub const UP_LIST_DOC: &str = "(up-list): Move point out of the list it is in, past its closing \
+         delimiter. Does nothing at the top level.\n\n\
          Example:\n\
-         (up-list)";
+         (define-key nil \"C-M-n\" 'up-list)";
 
 primitive!(up_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();
@@ -1240,12 +1121,9 @@ primitive!(up_list, _args, _env, ctx, {
     })
 });
 
-pub const BACKWARD_UP_LIST_DOC: &str = "(backward-up-list): Move point to the beginning of the \
-         list it is inside, leaving it on the opening delimiter -- or on the prefix in front of \
-         it, since `'(a b)' begins at the quote.\n\n\
-         Does nothing at the top level.\n\n\
-         Example:\n\
-         (define-key nil \\\"C-M-u\\\" 'backward-up-list)";
+pub const BACKWARD_UP_LIST_DOC: &str = "(backward-up-list): Move point back to the start of the \
+         list it is in: onto its opening delimiter, or onto the prefix before it, as in '(a b). \
+         Does nothing at the top level.";
 
 primitive!(backward_up_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();
@@ -1261,11 +1139,8 @@ primitive!(backward_up_list, _args, _env, ctx, {
 });
 
 pub const DOWN_LIST_DOC: &str = "(down-list): Move point just inside the next list that opens \
-         after it.\n\n\
-         Does nothing when no list opens between point and the end of the buffer. A delimiter \
-         inside a string or a comment is text and is not entered.\n\n\
-         Example:\n\
-         (define-key nil \\\"C-M-d\\\" 'down-list)";
+         after it. Does nothing when none does; a delimiter in a string or a comment does not \
+         count.";
 
 primitive!(down_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();
@@ -1317,12 +1192,11 @@ fn line_argument<B: BufferTrait>(args: &[ELispExp<B>], text: &B) -> usize {
     }
 }
 
-pub const CURRENT_INDENTATION_DOC: &str = "(current-indentation &optional LINE): The column of the \
-         first character on LINE that is not a space or a tab -- the line point is on when LINE \
-         is omitted. Lines are numbered from 1, as `goto-line' numbers them.\n\n\
-         A line with nothing but whitespace on it counts as indented all the way across.\n\n\
+pub const CURRENT_INDENTATION_DOC: &str = "(current-indentation &optional LINE): Return how many \
+         spaces and tabs begin LINE, numbered from 1 as `goto-line' numbers lines, or the line \
+         point is on. A blank line counts as indented all the way across.\n\n\
          Example:\n\
-         (current-indentation) => 4";
+         (current-indentation 1)";
 
 primitive!(current_indentation, args, _env, ctx, {
     ctx.with_current_buffer(|buf| {
@@ -1331,15 +1205,9 @@ primitive!(current_indentation, args, _env, ctx, {
     })
 });
 
-pub const PREVIOUS_INDENTATION_DOC: &str = "(previous-indentation): The indentation of the nearest \
-         line above point's that has something on it, or 0 if there is none.\n\n\
-         Blank lines are skipped rather than reported as indented to zero: a blank line between \
-         two indented ones is a paragraph break, not a return to the left margin, and taking it \
-         literally would make Tab walk a block back to column 0 one blank line at a time.\n\n\
-         This is what `indent-line' falls back to for a mode that declared no `indent-function' \
-         -- language-agnostic, and right often enough to be useful in any buffer.\n\n\
-         Example:\n\
-         (previous-indentation) => 4";
+pub const PREVIOUS_INDENTATION_DOC: &str = "(previous-indentation): Return the indentation of the \
+         nearest line above point's that is not blank, or 0 when there is none. A line in a mode \
+         without an `indent-function' is indented to this.";
 
 primitive!(previous_indentation, _args, _env, ctx, {
     ctx.with_current_buffer(|buf| {
@@ -1354,14 +1222,10 @@ primitive!(previous_indentation, _args, _env, ctx, {
     })
 });
 
-pub const INDENT_LINE_TO_DOC: &str = "(indent-line-to COLUMN): Replace the whitespace at the start \
-         of the line point is on with COLUMN spaces. Returns t if the line changed, nil if it \
-         was already there -- which is how `indent-for-tab-command' tells \"I indented it\" from \
-         \"there was nothing to do\".\n\n\
-         Point comes along: inside the old indentation it lands at the end of the new one, and \
-         after it, it keeps the character it was on.\n\n\
-         The change goes through the same two doors every edit goes through, so it is one undo \
-         step and a read-only buffer refuses it.\n\n\
+pub const INDENT_LINE_TO_DOC: &str = "(indent-line-to COLUMN): Replace the spaces and tabs that \
+         begin the line point is on with COLUMN spaces, as one undo step. Return t if the line \
+         changed, nil if it was already so. Point keeps its character, or goes to the end of the \
+         new indentation when it was inside the old.\n\n\
          Example:\n\
          (indent-line-to (previous-indentation))";
 
@@ -1419,13 +1283,8 @@ primitive!(indent_line_to, args, _env, ctx, {
     })
 });
 
-pub const CURRENT_COLUMN_DOC: &str = "(current-column): The column point is on, counting from 0.\n\n\
-         Columns, not characters: this is what a line has to be lined up *against*, which is why \
-         indentation is written in terms of it. `current-indentation' counts characters instead, \
-         and the two agree in a buffer indented with spaces -- which is every buffer \
-         `indent-line-to' has touched, since it only ever writes spaces.\n\n\
-         Example:\n\
-         (progn (goto-char open) (current-column))";
+pub const CURRENT_COLUMN_DOC: &str = "(current-column): Return the column point is on, counting \
+         from 0. Every character is one column, a tab included.";
 
 primitive!(current_column, _args, _env, ctx, {
     ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.cursor_pos().1 as f64)))

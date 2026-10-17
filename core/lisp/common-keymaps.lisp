@@ -1,8 +1,6 @@
 (define-key nil "<backspace>" 'delete-backward-char)
 
-;; Movement. Emacs bindings where a single key sequence can express them --
-;; C-a / C-e / M-f / M-b / M-< / M-> all fit; anything needing a prefix key
-;; (C-x style) waits on multi-key sequences.
+;; Moving, typing and the small verbs: the `editing' manual page.
 (define-key nil "C-a" 'beginning-of-line)
 (define-key nil "C-e" 'end-of-line)
 (define-key nil "C-f" 'forward-char)
@@ -17,10 +15,6 @@
 (define-key nil "M->" 'end-of-buffer)
 
 (define-key nil "C-o" 'open-line-above)
-
-;; Paragraph motion was on M-n and M-p, which is not what those keys do in
-;; Emacs -- they are not globally bound at all there, and mean "next/previous
-;; history entry" in a prompt. M-} and M-{ are the real bindings.
 
 ;; Going to a line. M-g is a prefix in Emacs, and both of the keys after it
 ;; reach the same command, so both are bound.
@@ -43,9 +37,8 @@
 (define-key nil "C-v" 'scroll-up-command)
 (define-key nil "M-v" 'scroll-down-command)
 
-;; Deletion, mirroring the movement bindings above. These discard the text
-;; rather than saving it -- the kill ring is roadmap #20 -- but they carry the
-;; Emacs names so the bindings will not change once it exists.
+;; Deleting and killing: the `editing' and `killing' manual pages.
+;; electric-pair.lisp takes Backspace and C-d over when it is loaded.
 (define-key nil "C-d" 'delete-char)
 (define-key nil "C-k" 'kill-line)
 (define-key nil "M-d" 'kill-word)
@@ -58,18 +51,12 @@
 (define-key nil "C-_" 'undo)
 (define-key nil "C-x u" 'undo)
 
-;; Redo was on M-_, which Emacs does not use. `C-?' is what Emacs 28 gave
-;; `undo-redo', so that is where it goes -- with the caveat that some terminals
-;; cannot send it. On one of those, reach redo through M-x until you bind it to
-;; something your terminal does send.
+;; Redo on `C-?', where Emacs 28 put `undo-redo'. Some terminals cannot send
+;; it: the `editing' manual page says what to do then.
 (define-key nil "C-?" 'redo)
 
-;; The mark and the region. C-<space> sets the mark; moving point from there
-;; grows the region, and any edit ends it.
+;; The mark, the region and the kill ring: the `killing' manual page.
 (define-key nil "C-<space>" 'set-mark)
-
-;; The kill ring. C-w and M-w act on the region; C-y puts the most recent kill
-;; back and M-y walks further into the ring, but only straight after a yank.
 (define-key nil "C-w" 'kill-region)
 (define-key nil "M-w" 'kill-ring-save)
 (define-key nil "C-y" 'yank)
@@ -152,13 +139,8 @@
 (define-key nil "M-g n" 'next-error)
 (define-key nil "M-g p" 'previous-error)
 
-;; The small verbs: case, whitespace, lines, transposition, zapping. Emacs'
-;; keys, because these are the ones most fingers already know -- and because
-;; every one of them is a verb rather than a mode, so there is nothing to learn
-;; beyond where it is.
-;;
-;; `duplicate-line' is left unbound: it is wanted often enough to exist and not
-;; often enough to spend a key on, and `C-c' is yours to put it under.
+;; The small verbs, on Emacs' keys: the `editing' manual page.
+;; `duplicate-line' is left unbound, wanted too seldom to spend a key on.
 (define-key nil "M-u" 'upcase-word)
 (define-key nil "M-l" 'downcase-word)
 (define-key nil "M-c" 'capitalize-word)
@@ -172,58 +154,20 @@
 (define-key nil "C-x C-t" 'transpose-lines)
 (define-key nil "M-z" 'zap-to-char)
 
-;; Commenting. `M-;' comments the region out, or the line when there is no
-;; region, and takes the comments off again when everything in the scope is
-;; already one. What a comment looks like comes from the mode -- see
-;; `set-comment-syntax' -- so this key does the right thing in Rust, C and this
-;; editor's own Lisp without knowing about any of them.
-;;
-;; `comment-indent' starts a comment *beside* the code rather than instead of
-;; it, and is left unbound: it is wanted far less often than the toggle, and
-;; the key most fingers reach for is this one.
+;; Comments: the `editing' manual page. `comment-indent' is left unbound:
+;; the key most fingers reach for is the toggle.
 (define-key nil "M-;" 'comment-dwim)
 (define-key nil "C-x C-;" 'comment-line)
 
-;; Keyboard macros. `C-x (' starts recording, `C-x )' stops, `C-x e' runs it --
-;; and `C-x e' stops a recording first if one is running, since wanting to run
-;; the macro is why you stopped.
-;;
-;;   C-x (        start recording      C-x )   stop
-;;   C-x e        run it; C-u N C-x e  runs it N times
-;;   C-x C-k C-i  insert the counter   C-x C-k C-c  set the counter
-;;
-;; What is recorded is the keys, so a macro does whatever they mean when it is
-;; replayed, and a command that reads a character of its own -- `M-z' -- records
-;; the character too. A recording that went wrong is abandoned with `M-x
-;; kmacro-cancel-macro'; what it did while recording stays done, which `undo' is
-;; for.
-;;
-;; `(define-kbd-macro 'name "C-a C-k C-y")' in your configuration makes a macro
-;; a command you have on every start -- `kbd-macro-keys' prints the last one in
-;; exactly that syntax.
+;; Keyboard macros: the `macros' manual page.
 (define-key nil "C-x (" 'kmacro-start-macro)
 (define-key nil "C-x )" 'kmacro-end-macro)
 (define-key nil "C-x e" 'kmacro-end-and-call-macro)
 (define-key nil "C-x C-k C-i" 'kmacro-insert-counter)
 (define-key nil "C-x C-k C-c" 'kmacro-set-counter)
 
-;; Rectangles -- blocks of text, the columns a run of lines have in common.
-;;
-;; `C-x SPC' draws the region as the block point and the mark are opposite
-;; corners of, so you can see what you are about to cut. The commands work
-;; either way: two corners are two corners, and the mode is how you see them.
-;;
-;;   C-x r k   cut the block out        C-x r y   put it back here
-;;   C-x r M-w copy it                  C-x r d   delete it, keeping nothing
-;;   C-x r o   open a block of spaces   C-x r c   blank the block out
-;;   C-x r t   replace it with a string, on every line
-;;
-;; A killed rectangle is kept apart from the kill ring, so `C-y' is never a
-;; question about what shape it is holding; `C-x r y' is how a block comes
-;; back.
-;;
-;; `C-x r' is where Emacs keeps these, and also where it keeps registers. The
-;; rectangle half is what exists here; the letters registers use are free.
+;; Rectangles: the `rectangles' manual page. `C-x r' is where Emacs keeps
+;; them, and its registers too; the letters registers use are free here.
 (define-key nil "C-x <space>" 'rectangle-mark-mode)
 (define-key nil "C-x r k" 'kill-rectangle)
 (define-key nil "C-x r d" 'delete-rectangle)
@@ -257,10 +201,7 @@
 ;; replaced, which is `case-replace'.
 (setq case-fold-search t)
 
-;; Structural motion, over balanced expressions rather than over words. What
-;; counts as a delimiter, a string or a comment comes from the buffer's mode 
-;; see `set-syntax-pairs'. A mode that declared nothing still gets brackets,
-;; double quotes and backslash, so these work everywhere.
+;; Motion over balanced expressions: the `editing' manual page.
 (define-key nil "C-M-f" 'forward-sexp)
 (define-key nil "C-M-b" 'backward-sexp)
 (define-key nil "C-M-k" 'kill-sexp)
@@ -268,25 +209,19 @@
 (define-key nil "C-M-u" 'backward-up-list)
 (define-key nil "C-M-d" 'down-list)
 
-;; `up-list' is left unbound, as in Emacs -- C-M-u is the *backward* one there,
-;; and reaching the forward one through M-x is what people expect.
+;; `up-list' is left unbound, as in Emacs.
 
 ;; Put the line point is on in the middle of the window, without moving point.
 ;; The text slides under the cursor; `C-v' moves the cursor with the text.
 (define-key nil "C-l" 'recenter)
 
-;; Tab: the region, or the line, or whatever `tab-always-indent' says when the
-;; line is already indented. See indent.lisp.
+;; Tab and Shift-Tab: the `indentation' manual page. Return is bound in
+;; indent.lisp, beside the command it runs.
 (define-key nil "tab" 'indent-for-tab-command)
-
-;; Shift-Tab: move the region -- or the line -- one `indent-width' to the left,
-;; keeping its shape. The way back from a Tab that shifted a block right.
 (define-key nil "S-<tab>" 'indent-rigidly-left)
 
-;; Enter is bound in indent.lisp, beside the command it runs. See there.
-
-;; C-g abandons a half-typed key sequence or prefix argument, and ends the
-;; region. It does not interrupt a running command -- that is roadmap #24.
+;; C-g: the `editing' manual page. It does not interrupt a running command:
+;; roadmap #24.
 (define-key nil "C-g" 'keyboard-quit)
 
 ;; The mode line and the line numbers: `mode-line-format' and

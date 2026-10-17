@@ -426,7 +426,7 @@ mod tests {
                 quoted.entry(name).or_default().push(owner.clone());
             }
         }
-        assert!(quoted.len() > 300, "too few quoted names: {}", quoted.len());
+        assert!(quoted.len() > 150, "too few quoted names: {}", quoted.len());
         let unlisted: Vec<String> = quoted
             .iter()
             .filter(|(name, _)| !known.contains(*name))

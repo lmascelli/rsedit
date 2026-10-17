@@ -7,7 +7,6 @@
 # The Lisp's special forms
 dolist
 fiber
-if
 while
 yield
 
@@ -32,7 +31,6 @@ shell-output-mode
 isearch
 
 # Symbols a function takes, returns or keeps as a property
-auto
 bold
 class
 close
@@ -69,7 +67,6 @@ car*
 color
 colour
 compilation--output-of-x
-foo
 link
 no
 target

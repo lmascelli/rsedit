@@ -16,17 +16,9 @@ fn repetitions<B: BufferTrait>(args: &[ELispExp<B>]) -> usize {
     }
 }
 
-pub const KMACRO_START_MACRO_DOC: &str = "(kmacro-start-macro): Begin recording the keys you \
-         press, so they can be pressed again. Returns t, or nil if a recording is already \
-         running.\n\n\
-         Everything you do is recorded *and* done: this is not a rehearsal. Finish with \
-         `kmacro-end-macro' and run what you recorded with `kmacro-call-macro'.\n\n\
-         Keys are what is recorded, not commands, so a macro does whatever its keys mean when it \
-         is replayed -- rebind one and the macro follows. It also means a command that reads a \
-         character of its own, like `zap-to-char', records the character too.\n\n\
-         The counter is set to zero. See `kmacro-insert-counter'.\n\n\
-         Example:\n\
-         (define-key nil \"C-x (\" 'kmacro-start-macro)";
+pub const KMACRO_START_MACRO_DOC: &str = "(kmacro-start-macro): Start recording the keys pressed, \
+         which still do what they do, and set the macro counter to 0. Return t, or nil when a \
+         recording is running already.";
 
 primitive!(kmacro_start_macro, _args, _env, ctx, {
     let started = ctx.macros_mut(|macros| macros.start());
@@ -38,15 +30,9 @@ primitive!(kmacro_start_macro, _args, _env, ctx, {
     Ok(ELispExp::boolean(started))
 });
 
-pub const KMACRO_END_MACRO_DOC: &str = "(kmacro-end-macro): Stop recording, and keep what was \
-         recorded as the last macro. Returns the number of keys, or nil if nothing was being \
-         recorded.\n\n\
-         The keys that ended the recording are not part of it, so a macro never ends by stopping \
-         a recording that is not running.\n\n\
-         An empty recording is not kept: there would be nothing to replay, and `C-x e' doing \
-         nothing with no way to tell why is worse than being told there is no macro.\n\n\
-         Example:\n\
-         (define-key nil \"C-x )\" 'kmacro-end-macro)";
+pub const KMACRO_END_MACRO_DOC: &str = "(kmacro-end-macro): Stop recording, and keep the keys as \
+         the last macro. Return how many there were, or nil when nothing was recorded: an empty \
+         recording keeps the macro there was.";
 
 primitive!(kmacro_end_macro, _args, _env, ctx, {
     match ctx.macros_mut(|macros| macros.finish()) {
@@ -61,10 +47,8 @@ primitive!(kmacro_end_macro, _args, _env, ctx, {
     }
 });
 
-pub const KMACRO_CANCEL_MACRO_DOC: &str = "(kmacro-cancel-macro): Stop recording and throw away \
-         what was recorded. Returns t if a recording was running.\n\n\
-         What was done while recording stays done -- recording changes nothing about what the \
-         keys did. This throws away the *recording*, not the edits, which `undo' is for.";
+pub const KMACRO_CANCEL_MACRO_DOC: &str = "(kmacro-cancel-macro): Stop recording and throw the \
+         keys away; what they did stays done. Return t if a recording was running.";
 
 primitive!(kmacro_cancel_macro, _args, _env, ctx, {
     let had = ctx.macros_mut(|macros| macros.cancel());
@@ -75,21 +59,8 @@ primitive!(kmacro_cancel_macro, _args, _env, ctx, {
 });
 
 pub const KMACRO_CALL_MACRO_DOC: &str = "(kmacro-call-macro &optional COUNT): Press the keys of \
-         the last macro again, COUNT times (default once). Returns how many times it ran.\n\n\
-         Each key goes through the same door a key from the keyboard does, so a macro does \
-         exactly what pressing its keys does -- prompts open, prefix arguments count, a command \
-         that reads a character reads the one that was recorded.\n\n\
-         A repetition that fails stops everything, and says so. Every key after a failure would \
-         be pressed in a state the recording never saw, which is how a macro does damage rather \
-         than merely not working.\n\n\
-         Each repetition is one undo step, so a macro run twenty times can be walked back one \
-         repetition at a time.\n\n\
-         Nothing can interrupt it: the keys are replayed inside one command, on the thread that \
-         would deliver a `C-g'. A macro that calls itself is stopped by a limit on how deeply \
-         replays may nest -- not by the execution budget, which a replay barely touches while \
-         growing the call stack until the process would abort.\n\n\
-         Example:\n\
-         (define-key nil \"C-x e\" 'kmacro-call-macro)";
+         the last macro again, COUNT times, once by default. Return how many times it ran to the \
+         end: a command in it that fails stops it there.";
 
 primitive!(kmacro_call_macro, args, env, ctx, {
     let Some(keys) = ctx.macros(|macros| macros.last()) else {
@@ -101,10 +72,8 @@ primitive!(kmacro_call_macro, args, env, ctx, {
 });
 
 pub const KMACRO_END_AND_CALL_MACRO_DOC: &str = "(kmacro-end-and-call-macro &optional COUNT): \
-         Finish a recording if one is running, and then run the last macro COUNT times.\n\n\
-         One key for both, so that `C-x e' means \"do that again\" whether or not you have \
-         remembered to stop recording -- which is the common case, since the thing you want \
-         immediately after recording a macro is to run it.";
+         Stop recording, if a recording is running, and press the keys of the last macro COUNT \
+         times, once by default.";
 
 primitive!(kmacro_end_and_call_macro, args, env, ctx, {
     if ctx.macros(|macros| macros.is_recording()) {
@@ -118,10 +87,9 @@ primitive!(kmacro_end_and_call_macro, args, env, ctx, {
     Ok(ELispExp::number(ran as f64))
 });
 
-pub const KBD_MACRO_KEYS_DOC: &str = "(kbd-macro-keys): The last macro, as a string of key names \
-         -- `\"C-a C-k C-y\"' -- or nil if none has been recorded.\n\n\
-         The same syntax `define-key' and `define-kbd-macro' take, which is the whole of saving a \
-         macro: print this, put it in your configuration, and it is a macro again next time.\n\n\
+pub const KBD_MACRO_KEYS_DOC: &str = "(kbd-macro-keys): Return the last macro as a string of key \
+         names, the way `define-key' and `define-kbd-macro' take them, or nil when none has been \
+         recorded.\n\n\
          Example:\n\
          (kbd-macro-keys) => \"C-a C-k C-y\"";
 
@@ -132,17 +100,12 @@ primitive!(kbd_macro_keys, _args, _env, ctx, {
     })
 });
 
-pub const DEFINE_KBD_MACRO_DOC: &str = "(define-kbd-macro NAME KEYS): Make KEYS -- a string of \
-         key names, as `define-key' takes -- into a command called NAME. Returns NAME.\n\n\
-         A real command: it appears in `M-x', `describe-function' explains it, `define-key' binds \
-         it and `where-is' finds it. Nothing about it is special except what it does.\n\n\
-         This is how a macro outlives the session it was recorded in -- `(define-kbd-macro \
-         'tidy-line \"C-a C-k C-y\")' in your configuration is a macro you have on every start, \
-         with no file format and nothing to load.\n\n\
-         Also makes KEYS the last macro, so `kmacro-call-macro' runs it.\n\n\
+pub const DEFINE_KBD_MACRO_DOC: &str = "(define-kbd-macro NAME KEYS): Make a command named NAME \
+         that presses KEYS, a string of key names as `define-key' takes, and make KEYS the last \
+         macro. Return NAME.\n\n\
          Example:\n\
          (define-kbd-macro 'tidy-line \"C-a C-k C-y\")\n\
-         (define-key nil \"C-c t\" 'tidy-line)";
+         (define-key nil \"C-c m\" 'tidy-line)";
 
 primitive!(define_kbd_macro, args, env, ctx, {
     exact_arity(args, 2)?;
@@ -197,11 +160,11 @@ primitive!(define_kbd_macro, args, env, ctx, {
     Ok(ELispExp::symbol(name.as_str().into()))
 });
 
-pub const KMACRO_CALL_KEYS_DOC: &str = "(kmacro-call-keys KEYS &optional COUNT): Press KEYS -- a \
-         string of key names -- COUNT times. Returns how many times it ran.\n\n\
-         What a command made by `define-kbd-macro' is: the keys are in the definition, so the \
-         command is readable rather than a handle to something stored elsewhere. Useful on its \
-         own for a module that wants to press keys without recording them first.";
+pub const KMACRO_CALL_KEYS_DOC: &str = "(kmacro-call-keys KEYS &optional COUNT): Press KEYS, a \
+         string of key names, COUNT times, once by default, and return how many times they ran to \
+         the end. A command made by `define-kbd-macro' calls this.\n\n\
+         Example:\n\
+         (kmacro-call-keys \"C-e C-n\" 3)";
 
 primitive!(kmacro_call_keys, args, env, ctx, {
     let Some(ELispExp::String(spelling)) = args.first() else {
@@ -219,11 +182,8 @@ primitive!(kmacro_call_keys, args, env, ctx, {
     Ok(ELispExp::number(ran as f64))
 });
 
-pub const KMACRO_RECORDING_P_DOC: &str = "(kmacro-recording-p): How many keys have been recorded \
-         so far, or nil when nothing is being recorded.\n\n\
-         For a mode line that says so. Recording changes nothing visible on its own -- the keys \
-         do what they always did -- so without something showing it, the only way to tell is to \
-         remember.";
+pub const KMACRO_RECORDING_P_DOC: &str = "(kmacro-recording-p): Return how many keys have been \
+         recorded so far, or nil when nothing is being recorded.";
 
 primitive!(kmacro_recording_p, _args, _env, ctx, {
     Ok(ctx.macros(|macros| {
@@ -240,17 +200,10 @@ primitive!(kmacro_recording_p, _args, _env, ctx, {
 // ---------------------------------------------------------------------------
 
 pub const KMACRO_INSERT_COUNTER_DOC: &str = "(kmacro-insert-counter &optional WIDTH): Insert the \
-         macro counter and advance it by one. Returns what was inserted.\n\n\
-         What a macro is for beyond repetition: numbering a run of lines, filling a column, \
-         generating a sequence. Record `kmacro-insert-counter' inside a macro and each repetition \
-         puts in the next number.\n\n\
-         WIDTH pads with leading zeros to that many digits -- `(kmacro-insert-counter 3)' gives \
-         `007' -- which is what makes a numbered list sort the way it reads.\n\n\
-         The counter is set to zero when a recording starts, and otherwise only by \
-         `kmacro-set-counter'. It advances when it is *inserted*, not once per repetition, so a \
-         macro that inserts it twice gets two different numbers.\n\n\
+         macro counter at point, padded with zeros to WIDTH digits, and add one to it. Return the \
+         text inserted.\n\n\
          Example:\n\
-         (define-key nil \"C-x C-k C-i\" 'kmacro-insert-counter)";
+         (kmacro-insert-counter 3)   ; 007";
 
 primitive!(kmacro_insert_counter, args, _env, ctx, {
     let width = match args.first() {
@@ -276,9 +229,7 @@ primitive!(kmacro_insert_counter, args, _env, ctx, {
 });
 
 pub const KMACRO_SET_COUNTER_DOC: &str = "(kmacro-set-counter VALUE): Set the macro counter to \
-         VALUE. Returns it.\n\n\
-         For starting a numbered run at something other than zero, and for starting it again \
-         after a run that went wrong.";
+         VALUE, and return it.";
 
 primitive!(kmacro_set_counter, args, _env, ctx, {
     let value = match args.first() {
@@ -294,9 +245,8 @@ primitive!(kmacro_set_counter, args, _env, ctx, {
     Ok(ELispExp::number(value as f64))
 });
 
-pub const KMACRO_COUNTER_DOC: &str = "(kmacro-counter): The macro counter's current value.\n\n\
-         Read without advancing it, which `kmacro-insert-counter' does. For a module that wants \
-         to put the number somewhere other than the buffer.";
+pub const KMACRO_COUNTER_DOC: &str = "(kmacro-counter): Return the macro counter, without adding \
+         one to it.";
 
 primitive!(kmacro_counter, _args, _env, ctx, {
     Ok(ELispExp::number(

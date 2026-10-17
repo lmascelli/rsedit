@@ -14,7 +14,8 @@ THE GUIDE
     Read a page with C-h m and its name. These are meant in this order.
 
         first-steps       the screen, moving, typing, saving, undoing
-        editing           the editing vocabulary, and the kill ring
+        editing           moving, typing, and the small verbs
+        killing           cutting, copying, and putting back
         files             opening, saving, directories, going back
         searching         finding things, and replacing them
         getting-help      how to ask the editor about itself
@@ -35,6 +36,7 @@ THE REFERENCE
         keymaps           how a key becomes a command
         modes             what colouring and keys a buffer gets
         completion        how candidates are found and shown
+        indentation       what Tab and Return do
         macros            record what you pressed, press it again
         rectangles        blocks of text, cut by column
         overlays          a face on one particular span

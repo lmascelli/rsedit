@@ -129,32 +129,23 @@ fn recase<B: BufferTrait>(ctx: &EditorState<B>, casing: Casing) -> ELispExp<B> {
     ELispExp::boolean(changed)
 }
 
-pub const UPCASE_WORD_DOC: &str = "(upcase-word): Upcase the word after point and leave point \
-         after it, so pressing it again takes the next word. With a region, upcases the region \
-         and leaves point where it was.\n\n\
-         A word is what `forward-word' steps over -- letters, digits and `_' -- so what this \
-         changes is what that key would have walked past.\n\n\
-         Example:\n\
-         (define-key nil \"M-u\" 'upcase-word)";
+pub const UPCASE_WORD_DOC: &str = "(upcase-word): Upcase the word after point, and leave point \
+         after it. With a region, upcase the region and leave point where it is.";
 
 primitive!(upcase_word, _args, _env, ctx, {
     Ok(recase(ctx, Casing::Up))
 });
 
-pub const DOWNCASE_WORD_DOC: &str = "(downcase-word): Downcase the word after point and leave \
-         point after it. With a region, downcases the region.\n\n\
-         Example:\n\
-         (define-key nil \"M-l\" 'downcase-word)";
+pub const DOWNCASE_WORD_DOC: &str = "(downcase-word): Downcase the word after point, and leave \
+         point after it. With a region, downcase the region and leave point where it is.";
 
 primitive!(downcase_word, _args, _env, ctx, {
     Ok(recase(ctx, Casing::Down))
 });
 
-pub const CAPITALIZE_WORD_DOC: &str = "(capitalize-word): Upcase the first letter of the word \
-         after point, downcase the rest, and leave point after it. With a region, does the same \
-         to every word in it.\n\n\
-         Example:\n\
-         (define-key nil \"M-c\" 'capitalize-word)";
+pub const CAPITALIZE_WORD_DOC: &str = "(capitalize-word): Capitalize the word after point, \
+         upcasing its first letter and downcasing the rest, and leave point after it. With a \
+         region, capitalize every word in it.";
 
 primitive!(capitalize_word, _args, _env, ctx, {
     Ok(recase(ctx, Casing::Capitalise))
@@ -179,12 +170,7 @@ fn horizontal_space<B: BufferTrait>(text: &B, point: usize) -> (usize, usize) {
 }
 
 pub const DELETE_HORIZONTAL_SPACE_DOC: &str = "(delete-horizontal-space): Delete the spaces and \
-         tabs around point, on both sides of it. Point ends where they were.\n\n\
-         Newlines are not whitespace for this purpose: it works within one line, so it cannot \
-         join two by accident. `just-one-space' is the same thing leaving a single space \
-         behind.\n\n\
-         Example:\n\
-         (define-key nil \"M-\\\\\" 'delete-horizontal-space)";
+         tabs on both sides of point, within the line.";
 
 primitive!(delete_horizontal_space, _args, _env, ctx, {
     let changed = ctx.with_current_buffer_mut(|buf| {
@@ -200,12 +186,8 @@ primitive!(delete_horizontal_space, _args, _env, ctx, {
     Ok(ELispExp::boolean(changed))
 });
 
-pub const JUST_ONE_SPACE_DOC: &str = "(just-one-space): Leave exactly one space where the spaces \
-         and tabs around point were. Point ends after it.\n\n\
-         With no whitespace at point, inserts one -- which is what makes it the verb for \
-         `there should be a space here' rather than only for tidying up.\n\n\
-         Example:\n\
-         (define-key nil \"M-<space>\" 'just-one-space)";
+pub const JUST_ONE_SPACE_DOC: &str = "(just-one-space): Replace the spaces and tabs around point \
+         with one space, or insert one when there are none, and leave point after it.";
 
 primitive!(just_one_space, _args, _env, ctx, {
     let changed = ctx.with_current_buffer_mut(|buf| {
@@ -222,14 +204,9 @@ fn blank_line<B: BufferTrait>(text: &B, line: usize) -> bool {
     text.slice(from, to).trim().is_empty()
 }
 
-pub const DELETE_BLANK_LINES_DOC: &str = "(delete-blank-lines): On a blank line in a run of them, \
-         leave one and delete the rest. On a blank line by itself, delete it. On a line with \
-         text, delete the blank lines after it.\n\n\
-         Three rules rather than one because it is one key pressed in three situations: in a \
-         gap that is too big, in a gap that should not be there, and at the end of a paragraph \
-         that has collected blank lines under it. Emacs' `C-x C-o', and its behaviour.\n\n\
-         Example:\n\
-         (define-key nil \"C-x C-o\" 'delete-blank-lines)";
+pub const DELETE_BLANK_LINES_DOC: &str = "(delete-blank-lines): On a blank line among others, \
+         delete all of them but one; on a blank line alone, delete it; on a line with text, \
+         delete the blank lines after it.";
 
 primitive!(delete_blank_lines, _args, _env, ctx, {
     let changed = ctx.with_current_buffer_mut(|buf| {
@@ -288,12 +265,8 @@ primitive!(delete_blank_lines, _args, _env, ctx, {
 });
 
 pub const BACK_TO_INDENTATION_DOC: &str = "(back-to-indentation): Move point to the first \
-         character on the line that is not a space or a tab. Returns where it went.\n\n\
-         Where `beginning-of-line' goes is column zero; where you usually want to be is the \
-         start of the code. On a line with nothing but whitespace, point goes to the end of \
-         it.\n\n\
-         Example:\n\
-         (define-key nil \"M-m\" 'back-to-indentation)";
+         character of its line that is not a space or a tab, or to the end of a blank line, and \
+         return the new position.";
 
 primitive!(back_to_indentation, _args, _env, ctx, {
     let at = ctx.with_current_buffer_mut(|buf| {
@@ -313,15 +286,10 @@ primitive!(back_to_indentation, _args, _env, ctx, {
 // Lines
 // ---------------------------------------------------------------------------
 
-pub const JOIN_LINE_DOC: &str = "(join-line): Join this line onto the end of the one above it, \
-         leaving one space where the line break was. Point ends at the join.\n\n\
-         The indentation of this line goes with the newline -- joining `foo' and `    bar' gives \
-         `foo bar' and not `foo     bar' -- and no space is left when the line above ends in an \
-         opening delimiter or this one begins with a closing one, which the mode's syntax table \
-         is asked about rather than a list of brackets kept here.\n\n\
-         On the first line there is nothing above to join to, and it says so.\n\n\
-         Example:\n\
-         (define-key nil \"M-^\" 'join-line)";
+pub const JOIN_LINE_DOC: &str = "(join-line): Join this line to the end of the one above, putting \
+         one space where the line break and this line's indentation were, or none after an \
+         opening delimiter or before a closing one. On the first line there is nothing to join \
+         to, and it says so.";
 
 primitive!(join_line, _args, _env, ctx, {
     let mode = ctx.with_current_buffer(|buf| buf.current_mode.clone());
@@ -366,8 +334,8 @@ primitive!(join_line, _args, _env, ctx, {
     }
 });
 
-pub const DUPLICATE_LINE_DOC: &str = "(duplicate-line): Put a copy of this line below it. Point \
-         does not move, so the copy is the one underneath.\n\n\
+pub const DUPLICATE_LINE_DOC: &str = "(duplicate-line): Put a copy of this line below it, leaving \
+         point where it is.\n\n\
          Example:\n\
          (define-key nil \"C-c d\" 'duplicate-line)";
 
@@ -392,11 +360,8 @@ primitive!(duplicate_line, _args, _env, ctx, {
     Ok(ELispExp::boolean(changed))
 });
 
-pub const TRANSPOSE_LINES_DOC: &str = "(transpose-lines): Swap this line with the one above it. \
-         Point ends on the line that moved down, which is where it was.\n\n\
-         On the first line there is nothing above to swap with, and it says so.\n\n\
-         Example:\n\
-         (define-key nil \"C-x C-t\" 'transpose-lines)";
+pub const TRANSPOSE_LINES_DOC: &str = "(transpose-lines): Move this line above the one before it, \
+         and point with it. On the first line there is nothing to swap with, and it says so.";
 
 primitive!(transpose_lines, _args, _env, ctx, {
     let answer = ctx.with_current_buffer_mut(|buf| {
@@ -428,11 +393,8 @@ primitive!(transpose_lines, _args, _env, ctx, {
 // Transposition
 // ---------------------------------------------------------------------------
 
-pub const TRANSPOSE_CHARS_DOC: &str = "(transpose-chars): Swap the two characters around point \
-         and step over them. At the end of a line, swaps the two before point, which is what \
-         makes it the fix for a typo you have just finished typing.\n\n\
-         Example:\n\
-         (define-key nil \"C-t\" 'transpose-chars)";
+pub const TRANSPOSE_CHARS_DOC: &str = "(transpose-chars): Swap the characters before and after \
+         point, and leave point after both. At the end of a line, swap the two before point.";
 
 primitive!(transpose_chars, _args, _env, ctx, {
     let changed = ctx.with_current_buffer_mut(|buf| {
@@ -466,10 +428,7 @@ primitive!(transpose_chars, _args, _env, ctx, {
 });
 
 pub const TRANSPOSE_WORDS_DOC: &str = "(transpose-words): Swap the word before point with the \
-         word after it, and leave point after the second. Whatever is between them -- a space, \
-         a comma, an arrow -- stays where it is.\n\n\
-         Example:\n\
-         (define-key nil \"M-t\" 'transpose-words);";
+         word after it, leaving what is between them in place, and leave point after both.";
 
 primitive!(transpose_words, _args, _env, ctx, {
     let changed = ctx.with_current_buffer_mut(|buf| {
@@ -508,14 +467,9 @@ primitive!(transpose_words, _args, _env, ctx, {
 /// The name the capture calls back into. See `zap-to-char`.
 const ZAP_ANSWER: &str = "zap-to-char--do";
 
-pub const ZAP_TO_CHAR_DOC: &str = "(zap-to-char): Read a character and kill everything from point \
-         up to and including the next one of it. Returns t.\n\n\
-         The text goes on the kill ring, so `yank' puts it back.\n\n\
-         The character is read through the same mechanism `describe-key' uses -- the editor's \
-         own key resolution, diverted for one keystroke -- so this cannot be answered with \
-         `C-x' or a function key, and says so rather than zapping to something surprising.\n\n\
-         Example:\n\
-         (define-key nil \"M-z\" 'zap-to-char)";
+pub const ZAP_TO_CHAR_DOC: &str = "(zap-to-char): Read a character, and kill from point up to and \
+         including the next one of it. Return t. A key that is not a character, such as C-x, is \
+         refused with a message.";
 
 primitive!(zap_to_char, _args, env, ctx, {
     ctx.set_echo_message("Zap to char:");
@@ -530,13 +484,8 @@ primitive!(zap_to_char, _args, env, ctx, {
 });
 
 pub const ZAP_TO_CHAR_DO_DOC: &str = "(zap-to-char--do KEYS TARGET SOURCE): Kill up to and \
-         including the character KEYS names. What `zap-to-char' arms; not meant to be called \
-         by hand.\n\n\
-         TARGET and SOURCE are what the key would have run and where from -- see \
-         `read-key-sequence' -- and are ignored here: a key is being read as a *character*, so \
-         what it is bound to is beside the point.\n\n\
-         Example:\n\
-         (zap-to-char--do \"q\" nil nil)";
+         including the character KEYS names: what `zap-to-char' runs when the key arrives. TARGET \
+         and SOURCE are ignored.";
 
 primitive!(zap_to_char_do, args, env, ctx, {
     let keys = match args.first() {

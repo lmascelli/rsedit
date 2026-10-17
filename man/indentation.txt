@@ -1,0 +1,163 @@
+NAME
+    indentation - what Tab and Return do
+
+SYNOPSIS
+    (indent-for-tab-command)
+    (indent-line)
+    (indent-region)
+    (indent-rigidly-right)
+    (indent-rigidly-left)
+    (indent-rigidly-lines FROM TO AMOUNT)
+    (newline)
+    (newline-and-indent)
+    (back-to-indentation)
+    (indent-line-to COLUMN)
+    (current-indentation &optional LINE)
+    (previous-indentation)
+    (current-column)
+    (indent-width)
+    (lisp-indent-line)
+    (lisp-indent-under OPEN)
+    (lisp-head-after OPEN)
+    (lisp-argument-column OPEN HEAD)
+    tab-width
+    tab-always-indent
+    indent-region-style
+    electric-indent-mode
+
+DESCRIPTION
+    Tab puts the line where its mode says it belongs, and Return starts the
+    next line there too. The editor has no opinion of its own about how a
+    language is indented: a mode gives its rule, and a buffer whose mode
+    has none matches the line above.
+
+    Indentation is written with spaces, never with tab characters.
+
+TAB ON A LINE
+    Tab indents the line point is on. Point stays on the character it was
+    on, or goes to the start of the text when it was in the indentation.
+    On a line that is already where it belongs, Tab does what
+    `tab-always-indent' says:
+
+        nil             insert spaces, as many as a Tab is wide
+        t               nothing: Tab only ever indents
+        complete        complete the word before point, as C-M-i does
+
+    M-m goes to the first character on the line that is not a space.
+
+TAB ON A REGION
+    With a region, Tab works on every line the region touches. A region
+    that ends at the very start of a line leaves that line out, which is
+    what selecting whole lines from the left margin wants. The region stays
+    selected afterwards, so pressing Tab again works on the same lines.
+
+    What Tab does to them is `indent-region-style':
+
+        reindent        put each line where the mode's rule says
+        shift           move the block right by one Tab, keeping its shape
+        auto            reindent when the mode has a rule, shift when not
+
+    auto is the default because, with no rule, putting each line where the
+    one above is would flatten a nested block to one column. A mode can
+    choose for itself: (put 'MODE 'indent-region-style 'shift).
+
+SHIFTING
+    S-<tab> moves the region, or the line, left by one Tab, and M-x
+    indent-rigidly-right moves it right. The lines keep their shape, and
+    in a region a line already at the margin stays there while the others
+    go on moving. Blank lines in a region are left alone.
+
+RETURN
+    Return ends the line and indents the new one as Tab would. The spaces
+    just before point go first, so the line it ends does not end in
+    spaces, and Return on an indented blank line leaves that line empty.
+
+    With `electric-indent-mode' set to nil, Return only inserts a newline;
+    M-x newline-and-indent still indents.
+
+HOW WIDE A TAB IS
+    `tab-width' is the width of one Tab everywhere, 4 unless it is set. A
+    mode can have its own: (put 'MODE 'tab-width N). risp-mode uses 2.
+    `indent-width' is the width in force in the current buffer.
+
+WRITING A RULE
+    A rule is a function of no arguments. It is called with point on the
+    line to indent and returns the column that line should start at; it
+    may move point, but it does not change the buffer. The editor does the
+    rest: it puts the line at the column, as one undo step, and puts point
+    back.
+
+        (put 'MODE 'indent-function 'FUNCTION)
+
+    The functions a rule is written with are `current-indentation' and
+    `previous-indentation', which read the indentation of a line, and
+    `current-column'; `syntax-ppss' says how deep in brackets a position
+    is. `indent-line-to' is what moves a line, for a command that indents
+    by itself.
+
+THE LISP RULE
+    `lisp-indent-line' is the rule for this editor's own Lisp, and
+    risp-mode uses it. It reads only the brackets, so it works for any mode
+    whose syntax pairs parentheses:
+
+        (foo bar        a call lines its arguments up under the first,
+             baz)       when the first is on the line of the call, and
+                        otherwise puts them one column in
+        (defun f ()     a form with a body indents it by two columns
+          body)
+        ((a b)          a list that starts with a list, one column in
+         c)
+
+    The forms with a body are the names with a lisp-indent property:
+    defun, let, when, while, dolist and the others like them. A string
+    keeps the indentation it has.
+
+LIMITS
+    A tab character in the text counts as one column, wherever the editor
+    counts columns. The terminal draws it wider, so a line indented with
+    tabs is shown further right than the editor reckons it.
+
+EXAMPLES
+    A Tab that only ever indents:
+
+        (setq tab-always-indent t)
+
+    A Tab that completes once the line is indented:
+
+        (setq tab-always-indent 'complete)
+
+    Wider indentation in C, and shifting rather than reindenting there:
+
+        (put 'cc-mode 'tab-width 8)
+        (put 'cc-mode 'indent-region-style 'shift)
+
+    Return as a plain newline:
+
+        (setq electric-indent-mode nil)
+
+    Indent a macro of your own like defun:
+
+        (put 'with-my-buffer 'lisp-indent 2)
+
+    A rule for a mode of your own, which indents a line one Tab further
+    than the one above when that one ends in a colon:
+
+        (make-mode 'my-mode)
+        (defun colon-indent ()
+          (let ((above (previous-indentation))
+                (line (line-number-at-point)))
+            (if (and (> line 1)
+                     (progn (goto-line (- line 1))
+                            (string-match-p ":$" (current-line))))
+                (+ above (indent-width))
+                above)))
+        (put 'my-mode 'indent-function 'colon-indent)
+
+KEYS
+    <tab>                   indent-for-tab-command
+    S-<tab>                 indent-rigidly-left
+    <ret>                   newline
+    M-m                     back-to-indentation
+
+SEE ALSO
+    editing, modes, completion
