@@ -169,8 +169,9 @@ WHY THERE IS MORE THAN ONE THREAD
 
     Reading a child process's output is not guaranteed to return. Nor is
     walking a directory tree. These take as long as the system takes, and
-    no budget shortens them -- so each gets a thread of its own, started
-    and then forgotten about.
+    no budget shortens them -- so each gets a thread of its own, named after
+    the buffer it writes into. `work-list' shows it, `stop-worker' with that
+    name stops it, and closing the buffer stops it too.
 
     The rule is not decoration. `M-x compile' on a long build used to hold
     the shared thread for the whole build: colouring stopped, the file

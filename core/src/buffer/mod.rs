@@ -16,7 +16,7 @@ pub mod undo;
 pub use undo::UndoHistory;
 
 use crate::input::KeyEvent;
-use crate::work::Topic;
+use crate::work::{Topic, WorkId};
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -178,6 +178,15 @@ pub struct Buffer<B: BufferTrait> {
     /// attachment describes whatever its owner says it does, and only its
     /// owner knows whether a reverted file invalidates it.
     pub data: HashMap<String, Box<dyn Any + Send + Sync>>,
+    /// The work writing into this buffer from a thread of its own -- a shell
+    /// command, a search -- for as long as it runs.
+    ///
+    /// Closing the buffer stops it: output with nowhere to go is not worth a
+    /// process, and a command nobody can see any more is one nobody can stop.
+    /// A number rather than a name, so that renaming the buffer does not lose
+    /// track of it; once the work has finished, stopping the number does
+    /// nothing, since a [`WorkId`] is never used twice.
+    pub writer: Option<WorkId>,
 }
 
 impl<B: BufferTrait> Buffer<B> {
@@ -202,6 +211,7 @@ impl<B: BufferTrait> Buffer<B> {
             read_only: false,
             data: HashMap::new(),
             changed: Topic::detached(),
+            writer: None,
         }
     }
 
@@ -332,6 +342,7 @@ impl<B: BufferTrait> Buffer<B> {
             read_only: false,
             data: HashMap::new(),
             changed: Topic::detached(),
+            writer: None,
         }
     }
 }

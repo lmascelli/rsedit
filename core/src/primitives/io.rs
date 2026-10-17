@@ -1054,6 +1054,11 @@ fn bool_exp<B: BufferTrait>(yes: bool) -> ELispExp<B> {
 /// descends into, and `limit` is how many files it will collect before giving
 /// up. Returns the paths and whether the limit stopped it early.
 ///
+/// `keep_going` is asked before each directory is read, since reading one is
+/// what can be slow: when it says no, the walk ends there as if the limit had
+/// stopped it. What a search on a thread of its own passes, so that being
+/// asked to stop is heard during the walk too.
+///
 /// # Why pruning is here and not in the caller
 ///
 /// Everything else about which files are interesting is policy, and policy
@@ -1070,6 +1075,7 @@ pub(crate) fn walk_files(
     prune: &std::collections::HashSet<String>,
     suffixes: &[String],
     limit: usize,
+    keep_going: &dyn Fn() -> bool,
 ) -> (Vec<String>, bool) {
     let mut found = Vec::new();
     // Explicit stack rather than recursion: a deep tree -- or a symlink loop
@@ -1077,6 +1083,9 @@ pub(crate) fn walk_files(
     // editor should not be able to be crashed by a directory.
     let mut pending = vec![(root.to_path_buf(), String::new())];
     while let Some((directory, prefix)) = pending.pop() {
+        if !keep_going() {
+            return (found, true);
+        }
         let Ok(entries) = std::fs::read_dir(&directory) else {
             // Unreadable directories are skipped rather than reported: a walk
             // from the home directory crosses several, and a permission error
@@ -1226,7 +1235,7 @@ primitive!(directory_files_recursive, args, _env, ctx, {
         ctx.log_diagnostic(&format!("Cannot walk {directory}: not a directory"));
         return Ok(ELispExp::nil());
     }
-    let (paths, truncated) = walk_files(root, &prune, &suffixes, limit);
+    let (paths, truncated) = walk_files(root, &prune, &suffixes, limit, &|| true);
     // Charged for what it found, not for the one call it was.
     //
     // The evaluator prices a primitive at one unit per call, which is right

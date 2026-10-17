@@ -463,6 +463,7 @@ fn layout(report: &mut Report) {
                 read_only: false,
                 data: Default::default(),
                 changed: Default::default(),
+                writer: None,
             },
         );
     }

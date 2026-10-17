@@ -315,11 +315,14 @@ anywhere."
 (define-key 'compilation-mode "p" 'compilation-previous)
 (define-key 'compilation-mode "g" 'compilation-recompile)
 (define-key 'compilation-mode "q" 'delete-window)
+;; A compilation is a shell command, and is stopped as one.
+(define-key 'compilation-mode "C-c C-k" 'shell-command-kill)
 
 ;; The exit line, as in `shell-output-mode': a failure should be visible at a
 ;; glance rather than read.
 (add-syntax-rule 'compilation-mode "^--- exited 0 ---$" 'comment)
 (add-syntax-rule 'compilation-mode "^--- exited [1-9][0-9]* ---$" 'error)
+(add-syntax-rule 'compilation-mode "^--- (killed|could not be waited for).*$" 'error)
 (add-syntax-rule 'compilation-mode "^\\$ .*$" 'keyword)
 
 ;; The two marks. Backgrounds rather than foregrounds: the text under them is

@@ -327,7 +327,7 @@ mod tests {
 
         let (late, _) = scripted(&[]);
         assert_eq!(work.submit(Spec::new("late"), late), None);
-        assert_eq!(work.spawn("late thread", |_| {}), None);
+        assert_eq!(work.spawn("late thread", |_, _| {}), None);
         assert!(
             !work.cancel_named("waiter"),
             "everything has stopped already"
@@ -483,7 +483,7 @@ mod tests {
         let saw = saw_stop.clone();
         let id = t
             .work
-            .spawn("reader", move |stop: Stop| {
+            .spawn("reader", move |stop: Stop, _| {
                 blocked_until_stopped(stop.clone());
                 saw.store(stop.is_cancelled(), Ordering::SeqCst);
             })
@@ -533,7 +533,7 @@ mod tests {
         let (registered, ready) = mpsc::channel::<()>();
         let (release, held) = mpsc::channel::<()>();
         let id = work
-            .spawn("clumsy", move |stop: Stop| {
+            .spawn("clumsy", move |stop: Stop, _| {
                 stop.on_cancel(|| panic!("bad action"));
                 let _ = registered.send(());
                 let _ = held.recv();
@@ -555,7 +555,7 @@ mod tests {
     fn a_panic_in_a_dedicated_thread_reaches_the_log() {
         let t = threaded();
         t.work.options().set("watchdog-every", 5).unwrap();
-        t.work.spawn("doomed", |_| panic!("kaboom")).unwrap();
+        t.work.spawn("doomed", |_, _| panic!("kaboom")).unwrap();
         eventually("the watchdog to log the panic", || {
             t.lines.contain("[BKG] panic: thread doomed: kaboom")
         });
@@ -571,7 +571,7 @@ mod tests {
         // It never looks at its stop, and registers nothing to unblock it.
         let id = t
             .work
-            .spawn("stubborn", move |_| {
+            .spawn("stubborn", move |_, _| {
                 let _ = held.recv();
             })
             .unwrap();
@@ -593,11 +593,41 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_that_has_finished_is_not_there_to_stop() {
+        // Listed until it is joined, but not stoppable: stopping it would
+        // answer that it had been running.
+        let t = threaded();
+        let id = t.work.spawn("brief", |_, _| {}).unwrap();
+        eventually("the thread to end", || t.work.threads().is_empty());
+        assert!(!t.work.cancel(id));
+        // Ended, and not yet joined by anybody: its body has returned, and
+        // the thread is over a moment later.
+        let token = Arc::new(());
+        let held = token.clone();
+        t.work.spawn("brief", move |_, _| drop(held)).unwrap();
+        eventually("the body to return", || Arc::strong_count(&token) == 1);
+        std::thread::sleep(ms(20));
+        assert!(!t.work.cancel_named("brief"), "it had finished");
+        assert!(!t.work.is_named("brief"));
+    }
+
+    #[test]
+    fn a_name_is_taken_while_its_work_runs() {
+        let (work, _) = manual();
+        assert!(!work.is_named("one"));
+        let (job, _) = scripted(&[Step::Sleep(ms(10))]);
+        work.submit(Spec::new("one"), job).unwrap();
+        assert!(work.is_named("one"));
+        assert!(work.cancel_named("one"));
+        assert!(!work.is_named("one"));
+    }
+
+    #[test]
     fn jobs_and_threads_share_one_namespace() {
         let (work, _) = manual();
         let stopped = Arc::new(AtomicBool::new(false));
         let flag = stopped.clone();
-        work.spawn("x", move |stop: Stop| {
+        work.spawn("x", move |stop: Stop, _| {
             blocked_until_stopped(stop);
             flag.store(true, Ordering::SeqCst);
         })
@@ -611,7 +641,7 @@ mod tests {
         assert_eq!(wakes(&trace), [Wake::Start]);
 
         // ...and a thread under the job's name stops the job.
-        work.spawn("x", |_| {}).unwrap();
+        work.spawn("x", |_, _| {}).unwrap();
         work.run_until_idle(&());
         assert_eq!(exits(&trace), [Exit::Cancelled]);
         eventually("both threads to be reaped", || work.threads().is_empty());
@@ -645,7 +675,7 @@ mod tests {
         // ...and three threads that wait until they are asked to stop.
         for i in 0..3 {
             t.work
-                .spawn(&format!("block {i}"), blocked_until_stopped)
+                .spawn(&format!("block {i}"), |stop, _| blocked_until_stopped(stop))
                 .unwrap();
         }
         // The executor, the watchdog and the three.

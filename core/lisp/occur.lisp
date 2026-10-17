@@ -109,8 +109,8 @@ expression."
   "Search every file under `default-directory' for PATTERN and list what turns up.
 
 The search runs in the background: the listing appears at once and fills as
-files are read, with a `--- 12 matches ---' line when it is done. Killing the
-listing stops it.
+files are read, with a `--- 12 matches ---' line when it is done. `C-c C-k' in
+the listing stops it, and so does closing the listing.
 
 Large generated directories -- `.git', `target', `node_modules' -- are not
 searched, and a file open with unsaved changes is searched as you have it
@@ -141,6 +141,15 @@ rather than as the disk has it."
 ;; Keys and faces
 ;; ---------------------------------------------------------------------------
 
+(defcommand grep-kill () nil
+  "Stop the search filling this listing. Bound to C-c C-k.
+
+What it has found so far stays listed, and the last line says the search
+stopped early. Closing the listing stops it as well."
+  (if (stop-worker (current-buffer))
+      (message "Stopping the search")
+      (message "No search is running in this buffer")))
+
 (define-key nil "M-s o" 'occur)
 (define-key nil "M-s g" 'grep)
 
@@ -149,6 +158,7 @@ rather than as the disk has it."
 (define-key 'occur-mode "n" 'next-line)
 (define-key 'occur-mode "p" 'previous-line)
 (define-key 'occur-mode "q" 'delete-window)
+(define-key 'occur-mode "C-c C-k" 'grep-kill)
 
 ;; The header and the trailer, so the shape of the list reads at a glance.
 (add-syntax-rule 'occur-mode "^--- .* ---$" 'comment)

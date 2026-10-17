@@ -126,8 +126,6 @@ impl<B: BufferTrait> EditorState<B> {
         let mut keymaps = Keymap::new();
         fill_default_keymaps(&mut keymaps);
 
-        // Create a secondary worker thread and the communication channels with it.
-        let (sender, receiver) = std::sync::mpsc::channel();
         // Made before the editor, so the WorkManager's reports can go to it.
         let log = Arc::new(RwLock::new(Log::default()));
         // And the WorkManager before the compartments, so the topics they
@@ -144,7 +142,6 @@ impl<B: BufferTrait> EditorState<B> {
 
         let editor_state = Self {
             running: Arc::new(AtomicBool::new(true)),
-            worker_mailbox: sender,
             work,
             background_change,
             buffers: Arc::new(RwLock::new(buffers)),
@@ -155,7 +152,6 @@ impl<B: BufferTrait> EditorState<B> {
             windows: Arc::new(RwLock::new(Windows::default())),
             commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
-            background_work: Arc::new(AtomicUsize::new(0)),
             current_results: Arc::new(RwLock::new(None)),
             macros: Arc::new(RwLock::new(Macros::default())),
             command_errors: Arc::new(AtomicUsize::new(0)),
@@ -172,7 +168,6 @@ impl<B: BufferTrait> EditorState<B> {
         // state did. A copy is a cycle -- the state holds the WorkManager --
         // and `shutdown` is what breaks it.
         editor_state.work.start(editor_state.clone());
-        BackgroundScheduler::spawn(receiver, editor_state.clone());
         // Colouring runs from here on, a bounded chunk at a time, whenever a
         // buffer or a grammar changes. Started at construction rather than
         // when a grammar is first defined, because a job waiting for a change

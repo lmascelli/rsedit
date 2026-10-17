@@ -1,14 +1,15 @@
 //! Searching a buffer, a file or a tree, and putting what was found where a
 //! view can show it.
 //!
-//! # Why the tree search runs on the worker
+//! # Why the tree search runs on a thread of its own
 //!
 //! For the reason a shell command does: it takes as long as it takes. A few
 //! thousand files is a moment, a home directory is not, and the difference is
-//! not knowable before starting. So a search over files is handed to the
-//! background worker and the editor carries on -- and results appear in the
-//! buffer as they are found, which is also how you tell a slow search from a
-//! stuck one.
+//! not knowable before starting. So a search over files gets a dedicated
+//! thread of the WorkManager, named after its listing, and the editor carries
+//! on -- and results appear in the buffer as they are found, which is also how
+//! you tell a slow search from a stuck one. `stop-worker` with the listing's
+//! name stops it, and so does closing the listing.
 //!
 //! A search of one buffer is not: the text is already in memory and the scan
 //! is one pass over it. Handing that to another thread would cost more than it
@@ -21,11 +22,11 @@
 //! text that is no longer there -- and, worse, offsets that land somewhere
 //! else entirely when you jump to them.
 use super::*;
-use crate::background::{ImmediateTask, WorkerMessage};
 use risp::eval;
 use crate::primitives::args;
 use crate::text::results::{Entry, KIND_BUFFER, KIND_FILE, RESULTS_KEY, Results};
 use crate::text::search::Pattern;
+use crate::work::{Stop, WorkId};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -115,15 +116,56 @@ fn unsaved_text<B: BufferTrait>(ctx: &EditorState<B>, path: &Path) -> Option<Str
     None
 }
 
-/// Scan TEXT and add what it finds to the set attached to BUFFER, writing each
-/// line into it as it goes.
+/// The buffer a search writes into, and who writes: the thread searching a
+/// tree, or nobody for a search done here, at once.
+#[derive(Clone, Copy)]
+struct Listing<'a> {
+    buffer: &'a str,
+    writer: Option<WorkId>,
+}
+
+impl Listing<'_> {
+    /// [`with_results_mut`], only while the buffer is still the writer's. See
+    /// `EditorState::append_as_writer`.
+    fn with_results_mut<B: BufferTrait, R>(
+        self,
+        ctx: &EditorState<B>,
+        body: impl FnOnce(&mut Results) -> R,
+    ) -> Option<R> {
+        ctx.with_buffer_mut(self.buffer, |buf| {
+            if self.writer.is_some_and(|writer| buf.writer != Some(writer)) {
+                return None;
+            }
+            buf.data_mut::<Results>(RESULTS_KEY).map(body)
+        })
+        .flatten()
+    }
+
+    /// Append TEXT to the buffer, as its writer when there is one.
+    fn write<B: BufferTrait>(self, ctx: &EditorState<B>, text: &str) {
+        match self.writer {
+            Some(writer) => {
+                if ctx.append_as_writer(self.buffer, writer, text) {
+                    ctx.changed_in_background();
+                }
+            }
+            None => {
+                ctx.append_to_buffer(self.buffer, text);
+            }
+        }
+    }
+}
+
+/// Scan TEXT and add what it finds to the set attached to the LISTING's
+/// buffer, writing each line into it as it goes.
 ///
 /// Returns how many were added. Nothing is added when the buffer has gone --
-/// the user killed it while the search was running, which is a reasonable
-/// thing to have done and the signal to stop.
+/// the user closed it while the search was running, which is a reasonable
+/// thing to have done and the signal to stop -- or when it is no longer the
+/// writer's.
 fn collect<B: BufferTrait>(
     ctx: &EditorState<B>,
-    buffer: &str,
+    listing: Listing,
     pattern: &Pattern,
     kind: &str,
     source: &str,
@@ -148,42 +190,54 @@ fn collect<B: BufferTrait>(
         rendered.push('\n');
     }
     let added = entries.len();
-    let stored = with_results_mut(ctx, buffer, |results| {
+    let stored = listing.with_results_mut(ctx, |results| {
         results.entries.extend(entries);
         results.truncated |= scan.truncated;
     });
     if stored.is_none() {
         return 0;
     }
-    ctx.append_to_buffer(buffer, &rendered);
+    listing.write(ctx, &rendered);
     added
 }
 
-/// Searching a tree, on the worker thread.
-struct TreeSearch {
-    pattern: Pattern,
-    root: PathBuf,
-    buffer: String,
-    limit: usize,
+/// Searching a tree, on a thread of its own.
+pub(crate) struct TreeSearch {
+    pub(crate) pattern: Pattern,
+    pub(crate) root: PathBuf,
+    pub(crate) buffer: String,
+    pub(crate) limit: usize,
 }
 
-impl<B: BufferTrait> ImmediateTask<B> for TreeSearch {
-    fn execute(self: Box<Self>, state: &EditorState<B>) {
+impl TreeSearch {
+    /// Walk the tree and list what matches in the buffer, until the walk is
+    /// done or STOP is raised. ME is the thread's own number: what the buffer
+    /// knows its writer by.
+    ///
+    /// Stopped, it ends as a search that hit its limit does: what was found
+    /// stands, and the trailer says the search stopped early.
+    pub(crate) fn run<B: BufferTrait>(self, state: &EditorState<B>, stop: &Stop, me: WorkId) {
+        let listing = Listing {
+            buffer: &self.buffer,
+            writer: Some(me),
+        };
         let prune: HashSet<String> = PRUNE.iter().map(|name| name.to_string()).collect();
         let (paths, walk_truncated) =
-            crate::primitives::io::walk_files(&self.root, &prune, &[], FILE_LIMIT);
+            crate::primitives::io::walk_files(&self.root, &prune, &[], FILE_LIMIT, &|| {
+                !stop.is_cancelled()
+            });
         if walk_truncated {
-            with_results_mut(state, &self.buffer, |results| results.truncated = true);
+            listing.with_results_mut(state, |results| results.truncated = true);
         }
         let mut found = 0usize;
         for relative in paths {
-            // The buffer going away is the user saying stop.
-            if !state.has_buffer(&self.buffer) {
-                state.finish_background_work();
-                return;
+            // Between two files: where a search can be put down.
+            if stop.is_cancelled() {
+                listing.with_results_mut(state, |results| results.truncated = true);
+                break;
             }
             if found >= self.limit {
-                with_results_mut(state, &self.buffer, |results| results.truncated = true);
+                listing.with_results_mut(state, |results| results.truncated = true);
                 break;
             }
             let path = self.root.join(&relative);
@@ -202,7 +256,7 @@ impl<B: BufferTrait> ImmediateTask<B> for TreeSearch {
             };
             found += collect(
                 state,
-                &self.buffer,
+                listing,
                 &self.pattern,
                 KIND_FILE,
                 &display,
@@ -210,8 +264,7 @@ impl<B: BufferTrait> ImmediateTask<B> for TreeSearch {
                 self.limit - found,
             );
         }
-        finish(state, &self.buffer, found);
-        state.finish_background_work();
+        finish(state, listing, found);
     }
 }
 
@@ -220,8 +273,8 @@ impl<B: BufferTrait> ImmediateTask<B> for TreeSearch {
 /// Last, and in this order: the trailer is what a reader sees, and marking a
 /// set done before its last line is in the buffer would let a view redraw an
 /// incomplete list and call it complete.
-fn finish<B: BufferTrait>(ctx: &EditorState<B>, buffer: &str, found: usize) {
-    let truncated = with_results_mut(ctx, buffer, |results| {
+fn finish<B: BufferTrait>(ctx: &EditorState<B>, listing: Listing, found: usize) {
+    let truncated = listing.with_results_mut(ctx, |results| {
         results.done = true;
         results.truncated
     });
@@ -229,23 +282,25 @@ fn finish<B: BufferTrait>(ctx: &EditorState<B>, buffer: &str, found: usize) {
         return;
     };
     let trailer = match (found, truncated) {
-        (0, _) => "--- nothing found ---\n".to_string(),
+        (0, false) => "--- nothing found ---\n".to_string(),
+        (0, true) => "--- nothing found, and the search stopped early ---\n".to_string(),
         (1, false) => "--- 1 match ---\n".to_string(),
+        (1, true) => "--- 1 match, and the search stopped early ---\n".to_string(),
         (n, false) => format!("--- {n} matches ---\n"),
         (n, true) => format!("--- {n} matches, and the search stopped early ---\n"),
     };
-    ctx.append_to_buffer(buffer, &trailer);
+    listing.write(ctx, &trailer);
 }
 
-/// Open the buffer a search will write into, with its header line in place.
+/// Open the buffer called NAME that a search will write into, with its header
+/// line in place. NAME is free already: the caller chose it.
 fn open_results<B: BufferTrait>(
     ctx: &EditorState<B>,
-    name: &str,
+    name: String,
     mode: &str,
     results: Results,
     env: &Arc<Env<EditorState<B>>>,
 ) -> String {
-    let name = ctx.free_buffer_name(name);
     ctx.new_buffer(&name, None, Some(mode.to_string()), env);
     ctx.append_to_buffer(&name, &format!("{} in {}\n", results.pattern, results.over));
     attach(ctx, &name, results);
@@ -264,7 +319,7 @@ pub const OCCUR_SCAN_DOC: &str = "(occur--scan PATTERN &optional REGEXP MODE): F
          `case-fold-search' says. MODE is the major mode the listing opens in, and defaults to \
          `occur-mode' -- a module gives the listing its own keys and colouring by passing one, \
          the way `compile' does for a shell command.\n\n\
-         Done at once rather than on the worker: the text is already in memory and the scan is \
+         Done at once rather than on a thread: the text is already in memory and the scan is \
          one pass over it.\n\n\
          What `occur' in the `occur' module is built on: this finds and attaches, that shows \
          the listing and takes you to it.\n\n\
@@ -288,21 +343,25 @@ primitive!(occur_scan, args, env, ctx, {
 
     let buffer = open_results(
         ctx,
-        "*Occur*",
+        ctx.free_buffer_name("*Occur*"),
         &mode,
         Results::new(&source_pattern, &source),
         &env,
     );
+    let listing = Listing {
+        buffer: &buffer,
+        writer: None,
+    };
     let found = collect(
         ctx,
-        &buffer,
+        listing,
         &pattern,
         KIND_BUFFER,
         &source,
         &text,
         DEFAULT_LIMIT,
     );
-    finish(ctx, &buffer, found);
+    finish(ctx, listing, found);
     ctx.set_current_results(Some(buffer.clone()));
     Ok(ELispExp::string(buffer))
 });
@@ -311,16 +370,18 @@ pub const GREP_SCAN_DOC: &str = "(grep--scan PATTERN &optional DIRECTORY REGEXP 
          DIRECTORY -- the current directory when it is omitted -- matching PATTERN, and list \
          them in a buffer of their own. Returns that buffer's name at once, while the search is \
          still running.\n\n\
-         The search is done by the background worker, so the editor stays usable, and results \
-         appear as they are found -- which is also how you tell a slow search from a stuck one. \
-         A `--- 12 matches ---' trailer is written when it finishes.\n\n\
+         The search runs on a thread of its own, named after the listing, so the editor stays \
+         usable, and results appear as they are found -- which is also how you tell a slow \
+         search from a stuck one. A `--- 12 matches ---' trailer is written when it \
+         finishes.\n\n\
          A file open in a buffer with unsaved changes is searched *as the buffer has it*, not as \
          the disk does, so what is reported is what is on screen. Files that are not text are \
          skipped without comment; every repository has some.\n\n\
          `.git', `target', `node_modules' and the rest of the large generated directories are \
          not descended into, the same list `find-file-recursive' skips.\n\n\
-         Entries are attached to the buffer as a result set, so `next-error' walks them. Killing \
-         the buffer stops the search, which is the only way to call one off.\n\n\
+         Entries are attached to the buffer as a result set, so `next-error' walks them. \
+         `(stop-worker BUFFER)' stops the search, and so does closing BUFFER: what was found \
+         stays listed, and the trailer says the search stopped early.\n\n\
          What `grep' in the `occur' module is built on.\n\n\
          Example:\n\
          (grep--scan \"TODO\")\n\
@@ -346,25 +407,27 @@ primitive!(grep_scan, args, env, ctx, {
         return Ok(ELispExp::nil());
     }
 
+    // Named so that the search, which takes the name too, cannot stop
+    // whatever work already had it.
     let buffer = open_results(
         ctx,
-        "*Grep*",
+        ctx.free_name_for_work("*Grep*"),
         &mode,
         Results::new(&source_pattern, &root.to_string_lossy()),
         &env,
     );
-    // Counted before the task is sent, as the shell command's is: the worker
-    // may not reach it for a moment, and a frame drawn in that moment would
-    // decide nothing was running and go back to sleep until a key was pressed.
-    ctx.begin_background_work();
-    if !ctx.send_to_worker(WorkerMessage::RunNow(Box::new(TreeSearch {
+    let search = TreeSearch {
         pattern,
         root,
         buffer: buffer.clone(),
         limit: DEFAULT_LIMIT,
-    }))) {
-        ctx.finish_background_work();
-        ctx.set_echo_message("The background worker has gone");
+    };
+    if ctx
+        .spawn_writer(&buffer, move |state, stop, me| search.run(state, stop, me))
+        .is_none()
+    {
+        // Only as the editor shuts down.
+        ctx.set_echo_message("The editor's background work has shut down");
         return Ok(ELispExp::nil());
     }
     ctx.set_current_results(Some(buffer.clone()));

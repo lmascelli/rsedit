@@ -81,8 +81,9 @@ mod tests {
     /// then **again for every floating window**, and to acquire `buffers` four
     /// separate times. A focus change landing between two of those reads
     /// produced a frame with two focused windows, or none -- a cursor drawn in
-    /// two places at once. That is not hypothetical: `BackgroundScheduler`
-    /// already runs with a clone of `EditorState`, and `(spawn ...)` adds more.
+    /// two places at once. That is not hypothetical: the WorkManager's
+    /// executor and threads run with a clone of `EditorState`, and
+    /// `(spawn ...)` adds more.
     ///
     /// This opens a floating window so the float path is actually exercised,
     /// hammers the buffers from three threads, and checks the one invariant

@@ -2,7 +2,7 @@
 //!
 //! # Why there is a queue at all
 //!
-//! A job runs on the worker thread, and the thing it was started for -- a
+//! A job runs on the WorkManager's executor, and what it was started for -- a
 //! completion list, a listing, an index -- belongs to a mode. Letting the job
 //! call the mode directly would be letting Lisp written for the command
 //! thread run at an arbitrary instant on another one: half-way through an

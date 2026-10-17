@@ -8,10 +8,10 @@
 ;;;
 ;;; `shell-output-mode' exists so the transcript can be read without being
 ;;; typed into, and so `q' means what it means in every other listing here. The
-;;; buffer is read-only from the moment it is created -- the worker thread
-;;; lifts that for exactly as long as it takes to append a line, under the
-;;; buffer's own lock, which is a stronger guarantee than a Lisp module can
-;;; make for itself.
+;;; buffer is read-only from the moment it is created -- the thread reading the
+;;; command lifts that for exactly as long as it takes to append its output,
+;;; under the buffer's own lock, which is a stronger guarantee than a Lisp
+;;; module can make for itself.
 ;;;
 ;;; # Several at once
 ;;;
@@ -19,6 +19,13 @@
 ;;; `*Shell Output*<2>'. Two commands writing into one buffer would interleave
 ;;; their lines into something neither of them said. The cost is that a long
 ;;; session leaves buffers behind -- `C-x C-b' and `d' is how they go.
+;;;
+;;; # Stopping one
+;;;
+;;; A command is known by the name of its buffer: `C-c C-k' in the buffer, or
+;;; `(stop-worker NAME)' from anywhere, stops it, and so does closing the
+;;; buffer. The command and everything it started are sent TERM, and KILL two
+;;; seconds later if they are still there.
 
 (make-mode 'shell-output-mode)
 
@@ -64,6 +71,16 @@ prompt is the only thing standing between reading it and running it."
         (shell-command command))
       (message "No region")))
 
+(defcommand shell-command-kill () nil
+  "Stop the command whose output is in this buffer. Bound to C-c C-k.
+
+The command and everything it started are asked to stop, and made to two
+seconds later if they have not. The buffer stays, ending with `--- killed ---'.
+Closing the buffer stops the command as well."
+  (if (stop-worker (current-buffer))
+      (message "Stopping %s" (current-buffer))
+      (message "Nothing is running in this buffer")))
+
 (define-key nil "M-!" 'shell-command)
 (define-key nil "C-c !" 'shell-command-on-region)
 
@@ -72,6 +89,7 @@ prompt is the only thing standing between reading it and running it."
 (define-key 'shell-output-mode "g" 'beginning-of-buffer)
 (define-key 'shell-output-mode "G" 'end-of-buffer)
 (define-key 'shell-output-mode "q" 'delete-window)
+(define-key 'shell-output-mode "C-c C-k" 'shell-command-kill)
 
 ;; The exit line, so a failure is visible at a glance rather than read. The
 ;; face is chosen by what the number is, which is the whole of why the trailer

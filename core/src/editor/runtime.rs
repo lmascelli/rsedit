@@ -1,5 +1,5 @@
 //! Odds and ends belonging to the session rather than to any document:
-//! whether the editor is running, what the worker is doing, and the small
+//! whether the editor is running, how many shell commands are, and the small
 //! pieces of state that reset between commands.
 
 use super::*;
@@ -55,23 +55,13 @@ impl<B: BufferTrait> EditorState<B> {
         self.runtime(|runtime| runtime.isearch_active())
     }
 
-    /// Send a task to the worker thread, and say whether it was accepted.
-    ///
-    /// The mailbox used to be a public field, so anything could post work to
-    /// the background scheduler. It is a method now for the same reason the
-    /// rest of the state is: there is exactly one queue, and the count of what
-    /// is in flight has to be kept in step with it -- see `begin_shell_command`.
-    pub(crate) fn send_to_worker(&self, message: WorkerMessage<B>) -> bool {
-        self.worker_mailbox.send(message).is_ok()
-    }
-
     /// Note that a shell command has started.
     pub(crate) fn begin_shell_command(&self) {
         self.shell_commands.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Note that one has finished. Called from the worker thread, after the
-    /// last of its output is in the buffer.
+    /// Note that one has finished. Called from the command's own thread, after
+    /// the last of its output is in the buffer.
     pub(crate) fn finish_shell_command(&self) {
         finish_one(&self.shell_commands);
     }
@@ -79,29 +69,6 @@ impl<B: BufferTrait> EditorState<B> {
     /// How many shell commands are still running.
     pub(crate) fn shell_commands_running(&self) -> usize {
         self.shell_commands.load(Ordering::Relaxed)
-    }
-
-    /// Note that something on the worker has started changing what is on
-    /// screen -- a search filling a listing, a background call building an
-    /// index.
-    ///
-    /// A second counter beside the shell's rather than one shared with it,
-    /// because `shell-command-running-p` answers a question people ask -- "is
-    /// my build still going" -- and a search of a directory is not an answer
-    /// to it. What the two share is the *consequence*: the renderer has to
-    /// keep waking while either is working, since neither waits for a key.
-    pub(crate) fn begin_background_work(&self) {
-        self.background_work.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Note that one has finished. Called from the worker thread, after the
-    /// last of its results is in the buffer.
-    pub(crate) fn finish_background_work(&self) {
-        finish_one(&self.background_work);
-    }
-
-    pub(crate) fn background_work_running(&self) -> usize {
-        self.background_work.load(Ordering::Relaxed)
     }
 
     /// Which buffer's results `next-error` walks, or `None`.

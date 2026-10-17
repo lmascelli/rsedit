@@ -7,13 +7,19 @@ SYNOPSIS
     n, p         move between locations in the buffer
     M-g n, M-g p walk them from anywhere
     g            run the same command again
+    C-c C-k      stop the command
     q            put the window away
 
 DESCRIPTION
     The running is `shell-command-start', unchanged: asynchronous, output
-    appended as it arrives, an "--- exited N ---" trailer at the end. This
-    module is the mode put on that buffer, plus the navigation. There is no
-    second way of running processes.
+    appended as it arrives -- standard error with standard output, in the
+    order the compiler wrote them -- and an "--- exited N ---" trailer at the
+    end. This module is the mode put on that buffer, plus the navigation.
+    There is no second way of running processes.
+
+    C-c C-k stops the build, and so does closing its buffer: the command and
+    everything it started are sent TERM, and KILL two seconds later if they
+    are still there. The trailer then says "--- killed ---".
 
 LOCATIONS
     A line names a place when one of `compilation-patterns' matches it. Each

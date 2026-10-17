@@ -328,16 +328,10 @@ impl<B: BufferTrait> EditorState<B> {
         // can colour. Coming back every interval shows it as it lands, at a
         // rate that reads as live and costs a frame now and then.
         let colouring = frame.colouring_pending.then_some(TURN_INTERVAL);
-        // Output from a running command arrives without anybody pressing a
-        // key, so the renderer has to come back and look. Same interval as
-        // colouring for the same reason: it is short enough to read as live
-        // and long enough to cost nothing.
-        let shell = (self.shell_commands_running() > 0).then_some(TURN_INTERVAL);
-        // Work on the worker that changes what is on screen is the same
-        // situation: results arrive and nobody has pressed a key.
-        let background = (self.background_work_running() > 0).then_some(TURN_INTERVAL);
         // A job on the WorkManager has changed something since the frame was
-        // composed: draw it, a turn after the last frame at the soonest.
+        // composed, or a thread of the editor's has -- a line of a command's
+        // output, a search result: draw it, a turn after the last frame at
+        // the soonest.
         let stepped = self.background_change.due_in();
         // A callback a job has already left is not something to wait for: it
         // is something to do, and the loop does it the moment it is told the
@@ -345,17 +339,10 @@ impl<B: BufferTrait> EditorState<B> {
         // ready now and a mode waiting to be told its list grew should not
         // spend a frame's worth of time not knowing.
         let owed = self.callbacks_owed().then_some(Duration::ZERO);
-        [
-            self.echo_expiry_in(env),
-            colouring,
-            shell,
-            background,
-            stepped,
-            owed,
-        ]
-        .into_iter()
-        .flatten()
-        .min()
+        [self.echo_expiry_in(env), colouring, stepped, owed]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     /// Set the echo message to be MSG, and start its timeout running.

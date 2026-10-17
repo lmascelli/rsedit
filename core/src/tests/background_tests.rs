@@ -22,13 +22,12 @@
 //!   until a key is pressed.
 #[cfg(test)]
 mod tests {
-    use crate::background::{ImmediateTask, WorkerMessage};
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use crate::modes::highlighter::TURN_INTERVAL;
     use risp::{Env, LispExp, Parser, eval};
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     type Ctx = EditorState<GapBuffer>;
@@ -660,37 +659,29 @@ mod tests {
     // Which thread a task believes it is on
     // ----------------------------------------------------------------
 
-    /// An `ImmediateTask` that does nothing but report where it woke up.
-    struct WhereAmI(Arc<Mutex<Option<bool>>>);
-
-    impl ImmediateTask<GapBuffer> for WhereAmI {
-        fn execute(self: Box<Self>, _state: &Ctx) {
-            *self.0.lock().expect("the probe's slot") = Some(crate::editor::in_worker());
-        }
+    /// Where a thread of the editor's own believes it is, as it starts.
+    fn where_a_thread_wakes(ctx: &Ctx) -> bool {
+        let (tell, told) = std::sync::mpsc::channel();
+        ctx.spawn_work("where-am-i", move |_state, _stop, _me| {
+            let _ = tell.send(crate::editor::in_worker());
+        })
+        .expect("the thread started");
+        told.recv_timeout(Duration::from_secs(10))
+            .expect("the thread never ran")
     }
 
     #[test]
-    fn a_task_on_its_own_thread_still_knows_it_is_not_the_command_thread() {
+    fn a_thread_of_its_own_still_knows_it_is_not_the_command_thread() {
         // The flag is what `minibuffer-read' consults before refusing to put
-        // up a prompt nobody is typing into, and a task with a thread of its
-        // own is further from the command thread than anything else here --
-        // so it is the case most in need of the flag and the one most easily
-        // left out.
+        // up a prompt nobody is typing into, and a thread of its own is
+        // further from the command thread than anything else here -- so it
+        // is the case most in need of the flag and the one most easily left
+        // out.
         let (ctx, _env) = editor();
-        let answer = Arc::new(Mutex::new(None));
         assert!(
-            ctx.send_to_worker(WorkerMessage::RunNow(Box::new(WhereAmI(answer.clone())))),
-            "the scheduler took it"
+            where_a_thread_wakes(&ctx),
+            "a thread must not believe it is the command thread"
         );
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if let Some(seen) = *answer.lock().expect("the probe's slot") {
-                assert!(seen, "a task must not believe it is the command thread");
-                return;
-            }
-            assert!(Instant::now() < deadline, "the task never ran");
-            std::thread::sleep(Duration::from_millis(2));
-        }
     }
 
     #[test]
@@ -718,16 +709,123 @@ mod tests {
     #[test]
     fn the_command_thread_knows_it_is_the_command_thread() {
         // The other half, and the one that would fail if the flag were ever
-        // left set: a task's thread setting it must not be visible here.
+        // left set: a thread setting it must not be visible here.
         let (ctx, _env) = editor();
-        let answer = Arc::new(Mutex::new(None));
-        ctx.send_to_worker(WorkerMessage::RunNow(Box::new(WhereAmI(answer.clone()))));
+        where_a_thread_wakes(&ctx);
+        assert!(!crate::editor::in_worker(), "this thread is the user's");
+    }
+
+    // ----------------------------------------------------------------
+    // Work that writes into a buffer
+    // ----------------------------------------------------------------
+
+    /// Start a thread that writes into NAME, as a command or a search does,
+    /// and waits to be stopped: it reports when it has been, and whether its
+    /// last line was let in.
+    fn waiting_writer(ctx: &Ctx, name: &str) -> std::sync::mpsc::Receiver<bool> {
+        let (tell, told) = std::sync::mpsc::channel();
+        let buffer = name.to_string();
+        ctx.spawn_writer(name, move |state, stop, me| {
+            let (unblock, blocked) = std::sync::mpsc::channel::<()>();
+            stop.on_cancel(move || drop(unblock));
+            let _ = blocked.recv();
+            let _ = tell.send(state.append_as_writer(&buffer, me, "last\n"));
+        })
+        .expect("the thread started");
+        told
+    }
+
+    #[test]
+    fn a_writer_for_a_buffer_that_is_not_there_is_stopped_at_once() {
+        // Its buffer went before it could be told who writes into it -- closed
+        // from another thread in that moment: nothing would ever stop the
+        // work, so it is stopped then, before it has written anything.
+        let (ctx, _env) = editor();
+        let (tell, told) = std::sync::mpsc::channel();
+        ctx.spawn_writer("*nowhere*", move |_state, stop, _me| {
+            let _ = tell.send(stop.is_cancelled());
+        })
+        .expect("the thread started");
+        assert_eq!(told.recv_timeout(Duration::from_secs(10)), Ok(true));
+    }
+
+    #[test]
+    fn closing_a_buffer_stops_what_writes_into_it() {
+        let (ctx, env) = editor();
+        run(r#"(buffer-create "*writer*")"#, &env, &ctx);
+        let told = waiting_writer(&ctx, "*writer*");
+        assert!(ctx.with_buffer("*writer*", |buf| buf.writer.is_some()) == Some(true));
+        assert!(ctx.close_buffer("*writer*", &env));
+        assert_eq!(
+            told.recv_timeout(Duration::from_secs(10)),
+            Ok(false),
+            "it was stopped, and its last line had nowhere to go"
+        );
+    }
+
+    #[test]
+    fn a_stopped_writer_cannot_write_into_a_new_buffer_of_the_same_name() {
+        // Close a command's output and start another, and the new buffer may
+        // well have the old one's name -- while the old command, stopping,
+        // still has its last line to write.
+        let (ctx, env) = editor();
+        run(r#"(buffer-create "*writer*")"#, &env, &ctx);
+        let told = waiting_writer(&ctx, "*writer*");
+        // The buffer made to forget its writer first, so that closing it
+        // does not stop the writer: still waiting when the new buffer
+        // arrives, it is stopped by name after.
+        ctx.with_buffer_mut("*writer*", |buf| buf.writer = None);
+        run(
+            r#"(close-buffer "*writer*") (buffer-create "*writer*")"#,
+            &env,
+            &ctx,
+        );
+        assert!(!run(r#"(stop-worker "*writer*")"#, &env, &ctx).is_nil());
+        assert_eq!(told.recv_timeout(Duration::from_secs(10)), Ok(false));
+        assert_eq!(
+            ctx.with_buffer("*writer*", |buf| buf.text.to_string()),
+            Some(String::new()),
+            "the new buffer is not the old writer's"
+        );
+    }
+
+    #[test]
+    fn a_writer_s_buffer_is_its_own_while_it_runs_and_free_after() {
+        let (ctx, env) = editor();
+        run(r#"(buffer-create "*writer*")"#, &env, &ctx);
+        let told = waiting_writer(&ctx, "*writer*");
+        assert!(!run(r#"(stop-worker "*writer*")"#, &env, &ctx).is_nil());
+        assert_eq!(
+            told.recv_timeout(Duration::from_secs(10)),
+            Ok(true),
+            "stopped by name, the buffer is still its own"
+        );
         let deadline = Instant::now() + Duration::from_secs(10);
-        while answer.lock().expect("the probe's slot").is_none() {
-            assert!(Instant::now() < deadline, "the task never ran");
+        while ctx.with_buffer("*writer*", |buf| buf.writer.is_some()) == Some(true) {
+            assert!(
+                Instant::now() < deadline,
+                "the buffer still names its writer"
+            );
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(!crate::editor::in_worker(), "this thread is the user's");
+        assert_eq!(
+            ctx.with_buffer("*writer*", |buf| buf.text.to_string()),
+            Some("last\n".to_string())
+        );
+    }
+
+    #[test]
+    fn a_name_work_has_taken_is_not_given_to_a_new_buffer() {
+        // A buffer and the work writing into it share a name: a name only the
+        // buffers had given up -- the old output renamed -- must not be
+        // handed out again while the work under it runs.
+        let (ctx, env) = editor();
+        run(r#"(buffer-create "*writer*")"#, &env, &ctx);
+        let told = waiting_writer(&ctx, "*writer*");
+        assert!(ctx.rename_buffer("*writer*", "*renamed*"));
+        assert_eq!(ctx.free_name_for_work("*writer*"), "*writer*<2>");
+        assert!(!run(r#"(stop-worker "*writer*")"#, &env, &ctx).is_nil());
+        assert!(told.recv_timeout(Duration::from_secs(10)).is_ok());
     }
 
     // ----------------------------------------------------------------

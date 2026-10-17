@@ -81,9 +81,9 @@ pub(crate) fn in_worker() -> bool {
 /// # Who holds one
 ///
 /// A Lisp job, around each of its steps: the executor's thread is shared with
-/// the Rust jobs, which run no Lisp and so have nothing to refuse. And the
-/// old scheduler, around every thread it starts for a shell command or a
-/// search.
+/// the Rust jobs, which run no Lisp and so have nothing to refuse. And
+/// [`EditorState::spawn_work`], around the whole life of every thread it
+/// starts -- a shell command's, a search's.
 ///
 /// # Why it nests
 ///
@@ -206,5 +206,87 @@ impl<B: BufferTrait> EditorState<B> {
     /// across the interpreter. Every call answers at once.
     pub(crate) fn work(&self) -> &WorkManager<Self> {
         &self.work
+    }
+
+    /// Start BODY on a thread of its own called NAME: work that may block,
+    /// which no step may do -- reading a process's output, walking a tree.
+    ///
+    /// BODY is handed the editor, the [`Stop`] that `stop-worker` raises and
+    /// its own number. The thread is off the command thread for its whole
+    /// life, so a prompt cannot be put up from it, and when BODY returns the
+    /// host is told to look: whatever it changed last is drawn. `None` when
+    /// the thread could not be started -- the editor is shutting down, or
+    /// the system will not give one.
+    pub(crate) fn spawn_work(
+        &self,
+        name: &str,
+        body: impl FnOnce(&EditorState<B>, &Stop, WorkId) + Send + 'static,
+    ) -> Option<WorkId> {
+        let state = self.clone();
+        self.work.spawn(name, move |stop, id| {
+            let _off_the_command_thread = WorkerTurn::begin();
+            body(&state, &stop, id);
+            state.changed_in_background();
+        })
+    }
+
+    /// Start BODY on a thread of its own that writes into BUFFER, and is known
+    /// by its name: a shell command, a search. `stop-worker BUFFER` stops it,
+    /// and so does closing the buffer.
+    ///
+    /// The buffer is told who writes into it before BODY can write a line:
+    /// [`Self::append_as_writer`] refuses every other writer, and a line
+    /// written in the moment before the buffer knew would be lost. When BODY
+    /// returns, the buffer has no writer again. A buffer gone before it could
+    /// be told -- closed from another thread in that moment -- stops the work
+    /// at once, which BODY then finds out as it would from `stop-worker`.
+    pub(crate) fn spawn_writer(
+        &self,
+        buffer: &str,
+        body: impl FnOnce(&EditorState<B>, &Stop, WorkId) + Send + 'static,
+    ) -> Option<WorkId> {
+        let (go, gate) = std::sync::mpsc::sync_channel::<()>(1);
+        let name = buffer.to_string();
+        let id = self.spawn_work(buffer, move |state, stop, id| {
+            // Whatever the answer: a gate that closed without one is a
+            // spawner that went away, and the stop is what says so.
+            let _ = gate.recv();
+            body(state, stop, id);
+            state.release_writer(&name, id);
+        })?;
+        let told = self
+            .with_buffer_mut(buffer, |buf| buf.writer = Some(id))
+            .is_some();
+        if !told {
+            self.work.cancel(id);
+        }
+        let _ = go.send(());
+        Some(id)
+    }
+
+    /// Something has changed the screen from a thread of the editor's own --
+    /// output appended, a result found. Tells the host, as the end of a step
+    /// does; see [`Self::on_background_change`]. Cheap enough for every line:
+    /// only the first since the last snapshot does more than set a flag.
+    pub(crate) fn changed_in_background(&self) {
+        self.background_change.raise();
+    }
+
+    /// STEM, or `STEM<2>`, `STEM<3>` -- the first that no buffer and no work
+    /// is using: the name for a buffer that work started now will write into,
+    /// and will be known by.
+    ///
+    /// Free in both places, because the two share it. A name only the buffers
+    /// had given up -- a command's buffer renamed while it runs -- would
+    /// otherwise stop that command the moment a new one took the name.
+    pub(crate) fn free_name_for_work(&self, stem: &str) -> String {
+        let taken = |name: &str| self.has_buffer(name) || self.work.is_named(name);
+        if !taken(stem) {
+            return stem.to_string();
+        }
+        (2..)
+            .map(|n| format!("{stem}<{n}>"))
+            .find(|candidate| !taken(candidate))
+            .expect("the names run out only with the integers")
     }
 }

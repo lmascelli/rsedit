@@ -23,7 +23,7 @@
 //!
 //! The executor holds a copy of the state, and in the editor the state holds
 //! the WorkManager: a cycle of references, which `Drop` cannot break. The same
-//! cycle keeps today's `BackgroundScheduler` alive for ever, one thread for
+//! cycle kept the scheduler before this one alive for ever, one thread for
 //! every editor ever built. So the host calls [`WorkManager::shutdown`] when
 //! the editor exits, and a test that starts threads calls it too.
 use std::collections::{BTreeMap, HashMap};
@@ -307,10 +307,15 @@ impl<C: Send + 'static> WorkManager<C> {
     /// Start BODY on a dedicated thread called NAME, and answer with its
     /// number: work that may block, which no step may do.
     ///
-    /// BODY is handed the [`Stop`] that [`Self::cancel`] raises. Work that
-    /// already has the name is stopped, as with [`Self::submit`]. `None` after
-    /// [`Self::shutdown`], or when the system will not give a thread.
-    pub fn spawn(&self, name: &str, body: impl FnOnce(Stop) + Send + 'static) -> Option<WorkId> {
+    /// BODY is handed the [`Stop`] that [`Self::cancel`] raises, and its own
+    /// number, as a job's step is: what it can tell its own writes by. Work
+    /// that already has the name is stopped, as with [`Self::submit`]. `None`
+    /// after [`Self::shutdown`], or when the system will not give a thread.
+    pub fn spawn(
+        &self,
+        name: &str,
+        body: impl FnOnce(Stop, WorkId) + Send + 'static,
+    ) -> Option<WorkId> {
         let shared = &self.shared;
         let id = WorkId::next();
         let stop = Stop::default();
@@ -322,7 +327,7 @@ impl<C: Send + 'static> WorkManager<C> {
             let replaced = registry.withdraw_named(name, &shared.inbox);
             let handed = stop.clone();
             let started = start_thread(&self.thread_name(name), shared.lives.enter(), move || {
-                body(handed)
+                body(handed, id)
             });
             let started = started.map(|handle| {
                 registry.names.insert(name.to_string(), id);
@@ -368,6 +373,9 @@ impl<C: Send + 'static> WorkManager<C> {
     /// such work: it has finished, or never was.
     pub fn cancel(&self, id: WorkId) -> bool {
         let shared = &self.shared;
+        // A thread that has finished is not there to stop, though it stays
+        // listed until it is joined: so it is joined first.
+        shared.reap();
         let withdrawn = shared
             .registry
             .lock()
@@ -379,6 +387,7 @@ impl<C: Send + 'static> WorkManager<C> {
     /// [`Self::cancel`] the work called NAME.
     pub fn cancel_named(&self, name: &str) -> bool {
         let shared = &self.shared;
+        shared.reap();
         let withdrawn = shared
             .registry
             .lock()
@@ -397,6 +406,17 @@ impl<C: Send + 'static> WorkManager<C> {
     /// ignored and answers false.
     pub fn after_step(&self, hook: impl Fn() + Send + Sync + 'static) -> bool {
         self.shared.after_step.set(Box::new(hook)).is_ok()
+    }
+
+    /// Whether work -- a job or a thread -- is running under NAME.
+    ///
+    /// For whoever names work after something else that must be unique too: a
+    /// shell command takes the name of the buffer it writes into, and that
+    /// name has to be free here as well, or starting the command would stop
+    /// whatever already had it.
+    pub fn is_named(&self, name: &str) -> bool {
+        let registry = self.shared.registry.lock().expect("work registry");
+        registry.names.contains_key(name)
     }
 
     /// Whether ID is the newest work submitted under NAME, and has not been

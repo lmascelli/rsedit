@@ -220,22 +220,34 @@ impl<B: BufferTrait> EditorState<B> {
     /// command's output and a search's results -- which held the same thirteen
     /// lines each, differing only in the wording of the complaint.
     pub(crate) fn append_to_buffer(&self, name: &str, text: &str) -> bool {
+        self.with_buffer_mut(name, |buf| append(buf, text)) == Some(true)
+    }
+
+    /// [`Self::append_to_buffer`], from the work numbered WRITER, and only
+    /// while the buffer is still the one it writes into.
+    ///
+    /// A buffer is a name, and names are given out again: close a command's
+    /// output and start another, and the new buffer may well be called what
+    /// the old one was -- while the old command, stopping, still has a last
+    /// line to write. Asking whose buffer it is, under the same lock as the
+    /// write, is what keeps that line out of the new command's output.
+    pub(crate) fn append_as_writer(&self, name: &str, writer: WorkId, text: &str) -> bool {
+        self.with_buffer_mut(name, |buf| buf.writer == Some(writer) && append(buf, text))
+            == Some(true)
+    }
+
+    /// The work numbered WRITER has stopped writing into NAME, if it still was.
+    pub(crate) fn release_writer(&self, name: &str, writer: WorkId) {
         self.with_buffer_mut(name, |buf| {
-            let was_read_only = buf.read_only;
-            buf.read_only = false;
-            let at = buf.text.len();
-            // Cannot fail here -- the only thing `insert_text` refuses is a
-            // read-only buffer, and the flag was just cleared under this same
-            // lock. Checked rather than discarded so that if it ever grows
-            // another reason to refuse, the text going missing is reported
-            // instead of silently not appearing.
-            let written = crate::primitives::edits::insert_text(buf, at, text);
-            buf.read_only = was_read_only;
-            written
-        }) == Some(true)
+            if buf.writer == Some(writer) {
+                buf.writer = None;
+            }
+        });
     }
 
     /// STEM, or `STEM<2>`, `STEM<3>` -- the first that no buffer is using.
+    /// For a buffer that work will write into, see
+    /// [`Self::free_name_for_work`].
     ///
     /// What makes a second `M-!` or a second `occur` open a buffer of its own
     /// rather than writing into the first one's. The two callers spelt this out
@@ -288,7 +300,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// none. Returns `false` if no buffer named NAME exists, `true`
     /// otherwise.
     pub fn close_buffer(&self, name: &str, env: &Arc<Env<EditorState<B>>>) -> bool {
-        let Some(closing_mode) = self.with_buffer(name, |buf| buf.current_mode.clone()) else {
+        let Some((closing_mode, writer)) =
+            self.with_buffer(name, |buf| (buf.current_mode.clone(), buf.writer))
+        else {
             return false;
         };
 
@@ -384,6 +398,14 @@ impl<B: BufferTrait> EditorState<B> {
             self.initialize_buffer("*scratch*", false, env);
         }
 
+        // Whatever is writing into it from a thread of its own stops with it:
+        // a command whose output has nowhere to go is a process nobody can see
+        // and nobody can stop. Asked once the buffer has left the table, so
+        // that nothing it writes from the moment it is asked can land.
+        if let Some(writer) = writer {
+            self.work.cancel(writer);
+        }
+
         self.run_hook(&closing_mode, "after-close-hook", env);
         true
     }
@@ -451,4 +473,20 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn set_current_buffer(&self, name: &str) -> Option<Arc<str>> {
         self.buffers_mut(|buffers| buffers.bind_current(name))
     }
+}
+
+/// Append TEXT to BUF, read-only or not. See
+/// [`EditorState::append_to_buffer`] for why the flag goes down and up again
+/// under the one lock.
+fn append<B: BufferTrait>(buf: &mut Buffer<B>, text: &str) -> bool {
+    let was_read_only = buf.read_only;
+    buf.read_only = false;
+    let at = buf.text.len();
+    // Cannot fail here -- the only thing `insert_text` refuses is a read-only
+    // buffer, and the flag was just cleared under this same lock. Checked
+    // rather than discarded so that if it ever grows another reason to refuse,
+    // the text going missing is reported instead of silently not appearing.
+    let written = crate::primitives::edits::insert_text(buf, at, text);
+    buf.read_only = was_read_only;
+    written
 }

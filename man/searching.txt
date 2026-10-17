@@ -53,7 +53,9 @@ EVERY MATCH AT ONCE
     open and modified, which it searches as you have them.
 
     Both fill in as they go rather than making you wait for the whole answer,
-    and a large tree is cut off rather than read to the end.
+    and a large tree is cut off rather than read to the end. C-c C-k in a
+    grep listing stops the search, and closing the listing does too; what was
+    found stays, and the last line says the search stopped early.
 
 WALKING THE RESULTS
     M-g n goes to the next thing in the current list of places, and M-g p to
@@ -78,6 +80,7 @@ KEYS IN OCCUR MODE
     o                       occur-show
     n                       next-line
     p                       previous-line
+    C-c C-k                 grep-kill
 
 SEE ALSO
     editing, compile, first-steps

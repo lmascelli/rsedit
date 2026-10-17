@@ -30,7 +30,6 @@
 
 use crate::{
     ELispExp,
-    background::{BackgroundScheduler, WorkerMessage},
     buffer::{Buffer, BufferTrait, FileStamp},
     commands::{ArgSpec, Invocation, PrefixArg},
     feature::isearch::install_isearch,
@@ -56,7 +55,7 @@ use crate::{
         LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,
         Window, WindowId, compose_layout, layout, region_highlights,
     },
-    work::{Topic, WorkId, WorkManager},
+    work::{Stop, Topic, WorkId, WorkManager},
 };
 
 use risp::{
@@ -70,7 +69,6 @@ use std::{
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-        mpsc::Sender,
     },
     time::{Duration, Instant},
 };
@@ -143,19 +141,16 @@ impl EchoMessage {
 #[derive(Clone)]
 pub struct EditorState<B: BufferTrait> {
     running: Arc<AtomicBool>,
-    /// A channel that is used to send work to a worker thread like
-    /// the syntax highlighting computation
-    worker_mailbox: Sender<WorkerMessage<B>>,
 
     /// Where asynchronous work runs: the scheduler and its executor, the
     /// dedicated threads and what watches them. See [`crate::work`].
     ///
-    /// It takes over from the mailbox above one job at a time: colouring, the
-    /// prescanner, the file watcher, the auto-saver and every Lisp job run on
-    /// it, and only shell commands and searches still go through the mailbox.
-    /// In this crate's own tests it is in manual mode: nothing runs unless
-    /// the test drives it, so no test is raced by a thread it did not ask
-    /// for.
+    /// Everything runs on it: colouring, the prescanner, the file watcher, the
+    /// auto-saver and every Lisp job as jobs, and shell commands and searches
+    /// on threads of their own. In this crate's own tests it is in manual
+    /// mode: no job runs unless the test drives it, so no test is raced by a
+    /// thread it did not ask for. A dedicated thread is a real one in both
+    /// modes -- a process does not wait to be driven.
     work: WorkManager<EditorState<B>>,
 
     /// Whether a job has changed the screen since the last snapshot, and how
@@ -222,27 +217,14 @@ pub struct EditorState<B: BufferTrait> {
     /// one lock and not five.
     commands: Arc<RwLock<Commands<B>>>,
 
-    /// How many shell commands are still running.
-    ///
-    /// # Why the editor counts them
-    ///
-    /// Output arrives from the worker thread, on its own, with nobody touching
-    /// the keyboard -- the same situation syntax colouring is in, and it has
-    /// the same consequence: a renderer blocked on input sleeps straight
-    /// through it, and the output appears only when some key is pressed. So
-    /// [`Self::next_redraw_in`] asks this, and keeps waking while anything is
-    /// running.
+    /// How many shell commands are still running: what
+    /// `shell-command-running-p` answers.
     ///
     /// A count rather than a flag because several commands can run at once,
-    /// each into a buffer of its own.
+    /// each into a buffer of its own. It used to keep the renderer waking every
+    /// turn too, for as long as any command ran; now each line of output tells
+    /// the host itself, and a command that says nothing costs nothing.
     shell_commands: Arc<AtomicUsize>,
-
-    /// How much work on the worker is changing what is on screen, for the
-    /// same reason as the count above it: a search of a directory runs
-    /// without anybody pressing a key, and the renderer has to come back and
-    /// look. A job on the WorkManager needs no count: the end of each of its
-    /// steps tells the host itself.
-    background_work: Arc<AtomicUsize>,
 
     /// The buffer whose result set `next-error` walks, if any.
     ///

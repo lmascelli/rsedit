@@ -325,6 +325,184 @@ mod tests {
         assert!(listing.contains("--- 2 matches ---"), "{listing}");
     }
 
+    /// A listing ready for a search of SANDBOX for PATTERN, whose writer is
+    /// the number handed back: what `grep--scan' sets up before its thread
+    /// starts.
+    fn listing_for(
+        ctx: &Ctx,
+        env: &Arc<Env<Ctx>>,
+        name: &str,
+        pattern: &str,
+        over: &str,
+    ) -> crate::work::WorkId {
+        run(&format!(r#"(buffer-create "{name}")"#), env, ctx);
+        crate::primitives::results::attach(
+            ctx,
+            name,
+            crate::text::results::Results::new(pattern, over),
+        );
+        let id = crate::work::WorkId::next();
+        ctx.with_buffer_mut(name, |buf| buf.writer = Some(id));
+        id
+    }
+
+    fn search(pattern: &str, root: &str, buffer: &str) -> crate::primitives::results::TreeSearch {
+        crate::primitives::results::TreeSearch {
+            pattern: crate::text::search::Pattern::new(pattern, false, false).expect("a pattern"),
+            root: PathBuf::from(root),
+            buffer: buffer.to_string(),
+            limit: 10_000,
+        }
+    }
+
+    #[test]
+    fn a_stopped_search_ends_with_what_it_found_and_says_it_stopped() {
+        // Taken here, on the test's thread, with the stop already raised:
+        // the search must look before it reads anything, and end the way a
+        // search that reached its limit does.
+        let sandbox = Sandbox::new("stopped");
+        sandbox.file("one.txt", "a needle\n");
+        sandbox.file("two.txt", "a needle\n");
+        let (ctx, env) = editor("");
+        let me = listing_for(&ctx, &env, "*Grep*", "needle", &sandbox.path());
+        let stop = crate::work::Stop::default();
+        let _ = stop.raise();
+        search("needle", &sandbox.path(), "*Grep*").run(&ctx, &stop, me);
+        let listing = text_of(&ctx, "*Grep*");
+        assert!(
+            listing.ends_with("--- nothing found, and the search stopped early ---\n"),
+            "{listing}"
+        );
+        assert_eq!(
+            run(r#"(nth 3 (results-state "*Grep*"))"#, &env, &ctx),
+            LispExp::t(),
+            "and the list is marked done, so nothing waits on it"
+        );
+    }
+
+    #[test]
+    fn a_walk_asked_to_stop_reads_no_more_directories() {
+        // The walk comes before any file is searched, and on a large tree it
+        // is most of the time a search takes: a stop must be heard there too.
+        let sandbox = Sandbox::new("walk");
+        sandbox.file("top.txt", "");
+        sandbox.file("below/deeper.txt", "");
+        let asked = std::cell::Cell::new(0);
+        let (paths, stopped) = crate::primitives::io::walk_files(
+            &PathBuf::from(sandbox.path()),
+            &std::collections::HashSet::new(),
+            &[],
+            100,
+            &|| {
+                asked.set(asked.get() + 1);
+                asked.get() == 1
+            },
+        );
+        assert_eq!(paths, ["top.txt"], "the top read, and nothing below");
+        assert!(stopped, "and said to have stopped early");
+    }
+
+    #[test]
+    fn a_search_writes_only_into_a_listing_that_is_still_its_own() {
+        // A listing closed and another opened under its name, while the old
+        // search was still on its way out: its results are not the new one's.
+        let sandbox = Sandbox::new("own");
+        sandbox.file("one.txt", "a needle\n");
+        let (ctx, env) = editor("");
+        let me = listing_for(&ctx, &env, "*Grep*", "needle", &sandbox.path());
+        ctx.with_buffer_mut("*Grep*", |buf| buf.writer = None);
+        search("needle", &sandbox.path(), "*Grep*").run(&ctx, &crate::work::Stop::default(), me);
+        assert_eq!(text_of(&ctx, "*Grep*"), "", "nothing was written");
+        assert_eq!(
+            run(r#"(nth 3 (results-state "*Grep*"))"#, &env, &ctx),
+            LispExp::nil(),
+            "and its list was not touched"
+        );
+    }
+
+    #[test]
+    fn a_running_search_is_known_by_its_listing() {
+        // Named after the listing, so `stop-worker' with the listing's name
+        // reaches it; and the listing knows it, so closing it does too.
+        let sandbox = Sandbox::new("named");
+        sandbox.file("one.txt", "a needle\n");
+        let (ctx, env) = editor("");
+        let buffer = match run(
+            &format!(r#"(grep--scan "needle" "{}")"#, sandbox.path()),
+            &env,
+            &ctx,
+        ) {
+            LispExp::String(name) => name.to_string(),
+            other => panic!("grep answered {other:?}"),
+        };
+        settle(&ctx, &env, &buffer);
+        // Done is said before the thread has quite gone.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ctx.work().threads().is_empty() {
+            assert!(Instant::now() < deadline, "the search's thread never ended");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            ctx.with_buffer(&buffer, |buf| buf.writer.is_none()) == Some(true),
+            "a finished search leaves its listing free"
+        );
+        assert!(
+            run(&format!(r#"(stop-worker "{buffer}")"#), &env, &ctx).is_nil(),
+            "and there is nothing left to stop"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_search_stopped_part_way_stops_before_the_next_file() {
+        // The walk is over and a file is being read: the stop is heard before
+        // the file after it. The one in the middle is a FIFO, which holds the
+        // search in its read for exactly as long as the test needs.
+        use std::os::unix::fs::OpenOptionsExt;
+        // Linux's, which the standard library does not name.
+        const O_NONBLOCK: i32 = 0o4000;
+        let sandbox = Sandbox::new("part-way");
+        sandbox.file("a.txt", "a needle\n");
+        sandbox.file("c.txt", "a needle\n");
+        let fifo = format!("{}/b.fifo", sandbox.path());
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        assert!(made.is_ok_and(|status| status.success()), "mkfifo");
+        let (ctx, env) = editor("");
+        let buffer = match run(
+            &format!(r#"(grep--scan "needle" "{}")"#, sandbox.path()),
+            &env,
+            &ctx,
+        ) {
+            LispExp::String(name) => name.to_string(),
+            other => panic!("grep answered {other:?}"),
+        };
+        // The FIFO opens for writing, without waiting, only once a reader has
+        // it open: then the search is past a.txt and inside b.fifo.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let writer = loop {
+            let opened = std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(O_NONBLOCK)
+                .open(&fifo);
+            if let Ok(writer) = opened {
+                break writer;
+            }
+            assert!(Instant::now() < deadline, "the search never read the FIFO");
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        assert!(!run(&format!(r#"(stop-worker "{buffer}")"#), &env, &ctx).is_nil());
+        // Its end: the read returns, and the search goes on to look again.
+        drop(writer);
+        settle(&ctx, &env, &buffer);
+        let listing = text_of(&ctx, &buffer);
+        assert!(listing.contains("a.txt:1: "), "{listing}");
+        assert!(!listing.contains("c.txt"), "{listing}");
+        assert!(
+            listing.ends_with("--- 1 match, and the search stopped early ---\n"),
+            "{listing}"
+        );
+    }
+
     #[test]
     fn a_generated_directory_is_not_searched() {
         // `.git' alone holds thousands of objects. A search that walked it

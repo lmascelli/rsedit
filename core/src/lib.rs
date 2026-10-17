@@ -10,9 +10,10 @@
 //! ```text
 //!   lisp/        the interpreter. Knows nothing of editors: no buffer, no
 //!                point, no window. Its context is a type parameter.
-//!   work/        where asynchronous work runs: the WorkManager and its
-//!                scheduler. Knows nothing of editors either: the state a job
-//!                works on is a type parameter. Replacing background/, below.
+//!   work/        where asynchronous work runs: the WorkManager, its
+//!                scheduler and its dedicated threads. Knows nothing of
+//!                editors either: the state a job works on is a type
+//!                parameter.
 //!   buffer/      text storage, and BufferTrait -- the only thing anything
 //!                else is allowed to assume about it. A buffer emits a topic
 //!                of work/ when its text changes, not knowing who listens.
@@ -31,8 +32,6 @@
 //!                the file watcher).
 //!   feature/     the two features whose mechanics could not be left to a
 //!                .lisp file: the minibuffer and incremental search.
-//!   background/  the threads the work that blocks still gets -- a shell
-//!                command, a search -- until they move to work/ too.
 //!   ui/          a description of what to draw. Draws nothing: there is no
 //!                terminal, no window system and no crossterm in here.
 //! ```
@@ -70,14 +69,11 @@ pub(crate) mod modes;
 pub(crate) mod primitives;
 
 // -- where work runs, and what the screen is asked to show -------------------
-pub(crate) mod background;
 pub(crate) mod ui;
-// The scheduler that replaces `background`, one piece at a time: see
-// `doc/workmanager.typ`. Every job of the editor's runs on a WorkManager --
-// colouring, the prescanner, the file watcher, the auto-saver and every Lisp
-// job. Shell commands and searches move to its dedicated threads in the next
-// steps, and until then the compiler would call that half of it dead code,
-// and its re-exports unused.
+// Where all asynchronous work runs: see `doc/workmanager.typ`. The editor
+// uses all of it but the manual mode's drives, which only tests call, and a
+// few of the re-exports, which are there for the hosts and tests to come:
+// without this the compiler would call those dead code.
 #[allow(dead_code, unused_imports)]
 pub(crate) mod work;
 
