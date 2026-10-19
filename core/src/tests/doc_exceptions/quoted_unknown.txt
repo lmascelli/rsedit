@@ -7,13 +7,11 @@
 *key-capture-function*
 *replace-read-function*
 case-replace
-watch-files
 worker-fuel
 
 # Names that do not exist
 default-directory      # in grep: the directory the editor was started in
 eval-expression        # in risp-refresh-vocabulary: M-: is eval-expression-prompt
 find-file-recursive    # in grep--scan: the command is dired-find-recursive
-goto                   # in mouse-start-selection: goto-char
 read-command-args      # in call-interactively
 search-forward         # in scan-buffer

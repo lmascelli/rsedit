@@ -1429,14 +1429,29 @@ mod tests {
     }
 
     #[test]
-    fn a_listing_is_alphabetical_by_default() {
+    fn dired_sort_name_is_one_alphabetical_run() {
         let sandbox = Sandbox::new("sort-name");
         sandbox.dir("mid");
         sandbox.file("aaa.txt", "");
         sandbox.file("zzz.txt", "");
         let (ctx, env) = setup();
+        run("(setq dired-sort 'name)", &env, &ctx);
         run(&format!(r#"(dired "{}")"#, sandbox.lisp()), &env, &ctx);
         assert_eq!(entries(&env, &ctx), vec!["aaa.txt", "mid/", "zzz.txt"]);
+    }
+
+    /// A setting, not a constant: an order chosen before the module loads --
+    /// as the default init.lisp chooses one -- survives loading it again.
+    #[test]
+    fn a_sort_order_set_before_dired_loads_is_kept() {
+        let (ctx, env) = setup();
+        run("(setq dired-sort 'type)", &env, &ctx);
+        eval_str(include_str!("../../lisp/dired.lisp"), &env, &ctx)
+            .expect("loading dired.lisp again");
+        assert_eq!(
+            string_of(&run("(symbol-name dired-sort)", &env, &ctx)),
+            "type"
+        );
     }
 
     /// Directories first when asked, each run still alphabetical. What you
@@ -1466,6 +1481,7 @@ mod tests {
         sandbox.dir("later");
         sandbox.file("earlier.txt", "");
         let (ctx, env) = setup();
+        run("(setq dired-sort 'name)", &env, &ctx);
         run(&format!(r#"(dired "{}")"#, sandbox.lisp()), &env, &ctx);
         assert_eq!(entries(&env, &ctx), vec!["earlier.txt", "later/"]);
 

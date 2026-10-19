@@ -1,0 +1,115 @@
+NAME
+    dired - a directory in a buffer
+
+SYNOPSIS
+    (dired DIRECTORY)
+    (dired-find-file)
+    (dired-find-file-other-window)
+    (dired-up-directory)
+    (dired-refresh)
+    (dired-delete-file)
+    (dired-rename-file)
+    (dired-find-recursive)
+    dired-sort
+    dired-window-width
+    dired-buffer-name
+    find-file-recursive-ignore
+    find-file-recursive-limit
+
+DESCRIPTION
+    C-x d asks for a directory and lists it in a buffer, one entry per
+    line, where keys open, delete and rename what the cursor is on. C-x C-f
+    on a directory does the same. C-x C-r finds a file by name anywhere
+    under the directory the editor was started in.
+
+THE LISTING
+        /home/me/project/:
+          ..
+          Cargo.toml
+          src/
+
+    The directory on the first line, then .. and one entry per line, a /
+    after each directory. `dired-sort' orders the entries: name for one
+    alphabetical run, type for the directories first. The listing is
+    read-only, and every listing is shown in the same buffer, *dired*:
+    going into a directory replaces the one you were in.
+
+MOVING AND OPENING
+        <ret>           open what the cursor is on
+        o               open it in a window beside the listing
+        ^               go up to the parent directory
+        g               read the directory again
+        n  p            down and up a line
+        q               close the listing
+
+    Return opens a file in this window, and a directory as the listing; ..
+    goes up. o opens a file in a window beside the listing and leaves the
+    listing `dired-window-width' columns wide. Pressing o again opens the
+    next file in that same window, so walking a directory leaves two
+    windows, not ten. Other keys keep their meaning: C-n, C-x o and M-x
+    work as anywhere else.
+
+CHANGING FILES
+    D deletes what the cursor is on, after asking: type yes, or y, and
+    Return. A directory with something in it says how many entries go with
+    it, and everything under it is deleted.
+
+    R renames it, asking for the new name. A plain name renames it in the
+    same directory; a name with a directory in it moves it there, taken
+    from the directory being listed unless it is absolute. A rename never
+    replaces a file that is there already.
+
+    Both read the directory again afterwards, and neither touches .. .
+
+FINDING A FILE ANYWHERE
+    C-x C-r collects every file under the directory the editor was started
+    in, and asks for one, completing on any part of its path. It does not
+    go into the directories named in `find-file-recursive-ignore', such as
+    .git and target, nor into those the .gitignore there names, and leaves
+    out the files whose endings it names. It stops at
+    `find-file-recursive-limit' files and says so.
+
+    The files are collected once, when the question opens, so a file made
+    while it is open is not among them.
+
+LIMITS
+    Of a .gitignore, only the top one is read, and only its plain names,
+    names ending in /, and *.ending lines are understood. Negations (!),
+    ** and paths are ignored rather than guessed at, so the search may
+    offer a file git would hide, but never hides one git would show.
+
+EXAMPLES
+    Directories first, in every listing:
+
+        (setq dired-sort 'type)
+
+    A wider listing beside the files o opens:
+
+        (setq dired-window-width 60)
+
+    Look further before stopping, and leave out one more directory:
+
+        (setq find-file-recursive-limit 20000)
+        (setq find-file-recursive-ignore
+              (cons "third_party" find-file-recursive-ignore))
+
+    List a directory from Lisp:
+
+        (dired "~/projects")
+
+KEYS
+    C-x d                   dired
+    C-x C-r                 dired-find-recursive
+
+KEYS IN DIRED MODE
+    <ret>                   dired-find-file
+    o                       dired-find-file-other-window
+    ^                       dired-up-directory
+    g                       dired-refresh
+    D                       dired-delete-file
+    R                       dired-rename-file
+    n                       next-line
+    p                       previous-line
+
+SEE ALSO
+    files, buffers, windows, completion

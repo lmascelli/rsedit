@@ -1,0 +1,55 @@
+NAME
+    mouse - clicking, dragging and the wheel
+
+SYNOPSIS
+    (mouse-mode-toggle)
+    (mouse-set-point WINDOW LINE COLUMN)
+    (mouse-start-selection WINDOW LINE COLUMN)
+    (mouse-drag-to WINDOW LINE COLUMN)
+    (mouse-resize DELTA)
+    (mouse-scroll WINDOW NOTCHES)
+    mouse-mode
+
+DESCRIPTION
+    The editor reads the mouse while `mouse-mode' is on. The init.lisp
+    the editor writes for you turns it on, and M-x mouse-mode-toggle turns
+    it off and on again for the session.
+
+    While the editor reads the mouse the terminal does not, so selecting
+    text with the mouse to copy it into another program stops working.
+    Most terminals give their own selection back while Shift is held.
+
+WHAT THE MOUSE DOES
+        click           put the cursor there, in that window
+        double click    set the mark there, to select from it
+        drag            select from where the button went down
+        drag a border   move the border between two windows
+        wheel           scroll the window under the pointer
+
+    A click gives its window the focus and ends any selection. A drag
+    selects as the keys do, so C-w and M-w work on what it selected; a drag
+    past the edge of the window selects up to the edge. A border is the
+    line between windows side by side, or the status line between windows
+    one above the other. The wheel moves the view three lines a notch, and
+    moves neither the focus nor the cursor.
+
+    Each of these runs one of the commands in the SYNOPSIS, as a key runs
+    its command: a click is one step to undo, like a key.
+
+LIMITS
+    A click in a floating window does nothing, nor do the middle and right
+    buttons. What each of the above does cannot be changed from Lisp: the
+    editor calls these commands by name, and a definition of your own
+    under the same name does not replace them.
+
+EXAMPLES
+    Leave the mouse to the terminal, from the start:
+
+        (setq mouse-mode nil)
+
+    A key to turn it on and off:
+
+        (define-key nil "C-c M" 'mouse-mode-toggle)
+
+SEE ALSO
+    windows, killing, first-steps, configuration

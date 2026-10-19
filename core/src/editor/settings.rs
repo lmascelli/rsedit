@@ -6,6 +6,8 @@
 //! raising an ordering question.
 
 use super::*;
+use crate::modes::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
+use crate::modes::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
 use risp::VARIABLE_DOCUMENTATION;
 
 /// A Lisp variable the editor reads, and what `C-h v` says about it.
@@ -61,6 +63,59 @@ pub const SETTINGS: &[Setting] = &[
               Example:\n\
               \x20 (setq lisp-path (cons (expand-file-name \"~/lisp\") lisp-path))",
     },
+    Setting {
+        name: AUTO_SAVE,
+        doc: "Whether the editor keeps a copy of each file buffer with unsaved changes, for \
+              `recover-file' to bring back after a crash: nil turns it off. The copy is #name# \
+              beside the file, or in `auto-save-directory'.",
+    },
+    Setting {
+        name: AUTO_SAVE_INTERVAL,
+        doc: "How many seconds pass between one look for `auto-save' and the next, one at least; \
+              each look takes four of the buffers, in turn. A change counts from the next look.",
+    },
+    Setting {
+        name: AUTO_SAVE_DIRECTORY,
+        doc: "The directory every `auto-save' copy goes in, with the file's whole path in its \
+              name; nil keeps each copy beside its file. The directory must exist, and a leading \
+              ~ is not expanded.\n\n\
+              Example:\n\
+              \x20 (setq auto-save-directory (expand-file-name \"~/.cache/rsedit\"))",
+    },
+    Setting {
+        name: WATCH_FILES,
+        doc: "Whether the editor notices files changing on disk: a buffer with no unsaved \
+              changes is read again, and one with unsaved changes is marked, so that saving it \
+              asks first. nil turns it off.",
+    },
+    Setting {
+        name: WATCH_FILE_INTERVAL,
+        doc: "How many seconds pass between looks at the open files, a tenth at least; each look \
+              takes eight of the buffers, in turn. A change counts from the next look.",
+    },
+    Setting {
+        name: OPEN_DIRECTORY_CALLBACK,
+        doc: "The function `find-file' hands a directory to, with its path; nil makes find-file \
+              say that the path is a directory. Loading dired sets it to `dired'.",
+    },
+    Setting {
+        name: MOUSE_MODE,
+        doc: "Whether the editor reads the mouse. While it does, the terminal's own selection is \
+              not there; most terminals give it back while Shift is held. `mouse-mode-toggle' \
+              turns it on and off.",
+    },
+    Setting {
+        name: WINDOW_SEPARATOR,
+        doc: "The character drawn between windows side by side, as a string; nil draws a \
+              space.\n\n\
+              Example:\n\
+              \x20 (setq window-separator \"|\")",
+    },
+    Setting {
+        name: AFTER_RESIZE_HOOK,
+        doc: "The functions called, with the new width and height in columns and rows, each \
+              time the terminal is resized.",
+    },
 ];
 
 /// Gives every setting in [`SETTINGS`] its documentation, where `defvar` puts
@@ -110,6 +165,14 @@ pub const MODE_LINE_FORMAT: &str = "mode-line-format";
 pub const DEFAULT_MODE_LINE_FORMAT: &str = " %* %b   %m %s  L%l C%c   %p ";
 
 pub const MOUSE_MODE: &str = "mouse-mode";
+
+/// The name of the Lisp variable holding the function `find-file` hands a
+/// directory to.
+pub const OPEN_DIRECTORY_CALLBACK: &str = "*open-directory-callback*";
+
+/// The name of the Lisp variable listing what to call when the frame is
+/// resized.
+pub const AFTER_RESIZE_HOOK: &str = "after-resize-hook";
 
 pub const WINDOW_SEPARATOR: &str = "window-separator";
 

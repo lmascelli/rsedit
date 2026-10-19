@@ -7,8 +7,8 @@ DESCRIPTION
     failing that is Escape pressed and released first. C-x C-f is two of
     them, one after the other.
 
-    Nothing here needs a mouse, though one works if your terminal reports it:
-    M-x mouse-mode-toggle.
+    Nothing here needs a mouse, though one works if your terminal reports
+    it: the `mouse' page says what it does.
 
 WHAT IS ON THE SCREEN
     The text you are editing, and a bar across the bottom of each window
@@ -104,8 +104,9 @@ ASKING THE EDITOR
     running rather than about the editor somebody wrote about.
 
 WHEN SOMETHING GOES WRONG
-    C-g. It cancels a prompt, a search, a half-typed key sequence, a
-    selection and a question you did not mean to ask.
+    C-g. It cancels a search, a half-typed key sequence and a selection.
+    A prompt closes with Escape instead, and a question answered with one
+    key waits for that key: y or n.
 
     If the editor said something you missed, C-h e shows everything it has
     said.

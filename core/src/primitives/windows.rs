@@ -37,15 +37,8 @@ fn split_division<B: BufferTrait>(
 }
 
 pub const SPLIT_WINDOW_BELOW_DOC: &str = "(split-window-below &optional ROWS): Split the focused \
-         window in two, one above the other. The new window shows the same buffer at the same \
-         place; focus stays where it was.\n\n\
-         With ROWS, *this* window keeps exactly that many rows and the new one takes the rest. \
-         Without it the two share the space evenly. Fixing the window being split rather than \
-         the new one is the useful way round: a window that should stay a given height should \
-         keep it when the frame is resized, and it is the other one that gives or takes.\n\n\
-         Example:\n\
-         (define-key nil \"C-x 2\" 'split-window-below)\n\
-         (split-window-below 10)   ; this window keeps 10 rows";
+         window in two, one above the other, the new one showing the same buffer; the focus \
+         stays. With ROWS, this window keeps that many rows and the new one takes the rest.";
 
 primitive!(split_window_below, args, _env, ctx, {
     let division = split_division(args.first())?;
@@ -57,15 +50,11 @@ primitive!(split_window_below, args, _env, ctx, {
     )
 });
 
-pub const SPLIT_WINDOW_RIGHT_DOC: &str = "(split-window-right &optional COLUMNS): Split the focused \
-         window in two, side by side. The new window shows the same buffer at the same place; \
-         focus stays where it was.\n\n\
-         With COLUMNS, *this* window keeps exactly that many columns and the new one takes the \
-         rest -- the same meaning Emacs' `split-window-right' gives its SIZE. Without it the two \
-         share the space evenly.\n\n\
+pub const SPLIT_WINDOW_RIGHT_DOC: &str = "(split-window-right &optional COLUMNS): Split the \
+         focused window in two, side by side, the new one showing the same buffer; the focus \
+         stays. With COLUMNS, this window keeps that many columns and the new one takes the rest.\n\n\
          Example:\n\
-         (define-key nil \"C-x 3\" 'split-window-right)\n\
-         (split-window-right 40)   ; this window keeps 40 columns";
+         (split-window-right 40)";
 
 primitive!(split_window_right, args, _env, ctx, {
     let division = split_division(args.first())?;
@@ -77,12 +66,9 @@ primitive!(split_window_right, args, _env, ctx, {
     )
 });
 
-pub const DELETE_WINDOW_DOC: &str = "(delete-window): Close the focused window; the window it was \
-         split from grows into the space. Signals an error when it is the \
-         only window, since a frame with none has nowhere to put the \
-         cursor.\n\n\
-         Example:\n\
-         (define-key nil \"C-x 0\" 'delete-window)";
+pub const DELETE_WINDOW_DOC: &str = "(delete-window &optional ID): Close the window with ID, the \
+         focused one by default, giving its space back, and return t. Closing the only window is \
+         an error.";
 
 primitive!(delete_window, args, _env, ctx, {
     let closed = match args.first() {
@@ -106,20 +92,11 @@ primitive!(delete_window, args, _env, ctx, {
 });
 
 pub const DISPLAY_BUFFER_AT_BOTTOM_DOC: &str = "(display-buffer-at-bottom BUFFER HEIGHT): Show \
-         BUFFER in a full-width window of exactly HEIGHT rows along the bottom of the frame, \
-         and return the new window's id -- which is what `delete-window' needs to close it \
-         again.\n\n\
-         The frame is divided, not one window: the strip appears below everything, and every \
-         window above it gives up a share of the space. Its height stays HEIGHT whatever the \
-         terminal is resized to, which an ordinary split cannot promise -- a split holds a \
-         fraction, and a fraction of a taller frame is more rows.\n\n\
-         **Focus does not move.** A strip is shown while something else is being typed into, \
-         and focus moving would make the strip's buffer current -- so the next keystroke would \
-         go into the strip instead of wherever the user is looking. Nothing about a strip is \
-         usable if this is not true.\n\n\
+         BUFFER in a window HEIGHT rows high across the bottom of the frame, and return its id. \
+         The height holds when the terminal is resized, and the focus does not move.\n\n\
          Example:\n\
-         (setq w (display-buffer-at-bottom \"*Completions*\" 6))\n\
-         (delete-window w)";
+         (setq strip (display-buffer-at-bottom \"*scratch*\" 6))\n\
+         (delete-window strip)";
 
 primitive!(display_buffer_at_bottom, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -149,9 +126,7 @@ primitive!(display_buffer_at_bottom, args, _env, ctx, {
 });
 
 pub const DELETE_OTHER_WINDOWS_DOC: &str = "(delete-other-windows): Close every window but the \
-         focused one, which grows to fill the frame.\n\n\
-         Example:\n\
-         (define-key nil \"C-x 1\" 'delete-other-windows)";
+         focused one, which then fills the frame.";
 
 primitive!(delete_other_windows, _args, _env, ctx, {
     Ok(match ctx.delete_other_windows() {
@@ -160,19 +135,9 @@ primitive!(delete_other_windows, _args, _env, ctx, {
     })
 });
 
-pub const OTHER_WINDOW_DOC: &str = "(other-window &optional N): Move focus N windows on (default 1), \
-         wrapping round at the end. A negative N moves the other way. \
-         Returns nil when there is only one window.\n\n\
-         Windows are ordered as they are laid out -- left to right, top to \
-         bottom -- so cycling walks the frame the way it looks. Floating windows come after \
-         the tiled ones, oldest first, which is up the stack in the order they are drawn.\n\n\
-         A floating window is in the cycle because otherwise it is a window focus can be \
-         taken off and never given back: a prompt, a completion strip or a module's popup \
-         left behind by a click or by `other-window' itself, still drawn and no longer usable. \
-         `count-windows' still counts only the tiled ones, which is the other question -- how \
-         many windows the frame is divided into -- and a float divides nothing.\n\n\
-         Example:\n\
-         (define-key nil \"C-x o\" 'other-window)";
+pub const OTHER_WINDOW_DOC: &str = "(other-window &optional N): Give the focus to the window N on \
+         from this one, 1 by default, the tiled windows left to right and top to bottom, then the \
+         floating ones. A negative N goes the other way. Returns nil when there is one window.";
 
 primitive!(other_window, args, _env, ctx, {
     Ok(match ctx.focus_other_window(count(args)) {
@@ -181,17 +146,15 @@ primitive!(other_window, args, _env, ctx, {
     })
 });
 
-pub const COUNT_WINDOWS_DOC: &str = "(count-windows): Return how many tiled windows the frame holds. \
-         Floating windows, such as an open minibuffer, are not counted.";
+pub const COUNT_WINDOWS_DOC: &str = "(count-windows): Return how many tiled windows the frame \
+         holds; floating windows are not counted.";
 
 primitive!(count_windows, _args, _env, ctx, {
     Ok(ELispExp::number(ctx.window_count() as f64))
 });
 
-pub const WINDOW_BUFFER_DOC: &str = "(window-buffer): Return the name of the buffer shown by the \
-         focused window.\n\n\
-         Not always the current buffer: a minibuffer prompt makes itself \
-         current without taking a tiled window's place.";
+pub const WINDOW_BUFFER_DOC: &str = "(window-buffer): Return the name of the buffer the focused \
+         window shows, which is not the current buffer while a prompt is open.";
 
 primitive!(window_buffer, _args, _env, ctx, {
     Ok(match ctx.focused_window_buffer() {
@@ -200,28 +163,19 @@ primitive!(window_buffer, _args, _env, ctx, {
     })
 });
 
-pub const SCROLL_UP_COMMAND_DOC: &str = "(scroll-up-command &optional N): Move the focused window's \
-         view forward through the buffer by N screenfuls (default 1), taking point along only if \
-         it would otherwise be left behind.\n\n\
-         A screenful is the window's height less `next-screen-context-lines' (2), so two pages \
-         share a couple of lines and a reader can find their place. Point keeps the line it was \
-         on whenever that line is still on screen, so reading a long file leaves the cursor where \
-         the eye left it.\n\n\
-         Reports \"End of buffer\" and does nothing when the last line is already at the top.\n\n\
-         Example:\n\
-         (define-key nil \"C-v\" 'scroll-up-command)";
+pub const SCROLL_UP_COMMAND_DOC: &str = "(scroll-up-command &optional N): Move the focused \
+         window's view N screens forward, 1 by default, keeping two lines of the last screen in \
+         sight. Point moves only when its line would leave the window. At the end of the buffer, \
+         it says so.";
 
 primitive!(scroll_up_command, args, _env, ctx, {
     Ok(scrolled(ctx, count(args), "End of buffer"))
 });
 
 pub const SCROLL_DOWN_COMMAND_DOC: &str = "(scroll-down-command &optional N): Move the focused \
-         window's view back through the buffer by N screenfuls (default 1). The mirror of \
-         `scroll-up-command'; see it for what a screenful is and when point moves.\n\n\
-         Reports \"Beginning of buffer\" and does nothing when the first line is already at the \
-         top.\n\n\
-         Example:\n\
-         (define-key nil \"M-v\" 'scroll-down-command)";
+         window's view N screens back, 1 by default, keeping two lines of the last screen in \
+         sight. Point moves only when its line would leave the window. At the start of the \
+         buffer, it says so.";
 
 primitive!(scroll_down_command, args, _env, ctx, {
     Ok(scrolled(ctx, -count(args), "Beginning of buffer"))
@@ -241,11 +195,8 @@ fn scrolled<B: BufferTrait>(ctx: &EditorState<B>, amount: isize, at_the_end: &st
     }
 }
 
-pub const SELECTED_WINDOW_DOC: &str = "(selected-window): The id of the window that has focus.\n\n\
-         An id is what `select-window' and `delete-window' take, so this is how a command \
-         remembers a window to come back to. `dired' uses it for exactly that: `o' opens a file \
-         beside the listing and remembers where it put it, so pressing `o' again replaces that \
-         file rather than splitting the frame a second time.\n\n\
+pub const SELECTED_WINDOW_DOC: &str = "(selected-window): Return the id of the window that has \
+         the focus.\n\n\
          Example:\n\
          (setq my-window (selected-window))";
 
@@ -253,15 +204,10 @@ primitive!(selected_window, _args, _env, ctx, {
     Ok(ctx.get_focused_window_id().into())
 });
 
-pub const SELECT_WINDOW_DOC: &str = "(select-window ID): Give focus to the window with ID. Returns \
-         t, or nil if no window has that id.\n\n\
-         Returning nil rather than signalling is the point: a window remembered earlier may have \
-         been closed since, and a caller that checks the answer can fall back to opening a new \
-         one. That is the whole of what \"reuse the window if it is still there\" needs.\n\n\
-         A floating window's id works here too, though focus returns to whatever had it when the \
-         float closes.\n\n\
+pub const SELECT_WINDOW_DOC: &str = "(select-window ID): Give the focus to the window with ID, \
+         and return t, or nil when no window has that id any longer.\n\n\
          Example:\n\
-         (if (select-window my-window) (find-file path) (progn (split-window-right) ...))";
+         (select-window my-window)";
 
 primitive!(select_window, args, _env, ctx, {
     let id = match args.first() {

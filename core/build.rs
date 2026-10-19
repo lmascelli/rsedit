@@ -1,27 +1,41 @@
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn main() {
-    let profile_dir = std::env::var("PROFILE").unwrap();
-    let manifest_dir = std::env::var("CARGO_WORKSPACE_DIR").unwrap();
-    let data_dir = Path::new(&manifest_dir)
-        .join("target")
-        .join(profile_dir)
-        .join("data");
+    let crate_dir = PathBuf::from(
+        env::var_os("CARGO_MANIFEST_DIR")
+            .expect("Cargo must set CARGO_MANIFEST_DIR"),
+    );
 
-    // What the editor reads at runtime goes beside the binary, because the
-    // source tree it was built from may not be there when it runs. Each
-    // directory is copied whole: which modules are loaded is init.lisp's
-    // business, and a test checks that every module it loads is here.
-    copy_files(Path::new("lisp"), &data_dir.join("lisp"), "lisp");
+    let out_dir = PathBuf::from(
+        env::var_os("OUT_DIR")
+            .expect("Cargo must set OUT_DIR"),
+    );
 
-    // The themes and the manual pages are at the project root, outside this
-    // crate, so they are copied when they are there. Of `man/`, only the
-    // pages: its README.md is for whoever writes one.
-    for (source, kind, extension) in [("../themes", "themes", "lisp"), ("../man", "man", "txt")] {
-        let source = Path::new(source);
+    // <target-dir>[/<target-triple>]/<profile>/build/<package-hash>/out
+    //                                      ^ three ancestors up
+    let binary_dir = out_dir
+        .ancestors()
+        .nth(3)
+        .expect("Unexpected Cargo OUT_DIR layout");
+
+    let data_dir = binary_dir.join("data");
+
+    copy_files(
+        &crate_dir.join("lisp"),
+        &data_dir.join("lisp"),
+        "lisp",
+    );
+
+    for (relative_source, kind, extension) in [
+        ("../themes", "themes", "lisp"),
+        ("../man", "man", "txt"),
+    ] {
+        let source = crate_dir.join(relative_source);
+
         if source.is_dir() {
-            copy_files(source, &data_dir.join(kind), extension);
+            copy_files(&source, &data_dir.join(kind), extension);
         }
     }
 }

@@ -1,26 +1,111 @@
 NAME
     windows - what shows a buffer
 
+SYNOPSIS
+    (split-window-below &optional ROWS)
+    (split-window-right &optional COLUMNS)
+    (delete-window &optional ID)
+    (delete-other-windows)
+    (other-window &optional N)
+    (selected-window)
+    (select-window ID)
+    (window-buffer)
+    (count-windows)
+    (scroll-up-command &optional N)
+    (scroll-down-command &optional N)
+    (recenter &optional WHERE)
+    (display-buffer-at-bottom BUFFER HEIGHT)
+    (make-floating-window BUFFER-NAME X Y WIDTH HEIGHT &optional TITLE MODE)
+    (close-floating-window)
+    window-separator
+    after-resize-hook
+
 DESCRIPTION
-    A window is a view onto a buffer. Two windows may show one buffer; they
-    share its point, because the point belongs to the buffer.
+    A window is a view onto a buffer. Two windows may show one buffer, each
+    with its own place in it: moving in one does not move the other.
 
-    Windows tile: splitting divides one into two, and closing one gives its
-    space back to its sibling. A floating window -- the minibuffer, a
-    completion strip -- sits above the tiling and is not part of it.
+    The windows tile the frame: splitting divides one into two, and closing
+    one gives its space back. A floating window -- a prompt, a pop-up --
+    is drawn above the tiling and takes no space from it.
 
-SIZES
-    split-window-right and split-window-below take an optional size, which
-    is what the window being split *keeps*. That way round is deliberate:
-    the window with an opinion about its width is the one asking, and it
-    should keep that width when the frame is resized.
+SPLITTING AND CLOSING
+        C-x 2           split this window, one above the other
+        C-x 3           split it, side by side
+        C-x 0           close this window
+        C-x 1           close every window but this one
+        C-x o           go to the next window
 
-        (split-window-right 40)   ; this window keeps 40 columns
+    A new window shows the same buffer at the same place, and the cursor
+    stays where it was. After C-x o, a plain o goes on to the next window,
+    and C-u 2 C-x o skips one.
 
-KILLING A BUFFER
-    Every window showing it is repointed at the most recently used buffer
-    that still exists. A window is never left naming something that is not
-    there.
+    From Lisp a split can be given a size, which is what the window being
+    split *keeps*: (split-window-right 40) leaves this window 40 columns
+    wide, and the new one takes the rest, however the terminal is resized.
+
+SCROLLING
+    C-v moves the view a screen forward and M-v a screen back. Two lines of
+    the last screen stay in sight, so you can find your place, and the
+    cursor moves only when its line would leave the window. C-l puts the
+    line the cursor is on in the middle of the window, and leaves the
+    cursor where it is.
+
+FLOATING WINDOWS
+    `make-floating-window' opens a buffer in a bordered window at a place
+    and size of your choosing, gives it the focus and returns its id.
+    `close-floating-window' closes the newest one and gives the focus back
+    to the window that had it. Floating windows stack, and close in the
+    reverse order they opened. C-x o reaches them too, after the tiled
+    ones; `count-windows' counts only the tiled ones.
+
+    `display-buffer-at-bottom' is the other kind of extra window: a strip
+    the width of the frame, of a fixed height, along the bottom, which
+    keeps that height when the terminal is resized. The focus stays where
+    it is, so typing goes on where it was. (delete-window ID) closes it.
+
+THE FRAME
+    The variables frame-width and frame-height hold the terminal's size,
+    and the editor keeps them up to date. When the terminal is resized,
+    each function in `after-resize-hook' is called with the new width and
+    height. `window-separator' is the character drawn between windows side
+    by side; nil draws a space.
+
+EXAMPLES
+    Split off a window of about 30 columns on the right, and go to it:
+
+        (progn (split-window-right (- frame-width 30)) (other-window 1))
+
+    Remember a window and come back to it later; select-window answers nil
+    when it has been closed in the meantime:
+
+        (setq my-window (selected-window))
+        (select-window my-window)
+
+    A pop-up in the top-left corner, closed again by q:
+
+        (make-mode 'note-mode)
+        (define-key 'note-mode "q" 'close-floating-window)
+        (make-floating-window "*note*" 2 1 40 6 "Note" 'note-mode)
+
+    A plain line between windows:
+
+        (setq window-separator "|")
+
+    Say the new size whenever the terminal is resized:
+
+        (setq after-resize-hook
+              (list (lambda (width height)
+                      (message "%dx%d" width height))))
+
+KEYS
+    C-x 2                   split-window-below
+    C-x 3                   split-window-right
+    C-x 0                   delete-window
+    C-x 1                   delete-other-windows
+    C-x o                   other-window
+    C-v                     scroll-up-command
+    M-v                     scroll-down-command
+    C-l                     recenter
 
 SEE ALSO
-    buffers, (selected-window), (select-window), (delete-window)
+    buffers, mouse, files, first-steps

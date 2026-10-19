@@ -70,12 +70,9 @@ pub(super) fn ask_with_keys<B: BufferTrait>(
     });
 }
 
-pub const Y_OR_N_DOC: &str = "(y-or-n PROMPT ON-YES &optional ON-NO): Ask PROMPT and wait for a \
-         single `y' or `n'. Returns immediately; ON-YES or ON-NO is called, with no arguments, \
-         when the key arrives.\n\n\
-         Every other key does nothing and leaves the question up, so a mistyped key cannot \
-         answer it -- but `y' is one keystroke, which is what makes this the right question to \
-         ask in a loop. For anything whose wrong answer cannot be undone, use `yes-or-no'.\n\n\
+pub const Y_OR_N_DOC: &str = "(y-or-n PROMPT ON-YES &optional ON-NO): Ask PROMPT, to be answered \
+         with y or n, and return at once; ON-YES or ON-NO is called, with no arguments, when the \
+         key comes. No other key answers.\n\n\
          Example:\n\
          (y-or-n \"Delete this line?\" 'kill-whole-line)";
 
@@ -91,15 +88,12 @@ primitive!(y_or_n, args, _env, ctx, {
     Ok(ELispExp::t())
 });
 
-pub const YES_OR_NO_DOC: &str = "(yes-or-no PROMPT ON-YES &optional ON-NO): Ask PROMPT and wait \
-         for the whole word `yes' or `no' to be typed and confirmed. Returns immediately; ON-YES \
-         or ON-NO is called, with no arguments, when the answer arrives.\n\n\
-         Anything else is refused and the question asked again, so the answer cannot be given by \
-         a key pressed in passing. That deliberate slowness is the point: this is the question to \
-         ask when the wrong answer loses something. Cancelling the prompt counts as `no', because \
-         backing out of a question about an irreversible act means not doing it.\n\n\
+pub const YES_OR_NO_DOC: &str = "(yes-or-no PROMPT ON-YES &optional ON-NO): Ask PROMPT, to be \
+         answered by typing yes or no and Return, and return at once; ON-YES or ON-NO is called, \
+         with no arguments, when the answer comes. Anything else asks again, and closing the \
+         question counts as no.\n\n\
          Example:\n\
-         (yes-or-no \"Really discard your changes?\" 'revert-buffer)";
+         (yes-or-no \"Discard your changes?\" 'revert-buffer)";
 
 primitive!(yes_or_no, args, env, ctx, {
     let prompt = args::text(args.first())?;

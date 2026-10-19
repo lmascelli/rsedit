@@ -1,78 +1,206 @@
 NAME
-    files - opening, saving, and going back
+    files - opening, saving, and leaving
+
+SYNOPSIS
+    (find-file PATH)
+    (save-buffer)
+    (write-file PATH)
+    (save-some-buffers &optional AFTER)
+    (revert-buffer)
+    (recover-file)
+    (quit)
+    (quit-without-saving)
+    (y-or-n PROMPT ON-YES &optional ON-NO)
+    (yes-or-no PROMPT ON-YES &optional ON-NO)
+    auto-save
+    auto-save-interval
+    auto-save-directory
+    watch-files
+    watch-file-interval
+    *open-directory-callback*
+
+    (read-file-to-string PATH)
+    (file-exists-p PATH)
+    (file-directory-p PATH)
+    (list-dir &optional DIRECTORY ORDER)
+    (directory-files-recursive &optional DIRECTORY LIMIT PRUNE SUFFIXES)
+    (directory-entry-count PATH)
+    (match-list LIST PATTERN)
+    (delete-file PATH &optional RECURSIVE)
+    (rename-file FROM TO)
+
+    (expand-file-name PATH &optional DIRECTORY)
+    (file-name-directory PATH)
+    (file-name-nondirectory PATH)
+    (file-name-as-directory PATH)
+    (directory-file-name PATH)
+    (data-directory &optional KIND)
+    (getenv NAME)
+    (setenv NAME &optional VALUE)
+    (path-separator)
 
 DESCRIPTION
     Opening a file reads it into a buffer. From then on you are editing the
-    buffer, and the file on disk is whatever it was until you save.
+    buffer, and the file on disk stays as it was until you save.
 
         C-x C-f         open a file, or make one
         C-x C-s         save this buffer
-        C-x C-w         save it somewhere else, and edit that from now on
+        C-x C-w         save it under another name, and edit that
         C-x C-c         quit, asking about anything unsaved
 
-    The prompt completes with Tab. Typing a directory and then Tab lists what
-    is in it.
+OPENING
+    C-x C-f asks for a path, and Tab completes it; after a directory, Tab
+    lists what is in it. The buffer is named after the file. Two files with
+    the same name in different directories get different buffers, the
+    second called name<2>, and opening a file that is open already goes back
+    to its buffer.
 
-A FILE THAT IS NOT THERE
-    C-x C-f on a name that does not exist gives you an empty buffer with that
-    name. Nothing is written until you save, so this is also how you decide
-    *not* to make a file: kill the buffer and nothing happened.
+    A path that does not exist gives an empty buffer that remembers where it
+    belongs, and the echo area says "(New file)". Nothing is written until
+    you save, so killing the buffer instead leaves no trace.
 
-GOING BACK
-        M-x revert-buffer       read the file again, losing your changes
-        M-x recover-file        read what was auto-saved instead
+    A directory is shown by dired: see the `dired' page. More exactly, it is
+    handed to the function in `*open-directory-callback*', which dired sets;
+    without one, C-x C-f says the path is a directory.
 
-    The editor auto-saves a buffer with unsaved changes to a file beside no
-    one's work but its own, and offers it to recover-file. An ordinary save
-    throws that copy away, because it has nothing left to protect.
+SAVING
+    C-x C-s writes the buffer to its file. C-x C-w writes it to another
+    path and visits that from then on: the buffer takes the new file's
+    name, its mode is chosen again from that name, and the old file is left
+    as it was. C-x C-w refuses a path another buffer is already visiting.
+
+    M-x save-some-buffers offers each buffer with unsaved changes that is
+    visiting a file:
+
+        y               save this one
+        n               leave it
+        !               save this one and every one left
+        q               stop asking
+
+    The question takes only those keys: anything else, C-g included, does
+    nothing while it is up.
 
 WHEN THE FILE CHANGES UNDER YOU
-    Something else writing the file you are editing -- a build, a branch
-    switch, another editor -- is noticed, and the buffer says so in its bar.
-    Nothing is read in behind your back: what you do about it is yours, and
-    revert-buffer is how.
+    Something else writing a file you have open -- a build, a branch
+    switch, another editor -- is noticed within a few seconds. A buffer
+    with no unsaved changes is read again on its own, and the log says so.
+    A buffer with unsaved changes is left alone and marked: the next C-x C-s
+    asks before writing over what is on disk now.
 
-DIRECTORIES
-    C-x d lists a directory in a buffer you can move around in.
+    M-x revert-buffer reads the file again on purpose, asking first when
+    there is something unsaved to lose. The undo history and the mark go
+    with the old text.
 
-        <ret>           open what the cursor is on
-        o               open it in a window beside the listing
-        ^               up to the parent directory
-        g               list it again
-        D               delete the file
-        R               rename it
-        n  p            down and up a line
-        q               close the listing
+    `watch-files' turns the watching off, and `watch-file-interval' is how
+    many seconds pass between looks, 3 to begin with; each look takes eight
+    of the buffers, in turn. Looking at a file on a network filesystem that
+    has stopped answering holds up colouring too, so turn watching off when
+    a mount misbehaves.
 
-    o reuses the window it opened last, so walking a directory does not slice
-    the frame into eight. C-x C-r searches a directory tree for a file by
-    name rather than listing it a level at a time.
+AUTO SAVING
+    A file buffer with unsaved changes is copied to #name# beside its
+    file. The copy is for the editor stopping without being asked -- a
+    crash, a lost terminal -- and saving the buffer deletes it. Opening a
+    file that has a copy says so.
 
-QUITTING WITH WORK UNSAVED
-    C-x C-c asks about each modified file. M-x save-some-buffers asks without
-    quitting, and M-x quit-without-saving does not ask at all -- which is
-    there so that the asking version can be the one on the key.
+    Every half minute the editor looks at four of the buffers, taking them
+    in turn, and copies those that need it. All the buffers take turns,
+    those with no file too, such as *scratch* or a manual page: with four
+    buffers or fewer, each is looked at every half minute; with twelve,
+    every minute and a half.
+
+    M-x recover-file puts the copy in the buffer, after asking. It comes in
+    unsaved: C-x C-s keeps it, and M-x revert-buffer goes back to the file.
+
+    `auto-save' turns it off, and `auto-save-interval' is how many seconds
+    pass between one look and the next. With `auto-save-directory' set,
+    every copy goes there instead, the file's path flattened into its name,
+    so that two files called main.rs keep a copy each. That directory must
+    exist, and a ~ in it is not expanded: give it with expand-file-name, as
+    below.
+
+LEAVING
+    C-x C-c asks about each buffer with unsaved changes, as
+    save-some-buffers does. If any are still unsaved after that, quitting
+    has to be confirmed by typing yes. Buffers with no file behind them,
+    such as *scratch* and the listings, are never asked about: there is
+    nowhere to save them. M-x quit-without-saving asks nothing.
+
+QUESTIONS
+    The editor asks in two ways. A question answered with one key, y or n,
+    takes only its keys. A question about something that cannot be undone
+    wants yes or no typed in full and Return; Escape closes it, which
+    counts as no. `y-or-n' and `yes-or-no' ask the same questions for a
+    command of your own, and call a function with the answer.
+
+FILES FROM LISP
+    `read-file-to-string' reads a file without making a buffer for it.
+    `list-dir' lists a directory, a / after each subdirectory, by name or
+    with the directories first. `directory-files-recursive' lists every
+    file under a directory, skipping the directory names and the file
+    endings it is given, and stops at a limit; its answer says whether it
+    stopped.
+
+    `delete-file' refuses a directory that is not empty unless it is told
+    otherwise, and deletes a symbolic link rather than what it points to.
+    `rename-file' refuses to replace a file that is there already, and
+    does not cross from one filesystem to another.
+
+    A leading ~ is the home directory to all of these except
+    directory-files-recursive, which takes its directory as it is given.
+
+PATHS
+    `expand-file-name' makes a path absolute: ~ becomes the home
+    directory, a relative path is taken from DIRECTORY or from the
+    directory the editor was started in, and . and .. are resolved by
+    name, without looking at the disk. The other four take a path apart
+    or put it together:
+
+        (file-name-directory "/a/b/c")          "/a/b/"
+        (file-name-nondirectory "/a/b/c")       "c"
+        (file-name-as-directory "/a/b")         "/a/b/"
+        (directory-file-name "/a/b/")           "/a/b"
+
+    `path-separator' is what goes between the paths of a variable such as
+    PATH: ":" on Unix, ";" on Windows. `getenv' and `setenv' read and set
+    the environment the editor and every program it starts see.
+    `data-directory' is where the editor's own modules, pages and themes
+    are installed.
+
+EXAMPLES
+    Keep the auto-save copies out of your project directories:
+
+        (setq auto-save-directory (expand-file-name "~/.cache/rsedit"))
+
+    Look for changes on disk every second, or not at all:
+
+        (setq watch-file-interval 1)
+        (setq watch-files nil)
+
+    Open a file from Lisp, in the home directory:
+
+        (find-file (expand-file-name "~/notes.txt"))
+
+    Every file under the current directory but those in target and .git,
+    and the lock files:
+
+        (directory-files-recursive "." 1000 '("target" ".git") '(".lock"))
+
+    Ask before doing something that cannot be undone:
+
+        (yes-or-no "Empty the log file?"
+                   (lambda () (message "emptied"))
+                   (lambda () (message "left alone")))
+
+    The parent of a directory:
+
+        (file-name-directory (directory-file-name "/a/b/"))
 
 KEYS
     C-x C-f                 find-file
     C-x C-s                 save-buffer
     C-x C-w                 write-file
     C-x C-c                 quit
-    C-x d                   dired
-    C-x C-r                 dired-find-recursive
-    C-x k                   kill-buffer
-    C-x b                   switch-to-buffer-prompt
-    C-x C-b                 buffer-list
-
-KEYS IN DIRED MODE
-    <ret>                   dired-find-file
-    o                       dired-find-file-other-window
-    ^                       dired-up-directory
-    g                       dired-refresh
-    D                       dired-delete-file
-    R                       dired-rename-file
-    n                       next-line
-    p                       previous-line
 
 SEE ALSO
-    first-steps, buffers, completion
+    buffers, dired, windows, completion, configuration

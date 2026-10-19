@@ -80,14 +80,13 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; The scheduler that runs them can be tuned too: see `work-option'.
 ;; (set-work-option 'high-steps 4)
 
-;; A copy of unsaved work, written every half minute, for when the editor stops
-;; without being asked. `M-x recover-file' brings it back. See
-;; common-keymaps.lisp.
+;; A copy of unsaved work, for when the editor stops without being asked.
+;; `M-x recover-file' brings it back. See the `files' manual page.
 ;; (setq auto-save nil)
-;; (setq auto-save-directory "~/.cache/rsedit")
+;; (setq auto-save-directory (expand-file-name "~/.cache/rsedit"))
 
 ;; Files changing underneath you: a clean buffer is reloaded, a modified one is
-;; flagged and `C-x C-s' asks. See common-keymaps.lisp.
+;; flagged and `C-x C-s' asks. See the `files' manual page.
 ;; (setq watch-files nil)
 ;; (setq watch-file-interval 10)
 
@@ -383,7 +382,25 @@ pub fn create_global_env<B: BufferTrait>()
 
     // Add a list of callbacks that will be called after a resize event.
     // The list will contain lambdas with arguments (new_width, new_height)
-    env.set_variable("after-resize-hook".into(), ELispExp::nil());
+    env.set_variable(AFTER_RESIZE_HOOK.into(), ELispExp::nil());
+
+    // Auto-saving and watching files, on, at the pace they keep when nothing
+    // says otherwise; and no file manager until a module installs one.
+    env.set_variable(crate::modes::autosave::AUTO_SAVE.into(), ELispExp::t());
+    env.set_variable(
+        crate::modes::autosave::AUTO_SAVE_INTERVAL.into(),
+        ELispExp::number(crate::modes::autosave::DEFAULT_AUTO_SAVE_INTERVAL.as_secs_f64()),
+    );
+    env.set_variable(
+        crate::modes::autosave::AUTO_SAVE_DIRECTORY.into(),
+        ELispExp::nil(),
+    );
+    env.set_variable(crate::modes::watcher::WATCH_FILES.into(), ELispExp::t());
+    env.set_variable(
+        crate::modes::watcher::WATCH_FILE_INTERVAL.into(),
+        ELispExp::number(crate::modes::watcher::DEFAULT_WATCH_INTERVAL.as_secs_f64()),
+    );
+    env.set_variable(OPEN_DIRECTORY_CALLBACK.into(), ELispExp::nil());
 
     // How long a message stays in the echo area. A number of seconds arms the
     // timeout; nil leaves messages up until something replaces them.

@@ -31,9 +31,7 @@
 (define-key nil "C-M-i" 'completion-at-point)
 (define-key nil "M-tab" 'completion-at-point)
 
-;; Scrolling by a screenful, with two lines of overlap so you can find your
-;; place. Point comes along only when the line it is on scrolls out of sight,
-;; so reading a long file leaves the cursor where you were looking.
+;; Scrolling: the `windows' manual page.
 (define-key nil "C-v" 'scroll-up-command)
 (define-key nil "M-v" 'scroll-down-command)
 
@@ -82,25 +80,21 @@
 ;; pressing the first shows it in the echo area and waits for the rest.
 (define-key nil "C-x C-x" 'exchange-point-and-mark)
 (define-key nil "C-x h" 'mark-whole-buffer)
+
+;; Files and buffers: the `files' and `buffers' manual pages.
 (define-key nil "C-x C-f" 'find-file)
 (define-key nil "C-x C-s" 'save-buffer)
-;; Save as: write somewhere else and visit that from now on. The old file is
-;; left alone -- this writes a copy rather than moving anything.
 (define-key nil "C-x C-w" 'write-file)
 (define-key nil "C-x C-c" 'quit)
 (define-key nil "C-x k" 'kill-buffer)
 
-;; Windows. C-x 2 splits above/below, C-x 3 side by side, C-x 0 closes this
-;; one, C-x 1 closes the others, C-x o cycles.
+;; Windows: the `windows' manual page. After C-x o, a bare o goes on.
 (define-key nil "C-x 2" 'split-window-below)
 (define-key nil "C-x 3" 'split-window-right)
 (define-key nil "C-x 0" 'delete-window)
 (define-key nil "C-x 1" 'delete-other-windows)
 (define-key nil "C-x o" 'other-window)
 
-;; ... and once you are cycling, a bare `o' keeps going: C-x o o o walks
-;; through the windows without the prefix each time. Any other key ends the
-;; run and does its own job, so ignoring the offer costs nothing.
 (define-repeat-key 'other-window "o")
 
 ;; Repeat the last command. The reason this is worth a key of its own is the
@@ -211,8 +205,7 @@
 
 ;; `up-list' is left unbound, as in Emacs.
 
-;; Put the line point is on in the middle of the window, without moving point.
-;; The text slides under the cursor; `C-v' moves the cursor with the text.
+;; C-l: the `windows' manual page.
 (define-key nil "C-l" 'recenter)
 
 ;; Tab and Shift-Tab: the `indentation' manual page. Return is bound in
@@ -240,38 +233,8 @@
   (message (if display-line-numbers "line numbers on" "line numbers off")))
 (register-command "toggle-line-numbers" nil)
 
-;; Files that change underneath you. A background job compares each open
-;; file's timestamp and length against what they were when the editor last read
-;; or wrote it, a few files at a time:
-;;
-;;   (setq watch-files nil)          ; off; t or unset is on
-;;   (setq watch-file-interval 10)   ; seconds; read once, at startup
-;;
-;; A buffer with nothing unsaved is reloaded silently -- switch branches and
-;; the windows are already showing the new text. A buffer with unsaved edits is
-;; never touched: it is marked, and `C-x C-s' asks before writing over whatever
-;; arrived. `M-x revert-buffer' rereads deliberately, asking first if there is
-;; anything to lose.
-;;
-;; Turn it off if a network filesystem is misbehaving -- the check is a `stat',
-;; and a `stat' on a dead mount blocks the thread that also colours syntax.
-
-;; Work that has never been saved. Every half minute, a copy of each modified
-;; file buffer is written beside it as `#name#' -- not a backup of the file,
-;; but a copy of what is in the buffer, for the one loss nothing else covers:
-;; the editor stopping without being asked.
-;;
-;;   (setq auto-save nil)                      ; off; t or unset is on
-;;   (setq auto-save-interval 60)              ; seconds; read once, at startup
-;;   (setq auto-save-directory "~/.cache/rsedit") ; all of them here instead
-;;
-;; With a directory set, the file's path is flattened into the name
-;; (`#!home!me!p!main.rs#') so that two `main.rs' from different directories do
-;; not share one copy.
-;;
-;; Opening a file that has one says so. `M-x recover-file' puts it in the
-;; buffer and marks it modified, so you can look before deciding: `C-x C-s'
-;; keeps it and deletes the copy, `M-x revert-buffer' throws it away.
+;; Watching files and auto-saving: `watch-files' and `auto-save', documented
+;; where `C-h v' finds them, and the `files' manual page.
 
 ;; Background workers. `define-worker' runs a fiber on the scheduler syntax
 ;; colouring runs on, resuming it once per step:

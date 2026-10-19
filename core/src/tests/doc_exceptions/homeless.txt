@@ -5,106 +5,6 @@
 # list only shrinks: each step of doc/documentazione.typ gives a home to the
 # names of its area.
 
-# -- passo 4: file, buffer, finestre
-# lisp/buffer-list.lisp
-buffer-list
-buffer-list-buffer-name
-buffer-list-kill
-buffer-list-mode-width
-buffer-list-name-column
-buffer-list-name-width
-buffer-list-refresh
-buffer-list-select
-switch-to-buffer-candidates
-switch-to-buffer-prompt
-# lisp/dired.lisp
-dired
-dired-buffer-name
-dired-delete-file
-dired-find-file
-dired-find-file-other-window
-dired-find-recursive
-dired-refresh
-dired-rename-file
-dired-sort
-dired-up-directory
-dired-window-width
-find-file-recursive-ignore
-find-file-recursive-limit
-# primitives/ask.rs
-y-or-n
-yes-or-no
-# primitives/buffers.rs
-buffer-create
-buffer-file-name
-buffer-get
-buffer-modified-p
-buffer-put
-buffer-read-only-p
-buffer-string
-buffer-substring
-clear-buffer
-close-buffer
-current-buffer
-kill-buffer
-kill-buffer-without-saving
-major-mode
-set-buffer-read-only
-set-major-mode
-switch-to-buffer
-with-current-buffer
-# primitives/io.rs
-data-directory
-delete-file
-directory-entry-count
-directory-file-name
-directory-files-recursive
-expand-file-name
-file-directory-p
-file-exists-p
-file-name-as-directory
-file-name-directory
-file-name-nondirectory
-find-file
-getenv
-list-dir
-match-list
-path-separator
-quit
-quit-without-saving
-read-file-to-string
-recover-file
-rename-file
-revert-buffer
-save-buffer
-save-some-buffers
-setenv
-write-file
-# primitives/mouse.rs
-mouse-drag-to
-mouse-mode-toggle
-mouse-resize
-mouse-scroll
-mouse-set-point
-mouse-start-selection
-# primitives/ui.rs
-close-floating-window
-make-floating-window
-recenter
-# primitives/windows.rs
-count-windows
-delete-other-windows
-delete-window
-display-buffer-at-bottom
-other-window
-scroll-down-command
-scroll-up-command
-select-window
-selected-window
-split-window-below
-split-window-right
-window-buffer
-
 # -- passo 5: cercare e navigare
 # lisp/compile.lisp
 compilation-mark-priority
@@ -225,7 +125,6 @@ preview-category
 preview-commands
 preview-minibuffer-name
 # primitives/commands.rs
-all-buffer-names
 all-commands
 call-interactively
 command-args

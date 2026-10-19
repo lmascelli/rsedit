@@ -3,16 +3,6 @@
 # page, in the step of doc/documentazione.typ for its area; the list only
 # shrinks.
 
-# -- passo 4: file, buffer, finestre
-# primitives/buffers.rs
-buffer-create
-close-buffer
-# primitives/io.rs
-directory-files-recursive
-find-file
-# primitives/ui.rs
-make-floating-window
-
 # -- passo 5: cercare e navigare
 # primitives/replace.rs
 query-replace

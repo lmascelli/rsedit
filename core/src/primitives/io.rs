@@ -3,26 +3,14 @@ use risp::{call_callable, eval};
 use crate::modes::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::{args, ask};
 
-pub const FIND_FILE_DOC: &str = "(find-file PATH): Open PATH into a buffer, make it current, and \
-         return the buffer's name.\n\n\
-         The buffer is named after PATH's file name, or after PATH itself when it has none. A \
-         name already taken by a buffer visiting a *different* file gets a suffix -- \
-         `mod.rs<2>' -- so that two files of the same name in different directories can both be \
-         open. Opening a file that is already open returns to its buffer rather than reading it \
-         again.\n\n\
-         A PATH that does not exist yet is not an error: an empty buffer is made that remembers \
-         where it goes, and `save-buffer' creates the file. It is *not* marked modified, since \
-         nothing has been written -- so leaving without saving loses nothing and asks nothing. \
-         The echo area says \"(New file)\", which is the only thing distinguishing it from an \
-         empty file that does exist.\n\n\
-         A PATH that is a directory is handed to `*open-directory-callback*' -- the function \
-         `dired' installs when it loads -- and its answer is returned. With nothing installed, \
-         this reports that PATH is a directory rather than failing obscurely on the read. That \
-         variable is the whole of what the editor knows about file managers: nothing here \
-         mentions `dired', and a different one can be installed instead.\n\n\
-         Returns nil (logging a diagnostic) if the file exists but cannot be read.\n\n\
+pub const FIND_FILE_DOC: &str = "(find-file PATH): Open the file at PATH in a buffer, make it \
+         current, and return the buffer's name. A file open already is gone back to; a name \
+         another file's buffer has gets a suffix, as in name<2>. A PATH that does not exist gives \
+         an empty buffer, which saving creates. A directory is handed to \
+         `*open-directory-callback*', and its answer returned. A file that cannot be read gives \
+         nil.\n\n\
          Example:\n\
-         (find-file \"/home/me/notes.txt\") => \"notes.txt\"";
+         (find-file \"~/notes.txt\")";
 
 /// The buffer name to use for PATH: its file name, made unique.
 ///
@@ -79,7 +67,7 @@ primitive!(find_file, args, env, ctx, {
     // a variable to ask; what answers it -- `dired', or something else
     // entirely -- it never learns.
     if path.is_dir() {
-        return match env.get_variable("*open-directory-callback*") {
+        return match env.get_variable(crate::editor::OPEN_DIRECTORY_CALLBACK) {
             Some(callback) if callback.is_truthy() => risp::call_callable(
                 &callback,
                 &[ELispExp::string(path_str.clone())],
@@ -129,12 +117,9 @@ primitive!(find_file, args, env, ctx, {
     }
 });
 
-pub const SAVE_BUFFER_DOC: &str = "(save-buffer): Write the current buffer's contents to the file it \
-         was visiting. Returns nil in every case (logging a diagnostic \
-         either way); if the buffer has no associated file, or the write \
-         fails, nothing is written.\n\n\
-         Example:\n\
-         (define-key nil \"C-x C-s\" 'save-buffer)";
+pub const SAVE_BUFFER_DOC: &str = "(save-buffer): Write the current buffer to its file, asking \
+         first when the file has changed on disk since it was read. A buffer with no file, or a \
+         write that fails, writes nothing and says why in the log.";
 
 primitive!(save_buffer, _args, env, ctx, {
     // What to write is taken under the lock; the write itself happens with
@@ -191,17 +176,9 @@ primitive!(save_buffer, _args, env, ctx, {
     }
 });
 
-pub const RECOVER_FILE_DOC: &str = "(recover-file): Replace the current buffer with what the \
-         auto-saver last wrote for it. Returns t if anything was recovered.\n\n\
-         For after the editor stopped without being asked -- a crash, a lost terminal, a machine \
-         that went down. Everything else in the editor protects work from being *discarded*; this \
-         is the only thing that helps when it was never saved at all.\n\n\
-         Asks first, because the recovered text replaces what is in the buffer now. What comes \
-         back is *not* saved: it is put in the buffer and marked modified, so you can look at it \
-         and decide. `C-x C-s' accepts it and throws the recovery copy away; `M-x revert-buffer' \
-         rejects it and goes back to the file.\n\n\
-         Example:\n\
-         (recover-file)";
+pub const RECOVER_FILE_DOC: &str = "(recover-file): Put the auto-saved copy of the current \
+         buffer's file into the buffer, after asking, and leave it unsaved: saving keeps it, and \
+         `revert-buffer' goes back to the file.";
 
 primitive!(recover_file, _args, env, ctx, {
     let Some(path) = ctx.with_current_buffer(|buf| buf.file_path.clone()) else {
@@ -260,17 +237,8 @@ primitive!(recover_file_adopt, _args, env, ctx, {
 });
 
 pub const REVERT_BUFFER_DOC: &str = "(revert-buffer): Read the current buffer's file again, \
-         throwing away anything unsaved. Returns t if it was read, nil otherwise.\n\n\
-         Asks first when there is something to lose -- typing `yes' -- and simply reads when \
-         there is not. The undo history, the mark and any overlays go with the old text: all \
-         three describe positions in text that no longer exists, and undoing back into a state \
-         the file never had would be worse than not being able to undo. Point stays roughly where \
-         it was, clamped into the new contents.\n\n\
-         Most of the time nothing has to run this. A buffer with no unsaved edits is reloaded on \
-         its own when the file changes -- see `watch-files' -- and this is the way to do it \
-         deliberately, or to abandon edits in favour of what is on disk.\n\n\
-         Example:\n\
-         (revert-buffer)";
+         asking first when there are unsaved changes to lose. The undo history, the mark and the \
+         overlays go with the old text.";
 
 primitive!(revert_buffer, _args, env, ctx, {
     let Some((path, modified)) =
@@ -328,17 +296,11 @@ fn reread<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> bool {
 }
 
 pub const WRITE_FILE_DOC: &str = "(write-file PATH): Write the current buffer to PATH and visit \
-         it from now on. Returns PATH, or nil if nothing was written.\n\n\
-         What \"save as\" means: the text goes to the new file, later `save-buffer\'s go there \
-         too, and the buffer is renamed after it -- with `<2>\' appended if that name is taken, \
-         the same way `find-file\' makes two `mod.rs\' tell each other apart. The mode is \
-         reconsidered from the new name, so saving a scratch buffer as `x.rs\' colours it.\n\n\
-         The old file, if there was one, is left exactly as it is. This does not move a file; it \
-         writes a copy and stops looking at the original.\n\n\
-         Refused, writing nothing, when another buffer is already visiting PATH -- two buffers \
-         over one file is how one of them silently loses its work.\n\n\
+         that file from then on; return PATH, or nil when nothing was written. The buffer takes \
+         the new file's name and its mode is chosen again, and the old file is left as it was. A \
+         PATH another buffer is visiting is refused.\n\n\
          Example:\n\
-         (write-file \"/home/me/notes-v2.txt\")";
+         (write-file \"~/notes-v2.txt\")";
 
 primitive!(write_file, args, env, ctx, {
     let Some(ELispExp::String(path_str)) = args.first() else {
@@ -625,17 +587,13 @@ pub(crate) fn directory_entries_ordered(
     Ok(names.into_iter().map(|(_, name)| name).collect())
 }
 
-pub const LIST_DIR_DOC: &str = "(list-dir &optional DIRECTORY ORDER): Return the names of \
-         everything in DIRECTORY -- the current directory if it is omitted -- as a sorted list of \
-         strings, with a \"/\" after each subdirectory. `.' and `..' are not included, and a \
-         leading \"~\" is expanded to the home directory.\n\n\
-         ORDER is 'name for one alphabetical run, which is the default, or 'type for the \
-         subdirectories first and then the files, each run alphabetical. Ordering is done here \
-         rather than by the caller because what each entry is has already been asked of the \
-         filesystem; sorting afterwards means asking again, once per entry.\n\n\
-         Returns nil (logging a diagnostic) if the directory can't be read.\n\n\
+pub const LIST_DIR_DOC: &str = "(list-dir &optional DIRECTORY ORDER): Return the names in \
+         DIRECTORY, the current directory by default, as a sorted list of strings with a / after \
+         each subdirectory; . and .. are left out. ORDER is name, the default, for one \
+         alphabetical run, or type for the subdirectories first. A leading ~ is expanded, and a \
+         directory that cannot be read gives nil.\n\n\
          Example:\n\
-         (list-dir \"/etc\" 'type) => (\"ssh/\" \"hosts\" ...)";
+         (list-dir \"/etc\" 'type)";
 
 primitive!(list_dir, args, _env, ctx, {
     if args.len() > 2 {
@@ -678,11 +636,8 @@ primitive!(list_dir, args, _env, ctx, {
     }
 });
 
-pub const MATCH_LIST_DOC: &str = "(match-list LIST PATTERN): Return the elements of LIST that \
-         contain PATTERN, in the order they appear. Non-string elements are skipped, so a list \
-         that is not all strings narrows rather than signalling.\n\n\
-         Containment, not prefix: this is for narrowing a listing to what is interesting, which \
-         is a different question from completing a prefix.\n\n\
+pub const MATCH_LIST_DOC: &str = "(match-list LIST PATTERN): Return the strings in LIST that \
+         contain PATTERN, in their order; anything that is not a string is left out.\n\n\
          Example:\n\
          (match-list (list-dir \"/etc\") \".conf\")";
 
@@ -705,19 +660,13 @@ primitive!(match_list, args, _env, _ctx, {
     ))
 });
 
-pub const EXPAND_FILE_NAME_DOC: &str = "(expand-file-name PATH &optional DIRECTORY): Return PATH as \
-         an absolute path: a leading \"~\" replaced by the home directory, a relative PATH \
-         resolved against DIRECTORY (the editor's working directory if it is omitted), and \
-         \".\" and \"..\" components collapsed.\n\n\
-         An absolute PATH is returned normalised but otherwise as given, so passing one \
-         through costs nothing and DIRECTORY is ignored for it.\n\n\
-         The collapsing is done on the name, not on the disk: \"/a/link/..\" becomes \"/a\" \
-         even when `link' is a symlink pointing elsewhere, and a path that does not exist \
-         yet -- the destination of a rename, say -- is expanded like any other.\n\n\
+pub const EXPAND_FILE_NAME_DOC: &str = "(expand-file-name PATH &optional DIRECTORY): Return PATH \
+         made absolute: a leading ~ becomes the home directory, a relative PATH is taken from \
+         DIRECTORY or from the directory the editor was started in, and . and .. are resolved by \
+         name, without looking at the disk.\n\n\
          Example:\n\
-         (expand-file-name \"~/notes.txt\")      => \"/home/me/notes.txt\"\n\
-         (expand-file-name \"..\" \"/a/b/c/\")     => \"/a/b\"\n\
-         (expand-file-name \"draft.md\" \"/a/b/\") => \"/a/b/draft.md\"";
+         (expand-file-name \"~/notes.txt\")    => \"/home/me/notes.txt\"\n\
+         (expand-file-name \"..\" \"/a/b/c/\")   => \"/a/b\"";
 
 primitive!(expand_file_name, args, _env, _ctx, {
     let path = match args.first() {
@@ -748,8 +697,8 @@ primitive!(expand_file_name, args, _env, _ctx, {
 });
 
 pub const FILE_NAME_AS_DIRECTORY_DOC: &str = "(file-name-as-directory PATH): Return PATH with a \
-         trailing separator, adding one only if it has none. This is the form a file name can \
-         be joined onto with `concat'.\n\n\
+         separator at its end, adding one only when it has none, ready for a name to be joined on \
+         with `concat'.\n\n\
          Example:\n\
          (concat (file-name-as-directory \"/etc\") \"hosts\") => \"/etc/hosts\"";
 
@@ -758,28 +707,21 @@ primitive!(file_name_as_directory, args, _env, _ctx, {
     Ok(ELispExp::string(as_directory(&path)))
 });
 
-pub const DIRECTORY_FILE_NAME_DOC: &str = "(directory-file-name PATH): Return PATH without its \
-         trailing separator -- the directory named as a file, which is the form whose own \
-         directory can be asked for.\n\n\
-         A root is returned unchanged: it is its own parent, and stripping its separator \
-         would leave the empty string.\n\n\
+pub const DIRECTORY_FILE_NAME_DOC: &str = "(directory-file-name PATH): Return PATH without the \
+         separator at its end; a root comes back as it is.\n\n\
          Example:\n\
-         (file-name-directory (directory-file-name \"/a/b/\")) => \"/a/\"   ; the parent";
+         (file-name-directory (directory-file-name \"/a/b/\")) => \"/a/\"";
 
 primitive!(directory_file_name, args, _env, _ctx, {
     let path = path_string(args.first())?;
     Ok(ELispExp::string(without_trailing_separator(&path)))
 });
 
-pub const FILE_NAME_DIRECTORY_DOC: &str = "(file-name-directory PATH): Return the directory part of \
-         PATH -- everything up to and including its last separator -- or nil if PATH contains \
-         no separator at all.\n\n\
-         About the name, not about the disk: \"/a/b\" gives \"/a/\" whether or not `b' is a \
-         directory, and \"/a/b/\" gives itself. To go *up* from a directory, take its \
-         `directory-file-name' first.\n\n\
+pub const FILE_NAME_DIRECTORY_DOC: &str = "(file-name-directory PATH): Return the directory part \
+         of PATH, up to and including its last separator, or nil when it has none. It reads the \
+         name, not the disk.\n\n\
          Example:\n\
-         (file-name-directory \"/a/b/c\") => \"/a/b/\"\n\
-         (file-name-directory \"notes\")  => nil";
+         (file-name-directory \"/a/b/c\") => \"/a/b/\"";
 
 primitive!(file_name_directory, args, _env, _ctx, {
     let path = path_string(args.first())?;
@@ -789,9 +731,8 @@ primitive!(file_name_directory, args, _env, _ctx, {
     })
 });
 
-pub const FILE_NAME_NONDIRECTORY_DOC: &str = "(file-name-nondirectory PATH): Return the last \
-         component of PATH -- everything after its last separator, or all of PATH when it has \
-         none.\n\n\
+pub const FILE_NAME_NONDIRECTORY_DOC: &str = "(file-name-nondirectory PATH): Return the part of \
+         PATH after its last separator, or all of PATH when it has none.\n\n\
          Example:\n\
          (file-name-nondirectory \"/a/b/notes.txt\") => \"notes.txt\"";
 
@@ -882,12 +823,8 @@ pub(crate) fn file_completions(prefix: &str) -> Vec<String> {
 // could not be called from a script, and a script that could not be stopped is
 // the more dangerous of the two mistakes.
 
-pub const FILE_EXISTS_P_DOC: &str = "(file-exists-p PATH): Return t if something exists at PATH, nil \
-         otherwise. A leading \"~\" is expanded.\n\n\
-         A broken symlink exists: the link is there, which is what matters to \
-         `rename-file' and `delete-file'.\n\n\
-         Example:\n\
-         (file-exists-p \"~/.config\") => t";
+pub const FILE_EXISTS_P_DOC: &str = "(file-exists-p PATH): Return t when something is at PATH, a \
+         broken symbolic link included, nil otherwise. A leading ~ is expanded.";
 
 primitive!(file_exists_p, args, _env, _ctx, {
     let path = path_arg(args.first())?;
@@ -899,25 +836,19 @@ primitive!(file_exists_p, args, _env, _ctx, {
     ))
 });
 
-pub const FILE_DIRECTORY_P_DOC: &str = "(file-directory-p PATH): Return t if PATH is a directory, nil \
-         if it is anything else or does not exist. A leading \"~\" is expanded, and a \
-         symlink to a directory counts as one.\n\n\
-         Example:\n\
-         (file-directory-p \"/etc\") => t";
+pub const FILE_DIRECTORY_P_DOC: &str = "(file-directory-p PATH): Return t when PATH is a \
+         directory, or a symbolic link to one, nil otherwise. A leading ~ is expanded.";
 
 primitive!(file_directory_p, args, _env, _ctx, {
     let path = path_arg(args.first())?;
     Ok(bool_exp(std::path::Path::new(&path).is_dir()))
 });
 
-pub const DIRECTORY_ENTRY_COUNT_DOC: &str = "(directory-entry-count PATH): Return how many entries \
-         PATH contains, not counting `.' and `..' and not descending into subdirectories. \
-         Returns nil (logging a diagnostic) if PATH is not a readable directory.\n\n\
-         What it is for: telling the user how much a recursive delete would take with them. \
-         \"Delete src/ (34 entries)?\" is a question somebody can answer; \"Delete src/?\" \
-         is one they can only guess at.\n\n\
+pub const DIRECTORY_ENTRY_COUNT_DOC: &str = "(directory-entry-count PATH): Return how many \
+         entries the directory PATH holds, not counting . and .. nor what is in its \
+         subdirectories, or nil when it is not a readable directory.\n\n\
          Example:\n\
-         (directory-entry-count \"/etc\") => 214";
+         (directory-entry-count \"/etc\")";
 
 primitive!(directory_entry_count, args, _env, ctx, {
     let path = path_arg(args.first())?;
@@ -930,20 +861,13 @@ primitive!(directory_entry_count, args, _env, ctx, {
     }
 });
 
-pub const DELETE_FILE_DOC: &str = "(delete-file PATH &optional RECURSIVE): Delete PATH. Returns t on \
-         success, or nil (logging a diagnostic) if it could not be deleted.\n\n\
-         A file, a symlink or an *empty* directory is removed. A directory with anything in \
-         it is refused unless RECURSIVE is non-nil, in which case everything under it goes \
-         too.\n\n\
-         Refusing by default is the point: a file manager binds this to a single keystroke, \
-         and one keystroke must not be able to lose a tree. Asking for RECURSIVE is how a \
-         caller says it has confirmed with the user that this is what they meant -- which is \
-         also why this does no asking of its own.\n\n\
-         A leading \"~\" is expanded. A symlink to a directory is unlinked, not followed: \
-         deleting a link never deletes what it points at, RECURSIVE or not.\n\n\
+pub const DELETE_FILE_DOC: &str = "(delete-file PATH &optional RECURSIVE): Delete the file, \
+         symbolic link or empty directory at PATH, and return t, or nil when it could not be \
+         deleted. A directory with something in it is deleted, with everything under it, only \
+         when RECURSIVE is non-nil. A symbolic link is removed, never what it points to. A \
+         leading ~ is expanded.\n\n\
          Example:\n\
-         (delete-file \"~/notes.txt\")\n\
-         (delete-file \"~/build\" t)      ; and everything under it";
+         (delete-file \"~/build\" t)";
 
 primitive!(delete_file, args, _env, ctx, {
     if args.is_empty() || args.len() > 2 {
@@ -983,19 +907,11 @@ primitive!(delete_file, args, _env, ctx, {
     }
 });
 
-pub const RENAME_FILE_DOC: &str = "(rename-file FROM TO): Rename FROM to TO, which may move it into \
-         another directory. Returns t on success, or nil (logging a diagnostic) if it \
-         failed.\n\n\
-         An existing TO is *not* overwritten -- the rename is refused instead. The \
-         underlying system call would replace it silently, which for a file manager means \
-         one mistyped name destroys an unrelated file with nothing said. Renaming \
-         something onto itself succeeds and changes nothing.\n\n\
-         A leading \"~\" is expanded in both. Both must be on the same filesystem: this is \
-         a rename, not a copy, and crossing a mount point is reported as a failure rather \
-         than silently costing a full copy of a large tree.\n\n\
+pub const RENAME_FILE_DOC: &str = "(rename-file FROM TO): Rename FROM to TO, which may be in \
+         another directory of the same filesystem, and return t, or nil when it failed. An \
+         existing TO is not replaced: the rename is refused. A leading ~ is expanded in both.\n\n\
          Example:\n\
-         (rename-file \"~/notes.txt\" \"~/notes.md\")\n\
-         (rename-file \"draft.txt\" \"archive/draft.txt\")";
+         (rename-file \"~/notes.txt\" \"~/notes.md\")";
 
 primitive!(rename_file, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -1139,30 +1055,14 @@ pub(crate) fn walk_files(
 }
 
 pub const DIRECTORY_FILES_RECURSIVE_DOC: &str = "(directory-files-recursive &optional DIRECTORY \
-         LIMIT PRUNE SUFFIXES): Every file under DIRECTORY -- the current directory if it is omitted -- \
-         as a list of paths relative to it, sorted. Directories themselves are not listed, only \
-         the files in them.\n\n\
-         Returns (TRUNCATED PATHS): TRUNCATED is t if LIMIT stopped the walk before it \
-         finished, nil if the list is everything there is. A caller that ignores it shows a \
-         partial list as though it were complete, which is how a search comes to quietly not \
-         find a file that is there.\n\n\
-         LIMIT defaults to 10000. PRUNE is a list of directory *names* -- not paths -- that the \
-         walk does not descend into; every directory so named is skipped wherever it appears. \
-         Pruning is not the same as filtering the result: \".git\" alone holds thousands of \
-         files, and a walk that collected them would reach LIMIT before reaching any source.\n\n\
-         SUFFIXES is a list of endings -- \".o\", \".lock\" -- that a file must not have to be \
-         listed. Dropped during the walk for the same reason PRUNE is: filtering afterwards in \
-         Lisp costs an evaluation per file per suffix, and on a large tree with a long \
-         .gitignore that alone can exhaust a command's whole fuel budget. A file dropped this \
-         way is not counted against LIMIT either, so LIMIT bounds what you are offered rather \
-         than what the walk stepped over.\n\n\
-         Unreadable directories are skipped rather than reported -- a walk of a home directory \
-         crosses several, and one refusal is not a failed search. Symlinks are listed as the \
-         links they are and never followed, so a link pointing at an ancestor cannot send the \
-         walk round in a circle.\n\n\
+         LIMIT PRUNE SUFFIXES): Return (TRUNCATED PATHS): the files under DIRECTORY, the current \
+         directory by default, as a sorted list of paths relative to it, and whether the walk \
+         stopped at LIMIT files, 10000 by default. The directory names in PRUNE are not entered \
+         at any depth, and files ending in one of SUFFIXES are left out and not counted. \
+         Directories that cannot be read are skipped, and symbolic links are listed, not \
+         followed.\n\n\
          Example:\n\
-         (directory-files-recursive \".\" 5000 '(\".git\" \"target\") '(\".o\"))\n\
-         => (nil (\"Cargo.toml\" \"src/main.rs\" ...))";
+         (directory-files-recursive \".\" 5000 '(\".git\" \"target\") '(\".o\"))";
 
 primitive!(directory_files_recursive, args, _env, ctx, {
     if args.len() > 4 {
@@ -1251,14 +1151,9 @@ primitive!(directory_files_recursive, args, _env, ctx, {
     ]))
 });
 
-pub const READ_FILE_TO_STRING_DOC: &str = "(read-file-to-string PATH): The contents of PATH as a \
-         string, or nil (logging a diagnostic) if it cannot be read.\n\n\
-         No buffer is involved: nothing is displayed, no mode is chosen, nothing is added to \
-         the buffer list, and there is nothing to close afterwards. That is the point -- it is \
-         for the files a *module* reads rather than the ones a user edits, such as the \
-         `.gitignore' that tells a recursive find what to leave out.\n\n\
-         A leading \"~\" is expanded. A file that is not valid UTF-8 is refused rather than \
-         mangled.\n\n\
+pub const READ_FILE_TO_STRING_DOC: &str = "(read-file-to-string PATH): Return the contents of the \
+         file at PATH as a string, without making a buffer for it, or nil when it cannot be read \
+         or is not UTF-8. A leading ~ is expanded.\n\n\
          Example:\n\
          (read-file-to-string \"~/.gitignore\")";
 
@@ -1277,14 +1172,10 @@ primitive!(read_file_to_string, args, _env, ctx, {
 // The environment
 // ---------------------------------------------------------------------------
 
-pub const GETENV_DOC: &str = "(getenv NAME): The value of the environment variable NAME, or nil \
-         if it is not set.\n\n\
-         nil is also the answer for a variable whose value is not valid Unicode, which cannot be \
-         told apart from unset here. The alternative is a second kind of nil, and nothing in \
-         this editor would do anything different with it.\n\n\
+pub const GETENV_DOC: &str = "(getenv NAME): Return the value of the environment variable NAME, \
+         or nil when it is not set or is not valid Unicode.\n\n\
          Example:\n\
-         (getenv \"HOME\") => \"/home/user\"\n\
-         (getenv \"MANPATH\")";
+         (getenv \"HOME\")";
 
 primitive!(getenv, args, _env, _ctx, {
     let Some(ELispExp::String(name)) = args.first() else {
@@ -1300,16 +1191,11 @@ primitive!(getenv, args, _env, _ctx, {
 });
 
 pub const SETENV_DOC: &str = "(setenv NAME &optional VALUE): Set the environment variable NAME to \
-         VALUE, or remove it when VALUE is omitted or nil. Returns VALUE.\n\n\
-         The change applies to this editor and to every process it starts afterwards -- which is \
-         the point: `(setenv \"MANPATH\" ...)' before running `man' is how `manpage-mode' \
-         decides where pages are looked for. It does not reach the shell that started the \
-         editor, because no process can change its parent's environment.\n\n\
-         Cross-platform: this is `std::env`, not a shell builtin, so it means the same thing \
-         everywhere.\n\n\
+         VALUE, or remove it when VALUE is nil or missing, and return VALUE. The change reaches \
+         the programs the editor starts from then on, not the shell that started the editor.\n\n\
          Example:\n\
-         (setenv \"MANPATH\" \"/usr/share/man:/usr/local/share/man\")\n\
-         (setenv \"PAGER\")        ; remove it";
+         (setenv \"PAGER\" \"cat\")\n\
+         (setenv \"PAGER\")   ; remove it";
 
 primitive!(setenv, args, _env, _ctx, {
     if args.is_empty() || args.len() > 2 {
@@ -1363,14 +1249,10 @@ primitive!(setenv, args, _env, _ctx, {
     }
 });
 
-pub const PATH_SEPARATOR_DOC: &str = "(path-separator): The character this platform puts between \
-         paths in a variable like PATH or MANPATH, as a string: \":\" on Unix, \";\" on \
-         Windows.\n\n\
-         Asked rather than assumed, for the reason `dired--parent' asks what a directory \
-         separator is: writing \":\" is one platform's rule spelled as though it were the rule, \
-         and the resulting MANPATH is one long nonsense entry on the other.\n\n\
+pub const PATH_SEPARATOR_DOC: &str = "(path-separator): Return what separates the paths in a \
+         variable such as PATH, as a string: \":\" on Unix, \";\" on Windows.\n\n\
          Example:\n\
-         (setenv \"MANPATH\" (string-join manpage-path (path-separator)))";
+         (split-string (getenv \"PATH\") (path-separator))";
 
 primitive!(path_separator, _args, _env, _ctx, {
     Ok(ELispExp::string(
@@ -1378,15 +1260,11 @@ primitive!(path_separator, _args, _env, _ctx, {
     ))
 });
 
-pub const DATA_DIRECTORY_DOC: &str = "(data-directory &optional KIND): The directory the editor's \
-         own data was installed into, or nil if it cannot be worked out.\n\n\
-         With KIND -- a string like \"man\" or \"lisp\" -- the subdirectory of it. These sit \
-         beside the executable, put there at build time, because they are read at runtime and \
-         the source tree they came from may not be present.\n\n\
-         This is what `lisp-path' is built from, and where `manpage' finds the editor's \
-         own manual pages.\n\n\
+pub const DATA_DIRECTORY_DOC: &str = "(data-directory &optional KIND): Return the directory the \
+         editor's own data is installed in, or nil when it cannot be found. With KIND, a string \
+         such as \"man\" or \"lisp\", return that subdirectory of it.\n\n\
          Example:\n\
-         (data-directory \"man\") => \"/path/to/target/debug/data/man\"";
+         (data-directory \"man\")";
 
 primitive!(data_directory, args, _env, ctx, {
     let kind = match args.first() {
@@ -1560,17 +1438,11 @@ fn answer_form<B: BufferTrait>(
 }
 
 pub const SAVE_SOME_BUFFERS_DOC: &str = "(save-some-buffers &optional AFTER): Offer to save each \
-         modified buffer that is visiting a file, one at a time, then call AFTER with no \
-         arguments.\n\n\
-         `y' saves this one, `n' leaves it, `!' saves this one and every one left, and `q' stops \
-         asking. Any other key does nothing, so the question cannot be answered by accident.\n\n\
-         Buffers not visiting a file are passed over: typing in `*scratch*' marks it modified and \
-         there is nowhere to put it, so asking would be a question with no useful answer.\n\n\
-         AFTER runs whether anything was saved or not, and whether or not the questions were \
-         stopped early -- it is where the caller decides what to do about what is left, which is \
-         what `quit' uses it for.\n\n\
+         buffer with unsaved changes that is visiting a file, one at a time, then call AFTER with \
+         no arguments, however the questions ended. y saves the buffer, n leaves it, ! saves it \
+         and every one left, and q stops asking; no other key answers.\n\n\
          Example:\n\
-         (save-some-buffers 'quit--confirm)";
+         (save-some-buffers (lambda () (message \"done\")))";
 
 primitive!(save_some_buffers, args, env, ctx, {
     let after = args.first().cloned().unwrap_or_else(ELispExp::nil);
@@ -1659,16 +1531,9 @@ primitive!(save_some_buffers_answer, args, env, ctx, {
     ask_about(ctx, env, &rest, &after)
 });
 
-pub const QUIT_DOC: &str = "(quit): Leave the editor, offering to save anything modified \
-         first.\n\n\
-         Each modified file buffer is offered in turn -- see `save-some-buffers' -- and if any \
-         are still unsaved afterwards, leaving has to be confirmed by typing `yes'. With nothing \
-         modified, it simply quits.\n\n\
-         The confirmation guards the act that cannot be undone rather than each step towards it: \
-         declining to save one buffer is recoverable right up until the editor closes, and that \
-         is the moment worth being sure about. `quit-without-saving' skips all of it.\n\n\
-         Example:\n\
-         (define-key nil \"C-x C-c\" 'quit)";
+pub const QUIT_DOC: &str = "(quit): Leave the editor, first offering to save each buffer with \
+         unsaved changes to a file, as `save-some-buffers' does. If any are still unsaved after \
+         that, leaving has to be confirmed by typing yes. `quit-without-saving' asks nothing.";
 
 primitive!(quit, _args, env, ctx, {
     let names = unsaved_file_buffers(ctx);
@@ -1703,10 +1568,8 @@ primitive!(quit_confirm, _args, env, ctx, {
     )
 });
 
-pub const QUIT_WITHOUT_SAVING_DOC: &str = "(quit-without-saving): Stop the editor's main loop at \
-         once, asking nothing and saving nothing.\n\n\
-         What `quit' eventually calls, and the way out for anything that has already done the \
-         asking itself.";
+pub const QUIT_WITHOUT_SAVING_DOC: &str = "(quit-without-saving): Leave the editor at once, \
+         asking nothing and saving nothing.";
 
 primitive!(quit_without_saving, _args, _env, ctx, {
     ctx.quit();

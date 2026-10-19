@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--3 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--4 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -802,12 +802,60 @@ all'editor (CMD-2 nel rapporto): `editing` lo dice tra i limiti, e il legame
 di `<delete>` in `electric-pair.lisp` resta senza effetto finché la scheda è
 aperta.
 
+*Passo 4, fatto.* `files`, `buffers` e `windows` sono riscritte sul modello, e
+`dired` e `mouse` sono nuove, come previsto. Il registro `SETTINGS` documenta
+nove impostazioni dell'area, con il loro valore iniziale: `auto-save`,
+`auto-save-interval`, `auto-save-directory`, `watch-files`,
+`watch-file-interval`, `*open-directory-callback*`, `mouse-mode`,
+`window-separator` e `after-resize-hook`. Le spiegazioni che stavano nei
+commenti di `common-keymaps.lisp` e dell'`init.lisp` predefinito sono passate
+in `files`. Le impostazioni di `dired.lisp` erano `defconst` e ora sono
+`defvar`, così un valore scelto prima che il modulo si carichi resta. Le 67
+docstring delle primitive pubbliche dell'area e quelle dei due moduli seguono
+il modello. `all-buffer-names` trova casa in `buffers` ora invece che nel
+passo 6.
+
+Le pagine e le docstring dell'area dicevano cose false, ora corrette:
+
+- due finestre sullo stesso buffer non condividono il punto: ciascuna ricorda
+  il suo;
+- un file cambiato sul disco viene riletto quando il buffer non ha modifiche,
+  e la barra non segnala nulla: `files` diceva il contrario su entrambi i
+  punti;
+- chiudere un buffer porta le sue finestre sul buffer usato più di recente,
+  non su `*scratch*`;
+- `delete-window` accetta un id, che la firma taceva;
+- una `defun` non sostituisce una primitiva, quindi il doppio clic non si
+  ridefinisce, come invece prometteva la docstring di
+  `mouse-start-selection`;
+- `C-g` non chiude un prompt (MIN-2 nel rapporto) né una domanda a un tasto,
+  mentre `guide` e `first-steps` dicevano di sì;
+- `first-steps` mandava a `M-x mouse-mode-toggle` per accendere il mouse, che
+  l'`init.lisp` predefinito accende già;
+- i commenti dicevano `watch-file-interval` e `auto-save-interval` letti una
+  volta all'avvio: si leggono a ogni giro;
+- i commenti dicevano che ogni mezzo minuto si copia ogni buffer modificato:
+  ogni mezzo minuto se ne guardano quattro, a turno, e contano tutti, anche
+  quelli senza file come `*scratch*`; con dodici buffer un file si copia ogni
+  minuto e mezzo.
+
+Restano due difetti del codice, che questo passo non corregge: spetta a una
+patch a parte.
+
+- `auto-save-directory` non espande `~` e non crea la cartella, quindi il
+  valore che l'`init.lisp` predefinito suggeriva, `"~/.cache/rsedit"`, non
+  funzionava. Il suggerimento ora è `(expand-file-name "~/.cache/rsedit")`, e
+  la pagina `files` dice che la cartella deve esistere.
+- `BUFFERS_PER_TURN`, in `autosave.rs`, dice quanti buffer un giro può
+  scrivere, ma conta quelli guardati: chi tiene aperti molti buffer aspetta la
+  copia ben più di mezzo minuto. La pagina ora lo dice.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),
   [2], [avvio, configurazione, diagnostica (fatto)], [`rsedit`, `guide`, `first-steps`, `configuration`], [da `general.rs`: `eval-file`, `log`, `all-logs`, `backtrace`], [`debug`, `commands`; nuova: `diagnostics` (il log nella cache, `*Messages*`, `C-h e`, il backtrace, le righe del watchdog)],
   [3], [scrivere e modificare (fatto)], [`editing`, `rectangles`, `macros`], [`edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`], [`indent`, `electric-pair`, `clipboard`; nuove: `indentation`, `killing`],
-  [4], [file, buffer, finestre], [`files`, `buffers`, `windows`], [`io`, `buffers`, `windows`, `ui`, `mouse`, `ask`], [`dired`, `buffer-list`; nuove: `dired`, `mouse`; le impostazioni `auto-save` e `watch-files`],
+  [4], [file, buffer, finestre (fatto)], [`files`, `buffers`, `windows`], [`io`, `buffers`, `windows`, `ui`, `mouse`, `ask`], [`dired`, `buffer-list`; nuove: `dired`, `mouse`; le impostazioni `auto-save` e `watch-files`],
   [5], [cercare e navigare], [`searching`, `compile`], [`isearch`, `replace`, `results`, `scan`, `match_data`], [`occur`, `compile`],
   [6], [prompt, completamento, tasti, aiuto], [`completion`, `keymaps`, `getting-help`], [`minibuffer`, `completion`, `help`, `commands`, il resto di `general`], [`minibuffer`, `completion`, `completion-at-point`, `help`, `manpage`, `preview`, `common-keymaps`],
   [7], [modi e aspetto], [`modes`, `themes`, `overlays`, `virtual-text`], [`modes`, `theme`, `overlays`, `virtual_text`], [`rust-mode`, `risp-mode`, `cc-mode`, `theme`],

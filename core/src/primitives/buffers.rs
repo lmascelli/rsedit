@@ -1,33 +1,17 @@
 use super::*;
 use risp::{Lambda, eval};
 
-pub const CURRENT_BUFFER_DOC: &str = "(current-buffer): Return the name of the current buffer, as a \
-         string. Unlike real Emacs Lisp's `current-buffer`, which returns a \
-         buffer object, this returns the buffer's name.\n\n\
-         Example:\n\
-         (current-buffer) => \"*scratch*\"";
+pub const CURRENT_BUFFER_DOC: &str = "(current-buffer): Return the name of the current buffer.";
 
 primitive!(current_buffer, _args, _env, ctx, {
     Ok(ELispExp::string(ctx.get_current_buffer_name()))
 });
 
-pub const BUFFER_CREATE_DOC: &str = "(buffer-create NAME &optional MODE): Create a new, empty buffer \
-         named NAME (a string or symbol), if one doesn't already exist -- does nothing \
-         if it does. Does not switch to it or change what any window is displaying; see \
-         `switch-to-buffer'. Returns NAME as a string.\n\n\
-         MODE, if given, is the major mode the buffer opens in, and therefore which \
-         keymap answers keys typed into it; it defaults to `fundamental-mode'. A buffer that \
-         is a *view* of something -- a directory listing, a backtrace -- needs this: its \
-         mode is the whole of what makes its keys mean what they mean, and there is no \
-         file name for `add-auto-mode' to key on.\n\n\
-         An existing buffer keeps the mode it has. Re-creating a buffer is how a view is \
-         refreshed, and a refresh that quietly reset the mode would take the keymap away \
-         from the very buffer being refreshed.\n\n\
-         A new buffer runs buffer-created-hook, major-mode-hook and \
-         after-change-major-mode-hook with that buffer current, without displaying it.\n\n\
+pub const BUFFER_CREATE_DOC: &str = "(buffer-create NAME &optional MODE): Make an empty buffer \
+         called NAME in MODE, fundamental-mode by default, without showing it, and return NAME. A \
+         buffer of that name that exists already is left as it is, mode included.\n\n\
          Example:\n\
-         (buffer-create \"*Messages*\")\n\
-         (buffer-create \"*dired*\" 'dired-mode)";
+         (buffer-create \"*report*\")";
 
 primitive!(buffer_create, args, env, ctx, {
     if args.is_empty() || args.len() > 2 {
@@ -55,19 +39,9 @@ primitive!(buffer_create, args, env, ctx, {
 });
 
 pub const SET_BUFFER_READ_ONLY_DOC: &str = "(set-buffer-read-only FLAG): Make the current buffer \
-         refuse to have its text changed if FLAG is non-nil, or accept changes again if it \
-         is nil. Returns FLAG.\n\n\
-         The refusal is enforced where undo is, at the two functions every text change goes \
-         through, so it holds against every command and every line of Lisp -- not only \
-         against the keys a mode remembered to unbind. Point still moves freely: reading is \
-         the reason to have a read-only buffer at all.\n\n\
-         A buffer that presents state living somewhere else -- a directory listing, a list \
-         of faces -- writes its contents with the flag off and turns it back on, so the \
-         only way the text changes is by being rebuilt from the thing it describes.\n\n\
+         refuse every change to its text when FLAG is non-nil, or accept changes again when it is \
+         nil, and return FLAG. Point still moves.\n\n\
          Example:\n\
-         (set-buffer-read-only nil)\n\
-         (clear-buffer)\n\
-         (insert listing)\n\
          (set-buffer-read-only t)";
 
 primitive!(set_buffer_read_only, args, _env, ctx, {
@@ -120,20 +94,11 @@ fn data_buffer<B: BufferTrait>(args: &[ELispExp<B>], index: usize, ctx: &EditorS
     }
 }
 
-pub const BUFFER_PUT_DOC: &str = "(buffer-put KEY VALUE &optional BUFFER): Remember VALUE against \
-         BUFFER -- the current one when it is omitted -- under KEY. Returns VALUE.\n\n\
-         What `put' is for a symbol, this is for a buffer, and the difference is what it is \
-         for: a symbol property is global and outlives everything, while this **goes when the \
-         buffer goes**. That is the whole point. A module that kept `compilation--output-of-x' \
-         in a global would still be holding it long after the buffer was killed, and would be \
-         holding it under the wrong name the moment somebody renamed one.\n\n\
-         A VALUE of nil removes the entry rather than storing nil, so putting nil and never \
-         putting are the same state -- which is what `buffer-get' answering nil for both \
-         already implies.\n\n\
-         Returns nil, and logs, when there is no buffer called BUFFER.\n\n\
+pub const BUFFER_PUT_DOC: &str = "(buffer-put KEY VALUE &optional BUFFER): Keep VALUE with \
+         BUFFER, the current one by default, under KEY, and return VALUE. The value goes when the \
+         buffer goes, and a VALUE of nil removes it. A BUFFER that does not exist gives nil.\n\n\
          Example:\n\
-         (buffer-put 'occur-pattern \"TODO\")\n\
-         (buffer-get 'occur-pattern) => \"TODO\"";
+         (buffer-put 'occur-pattern \"TODO\")";
 
 primitive!(buffer_put, args, _env, ctx, {
     if args.len() < 2 {
@@ -159,10 +124,8 @@ primitive!(buffer_put, args, _env, ctx, {
     Ok(args[1].clone())
 });
 
-pub const BUFFER_GET_DOC: &str = "(buffer-get KEY &optional BUFFER): What was remembered against \
-         BUFFER -- the current one when it is omitted -- under KEY, or nil.\n\n\
-         nil for a key nothing was put under, for a buffer that does not exist, and for a \
-         buffer that was killed and made again: what is attached to a buffer dies with it.\n\n\
+pub const BUFFER_GET_DOC: &str = "(buffer-get KEY &optional BUFFER): Return the value kept with \
+         BUFFER, the current one by default, under KEY, or nil.\n\n\
          Example:\n\
          (buffer-get 'occur-pattern)";
 
@@ -178,10 +141,8 @@ primitive!(buffer_get, args, _env, ctx, {
         .unwrap_or_else(ELispExp::nil))
 });
 
-pub const BUFFER_READ_ONLY_P_DOC: &str = "(buffer-read-only-p): Return t if the current buffer \
-         refuses text changes, nil otherwise. See `set-buffer-read-only'.\n\n\
-         Example:\n\
-         (buffer-read-only-p) => nil";
+pub const BUFFER_READ_ONLY_P_DOC: &str = "(buffer-read-only-p): Return t when the current buffer \
+         refuses changes to its text, nil otherwise.";
 
 primitive!(buffer_read_only_p, _args, _env, ctx, {
     let read_only = ctx.with_current_buffer(|buf| buf.read_only);
@@ -192,41 +153,16 @@ primitive!(buffer_read_only_p, _args, _env, ctx, {
     })
 });
 
-pub const CLOSE_BUFFER_DOC: &str = "(close-buffer &optional BUFFER-OR-NAME): Close the buffer named \
-         BUFFER-OR-NAME (a string or symbol), or the current buffer if no \
-         argument is given.\n\n\
-         A buffer visiting a file with unsaved changes is *not* closed: it asks first, and \
-         closes when the question is answered -- so this returns nil in that case, because the \
-         buffer is still there. A buffer with nowhere to save to is closed without a question, \
-         which is what keeps `*scratch*' and every listing from asking about work that does not \
-         exist. `kill-buffer-without-saving' skips the question altogether. Detaches it from whatever window is showing \
-         it -- a tiled window falls back to *scratch*, a floating window \
-         is removed and focus returns to whatever was focused before it \
-         opened -- runs that buffer's major mode's after-close-hook, and \
-         removes it from the buffer list. If BUFFER-OR-NAME was the last \
-         remaining buffer, a fresh empty *scratch* is created so the \
-         editor is never left without one. Returns t on success, nil if \
-         no such buffer exists. Not a standard Elisp primitive -- the \
-         closest real Elisp equivalent is `kill-buffer`.\n\n\
-         Example:\n\
-         (close-buffer) ; closes the current buffer\n\
-         (close-buffer \"*Minibuffer*\")";
+pub const CLOSE_BUFFER_DOC: &str = "(close-buffer &optional BUFFER-OR-NAME): Kill the buffer \
+         named BUFFER-OR-NAME, the current one by default: `kill-buffer' under another name.";
 
-pub const KILL_BUFFER_DOC: &str = "(kill-buffer &optional BUFFER-OR-NAME): Emacs' name for \
-         `close-buffer', and the one reachable from `M-x' and bound to `C-x k'. Closes the buffer \
-         named BUFFER-OR-NAME, or the current buffer when the name is omitted or empty.\n\n\
-         Answering the prompt with nothing kills the buffer you are in, which is what the key is \
-         reached for nine times in ten.\n\n\
-         A buffer visiting a file with unsaved changes is asked about before it goes -- typed \
-         in full, because there is nothing to undo afterwards -- and killed when the answer \
-         arrives. Until then it is still there, which is why this returns nil rather than t \
-         when it asks. Buffers with no file behind them are killed without a question.\n\n\
-         The same function as `close-buffer', under both names: one is what Emacs calls it and \
-         the other is what this editor called it first, and two implementations would eventually \
-         be two behaviours.\n\n\
+pub const KILL_BUFFER_DOC: &str = "(kill-buffer &optional BUFFER-OR-NAME): Kill the buffer named \
+         BUFFER-OR-NAME, the current one by default or when the name is empty, and return t when \
+         it is gone. A buffer with unsaved changes to a file asks first, with yes typed in full, \
+         and returns nil: it is killed when the answer comes. The windows that showed it show \
+         another buffer.\n\n\
          Example:\n\
-         (kill-buffer)\n\
-         (kill-buffer \"*Messages*\")";
+         (kill-buffer \"*report*\")";
 
 /// Which buffer a close command was asked about.
 ///
@@ -295,13 +231,8 @@ primitive!(close_buffer, args, env, ctx, {
 });
 
 pub const KILL_BUFFER_WITHOUT_SAVING_DOC: &str = "(kill-buffer-without-saving &optional \
-         BUFFER-OR-NAME): Close the buffer, asking nothing and saving nothing. Returns t if \
-         there was one to close.\n\n\
-         What `kill-buffer' calls once its question has been answered, and the way out for \
-         anything that has already done the asking itself -- the same arrangement as `quit' and \
-         `quit-without-saving'.\n\n\
-         Example:\n\
-         (kill-buffer-without-saving \"notes.txt\")";
+         BUFFER-OR-NAME): Kill the buffer, asking nothing and saving nothing, and return t if \
+         there was one.";
 
 primitive!(kill_buffer_without_saving, args, env, ctx, {
     let target = close_target(args, ctx)?;
@@ -312,10 +243,8 @@ primitive!(kill_buffer_without_saving, args, env, ctx, {
     })
 });
 
-pub const BUFFER_STRING_DOC: &str = "(buffer-string): Return the entire contents of the current buffer as \
-         a string.\n\n\
-         Example:\n\
-         (buffer-string) => \"line one\\nline two\\n\"";
+pub const BUFFER_STRING_DOC: &str = "(buffer-string): Return the whole text of the current \
+         buffer.";
 
 primitive!(buffer_string, _args, _env, ctx, {
     Ok(ELispExp::string(
@@ -323,15 +252,11 @@ primitive!(buffer_string, _args, _env, ctx, {
     ))
 });
 
-pub const BUFFER_SUBSTRING_DOC: &str = "(buffer-substring START END): Return the text of the \
-         current buffer between positions START and END, as a string. The positions are clamped \
-         to the buffer and may be given in either order, so a caller holding a region does not \
-         have to sort it first.\n\n\
-         Unlike `buffer-string', this copies only what was asked for -- which is what makes it \
-         usable on a key press, where reading a whole buffer to look at eight characters is the \
-         difference between a completion and a pause.\n\n\
+pub const BUFFER_SUBSTRING_DOC: &str = "(buffer-substring START END): Return the current buffer's \
+         text between START and END, which may come in either order and are kept within the \
+         buffer.\n\n\
          Example:\n\
-         (buffer-substring (point-min) (point)) => \"everything before point\"";
+         (buffer-substring (point-min) (point))";
 
 primitive!(buffer_substring, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -349,12 +274,7 @@ primitive!(buffer_substring, args, _env, ctx, {
     })))
 });
 
-pub const CLEAR_BUFFER_DOC: &str = "(clear-buffer): Delete the entire contents of the current buffer. \
-         Not a standard Elisp primitive -- comparable to Emacs's \
-         `erase-buffer`.\n\n\
-         Example:\n\
-         (clear-buffer)\n\
-         (buffer-string) => \"\"";
+pub const CLEAR_BUFFER_DOC: &str = "(clear-buffer): Delete the whole text of the current buffer.";
 
 primitive!(clear_buffer, _args, _env, ctx, {
     let happened = ctx.with_current_buffer_mut(|buf| {
@@ -369,13 +289,9 @@ primitive!(clear_buffer, _args, _env, ctx, {
     Ok(super::edits::edited(ctx, happened))
 });
 
-pub const SWITCH_TO_BUFFER_DOC: &str = "(switch-to-buffer BUFFER-NAME): Make the buffer named BUFFER-NAME \
-         (a string or symbol) the one shown in the focused window, and \
-         return BUFFER-NAME. Returns nil (logging a diagnostic) if no buffer \
-         with that name exists -- unlike real Emacs Lisp's \
-         `switch-to-buffer`, this does not create one.\n\n\
-         Example:\n\
-         (switch-to-buffer \"*scratch*\") => \"*scratch*\"";
+pub const SWITCH_TO_BUFFER_DOC: &str = "(switch-to-buffer BUFFER-NAME): Show the buffer named \
+         BUFFER-NAME in the focused window, make it current, and return the name; nil when there \
+         is no such buffer, since this does not make one.";
 
 primitive!(switch_to_buffer, args, _env, ctx, {
     if args.len() != 1 {
@@ -404,17 +320,12 @@ primitive!(switch_to_buffer, args, _env, ctx, {
     }
 });
 
-pub const WITH_CURRENT_BUFFER_DOC: &str = "(with-current-buffer NAME FUNCTION): Call FUNCTION with \
-         no arguments while NAME is the current buffer, then make whatever was current before \
-         current again -- whether FUNCTION returned or signalled. Returns what FUNCTION returned.\n\n\
-         The buffer is made current without being *shown*: no window changes, so this is for code \
-         that wants to act on a buffer rather than take the user to it. Buffer \
-         selection history is not changed by this temporary context.\n\n\
-         Signals if there is no buffer called NAME.\n\n\
-         Unlike Emacs Lisp's macro of the same name, this takes a function rather than a body, \
-         because a primitive receives its arguments already evaluated. Wrap the body in a lambda:\n\n\
+pub const WITH_CURRENT_BUFFER_DOC: &str = "(with-current-buffer NAME FUNCTION): Call FUNCTION \
+         with no arguments while the buffer NAME is current, without showing it, and make the one \
+         before current again, even when FUNCTION fails. Return what FUNCTION returns. A NAME \
+         that is no buffer is an error.\n\n\
          Example:\n\
-         (with-current-buffer \"notes.txt\" (lambda () (buffer-string)))";
+         (with-current-buffer \"*scratch*\" (lambda () (buffer-string)))";
 
 primitive!(with_current_buffer, args, env, ctx, {
     exact_arity(args, 2)?;
@@ -441,14 +352,10 @@ primitive!(with_current_buffer, args, env, ctx, {
     result
 });
 
-pub const MAJOR_MODE_DOC: &str = "(major-mode &optional BUFFER): The major mode BUFFER is in -- \
-         the current buffer if it is omitted -- as a symbol. nil if BUFFER names no live \
-         buffer.\n\n\
-         A symbol rather than a string because that is how every other form taking a mode is \
-         written -- `(make-mode 'rust-mode)', `(add-hook 'rust-mode ...)' -- and because it makes \
-         `eq' work on the result, which is what anything keying data by mode needs.\n\n\
+pub const MAJOR_MODE_DOC: &str = "(major-mode &optional BUFFER): Return the major mode of BUFFER, \
+         the current one by default, as a symbol, or nil when it does not exist.\n\n\
          Example:\n\
-         (get (major-mode) 'keywords)";
+         (get (major-mode) 'tab-width)";
 
 primitive!(major_mode, args, _env, ctx, {
     let name = buffer_argument(args, ctx)?;
@@ -458,18 +365,11 @@ primitive!(major_mode, args, _env, ctx, {
     Ok(ELispExp::symbol(mode))
 });
 
-pub const SET_MAJOR_MODE_DOC: &str = "(set-major-mode MODE): Select a registered major mode for \
-         the current buffer. Returns MODE; signals for an unknown mode. A real change \
-         invalidates syntax caches and runs major-mode-hook, then \
-         after-change-major-mode-hook, in that buffer. Buffer-local metadata is retained. \
-         Selecting the current mode again does not run hooks.\n\n\
-         write-file also runs after-set-visited-file-name-hook after changing the \
-         visited path, once the final name and major mode are set.\n\n\
-         Creation runs buffer-created-hook, major-mode-hook, \
-         after-change-major-mode-hook, then find-file-hook for file visits (including new \
-         files). Reopening an existing buffer does not run these hooks. \
-         Mode-specific callbacks precede global callbacks at each step.\n\n\
-         Example: (add-hook 'rust-mode \"major-mode-hook\" 'my-rust-setup)";
+pub const SET_MAJOR_MODE_DOC: &str = "(set-major-mode MODE): Put the current buffer in MODE, \
+         which must be a mode the editor knows, and return MODE. A different mode runs the hooks \
+         the `modes' page describes; the same one changes nothing.\n\n\
+         Example:\n\
+         (set-major-mode 'rust-mode)";
 
 primitive!(set_major_mode, args, env, ctx, {
     exact_arity(args, 1)?;
@@ -503,13 +403,9 @@ fn buffer_argument<B: BufferTrait>(
         .unwrap_or_else(|| ctx.get_current_buffer_name()))
 }
 
-pub const BUFFER_MODIFIED_P_DOC: &str = "(buffer-modified-p &optional BUFFER): t if BUFFER has \
-         changes that have not been saved -- the current buffer if it is omitted. nil if it has \
-         none, and nil if BUFFER names no live buffer.\n\n\
-         A buffer with no file behind it can still be modified: `*scratch*' counts as changed \
-         the moment something is typed into it, which is what makes killing it worth a question.\n\n\
-         Example:\n\
-         (if (buffer-modified-p \"notes.txt\") (message \"unsaved\"))";
+pub const BUFFER_MODIFIED_P_DOC: &str = "(buffer-modified-p &optional BUFFER): Return t when \
+         BUFFER, the current one by default, has changes that have not been saved, nil when it \
+         has none or does not exist.";
 
 primitive!(buffer_modified_p, args, _env, ctx, {
     let name = buffer_argument(args, ctx)?;
@@ -521,14 +417,9 @@ primitive!(buffer_modified_p, args, _env, ctx, {
     })
 });
 
-pub const BUFFER_FILE_NAME_DOC: &str = "(buffer-file-name &optional BUFFER): The file BUFFER is \
-         visiting, as a string -- the current buffer if it is omitted. nil when the buffer has no \
-         file behind it, and nil if BUFFER names no live buffer.\n\n\
-         nil for `*scratch*', `*Messages*', a directory listing, a completion strip: the buffers \
-         that present something rather than holding a file. That is the question this answers, \
-         and why a listing can use it to tell the two kinds apart.\n\n\
-         Example:\n\
-         (buffer-file-name) => \"/home/user/notes.txt\"";
+pub const BUFFER_FILE_NAME_DOC: &str = "(buffer-file-name &optional BUFFER): Return the file \
+         BUFFER, the current one by default, is visiting, or nil when it has none or does not \
+         exist.";
 
 primitive!(buffer_file_name, args, _env, ctx, {
     let name = buffer_argument(args, ctx)?;

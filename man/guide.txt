@@ -33,6 +33,8 @@ THE REFERENCE
         rsedit            the editor's own shape, and the help tree
         buffers           what is being edited
         windows           what shows a buffer
+        dired             a directory in a buffer
+        mouse             clicking, dragging and the wheel
         keymaps           how a key becomes a command
         modes             what colouring and keys a buffer gets
         completion        how candidates are found and shown
@@ -52,9 +54,9 @@ THE REFERENCE
     cannot promise.
 
 IF YOU ONLY REMEMBER ONE THING
-    C-g gets you out. A prompt you did not mean to open, a search you have
-    finished with, a half-typed key sequence, a selection you want rid of --
-    C-g, and you are back.
+    C-g gets you out. A search you have finished with, a half-typed key
+    sequence, a selection you want rid of -- C-g, and you are back. A prompt
+    you did not mean to open is the exception, for now: Escape closes it.
 
 SEE ALSO
     first-steps, rsedit, getting-help

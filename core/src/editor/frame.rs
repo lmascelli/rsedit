@@ -225,7 +225,7 @@ impl<B: BufferTrait> EditorState<B> {
             "frame-height".into(),
             ELispExp::number(new_screen_height as f64),
         );
-        if let Some(callback_list) = env.get_variable("after-resize-hook") {
+        if let Some(callback_list) = env.get_variable(AFTER_RESIZE_HOOK) {
             for el in callback_list.iter() {
                 let _command = self.begin_command();
                 match &el {

@@ -1,22 +1,11 @@
 use super::*;
 
 pub const MAKE_FLOATING_WINDOW_DOC: &str = "(make-floating-window BUFFER-NAME X Y WIDTH HEIGHT \
-         &optional TITLE MODE): Create a new buffer named BUFFER-NAME in \
-         major mode MODE (a symbol; defaults to fundamental-mode if \
-         omitted), open it in a new bordered floating window positioned \
-         at (X, Y) with the given WIDTH and HEIGHT (and optional TITLE \
-         string), give that window focus, and return its id. Closing the \
-         floating window (e.g. via close-buffer or \
-         close-floating-window) restores focus to whatever window was \
-         focused before this call. Not a standard Elisp primitive.\n\n\
-         The id is what `select-window' takes, so a module can give its window focus again \
-         after something else has taken it -- which is the only way to, since `selected-window' \
-         answers about the window that has focus now, and this one by then does not.\n\n\
-         `other-window' reaches a floating window too, so one left by accident can be returned \
-         to with `C-x o' without anything having remembered anything.\n\n\
+         &optional TITLE MODE): Make a buffer called BUFFER-NAME in MODE, fundamental-mode by \
+         default, open it in a bordered window floating at column X and row Y, WIDTH by HEIGHT, \
+         with TITLE on its border, give it the focus, and return its id.\n\n\
          Example:\n\
-         (setq popup (make-floating-window \"*Notes*\" 4 4 40 10 \"Notes\"))\n\
-         (select-window popup)";
+         (make-floating-window \"*note*\" 2 1 40 6 \"Note\")";
 
 primitive!(make_floating_window, args, env, ctx, {
     if args.len() < 5 {
@@ -69,16 +58,9 @@ primitive!(make_floating_window, args, env, ctx, {
     }
 });
 
-pub const CLOSE_FLOATING_WINDOW_DOC: &str = "(close-floating-window): Close the floating window \
-         opened most recently and give focus back to whatever had it before that one opened. \
-         Returns nil.\n\n\
-         Does nothing when no floating window is open, so a command that ends one can call it \
-         without first asking whether there is one.\n\n\
-         The most recent rather than a named one: floating windows are a stack -- a backtrace \
-         over a completion strip -- and closing one out of order would leave the one above it \
-         with nothing underneath.\n\n\
-         Example:\n\
-         (close-floating-window)";
+pub const CLOSE_FLOATING_WINDOW_DOC: &str = "(close-floating-window): Close the newest floating \
+         window and give the focus back to the window that had it before; do nothing when there \
+         is none.";
 
 primitive!(close_floating_window, _args, _env, ctx, {
     // TODO(improve) this still always closes the most-recently-opened
@@ -95,17 +77,9 @@ primitive!(close_floating_window, _args, _env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const RECENTER_DOC: &str = "(recenter &optional WHERE): Scroll the window so that the line \
-         point is on sits WHERE of the way down it -- 0 the top row, 0.5 the middle, 1 the \
-         bottom. WHERE defaults to 0.5.\n\n\
-         Point does not move: the text slides under the cursor. That is the difference between \
-         this and `scroll-up-command', which moves the view and takes point along only when it \
-         would otherwise fall off the screen.\n\n\
-         Near the end of a buffer the view may show blank rows below the last line, because \
-         there is nothing left to fill them with and refusing to scroll would leave the last \
-         screenful uncentreable.\n\n\
-         Example:\n\
-         (define-key nil \\\"C-l\\\" 'recenter)";
+pub const RECENTER_DOC: &str = "(recenter &optional WHERE): Scroll the window so that point's \
+         line is WHERE of the way down it: 0 the top, 0.5 the middle, which is the default, 1 the \
+         bottom. Point does not move.";
 
 primitive!(recenter, args, _env, ctx, {
     let where_to = match args.first() {
