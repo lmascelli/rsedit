@@ -45,6 +45,7 @@ THE REFERENCE
         virtual-text      text shown and not in the buffer
         themes            how the colours are chosen
         compile           running a build, and jumping to its complaints
+        regexps           regular expressions, and matching them from Lisp
         background        work that must not happen on the drawing thread
         vim               modal editing, for those who would rather
 

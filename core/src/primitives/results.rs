@@ -308,24 +308,9 @@ fn open_results<B: BufferTrait>(
     name
 }
 
-pub const OCCUR_SCAN_DOC: &str = "(occur--scan PATTERN &optional REGEXP MODE): Find every line of this \
-         buffer matching PATTERN and list them in a buffer of their own. Returns that buffer's \
-         name.\n\n\
-         Each line is written as `SOURCE:LINE: TEXT', and the whole list is also attached to \
-         the buffer as a *result set*: `next-error', `previous-error' and anything else that \
-         walks places read it from there rather than parsing the text back, so a list can say \
-         exactly where it means.\n\n\
-         With REGEXP non-nil, PATTERN is a regular expression. Case is folded as \
-         `case-fold-search' says. MODE is the major mode the listing opens in, and defaults to \
-         `occur-mode' -- a module gives the listing its own keys and colouring by passing one, \
-         the way `compile' does for a shell command.\n\n\
-         Done at once rather than on a thread: the text is already in memory and the scan is \
-         one pass over it.\n\n\
-         What `occur' in the `occur' module is built on: this finds and attaches, that shows \
-         the listing and takes you to it.\n\n\
-         Example:\n\
-         (occur--scan \"TODO\")\n\
-         (occur--scan \"fn [a-z_]+\" t)";
+pub const OCCUR_SCAN_DOC: &str = "(occur--scan PATTERN &optional REGEXP MODE): List every line of \
+         this buffer matching PATTERN in a new buffer, in MODE or `occur-mode', and return its \
+         name.";
 
 primitive!(occur_scan, args, env, ctx, {
     let source_pattern = args::text(args.first())?;
@@ -366,26 +351,10 @@ primitive!(occur_scan, args, env, ctx, {
     Ok(ELispExp::string(buffer))
 });
 
-pub const GREP_SCAN_DOC: &str = "(grep--scan PATTERN &optional DIRECTORY REGEXP MODE): Find every line under \
-         DIRECTORY -- the current directory when it is omitted -- matching PATTERN, and list \
-         them in a buffer of their own. Returns that buffer's name at once, while the search is \
-         still running.\n\n\
-         The search runs on a thread of its own, named after the listing, so the editor stays \
-         usable, and results appear as they are found -- which is also how you tell a slow \
-         search from a stuck one. A `--- 12 matches ---' trailer is written when it \
-         finishes.\n\n\
-         A file open in a buffer with unsaved changes is searched *as the buffer has it*, not as \
-         the disk does, so what is reported is what is on screen. Files that are not text are \
-         skipped without comment; every repository has some.\n\n\
-         `.git', `target', `node_modules' and the rest of the large generated directories are \
-         not descended into, the same list `find-file-recursive' skips.\n\n\
-         Entries are attached to the buffer as a result set, so `next-error' walks them. \
-         `(stop-worker BUFFER)' stops the search, and so does closing BUFFER: what was found \
-         stays listed, and the trailer says the search stopped early.\n\n\
-         What `grep' in the `occur' module is built on.\n\n\
-         Example:\n\
-         (grep--scan \"TODO\")\n\
-         (grep--scan \"fn [a-z_]+\" \"src\" t)";
+pub const GREP_SCAN_DOC: &str = "(grep--scan PATTERN &optional DIRECTORY REGEXP MODE): Start \
+         searching the files under DIRECTORY, or the directory the editor was started in, for \
+         PATTERN, and return the name of the new buffer, in MODE or `occur-mode', that the \
+         matches go into as they are found.";
 
 primitive!(grep_scan, args, env, ctx, {
     let source_pattern = args::text(args.first())?;
@@ -614,12 +583,9 @@ fn has_results<B: BufferTrait>(ctx: &EditorState<B>, name: &str) -> bool {
     with_results(ctx, name, |_| ()).is_some()
 }
 
-pub const RESULTS_COUNT_DOC: &str = "(results-count &optional BUFFER): How many entries the \
-         result set in BUFFER has, or nil when it has none.\n\n\
-         BUFFER defaults to the listing `next-error' is walking, and failing that to the \
-         current buffer. Nil for a buffer that is not a listing at all.\n\n\
-         Example:\n\
-         (results-count) => 12";
+pub const RESULTS_COUNT_DOC: &str = "(results-count &optional BUFFER): Return how many entries \
+         the list in BUFFER has, or nil when it holds none. BUFFER defaults to the list \
+         `next-error' walks, and failing that to the current buffer.";
 
 primitive!(results_count, args, _env, ctx, {
     let Some(buffer) = asked_about(args, 0, ctx) else {
@@ -631,13 +597,9 @@ primitive!(results_count, args, _env, ctx, {
     })
 });
 
-pub const RESULTS_ENTRY_DOC: &str = "(results-entry N &optional BUFFER): Entry N of the result \
-         set in BUFFER, counting from 0, or nil.\n\n\
-         An entry is (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END) -- the same \
-         shape `scan-buffer' answers in, so a view written for one list works for every \
-         list.\n\n\
-         Read one at a time rather than the lot: a search of a large tree has thousands, and a \
-         view shows a screenful.\n\n\
+pub const RESULTS_ENTRY_DOC: &str = "(results-entry N &optional BUFFER): Return entry N of the \
+         list in BUFFER, counting from 0, or nil. An entry is (KIND SOURCE LINE COLUMN OFFSET \
+         TEXT MATCH-START MATCH-END); BUFFER defaults as for `results-count'.\n\n\
          Example:\n\
          (results-entry 0) => (\"file\" \"src/main.rs\" 12 4 213 \"    // TODO\" 7 11)";
 
@@ -657,12 +619,10 @@ primitive!(results_entry, args, _env, ctx, {
     )
 });
 
-pub const RESULTS_STATE_DOC: &str = "(results-state &optional BUFFER): What the result set in \
-         BUFFER is, as (PATTERN OVER COUNT DONE TRUNCATED CURRENT), or nil when there is \
-         none.\n\n\
-         DONE is nil while a search is still running, which is how a view says \"still \
-         looking\" rather than looking empty. TRUNCATED is t when a limit stopped it. CURRENT is \
-         the index last visited, or nil.\n\n\
+pub const RESULTS_STATE_DOC: &str = "(results-state &optional BUFFER): Return what the list in \
+         BUFFER is, as (PATTERN OVER COUNT DONE TRUNCATED CURRENT), or nil. DONE is nil while a \
+         search is still filling it, TRUNCATED is t when a limit stopped it, and CURRENT is the \
+         entry last visited, or nil.\n\n\
          Example:\n\
          (results-state) => (\"TODO\" \"src\" 12 t nil 3)";
 
@@ -686,13 +646,9 @@ primitive!(results_state, args, _env, ctx, {
     .unwrap_or_else(ELispExp::nil))
 });
 
-pub const RESULTS_VISIT_DOC: &str = "(results-visit N &optional BUFFER): Go to entry N: open what \
-         it is in, put point on the line, and mark it. Returns the entry, or nil.\n\n\
-         The walk's position moves to N, so `next-error' carries on from there. Marking is done \
-         through the faces `results-target' (in what was opened) and `results-here' (in the \
-         listing); a view that has not named those faces simply gets no marks.\n\n\
-         Example:\n\
-         (results-visit 0)";
+pub const RESULTS_VISIT_DOC: &str = "(results-visit N &optional BUFFER): Go to entry N of the \
+         list in BUFFER: open what it is in, put point on its line, and mark the line. Return the \
+         entry, or nil. `next-error' goes on from N.";
 
 primitive!(results_visit, args, env, ctx, {
     let index = match args.first() {
@@ -778,28 +734,23 @@ fn step_and_visit<B: BufferTrait>(
     visit_index(ctx, env, &buffer, next)
 }
 
-pub const NEXT_ERROR_DOC: &str = "(next-error): Go to the next entry of the current result set. \
-         Returns it, or nil at the end.\n\n\
-         The list it walks is whichever was made last -- a search, a compilation, anything that \
-         built one -- and *not* the buffer this is called in: the point of the key is that it \
-         is pressed in the file being fixed.\n\n\
-         The end of the list is said rather than wrapped around to the start.\n\n\
-         Example:\n\
-         (define-key nil \"M-g n\" 'next-error)";
+pub const NEXT_ERROR_DOC: &str = "(next-error): Go to the next place in the newest list -- a \
+         search's, a compilation's -- opening it in the selected window, and return its entry. At \
+         the end of the list, say so and return nil.";
 
 primitive!(next_error, _args, env, ctx, {
     step_and_visit(ctx, &env, 1)
 });
 
-pub const PREVIOUS_ERROR_DOC: &str =
-    "(previous-error): Go to the entry before the current one. Returns it, or nil at the start.";
+pub const PREVIOUS_ERROR_DOC: &str = "(previous-error): Go to the place before the current one in \
+         the newest list, and return its entry, or nil at the start.";
 
 primitive!(previous_error, _args, env, ctx, {
     step_and_visit(ctx, &env, -1)
 });
 
-pub const RESULTS_BUFFER_DOC: &str = "(results-buffer): The name of the listing `next-error' is \
-         walking, or nil when there is none or it has been killed.\n\n\
+pub const RESULTS_BUFFER_DOC: &str = "(results-buffer): Return the name of the list `next-error' \
+         walks, or nil when there is none.\n\n\
          Example:\n\
          (results-buffer) => \"*Grep*\"";
 
@@ -810,12 +761,9 @@ primitive!(results_buffer, _args, _env, ctx, {
     })
 });
 
-pub const RESULTS_SELECT_DOC: &str = "(results-select &optional BUFFER): Make BUFFER -- the \
-         current one when it is omitted -- the listing `next-error' walks. Returns its name, or \
-         nil when it holds no result set.\n\n\
-         What `C-x `' would be: going back to an older listing and walking that one instead.\n\n\
-         Example:\n\
-         (results-select \"*Grep*\")";
+pub const RESULTS_SELECT_DOC: &str = "(results-select &optional BUFFER): Make the list in BUFFER, \
+         or in the current buffer, the one `next-error' walks. Return its name, or nil when \
+         BUFFER holds no list.";
 
 primitive!(results_select, args, _env, ctx, {
     let name = match args.first() {
@@ -831,21 +779,12 @@ primitive!(results_select, args, _env, ctx, {
 });
 
 pub const RESULTS_PUT_DOC: &str = "(results-put PATTERN OVER ENTRIES &optional BUFFER): Attach \
-         ENTRIES to BUFFER as a result set, and make it the one `next-error' walks. Returns how \
-         many were attached.\n\n\
-         How anything that is not a search joins in: a compilation parses its own output, a \
-         linter reads its own format, and each attaches what it found in the shape every view \
-         and every key already understands. Nothing is written into the buffer -- whatever \
-         produced the text has already done that.\n\n\
-         A list that is still growing -- a compilation's, while it runs -- puts a function \
-         under `results-refresh' with `buffer-put', and it is called with the buffer's name \
-         before each walk, so `next-error' sees what has arrived since.\n\n\
-         ENTRIES is a list of (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END). \
-         Everything after SOURCE may be omitted: LINE defaults to 1 and the rest to 0 or to the \
-         empty string, so a producer that knows only a file and a line says just that.\n\n\
+         ENTRIES to BUFFER, or to the current buffer, as a list of places, make it the list \
+         `next-error' walks, and return how many there are. PATTERN and OVER say what was looked \
+         for, and where. An entry is (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END), \
+         and all but KIND and SOURCE may be left off.\n\n\
          Example:\n\
-         (results-put \"cargo build\" \"the project\"\n\
-                       '((\"file\" \"src/main.rs\" 12)))";
+         (results-put \"lint\" \"the project\" '((\"file\" \"src/main.rs\" 12)))";
 
 primitive!(results_put, args, _env, ctx, {
     if args.len() < 3 {

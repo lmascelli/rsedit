@@ -5,13 +5,8 @@
 # Variables the editor reads but does not declare: declared, with a
 # docstring, in the step of their area.
 *key-capture-function*
-*replace-read-function*
-case-replace
 worker-fuel
 
 # Names that do not exist
-default-directory      # in grep: the directory the editor was started in
 eval-expression        # in risp-refresh-vocabulary: M-: is eval-expression-prompt
-find-file-recursive    # in grep--scan: the command is dired-find-recursive
 read-command-args      # in call-interactively
-search-forward         # in scan-buffer

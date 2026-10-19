@@ -402,6 +402,11 @@ pub fn create_global_env<B: BufferTrait>()
     );
     env.set_variable(OPEN_DIRECTORY_CALLBACK.into(), ELispExp::nil());
 
+    // A replacement takes the case of what it replaces, and the replace asks
+    // its own question until something installs another.
+    env.set_variable(CASE_REPLACE.into(), ELispExp::t());
+    env.set_variable(REPLACE_READ_FUNCTION.into(), ELispExp::nil());
+
     // How long a message stays in the echo area. A number of seconds arms the
     // timeout; nil leaves messages up until something replaces them.
     env.set_variable(

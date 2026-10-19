@@ -3,16 +3,6 @@
 # page, in the step of doc/documentazione.typ for its area; the list only
 # shrinks.
 
-# -- passo 5: cercare e navigare
-# primitives/replace.rs
-query-replace
-# primitives/results.rs
-grep--scan
-occur--scan
-results-put
-# primitives/scan.rs
-scan-buffer
-
 # -- passo 6: prompt, completamento, tasti, aiuto
 # lisp/manpage.lisp
 manpage-names

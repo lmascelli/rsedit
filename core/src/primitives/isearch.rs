@@ -49,38 +49,33 @@ fn begin<B: BufferTrait>(
     )
 }
 
-pub const ISEARCH_FORWARD_DOC: &str = "(isearch-forward): Search forward, incrementally: a prompt \
-         opens and the buffer jumps to the first match of whatever has been typed so far, \
-         re-searching on every keystroke.\n\n\
-         `C-s' again goes to the next match, `C-r' turns around, Return stops and leaves point at \
-         the match, and Escape or `C-g' abandons the search and puts point back where it started. \
-         A search that runs out says so; repeating it then wraps around the buffer.\n\n\
-         Case is ignored unless `case-fold-search' is nil.\n\n\
-         Example:\n\
-         (define-key nil \"C-s\" 'isearch-forward)";
+pub const ISEARCH_FORWARD_DOC: &str = "(isearch-forward): Search forward as you type: a prompt \
+         opens, and each character typed moves to the first match of what has been typed so far. \
+         Inside the search C-s goes on to the next match and C-r back, Return stops at the match, \
+         and C-g or Escape goes back to where the search started. Case is ignored unless \
+         `case-fold-search' is nil.";
 
 primitive!(isearch_forward, _args, env, ctx, {
     begin(env, ctx, Direction::Forward, false)
 });
 
-pub const ISEARCH_BACKWARD_DOC: &str = "(isearch-backward): Like `isearch-forward', but searching \
+pub const ISEARCH_BACKWARD_DOC: &str = "(isearch-backward): Like `isearch-forward', searching \
          backward from point.";
 
 primitive!(isearch_backward, _args, env, ctx, {
     begin(env, ctx, Direction::Backward, false)
 });
 
-pub const ISEARCH_FORWARD_REGEXP_DOC: &str = "(isearch-forward-regexp): Like `isearch-forward', but \
-         what is typed is a regular expression. `^' and `$' match at the beginning and end of a \
-         line. A pattern that is not yet a valid regexp is reported rather than signalled -- half \
-         a regexp is what every complete one looks like while it is being typed.";
+pub const ISEARCH_FORWARD_REGEXP_DOC: &str = "(isearch-forward-regexp): Like `isearch-forward', \
+         for a regular expression. A pattern still being typed, and not yet valid, reads as a \
+         failing search.";
 
 primitive!(isearch_forward_regexp, _args, env, ctx, {
     begin(env, ctx, Direction::Forward, true)
 });
 
 pub const ISEARCH_BACKWARD_REGEXP_DOC: &str = "(isearch-backward-regexp): Like \
-         `isearch-forward-regexp', but searching backward from point.";
+         `isearch-forward-regexp', searching backward from point.";
 
 primitive!(isearch_backward_regexp, _args, env, ctx, {
     begin(env, ctx, Direction::Backward, true)
@@ -90,9 +85,9 @@ primitive!(isearch_backward_regexp, _args, env, ctx, {
 // Running one
 // ---------------------------------------------------------------------------
 
-pub const ISEARCH_UPDATE_DOC: &str = "(isearch-update): Re-run the search for whatever is in the \
-         prompt and move to what it finds. Run from `isearch-mode's post-command-hook after every \
-         command, which is what makes the search incremental; not normally called directly.";
+pub const ISEARCH_UPDATE_DOC: &str = "(isearch-update): Search again for what the prompt holds, \
+         and move to what is found. Run after every command while a search is open; not called \
+         directly.";
 
 primitive!(isearch_update, _args, env, ctx, {
     let Some(mut session) = ctx.take_isearch() else {
@@ -184,17 +179,17 @@ fn repeat<B: BufferTrait>(
     Ok(ELispExp::nil())
 }
 
-pub const ISEARCH_REPEAT_FORWARD_DOC: &str = "(isearch-repeat-forward): Go to the next match \
-         forward. Bound to `C-s' inside an incremental search; turns the search around if it was \
-         going backward. Repeating a search that has run out wraps to the beginning of the buffer.";
+pub const ISEARCH_REPEAT_FORWARD_DOC: &str = "(isearch-repeat-forward): Go on to the next match, \
+         turning the search round if it was going backward; after a failed search, start again \
+         from the top of the buffer. C-s inside a search.";
 
 primitive!(isearch_repeat_forward, _args, env, ctx, {
     repeat(env, ctx, Direction::Forward)
 });
 
-pub const ISEARCH_REPEAT_BACKWARD_DOC: &str = "(isearch-repeat-backward): Go to the previous match. \
-         Bound to `C-r' inside an incremental search; turns the search around if it was going \
-         forward. Repeating a search that has run out wraps to the end of the buffer.";
+pub const ISEARCH_REPEAT_BACKWARD_DOC: &str = "(isearch-repeat-backward): Go back to the previous \
+         match, turning the search round if it was going forward; after a failed search, start \
+         again from the end of the buffer. C-r inside a search.";
 
 primitive!(isearch_repeat_backward, _args, env, ctx, {
     repeat(env, ctx, Direction::Backward)
@@ -204,9 +199,8 @@ primitive!(isearch_repeat_backward, _args, env, ctx, {
 // Ending one
 // ---------------------------------------------------------------------------
 
-pub const ISEARCH_EXIT_DOC: &str = "(isearch-exit): Stop the search, leaving point at the match. \
-         The prompt's on-confirm callback -- what Return in an incremental search runs, after \
-         `minibuffer-confirm' has closed the prompt.";
+pub const ISEARCH_EXIT_DOC: &str = "(isearch-exit): End the search, leaving point at the match. \
+         What Return in a search runs, once the prompt has closed.";
 
 primitive!(isearch_exit, _args, _env, ctx, {
     let Some(session) = ctx.take_isearch() else {
@@ -228,11 +222,7 @@ primitive!(isearch_exit, _args, _env, ctx, {
 });
 
 pub const ISEARCH_ABORT_DOC: &str = "(isearch-abort): Abandon the search and put point back where \
-         it was when the search started. The prompt's on-cancel callback -- what Escape and `C-g' \
-         in an incremental search run, after `minibuffer-cancel' has closed the prompt.\n\n\
-         Going back is the point of it: an incremental search moves point as you type, so \
-         abandoning one has to undo that or a mistyped search would leave you somewhere you never \
-         chose to be.";
+         it started. What C-g and Escape in a search run, once the prompt has closed.";
 
 primitive!(isearch_abort, _args, _env, ctx, {
     let Some(session) = ctx.take_isearch() else {
@@ -244,8 +234,8 @@ primitive!(isearch_abort, _args, _env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const ISEARCH_ACTIVE_P_DOC: &str = "(isearch-active-p): Return t while an incremental search is \
-         running, nil otherwise.";
+pub const ISEARCH_ACTIVE_P_DOC: &str = "(isearch-active-p): Return t while a search is open, and \
+         nil otherwise.";
 
 primitive!(isearch_active_p, _args, _env, ctx, {
     Ok(if ctx.isearch_active() {

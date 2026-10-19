@@ -1,65 +1,39 @@
 ;;; compile --- run a build, and jump to what it complained about.
 ;;;
-;;; `M-x compile' runs a command and shows its output. Return on a line that
-;;; names a file and a line number opens that file, there, in a window beside
-;;; the output. `M-g n' and `M-g p' walk the complaints without going back to
-;;; the buffer at all.
+;;; C-c c runs a command and shows its output in a strip along the bottom;
+;;; M-g n and M-g p walk the places it names. User manual: the `compile' page.
 ;;;
-;;; # What this module is, and is not
-;;;
-;;; It is a mode and some navigation. The running is `shell-command-start',
-;;; unchanged: that already runs asynchronously, appends output as it arrives,
-;;; writes an `--- exited N ---' trailer and keeps the renderer awake while it
-;;; works. A second way of running processes would be a second thing to keep
-;;; correct.
-;;;
-;;; # Where the state is
-;;;
-;;; In the buffer, as in `dired'. `shell-command-start' writes the command it
-;;; ran as the first line -- `$ cargo build' -- so `g' reads it back off the
-;;; screen rather than from a variable that can disagree with what is displayed.
-;;; Two compilations in two buffers each re-run their own command, and neither
-;;; needs a table mapping buffers to commands.
-;;;
-;;; The one thing kept outside is which buffer `M-g n' should walk, since that
-;;; question is asked from a *different* buffer and so cannot be answered by
-;;; reading the current one.
+;;; The running is `shell-command-start', unchanged: this module is the mode of
+;;; its output buffer and the navigation. The state is in the buffer, as in
+;;; dired: the first line, `$ cargo build', is the command `g' runs again. Only
+;;; which buffer M-g n walks is kept outside, since that is asked from another
+;;; buffer.
 
 (make-mode 'compilation-mode)
 
-(defconst compilation-window-height 12
-  "How tall the window showing a compilation is.
+(defvar compilation-window-height 12
+  "How tall the window showing a compilation's output is, in rows.")
 
-A strip across the bottom, like `M-!'. The output is something you glance at
-while working, and the file you jumped to is what deserves the room.")
+;; A list, because compilers do not agree, and adding one is adding a line.
+(defvar compilation-patterns
+  '(;; gcc, clang, rustc's main line, most linters: path:line:col:
+    ("^([^ :][^:]*):([0-9]+):([0-9]+)" 1 2 3)
+    ;; make, older tools, and anything that omits the column.
+    ("^([^ :][^:]*):([0-9]+):" 1 2 nil)
+    ;; rustc's second line, which is where the useful path usually is:
+    ;;   --> src/main.rs:12:9
+    ("-->[ \t]+([^ :]+):([0-9]+):([0-9]+)" 1 2 3)
+    ;; A Python traceback.
+    ("File \"([^\"]+)\", line ([0-9]+)" 1 2 nil))
+  "The patterns a line of output names a place by: a list of (REGEXP
+FILE-GROUP LINE-GROUP COLUMN-GROUP), the groups numbered as `match-string'
+numbers them, COLUMN-GROUP nil for a format with no column. The first that
+matches a line decides.")
 
-;; What counts as a location, and which group is which.
-;;
-;; Each entry is (REGEXP FILE-GROUP LINE-GROUP COLUMN-GROUP), where the groups
-;; are group numbers as `match-string' takes them -- 0 being the whole match, so
-;; the first capture is 1. A nil column group means the format has no column.
-;;
-;; A list rather than one pattern because compilers do not agree, and a list is
-;; how adding one is adding a line. What is here covers gcc, clang, most
-;; linters, Python tracebacks and rustc.
-(setq compilation-patterns
-      '(;; gcc, clang, rustc's main line, most linters: path:line:col:
-        ("^([^ :][^:]*):([0-9]+):([0-9]+)" 1 2 3)
-        ;; make, older tools, and anything that omits the column.
-        ("^([^ :][^:]*):([0-9]+):" 1 2 nil)
-        ;; rustc's second line, which is where the useful path usually is:
-        ;;   --> src/main.rs:12:9
-        ("-->[ \t]+([^ :]+):([0-9]+):([0-9]+)" 1 2 3)
-        ;; A Python traceback.
-        ("File \"([^\"]+)\", line ([0-9]+)" 1 2 nil)))
-
+;; Above `manpage-emphasis-priority' (10), and the height the built-in walk
+;; puts its own marks at: they are the same mark.
 (defconst compilation-mark-priority 20
-  "Priority of the mark on the location being visited.
-
-Above `manpage-emphasis-priority', which is 10: a compilation buffer has no
-emphasis of its own, and the number says which wins if anything ever puts both
-in one buffer. The same height the built-in navigation puts its own marks at,
-because they are the same mark -- see the faces at the foot of this file.")
+  "The priority of the marks on the place being visited, as overlays.")
 
 ;; Which buffer `M-g n' walks. Asked from another buffer, so it cannot be read
 ;; off the screen the way the command can.
@@ -70,16 +44,12 @@ because they are the same mark -- see the faces at the foot of this file.")
 ;; ---------------------------------------------------------------------------
 
 (defun compilation--group (line index)
-  "Group INDEX of the last match against LINE, or nil if INDEX is nil or the
-group did not take part."
+  "Group INDEX of the last match against LINE, or nil."
   (if (null index) nil (match-string index line)))
 
 (defun compilation--parse (line)
-  "(FILE LINE COLUMN) for LINE, or nil if it names no place.
-
-COLUMN is nil for a format that has none. The patterns are tried in order and
-the first to match decides, so the more specific ones come first in
-`compilation-patterns'."
+  "(FILE LINE COLUMN) for LINE, COLUMN maybe nil, or nil if it names no place."
+  ;; The first pattern to match decides, so the more specific come first.
   (let ((found nil))
     (mapc (lambda (pattern)
             (if (null found)
@@ -100,10 +70,9 @@ the first to match decides, so the more specific ones come first in
 ;; ---------------------------------------------------------------------------
 
 (defun compilation--mark-here ()
-  "Mark the cursor's line in the compilation buffer as the one being visited.
-
-By category, so the previous mark goes when this one arrives -- which is what
-makes a list of forty errors legible: exactly one line is ever marked."
+  "Mark the cursor's line as the place visited; return the overlay, or nil."
+  ;; By category, so the previous mark goes when this one arrives: one line
+  ;; is ever marked.
   (remove-overlays 'results-here)
   (let ((start (progn (beginning-of-line) (point)))
         (end (progn (end-of-line) (point))))
@@ -113,7 +82,7 @@ makes a list of forty errors legible: exactly one line is ever marked."
                       'results-here))))
 
 (defun compilation--mark-target ()
-  "Mark the line point is on in the file that was jumped to."
+  "Mark point's line in the file jumped to; return the overlay, or nil."
   (remove-overlays 'results-target)
   (let ((start (progn (beginning-of-line) (point)))
         (end (progn (end-of-line) (point))))
@@ -123,10 +92,7 @@ makes a list of forty errors legible: exactly one line is ever marked."
                       'results-target))))
 
 (defun compilation--visit (location)
-  "Open LOCATION -- (FILE LINE COLUMN) -- in a window beside this one.
-
-The compilation output stays visible, which is the point of having it in a
-buffer at all: you read the next complaint without going back for it."
+  "Open LOCATION, (FILE LINE COLUMN), in a window split from this one."
   (let ((file (nth 0 location))
         (line (string-to-number (nth 1 location)))
         (column (nth 2 location))
@@ -159,7 +125,7 @@ buffer at all: you read the next complaint without going back for it."
 (setq compilation--file-window nil)
 
 (defcommand compilation-goto () nil
-  "Open what the cursor's line names. Bound to RET in compilation-mode."
+  "Open the file and line the cursor's line names."
   (let ((location (compilation--location-here)))
     (if location
         (progn
@@ -175,10 +141,7 @@ buffer at all: you read the next complaint without going back for it."
 ;; ---------------------------------------------------------------------------
 
 (defun compilation--step (direction)
-  "Move to the next line naming a location, DIRECTION being 1 or -1.
-
-Returns t if it found one, leaving point there; nil if it ran out, leaving
-point where it started."
+  "t after moving to the next line naming a place, DIRECTION 1 or -1, else nil."
   (let ((start (line-number-at-point))
         (limit (progn (end-of-buffer) (line-number-at-point)))
         (found nil))
@@ -193,11 +156,11 @@ point where it started."
     found))
 
 (defcommand compilation-next () nil
-  "Move to the next line naming a location. Bound to n in compilation-mode."
+  "Move to the next line of the output that names a place."
   (if (not (compilation--step 1)) (message "No more")))
 
 (defcommand compilation-previous () nil
-  "Move to the previous line naming a location. Bound to p."
+  "Move to the previous line of the output that names a place."
   (if (not (compilation--step -1)) (message "No earlier one")))
 
 ;; ---------------------------------------------------------------------------
@@ -218,11 +181,9 @@ point where it started."
 ;; and at a worse moment.
 
 (defun compilation--entries ()
-  "Every location this buffer names, in the shape a result set takes.
-
-(KIND SOURCE LINE COLUMN) is all a compiler's complaint can say; the rest of an
-entry -- the offset, the text of the line, where the match sits in it -- is for
-things that searched text, and is left off."
+  "Every place this buffer names, as entries of a result set."
+  ;; (KIND SOURCE LINE COLUMN) is all a complaint says; the rest of an entry
+  ;; is for things that searched text, and is left off.
   (let ((line 1)
         (last (progn (end-of-buffer) (line-number-at-point)))
         (entries nil))
@@ -242,7 +203,7 @@ things that searched text, and is left off."
     (reverse entries)))
 
 (defun compilation--rebuild (buffer)
-  "Attach what BUFFER complains about, as a result set. The refresher."
+  "Attach the places BUFFER names to it, as its result set."
   (with-current-buffer
    buffer
    (lambda ()
@@ -258,12 +219,7 @@ things that searched text, and is left off."
 ;; ---------------------------------------------------------------------------
 
 (defun compilation--command-here ()
-  "The command this buffer's output came from, read off its first line.
-
-`shell-command-start' writes `$ <command>' as the first line, so the buffer
-says what produced it. Reading it back is the same trick `dired' uses for the
-directory it is listing: a variable beside the buffer can disagree with what is
-displayed, and reading the screen cannot."
+  "The command this buffer's output came from, read off its first line, or nil."
   (let ((here (point)))
     (goto-line 1)
     (let ((line (current-line)))
@@ -273,12 +229,8 @@ displayed, and reading the screen cannot."
           nil))))
 
 (defcommand compile (command) ("sCompile command: ")
-  "Run COMMAND and show what it says, ready to be jumped around.
-
-Bound to C-c c. The command runs in the background, so the editor stays usable
-while it works and output appears as it is produced. Return on a line naming a
-file and line opens it beside the output; `M-g n' and `M-g p' walk them from
-anywhere."
+  "Run COMMAND, showing its output as it comes; `next-error' walks the places
+it names."
   (let ((name (shell-command-start command 'compilation-mode)))
     (if (null name)
         nil
@@ -294,7 +246,7 @@ anywhere."
           (display-buffer-at-bottom name compilation-window-height)))))
 
 (defcommand compilation-recompile () nil
-  "Run this buffer's command again. Bound to g in compilation-mode."
+  "Run this output's command again."
   (let ((command (compilation--command-here)))
     (if command
         (compile command)

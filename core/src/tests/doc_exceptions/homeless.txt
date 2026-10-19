@@ -5,66 +5,6 @@
 # list only shrinks: each step of doc/documentazione.typ gives a home to the
 # names of its area.
 
-# -- passo 5: cercare e navigare
-# lisp/compile.lisp
-compilation-mark-priority
-compilation-window-height
-# lisp/occur.lisp
-grep
-grep-in
-grep-kill
-grep-regexp
-occur
-occur-goto
-occur-header-lines
-occur-regexp
-occur-show
-occur-window-height
-# primitives/isearch.rs
-isearch-abort
-isearch-active-p
-isearch-backward
-isearch-backward-regexp
-isearch-exit
-isearch-forward
-isearch-forward-regexp
-isearch-repeat-backward
-isearch-repeat-forward
-isearch-update
-# primitives/match_data.rs
-match-beginning
-match-data
-match-end
-match-string
-set-match-data
-string-match
-string-match-p
-# primitives/replace.rs
-query-replace
-query-replace-regexp
-replace-abandon
-replace-back
-replace-count
-replace-done
-replace-match
-replace-regexp
-replace-rest
-replace-skip
-replace-string
-replace-this
-# primitives/results.rs
-next-error
-previous-error
-results-buffer
-results-count
-results-entry
-results-put
-results-select
-results-state
-results-visit
-# primitives/scan.rs
-scan-buffer
-
 # -- passo 6: prompt, completamento, tasti, aiuto
 # lisp/common-keymaps.lisp
 list-workers
@@ -229,7 +169,6 @@ virtual-text-at
 # -- passo 8: estendere l'editor
 # lisp/commands.lisp
 defcommand
-save-match-data
 string-prefix-p
 string-suffix-p
 # lisp/shell.lisp

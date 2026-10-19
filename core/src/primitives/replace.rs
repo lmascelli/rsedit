@@ -15,15 +15,10 @@
 //! feature is complete with no configuration at all, which is the same reason
 //! the minibuffer has a built-in prompt.
 use super::*;
+use crate::editor::{CASE_REPLACE, REPLACE_READ_FUNCTION};
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
 use risp::call_callable;
 use crate::primitives::args;
-
-/// The name of the variable naming the view.
-pub const REPLACE_READ_FUNCTION: &str = "*replace-read-function*";
-
-/// The name of the variable that turns case-preserving replacement off.
-pub const CASE_REPLACE: &str = "case-replace";
 
 fn flag<B: BufferTrait>(
     env: &std::sync::Arc<Env<EditorState<B>>>,
@@ -132,24 +127,13 @@ fn default_view<B: BufferTrait>(ctx: &EditorState<B>) {
     });
 }
 
-pub const QUERY_REPLACE_DOC: &str = "(query-replace FROM TO): Replace FROM with TO, asking about \
-         each one.\n\n\
-         In the region when the mark is active, from point to the end of the buffer \
-         otherwise.\n\n\
-         `y' replaces this one, `n' leaves it, `!' replaces this one and all the rest, `^' takes \
-         back the last replacement and offers it again, and `q' stops. Any other key stops and \
-         then does what it normally does, so carrying on typing abandons it.\n\n\
-         Each replacement is its own undo step, so `C-/' walks back through them one at a \
-         time -- which is also what `^' is built out of.\n\n\
-         Whether FROM matches regardless of case is `case-fold-search' -- the same variable the \
-         incremental search reads, on unless something turned it off.\n\n\
-         TO goes in with the casing of what it replaced, unless `case-replace' is nil: replacing \
-         `colour' with `color' turns `Colour' into `Color'. Group references (`\\\\1' to `\\\\9', \
-         `\\\\&' for the whole match) are filled in per match; under a literal pattern, which has \
-         no groups, they expand to nothing.\n\n\
-         How you are asked is `*replace-read-function*'; what gets replaced is not configurable, \
-         because a replace that a missing module could silently change is not one anybody could \
-         trust.\n\n\
+pub const QUERY_REPLACE_DOC: &str = "(query-replace FROM TO): Replace FROM with TO, asking at \
+         each match, from point to the end of the buffer, or through the region when the mark is \
+         active. y replaces, n skips, ! replaces all the rest, ^ takes back the last one and q \
+         stops; any other key stops and then does its own job. TO takes the case of what it \
+         replaces unless `case-replace' is nil, and which matches are found follows \
+         `case-fold-search'. A function in `*replace-read-function*' asks instead, when there is \
+         one.\n\n\
          Example:\n\
          (query-replace \"colour\" \"color\")";
 
@@ -158,26 +142,26 @@ primitive!(query_replace, args, env, ctx, {
 });
 
 pub const QUERY_REPLACE_REGEXP_DOC: &str = "(query-replace-regexp FROM TO): Like `query-replace', \
-         with FROM read as a regular expression and `\\\\1'...`\\\\9' in TO standing for what its \
-         groups matched.\n\n\
+         with FROM a regular expression. In TO, \\1 to \\9 stand for what its groups matched, and \
+         \\& for the whole match.\n\n\
          Example:\n\
-         (query-replace-regexp \"(\\\\\\\\w+), (\\\\\\\\w+)\" \"\\\\\\\\2 \\\\\\\\1\")";
+         (query-replace-regexp \"(\\\\w+) (\\\\w+)\" \"\\\\2 \\\\1\")";
 
 primitive!(query_replace_regexp, args, env, ctx, {
     begin(args, env, ctx, true, true)
 });
 
-pub const REPLACE_STRING_DOC: &str = "(replace-string FROM TO): Replace every FROM with TO, \
-         asking nothing. Returns how many.\n\n\
-         In the region when the mark is active, from point to the end of the buffer otherwise -- \
-         the same scope `query-replace' uses, and the same casing and group rules.";
+pub const REPLACE_STRING_DOC: &str = "(replace-string FROM TO): Replace every FROM with TO \
+         without asking, from point to the end of the buffer, or through the region when the mark \
+         is active. Return how many were replaced, or nil when there was none. Case is handled as \
+         by `query-replace'.";
 
 primitive!(replace_string, args, env, ctx, {
     begin(args, env, ctx, false, false)
 });
 
 pub const REPLACE_REGEXP_DOC: &str = "(replace-regexp FROM TO): Like `replace-string', with FROM \
-         read as a regular expression.";
+         a regular expression and TO as in `query-replace-regexp'.";
 
 primitive!(replace_regexp, args, env, ctx, {
     begin(args, env, ctx, true, false)
@@ -187,11 +171,9 @@ primitive!(replace_regexp, args, env, ctx, {
 // The verbs, which are what a view calls
 // ---------------------------------------------------------------------------
 
-pub const REPLACE_THIS_DOC: &str = "(replace-this): Replace the match being offered and move to \
-         the next. Returns t, or nil if no replace is running.\n\n\
-         One of the verbs a view drives a replace with. The others are `replace-skip', \
-         `replace-rest', `replace-back', `replace-done' and `replace-abandon'; `replace-match' \
-         says what is being offered and `replace-count' how many have been done.";
+pub const REPLACE_THIS_DOC: &str = "(replace-this): Replace the match on offer, and offer the \
+         next. Return t while matches are left, the number replaced once there are none, and nil \
+         when no replace is running.";
 
 primitive!(replace_this, _args, env, ctx, {
     if !ctx.replace_active() {
@@ -202,8 +184,8 @@ primitive!(replace_this, _args, env, ctx, {
     ask(env, ctx)
 });
 
-pub const REPLACE_SKIP_DOC: &str =
-    "(replace-skip): Leave the match being offered alone and move to the next.";
+pub const REPLACE_SKIP_DOC: &str = "(replace-skip): Leave the match on offer as it is, and offer \
+         the next. Return as `replace-this' does.";
 
 primitive!(replace_skip, _args, env, ctx, {
     if !ctx.replace_active() {
@@ -214,8 +196,8 @@ primitive!(replace_skip, _args, env, ctx, {
     ask(env, ctx)
 });
 
-pub const REPLACE_REST_DOC: &str = "(replace-rest): Replace the match being offered and every one \
-         after it, asking nothing more, and finish. Returns how many were replaced in all.";
+pub const REPLACE_REST_DOC: &str = "(replace-rest): Replace the match on offer and all the rest \
+         without asking, finish, and return how many were replaced in all.";
 
 primitive!(replace_rest, _args, _env, ctx, {
     if !ctx.replace_active() {
@@ -228,9 +210,8 @@ primitive!(replace_rest, _args, _env, ctx, {
     Ok(ELispExp::number(count as f64))
 });
 
-pub const REPLACE_BACK_DOC: &str = "(replace-back): Take back the last replacement and offer it \
-         again. Returns t if there was one.\n\n\
-         An undo and a re-search, which is why each replacement is its own undo step.";
+pub const REPLACE_BACK_DOC: &str = "(replace-back): Take back the last replacement and offer that \
+         match again. Return t, or nil when nothing has been replaced yet.";
 
 primitive!(replace_back, _args, env, ctx, {
     if !ctx.replace_active() || ctx.replace_count() == 0 {
@@ -242,8 +223,8 @@ primitive!(replace_back, _args, env, ctx, {
     ask(env, ctx)
 });
 
-pub const REPLACE_DONE_DOC: &str = "(replace-done): Stop here, keeping what has been replaced. \
-         Returns how many.";
+pub const REPLACE_DONE_DOC: &str = "(replace-done): Stop, keeping what has been replaced, and \
+         return how many.";
 
 primitive!(replace_done, _args, _env, ctx, {
     ctx.clear_transient_keymap();
@@ -253,7 +234,7 @@ primitive!(replace_done, _args, _env, ctx, {
 });
 
 pub const REPLACE_ABANDON_DOC: &str = "(replace-abandon): Stop, and put point back where the \
-         replace started. What has already been replaced stays replaced -- use `undo' for that.";
+         replace started. What has been replaced stays replaced. Return how many.";
 
 primitive!(replace_abandon, _args, _env, ctx, {
     ctx.clear_transient_keymap();
@@ -261,10 +242,9 @@ primitive!(replace_abandon, _args, _env, ctx, {
     Ok(ELispExp::number(count as f64))
 });
 
-pub const REPLACE_MATCH_DOC: &str = "(replace-match): What the replace is offering, as \
-         (START END TEXT REPLACEMENT), or nil when it is offering nothing.\n\n\
-         REPLACEMENT is what TEXT would become -- group references filled in and casing \
-         applied -- so a view can show the change without working any of it out.";
+pub const REPLACE_MATCH_DOC: &str = "(replace-match): Return the match on offer as (START END \
+         TEXT REPLACEMENT), REPLACEMENT being what TEXT would become, or nil when nothing is on \
+         offer.";
 
 primitive!(replace_match, _args, _env, ctx, {
     Ok(match ctx.replace_match() {
@@ -278,8 +258,8 @@ primitive!(replace_match, _args, _env, ctx, {
     })
 });
 
-pub const REPLACE_COUNT_DOC: &str =
-    "(replace-count): How many have been replaced in the session running now, or 0.";
+pub const REPLACE_COUNT_DOC: &str = "(replace-count): Return how many matches the replace running \
+         now has replaced, or 0.";
 
 primitive!(replace_count, _args, _env, ctx, {
     Ok(ELispExp::number(ctx.replace_count() as f64))

@@ -6,6 +6,7 @@
 //! raising an ordering question.
 
 use super::*;
+use crate::feature::isearch::CASE_FOLD;
 use crate::modes::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
 use crate::modes::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
 use risp::VARIABLE_DOCUMENTATION;
@@ -116,6 +117,25 @@ pub const SETTINGS: &[Setting] = &[
         doc: "The functions called, with the new width and height in columns and rows, each \
               time the terminal is resized.",
     },
+    Setting {
+        name: CASE_FOLD,
+        doc: "Whether searching ignores case. C-s, the replace commands, `occur', `grep' and \
+              `scan-buffer' read it; nil makes them match case exactly. `string-match' does \
+              not read it.",
+    },
+    Setting {
+        name: CASE_REPLACE,
+        doc: "Whether a replacement takes the case of what it replaces, so that replacing \
+              colour with color turns Colour into Color and COLOUR into COLOR. nil puts it in \
+              as typed.",
+    },
+    Setting {
+        name: REPLACE_READ_FUNCTION,
+        doc: "The function the replace commands call, with no arguments, to offer each match, \
+              or nil for their own question. It answers by calling `replace-this', \
+              `replace-skip', `replace-rest', `replace-back', `replace-done' or \
+              `replace-abandon'.",
+    },
 ];
 
 /// Gives every setting in [`SETTINGS`] its documentation, where `defvar` puts
@@ -173,6 +193,13 @@ pub const OPEN_DIRECTORY_CALLBACK: &str = "*open-directory-callback*";
 /// The name of the Lisp variable listing what to call when the frame is
 /// resized.
 pub const AFTER_RESIZE_HOOK: &str = "after-resize-hook";
+
+/// The name of the Lisp variable that turns case-preserving replacement off.
+pub const CASE_REPLACE: &str = "case-replace";
+
+/// The name of the Lisp variable naming the function that offers each match
+/// of a replace.
+pub const REPLACE_READ_FUNCTION: &str = "*replace-read-function*";
 
 pub const WINDOW_SEPARATOR: &str = "window-separator";
 

@@ -1,67 +1,222 @@
 NAME
     searching - finding things, and replacing them
 
+SYNOPSIS
+    (isearch-forward)
+    (isearch-backward)
+    (isearch-forward-regexp)
+    (isearch-backward-regexp)
+    (isearch-repeat-forward)
+    (isearch-repeat-backward)
+    (isearch-update)
+    (isearch-exit)
+    (isearch-abort)
+    (isearch-active-p)
+    case-fold-search
+
+    (query-replace FROM TO)
+    (query-replace-regexp FROM TO)
+    (replace-string FROM TO)
+    (replace-regexp FROM TO)
+    (replace-this)
+    (replace-skip)
+    (replace-rest)
+    (replace-back)
+    (replace-done)
+    (replace-abandon)
+    (replace-match)
+    (replace-count)
+    case-replace
+    *replace-read-function*
+
+    (occur PATTERN)
+    (occur-regexp PATTERN)
+    (grep PATTERN)
+    (grep-regexp PATTERN)
+    (grep-in DIRECTORY)
+    (grep-kill)
+    (occur-goto)
+    (occur-show)
+    occur-window-height
+    occur-header-lines
+
+    (next-error)
+    (previous-error)
+    (results-select &optional BUFFER)
+    (results-buffer)
+    (results-count &optional BUFFER)
+    (results-entry N &optional BUFFER)
+    (results-state &optional BUFFER)
+    (results-visit N &optional BUFFER)
+    (results-put PATTERN OVER ENTRIES &optional BUFFER)
+
 DESCRIPTION
-    C-s searches forward as you type: each character narrows the search and
-    the view follows it. C-s again goes to the next match, C-r turns round
-    and goes back.
+    C-s finds text as you type it, and M-% replaces it, asking at each
+    place. M-s o lists every line of this buffer that matches, M-s g every
+    line of the files under a directory, and M-g n and M-g p go from one
+    listed place to the next while you work. Each has a form that takes a
+    regular expression instead of plain text; the `regexps' page says how
+    one is written.
 
-        C-s             search forward, typing as you go
+SEARCHING AS YOU TYPE
+        C-s             search forward
         C-r             search backward
-        <ret>           stop here, leaving the cursor at the match
-        C-g             stop, and go back to where you started
+        C-M-s  C-M-r    the same, for a regular expression
 
-    The matches are all marked, not just the one you are on, so you can see
-    how many there are before deciding.
+    C-s opens a prompt, and each character typed into it moves to the first
+    match of what has been typed so far, selected; Backspace takes the last
+    character back. Inside the search:
 
-    Whether case matters is the variable `case-fold-search', which is on by
-    default -- so a lower-case search finds capitals too. (setq
-    case-fold-search nil) in your configuration turns it off. Replacing reads
-    the same variable, so the two always agree.
+        C-s  C-r        go on to the next match forward, or backward
+        <ret>           stop, leaving the cursor at the match
+        C-g  Escape     stop, and go back to where the search started
 
-PATTERNS
-    C-M-s and C-M-r search for a regular expression instead of for text.
+    A search that runs out says Failing, and pressing C-s once more starts
+    again from the top of the buffer, C-r from the bottom. A regular
+    expression still being typed, such as [a-, reads as a failing search
+    until it is complete.
+
+    Case is ignored unless `case-fold-search' is nil: a search for the
+    finds The and THE, and so does a search for The.
 
 REPLACING
-    M-% asks what to replace and what with, then stops at each match and asks
-    what to do about it:
+        M-%             replace text, asking at each match
+        C-M-%           the same, for a regular expression
 
-        y               replace this one
-        n               leave it
-        !               replace this one and every one after it
-        ^               take back the last one
-        <ret>           stop here
+    M-% asks what to replace and what with, then stops at each match:
 
-    C-M-% does the same for a pattern. M-x replace-string and M-x
-    replace-regexp do it everywhere without asking, which is what you want
-    once you are sure.
+        y               replace this one, and go on
+        n               leave this one, and go on
+        !               replace this one and all the rest
+        ^               take back the last one replaced
+        q               stop here
 
-    Replacing starts where the cursor is and goes forward, so to do a whole
-    buffer go to the top first.
+    Any other key stops too, and then does what it always does: Return
+    stops and breaks the line, C-g stops and does nothing more. Each
+    replacement is undone on its own by C-/.
+
+    Replacing goes from the cursor to the end of the buffer, or through the
+    region when there is one: go to the top first to do a whole buffer.
+    M-x replace-string and M-x replace-regexp replace every match there
+    without asking, and say how many they replaced.
+
+    The replacement takes the case of what it replaces: replacing colour
+    with color turns Colour into Color and COLOUR into COLOR, and leaves
+    any other mix of cases as typed. Set `case-replace' to nil to have it
+    put in as typed every time. Which matches are found follows
+    `case-fold-search', as searching does.
+
+    In the replacement of C-M-%, \1 to \9 stand for what the groups of the
+    pattern matched, \& and \0 for the whole match, and \\ for a backslash.
+
+    How the question is asked can be replaced. `*replace-read-function*'
+    names a function, called with no arguments at each match, that shows
+    the match its own way and answers with `replace-this', `replace-skip',
+    `replace-rest', `replace-back', `replace-done' or `replace-abandon'.
+    `replace-match' says what is on offer, and `replace-count' how many
+    have been replaced.
 
 EVERY MATCH AT ONCE
-    M-s o lists every line in this buffer matching what you ask for, in a
-    window of its own.
+        M-s o           list the lines of this buffer that match
+        M-s g           list the matching lines of every file under the
+                        directory the editor was started in
 
-        <ret>           go to that line
-        o               go to it, keeping the listing in view
-        n  p            down and up the list
-        q               close the listing
+    The list goes in a buffer of its own, one line for each match:
 
-    M-s g does the same across a directory tree rather than one buffer, and
-    searches the files as they are on disk -- except for the ones you have
-    open and modified, which it searches as you have them.
+        TODO in notes.txt
+        notes.txt:1: TODO: ask about the deadline
+        notes.txt:7: TODO later
+        --- 2 matches ---
 
-    Both fill in as they go rather than making you wait for the whole answer,
-    and a large tree is cut off rather than read to the end. C-c C-k in a
-    grep listing stops the search, and closing the listing does too; what was
-    found stays, and the last line says the search stopped early.
+    In it:
 
-WALKING THE RESULTS
-    M-g n goes to the next thing in the current list of places, and M-g p to
-    the one before -- from wherever you are, without going back to the
-    listing. The same two keys walk a compilation's complaints; see
-    `compile'.
+        <ret>           go to the match on this line
+        o               go to it, and come back to the list
+        n  p            down and up a line
+        q               close the list's window
+        C-c C-k         stop a search of files that is still going
+
+    M-x occur-regexp and M-x grep-regexp take a regular expression, and
+    M-x grep-in asks which directory to search. Each search makes a new
+    list -- *Occur*, *Occur*<2>, *Grep* -- and the old ones stay until they
+    are killed.
+
+    A search of files runs while you go on working, and the list fills in
+    as the files are read; its last line says how many matched. A file
+    open with unsaved changes is searched as you have it, not as it is on
+    disk. Files that are not text are left out, and so are seventeen
+    directories that are large and generated, .git, target, build and
+    node_modules among them. The search stops at 20000 files or 10000
+    matches, and its last line says it stopped early; so does C-c C-k,
+    which keeps what was found. Killing the list stops the search as well.
+
+WALKING A LIST
+        M-g n           go to the next place in the list
+        M-g p           go to the place before
+
+    M-g n and M-g p walk the newest list -- a search's or a compilation's
+    -- from wherever you are, opening each place in the window you are in.
+    The line is marked in the file, and the entry in the list. At either
+    end they say so rather than starting again. M-x results-select, in an
+    older list, makes that one the list they walk.
+
+LIMITS
+    The list of M-s o and M-s g opens in a strip along the bottom, and
+    also takes the place of your buffer in the window you were in; C-x b
+    brings your buffer back. For the same reason o opens the match and
+    puts the list straight back over it. M-g n, from your buffer, is the
+    way to go through a list without losing sight of either.
+
+    M-s g does not read .gitignore, and the directories it leaves out are
+    fixed: `find-file-recursive-ignore' does not change them. Searching a
+    buffer only highlights the match the cursor is on, not every match.
+
+LISTS FROM LISP
+    A list of places is a set of entries attached to a buffer, and any code
+    can make one: `results-put' attaches entries to a buffer and makes it
+    the list M-g n walks. An entry is
+
+        (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END)
+
+    where KIND is "file" or "buffer", SOURCE a path or a buffer's name,
+    LINE counts from 1 and COLUMN from 0, OFFSET is where the match starts
+    in the whole text, TEXT is its line, and the last two say where the
+    match is within that line. All but KIND and SOURCE may be left off.
+    `results-count', `results-entry' and `results-state' read a list,
+    `results-visit' goes to one of its places, and `results-buffer' names
+    the list M-g n walks. `occur-header-lines' is how many lines of a list
+    come before its first match.
+
+    A list that grows while it is walked, as a compilation's does, keeps a
+    function under the buffer property results-refresh, with `buffer-put':
+    it is called with the buffer's name before each step of M-g n.
+
+EXAMPLES
+    Match case exactly when searching and replacing:
+
+        (setq case-fold-search nil)
+
+    Put replacements in exactly as typed:
+
+        (setq case-replace nil)
+
+    Replace every tab in the buffer with four spaces:
+
+        (progn (goto-char 0) (replace-string "\t" "    "))
+
+    A key that lists the TODO lines of the buffer:
+
+        (define-key nil "C-c o" '(occur "TODO"))
+
+    A taller window for the lists:
+
+        (setq occur-window-height 20)
+
+    Put the places a linter reported in a list M-g n walks:
+
+        (results-put "lint" "the project"
+                     '(("file" "src/main.rs" 12 4)
+                       ("file" "src/lib.rs" 3)))
 
 KEYS
     C-s                     isearch-forward
@@ -75,12 +230,20 @@ KEYS
     M-g n                   next-error
     M-g p                   previous-error
 
+KEYS IN ISEARCH MODE
+    C-s                     isearch-repeat-forward
+    C-r                     isearch-repeat-backward
+    <ret>                   minibuffer-confirm
+    C-g                     minibuffer-cancel
+    <esc>                   minibuffer-cancel
+
 KEYS IN OCCUR MODE
     <ret>                   occur-goto
     o                       occur-show
     n                       next-line
     p                       previous-line
+    q                       delete-window
     C-c C-k                 grep-kill
 
 SEE ALSO
-    editing, compile, first-steps
+    regexps, compile, editing, buffers, first-steps

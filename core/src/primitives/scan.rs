@@ -75,24 +75,12 @@ fn limit_arg<B: BufferTrait>(args: &[ELispExp<B>], index: usize) -> usize {
     }
 }
 
-pub const SCAN_BUFFER_DOC: &str = "(scan-buffer PATTERN &optional REGEXP LIMIT BUFFER): Every \
-         match of PATTERN in BUFFER -- the current one when it is omitted -- as \
-         (TRUNCATED ENTRIES).\n\n\
-         Each entry is (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END): KIND is \
-         \"buffer\", SOURCE the buffer's name, LINE counts from 1 and COLUMN from 0, OFFSET is \
-         where the match begins in the whole buffer, TEXT is the line it is on, and the last \
-         two are where the match sits *within that line* -- so a view can show and highlight it \
-         without reading the buffer again.\n\n\
-         TRUNCATED is t when LIMIT (10000 by default) stopped the scan before the end. A caller \
-         that ignores it shows a partial list as though it were everything, which is how a \
-         search comes to quietly not find what is there.\n\n\
-         With REGEXP non-nil PATTERN is a regular expression, and `\\\\1' onwards are available \
-         to whatever reads the entries. Case is folded as `case-fold-search' says, the same \
-         variable the incremental search and replace read.\n\n\
-         Matches do not overlap, and a pattern that can match nothing -- `x*' -- still \
-         terminates: the scan steps one character past an empty match.\n\n\
-         One pass over the text, rather than a search per match. That is the whole reason this \
-         exists next to `search-forward': the loop is quadratic and this is not.\n\n\
+pub const SCAN_BUFFER_DOC: &str = "(scan-buffer PATTERN &optional REGEXP LIMIT BUFFER): Return \
+         every match of PATTERN in BUFFER, or in the current buffer, as (TRUNCATED ENTRIES). An \
+         entry is (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END), the last two being \
+         where the match is in its line, TEXT. TRUNCATED is t when LIMIT, 10000 if not given, \
+         stopped the scan. With REGEXP non-nil, PATTERN is a regular expression; case follows \
+         `case-fold-search'.\n\n\
          Example:\n\
          (scan-buffer \"TODO\") => (nil ((\"buffer\" \"notes.txt\" 3 4 57 \"    TODO: this\" 4 8)))";
 

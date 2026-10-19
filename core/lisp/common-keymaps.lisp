@@ -115,21 +115,11 @@
 (define-repeat-key 'undo "u")
 (define-repeat-key 'redo "r")
 
-;; Incremental search. C-s opens a prompt and the buffer jumps to the first
-;; match of whatever has been typed so far, re-searching on every keystroke.
-;; Inside the search, C-s goes to the next match and C-r turns around; Return
-;; stops there, and Escape or C-g puts point back where it started. A search
-;; that runs out says so, and repeating it then wraps around the buffer.
-;;
-;; C-M-s and C-M-r take a regular expression instead.
+;; Searching, and walking a list of places: the `searching' manual page.
 (define-key nil "C-s" 'isearch-forward)
 (define-key nil "C-r" 'isearch-backward)
 (define-key nil "C-M-s" 'isearch-forward-regexp)
 
-;; Walking a list of places -- a search's, a compilation's, anything that
-;; attached one. Built in rather than a module's, so that whichever list was
-;; made last is the one these walk and no producer depends on another's module
-;; being loaded.
 (define-key nil "M-g n" 'next-error)
 (define-key nil "M-g p" 'previous-error)
 
@@ -171,29 +161,10 @@
 (define-key nil "C-x r c" 'clear-rectangle)
 (define-key nil "C-x r t" 'string-rectangle)
 
-;; Replace. `M-%' is Emacs' key for it and there is no reason to differ.
-;;
-;;   y   replace this one        !   replace this and all the rest
-;;   n   leave it                ^   take back the last one
-;;   q   stop
-;;
-;; Anything else stops and then does what it normally does, so carrying on
-;; typing abandons it. In the region when the mark is active, from point
-;; onwards otherwise. `M-x replace-string' does the lot without asking.
-;;
-;; The keys above are the built-in way of asking; `*replace-read-function*'
-;; replaces it with something else entirely, which then drives the same
-;; `replace-this'/`replace-skip'/`replace-rest' verbs.
+;; Replacing, and `case-fold-search': the `searching' manual page.
 (define-key nil "M-%" 'query-replace)
 (define-key nil "C-M-%" 'query-replace-regexp)
 (define-key nil "C-M-r" 'isearch-backward-regexp)
-
-;; Whether searching ignores case. Emacs' name, Emacs' default -- and it is
-;; also set from Rust, so searching behaves the same with no configuration
-;; loaded at all. Read by the incremental search and by replace alike; a
-;; folded replace still puts the replacement in with the casing of what it
-;; replaced, which is `case-replace'.
-(setq case-fold-search t)
 
 ;; Motion over balanced expressions: the `editing' manual page.
 (define-key nil "C-M-f" 'forward-sexp)

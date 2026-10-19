@@ -60,4 +60,5 @@ SEE ALSO
     guide, first-steps, editing, killing, files, searching, getting-help,
     completion, keymaps, modes, configuration, diagnostics,
     writing-commands, buffers, windows, dired, mouse, overlays, compile,
-    themes, background, indentation, rectangles, virtual-text, macros, vim
+    regexps, themes, background, indentation, rectangles, virtual-text,
+    macros, vim

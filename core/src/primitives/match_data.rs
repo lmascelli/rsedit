@@ -138,21 +138,14 @@ fn search<B: BufferTrait>(
     ))
 }
 
-pub const STRING_MATCH_DOC: &str = "(string-match REGEXP STRING &optional START): The index in STRING \
-         where the first match for REGEXP starts, or nil if there is none.\n\n\
-         The search begins at character START when it is given -- negative counts from the end -- \
-         but `^' still means the start of STRING.\n\n\
-         A match is recorded in the match data, which `match-beginning', `match-end' and \
-         `match-string' read: group 0 is the whole match, and 1 onwards the parenthesised groups. \
-         A failed match leaves the match data as it was. Use `string-match-p' to ask without \
-         changing it, and `save-match-data' around anything that matches on somebody else's \
-         behalf.\n\n\
-         Signals `invalid-regexp' if REGEXP does not compile. The syntax is the one the search \
-         commands use -- groups are (...), not \\(...\\) -- with no lookahead and no \
-         backreferences.\n\n\
+pub const STRING_MATCH_DOC: &str = "(string-match REGEXP STRING &optional START): Return where in \
+         STRING the first match of REGEXP starts, or nil, and record where its groups matched for \
+         `match-beginning', `match-end' and `match-string'. The search begins at character START, \
+         a negative one counting from the end, but ^ still means the start of STRING. Case is \
+         matched exactly. A failed match leaves the match data alone, and a REGEXP that is not \
+         valid signals `invalid-regexp'.\n\n\
          Example:\n\
-         (when (string-match \\\"([a-z.]+):([0-9]+)\\\" \\\"see main.rs:42\\\")\n\
-         \x20\x20(match-string 2 \\\"see main.rs:42\\\")) => \\\"42\\\"";
+         (string-match \"([a-z.]+):([0-9]+)\" \"see main.rs:42\") => 4";
 
 primitive!(string_match, args, _env, _ctx, {
     match search(args)? {
@@ -166,11 +159,9 @@ primitive!(string_match, args, _env, _ctx, {
 });
 
 pub const STRING_MATCH_P_DOC: &str = "(string-match-p REGEXP STRING &optional START): Like \
-         `string-match', but leaves the match data alone.\n\n\
-         For the question \"does it match?\" -- a filter, a predicate -- where nothing will read \
-         the groups and nothing should lose the ones it was about to read.\n\n\
+         `string-match', but leave the match data alone.\n\n\
          Example:\n\
-         (string-match-p \\\"[.]rs$\\\" \\\"main.rs\\\") => 4";
+         (string-match-p \"[.]rs$\" \"main.rs\") => 4";
 
 primitive!(string_match_p, args, _env, _ctx, {
     Ok(match search(args)? {
@@ -190,10 +181,8 @@ fn group<B: BufferTrait>(
     Ok(MATCH_DATA.with(|data| data.borrow().get(n as usize).copied().flatten()))
 }
 
-pub const MATCH_BEGINNING_DOC: &str = "(match-beginning N): Where group N of the last match \
-         started, or nil if that group did not take part. Group 0 is the whole match.\n\n\
-         Example:\n\
-         (string-match \\\"b+\\\" \\\"abbc\\\") (match-beginning 0) => 1";
+pub const MATCH_BEGINNING_DOC: &str = "(match-beginning N): Return where group N of the last \
+         match started, or nil if the group took no part. Group 0 is the whole match.";
 
 primitive!(match_beginning, args, _env, _ctx, {
     exact_arity(args, 1)?;
@@ -203,10 +192,8 @@ primitive!(match_beginning, args, _env, _ctx, {
     })
 });
 
-pub const MATCH_END_DOC: &str = "(match-end N): Where group N of the last match ended -- the \
-         index just past it -- or nil if that group did not take part.\n\n\
-         Example:\n\
-         (string-match \\\"b+\\\" \\\"abbc\\\") (match-end 0) => 3";
+pub const MATCH_END_DOC: &str = "(match-end N): Return where group N of the last match ended, \
+         just past its last character, or nil if the group took no part.";
 
 primitive!(match_end, args, _env, _ctx, {
     exact_arity(args, 1)?;
@@ -216,16 +203,12 @@ primitive!(match_end, args, _env, _ctx, {
     })
 });
 
-pub const MATCH_STRING_DOC: &str = "(match-string N STRING): The text group N of the last match \
-         covered in STRING, or nil if that group did not take part.\n\n\
-         STRING has to be the one that was matched: the match data records positions, not text. \
-         Emacs reads the current buffer when STRING is left out; this editor has no buffer regexp \
-         search to have matched there, so leaving it out is an error rather than a quiet read of \
-         the wrong text.\n\n\
+pub const MATCH_STRING_DOC: &str = "(match-string N STRING): Return the text group N of the last \
+         match covered in STRING, which has to be the string matched, or nil if the group took no \
+         part.\n\n\
          Example:\n\
-         (let ((line \\\"main.rs:42\\\"))\n\
-         \x20\x20(when (string-match \\\"([a-z.]+):([0-9]+)\\\" line)\n\
-         \x20\x20\x20\x20(match-string 1 line))) => \\\"main.rs\\\"";
+         (string-match \"([a-z.]+):([0-9]+)\" \"main.rs:42\")\n\
+         (match-string 2 \"main.rs:42\") => \"42\"";
 
 primitive!(match_string, args, _env, _ctx, {
     exact_arity(args, 2)?;
@@ -241,12 +224,11 @@ primitive!(match_string, args, _env, _ctx, {
     Ok(ELispExp::string(subject[from..to].to_string()))
 });
 
-pub const MATCH_DATA_DOC: &str = "(match-data): The last match as a list of positions: the start \
-         and end of group 0, then of group 1, and so on, with nil for both ends of a group that \
-         did not take part. Trailing groups that did not take part are left off.\n\n\
-         What `save-match-data' saves, and `set-match-data' puts back.\n\n\
+pub const MATCH_DATA_DOC: &str = "(match-data): Return the last match as a list of positions: the \
+         start and end of group 0, then of group 1, and so on, nil for both ends of a group that \
+         took no part. Groups at the end that took no part are left off.\n\n\
          Example:\n\
-         (string-match \\\"(a)|(b)\\\" \\\"b\\\") (match-data) => (0 1 nil nil 0 1)";
+         (progn (string-match \"(a)|(b)\" \"b\") (match-data)) => (0 1 nil nil 0 1)";
 
 primitive!(match_data, args, _env, _ctx, {
     exact_arity(args, 0)?;
@@ -268,12 +250,8 @@ primitive!(match_data, args, _env, _ctx, {
     Ok(ELispExp::proper_list(positions))
 });
 
-pub const SET_MATCH_DATA_DOC: &str = "(set-match-data LIST): Make LIST the match data, in the \
-         shape `match-data' returns. nil clears it.\n\n\
-         Example:\n\
-         (let ((saved (match-data)))\n\
-         \x20\x20(string-match \\\"x\\\" \\\"xyz\\\")\n\
-         \x20\x20(set-match-data saved))";
+pub const SET_MATCH_DATA_DOC: &str = "(set-match-data LIST): Make LIST, in the shape `match-data' \
+         returns, the match data; nil clears it.";
 
 primitive!(set_match_data, args, _env, _ctx, {
     exact_arity(args, 1)?;

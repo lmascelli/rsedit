@@ -1,72 +1,45 @@
 ;;; occur --- listing every line that matches, and walking the list.
 ;;;
-;;; `M-s o' lists the lines of this buffer matching a pattern; `M-s g' searches
-;;; a directory tree. Either way the matches land in a buffer of their own, and
-;;; `M-g n' and `M-g p' walk them from wherever you are working.
+;;; M-s o lists the lines of this buffer that match a pattern, M-s g those of
+;;; the files under a directory, and M-g n and M-g p walk the list from
+;;; wherever you are. User manual: the `searching' page.
 ;;;
-;;; # What is here and what is not
-;;;
-;;; Nothing here searches anything. `occur--scan' and `grep--scan' find the
-;;; matches, and what they hand back is not text but a *result set* attached to
-;;; the listing buffer: one entry per match, each saying what it is in, which
-;;; line, which column, and the text of that line. `results-entry',
-;;; `results-visit' and `next-error' read that set.
-;;;
-;;; So this module is the view, and only the view: which window the listing
-;;; opens in, what its keys do, and how the two marks look. A different view --
-;;; a floating window, a list grouped by file, a tree -- replaces this file and
-;;; changes none of the answers, because it asks the same questions.
-;;;
-;;; # Why the navigation keys are not defined here
-;;;
-;;; `next-error' and `previous-error' are built in. A compilation, a search and
-;;; anything else that produces a list of places all attach one and are walked
-;;; by the same two keys -- and none of them has to be loaded for another to
-;;; work. A module that owned those keys would be a module every other producer
-;;; had to depend on.
+;;; This module is only the view. `occur--scan' and `grep--scan' find the
+;;; matches and attach them to the listing as a result set, which
+;;; `results-visit' and `next-error' read; which window shows the listing, and
+;;; what its keys do, is all that is decided here. The walking keys are built
+;;; in, so that no producer of a list depends on this module.
 
 (make-mode 'occur-mode)
 
-(defconst occur-window-height 12
-  "How tall the window showing a listing is.
-
-A strip across the bottom, like a compilation: the list is something you glance
-at while working in the file above it, and the file is what deserves the room.")
+(defvar occur-window-height 12
+  "How many rows the window showing a list of matches takes.")
 
 ;; ---------------------------------------------------------------------------
 ;; Reading the listing
 ;; ---------------------------------------------------------------------------
 
 (defconst occur-header-lines 1
-  "How many lines of the listing come before the first entry.
-
-`occur--scan' writes one: the pattern and what was searched. Entry N is
-therefore on line N + this + 1, and `occur--index-here' is the only place that
-arithmetic is written down.")
+  "How many lines of a list come before its first match.")
 
 (defun occur--index-here ()
-  "Which entry the cursor's line names, or nil if it names none.
-
-Counted rather than parsed. The line says `file:12: text', and reading it back
-would be a second, worse copy of what the entry already knows -- worse because
-a path with a colon in it parses two ways and the entry never did."
+  "The index of the entry on the cursor's line, or nil."
+  ;; Counted, not parsed: a path with a colon in it reads two ways, and the
+  ;; entry already knows where it is.
   (let ((index (- (line-number-at-point) occur-header-lines 1)))
     (if (and (>= index 0) (< index (or (results-count) 0)))
         index
         nil)))
 
 (defcommand occur-goto () nil
-  "Go to what the cursor's line found. Bound to RET in a listing."
+  "Go to the match on the cursor's line."
   (let ((index (occur--index-here)))
     (if (null index)
         (message "No result on this line")
         (results-visit index))))
 
 (defcommand occur-show () nil
-  "Show what the cursor's line found without leaving the listing.
-
-For reading down a list of forty matches: the file follows the cursor, and the
-cursor stays where it can be moved again."
+  "Go to the match on the cursor's line, and come back to the list."
   (let ((listing (current-buffer))
         (index (occur--index-here)))
     (if (null index)
@@ -79,20 +52,14 @@ cursor stays where it can be moved again."
 ;; ---------------------------------------------------------------------------
 
 (defun occur--display (buffer)
-  "Show BUFFER as a strip across the bottom and go to it."
+  "Show BUFFER in a strip along the bottom, make it current, and return it."
   (display-buffer-at-bottom buffer occur-window-height)
   (switch-to-buffer buffer)
   (goto-line 1)
   buffer)
 
 (defcommand occur (pattern) ("sList lines matching: ")
-  "List every line of this buffer matching PATTERN, in a buffer of its own.
-
-The listing is a result set, so `M-g n' walks it from anywhere. `RET' on a line
-goes to it, `o' shows it without leaving the list.
-
-PATTERN is matched literally; `occur-regexp' is the same command for a regular
-expression."
+  "List every line of this buffer containing PATTERN, in a buffer of its own."
   (let ((buffer (occur--scan pattern nil)))
     (if (null buffer)
         (message "Nothing to search")
@@ -106,29 +73,22 @@ expression."
         (occur--display buffer))))
 
 (defcommand grep (pattern) ("sSearch the tree for: ")
-  "Search every file under `default-directory' for PATTERN and list what turns up.
-
-The search runs in the background: the listing appears at once and fills as
-files are read, with a `--- 12 matches ---' line when it is done. `C-c C-k' in
-the listing stops it, and so does closing the listing.
-
-Large generated directories -- `.git', `target', `node_modules' -- are not
-searched, and a file open with unsaved changes is searched as you have it
-rather than as the disk has it."
+  "List every line containing PATTERN in the files under the directory the
+editor was started in. The list fills in as the files are read."
   (let ((buffer (grep--scan pattern nil nil)))
     (if (null buffer)
         (message "Nothing to search")
         (occur--display buffer))))
 
 (defcommand grep-regexp (pattern) ("sSearch the tree for regexp: ")
-  "Like `grep', with PATTERN read as a regular expression."
+  "Like `grep', with PATTERN a regular expression."
   (let ((buffer (grep--scan pattern nil t)))
     (if (null buffer)
         (message "Nothing to search")
         (occur--display buffer))))
 
 (defcommand grep-in (directory) ("fSearch which directory: ")
-  "Search DIRECTORY for a pattern, asking for the pattern next."
+  "Like `grep', in DIRECTORY; the pattern is asked for next."
   (minibuffer-read "Search for:"
                    (lambda (pattern)
                      (unless (string= pattern "")
@@ -142,10 +102,7 @@ rather than as the disk has it."
 ;; ---------------------------------------------------------------------------
 
 (defcommand grep-kill () nil
-  "Stop the search filling this listing. Bound to C-c C-k.
-
-What it has found so far stays listed, and the last line says the search
-stopped early. Closing the listing stops it as well."
+  "Stop the search filling this list; what it has found stays."
   (if (stop-worker (current-buffer))
       (message "Stopping the search")
       (message "No search is running in this buffer")))
@@ -163,17 +120,13 @@ stopped early. Closing the listing stops it as well."
 ;; The header and the trailer, so the shape of the list reads at a glance.
 (add-syntax-rule 'occur-mode "^--- .* ---$" 'comment)
 ;; What each line is in, up to the colon before the line number. A path may
-;; contain a colon; the *last* colon-number-colon is the one this module wrote.
+;; contain a colon; the *last* colon-number-colon is the one the scan wrote.
 (add-syntax-rule 'occur-mode "^(.*):[0-9]+: " 'type 1)
 
-;; The two marks, as a compilation has them: backgrounds rather than
-;; foregrounds, because the text under them is already coloured and a
-;; background says "you are here" without arguing with what the text is.
-;;
-;; Naming them is also what turns them on: the marks are put on by the built-in
-;; navigation, which looks the faces up by name and does nothing at all when
-;; nothing has named them. A view that wants no marks simply does not name
-;; these.
+;; The two marks, as a compilation has them. Backgrounds, because the text
+;; under them is already coloured. Naming the faces is also what turns the
+;; marks on: the built-in walk looks them up by name and marks nothing when
+;; nothing has named them.
 (set-face 'results-here nil "bright-black")
 (set-face 'results-target nil "bright-black")
 

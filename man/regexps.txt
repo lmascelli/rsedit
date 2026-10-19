@@ -1,0 +1,113 @@
+NAME
+    regexps - regular expressions, and matching them from Lisp
+
+SYNOPSIS
+    (string-match REGEXP STRING &optional START)
+    (string-match-p REGEXP STRING &optional START)
+    (match-beginning N)
+    (match-end N)
+    (match-string N STRING)
+    (match-data)
+    (set-match-data LIST)
+    (save-match-data BODY...)
+    (scan-buffer PATTERN &optional REGEXP LIMIT BUFFER)
+
+DESCRIPTION
+    A regular expression is a pattern that text matches or does not. C-M-s,
+    C-M-%, M-x occur-regexp and M-x grep-regexp take one, and so do the
+    rules a mode colours text by and the patterns a compilation reads its
+    output with. They are all written the same way, and so are the ones
+    Lisp matches strings against.
+
+    The syntax is that of Rust's regex library, which is close to what most
+    languages use and not what Emacs uses: a group is (...), not \(...\).
+
+WRITING ONE
+        .               any character but a newline
+        [abc]  [^abc]   one of these, or any but these; [a-z] a range
+        \d  \w  \s      a digit, a letter or digit or _, white space
+        \D  \W  \S      anything but those
+        \b              the edge of a word
+        ^  $            the start and the end of a line
+        x*  x+  x?      none or more, one or more, none or one
+        x{2,4}          two to four
+        x*?  x+?        as few as will do
+        a|b             either
+        (...)           a group, numbered from 1 by its opening bracket
+        (?:...)         a group that is not numbered
+        (?i)            ignore case from here on
+        \.  \(  \\      the character itself
+
+    Other characters stand for themselves; a \ before any of . [ ] ( ) { }
+    * + ? | ^ $ \ makes it stand for itself. A pattern cannot look ahead or
+    behind, and cannot refer back to a group: \1 in a pattern is an error.
+    In the replacement of C-M-% it stands for what group 1 matched; see the
+    `searching' page.
+
+    When a buffer is searched, and when a mode colours a line, ^ and $ are
+    the ends of a line. In a string matched from Lisp they are the ends of
+    the string.
+
+MATCHING FROM LISP
+    `string-match' answers where in a string a pattern first matches, or
+    nil, and records where each group matched in the match data, which
+    `match-beginning', `match-end' and `match-string' read afterwards.
+    Group 0 is the whole match, and a group that took no part reads as nil.
+    A failed match leaves the match data as it was.
+
+        (when (string-match "([a-z.]+):([0-9]+)" "see main.rs:42")
+          (match-string 2 "see main.rs:42"))          ; "42"
+
+    `match-string' wants the matched string back, unlike in Emacs: the
+    match data holds positions, not text. Positions count characters, not
+    bytes. `string-match' matches case exactly, whatever
+    `case-fold-search' says; (?i) at the start of the pattern ignores it.
+    In a Lisp string a \ is written twice: "\\d+" is the pattern \d+.
+
+    A function that matches on behalf of somebody else wraps its matching
+    in `save-match-data', so that its caller's groups are still there when
+    it returns. `string-match-p' answers the same question without touching
+    the match data at all. `match-data' and `set-match-data' read and
+    replace the match data whole.
+
+    A pattern that is not a valid regular expression is an error,
+    `invalid-regexp', rather than a failed match. The match data belongs to
+    the thread: a background worker matching strings of its own does not
+    disturb the command in front.
+
+EVERY MATCH IN A BUFFER
+    `scan-buffer' finds every match of a pattern in a buffer, in one pass,
+    as a list of entries in the shape the lists of the `searching' page
+    use. Its answer says whether a limit stopped it before the end:
+
+        (scan-buffer "TODO")
+        ; (nil (("buffer" "notes.txt" 3 4 57 "    TODO: this" 4 8)))
+
+    It follows `case-fold-search' and treats ^ and $ as the ends of lines,
+    as the search commands do. Matches do not overlap, and a pattern that
+    can match nothing, such as x*, matches at every position.
+
+EXAMPLES
+    The number at the end of a string, or nil:
+
+        (let ((line "width = 80"))
+          (when (string-match "([0-9]+)$" line)
+            (string-to-number (match-string 1 line))))
+
+    Whether a file name ends in .rs, leaving the match data alone:
+
+        (string-match-p "[.]rs$" "main.rs")
+
+    A helper that matches without disturbing its caller:
+
+        (defun file-extension (path)
+          (save-match-data
+            (when (string-match "[.]([^./]+)$" path)
+              (match-string 1 path))))
+
+    How many lines of this buffer begin with TODO:
+
+        (length (car (cdr (scan-buffer "^TODO" t))))
+
+SEE ALSO
+    searching, compile, modes, writing-commands

@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--4 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--5 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -850,13 +850,58 @@ patch a parte.
   scrivere, ma conta quelli guardati: chi tiene aperti molti buffer aspetta la
   copia ben più di mezzo minuto. La pagina ora lo dice.
 
+*Passo 5, fatto.* `searching` e `compile` sono riscritte sul modello. La
+pagina nuova è `regexps`, che il piano non prevedeva: la sintassi delle
+espressioni regolari non era scritta da nessuna parte, e le funzioni dei dati
+del match (`string-match` e le altre sei), `save-match-data` e `scan-buffer`
+vi trovano casa. Il registro `SETTINGS` documenta `case-fold-search`,
+`case-replace` e `*replace-read-function*`, e le ultime due hanno ora un
+valore all'avvio. In `compile.lisp` `compilation-patterns` passa da `setq` a
+`defvar` con docstring, e le altezze delle finestre, `compilation-window-height`
+e `occur-window-height`, da `defconst` a `defvar`. Le 41 docstring delle
+primitive dell'area e quelle dei due moduli seguono il modello. I commenti di
+`common-keymaps.lisp` sulla ricerca sono diventati rimandi, e il suo
+`(setq case-fold-search t)`, che il Rust fa già, non c'è più.
+
+Le pagine e le docstring dell'area dicevano cose false, ora corrette:
+
+- durante `M-%`, Return non si limita a fermare la sostituzione: la ferma e
+  poi va a capo, come fa ogni tasto che non risponde alla domanda;
+  `searching` lo dava come il tasto per fermarsi, e taceva `q`;
+- `C-s` evidenzia solo la corrispondenza su cui si trova, non tutte;
+- `replace-string` e `replace-regexp` non sostituiscono «dappertutto», ma dal
+  cursore in avanti, o nella regione; senza corrispondenze restituiscono nil,
+  non un numero;
+- `string-match` distingue sempre maiuscole e minuscole, qualunque sia
+  `case-fold-search`, e per lei `^` e `$` sono gli estremi della stringa;
+- solo la ricerca nei file si riempie man mano, non quella nel buffer;
+- `grep` cercava «sotto `default-directory`», che non esiste: cerca nella
+  cartella in cui l'editor è partito; `grep--scan` rimandava a
+  `find-file-recursive` e `scan-buffer` a `search-forward`, che non esistono;
+- `scan-buffer` prometteva i gruppi `\1` e seguenti a chi legge le voci, che
+  non li portano.
+
+Restano quattro difetti del codice, che questo passo non corregge; le pagine
+li descrivono tra i limiti:
+
+- dopo `C-s` e Return il messaggio dice «Mark saved where search started», ma
+  il mark resta all'altra estremità della corrispondenza;
+- `occur--display` mostra la lista nella striscia in basso e anche nella
+  finestra in cui si lavorava, al posto del buffer; per la stessa ragione `o`
+  non lascia vedere la corrispondenza;
+- Return nell'output di una compilazione divide la striscia: il file la
+  occupa quasi tutta, l'output resta alto una riga e il cursore passa al
+  file; `compilation-goto` non sposta il punto da cui riparte `M-g n`;
+- la prima riga dell'output, il comando, è letta come un luogo quando il
+  comando ne contiene uno.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),
   [2], [avvio, configurazione, diagnostica (fatto)], [`rsedit`, `guide`, `first-steps`, `configuration`], [da `general.rs`: `eval-file`, `log`, `all-logs`, `backtrace`], [`debug`, `commands`; nuova: `diagnostics` (il log nella cache, `*Messages*`, `C-h e`, il backtrace, le righe del watchdog)],
   [3], [scrivere e modificare (fatto)], [`editing`, `rectangles`, `macros`], [`edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`], [`indent`, `electric-pair`, `clipboard`; nuove: `indentation`, `killing`],
   [4], [file, buffer, finestre (fatto)], [`files`, `buffers`, `windows`], [`io`, `buffers`, `windows`, `ui`, `mouse`, `ask`], [`dired`, `buffer-list`; nuove: `dired`, `mouse`; le impostazioni `auto-save` e `watch-files`],
-  [5], [cercare e navigare], [`searching`, `compile`], [`isearch`, `replace`, `results`, `scan`, `match_data`], [`occur`, `compile`],
+  [5], [cercare e navigare (fatto)], [`searching`, `compile`], [`isearch`, `replace`, `results`, `scan`, `match_data`], [`occur`, `compile`; nuova: `regexps`],
   [6], [prompt, completamento, tasti, aiuto], [`completion`, `keymaps`, `getting-help`], [`minibuffer`, `completion`, `help`, `commands`, il resto di `general`], [`minibuffer`, `completion`, `completion-at-point`, `help`, `manpage`, `preview`, `common-keymaps`],
   [7], [modi e aspetto], [`modes`, `themes`, `overlays`, `virtual-text`], [`modes`, `theme`, `overlays`, `virtual_text`], [`rust-mode`, `risp-mode`, `cc-mode`, `theme`],
   [8], [estendere l'editor], [`writing-commands` \ `background`], [`workers`, `shell`], [`shell`; nuova: `shell`],

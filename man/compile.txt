@@ -3,53 +3,91 @@ NAME
 
 SYNOPSIS
     (compile COMMAND)
+    (compilation-recompile)
     (compilation-goto)
     (compilation-next)
     (compilation-previous)
-    (compilation-recompile)
+    compilation-patterns
+    compilation-window-height
+    compilation-mark-priority
 
 DESCRIPTION
-    The running is `shell-command-start', unchanged: asynchronous, output
-    appended as it arrives -- standard error with standard output, in the
-    order the compiler wrote them -- and an "--- exited N ---" trailer at the
-    end. This module is the mode put on that buffer, plus the navigation.
-    There is no second way of running processes.
+    C-c c asks for a command, runs it, and shows what it prints in a strip
+    along the bottom of the frame while you go on working. A line of the
+    output that names a file and a line, such as src/main.rs:12:5, is a
+    place: M-g n and M-g p go from one place to the next, from the window
+    you are working in, and Return on one in the output opens it too.
 
-    C-c C-k stops the build, and so does closing its buffer: the command and
-    everything it started are sent TERM, and KILL two seconds later if they
-    are still there. The trailer then says "--- killed ---".
+RUNNING A BUILD
+    The command runs through the shell, in the directory the editor was
+    started in, with what it prints and what it complains about in one
+    stream, in the order it wrote them. The first line of the output is
+    the command, as in $ cargo build; the last says how it ended:
 
-LOCATIONS
-    A line names a place when one of `compilation-patterns' matches it. Each
-    entry is (REGEXP FILE-GROUP LINE-GROUP COLUMN-GROUP), where the groups
-    are numbered as `match-string' takes them -- 0 is the whole match, so the
-    first capture is 1. A nil column group means the format has no column.
+        --- exited 0 ---        it worked
+        --- exited 101 ---      it failed, with that code
+        --- killed ---          it was stopped
 
-    Recognised out of the box: path:line:col (gcc, clang, rustc, most
-    linters), path:line (make and older tools), rustc's indented "--> " line,
-    and Python's File "x", line N. Adding a compiler is adding a line to the
-    variable.
+    Each run has an output buffer of its own, *Shell Output*, then *Shell
+    Output*<2>. In the output:
 
-    A relative path resolves against the editor's working directory, which is
-    right when the editor was started where the command was run. When it is
-    not, the file is reported as missing rather than some other file of the
-    same name being opened.
+        g               run the same command again
+        C-c C-k         stop it
+        q               close the output's window
 
-WHERE THE STATE IS
-    In the buffer. `shell-command-start' writes the command as the first
-    line -- "$ cargo build" -- so `g' reads it back off the screen rather
-    than from a variable that could disagree with what is displayed. Two
-    compilation buffers each re-run their own command.
+    C-c C-k, and killing the output buffer, ask the command and everything
+    it started to stop, and stop them outright two seconds later.
 
-    The exception is which buffer M-g n walks, which is kept outside: that
-    question is asked from a different buffer, so it cannot be answered by
-    reading the current one.
+GOING TO THE PLACES
+        M-g n           open the next place, in the window you are in
+        M-g p           open the one before
+        <ret>           in the output, open the place on this line
+        n  p            in the output, the next and previous line with one
 
-MARKS
-    The location being visited is marked in the compilation buffer, and the
-    line jumped to is marked in the file. Both by overlay category, so the
-    previous mark goes when the next arrives and exactly one line is ever
-    marked -- which is what makes a list of forty errors legible.
+    M-g n walks what the compiler has said so far, so it can start before
+    the build ends. The line is marked in the file, and the place in the
+    output; the marks Return puts are overlays at
+    `compilation-mark-priority'. A relative path is taken from the directory
+    the editor was started in; when the build ran somewhere else the file
+    is reported missing, rather than another file of the same name being
+    opened.
+
+WHICH LINES NAME A PLACE
+    A line names a place when one of `compilation-patterns' matches it.
+    Each entry is a list (REGEXP FILE-GROUP LINE-GROUP COLUMN-GROUP), the
+    groups numbered as `match-string' numbers them, and COLUMN-GROUP nil for
+    a format with no column. The first entry that matches a line decides.
+    Out of the box:
+
+        path:line:col           gcc, clang, rustc and most linters
+        path:line:              make, and tools that give no column
+        --> path:line:col       rustc's second line
+        File "path", line N     Python's tracebacks
+
+LIMITS
+    Return in the output splits the strip: the file opens in most of it,
+    the output is left a line tall, and the cursor goes to the file. M-g n
+    then starts again from the first place, not from the one Return
+    opened. M-g n and M-g p, from the window you are working in, go through
+    the places with the output in view.
+
+    The first line of the output names a place too when the command itself
+    contains one, as an echo of src/main.rs:1:1 does.
+
+EXAMPLES
+    Build with cargo from a key of its own:
+
+        (define-key nil "C-c b" '(compile "cargo build"))
+
+    Recognise a tool that writes "ERROR in FILE at line N":
+
+        (setq compilation-patterns
+              (cons '("ERROR in ([^ ]+) at line ([0-9]+)" 1 2 nil)
+                    compilation-patterns))
+
+    A taller window for the output:
+
+        (setq compilation-window-height 20)
 
 KEYS
     C-c c                   compile
@@ -65,4 +103,4 @@ KEYS IN COMPILATION MODE
     q                       delete-window
 
 SEE ALSO
-    overlays, buffers, windows, (shell-command-start), (string-match)
+    searching, regexps, windows, buffers
