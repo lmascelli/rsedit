@@ -51,6 +51,11 @@ pub struct Entry {
     /// where it was.
     pub start: usize,
     pub end: usize,
+    /// The line of the listing this entry is shown on, counting from 1, when
+    /// its producer says. A search's listing has a header line and then an
+    /// entry per line, so it need not; a compilation's output names places
+    /// on whichever lines the compiler wrote them, so it must.
+    pub at: Option<usize>,
 }
 
 impl Entry {
@@ -65,6 +70,7 @@ impl Entry {
             text: found.line_text.clone(),
             start: found.in_line(),
             end: found.end_in_line(),
+            at: None,
         }
     }
 

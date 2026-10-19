@@ -30,14 +30,15 @@ FILE-GROUP LINE-GROUP COLUMN-GROUP), the groups numbered as `match-string'
 numbers them, COLUMN-GROUP nil for a format with no column. The first that
 matches a line decides.")
 
-;; Above `manpage-emphasis-priority' (10), and the height the built-in walk
-;; puts its own marks at: they are the same mark.
-(defconst compilation-mark-priority 20
-  "The priority of the marks on the place being visited, as overlays.")
-
 ;; Which buffer `M-g n' walks. Asked from another buffer, so it cannot be read
 ;; off the screen the way the command can.
 (setq compilation--buffer nil)
+
+;; The window outputs are shown in, and the window places open in: the one
+;; the newest build was started from. Window ids; either may have been closed
+;; since.
+(setq compilation--window nil)
+(setq compilation--origin nil)
 
 ;; ---------------------------------------------------------------------------
 ;; Reading a line as a location
@@ -62,79 +63,54 @@ matches a line decides.")
     found))
 
 (defun compilation--location-here ()
-  "The location named on the cursor's line, or nil."
-  (compilation--parse (current-line)))
+  "The place the cursor's line names, or nil; the command on the first line
+names none."
+  (if (and (= (line-number-at-point) 1) (compilation--command-here))
+      nil
+      (compilation--parse (current-line))))
 
 ;; ---------------------------------------------------------------------------
 ;; Going there
 ;; ---------------------------------------------------------------------------
 
-(defun compilation--mark-here ()
-  "Mark the cursor's line as the place visited; return the overlay, or nil."
-  ;; By category, so the previous mark goes when this one arrives: one line
-  ;; is ever marked.
-  (remove-overlays 'results-here)
-  (let ((start (progn (beginning-of-line) (point)))
-        (end (progn (end-of-line) (point))))
-    (goto-char start)
-    (if (< start end)
-        (make-overlay start end 'results-here compilation-mark-priority
-                      'results-here))))
-
-(defun compilation--mark-target ()
-  "Mark point's line in the file jumped to; return the overlay, or nil."
-  (remove-overlays 'results-target)
-  (let ((start (progn (beginning-of-line) (point)))
-        (end (progn (end-of-line) (point))))
-    (goto-char start)
-    (if (< start end)
-        (make-overlay start end 'results-target compilation-mark-priority
-                      'results-target))))
-
-(defun compilation--visit (location)
-  "Open LOCATION, (FILE LINE COLUMN), in a window split from this one."
-  (let ((file (nth 0 location))
-        (line (string-to-number (nth 1 location)))
-        (column (nth 2 location))
-        (from (selected-window)))
-    (compilation--mark-here)
-    (setq compilation--buffer (current-buffer))
-    ;; Reuse the window last jumped into, the way dired's `o' does, so walking
-    ;; a list of errors does not slice the frame into eight.
-    (if (and compilation--file-window (select-window compilation--file-window))
-        nil
-        (progn
-          (split-window-below compilation-window-height)
-          (setq compilation--file-window (selected-window))))
-    ;; A relative path resolves against the editor's working directory, which
-    ;; is right when the editor was started where the command was run -- the
-    ;; normal case. When it is not, the file is simply not found and this says
-    ;; so, rather than opening some other file of the same name.
-    (if (file-exists-p (expand-file-name file))
-        (progn
-          (find-file file)
+(defun compilation--index-here ()
+  "Which of this buffer's places the cursor's line names, from 0, or nil."
+  (if (null (compilation--location-here))
+      nil
+      (let ((here (line-number-at-point))
+            (line 1)
+            (count 0))
+        (while (< line here)
           (goto-line line)
-          (beginning-of-line)
-          (if column (forward-char (- (string-to-number column) 1)))
-          (compilation--mark-target)
-          (select-window from))
-        (progn
-          (select-window from)
-          (message "No such file: %s" file)))))
+          (if (compilation--location-here) (setq count (+ count 1)))
+          (setq line (+ line 1)))
+        (goto-line here)
+        count)))
 
-(setq compilation--file-window nil)
+(defun compilation--select-file-window ()
+  "Select the window the build was started from, while it is there, or make
+a second window when this is the only one."
+  ;; Otherwise the walk opens the place in the next window: never the
+  ;; output's own, which would put the file over the output.
+  (unless (and compilation--origin
+               (not (= compilation--origin (selected-window)))
+               (select-window compilation--origin))
+    (if (= (count-windows) 1) (split-window-below))))
 
 (defcommand compilation-goto () nil
-  "Open the file and line the cursor's line names."
-  (let ((location (compilation--location-here)))
-    (if location
+  "Open the place the cursor's line names, in the window the build was
+started from."
+  (let ((index (compilation--index-here))
+        (output (current-buffer)))
+    (if (null index)
+        (message "No file and line on this line")
         (progn
-          ;; This listing is the one being walked now, so that `M-g n' from
-          ;; the file carries on from the line just opened rather than from
-          ;; whatever was searched for last.
-          (compilation--rebuild (current-buffer))
-          (compilation--visit location))
-        (message "No file and line on this line"))))
+          ;; Attached again, so that what opens is what is on screen, and
+          ;; opened through the walk, so that M-g n goes on from here and the
+          ;; marks are the walk's.
+          (compilation--rebuild output)
+          (compilation--select-file-window)
+          (results-visit index output)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Walking the complaints
@@ -182,22 +158,27 @@ matches a line decides.")
 
 (defun compilation--entries ()
   "Every place this buffer names, as entries of a result set."
-  ;; (KIND SOURCE LINE COLUMN) is all a complaint says; the rest of an entry
-  ;; is for things that searched text, and is left off.
+  ;; (KIND SOURCE LINE COLUMN) is all a complaint says, so the offset, the
+  ;; text and the match are left empty; the ninth element is the line of the
+  ;; output the place is on, for the walk's mark.
   (let ((line 1)
         (last (progn (end-of-buffer) (line-number-at-point)))
         (entries nil))
     (while (<= line last)
       (goto-line line)
-      (let ((location (compilation--parse (current-line))))
+      (let ((location (compilation--location-here)))
         (if location
             (setq entries
                   (cons (list "file"
                               (nth 0 location)
-                              (if (nth 1 location) (string-to-number (nth 1 location)) 1)
+                              (if (nth 1 location)
+                                  (string-to-number (nth 1 location))
+                                  1)
                               (if (nth 2 location)
                                   (- (string-to-number (nth 2 location)) 1)
-                                  0))
+                                  0)
+                              0 "" 0 0
+                              line)
                         entries))))
       (setq line (+ line 1)))
     (reverse entries)))
@@ -228,6 +209,21 @@ matches a line decides.")
           (substring line 2)
           nil))))
 
+(defun compilation--show (name)
+  "Show the output buffer NAME in the compilation strip, leaving the focus
+where it is."
+  (let ((from (selected-window)))
+    ;; Run again from the output itself, a build keeps the window the last
+    ;; one was started from.
+    (unless (and compilation--window (= from compilation--window))
+      (setq compilation--origin from))
+    ;; One strip for every build, so running one again does not stack another.
+    (if (and compilation--window (select-window compilation--window))
+        (progn (switch-to-buffer name)
+               (select-window from))
+        (setq compilation--window
+              (display-buffer-at-bottom name compilation-window-height)))))
+
 (defcommand compile (command) ("sCompile command: ")
   "Run COMMAND, showing its output as it comes; `next-error' walks the places
 it names."
@@ -243,7 +239,7 @@ it names."
           ;; has arrived rather than what had arrived when this was attached.
           (results-put command name nil name)
           (buffer-put 'results-refresh 'compilation--rebuild name)
-          (display-buffer-at-bottom name compilation-window-height)))))
+          (compilation--show name)))))
 
 (defcommand compilation-recompile () nil
   "Run this output's command again."

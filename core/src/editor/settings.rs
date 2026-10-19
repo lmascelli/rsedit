@@ -72,16 +72,16 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         name: AUTO_SAVE_INTERVAL,
-        doc: "How many seconds pass between one look for `auto-save' and the next, one at least; \
-              each look takes four of the buffers, in turn. A change counts from the next look.",
+        doc: "How many seconds pass between one round of `auto-save' copies and the next, one at \
+              least. A change counts from the next round.",
     },
     Setting {
         name: AUTO_SAVE_DIRECTORY,
         doc: "The directory every `auto-save' copy goes in, with the file's whole path in its \
-              name; nil keeps each copy beside its file. The directory must exist, and a leading \
-              ~ is not expanded.\n\n\
+              name; nil keeps each copy beside its file. A leading ~ is the home directory, and \
+              the directory is made when the first copy is written.\n\n\
               Example:\n\
-              \x20 (setq auto-save-directory (expand-file-name \"~/.cache/rsedit\"))",
+              \x20 (setq auto-save-directory \"~/.cache/rsedit\")",
     },
     Setting {
         name: WATCH_FILES,

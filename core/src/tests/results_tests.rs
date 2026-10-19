@@ -752,6 +752,134 @@ mod tests {
         assert_eq!(state[5], "1", "the second entry is the current one");
     }
 
+    /// The buffers the windows show, from the top.
+    fn shown(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> Vec<String> {
+        ctx.snapshot(env, 80, 24)
+            .views
+            .iter()
+            .map(|view| view.buffer_name.clone())
+            .collect()
+    }
+
+    /// The list opens in a strip along the bottom and takes the focus; the
+    /// window you were in keeps your buffer. It took that window's place as
+    /// well, so your buffer went out of sight.
+    #[test]
+    fn a_list_opens_below_and_your_buffer_stays_in_view() {
+        let (ctx, env) = with_view("one TODO\ntwo\nthree TODO\n");
+        run(r#"(occur "TODO")"#, &env, &ctx);
+        assert_eq!(ctx.window_count(), 2);
+        assert_eq!(shown(&ctx, &env), ["*scratch*", "*Occur*"]);
+        assert_eq!(
+            run("(window-buffer)", &env, &ctx),
+            LispExp::string("*Occur*".into())
+        );
+    }
+
+    /// Return opens the match in the window the list was made from, and the
+    /// list stays in view.
+    #[test]
+    fn return_opens_the_match_in_the_window_the_list_came_from() {
+        let (ctx, env) = with_view("one TODO\ntwo\nthree TODO\n");
+        run(r#"(occur "TODO")"#, &env, &ctx);
+        run("(goto-line 3) (occur-goto)", &env, &ctx);
+        assert_eq!(
+            run("(list (window-buffer) (line-number-at-point))", &env, &ctx),
+            run(r#"(list "*scratch*" 3)"#, &env, &ctx)
+        );
+        assert_eq!(shown(&ctx, &env), ["*scratch*", "*Occur*"]);
+    }
+
+    /// o shows the match and leaves the focus in the list. It put the list
+    /// straight back over the match, in the same window.
+    #[test]
+    fn o_shows_the_match_beside_the_list() {
+        let (ctx, env) = with_view("one TODO\ntwo\nthree TODO\n");
+        run(r#"(occur "TODO")"#, &env, &ctx);
+        run("(goto-line 3) (occur-show)", &env, &ctx);
+        assert_eq!(
+            run("(window-buffer)", &env, &ctx),
+            LispExp::string("*Occur*".into())
+        );
+        assert_eq!(shown(&ctx, &env), ["*scratch*", "*Occur*"]);
+        assert_eq!(
+            ctx.with_buffer("*scratch*", |buf| buf.text.cursor_pos().0),
+            Some(2),
+            "the match is on the third line"
+        );
+    }
+
+    /// A second list goes in the strip the first one is in, rather than
+    /// stacking another.
+    #[test]
+    fn a_second_list_reuses_the_strip() {
+        let (ctx, env) = with_view("one TODO\ntwo FIXME\n");
+        run(r#"(occur "TODO")"#, &env, &ctx);
+        run(r#"(other-window 1) (occur "FIXME")"#, &env, &ctx);
+        assert_eq!(ctx.window_count(), 2);
+        assert_eq!(shown(&ctx, &env), ["*scratch*", "*Occur*<2>"]);
+    }
+
+    /// M-g n from the list opens the place beside it, never over it.
+    #[test]
+    fn m_g_n_from_the_list_opens_the_place_beside_it() {
+        let (ctx, env) = with_view("one TODO\ntwo\nthree TODO\n");
+        run(r#"(occur "TODO")"#, &env, &ctx);
+        run("(next-error)", &env, &ctx);
+        assert_eq!(shown(&ctx, &env), ["*scratch*", "*Occur*"]);
+        assert_eq!(
+            run("(window-buffer)", &env, &ctx),
+            LispExp::string("*scratch*".into())
+        );
+    }
+
+    /// A place in a file that is not there is said to be missing, rather than
+    /// opened as an empty buffer of the same name.
+    #[test]
+    fn a_missing_file_is_said_rather_than_opened() {
+        let (ctx, env) = editor("text\n");
+        run(
+            r#"(results-put "x" "y" '(("file" "no/such/place.rs" 3)))"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(run("(next-error)", &env, &ctx), LispExp::nil());
+        assert!(!ctx.has_buffer("place.rs"));
+        assert_eq!(
+            ctx.snapshot(&env, 80, 24).echo_message,
+            "No such file: no/such/place.rs"
+        );
+    }
+
+    /// The ninth element of an entry is the line of the listing it is on,
+    /// which is where the walk's mark goes.
+    #[test]
+    fn an_entry_can_say_which_line_of_its_listing_it_is_on() {
+        let (ctx, env) = with_view("a\nb\nc\nd\n");
+        run(
+            r#"(buffer-create "out")
+               (with-current-buffer "out" (lambda () (insert "x\ny\nz\nw\n")))
+               (results-put "p" "q" '(("buffer" "*scratch*" 2 0 0 "" 0 0 4)) "out")
+               (next-error)"#,
+            &env,
+            &ctx,
+        );
+        let marked = |line: usize| {
+            run(
+                &format!(
+                    r#"(with-current-buffer "out"
+                         (lambda () (goto-line {line}) (overlays-at (point))))"#
+                ),
+                &env,
+                &ctx,
+            )
+            .iter()
+            .count()
+        };
+        assert_eq!(marked(4), 1);
+        assert_eq!(marked(2), 0);
+    }
+
     // ----------------------------------------------------------------
     // The set's own lifetime
     // ----------------------------------------------------------------

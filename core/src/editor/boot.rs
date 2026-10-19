@@ -83,7 +83,7 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; A copy of unsaved work, for when the editor stops without being asked.
 ;; `M-x recover-file' brings it back. See the `files' manual page.
 ;; (setq auto-save nil)
-;; (setq auto-save-directory (expand-file-name "~/.cache/rsedit"))
+;; (setq auto-save-directory "~/.cache/rsedit")
 
 ;; Files changing underneath you: a clean buffer is reloaded, a modified one is
 ;; flagged and `C-x C-s' asks. See the `files' manual page.

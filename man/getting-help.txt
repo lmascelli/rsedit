@@ -11,7 +11,7 @@ DESCRIPTION
     Everything starts with C-h.
 
         C-h k           press a key, and be told what it runs
-        C-h f           a function or command, by name
+        C-h f           a function, command or macro, by name
         C-h v           a variable, by name
         C-h b           every key in effect in this buffer
         C-h M           what this buffer's mode is and does

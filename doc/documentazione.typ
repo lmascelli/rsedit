@@ -839,8 +839,8 @@ Le pagine e le docstring dell'area dicevano cose false, ora corrette:
   quelli senza file come `*scratch*`; con dodici buffer un file si copia ogni
   minuto e mezzo.
 
-Restano due difetti del codice, che questo passo non corregge: spetta a una
-patch a parte.
+Il passo ha trovato due difetti del codice, che non corregge: li corregge la
+patch descritta dopo il passo 5.
 
 - `auto-save-directory` non espande `~` e non crea la cartella, quindi il
   valore che l'`init.lisp` predefinito suggeriva, `"~/.cache/rsedit"`, non
@@ -881,8 +881,8 @@ Le pagine e le docstring dell'area dicevano cose false, ora corrette:
 - `scan-buffer` prometteva i gruppi `\1` e seguenti a chi legge le voci, che
   non li portano.
 
-Restano quattro difetti del codice, che questo passo non corregge; le pagine
-li descrivono tra i limiti:
+Il passo ha trovato quattro difetti del codice, che non corregge: li corregge
+la patch descritta qui sotto.
 
 - dopo `C-s` e Return il messaggio dice «Mark saved where search started», ma
   il mark resta all'altra estremità della corrispondenza;
@@ -894,6 +894,38 @@ li descrivono tra i limiti:
   file; `compilation-goto` non sposta il punto da cui riparte `M-g n`;
 - la prima riga dell'output, il comando, è letta come un luogo quando il
   comando ne contiene uno.
+
+*I difetti corretti.* Una patch a parte corregge i sei difetti dei passi 4 e
+5, e altri quattro trovati mentre li verificava; le pagine non li descrivono
+più tra i limiti, e ognuno ha un test che fallisce senza la correzione:
+
+- dopo `C-s` e Return il mark va dove la ricerca è partita, come dice il
+  messaggio;
+- la lista di `M-s o` e `M-s g` si apre nella striscia in basso e ne prende
+  il focus, mentre la finestra in cui si lavorava resta com'era; Return e `o`
+  aprono la corrispondenza in quella finestra;
+- Return nell'output di una compilazione apre il file nella finestra da cui
+  la compilazione è partita, senza dividere la striscia, e `M-g n` riparte da
+  lì;
+- la riga del comando non è più letta come un luogo;
+- `auto-save-directory` espande `~` e la cartella si crea alla prima copia;
+- ogni giro dell'auto-save guarda tutti i buffer e scrive al più quattro
+  copie;
+- una seconda lista, o una seconda compilazione, apriva un'altra striscia
+  sotto la prima: ora usa la stessa;
+- nell'output di una compilazione `M-g n` segnava la riga sbagliata, quella
+  che segue l'indice della voce, giusta solo per le liste di ricerca; ora una
+  voce di `results-put` può dire, con un nono elemento, su quale riga della
+  lista sta;
+- `M-g n` su un file che non esiste apriva un buffer vuoto con quel nome:
+  ora dice che il file manca, come già faceva Return nell'output;
+- `C-h f` su una macro diceva che non è una funzione: ora la descrive, con
+  argomenti e docstring. `defmacro` di `risp` lascia la docstring nel corpo,
+  e la primitiva privata `help--macro-doc` la legge da lì.
+
+`compilation-mark-priority` non c'è più: i segni sono quelli della
+navigazione comune, e il codice di `compile.lisp` che li metteva da sé è
+stato tolto con loro.
 
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),

@@ -470,6 +470,13 @@ fn visit<B: BufferTrait>(
     entry: &Entry,
 ) -> Result<bool, EvalError<EditorState<B>>> {
     if entry.kind == KIND_FILE {
+        // Said rather than opened: a path that is not there was written by a
+        // build run somewhere else, and an empty buffer of the same name would
+        // look like the file.
+        if !Path::new(&crate::primitives::io::expand_path(&entry.source)).exists() {
+            ctx.set_echo_message(&format!("No such file: {}", entry.source));
+            return Ok(false);
+        }
         // Through `find-file` rather than around it: opening a file means
         // reusing the buffer already visiting it, reporting a file that has
         // gone, noticing an auto-save copy. A second implementation of that
@@ -517,6 +524,11 @@ fn visit_index<B: BufferTrait>(
     else {
         return Ok(ELispExp::nil());
     };
+    // A place is not opened over its own list: from the window showing the
+    // list, it opens in the next one, so the list stays in view.
+    if ctx.focused_window_buffer().as_deref() == Some(buffer) && ctx.window_count() > 1 {
+        ctx.focus_other_window(1);
+    }
     // Recorded before the jump: a visit that failed still moved the walk on,
     // or `next-error` would offer the same unreachable file for ever.
     let previous = with_results_mut(ctx, buffer, |results| {
@@ -531,11 +543,12 @@ fn visit_index<B: BufferTrait>(
     if let Some(previous) = previous {
         unmark(ctx, &previous, TARGET_CATEGORY);
     }
-    // The listing's own mark, put on the line for this entry. The header line
-    // is why the offset is one more than the index.
+    // The listing's own mark, put on the line for this entry: the line its
+    // producer gave, or else the header line's worth after the index.
+    let row = entry.at.map_or(index + 1, |line| line.saturating_sub(1));
     let here = ctx.get_current_buffer_name();
     ctx.with_buffer_mut(buffer, |buf| {
-        buf.text.cursor_move(index + 1, 0);
+        buf.text.cursor_move(row, 0);
     });
     if ctx.has_buffer(buffer) {
         let was = ctx.get_current_buffer_name();
@@ -782,7 +795,8 @@ pub const RESULTS_PUT_DOC: &str = "(results-put PATTERN OVER ENTRIES &optional B
          ENTRIES to BUFFER, or to the current buffer, as a list of places, make it the list \
          `next-error' walks, and return how many there are. PATTERN and OVER say what was looked \
          for, and where. An entry is (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END), \
-         and all but KIND and SOURCE may be left off.\n\n\
+         and all but KIND and SOURCE may be left off; a ninth element is the line of BUFFER it \
+         is shown on, which is otherwise taken to follow one header line.\n\n\
          Example:\n\
          (results-put \"lint\" \"the project\" '((\"file\" \"src/main.rs\" 12)))";
 
@@ -830,6 +844,10 @@ primitive!(results_put, args, _env, ctx, {
             text: text_at(5),
             start: number_at(6, 0),
             end: number_at(7, 0),
+            at: match parts.get(8) {
+                Some(ELispExp::Number(n)) if *n >= 1.0 => Some(*n as usize),
+                _ => None,
+            },
         });
     }
     let count = results.len();

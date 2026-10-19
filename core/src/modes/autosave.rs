@@ -90,9 +90,15 @@ pub fn auto_save_interval<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Dur
 
 /// The directory every auto-save file goes in, or `None` for "beside its own
 /// file".
+///
+/// Expanded as a path typed anywhere else is, so that `~/.cache/rsedit`
+/// means the home directory's and not a directory called `~` wherever the
+/// editor was started.
 pub fn auto_save_directory<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Option<String> {
     match env.get_variable(AUTO_SAVE_DIRECTORY) {
-        Some(crate::ELispExp::String(dir)) if !dir.is_empty() => Some(dir.to_string()),
+        Some(crate::ELispExp::String(dir)) if !dir.is_empty() => {
+            Some(crate::primitives::io::expand_path(&dir))
+        }
         _ => None,
     }
 }
@@ -202,32 +208,44 @@ impl<B: BufferTrait> EditorState<B> {
         if names.is_empty() {
             return (0, 0);
         }
+        // Every buffer is looked at, from where the last turn stopped, and at
+        // most BUFFERS_PER_TURN are written: the limit is on writes, which
+        // are the cost, so a buffer's turn does not wait on how many others
+        // are open. A turn that fills up leaves the rest to the next one.
         let start = from % names.len();
-        let count = BUFFERS_PER_TURN.min(names.len());
+        let mut next = start;
         let mut written = 0;
-        for step in 0..count {
-            let name = &names[(start + step) % names.len()];
-            if let Some(pending) = self.auto_save_for(name, directory) {
+        for step in 0..names.len() {
+            let index = (start + step) % names.len();
+            if written == BUFFERS_PER_TURN {
+                next = index;
+                break;
+            }
+            if let Some(pending) = self.auto_save_for(&names[index], directory) {
+                // Made when first needed, as the directory a copy goes in
+                // would have to be made by hand otherwise.
+                if let Some(directory) = directory {
+                    let _ = std::fs::create_dir_all(directory);
+                }
                 self.write_auto_save(pending);
                 written += 1;
             }
+            next = (index + 1) % names.len();
         }
-        ((start + count) % names.len(), written)
+        (next, written)
     }
 
     /// What NAME needs written, or `None` when it needs nothing.
     pub(crate) fn auto_save_for(&self, name: &str, directory: Option<&str>) -> Option<AutoSave> {
-        let (path, version, saved_at, modified, read_only, text) =
-            self.with_buffer(name, |buf| {
-                (
-                    buf.file_path.clone(),
-                    buf.version,
-                    buf.auto_saved_at,
-                    buf.is_modified,
-                    buf.read_only,
-                    buf.text.to_string(),
-                )
-            })?;
+        let (path, version, saved_at, modified, read_only) = self.with_buffer(name, |buf| {
+            (
+                buf.file_path.clone(),
+                buf.version,
+                buf.auto_saved_at,
+                buf.is_modified,
+                buf.read_only,
+            )
+        })?;
 
         // Only buffers with somewhere to be recovered *to*. A listing, a
         // backtrace and a manual page are "modified" in a way that means
@@ -236,6 +254,9 @@ impl<B: BufferTrait> EditorState<B> {
         if read_only || !modified || saved_at == Some(version) {
             return None;
         }
+        // The text only now, and with its own version: a turn looks at every
+        // buffer, and copying the text of each to decide would copy them all.
+        let (text, version) = self.with_buffer(name, |buf| (buf.text.to_string(), buf.version))?;
 
         Some(AutoSave {
             buffer: name.to_string(),

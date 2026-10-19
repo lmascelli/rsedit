@@ -260,6 +260,52 @@ mod tests {
         assert_eq!(sandbox.copy_beside("one.txt"), None, "and none beside");
     }
 
+    /// A directory that is not there is made, rather than every copy failing
+    /// to be written into it.
+    #[test]
+    fn the_configured_directory_is_made_when_it_is_missing() {
+        let sandbox = Sandbox::new("missing-directory");
+        let saves = sandbox.0.join("not").join("yet").display().to_string();
+        let one = sandbox.file("one.txt", "1");
+        let (ctx, env) = editor();
+        open(&one, &env, &ctx);
+        run(r#"(insert "A")"#, &env, &ctx);
+
+        sweep(&ctx, Some(&saves));
+        assert_eq!(sandbox.entries(&saves).len(), 1);
+    }
+
+    /// A ~ in the directory is the home directory, as in a path typed
+    /// anywhere else; it was taken as a directory called ~.
+    #[test]
+    fn a_tilde_in_the_directory_is_the_home_directory() {
+        let (ctx, env) = editor();
+        run(r#"(setq auto-save-directory "~/saves")"#, &env, &ctx);
+        let directory = crate::modes::autosave::auto_save_directory(&env).expect("a directory");
+        assert!(!directory.starts_with('~'), "{directory}");
+        assert!(directory.ends_with("saves"), "{directory}");
+        let _ = ctx;
+    }
+
+    /// A turn writes up to four copies however many buffers are open. It
+    /// looked at four buffers, so with many open, a modified one waited
+    /// several turns for its copy.
+    #[test]
+    fn a_turn_is_not_used_up_by_buffers_that_need_no_copy() {
+        let sandbox = Sandbox::new("many-buffers");
+        let (ctx, env) = editor();
+        for name in ["a", "b", "c", "d", "e", "f"] {
+            run(&format!(r#"(buffer-create "{name}")"#), &env, &ctx);
+        }
+        let late = sandbox.file("zz.txt", "z");
+        open(&late, &env, &ctx);
+        run(r#"(insert "Z")"#, &env, &ctx);
+
+        let (_, written) = ctx.auto_save_turn(0, None);
+        assert_eq!(written, 1);
+        assert_eq!(sandbox.copy_beside("zz.txt").as_deref(), Some("Zz"));
+    }
+
     // ----------------------------------------------------------------
     // When a copy is thrown away
     // ----------------------------------------------------------------

@@ -9,7 +9,6 @@ SYNOPSIS
     (compilation-previous)
     compilation-patterns
     compilation-window-height
-    compilation-mark-priority
 
 DESCRIPTION
     C-c c asks for a command, runs it, and shows what it prints in a strip
@@ -29,7 +28,7 @@ RUNNING A BUILD
         --- killed ---          it was stopped
 
     Each run has an output buffer of its own, *Shell Output*, then *Shell
-    Output*<2>. In the output:
+    Output*<2>, shown in the same strip. In the output:
 
         g               run the same command again
         C-c C-k         stop it
@@ -45,34 +44,25 @@ GOING TO THE PLACES
         n  p            in the output, the next and previous line with one
 
     M-g n walks what the compiler has said so far, so it can start before
-    the build ends. The line is marked in the file, and the place in the
-    output; the marks Return puts are overlays at
-    `compilation-mark-priority'. A relative path is taken from the directory
-    the editor was started in; when the build ran somewhere else the file
-    is reported missing, rather than another file of the same name being
-    opened.
+    the build ends. Return in the output opens its place in the window the
+    build was started from, and M-g n goes on from there. The line is
+    marked in the file, and the place in the output. A relative path is
+    taken from the directory the editor was started in; when the build ran
+    somewhere else the file is said to be missing, rather than another file
+    of the same name being opened.
 
 WHICH LINES NAME A PLACE
     A line names a place when one of `compilation-patterns' matches it.
     Each entry is a list (REGEXP FILE-GROUP LINE-GROUP COLUMN-GROUP), the
     groups numbered as `match-string' numbers them, and COLUMN-GROUP nil for
-    a format with no column. The first entry that matches a line decides.
-    Out of the box:
+    a format with no column. The first entry that matches a line decides,
+    and the first line of the output, the command, names no place. Out of
+    the box:
 
         path:line:col           gcc, clang, rustc and most linters
         path:line:              make, and tools that give no column
         --> path:line:col       rustc's second line
         File "path", line N     Python's tracebacks
-
-LIMITS
-    Return in the output splits the strip: the file opens in most of it,
-    the output is left a line tall, and the cursor goes to the file. M-g n
-    then starts again from the first place, not from the one Return
-    opened. M-g n and M-g p, from the window you are working in, go through
-    the places with the output in view.
-
-    The first line of the output names a place too when the command itself
-    contains one, as an echo of src/main.rs:1:1 does.
 
 EXAMPLES
     Build with cargo from a key of its own:

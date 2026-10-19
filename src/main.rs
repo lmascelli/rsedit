@@ -4,7 +4,10 @@ use rsedit_core::{
 };
 use std::io::{self, IsTerminal};
 use std::time::Duration;
+use std::{ffi::OsString, path::PathBuf, sync::Arc};
+
 use tui::tui_main;
+use gui::gui_main;
 
 #[cfg(test)]
 mod tests;
@@ -32,8 +35,50 @@ impl Drop for ShutDownOnExit<'_> {
     }
 }
 
+#[derive(Debug, Default)]
+struct Options {
+    files: Vec<PathBuf>,
+    gui: bool,
+    vim: bool,
+    font: Option<PathBuf>,
+    help: bool,
+}
+
+impl Options {
+    fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
+        let mut options = Self::default();
+        let mut args = args.into_iter();
+        let mut positional = false;
+        while let Some(arg) = args.next() {
+            match arg.to_str() {
+                Some("--") if !positional => positional = true,
+                Some("--gui") if !positional => options.gui = true,
+                Some("--vim") if !positional => options.vim = true,
+                Some("--help" | "-h") if !positional => options.help = true,
+                Some("--font") if !positional => {
+                    options.font = Some(args.next().ok_or("--font requires a font file")?.into());
+                }
+                Some(flag) if !positional && flag.starts_with('-') => {
+                    return Err(format!("Unknown option: {flag}"));
+                }
+                _ => options.files.push(arg.into()),
+            }
+        }
+        Ok(options)
+    }
+}
+
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
+    let options = Options::parse(std::env::args_os().skip(1))?;
+    if options.help {
+        println!(
+            "rsedit-egui [--vim] [--font MONOSPACE.ttf] [--] [FILES...]\n\
+            M-x: commands; C-x C-f: open; C-x C-s: save; C-x C-c: quit.\n\
+            Linux/Windows: Ctrl+Shift+V pastes; Ctrl+V retains its core binding.\n\
+            macOS: Cmd+O/S/Q, Cmd+C/X/V and Cmd+Z are native shortcuts."
+        );
+        return Ok(());
+    }
 
     let (state, env) = match create_global_env::<BufferType>() {
         Ok((state, env)) => (state, env),
@@ -58,7 +103,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = state.enable_log_file(cache.join(LOG_FILE));
     }
 
-    if let Some(path) = args.get(1).cloned() {
+    for file in options.files {
         let ast = ELispExp::form(vec![
             ELispExp::symbol("find-file".into()),
             ELispExp::string(path),
@@ -72,9 +117,11 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if io::stdin().is_terminal() {
+    let is_gui = io::stdin().is_terminal() || options.gui;
+
+    if !is_gui {
         tui_main(&state, env.clone())
     } else {
-        Ok(())
+        gui_main(&state, env.clone())
     }
 }

@@ -384,12 +384,26 @@ mod tests {
     // Marking
     // ----------------------------------------------------------------
 
+    /// How many marks are on LINE of the compilation buffer.
+    fn marks_on(line: usize, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> usize {
+        run(
+            &format!(
+                r#"(with-current-buffer "*compile*"
+                     (lambda () (goto-line {line}) (overlays-at (point))))"#
+            ),
+            env,
+            ctx,
+        )
+        .iter()
+        .count()
+    }
+
     #[test]
     fn visiting_marks_the_line_in_the_compilation_buffer() {
         let (ctx, env) = editor();
         compilation_with("$ make\nsrc/a.rs:1:1: bad\n", &env, &ctx);
-        run("(goto-line 2) (compilation--mark-here)", &env, &ctx);
-        assert_eq!(run("(overlays-at (point))", &env, &ctx).iter().count(), 1);
+        run("(goto-line 2) (compilation-goto)", &env, &ctx);
+        assert_eq!(marks_on(2, &env, &ctx), 1);
     }
 
     #[test]
@@ -402,20 +416,135 @@ mod tests {
             &env,
             &ctx,
         );
-        run("(goto-line 2) (compilation--mark-here)", &env, &ctx);
-        run("(goto-line 3) (compilation--mark-here)", &env, &ctx);
-        assert_eq!(
-            run("(goto-line 2) (overlays-at (point))", &env, &ctx)
-                .iter()
-                .count(),
-            0
+        run("(goto-line 2) (compilation-goto)", &env, &ctx);
+        run(
+            r#"(switch-to-buffer "*compile*") (goto-line 3) (compilation-goto)"#,
+            &env,
+            &ctx,
         );
-        assert_eq!(
-            run("(goto-line 3) (overlays-at (point))", &env, &ctx)
-                .iter()
-                .count(),
-            1
+        assert_eq!(marks_on(2, &env, &ctx), 0);
+        assert_eq!(marks_on(3, &env, &ctx), 1);
+    }
+
+    /// The walk's mark goes on the line that names the place. It went on the
+    /// line one past the entry's index -- right for a search's listing, with
+    /// its header line, and wrong for output where the compiler writes other
+    /// lines between its complaints.
+    #[test]
+    fn m_g_n_marks_the_line_that_names_the_place() {
+        let (ctx, env) = editor();
+        compilation_with(
+            "$ cargo build\n   Compiling foo\nerror: types\n --> src/a.rs:3:1\n",
+            &env,
+            &ctx,
         );
+        run(
+            r#"(compilation--rebuild "*compile*") (next-error)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(marks_on(4, &env, &ctx), 1);
+        assert_eq!(marks_on(2, &env, &ctx), 0);
+    }
+
+    /// Return opens a place through the walk, so M-g n goes on from it. It
+    /// went on from wherever the walk had last been.
+    #[test]
+    fn return_moves_where_m_g_n_goes_on_from() {
+        let (ctx, env) = editor();
+        compilation_with(
+            "$ make\nsrc/a.rs:1:1: one\nsrc/b.rs:2:1: two\nsrc/c.rs:3:1: three\n",
+            &env,
+            &ctx,
+        );
+        run("(goto-line 3) (compilation-goto)", &env, &ctx);
+        run("(next-error)", &env, &ctx);
+        assert_eq!(
+            run(r#"(nth 5 (results-state "*compile*"))"#, &env, &ctx),
+            LispExp::number(2.0),
+            "the third place follows the second"
+        );
+    }
+
+    /// The command on the first line is not a place, even when it names one.
+    #[test]
+    fn the_command_line_names_no_place() {
+        let (ctx, env) = editor();
+        compilation_with("$ echo src/main.rs:1:1\nsrc/main.rs:1:1\n", &env, &ctx);
+        assert!(run("(goto-line 1) (compilation--location-here)", &env, &ctx).is_nil());
+        assert_eq!(
+            run("(length (compilation--entries))", &env, &ctx),
+            LispExp::number(1.0)
+        );
+        run("(goto-line 1) (compilation-next)", &env, &ctx);
+        assert_eq!(line_number(&env, &ctx), 2.0);
+    }
+
+    /// One strip for every build: running one again shows its output where
+    /// the last one was, rather than stacking another strip, and the focus
+    /// stays where it was.
+    #[test]
+    fn a_second_build_reuses_the_strip() {
+        let (ctx, env) = editor();
+        run(r#"(buffer-create "one") (buffer-create "two")"#, &env, &ctx);
+        run(r#"(compilation--show "one")"#, &env, &ctx);
+        let after_one = ctx.window_count();
+        run(r#"(compilation--show "two")"#, &env, &ctx);
+        assert_eq!(ctx.window_count(), after_one);
+        assert_eq!(
+            run("(window-buffer)", &env, &ctx),
+            LispExp::string("*scratch*".into())
+        );
+        let shown: Vec<String> = ctx
+            .snapshot(&env, 80, 24)
+            .views
+            .iter()
+            .map(|v| v.buffer_name.clone())
+            .collect();
+        assert!(shown.contains(&"two".to_string()), "got {shown:?}");
+        assert!(!shown.contains(&"one".to_string()), "got {shown:?}");
+    }
+
+    /// Return in the output opens the file in the window the build was started
+    /// from, and leaves the output where it was. It split the output's strip,
+    /// leaving the output a line tall.
+    #[test]
+    fn return_opens_the_file_in_the_window_the_build_came_from() {
+        let sandbox = Sandbox::new("origin");
+        let path = sandbox.file("thing.rs", "one\ntwo\nthree\n");
+        let (ctx, env) = editor();
+        run(
+            r#"(buffer-create "*compile*" 'compilation-mode)"#,
+            &env,
+            &ctx,
+        );
+        run(
+            &format!(
+                r#"(with-current-buffer "*compile*"
+                     (lambda () (insert "$ make\n{path}:2:1: here\n")))"#
+            ),
+            &env,
+            &ctx,
+        );
+        run(r#"(compilation--show "*compile*")"#, &env, &ctx);
+        let windows = ctx.window_count();
+        run(
+            "(other-window 1) (goto-line 2) (compilation-goto)",
+            &env,
+            &ctx,
+        );
+        assert_eq!(ctx.window_count(), windows, "no window was split");
+        assert_eq!(
+            run("(list (window-buffer) (line-number-at-point))", &env, &ctx),
+            run(r#"(list "thing.rs" 2)"#, &env, &ctx)
+        );
+        let shown: Vec<String> = ctx
+            .snapshot(&env, 80, 24)
+            .views
+            .iter()
+            .map(|v| v.buffer_name.clone())
+            .collect();
+        assert!(shown.contains(&"*compile*".to_string()), "got {shown:?}");
     }
 
     #[test]

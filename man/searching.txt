@@ -71,8 +71,9 @@ SEARCHING AS YOU TYPE
         <ret>           stop, leaving the cursor at the match
         C-g  Escape     stop, and go back to where the search started
 
-    A search that runs out says Failing, and pressing C-s once more starts
-    again from the top of the buffer, C-r from the bottom. A regular
+    Return leaves the mark where the search started, so C-x C-x goes back
+    there. A search that runs out says Failing, and pressing C-s once more
+    starts again from the top of the buffer, C-r from the bottom. A regular
     expression still being typed, such as [a-, reads as a failing search
     until it is complete.
 
@@ -121,7 +122,8 @@ EVERY MATCH AT ONCE
         M-s g           list the matching lines of every file under the
                         directory the editor was started in
 
-    The list goes in a buffer of its own, one line for each match:
+    The list goes in a buffer of its own, one line for each match, shown
+    in a strip along the bottom of the frame, and the cursor goes to it:
 
         TODO in notes.txt
         notes.txt:1: TODO: ask about the deadline
@@ -130,16 +132,17 @@ EVERY MATCH AT ONCE
 
     In it:
 
-        <ret>           go to the match on this line
-        o               go to it, and come back to the list
+        <ret>           go to the match on this line, in the window the
+                        list was made from
+        o               show the match there, and stay in the list
         n  p            down and up a line
         q               close the list's window
         C-c C-k         stop a search of files that is still going
 
     M-x occur-regexp and M-x grep-regexp take a regular expression, and
     M-x grep-in asks which directory to search. Each search makes a new
-    list -- *Occur*, *Occur*<2>, *Grep* -- and the old ones stay until they
-    are killed.
+    list -- *Occur*, *Occur*<2>, *Grep* -- shown in the same strip, and the
+    old ones stay until they are killed.
 
     A search of files runs while you go on working, and the list fills in
     as the files are read; its last line says how many matched. A file
@@ -155,18 +158,14 @@ WALKING A LIST
         M-g p           go to the place before
 
     M-g n and M-g p walk the newest list -- a search's or a compilation's
-    -- from wherever you are, opening each place in the window you are in.
-    The line is marked in the file, and the entry in the list. At either
-    end they say so rather than starting again. M-x results-select, in an
-    older list, makes that one the list they walk.
+    -- from wherever you are, opening each place in the window you are in;
+    in the list itself, they open it in the window beside the list. The
+    line is marked in the file, and the entry in the list. A place in a
+    file that is not there is said to be missing. At either end they say
+    so rather than starting again. M-x results-select, in an older list,
+    makes that one the list they walk.
 
 LIMITS
-    The list of M-s o and M-s g opens in a strip along the bottom, and
-    also takes the place of your buffer in the window you were in; C-x b
-    brings your buffer back. For the same reason o opens the match and
-    puts the list straight back over it. M-g n, from your buffer, is the
-    way to go through a list without losing sight of either.
-
     M-s g does not read .gitignore, and the directories it leaves out are
     fixed: `find-file-recursive-ignore' does not change them. Searching a
     buffer only highlights the match the cursor is on, not every match.
@@ -178,14 +177,16 @@ LISTS FROM LISP
 
         (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END)
 
-    where KIND is "file" or "buffer", SOURCE a path or a buffer's name,
-    LINE counts from 1 and COLUMN from 0, OFFSET is where the match starts
-    in the whole text, TEXT is its line, and the last two say where the
-    match is within that line. All but KIND and SOURCE may be left off.
-    `results-count', `results-entry' and `results-state' read a list,
-    `results-visit' goes to one of its places, and `results-buffer' names
-    the list M-g n walks. `occur-header-lines' is how many lines of a list
-    come before its first match.
+    where KIND is "file" or "buffer", SOURCE a path or a buffer's name, LINE
+    counts from 1 and COLUMN from 0, OFFSET is where the match starts in the
+    whole text, TEXT is its line, and the last two say where the match is
+    within that line. All but KIND and SOURCE may be left off. A ninth element
+    is the line of the list the entry is shown on, counting from 1; without
+    it, the entries are taken to follow one header line, one to a line, as a
+    search's do. `results-count', `results-entry' and `results-state' read a
+    list, `results-visit' goes to one of its places, and `results-buffer'
+    names the list M-g n walks. `occur-header-lines' is how many lines of a
+    list come before its first match.
 
     A list that grows while it is walked, as a compilation's does, keeps a
     function under the buffer property results-refresh, with `buffer-put':

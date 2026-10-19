@@ -11,6 +11,7 @@
 //! by the mode, and they would be exactly as useful to a second search written
 //! in Lisp.
 use super::*;
+use crate::buffer::Mark;
 use crate::feature::isearch;
 use crate::text::search::{Direction, Isearch, Pattern};
 use std::sync::Arc;
@@ -199,25 +200,39 @@ primitive!(isearch_repeat_backward, _args, env, ctx, {
 // Ending one
 // ---------------------------------------------------------------------------
 
-pub const ISEARCH_EXIT_DOC: &str = "(isearch-exit): End the search, leaving point at the match. \
-         What Return in a search runs, once the prompt has closed.";
+pub const ISEARCH_EXIT_DOC: &str = "(isearch-exit): End the search, leaving point at the match \
+         and the mark, inactive, where the search started. What Return in a search runs, once the \
+         prompt has closed.";
 
 primitive!(isearch_exit, _args, _env, ctx, {
     let Some(session) = ctx.take_isearch() else {
         return Ok(ELispExp::nil());
     };
-    // Point is already at the match -- every update put it there. All that is
-    // left is to say what happened, and to stop the mark making the match look
-    // like a selection the next command should act on.
-    ctx.with_buffer_mut(&session.buffer, |buf| {
-        if let Some(mark) = buf.mark.as_mut() {
+    // Point is already at the match -- every update put it there. While the
+    // search ran, the mark was the match's other end, so that the match drew
+    // as a selection; now it goes where the search started, as in Emacs, so
+    // that `C-x C-x' goes back there. Inactive either way: the match is not a
+    // selection the next command should act on.
+    let origin = session.origin;
+    let moved = ctx
+        .with_buffer_mut(&session.buffer, |buf| {
+            if buf.text.cursor_pos_1d() == origin {
+                if let Some(mark) = buf.mark.as_mut() {
+                    mark.active = false;
+                }
+                return false;
+            }
+            let mut mark = Mark::new(origin.min(buf.text.len()));
             mark.active = false;
-        }
-    });
-    ctx.set_echo_message(&match session.found {
-        Some(_) => "Mark saved where search started".to_string(),
-        None => "Search failed".to_string(),
-    });
+            buf.mark = Some(mark);
+            true
+        })
+        .unwrap_or(false);
+    if session.found.is_none() {
+        ctx.set_echo_message("Search failed");
+    } else if moved {
+        ctx.set_echo_message("Mark saved where search started");
+    }
     Ok(ELispExp::nil())
 });
 

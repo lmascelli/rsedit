@@ -98,26 +98,21 @@ WHEN THE FILE CHANGES UNDER YOU
     a mount misbehaves.
 
 AUTO SAVING
-    A file buffer with unsaved changes is copied to #name# beside its
-    file. The copy is for the editor stopping without being asked -- a
-    crash, a lost terminal -- and saving the buffer deletes it. Opening a
-    file that has a copy says so.
-
-    Every half minute the editor looks at four of the buffers, taking them
-    in turn, and copies those that need it. All the buffers take turns,
-    those with no file too, such as *scratch* or a manual page: with four
-    buffers or fewer, each is looked at every half minute; with twelve,
-    every minute and a half.
+    Every half minute, each file buffer with changes not yet copied is
+    copied to #name# beside its file, four at most each time and the rest
+    at the next. The copy is for the editor stopping without being asked
+    -- a crash, a lost terminal -- and saving the buffer deletes it.
+    Opening a file that has a copy says so.
 
     M-x recover-file puts the copy in the buffer, after asking. It comes in
     unsaved: C-x C-s keeps it, and M-x revert-buffer goes back to the file.
 
     `auto-save' turns it off, and `auto-save-interval' is how many seconds
-    pass between one look and the next. With `auto-save-directory' set,
-    every copy goes there instead, the file's path flattened into its name,
-    so that two files called main.rs keep a copy each. That directory must
-    exist, and a ~ in it is not expanded: give it with expand-file-name, as
-    below.
+    pass between one round of copies and the next. With
+    `auto-save-directory' set, every copy goes there instead, the file's
+    path flattened into its name, so that two files called main.rs keep a
+    copy each. A ~ in it is the home directory, and the directory is made
+    when the first copy is written.
 
 LEAVING
     C-x C-c asks about each buffer with unsaved changes, as
@@ -170,7 +165,7 @@ PATHS
 EXAMPLES
     Keep the auto-save copies out of your project directories:
 
-        (setq auto-save-directory (expand-file-name "~/.cache/rsedit"))
+        (setq auto-save-directory "~/.cache/rsedit")
 
     Look for changes on disk every second, or not at all:
 

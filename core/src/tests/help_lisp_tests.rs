@@ -123,6 +123,20 @@ mod tests {
         assert_says(&page(&ctx), "(goto-char POSITION)");
     }
 
+    /// A macro gets a page of its own. It got the page of a name that is no
+    /// function at all, because `function-doc' knows only functions.
+    #[test]
+    fn a_macro_page_carries_its_arguments_and_its_documentation() {
+        let (ctx, env) = editor();
+        run(r#"(help-function "save-match-data")"#, &env, &ctx);
+        let page = page(&ctx);
+        assert_says(&page, "(save-match-data &rest body)");
+        assert_says(&page, "A macro");
+        assert_says(&page, "Run BODY, then put the match data back");
+        assert_says(&page, "Manual: regexps");
+        assert!(!page.contains("is not a function"), "{page}");
+    }
+
     #[test]
     fn a_name_that_is_no_function_gets_a_page_saying_so() {
         // Not an empty page: a page with nothing on it reads as "this exists

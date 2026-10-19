@@ -451,6 +451,41 @@ mod tests {
         );
     }
 
+    /// What the message says, as in Emacs: the mark goes where the search
+    /// started, so `C-x C-x' goes back there. It was left at the far end of
+    /// the match, which the message did not say.
+    #[test]
+    fn return_saves_the_mark_where_the_search_started() {
+        let (ctx, env) = editor_with("alpha beta gamma");
+        goto(&ctx, 2);
+        start_isearch(&ctx, &env);
+        type_pattern(&ctx, &env, "gamma");
+        press(&ctx, &env, KeyCode::Enter);
+
+        assert_eq!(point(&ctx), 16);
+        assert_eq!(mark_of(&ctx), Some((2, false)));
+        assert_eq!(echo(&ctx, &env), "Mark saved where search started");
+
+        eval_str("(exchange-point-and-mark)", &env, &ctx).expect("C-x C-x");
+        assert_eq!(point(&ctx), 2, "back where the search started");
+    }
+
+    /// A search that never moved has nowhere to go back to, and the mark is
+    /// left where it was.
+    #[test]
+    fn a_failed_search_that_never_moved_leaves_the_mark_alone() {
+        let (ctx, env) = editor_with("alpha beta");
+        goto(&ctx, 3);
+        ctx.with_buffer_mut("*scratch*", |b| b.mark = Some(crate::buffer::Mark::new(1)));
+        start_isearch(&ctx, &env);
+        type_pattern(&ctx, &env, "zzz");
+        press(&ctx, &env, KeyCode::Enter);
+
+        assert_eq!(point(&ctx), 3);
+        assert_eq!(mark_of(&ctx), Some((1, false)));
+        assert_eq!(echo(&ctx, &env), "Search failed");
+    }
+
     /// The reason the origin is recorded at all: a search moves point as you
     /// type, so abandoning one has to undo that.
     #[test]

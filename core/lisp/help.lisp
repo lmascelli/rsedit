@@ -157,32 +157,50 @@ its SYNOPSIS or the `manpage' module is not loaded."
   (let ((page (and (functionp 'manpage-home) (manpage-home name))))
     (if page (list "" (concat "Manual: " page)) nil)))
 
+(defun help--macro-lines (name found)
+  "The page for the macro NAME, FOUND being what `help--macro-doc' says of it."
+  (append
+   (list name
+         ""
+         (if (car found)
+             (concat "(" name " " (help--join-words (car found)) ")")
+             (concat "(" name ")"))
+         ""
+         "A macro: its arguments are not evaluated before it runs."
+         "")
+   (help--lines (or (nth 1 found) "Undocumented macro."))
+   (help--manual-lines name)))
+
 (defun help--function-lines (name)
-  "The page for the function NAME."
+  "The page for the function NAME, or for the macro of that name."
   (let* ((symbol (help--symbol name))
-         (doc (function-doc symbol)))
-    (if (null doc)
-        (list (concat name " is not a function.")
-              ""
-              (concat "Nothing is bound to that name. `" help-key
-                      " a' searches every name there is."))
-        (append
-         (list name "")
-         (let ((signature (help--signature name)))
-           (if signature (list signature "") nil))
-         (let ((keys (where-is symbol)))
-           (if keys
-               (list (concat "Bound to: " (help--join-words keys)) "")
-               nil))
-         (if (commandp symbol)
-             (let ((specs (command-specs name)))
-               (list (if specs
-                         (concat "A command. It asks for: " (help--join-words specs))
-                         "A command. It takes no arguments.")
-                     ""))
-             nil)
-         (help--lines doc)
-         (help--manual-lines name)))))
+         (found (help--macro-doc symbol))
+         (doc (if found nil (function-doc symbol))))
+    (cond (found (help--macro-lines name found))
+          ((null doc)
+           (list (concat name " is not a function.")
+                 ""
+                 (concat "Nothing is bound to that name. `" help-key
+                         " a' searches every name there is.")))
+          (t
+           (append
+            (list name "")
+            (let ((signature (help--signature name)))
+              (if signature (list signature "") nil))
+            (let ((keys (where-is symbol)))
+              (if keys
+                  (list (concat "Bound to: " (help--join-words keys)) "")
+                  nil))
+            (if (commandp symbol)
+                (let ((specs (command-specs name)))
+                  (list (if specs
+                            (concat "A command. It asks for: "
+                                    (help--join-words specs))
+                            "A command. It takes no arguments.")
+                        ""))
+                nil)
+            (help--lines doc)
+            (help--manual-lines name))))))
 
 (defun help--variable-lines (name)
   "The page for the variable NAME."

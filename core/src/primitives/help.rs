@@ -244,6 +244,55 @@ primitive!(read_key_sequence, args, env, ctx, {
     Ok(ELispExp::t())
 });
 
+pub const HELP_MACRO_DOC_DOC: &str = "(help--macro-doc SYMBOL): Return (ARGLIST DOC) for the \
+         macro SYMBOL names, its parameters as strings and its docstring or nil, or nil when it \
+         names no macro.";
+
+primitive!(help_macro_doc, args, env, _ctx, {
+    exact_arity(args, 1)?;
+    let name = match &args[0] {
+        ELispExp::Symbol(name) | ELispExp::String(name) => name.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Symbol".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let Some(ELispExp::Lambda(lambda)) = env.get_macro(&name) else {
+        return Ok(ELispExp::nil());
+    };
+    let mut arglist: Vec<ELispExp<B>> = lambda
+        .params
+        .iter()
+        .map(|param| ELispExp::string(param.clone()))
+        .collect();
+    if !lambda.optionals.is_empty() {
+        arglist.push(ELispExp::string("&optional".into()));
+        arglist.extend(
+            lambda
+                .optionals
+                .iter()
+                .map(|param| ELispExp::string(param.clone())),
+        );
+    }
+    if let Some(rest) = &lambda.rest {
+        arglist.push(ELispExp::string("&rest".into()));
+        arglist.push(ELispExp::string(rest.clone()));
+    }
+    // `defmacro' leaves the docstring as the first form of the body, where
+    // `defun' keeps it apart; a string followed by more body is one.
+    let doc = match (&lambda.doc, lambda.body.first()) {
+        (Some(doc), _) => Some(doc.to_string()),
+        (None, Some(ELispExp::String(text))) if lambda.body.len() > 1 => Some(text.to_string()),
+        _ => None,
+    };
+    Ok(ELispExp::proper_list(vec![
+        ELispExp::proper_list(arglist),
+        doc.map_or_else(ELispExp::nil, ELispExp::string),
+    ]))
+});
+
 /// Register this module's primitives: the self-documentation commands.
 ///
 /// Called by [`super::install_primitives`]. Here rather than there because a
@@ -256,6 +305,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("keymap-bindings", keymap_bindings, KEYMAP_BINDINGS_DOC);
     into.function("where-is", where_is, WHERE_IS_DOC);
     into.function("command-specs", command_specs, COMMAND_SPECS_DOC);
+    into.function("help--macro-doc", help_macro_doc, HELP_MACRO_DOC_DOC);
     into.function(
         "read-key-sequence",
         read_key_sequence,
