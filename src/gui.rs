@@ -1,9 +1,7 @@
 use rsedit_core::{
-    ELispExp, EditorState, Env, GapBuffer, KeyCode, KeyEvent, KeyModifiers, create_global_env, eval,
+    BufferTrait, ELispExp, EditorState, Env, GapBuffer, KeyCode, KeyEvent, KeyModifiers, eval,
 };
-
-
-type State = EditorState<GapBuffer>;
+use std::{path::PathBuf, sync::Arc};
 
 fn shifted(c: char) -> char {
     // Fallback for logical symbols absent from egui::Key (e.g. '_' or '<').
@@ -66,32 +64,25 @@ fn character_shortcut(
     })
 }
 
-struct Core {
-    state: State,
-    env: Arc<Env<State>>,
+struct Core<'editor, B: BufferTrait> {
+    state: &'editor EditorState<B>,
+    env: Arc<Env<EditorState<B>>>,
 }
 
-impl Core {
-    fn new(options: &Options) -> Result<Self, String> {
+impl<'editor, B: BufferTrait> Core<'editor, B> {
+    fn new(
+        state: &'editor EditorState<B>,
+        env: Arc<Env<EditorState<B>>>,
+        font: Option<PathBuf>,
+    ) -> Result<Self, String> {
         // The core loads init.lisp itself, from the same configuration as the TUI.
-        let (state, env) = create_global_env::<GapBuffer>().map_err(|e| format!("{e:?}"))?;
         let core = Self { state, env };
         core.state.resize(core.env.clone(), 100, 32);
         core.enable_unicode_typing()?;
-        if options.vim {
-            // Existing configurations may not load the optional Vim module yet.
-            if core.env.get_function("global-vim-mode").is_none() {
-                core.value("eval-file", vec![ELispExp::string("vim".into())])?;
-            }
-            core.value("global-vim-mode", vec![ELispExp::t()])?;
-        }
-        for file in &options.files {
-            core.open(file)?;
-        }
         Ok(core)
     }
 
-    fn quote(name: &str) -> ELispExp<GapBuffer> {
+    fn quote(name: &str) -> ELispExp<B> {
         ELispExp::form(vec![
             ELispExp::symbol("quote".into()),
             ELispExp::symbol(name.into()),
@@ -126,8 +117,8 @@ impl Core {
     fn value(
         &self,
         name: &str,
-        args: Vec<ELispExp<GapBuffer>>,
-    ) -> Result<ELispExp<GapBuffer>, String> {
+        args: Vec<ELispExp<B>>,
+    ) -> Result<ELispExp<B>, String> {
         let mut form = vec![ELispExp::symbol(name.into())];
         form.extend(args);
         eval(&ELispExp::form(form), self.env.clone(), &self.state)
@@ -324,8 +315,8 @@ mod gui {
         })
     }
 
-    pub struct EditorApp {
-        core: Core,
+    pub struct EditorApp<'editor, B: BufferTrait> {
+        core: Core<'editor, B>,
         font_size: f32,
         size: (usize, usize),
         preedit: String,
@@ -336,14 +327,14 @@ mod gui {
         last_input_frame: Option<u64>,
     }
 
-    impl EditorApp {
+    impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
         pub fn new(
             cc: &eframe::CreationContext<'_>,
-            core: Core,
-            options: &Options,
+            core: Core<'editor, B>,
+            font: Option<PathBuf>,
         ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            if let Some(path) = &options.font {
+            if let Some(path) = font {
                 let mut fonts = egui::FontDefinitions::default();
                 fonts.font_data.insert(
                     "user-mono".into(),
@@ -852,8 +843,9 @@ mod gui {
         }
         None
     }
+    
 
-    impl eframe::App for EditorApp {
+    impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
         fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             let frame_number = ctx.cumulative_frame_nr();
             let accept_input = self.last_input_frame != Some(frame_number);
@@ -1011,12 +1003,14 @@ mod gui {
                 });
         }
     }
-
-
 }
 
-fn gui_main() -> Result<(), Box<dyn std::error::Error>> {
-    let core = Core::new(&options)?;
+pub fn gui_main<B: BufferTrait>(
+    state: &EditorState<B>,
+    env: Arc<Env<EditorState<B>>>,
+    font: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let core = Core::new(state, env, font.clone())?;
     let native = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1000., 720.])
@@ -1031,7 +1025,7 @@ fn gui_main() -> Result<(), Box<dyn std::error::Error>> {
     eframe::run_native(
         "rsedit",
         native,
-        Box::new(move |cc| Ok(Box::new(gui::EditorApp::new(cc, core, &options)?))),
+        Box::new(move |cc| Ok(Box::new(gui::EditorApp::new(cc, core, font)?))),
     )
     .map_err(|error| error.to_string().into())
 }

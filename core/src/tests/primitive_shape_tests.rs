@@ -24,10 +24,7 @@
 //! reach a hundred primitives.
 #[cfg(test)]
 mod tests {
-    use crate::{
-        buffer::gap_buffer::GapBuffer,
-        editor::create_global_env,
-    };
+    use crate::{buffer::gap_buffer::GapBuffer, editor::create_global_env};
     use risp::{EvalError, Parser, eval};
 
     /// Evaluate SOURCE in a fresh editor and say what went wrong, if anything.
@@ -242,10 +239,7 @@ mod setting_tests {
 /// answer no to. Anything swapped between two of them fails twice.
 #[cfg(test)]
 mod shape_tests {
-    use crate::{
-        buffer::gap_buffer::GapBuffer,
-        editor::create_global_env,
-    };
+    use crate::{buffer::gap_buffer::GapBuffer, editor::create_global_env};
     use risp::{LispExp, Parser, eval};
 
     type Value = LispExp<crate::editor::EditorState<GapBuffer>>;

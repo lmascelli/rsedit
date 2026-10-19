@@ -644,8 +644,8 @@ mod tests {
         assert_eq!(
             run("(nth 2 (assoc \"x\" (keymap-bindings)))", &env, &ctx),
             LispExp::string("local".into())
-         );
-     }
+        );
+    }
 
     #[test]
     fn negative_upward_motions_work_for_k_and_the_up_arrow_with_counts() {
@@ -700,7 +700,7 @@ mod tests {
         assert_eq!(run("(region-beginning)", &env, &ctx), LispExp::number(4.0));
         assert_eq!(run("(region-end)", &env, &ctx), LispExp::number(7.0));
     }
-    
+
     #[test]
     fn global_vim_applies_to_existing_and_future_buffers_without_moving_focus() {
         let (ctx, env) = editor("abc");

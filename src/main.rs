@@ -1,13 +1,14 @@
+mod gui;
 mod tui;
 use rsedit_core::{
     AppDir, DirOptions, ELispExp, EditorState, GapBuffer, app_dir, create_global_env, eval,
 };
 use std::io::{self, IsTerminal};
 use std::time::Duration;
-use std::{ffi::OsString, path::PathBuf, sync::Arc};
+use std::{ffi::OsString, path::PathBuf};
 
-use tui::tui_main;
 use gui::gui_main;
+use tui::tui_main;
 
 #[cfg(test)]
 mod tests;
@@ -39,7 +40,6 @@ impl Drop for ShutDownOnExit<'_> {
 struct Options {
     files: Vec<PathBuf>,
     gui: bool,
-    vim: bool,
     font: Option<PathBuf>,
     help: bool,
 }
@@ -53,7 +53,6 @@ impl Options {
             match arg.to_str() {
                 Some("--") if !positional => positional = true,
                 Some("--gui") if !positional => options.gui = true,
-                Some("--vim") if !positional => options.vim = true,
                 Some("--help" | "-h") if !positional => options.help = true,
                 Some("--font") if !positional => {
                     options.font = Some(args.next().ok_or("--font requires a font file")?.into());
@@ -72,7 +71,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = Options::parse(std::env::args_os().skip(1))?;
     if options.help {
         println!(
-            "rsedit-egui [--vim] [--font MONOSPACE.ttf] [--] [FILES...]\n\
+            "rsedit-egui [--font MONOSPACE.ttf] [--] [FILES...]\n\
             M-x: commands; C-x C-f: open; C-x C-s: save; C-x C-c: quit.\n\
             Linux/Windows: Ctrl+Shift+V pastes; Ctrl+V retains its core binding.\n\
             macOS: Cmd+O/S/Q, Cmd+C/X/V and Cmd+Z are native shortcuts."
@@ -106,7 +105,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     for file in options.files {
         let ast = ELispExp::form(vec![
             ELispExp::symbol("find-file".into()),
-            ELispExp::string(path),
+            ELispExp::string(format!("{}", file.display())),
         ]);
         if let Err(e) = eval(&ast, env.clone(), &state) {
             state.set_echo_message(&format!(
@@ -117,11 +116,11 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let is_gui = io::stdin().is_terminal() || options.gui;
+    let is_gui = !io::stdin().is_terminal() || options.gui;
 
     if !is_gui {
         tui_main(&state, env.clone())
     } else {
-        gui_main(&state, env.clone())
+        gui_main(&state, env.clone(), options.font)
     }
 }

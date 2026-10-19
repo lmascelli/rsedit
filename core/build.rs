@@ -4,14 +4,10 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     let crate_dir = PathBuf::from(
-        env::var_os("CARGO_MANIFEST_DIR")
-            .expect("Cargo must set CARGO_MANIFEST_DIR"),
+        env::var_os("CARGO_MANIFEST_DIR").expect("Cargo must set CARGO_MANIFEST_DIR"),
     );
 
-    let out_dir = PathBuf::from(
-        env::var_os("OUT_DIR")
-            .expect("Cargo must set OUT_DIR"),
-    );
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo must set OUT_DIR"));
 
     // <target-dir>[/<target-triple>]/<profile>/build/<package-hash>/out
     //                                      ^ three ancestors up
@@ -22,16 +18,11 @@ fn main() {
 
     let data_dir = binary_dir.join("data");
 
-    copy_files(
-        &crate_dir.join("lisp"),
-        &data_dir.join("lisp"),
-        "lisp",
-    );
+    copy_files(&crate_dir.join("lisp"), &data_dir.join("lisp"), "lisp");
 
-    for (relative_source, kind, extension) in [
-        ("../themes", "themes", "lisp"),
-        ("../man", "man", "txt"),
-    ] {
+    for (relative_source, kind, extension) in
+        [("../themes", "themes", "lisp"), ("../man", "man", "txt")]
+    {
         let source = crate_dir.join(relative_source);
 
         if source.is_dir() {

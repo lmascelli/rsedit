@@ -30,8 +30,8 @@
 //! which question is live.
 use super::*;
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
-use risp::{Lambda, call_callable, eval};
 use crate::primitives::args;
+use risp::{Lambda, call_callable, eval};
 
 fn nil_or<B: BufferTrait>(value: Option<&ELispExp<B>>) -> ELispExp<B> {
     value.cloned().unwrap_or_else(ELispExp::nil)

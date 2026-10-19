@@ -3,8 +3,8 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::ui::{Color, Face, NAMED_COLORS, Style, Theme};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;

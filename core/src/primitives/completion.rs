@@ -46,8 +46,8 @@
 //! is passed over, because two sources completing different spans of text
 //! cannot both be right.
 use super::*;
-use risp::call_callable;
 use crate::primitives::edits::{delete_range, edited, insert_text};
+use risp::call_callable;
 
 /// Where the text being completed begins, while a presenter is being handed
 /// the candidates -- and only for that long.

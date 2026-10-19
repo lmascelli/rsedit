@@ -17,8 +17,8 @@
 use super::*;
 use crate::editor::{CASE_REPLACE, REPLACE_READ_FUNCTION};
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
-use risp::call_callable;
 use crate::primitives::args;
+use risp::call_callable;
 
 fn flag<B: BufferTrait>(
     env: &std::sync::Arc<Env<EditorState<B>>>,

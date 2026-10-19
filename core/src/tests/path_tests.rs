@@ -19,12 +19,12 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::primitives::io::{
         as_directory, directory_part, expand_path, expand_path_in, last_component,
         without_trailing_separator,
     };
     use crate::tests::home_guard::guard::HomeAs;
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::path::{MAIN_SEPARATOR, Path, PathBuf};
     use std::sync::Arc;
 

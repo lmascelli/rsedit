@@ -57,7 +57,8 @@ primitive!(set_local_keymap, args, _env, ctx, {
     Ok(args[0].clone())
 });
 
-pub const DEFINE_KEY_DOC: &str = "(define-key MODE KEY COMMAND): Bind KEY (an Emacs-style key sequence \
+pub const DEFINE_KEY_DOC: &str =
+    "(define-key MODE KEY COMMAND): Bind KEY (an Emacs-style key sequence \
          string, e.g. \"C-x\" or \"<ret>\") to COMMAND. MODE is either nil, \
          binding KEY globally, or a mode name symbol/string, binding KEY only \
          in that major mode. COMMAND may be a symbol naming a function (which \

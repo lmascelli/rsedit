@@ -22,11 +22,11 @@
 //! text that is no longer there -- and, worse, offsets that land somewhere
 //! else entirely when you jump to them.
 use super::*;
-use risp::eval;
 use crate::primitives::args;
 use crate::text::results::{Entry, KIND_BUFFER, KIND_FILE, RESULTS_KEY, Results};
 use crate::text::search::Pattern;
 use crate::work::{Stop, WorkId};
+use risp::eval;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

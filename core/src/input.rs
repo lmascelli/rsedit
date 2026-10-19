@@ -156,7 +156,7 @@ impl<B: BufferTrait> Keymap<B> {
     pub fn set_character_handler(&mut self, handler: ELispExp<B>) {
         self.character_handler = (!handler.is_nil()).then_some(handler);
     }
-    
+
     pub fn binding(&self, keys: &[KeyEvent]) -> Option<ELispExp<B>> {
         if let Some(binding) = self.get(keys) {
             return Some(binding.clone());
@@ -183,7 +183,7 @@ impl<B: BufferTrait> Keymap<B> {
             ]),
         })
     }
-    
+
     /// Bind KEYS to AST, and register every proper prefix of KEYS.
     ///
     /// *Proper*: the sequence itself is not registered. Nothing observable

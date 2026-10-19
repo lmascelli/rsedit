@@ -4,8 +4,8 @@ mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyCode, KeyEvent, KeyModifiers};
-    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::ui::{Face, RenderableWindowView};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;

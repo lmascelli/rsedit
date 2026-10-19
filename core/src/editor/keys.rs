@@ -94,7 +94,9 @@ impl<B: BufferTrait> EditorState<B> {
             if let Some(ELispExp::Symbol(name) | ELispExp::String(name)) =
                 buf.data::<ELispExp<B>>("lisp:local-keymap")
                 && name.as_str() != "nil"
-            { names.push(name.to_string()); }
+            {
+                names.push(name.to_string());
+            }
             names.push(buf.current_mode.clone());
             names
         })

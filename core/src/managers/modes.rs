@@ -242,11 +242,7 @@ impl<B: BufferTrait> Modes<B> {
     /// the transient map itself: a miss there can mean *refuse the key*, which
     /// is not a thing a binding lookup can express. Sharing the rest is what
     /// keeps "what would this key do" and "what this key does" the same walk.
-    pub fn binding_below_transient(
-        &self,
-        modes: &[&str],
-        keys: &[KeyEvent],
-    ) -> Option<Binding<B>> {
+    pub fn binding_below_transient(&self, modes: &[&str], keys: &[KeyEvent]) -> Option<Binding<B>> {
         for (index, mode) in modes.iter().enumerate() {
             if let Some(keymap) = self.mode_keymap(mode)
                 && let Some(target) = keymap.binding(keys)
@@ -297,8 +293,7 @@ impl<B: BufferTrait> Modes<B> {
                 Binding::new(keys, target.clone(), BindingSource::Global),
             );
         }
-        for (index, mode) in modes.iter().enumerate().rev()
-        {
+        for (index, mode) in modes.iter().enumerate().rev() {
             if let Some(keymap) = self.mode_keymap(mode) {
                 let source = if index + 1 < modes.len() {
                     BindingSource::Local

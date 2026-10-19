@@ -4,11 +4,11 @@
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
-    use risp::{Env, EvalError, LispExp, Parser, eval};
     use crate::modes::{Grammar, SyntaxRegion, SyntaxRule, SyntaxState, highlight_line};
     use crate::ui::Face;
     use crate::work::Place;
     use regex::Regex;
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -643,9 +643,15 @@ mod tests {
     #[test]
     fn untrusting_a_line_starts_again_from_the_state_it_is_entered_in() {
         let mut cache = crate::buffer::syntax::SyntaxCache::default();
-        cache.record(0, &vec![], Vec::new(), &vec![0]).expect("line 0");
-        cache.record(1, &vec![0], Vec::new(), &vec![0]).expect("line 1");
-        cache.record(2, &vec![0], Vec::new(), &vec![]).expect("line 2");
+        cache
+            .record(0, &vec![], Vec::new(), &vec![0])
+            .expect("line 0");
+        cache
+            .record(1, &vec![0], Vec::new(), &vec![0])
+            .expect("line 1");
+        cache
+            .record(2, &vec![0], Vec::new(), &vec![])
+            .expect("line 2");
         assert_eq!(cache.frontier(), &vec![]);
 
         cache.invalidate_from(1, 2);

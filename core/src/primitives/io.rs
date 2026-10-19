@@ -1,7 +1,7 @@
 use super::*;
-use risp::{call_callable, eval};
 use crate::modes::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::{args, ask};
+use risp::{call_callable, eval};
 
 pub const FIND_FILE_DOC: &str = "(find-file PATH): Open the file at PATH in a buffer, make it \
          current, and return the buffer's name. A file open already is gone back to; a name \

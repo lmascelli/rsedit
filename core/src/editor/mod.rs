@@ -306,7 +306,7 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
         self.runtime(|runtime| runtime.fuel())
             .with_unwind(100_000, cleanup)
     }
-    
+
     fn begin_thread_evaluation(&self) {
         self.runtime(|runtime| runtime.fuel()).arm_thread();
     }

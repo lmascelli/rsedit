@@ -41,7 +41,10 @@ mod tests {
         let lines = log.lines();
         assert_eq!(lines.len(), Log::MAX_LINES, "the oldest lines are dropped");
         assert_eq!(lines[0], "line 5", "the five oldest went first");
-        assert_eq!(lines[Log::MAX_LINES - 1], format!("line {}", Log::MAX_LINES + 4));
+        assert_eq!(
+            lines[Log::MAX_LINES - 1],
+            format!("line {}", Log::MAX_LINES + 4)
+        );
     }
 
     #[test]

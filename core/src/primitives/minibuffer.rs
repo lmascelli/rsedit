@@ -16,8 +16,8 @@ use crate::editor::{
     DEFAULT_MINIBUFFER_HEIGHT, DEFAULT_MINIBUFFER_WIDTH, MINIBUFFER_HEIGHT, MINIBUFFER_WIDTH,
 };
 use crate::feature::minibuffer;
-use risp::call_callable;
 use crate::managers::Recalled;
+use risp::call_callable;
 use std::sync::Arc;
 
 const MINIBUFFER_CLEANUP_DOC: &str = "(minibuffer-cleanup): Runs via `minibuffer-mode's \

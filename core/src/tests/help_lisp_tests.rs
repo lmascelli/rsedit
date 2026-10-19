@@ -17,8 +17,8 @@
 mod tests {
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyCode, KeyEvent, KeyModifiers};
-    use risp::{Env, LispExp, Parser, eval};
     use crate::{ELispExp, buffer::gap_buffer::GapBuffer};
+    use risp::{Env, LispExp, Parser, eval};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;

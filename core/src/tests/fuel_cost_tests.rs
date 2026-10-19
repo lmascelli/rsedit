@@ -53,8 +53,7 @@ mod tests {
     /// What one evaluation costs, exactly.
     fn cost(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> u64 {
         let ast = Parser::new(src).next().expect("source must parse");
-        let (outcome, spent) =
-            risp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), ctx));
+        let (outcome, spent) = risp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), ctx));
         outcome.unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"));
         spent
     }
@@ -220,8 +219,7 @@ mod tests {
         let ast = Parser::new(r#"(fuzzy-filter "nm" names)"#)
             .next()
             .expect("source must parse");
-        let (outcome, spent) =
-            risp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), &ctx));
+        let (outcome, spent) = risp::measure(&ctx.fuel_meter(), || eval(&ast, env.clone(), &ctx));
         assert!(outcome.is_ok());
         assert!(
             spent >= 5000,
