@@ -160,6 +160,20 @@ mod tests {
 
     // ---------------- the list changing underneath ----------------
 
+    /// A candidate that fills its cell is cut a column short, so that it
+    /// never runs into the one beside it.
+    #[test]
+    fn a_long_candidate_leaves_the_last_column_of_its_cell_blank() {
+        let (ctx, env) = with_module();
+        let cell = |src: &str| text_of(&run(src, &env, &ctx));
+        assert_eq!(
+            cell(r#"(completion--cell (cons "abcdef" "a description") 8)"#),
+            "abcdef  "
+        );
+        assert_eq!(cell(r#"(completion--cell "abcdefgh" 8)"#), "abcdefg ");
+        assert_eq!(cell(r#"(completion--cell "ab" 8)"#), "ab      ");
+    }
+
     #[test]
     fn a_strip_redraws_when_the_candidates_are_invalidated() {
         // The case a completion list built in the background puts the strip

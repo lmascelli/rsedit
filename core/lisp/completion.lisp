@@ -71,19 +71,20 @@ nil."
   (if (consp item) (cdr item) nil))
 
 (defun completion--cell (item width)
-  "ITEM in exactly WIDTH characters, cut short or padded."
+  "ITEM in exactly WIDTH characters, cut short or padded, the last always a
+space."
   ;; Exactly, padding included: where each candidate is in the buffer is
-  ;; computed, not searched for -- see `completion--offset'.
+  ;; computed, not searched for -- see `completion--offset'. The last column
+  ;; is kept blank so that a long candidate does not run into the next.
   (let* ((description (completion-description item))
          (text (if description
                    (concat (completion-value item) " " description)
                    (completion-value item)))
-         (length (length text)))
-    (if (< width length)
-        ;; Truncated rather than wrapped: a candidate spilling onto the next
-        ;; row would put two things in one cell and break the arithmetic above.
-        (substring text 0 width)
-        (concat text (make-string (- width length) " ")))))
+         (room (max 0 (- width 1)))
+         (shown (if (< room (length text)) (substring text 0 room) text)))
+    ;; Cut rather than wrapped: a candidate spilling onto the next row would
+    ;; put two things in one cell.
+    (concat shown (make-string (- width (length shown)) " "))))
 
 ;; ---------------------------------------------------------------------------
 ;; The page
@@ -156,7 +157,8 @@ nil."
       (let* ((item (nth *completion--index* *completion--items*))
              (start (completion--offset *completion--index*))
              (width (completion--cell-width))
-             (shown (min width (length (completion-value item)))))
+             (shown (min (max 0 (- width 1))
+                         (length (completion-value item)))))
         (goto-char start)
         (set-mark)
         (goto-char (+ start shown))))))

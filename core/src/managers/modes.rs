@@ -42,7 +42,7 @@
 use crate::{
     ELispExp,
     buffer::BufferTrait,
-    input::{KeyEvent, Keymap, TransientKeymap, describe_keys},
+    input::{KeyEvent, Keymap, OnUnbound, TransientKeymap, describe_keys},
     modes::{MajorMode, SyntaxTable},
 };
 use std::collections::HashMap;
@@ -222,15 +222,19 @@ impl<B: BufferTrait> Modes<B> {
     /// `None` for a sequence that is bound to nothing -- including one that is
     /// only a *prefix* of a binding, which runs nothing on its own. Ask
     /// [`Modes::is_prefix`] to tell those two apart.
-    /// A transient map that refuses what it does not bind is not accounted
-    /// for: this answers what is *bound*, and a refusing map makes everything
-    /// below it unreachable without unbinding any of it. Nothing can ask this
-    /// while such a map is up anyway, since asking means running a command.
+    ///
+    /// A transient map that refuses what it does not bind leaves nothing below
+    /// it to run, as key resolution does: a command running while one is up --
+    /// one of its own bindings, or the command that put it up -- would
+    /// otherwise be told about keys that do nothing.
     pub fn binding_for(&self, modes: &[&str], keys: &[KeyEvent]) -> Option<Binding<B>> {
-        if let Some(map) = self.transient()
-            && let Some(target) = map.keymap.get(keys)
-        {
-            return Some(Binding::new(keys, target.clone(), BindingSource::Transient));
+        if let Some(map) = self.transient() {
+            if let Some(target) = map.keymap.get(keys) {
+                return Some(Binding::new(keys, target.clone(), BindingSource::Transient));
+            }
+            if map.on_unbound == OnUnbound::Refuse {
+                return None;
+            }
         }
         self.binding_below_transient(modes, keys)
     }
@@ -261,11 +265,14 @@ impl<B: BufferTrait> Modes<B> {
     }
 
     /// Whether KEYS is the start of a longer binding in any map that is in
-    /// effect -- which is what keeps a half-typed sequence alive.
+    /// effect -- which is what keeps a half-typed sequence alive. Under a
+    /// transient map that refuses, only its own sequences are.
     pub fn is_prefix(&self, modes: &[&str], keys: &[KeyEvent]) -> bool {
-        self.transient()
-            .is_some_and(|map| map.keymap.is_prefix(keys))
-            || self.is_prefix_below_transient(modes, keys)
+        match self.transient() {
+            Some(map) if map.on_unbound == OnUnbound::Refuse => map.keymap.is_prefix(keys),
+            Some(map) => map.keymap.is_prefix(keys) || self.is_prefix_below_transient(modes, keys),
+            None => self.is_prefix_below_transient(modes, keys),
+        }
     }
 
     /// The same question of the mode's keymap and the global one alone.
@@ -285,7 +292,8 @@ impl<B: BufferTrait> Modes<B> {
     pub fn bindings(&self, modes: &[&str]) -> Vec<Binding<B>> {
         // Lowest priority first, so a later insert overwrites a lower map's
         // claim on the same sequence -- the same order resolution reads them
-        // in, run backwards.
+        // in, run backwards. Under a transient map that refuses what it does
+        // not bind, the walk at the end leaves the lower maps' bindings out.
         let mut found: HashMap<Vec<KeyEvent>, Binding<B>> = HashMap::new();
         for (keys, target) in self.global_keymap.iter() {
             found.insert(

@@ -103,8 +103,14 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Explicit buffer-local bindings may claim the argument reader's keys.
+    ///
+    /// Below the transient map, where the local keymap is: a map that
+    /// refuses a key does not stop the buffer from claiming it from the
+    /// reader, and the transient map then refuses it.
     fn local_key_claims(&self, event: &KeyEvent) -> bool {
-        self.key_binding(std::slice::from_ref(event))
+        let names = self.keymap_modes();
+        let modes: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.modes(|registry| registry.binding_below_transient(&modes, std::slice::from_ref(event)))
             .is_some_and(|binding| binding.source == crate::managers::BindingSource::Local)
     }
 

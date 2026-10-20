@@ -97,6 +97,34 @@ it again: (KIND ARGUMENTS...).")
               (car (split-string first ":"))
               nil)))))
 
+(defun help--argument (argument)
+  "ARGUMENT, a (KIND PROMPT) of `command-args', in words."
+  (let ((kind (symbol-name (car argument)))
+        (prompt (help--trim (nth 1 argument))))
+    (cond ((string= kind "count") "the prefix count")
+          ((string= kind "raw-count") "the raw prefix argument")
+          ((string= kind "region") "the region")
+          (t (concat (cond ((string= kind "string") "a string")
+                           ((string= kind "number") "a number")
+                           ((string= kind "buffer") "a buffer name")
+                           ((string= kind "file") "a file name")
+                           (t kind))
+                     " (" prompt ")")))))
+
+(defun help--trim (text)
+  "TEXT without the spaces at its end."
+  (if (string-match " +$" text)
+      (substring text 0 (match-beginning 0))
+      text))
+
+(defun help--join-list (items)
+  "ITEMS joined with commas."
+  (let ((out ""))
+    (mapc (lambda (item)
+            (setq out (if (string= out "") item (concat out ", " item))))
+          items)
+    out))
+
 (defun help--join-words (words)
   "WORDS joined with single spaces."
   (let ((out ""))
@@ -145,10 +173,12 @@ it again: (KIND ARGUMENTS...).")
                   (list (concat "Bound to: " (help--join-words keys)) "")
                   nil))
             (if (commandp symbol)
-                (let ((specs (command-specs name)))
-                  (list (if specs
-                            (concat "A command. It asks for: "
-                                    (help--join-words specs))
+                (let ((arguments (command-args symbol)))
+                  (list (if arguments
+                            (concat "A command. Its arguments: "
+                                    (help--join-list
+                                     (mapcar 'help--argument arguments))
+                                    ".")
                             "A command. It takes no arguments.")
                         ""))
                 nil)
@@ -210,6 +240,7 @@ it again: (KIND ARGUMENTS...).")
   "Every binding in effect in BUFFER, grouped by the keymap it comes from."
   ;; Named, not assumed: going back to the page, the help buffer is current.
   (let ((transient nil)
+        (local nil)
         (mode nil)
         (global nil))
     (mapc (lambda (binding)
@@ -217,14 +248,20 @@ it again: (KIND ARGUMENTS...).")
                                 (help--name (nth 1 binding))))
                   (source (nth 2 binding)))
               (cond ((string= source "transient") (setq transient (append transient (list line))))
+                    ((string= source "local") (setq local (append local (list line))))
                     ((string= source "mode") (setq mode (append mode (list line))))
                     (t (setq global (append global (list line)))))))
           (with-current-buffer buffer 'keymap-bindings))
-    (let ((mode-name (with-current-buffer buffer (lambda () (help--name (major-mode))))))
+    (let ((mode-name (with-current-buffer buffer (lambda () (help--name (major-mode)))))
+          (local-name (with-current-buffer buffer
+                        (lambda () (help--name (buffer-get 'local-keymap))))))
       (append
        (list (concat "Bindings in effect in " buffer " (" mode-name ")") "")
        (if transient
            (append (list "Transient -- until the question is answered") transient (list ""))
+           nil)
+       (if local
+           (append (list (concat "Local -- " local-name ", this buffer only")) local (list ""))
            nil)
        (if mode (append (list (concat "Mode -- " mode-name)) mode (list "")) nil)
        (if global (append (list "Global -- everywhere") global) nil)))))
@@ -488,26 +525,45 @@ variable if not; on the Manual: line, open that page."
 ;; Keys
 ;; ---------------------------------------------------------------------------
 
+(defvar help--installed-key nil
+  "The key the help keys were last bound under, or nil before they were.")
+
+(defun help--key-bindings (key)
+  "The help keys under KEY, as (KEY-AFTER-IT . COMMAND)."
+  ;; `m' is the manual's, and goes with the rest when the manual is there.
+  (append (list (cons "f" 'describe-function)
+                (cons "v" 'describe-variable)
+                (cons "k" 'describe-key)
+                (cons "w" 'where-is-command)
+                (cons "b" 'describe-bindings)
+                (cons "M" 'describe-mode)
+                (cons "a" 'apropos)
+                (cons "e" 'switch-to-messages)
+                (cons "?" 'help-for-help)
+                (cons key 'help-for-help))
+          (if (functionp 'manpage-prompt) (list (cons "m" 'manpage-prompt)) nil)))
+
 (defun install-help-keys ()
-  "Bind the help keys under `help-key'. The keys bound before keep what they
-were given."
-  (define-key nil (concat help-key " f") 'describe-function)
-  (define-key nil (concat help-key " v") 'describe-variable)
-  (define-key nil (concat help-key " k") 'describe-key)
-  (define-key nil (concat help-key " w") 'where-is-command)
-  (define-key nil (concat help-key " b") 'describe-bindings)
-  (define-key nil (concat help-key " M") 'describe-mode)
-  (define-key nil (concat help-key " a") 'apropos)
-  (define-key nil (concat help-key " e") 'switch-to-messages)
-  (define-key nil (concat help-key " ?") 'help-for-help)
-  (define-key nil (concat help-key " " help-key) 'help-for-help)
+  "Bind the help keys under `help-key', the manual's among them, and take away
+those still bound under the key they were under before."
+  (if (and help--installed-key (not (string= help--installed-key help-key)))
+      (mapc (lambda (binding)
+              (let* ((keys (concat help--installed-key " " (car binding)))
+                     (found (key-binding keys)))
+                ;; Only while it is still ours: a key you rebound stays.
+                (if (and found (string= (help--name (nth 1 found))
+                                        (symbol-name (cdr binding))))
+                    (define-key nil keys nil))))
+            (help--key-bindings help--installed-key)))
+  (mapc (lambda (binding)
+          (define-key nil (concat help-key " " (car binding)) (cdr binding)))
+        (help--key-bindings help-key))
+  (setq help--installed-key help-key)
   t)
 
 (install-help-keys)
 
-;; `C-h m' stays with the manual: a manual page is the other half of what
-;; somebody presses a help key to find, and it was bound there first. This
-;; module takes `M' for the mode, which is the one collision worth living with.
+;; This module takes `M' for the mode, since `m' was the manual's first.
 
 (define-key 'help-mode "q" '(close-buffer help-buffer-name))
 (define-key 'help-mode "l" 'help-back)

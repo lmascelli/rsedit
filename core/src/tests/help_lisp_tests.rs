@@ -95,8 +95,25 @@ mod tests {
         assert_says(&page, "find-file");
         // Bound in common-keymaps, and a command that asks for a file name.
         assert_says(&page, "Bound to: C-x C-f");
-        assert_says(&page, "A command. It asks for:");
-        assert_says(&page, "fFind file: ");
+        assert_says(&page, "A command. Its arguments: a file name (Find file:).");
+        assert!(
+            !page.contains("fFind"),
+            "the code an argument is declared with is not for the reader:\n{page}"
+        );
+    }
+
+    /// The codes are how a command declares its arguments, \"sReplace: \" and
+    /// the rest; somebody reading its page wants to know what it will ask.
+    #[test]
+    fn a_commands_arguments_are_told_in_words_rather_than_codes() {
+        let (ctx, env) = editor();
+        run(r#"(help-function "query-replace")"#, &env, &ctx);
+        assert_says(
+            &page(&ctx),
+            "Its arguments: a string (Replace:), a string (With:).",
+        );
+        run(r#"(help-function "next-line")"#, &env, &ctx);
+        assert_says(&page(&ctx), "Its arguments: the prefix count.");
     }
 
     #[test]
@@ -204,7 +221,7 @@ mod tests {
         assert_says(&page, "global keymap");
         // And the function's own page is folded in, so looking up a key
         // answers the question the key was being looked up for.
-        assert_says(&page, "A command. It asks for:");
+        assert_says(&page, "A command. Its arguments:");
     }
 
     #[test]
@@ -290,6 +307,67 @@ mod tests {
         press('x', true, &ctx, &env);
         press('j', false, &ctx, &env);
         assert_says(&page(&ctx), "C-x continues with:");
+    }
+
+    /// What KEYS run, by name, or the empty string when nothing does.
+    fn named(keys: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> String {
+        match run(
+            &format!(r#"(help--name (nth 1 (key-binding "{keys}")))"#),
+            env,
+            ctx,
+        ) {
+            LispExp::String(name) if name.as_str() != "nil" => name.to_string(),
+            _ => String::new(),
+        }
+    }
+
+    #[test]
+    fn moving_the_help_key_moves_the_manual_too_and_frees_the_old_one() {
+        // On a terminal that sends Backspace as C-h, C-h coming back is what
+        // moving the key is for: nothing may be left under it, the manual's
+        // key included.
+        let (ctx, env) = editor();
+        run(r#"(setq help-key "C-c h") (install-help-keys)"#, &env, &ctx);
+        assert_eq!(named("C-c h f", &env, &ctx), "describe-function");
+        assert_eq!(named("C-c h m", &env, &ctx), "manpage-prompt");
+        assert!(
+            run(r#"(keys-with-prefix "C-h")"#, &env, &ctx).is_nil(),
+            "nothing should be left under C-h"
+        );
+    }
+
+    #[test]
+    fn a_help_key_you_rebound_stays_when_the_help_key_moves() {
+        let (ctx, env) = editor();
+        run(
+            r#"(define-key nil "C-h e" 'next-line)
+               (setq help-key "C-c h")
+               (install-help-keys)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(named("C-h e", &env, &ctx), "next-line");
+        assert_eq!(named("C-c h e", &env, &ctx), "switch-to-messages");
+    }
+
+    #[test]
+    fn a_help_key_set_before_the_modules_load_leaves_c_h_alone() {
+        let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
+        env.set_variable("frame-width".into(), LispExp::number(80.0));
+        env.set_variable("frame-height".into(), LispExp::number(24.0));
+        run(r#"(setq help-key "C-c h")"#, &env, &ctx);
+        for (name, source) in SHIPPED {
+            let ast = Parser::new(&format!("(progn {source})"))
+                .next()
+                .unwrap_or_else(|why| panic!("{name}.lisp must parse: {why:?}"));
+            eval(&ast, env.clone(), &ctx)
+                .unwrap_or_else(|why| panic!("loading {name}.lisp: {why:?}"));
+        }
+        assert_eq!(named("C-c h m", &env, &ctx), "manpage-prompt");
+        assert!(
+            run(r#"(keys-with-prefix "C-h")"#, &env, &ctx).is_nil(),
+            "the manual's key should have gone under the help key too"
+        );
     }
 
     #[test]
@@ -389,6 +467,34 @@ mod tests {
         assert_says(&page, "Mode -- probe-mode");
         assert_says(&page, "C-c 7");
         assert_says(&page, "Global -- everywhere");
+    }
+
+    #[test]
+    fn the_bindings_page_puts_a_local_keymap_under_a_heading_of_its_own() {
+        // vim's states are local keymaps, and their keys were listed among
+        // the global ones, as though they held in every buffer.
+        let (ctx, env) = editor();
+        run(
+            r#"(make-mode 'probe-map)
+               (define-key 'probe-map "C-c 8" 'local-answer)
+               (buffer-create "*probe*")
+               (switch-to-buffer "*probe*")
+               (set-local-keymap 'probe-map)
+               (describe-bindings)"#,
+            &env,
+            &ctx,
+        );
+        let page = page(&ctx);
+        assert_says(&page, "Local -- probe-map, this buffer only");
+        let local = page.find("Local -- probe-map").expect("the local heading");
+        let binding = page.find("C-c 8").expect("the local binding");
+        let global = page
+            .find("Global -- everywhere")
+            .expect("the global heading");
+        assert!(
+            local < binding && binding < global,
+            "C-c 8 belongs under the local heading:\n{page}"
+        );
     }
 
     #[test]

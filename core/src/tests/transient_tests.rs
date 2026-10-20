@@ -523,6 +523,101 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // What a key is said to run while a map is up
+    // -----------------------------------------------------------------------
+
+    /// A question does nothing with a key it does not bind, and asking what
+    /// that key runs says so, rather than naming what it would run once the
+    /// question is answered.
+    #[test]
+    fn under_a_question_only_its_own_keys_are_bound() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(progn (defun pick () nil)
+                      (set-transient-keymap (list (cons "n" 'pick))))"#,
+            &env,
+            &ctx,
+        )
+        .expect("putting up the question");
+
+        let asked = |src: &str| eval_str(src, &env, &ctx).expect(src);
+        assert!(asked(r#"(key-binding "x")"#).is_nil());
+        assert!(asked(r#"(key-binding "<down>")"#).is_nil());
+        assert_eq!(
+            asked(r#"(nth 2 (key-binding "n"))"#),
+            LispExp::string("transient".into())
+        );
+        assert_eq!(asked("(length (keymap-bindings))"), LispExp::number(1.0));
+    }
+
+    /// A filter and an offer hand a key they do not bind to the keymaps
+    /// underneath, so it keeps its binding there.
+    #[test]
+    fn under_a_filter_or_an_offer_the_other_keys_keep_their_bindings() {
+        let (ctx, env) = editor_with("");
+        let source =
+            |ctx: &Ctx| eval_str(r#"(nth 2 (key-binding "<down>"))"#, &env, ctx).expect("asking");
+        eval_str(
+            r#"(progn (defun pick () nil)
+                      (set-transient-keymap (list (cons "n" 'pick)) nil t))"#,
+            &env,
+            &ctx,
+        )
+        .expect("putting up the filter");
+        assert_eq!(source(&ctx), LispExp::string("global".into()));
+
+        ctx.set_transient_keymap(counting_map(&ctx, &env, OnUnbound::Release));
+        assert_eq!(source(&ctx), LispExp::string("global".into()));
+    }
+
+    /// A key sequence handed to a function instead of being run is told
+    /// about the same way: a prefix of the keymaps under a question is not
+    /// waited on, since the question would refuse it.
+    #[test]
+    fn under_a_question_a_prefix_below_it_is_not_waited_on() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(progn (defun pick () nil)
+                      (define-key nil "C-x C-f" 'pick)
+                      (setq probe nil)
+                      (set-transient-keymap (list (cons "n" 'pick)))
+                      (read-key-sequence (lambda (keys target source) (setq probe keys))))"#,
+            &env,
+            &ctx,
+        )
+        .expect("putting up the question");
+
+        press_ctrl(&ctx, &env, 'x');
+
+        assert_eq!(
+            eval_str("probe", &env, &ctx).expect("probe"),
+            LispExp::string("C-x".into())
+        );
+    }
+
+    /// The buffer's own C-u is refused under a question, as every key it
+    /// does not bind is, rather than read as the start of a prefix argument.
+    #[test]
+    fn under_a_question_a_local_c_u_is_refused_rather_than_read_as_an_argument() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(progn (make-mode 'probe-map)
+                      (define-key 'probe-map "C-u" 'end-of-line)
+                      (set-local-keymap 'probe-map)
+                      (defun pick () nil)
+                      (set-transient-keymap (list (cons "n" 'pick))))"#,
+            &env,
+            &ctx,
+        )
+        .expect("putting up the question");
+
+        press_ctrl(&ctx, &env, 'u');
+
+        assert_eq!(ctx.prefix_argument(), None);
+        assert!(ctx.transient_keymap_active());
+    }
+
     /// A map with nothing bound would swallow every key for the rest of the
     /// session, and nothing could take it down.
     #[test]

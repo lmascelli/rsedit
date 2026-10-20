@@ -370,7 +370,8 @@ string, or nil: the page C-h f and C-h v name."
 ;; Keys and faces
 ;; ---------------------------------------------------------------------------
 
-(define-key nil "C-h m" 'manpage-prompt)
+;; Under the help key when it is set already, as help.lisp binds the rest.
+(define-key nil (concat (if (boundp 'help-key) help-key "C-h") " m") 'manpage-prompt)
 (define-key 'manpage-mode "q" '(close-buffer manpage-buffer-name))
 (define-key 'manpage-mode "n" 'next-line)
 (define-key 'manpage-mode "p" 'previous-line)

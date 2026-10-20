@@ -47,7 +47,7 @@ DESCRIPTION
         C-h k           press a key, and be told what it runs
         C-h f           a function, command or macro, by name
         C-h v           a variable, by name, and its value
-        C-h b           every key in effect in this buffer
+        C-h b           every key in effect in this buffer, by keymap
         C-h M           this buffer's mode, and the keys it binds
         C-h a           every name that matches a pattern
         C-h w           which keys run a command
@@ -111,14 +111,14 @@ MOVING THE HELP KEY
 
         (setq help-key "C-c h")
         (install-help-keys)
-        (define-key nil "C-c h m" 'manpage-prompt)
         (define-key nil "C-h" 'delete-backward-char)
 
-    `install-help-keys' binds the help keys again under `help-key', and the
-    help key after a prefix becomes its last key, h. The keys it bound
-    before stay where they are, and C-h m belongs to the manual rather than
-    to the help keys: the last two lines move the manual too and give C-h
-    back to Backspace.
+    `install-help-keys' binds the help keys again under `help-key', C-h m
+    of the manual among them, and takes them away from C-h, leaving any you
+    bound to something else yourself; the help key after a prefix becomes
+    its last key, h. The last line gives C-h back to Backspace. Set at the
+    top of init.lisp, before the modules, `help-key' is where they bind
+    their keys in the first place.
 
 EXAMPLES
     Describe a function from Lisp, as C-h f does:

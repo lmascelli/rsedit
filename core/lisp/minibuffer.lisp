@@ -18,6 +18,10 @@ with the error when it fails."
   "Ask for a Lisp expression, and evaluate it in the running editor. M-:."
   (minibuffer-read "Eval:" 'eval-expression-confirm nil nil))
 
+;; A `defun' and a `register-command', as in common-keymaps.lisp, so that
+;; this file loads without commands.lisp.
+(register-command "eval-expression-prompt" nil)
+
 (define-key nil "M-:" 'eval-expression-prompt)
 
 (log "End of the minibuffer.lisp")

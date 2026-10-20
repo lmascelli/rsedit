@@ -62,10 +62,12 @@ BINDING ONE
 
         (define-key nil "C-c d" '(insert "--"))
 
-    A key that names no key, or a mode that does not exist, is refused, with
-    a line in the log. The key "<char>" binds every character the keymap
-    does not bind itself, to a function given the character as a string;
-    vim's states use it.
+    nil in place of the command takes the binding away: the key reaches the
+    keymaps below again, and a prefix left with nothing under it no longer
+    waits for another key. A key that names no key, or a mode that does not
+    exist, is refused, with a line in the log. The key "<char>" binds every
+    character the keymap does not bind itself, to a function given the
+    character as a string; vim's states use it.
 
     `set-local-keymap' gives one buffer the keymap of a mode, looked in
     before the buffer's own mode, while its mode stays what it was.
@@ -136,16 +138,14 @@ MOVING A KEY YOU DISLIKE
     Return, the arrows and the characters that type themselves. A
     `define-key' rebinds those as well.
 
-LIMITS
-    While a question is up, `key-binding' names what a key it refuses would
-    run without it, rather than saying the key does nothing. C-h b lists
-    the bindings of a buffer's local keymap, as vim's, among the global
-    ones, as though they held everywhere.
-
 EXAMPLES
     A key for a command, in every buffer:
 
         (define-key nil "C-c l" 'goto-line)
+
+    Take it away again:
+
+        (define-key nil "C-c l" nil)
 
     A key that inserts a separator:
 

@@ -204,6 +204,22 @@ impl<B: BufferTrait> Keymap<B> {
         self.insert(vec![key], ast);
     }
 
+    /// Take away the binding of KEYS, and the prefixes only it needed.
+    /// Returns whether there was one.
+    pub fn remove(&mut self, keys: &[KeyEvent]) -> bool {
+        if self.bindings.remove(keys).is_none() {
+            return false;
+        }
+        // Built again from what is left: a prefix may be shared by other
+        // bindings, and taking one away is rare.
+        self.prefixes = self
+            .bindings
+            .keys()
+            .flat_map(|keys| (1..keys.len()).map(move |len| keys[..len].to_vec()))
+            .collect();
+        true
+    }
+
     /// What KEYS is bound to, if it is a complete binding.
     pub fn get(&self, keys: &[KeyEvent]) -> Option<&ELispExp<B>> {
         self.bindings.get(keys)

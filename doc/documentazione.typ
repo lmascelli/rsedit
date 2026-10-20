@@ -982,8 +982,8 @@ Le pagine e le docstring dell'area dicevano cose false, ora corrette:
 - l'intestazione di `completion.lisp` diceva che la striscia si scorre con n
   e p: si scorre con `C-n` e `C-p`.
 
-Il passo ha trovato sei difetti del codice, che non corregge; i primi due
-sono tra i limiti di `keymaps`:
+Il passo ha trovato sei difetti del codice, che non corregge: li corregge la
+patch descritta qui sotto.
 
 - `C-h b` elenca i tasti della mappa locale di un buffer, quelli degli stati
   di vim, sotto `Global -- everywhere`, come se valessero ovunque:
@@ -998,6 +998,30 @@ sono tra i limiti di `keymaps`:
   for: fFind file:»;
 - `M-:` lega `eval-expression-prompt`, che non è un comando: a
   `M-x eval-expression-prompt` l'editor risponde che il comando non esiste.
+
+*I difetti del passo 6 corretti.* Una patch a parte corregge i sei difetti;
+`keymaps` non li descrive più tra i limiti, e ognuno ha un test che fallisce
+senza la correzione:
+
+- `C-h b` elenca i tasti della mappa locale sotto un titolo loro, «Local»
+  con il nome della mappa, tra quelli della domanda e quelli del modo;
+- mentre una domanda è aperta, `key-binding`, `keymap-bindings` e
+  `keys-with-prefix` danno solo i tasti della domanda, come la pressione di
+  un tasto. La mappa locale continua a togliere `C-u` al lettore
+  dell'argomento numerico, come prima: un test lo controlla;
+- `define-key` con nil al posto del comando toglie il legame, e il prefisso
+  rimasto senza tasti sotto di sé: prima non c'era modo di togliere un tasto,
+  e nil lo legava a un comando che non fa nulla;
+- `install-help-keys` lega sotto `help-key` anche `m`, il tasto del manuale, e
+  toglie i tasti dell'aiuto dal tasto di prima, salvo quelli che l'utente ha
+  legato ad altro; `manpage.lisp` lega `m` sotto `help-key` quando è già
+  impostato, così un `help-key` scelto prima dei moduli non lega nulla sotto
+  `C-h`. La ricetta di `getting-help` ha una riga in meno;
+- nella striscia l'ultima colonna di ogni casella resta vuota, e un candidato
+  lungo non si attacca più al successivo;
+- `C-h f` su un comando dice gli argomenti a parole: «Its arguments: a file
+  name (Find file:).»;
+- `eval-expression-prompt` è un comando, e `M-x` lo raggiunge.
 
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),

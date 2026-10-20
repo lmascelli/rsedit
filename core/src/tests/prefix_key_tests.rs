@@ -286,6 +286,65 @@ mod tests {
         );
     }
 
+    // ---------------- taking a binding away ----------------
+
+    /// nil takes a binding away; once nothing is left under a prefix, the
+    /// prefix goes too and the key is free again.
+    #[test]
+    fn define_key_with_nil_takes_a_binding_and_its_prefix_away() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(define-key nil "C-c 1" 'end-of-line)
+               (define-key nil "C-c 2" 'beginning-of-line)"#,
+            &env,
+            &ctx,
+        )
+        .expect("binding");
+        let asked = |src: &str| eval_str(src, &env, &ctx).expect(src);
+
+        assert!(asked(r#"(define-key nil "C-c 1" nil)"#).is_truthy());
+        assert!(asked(r#"(key-binding "C-c 1")"#).is_nil());
+        assert_eq!(
+            asked(r#"(length (keys-with-prefix "C-c"))"#),
+            LispExp::number(1.0),
+            "C-c 2 is still bound"
+        );
+
+        asked(r#"(define-key nil "C-c 2" nil)"#);
+        assert!(asked(r#"(keys-with-prefix "C-c")"#).is_nil());
+        press(&ctx, &env, KeyCode::Char('c'), ctrl());
+        assert_eq!(
+            ctx.get_echo_message(),
+            "C-c is undefined",
+            "C-c leads nowhere now, so it is not waited on"
+        );
+    }
+
+    /// Taken away from a mode, a key reaches the global keymap again.
+    #[test]
+    fn define_key_with_nil_in_a_mode_lets_the_global_binding_through() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(make-mode 'probe-mode)
+               (define-key 'probe-mode "<down>" 'end-of-line)"#,
+            &env,
+            &ctx,
+        )
+        .expect("binding");
+        ctx.with_current_buffer_mut(|buf| buf.current_mode = "probe-mode".to_string());
+        let source = || eval_str(r#"(nth 2 (key-binding "<down>"))"#, &env, &ctx).expect("asking");
+
+        assert_eq!(source(), LispExp::string("mode".into()));
+        eval_str(r#"(define-key 'probe-mode "<down>" nil)"#, &env, &ctx).expect("unbinding");
+        assert_eq!(source(), LispExp::string("global".into()));
+        assert!(
+            eval_str(r#"(define-key 'no-such-mode "<down>" nil)"#, &env, &ctx)
+                .expect("asking")
+                .is_nil(),
+            "a mode that does not exist is refused"
+        );
+    }
+
     // ---------------- the bindings this unblocked ----------------
 
     #[test]

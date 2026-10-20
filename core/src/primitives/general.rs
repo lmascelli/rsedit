@@ -59,10 +59,11 @@ primitive!(set_local_keymap, args, _env, ctx, {
 
 pub const DEFINE_KEY_DOC: &str = "(define-key MODE KEY COMMAND): Bind KEY, a key sequence such as \
          \"C-x C-f\" or \"<ret>\", to COMMAND in the global keymap when MODE is nil, or in the \
-         keymap of the mode MODE. COMMAND is the name of a function, run with no arguments, or an \
-         expression, evaluated as written. Return t, or nil when KEY or MODE is unknown. The KEY \
-         \"<char>\" binds the characters the keymap does not: COMMAND is then a function, given \
-         the character as a string, or nil to take it away.\n\n\
+         keymap of the mode MODE. COMMAND is the name of a function, run with no arguments, an \
+         expression, evaluated as written, or nil, which takes KEY's binding away. Return t, or \
+         nil when KEY or MODE is unknown. The KEY \"<char>\" binds the characters the keymap does \
+         not: COMMAND is then a function, given the character as a string, or nil to take it \
+         away.\n\n\
          Example:\n\
          (define-key nil \"C-c l\" 'goto-line)\n\
          (define-key 'rust-mode \"C-c d\" '(insert \"dbg!()\"))";
@@ -115,6 +116,26 @@ primitive!(define_key, args, env, ctx, {
 
             let actual_ast = command_ast(ast, &env);
             if let Some(keys) = parse_key_sequence(key_str) {
+                if ast.is_nil() {
+                    // nil takes the binding away, so that the key is free
+                    // again -- to a lower keymap, or for a prefix it kept.
+                    let found = ctx.modes_mut(|modes| match &mode_name {
+                        Some(name) => modes.edit(name, |mode| {
+                            mode.keymaps.remove(&keys);
+                        }),
+                        None => {
+                            modes.global_keymap_mut().remove(&keys);
+                            true
+                        }
+                    });
+                    if !found {
+                        ctx.log_diagnostic(&format!(
+                            "[ERROR]: define-key no mode named {}",
+                            mode_name.unwrap_or_default()
+                        ));
+                    }
+                    return Ok(ELispExp::boolean(found));
+                }
                 if let Some(mode_name) = mode_name {
                     // Reported outside the closure: the diagnostic writes the
                     // echo area, which is a compartment of its own.

@@ -201,6 +201,23 @@ mod tests {
     }
 
     #[test]
+    fn the_command_m_colon_runs_is_one_m_x_reaches_too() {
+        let (ctx, env) = setup();
+        assert!(
+            eval_str("(commandp 'eval-expression-prompt)", &env, &ctx)
+                .unwrap()
+                .is_truthy()
+        );
+        eval_str(
+            r#"(execute-extended-command "eval-expression-prompt")"#,
+            &env,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+    }
+
+    #[test]
     fn eval_expression_of_an_invalid_form_does_not_abort_the_confirm_flow() {
         // Regression test: typing something that isn't a valid function
         // call (e.g. `(1 2 3)`, whose head `1` isn't callable) used to make
