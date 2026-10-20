@@ -1,76 +1,34 @@
 ;;; help --- what the editor can tell you about itself.
 ;;;
-;;; `C-h f' a function, `C-h v' a variable, `C-h k' a key, `C-h b' every
-;;; binding in effect, `C-h a' anything whose name matches, `C-h ?' this list.
-;;; Half-way through a prefix, `C-h' says what the prefix goes on to.
+;;; C-h f a function, C-h v a variable, C-h k a key, C-h b the bindings, C-h a
+;;; the names that match, C-h ? the help keys. User manual: the
+;;; `getting-help' page.
 ;;;
-;;; # What is in here and what is not
-;;;
-;;; Nothing here knows what a binding *is*. `key-binding', `where-is',
-;;; `keymap-bindings', `function-doc', `variable-doc' and the rest are built
-;;; in, and they answer out of the same keymaps and the same environment the
-;;; editor runs on. A help command that a missing module could quietly make
-;;; wrong would be worse than no help command at all, because it is believed.
-;;;
-;;; What is here is the *page*: which facts go together, in what order, and in
-;;; which buffer. Replace it and the answers do not move.
-;;;
-;;; # Every command comes in two halves
-;;;
-;;; `describe-function' prompts; `help-function' takes a name. The prompting
-;;; half is what a key is bound to, the other is what anything else calls --
-;;; a script, a test, another page's cross-reference. Splitting them is what
-;;; lets the prompt use completion over `all-functions' rather than the plain
-;;; string an argument spec would read.
-;;;
-;;; # The back stack
-;;;
-;;; A help page is mostly links: a function's page names the variables it
-;;; reads, a key's page names the command it runs. Following one and not being
-;;; able to get back is the difference between a help system and a maze, so
-;;; every page that is opened remembers the one before it, and `l' returns.
-;;; The stack holds *descriptions* -- ("function" "insert") -- rather than the
-;;; text, so a page revisited is rebuilt from the editor as it is now rather
-;;; than replayed from how it was.
+;;; The answers are built in -- `key-binding', `where-is', `function-doc' and
+;;; the rest -- so that no module can make them wrong; this module is the
+;;; pages. Each command has a half that prompts, bound to a key, and a half
+;;; that takes the name, for Lisp. The back stack keeps what it takes to build
+;;; a page again, so a page gone back to shows the editor as it is now.
 
 (make-mode 'help-mode)
 
 (defconst help-buffer-name "*Help*"
-  "The one buffer help pages are shown in.
-
-One rather than one per page, for the reason `man' shows one manual at a time:
-a page is something you consult and leave, and accumulating them would leave a
-buffer list nobody wants to read.")
+  "The buffer help pages are shown in, one for them all.")
 
 (defvar help-key "C-h"
-  "The key that opens help, and -- its last key -- what asks a half-typed
-prefix where it goes
-
-`C-h' is Emacs' answer and the one most fingers already know. It is a variable
-because it cannot be the right answer everywhere: a terminal that still sends
-Backspace as `C-h' makes this prefix and that key the same keystroke. On such a
-terminal, put
-
-  (setq help-key \"C-c h\")
-  (install-help-keys)
-
-in your init.lisp and the whole tree moves. Prefix help moves with it and asks
-on the *last* key of the sequence -- plain `h' after `C-x', in that example --
-since half-way through a sequence there is only ever one key to press. It is
-asked about sequences that are bound to nothing, so it takes nothing away.")
+  "The key the help keys follow, written as `define-key' writes keys. Its last
+key, after a prefix, lists where the prefix goes. After changing it,
+`install-help-keys' binds the help keys under it.")
 
 (defvar help--history nil
-  "Pages visited before this one, most recent first.
-
-Each entry is what it takes to build a page again -- (\"function\" \"insert\")
--- and not the text of it, so `help-back' shows what is true now rather than
-what was true when the page was first drawn.")
+  "The pages visited before this one, most recent first, each as what builds
+it again: (KIND ARGUMENTS...).")
 
 (defvar help--current nil
   "The page being shown, in the same form as an entry of `help--history'.")
 
-(defconst help-history-length 50
-  "How many pages back `l' can walk. Older ones are forgotten.")
+(defvar help-history-length 50
+  "How many pages back `help-back' can go.")
 
 ;; ---------------------------------------------------------------------------
 ;; Building a page
@@ -102,10 +60,8 @@ what was true when the page was first drawn.")
     out))
 
 (defun help--last-key (sequence)
-  "The last key of SEQUENCE, which is the one pressed half-way through one.
-
-The editor asks the same question of `help-key' in Rust; this is here so the
-page shows what will actually work rather than the whole prefix."
+  "The last key of SEQUENCE."
+  ;; The key that asks a prefix where it goes, as the editor reads `help-key'.
   (let ((parts (split-string sequence " ")))
     (nth (- (length parts) 1) parts)))
 
@@ -130,11 +86,9 @@ page shows what will actually work rather than the whole prefix."
 ;; ---------------------------------------------------------------------------
 
 (defun help--signature (name)
-  "How NAME is called, as a line, or nil when nothing can be said.
-
-A Lisp function has a parameter list to read. A primitive does not -- it is a
-Rust function -- but the first line of its documentation is its call, written
-there for exactly this reason."
+  "How NAME is called, as a line, or nil."
+  ;; A primitive has no parameter list to read; the first line of its
+  ;; documentation is its call.
   (let ((arglist (function-arglist (help--symbol name))))
     (if arglist
         (concat "(" name " " (help--join-words arglist) ")")
@@ -152,8 +106,7 @@ there for exactly this reason."
     out))
 
 (defun help--manual-lines (name)
-  "The lines naming the manual page of NAME, or nil when no page lists it in
-its SYNOPSIS or the `manpage' module is not loaded."
+  "The lines naming the manual page of NAME, or nil."
   (let ((page (and (functionp 'manpage-home) (manpage-home name))))
     (if page (list "" (concat "Manual: " page)) nil)))
 
@@ -226,11 +179,8 @@ its SYNOPSIS or the `manpage' module is not loaded."
          (help--manual-lines name)))))
 
 (defun help--key-lines (keys target source)
-  "The page for KEYS, which runs TARGET, from the map named SOURCE.
-
-The three are passed in rather than looked up again because they came from the
-editor's own resolution -- see `read-key-sequence'. A page that asked the
-keymaps a second time would be answering a slightly different question."
+  "The page for KEYS, which run TARGET from the keymap SOURCE."
+  ;; Given, not looked up again: they come from the editor's own lookup.
   (append
    (list (concat "Key: " keys) "")
    ;; `null' first: `string=' is asked about a string, and a key bound to
@@ -257,11 +207,8 @@ keymaps a second time would be answering a slightly different question."
            (help--function-lines (help--name target)))))))
 
 (defun help--bindings-lines (buffer)
-  "Every binding in effect in BUFFER, grouped by the map it comes from.
-
-BUFFER is named rather than assumed, because by the time a page is rebuilt --
-going back to it with `l' -- the current buffer is the help buffer itself, and
-the bindings in effect *there* are not the ones anybody asked about."
+  "Every binding in effect in BUFFER, grouped by the keymap it comes from."
+  ;; Named, not assumed: going back to the page, the help buffer is current.
   (let ((transient nil)
         (mode nil)
         (global nil))
@@ -381,13 +328,9 @@ the bindings in effect *there* are not the ones anybody asked about."
           (t (list (concat "No such help page: " (help--name kind)))))))
 
 (defun help--draw (page)
-  "Put PAGE in the help buffer, without touching the history.
-
-Built first and shown after, which is the order that needs no thinking about:
-whatever a page reads, it reads while the editor is still as the reader left
-it. The pages that describe a buffer do not rely on that -- they carry the
-buffer's name, because going *back* to one happens from inside the help buffer
--- but a page added later might, and this way it is right by default."
+  "Put PAGE in the help buffer, leaving the history alone."
+  ;; Built before the help buffer is shown, so that it reads the editor as the
+  ;; reader left it.
   (let ((lines (help--build page)))
     (buffer-create help-buffer-name 'help-mode)
     (switch-to-buffer help-buffer-name)
@@ -484,20 +427,17 @@ buffer's name, because going *back* to one happens from inside the help buffer
                    nil))
 
 (defcommand apropos () nil
-  "Ask for a pattern and list every name matching it."
+  "Ask for a regular expression and list every name that matches it."
   (minibuffer-read "Apropos (regexp):"
                    (lambda (pattern) (unless (string= pattern "") (help-apropos pattern)))
                    nil
                    nil))
 
 (defcommand describe-key () nil
-  "Press a key sequence and be told what it runs.
-
-The sequence is read by the editor's own resolution rather than by this
-module, so what is reported is what would have happened -- the mode's binding
-where a mode has one, the transient map's where a question is being asked, and
-`C-u' named as the prefix argument it is. Nothing is run, and a key that would
-have typed a character does not."
+  "Press a key sequence and be told what it runs, and from which keymap.
+Nothing is run."
+  ;; Read by the editor's own lookup, through `read-key-sequence', so that what
+  ;; is told is what would have happened.
   (message "Describe key: press a key sequence")
   (read-key-sequence 'help--describe-key-answer))
 
@@ -506,10 +446,8 @@ have typed a character does not."
   (help--goto (list "key" keys (help--name target) source)))
 
 (defun describe-prefix-keys (prefix)
-  "Show what PREFIX continues with.
-
-Called by the editor when the help key is pressed half-way through a sequence,
-which is the only way this is reached: there is no key of its own to press."
+  "Show what PREFIX continues with. Run by the editor when the help key follows
+a prefix."
   (help--goto (list "prefix" prefix)))
 
 (defcommand describe-bindings () nil
@@ -536,11 +474,8 @@ which is the only way this is reached: there is no key of its own to press."
         (buffer-substring (nth 0 bounds) (nth 1 bounds)))))
 
 (defcommand help-follow () nil
-  "Describe the name under the cursor; on a `Manual:' line, open that page.
-
-A function if it is one, a variable otherwise -- the order a reader expects,
-since a page naming `insert' means the command and a page naming
-`case-fold-search' means the setting."
+  "Describe the name under the cursor, as a function if it is one and as a
+variable if not; on the Manual: line, open that page."
   (let ((name (help--symbol-at-point)))
     (cond ((null name) (message "Nothing under the cursor"))
           ((and (functionp 'manpage) (string-prefix-p "Manual: " (current-line)))
@@ -554,11 +489,8 @@ since a page naming `insert' means the command and a page naming
 ;; ---------------------------------------------------------------------------
 
 (defun install-help-keys ()
-  "Bind the help tree under `help-key'.
-
-Run when this module loads, and again after changing `help-key'. Rebinding
-rather than moving: the old keys keep whatever they were given, which is what
-somebody who moved the prefix to get their Backspace back is asking for."
+  "Bind the help keys under `help-key'. The keys bound before keep what they
+were given."
   (define-key nil (concat help-key " f") 'describe-function)
   (define-key nil (concat help-key " v") 'describe-variable)
   (define-key nil (concat help-key " k") 'describe-key)

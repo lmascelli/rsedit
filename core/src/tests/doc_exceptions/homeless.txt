@@ -5,113 +5,6 @@
 # list only shrinks: each step of doc/documentazione.typ gives a home to the
 # names of its area.
 
-# -- passo 6: prompt, completamento, tasti, aiuto
-# lisp/common-keymaps.lisp
-list-workers
-# lisp/completion-at-point.lisp
-capf-buffer-names
-capf-buffer-words
-capf-file-name
-capf-mode-keywords
-capf-symbols
-# lisp/completion.lisp
-completion-abandon
-completion-buffer-name
-completion-choose
-completion-commands-fuzzy
-completion-description
-completion-minibuffer-name
-completion-next
-completion-previous
-completion-reconsider
-completion-value
-# lisp/help.lisp
-apropos
-describe-bindings
-describe-function
-describe-key
-describe-mode
-describe-prefix-keys
-describe-variable
-help-apropos
-help-back
-help-buffer-name
-help-follow
-help-for-help
-help-function
-help-history-length
-help-key
-help-variable
-help-where-is
-install-help-keys
-where-is-command
-# lisp/manpage.lisp
-capf-manpage-names
-manpage
-manpage-at-point
-manpage-buffer-name
-manpage-candidates
-manpage-emphasis-priority
-manpage-home
-manpage-index-job
-manpage-names
-manpage-prompt
-manpage-reindex
-# lisp/minibuffer.lisp
-eval-expression-confirm
-eval-expression-prompt
-# lisp/preview.lisp
-preview-category
-preview-commands
-preview-minibuffer-name
-# primitives/commands.rs
-all-commands
-call-interactively
-command-args
-command-completions
-command-execute-prompt
-commandp
-execute-extended-command
-pending-command
-register-command
-# primitives/completion.rs
-add-completion-function
-bounds-of-thing-at-point
-buffer-words
-completion-at-point
-completion-at-point-choose
-completion-functions
-fuzzy-filter
-set-completion-functions
-# primitives/general.rs
-clear-transient-keymap
-define-key
-define-repeat-key
-regexp-opt
-repeat
-set-local-keymap
-set-transient-keymap
-# primitives/help.rs
-command-specs
-key-binding
-keymap-bindings
-keys-with-prefix
-read-key-sequence
-where-is
-# primitives/minibuffer.rs
-clear-minibuffer-history
-completion-invalidate
-default-minibuffer-prompt
-history-next
-history-previous
-minibuffer-cancel
-minibuffer-choose-completion
-minibuffer-cleanup
-minibuffer-complete
-minibuffer-confirm
-minibuffer-history
-minibuffer-read
-
 # -- passo 7: modi e aspetto
 # lisp/cc-mode.lisp
 cpp-constants
@@ -167,6 +60,8 @@ make-virtual-text
 virtual-text-at
 
 # -- passo 8: estendere l'editor
+# lisp/common-keymaps.lisp
+list-workers
 # lisp/commands.lisp
 defcommand
 string-prefix-p

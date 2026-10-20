@@ -1,74 +1,141 @@
 NAME
     getting-help - asking the editor about itself
 
+SYNOPSIS
+    (describe-key)
+    (describe-function)
+    (describe-variable)
+    (describe-bindings)
+    (describe-mode)
+    (apropos)
+    (where-is-command)
+    (help-for-help)
+    (describe-prefix-keys PREFIX)
+    (help-function NAME)
+    (help-variable NAME)
+    (help-apropos PATTERN)
+    (help-where-is NAME)
+    (help-follow)
+    (help-back)
+    (install-help-keys)
+    help-key
+    help-history-length
+    help-buffer-name
+    (manpage NAME)
+    (manpage-prompt)
+    (manpage-at-point)
+    (manpage-reindex)
+    (manpage-home NAME)
+    (manpage-names)
+    (manpage-candidates INPUT)
+    (capf-manpage-names)
+    manpage-path
+    manpage-buffer-name
+    manpage-emphasis-priority
+    manpage-index-job
+
 DESCRIPTION
-    Every command, every function and every variable in this editor carries
-    its own description, and the help commands read those rather than a list
-    written down beside them. So the answers are about the editor you are
-    running: a key you rebound reports what you rebound it to, and a module
-    you did not load is simply absent rather than described.
+    Every command, function and variable in this editor carries a
+    description of its own, and the help commands read those, and the
+    keymaps, rather than a list written down beside them. So the answers
+    are about the editor you are running: a key you rebound reports what
+    you bound it to, and a module you did not load is absent rather than
+    described.
 
     Everything starts with C-h.
 
         C-h k           press a key, and be told what it runs
         C-h f           a function, command or macro, by name
-        C-h v           a variable, by name
+        C-h v           a variable, by name, and its value
         C-h b           every key in effect in this buffer
-        C-h M           what this buffer's mode is and does
-        C-h a           search every description for a word
-        C-h w           where a command is bound, if anywhere
-        C-h m           read a page of this manual
+        C-h M           this buffer's mode, and the keys it binds
+        C-h a           every name that matches a pattern
+        C-h w           which keys run a command
+        C-h m           a page of this manual
         C-h e           everything the editor has said
-        C-h ?           what else C-h can do
+        C-h ?           this list
 
-    C-h k is the one to reach for. It tells you the command, what it does and
-    which keymap the binding came from -- so a key that does something
-    surprising says which mode took it.
-
-PART WAY THROUGH A KEY
-    C-h after a prefix lists where that prefix goes: C-x C-h for everything
-    under C-x, C-x r C-h for the rectangle keys. Useful when you know roughly
-    where a command lives and not what it is called.
+    C-h k is the one to reach for. It names the command, the keymap the
+    binding came from and what the command does, so a key that does
+    something surprising says which mode took it. C-h f on a command adds
+    the keys that run it and the arguments it asks for, and C-h f and C-h v
+    end with the page of this manual that documents the name.
 
 THE HELP BUFFER
-    Answers go in a buffer you can move around in, and it remembers where you
-    have been.
+    Answers go in one buffer, *Help*, which remembers the pages you went
+    through.
 
-        <ret>           follow the name under the cursor
-        K               the same
-        l               back to the previous answer
+        <ret>  K        describe the name under the cursor
+        l               back to the page before
         n  p            down and up a line
         q               close it
 
-    So C-h f on a command, Return on a function it mentions, l to come back.
+    Return on a name describes it as a function if it is one, as a variable
+    if not; on the Manual: line it opens that page. l goes back as many as
+    `help-history-length' pages. So C-h f on a command, Return on a function
+    it mentions, l to come back.
 
 WHEN YOU DO NOT KNOW THE NAME
-    C-h a and a word searches everything -- command names, function names,
-    variable names and their descriptions. C-h a rectangle finds the
-    rectangle commands whether or not you knew any of them were called that.
+    C-h a takes a regular expression and lists every function and variable
+    whose name matches it, with the first line of what each says: C-h a
+    rectangle lists the rectangle commands, C-h a ^kill- the names that
+    begin with kill-. It searches the names, not what they say. The prompts
+    of C-h f, C-h v and C-h w complete over every name there is, matching
+    anywhere in it, and so does M-x.
 
-    M-x also matches the middle of a name rather than only the start, so M-x
-    rect offers them too.
+PART WAY THROUGH A KEY
+    The help key after a prefix lists where the prefix goes: C-x C-h
+    everything under C-x, C-x r C-h the rectangle keys. It works after any
+    prefix the help key does not continue already.
 
 READING THIS MANUAL
-    C-h m asks for a page name and completes over every page there is, this
-    editor's own first and the system's after. K on a word in a page opens the
-    page or the function it names.
+    C-h m asks for a page and completes over every page there is, this
+    editor's first and the system's after them; M-x manpage takes a name
+    without completing it. The system's pages are formatted by man, bold
+    and underlining kept. In a page:
 
+        K               open the page named by the word under the cursor
         n  p            down and up a line
-        K               open what the cursor is on
         q               close the page
+        C-M-i           complete the name of a page
 
-    `guide' is the index of the editor's own pages.
+    `guide' is the index of this editor's pages. The names are gathered in
+    the background as the editor starts, and gathered again when
+    `manpage-path', where the system's pages are looked for, changes; M-x
+    manpage-reindex gathers them again after something new is installed,
+    and says how many it found.
 
 MOVING THE HELP KEY
-    On a terminal that sends Backspace as C-h, put this in your
-    configuration:
+    Some terminals send C-h for Backspace, so that Backspace starts a help
+    key instead of deleting. Put this in your init.lisp, after the modules:
 
         (setq help-key "C-c h")
         (install-help-keys)
+        (define-key nil "C-c h m" 'manpage-prompt)
+        (define-key nil "C-h" 'delete-backward-char)
 
-    which moves the whole tree, including the prefix listing.
+    `install-help-keys' binds the help keys again under `help-key', and the
+    help key after a prefix becomes its last key, h. The keys it bound
+    before stay where they are, and C-h m belongs to the manual rather than
+    to the help keys: the last two lines move the manual too and give C-h
+    back to Backspace.
+
+EXAMPLES
+    Describe a function from Lisp, as C-h f does:
+
+        (help-function 'define-key)
+
+    List the names that contain region:
+
+        (help-apropos "region")
+
+    Look for the system's pages in one more place:
+
+        (setq manpage-path (cons "/opt/homebrew/share/man" manpage-path))
+
+    Keep more pages to go back to:
+
+        (setq help-history-length 200)
 
 KEYS
     C-h k                   describe-key
@@ -89,11 +156,13 @@ KEYS IN HELP MODE
     l                       help-back
     n                       next-line
     p                       previous-line
+    q                       close-buffer
 
 KEYS IN MANPAGE MODE
     K                       manpage-at-point
     n                       next-line
     p                       previous-line
+    q                       close-buffer
 
 SEE ALSO
-    guide, rsedit, keymaps
+    guide, rsedit, keymaps, completion, diagnostics

@@ -21,13 +21,8 @@
 (define-key nil "M-g g" 'goto-line)
 (define-key nil "M-g M-g" 'goto-line)
 
-;; Completion at point. C-M-i is Emacs' binding and is the same keystroke as
-;; M-<tab>, which is what most terminals actually send -- so both are bound and
-;; whichever arrives reaches the same command.
-;;
-;; What it can complete depends on the buffer: every mode's own sources are
-;; tried before the global ones. `completion-functions' lists them and
-;; `set-completion-functions' reorders or removes them.
+;; Completion at point: the `completion' manual page. C-M-i is the same
+;; keystroke as M-<tab> on most terminals, so both are bound.
 (define-key nil "C-M-i" 'completion-at-point)
 (define-key nil "M-tab" 'completion-at-point)
 
@@ -76,8 +71,7 @@
 ;;
 ;; `list-faces' names everything that can be styled this way.
 
-;; Prefix key sequences. A binding is written as its keys separated by spaces;
-;; pressing the first shows it in the echo area and waits for the rest.
+;; Keys, and sequences of them: the `keymaps' manual page.
 (define-key nil "C-x C-x" 'exchange-point-and-mark)
 (define-key nil "C-x h" 'mark-whole-buffer)
 
@@ -97,21 +91,10 @@
 
 (define-repeat-key 'other-window "o")
 
-;; Repeat the last command. The reason this is worth a key of its own is the
-;; commands whose binding is long: `C-x u' three times to undo three times is
-;; three two-key sequences, where `C-x u C-x z z z' is one sequence and three
-;; taps. The repeat key on `repeat' itself is what makes the tail of that work.
+;; Repeating: the `keymaps' manual page. C-x z repeats any command, and undo
+;; and redo, often wanted several times running, have repeat keys of their own.
 (define-key nil "C-x z" 'repeat)
 (define-repeat-key 'repeat "z")
-
-;; And bare letters for the two commands that are most often wanted several
-;; times running. `C-x z' covers every command including these, but `C-x u'
-;; followed by `u u u' is the shape people reach for, and having to type
-;; `C-x z' in between to get it is the complaint this answers.
-;;
-;; The cost of a repeat key is that the letter stops doing its ordinary thing
-;; for exactly one keystroke after that command -- and the offer is shown in
-;; the frame while it stands, so nobody is left guessing.
 (define-repeat-key 'undo "u")
 (define-repeat-key 'redo "r")
 
@@ -207,29 +190,7 @@
 ;; Watching files and auto-saving: `watch-files' and `auto-save', documented
 ;; where `C-h v' finds them, and the `files' manual page.
 
-;; Background workers. `define-worker' runs a fiber on the scheduler syntax
-;; colouring runs on, resuming it once per step:
-;;
-;;   (define-worker 'indexer
-;;     (fiber (while t
-;;              (if (index--stale-p)
-;;                  (progn (index--one-chunk) (yield 'continue))
-;;                (yield '(wait buffer-changed))))))
-;;
-;; The `yield' is the whole contract: it is where the worker is willing to be
-;; put down, and everything between two of them is one step's work. What it
-;; yields says when the next step comes -- at once, after a sleep, or when an
-;; event it names is emitted; a plain (yield) waits 40 ms. See `define-worker'
-;; for the table. A step has its own budget -- `worker-fuel' -- separate from
-;; the one commands run under, so nothing you type can cut a worker short and
-;; no worker can spend your budget. A step that never reaches a `yield' is
-;; stopped and the worker with it, because the thread it holds is the one
-;; colouring runs on.
-;;
-;; `M-x list-workers' says which are running; `stop-worker' stops one, and
-;; `(work-list)' shows everything the scheduler is running, the editor's own
-;; work included. Defining a worker over an existing name replaces it, so
-;; re-evaluating a module leaves one worker rather than two.
+;; Background workers: the `background' manual page.
 (defun list-workers ()
   "Show which background workers are running."
   (let ((names (running-workers)))

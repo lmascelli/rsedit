@@ -1,0 +1,141 @@
+NAME
+    minibuffer - the prompt, its history, and asking from Lisp
+
+SYNOPSIS
+    (minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL &optional MODE KEY)
+    (default-minibuffer-prompt PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL ...)
+    (minibuffer-confirm)
+    (minibuffer-cancel)
+    (minibuffer-cleanup)
+    (history-previous)
+    (history-next)
+    (minibuffer-history KEY)
+    (clear-minibuffer-history KEY)
+    (pending-command)
+    (eval-expression-prompt)
+    (eval-expression-confirm INPUT)
+    history-length
+    minibuffer-width
+    minibuffer-height
+    *minibuffer-read-function*
+    preview-commands
+    preview-category
+    preview-minibuffer-name
+
+DESCRIPTION
+    A command that needs something from you -- a file name, a string to
+    search for, a command's name -- asks for it in a prompt: a small window
+    in the middle of the frame, with the question as its title. Type the
+    answer and press Return; Escape closes the prompt without answering.
+    Tab completes what you have typed, as the `completion' page describes,
+    and the arrow keys bring back what you answered at the same prompt
+    before.
+
+ANSWERING
+        <ret>           answer with what is typed
+        <esc>           close the prompt, answering nothing
+        <tab>           complete what is typed
+        <backspace>     delete the character before the cursor
+        C-p  M-p  <up>  the answer given before this one
+        C-n  M-n  <down>
+                        the one after it
+
+    The keys that move and edit in a buffer work in a prompt as well: C-a,
+    C-e, C-f, C-b, C-k and C-y among them. C-g does not close a prompt: it
+    says Quit and leaves it open, so Escape is the way out of one.
+
+HISTORY
+    Each prompt remembers the answers given to it, under its own question:
+    M-x the commands you ran, C-x C-f the files you opened, M-: the
+    expressions you evaluated. Two prompts that ask in the same words share
+    one history. An empty answer is not remembered, and neither is the same
+    answer twice running.
+
+    C-p goes back one answer at a time and C-n forward again; one step past
+    the newest brings back what you had half typed. A prompt keeps
+    `history-length' answers, a hundred unless you change it, and 0 keeps
+    none. The history lasts until the editor quits.
+
+EVALUATING AN EXPRESSION
+    M-: asks for a Lisp expression, evaluates it, and shows it in the echo
+    area with its value, as (+ 1 2) => 3. One that fails shows !! and the
+    error in place of => and the value. Both stay in the log, where C-h e
+    finds them.
+
+PREVIEWS
+    While C-x r t asks for its string, what you type is drawn on every line
+    of the block, and goes when you answer or close the prompt. It is drawn
+    over the buffer, not put in it, so closing the prompt leaves the file as
+    it was. `preview-commands' names the commands shown this way; each needs
+    code of its own in preview.lisp to say what it would do.
+
+ASKING FROM LISP
+    `minibuffer-read' opens a prompt and returns at once. What is typed
+    reaches a function of yours later, when Return is pressed:
+
+        (minibuffer-read "Name:" (lambda (name) (message "Hello %s" name))
+                         nil nil)
+
+    ON-CONFIRM is called with the text when Return is pressed, and
+    ON-CANCEL, when it is not nil, with nothing when Escape is. ON-CHANGE,
+    when it is not nil, is what Tab asks for candidates: it is called with
+    the text and returns a list of strings. MODE is the major mode the
+    prompt is edited in, and so what its keys do -- an incremental search
+    gives its own -- and KEY names the history it keeps, PROMPT itself when
+    it is not given.
+
+    A command that declares its arguments needs none of this: the editor
+    asks for them, with these prompts, before it runs the command. See
+    `keymaps'. `pending-command' says which command an open prompt is
+    asking for, which is how a preview knows what to show. A background job
+    cannot open a prompt: `minibuffer-read' refuses there.
+
+REPLACING THE PROMPT
+    `minibuffer-read' hands its arguments to the function
+    `*minibuffer-read-function*' names, and every prompt in the editor goes
+    through it, so a function of yours there replaces them all. The
+    editor's own is `default-minibuffer-prompt', the window described here,
+    `minibuffer-width' columns wide and `minibuffer-height' rows tall, its
+    border included, or as much as the frame can hold. In it Return runs
+    `minibuffer-confirm', Escape `minibuffer-cancel' and Tab
+    `minibuffer-complete', and closing it runs `minibuffer-cleanup', which
+    makes the buffer you were in current again.
+
+EXAMPLES
+    A narrower prompt:
+
+        (setq minibuffer-width 40)
+
+    A longer history at every prompt:
+
+        (setq history-length 500)
+
+    A question of your own, with Tab completing over three answers:
+
+        (minibuffer-read "Colour:"
+                         (lambda (colour) (message "You chose %s" colour))
+                         (lambda (typed)
+                           (fuzzy-filter typed '("red" "green" "blue")))
+                         nil)
+
+    Forget the commands M-x remembers:
+
+        (clear-minibuffer-history "M-x")
+
+KEYS
+    M-:                     eval-expression-prompt
+
+KEYS IN MINIBUFFER MODE
+    <ret>                   minibuffer-confirm
+    <esc>                   minibuffer-cancel
+    <tab>                   minibuffer-complete
+    <backspace>             delete-backward-char
+    C-p                     history-previous
+    M-p                     history-previous
+    <up>                    history-previous
+    C-n                     history-next
+    M-n                     history-next
+    <down>                  history-next
+
+SEE ALSO
+    completion, keymaps, writing-commands, rectangles, virtual-text

@@ -13,33 +13,25 @@
 //! say what to do with it.
 use super::*;
 use crate::editor::{
-    DEFAULT_MINIBUFFER_HEIGHT, DEFAULT_MINIBUFFER_WIDTH, MINIBUFFER_HEIGHT, MINIBUFFER_WIDTH,
+    COMPLETION_INVALIDATED_FUNCTION, COMPLETION_READ_FUNCTION, DEFAULT_MINIBUFFER_HEIGHT,
+    DEFAULT_MINIBUFFER_WIDTH, MINIBUFFER_HEIGHT, MINIBUFFER_READ_FUNCTION, MINIBUFFER_WIDTH,
 };
 use crate::feature::minibuffer;
 use crate::managers::Recalled;
 use risp::call_callable;
 use std::sync::Arc;
 
-const MINIBUFFER_CLEANUP_DOC: &str = "(minibuffer-cleanup): Runs via `minibuffer-mode's \
-         after-close-hook once the minibuffer buffer closes, however it \
-         closed (confirm, cancel, or otherwise): switches back to \
-         *minibuffer-previous-buffer* (the buffer that was current before \
-         the minibuffer opened -- `close-buffer` alone only restores window \
-         *focus*, not which buffer is \"current\", so this is done \
-         explicitly), then clears *minibuffer-on-confirm*, \
-         *minibuffer-on-change*, *minibuffer-on-cancel*, \
-         *minibuffer-previous-buffer*, *minibuffer-completions* and \
-         *minibuffer-completion-index*, so the next prompt starts from a \
-         clean slate.";
+const MINIBUFFER_CLEANUP_DOC: &str = "(minibuffer-cleanup): Put the prompt's state back to no \
+         prompt open, and make the buffer that was current before the prompt current again. Run \
+         when the prompt's buffer closes, however it closed; not called directly.";
 
 primitive!(minibuffer_cleanup_primitive, _args, env, ctx, {
     minibuffer::reset_prompt_state(&env, ctx);
     Ok(ELispExp::nil())
 });
 
-const MINIBUFFER_CONFIRM_DOC: &str = "(minibuffer-confirm): Called when the user presses Return in the minibuffer. \
-         Closes the minibuffer, then -- if *minibuffer-on-confirm* is set -- \
-         calls it with the minibuffer's final contents as its one argument.";
+const MINIBUFFER_CONFIRM_DOC: &str = "(minibuffer-confirm): Close the prompt, remember what was \
+         typed in its history, and call its ON-CONFIRM with the text. Return in a prompt.";
 
 primitive!(minibuffer_confirm, _args, env, ctx, {
     let input = ctx.with_current_buffer(|buf| buf.text.to_string());
@@ -63,9 +55,8 @@ primitive!(minibuffer_confirm, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-const MINIBUFFER_CANCEL_DOC: &str = "(minibuffer-cancel): Called when the user presses Escape in the minibuffer. \
-         Closes the minibuffer, then -- if *minibuffer-on-cancel* is set -- \
-         calls it with no arguments.";
+const MINIBUFFER_CANCEL_DOC: &str = "(minibuffer-cancel): Close the prompt and call its \
+         ON-CANCEL, when it has one, with no arguments. Escape in a prompt.";
 
 primitive!(minibuffer_cancel, _args, env, ctx, {
     let on_cancel = env.get_variable("*minibuffer-on-cancel*");
@@ -80,28 +71,15 @@ primitive!(minibuffer_cancel, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-const MINIBUFFER_COMPLETE_DOC: &str = "(minibuffer-complete): Called when the user presses Tab in the minibuffer. \
-         The first press after a change to the input calls \
-         *minibuffer-on-change* with the current input to compute completion \
-         candidates and shows the first one; further presses (as long as the \
-         input hasn't changed since) cycle through the rest.\n\n\
-         The candidate function is asked once per distinct input, whichever way the candidates \
-         are presented. Pressing Tab again cannot change the answer, and a candidate function \
-         may be expensive -- the manual's walks every page installed -- so asking again would \
-         be paying for the same list twice, on the thread that draws.\n\n\
-         If *completion-read-function* is set, it is called instead of cycling, with the \
-         candidate list and the symbol `minibuffer-choose-completion' -- which it calls with \
-         whichever candidate the user picked. Setting that variable is how a module replaces \
-         the way completions are presented without this, or any of its callers, knowing that \
-         it did. Unset, the cycling below is all there is, so nothing here depends on such a \
-         module existing.";
+const MINIBUFFER_COMPLETE_DOC: &str = "(minibuffer-complete): Complete what is typed in the \
+         prompt. Its ON-CHANGE is asked for the candidates, once for each different text. When \
+         `*completion-read-function*' names a function, that function is given them all; \
+         otherwise the first is put in the prompt, and each Tab after it the next. Tab in a \
+         prompt.";
 
-const MINIBUFFER_CHOOSE_COMPLETION_DOC: &str = "(minibuffer-choose-completion VALUE): Replace the \
-         minibuffer's contents with VALUE. Returns VALUE.\n\n\
-         This is the symbol handed to *completion-read-function* as the thing to call when the \
-         user picks a candidate. A presenter is given it rather than being told to write to the \
-         minibuffer itself, so that it needs to know nothing about where the completion came \
-         from -- the same presenter serves a prompt, and would serve a buffer.";
+const MINIBUFFER_CHOOSE_COMPLETION_DOC: &str = "(minibuffer-choose-completion VALUE): Put VALUE \
+         in the prompt in place of what is typed, and return VALUE. The function \
+         `*completion-read-function*' is given to call with the candidate chosen at a prompt.";
 
 primitive!(minibuffer_choose_completion, args, _env, ctx, {
     let Some(ELispExp::String(value)) = args.first() else {
@@ -140,7 +118,7 @@ primitive!(minibuffer_complete, _args, env, ctx, {
     // to report a choice, and nothing below runs. Asked for *before* the
     // cycling state is consulted, because a presenter has no use for an index
     // into a list it is about to show all of.
-    if let Some(present) = env.get_variable("*completion-read-function*")
+    if let Some(present) = env.get_variable(COMPLETION_READ_FUNCTION)
         && present.is_truthy()
     {
         // Asked again only when the input has changed since the last time.
@@ -213,21 +191,14 @@ primitive!(minibuffer_complete, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-const HISTORY_PREVIOUS_DOC: &str = "(history-previous): Replace the minibuffer's contents with the previous thing \
-         typed at this prompt. Bound in the minibuffer to C-p, M-p and the up arrow.\n\n\
-         While a completion strip is showing, those keys move through the candidates instead: \
-         the strip installs a transient keymap, and a transient keymap is consulted before \
-         every other. So this is reached exactly when a prompt is open and no completion is \
-         being offered, without either of them having to know about the other.\n\n\
-         The first step remembers whatever was half-typed, and walking forward past the newest \
-         entry brings it back -- looking through the history costs nothing, so there is no reason \
-         not to look.\n\n\
-         Does nothing at the oldest entry, and nothing at a prompt with no history.";
+const HISTORY_PREVIOUS_DOC: &str = "(history-previous): Put in the prompt the answer given at it \
+         before the one it shows, keeping what was half typed for `history-next' to bring back. \
+         Return t, or nil at the oldest. C-p, M-p and the up arrow in a prompt; while a \
+         completion strip is showing, C-p and the up arrow move in the strip instead.";
 
-const HISTORY_NEXT_DOC: &str = "(history-next): The other way through the history from \
-         `history-previous'. Bound in the minibuffer to C-n, M-n and the down arrow.\n\n\
-         One step forward from the newest entry restores what was being typed when the walk \
-         started.";
+const HISTORY_NEXT_DOC: &str = "(history-next): Put in the prompt the answer given at it after \
+         the one it shows, and past the newest what was being typed. Return t, or nil when the \
+         history is not being walked. C-n, M-n and the down arrow in a prompt.";
 
 /// One step through the history, in whichever direction.
 ///
@@ -274,9 +245,11 @@ primitive!(history_next, _args, env, ctx, {
     Ok(step_history(ctx, &env, false))
 });
 
-const MINIBUFFER_HISTORY_DOC: &str = "(minibuffer-history KEY): What has been typed at the prompt filed under KEY, newest \
-         first, as a list of strings. KEY is the prompt's own text unless the prompt named \
-         something else.";
+const MINIBUFFER_HISTORY_DOC: &str = "(minibuffer-history KEY): Return what has been typed at the \
+         prompt whose history is KEY, newest first, as a list of strings. A prompt's history is \
+         its PROMPT, unless `minibuffer-read' was given another KEY.\n\n\
+         Example:\n\
+         (minibuffer-history \"M-x\")";
 
 primitive!(minibuffer_history, args, _env, ctx, {
     let Some(ELispExp::String(key) | ELispExp::Symbol(key)) = args.first() else {
@@ -293,8 +266,8 @@ primitive!(minibuffer_history, args, _env, ctx, {
     ))
 });
 
-const CLEAR_MINIBUFFER_HISTORY_DOC: &str = "(clear-minibuffer-history KEY): Forget what has been typed at the prompt filed under KEY. \
-         Returns t if there was anything to forget.";
+const CLEAR_MINIBUFFER_HISTORY_DOC: &str = "(clear-minibuffer-history KEY): Forget what has been \
+         typed at the prompt whose history is KEY. Return t when there was something to forget.";
 
 primitive!(clear_minibuffer_history, args, _env, ctx, {
     let Some(ELispExp::String(key) | ELispExp::Symbol(key)) = args.first() else {
@@ -308,16 +281,11 @@ primitive!(clear_minibuffer_history, args, _env, ctx, {
     ))
 });
 
-const DEFAULT_MINIBUFFER_PROMPT_DOC: &str = "(default-minibuffer-prompt PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL \
-         &optional MODE): The built-in *minibuffer-read-function*: a floating window in the \
-         middle of the frame, titled PROMPT, in major mode MODE (default \
-         `minibuffer-mode'). Not normally called directly -- see `minibuffer-read'.\n\n\
-         `minibuffer-width' and `minibuffer-height' say how large it is, in columns and rows \
-         including its border; both are clamped to what the frame can hold. It used to be \
-         docked along the bottom, which put it exactly where anything else wanting a strip \
-         there -- a list of completions -- also goes.\n\n\
-         Example:\n\
-         (setq minibuffer-width 40)   ; a narrower prompt";
+const DEFAULT_MINIBUFFER_PROMPT_DOC: &str = "(default-minibuffer-prompt PROMPT ON-CONFIRM \
+         ON-CHANGE ON-CANCEL &optional MODE KEY): The prompt `minibuffer-read' opens unless \
+         `*minibuffer-read-function*' names another: a window in the middle of the frame titled \
+         PROMPT, `minibuffer-width' columns by `minibuffer-height' rows, or what the frame can \
+         hold. The arguments are those of `minibuffer-read'; not called directly.";
 
 primitive!(default_minibuffer_prompt, args, env, ctx, {
     if !(4..=6).contains(&args.len()) {
@@ -436,37 +404,18 @@ fn centred(
     (x, y, width, height)
 }
 
-/// The function a module registers to be told that candidates have changed.
-///
-/// The same shape as `*completion-read-function*`, which is the established
-/// way a presenter attaches itself: a module that shows candidates sets this,
-/// a module whose candidates are built in the background calls
-/// `completion-invalidate`, and neither has to have been loaded for the other
-/// to work.
-const COMPLETION_INVALIDATED: &str = "*completion-invalidated-function*";
-
 const COMPLETION_INVALIDATE_DOC: &str = "(completion-invalidate): Say that the completion \
-         candidates may have changed, whoever is showing them.\n\n\
-         For a module whose candidate list is built in the background -- the manual's list of \
-         pages is the one in the tree. The list it handed out a moment ago was the truth at the \
-         time and is now short, and there is no other way for whatever is showing it to find \
-         that out: nothing was typed.\n\n\
-         Two things happen. The answer remembered for the current input is forgotten, so the \
-         next Tab asks the candidate function again rather than repeating what it was told. And \
-         if `*completion-invalidated-function*' is set -- a presenter registers itself there, as \
-         it does with `*completion-read-function*' -- it is called with no arguments, so a \
-         list already on screen can redraw with what there is now.\n\n\
-         Safe with no prompt open and with no presenter loaded: it is a signal, and nobody \
-         having to hear it is a normal state of affairs.\n\n\
-         This is the call a background job's ON-PROGRESS makes -- see `background-call'. It is \
-         made on the thread that runs commands, which is what makes redrawing from it safe.";
+         candidates may have changed, for a list still being built in the background. The next \
+         Tab asks for them again, and the function `*completion-invalidated-function*' names, \
+         when there is one, is called with no arguments so that a list on screen can be shown \
+         again. Harmless with no prompt open.";
 
 primitive!(completion_invalidate, _args, env, ctx, {
     // Forgotten rather than recomputed: recomputing here would call the
     // candidate function whether or not anybody was going to look, and the
     // whole reason this exists is that the candidate function is expensive.
     minibuffer::setq(&env, ASKED_ABOUT, ELispExp::nil());
-    if let Some(presenter) = env.get_variable(COMPLETION_INVALIDATED)
+    if let Some(presenter) = env.get_variable(COMPLETION_INVALIDATED_FUNCTION)
         && presenter.is_truthy()
     {
         call_callable(&presenter, &[], env.clone(), ctx)?;
@@ -474,25 +423,15 @@ primitive!(completion_invalidate, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL &optional MODE): \
-         Read a line of input from the user via a minibuffer prompt. PROMPT \
-         is shown as the window's title. ON-CONFIRM is called with the final \
-         input string when the user presses Return. ON-CHANGE, if non-nil, \
-         is called with the current input string whenever the user presses \
-         Tab, and must return a list of completion candidate strings; \
-         repeated Tab presses cycle through them. ON-CANCEL, if non-nil, is \
-         called with no arguments when the user presses Escape.\n\n\
-         MODE, if given, is the major mode the prompt's buffer opens in, and \
-         therefore which keymap answers keys typed into it. It defaults to \
-         `minibuffer-mode'. A prompt whose keys mean something other than \
-         \"edit a line of text\" -- incremental search is the one in the tree \
-         -- names its own mode here rather than reimplementing the prompt.\n\n\
-         Which implementation actually runs is controlled by \
-         *minibuffer-read-function* -- rebind it to replace the built-in \
-         minibuffer with a custom implementation; every caller of \
-         `minibuffer-read' picks up the change automatically.\n\n\
+const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL \
+         &optional MODE KEY): Open a prompt titled PROMPT, and return at once. ON-CONFIRM is \
+         called with the text typed when Return is pressed, and ON-CANCEL, when not nil, with no \
+         arguments when Escape is. ON-CHANGE, when not nil, is called with the text when Tab is \
+         pressed and returns the candidates, a list of strings. MODE is the prompt's major mode, \
+         `minibuffer-mode' by default, and KEY names its history, PROMPT by default. Refused in a \
+         background job.\n\n\
          Example:\n\
-         (minibuffer-read \"Eval:\" 'my-on-confirm nil nil)";
+         (minibuffer-read \"Name:\" (lambda (name) (message \"Hello %s\" name)) nil nil)";
 
 primitive!(minibuffer_read, args, env, ctx, {
     if !(4..=6).contains(&args.len()) {
@@ -516,8 +455,8 @@ primitive!(minibuffer_read, args, env, ctx, {
         ));
     }
     let read_fn = env
-        .get_variable("*minibuffer-read-function*")
-        .ok_or_else(|| EvalError::UnboundVariable("*minibuffer-read-function*".into()))?;
+        .get_variable(MINIBUFFER_READ_FUNCTION)
+        .ok_or_else(|| EvalError::UnboundVariable(MINIBUFFER_READ_FUNCTION.into()))?;
     call_callable(&read_fn, args, env.clone(), ctx)
 });
 

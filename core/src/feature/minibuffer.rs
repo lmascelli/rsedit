@@ -19,6 +19,7 @@
 //! *implementation* it happens to ship with.
 use crate::{
     BufferTrait, ELispExp, EditorState,
+    editor::MINIBUFFER_READ_FUNCTION,
     input::{KeyCode, KeyEvent, KeyModifiers},
     managers::DEFAULT_HISTORY_LENGTH,
     modes::MajorMode,
@@ -156,7 +157,7 @@ pub fn install_minibuffer<B: BufferTrait>(
     // replace the built-in minibuffer with a custom implementation; see
     // `minibuffer-read`'s docstring for the required signature.
     env.set_variable(
-        "*minibuffer-read-function*".into(),
+        MINIBUFFER_READ_FUNCTION.into(),
         ELispExp::symbol("default-minibuffer-prompt".into()),
     );
 

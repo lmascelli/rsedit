@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::feature::isearch::CASE_FOLD;
+use crate::feature::minibuffer::HISTORY_LENGTH;
 use crate::modes::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
 use crate::modes::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
 use risp::VARIABLE_DOCUMENTATION;
@@ -136,6 +137,63 @@ pub const SETTINGS: &[Setting] = &[
               `replace-skip', `replace-rest', `replace-back', `replace-done' or \
               `replace-abandon'.",
     },
+    Setting {
+        name: HISTORY_LENGTH,
+        doc: "How many answers each prompt remembers, the oldest going first; 0 remembers \
+              none.",
+    },
+    Setting {
+        name: MINIBUFFER_WIDTH,
+        doc: "How many columns wide a prompt is, its border included. A frame too narrow for \
+              it gets one as wide as it can hold.",
+    },
+    Setting {
+        name: MINIBUFFER_HEIGHT,
+        doc: "How many rows tall a prompt is, its border included: 3 is one line of text \
+              between two of border.",
+    },
+    Setting {
+        name: MINIBUFFER_READ_FUNCTION,
+        doc: "The function that opens a prompt, called with the arguments of \
+              `minibuffer-read'. Every prompt goes through it, so one of your own replaces \
+              them all; `default-minibuffer-prompt' is the editor's.",
+    },
+    Setting {
+        name: COMPLETION_READ_FUNCTION,
+        doc: "The function that shows completion candidates, called with the list and a \
+              function to call with the one chosen; nil puts them in the prompt one Tab at a \
+              time. The completion module sets it to its strip.",
+    },
+    Setting {
+        name: COMPLETION_FILTER_FUNCTION,
+        doc: "The function that matches completion candidates against what is typed, called \
+              with the text and the candidates and returning those that match; nil matches \
+              the start. The completion module sets it to `fuzzy-filter'.",
+    },
+    Setting {
+        name: COMPLETION_INVALIDATED_FUNCTION,
+        doc: "The function `completion-invalidate' calls, with no arguments, so that \
+              candidates on screen are shown again; nil for none. The completion module sets \
+              it.",
+    },
+    Setting {
+        name: COMMAND_COMPLETION_FUNCTION,
+        doc: "The function M-x asks for candidates, with what is typed; nil asks \
+              `command-completions'. The completion module sets it to one matching anywhere \
+              in a name.",
+    },
+    Setting {
+        name: COMMAND_ARG_COMPLETION_FUNCTION,
+        doc: "A function that completes every argument a command asks for, called with the \
+              kind of argument -- file, buffer, string or number -- and what is typed; nil \
+              leaves each kind to the editor.",
+    },
+    Setting {
+        name: KEY_CAPTURE_FUNCTION,
+        doc: "The function the next key sequence is handed to instead of being run, or nil. \
+              `read-key-sequence' sets it, and it is nil again once the keys have been handed \
+              over.",
+    },
 ];
 
 /// Gives every setting in [`SETTINGS`] its documentation, where `defvar` puts
@@ -177,6 +235,28 @@ pub const MINIBUFFER_HEIGHT: &str = "minibuffer-height";
 pub const DEFAULT_MINIBUFFER_WIDTH: f64 = 60.0;
 
 pub const DEFAULT_MINIBUFFER_HEIGHT: f64 = 3.0;
+
+/// The name of the Lisp variable naming the function that opens a prompt.
+pub const MINIBUFFER_READ_FUNCTION: &str = "*minibuffer-read-function*";
+
+/// The name of the Lisp variable naming the function that shows completion
+/// candidates.
+pub const COMPLETION_READ_FUNCTION: &str = "*completion-read-function*";
+
+/// The name of the Lisp variable naming the function that matches completion
+/// candidates against what is typed.
+pub const COMPLETION_FILTER_FUNCTION: &str = "*completion-filter-function*";
+
+/// The name of the Lisp variable naming the function told that completion
+/// candidates have changed.
+pub const COMPLETION_INVALIDATED_FUNCTION: &str = "*completion-invalidated-function*";
+
+/// The name of the Lisp variable naming the function M-x completes with.
+pub const COMMAND_COMPLETION_FUNCTION: &str = "*command-completion-function*";
+
+/// The name of the Lisp variable naming the function that completes every
+/// argument a command asks for.
+pub const COMMAND_ARG_COMPLETION_FUNCTION: &str = "*command-arg-completion-function*";
 
 /// The name of the Lisp variable holding the mode-line format.
 pub const MODE_LINE_FORMAT: &str = "mode-line-format";

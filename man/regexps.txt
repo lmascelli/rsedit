@@ -11,6 +11,7 @@ SYNOPSIS
     (set-match-data LIST)
     (save-match-data BODY...)
     (scan-buffer PATTERN &optional REGEXP LIMIT BUFFER)
+    (regexp-opt WORDS)
 
 DESCRIPTION
     A regular expression is a pattern that text matches or does not. C-M-s,
@@ -70,6 +71,10 @@ MATCHING FROM LISP
     the match data at all. `match-data' and `set-match-data' read and
     replace the match data whole.
 
+    `regexp-opt' makes one pattern out of a list of words, matching any of
+    them, with every character a pattern treats specially escaped: so a
+    mode keeps one list of its keywords and colours them with it.
+
     A pattern that is not a valid regular expression is an error,
     `invalid-regexp', rather than a failed match. The match data belongs to
     the thread: a background worker matching strings of its own does not
@@ -104,6 +109,10 @@ EXAMPLES
           (save-match-data
             (when (string-match "[.]([^./]+)$" path)
               (match-string 1 path))))
+
+    A pattern for any of three words, as a mode's keywords are written:
+
+        (regexp-opt '("fn" "let" "1+"))        ; "(?:fn|let|1\\+)"
 
     How many lines of this buffer begin with TODO:
 

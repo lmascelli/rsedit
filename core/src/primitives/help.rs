@@ -50,17 +50,12 @@ fn key_argument<B: BufferTrait>(args: &[ELispExp<B>]) -> Option<Vec<KeyEvent>> {
     }
 }
 
-pub const KEY_BINDING_DOC: &str = "(key-binding KEYS): What pressing KEYS would run in the \
-         current buffer, as (KEYS TARGET SOURCE), or nil when it would run nothing.\n\n\
-         SOURCE is \"transient\", \"local\", \"mode\" or \"global\" -- which map the binding came from, and \
-         so whether it is in force everywhere or only here.\n\n\
-         nil for a sequence that is only the *start* of a binding: `C-x' runs nothing on its \
-         own. Ask `keys-with-prefix' to tell a prefix from a key bound to nothing at all.\n\n\
-         The answer comes from the same walk key resolution does, in the buffer as it is now, so \
-         it is what would happen rather than what a keymap says in isolation.\n\n\
+pub const KEY_BINDING_DOC: &str = "(key-binding KEYS): Return what pressing KEYS would run in the \
+         current buffer, as (KEYS TARGET SOURCE), or nil for keys bound to nothing or the start \
+         of a longer sequence. SOURCE names the keymap: \"transient\", \"local\", \"mode\" or \
+         \"global\". The answer comes from the lookup a key press makes.\n\n\
          Example:\n\
-         (key-binding \"C-x C-f\") => (\"C-x C-f\" (find-file) \"global\")\n\
-         (key-binding \"C-x\") => nil";
+         (key-binding \"C-x C-f\")   ; (\"C-x C-f\" (find-file) \"global\")";
 
 primitive!(key_binding, args, _env, ctx, {
     exact_arity(args, 1)?;
@@ -74,14 +69,11 @@ primitive!(key_binding, args, _env, ctx, {
     })
 });
 
-pub const KEYS_WITH_PREFIX_DOC: &str = "(keys-with-prefix KEYS): Every binding in effect that \
-         begins with KEYS and is longer, as a list of (KEYS TARGET SOURCE), sorted.\n\n\
-         What continues a half-typed sequence, and so what a `C-x' is *for*. An empty list means \
-         KEYS leads nowhere, which -- together with `key-binding' answering nil -- is how a \
-         prefix is told apart from a key bound to nothing.\n\n\
-         Called with the empty string it lists everything, which is `keymap-bindings'.\n\n\
+pub const KEYS_WITH_PREFIX_DOC: &str = "(keys-with-prefix KEYS): Return every binding in effect \
+         that begins with KEYS and is longer, sorted, each as (KEYS TARGET SOURCE). Empty when \
+         KEYS begins none; the empty string gives every binding.\n\n\
          Example:\n\
-         (keys-with-prefix \"C-x\") => ((\"C-x C-f\" (find-file) \"global\") ...)";
+         (keys-with-prefix \"C-x r\")";
 
 primitive!(keys_with_prefix, args, _env, ctx, {
     exact_arity(args, 1)?;
@@ -111,13 +103,9 @@ primitive!(keys_with_prefix, args, _env, ctx, {
     Ok(ELispExp::proper_list(found))
 });
 
-pub const KEYMAP_BINDINGS_DOC: &str = "(keymap-bindings): Every binding in effect in the current \
-         buffer, as a list of (KEYS TARGET SOURCE), sorted by key sequence.\n\n\
-         Each sequence appears once, under the map that wins it: a key the mode rebinds is \
-         listed as the mode's, and the global binding it hides is not listed at all. What is \
-         wanted here is what the keys do, and a binding that cannot happen is not that.\n\n\
-         Example:\n\
-         (length (keymap-bindings)) => 214";
+pub const KEYMAP_BINDINGS_DOC: &str = "(keymap-bindings): Return every binding in effect in the \
+         current buffer, sorted by key, each as (KEYS TARGET SOURCE) under the keymap that wins \
+         it; a binding another keymap hides is left out.";
 
 primitive!(keymap_bindings, _args, _env, ctx, {
     Ok(ELispExp::proper_list(
@@ -128,14 +116,11 @@ primitive!(keymap_bindings, _args, _env, ctx, {
     ))
 });
 
-pub const WHERE_IS_DOC: &str = "(where-is COMMAND): Every key sequence that runs COMMAND in the \
-         current buffer, as a sorted list of strings. Empty when it has no binding.\n\n\
-         A binding counts when it names COMMAND and supplies no arguments of its own -- `\\'quit' \
-         or `(quit)'. A binding that hands the command an argument, as every self-inserting key \
-         does, is a different offer and is not listed: what `where-is' is for is telling somebody \
-         which keys to press to get what `M-x COMMAND' would give them.\n\n\
+pub const WHERE_IS_DOC: &str = "(where-is COMMAND): Return the keys that run COMMAND in the \
+         current buffer, sorted, as strings; empty when none does. Only a binding that names \
+         COMMAND and gives it no arguments of its own counts.\n\n\
          Example:\n\
-         (where-is 'find-file) => (\"C-x C-f\")";
+         (where-is 'find-file)   ; (\"C-x C-f\")";
 
 primitive!(where_is, args, _env, ctx, {
     exact_arity(args, 1)?;
@@ -178,15 +163,11 @@ primitive!(where_is, args, _env, ctx, {
     Ok(ELispExp::proper_list(found))
 });
 
-pub const COMMAND_SPECS_DOC: &str = "(command-specs NAME): The argument specs NAME was \
-         registered with, as a list of code strings, or nil when it takes none.\n\n\
-         The codes are the ones `defcommand' was written with -- \"sPrompt: \" and the rest -- so \
-         what comes back can be read straight back into one.\n\n\
-         nil also for a name that is no command at all; `commandp' is the question that tells \
-         those apart.\n\n\
+pub const COMMAND_SPECS_DOC: &str = "(command-specs NAME): Return the argument codes the command \
+         NAME was registered with, as strings such as \"fFind file: \", or nil when it takes none \
+         or is no command.\n\n\
          Example:\n\
-         (command-specs \"find-file\") => (\"fFind file: \")\n\
-         (command-specs \"next-line\") => nil";
+         (command-specs \"find-file\")";
 
 primitive!(command_specs, args, _env, ctx, {
     exact_arity(args, 1)?;
@@ -210,23 +191,14 @@ primitive!(command_specs, args, _env, ctx, {
     })
 });
 
-pub const READ_KEY_SEQUENCE_DOC: &str = "(read-key-sequence FUNCTION): Have the next key \
-         sequence handed to FUNCTION instead of being run. Returns t.\n\n\
-         FUNCTION is called as (FUNCTION KEYS TARGET SOURCE): KEYS spelt the way a binding is \
-         written, TARGET the form that key would have run -- quoted, so it can be shown rather \
-         than done -- and SOURCE the map it came from (\"transient\", \"mode\", \"global\"), or \
-         \"prefix-argument\" for `C-u', or nil when the keys are bound to nothing.\n\n\
-         A prefix is read to the end: asking about `C-x' waits for the key after it, exactly as \
-         the editor does, and the half-typed sequence shows in the echo area meanwhile.\n\n\
-         What makes this truthful is where it diverts. The keys are resolved by the editor's own \
-         resolution -- this buffer, this mode, the transient map first -- and only the *running* \
-         is replaced. A reader that walked the keymaps itself would be a second copy of the \
-         precedence rules, and would go on reporting the old ones after they changed.\n\n\
-         Reading is armed by setting `*key-capture-function*', which is also how it is cancelled: \
-         (setq *key-capture-function* nil).\n\n\
+pub const READ_KEY_SEQUENCE_DOC: &str = "(read-key-sequence FUNCTION): Hand the next key sequence \
+         to FUNCTION instead of running it, and return t. FUNCTION is called as (FUNCTION KEYS \
+         TARGET SOURCE): KEYS written as a binding writes them, TARGET the form they would run, \
+         quoted, and SOURCE the keymap as `key-binding' names it, \"prefix-argument\" for C-u, or \
+         nil for keys bound to nothing. A prefix waits for the rest of its sequence. This sets \
+         `*key-capture-function*', and setting that to nil cancels it.\n\n\
          Example:\n\
-         (read-key-sequence (lambda (keys target source)\n\
-                              (message \"%s runs %s (%s)\" keys target source)))";
+         (read-key-sequence (lambda (keys target source) (message \"%s runs %s\" keys target)))";
 
 primitive!(read_key_sequence, args, env, ctx, {
     exact_arity(args, 1)?;

@@ -1,57 +1,24 @@
-;;; preview --- show what a command would insert, before it inserts it.
+;;; preview --- what C-x r t would put in, shown while you type it.
 ;;;
-;;; `C-x r t' asks for a string and then replaces a block with it on every
-;;; line. Until you have answered, there is nothing to look at but the prompt --
-;;; and whether a replacement lines up is exactly the kind of thing you can see
-;;; and cannot work out.
+;;; While the prompt of a command in `preview-commands' is open, what is typed
+;;; is drawn in the buffer as virtual text, which changes nothing, and goes
+;;; when the prompt closes. User manual: the `minibuffer' page.
 ;;;
-;;; This shows it: as you type into the prompt, the string appears in the buffer
-;;; at every line of the block, in the face virtual text uses, and goes again
-;;; when the prompt is answered or abandoned.
-;;;
-;;; # What makes it possible
-;;;
-;;; `make-virtual-text' -- text drawn in the window and not in the buffer. The
-;;; buffer is not modified, so nothing lands in the undo history, nothing is
-;;; marked unsaved, and abandoning the prompt leaves the file exactly as it was.
-;;; Inserting the string for real and taking it back out again would do all
-;;; three, and would be visible in the undo history for the rest of the session.
-;;;
-;;; # Why it is a module and not part of the command
-;;;
-;;; Because the mechanism should not know what it is for. `string-rectangle'
-;;; computes and edits; `make-virtual-text' draws; neither has heard of the
-;;; other, and this file is the only thing that has heard of both. A second
-;;; command worth previewing is another few lines here rather than a change to
-;;; either of them.
-;;;
-;;; # How it knows when to run
-;;;
-;;; `post-command-hook', the same seam the completion strip refreshes on. It
-;;; runs after every command including each `self-insert-command' in the
-;;; minibuffer, so "as you type" needs no new mechanism -- and
-;;; `pending-command' says which command the prompt belongs to, so this previews
-;;; the one it knows about and leaves every other prompt alone.
+;;; `string-rectangle' and `make-virtual-text' know nothing of each other; this
+;;; module, run on `post-command-hook', is the only thing that knows both, and
+;;; `pending-command' says which command the open prompt belongs to.
 
+;; Named here as well as in completion.lisp: each module loads on its own.
 (defconst preview-minibuffer-name "*Minibuffer*"
-  "The buffer a minibuffer prompt reads into.
-
-Named here rather than taken from `completion.lisp', which names it too: a
-module that read another module's constant would be a module that stopped
-working when that one was not loaded, and every module here loads on its own.")
+  "The buffer a prompt reads into.")
 
 (defconst preview-category 'preview
-  "The category this module's virtual text belongs to.
-
-Its own, so that clearing the preview cannot take down a language server's
-hints or anything else drawn in the same buffer.")
+  "The category of this module's virtual text, so that clearing it takes
+nothing else with it.")
 
 (defconst preview-commands '("string-rectangle")
-  "The commands this module previews, by name.
-
-A list because adding one is adding a name. Each needs a function below that
-knows what that command would do -- there is no way to preview a command in
-general, since the preview *is* the knowledge of what it is about to do.")
+  "The names of the commands previewed. Each needs a function here that knows
+what it would do.")
 
 ;; Which buffer the preview was last drawn in, so it can be cleared from there
 ;; rather than from wherever the cursor has since gone.

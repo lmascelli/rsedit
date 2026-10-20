@@ -46,6 +46,7 @@
 //! is passed over, because two sources completing different spans of text
 //! cannot both be right.
 use super::*;
+use crate::editor::{COMPLETION_FILTER_FUNCTION, COMPLETION_READ_FUNCTION};
 use crate::primitives::edits::{delete_range, edited, insert_text};
 use risp::call_callable;
 
@@ -80,13 +81,6 @@ const START_VAR: &str = "*completion-at-point-start*";
 /// forward by the difference. Without that, typing `e` after `ab` and then
 /// choosing `abce` left `abcee`.
 const REGION_VAR: &str = "*completion-at-point-region*";
-
-/// A Lisp function of (PATTERN CANDIDATES) returning the candidates that
-/// match. Unset, the match is a plain prefix.
-const FILTER_HOOK: &str = "*completion-filter-function*";
-
-/// The presenter, shared with the minibuffer -- see `crate::feature::minibuffer`.
-const PRESENT_HOOK: &str = "*completion-read-function*";
 
 /// Read a list that may have arrived as data or as syntax.
 ///
@@ -196,19 +190,13 @@ fn common_prefix(values: &[String]) -> String {
 // ---------------------------------------------------------------------------
 
 pub const ADD_COMPLETION_FUNCTION_DOC: &str = "(add-completion-function MODE FUNCTION): Add \
-         FUNCTION to the completion sources tried in major mode MODE, or -- when MODE is nil -- \
-         to the ones tried in every buffer. Returns t, or nil (logging a diagnostic) if MODE \
-         names an unknown mode.\n\n\
-         FUNCTION takes no arguments. It is called with its buffer current and point where the \
-         user left it, and returns nil if it has nothing to offer there, or a list \
-         (START END CANDIDATES): the buffer positions of the text it is offering to replace, and \
-         a list of strings or (VALUE . DESCRIPTION) pairs.\n\n\
-         A mode's own sources are tried before the global ones. `nil' means global here for the \
-         same reason it does in `define-key'.\n\n\
+         FUNCTION to the completion sources of the major mode MODE, after the ones it has, or to \
+         those of every buffer when MODE is nil. Return t, or nil when MODE is unknown. FUNCTION \
+         takes no arguments and returns nil, or (START END CANDIDATES): the positions of the text \
+         it would replace, and a list of strings or (VALUE . DESCRIPTION) pairs. A mode's sources \
+         are asked before the global ones.\n\n\
          Example:\n\
-         (defun capf-greeting ()\n\
-           (list (point) (point) '((\"hello\" . \"a greeting\"))))\n\
-         (add-completion-function nil 'capf-greeting)";
+         (add-completion-function 'manpage-mode 'capf-manpage-names)";
 
 primitive!(add_completion_function, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -221,13 +209,10 @@ primitive!(add_completion_function, args, _env, ctx, {
     }
 });
 
-pub const SET_COMPLETION_FUNCTIONS_DOC: &str = "(set-completion-functions MODE FUNCTIONS): Replace \
-         the whole list of completion sources for major mode MODE, or the global list when MODE \
-         is nil. Returns t, or nil if MODE is unknown.\n\n\
-         This is how a source is removed, or the order of two of them changed -- neither of \
-         which `add-completion-function' can express. The order matters: the first source to \
-         answer decides which text is being completed, and later sources only contribute if they \
-         agree.\n\n\
+pub const SET_COMPLETION_FUNCTIONS_DOC: &str = "(set-completion-functions MODE FUNCTIONS): Make \
+         the list FUNCTIONS, in the order they are to be asked, the completion sources of the \
+         major mode MODE, or of every buffer when MODE is nil. Return t, or nil when MODE is \
+         unknown.\n\n\
          Example:\n\
          (set-completion-functions nil '(capf-file-name capf-buffer-words))";
 
@@ -242,11 +227,11 @@ primitive!(set_completion_functions, args, _env, ctx, {
     }
 });
 
-pub const COMPLETION_FUNCTIONS_DOC: &str = "(completion-functions &optional MODE): The completion \
-         sources declared for major mode MODE, or the global ones when MODE is nil or omitted. \
-         One list on its own, not the merged list `completion-at-point' actually tries.\n\n\
+pub const COMPLETION_FUNCTIONS_DOC: &str = "(completion-functions &optional MODE): Return the \
+         completion sources of the major mode MODE, or of every buffer when MODE is nil or not \
+         given: one of the two lists `completion-at-point' asks.\n\n\
          Example:\n\
-         (completion-functions 'risp-mode)";
+         (completion-functions 'manpage-mode)";
 
 primitive!(completion_functions, args, _env, ctx, {
     let mode = match args.first() {
@@ -305,12 +290,9 @@ fn is_file_char(c: char) -> bool {
     is_symbol_char(c) || matches!(c, '/' | '\\' | '.' | '~' | ':' | '+')
 }
 
-pub const BUFFER_WORDS_DOC: &str = "(buffer-words &optional BUFFER MINIMUM): Every distinct word \
-         in BUFFER (default: the current buffer), sorted, as a list of strings. A word is a run \
-         of symbol characters -- see `bounds-of-thing-at-point'. MINIMUM, if given, is the shortest word \
-         worth reporting (default 3).\n\n\
-         In Rust because this reads a whole buffer: doing it in Lisp means `buffer-string' \
-         copying every character into one value first, for every buffer, on a key press.\n\n\
+pub const BUFFER_WORDS_DOC: &str = "(buffer-words &optional BUFFER MINIMUM): Return the distinct \
+         words of BUFFER, the current buffer by default, sorted: runs of letters, digits, _, - \
+         and * at least MINIMUM characters long, 3 by default.\n\n\
          Example:\n\
          (buffer-words \"*scratch*\" 4)";
 
@@ -361,16 +343,13 @@ primitive!(buffer_words, args, _env, ctx, {
     ))
 });
 
-pub const BOUNDS_OF_THING_AT_POINT_DOC: &str = "(bounds-of-thing-at-point &optional KIND): The \
-         positions (START END) of the thing point is inside or at the end of, or nil if there is \
-         none there.\n\n\
-         KIND is `symbol' (the default) for a run of letters, digits, `_', `-' and `*', or \
-         `filename' for those plus the characters a path is made of. Every completion source \
-         that offers names should use the same KIND: `completion-at-point' merges the sources \
-         that claim the same text, so one scanning back over a different set of characters would \
-         quietly drop out of the list.\n\n\
+pub const BOUNDS_OF_THING_AT_POINT_DOC: &str = "(bounds-of-thing-at-point &optional KIND): Return \
+         (START END) for the thing point is in or at the end of, or nil when there is none. KIND \
+         is `symbol', the default, for a run of letters, digits, _, - and *, or `filename', which \
+         takes / \\ . ~ : and + as well. A completion source of names takes its bounds from here, \
+         so that it agrees with the others.\n\n\
          Example:\n\
-         (bounds-of-thing-at-point 'symbol) => (12 18)";
+         (bounds-of-thing-at-point 'filename)";
 
 primitive!(bounds_of_thing_at_point, args, _env, ctx, {
     let wanted = args::optional_name(args.first(), "Symbol or String")?
@@ -415,18 +394,13 @@ primitive!(bounds_of_thing_at_point, args, _env, ctx, {
 // The runner
 // ---------------------------------------------------------------------------
 
-pub const COMPLETION_AT_POINT_DOC: &str = "(completion-at-point): Complete the text at point, \
-         asking this buffer's mode and then the global list what could go there.\n\n\
-         Each source is called with no arguments and answers nil, or (START END CANDIDATES). The \
-         first to answer decides which text is being completed; later sources claiming the same \
-         text have their candidates added, and ones claiming different text are passed over. The \
-         candidates are then filtered against what is already written there -- by \
-         `*completion-filter-function*' if it is bound, and by a plain prefix match if not.\n\n\
-         One candidate is inserted. Several are shown by `*completion-read-function*' if a module \
-         has bound it; with nothing bound, as much of the candidates as they all agree on is \
-         inserted and the number left is reported -- so this works with no module loaded.\n\n\
-         Example:\n\
-         (define-key nil \"C-M-i\" 'completion-at-point)";
+pub const COMPLETION_AT_POINT_DOC: &str = "(completion-at-point): Complete the text at point. The \
+         sources of the buffer's mode are asked, then the global ones: the first to answer \
+         decides which text is completed, and later ones claiming the same text add their \
+         candidates. They are matched against what is typed by `*completion-filter-function*', or \
+         from the start when it is nil. One candidate is put in; several go to \
+         `*completion-read-function*', or, when it is nil, as much as they all begin with is put \
+         in and their number shown. C-M-i.";
 
 primitive!(completion_at_point, _args, env, ctx, {
     // A new completion, so whatever the last one left for a late answer to
@@ -465,7 +439,7 @@ primitive!(completion_at_point, _args, env, ctx, {
     };
 
     let pattern = text_between(ctx, start, end);
-    let matching = match env.get_variable(FILTER_HOOK) {
+    let matching = match env.get_variable(COMPLETION_FILTER_FUNCTION) {
         Some(filter) if filter.is_truthy() => as_list(&call_callable(
             &filter,
             &[
@@ -509,7 +483,7 @@ primitive!(completion_at_point, _args, env, ctx, {
             }
         }
         count => {
-            if let Some(present) = env.get_variable(PRESENT_HOOK)
+            if let Some(present) = env.get_variable(COMPLETION_READ_FUNCTION)
                 && present.is_truthy()
             {
                 let length = ctx.with_current_buffer(|buf| buf.text.len());
@@ -553,13 +527,10 @@ primitive!(completion_at_point, _args, env, ctx, {
 });
 
 pub const COMPLETION_AT_POINT_CHOOSE_DOC: &str = "(completion-at-point-choose VALUE): Put VALUE \
-         where the text `completion-at-point' offered to complete was -- along with whatever \
-         has been typed into it since, which is what typing to narrow the candidates does. \
-         Returns VALUE.\n\n\
-         This is the symbol handed to `*completion-read-function*' as the thing to call when the \
-         user picks a candidate, so that a presenter needs to know nothing about buffers or \
-         about where the candidates came from -- the same presenter serves this and the \
-         minibuffer, which hands over `minibuffer-choose-completion' instead.";
+         in place of the text `completion-at-point' offered to complete, and of what has been \
+         typed into it since. Return VALUE, or nil when no completion is in progress. The \
+         function `*completion-read-function*' is given to call with the candidate chosen in a \
+         buffer.";
 
 primitive!(completion_at_point_choose, args, env, ctx, {
     let Some(value) = args.first().and_then(candidate_value) else {
@@ -700,22 +671,14 @@ fn fuzzy_score(pattern: &str, candidate: &str) -> Option<i64> {
     Some(score + literal - (hay.len() as i64) / 4)
 }
 
-pub const FUZZY_FILTER_DOC: &str = "(fuzzy-filter PATTERN CANDIDATES): The candidates matching \
-         PATTERN, best first.\n\n\
-         A candidate matches when PATTERN's characters occur in it in order, though not \
-         necessarily next to each other -- so \"cap\" matches `completion-at-point'. The order is \
-         by how good the match is: characters landing at word starts and characters landing \
-         next to each other both count for a lot, and a long candidate counts slightly against \
-         itself, so the tightest match comes first.\n\n\
-         Case is ignored. An empty PATTERN matches everything, in the order given -- which is \
-         what makes a freshly-opened completion strip show the whole list.\n\n\
-         A candidate may be a string or a (VALUE . DESCRIPTION) pair; the match is against \
-         VALUE, and whichever shape arrived is what comes back.\n\n\
-         This is what `*completion-filter-function*' is normally set to. Set that to something \
-         else and every completion source in the editor changes how it matches at once.\n\n\
+pub const FUZZY_FILTER_DOC: &str = "(fuzzy-filter PATTERN CANDIDATES): Return the candidates \
+         PATTERN matches, best first. A candidate matches when PATTERN's characters come in it in \
+         order, not necessarily together, case ignored; characters at the start of a word or next \
+         to each other count for more, and a longer candidate for less. An empty PATTERN keeps \
+         them all, in their order. A candidate is a string, or a (VALUE . DESCRIPTION) pair \
+         matched by VALUE.\n\n\
          Example:\n\
-         (fuzzy-filter \\\"cap\\\" '(\\\"completion-at-point\\\" \\\"copy\\\" \\\"cap\\\"))\n\
-         (setq *completion-filter-function* 'fuzzy-filter)";
+         (fuzzy-filter \"cap\" '(\"completion-at-point\" \"copy\" \"cap\"))";
 
 primitive!(fuzzy_filter, args, _env, ctx, {
     exact_arity(args, 2)?;

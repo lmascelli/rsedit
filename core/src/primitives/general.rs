@@ -27,10 +27,10 @@ primitive!(eval_file, args, env, ctx, {
     }
 });
 
-pub const SET_LOCAL_KEYMAP_DOC: &str = "(set-local-keymap MODE): Layer MODE's keymap above the \
-    current buffer's major mode and the global map, below transient maps. MODE names a \
-    registered mode, or nil to remove the layer. Syntax and hooks still use the major mode. \
-    The setting belongs to this buffer and is readable as (buffer-get 'local-keymap).";
+pub const SET_LOCAL_KEYMAP_DOC: &str = "(set-local-keymap MODE): Give the current buffer the \
+         keymap of the mode MODE, looked in after a transient keymap and before the buffer's own \
+         mode, which stays as it is; nil takes it away. Return MODE; an unknown mode is refused. \
+         (buffer-get 'local-keymap) reads it back.";
 
 primitive!(set_local_keymap, args, _env, ctx, {
     exact_arity(args, 1)?;
@@ -57,23 +57,15 @@ primitive!(set_local_keymap, args, _env, ctx, {
     Ok(args[0].clone())
 });
 
-pub const DEFINE_KEY_DOC: &str =
-    "(define-key MODE KEY COMMAND): Bind KEY (an Emacs-style key sequence \
-         string, e.g. \"C-x\" or \"<ret>\") to COMMAND. MODE is either nil, \
-         binding KEY globally, or a mode name symbol/string, binding KEY only \
-         in that major mode. COMMAND may be a symbol naming a function (which \
-         is wrapped so it is called with no arguments) or an arbitrary \
-         expression to evaluate. Returns t on success, nil (logging a \
-         diagnostic) if MODE names an unknown mode or KEY isn't a recognized \
-         key sequence.\n\n\
-         The special KEY \"<char>\" installs a character fallback: COMMAND must be a \
-         function name, lambda or nil (to remove it). It receives the unmodified character \
-         as a one-character string. Explicit bindings and prefixes win in the same map.\n\n\
-
+pub const DEFINE_KEY_DOC: &str = "(define-key MODE KEY COMMAND): Bind KEY, a key sequence such as \
+         \"C-x C-f\" or \"<ret>\", to COMMAND in the global keymap when MODE is nil, or in the \
+         keymap of the mode MODE. COMMAND is the name of a function, run with no arguments, or an \
+         expression, evaluated as written. Return t, or nil when KEY or MODE is unknown. The KEY \
+         \"<char>\" binds the characters the keymap does not: COMMAND is then a function, given \
+         the character as a string, or nil to take it away.\n\n\
          Example:\n\
-         (define-key nil \"C-n\" 'next-line)          ; global binding\n\
-         (define-key 'lisp-mode \"<ret>\" 'insert-newline) ; mode-local binding\n\
-         (define-key nil \"C-x C-s\" '(save-buffer))  ; arbitrary expression";
+         (define-key nil \"C-c l\" 'goto-line)\n\
+         (define-key 'rust-mode \"C-c d\" '(insert \"dbg!()\"))";
 
 primitive!(define_key, args, env, ctx, {
     if args.len() != 3 {
@@ -240,22 +232,11 @@ primitive!(set_echo_message, args, _env, ctx, {
     }
 });
 
-pub const REPEAT_DOC: &str = "(repeat): Run the last command again.\n\n\
-         Emacs' `C-x z'. With `repeat' given a repeat key of its own, `C-x z z z' runs it three \
-         times more -- which is what makes it worth having over pressing the original key again: \
-         the original may be a three-key sequence, and `C-x u C-x u C-x u' to undo three times is \
-         the complaint this answers.\n\n\
-         Works for every command, including ones defined later, because it re-runs the form the \
-         last command ran rather than consulting a list of which commands may be repeated. A \
-         command that prompts will prompt again: what is remembered is the command, not the \
-         answers that were given to it.\n\n\
-         Repeating `repeat' is not a thing -- it never becomes the last command, so the second \
-         press repeats what the first one did.\n\n\
-         Returns whatever the repeated command returned, or nil (reporting it) when nothing has \
-         run yet.\n\n\
+pub const REPEAT_DOC: &str = "(repeat): Run the last command again, and return what it returned. \
+         A command that asks for arguments asks again. With nothing run yet, say so and return \
+         nil. C-x z, and z after it.\n\n\
          Example:\n\
-         (define-key nil \"C-x z\" 'repeat)\n\
-         (define-repeat-key 'repeat \"z\")";
+         (define-key nil \"C-c r\" 'repeat)";
 
 primitive!(repeat, _args, env, ctx, {
     let Some(form) = ctx.last_command_form() else {
@@ -269,16 +250,12 @@ primitive!(repeat, _args, env, ctx, {
     risp::eval(&form, env.clone(), ctx)
 });
 
-pub const DEFINE_REPEAT_KEY_DOC: &str = "(define-repeat-key COMMAND KEY): Say that after COMMAND \
-         runs, pressing KEY on its own runs it again -- and offers the same again after that, \
-         until some other key is pressed.\n\n\
-         KEY is one key, written as a binding is: \"o\", \"C-o\". The offer is shown in the frame \
-         while it stands, and the key that ends it is *not* swallowed: it does whatever it \
-         ordinarily does, so ignoring the offer costs nothing.\n\n\
-         Declared rather than inferred: a rule like \"the last key of the sequence repeats\" would \
-         make `C-x C-f' followed by `f' re-open `find-file'.\n\n\
+pub const DEFINE_REPEAT_KEY_DOC: &str = "(define-repeat-key COMMAND KEY): Offer KEY, a single \
+         key, after COMMAND runs: pressing it runs COMMAND again, and offers it again. The offer \
+         shows in the echo area, and any other key ends it and does what it always does. Return \
+         t.\n\n\
          Example:\n\
-         (define-repeat-key 'other-window \"o\")   ; C-x o o o cycles windows";
+         (define-repeat-key 'kill-word \"d\")   ; M-d d d kills three words";
 
 primitive!(define_repeat_key, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -347,36 +324,13 @@ fn command_ast<B: BufferTrait>(
 }
 
 pub const SET_TRANSIENT_KEYMAP_DOC: &str = "(set-transient-keymap BINDINGS &optional MESSAGE \
-         PASS-THROUGH): Install a keymap that is consulted before every other, until one of its \
-         own bindings takes it down with `clear-transient-keymap'.\n\n\
-         With PASS-THROUGH nil -- the default -- the map **swallows every key it does not \
-         bind**. Non-nil, an unbound key is handed on to the keymaps underneath and the map \
-         stays up.\n\n\
-         BINDINGS is a list of (KEY . COMMAND) pairs, where KEY is written as a binding is -- \
-         \"n\", \"<ret>\", \"C-g\" -- and COMMAND is a symbol naming a function or an expression \
-         to evaluate. MESSAGE, if given, is shown in the frame while the map stands, so that the \
-         user can see what is being asked of them.\n\n\
-         This is for a map that is a *question*: a list of completions to pick from, a \
-         confirmation to answer. Swallowing the unbound keys is the point -- a half-finished \
-         choice must not be walked away from by pressing something unrelated, because nothing \
-         would then say it was still standing. Which is also why every such map must bind a way \
-         out, `C-g' and Escape included: nothing else can take it down.\n\n\
-         PASS-THROUGH is for the third kind: a map that is a *filter*. The completion strip \
-         binds the keys that move and choose, and lets ordinary typing through to the buffer so \
-         that it narrows the list -- which needs the key to arrive *and* the map to survive. A \
-         swallowing map could not be typed at and a dismissing one would vanish at the first \
-         letter, so neither of the other answers can be bent into it. Such a map still has to \
-         bind a way out, because nothing takes it down on its own.\n\n\
-         For the other kind of transient map -- an *offer*, like the `o' that keeps cycling \
-         windows after `C-x o' -- see `define-repeat-key', which dismisses itself the moment \
-         something else is pressed.\n\n\
+         PASS-THROUGH): Put up a keymap looked in before every other, until \
+         `clear-transient-keymap' takes it down, and return t. BINDINGS is a list of (KEY . \
+         COMMAND), written as for `define-key'; MESSAGE shows in the echo area while it stands. A \
+         key it does not bind does nothing, or, with PASS-THROUGH, goes on to the other keymaps \
+         while the keymap stays. Nothing but its own bindings takes it down.\n\n\
          Example:\n\
-         (set-transient-keymap (list (cons \"n\" 'next-candidate)\n\
-                                     (cons \"p\" 'previous-candidate)\n\
-                                     (cons \"<ret>\" 'choose-candidate)\n\
-                                     (cons \"<esc>\" 'abandon-candidates)\n\
-                                     (cons \"C-g\" 'abandon-candidates))\n\
-                               \"[n/p to move, RET to choose]\")";
+         (set-transient-keymap (list (cons \"C-g\" 'clear-transient-keymap)) \"C-g to go on\")";
 
 primitive!(set_transient_keymap, args, env, ctx, {
     if args.is_empty() || args.len() > 3 {
@@ -439,31 +393,21 @@ primitive!(set_transient_keymap, args, env, ctx, {
 });
 
 pub const CLEAR_TRANSIENT_KEYMAP_DOC: &str = "(clear-transient-keymap): Take down the keymap \
-         installed by `set-transient-keymap', so that keys reach the buffer's own bindings \
-         again. Returns t.\n\n\
-         Every command bound in such a map that ends the question -- choosing, cancelling -- \
-         has to call this. The map does not dismiss itself when one of its own bindings runs, \
-         which is what lets a map offer several keys that do not end anything.\n\n\
-         Example:\n\
-         (defun abandon-candidates () (completion--close) (clear-transient-keymap))";
+         `set-transient-keymap' put up, so that keys reach the buffer's keymaps again, and return \
+         t. The binding of that keymap that ends what it was put up for calls this: the keymap \
+         does not go by itself.";
 
 primitive!(clear_transient_keymap, _args, _env, ctx, {
     ctx.clear_transient_keymap();
     Ok(ELispExp::t())
 });
 
-pub const REGEXP_OPT_DOC: &str = "(regexp-opt WORDS): Return a regular expression matching any one \
-         of WORDS, with every character that means something to the regexp engine escaped. The \
-         group is non-capturing, so a rule wrapping it can still use group 1 for its own.\n\n\
-         In Rust rather than in a module because which characters are special is a property of \
-         the engine, not of the language being matched. A module escaping the ones it could \
-         think of is writing down a guess -- and this editor's own names are full of them: \
-         unquoted, `1+' is a pattern matching `11', `111' and every other run of ones, and \
-         `*items*' does not compile at all.\n\n\
-         What it is for is letting a mode keep **one** list of its keywords and get both its \
-         colouring and its completion out of it, rather than two copies that drift.\n\n\
+pub const REGEXP_OPT_DOC: &str = "(regexp-opt WORDS): Return a regular expression that matches \
+         any of WORDS, a list of strings or symbols, every character special to a pattern \
+         escaped, in a group that is not numbered. An empty list gives a pattern that matches \
+         nothing.\n\n\
          Example:\n\
-         (regexp-opt '(\\\"fn\\\" \\\"let\\\")) => \\\"(?:fn|let)\\\"";
+         (regexp-opt '(\"fn\" \"let\"))   ; \"(?:fn|let)\"";
 
 primitive!(regexp_opt, args, _env, _ctx, {
     exact_arity(args, 1)?;

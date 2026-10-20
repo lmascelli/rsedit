@@ -1,80 +1,169 @@
 NAME
     keymaps - how a key becomes a command
 
-DESCRIPTION
-    A key is looked for in three places, in order: the keymap a question has
-    put up, then the buffer's mode, then the global map. The first that has it
-    wins, which is why n means "down a line" in a directory listing and
-    inserts an n everywhere else.
+SYNOPSIS
+    (define-key MODE KEY COMMAND)
+    (set-local-keymap MODE)
+    (set-transient-keymap BINDINGS &optional MESSAGE PASS-THROUGH)
+    (clear-transient-keymap)
+    (define-repeat-key COMMAND KEY)
+    (repeat)
+    (key-binding KEYS)
+    (keys-with-prefix KEYS)
+    (keymap-bindings)
+    (where-is COMMAND)
+    (read-key-sequence FUNCTION)
+    (call-interactively COMMAND)
+    (commandp NAME)
+    (command-args NAME)
+    (command-specs NAME)
+    (register-command NAME SPECS)
+    *key-capture-function*
 
-    C-h k says which of the three answered, so a key that does something
-    surprising tells you what took it.
+DESCRIPTION
+    A key you press is looked up in keymaps, and what the first one that
+    binds it holds is run. They are looked in in this order:
+
+        transient   put up for a moment, by a question or an offer
+        local       given to this buffer, as vim gives one to each state
+        mode        the one of the buffer's major mode
+        global      the one that holds in every buffer
+
+    That is why n moves down a line in a directory listing and types an n
+    everywhere else. C-h k says what a key runs and which of the four it
+    came from, so a key that does something surprising tells you what took
+    it.
 
 WRITING A KEY
-    Modifiers first, then the key's name.
-
-        C-f             Control and f
-        M-f             Meta -- Alt, or Escape first -- and f
-        C-M-f           both
-        S-<tab>         Shift, for a key with no character -- a shifted
-                        letter is just the capital
+        a               the key a, and so for every character
+        C-a             Control and a
+        M-a             Meta -- Alt, or Escape pressed first -- and a
+        C-M-a           both
+        S-<tab>         Shift, for a key with no character of its own
         C-x C-f         two keys, one after the other
-        <ret> <tab>     keys with no character: also <esc>, <space>,
-                        <backspace>, <up>, <down>, <left>, <right>
 
-    A sequence is those separated by spaces. The same spelling is what the
-    editor prints back at you, so what C-h k shows you is what you can write.
+    The keys with no character are written with their names: <ret>, <tab>,
+    <esc>, <space>, <backspace>, <up>, <down>, <left> and <right>, and
+    <backtab> is another name for S-<tab>. A shifted letter is just the
+    capital, A. The modifiers combine only as written here: C-S-a and M-C-a
+    are not keys. Delete, Home, End, Page Up and Page Down and the function
+    keys have no names, because they do not reach the editor.
+
+    The editor writes keys back the same way, so what C-h k shows you is
+    what you can bind.
 
 BINDING ONE
-    In your configuration:
+        (define-key nil "C-c w" 'my-command)          ; everywhere
+        (define-key 'rust-mode "C-c b" 'my-build)     ; in Rust buffers
 
-        (define-key nil "C-c w" 'my-command)         ; everywhere
-        (define-key 'rust-mode "C-c b" 'cargo-build)  ; in one mode
+    nil is the global keymap; a mode's name binds the key only in buffers in
+    that mode. What is bound is the name of a function, run with no
+    arguments, or an expression, evaluated as written:
 
-    nil means the global map. A symbol names a mode, and the binding only
-    applies in a buffer in that mode.
+        (define-key nil "C-c d" '(insert "--"))
 
-    The command may take arguments: the editor collects them when the key is
-    pressed, so C-x C-f asks for a file name without the binding having to say
-    how. See `writing-commands'.
+    A key that names no key, or a mode that does not exist, is refused, with
+    a line in the log. The key "<char>" binds every character the keymap
+    does not bind itself, to a function given the character as a string;
+    vim's states use it.
+
+    `set-local-keymap' gives one buffer the keymap of a mode, looked in
+    before the buffer's own mode, while its mode stays what it was.
 
 PREFIXES
-    C-x, C-h, C-c, M-g, M-s, C-x r and C-x C-k are prefixes: a key after them
-    completes the sequence. Half-way through one, the echo area shows what you
-    have pressed so far, C-h lists where it goes, and C-g abandons it.
+    C-x, C-c, C-h, M-g, M-s, C-x r and C-x C-k begin longer sequences. After
+    one, the echo area shows what you have pressed so far, and the next key
+    completes the sequence or says it is undefined: C-g, which completes
+    none of them, leaves you where you were. The help key after a prefix
+    lists where it goes, as C-x C-h lists everything under C-x.
 
-    C-c is the one left mostly empty on purpose: it is where your own bindings
-    go. Three are taken -- C-c c compiles, C-c ! runs the region through a
-    shell command, C-c t lists the themes -- and the rest of the letters are
-    yours. C-x C-h and C-c C-h list what is actually there, which is a better
-    answer than this page can be.
+    C-c is the prefix left for you. The editor puts three keys in it --
+    C-c c compiles, C-c ! runs the region through a shell command, C-c t
+    lists the themes -- and C-c with any other letter is yours.
 
-QUESTIONS THAT TAKE THE KEYBOARD
-    Some things put up a keymap that is consulted before everything else: a
-    query-replace asking y or n, a completion strip offering candidates, the
-    repeat key after a command that has one.
+WHEN SOMETHING TAKES THE KEYBOARD
+    A transient keymap is put up by something waiting for a key, and it is
+    looked in before every other until it goes. There are three kinds, and
+    they differ in what a key they do not bind does:
 
-    There are two kinds. A *question* swallows keys it does not recognise, so
-    a half-finished replace cannot be walked away from by pressing something
-    unrelated -- every one of them binds an answer meaning stop, and C-g is
-    always one. An *offer* lets a key it does not recognise through, and goes
-    away: after C-x o a bare o moves to the next window, and anything else
-    does what it always did.
+        a question  nothing: a yes-or-no question asked with one key takes
+                    y and n and no other, C-g included
+        an offer    goes away, and the key does what it always does: the o
+                    after C-x o, and the questions of M-%
+        a filter    goes on to the other keymaps, and the keymap stays: the
+                    completion strip, which lets typing reach the prompt
+
+    `set-transient-keymap' puts up a question, or a filter with
+    PASS-THROUGH. Nothing takes one down but its own bindings, by calling
+    `clear-transient-keymap', so each must bind a way out.
 
 REPEATING
-    C-x z repeats the last command, and z repeats it again. Some commands
-    offer a shorter repeat of their own -- after C-x o, o.
+    C-x z runs the last command again, and z after it once more, as often as
+    you like: C-x u C-x z z undoes three times. A command that asks for its
+    arguments asks again. Some commands offer a key of their own to repeat
+    them -- o after C-x o, u after undo, r after redo -- shown in the echo
+    area while the offer stands, and any other key ends the offer and does
+    what it always does. `define-repeat-key' gives a command such a key.
+
+WHAT A KEY RUNS
+    A command is a function registered, with `register-command' or
+    `defcommand', together with the arguments it takes. A key bound to one
+    runs it through `call-interactively', which asks for the arguments in
+    prompts first, so the binding never has to say how. A function that is
+    no command is called with no arguments: any function can be bound to a
+    key, but only a command can be reached with M-x. The codes that name
+    the arguments are on the `writing-commands' page; `command-args' and
+    `command-specs' read them back.
 
 FINDING A KEY
-        C-h k           what does this key do
-        C-h b           every key in effect here
-        C-h w           where is this command bound
-        C-x C-h         where does C-x go
+        C-h k           what a key runs, and from which keymap
+        C-h b           every key in effect in this buffer
+        C-h w           which keys run a command
+        C-x C-h         what C-x goes on to
+
+    From Lisp, `key-binding' answers what keys run here, `where-is' which
+    keys run a command, `keys-with-prefix' what continues a prefix and
+    `keymap-bindings' all of them. They answer from the same lookup a key
+    press makes, in the current buffer. `read-key-sequence' hands the next
+    keys pressed to a function instead of running them, which is what C-h k
+    does: it sets `*key-capture-function*', and setting that back to nil
+    cancels it.
 
 MOVING A KEY YOU DISLIKE
-    There is nothing special about the keys the editor ships with. They are
-    `define-key' calls in a file you can read -- common-keymaps.lisp -- and a
-    line in your own configuration overrides any of them.
+    The keys the editor comes with are `define-key' calls -- in
+    common-keymaps.lisp, and in each module beside what it binds -- and a
+    line in your init.lisp rebinds any of them. A few are built in: M-x,
+    Return, the arrows and the characters that type themselves. A
+    `define-key' rebinds those as well.
+
+LIMITS
+    While a question is up, `key-binding' names what a key it refuses would
+    run without it, rather than saying the key does nothing. C-h b lists
+    the bindings of a buffer's local keymap, as vim's, among the global
+    ones, as though they held everywhere.
+
+EXAMPLES
+    A key for a command, in every buffer:
+
+        (define-key nil "C-c l" 'goto-line)
+
+    A key that inserts a separator:
+
+        (define-key nil "C-c -" '(insert "----"))
+
+    A repeat key for kill-word, so that M-d d d kills three words:
+
+        (define-repeat-key 'kill-word "d")
+
+    What C-x C-f runs, from Lisp:
+
+        (key-binding "C-x C-f")
+
+KEYS
+    C-x z                   repeat
+    C-h k                   describe-key
+    C-h b                   describe-bindings
+    C-h w                   where-is-command
 
 SEE ALSO
-    modes, configuration, getting-help, macros
+    getting-help, writing-commands, minibuffer, modes, configuration, macros

@@ -95,7 +95,7 @@ DOING THINGS BY NAME
 ASKING THE EDITOR
         C-h k           press a key, and be told what it does
         C-h f           a function, by name
-        C-h a           search everything for a word
+        C-h a           every name that matches a pattern
         C-h b           every key in effect right now
         C-h m           read a page of this manual
         C-h ?           what else C-h can do

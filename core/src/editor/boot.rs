@@ -425,6 +425,23 @@ pub fn create_global_env<B: BufferTrait>()
         MINIBUFFER_HEIGHT.into(),
         ELispExp::number(DEFAULT_MINIBUFFER_HEIGHT),
     );
+    env.set_variable(
+        crate::feature::minibuffer::HISTORY_LENGTH.into(),
+        ELispExp::number(crate::managers::DEFAULT_HISTORY_LENGTH as f64),
+    );
+
+    // How candidates are shown and matched, and where the next keys go: the
+    // editor's own way until a module sets one of these.
+    for hook in [
+        COMPLETION_READ_FUNCTION,
+        COMPLETION_FILTER_FUNCTION,
+        COMPLETION_INVALIDATED_FUNCTION,
+        COMMAND_COMPLETION_FUNCTION,
+        COMMAND_ARG_COMPLETION_FUNCTION,
+        KEY_CAPTURE_FUNCTION,
+    ] {
+        env.set_variable(hook.into(), ELispExp::nil());
+    }
 
     // What each window's status line shows.
     env.set_variable(

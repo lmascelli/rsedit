@@ -1,55 +1,30 @@
-;;; manpage --- reading manual pages, the system's and this editor's.
+;;; manpage --- reading manual pages, this editor's and the system's.
 ;;;
-;;; `K' on a word opens its page. `M-x manpage' asks for one, completing over
-;;; everything installed. rsedit's own pages are searched first, so `K' on
-;;; `insert' while writing Lisp gives you this editor's `insert' rather than
-;;; nothing at all.
+;;; C-h m asks for a page, completing over every one installed, and K opens
+;;; the page named by the word under the cursor; this editor's pages come
+;;; first. User manual: the `getting-help' page.
 ;;;
-;;; # Why `man' does the rendering
-;;;
-;;; Installed pages are gzipped troff. Rendering them means a gzip decompressor
-;;; and a troff subset, which is a project rather than a module -- and `man' is
-;;; already on any machine that has pages to read. So the module's job is to
-;;; decide *which* page, and `man' formats it.
-;;;
-;;; `manpage-path' is handed to it as MANPATH, so the variable controls what is
-;;; found as well as what is listed. A path list that only affected the
-;;; completion candidates would be the kind of half-truth that wastes an
-;;; afternoon.
-;;;
-;;; # How the formatting survives
-;;;
-;;; `man' marks bold and underline with overstrike -- `e\be' -- which is
-;;; unreadable if left in. `parse-overstrike' takes it apart into plain text and
-;;; the spans that were emphasised, and each span becomes an overlay.
-;;;
-;;; Overlays are what make this possible at all. A mode's colouring is a set of
-;;; patterns over the text, and "this word, because `man' doubled its letters"
-;;; is not a pattern -- there is nothing about the word itself to match on. The
-;;; syntax rules at the bottom still do the structural part, which patterns are
-;;; good at: a heading is a heading because it is a word alone at the left
-;;; margin. The two together give a page that reads the way it does in a
-;;; terminal, emphasis mid-sentence included.
+;;; `man' formats the system's pages, with `manpage-path' as MANPATH, so the
+;;; variable decides what is found as well as what is listed. The bold and the
+;;; underlining it marks by overstriking become overlays, and the headings are
+;;; coloured from the layout. The list of names is built in the background.
 
 (make-mode 'manpage-mode)
 
 (defconst manpage-buffer-name "*Manual*"
-  "The one buffer pages are shown in. Reading a second page replaces the first,
-the way it does in `man' itself -- a page is something you consult, not
-something you accumulate.")
+  "The one buffer pages are shown in: a second page takes the place of the
+first.")
 
-;; Where pages are looked for, and what is offered for completion. Given to
-;; `man' as MANPATH, so this is the whole answer to "which pages exist".
-;;
-;; The defaults are the usual Unix locations. On a system that keeps them
-;; somewhere else, or for a toolchain that installs its own, add to this.
-(setq manpage-path
-      (if (getenv "MANPATH")
-          (split-string (getenv "MANPATH") (path-separator))
-          '("/usr/share/man"
-            "/usr/local/share/man"
-            "/usr/local/man"
-            "/opt/local/share/man")))
+(defvar manpage-path
+  (if (getenv "MANPATH")
+      (split-string (getenv "MANPATH") (path-separator))
+      '("/usr/share/man"
+        "/usr/local/share/man"
+        "/usr/local/man"
+        "/opt/local/share/man"))
+  "The directories the system's manual pages are looked for in, given to man
+as MANPATH. It starts as the MANPATH the editor was started with, or the usual
+places when there is none.")
 
 ;; ---------------------------------------------------------------------------
 ;; Finding a page
@@ -68,11 +43,7 @@ something you accumulate.")
   (data-directory "man"))
 
 (defun manpage--rsedit-page (name)
-  "The text of rsedit's page for NAME, or nil if it has none.
-
-Searched before the system's, which is the right way round while writing rsedit
-Lisp: `insert' and `point' mean this editor's, and a name that is only a Unix
-command falls through to `man' unchanged."
+  "The text of this editor's page NAME, or nil."
   (let ((directory (manpage--rsedit-directory)))
     (if (null directory)
         nil
@@ -80,10 +51,7 @@ command falls through to `man' unchanged."
          (concat (file-name-as-directory directory) name ".txt")))))
 
 (defun manpage--system-page (name)
-  "The text of the system's page for NAME, or nil if `man' found none.
-
-MANPATH is set from `manpage-path' first, so what is rendered is what this
-module said should be searched."
+  "The text of the system's page NAME, formatted by man, or nil."
   (setenv "MANPATH" (manpage--join manpage-path (path-separator)))
   ;; Asked whether the page exists *before* asking for it. `man -w' prints the
   ;; file it would format and nothing at all when there is none, which is the
@@ -102,16 +70,9 @@ module said should be searched."
           (if (or (null text) (string= text "")) nil text)))))
 
 (defun manpage--located-p (located)
-  "Whether LOCATED is `man -w' saying it found a page.
-
-`man -w' documents itself as printing the *location* of the page it would
-format, so an answer that is a path means yes and anything else means no.
-
-Checking the shape rather than the exit status, because the status cannot be
-trusted: a system with its manuals stripped out -- a minimal container, most
-build images -- ships a stub `man' that prints an explanatory paragraph to
-standard output and exits 0 whatever it is asked. Taking that at its word gives
-a manual page whose entire content is an apology for not having manual pages."
+  "Whether LOCATED, what man -w printed, is the path of a page."
+  ;; The shape, not the exit status: a system with its manuals stripped out
+  ;; ships a man that prints an apology and exits 0 whatever it is asked.
   (and located
        (let ((trimmed (manpage--trim located)))
          (and (not (string= trimmed ""))
@@ -139,11 +100,7 @@ a manual page whose entire content is an apology for not having manual pages."
 ;; ---------------------------------------------------------------------------
 
 (defconst manpage-emphasis-priority 10
-  "Where a page's own emphasis sits among overlaps.
-
-Above nothing in particular today -- it is the only thing making overlays in a
-manual buffer. Named rather than written as a bare 10 so that whatever is added
-next has something to be higher or lower than.")
+  "The priority of the overlays a page's bold and underlining are drawn with.")
 
 (defun manpage--show (name text)
   "Put TEXT in the manual buffer as the page for NAME, emphasis and all."
@@ -171,28 +128,20 @@ next has something to be higher or lower than.")
   (message "Manual page %s" name))
 
 (defun manpage--face-for (kind)
-  "The face KIND -- `bold' or `underline' -- should be drawn in.
-
-Two faces of this module's own rather than reusing `keyword' and so on: a
-manual page's bold means "this is emphasised", not "this is a keyword", and a
-theme should be able to say so."
+  "The face the emphasis KIND, `bold' or `underline', is drawn in."
   (if (eq kind 'underline) 'manpage-underline 'manpage-bold))
 
 (defcommand manpage (name) ("sManual page: ")
-  "Show the manual page for NAME. Bound to M-x manpage.
-
-rsedit's own pages are searched before the system's, so a name that is both --
-`insert', `sort' -- gives you this editor's."
+  "Show the manual page NAME: this editor's when it has one, else the
+system's."
   (let ((text (manpage--text name)))
     (if text
         (manpage--show name text)
         (message "No manual entry for %s" name))))
 
 (defcommand manpage-at-point () nil
-  "Show the manual page for the word under the cursor. Bound to K.
-
-The thing you actually want while reading code: point at a name, press one key,
-read what it does."
+  "Show the manual page named by the word under the cursor. K in a manual
+page."
   (let ((bounds (bounds-of-thing-at-point 'symbol)))
     (if (null bounds)
         (message "No word here")
@@ -203,30 +152,16 @@ read what it does."
 ;; ---------------------------------------------------------------------------
 
 (defun manpage--strip-extensions (file)
-  "FILE without its section and compression suffixes: \"ls.1.gz\" => \"ls\".
-
-Everything from the first dot, because a page is named for a command and a
-command does not have one."
-  ;; One `string-match', not a loop over the characters.
-  ;;
-  ;; What this used to do was walk the name a character at a time asking
-  ;; `(< n (length name))' -- and `length' on a string charges per character,
-  ;; so each step cost the length of the name and the whole thing cost its
-  ;; square. Measured: 184 units for a 7-character name, 808 for a 20-character
-  ;; one. Called once per page, on a system with twenty thousand of them, that
-  ;; is ten million units spent deciding what the files are called -- the whole
-  ;; fuel budget, before anything is matched against anything.
+  "FILE without its section and compression suffixes: \"ls.1.gz\" => \"ls\"."
+  ;; One `string-match': `length' on a string charges per character, so a
+  ;; loop asking it was quadratic, and ran out of fuel on a full system.
   (let ((name (file-name-nondirectory file)))
     (if (string-match "^[^.]+" name)
         (match-string 0 name)
         name)))
 
 (defun manpage-candidates (input)
-  "Manual page names matching INPUT, best first.
-
-Walks `manpage-path' and this editor's own pages. Used both for the `manpage'
-prompt and as a completion source, which is why it takes a pattern rather than
-returning everything: the list on a full system is tens of thousands of names."
+  "Manual page names matching INPUT, best first."
   (fuzzy-filter input (manpage-names)))
 
 (setq manpage--names nil)
@@ -235,40 +170,17 @@ returning everything: the list on a full system is tens of thousands of names."
 (setq manpage--index-announce nil)
 
 (defconst manpage-index-job 'manpage-index
-  "The name the background index build runs under.
-
-Named rather than written out three times, and named at all because that is
-how a job is stopped and replaced: `(stop-worker manpage-index-job)' stops the
-build, and starting a second one under the same name retires the first instead
-of running two walks of the same directories against each other.")
+  "The name the background build of the list of pages runs under, for
+`stop-worker'.")
 
 (defun manpage-names ()
-  "Every manual page name that can be found, rsedit's first.
-
-Answered from `manpage--names', which `manpage--reindex' fills in the
-background.
-
-# Why this is cached now, having deliberately not been
-
-It used to walk on every call, on the argument that a cache is one more thing
-to invalidate. That argument was right about the cost and wrong about the
-scale: the walk itself is milliseconds, but the *names* are stripped of their
-extensions one `string-match' at a time, and a completion source is asked
-again on every keystroke and every Tab. On a system with four thousand pages
-that was three seconds per press, on the thread that draws.
-
-# What it answers while the list is still being built
-
-What there is so far. Every name in a half-built list is a real page -- the
-build appends whole directories -- so a partial answer is a short one rather
-than a wrong one, and it arrives now. The alternative is walking the tree
-here, which is the three-second pause this exists to remove, and doing it
-while a background job is part-way through doing the same thing.
-
-What is invalidated, and when, is the whole of the cost: the list is rebuilt
-when `manpage-path' is not the one it was built from. Nothing else can change
-the answer except a page appearing on disk, and `manpage-reindex' is there for
-that."
+  "Every manual page name found, this editor's first: the list the background
+build fills in, or, when nothing has been built for `manpage-path', one built
+now."
+  ;; Kept, not walked on every call: a completion source is asked on every Tab,
+  ;; and stripping thousands of names took seconds. While a build runs, what
+  ;; it has found so far is a short answer but not a wrong one, since it adds
+  ;; whole directories; the list is built again when `manpage-path' changes.
   (cond
    ;; Being built for the path in force now, and there is something to hand
    ;; out: the previous complete list until the first directory of the new
@@ -298,14 +210,9 @@ that."
           manpage-path))
 
 (defun manpage--names-in (directory)
-  "The page names in DIRECTORY and below it.
-
-`mapcar' rather than appending one name at a time: building an n-element list
-by `(setq names (append names (list one)))' copies everything gathered so far
-on every step, which is n squared units of work, and the interpreter charges
-for the walk. On a system with a real set of manual pages -- five to thirty
-thousand of them -- that did not merely go slowly, it ran out of fuel and gave
-up somewhere around 4,500 names."
+  "The page names in DIRECTORY and below it."
+  ;; `mapcar', not appending one at a time, which is quadratic and ran out of
+  ;; fuel on a system with thousands of pages.
   (mapcar 'manpage--strip-extensions
           (nth 1 (directory-files-recursive directory 20000))))
 
@@ -318,19 +225,10 @@ up somewhere around 4,500 names."
 ;; anything. See the `background' manual page for the rule.
 
 (defun manpage--index-fiber (for-path)
-  "A fiber that fills `manpage--names' for FOR-PATH, a directory at a time.
-
-One directory per `yield', which is what makes the list grow visibly rather
-than appearing whole at the end: a yield is a progress point, and the progress
-callback is what tells a prompt that has the list open that there is more of
-it. It yields `continue': the next directory as soon as the job's turn comes
-round, rather than a plain yield's pause, since there is nothing to wait for.
-
-FOR-PATH is carried rather than read from `manpage-path' each time round,
-because they can stop being the same thing: the user may set the path while
-this is running. A job never assumes the editor stood still, so this checks
-before it publishes anything and gives up if the answer it is building is no
-longer the answer to any question."
+  "A fiber that fills `manpage--names' for FOR-PATH, a directory at a time."
+  ;; One directory per yield, so that the list grows where it can be seen, and
+  ;; `continue', since there is nothing to wait for. FOR-PATH is carried: if
+  ;; `manpage-path' changes meanwhile, the build gives up.
   (fiber
    (let ((gathered nil)
          (left (manpage--directories)))
@@ -348,28 +246,14 @@ longer the answer to any question."
              (yield 'continue)))))))
 
 (defun manpage--index-progress (name)
-  "Another directory's worth of page names is in the list.
-
-NAME is the job, which is not used: there is one of these and it is this one.
-The argument is there because `background-call' hands its callbacks the name
-they ran under rather than what the job produced -- what it produced is in the
-variable, and the variable is what anybody reading it would read anyway.
-
-All this does is say that the candidates changed. What that means to whatever
-is showing them is not this module's business, and `completion-invalidate'
-reaches a completion strip without this module having to know one exists."
+  "Say that the list of pages has grown; NAME, the job's, is not used."
   (completion-invalidate))
 
 (defun manpage--index-done (name finished)
-  "The build under NAME has ended, FINISHED saying whether it reached the end.
-
-A stopped build -- one that raised, or spent its allowance -- leaves the names
-it had gathered in place and does *not* mark them complete, so the next thing
-to ask gets a fresh walk rather than a list that is short for ever.
-
-The mode keeps itself consistent with the new state, which here is three
-things: the list is complete or it is not, nothing is building any more, and
-whatever is showing candidates is told."
+  "Note that the build under NAME has ended, FINISHED saying whether it reached
+the end."
+  ;; A stopped build leaves its names but not marked complete, so that the
+  ;; next question walks again.
   (if (and finished (equal manpage--building-for manpage-path))
       (setq manpage--names-for manpage--building-for))
   (setq manpage--building-for nil)
@@ -382,14 +266,8 @@ whatever is showing candidates is told."
                      "Looking for manual pages did not finish -- see the log")))))
 
 (defun manpage--reindex ()
-  "Start building the list of page names in the background. Returns the name.
-
-Called when the module loads, so that the first `C-h m' has an answer waiting
-rather than paying for the walk itself.
-
-Starting it again while it is running replaces it, which is what should happen
-when `manpage-path' has changed: the walk in progress is of the old
-directories."
+  "Start building the list of page names in the background, and return the
+job's name. A build already running is replaced."
   ;; `manpage--names' is left alone. It is the previous answer, which is a
   ;; better thing to hand out for the moment before the first directory lands
   ;; than an empty list would be -- and `manpage--names-for' going to nil is
@@ -402,13 +280,8 @@ directories."
                    'manpage--index-done))
 
 (defun manpage--reindex-now ()
-  "Build the list here and now, and return it.
-
-For the caller that cannot wait -- `manpage-names' asked before anything has
-been built. Whatever was being built in the background is stopped first: it is
-walking the same directories to reach the same answer, and letting it finish
-would have it publish a list for the path it started with over the one built
-here."
+  "Build the list of page names here and now, and return it, stopping a build
+in the background first."
   (stop-worker manpage-index-job)
   (setq manpage--building-for nil)
   (setq manpage--names (let ((names nil))
@@ -420,17 +293,16 @@ here."
   manpage--names)
 
 (defcommand manpage-reindex () nil
-  "Look for manual pages again, in the background.
-
-For after installing something. The list is otherwise rebuilt only when
-`manpage-path' changes, since nothing else the editor can see makes it wrong."
+  "Look for manual pages again, in the background, and say how many there are
+when done: for after installing some."
   (setq manpage--index-announce t)
   (setq manpage--homes nil)
   (manpage--reindex)
   (message "Looking for manual pages..."))
 
 (defcommand manpage-prompt () nil
-  "Ask which manual page to open, completing over the ones installed."
+  "Ask for a manual page, completing over every one installed, and show it.
+C-h m."
   (minibuffer-read "Manual page:"
                    (lambda (name) (if (string= name "") nil (manpage name)))
                    'manpage-candidates
@@ -488,10 +360,8 @@ For after installing something. The list is otherwise rebuilt only when
     homes))
 
 (defun manpage-home (name)
-  "The rsedit manual page whose SYNOPSIS lists NAME, or nil.
-
-NAME is a symbol or a string. This is the page `C-h f' and `C-h v' name as the
-manual of a function or a variable."
+  "The page of this editor's manual whose SYNOPSIS lists NAME, a symbol or a
+string, or nil: the page C-h f and C-h v name."
   (if (null manpage--homes)
       (setq manpage--homes (manpage--read-homes)))
   (cdr (assoc (if (symbolp name) (symbol-name name) name) manpage--homes)))

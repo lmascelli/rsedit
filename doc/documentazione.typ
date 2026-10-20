@@ -927,6 +927,78 @@ più tra i limiti, e ognuno ha un test che fallisce senza la correzione:
 navigazione comune, e il codice di `compile.lisp` che li metteva da sé è
 stato tolto con loro.
 
+*Passo 6, fatto.* `completion`, `keymaps` e `getting-help` sono riscritte sul
+modello. La pagina nuova è `minibuffer`, che il piano non prevedeva: il
+prompt, la sua cronologia, `M-:`, l'anteprima di `C-x r t` e `minibuffer-read`
+non stavano in nessuna pagina, e in `completion` la SYNOPSIS avrebbe superato
+i cinquanta nomi. `regexp-opt` trova casa in `regexps`; `list-workers` passa
+al passo 8, con la pagina `background`, che oggi non ha una SYNOPSIS. Il
+registro `SETTINGS` documenta dieci impostazioni dell'area, con il loro
+valore all'avvio: `history-length`, `minibuffer-width`, `minibuffer-height`,
+`*minibuffer-read-function*`, `*completion-read-function*`,
+`*completion-filter-function*`, `*completion-invalidated-function*`,
+`*command-completion-function*`, `*command-arg-completion-function*` e
+`*key-capture-function*`. I loro nomi sono costanti di `editor/settings.rs`,
+che le primitive usano al posto delle copie che ciascuna teneva. `help-key`
+resta una `defvar` di `help.lisp`: il modulo la definisce e la usa, e il Rust
+la legge solo per l'aiuto a metà sequenza, che senza il modulo non c'è. Nei
+moduli `completion-window-height`, `completion-columns` e `manpage-path`
+passano da `setq` a `defvar` con docstring, e `help-history-length` da
+`defconst` a `defvar`. Le 42 docstring delle primitive dell'area e quelle dei
+sette moduli seguono il modello; le intestazioni dei moduli rimandano alle
+pagine, e i commenti di `common-keymaps.lisp` sul completamento, sui tasti,
+sulla ripetizione e sui lavori in background sono diventati rimandi.
+
+Le pagine e le docstring dell'area dicevano cose false, ora corrette:
+
+- nella striscia di completamento le frecce sinistra e destra muovono il
+  cursore nel prompt, non la selezione: la muovono su e giù, e Tab sceglie;
+- non tutti i candidati si cercano «ovunque nel nome»: i nomi dei file, e
+  quelli dei buffer chiesti da un argomento, si completano dall'inizio;
+- `C-M-i` non offre solo le parole dei buffer, ma anche i percorsi, le parole
+  chiave del modo, i nomi del Lisp e quelli dei buffer, in ogni buffer;
+- un tasto si cerca in quattro mappe, non in tre: tra quella transitoria e
+  quella del modo c'è quella locale del buffer, che vim dà ai suoi stati;
+- la domanda di `M-%` non trattiene i tasti che non conosce: è un'offerta, che
+  qualunque altro tasto chiude; una domanda a un tasto come `y-or-n` accetta
+  solo y e n, `C-g` compreso; e le mappe transitorie sono di tre tipi, con il
+  filtro della striscia;
+- `C-h a` cerca nei nomi, con un'espressione regolare, e non nelle
+  descrizioni, come dicevano anche `first-steps` e `getting-help`;
+- `K` in una pagina del manuale apre la pagina che ha il nome della parola
+  sotto il cursore, non la descrizione di una funzione;
+- la ricetta per spostare il tasto dell'aiuto non spostava `C-h m` e lasciava
+  `C-h` un prefisso, quindi non restituiva Backspace a un terminale che manda
+  `C-h`: ora ha le due righe che mancavano;
+- `minibuffer-read` e `default-minibuffer-prompt` prendono un sesto
+  argomento, la chiave della cronologia, che la firma taceva;
+- `register-command` e `command-args` elencavano quattro codici di argomento
+  su sette, e `read-key-sequence` taceva la mappa locale; `call-interactively`
+  rimandava a `read-command-args`, che non esiste;
+- gli esempi di `fuzzy-filter` e `regexp-opt` non si potevano incollare, per
+  le virgolette precedute dalla barra, e quello di `define-key` usava
+  `lisp-mode`, che non c'è; la docstring di `pending-command` aveva una fila
+  di spazi a metà frase;
+- l'intestazione di `completion.lisp` diceva che la striscia si scorre con n
+  e p: si scorre con `C-n` e `C-p`.
+
+Il passo ha trovato sei difetti del codice, che non corregge; i primi due
+sono tra i limiti di `keymaps`:
+
+- `C-h b` elenca i tasti della mappa locale di un buffer, quelli degli stati
+  di vim, sotto `Global -- everywhere`, come se valessero ovunque:
+  `help--bindings-lines` conosce solo le sorgenti transient, mode e global;
+- mentre una domanda è aperta, `key-binding` dà per un tasto che la domanda
+  rifiuta ciò che il tasto farebbe senza di lei;
+- `install-help-keys` non sposta `C-h m`, che `manpage.lisp` lega da sé, e
+  lascia legati i tasti vecchi: la pagina ora dà la ricetta intera;
+- nella striscia un candidato con una descrizione lunga riempie la sua
+  colonna e si attacca al successivo, senza spazio in mezzo;
+- `C-h f` su un comando mostra i codici grezzi dei suoi argomenti: «It asks
+  for: fFind file:»;
+- `M-:` lega `eval-expression-prompt`, che non è un comando: a
+  `M-x eval-expression-prompt` l'editor risponde che il comando non esiste.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),
@@ -934,7 +1006,7 @@ stato tolto con loro.
   [3], [scrivere e modificare (fatto)], [`editing`, `rectangles`, `macros`], [`edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`], [`indent`, `electric-pair`, `clipboard`; nuove: `indentation`, `killing`],
   [4], [file, buffer, finestre (fatto)], [`files`, `buffers`, `windows`], [`io`, `buffers`, `windows`, `ui`, `mouse`, `ask`], [`dired`, `buffer-list`; nuove: `dired`, `mouse`; le impostazioni `auto-save` e `watch-files`],
   [5], [cercare e navigare (fatto)], [`searching`, `compile`], [`isearch`, `replace`, `results`, `scan`, `match_data`], [`occur`, `compile`; nuova: `regexps`],
-  [6], [prompt, completamento, tasti, aiuto], [`completion`, `keymaps`, `getting-help`], [`minibuffer`, `completion`, `help`, `commands`, il resto di `general`], [`minibuffer`, `completion`, `completion-at-point`, `help`, `manpage`, `preview`, `common-keymaps`],
+  [6], [prompt, completamento, tasti, aiuto (fatto)], [`completion`, `keymaps`, `getting-help`], [`minibuffer`, `completion`, `help`, `commands`, il resto di `general`], [`minibuffer`, `completion`, `completion-at-point`, `help`, `manpage`, `preview`, `common-keymaps`; nuova: `minibuffer`],
   [7], [modi e aspetto], [`modes`, `themes`, `overlays`, `virtual-text`], [`modes`, `theme`, `overlays`, `virtual_text`], [`rust-mode`, `risp-mode`, `cc-mode`, `theme`],
   [8], [estendere l'editor], [`writing-commands` \ `background`], [`workers`, `shell`], [`shell`; nuova: `shell`],
   [9], [vim], [`vim`], [---], [`vim`],

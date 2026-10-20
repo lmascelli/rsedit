@@ -1,63 +1,29 @@
-;;; completion --- pick a candidate from a list, in a strip along the bottom.
+;;; completion --- the strip that shows every candidate at once.
 ;;;
-;;; An optional module. Nothing in the editor requires it: without it, Tab in a
-;;; prompt cycles through candidates one at a time, exactly as it always has.
-;;; Loading this file sets `*completion-read-function*', and from then on Tab
-;;; shows every candidate at once and lets you walk them with `n' and `p'.
-;;; Unload it -- or set that variable back to nil -- and the cycling returns.
+;;; Tab at a prompt, and C-M-i in a buffer, show the candidates in a strip
+;;; along the bottom of the frame, which typing narrows. Without this module
+;;; Tab cycles through them in the prompt. User manual: the `completion' page.
 ;;;
-;;; # What the editor knows about this
-;;;
-;;; Nothing at all. `minibuffer-complete' asks whether
-;;; `*completion-read-function*' is set; if it is, it hands over the candidate
-;;; list and the symbol `minibuffer-choose-completion', and stops. It does not
-;;; know what the presenter will do with them, and the presenter does not know
-;;; the candidates came from a prompt. That is what makes this replaceable
-;;; rather than merely configurable: a different picker is a different function
-;;; in that variable, not a patch to the editor.
-;;;
-;;; # The strip, and why it is not a floating window
-;;;
-;;; `display-buffer-at-bottom' divides the whole frame, so the strip appears
-;;; below everything and the windows above it give up the space. A float would
-;;; paint over them instead -- which is right for a prompt, whose three lines
-;;; are gone in a moment, and wrong for a list you read while comparing it
-;;; against the text underneath.
-;;;
-;;; The strip never takes focus. If it did, its buffer would become the current
-;;; one and the next keystroke would be typed into the list of suggestions
-;;; rather than into the prompt the user is still filling in.
-;;;
-;;; # Why a page rather than a scrollbar
-;;;
-;;; Only the focused window scrolls to follow its cursor, and the strip is
-;;; never focused. So instead of scrolling, the strip is *re-rendered* around
-;;; the selection: it always shows the page the selection is on. The buffer is
-;;; the viewport, which needs no scrolling machinery and cannot get out of step
-;;; with what is selected.
-;;;
-;;; # The state
-;;;
-;;; Four variables, and they are the module's own: the candidates it was given,
-;;; which one is selected, what to call with the answer, and which window it
-;;; opened. Unlike `dired', the truth is not on screen and cannot be -- the
-;;; candidate list is handed in and exists nowhere else -- so it is held here
-;;; and the buffer is a rendering of it.
+;;; The editor only calls `*completion-read-function*', which this module
+;;; sets, and the module knows nothing of where the candidates came from.
+;;; The strip never takes the focus, so typing still reaches the prompt, and
+;;; it is drawn a page at a time around the selection: the candidates are
+;;; held here, and the buffer is only a picture of them.
 
 (make-mode 'completion-mode)
 
 (defconst completion-buffer-name "*Completions*"
   "The buffer the strip shows.")
 
-;; How many rows tall the strip is. All of them show candidates: a strip has no
-;; status line, so this many rows means this many rows of completions.
-(setq completion-window-height 6)
+(defvar completion-window-height 6
+  "How many rows of candidates the strip shows.")
 
-;; How many candidates sit side by side on a row.
-(setq completion-columns 3)
+(defvar completion-columns 3
+  "How many candidates the strip shows side by side.")
 
-;; The module's own state -- see the header. Cleared when the strip closes so
-;; that a stale answer can never be delivered to a question nobody asked.
+;; The module's own state: the candidates, the one selected, what to call with
+;; the answer and the strip's window. Cleared when the strip closes, so that a
+;; stale answer never reaches a question nobody asked.
 (setq *completion--items* nil)
 (setq *completion--index* 0)
 (setq *completion--on-choose* nil)
@@ -95,30 +61,19 @@
 ;; ---------------------------------------------------------------------------
 
 (defun completion-value (item)
-  "The text ITEM completes to.
-
-An item is either a string, which is its own value, or a (VALUE . DESCRIPTION)
-pair. The bare string is what every completion source in the editor already
-produces -- file names, buffer names, command names -- so none of them had to
-change for this module to exist, and none of them has to change to gain a
-description later."
+  "The text ITEM completes to: ITEM itself, a string, or the VALUE of a
+(VALUE . DESCRIPTION) pair."
   (if (consp item) (car item) item))
 
 (defun completion-description (item)
-  "What ITEM is, or nil if it did not say.
-
-Shown after the value when there is room. Meant for what a language server
-sends alongside a completion -- a type, a signature -- which is the reason the
-pair exists at all rather than the list being plain strings."
+  "What ITEM says it is, the DESCRIPTION of a (VALUE . DESCRIPTION) pair, or
+nil."
   (if (consp item) (cdr item) nil))
 
 (defun completion--cell (item width)
-  "ITEM rendered into exactly WIDTH characters.
-
-Exactly, including the padding, because the position of every candidate in the
-buffer is worked out by arithmetic rather than by searching: a row is COLUMNS
-cells of WIDTH, so candidate N begins at a place that can be computed. A cell
-that were merely *at most* WIDTH would make every position after it a guess."
+  "ITEM in exactly WIDTH characters, cut short or padded."
+  ;; Exactly, padding included: where each candidate is in the buffer is
+  ;; computed, not searched for -- see `completion--offset'.
   (let* ((description (completion-description item))
          (text (if description
                    (concat (completion-value item) " " description)
@@ -139,11 +94,8 @@ that were merely *at most* WIDTH would make every position after it a guess."
   (* completion-window-height completion-columns))
 
 (defun completion--page-start ()
-  "The index of the first candidate on the page the selection is on.
-
-`floor' because `/' here is division and not integer division: without it the
-start of page 1 of 15 candidates is 6.6, and every position computed from it is
-between two characters."
+  "The index of the first candidate on the page the selection is on."
+  ;; `floor', because `/' divides exactly.
   (* (floor (/ *completion--index* (completion--per-page))) (completion--per-page)))
 
 (defun completion--cell-width ()
@@ -151,11 +103,8 @@ between two characters."
   (max 1 (floor (/ frame-width completion-columns))))
 
 (defun completion--offset (index)
-  "Where candidate INDEX begins, as a position in the completions buffer.
-
-Arithmetic, not a search: every row is COLUMNS cells of equal width followed by
-a newline, so the position is a multiplication. This is the whole reason
-`completion--cell' pads."
+  "Where candidate INDEX begins in the completions buffer."
+  ;; Every row is `completion-columns' cells of one width and a newline.
   (let* ((width (completion--cell-width))
          (relative (- index (completion--page-start)))
          (row (floor (/ relative completion-columns)))
@@ -193,13 +142,9 @@ a newline, so the position is a multiplication. This is the whole reason
   (completion--highlight))
 
 (defun completion--highlight ()
-  "Mark the selected candidate as the region, so it is drawn highlighted.
-
-The region rather than a marker character: a `>' in front of the selection
-would shift that cell's text by one and make it the only cell not aligned with
-its column. The region is also what the renderer already knows how to draw, in
-every window showing the buffer -- including one that is not focused, which
-this one never is."
+  "Mark the selected candidate as the region, so that it is drawn highlighted."
+  ;; The region rather than a marker character, which would push that cell
+  ;; out of its column; it is drawn in a window without the focus too.
   (if (null *completion--items*)
       nil
       (completion--highlight-selected)))
@@ -221,11 +166,8 @@ this one never is."
 ;; ---------------------------------------------------------------------------
 
 (defun completion--present (items on-choose)
-  "Show ITEMS in the strip and let the user pick one.
-
-This is what `*completion-read-function*' names, and the whole of what a
-replacement has to provide: take a list of items, and eventually call ON-CHOOSE
-with the chosen value -- or do not call it at all, if the user declined."
+  "Show ITEMS in the strip, and call ON-CHOOSE with the one chosen, if any.
+What `*completion-read-function*' names."
   (cond
    ((null items) (message "No completions"))
    ;; One candidate is not a choice. Taking it saves a keystroke and, more to
@@ -253,20 +195,10 @@ with the chosen value -- or do not call it at all, if the user declined."
         (completion--install-keys)))))
 
 (defun completion--install-keys ()
-  "Bind the keys that move and choose, and let everything else through.
-
-A *filter* map rather than a modal one, which is the whole of this module's
-behaviour as far as a user notices it. The strip used to swallow every key it
-did not bind, so a list of forty candidates could only be walked through --
-there was no way to say which one you wanted except by pressing `n' until you
-reached it. Now typing goes to the buffer or the minibuffer underneath, and
-what you type narrows the list.
-
-Passing keys on means nothing dismisses the map on its own, so the ways out
-matter more than they did: Escape and `C-g' are both bound, and both close.
-
-`C-n' and `C-p' rather than bare `n' and `p', because bare letters are exactly
-what has to reach the buffer now."
+  "Bind the keys that move and choose, and let every other key through."
+  ;; A filter: typing reaches the prompt or the buffer, and narrows the list.
+  ;; Nothing takes such a keymap down by itself, so Escape and C-g both close;
+  ;; C-n and C-p rather than n and p, which have to reach the text.
   (set-transient-keymap
    (list (cons "C-n" 'completion-next)
          (cons "C-p" 'completion-previous)
@@ -296,16 +228,9 @@ what has to reach the buffer now."
       nil))
 
 (defun completion--current-text ()
-  "The text the candidates should be matched against.
-
-The two callers put it in different places, and this is the only function that
-has to know: an in-buffer completion is matching against what has been typed
-since the completion began, and a minibuffer prompt against the whole of what
-is in the minibuffer.
-
-A strip opened by neither -- a module calling the presenter directly -- has no
-text to match against at all, and answers the empty string. It shows what it
-was given and does not narrow, which is what it did before any of this."
+  "The text the candidates are matched against."
+  ;; What has been typed since the completion began in a buffer, the whole
+  ;; prompt at a prompt, and nothing for a strip opened by neither.
   (cond
    (*completion--anchor*
     (if (>= (point) *completion--anchor*)
@@ -315,18 +240,10 @@ was given and does not narrow, which is what it did before any of this."
         (if text text "")))))
 
 (defun completion--narrow (text)
-  "Recompute the candidates for TEXT.
-
-The two callers are narrowed differently, and deliberately so.
-
-An in-buffer completion is filtered from the candidates it was opened with:
-they were computed once by asking the mode what could go at that position, and
-typing does not change what could go there -- only which of them you meant.
-
-A minibuffer prompt is *re-asked* instead. Its candidates come from
-`*minibuffer-on-change*' called with the whole input, and for `find-file' that
-input is a path: typing a `/' means the answer is now a different directory's
-entries, which no amount of filtering the old list could produce."
+  "Make the candidates those for TEXT."
+  ;; In a buffer they are filtered from the ones the strip opened with, since
+  ;; typing does not change what could go there. A prompt is asked again: for
+  ;; a path, a `/' typed means another directory's entries.
   (if *completion--anchor*
       (setq *completion--items* (fuzzy-filter text *completion--all-items*))
       (let ((fresh (if *minibuffer-on-change*
@@ -336,13 +253,10 @@ entries, which no amount of filtering the old list could produce."
         (setq *completion--items* fresh))))
 
 (defun completion--refresh ()
-  "Re-narrow the strip if what was typed has changed.
-
-Registered on `post-command-hook' for every mode, so it runs after anything the
-user does while the strip is open -- including the strip's own commands. Which
-is why it compares against the last pattern rather than simply re-narrowing:
-`C-n' is a command too, and re-narrowing after it would reset the selection to
-the first candidate and make the key appear to do nothing."
+  "Narrow the strip again when what is typed has changed. On
+`post-command-hook'."
+  ;; Compared with the last text, because the strip's own C-n is a command
+  ;; too, and narrowing after it would put the selection back at the top.
   (if *completion--window*
       (cond
        ;; Backspaced past where the completion began. There is no longer a word
@@ -368,21 +282,10 @@ the first candidate and make the key appear to do nothing."
                   (completion--draw))))))))
 
 (defun completion-reconsider ()
-  "Ask for the candidates again and redraw the strip, if one is open.
-
-Registered on `*completion-invalidated-function*', so this is what
-`completion-invalidate' reaches -- and a module whose candidates are built in
-the background calls that without knowing this file exists.
-
-Different from `completion--refresh', which is the *typing* case: it asks
-whether what was typed has changed and does nothing when it has not. Here
-nothing was typed and the answer has changed anyway, because the list the
-candidates came from grew while the strip was showing them.
-
-The selection is kept where it is rather than reset to the first candidate.
-Everything the strip was offering is still being offered -- a list only grows
-this way -- so moving the selection would be taking the user back to the top
-of a list they were part-way down, for no reason they could see."
+  "Ask for the candidates again and redraw the strip, when one is open,
+keeping the selection. What `completion-invalidate' reaches, through
+`*completion-invalidated-function*'."
+  ;; Unlike `completion--refresh', nothing was typed: the list grew.
   (if *completion--window*
       (let ((text (completion--current-text)))
         (completion--narrow text)
@@ -403,7 +306,7 @@ of a list they were part-way down, for no reason they could see."
   (completion--move -1))
 
 (defun completion--move (step)
-  "Move the selection by STEP, and redraw if that crossed onto another page."
+  "Move the selection by STEP, and redraw when that turns the page."
   (let* ((total (length *completion--items*))
          ;; Nothing to move through, and `mod' by zero is an error rather than
          ;; a no-op. Reachable by pressing `C-n' while "No matches" is up.
@@ -424,10 +327,8 @@ of a list they were part-way down, for no reason they could see."
         (completion--draw))))
 
 (defun completion-choose ()
-  "Take the selected candidate and put the question away.
-
-With nothing matching there is nothing to take, and the strip stays up: what
-you have typed is still in the buffer, and one backspace brings the list back."
+  "Take the selected candidate and close the strip; with nothing matching, say
+so and leave it open."
   (if (null *completion--items*)
       (message "No matches")
       (completion--choose-selected)))
@@ -443,14 +344,12 @@ you have typed is still in the buffer, and one backspace brings the list back."
     (funcall on-choose chosen)))
 
 (defun completion-abandon ()
-  "Put the question away without answering it."
+  "Close the strip without taking a candidate."
   (completion--close))
 
 (defun completion--close ()
-  "Take down the strip, the keymap and the state, in that order.
-
-All three, every time, through one function -- so that there is no way to end
-this that leaves the keyboard captured by a window that is no longer there."
+  "Take down the strip, its keymap and its state."
+  ;; All three, every time, so that no way out leaves the keys captured.
   (if *completion--window* (delete-window *completion--window*))
   (setq *completion--window* nil)
   (setq *completion--items* nil)
@@ -465,44 +364,24 @@ this that leaves the keyboard captured by a window that is no longer there."
 ;; Taking over
 ;; ---------------------------------------------------------------------------
 ;;
-;; The one line that makes any of this run. Everything above is reachable
-;; without it -- `completion--present' can be called directly -- and setting
-;; this back to nil restores the cycling the editor does on its own.
+;; The line below is what makes any of this run; setting the variable back to
+;; nil brings back the cycling the editor does on its own.
 
 (defconst completion-minibuffer-name "*Minibuffer*"
-  "The buffer a minibuffer prompt reads into.
-
-Named here because `completion--current-text' has to read what is in it, and a
-literal repeated in two modules is one rename away from being wrong in one of
-them.")
+  "The buffer a prompt reads into, whose text the strip narrows by.")
 
 (setq *completion-read-function* 'completion--present)
 
-;; And how a module says the candidates have changed underneath it. The same
-;; arrangement as the line above: the editor calls this if it is set and does
-;; nothing if it is not, so `completion-invalidate' is safe to call from a
-;; module that has never heard of this one.
+;; How a list built in the background tells the strip it has grown.
 (setq *completion-invalidated-function* 'completion-reconsider)
 
-;; How candidates are narrowed, everywhere at once. `completion-at-point'
-;; consults this before presenting, and the strip uses the same function as you
-;; type, so the two agree by construction rather than by being kept in step.
+;; How candidates are matched, in a buffer and as the strip narrows alike.
 (setq *completion-filter-function* 'fuzzy-filter)
 
-;; The refresh, for every mode. Registered globally -- `add-hook' with nil --
-;; because what the buffer's major mode happens to be has nothing to do with
-;; whether a completion strip is open in front of it, and registering this in
-;; each mode separately would work until somebody defined a mode afterwards.
+;; For every mode: a strip can be open in front of any buffer.
 (add-hook nil "post-command-hook" 'completion--refresh)
 
-
-;; M-x, matched the same way everything else is.
-;;
-;; `command-completions' narrows by prefix, which is the right default with no
-;; module loaded and the wrong one once fuzzy matching exists: `M-x cap' should
-;; find `completion-at-point', and by prefix it finds nothing. The seam for
-;; this already existed -- M-x asks `*command-completion-function*' and only
-;; falls back to the prefix version when it is unset.
+;; M-x, matched as everything else is, so that M-x cap finds capitalize-word.
 (defun completion-commands-fuzzy (pattern)
   "Command names matching PATTERN, best first."
   (fuzzy-filter pattern (all-commands)))

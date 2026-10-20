@@ -3,20 +3,6 @@
 # page, in the step of doc/documentazione.typ for its area; the list only
 # shrinks.
 
-# -- passo 6: prompt, completamento, tasti, aiuto
-# lisp/manpage.lisp
-manpage-names
-# primitives/completion.rs
-fuzzy-filter
-# primitives/general.rs
-set-transient-keymap
-# primitives/help.rs
-read-key-sequence
-# primitives/minibuffer.rs
-completion-invalidate
-minibuffer-complete
-minibuffer-read
-
 # -- passo 7: modi e aspetto
 # primitives/modes.rs
 add-hook

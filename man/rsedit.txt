@@ -20,7 +20,7 @@ MODULES
     debug                message, and the *Messages* buffer
     common-keymaps       the default bindings
     indent               what Tab does; a mode plugs its own rule in
-    minibuffer           commands built on the built-in prompt
+    minibuffer           M-:, an expression evaluated at a prompt
     rust-mode            colouring for Rust
     risp-mode            colouring and indentation for rsedit's own Lisp
     cc-mode              colouring for C and C++
@@ -58,7 +58,7 @@ FINDING YOUR WAY
 
 SEE ALSO
     guide, first-steps, editing, killing, files, searching, getting-help,
-    completion, keymaps, modes, configuration, diagnostics,
+    completion, minibuffer, keymaps, modes, configuration, diagnostics,
     writing-commands, buffers, windows, dired, mouse, overlays, compile,
     regexps, themes, background, indentation, rectangles, virtual-text,
     macros, vim

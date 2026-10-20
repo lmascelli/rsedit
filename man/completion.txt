@@ -1,60 +1,178 @@
 NAME
-    completion - Tab, and finishing what you started typing
+    completion - Tab, M-x, and finishing what you started typing
+
+SYNOPSIS
+    (minibuffer-complete)
+    (minibuffer-choose-completion VALUE)
+    (completion-invalidate)
+    (command-execute-prompt)
+    (execute-extended-command NAME)
+    (command-completions PREFIX)
+    (all-commands)
+    (completion-at-point)
+    (completion-at-point-choose VALUE)
+    (add-completion-function MODE FUNCTION)
+    (set-completion-functions MODE FUNCTIONS)
+    (completion-functions &optional MODE)
+    (bounds-of-thing-at-point &optional KIND)
+    (buffer-words &optional BUFFER MINIMUM)
+    (fuzzy-filter PATTERN CANDIDATES)
+    (capf-file-name)
+    (capf-mode-keywords)
+    (capf-symbols)
+    (capf-buffer-names)
+    (capf-buffer-words)
+    (completion-value ITEM)
+    (completion-description ITEM)
+    (completion-next)
+    (completion-previous)
+    (completion-choose)
+    (completion-abandon)
+    (completion-reconsider)
+    (completion-commands-fuzzy PATTERN)
+    completion-window-height
+    completion-columns
+    completion-buffer-name
+    completion-minibuffer-name
+    *completion-read-function*
+    *completion-filter-function*
+    *completion-invalidated-function*
+    *command-completion-function*
+    *command-arg-completion-function*
 
 DESCRIPTION
-    Tab at a prompt completes. What it offers depends on what is being asked
-    for: a file name completes over the directory, a buffer name over the
-    buffers, a command name over the commands, a manual page over the pages.
+    Tab at a prompt completes what you have typed: a file name over the
+    files of its directory, a buffer name over the buffers, a command's
+    name over the commands, a manual page over the pages. When more than
+    one candidate is left, a strip along the bottom of the frame shows them
+    all, and what you go on typing narrows it. C-M-i does the same in an
+    ordinary buffer, for the word the cursor is in.
 
-    With the completion module loaded -- it is, unless you took it out -- Tab
-    shows every candidate at once in a strip across the bottom rather than
-    cycling through them one at a time.
+    M-x asks for the name of a command and runs it: every command can be
+    reached this way, the many with no key among them.
 
-        <tab>           show the candidates
-        C-n  C-p        move through them
-        <left> <right>  the same
-        <ret>           take the one selected
-        C-g             put the strip away
+THE STRIP
+        <tab>           at a prompt, show the candidates
+        C-n  <down>     select the next one
+        C-p  <up>       select the one before
+        <ret>  <tab>    take the one selected
+        <esc>  C-g      put the strip away
 
-    Typing narrows the strip as you go. Backspacing widens it again.
+    The strip opens with the first candidate selected, and moving past
+    either end goes round to the other. A single candidate is taken at once,
+    with no strip, and none at all says No completions. Taking one at a
+    prompt puts it in the prompt; Return then answers.
 
-MATCHING THE MIDDLE
-    Candidates match anywhere in the name, not only at the start, and are
-    ordered by how well they match. M-x cap finds capitalize-word; M-x rect
-    finds the rectangle commands. This is what makes M-x usable without
-    remembering which word a command's name starts with.
+    Every other key goes to the prompt or the buffer, and the strip follows
+    what you type: it narrows as you type, Backspace widens it again, and
+    with nothing left it says No matches until you do. In a buffer,
+    backspacing past the start of the word puts it away. M-p and M-n still
+    walk the prompt's history while the strip is up. It shows
+    `completion-window-height' rows of `completion-columns' candidates, a
+    page at a time, with a candidate's description after its name where
+    there is one.
 
-IN A BUFFER RATHER THAN A PROMPT
-    C-M-i -- also M-<tab> -- completes the word you are typing in an ordinary
-    buffer, from the words already in it and in your other buffers. There is
-    no index and nothing to keep up to date; it reads what is there.
+WHAT MATCHES
+    At M-x, C-x b, C-h f, C-h v, C-h w and C-h m, and for C-M-i, what you
+    type matches anywhere in a name, and the candidates come best first:
+    the letters must appear in order, and count for more at the start of a
+    word and next to each other. M-x cap finds capitalize-word first, and
+    M-x rect the rectangle commands. Case is ignored.
 
-WHAT ASKS FOR WHAT
-    A command declares what its arguments are, and the editor collects them:
-    a file name, a buffer name, a line number, a string, the region. So a
-    command bound to a key and the same command from M-x ask the same
-    questions in the same way, and a command you write gets the same prompts
-    for nothing. See `writing-commands'.
+    A file name is completed from its start, one directory at a time, and
+    so is a buffer name a command asks for: Tab after src/ma offers the
+    files of src whose names begin with ma. A file whose name begins with a
+    dot is offered only once the dot is typed.
 
-HISTORY
-    A prompt remembers what you typed into it before.
+RUNNING A COMMAND BY NAME
+    M-x, the name and Return run a command, asking for its arguments as its
+    key would. A name that is no command says No such command.
+    `all-commands' lists every one there is.
 
-        C-p  M-p        the previous thing
-        C-n  M-n        the next
-        <up> <down>     the same
+IN A BUFFER
+        C-M-i  M-<tab>  complete the word the cursor is in
 
-    Each kind of prompt has its own history, so file names and search terms
-    do not get mixed up.
+    C-M-i asks a list of sources what could go where the cursor is: the
+    buffer's major mode's own sources first, then these, in this order:
+
+        capf-file-name      a path, when the cursor is in one: /usr/sh
+        capf-mode-keywords  the keywords of the buffer's language
+        capf-symbols        the names of Lisp functions, macros and
+                            variables
+        capf-buffer-names   the names of the buffers
+        capf-buffer-words   the words, three letters or more, written in
+                            any buffer
+
+    The first source with something to offer decides which text is being
+    completed, and the later ones that agree add their candidates: a path
+    and a word are different text, so inside a path only file names are
+    offered. In a manual page the pages' names come first. One candidate is
+    put in at once, and several open the strip. Without the strip, as much
+    as the candidates all begin with is put in, and the echo area says how
+    many there are.
+
+    The Lisp names and the words of every buffer are offered in any buffer,
+    not only in Lisp; `set-completion-functions' takes a source out.
+
+WRITING A SOURCE
+    A source is a function of no arguments, called with its buffer current
+    and the cursor where it is. It returns nil when it has nothing to offer,
+    or (START END CANDIDATES): the positions of the text it would replace,
+    and a list of strings or of (VALUE . DESCRIPTION) pairs. It offers
+    everything that could go there; what has been typed is matched against
+    the candidates afterwards. A source of words takes START and END from
+    `bounds-of-thing-at-point', so that it agrees with the others on where
+    the word is. `add-completion-function' adds one, for a mode or for every
+    buffer.
 
 REPLACING THE STRIP
-    The strip is a module and the editor works without it -- Tab then cycles
-    through candidates in the prompt itself. Anything that sets
-    `*completion-read-function*' takes over presenting candidates, and the
-    minibuffer neither knows nor cares what it does with them.
+    The strip is the completion module. Without it, Tab at a prompt puts the
+    first candidate in, and each Tab after it the next one.
+
+    Whatever shows the candidates is the function `*completion-read-function*'
+    names: it is called with the candidates and a function to call with the
+    one chosen, `minibuffer-choose-completion' at a prompt and
+    `completion-at-point-choose' in a buffer. How they are matched against
+    what is typed is `*completion-filter-function*', which the module sets
+    to `fuzzy-filter'; nil matches the start. M-x asks
+    `*command-completion-function*' for its candidates, and nil asks
+    `command-completions', which matches the start too.
+    `*command-arg-completion-function*', when set, completes every argument
+    a command asks for, called with the kind of argument -- file, buffer,
+    string or number -- and what is typed.
+
+    A list of candidates built in the background calls
+    `completion-invalidate' as it grows, and the strip shows the longer list
+    at once: the list of manual pages works this way.
+
+EXAMPLES
+    A taller strip, with two columns:
+
+        (setq completion-window-height 10)
+        (setq completion-columns 2)
+
+    Leave the Lisp names out of C-M-i:
+
+        (set-completion-functions nil '(capf-file-name capf-mode-keywords
+                                        capf-buffer-names capf-buffer-words))
+
+    A source offering three colours for the word at the cursor:
+
+        (defun capf-colours ()
+          (let ((bounds (bounds-of-thing-at-point)))
+            (if bounds
+                (list (nth 0 bounds) (nth 1 bounds)
+                      '("crimson" "cyan" "cornflower")))))
+        (add-completion-function nil 'capf-colours)
+
+    Match from the start, as the editor does without the module:
+
+        (setq *completion-filter-function* nil)
 
 KEYS
+    M-x                     command-execute-prompt
     C-M-i                   completion-at-point
     M-<tab>                 completion-at-point
 
 SEE ALSO
-    first-steps, files, writing-commands
+    minibuffer, keymaps, files, buffers, first-steps

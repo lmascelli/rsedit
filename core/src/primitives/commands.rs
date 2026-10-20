@@ -9,14 +9,9 @@
 //! Lisp versus a resumable state machine in Rust.
 use super::*;
 use crate::commands::ArgSpec;
+use crate::editor::{COMMAND_ARG_COMPLETION_FUNCTION, COMMAND_COMPLETION_FUNCTION};
 use crate::primitives::args;
 use risp::call_callable;
-
-/// A Lisp function of (KIND PREFIX) returning completion candidates, consulted
-/// before the built-in ones. Unset by default; bind it to replace how any
-/// argument completes, the same way `*minibuffer-read-function*` replaces the
-/// prompt itself.
-const COMPLETION_HOOK: &str = "*command-arg-completion-function*";
 
 /// Read a command name from an argument that may be a symbol or a string, so
 /// `(commandp 'find-file)` and `(commandp "find-file")` both work -- M-x has a
@@ -30,16 +25,13 @@ fn spec_to_lisp<B: BufferTrait>(spec: &ArgSpec) -> ELispExp<B> {
     ])
 }
 
-pub const REGISTER_COMMAND_DOC: &str = "(register-command NAME SPECS): Register NAME (a symbol or \
-         string) as a command the user can run with M-x or bind to a key. SPECS is a list of \
-         Emacs-style argument codes, one per argument the editor should collect: \"sPROMPT\" \
-         reads a string, \"nPROMPT\" a number, \"bPROMPT\" a buffer name with completion, and \
-         \"fPROMPT\" a file name with completion. A command taking no arguments registers with \
-         nil.\n\n\
-         The function itself is an ordinary function, defined however you like -- registering \
-         only records that it may be invoked by name. Re-registering a name replaces its specs.\n\n\
+pub const REGISTER_COMMAND_DOC: &str = "(register-command NAME SPECS): Make the function NAME a \
+         command, which M-x reaches and a key collects the arguments of, and return t. SPECS has \
+         one code for each argument -- \"sPROMPT\" a string, \"nPROMPT\" a number, \"bPROMPT\" a \
+         buffer's name, \"fPROMPT\" a file's, \"p\" the prefix count, \"P\" the raw prefix, \"r\" \
+         the region, which is two -- or is nil. Codes that do not fit the function's parameters \
+         are refused.\n\n\
          Example:\n\
-         (register-command 'find-file '(\"fFind file: \"))\n\
          (register-command 'save-buffer nil)";
 
 primitive!(register_command, args, env, ctx, {
@@ -99,11 +91,10 @@ primitive!(register_command, args, env, ctx, {
     Ok(ELispExp::t())
 });
 
-pub const COMMANDP_DOC: &str = "(commandp NAME): Return t if NAME (a symbol or string) names a \
-         command -- something the user can run with M-x -- and nil otherwise.\n\n\
+pub const COMMANDP_DOC: &str = "(commandp NAME): Return t when NAME, a symbol or a string, names \
+         a command, and nil otherwise.\n\n\
          Example:\n\
-         (commandp 'find-file) => t\n\
-         (commandp 'car)       => nil";
+         (commandp 'find-file)   ; t";
 
 primitive!(commandp, args, _env, ctx, {
     exact_arity(args, 1)?;
@@ -113,11 +104,11 @@ primitive!(commandp, args, _env, ctx, {
 });
 
 pub const COMMAND_ARGS_DOC: &str = "(command-args NAME): Return the arguments the editor collects \
-         for command NAME, as a list of (KIND PROMPT) pairs where KIND is one of the symbols \
-         string, number, buffer or file. Returns nil both for a command taking no arguments and \
-         for a name that is not a command -- use `commandp' to tell those apart.\n\n\
+         for the command NAME, as a list of (KIND PROMPT), KIND being one of string, number, \
+         buffer, file, count, raw-count and region; nil for a command with none and for a name \
+         that is no command.\n\n\
          Example:\n\
-         (command-args 'find-file) => ((file \"Find file: \"))";
+         (command-args 'find-file)   ; ((file \"Find file: \"))";
 
 primitive!(command_args, args, _env, ctx, {
     exact_arity(args, 1)?;
@@ -129,10 +120,8 @@ primitive!(command_args, args, _env, ctx, {
     ))
 });
 
-pub const ALL_COMMANDS_DOC: &str = "(all-commands): Return the names of every registered command, \
-         as a sorted list of strings. This is what M-x completes over.\n\n\
-         Example:\n\
-         (all-commands) => (\"find-file\" \"next-line\" ...)";
+pub const ALL_COMMANDS_DOC: &str = "(all-commands): Return the names of every command, sorted, as \
+         strings: what M-x completes over.";
 
 primitive!(all_commands, _args, _env, ctx, {
     Ok(ELispExp::proper_list(
@@ -143,18 +132,13 @@ primitive!(all_commands, _args, _env, ctx, {
     ))
 });
 
-pub const CALL_INTERACTIVELY_DOC: &str = "(call-interactively COMMAND): Run COMMAND (a symbol or \
-         string) the way a key press or M-x would: collect the arguments named by its \
-         registration, then call it with them.\n\n\
-         Every key bound to a bare command invocation goes through here, which makes this the \
-         single place to observe or advise command execution.\n\n\
-         A command taking no arguments -- or a function that was never registered -- is simply \
-         called with none, so binding an ordinary Lisp function to a key keeps working. \
-         Otherwise the arguments are collected by `read-command-args', which prompts for them \
-         one at a time; because the minibuffer delivers its input on a later keystroke, COMMAND \
-         runs after this call has already returned.\n\n\
+pub const CALL_INTERACTIVELY_DOC: &str = "(call-interactively COMMAND): Run COMMAND as a key \
+         press would: ask for the arguments its registration names, one prompt at a time, then \
+         call it with them. A function that is no command is called with no arguments. A command \
+         with arguments to ask for runs after this returns, when the last prompt is answered, and \
+         one that takes the region is refused when there is none.\n\n\
          Example:\n\
-         (call-interactively 'find-file)   ; prompts, then opens the file";
+         (call-interactively 'find-file)";
 
 primitive!(call_interactively, args, env, ctx, {
     exact_arity(args, 1)?;
@@ -332,7 +316,7 @@ primitive!(command_arg_complete, args, env, ctx, {
     };
 
     // A Lisp override, if one is bound, decides for every kind.
-    if let Some(hook) = env.get_variable(COMPLETION_HOOK)
+    if let Some(hook) = env.get_variable(COMMAND_ARG_COMPLETION_FUNCTION)
         && hook.is_truthy()
     {
         return call_callable(
@@ -393,8 +377,7 @@ primitive!(all_buffer_names, _args, _env, ctx, {
 });
 
 pub const EXECUTE_EXTENDED_COMMAND_DOC: &str = "(execute-extended-command NAME): Run the command \
-         named NAME, or report that there is no such command. This is what M-x calls once the \
-         user has typed a name and pressed Return.\n\n\
+         NAME as M-x does, asking for its arguments, or say No such command when it is none.\n\n\
          Example:\n\
          (execute-extended-command \"save-buffer\")";
 
@@ -415,11 +398,11 @@ primitive!(execute_extended_command, args, env, ctx, {
     call_interactively(&[ELispExp::string(name)], env, ctx)
 });
 
-pub const COMMAND_COMPLETIONS_DOC: &str = "(command-completions PREFIX): Return the command names \
-         starting with PREFIX. This is what M-x completes over; rebind \
-         *command-completion-function* to complete differently.\n\n\
+pub const COMMAND_COMPLETIONS_DOC: &str = "(command-completions PREFIX): Return the names of the \
+         commands that begin with PREFIX: what M-x completes with, unless \
+         `*command-completion-function*' names another function.\n\n\
          Example:\n\
-         (command-completions \"save-\") => (\"save-buffer\")";
+         (command-completions \"save-\")";
 
 primitive!(command_completions, args, _env, ctx, {
     let prefix = match args.first() {
@@ -435,20 +418,14 @@ primitive!(command_completions, args, _env, ctx, {
     ))
 });
 
-/// A Lisp function of one argument returning M-x completion candidates.
-/// Unset by default; bind it for fuzzy matching or any other policy.
-const MX_COMPLETION_HOOK: &str = "*command-completion-function*";
-
-pub const COMMAND_EXECUTE_PROMPT_DOC: &str = "(command-execute-prompt): Prompt for a command name \
-         with completion, then run it. This is M-x.\n\n\
-         Bound to M-x by default. The completion candidates come from \
-         `command-completions' unless *command-completion-function* is bound to something else.";
+pub const COMMAND_EXECUTE_PROMPT_DOC: &str = "(command-execute-prompt): Ask for the name of a \
+         command, completing it, and run it. M-x.";
 
 primitive!(command_execute_prompt, _args, env, ctx, {
     let reader = env
         .get_function("minibuffer-read")
         .ok_or_else(|| EvalError::UndefinedFunction("minibuffer-read".into()))?;
-    let completer = match env.get_variable(MX_COMPLETION_HOOK) {
+    let completer = match env.get_variable(COMMAND_COMPLETION_FUNCTION) {
         Some(hook) if hook.is_truthy() => hook,
         _ => ELispExp::primitive(command_completions, None),
     };
@@ -465,16 +442,11 @@ primitive!(command_execute_prompt, _args, env, ctx, {
     )
 });
 
-pub const PENDING_COMMAND_DOC: &str = "(pending-command): The name of the command whose arguments          are being collected, as a string, or nil when none is.\n\n\
-         A command declared with arguments is run in two halves: the prompt goes up, and the \
-         command runs when it has been answered. This is how anything watching can tell which \
-         command the prompt in front of it belongs to -- which is what a preview needs, since it \
-         has to show what *that* command would do and nothing else.\n\n\
-         A fact about the editor rather than about any particular command: nothing here knows \
-         which commands are worth previewing, and a preview asks about the one it cares about by \
-         name.\n\n\
+pub const PENDING_COMMAND_DOC: &str = "(pending-command): Return the name of the command whose \
+         arguments a prompt is asking for, or nil when none is: how a preview knows which \
+         command's prompt is open.\n\n\
          Example:\n\
-         (if (equal (pending-command) \"string-rectangle\") (my-preview))";
+         (equal (pending-command) \"string-rectangle\")";
 
 primitive!(pending_command, _args, _env, ctx, {
     Ok(match ctx.pending_progress() {

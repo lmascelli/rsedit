@@ -19,7 +19,6 @@ buffer-changed
 syntax-changed
 
 # Modes, named by make-mode
-dired-mode
 minibuffer-mode
 occur-mode
 shell-output-mode
@@ -31,13 +30,11 @@ isearch
 bold
 class
 close
-continue
 escape
 filename
 indent-function
 invalid-regexp
 max-ms
-nil
 open
 overlay
 prefix
@@ -56,12 +53,9 @@ highlighter
 monochrome-theme
 
 # Words, patterns and names given as examples
-*items*
-and/
 car*
 
 # Programs
 man
-sort
 
 # Emacs's names, where the text compares the two
