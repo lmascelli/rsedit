@@ -1,0 +1,237 @@
+name: Release archives
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUSTUP_TOOLCHAIN: "1.99.0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            rustflags: ""
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            rustflags: "-C target-feature=+crt-static"
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            rustflags: ""
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            rustflags: ""
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      TARGET: ${{ matrix.target }}
+      RUSTFLAGS: ${{ matrix.rustflags }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" \
+            --profile minimal --target "$TARGET"
+
+      - name: Check version
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          metadata = json.loads(subprocess.check_output(
+              ["cargo", "metadata", "--locked", "--no-deps",
+               "--format-version", "1"],
+              text=True,
+          ))
+          package = next(
+              p for p in metadata["packages"] if p["name"] == "rsedit"
+          )
+          label = "v" + package["version"]
+
+          if os.environ["GITHUB_REF_TYPE"] == "tag":
+              if os.environ["GITHUB_REF_NAME"] != label:
+                  raise SystemExit(
+                      "Il tag deve corrispondere alla versione: " + label
+                  )
+          else:
+              label += "-" + os.environ["GITHUB_SHA"][:12]
+
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write("RELEASE_LABEL=" + label + "\n")
+          PY
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev
+
+      - name: Run workspace tests
+        if: runner.os == 'Linux'
+        env:
+          NO_COLOR: ""
+        run: cargo test --locked --workspace --target "$TARGET"
+
+      - name: Build executable
+        run: |
+          cargo build --locked --release \
+            --target "$TARGET" --bin rsedit
+
+      - name: Create and verify archive
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import tempfile
+
+          target = os.environ["TARGET"]
+          windows = "windows" in target
+          executable = "rsedit.exe" if windows else "rsedit"
+          name = "rsedit-" + os.environ["RELEASE_LABEL"] + "-" + target
+          build = Path("target") / target / "release"
+          bundle = Path("package") / name
+
+          bundle.mkdir(parents=True)
+          shutil.copy2(build / executable, bundle / executable)
+          shutil.copytree(build / "data", bundle / "data")
+
+          for document in ["LICENSE", "README.md"]:
+              shutil.copy2(document, bundle / document)
+
+          def check_data(root):
+              groups = [
+                  ("core/lisp", "lisp", "*.lisp"),
+                  ("themes", "themes", "*.lisp"),
+                  ("man", "man", "*.txt"),
+              ]
+              for source, destination, pattern in groups:
+                  files = list(Path(source).glob(pattern))
+                  if not files:
+                      raise RuntimeError("Risorse mancanti: " + source)
+                  for source_file in files:
+                      packaged = root / "data" / destination / source_file.name
+                      if packaged.read_bytes() != source_file.read_bytes():
+                          raise RuntimeError(
+                              "Risorsa non corretta: " + str(packaged)
+                          )
+
+          check_data(bundle)
+          Path("dist").mkdir()
+
+          archive = Path(shutil.make_archive(
+              str(Path("dist") / name),
+              "zip" if windows else "gztar",
+              root_dir="package",
+              base_dir=name,
+          ))
+
+          with tempfile.TemporaryDirectory() as temporary:
+              shutil.unpack_archive(str(archive), temporary)
+              extracted = Path(temporary) / name
+              check_data(extracted)
+              subprocess.run(
+                  [str(extracted / executable), "--help"],
+                  cwd=temporary,
+                  check=True,
+                  timeout=30,
+              )
+
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          archive.with_name(archive.name + ".sha256").write_text(
+              digest + "  " + archive.name + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rsedit-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Create draft release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: rsedit-*
+          merge-multiple: true
+          path: dist
+
+      - name: Attach archives to draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd dist
+
+          checksums=(*.sha256)
+          if [ "${#checksums[@]}" -ne 4 ]; then
+            echo "Mancano archivi di una o più piattaforme." >&2
+            exit 1
+          fi
+
+          cat "${checksums[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+          if is_draft="$(gh release view "$RELEASE_TAG" \
+            --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$is_draft" != true ]; then
+              echo "Release già pubblicata: usa un nuovo tag." >&2
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" \
+              --verify-tag --draft \
+              --title "$RELEASE_TAG" --generate-notes
+          fi
+
+          archives=(*.tar.gz *.zip)
+          gh release upload "$RELEASE_TAG" \
+            "${archives[@]}" SHA256SUMS --clobber
