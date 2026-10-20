@@ -2,12 +2,3 @@
 # limit came in. Each is shortened, and what it explains moved to a manual
 # page, in the step of doc/documentazione.typ for its area; the list only
 # shrinks.
-
-# -- passo 8: estendere l'editor
-# primitives/shell.rs
-parse-overstrike
-shell-command-start
-shell-command-to-string
-# primitives/workers.rs
-background-call
-define-worker

@@ -5,6 +5,7 @@
 //! editor's WorkManager, in [`crate::work`]; this is the door Lisp comes
 //! through.
 use super::*;
+use crate::editor::WORKER_FUEL;
 use crate::modes::highlighter::TURN_INTERVAL;
 use crate::primitives::lisp_job::{Body, DEFAULT_WORKER_FUEL, LispJob};
 use crate::work::{Class, OptionError, Place};
@@ -66,37 +67,16 @@ fn start<B: BufferTrait>(
     }
 }
 
-pub const DEFINE_WORKER_DOC: &str = "(define-worker NAME FIBER &optional INTERVAL): Run FIBER in \
-         the background, a step at a time, until it finishes.\n\n\
-         FIBER is a `fiber' -- see `yield'. Each step resumes it once, so a worker is written as \
-         a loop that says where it is willing to be put down, and what it yields says when it \
-         wants its next step:\n\n\
-         \x20 (define-worker 'symbol-index\n\
-         \x20   (fiber (while t\n\
-         \x20            (if (index-stale-p)\n\
-         \x20                (progn (index-one-chunk) (yield 'continue))\n\
-         \x20              (yield '(wait buffer-changed))))))\n\n\
-         \x20 (yield)                    wait INTERVAL milliseconds, 40 if not given\n\
-         \x20 (yield 'continue)          go on as soon as its turn comes round again\n\
-         \x20 (yield '(sleep MS))        wait MS milliseconds\n\
-         \x20 (yield '(wait TOPIC...))   wait for one of the TOPICs: see `emit-event'\n\
-         \x20 (yield '(wait-at-most MS TOPIC...))\n\
-         \x20                            for one of the TOPICs, or MS milliseconds at most\n\n\
-         Any other value waits INTERVAL, as `(yield)' does, and a list that starts like one of \
-         these and is not one stops the worker with a message saying so. The topics of a wait \
-         are the worker's until a later wait names others, so `(wait)' keeps them. The editor \
-         emits `buffer-changed' when the text of a buffer changes and `syntax-changed' when a \
-         grammar or a syntax table does.\n\n\
-         Defining a worker under a name that already has one *replaces* it: the old one stops \
-         before its next step. That is what makes re-evaluating a module safe -- without it, \
-         loading a file twice would leave two copies of its worker running against each other. \
-         Names are shared with `background-call' and with the editor's own work, which \
-         `work-list' shows.\n\n\
-         A step gets its own execution budget, `worker-fuel', which is separate from the one \
-         commands run under: nothing the user does can cut a step short. A step that runs past \
-         its own budget is stopped, and the worker with it, because a worker that never \
-         reaches a `yield' holds the thread syntax colouring runs on.\n\n\
-         Returns NAME.";
+pub const DEFINE_WORKER_DOC: &str = "(define-worker NAME FIBER &optional INTERVAL): Run FIBER, a \
+         `fiber', in the background under NAME, a step at a time for as long as it goes on, and \
+         return NAME. Each `yield' says when the next step comes: (yield) after INTERVAL \
+         milliseconds, 40 unless given; (yield 'continue) at the next turn; (yield '(sleep MS)) \
+         after MS; (yield '(wait TOPIC...)) when `emit-event' emits one of the TOPICs; (yield \
+         '(wait-at-most MS TOPIC...)) at whichever comes first. A worker defined under a name in \
+         use replaces what ran under it. An error, or a step that spends all its `worker-fuel', \
+         stops the worker, and the log says why.\n\n\
+         Example:\n\
+         (define-worker 'my-ticker (fiber (while t (my-tick) (yield '(sleep 1000)))))";
 
 primitive!(define_worker, args, env, ctx, {
     if !(2..=3).contains(&args.len()) {
@@ -124,17 +104,13 @@ primitive!(define_worker, args, env, ctx, {
     Ok(start(ctx, "define-worker", &name, job))
 });
 
-pub const STOP_WORKER_DOC: &str = "(stop-worker NAME): Stop the work in the background called \
-         NAME: a worker, a job started with `background-call', or any of the editor's own work \
-         that `work-list' shows. Returns t if there was one, nil otherwise.\n\n\
-         A job stops at the end of the step it is taking, or before its next one. Nothing waits \
-         for that: waiting would block the thread you are typing on until the job got round to \
-         it, which is the arrangement this whole mechanism exists to avoid.\n\n\
-         A job stopped this way does not call its ON-DONE, and the callbacks it had queued are \
-         dropped. It was not done -- it was stopped -- and whoever stopped it is on the thread \
-         that would have been told.\n\n\
-         The editor's own work stops just the same, and does not come back until the editor is \
-         started again: stopping `highlighter' stops syntax colouring.";
+pub const STOP_WORKER_DOC: &str = "(stop-worker NAME): Stop the background work called NAME at \
+         the end of the step it is taking, and return t; nil when nothing runs under NAME. NAME \
+         is any name `work-list' shows: a worker, a job of `background-call', the editor's own \
+         work, or a shell command by the name of its buffer. A job stopped does not call its \
+         ON-DONE, and the editor's own work stays stopped until the editor starts again.\n\n\
+         Example:\n\
+         (stop-worker \"*Shell Output*\")";
 
 primitive!(stop_worker, args, _env, ctx, {
     let name = required_name(args.first())?;
@@ -144,13 +120,11 @@ primitive!(stop_worker, args, _env, ctx, {
     Ok(ELispExp::boolean(ctx.work().cancel_named(&name)))
 });
 
-pub const RUNNING_WORKERS_DOC: &str = "(running-workers): The names of the workers and \
-         background jobs started from Lisp that are still running, as a sorted list of \
-         strings.\n\n\
-         The part of `work-list' that Lisp started; `work-list' shows the editor's own work as \
-         well. One list for workers and jobs because there is one namespace: `define-worker' \
-         and `background-call' name what they start in the same place, so that a name means \
-         one thing and `stop-worker' stops whichever it is.";
+pub const RUNNING_WORKERS_DOC: &str = "(running-workers): Return the names of the workers and the \
+         jobs started from Lisp that are still running, as a sorted list of strings. `work-list' \
+         shows the editor's own work as well.\n\n\
+         Example:\n\
+         (member \"my-index\" (running-workers))";
 
 primitive!(running_workers, _args, _env, ctx, {
     let running: HashSet<_> = ctx.work().jobs().into_iter().map(|job| job.id).collect();
@@ -177,55 +151,18 @@ fn worker_fuel<B: BufferTrait>(env: &std::sync::Arc<Env<EditorState<B>>>) -> u32
     }
 }
 
-/// The name of the Lisp variable holding one step's execution budget.
-pub const WORKER_FUEL: &str = "worker-fuel";
-
 pub const BACKGROUND_CALL_DOC: &str = "(background-call NAME JOB &optional ON-PROGRESS ON-DONE \
-         INTERVAL): Do JOB in the background under the name NAME, and return NAME at once \
-         without waiting for it.\n\n\
-         This is how anything that may take longer than a frame is started. JOB is either a \
-         function of no arguments -- called once, in the background -- or a `fiber', which is \
-         resumed a step at a time and is the shape to use when the work can be done in \
-         pieces:\n\n\
-         \x20 (background-call 'manpage-index\n\
-         \x20                  (fiber (let ((left manpage-path))\n\
-         \x20                           (while left\n\
-         \x20                             (manpage--index-one (car left))\n\
-         \x20                             (setq left (cdr left))\n\
-         \x20                             (yield 'continue))))\n\
-         \x20                  'manpage--index-progress\n\
-         \x20                  'manpage--index-done)\n\n\
-         A `while' and not a `dolist': a `yield' is legal only where the evaluator can record \
-         a way back to it, which is a body statement or a form of a `while'. A `dolist' body \
-         is not one, and a yield there is refused -- so a fiber walks its own list. What a \
-         fiber yields says when it wants its next step, as for `define-worker': the \
-         `(yield 'continue)' above goes on as soon as its turn comes round, where `(yield)' \
-         would wait INTERVAL first.\n\n\
-         ON-PROGRESS is called with NAME after every step but the last, so each `yield' in a \
-         fiber is a progress point and a plain function has none. ON-DONE is called once, with \
-         NAME and t if the job reached its end or nil if it failed -- an error, or a step that \
-         spent its allowance -- because a mode that is never told stays waiting for ever. It \
-         is not called for a job stopped with `stop-worker' or replaced by another of the same \
-         name: whoever did that knows already.\n\n\
-         Both run on the thread that runs commands, *between* commands, and so may do anything \
-         a command may do. The job itself may not: it runs while you are typing, and the editor \
-         it can see is in whatever state the command in progress has left it in. So a job \
-         computes and stores; a callback is where the mode is told, and the mode is what keeps \
-         itself consistent with what it is told.\n\n\
-         Neither callback is given what the job produced. They are given the name it ran under, \
-         and look the rest up -- because between the step that produced something and the \
-         callback that reports it the user may have killed the buffer, changed the variable, or \
-         started the same job again.\n\n\
-         Starting a job under a name that already has one *replaces* it: the old job stops \
-         before its next step, and whatever callbacks it had already queued are dropped rather \
-         than delivered against the new job's state. That is what makes re-evaluating a module, \
-         or pressing the same key twice, safe. `stop-worker' stops a job and `running-workers' \
-         lists one -- jobs and workers share a namespace, and a name cannot be both.\n\n\
-         INTERVAL is how many milliseconds a plain `(yield)' waits, 40 if not given. It means \
-         nothing for a job that is a plain function, which has one step.\n\n\
-         Each step gets `worker-fuel' to spend, separately from the budget commands run under. \
-         A step that runs past it is stopped and the job fails, because a step that never ends \
-         holds the thread syntax colouring runs on.";
+         INTERVAL): Run JOB in the background under NAME, and return NAME at once. JOB is a \
+         function of no arguments, called once, or a `fiber', resumed a step at a time as \
+         `define-worker' resumes one. ON-PROGRESS is called with NAME after each step but the \
+         last, and ON-DONE with NAME and t when JOB reached its end, or nil when it failed; both \
+         run between commands. A job started under a name in use replaces the one running, whose \
+         callbacks are then not called. INTERVAL is how many milliseconds a plain (yield) waits: \
+         40 unless given.\n\n\
+         Example:\n\
+         (defvar my-sum nil)\n\
+         (defun my-done (name ok) (message \"%s finished: %s\" name ok))\n\
+         (background-call 'my-sum (lambda () (setq my-sum (my-slow-sum))) nil 'my-done)";
 
 primitive!(background_call, args, env, ctx, {
     if !(2..=5).contains(&args.len()) {
@@ -294,20 +231,12 @@ fn optional_callback<B: BufferTrait>(
     }
 }
 
-pub const EMIT_EVENT_DOC: &str = "(emit-event TOPIC): Say that something TOPIC stands for has \
-         changed, waking every worker or background job waiting for it. TOPIC is a symbol or a \
-         string. Returns nil.\n\n\
-         A topic carries nothing: it says \"go and look\", and a job woken by it looks at \
-         whatever it was waiting to see change. So a mode tells its worker there is work \
-         without handing it any, and a burst of emissions is one wake-up:\n\n\
-         \x20 (emit-event 'my-mode-refresh)\n\
-         \x20 (define-worker 'my-mode-indexer\n\
-         \x20   (fiber (while t\n\
-         \x20            (my-mode-reindex)\n\
-         \x20            (yield '(wait my-mode-refresh buffer-changed)))))\n\n\
-         A waiting job takes its step `event-delay' milliseconds after the first emission it \
-         has not seen: see `work-option'. The editor emits `buffer-changed' and \
-         `syntax-changed' itself.";
+pub const EMIT_EVENT_DOC: &str = "(emit-event TOPIC): Wake every worker and job waiting for \
+         TOPIC, a symbol or a string, and return nil. A topic carries nothing: the job it wakes \
+         looks for itself at what changed, and emissions that come together wake it once. The \
+         editor emits buffer-changed and syntax-changed itself.\n\n\
+         Example:\n\
+         (emit-event 'my-index-stale)";
 
 primitive!(emit_event, args, _env, ctx, {
     exact_arity(args, 1)?;
@@ -316,19 +245,12 @@ primitive!(emit_event, args, _env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const WORK_OPTION_DOC: &str = "(work-option NAME): The value of NAME, an option of the \
-         scheduler that runs the background work. Signals an error for a name that is not one; \
-         `work-options' lists them with their values.\n\n\
-         \x20 high-steps      colouring steps in a row before any other job gets one: 4\n\
-         \x20 event-delay     milliseconds from an emission to the step it wakes: 20\n\
-         \x20 long-step       a step longer than this many milliseconds is logged: 40\n\
-         \x20 late-high       colouring kept waiting longer than this, in ms, is logged: 40\n\
-         \x20 late-normal     any other job kept waiting longer than this is logged: 200\n\
-         \x20 stuck-step      a thread slower to stop than this, in ms, is logged: 1000\n\
-         \x20 busy-share      a second busier than this many percent is logged: 50\n\
-         \x20 summary-every   milliseconds between two summaries of one report: 10000\n\
-         \x20 watchdog-every  milliseconds between two looks of the watchdog: 250\n\n\
-         `set-work-option' changes one.";
+pub const WORK_OPTION_DOC: &str = "(work-option NAME): Return the value of NAME, an option of the \
+         scheduler that runs the background work, or signal an error when there is no option of \
+         that name. `work-options' lists them with their values, and the `background' page says \
+         what each does.\n\n\
+         Example:\n\
+         (work-option 'high-steps)";
 
 primitive!(work_option, args, _env, ctx, {
     exact_arity(args, 1)?;
@@ -341,13 +263,12 @@ primitive!(work_option, args, _env, ctx, {
     }
 });
 
-pub const SET_WORK_OPTION_DOC: &str = "(set-work-option NAME VALUE): Set NAME, an option of \
-         the scheduler that runs the background work, to VALUE, a whole number. It counts from \
-         the scheduler's next step. Returns VALUE.\n\n\
-         Signals an error, and changes nothing, for a name that is not an option or a value \
-         outside what the option accepts; the message gives the range. See `work-option' for \
-         what each one does. It works from init.lisp as well:\n\n\
-         \x20 (set-work-option 'high-steps 6)";
+pub const SET_WORK_OPTION_DOC: &str = "(set-work-option NAME VALUE): Set NAME, an option of the \
+         scheduler that runs the background work, to VALUE, a whole number, and return VALUE; it \
+         counts from the scheduler's next step. Signal an error, and change nothing, when there \
+         is no such option or it does not take VALUE: the message says what it takes.\n\n\
+         Example:\n\
+         (set-work-option 'high-steps 6)";
 
 primitive!(set_work_option, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -372,9 +293,11 @@ primitive!(set_work_option, args, _env, ctx, {
     }
 });
 
-pub const WORK_OPTIONS_DOC: &str = "(work-options): Every option of the scheduler that runs \
-         the background work, with its value, as a property list: (high-steps 4 event-delay 20 \
-         ...). See `work-option' for what each one does.";
+pub const WORK_OPTIONS_DOC: &str = "(work-options): Return every option of the scheduler that \
+         runs the background work, with its value, as a property list: (high-steps 4 event-delay \
+         20 ...). `work-option' reads one, and `set-work-option' sets one.\n\n\
+         Example:\n\
+         (work-options)";
 
 primitive!(work_options, args, _env, ctx, {
     exact_arity(args, 0)?;
@@ -392,20 +315,14 @@ primitive!(work_options, args, _env, ctx, {
     ))
 });
 
-pub const WORK_LIST_DOC: &str = "(work-list): Everything running in the background -- the \
-         editor's own work as well as Lisp's -- as a list of property lists, one each:\n\n\
-         \x20 ((name \"highlighter\" kind job class high state waiting\n\
-         \x20   steps 1204 total-ms 412 max-ms 38) ...)\n\n\
-         A job has a `class' -- high for what the user is waiting to see, colouring and the \
-         prescanner, normal for the rest -- and a `state': ready, running, sleeping or \
-         waiting. `steps' is how many steps it has taken, `total-ms' how long they took \
-         together and `max-ms' how long the longest did. The figures are brought up to date \
-         whenever the scheduler runs out of work, and every tenth of a second while it is \
-         busy.\n\n\
-         A thread of its own has `kind thread', a `state' of running or stopping, and \
-         `running-ms', how long it has been running.\n\n\
-         `running-workers' is the part of this list that Lisp started, and `stop-worker' stops \
-         anything in it by name.";
+pub const WORK_LIST_DOC: &str = "(work-list): Return everything in the background, the editor's \
+         own work as well as Lisp's, as a list of property lists, one each. A job's gives its \
+         name, kind job, class high or normal, state ready, running, sleeping or waiting, and \
+         steps, total-ms and max-ms: how many steps it has taken, how long they took and how long \
+         the longest did. A thread's, such as a shell command's, gives its name, kind thread, \
+         state running or stopping, and running-ms.\n\n\
+         Example:\n\
+         (mapcar (lambda (work) (nth 1 work)) (work-list))";
 
 primitive!(work_list, args, _env, ctx, {
     exact_arity(args, 0)?;

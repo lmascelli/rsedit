@@ -20,7 +20,8 @@ DESCRIPTION
     init.lisp is this editor's own Lisp, which is close enough to Emacs
     Lisp to read and is not the same language. M-: evaluates one
     expression without restarting, which is how you try a line before
-    keeping it.
+    keeping it; what it defines does not stay, as the `minibuffer' page
+    says.
 
 WHERE THE FILES ARE
     The configuration directory is the first of these that applies:

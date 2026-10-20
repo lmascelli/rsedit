@@ -101,6 +101,13 @@ REPLACING THE PROMPT
     `minibuffer-complete', and closing it runs `minibuffer-cleanup', which
     makes the buffer you were in current again.
 
+LIMITS
+    What M-: defines lasts only as long as the expression: a defun, a
+    defvar or a defcommand evaluated there, and what a file loaded there
+    with eval-file defines, are gone once it returns. A variable that has
+    a value already is set as asked. The `writing-commands' page says how
+    to load definitions again in a running editor.
+
 EXAMPLES
     A narrower prompt:
 

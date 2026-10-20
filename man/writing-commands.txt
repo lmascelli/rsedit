@@ -1,33 +1,48 @@
 NAME
     writing-commands - when a setting is not enough
 
+SYNOPSIS
+    (defcommand NAME PARAMS SPECS &rest BODY)
+    (string-prefix-p PREFIX S)
+    (string-suffix-p SUFFIX S)
+
 DESCRIPTION
-    A command is a function the editor knows how to ask for the arguments of.
-    That is the whole of the difference: an ordinary function you call from
-    Lisp, and a command you can also reach from M-x and bind to a key.
+    A command is a function the editor knows how to ask the arguments of.
+    That is the whole of the difference: a function is called from Lisp,
+    and a command can be run with M-x and put on a key as well.
 
         (defcommand insert-date () nil
           "Insert today's date."
-          (insert (shell-command-to-string "date +%Y-%m-%d")))
+          (insert (substring (shell-command-to-string "date +%Y-%m-%d")
+                             0 -1)))
 
-    Then M-x insert-date works, C-h f insert-date shows that description, and
+    After that M-x insert-date inserts the date at point, C-h f
+    insert-date shows the string, and
 
         (define-key nil "C-c d" 'insert-date)
 
-    puts it on a key.
+    puts it on a key. The `substring' takes off the newline date prints
+    after the date. A definition like this goes in init.lisp, or in a file
+    of your own that init.lisp loads with `eval-file'.
 
-ARGUMENTS
-    A command says what its arguments are and the editor collects them. One
-    code per parameter:
+THE ARGUMENTS
+    SPECS has a code for each parameter, and the editor collects the
+    arguments before the command runs:
 
-        "sPROMPT"       a string
-        "nPROMPT"       a number
-        "bPROMPT"       a buffer name, with completion
-        "fPROMPT"       a file name, with completion
-        "p"             the numeric prefix argument -- C-u 5 and so on
-        "r"             the region, as two arguments
+        "sPROMPT"   a string, as typed
+        "nPROMPT"   a number
+        "bPROMPT"   the name of a buffer, completed from those there are
+        "fPROMPT"   the name of a file, completed from the disk
+        "p"         the prefix argument as a count: 1 without one, 4
+                    after C-u, 5 after C-u 5, -1 after C-u -
+        "P"         the prefix argument as typed: nil without one, (4)
+                    after C-u, 5 after C-u 5, the symbol - after C-u -
+        "r"         the region, as two arguments: where it begins, and
+                    where it ends
 
-    So:
+    Those with a PROMPT ask for their arguments in turn, each in a prompt
+    that names the command; p, P and r ask nothing. nil for SPECS is a
+    command with no arguments.
 
         (defcommand surround (before after) ("sBefore: " "sAfter: ")
           "Put BEFORE and AFTER around the region."
@@ -35,95 +50,120 @@ ARGUMENTS
             (goto-char end) (insert after)
             (goto-char start) (insert before)))
 
-    nil means a command with no arguments. The editor checks the codes against
-    the parameters when the command is defined, so the two cannot drift apart.
+    The codes are checked when the command is defined, not when it runs: a
+    code the editor does not know, a prompt after p, P or r, or codes that
+    give more or fewer values than there are parameters, r giving two, is
+    an error then. A command that takes the region does not run when the
+    mark is not set.
 
-    Calling a command from Lisp is a plain call and prompts for nothing, which
-    is what makes commands usable as building blocks.
+    From Lisp a command is a function like any other, and asks for
+    nothing: (surround "<" ">") puts the two around the region. To ask, as
+    M-x does, call it with `call-interactively'; `register-command' makes a
+    command of a function defined with `defun'. The `keymaps' page has
+    both.
 
-WHAT YOU HAVE TO WORK WITH
-    C-h a is the real answer, but the shapes are these.
+WHAT A COMMAND WORKS WITH
+    C-h a finds a function by a part of its name, and C-h f says what it
+    does. The ones a command reaches for most, and the pages that have
+    them:
 
-    Where you are, and moving:
+        (point)  (goto-char POS)  (goto-line N)          editing
+        (insert TEXT)  (delete-region FROM TO)           editing
+        (buffer-string)  (buffer-substring FROM TO)      buffers
+        (current-buffer)  (switch-to-buffer NAME)        buffers
+        (region-beginning)  (region-end)  (mark)         killing
+        (message FORMAT ARG...)  (log TEXT)              diagnostics
 
-        (point)  (goto-char N)  (point-min)  (point-max)
-        (line-number-at-point)  (goto-line N)
-        (beginning-of-line)  (end-of-line)  (forward-char N)
+    And two of this page's own, for the names of buffers and files:
+    `string-prefix-p' says whether a string begins with another, and
+    `string-suffix-p' whether it ends with one.
 
-    Reading and changing text:
+        (string-suffix-p ".rs" (buffer-file-name))
 
-        (buffer-substring FROM TO)  (buffer-string)  (current-line)
-        (insert TEXT)  (delete-region FROM TO)
+    is t in a buffer visiting a Rust file, and nil in one visiting none.
 
-    The selection:
+ASKING SOMETHING ELSE
+    A question that is not one of the arguments is asked with
+    `minibuffer-read', or with `y-or-n' and `yes-or-no' for a yes or a no:
+    the `minibuffer' and `files' pages have them. They return before the
+    answer comes, and give it to a function of yours, because a prompt
+    does not stop the editor: it goes on drawing while you type.
 
-        (region-beginning)  (region-end)  (mark)  (set-mark)
-
-    Buffers:
-
-        (current-buffer)  (buffer-name)  (all-buffer-names)
-        (switch-to-buffer NAME)  (with-current-buffer NAME FUNCTION)
-
-    Saying something:
-
-        (message "format %s" value)   in the echo area
-        (log "...")                   in the message buffer
-
-ASKING A QUESTION
-    `minibuffer-read' puts up a prompt and calls you back:
-
-        (minibuffer-read "Which? " 'on-confirm 'on-change 'on-cancel)
-
-    ON-CHANGE, if given, is asked for completion candidates. A command with
-    argument codes does not need this -- the editor does it for you -- and
-    this is for a question that is not an argument.
-
-    `yes-or-no' asks a yes-or-no question the same way. Both return before the
-    answer arrives, because a prompt is a conversation and not a pause: the
-    editor keeps drawing, and your work carries on in the callback.
-
-MARKING SOMETHING
-    Colouring is patterns over the text and cannot say "this span, because of
-    something that happened". An overlay can:
+MARKING TEXT
+    A command that has found something shows where with an overlay, a
+    face on one span of text, and takes its marks away again by naming
+    their category:
 
         (make-overlay START END 'error 10 'my-checker)
         (remove-overlays 'my-checker)
 
-    The last argument is a category, and clearing by category is how a
-    producer replaces its own marks without keeping a handle for each. See
-    `overlays'.
-
-    To show text that is *not* in the buffer -- a hint, a preview -- see
-    `virtual-text'.
+    Text shown and not in the buffer is virtual text. The `overlays' and
+    `virtual-text' pages have both.
 
 WORK THAT TAKES TIME
-    Anything that might take longer than a frame does not belong on the thread
-    that draws. One call starts it:
+    A command runs while the editor waits for it, so a command that may
+    take long hands its work to the background, with `background-call',
+    and shows the result from a function called when the work is done. A
+    program is run with `shell-command-start', which shows what it prints
+    as it comes. The `background' and `shell' pages have them.
 
-        (background-call 'my-index (fiber ...) 'on-progress 'on-done)
-
-    and the two callbacks run between commands, where it is safe to change
-    what a mode is showing. See `background', which states the rule the whole
-    editor follows for this.
-
-    `shell-command-start' runs a program and appends its output as it arrives,
-    each on a thread of its own.
-
-AT A MOMENT
+WHEN SOMETHING HAPPENS
         (add-hook nil "post-command-hook" 'my-function)
         (add-hook 'rust-mode "post-self-insert-hook" 'my-function)
 
-    nil means every mode. post-self-insert-hook runs after a character is
-    typed; post-command-hook after every command.
+    The first calls my-function after every command, in any mode; the
+    second after every key that types itself, in Rust buffers. The `modes'
+    page lists the hooks.
 
-TRYING IT
-    M-: evaluates an expression. C-h e shows everything the editor has said,
-    including the backtrace of anything that failed. A function redefined with
-    M-: takes effect at once, so the loop is: change the file, evaluate the
-    definition, press the key.
+TRYING IT OUT
+    M-: evaluates an expression and says what it returned, so a command
+    can be tried before it has a key, as (surround "<" ">") is. A
+    definition does not outlast the expression, as the `minibuffer' page
+    says, and a defcommand evaluated there leaves M-x a command it cannot
+    run. So a command being written goes in a file of your own, which
+    init.lisp loads as the `configuration' page says, and a key loads the
+    file again:
+
+        (define-key nil "C-c r" '(eval-file "mine"))
+
+    Each C-c r puts the file's functions and commands in place of those
+    before, though a defvar leaves the value its variable has, so the way
+    to work is: change the file, press C-c r, try the command.
+    C-h e shows the log, where a command that failed says why; with
+    debug-on-error set, a failure opens its backtrace as well.
+
+LIMITS
+    An answer to "n" that is not a number reaches the command as 0, and
+    so does no answer: the prompt does not ask again.
+
+EXAMPLES
+    How many characters the region holds:
+
+        (defcommand count-region (start end) ("r")
+          "Say how many characters the region holds."
+          (message "%d characters" (- end start)))
+
+    A command that uses the prefix argument, so that C-u 3 C-c i inserts
+    three stars:
+
+        (defcommand insert-stars (n) ("p")
+          "Insert N stars."
+          (dotimes (i n) (insert "*")))
+        (define-key nil "C-c i" 'insert-stars)
+
+    Ask for a buffer and say what mode it is in:
+
+        (defcommand buffer-mode (name) ("bBuffer: ")
+          "Say what major mode the buffer NAME is in."
+          (message "%s is in %s" name (major-mode name)))
+
+    Whether the current buffer is the output of a shell command:
+
+        (string-prefix-p "*Shell Output*" (current-buffer))
 
 KEYS
     M-:                     eval-expression-prompt
 
 SEE ALSO
-    configuration, keymaps, overlays, virtual-text, background
+    keymaps, configuration, background, shell, overlays, virtual-text,
+    minibuffer, modes, diagnostics

@@ -1,0 +1,137 @@
+NAME
+    shell - running a command, and reading what it printed
+
+SYNOPSIS
+    (shell-command COMMAND)
+    (shell-command-on-region)
+    (shell-command-kill)
+    (shell-command-start COMMAND &optional MODE)
+    (shell-command-to-string COMMAND)
+    (shell-command-running-p)
+    (parse-overstrike TEXT)
+    shell-output-window-height
+
+DESCRIPTION
+    M-! asks for a command and runs it, and what the command prints appears
+    in a strip along the bottom of the frame as it comes. The cursor stays
+    where it was, and you go on working while the command runs: a long
+    build, or a tail -f that never ends, keeps nothing else waiting. C-c !
+    runs the region as a command, for one that is already written down --
+    in a README, in a comment, in the output of another.
+
+    The command goes to the shell as it is written, /bin/sh -c on Unix and
+    cmd /C on Windows, so pipes, redirection and quoting mean what they
+    mean at a prompt. It runs in the directory the editor was started in.
+
+THE OUTPUT
+    Each command has a buffer of its own: *Shell Output*, and then
+    *Shell Output*<2> for one started while the first is still there. Its
+    first line is the command, after a $, and its last says how it ended:
+
+        --- exited 0 ---        it worked
+        --- exited 3 ---        it failed, with that code
+        --- killed ---          it was stopped, or a signal ended it
+        --- could not be waited for: WHY ---
+                                the system could not say how it ended
+
+    What the command prints and what it complains about arrive together,
+    in the order it wrote them, and bytes that are not UTF-8 are shown as
+    a replacement character. The command has nothing to read: what it asks
+    is answered by the end of its input.
+
+    The buffer is read-only. In it n and p move a line, g and G go to its
+    beginning and to its end, and q closes its window. The buffer stays
+    when its window goes, for C-x b to come back to, until it is closed.
+
+STOPPING ONE
+    C-c C-k in the output stops its command, and so does closing the
+    buffer. The command, and everything it started, is asked to stop, and
+    is stopped outright two seconds later if it has not; the buffer ends
+    with --- killed ---. Where the command has ended already, C-c C-k
+    says so and does nothing.
+
+    A command that is running is in (work-list), as a thread named after
+    its buffer, and (stop-worker NAME) with that name stops it from
+    anywhere, as C-c C-k does. The `background' page has both.
+
+FROM LISP
+    `shell-command' is what M-! runs. `shell-command-start' runs COMMAND
+    without showing its output, and returns the name of the buffer it goes
+    to at once; MODE is that buffer's major mode, shell-output-mode unless
+    given. compile runs its builds so, in compilation-mode. When there is
+    no shell to run, both say why and return nil.
+
+    `shell-command-to-string' runs COMMAND and returns what it printed,
+    newline and all. What it complains about is left out, and how it ended
+    makes no difference. It waits for the command to end, and the editor
+    waits with it, so it is for a command that answers at once.
+
+    `shell-command-running-p' says how many commands are running, or nil
+    when none is.
+
+    `parse-overstrike' reads the text man prints for a terminal, where a
+    letter in bold is printed, then a backspace, then printed again, and
+    an underlined one is an underscore, a backspace and the letter. It
+    returns (PLAIN SPANS): the text without them, and a list of (START END
+    bold) and (START END underline), counted in characters from the start
+    of PLAIN, from 0.
+
+LIMITS
+    Each M-! opens a strip of its own along the bottom, under those
+    already there, rather than showing its output in the strip of the
+    command before: in a frame of thirty rows the third leaves a single row
+    to the window you were working in. q in a strip closes it.
+
+    A command that asks for a password at the terminal, as sudo and ssh
+    may, cannot be given one: the system stops it as it asks, and it waits
+    there until C-c C-k.
+
+    A daemon the command starts leaves its process group, and is not
+    stopped with it. One that keeps the output it was given keeps the
+    buffer from ending as well: the last line comes when the daemon lets
+    the output go, even after C-c C-k.
+
+    On Windows a command is stopped at once, without the two seconds, and
+    only the shell is: what it started goes on.
+
+    M-x offers shell-command-start beside shell-command, and it runs the
+    command without showing what it prints: the output buffer is made, and
+    no window shows it until C-x b.
+
+EXAMPLES
+    The state of a git repository, from a key of its own:
+
+        (define-key nil "C-c g" '(shell-command "git status --short"))
+
+    The names of the files here, inserted at point:
+
+        (insert (shell-command-to-string "ls"))
+
+    A taller strip for the output:
+
+        (setq shell-output-window-height 20)
+
+    Stop the command writing into the second output buffer:
+
+        (stop-worker "*Shell Output*<2>")
+
+    A word in bold, as man prints one, and what is made of it:
+
+        (parse-overstrike
+         (shell-command-to-string "printf 'N\\bNA\\bAM\\bME\\bE'"))
+          => ("NAME" ((0 4 bold)))
+
+KEYS
+    M-!                     shell-command
+    C-c !                   shell-command-on-region
+
+KEYS IN SHELL OUTPUT MODE
+    n                       next-line
+    p                       previous-line
+    g                       beginning-of-buffer
+    G                       end-of-buffer
+    q                       delete-window
+    C-c C-k                 shell-command-kill
+
+SEE ALSO
+    background, compile, writing-commands, buffers, windows

@@ -179,7 +179,7 @@
 
 ;; Background workers: the `background' manual page.
 (defun list-workers ()
-  "Show which background workers are running."
+  "Say in the echo area which workers and jobs started from Lisp are running."
   (let ((names (running-workers)))
     (if (null names)
         (message "No workers running")

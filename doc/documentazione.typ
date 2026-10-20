@@ -391,7 +391,8 @@ tabella è lo strumento dei passi delle fasi B e C.
 
 === Una docstring: `background-call`
 
-Oggi la docstring è lunga 3 689 caratteri. Eccone l'inizio:
+Prima del passo 8 la docstring era lunga 3 145 caratteri, 3 689 contati nel
+sorgente come li conta l'inventario. Eccone l'inizio:
 
 ```
 (background-call NAME JOB &optional ON-PROGRESS ON-DONE INTERVAL): Do JOB in
@@ -406,27 +407,28 @@ work can be done in pieces:
 ```
 
 Quasi tutto ripete la pagina `background`, che ha lo stesso esempio e le
-stesse regole. Dopo il riordino:
+stesse regole. Dopo il riordino, che il passo 8 ha fatto:
 
 ```
 (background-call NAME JOB &optional ON-PROGRESS ON-DONE INTERVAL): Run JOB in
-the background under NAME, and return NAME at once.
-
-JOB is a function of no arguments, called once, or a `fiber', resumed a step
-at a time. ON-PROGRESS is called with NAME after each step but the last, and
-ON-DONE with NAME and t or nil when JOB ends; both run between commands. A
-job started under a name in use replaces the one running. INTERVAL is how
-many milliseconds a plain (yield) waits: 40 by default.
+the background under NAME, and return NAME at once. JOB is a function of no
+arguments, called once, or a `fiber', resumed a step at a time as
+`define-worker' resumes one. ON-PROGRESS is called with NAME after each step
+but the last, and ON-DONE with NAME and t when JOB reached its end, or nil
+when it failed; both run between commands. A job started under a name in use
+replaces the one running, whose callbacks are then not called. INTERVAL is how
+many milliseconds a plain (yield) waits: 40 unless given.
 
 Example:
-  (defun my-done (name ok) (message "%s finished: %s" name ok))
-  (background-call 'my-sum (lambda () (setq my-sum (my-slow-sum))) nil 'my-done)
+(defvar my-sum nil)
+(defun my-done (name ok) (message "%s finished: %s" name ok))
+(background-call 'my-sum (lambda () (setq my-sum (my-slow-sum))) nil 'my-done)
 
 Manual: background
 ```
 
 L'ultima riga non è scritta nella docstring: la aggiunge `C-h f`, dalla
-SYNOPSIS della pagina. La formulazione definitiva si scrive nel passo 8.
+SYNOPSIS della pagina.
 
 === Un rustdoc: `app_dir`
 
@@ -1127,6 +1129,93 @@ fallisce senza la correzione:
 - `add-hook` e `remove-hook` nominano l'argomento che rifiutano: la funzione
   quando è una lambda, il hook quando non è una stringa.
 
+*Passo 8, fatto.* `writing-commands` e `background` sono riscritte sul
+modello, con la SYNOPSIS che non avevano, e la pagina nuova `shell` descrive
+`M-!`, `C-c !`, il buffer dell'uscita con le sue righe e i suoi tasti, come
+si ferma un comando, le quattro primitive di `shell.rs` e i limiti.
+`writing-commands` è la casa di `defcommand`, `string-prefix-p` e
+`string-suffix-p`, e dà i sette codici degli argomenti; `background` lo è di
+`background-call`, `define-worker`, `stop-worker`, `running-workers`,
+`list-workers`, `emit-event`, `work-list`, `work-option`, `set-work-option`,
+`work-options` e `worker-fuel`, e descrive `fiber` e `yield`, forme speciali
+che `C-h f` non trova, con i punti in cui un `yield` è ammesso, provati forma
+per forma. Da `background` sono usciti la storia di `M-x compile` che teneva
+il thread condiviso, le sette regole scritte per chi sviluppa e la sezione su
+`completion-invalidate`, che ha casa in `completion` e ora vi è solo citata;
+la SEE ALSO nomina solo pagine. `guide`, `rsedit` e `compile` nominano
+`shell`.
+
+Le docstring delle tredici primitive di `workers.rs` e `shell.rs` seguono il
+modello, e le cinque che superavano il limite sono scese: `background-call` da
+3 145 caratteri a 756, nella forma definitiva dell'esempio delle regole,
+`define-worker` da 1 944 a 700, `shell-command-start` da 1 795 a 620,
+`parse-overstrike` da 1 075 a 460 e `shell-command-to-string` da 1 042 a 467.
+Seguono il modello anche quelle di `shell.lisp`, di `defcommand`, di
+`string-prefix-p` e `string-suffix-p` e di `list-workers`; il ragionamento di
+`string-suffix-p` e di `shell--show` è passato in commenti `;;`, e le
+intestazioni di `shell.lisp` e `commands.lisp` rimandano alle pagine.
+`worker-fuel` entra nel registro `SETTINGS`, con la docstring e il valore
+200 000 all'avvio: l'editor lo leggeva senza che avesse un valore, e
+`C-h v worker-fuel` non lo trovava. Il nome è una costante di
+`editor/settings.rs`, che `workers.rs` usa. `shell-output-window-height` è una
+`defvar`: con `defconst` un `setq` scritto nell'`init.lisp` prima del modulo
+andava perso quando il modulo si caricava. Il commento dell'`init.lisp`
+predefinito su `worker-fuel` rimanda alla pagina. L'elenco dei nomi senza casa
+perde il blocco del passo 8, ventuno nomi, quello delle docstring lunghe i
+suoi cinque, e `worker-fuel` esce dai nomi citati sconosciuti; `defun`,
+`defvar` e `setq`, che le pagine ora citano, si aggiungono alle forme
+speciali, e i nomi che nessuno cita più escono dall'elenco.
+
+Le pagine e le docstring dell'area dicevano cose false, ora corrette:
+
+- `writing-commands` elencava `(buffer-name)`, che non esiste: il nome del
+  buffer corrente lo dà `(current-buffer)`;
+- `writing-commands` dava sei codici degli argomenti, e la docstring di
+  `defcommand` quattro: sono sette, `s`, `n`, `b`, `f`, `p`, `P` e `r`;
+- l'esempio di `insert-date` inseriva la data seguita dall'a capo che `date`
+  stampa;
+- `writing-commands` diceva che una funzione ridefinita con `M-:` vale
+  subito, e che `C-h e` mostra il backtrace di ciò che fallisce: quello che
+  `M-:` definisce non resta (il primo difetto qui sotto), e il log riporta il
+  messaggio, mentre il backtrace si apre solo con `debug-on-error`.
+  `configuration` e `diagnostics`, che propongono `M-:` per provare una riga
+  e per caricare un modulo, ora dicono che le definizioni non restano;
+- l'esempio della docstring di `shell-command-to-string` non si poteva
+  incollare, per le virgolette precedute dalla barra, e quella di
+  `parse-overstrike` raccontava la propria storia.
+
+Le pagine scrivono i limiti che il passo ha provato sull'editor, in un
+terminale: un comando che chiede una password al terminale viene fermato dal
+sistema e aspetta `C-c C-k`; un demone avviato dal comando non si ferma con
+lui, e se tiene l'uscita il buffer non finisce finché non la lascia. Su
+Windows un comando si ferma subito, e solo la shell: questo viene dal codice,
+e non è provato. `background` dice anche una regola del Lisp che un lavoro in
+background incontra subito: un `setq` di un nome senza valore, dentro una
+funzione, crea una variabile di quella funzione, e il risultato che il lavoro
+vi lascia sparisce con lei.
+
+Il passo ha trovato quattro difetti del codice, che non corregge:
+
+- quello che `M-:` definisce non resta. `eval-expression-confirm`, in
+  `minibuffer.lisp`, valuta il testo con `eval-string-safe` dentro la propria
+  funzione, e una `defun`, una `defvar`, una `defcommand`, un `setq` di un
+  nome nuovo e ciò che definisce un file caricato con `(eval-file ...)`
+  finiscono nel suo ambiente locale e spariscono al ritorno; anche una
+  funzione che esiste già, ridefinita, resta quella di prima. Una
+  `defcommand` lascia a `M-x` un comando che non può eseguire
+  (`UndefinedFunction`). Un tasto legato a `'(eval-file "mine")` invece
+  carica il file nell'ambiente globale, e `writing-commands` lo propone;
+- con il codice `n`, una risposta che non è un numero, o nessuna risposta,
+  arriva al comando come 0: `convert_arg`, in `primitives/commands.rs`, legge
+  il testo con `unwrap_or(0.0)`, e il prompt non chiede di nuovo;
+- ogni `M-!` apre una striscia nuova sotto quelle che ci sono, invece di
+  mostrare l'uscita in quella del comando di prima come fa `compile` con la
+  sua: in un terminale di trenta righe il terzo comando lascia una riga sola
+  alla finestra in cui si lavorava;
+- `shell-command-start` è registrata come comando: `M-x` la propone accanto a
+  `shell-command`, e la versione di `M-x` avvia il comando senza mostrare
+  nulla, perché il buffer dell'uscita nasce senza finestra.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),
@@ -1136,7 +1225,7 @@ fallisce senza la correzione:
   [5], [cercare e navigare (fatto)], [`searching`, `compile`], [`isearch`, `replace`, `results`, `scan`, `match_data`], [`occur`, `compile`; nuova: `regexps`],
   [6], [prompt, completamento, tasti, aiuto (fatto)], [`completion`, `keymaps`, `getting-help`], [`minibuffer`, `completion`, `help`, `commands`, il resto di `general`], [`minibuffer`, `completion`, `completion-at-point`, `help`, `manpage`, `preview`, `common-keymaps`; nuova: `minibuffer`],
   [7], [modi e aspetto (fatto)], [`modes`, `themes`, `overlays`, `virtual-text`], [`modes`, `theme`, `overlays`, `virtual_text`], [`rust-mode`, `risp-mode`, `cc-mode`, `theme`; nuova: `writing-modes`],
-  [8], [estendere l'editor], [`writing-commands` \ `background`], [`workers`, `shell`], [`shell`; nuova: `shell`],
+  [8], [estendere l'editor (fatto)], [`writing-commands` \ `background`], [`workers`, `shell`], [`shell`; nuova: `shell`],
   [9], [vim], [`vim`], [---], [`vim`],
 )
 

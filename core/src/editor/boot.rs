@@ -73,11 +73,9 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; mode with `add-completion-function'.
 (eval-file "completion-at-point")
 
-;; How much work one step of a background worker may do before it is stopped.
-;; See `define-worker'. Raising it lets a worker do more per step at the cost
-;; of how long colouring can be kept waiting behind it.
+;; How much one step of background work may do before it is stopped, and how
+;; the scheduler that runs it takes turns. See the `background' manual page.
 ;; (setq worker-fuel 200000)
-;; The scheduler that runs them can be tuned too: see `work-option'.
 ;; (set-work-option 'high-steps 4)
 
 ;; A copy of unsaved work, for when the editor stops without being asked.
@@ -453,6 +451,12 @@ pub fn create_global_env<B: BufferTrait>()
     env.set_variable(
         WINDOW_SEPARATOR.into(),
         ELispExp::string(DEFAULT_WINDOW_SEPARATOR.to_string()),
+    );
+
+    // How much one step of background work may evaluate.
+    env.set_variable(
+        WORKER_FUEL.into(),
+        ELispExp::number(crate::primitives::lisp_job::DEFAULT_WORKER_FUEL as f64),
     );
 
     // The line-number gutter, off, at the width it has when nothing is said.

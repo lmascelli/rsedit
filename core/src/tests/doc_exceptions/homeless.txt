@@ -5,34 +5,6 @@
 # list only shrinks: each step of doc/documentazione.typ gives a home to the
 # names of its area.
 
-# -- passo 8: estendere l'editor
-# lisp/common-keymaps.lisp
-list-workers
-# lisp/commands.lisp
-defcommand
-string-prefix-p
-string-suffix-p
-# lisp/shell.lisp
-shell-command
-shell-command-kill
-shell-command-on-region
-shell-output-window-height
-# primitives/shell.rs
-parse-overstrike
-shell-command-running-p
-shell-command-start
-shell-command-to-string
-# primitives/workers.rs
-background-call
-define-worker
-emit-event
-running-workers
-set-work-option
-stop-worker
-work-list
-work-option
-work-options
-
 # -- passo 9: vim
 # lisp/vim.lisp
 vim-default-buffer-p

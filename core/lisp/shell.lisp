@@ -1,57 +1,33 @@
-;;; shell --- running a command and reading what it said.
+;;; shell --- running a command, and reading what it printed.
 ;;;
-;;; `M-!' asks for a command, runs it, and shows its output in a window beside
-;;; what you were doing. The command runs in the background: the editor stays
-;;; usable while a build runs, and the output appears as it is produced.
+;;; M-! runs a command and shows what it prints in a strip along the bottom,
+;;; and C-c ! runs the region. User manual: the `shell' page.
 ;;;
-;;; # What the mode is for
-;;;
-;;; `shell-output-mode' exists so the transcript can be read without being
-;;; typed into, and so `q' means what it means in every other listing here. The
-;;; buffer is read-only from the moment it is created -- the thread reading the
-;;; command lifts that for exactly as long as it takes to append its output,
-;;; under the buffer's own lock, which is a stronger guarantee than a Lisp
-;;; module can make for itself.
-;;;
-;;; # Several at once
-;;;
-;;; Each command gets a buffer of its own: `*Shell Output*', then
-;;; `*Shell Output*<2>'. Two commands writing into one buffer would interleave
-;;; their lines into something neither of them said. The cost is that a long
-;;; session leaves buffers behind -- `C-x C-b' and `d' is how they go.
-;;;
-;;; # Stopping one
-;;;
-;;; A command is known by the name of its buffer: `C-c C-k' in the buffer, or
-;;; `(stop-worker NAME)' from anywhere, stops it, and so does closing the
-;;; buffer. The command and everything it started are sent TERM, and KILL two
-;;; seconds later if they are still there.
+;;; The running is `shell-command-start', in Rust: a thread of its own reads
+;;; the command into a buffer that is read-only from the moment it is made,
+;;; and lifts that only to append, under the buffer's own lock. This module is
+;;; the mode of that buffer, its keys and its colours, and the commands. Each
+;;; command has a buffer of its own, since two writing into one would mix
+;;; their lines into something neither of them said.
 
 (make-mode 'shell-output-mode)
 
-(defconst shell-output-window-height 12
-  "How tall the window showing a command's output is.
-
-A strip across the bottom rather than half the frame: the output is something
-you glance at while working, and taking half the screen for `git status' would
-make `M-!' a thing you undo afterwards.")
+;; A strip rather than half the frame: the output is glanced at while working,
+;; and half the screen for a git status would make M-! a thing to undo.
+(defvar shell-output-window-height 12
+  "How tall the window showing a command's output is, in rows.")
 
 (defun shell--show (name)
-  "Show the output buffer called NAME in a strip at the bottom.
-
-Focus does not move. `M-!' is run from somewhere, and that somewhere is where
-you want to still be when the output starts arriving."
+  "Show the output buffer NAME in a strip along the bottom."
+  ;; The focus stays: M-! is run from somewhere, and that is where you want to
+  ;; be when the output starts arriving.
   (display-buffer-at-bottom name shell-output-window-height))
 
 (defcommand shell-command (command) ("sShell command: ")
-  "Run COMMAND with the shell and show its output. Bound to M-!.
-
-Returns straight away -- the command runs in the background and its output
-appears as it is produced, ending with a line saying what it exited with. What
-you type goes to the shell as written, so pipes and redirection work.
-
-Each run gets its own output buffer, so starting a second command does not
-disturb the first."
+  "Run COMMAND with the shell, and show what it prints in a strip along the
+bottom as it comes; the cursor stays where it is. COMMAND goes to the shell as
+written, pipes and redirection included. Its output buffer is its own, and
+ends with a line saying how the command ended."
   (let ((name (shell-command-start command)))
     (if name
         (shell--show name)
@@ -60,11 +36,7 @@ disturb the first."
         nil)))
 
 (defcommand shell-command-on-region () nil
-  "Run the region as a shell command. Bound to C-c !.
-
-For the case where the command is already written down -- in a comment, in a
-README, in the transcript of an earlier command -- and retyping it into a
-prompt is the only thing standing between reading it and running it."
+  "Run the text of the region as a shell command, as `shell-command' does."
   (if (use-region-p)
       (let ((command (buffer-substring (region-beginning) (region-end))))
         (deactivate-mark)
@@ -72,11 +44,9 @@ prompt is the only thing standing between reading it and running it."
       (message "No region")))
 
 (defcommand shell-command-kill () nil
-  "Stop the command whose output is in this buffer. Bound to C-c C-k.
-
-The command and everything it started are asked to stop, and made to two
-seconds later if they have not. The buffer stays, ending with `--- killed ---'.
-Closing the buffer stops the command as well."
+  "Stop the command whose output is in this buffer, and everything it started:
+asked to stop, and made to two seconds later if it has not. The buffer stays,
+and ends with --- killed ---."
   (if (stop-worker (current-buffer))
       (message "Stopping %s" (current-buffer))
       (message "Nothing is running in this buffer")))

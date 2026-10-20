@@ -1,253 +1,231 @@
 NAME
-    background - work that must not happen on the thread that draws
+    background - work that goes on while you type
+
+SYNOPSIS
+    (background-call NAME JOB &optional ON-PROGRESS ON-DONE INTERVAL)
+    (define-worker NAME FIBER &optional INTERVAL)
+    (stop-worker NAME)
+    (running-workers)
+    (list-workers)
+    (emit-event TOPIC)
+    (work-list)
+    (work-option NAME)
+    (set-work-option NAME VALUE)
+    (work-options)
+    worker-fuel
 
 DESCRIPTION
-    Anything that may take longer than a frame is a background job. Walking
-    a directory tree for manual pages, searching a project, building an
-    index: done where a command is done, each of those is the editor
-    stopping. Done in the background and reported carelessly, each is a
-    mode being changed underneath itself by another thread.
+    A command runs while the editor waits for it: nothing is drawn and no
+    key is read until it returns. Work that may take longer than that --
+    walking a directory tree, indexing a project, anything that goes
+    through something large -- is handed to the background instead, and
+    goes on a step at a time while you type:
 
-    A job is started by one call that names what to do and what to do when
-    it is done.
-
-        (background-call NAME JOB &optional ON-PROGRESS ON-DONE INTERVAL)
-        (define-worker NAME FIBER &optional INTERVAL)
-        (stop-worker NAME)
-        (running-workers)
-        (emit-event TOPIC)
-        (completion-invalidate)
-
-THE TWO SHAPES
-    JOB is either a function of no arguments, called once, or a `fiber',
-    resumed a step at a time. A fiber is the shape to use whenever the work
-    divides, because each (yield) in it is a progress point and there is
-    nowhere else progress could be reported from.
-
-        (background-call 'manpage-index
-                         (fiber (let ((left manpage-path))
+        (background-call 'my-index
+                         (fiber (let ((left my-files))
                                   (while left
-                                    (manpage--index-one (car left))
+                                    (my-index-file (car left))
                                     (setq left (cdr left))
                                     (yield 'continue))))
-                         'manpage--index-progress
-                         'manpage--index-done)
+                         'my-index-progress
+                         'my-index-done)
 
-    A `while' rather than a `dolist', and that is not a matter of taste: a
-    (yield) is only legal where the evaluator can record a way back to it,
-    which is a body statement or a form of a `while'. A `dolist' body is
-    not one of those, and a yield there is refused -- so a fiber is
-    written as a loop that walks its own list.
+    `background-call' runs a job that ends, and `define-worker' one that
+    goes on for as long as the editor does: an index kept up to date as
+    you edit, something that watches. Each has a name, and the name is
+    how it is listed, stopped and replaced.
 
-    `fiber' and `yield' are special forms of the interpreter rather than
-    functions, so C-h f does not find them. This page is their
-    documentation.
+FIBERS
+    A job is a function of no arguments, called once, or a fiber: a body
+    that runs as far as a yield, and goes on from there at its next step.
 
-WHAT A YIELD ASKS FOR
-    What a fiber yields says when it wants its next step:
+        (fiber BODY...)
+        (yield &optional WHEN)
 
-        (yield)                      wait INTERVAL ms, 40 if not given
+    `fiber' and `yield' are part of the Lisp itself rather than functions,
+    so C-h f does not find them, and this page is where they are described.
+
+    A yield stands as a form of a body: the fiber's own, or that of a let,
+    a progn, a while, an if, a when, a cond, or a function the fiber calls
+    from one of those. As the argument of a call, as the value of a setq,
+    or inside dolist, dotimes, mapc or funcall it is refused, and the job
+    fails: so a fiber walks a list with while, as above.
+
+    What a fiber yields says when its next step comes:
+
+        (yield)                      after INTERVAL milliseconds, 40
+                                     unless given
         (yield 'continue)            as soon as its turn comes round
-        (yield '(sleep MS))          wait MS milliseconds
-        (yield '(wait TOPIC...))     until one of the TOPICs is emitted
+        (yield '(sleep MS))          after MS milliseconds
+        (yield '(wait TOPIC...))     when one of the TOPICs is emitted
         (yield '(wait-at-most MS TOPIC...))
-                                     the same, or MS milliseconds at most
+                                     the same, or after MS at most
 
-    Any other value waits INTERVAL, as (yield) does, so a fiber written to
-    yield its progress as a value goes on as it always did. A list that
-    starts like one of these and is not one -- (sleep "soon") -- stops the
-    job, with a line in the log saying what the shape is.
-
-    The topics of a wait are the job's until a later wait names others, so
-    (wait) and (wait-at-most MS) keep them. A wait for topics the job did
-    not have yet costs one more step, a moment later: the step that named
-    them may have looked just before one was emitted.
+    Anything else waits INTERVAL, as (yield) does, but a list that starts
+    like one of these and is not one, such as (sleep "soon"), makes the
+    job fail. A wait keeps the topics it names until a later one names
+    others, so (wait) waits for the same ones again.
 
 EVENTS
-    A topic carries nothing. Emitting one says "go and look", and a job
-    woken by it looks at whatever it was waiting to see change. So a burst
-    of emissions is one step, not one each.
-
-    The editor emits `buffer-changed' when the text of a buffer changes,
-    and `syntax-changed' when a grammar or a syntax table does. A mode
+    A topic is a name, and emitting one carries nothing else: it says "go
+    and look", and the job it wakes looks for itself at what it was
+    waiting to see change. Emissions that come together wake a job once.
+    The editor emits buffer-changed when the text of a buffer changes, and
+    syntax-changed when a mode's colouring or syntax table does; a module
     emits its own with `emit-event':
 
-        (emit-event 'my-mode-refresh)
-        (define-worker 'my-mode-indexer
+        (define-worker 'my-indexer
           (fiber (while t
-                   (my-mode-reindex)
-                   (yield '(wait my-mode-refresh buffer-changed)))))
+                   (my-reindex)
+                   (yield '(wait my-refresh buffer-changed)))))
+        (emit-event 'my-refresh)
 
-WHICH THREAD RUNS WHAT
-    The job runs on the background thread. Both callbacks run on the thread
-    that runs commands, between commands.
+    The step an emission wakes a job for comes event-delay milliseconds
+    after the first emission the job has not seen. A wait that names
+    topics the job was not waiting for yet takes one more step, a moment
+    later, in case one of them was emitted just before.
 
-    That division is the whole of the arrangement. A job runs while you are
-    typing: half-way through an insertion, inside a hook that is walking a
-    list it is also changing. Anything it calls sees the editor in whatever
-    state the command in progress has left it in, and no amount of care in
-    the thing being called fixes that, because it is not the callee's
-    fault.
+WHERE THE CALLBACKS RUN
+    A job runs while you type, and whatever it looks at is as the command
+    in progress has left it. ON-PROGRESS and ON-DONE run between commands,
+    as the command of a key does, and may do whatever a command may: show
+    a message, change a buffer, draw a list again. So a job computes and
+    stores, and its callbacks show what it found.
 
-    A callback queued to the command thread runs where a keystroke would
-    run, with the same locks free and the same invariants holding. So a
-    callback may do anything a command may do, and a job may not.
+    ON-PROGRESS is called with NAME after every step but the last, so each
+    yield of a fiber is a point of progress, and a plain function has
+    none. ON-DONE is called once, with NAME and what became of the job:
 
-    The price is that a callback is not immediate. It is at most one pass
-    of the event loop away -- the same delay a keystroke has.
+        it reached its end                          t
+        it failed: an error, a wrong yield, or      nil
+          a step that spent all its worker-fuel
+        it was stopped, or replaced by another      ON-DONE is not called
+          of the same name
 
-THE RULE
-    1.  Anything that may take longer than a frame is a background job, and
-        a job is started by one call that names what to do and what to do
-        when it is done.
+    Neither callback is given what the job made, because by the time it
+    runs the buffer the job was for may have gone, or the job may have been
+    started again. The job stores what it makes where the callback can
+    look, and the callback looks. A variable the job sets has to have a
+    value before the job starts, from a `defvar': in this Lisp a `setq' of
+    a name with no value makes a variable of the function doing it, and
+    the variable goes, with what the job stored in it, when the function
+    returns.
 
-    2.  A job never draws. It changes state; the renderer notices -- the
-        end of every step tells it to look.
+    A job that finds completion candidates says it has more from its
+    ON-PROGRESS, with `completion-invalidate', so that a list of them on
+    the screen is drawn again: the `completion' page has it.
 
-    3.  A job never assumes the editor stood still. The buffer may be gone,
-        the variable may have been set again, the version it read may be
-        two edits old. It re-checks before it stores, and what it cannot
-        re-check it does not keep.
+NAMES
+    A name is a symbol or a string, and one name means one thing: the
+    workers, the jobs and the editor's own work share them. Starting work
+    under a name in use replaces what ran under it: the old work stops
+    before its next step, and the callbacks it had queued are dropped. That
+    is what makes loading a module twice, or pressing a key twice, start
+    one job and not two.
 
-    4.  Progress is a signal, not a redraw. A job says there is more now;
-        what more means is the mode's business.
+    `stop-worker' stops the work called NAME, whatever it is, at the end of
+    the step it is taking, and its ON-DONE is not called; a shell command
+    is stopped so too, by the name of its buffer. The editor's own work
+    stops just the same, and stays stopped until the editor starts again:
+    stopping highlighter stops the colouring. `running-workers' lists the
+    work started from Lisp that is still running, and M-x list-workers
+    says it in the echo area.
 
-    5.  The mode keeps itself consistent. Which is a fair thing to ask only
-        because the signal arrives somewhere a mode can answer it.
+WHAT IS RUNNING
+    (work-list) lists everything in the background, the editor's own work
+    as well as Lisp's, one property list each:
 
-    6.  Errors are logged, never raised. The command that started the job
-        returned long ago; there is nobody to raise to.
+        (name "highlighter" kind job class high state waiting
+         steps 1204 total-ms 412 max-ms 38)
 
-    7.  A job is superseded, not duplicated. Starting one under a name that
-        has one stops the old, and the old one's queued callbacks are
-        dropped rather than delivered against the new one's state.
-
-WHAT THE CALLBACKS ARE GIVEN
-    The name the job ran under, and nothing else.
-
-    Not what it produced, deliberately. Between the step that produced
-    something and the callback that reports it, the buffer may have been
-    killed and the variable set again -- so a callback that was handed a
-    result would be handed a result about a world that no longer exists. A
-    callback looks up what it needs, and finds either the current answer or
-    nothing.
-
-    ON-PROGRESS is called with NAME after every step but the last. ON-DONE
-    is called once, with NAME and whether the job reached its end:
-
-        reached its end                   (NAME t)
-        an error, or a step that spent    (NAME nil)
-          its allowance
-        stopped, or replaced by a job     not called: whoever did it
-          of the same name                knows already
-
-    A job that failed still says so, because a mode that is never told
-    stays waiting for ever.
-
-SAYING THE CANDIDATES CHANGED
-    The one signal common enough to be a primitive.
-
-    A module whose completion candidates are built in the background calls
-    `completion-invalidate' from its ON-PROGRESS. That forgets the answer
-    remembered for the current input, so the next Tab asks again, and calls
-    `*completion-invalidated-function*' if a presenter has registered one,
-    so a list already on screen redraws with what there is now.
-
-    Neither module has to have been loaded for the other to work, which is
-    the point of it going through the editor rather than through a call
-    from one to the other.
-
-WHY THERE IS MORE THAN ONE THREAD
-    One rule decides it:
-
-        The shared thread may only run work that is guaranteed to return.
-
-    A fiber's step is guaranteed to return, because `worker-fuel' cuts it
-    off whether it wants to stop or not. A chunk of syntax colouring is
-    the same. Any number of those share one thread and take turns, and a
-    step costs nothing.
-
-    Reading a child process's output is not guaranteed to return. Nor is
-    walking a directory tree. These take as long as the system takes, and
-    no budget shortens them -- so each gets a thread of its own, named after
-    the buffer it writes into. `work-list' shows it, `stop-worker' with that
-    name stops it, and closing the buffer stops it too.
-
-    The rule is not decoration. `M-x compile' on a long build used to hold
-    the shared thread for the whole build: colouring stopped, the file
-    watcher stopped, the auto-saver stopped, and every worker and every
-    background job stopped until the build finished. A second command
-    started meanwhile did run -- a process begins the moment it is
-    spawned -- but nothing read its output, so it printed into a pipe
-    nobody was emptying and showed nothing until the build was over.
-
-    So: if the work can be written as steps, write it as steps and it
-    costs a fiber. If it blocks, it is a thread, and in Lisp that means
-    `shell-command-start' -- which is the only door to blocking work that
-    Lisp has, deliberately.
+    A job's class is high for what you are waiting to see, the colouring
+    and the prescanner, and normal for the rest. Its state is ready,
+    running, sleeping or waiting; steps says how many steps it has taken,
+    total-ms how long they took together and max-ms how long the longest
+    did. The figures are brought up to date when the scheduler runs out of
+    work, and every tenth of a second while it is busy. A shell command is
+    a thread of its own, with kind thread, a state of running or stopping,
+    and running-ms, how long it has been running.
 
 WHO GOES FIRST
-    The shared thread runs two classes of job. Colouring and the
-    prescanner are what you are waiting to see on the screen, and go
-    first; everything else, every Lisp job among it, gets a step after
-    every few of theirs -- `high-steps' of them, 4 unless set otherwise.
-    So a busy worker cannot keep colour off the screen, and a large file
-    being coloured cannot stop a worker for long.
+    The jobs take turns on a thread of their own. The colouring and the
+    prescanner go first, and the other jobs, every Lisp job among them,
+    get a step after every high-steps of theirs: 4 unless set. So a busy
+    worker cannot keep colour off the screen, and a large file being
+    coloured cannot hold a worker back for long.
 
-WORKERS ARE THE OTHER HALF
-    `define-worker' starts something that goes on for the life of the
-    session: an index kept up to date, something that watches. A job
-    finishes. They share a namespace on purpose -- with the editor's own
-    work too -- so that `stop-worker' and `running-workers' mean one
-    thing, and a name cannot be two.
+    A step has worker-fuel to spend, 200000 unless set: how much Lisp it
+    may evaluate, apart from what commands are given. A step that spends
+    it all is stopped, and its job fails, because a step that never yields
+    would hold the colouring up for ever. A job that needs more yields
+    more often, or is started again after a `setq' of worker-fuel: the
+    value is read when a job starts.
 
-    Each step of either gets `worker-fuel' to spend, separately from the
-    budget commands run under: nothing the user does can cut a step short,
-    and a step that runs past its allowance is stopped and the job with
-    it, because a step that never ends holds the thread syntax colouring
-    and the prescanner also run on.
-
-WHAT IS RUNNING AND HOW IT IS TUNED
-    `(work-list)' shows everything the scheduler runs, the editor's own
-    work as well as Lisp's, one property list each: its name, its kind,
-    its class, its state -- ready, running, sleeping or waiting -- and how
-    many steps it has taken, in how long. `(running-workers)' is the part
-    of it Lisp started.
-
+TUNING THE SCHEDULER
     The scheduler's thresholds are options, read with `work-option' and
-    set with `set-work-option', from the next step on -- in init.lisp as
-    well. `(work-options)' lists them:
+    set with `set-work-option', from init.lisp as well; a change counts
+    from the scheduler's next step. `work-options' lists them with their
+    values:
 
         high-steps      steps of colouring before another job's: 4
         event-delay     ms from an emission to the step it wakes: 20
         long-step       a step longer than this, in ms, is logged: 40
-        late-high       colouring kept waiting this long is logged: 40
+        late-high       colouring kept waiting this long, in ms, is
+                        logged: 40
         late-normal     any other job kept waiting this long: 200
-        stuck-step      a step, or a thread asked to stop, still going
-                        after this many ms is logged: 1000
-        busy-share      a second busier than this percentage: 50
-        summary-every   ms between two summaries of a report: 10000
+        stuck-step      a step still running after this many ms, or a
+                        thread this slow to stop, is logged: 1000
+        busy-share      a second busier than this percentage is logged:
+                        50
+        summary-every   ms between two summaries of one report: 10000
         watchdog-every  ms between two looks of the watchdog: 250
 
-    What they report goes to the log, in lines that start with [BKG].
+    A value an option does not take is refused, and the error says which
+    it takes. What these report goes to the log, in lines that start with
+    [BKG].
 
-THE WATCHDOG
-    A step that does not end cannot say so: the thread that would report
-    it is the one running it. So a thread of its own looks from outside,
-    every `watchdog-every', and writes what it sees:
+WHEN A STEP DOES NOT END
+    A step that does not end cannot say so, since the thread that would
+    say it is the one running it. So a thread of its own looks from
+    outside, every watchdog-every, and writes what it sees in the log:
 
         [BKG] stuck step: manpage-index running for 1.0 s
 
-    at `stuck-step', and again each time the step has run twice as long --
-    2 s, 4 s, 8 s -- so a step that never ends is a line now and then, not
-    a line a look. While it runs, `(work-list)' shows its job as running.
+    at stuck-step, and again each time the step has run twice as long. A
+    job that fails says why in the log too, with its name:
 
-    The watchdog also writes the log file, rsedit.log: nothing else that
-    logs a line touches the disk. A line reaches the file within a look of
-    the watchdog, and the last of them as the editor exits -- by a panic
-    too, when the last lines are the ones that say why.
+        [BKG] error: my-index: WrongArgumentType { expected: "List", got: 5 }
+
+    The `diagnostics' page says where the log is.
+
+EXAMPLES
+    A sum worked out in the background, said when it is ready:
+
+        (defvar my-sum nil)
+        (defun my-done (name ok) (message "%s finished: %s" name ok))
+        (background-call 'my-sum (lambda () (setq my-sum (my-slow-sum)))
+                         nil 'my-done)
+
+    A worker that does something every second:
+
+        (define-worker 'my-ticker
+          (fiber (while t (my-tick) (yield '(sleep 1000)))))
+
+    And stopping it:
+
+        (stop-worker 'my-ticker)
+
+    Colouring first for six steps in a row rather than four:
+
+        (set-work-option 'high-steps 6)
+
+    More for each step of the jobs started from now on:
+
+        (setq worker-fuel 400000)
+
+    What is running, and how long its steps take:
+
+        (work-list)
 
 SEE ALSO
-    macros, (define-worker), (stop-worker), (running-workers),
-    (background-call), (emit-event), (work-list), (work-option),
-    (set-work-option), (work-options), (completion-invalidate)
+    shell, writing-commands, completion, diagnostics

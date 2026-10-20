@@ -189,6 +189,15 @@ pub const SETTINGS: &[Setting] = &[
               leaves each kind to the editor.",
     },
     Setting {
+        name: WORKER_FUEL,
+        doc: "How much Lisp one step of background work may evaluate, apart from what commands \
+              are given: a step of a `define-worker' worker or of a `background-call' job that \
+              spends it all is stopped, and its job fails. It is read when a job starts; \
+              anything but a number from 1 up counts as 200000.\n\n\
+              Example:\n\
+              \x20 (setq worker-fuel 400000)",
+    },
+    Setting {
         name: KEY_CAPTURE_FUNCTION,
         doc: "The function the next key sequence is handed to instead of being run, or nil. \
               `read-key-sequence' sets it, and it is nil again once the keys have been handed \
@@ -250,6 +259,10 @@ pub const COMPLETION_FILTER_FUNCTION: &str = "*completion-filter-function*";
 /// The name of the Lisp variable naming the function told that completion
 /// candidates have changed.
 pub const COMPLETION_INVALIDATED_FUNCTION: &str = "*completion-invalidated-function*";
+
+/// The name of the Lisp variable holding how much one step of background work
+/// may evaluate.
+pub const WORKER_FUEL: &str = "worker-fuel";
 
 /// The name of the Lisp variable naming the function M-x completes with.
 pub const COMMAND_COMPLETION_FUNCTION: &str = "*command-completion-function*";

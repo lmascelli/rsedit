@@ -372,33 +372,16 @@ fn abandon(process: &Process) {
     }
 }
 
-pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND &optional MODE): Run COMMAND \
-         with the shell, in the background, and return the name of the buffer its output is \
-         going into.\n\n\
-         Returns immediately -- the editor stays usable while the command runs, and output \
-         appears in the buffer as it is produced. A `--- exited 0 ---' line is written when it \
-         finishes, which is how you tell a finished command from a slow one, and how you learn \
-         whether it worked.\n\n\
-         COMMAND goes to the shell as written, so pipes, redirection and quoting all mean what \
-         they mean at a prompt. Standard output and standard error arrive together, in the \
-         order the command wrote them; output that is not UTF-8 is shown with the bytes that \
-         cannot be read replaced.\n\n\
-         Each call gets a buffer of its own -- `*Shell Output*', then `*Shell Output*<2>' -- \
-         because two commands sharing one would interleave their lines into something neither \
-         of them said. Each is also read on a thread of its own, named after its buffer, so a \
-         `git status' started during a build shows its output at once, and syntax colouring \
-         and every other background job go on while a long command runs. The buffer is \
-         read-only.\n\n\
-         `(stop-worker BUFFER)' stops the command writing into BUFFER, and so does closing \
-         BUFFER: the command and everything it started are sent TERM, and KILL two seconds \
-         later if they are still there. The buffer then ends with `--- killed ---'.\n\n\
-         MODE, if given, is the major mode the output buffer is put in, so a module can give the \
-         transcript keys and colouring of its own -- which is the whole of how `compile' differs \
-         from `M-!'. It defaults to `shell-output-mode'.\n\n\
-         Returns nil (reporting it) if the command could not be started at all.\n\n\
+pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND &optional MODE): Run \
+         COMMAND, a string, with the shell in the background, and return at once the name of the \
+         buffer its output goes into. The buffer is read-only and in major mode MODE, \
+         `shell-output-mode' unless given; its first line is the command, and its last says how \
+         it ended, as --- exited 0 ---. Each call has a buffer of its own. `stop-worker' with the \
+         buffer's name stops the command, and so does closing the buffer. Return nil, saying why, \
+         when the shell cannot be started.\n\n\
          Example:\n\
-         (shell-command-start \"git status --short\") => \"*Shell Output*\"\n\
-         (shell-command-start \"cargo build\" \'compilation-mode)";
+         (shell-command-start \"git status --short\")\n\
+         (shell-command-start \"cargo build\" 'compilation-mode)";
 
 primitive!(shell_command_start, args, env, ctx, {
     let Some(ELispExp::String(command)) = args.first() else {
@@ -445,12 +428,10 @@ primitive!(shell_command_start, args, env, ctx, {
     Ok(ELispExp::string(name))
 });
 
-pub const SHELL_COMMAND_RUNNING_P_DOC: &str = "(shell-command-running-p): How many shell commands \
-         are still running, or nil when none are.\n\n\
-         A count rather than a flag because several can run at once. Mostly useful for a mode \
-         line, and for asking before quitting.\n\n\
+pub const SHELL_COMMAND_RUNNING_P_DOC: &str = "(shell-command-running-p): Return how many shell \
+         commands are running, or nil when none is.\n\n\
          Example:\n\
-         (if (shell-command-running-p) (message \"still working\"))";
+         (if (shell-command-running-p) (message \"A command is still running\"))";
 
 primitive!(shell_command_running_p, _args, _env, ctx, {
     let running = ctx.shell_commands_running();
@@ -461,22 +442,14 @@ primitive!(shell_command_running_p, _args, _env, ctx, {
     })
 });
 
-pub const SHELL_COMMAND_TO_STRING_DOC: &str = "(shell-command-to-string COMMAND): Run COMMAND with \
-         the shell, wait for it, and return everything it wrote to standard output as a \
-         string.\n\n\
-         **This blocks the editor until the command finishes.** Use it for commands that are \
-         bounded and quick -- `man ls', `git rev-parse HEAD' -- and `shell-command-start' for \
-         anything that might not be. There is no timeout: `shell-command-to-string \\\"sleep \
-         600\\\"' stops the editor for ten minutes, and that is the caller's to avoid.\n\n\
-         Blocking is the point rather than an oversight. A caller that wants the output as a \
-         *value* has nowhere to put an answer that arrives later: the thread reading a command \
-         cannot call back into Lisp, so an asynchronous version of this could only write into a \
-         buffer, which is what `shell-command-start' already does.\n\n\
-         Standard error is not included, and a non-zero exit is not an error here -- whatever \
-         was printed is returned either way. Returns nil (reporting it) if the command could \
-         not be started at all.\n\n\
+pub const SHELL_COMMAND_TO_STRING_DOC: &str = "(shell-command-to-string COMMAND): Run COMMAND \
+         with the shell, wait for it to end, and return what it printed on its standard output, \
+         newline and all; nil, saying why, when the shell cannot be started. What it printed on \
+         standard error is left out, and how it ended makes no difference. The editor waits with \
+         it, so it is for a command that answers at once: `shell-command-start' runs one that may \
+         not.\n\n\
          Example:\n\
-         (shell-command-to-string \\\"git rev-parse --short HEAD\\\")";
+         (shell-command-to-string \"git rev-parse --short HEAD\")";
 
 primitive!(shell_command_to_string, args, _env, ctx, {
     let Some(ELispExp::String(command)) = args.first() else {
@@ -496,23 +469,14 @@ primitive!(shell_command_to_string, args, _env, ctx, {
     }
 });
 
-pub const PARSE_OVERSTRIKE_DOC: &str = "(parse-overstrike TEXT): TEXT with its terminal \
-         overstrike removed, together with where the emphasis was. Returns (PLAIN SPANS), where \
-         SPANS is a list of (START END KIND) over PLAIN and KIND is `bold' or `underline'.\n\n\
-         `man' marks bold by printing a character, a backspace and the same character again \
-         (`e\\be'), and underline by printing an underscore, a backspace and the character \
-         (`_\\be'). It is how emphasis was done on a printer that could only strike the same \
-         spot twice, and it is still what comes out of `man' today. Left in, every emphasised \
-         word is unreadable.\n\n\
-         Both halves come from one pass, and both are returned. An earlier version of this threw \
-         the spans away and kept only the text, which made the emphasis unrecoverable without \
-         parsing the whole thing a second time -- and two passes over the same string have to \
-         agree about offsets, which is exactly the sort of thing that disagrees on a multi-byte \
-         character.\n\n\
-         Offsets are in characters, into PLAIN, so they can be handed straight to \
-         `make-overlay'.\n\n\
+pub const PARSE_OVERSTRIKE_DOC: &str = "(parse-overstrike TEXT): Return TEXT without the \
+         overstrike man prints for a terminal, and where it was, as (PLAIN SPANS). A character, a \
+         backspace and the same character again is bold; an underscore, a backspace and a \
+         character is underlined. Each of SPANS is (START END bold) or (START END underline), a \
+         run of characters counted in PLAIN from 0.\n\n\
          Example:\n\
-         (parse-overstrike page) => (\"NAME\" ((0 4 bold)))";
+         (parse-overstrike (shell-command-to-string \"printf 'N\\\\bNA\\\\bAM\\\\bME\\\\bE'\"))\n\
+         => (\"NAME\" ((0 4 bold)))";
 
 primitive!(parse_overstrike, args, _env, _ctx, {
     let Some(ELispExp::String(text)) = args.first() else {

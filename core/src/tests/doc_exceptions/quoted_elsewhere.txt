@@ -5,18 +5,15 @@
 # more is taken out.
 
 # The Lisp's special forms
-dolist
+defun
+defvar
 fiber
-while
+setq
 yield
 
 # Hooks, which add-hook takes by name
 post-command-hook
 post-self-insert-hook
-
-# Topics the editor emits
-buffer-changed
-syntax-changed
 
 # Modes, named by make-mode
 minibuffer-mode
@@ -25,30 +22,18 @@ shell-output-mode
 
 # Symbols a function takes, returns or keeps as a property
 bold
-class
 close
 escape
 filename
 indent-function
 invalid-regexp
-max-ms
 open
 overlay
 prefix
 punctuation
 reindent
-running-ms
 shift
-state
-steps
 symbol
-total-ms
 underline
-
-# Buffers and jobs, by name
-highlighter
-
-# Programs
-man
 
 # Emacs's names, where the text compares the two

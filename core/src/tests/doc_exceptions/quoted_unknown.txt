@@ -1,7 +1,3 @@
 # Names the manual pages and docstrings quote, as `name', that the editor
 # does not define: mistakes, fixed in the step of doc/documentazione.typ
 # for their area. The list only shrinks.
-
-# Variables the editor reads but does not declare: declared, with a
-# docstring, in the step of their area.
-worker-fuel

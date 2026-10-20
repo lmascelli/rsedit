@@ -47,8 +47,9 @@ THE REFERENCE
         virtual-text      text shown and not in the buffer
         themes            how the colours are chosen
         compile           running a build, and jumping to its complaints
+        shell             running a command, and reading what it printed
         regexps           regular expressions, and matching them from Lisp
-        background        work that must not happen on the drawing thread
+        background        work that goes on while you type
         vim               modal editing, for those who would rather
 
     Every command and every variable also documents itself. C-h f names a

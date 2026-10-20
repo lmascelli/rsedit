@@ -93,4 +93,4 @@ KEYS IN COMPILATION MODE
     q                       delete-window
 
 SEE ALSO
-    searching, regexps, windows, buffers
+    searching, shell, regexps, windows, buffers

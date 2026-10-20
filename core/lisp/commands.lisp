@@ -1,30 +1,30 @@
-;; Convenience on top of the command system.
+;; Convenience on top of the command system. User manual: the
+;; `writing-commands' page.
 ;;
 ;; Nothing here is required. The registry, argument collection and M-x are all
 ;; hardcoded in Rust (`core/src/commands.rs' and `core/src/primitives/commands.rs'),
 ;; because a command that cannot collect its arguments is not a command, and a
 ;; configuration file should not be able to take that away by failing to load.
-;; What is left here is sugar and policy: a shorter way to define a command,
-;; and a place to change how completion behaves.
+;; What is left here is sugar: a shorter way to define a command, two small
+;; functions on strings, and `save-match-data'.
 ;;
 ;; To define a command without this file:
 ;;   (defun greet (who) (message "hello %s" who))
 ;;   (register-command 'greet '("sGreet whom: "))
 
 (defmacro defcommand (name params specs &rest body)
-  "Define NAME as a function taking PARAMS, and register it as a command whose
-arguments the editor collects according to SPECS.
+  "Define NAME as a function of PARAMS that runs BODY, and make it a command
+whose arguments the editor collects as SPECS says: a list with a code for each
+parameter, or nil for none. \"sPROMPT\" asks for a string, \"nPROMPT\" a
+number, \"bPROMPT\" the name of a buffer and \"fPROMPT\" that of a file; \"p\"
+is the prefix argument as a count, \"P\" as it was typed, and \"r\" the
+region, as two arguments. A string at the head of BODY documents the command.
 
-SPECS is a list of Emacs-style argument codes, one per parameter: \"sPROMPT\"
-reads a string, \"nPROMPT\" a number, \"bPROMPT\" a buffer name with completion,
-\"fPROMPT\" a file name. Use nil for a command taking no arguments.
-
-The function defined is an ordinary function -- calling it from Lisp is a plain
-call and prompts for nothing. `register-command' checks SPECS against PARAMS,
-so the two cannot drift apart.
+Called from Lisp, NAME is a function like any other, and asks for nothing.
 
 Example:
   (defcommand greet (who) (\"sGreet whom: \")
+    \"Say hello to WHO.\"
     (message \"hello %s\" who))"
   ;; Note the shapes used here. `,(symbol-name name)' passes the command's name
   ;; as a string literal, and `(list ,@specs)' builds the spec list at run time
@@ -37,20 +37,24 @@ Example:
      (register-command ,(symbol-name name) (list ,@specs))))
 
 (defun string-prefix-p (prefix s)
-  "Return t if S starts with PREFIX."
+  "t if S begins with PREFIX, nil if it does not.
+
+Example:
+  (string-prefix-p \"*Shell\" (current-buffer))"
   (and (<= (length prefix) (length s))
        (string= prefix (substring s 0 (length prefix)))))
 
 (defun string-suffix-p (suffix s)
-  "Return t if S ends with SUFFIX.
+  "t if S ends with SUFFIX, nil if it does not.
 
-The length test states the precondition rather than earning its keep: this
-`substring' clamps an out-of-range index instead of complaining -- (substring
-\"abc\" -1) is \"c\" and (substring \"abc\" 5) is \"\" -- so a SUFFIX longer than S
-would come out as nil anyway, by luck rather than by reasoning. Written the
-same way as `string-prefix-p' above, and for the same reason: the day
-`substring' is made to complain about a range that is not there, neither of
-these should be what breaks."
+Example:
+  (string-suffix-p \".rs\" (buffer-file-name))"
+  ;; The length test states the precondition rather than earning its keep:
+  ;; `substring' clamps an index out of range -- (substring "abc" -1) is "c"
+  ;; and (substring "abc" 5) is "" -- so a SUFFIX longer than S would come out
+  ;; nil anyway, by luck rather than by reasoning. The day `substring'
+  ;; complains about a range that is not there, this should not be what
+  ;; breaks.
   (and (<= (length suffix) (length s))
        (string= suffix (substring s (- (length s) (length suffix))))))
 
