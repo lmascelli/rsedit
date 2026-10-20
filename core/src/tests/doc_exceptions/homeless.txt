@@ -5,60 +5,6 @@
 # list only shrinks: each step of doc/documentazione.typ gives a home to the
 # names of its area.
 
-# -- passo 7: modi e aspetto
-# lisp/cc-mode.lisp
-cpp-constants
-cpp-keywords
-cpp-types
-# lisp/risp-mode.lisp
-risp-constants
-risp-refresh-vocabulary
-risp-special-forms
-# lisp/rust-mode.lisp
-rust-constants
-rust-keywords
-rust-types
-# lisp/theme.lisp
-theme-list-buffer-name
-theme-list-name-column
-theme-list-refresh
-theme-list-select
-theme-suffix
-# primitives/modes.rs
-add-auto-mode
-add-hook
-add-syntax-region
-add-syntax-rule
-balance-point
-bounds-of-enclosing-list
-make-mode
-matching-delimiter
-remove-hook
-set-char-quote
-set-comment-syntax
-set-string-syntax
-set-syntax-entry
-set-syntax-pairs
-syntax-class
-syntax-ppss
-# primitives/overlays.rs
-delete-overlay
-make-overlay
-overlay-face
-overlays-at
-remove-overlays
-# primitives/theme.rs
-face-style
-list-colors
-list-faces
-reset-faces
-set-face
-# primitives/virtual_text.rs
-clear-virtual-text
-delete-virtual-text
-make-virtual-text
-virtual-text-at
-
 # -- passo 8: estendere l'editor
 # lisp/common-keymaps.lisp
 list-workers

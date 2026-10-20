@@ -15,30 +15,13 @@ use crate::ui::Face;
 const DEFAULT_CATEGORY: &str = "virtual-text";
 
 pub const MAKE_VIRTUAL_TEXT_DOC: &str = "(make-virtual-text POSITION TEXT &optional FACE PRIORITY \
-         CATEGORY): Show TEXT at POSITION without putting it in the buffer, and return a handle \
-         to it. Returns nil for empty TEXT.\n\n\
-         The text is drawn in front of the character at POSITION, pushing the rest of the line \
-         to the right. It is not in the buffer: nothing is modified, nothing is added to the \
-         undo history, and saving writes the file as it was. Point cannot be put inside it, and \
-         moving across the position it sits at steps over it in one go -- it is not text.\n\n\
-         To put something at the end of a line, give the position of that line's newline. \
-         `(line-end-position)' is that.\n\n\
-         FACE is how it is drawn, defaulting to `comment' -- which is the right default because \
-         the one thing the reader must never have to wonder is whether what they are looking at \
-         is in the file. PRIORITY orders two at the same position, higher first; equal \
-         priorities are drawn oldest first.\n\n\
-         CATEGORY is a symbol naming whatever made it, and is how a producer replaces its own \
-         batch later -- see `clear-virtual-text'. It defaults to `virtual-text'. The editor \
-         attaches no meaning to the name: a language server's hints, a preview and a note are \
-         all just categories, and one that the editor understood would be one it had to be \
-         taught about the next kind of.\n\n\
-         **It moves with the text.** Typing before it carries it along; deleting the text it \
-         sits in front of leaves it where that text began. It is never dropped, unlike an \
-         overlay, which goes when everything it covered does -- a position has no width to \
-         lose. A producer whose text has ended up somewhere wrong says so by clearing its \
-         category and placing it again.\n\n\
+         CATEGORY): Show TEXT in front of the character at POSITION in the current buffer, \
+         without putting it in the buffer, and return a handle to it, or nil when TEXT is empty. \
+         FACE is `comment' unless given. PRIORITY orders several at one position, highest first, \
+         0 unless given. CATEGORY is a symbol naming whatever made it, `virtual-text' unless \
+         given, for `clear-virtual-text'.\n\n\
          Example:\n\
-         (make-virtual-text (point) \": int\" 'comment 0 'lsp-hints)";
+         (make-virtual-text (point) \": int\" nil 0 'my-hints)";
 
 primitive!(make_virtual_text, args, _env, ctx, {
     if args.len() < 2 {
@@ -101,17 +84,11 @@ primitive!(make_virtual_text, args, _env, ctx, {
     Ok(ELispExp::number(id as f64))
 });
 
-pub const CLEAR_VIRTUAL_TEXT_DOC: &str = "(clear-virtual-text &optional CATEGORY): Remove virtual \
-         text from the current buffer -- everything in CATEGORY, or all of it when CATEGORY is \
-         omitted. Returns how many entries went.\n\n\
-         The useful half of the interface, and the reason a category exists. A producer that has \
-         new answers -- a language server that has re-analysed the file, a preview following \
-         what is being typed -- clears its own batch and places the new one, without keeping a \
-         handle for each entry and without disturbing anybody else's.\n\n\
-         That still works after the module that made them has been reloaded, which loose handles \
-         do not.\n\n\
+pub const CLEAR_VIRTUAL_TEXT_DOC: &str = "(clear-virtual-text &optional CATEGORY): Remove the \
+         virtual text of CATEGORY from the current buffer, or all of it, and return how many \
+         went.\n\n\
          Example:\n\
-         (clear-virtual-text 'lsp-hints)";
+         (clear-virtual-text 'my-hints)";
 
 primitive!(clear_virtual_text, args, _env, ctx, {
     let category = args::optional_name(args.first(), "Symbol naming a category, or nil")?;
@@ -119,11 +96,8 @@ primitive!(clear_virtual_text, args, _env, ctx, {
     Ok(ELispExp::number(gone as f64))
 });
 
-pub const DELETE_VIRTUAL_TEXT_DOC: &str = "(delete-virtual-text HANDLE): Remove the one entry \
-         HANDLE names. Returns t if there was one, nil otherwise.\n\n\
-         For a producer with exactly one thing to take back. A producer with a set of them wants \
-         `clear-virtual-text' and a category instead, which is one call rather than a list of \
-         handles to keep correct.";
+pub const DELETE_VIRTUAL_TEXT_DOC: &str = "(delete-virtual-text HANDLE): Remove the one piece of \
+         virtual text HANDLE names from the current buffer. Return t, or nil when there is none.";
 
 primitive!(delete_virtual_text, args, _env, ctx, {
     let ELispExp::Number(id) = args.first().unwrap_or(&ELispExp::Number(-1.0)) else {
@@ -141,11 +115,11 @@ primitive!(delete_virtual_text, args, _env, ctx, {
     })))
 });
 
-pub const VIRTUAL_TEXT_AT_DOC: &str = "(virtual-text-at POSITION): The virtual text shown at \
-         POSITION, as a list of (TEXT FACE CATEGORY HANDLE) in the order it is drawn. Empty when \
-         there is none.\n\n\
-         For a module that wants to say something about what is shown there -- or for a test, \
-         which cannot read the screen.";
+pub const VIRTUAL_TEXT_AT_DOC: &str = "(virtual-text-at POSITION): Return the virtual text shown \
+         at POSITION in the current buffer, as a list of (TEXT FACE CATEGORY HANDLE) in the order \
+         it is drawn.\n\n\
+         Example:\n\
+         (virtual-text-at (point))";
 
 primitive!(virtual_text_at, args, _env, ctx, {
     let at = match args.first() {

@@ -5,6 +5,3 @@
 # Variables the editor reads but does not declare: declared, with a
 # docstring, in the step of their area.
 worker-fuel
-
-# Names that do not exist
-eval-expression        # in risp-refresh-vocabulary: M-: is eval-expression-prompt

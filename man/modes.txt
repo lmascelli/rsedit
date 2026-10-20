@@ -1,125 +1,159 @@
 NAME
     modes - what a buffer is being edited as
 
+SYNOPSIS
+    (add-auto-mode PATTERN MODE)
+    (add-hook MODE HOOK FUNCTION)
+    (remove-hook MODE HOOK FUNCTION)
+    (risp-refresh-vocabulary)
+    rust-keywords
+    rust-constants
+    rust-types
+    cpp-keywords
+    cpp-constants
+    cpp-types
+    risp-special-forms
+    risp-constants
+
 DESCRIPTION
-    Every buffer has one major mode. It decides three things: how the text is
-    coloured, which keys mean something other than what they usually mean, and
-    what counts as a comment.
+    Every buffer has one major mode, and the mode says what the buffer is
+    edited as: how its text is coloured, what its brackets, strings and
+    comments are, how Tab indents a line, which words C-M-i offers, and
+    which keys do something of their own in it. The status line shows the
+    mode's name, and C-h M describes it, with the keys it binds.
 
-    C-h M says what the current buffer's mode is and what it does.
+    A file gets its mode from its name, and a buffer that is not a file --
+    a directory listing, a manual page, a list of matches -- from whatever
+    made it. `set-major-mode' gives the current buffer another, as the
+    `buffers' page says. Making a mode of your own is `writing-modes'.
 
-WHICH MODE A BUFFER GETS
-    From its file's name. A .rs file gives you rust-mode; .c, .h, .cpp, .hpp,
-    .cc, .cxx and .hxx give cpp-mode; .lisp and .risp give risp-mode, which is
-    this editor's own Lisp. Anything else is fundamental-mode, which colours
-    nothing and takes no keys of its own.
+WHICH MODE A FILE GETS
+        rust-mode           .rs
+        cpp-mode            .c .h .cpp .hpp .cc .cxx .hxx .C .H
+        risp-mode           .lisp .risp
+        fundamental-mode    any other name
 
-    A buffer that is not a file gets the mode whatever made it asked for: a
-    directory listing is dired-mode, a compilation's output is
-    compilation-mode, a manual page is manpage-mode.
+    `add-auto-mode' adds a name to these. PATTERN is a regular expression
+    matched against the file's whole path, so it can name a directory as
+    well as an extension. The first pattern declared that matches is the
+    one that counts, and the modules declare theirs as they load: a pattern
+    of yours that takes a name from one of them goes at the top of
+    init.lisp, before the modules. MODE need not exist yet.
 
-WHAT COLOURING IS
-    A list of patterns over the text, each saying "this shape is a keyword"
-    or "this shape is a string". It is not a parser: a mode can say that a
-    word in a list is a keyword and cannot say anything about what the code
-    means.
-
-    That is a deliberate limit, and the thing that fills the gap is an
-    *overlay* -- a face on one particular span, put there by something that
-    knows why. A search marks its matches that way, and so does a
-    compilation's current complaint. See `overlays'.
-
-    Colour arrives a chunk at a time on a background thread, so a large file
-    opens as plain text and fills in rather than making you wait.
+    The mode is chosen when the file is opened, and again when C-x C-w
+    writes the buffer under a name that another pattern claims. A name no
+    pattern claims leaves the mode as it was.
 
 MODES THAT SHIP
-        fundamental-mode    no colouring, no keys of its own
-        rust-mode           .rs
-        cpp-mode            .c, .h, .cpp, .hpp, .cc, .cxx, .hxx
-        risp-mode           .lisp, .risp -- this editor's own Lisp
+        fundamental-mode    plain text: no colours, no keys of its own
+        rust-mode           Rust
+        cpp-mode            C and C++
+        risp-mode           this editor's own Lisp
         dired-mode          a directory listing
-        compilation-mode    a build's output
-        shell-output-mode   a command's output
-        occur-mode          a list of matches
-        manpage-mode        a manual page
-        help-mode           an answer from the help system
         buffer-list-mode    the list of buffers
-        minibuffer-mode     a prompt
-        isearch-mode        a search in progress
-        completion-mode     the strip of candidates
+        compilation-mode    the output of a build
+        occur-mode          a list of matches
+        shell-output-mode   what a shell command printed
+        help-mode           an answer from C-h
+        manpage-mode        a page of this manual
         theme-list-mode     the list of themes
         backtrace-mode      where an error came from
+        minibuffer-mode     a prompt
+        isearch-mode        the prompt of an incremental search
+        completion-mode     the strip of candidates
 
-    Each is a .lisp file you can read, and taking one out of your
-    configuration removes exactly that feature.
-
-MODE KEYS
-    A mode's keys are consulted before the global ones, so a listing can use
-    plain letters. Nearly all of them agree on four:
-
-        n  p            down and up a line
-        q               put this away
-        g               build it again, where that means anything
-
-    A key the mode does not bind falls through to the global map, which is why
+    In the buffers the editor makes to show you something -- the listings,
+    the help, the manual -- n and p go down and up, a line at a time or in a
+    build's output a complaint at a time, and q puts the buffer away. g
+    reads dired, the buffer list and the theme list again, and runs a build
+    again. A key a mode does not bind does what it does everywhere else, so
     C-x C-f works in a directory listing.
 
+THE LANGUAGES
+    rust-mode, cpp-mode and risp-mode colour keywords, strings, comments,
+    numbers and the names of functions; rust-mode and cpp-mode types, doc
+    comments and attributes as well, and cpp-mode the lines of the
+    preprocessor. Each tells the editor its brackets, strings and comments,
+    which C-M-f and M-; go by. risp-mode indents as Lisp; in the other two
+    Tab matches the line above.
+
+    Their words are lists you can read: `rust-keywords', `rust-constants'
+    and `rust-types', `cpp-keywords', `cpp-constants' and `cpp-types',
+    `risp-special-forms' and `risp-constants'. C-M-i offers them as
+    keywords. The colouring and what C-M-i offers are both made from the
+    lists when the module loads, so changing a list afterwards changes
+    neither.
+
+    risp-mode does not list the functions and macros it colours: it asks
+    the interpreter, which knows every one there is, yours included. It
+    asks when it loads, so a function defined since is coloured once
+    (risp-refresh-vocabulary) has been evaluated, with M-:. C-M-i asks
+    every time, and needs nothing.
+
 HOOKS
-    Hooks are functions called without arguments, in registration order:
+    A hook is a list of functions the editor calls at a moment of its own,
+    named by a string:
 
-        (add-hook 'rust-mode "post-command-hook" 'my-function)
+        pre-command-hook        before every command
+        post-command-hook       after every command that did not fail
+        post-self-insert-hook   after a key that types itself, before
+                                post-command-hook; not after a paste
+        buffer-created-hook     a buffer has just been made
+        major-mode-hook         a buffer has its mode: it has just been
+                                made, or its mode has just changed
+        after-change-major-mode-hook
+                                straight after major-mode-hook
+        find-file-hook          a file has been opened in a new buffer,
+                                after those three
+        after-set-visited-file-name-hook
+                                C-x C-w has written the buffer to a file
+                                it was not visiting
+        after-close-hook        a buffer has been closed
 
-    nil instead of a mode name means every mode. Each event runs its
-    mode-specific callbacks before global callbacks. add-hook ignores
-    duplicate registrations in the same scope; remove-hook takes the same
-    three arguments. Errors are logged and do not prevent the remaining
-    callbacks from running.
+    (add-hook 'rust-mode "find-file-hook" 'my-rust-setup) calls the function
+    my-rust-setup, with no arguments, when a Rust file is opened; nil in
+    place of the mode calls it whatever the mode. FUNCTION is the name of a
+    function: a lambda is refused. The functions run in the order they were
+    added, the mode's own before those for every mode, with the buffer
+    concerned current; after-close-hook runs those of the closed buffer's
+    mode, once it has gone. A function added twice runs once.
 
-    pre-command-hook runs before a command; post-command-hook after it.
-    post-self-insert-hook runs after a character is typed, for auto-pairing.
+    `remove-hook' takes the same arguments: with a mode it takes the
+    function off that mode's hook, and with nil off the one for every mode.
+    A function that fails is reported in the log, and the others still run.
+    The first *scratch* is made before init.lisp is read, so the hooks of
+    a new buffer that init.lisp adds do not run for it.
 
-BUFFER LIFECYCLE
-    Every newly allocated buffer runs these events, in this order:
+LIMITS
+    Loading a mode's file again makes the mode again, empty: the keys and
+    hooks other files gave it go, electric-pair's among them.
 
-        buffer-created-hook             Buffer and major mode are available.
-        major-mode-hook                 Setup for that major mode.
-        after-change-major-mode-hook    General setup after mode callbacks.
-        find-file-hook                  File visits only, including new files.
+    `risp-refresh-vocabulary' is not a command, so M-x does not reach it;
+    and each call adds its patterns to the colouring without taking away
+    the ones before, so that colouring a Lisp buffer costs a little more
+    every time.
 
-    Callbacks see the new buffer as current. Creating a hidden buffer does not
-    display it or change window focus. File text and path are already
-    available for file visits; producers of generated buffers may populate
-    them later. Re-selecting, re-opening or buffer-create on an existing
-    buffer does not run initialization again. A replacement *scratch* after
-    closing the last buffer is a new allocation and receives these hooks too.
+EXAMPLES
+    Open .ino files as C++, at the top of init.lisp:
 
-        (defun my-rust-setup () (buffer-put 'my-setting 4))
-        (add-hook 'rust-mode "major-mode-hook" 'my-rust-setup)
-        (add-hook nil "find-file-hook" 'my-file-setup)
+        (add-auto-mode "\\.ino$" 'cpp-mode)
 
-    (set-major-mode 'rust-mode) selects a registered mode for the current
-    buffer, invalidates its syntax caches, then runs major-mode-hook and
-    after-change-major-mode-hook. Selecting the same mode is a no-op.
-    write-file uses this path when a new filename selects a different mode.
-    After a successful write-file changes the visited path, it also runs
-    after-set-visited-file-name-hook, with the final name and mode available.
+    Say which file has been opened, whatever its mode:
 
-    This follows Emacs's distinction between mode setup and file visits.
-    rsedit uses (add-hook MODE "major-mode-hook" FUNCTION) where Emacs would
-    use a variable such as rust-mode-hook. It matches exact mode names; there
-    is no derived-mode inheritance or buffer-local hook variable. Unlike
-    Emacs, set-major-mode retains buffer-local metadata. The initial *scratch*
-    predates init.lisp; use a globalized mode's refresh to cover existing
-    buffers.
+        (defun my-opened () (message "Opened %s" (current-buffer)))
+        (add-hook nil "find-file-hook" 'my-opened)
 
-    Vim uses these generic events to implement global-vim-mode and selection
-    by major mode in Risp. A globalized mode applies buffer-local keymaps to
-    eligible buffers, keeping minibuffers and service buffer commands usable.
+    And stop saying it:
 
-WRITING ONE
-    A mode is `make-mode', some `add-syntax-rule' calls, some `define-key'
-    calls, and an `add-auto-mode' saying which file names it claims.
-    rust-mode.lisp is a hundred and thirty lines of it and is the one to copy.
+        (remove-hook nil "find-file-hook" 'my-opened)
+
+    Colour the Lisp functions defined since risp-mode loaded:
+
+        (risp-refresh-vocabulary)
+
+    How many keywords rust-mode knows:
+
+        (length rust-keywords)
 
 SEE ALSO
-    keymaps, overlays, themes, configuration
+    writing-modes, buffers, keymaps, indentation, completion, themes, vim

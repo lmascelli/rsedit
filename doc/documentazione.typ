@@ -1023,6 +1023,84 @@ senza la correzione:
   name (Find file:).»;
 - `eval-expression-prompt` è un comando, e `M-x` lo raggiunge.
 
+*Passo 7, fatto.* `modes`, `themes`, `overlays` e `virtual-text` sono
+riscritte sul modello. La pagina nuova è `writing-modes`, che il piano non
+prevedeva: come si scrive un modo --- la colorazione con le regole e le
+regioni, la tabella della sintassi e le funzioni che la interrogano --- stava
+solo nelle docstring e nei commenti di `rust-mode.lisp`, e in `modes` avrebbe
+mescolato chi usa i modi e chi li scrive. `modes` è la casa di
+`add-auto-mode`, degli hook e delle liste delle parole dei tre linguaggi;
+`themes` delle facce e dei colori. Le sezioni di `virtual-text` sul costo e
+sulle righe descrivevano l'interno ed escono dalla pagina: le dice già la
+documentazione di `ui/layout.rs`. In `theme.lisp` `current-theme` passa da
+`setq` a `defvar` con docstring, così ricaricare il modulo non dimentica il
+tema in vigore. Nessuna impostazione dell'area è letta dal Rust, e il
+registro `SETTINGS` non cambia. Le 30 docstring delle primitive dell'area e
+quelle dei quattro moduli seguono il modello; le intestazioni dei moduli
+rimandano alle pagine, il commento di `common-keymaps.lisp` sulla faccia
+della regione è diventato un rimando, e `themes/README.md`, che ripeteva la
+pagina, descrive i dieci temi classici e rimanda a `themes`.
+
+Le pagine e le docstring dell'area dicevano cose false, ora corrette:
+
+- `syntax-ppss` dà cinque elementi, non quattro;
+- `face-style` non risponde nella forma che `set-face` prende: gli attributi
+  seguono i colori invece di stare in una lista, e `themes` prometteva che
+  un tema si potesse leggere così da un editor in funzione;
+- `line-end-position`, che `virtual-text` e la docstring di
+  `make-virtual-text` davano per la fine della riga, non esiste;
+- gli esempi per il C di `editing` e di `indentation`, e quello della
+  docstring di `electric-pair-enable`, usavano `cc-mode`, il nome del modulo,
+  al posto di `cpp-mode`, il nome del modo, e non facevano nulla;
+- gli esempi di `make-mode` e `add-auto-mode` usavano `lisp-mode`, che non
+  c'è; quelli di `set-string-syntax`, `set-char-quote`, `syntax-ppss`,
+  `balance-point` e `syntax-class` non si potevano incollare, per le
+  virgolette precedute dalla barra;
+- `set-syntax-pairs` non dichiara le coppie del modo: le aggiunge alle
+  parentesi che ogni modo ha già, e in `risp-mode` le graffe restano coppie;
+- `add-hook` prende il nome di una funzione e rifiuta una lambda;
+  `post-command-hook` non gira dopo un comando che fallisce; la pagina non
+  nominava `after-close-hook` né `after-set-visited-file-name-hook`;
+- `modes` diceva ogni modo un file `.lisp`: `fundamental-mode`,
+  `minibuffer-mode` e `isearch-mode` sono nel Rust;
+- `overlays` diceva gli overlay le sole posizioni che l'editor tiene, e il
+  testo virtuale ne tiene altre;
+- l'intestazione di `risp-mode.lisp` chiamava comando
+  `risp-refresh-vocabulary`, e la sua docstring rimandava a
+  `eval-expression`, che non esiste; un commento di `rust-mode.lisp`
+  nominava `set-mode-keywords`, che non esiste;
+- l'esempio di `themes`, e quello di `configuration`, caricavano il modulo
+  `theme`, che l'`init.lisp` predefinito carica già.
+
+Due limiti noti sono ora scritti nelle pagine: `make-mode` su un modo che
+esiste lo rifà vuoto, chiavi e hook degli altri moduli compresi (SIN-4 nel
+rapporto), e una finestra flottante non mostra né la colorazione né gli
+overlay (TUI-6).
+
+Il passo ha trovato sei difetti del codice, che non corregge:
+
+- `reset-faces` rimette solo le quattordici facce che il Rust conosce; quelle
+  che danno i moduli (`doc-comment`, `attribute`, `preprocessor`, `error`,
+  `preview`, `results-here`, `results-target`, `manpage-bold`,
+  `manpage-underline`) restano senza stile. Dopo `M-x reset-theme` le pagine
+  del manuale perdono il grassetto e i segni di `M-g n` spariscono, e un tema
+  che non le nomina le lascia spente;
+- `monochrome` e `soft-contrast-gray` danno uno stile a `compilation-here` e
+  `compilation-target`, che nessuno disegna, e non a `results-here`,
+  `results-target`, `preview` e `preprocessor`; `themes/README.md` diceva
+  che i temi così erano tre;
+- i prompt di `set-face`, `set-kill-ring-max` e `set-undo-limit` cominciano
+  con i due punti, «:Face: »: le specifiche sono scritte `"s:Face: "`, e
+  `ArgSpec::parse` prende per prompt tutto ciò che segue il primo carattere;
+- `risp-refresh-vocabulary` non è un comando, e ogni chiamata aggiunge le sue
+  quattro regole senza togliere le vecchie: nove regole al caricamento,
+  tredici dopo una chiamata, diciassette dopo due;
+- `set-face` con gli attributi scritti come una stringa, `"bold"` invece di
+  `'("bold")`, non accende nulla e non dice nulla, mentre un attributo
+  sconosciuto è un errore;
+- quando rifiuta una lambda, `add-hook` riferisce l'argomento sbagliato:
+  `got "post-command-hook"` con il modo nil, `got "other"` con un modo.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),
@@ -1031,7 +1109,7 @@ senza la correzione:
   [4], [file, buffer, finestre (fatto)], [`files`, `buffers`, `windows`], [`io`, `buffers`, `windows`, `ui`, `mouse`, `ask`], [`dired`, `buffer-list`; nuove: `dired`, `mouse`; le impostazioni `auto-save` e `watch-files`],
   [5], [cercare e navigare (fatto)], [`searching`, `compile`], [`isearch`, `replace`, `results`, `scan`, `match_data`], [`occur`, `compile`; nuova: `regexps`],
   [6], [prompt, completamento, tasti, aiuto (fatto)], [`completion`, `keymaps`, `getting-help`], [`minibuffer`, `completion`, `help`, `commands`, il resto di `general`], [`minibuffer`, `completion`, `completion-at-point`, `help`, `manpage`, `preview`, `common-keymaps`; nuova: `minibuffer`],
-  [7], [modi e aspetto], [`modes`, `themes`, `overlays`, `virtual-text`], [`modes`, `theme`, `overlays`, `virtual_text`], [`rust-mode`, `risp-mode`, `cc-mode`, `theme`],
+  [7], [modi e aspetto (fatto)], [`modes`, `themes`, `overlays`, `virtual-text`], [`modes`, `theme`, `overlays`, `virtual_text`], [`rust-mode`, `risp-mode`, `cc-mode`, `theme`; nuova: `writing-modes`],
   [8], [estendere l'editor], [`writing-commands` \ `background`], [`workers`, `shell`], [`shell`; nuova: `shell`],
   [9], [vim], [`vim`], [---], [`vim`],
 )

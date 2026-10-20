@@ -1,54 +1,149 @@
 NAME
-    themes - choosing how faces are drawn
+    themes - how faces are drawn, and choosing a theme
 
 SYNOPSIS
     (theme-list)
+    (theme-list-select)
+    (theme-list-refresh)
     (select-theme NAME)
     (reset-theme)
     (available-themes)
+    (set-face FACE &optional FOREGROUND BACKGROUND ATTRIBUTES)
+    (face-style FACE)
+    (reset-faces)
+    (list-faces)
+    (list-colors)
+    current-theme
+    theme-list-buffer-name
+    theme-list-name-column
+    theme-suffix
 
 DESCRIPTION
-    A theme is a file under data/themes that puts an alist on a symbol named
-    after it: monochrome.lisp defines monochrome-theme. Each entry is
+    Everything the editor colours, it colours by name: a keyword is drawn
+    in the face keyword, the region in the face region, the status line in
+    mode-line. A face says how its text is drawn -- a colour for the text, a
+    colour behind it, bold, italic, underline, reverse video -- and a theme
+    says it for many faces at once.
 
-        (FACE FOREGROUND BACKGROUND ATTRIBUTES)
+    C-c t lists the themes, and Return on one applies it. To keep a choice,
+    put it in init.lisp, after the line that loads the module,
+    (eval-file "theme"):
 
-    which is exactly what set-face takes, so a theme is written the way a
-    face is set and there is no second vocabulary.
+        (select-theme 'gruvbox-dark)
 
-    An entry is a style rather than a colour because that is what makes a
-    monochrome theme possible: it has to be able to say "bold" where it
-    cannot say "blue".
+    Twelve themes come with the editor: dracula, gruvbox-dark,
+    gruvbox-light, monochrome, monokai, nord, soft-contrast-gray,
+    solarized-dark, solarized-light, tango-dark, tomorrow-night and
+    zenburn. monochrome sets no colour at all, only bold, italic, underline
+    and reverse video, so it reads the same on any terminal.
 
-    Loading a theme file changes nothing. It defines data; applying it is a
-    separate act, which is what makes it safe to read one in order to find
-    out its name.
+THE LIST OF THEMES
+    C-c t shows the themes installed, one to a line, with a * beside the one
+    in force. Return applies the theme on the cursor's line, g reads the
+    themes again, n and p move, q puts the list away. M-x reset-theme takes
+    the theme away again.
 
-RESETTING
-    Applying a theme puts every face back to how the editor ships it, then
-    sets the ones the theme names. Without that a theme only changes what it
-    mentions, so switching from a colourful theme to a sparse one leaves the
-    colourful one's choices behind.
+THE FACES
+        default              the text itself; no front end draws it yet
+        region               the region, between point and the mark
+        mode-line            the status line of the window you are in
+        mode-line-inactive   the status line of the other windows
+        window-separator     the line between windows side by side
+        line-number          the line numbers, when they are on
+        line-number-current  the number of the line point is on
+        replace-match        the match M-% is asking about
+        keyword  type  function  builtin  string  comment
+                             the parts of a language its mode colours
+        doc-comment  attribute  preprocessor
+                             the same, named by rust-mode and cpp-mode
+        error                the line saying a command failed, in its
+                             output
+        preview              what C-x r t is about to insert
+        results-here         the entry M-g n is on, in its list
+        results-target       the line that entry is about, in its file
+        manpage-bold         bold, in a page of the system's manual
+        manpage-underline    underlining, in one
 
-    The cost is that themes do not compose: a small theme cannot tweak a big
-    one. That is the right trade while selecting a theme means "make the
-    editor look like this" rather than "adjust it a bit".
+    `list-faces' names every face there is. A face is made by being named,
+    so a misspelt name is a new face that nothing draws -- and shows up
+    there.
 
-WRITING ONE
-    Put a file in themes/ at the project root; the build copies it. Use
-    list-faces to see what can be set, and face-style to read how a face is
-    drawn now -- it answers in the form set-face takes, so a theme can be
-    read out of a running editor and pasted into a file.
+SETTING A FACE
+        (set-face 'region "#f8f8f2" "#3a5fcd")
+        (set-face 'comment "bright-black" nil '("italic"))
+
+    FOREGROUND and BACKGROUND are colours, and nil or "" leaves that side
+    to the terminal. ATTRIBUTES is a list of the attributes to turn on:
+    "bold", "italic", "underline" and "reverse". `set-face' replaces the
+    whole face, so what it is not given, the face loses. M-x set-face asks
+    for the face and the two colours.
+
+    A colour is "#rrggbb", "#rgb", or one of sixteen names, which
+    `list-colors' gives: black, red, green, yellow, blue, magenta, cyan and
+    white, and each of them with bright- in front. It is drawn as asked on
+    a terminal that says, in COLORTERM, that it shows any colour; on one
+    that says 256color in TERM, as the nearest of its 256; on any other, as
+    the nearest of its sixteen, which are the terminal's own. A name always
+    lands on the colour of the same name.
+
+    `face-style' says how a face is drawn now, as (FOREGROUND BACKGROUND
+    ATTRIBUTE...): each colour written "#rrggbb", or nil, and the
+    attributes after them rather than in a list of their own.
+
+WRITING A THEME
+    A theme is a file of Lisp in the editor's themes directory,
+    (data-directory "themes"), that puts the list of its faces on a symbol:
+    a file called night.lisp puts it on night-theme.
+
+        (put 'night-theme 'faces
+             '((keyword "#859900" nil ("bold"))
+               (region  nil "#073642" nil)))
+
+    Each entry is what `set-face' takes, so a theme is written the way a
+    face is set. Loading the file changes nothing; `select-theme' applies
+    it, after putting every face back with `reset-faces', so that nothing
+    of the theme before is left. A face a theme does not name goes back to
+    how it ships. In the source tree the themes are in themes/, which the
+    build copies.
+
+LIMITS
+    The terminal front end does not draw the face default: the text and the
+    background keep the terminal's own colours, whatever the theme says.
+    Set the terminal's colours to the ones in the theme's default entry.
+
+    `reset-faces', and so `select-theme' and M-x reset-theme, puts back
+    only the faces the editor itself styles. The ones modules style --
+    doc-comment, attribute, preprocessor, error, preview, results-here,
+    results-target, manpage-bold and manpage-underline -- are left plain,
+    unless the theme names them: after M-x reset-theme the manual's bold
+    and the marks of M-g n are gone. Of the themes that come with the
+    editor, monochrome and soft-contrast-gray do not name preprocessor,
+    preview, results-here and results-target, and name instead two faces
+    nothing draws, compilation-here and compilation-target.
+
+    ATTRIBUTES must be a list: "bold" on its own turns on nothing, and says
+    nothing.
 
 EXAMPLES
-    Choose a theme in init.lisp, after the line that loads the module:
+    A theme from init.lisp:
 
-        (eval-file "theme")
-        (select-theme 'monochrome)
+        (select-theme 'nord)
 
-    Go back to how the editor ships:
+    The region in a colour rather than in reverse video:
 
-        (reset-theme)
+        (set-face 'region nil "bright-black")
+
+    And back as the editor ships it:
+
+        (set-face 'region nil nil '("reverse"))
+
+    How keywords are drawn now:
+
+        (face-style 'keyword)
+
+    The themes there are to choose from:
+
+        (available-themes)
 
 KEYS
     C-c t                   theme-list
@@ -56,6 +151,9 @@ KEYS
 KEYS IN THEME LIST MODE
     <ret>                   theme-list-select
     g                       theme-list-refresh
+    n                       next-line
+    p                       previous-line
+    q                       close-buffer
 
 SEE ALSO
-    rsedit, overlays, (set-face), (face-style), (list-faces)
+    configuration, modes, writing-modes, overlays

@@ -2,10 +2,9 @@ use super::*;
 use crate::modes::{StringStyle, sexp};
 use crate::primitives::args;
 
-pub const REMOVE_HOOK_DOC: &str = "(remove-hook MODE HOOK FUNCTION): Remove FUNCTION from HOOK \
-         in MODE, or from the global hooks when MODE is nil. Uses the same arguments as \
-         add-hook. Returns t for a known mode (even when FUNCTION was absent), nil for an \
-         unknown mode. Removing a mode's callback does not remove a global callback.";
+pub const REMOVE_HOOK_DOC: &str = "(remove-hook MODE HOOK FUNCTION): Take FUNCTION off HOOK in \
+         major mode MODE, or off the hook for every mode when MODE is nil: the arguments \
+         `add-hook' took. Return t, or nil when there is no such mode.";
 
 primitive!(remove_hook, args, _env, ctx, {
     exact_arity(args, 3)?;
@@ -31,13 +30,11 @@ primitive!(remove_hook, args, _env, ctx, {
     )
 });
 
-pub const MAKE_MODE_DOC: &str = "(make-mode NAME): Register a new, empty major mode named NAME (a \
-         symbol) with no keymaps, hooks, or syntax rules of its own. Returns \
-         t. rsedit's own simplified alternative to Emacs's \
-         `define-derived-mode`.\n\n\
+pub const MAKE_MODE_DOC: &str = "(make-mode NAME): Make a major mode called NAME, a symbol, with \
+         no keys, hooks, colouring or syntax of its own, and return t. A mode that exists already \
+         is made again, empty.\n\n\
          Example:\n\
-         (make-mode 'lisp-mode)\n\
-         (add-syntax-rule 'lisp-mode \"defun\" 'keyword)";
+         (make-mode 'conf-mode)";
 
 primitive!(make_mode, args, _env, ctx, {
     if args.len() != 1 {
@@ -61,23 +58,12 @@ primitive!(make_mode, args, _env, ctx, {
     }
 });
 
-pub const ADD_HOOK_DOC: &str = "(add-hook MODE HOOK FUNCTION): Append the function named FUNCTION to \
-         the list of functions run for HOOK, unless already present (a string, e.g. \
-         \"post-command-hook\") in major mode MODE. Returns t, or nil \
-         (logging a diagnostic) if MODE names an unknown mode.\n\n\
-         MODE may be nil, meaning every mode -- the same way nil means the global keymap in \
-         `define-key'. Use that for a hook whose business has nothing to do with what kind of \
-         buffer this is: the completion strip redraws after any command that changed what was \
-         typed, and registering that in each mode separately would work until somebody defined \
-         a mode afterwards.\n\n\
-         A mode's own hooks run before the ones registered for every mode, so the specific \
-         statement about this buffer acts before anything general reacts to the result.\n\n\
-         Unlike real Emacs Lisp's `add-hook`, a hook here belongs to a mode (or to all of them) \
-         rather than being a variable that can be let-bound.\n\n\
+pub const ADD_HOOK_DOC: &str = "(add-hook MODE HOOK FUNCTION): Call FUNCTION, the name of a \
+         function of no arguments, at HOOK -- a string, such as \"find-file-hook\" -- in the \
+         buffers of major mode MODE, or in every buffer when MODE is nil. Return t, or nil when \
+         there is no such mode. A function already there is not added again.\n\n\
          Example:\n\
-         (defun my-mode-hook () (log \"entered my-mode\"))\n\
-         (add-hook 'my-mode \"post-command-hook\" 'my-mode-hook)\n\
-         (add-hook nil \"post-command-hook\" 'something-everywhere)";
+         (add-hook 'rust-mode \"find-file-hook\" 'my-rust-setup)";
 
 primitive!(add_hook, args, _env, ctx, {
     exact_arity(args, 3)?;
@@ -125,22 +111,12 @@ primitive!(add_hook, args, _env, ctx, {
     }
 });
 
-pub const ADD_SYNTAX_RULE_DOC: &str = "(add-syntax-rule MODE REGEX FACE &optional GROUP): Add a \
-         syntax-highlighting rule to major mode MODE: text matching the regular expression REGEX \
-         is drawn with FACE.\n\n\
-         FACE is any symbol. Naming one that does not exist defines it, so a grammar can colour \
-         whatever its language has; `set-face' then says what it looks like and `list-faces' \
-         lists it.\n\n\
-         GROUP, if given, is the capture group that takes the face rather than the whole match. \
-         This is how a rule expresses context the regexp engine cannot look ahead for: to colour \
-         a function *call*, match the name and the parenthesis together and face only the name.\n\n\
-         A rule applies within one line. Something that can span lines is a region -- see \
-         `add-syntax-region'.\n\n\
-         Returns t, or nil (logging a diagnostic) if MODE is unknown or REGEX fails to \
-         compile.\n\n\
+pub const ADD_SYNTAX_RULE_DOC: &str = "(add-syntax-rule MODE REGEX FACE &optional GROUP): Colour \
+         in FACE, in major mode MODE, what the regular expression REGEX matches within a line; \
+         with GROUP, only that capture group of the match. Return t, or nil when there is no such \
+         mode or REGEX is wrong, which the log says.\n\n\
          Example:\n\
-         (add-syntax-rule 'rust-mode \"\\\\b(fn|let|mut)\\\\b\" 'keyword)\n\
-         (add-syntax-rule 'rust-mode \"\\\\b([a-z_]\\\\w*)\\\\s*\\\\(\" 'function 1)";
+         (add-syntax-rule 'rust-mode \"\\\\b(fn|let|mut)\\\\b\" 'keyword)";
 
 primitive!(add_syntax_rule, args, _env, ctx, {
     if !(3..=4).contains(&args.len()) {
@@ -181,19 +157,10 @@ primitive!(add_syntax_rule, args, _env, ctx, {
 });
 
 pub const ADD_SYNTAX_REGION_DOC: &str = "(add-syntax-region MODE BEGIN END FACE &optional ESCAPE \
-         NESTABLE): Add a construct that runs from BEGIN to END -- possibly across lines -- and is \
-         drawn with FACE. Block comments and strings are regions; a line comment is a rule.\n\n\
-         ESCAPE, if given, is a regular expression for text that looks like END but is not, so \
-         that a quote written with a backslash does not close a string. It is needed because the \
-         regexp engine has no lookbehind, and so END cannot say \"not preceded by a backslash\" \
-         itself.\n\n\
-         NESTABLE, if non-nil, means BEGIN matching inside the region opens another one, so that \
-         a nested block comment closes where it should rather than at the first end \
-         delimiter.\n\n\
-         Everything between the two is drawn with FACE, delimiters included, and no rule applies \
-         inside: a string is uniformly a string.\n\n\
-         Returns t, or nil (logging a diagnostic) if MODE is unknown or a regexp fails to \
-         compile.\n\n\
+         NESTABLE): Colour in FACE, in major mode MODE, everything from a match of BEGIN to the \
+         next match of END, across lines if need be, and nothing else inside. ESCAPE matches text \
+         inside that looks like END and is not; NESTABLE non-nil means BEGIN inside opens \
+         another. Return t, or nil when there is no such mode or a regular expression is wrong.\n\n\
          Example:\n\
          (add-syntax-region 'rust-mode \"/\\\\*\" \"\\\\*/\" 'comment nil t)";
 
@@ -281,17 +248,12 @@ where
     }
 }
 
-pub const ADD_AUTO_MODE_DOC: &str = "(add-auto-mode PATTERN MODE): Open a file whose name matches \
-         the regular expression PATTERN in major mode MODE.\n\n\
-         PATTERN is matched against the whole path, so it can key on a directory as well as an \
-         extension. Patterns are tried in the order they are declared and the first match wins, \
-         which is what lets a specific rule be written before a general one.\n\n\
-         This is how a language module comes to be used at all: nothing else maps a file to a \
-         mode, so a grammar without one can only be reached by hand.\n\n\
-         Returns t, or nil (logging a diagnostic) if PATTERN fails to compile.\n\n\
+pub const ADD_AUTO_MODE_DOC: &str = "(add-auto-mode PATTERN MODE): Open in major mode MODE a file \
+         whose whole path the regular expression PATTERN matches. Of the patterns that match a \
+         file, the one added first is used. Return t, or nil when PATTERN is wrong, which the log \
+         says.\n\n\
          Example:\n\
-         (add-auto-mode \"\\\\.rs$\" 'rust-mode)\n\
-         (add-auto-mode \"\\\\.lisp$\" 'lisp-mode)";
+         (add-auto-mode \"\\\\.ino$\" 'cpp-mode)";
 
 primitive!(add_auto_mode, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -373,16 +335,12 @@ where
     ELispExp::boolean(ctx.edit_syntax_table(mode_name, edit))
 }
 
-pub const SET_SYNTAX_PAIRS_DOC: &str = "(set-syntax-pairs MODE PAIRS): Declare the delimiters that \
-         nest in major mode MODE. PAIRS is a string read two characters at a time: each opener \
-         followed by the closer that matches it. Returns t, or nil (logging a diagnostic) if \
-         MODE is unknown.\n\n\
-         Openers and closers are declared together, and cannot be set one at a time by \
-         `set-syntax-entry': a delimiter whose partner is unknown tells the scanner nothing.\n\n\
-         A trailing odd character is ignored rather than refused -- it is a typo in a mode file, \
-         and taking the whole table down over it would take the mode with it.\n\n\
+pub const SET_SYNTAX_PAIRS_DOC: &str = "(set-syntax-pairs MODE PAIRS): Make delimiters, in major \
+         mode MODE, of the characters of the string PAIRS, read two at a time: an opener, then \
+         the closer that matches it. They are added to the brackets every mode has. Return t, or \
+         nil when there is no such mode.\n\n\
          Example:\n\
-         (set-syntax-pairs 'rust-mode \"()[]{}\")";
+         (set-syntax-pairs 'conf-mode \"<>\")";
 
 primitive!(set_syntax_pairs, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -395,21 +353,12 @@ primitive!(set_syntax_pairs, args, _env, ctx, {
     Ok(answer)
 });
 
-pub const SET_STRING_SYNTAX_DOC: &str = "(set-string-syntax MODE STYLES): Declare the strings in \
-         major mode MODE whose delimiters are more than one character. STYLES is a list of \
-         (OPENER CLOSER). Returns t, or nil (logging a diagnostic) if MODE is unknown.\n\n\
-         The `string' syntax class says \\\"this character opens a string and the same one ends \
-         it\\\", which is true of the double quote and of nothing else. A Rust raw string opens \
-         with three characters and closes with two; Python's triple quote opens with three and \
-         closes with three, and its first character is already a string quote in its own \
-         right.\n\n\
-         The longest opener wins, so a raw-string opener beats the plain quote it begins with. \
-         Nothing is escaped inside one, which is usually the point of having them.\n\n\
-         This is about what the text *means* -- what `forward-sexp', the indenter and \
-         `syntax-ppss' read. What it should look like is the grammar's business; a mode \
-         declaring a raw string here will usually want `add-syntax-region' for it too.\n\n\
+pub const SET_STRING_SYNTAX_DOC: &str = "(set-string-syntax MODE STYLES): Declare the strings of \
+         major mode MODE whose delimiters are longer than one character, as a list of (OPENER \
+         CLOSER), in place of those declared before. Nothing is escaped inside one, and the \
+         longest opener wins. Return t, or nil when there is no such mode.\n\n\
          Example:\n\
-         (set-string-syntax 'rust-mode '((\\\"r#\\\\\\\"\\\" \\\"\\\\\\\"#\\\") (\\\"r\\\\\\\"\\\" \\\"\\\\\\\"\\\")))";
+         (set-string-syntax 'rust-mode '((\"r#\\\"\" \"\\\"#\") (\"r\\\"\" \"\\\"\")))";
 
 primitive!(set_string_syntax, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -449,23 +398,13 @@ primitive!(set_string_syntax, args, _env, ctx, {
     Ok(answer)
 });
 
-pub const SET_CHAR_QUOTE_DOC: &str = "(set-char-quote MODE CHAR): Declare the character that \
-         encloses a single literal character in major mode MODE -- `\'` in Rust, C, C++ and \
-         Java. CHAR is a one-character string; nil removes it. Returns t, or nil (logging a \
-         diagnostic) if MODE is unknown.\n\n\
-         Not a syntax class, because `\'` is not one thing. In `\'a\'` it quotes a character, in \
-         Rust\'s `\'static` it begins a lifetime, and in prose it is an apostrophe. A class says \
-         what a character *is*; this depends on what comes after it, so the scanner decides by \
-         looking: a quote that closes within one character -- two if the first is an escape -- \
-         is a literal and is read as one atom, and anything else is ordinary punctuation.\n\n\
-         Neither existing class can do the job. `string\' would make the first lifetime open a \
-         string that swallows the rest of the file. `escape\' is honoured inside strings too, so \
-         it would eat the closing quote of \\\"it\'s\\\".\n\n\
-         What it fixes is everything that reads the table: `forward-sexp\', the indenter, \
-         `syntax-ppss\' and the pairing built on them all stop being confused by `let c = \
-         \'\\\"\';\'.\n\n\
+pub const SET_CHAR_QUOTE_DOC: &str = "(set-char-quote MODE CHAR): Make CHAR, a one-character \
+         string, the quote that encloses a single character in major mode MODE, as ' does in Rust \
+         and C; nil takes it away. A quote that closes after one character, or after an escape \
+         and one, makes a character literal, and any other is punctuation. Return t, or nil when \
+         there is no such mode.\n\n\
          Example:\n\
-         (set-char-quote \'rust-mode \"\'\")";
+         (set-char-quote 'rust-mode \"'\")";
 
 primitive!(set_char_quote, args, _env, ctx, {
     exact_arity(args, 2)?;
@@ -494,23 +433,12 @@ primitive!(set_char_quote, args, _env, ctx, {
     Ok(answer)
 });
 
-pub const SET_SYNTAX_ENTRY_DOC: &str = "(set-syntax-entry MODE CHARS CLASS): Give every character \
-         in the string CHARS the syntax CLASS in major mode MODE. Returns t, or nil (logging a \
-         diagnostic) if MODE is unknown.\n\n\
-         CLASS is one of:\n\
-         `string'       opens and closes a string; the same character ends it\n\
-         `escape'       the next character is literal, whatever it is\n\
-         `prefix'       attaches to the expression that follows it\n\
-         `symbol'       part of a name\n\
-         `punctuation'  separates, and belongs to nothing\n\n\
-         Delimiters are not here; see `set-syntax-pairs'.\n\n\
-         The same character means different things in different languages, which is the whole \
-         reason a table is per mode: `'' is a prefix in Lisp and punctuation in Rust, where \
-         making it a string quote would leave every lifetime looking like an unterminated \
-         string.\n\n\
+pub const SET_SYNTAX_ENTRY_DOC: &str = "(set-syntax-entry MODE CHARS CLASS): Give each character \
+         of the string CHARS the syntax CLASS in major mode MODE: `string', `escape', `prefix', \
+         `symbol' or `punctuation'. Delimiters are made with `set-syntax-pairs'. Return t, or nil \
+         when there is no such mode.\n\n\
          Example:\n\
-         (set-syntax-entry 'risp-mode \"'`,#\" 'prefix)\n\
-         (set-syntax-entry 'rust-mode \"'\" 'punctuation)";
+         (set-syntax-entry 'conf-mode \"-.\" 'symbol)";
 
 primitive!(set_syntax_entry, args, _env, ctx, {
     exact_arity(args, 3)?;
@@ -528,17 +456,11 @@ primitive!(set_syntax_entry, args, _env, ctx, {
     Ok(answer)
 });
 
-pub const SET_COMMENT_SYNTAX_DOC: &str = "(set-comment-syntax MODE STYLES): Declare how major mode \
-         MODE writes comments. Replaces whatever was declared before. Returns t, or nil (logging \
-         a diagnostic) if MODE is unknown.\n\n\
-         STYLES is a list, one entry per way the language writes a comment:\n\
-         (OPENER)                runs from OPENER to the end of the line\n\
-         (OPENER CLOSER)         runs from OPENER to CLOSER, across lines if need be\n\
-         (OPENER CLOSER t)       the same, and nests: /* /* */ */ is one comment\n\n\
-         A list rather than one line-comment and one block-comment, because a language may have \
-         two of either and the limit would be the editor's rather than the language's.\n\n\
+pub const SET_COMMENT_SYNTAX_DOC: &str = "(set-comment-syntax MODE STYLES): Declare how major \
+         mode MODE writes comments, in place of what was declared before. STYLES has an entry for \
+         each way: (OPENER) to the end of the line, (OPENER CLOSER) as far as CLOSER, and (OPENER \
+         CLOSER t) the same, nesting. Return t, or nil when there is no such mode.\n\n\
          Example:\n\
-         (set-comment-syntax 'risp-mode '((\";\")))\n\
          (set-comment-syntax 'rust-mode '((\"//\") (\"/*\" \"*/\" t)))";
 
 primitive!(set_comment_syntax, args, _env, ctx, {
@@ -587,22 +509,12 @@ primitive!(set_comment_syntax, args, _env, ctx, {
     Ok(answer)
 });
 
-pub const MATCHING_DELIMITER_DOC: &str = "(matching-delimiter CHAR &optional MODE): The character \
-         that closes CHAR if CHAR opens, or the one that opens it if CHAR closes, according to \
-         major mode MODE -- the current buffer's mode when MODE is omitted. Returns nil if CHAR \
-         is not a delimiter at all.\n\n\
-         This is the same table `syntax-class' reads, asked for the partner rather than the \
-         kind, and it is what auto-pairing is built on. A mode that declared its brackets with \
-         `set-syntax-pairs' has therefore already said everything electric pairing needs to \
-         know -- there is no second list of pairs to keep in step with the first, and a mode \
-         whose brackets are unusual gets pairing that matches them for free.\n\n\
-         A string quote is not a delimiter in this sense and answers nil: the same character \
-         both opens and closes it, so `syntax-class' already says all there is to say. A \
-         caller that pairs quotes tests for `string' and uses CHAR itself.\n\n\
+pub const MATCHING_DELIMITER_DOC: &str = "(matching-delimiter CHAR &optional MODE): Return the \
+         delimiter that pairs with CHAR, a one-character string, in major mode MODE or in the \
+         current buffer's: the closer of an opener, the opener of a closer. nil when CHAR is no \
+         delimiter; a string quote is none, being its own pair.\n\n\
          Example:\n\
-         (matching-delimiter \"(\")            => \")\"\n\
-         (matching-delimiter \"]\")            => \"[\"\n\
-         (matching-delimiter \"x\")            => nil";
+         (matching-delimiter \"(\")";
 
 primitive!(matching_delimiter, args, _env, ctx, {
     if args.is_empty() || args.len() > 2 {
@@ -635,15 +547,11 @@ primitive!(matching_delimiter, args, _env, ctx, {
     })
 });
 
-pub const SYNTAX_CLASS_DOC: &str = "(syntax-class CHAR &optional MODE): What CHAR -- a \
-         one-character string -- means in major mode MODE, or in the current buffer's mode when \
-         MODE is omitted. One of `open', `close', `string', `escape', `prefix', `symbol' or \
-         `punctuation'.\n\n\
-         A mode that declared no table of its own answers from the default one, which pairs the \
-         brackets and knows `\\\"' and `\\\\'. That is why sexp motion works in a buffer whose \
-         mode never mentioned syntax.\n\n\
+pub const SYNTAX_CLASS_DOC: &str = "(syntax-class CHAR &optional MODE): Return what CHAR, a \
+         one-character string, is in major mode MODE or in the current buffer's: `open', `close', \
+         `string', `escape', `prefix', `symbol' or `punctuation'.\n\n\
          Example:\n\
-         (syntax-class \"(\" 'rust-mode) => open";
+         (syntax-class \"(\" 'rust-mode)";
 
 primitive!(syntax_class, args, _env, ctx, {
     if args.is_empty() || args.len() > 2 {
@@ -683,20 +591,13 @@ primitive!(syntax_class, args, _env, ctx, {
     ))
 });
 
-pub const SYNTAX_PPSS_DOC: &str = "(syntax-ppss &optional POS): What point -- or POS, if given -- \
-         is inside, as a list of four:\n\n\
-         0  how many lists deep it is; 0 at the top level\n\
-         1  where the innermost open list begins, or nil at the top level\n\
-         2  where the string it is inside begins, or nil if it is not in one\n\
-         3  where the comment it is inside begins, or nil if it is not in one\n\
-         4  where the innermost list's delimiter is, as opposed to where its expression \
-         begins -- they differ by any prefix, and indentation lines up against the delimiter\n\n\
-         Positional, so `(nth 3 (syntax-ppss))' asks whether point is in a comment. Emacs \
-         returns eleven elements; these four are the ones this editor knows.\n\n\
-         A string does not change the depth: point inside a string in a list is still one list \
-         deep.\n\n\
+pub const SYNTAX_PPSS_DOC: &str = "(syntax-ppss &optional POS): Return what POS, or point, is \
+         inside, as a list of five: how many lists deep it is; where the innermost list begins, \
+         its prefix included; where the string it is in begins; where the comment it is in \
+         begins; and where the innermost list's opening delimiter is. Each is nil where there is \
+         none, and the depth 0 at the top level.\n\n\
          Example:\n\
-         (if (nth 2 (syntax-ppss)) (message \\\"in a string\\\"))";
+         (nth 3 (syntax-ppss))";
 
 primitive!(syntax_ppss, args, _env, ctx, {
     let table = ctx.current_syntax_table();
@@ -722,20 +623,12 @@ primitive!(syntax_ppss, args, _env, ctx, {
     ]))
 });
 
-pub const BALANCE_POINT_DOC: &str = "(balance-point &optional POS): The first position at or \
-         after POS -- or point -- by which every list open there has been closed. nil when the \
-         buffer runs out with something still open.\n\n\
-         POS itself when nothing is open there, since nothing then has to close.\n\n\
-         Not the same question as whether the buffer balances. A buffer balances when the depth \
-         is zero at the *end*; this asks whether it reaches zero at all, and stops as soon as it \
-         does. The two come apart whenever something further down is still being typed: in a \
-         file whose last function is half-written, every brace above it is closed and the buffer \
-         as a whole is not.\n\n\
-         Cheaper for the same reason. It stops at the first point of balance instead of running \
-         to the end of the file, which from inside a function is that function's own closing \
-         brace.\n\n\
+pub const BALANCE_POINT_DOC: &str = "(balance-point &optional POS): Return the first position, \
+         from POS or point on, by which every list open there has closed: POS itself when none \
+         is, nil when the buffer ends first. It stops there, without reading the rest of the \
+         buffer.\n\n\
          Example:\n\
-         (if (balance-point) (message \\\"closed already\\\"))";
+         (balance-point)";
 
 primitive!(balance_point, args, _env, ctx, {
     let table = ctx.current_syntax_table();
@@ -754,14 +647,12 @@ primitive!(balance_point, args, _env, ctx, {
     })
 });
 
-pub const BOUNDS_OF_ENCLOSING_LIST_DOC: &str = "(bounds-of-enclosing-list &optional POS): The \
-         positions (START END) of the innermost list point -- or POS -- is inside, or nil at the \
-         top level.\n\n\
-         START is the opening delimiter, or the prefix before it; END is one past the closing \
-         one, so the two bound the whole expression. A list left unclosed ends at the end of the \
-         buffer, which is what a file being typed into looks like.\n\n\
+pub const BOUNDS_OF_ENCLOSING_LIST_DOC: &str = "(bounds-of-enclosing-list &optional POS): Return \
+         (START END) of the innermost list that POS, or point, is inside, or nil at the top \
+         level. START is at the list's prefix, when it has one, and END just past its closer; a \
+         list not yet closed ends at the end of the buffer.\n\n\
          Example:\n\
-         (bounds-of-enclosing-list) => (12 48)";
+         (bounds-of-enclosing-list)";
 primitive!(bounds_of_enclosing_list, args, _env, ctx, {
     let table = ctx.current_syntax_table();
     let found = ctx.with_current_buffer(|buf| {

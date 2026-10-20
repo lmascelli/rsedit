@@ -128,8 +128,8 @@ EXAMPLES
 
     Wider indentation in C, and shifting rather than reindenting there:
 
-        (put 'cc-mode 'tab-width 8)
-        (put 'cc-mode 'indent-region-style 'shift)
+        (put 'cpp-mode 'tab-width 8)
+        (put 'cpp-mode 'indent-region-style 'shift)
 
     Return as a plain newline:
 

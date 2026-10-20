@@ -257,8 +257,8 @@ EXAMPLES
 
     Pair brackets in C as well, but not quotes:
 
-        (electric-pair-enable 'cc-mode)
-        (put 'cc-mode 'electric-pair-inhibit-quotes t)
+        (electric-pair-enable 'cpp-mode)
+        (put 'cpp-mode 'electric-pair-inhibit-quotes t)
 
     Keep every closing bracket you type, even next to one already there:
 

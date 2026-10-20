@@ -1,0 +1,182 @@
+NAME
+    writing-modes - colouring a language, and saying what its text means
+
+SYNOPSIS
+    (make-mode NAME)
+    (add-syntax-rule MODE REGEX FACE &optional GROUP)
+    (add-syntax-region MODE BEGIN END FACE &optional ESCAPE NESTABLE)
+    (set-syntax-pairs MODE PAIRS)
+    (set-syntax-entry MODE CHARS CLASS)
+    (set-string-syntax MODE STYLES)
+    (set-char-quote MODE CHAR)
+    (set-comment-syntax MODE STYLES)
+    (syntax-class CHAR &optional MODE)
+    (matching-delimiter CHAR &optional MODE)
+    (syntax-ppss &optional POS)
+    (balance-point &optional POS)
+    (bounds-of-enclosing-list &optional POS)
+
+DESCRIPTION
+    A mode is a name and what is said about it. This is a whole one, for
+    files of settings with comments that begin with #:
+
+        (make-mode 'conf-mode)
+        (add-syntax-region 'conf-mode "\"" "\"" 'string "\\\\.")
+        (add-syntax-rule 'conf-mode "#.*" 'comment)
+        (add-syntax-rule 'conf-mode "^([a-z_.]+)\\s*=" 'keyword 1)
+        (set-comment-syntax 'conf-mode '(("#")))
+        (add-auto-mode "\\.conf$" 'conf-mode)
+
+    `make-mode' makes the mode, and `add-auto-mode' gives it the files
+    whose names end in .conf. The lines between answer two questions, and
+    answer them apart: how the text looks, and what it means. How it looks
+    is the colouring: patterns run over each line, in the background. What
+    it means is the syntax table: which characters are brackets, and which
+    open a string or a comment. The editor reads the table the moment it
+    needs it -- for C-M-f, M-;, Tab, and the pairing of brackets -- so it
+    holds where no colour has arrived yet. A string or a comment is usually
+    declared in both.
+
+    A mode's keys are `define-key' with its name, as the `keymaps' page
+    says, and its hooks `add-hook', as `modes' says. rust-mode.lisp is a
+    mode of a hundred and thirty lines, and the one to copy.
+
+COLOURING
+    A rule colours what its regular expression matches, within a line. A
+    region runs from BEGIN to END, across lines if need be, and nothing else
+    is coloured inside it: block comments and strings are regions. A line
+    comment is a rule, since it ends with its line.
+
+        (add-syntax-rule 'rust-mode "\\b(fn|let|mut)\\b" 'keyword)
+        (add-syntax-region 'rust-mode "/\\*" "\\*/" 'comment nil t)
+
+    The scan takes, all along a line, the match that begins first. Of two
+    that begin at the same column a region wins over a rule, and the rule
+    added first over a later one: the specific goes before the general. So
+    rust-mode's rule for a character literal, which begins at its first ',
+    wins over the string that the " in '"' would open a column later.
+
+    The regular expressions, which `regexps' describes, have no lookahead,
+    no lookbehind and no backreferences. These do their work:
+
+        GROUP       the capture group that takes the face, not the whole
+                    match: "\\b([a-z_]+)\\s*\\(" with 1 colours a function's
+                    name where it is called, and not its parenthesis
+        ESCAPE      in a region, text that looks like END and is not:
+                    "\\\\." in a string, so that \" does not end it
+        NESTABLE    BEGIN inside the region opens another, which END closes
+                    first: Rust's /* /* */ */ is one comment
+
+    FACE is any name. The editor's own are keyword, type, function,
+    builtin, string and comment, which every theme gives a style; a name no
+    one has used makes a new face, drawn as plain text until `set-face'
+    says otherwise -- see `themes'. A regular expression that is wrong adds
+    nothing, and the log says why. The buffers of the mode are coloured
+    again whenever a rule or a region is added.
+
+WHAT THE TEXT MEANS
+    Every mode starts from a table that pairs (), [] and {}, and knows " for
+    strings and \ for escapes. A mode declares what differs:
+
+        (set-syntax-pairs 'conf-mode "<>")
+        (set-syntax-entry 'conf-mode "-." 'symbol)
+        (set-comment-syntax 'rust-mode '(("//") ("/*" "*/" t)))
+        (set-string-syntax 'rust-mode '(("r#\"" "\"#") ("r\"" "\"")))
+        (set-char-quote 'rust-mode "'")
+
+    `set-syntax-pairs' adds delimiters, from a string read two characters
+    at a time: an opener, and the closer that matches it. `set-syntax-entry'
+    gives each of CHARS one of these classes:
+
+        string        opens a string, which the same character closes
+        escape        the next character is taken as it is
+        prefix        belongs to the expression after it, as ' in Lisp
+        symbol        part of a name
+        punctuation   part of nothing
+
+    There is no class for a delimiter, which needs its partner to mean
+    anything: `set-syntax-pairs' says both.
+
+    `set-comment-syntax' lists every way the language writes a comment:
+    (OPENER) to the end of the line, (OPENER CLOSER) as far as CLOSER, and
+    (OPENER CLOSER t) the same, nesting. `set-string-syntax' lists the
+    strings whose delimiters are longer than a character, as (OPENER
+    CLOSER): Rust's raw strings, Python's triple quotes. Nothing is escaped
+    in one, and its opener wins over the quote it begins with. Both replace
+    whatever the mode had said before.
+
+    `set-char-quote' names the character that encloses one literal
+    character: ' in Rust and C. It is no class, because the same ' begins a
+    lifetime in Rust and is an apostrophe in prose: a quote that closes
+    after one character, or after an escape and one, is a character
+    literal, and any other is punctuation. nil takes it away.
+
+ASKING WHAT THE TEXT MEANS
+    These answer from the table of the current buffer's mode, or of MODE.
+    In a Lisp buffer holding (setq x '(1 2)), with point after the 1:
+
+        (syntax-class "(")              => open
+        (matching-delimiter "(")        => ")"
+        (syntax-ppss)                   => (2 9 nil nil 9)
+        (bounds-of-enclosing-list)      => (9 14)
+        (balance-point)                 => 15
+
+    `syntax-class' answers open, close, string, escape, prefix, symbol or
+    punctuation, and `matching-delimiter' the partner of a bracket, or nil:
+    a quote has none, being its own. `syntax-ppss' says what POS, or point,
+    is inside:
+
+        0   how many lists deep it is, 0 at the top level
+        1   where the innermost list begins, its prefix included, or nil
+        2   where the string it is in begins, or nil
+        3   where the comment it is in begins, or nil
+        4   where the innermost list's opening delimiter is, or nil
+
+    so (nth 3 (syntax-ppss)) asks whether point is in a comment. A string is
+    not a list, and does not count. `bounds-of-enclosing-list' gives where
+    the innermost list begins, its prefix included, and where it ends; a
+    list not yet closed ends at the end of the buffer. `balance-point'
+    gives the first position, from POS on, by which every list open at POS
+    has closed: POS itself when none is, nil when the buffer ends first.
+
+WHAT ELSE A MODE CAN SAY
+    The rest is properties of the mode's name, each on the page of what it
+    changes:
+
+        (put 'conf-mode 'keywords '("include" "set"))    ; completion
+        (put 'conf-mode 'tab-width 2)                    ; indentation
+        (put 'conf-mode 'indent-function 'my-indent)     ; indentation
+        (put 'conf-mode 'electric-pair-inhibit-quotes t) ; editing
+
+LIMITS
+    `make-mode' on a mode that exists makes it again, empty: its keys,
+    hooks, colouring and table go, whoever had added them. So a mode's file
+    is loaded once, before anything adds to the mode.
+
+    A mode does not inherit from another: each says everything itself.
+
+    A buffer shown in a floating window is drawn without its colouring.
+
+EXAMPLES
+    Colour a list of words, and offer them to C-M-i:
+
+        (defconst conf-words '("include" "set" "unset"))
+        (add-syntax-rule 'conf-mode
+                         (concat "\\b" (regexp-opt conf-words) "\\b")
+                         'keyword)
+        (put 'conf-mode 'keywords conf-words)
+
+    Make - and . part of a name in conf-mode:
+
+        (set-syntax-entry 'conf-mode "-." 'symbol)
+
+    Say whether point is in a string:
+
+        (if (nth 2 (syntax-ppss)) (message "In a string"))
+
+    Where the list around point ends:
+
+        (nth 1 (bounds-of-enclosing-list))
+
+SEE ALSO
+    modes, regexps, themes, keymaps, indentation, editing, completion

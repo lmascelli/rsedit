@@ -37,6 +37,7 @@ THE REFERENCE
         mouse             clicking, dragging and the wheel
         keymaps           how a key becomes a command
         modes             what colouring and keys a buffer gets
+        writing-modes     colouring a language, and its brackets
         completion        how candidates are found and shown
         minibuffer        the prompt, its history, and M-:
         indentation       what Tab and Return do

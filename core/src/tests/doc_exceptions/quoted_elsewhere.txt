@@ -23,9 +23,6 @@ minibuffer-mode
 occur-mode
 shell-output-mode
 
-# Features, by name
-isearch
-
 # Symbols a function takes, returns or keeps as a property
 bold
 class
@@ -48,12 +45,8 @@ symbol
 total-ms
 underline
 
-# Buffers, jobs and themes, by name
+# Buffers and jobs, by name
 highlighter
-monochrome-theme
-
-# Words, patterns and names given as examples
-car*
 
 # Programs
 man

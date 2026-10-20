@@ -1,4 +1,7 @@
 ;;; cc-mode --- colouring for C/C++ source.
+;;;
+;;; The mode is cpp-mode, for the files whose names end in .c, .h, .cpp, .hpp,
+;;; .cc, .cxx and .hxx. User manual: the `modes' page.
 
 (make-mode 'cpp-mode)
 
@@ -38,11 +41,11 @@
     "requires" "return" "sizeof" "static" "static_assert" "struct" "switch"
     "template" "this" "thread_local" "throw" "try" "typedef" "typeid"
     "typename" "union" "using" "virtual" "volatile" "while")
-  "Keywords reserved by C and C++.")
+  "The words C and C++ reserve, which cpp-mode colours as keywords.")
 
 (defconst cpp-constants
   '("true" "false" "NULL" "nullptr" "stdin" "stdout" "stderr")
-  "Values spelled as names.")
+  "The values C and C++ spell as names, which cpp-mode colours as builtins.")
 
 (defconst cpp-types
   '("void" "bool" "char" "short" "int" "long" "float" "double"
@@ -50,7 +53,9 @@
     "ptrdiff_t" "int8_t" "int16_t" "int32_t" "int64_t"
     "uint8_t" "uint16_t" "uint32_t" "uint64_t"
     "char8_t" "char16_t" "char32_t" "wchar_t")
-  "Built-in primitives and standard type definitions.")
+  "The types of C and C++ and of their standard libraries, which cpp-mode
+colours as types; any name that ends in _t or begins with a capital is
+coloured as a type too.")
 
 ;; All three are offered for completion.
 (put 'cpp-mode 'keywords

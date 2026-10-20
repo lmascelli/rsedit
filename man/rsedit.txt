@@ -58,7 +58,7 @@ FINDING YOUR WAY
 
 SEE ALSO
     guide, first-steps, editing, killing, files, searching, getting-help,
-    completion, minibuffer, keymaps, modes, configuration, diagnostics,
-    writing-commands, buffers, windows, dired, mouse, overlays, compile,
-    regexps, themes, background, indentation, rectangles, virtual-text,
-    macros, vim
+    completion, minibuffer, keymaps, modes, writing-modes, configuration,
+    diagnostics, writing-commands, buffers, windows, dired, mouse, overlays,
+    compile, regexps, themes, background, indentation, rectangles,
+    virtual-text, macros, vim

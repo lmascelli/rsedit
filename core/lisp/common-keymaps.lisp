@@ -55,21 +55,8 @@
 (define-key nil "C-y" 'yank)
 (define-key nil "M-y" 'yank-pop)
 
-;; The region is drawn with the `region' face, which ships bound to reverse
-;; video -- no colour to clash with whatever scheme the terminal is set to. To
-;; pick colours instead:
-;;
-;;   (set-face 'region nil "bright-black")         ; a conventional colour
-;;   (set-face 'region "#f8f8f2" "#3a5fcd")        ; any colour you like
-;;   (set-face 'region nil nil '("reverse"))       ; back to the default
-;;
-;; A colour is a request. The renderer draws it as asked where it can, and the
-;; nearest thing it has where it cannot -- on a sixteen-colour terminal that is
-;; a palette slot, which is your own configured colour. `list-colors' names the
-;; conventional ones, and they are chosen so they land on the slot of the same
-;; name when a terminal has to approximate.
-;;
-;; `list-faces' names everything that can be styled this way.
+;; The region is drawn in the face region, reverse video unless a theme says
+;; otherwise: the `themes' manual page says how to change a face.
 
 ;; Keys, and sequences of them: the `keymaps' manual page.
 (define-key nil "C-x C-x" 'exchange-point-and-mark)

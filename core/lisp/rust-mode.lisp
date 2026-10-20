@@ -1,15 +1,12 @@
 ;;; rust-mode --- colouring for Rust source.
 ;;;
-;;; Two things are worth knowing before writing one of these.
+;;; Colours Rust, and tells the editor its brackets, strings, character
+;;; literals and comments, in the files whose names end in .rs. User manual:
+;;; the `modes' page; how a mode like this one is written, `writing-modes'.
 ;;;
-;;; The regexp engine has no lookahead, no lookbehind and no backreferences --
-;;; that is how it stays linear. Where you would reach for `(?=...)', match the
-;;; wider thing and face a capture group instead; where you would reach for
-;;; `(?<!\\)', give the region an escape pattern.
-;;;
-;;; Anything that can cross a line is a *region*; anything that cannot is a
-;;; *rule*. A line comment is a rule even though it looks like a region,
-;;; because it always ends where the line does.
+;;; The regexp engine has no lookahead, no lookbehind and no backreferences:
+;;; where `(?=...)' would do, a rule matches the wider thing and faces a
+;;; capture group, and where `(?<!\\)' would, a region names an escape.
 
 (make-mode 'rust-mode)
 
@@ -48,26 +45,27 @@
 
 ;; The vocabulary, written once and used twice.
 ;;
-;; `set-mode-keywords' is what `capf-mode-keywords' offers when you complete in
-;; a Rust buffer; `regexp-opt' turns the same list into the pattern that
-;; colours it. Written as a regexp literal and a list side by side, the two
-;; would agree today and disagree the first time someone added a keyword to one
-;; of them -- and the failure would be a word that highlights but will not
-;; complete, which nobody reports as a bug.
+;; The list on the mode's keywords property is what `capf-mode-keywords'
+;; offers when you complete in a Rust buffer; `regexp-opt' turns the same list
+;; into the pattern that colours it. Written as a regexp literal and a list
+;; side by side, the two would agree today and disagree the first time someone
+;; added a keyword to one of them -- and the failure would be a word that
+;; highlights but will not complete, which nobody reports as a bug.
 (defconst rust-keywords
   '("fn" "let" "mut" "const" "static" "pub" "crate" "mod" "use" "as" "impl"
     "trait" "for" "in" "where" "match" "if" "else" "while" "loop" "break"
     "continue" "return" "struct" "enum" "type" "dyn" "move" "ref" "self"
     "super" "unsafe" "async" "await")
-  "The words Rust reserves.")
+  "The words Rust reserves, which rust-mode colours as keywords.")
 
 (defconst rust-constants '("true" "false" "None" "Some" "Ok" "Err")
-  "Values spelled as names.")
+  "The values Rust spells as names, which rust-mode colours as builtins.")
 
 (defconst rust-types
   '("i8" "i16" "i32" "i64" "isize" "u8" "u16" "u32" "u64" "usize" "f32" "f64"
     "bool" "char" "str" "String" "Vec" "Option" "Result")
-  "The types worth knowing without being told.")
+  "The types rust-mode colours by name; any name that begins with a capital
+is coloured as a type too.")
 
 ;; All three are offered for completion, because all three are things you type.
 (put 'rust-mode 'keywords

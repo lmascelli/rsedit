@@ -76,20 +76,12 @@ fn face_arg<B: BufferTrait>(arg: Option<&ELispExp<B>>) -> Result<Face, EvalError
     Ok(Face::intern(&name))
 }
 
-pub const SET_FACE_DOC: &str = "(set-face FACE &optional FOREGROUND BACKGROUND ATTRIBUTES): Bind \
-         FACE to a style, replacing whatever it was bound to.\n\n\
-         FACE is a face name, as a string or symbol -- see `list-faces'. \
-         FOREGROUND and BACKGROUND are colours: a name (\"red\", \
-         \"bright-blue\") or an exact colour (\"#rrggbb\", \"#rgb\"). nil or \
-         \"\" for either leaves that side alone. ATTRIBUTES is a list of \
-         \"bold\", \"italic\", \"underline\" and \"reverse\".\n\n\
-         A colour is a request, not an instruction: a display that cannot show \
-         it draws the nearest thing it has, which on a sixteen-colour terminal \
-         is the user's own palette. Names are shorthand for conventional \
-         colours -- see `list-colors'.\n\n\
+pub const SET_FACE_DOC: &str = "(set-face FACE &optional FOREGROUND BACKGROUND ATTRIBUTES): Draw \
+         the face called FACE with FOREGROUND and BACKGROUND -- \"#rrggbb\", \"#rgb\" or a name \
+         `list-colors' gives, and nil or \"\" for the terminal's own -- and ATTRIBUTES, a list of \
+         \"bold\", \"italic\", \"underline\" and \"reverse\". What FACE was is replaced whole, \
+         and a face no one has named is made. Return nil.\n\n\
          Example:\n\
-         (set-face 'region \"#f8f8f2\" \"#3a5fcd\")\n\
-         (set-face 'region nil nil '(\"reverse\")) ; the default: no colour to clash\n\
          (set-face 'comment \"bright-black\" nil '(\"italic\"))";
 
 primitive!(set_face, args, _env, ctx, {
@@ -104,12 +96,11 @@ primitive!(set_face, args, _env, ctx, {
     Ok(ELispExp::nil())
 });
 
-pub const FACE_STYLE_DOC: &str = "(face-style FACE): Return how FACE is currently drawn, as a list \
-         (FOREGROUND BACKGROUND . ATTRIBUTES) in the form `set-face' takes \
-         back as a hex string, or nil when the face leaves that side \
-         alone.\n\n\
+pub const FACE_STYLE_DOC: &str = "(face-style FACE): Return how FACE is drawn now, as (FOREGROUND \
+         BACKGROUND ATTRIBUTE...): each colour written \"#rrggbb\", or nil where the face leaves \
+         it to the terminal, then the names of the attributes that are on.\n\n\
          Example:\n\
-         (face-style 'region) => (nil nil \"reverse\")";
+         (face-style 'region)";
 
 primitive!(face_style, args, _env, ctx, {
     let style = ctx.face_style(face_arg(args.first())?);
@@ -129,13 +120,8 @@ primitive!(face_style, args, _env, ctx, {
     Ok(ELispExp::proper_list(items))
 });
 
-pub const LIST_FACES_DOC: &str = "(list-faces): Return the names of every face the editor knows, as \
-         a list of strings: the ones it ships with, then any that `set-face' or \
-         `add-syntax-rule' have named since.\n\n\
-         The set is open. Naming a face that does not exist defines it, so a \
-         grammar can colour whatever its language has -- and a face nobody \
-         styles is inert rather than an error, which is why a misspelling shows \
-         up here.";
+pub const LIST_FACES_DOC: &str = "(list-faces): Return the names of every face, as strings: the \
+         editor's own first, then those named since, by `set-face', `add-syntax-rule' or a theme.";
 
 primitive!(list_faces, _args, _env, _ctx, {
     Ok(ELispExp::proper_list(
@@ -146,9 +132,8 @@ primitive!(list_faces, _args, _env, _ctx, {
     ))
 });
 
-pub const LIST_COLORS_DOC: &str = "(list-colors): Return the colour names `set-face' accepts, as a \
-         list of strings. Each is shorthand for a conventional colour; any \
-         other colour is written as \"#rrggbb\" or \"#rgb\".";
+pub const LIST_COLORS_DOC: &str = "(list-colors): Return the sixteen colour names `set-face' \
+         takes, as strings. Any other colour is written \"#rrggbb\" or \"#rgb\".";
 
 primitive!(list_colors, _args, _env, _ctx, {
     Ok(ELispExp::proper_list(
@@ -159,15 +144,8 @@ primitive!(list_colors, _args, _env, _ctx, {
     ))
 });
 
-pub const RESET_FACES_DOC: &str = "(reset-faces): Put every face back to how the editor ships it, \
-         undoing anything `set-face' has done. Returns nil.\n\n\
-         What selecting a theme does first. Without it a theme only changes what it names, so a \
-         sparse theme keeps whatever the previous one left behind -- and a monochrome theme that \
-         is still half blue is the failure that makes themes feel broken.\n\n\
-         The defaults are the ones compiled in, not a snapshot of some earlier moment, so this \
-         means the same thing however many themes have been applied since the editor started.\n\n\
-         Example:\n\
-         (reset-faces)   ; back to the shipped appearance";
+pub const RESET_FACES_DOC: &str = "(reset-faces): Put every face back as the editor ships it: the \
+         ones it styles itself as they were, and any other with no style at all. Return nil.";
 
 primitive!(reset_faces, _args, _env, ctx, {
     ctx.reset_theme();

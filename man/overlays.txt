@@ -1,71 +1,77 @@
 NAME
     overlays - a face on one particular span of text
 
+SYNOPSIS
+    (make-overlay START END FACE &optional PRIORITY CATEGORY)
+    (delete-overlay HANDLE)
+    (remove-overlays &optional CATEGORY)
+    (overlays-at POSITION)
+    (overlay-face HANDLE)
+
 DESCRIPTION
-    A mode's colouring is a set of patterns: it can say "a word in this list
-    is a keyword" and cannot say "this span, here, because of something that
-    happened". A search marking its matches, a diagnostic arriving from
-    elsewhere, a manual page whose emphasis was in the bytes rather than in
-    the words -- none of those are expressible as a rule over the text.
+    A mode colours text by its shape: a word in a list is a keyword
+    wherever it is. An overlay colours one span, here, for a reason of its
+    own, and stays on that text while the buffer is edited. The editor's
+    are the match M-% is asking about, the marks M-g n leaves, the bold and
+    underlining of a system manual page, and vim's visual selection.
 
-    An overlay is that: a span, a face, a priority, and a category naming
-    whatever made it.
+        (make-overlay 10 20 'error)
 
-        (make-overlay START END FACE &optional PRIORITY CATEGORY)  => handle
-        (delete-overlay HANDLE)
-        (remove-overlays &optional CATEGORY)
-        (overlays-at POSITION)
-        (overlay-face HANDLE)
+    draws the characters from 10 up to 20 in the face error, and returns a
+    handle: a number that names the overlay. START and END may come in
+    either order, and are kept within the buffer; an empty span makes
+    nothing, and returns nil. FACE is any face, as `themes' says.
 
 DRAW ORDER
-    Syntax colouring, then overlays, then the region. An overlay is drawn
-    over the mode's colouring, so a diagnostic is visible on a keyword; the
-    selection is drawn over everything, which is what the eye depends on.
+    The mode's colouring first, then the overlays, then the region, so an
+    overlay shows on a keyword and the region on everything. Where two
+    overlap, the one with the higher PRIORITY is drawn last, and shows; of
+    two with the same, the one made later. A manual page's emphasis is 10,
+    the marks of M-g n 20, M-% and vim 100.
 
-    Among themselves, overlays are ordered by priority, higher winning.
-    Equal priorities are drawn oldest first, so the later one covers.
-
-SURVIVING EDITS
-    Overlays are the only stored positions in the editor. Everything else
-    either recomputes each frame -- syntax spans, the region -- or is
-    invalidated when the text changes. So the two doors move them.
-
-    Inserting before an overlay carries it along. Inserting at either end
-    leaves the new text outside it: a highlighted match stays exactly the
-    text that matched, however much is typed either side. Inserting strictly
-    inside is absorbed, because text typed into a highlighted region is part
-    of it.
-
-    Deleting shrinks an overlay, and deleting everything it covered removes
-    it. Undoing that deletion does not bring it back -- whatever made the
-    overlay will make it again if it still matters.
+AS THE TEXT CHANGES
+    Typing before an overlay carries it along. Typing at either end leaves
+    the new text outside it, so a highlighted match stays the text that
+    matched; typing inside it makes it longer. Deleting part of it makes it
+    shorter, and deleting all of it removes it for good: undoing the
+    deletion brings the text back and not the overlay. Reverting the buffer
+    removes every overlay in it.
 
 CATEGORIES
-    The useful half of the interface. A producer re-running -- a search
-    finding new matches -- clears its own batch with one call rather than
-    keeping every handle, and that still works after the module has been
-    reloaded, which loose handles do not survive.
+    CATEGORY names whatever made the overlay, and is overlay when it is not
+    given. It is what lets a maker take back its own in one call, however
+    many it made, without keeping their handles and without touching anyone
+    else's:
 
-        (remove-overlays 'isearch)
+        (remove-overlays 'my-marks)
 
-WHAT THEY ARE NOT
-    An overlay carries a face and a priority and nothing else. It says
-    something about characters that are already there.
+    With no category `remove-overlays' removes every overlay in the buffer,
+    and it says how many went. `delete-overlay' removes one, by its handle;
+    a handle is never used again, so an old one names nothing rather than
+    something else. `overlays-at' gives the handles of those that cover a
+    position, lowest priority first -- an overlay covers its START and not
+    its END -- and `overlay-face' the face one is drawn in.
 
-    Text that is *not* there -- an inlay hint, a preview of what a command
-    would insert -- is virtual text, which is its own thing and not a field
-    on this one. It is anchored at a point rather than over a span, and an
-    overlay with no width is one this table deletes: that rule is what stops
-    a highlight lingering after everything it covered has gone. See
-    `virtual-text'.
+LIMITS
+    An overlay has a face and a priority, and nothing else: it cannot hide
+    text or give it keys of its own. Text that is not in the buffer at all
+    is `virtual-text'.
 
-    Emacs' invisible and overlay keymaps would still need renderer and input
-    support this editor does not have, so they are not accepted rather than
-    being stored and quietly ignored.
+    A buffer shown in a floating window is drawn without its overlays; only
+    the region and virtual text are drawn there.
 
-    The mark is not an overlay, though it could be. It is deactivated by
-    every edit precisely so that it never needs adjusting for one.
+EXAMPLES
+    Draw the next ten characters as an error, as one of your marks:
+
+        (make-overlay (point) (+ (point) 10) 'error 5 'my-marks)
+
+    The faces of whatever covers point:
+
+        (mapcar 'overlay-face (overlays-at (point)))
+
+    Take your marks away again:
+
+        (remove-overlays 'my-marks)
 
 SEE ALSO
-    virtual-text, buffers, windows, (make-overlay), (set-face),
-    (list-faces)
+    virtual-text, themes, writing-modes, searching

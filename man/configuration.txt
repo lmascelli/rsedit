@@ -111,9 +111,9 @@ SETTINGS
     face.
 
 COLOURS
-    C-c t lists the themes, and Return on one applies it. To keep a choice:
+    C-c t lists the themes, and Return on one applies it. To keep a choice,
+    after the line that loads the module, (eval-file "theme"):
 
-        (eval-file "theme")
         (select-theme 'monochrome)
 
     Or set one face at a time, which is what a theme is made of:

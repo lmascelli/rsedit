@@ -1,96 +1,72 @@
 NAME
     virtual-text - text shown in a window and not in the buffer
 
+SYNOPSIS
+    (make-virtual-text POSITION TEXT &optional FACE PRIORITY CATEGORY)
+    (clear-virtual-text &optional CATEGORY)
+    (delete-virtual-text HANDLE)
+    (virtual-text-at POSITION)
+
 DESCRIPTION
-    An inlay hint from a language server -- a parameter name, an inferred
-    type -- shown where it would go if it had been written. A preview of
-    what a command is about to insert, before it has inserted anything.
-    Anything the reader should see at a position in the text without the
-    text having changed.
+    Text the reader should see at a place in the buffer without its being
+    in the buffer: a hint from a language server, the name of a parameter,
+    what a command is about to insert. C-x r t shows its string this way,
+    on every line of the rectangle, while you type it.
 
-        (make-virtual-text POSITION TEXT &optional FACE PRIORITY CATEGORY)
-        (clear-virtual-text &optional CATEGORY)
-        (delete-virtual-text HANDLE)
-        (virtual-text-at POSITION)
+        (make-virtual-text (point) ": int")
 
-    The text is drawn in front of the character at POSITION, pushing the
-    rest of the line to the right. The buffer is not modified: nothing
-    reaches the undo history, nothing is marked unsaved, and saving writes
-    the file as it was. Inserting the text for real and taking it out again
-    would do all three, and all three are invisible at the time and wrong
-    much later.
+    draws ": int" in front of the character at point, pushing the rest of
+    the line to the right, and returns a handle: a number that names it.
+    The buffer does not change. Nothing is marked modified, there is
+    nothing to undo, and saving writes the file without it. FACE is comment
+    unless it is given, so that it does not pass for the text around it.
+    An empty TEXT makes nothing and returns nil, and a POSITION past the
+    end of the buffer is its end.
 
-NOT AN OVERLAY
-    An overlay puts a face on characters that are already there. This has
-    no characters -- it sits between two of them, so it is anchored at a
-    point rather than over a span.
+WHERE IT GOES
+    In front of the character at POSITION. For the end of a line, give the
+    position of its newline -- (end-of-line) and then (point) -- and for the
+    end of the buffer (point-max). Several at one position are drawn in
+    order of PRIORITY, highest first, and of two with the same, the older
+    first.
 
-    That is also why it is not a field on an overlay. An overlay with no
-    width is deleted by the overlay table, which keeps only those whose
-    start is before their end; that rule is what stops a highlight
-    lingering after everything it covered has gone, and a point has nothing
-    for it to be true of.
+    The cursor is never inside it. With point at its position the cursor is
+    drawn after it, on the character it is in front of; C-f and C-b step
+    over it in one go, and a click on it puts point on that character.
 
-NOTHING KNOWS WHAT IT IS FOR
-    There is no hint, no diagnostic and no blame in the editor. Those are
-    CATEGORY names a producer chooses, exactly as `isearch' is a category
-    of overlay, and the whole of what the editor does with one is let that
-    producer replace its own batch in a single call:
+AS THE TEXT CHANGES
+    Typing before it carries it along, and so does typing at its position:
+    it stays in front of the character it was in front of. Deleting the
+    text around it leaves it where the deletion began. No edit removes it,
+    not even one that takes away everything around it; reverting the
+    buffer removes all of it.
 
-        (clear-virtual-text 'lsp-hints)
+CATEGORIES
+    CATEGORY names whoever made the text, and is virtual-text when it is not
+    given. It is what lets a maker replace its own in one call, and then
+    place the new, without keeping their handles and without disturbing
+    anyone else's -- what a language server does after every edit:
 
-    which still works after the module that made them has been reloaded,
-    and which loose handles do not.
+        (clear-virtual-text 'my-hints)
 
-    A mechanism that understood the difference between a hint and a preview
-    would be one that had to be taught about the next kind.
+    With no category `clear-virtual-text' clears all of it, and it says how
+    many went. `delete-virtual-text' takes away one, by its handle.
+    `virtual-text-at' lists what is shown at a position, each as (TEXT FACE
+    CATEGORY HANDLE), in the order it is drawn.
 
-WHERE POINT GOES
-    Point is never inside it. Virtual text is not somewhere the cursor can
-    be, so moving across the position it sits at steps over it in one go,
-    and clicking it puts point on the character it is in front of -- the
-    one it is about.
+EXAMPLES
+    A note at the end of the line point is on:
 
-    The cursor is drawn *after* text anchored at its column, because the
-    text comes before that column and the cursor is on the character.
+        (end-of-line)
+        (make-virtual-text (point) "  <- look here" nil 0 'my-notes)
 
-AT THE END OF A LINE
-    Give the position of that line's newline, which `(line-end-position)'
-    is. A line's last column and the column its newline occupies are
-    different positions, and the second is the one that means "after
-    everything".
+    What is shown at point:
 
-MOVING WITH THE TEXT
-    Typing before it carries it along. Typing exactly where it sits pushes
-    it along with the character it was in front of, rather than leaving it
-    in front of what was just typed. Deleting the text it sat in front of
-    leaves it where that text began.
+        (virtual-text-at (point))
 
-    It is never dropped. A producer whose text has ended up somewhere wrong
-    says so by clearing its category and placing it again -- which is what
-    a language server does after every edit in any case.
+    Take the notes away:
 
-    Reverting a buffer takes it down, for the same reason reverting clears
-    the overlays: it describes a position in text that no longer exists.
-
-WHAT IT COSTS
-    Two coordinate systems. A row showing virtual text is wider than the
-    line it came from, so a buffer column and a screen column are no longer
-    the same number, and five things have to ask rather than assume: what
-    is drawn, where the cursor goes, how far the window scrolls sideways to
-    keep it visible, where a highlight's columns land, and which character
-    a click is on.
-
-    All five go through one mapping, per row, so there is one place to get
-    it right rather than five places to forget it.
-
-ROWS
-    A row is one row of the screen and records which buffer line it came
-    from. Today that is always one row per line. The five callers are
-    written against rows rather than lines so that a decoration occupying a
-    row of its own, or a long line wrapped across two, is a new kind of
-    producer rather than a third coordinate system.
+        (clear-virtual-text 'my-notes)
 
 SEE ALSO
-    overlays, buffers, windows, (make-virtual-text),
-    (clear-virtual-text), (pending-command)
+    overlays, rectangles, minibuffer, themes

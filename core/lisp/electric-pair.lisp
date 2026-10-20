@@ -262,7 +262,7 @@ half of."
   "Pair delimiters in the buffers of MODE.
 
 Example:
-  (electric-pair-enable 'cc-mode)"
+  (electric-pair-enable 'cpp-mode)"
   (add-hook mode "post-self-insert-hook" 'electric-pair-post-self-insert))
 
 (electric-pair-enable 'fundamental-mode)

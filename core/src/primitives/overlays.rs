@@ -27,22 +27,12 @@ fn position<B: BufferTrait>(exp: &ELispExp<B>) -> Result<usize, EvalError<Editor
 }
 
 pub const MAKE_OVERLAY_DOC: &str = "(make-overlay START END FACE &optional PRIORITY CATEGORY): \
-         Draw the text between START and END in FACE, and return a handle to it. Returns nil if \
-         the span is empty.\n\n\
-         An overlay says something about one particular span, which a syntax rule cannot: rules \
-         are patterns over the text, and \"this match, here\" is not a pattern. It is drawn over \
-         the mode's colouring and under the region, so a diagnostic is visible on a keyword and \
-         a selection is visible over everything.\n\n\
-         PRIORITY orders overlaps, higher winning; equal priorities are drawn oldest first. \
-         CATEGORY is a symbol naming whatever made it, and is how a producer replaces its own \
-         batch later -- see `remove-overlays'. It defaults to `overlay'.\n\n\
-         **Overlays move with the text.** Typing before one carries it along; typing at either \
-         end leaves the new text outside it, so a highlighted match stays exactly the text that \
-         matched; typing inside it is absorbed. Deleting everything an overlay covered removes \
-         it, and undoing that deletion does not bring it back -- whatever made it will make it \
-         again if it still matters.\n\n\
+         Draw the text between START and END of the current buffer in FACE, and return a handle \
+         to the overlay, or nil when the span is empty. Of two that overlap, the one with the \
+         higher PRIORITY shows, 0 unless given. CATEGORY is a symbol naming whatever made it, \
+         `overlay' unless given, for `remove-overlays'.\n\n\
          Example:\n\
-         (make-overlay 10 20 'error 5 'diagnostics)";
+         (make-overlay (point) (+ (point) 10) 'error 5 'my-marks)";
 
 primitive!(make_overlay, args, _env, ctx, {
     if args.len() < 3 || args.len() > 5 {
@@ -98,15 +88,9 @@ primitive!(make_overlay, args, _env, ctx, {
     })
 });
 
-pub const DELETE_OVERLAY_DOC: &str = "(delete-overlay ID): Remove the overlay with handle ID from \
-         the current buffer. Returns t if there was one, nil otherwise.\n\n\
-         nil rather than an error, because an overlay may have gone on its own: deleting all the \
-         text it covered removes it. A handle is never reused, so a stale one names nothing \
-         rather than naming whatever took its place.\n\n\
-         To remove a whole batch at once -- every match of the last search, say -- use \
-         `remove-overlays' with the category instead.\n\n\
-         Example:\n\
-         (delete-overlay my-overlay)";
+pub const DELETE_OVERLAY_DOC: &str = "(delete-overlay HANDLE): Remove the overlay HANDLE names \
+         from the current buffer. Return t, or nil when there is none: an overlay goes by itself \
+         when all its text is deleted, and a handle is never used again.";
 
 primitive!(delete_overlay, args, _env, ctx, {
     let id = match args.first() {
@@ -126,16 +110,10 @@ primitive!(delete_overlay, args, _env, ctx, {
     })
 });
 
-pub const REMOVE_OVERLAYS_DOC: &str = "(remove-overlays &optional CATEGORY): Remove every overlay \
-         in CATEGORY from the current buffer, or all of them when CATEGORY is omitted. Returns \
-         how many went.\n\n\
-         This is what a producer actually wants. Re-running a search means \"forget every match I \
-         marked last time\", which is one call rather than a list of handles to keep -- and it \
-         still works after the module that made them has been reloaded, which loose handles do \
-         not survive.\n\n\
+pub const REMOVE_OVERLAYS_DOC: &str = "(remove-overlays &optional CATEGORY): Remove the overlays \
+         of CATEGORY from the current buffer, or all of them, and return how many went.\n\n\
          Example:\n\
-         (remove-overlays 'isearch)\n\
-         (remove-overlays)            ; every overlay in this buffer";
+         (remove-overlays 'my-marks)";
 
 primitive!(remove_overlays, args, _env, ctx, {
     let category = args::optional_name(args.first(), "Symbol naming a category")?;
@@ -144,12 +122,9 @@ primitive!(remove_overlays, args, _env, ctx, {
     Ok(ELispExp::number(removed as f64))
 });
 
-pub const OVERLAYS_AT_DOC: &str = "(overlays-at POSITION): The handles of the overlays covering \
-         POSITION in the current buffer, lowest priority first.\n\n\
-         An overlay covers its START and not its END, the way a region does, so the two ends of \
-         adjoining overlays do not both claim the same character.\n\n\
-         Mostly for finding out what is there -- a test, or a command reporting the diagnostic \
-         under the cursor.\n\n\
+pub const OVERLAYS_AT_DOC: &str = "(overlays-at POSITION): Return the handles of the overlays \
+         that cover POSITION in the current buffer, lowest priority first. An overlay covers its \
+         start and not its end.\n\n\
          Example:\n\
          (overlays-at (point))";
 
@@ -165,10 +140,10 @@ primitive!(overlays_at, args, _env, ctx, {
     Ok(ELispExp::proper_list(found))
 });
 
-pub const OVERLAY_FACE_DOC: &str = "(overlay-face ID): The face the overlay with handle ID is \
-         drawn in, as a symbol, or nil if there is no such overlay.\n\n\
+pub const OVERLAY_FACE_DOC: &str = "(overlay-face HANDLE): Return the face the overlay HANDLE \
+         names is drawn in, as a symbol, or nil when there is no such overlay.\n\n\
          Example:\n\
-         (overlay-face (car (overlays-at (point))))";
+         (mapcar 'overlay-face (overlays-at (point)))";
 
 primitive!(overlay_face, args, _env, ctx, {
     let id = match args.first() {
