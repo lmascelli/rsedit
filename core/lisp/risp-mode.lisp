@@ -63,28 +63,39 @@ keywords.")
   "A regexp matching any of WORDS as a whole symbol, the symbol in group 2."
   (concat "(^|[ \t\n()\\[\\]'`,])(" (regexp-opt words) ")([ \t\n()\\[\\]]|$)"))
 
-(defun risp-refresh-vocabulary ()
-  "Colour the functions and macros defined since risp-mode loaded, asking the
-interpreter for them again, and return t."
+(defun risp--build-vocabulary ()
+  "Make the rules that colour risp-mode's words, from what the interpreter knows."
   ;; Group 2 in each: `risp--word-pattern' has to match the delimiters either
   ;; side to know where a symbol ends, and colouring them would paint over the
-  ;; parenthesis that the sexp scanner and the reader both care about.
-  (add-syntax-rule 'risp-mode (risp--word-pattern risp-special-forms) 'keyword 2)
-  (add-syntax-rule 'risp-mode (risp--word-pattern risp-constants) 'builtin 2)
+  ;; parenthesis that the sexp scanner and the reader both care about. And a
+  ;; name for each, so that building a rule again puts it in the old one's
+  ;; place instead of adding another after the rest.
+  (add-syntax-rule 'risp-mode (risp--word-pattern risp-special-forms) 'keyword 2
+                   'risp-special-forms)
+  (add-syntax-rule 'risp-mode (risp--word-pattern risp-constants) 'builtin 2
+                   'risp-constants)
   (let ((macros (all-macros)))
     (if macros
-        (add-syntax-rule 'risp-mode (risp--word-pattern macros) 'keyword 2)))
+        (add-syntax-rule 'risp-mode (risp--word-pattern macros) 'keyword 2
+                         'risp-macros)))
   (let ((functions (all-functions)))
     (if functions
-        (add-syntax-rule 'risp-mode (risp--word-pattern functions) 'function 2)))
+        (add-syntax-rule 'risp-mode (risp--word-pattern functions) 'function 2
+                         'risp-functions)))
   ;; What `C-M-i' offers from `capf-mode-keywords'. The other completion
   ;; sources already ask the environment directly; this is the one that reads a
   ;; list, so it is given the same one the colours use.
   (put 'risp-mode 'keywords
-       (append risp-special-forms (append risp-constants (all-macros))))
-  t)
+       (append risp-special-forms (append risp-constants (all-macros)))))
 
-(risp-refresh-vocabulary)
+(defcommand risp-refresh-vocabulary () nil
+  "Colour the functions and macros defined since risp-mode loaded, asking the
+interpreter for them again."
+  (risp--build-vocabulary)
+  (message "risp-mode colours %s functions and %s macros"
+           (length (all-functions)) (length (all-macros))))
+
+(risp--build-vocabulary)
 
 ;; A defun's name, coloured as a definition rather than as a call. After the
 ;; vocabulary rules so it wins over them: the name being defined is not yet a

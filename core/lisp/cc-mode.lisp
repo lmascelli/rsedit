@@ -78,9 +78,9 @@ coloured as a type too.")
 (add-syntax-rule 'cpp-mode "\\b(0[xX][0-9a-fA-F_']+|0[bB][01_']+|[0-9][0-9_']*(\\.[0-9_']*)?)\\b" 'builtin)
 
 ;; Custom faces invented for this mode.
-(set-face 'doc-comment "bright-cyan" nil '("italic"))
-(set-face 'attribute "bright-yellow" nil)
-(set-face 'preprocessor "bright-magenta" nil)
+(define-face 'doc-comment "bright-cyan" nil '("italic"))
+(define-face 'attribute "bright-yellow" nil)
+(define-face 'preprocessor "bright-magenta" nil)
 
 ;; Syntax matching pairs.
 (set-syntax-pairs 'cpp-mode "()[]{}")

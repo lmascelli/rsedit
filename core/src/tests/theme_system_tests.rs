@@ -8,6 +8,7 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
+    use crate::tests::shipped::load_default_modules;
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
@@ -56,6 +57,26 @@ mod tests {
             text(&parts[1]),
             parts[2..].iter().filter_map(text).collect(),
         )
+    }
+
+    /// The editor as init.lisp leaves it, every module loaded.
+    fn editor_with_modules() -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
+        env.set_variable("frame-width".into(), LispExp::number(80.0));
+        env.set_variable("frame-height".into(), LispExp::number(24.0));
+        load_default_modules(&env, &ctx);
+        (ctx, env)
+    }
+
+    /// The names of the faces the editor knows now.
+    fn faces(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> Vec<String> {
+        run("(list-faces)", env, ctx)
+            .iter()
+            .map(|name| match name {
+                LispExp::String(name) => name.to_string(),
+                other => panic!("a face's name, not {other:?}"),
+            })
+            .collect()
     }
 
     /// Define a theme in the running editor, as a theme file would.
@@ -157,6 +178,40 @@ mod tests {
         assert!(run("current-theme", &env, &ctx).is_nil());
     }
 
+    /// A face a module styles -- the manual's bold, the marks M-g n leaves --
+    /// is part of how the editor ships, and a theme that does not name it,
+    /// or taking the theme away, leaves it as it shipped rather than plain.
+    #[test]
+    fn the_faces_modules_style_survive_a_theme_that_does_not_name_them() {
+        let (ctx, env) = editor_with_modules();
+        let shipped: Vec<_> = ["manpage-bold", "results-here", "preview", "doc-comment"]
+            .iter()
+            .map(|face| style(face, &env, &ctx))
+            .collect();
+        assert_eq!(shipped[0], (None, None, vec!["bold".to_string()]));
+
+        define("toy", r#"(keyword "red" nil nil)"#, &env, &ctx);
+        run("(select-theme 'toy)", &env, &ctx);
+        for (face, before) in ["manpage-bold", "results-here", "preview", "doc-comment"]
+            .iter()
+            .zip(&shipped)
+        {
+            assert_eq!(
+                &style(face, &env, &ctx),
+                before,
+                "{face} under the toy theme"
+            );
+        }
+
+        run("(reset-theme)", &env, &ctx);
+        for (face, before) in ["manpage-bold", "results-here", "preview", "doc-comment"]
+            .iter()
+            .zip(&shipped)
+        {
+            assert_eq!(&style(face, &env, &ctx), before, "{face} after reset-theme");
+        }
+    }
+
     #[test]
     fn the_theme_in_force_is_remembered() {
         let (ctx, env) = editor();
@@ -199,6 +254,44 @@ mod tests {
                 "{face} should be distinguished somehow"
             );
         }
+    }
+
+    /// A theme that names a face nothing draws styles nothing, and nothing
+    /// says so: setting a face by a name no one has used makes a new face.
+    /// So every face a shipped theme names has to be one the editor and its
+    /// modules draw.
+    #[test]
+    fn every_face_a_shipped_theme_names_is_one_the_editor_draws() {
+        let (ctx, env) = editor_with_modules();
+        let drawn = faces(&env, &ctx);
+        let themes: Vec<String> = run("(available-themes)", &env, &ctx)
+            .iter()
+            .map(|name| match name {
+                LispExp::String(name) => name.to_string(),
+                other => panic!("a theme's name, not {other:?}"),
+            })
+            .collect();
+        assert!(
+            themes.len() > 1,
+            "the shipped themes should be installed: {themes:?}"
+        );
+        let mut unknown = Vec::new();
+        for theme in &themes {
+            for entry in run(&format!("(theme--faces {theme:?})"), &env, &ctx).iter() {
+                let face = match entry.iter().next() {
+                    Some(LispExp::Symbol(name)) => name.to_string(),
+                    other => panic!("{theme}: an entry begins with a face, not {other:?}"),
+                };
+                if !drawn.contains(&face) {
+                    unknown.push(format!("{theme}: {face}"));
+                }
+            }
+        }
+        assert!(
+            unknown.is_empty(),
+            "faces nothing draws:\n{}",
+            unknown.join("\n")
+        );
     }
 
     // ----------------------------------------------------------------

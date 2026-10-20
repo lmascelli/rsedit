@@ -276,7 +276,7 @@ it names."
 ;; The two marks. Backgrounds rather than foregrounds: the text under them is
 ;; already coloured by the rules above, and a background says "you are here"
 ;; without arguing with what the text is.
-(set-face 'results-here nil "bright-black")
-(set-face 'results-target nil "bright-black")
+(define-face 'results-here nil "bright-black")
+(define-face 'results-target nil "bright-black")
 
 (log "compile loaded")

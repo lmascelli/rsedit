@@ -36,6 +36,14 @@ fn attributes_arg<B: BufferTrait>(
     if exp.is_nil() {
         return Ok(());
     }
+    // A list and nothing else: a string, "bold" for '("bold"), would be
+    // iterated as an empty list, and turn on nothing without a word.
+    if !matches!(exp, ELispExp::Cons(_)) {
+        return Err(EvalError::WrongArgumentType {
+            expected: "a list of attributes, such as (\"bold\")".into(),
+            got: exp.clone(),
+        });
+    }
     for item in exp.iter() {
         let name = match &item {
             ELispExp::String(name) => name.to_string(),
@@ -84,7 +92,17 @@ pub const SET_FACE_DOC: &str = "(set-face FACE &optional FOREGROUND BACKGROUND A
          Example:\n\
          (set-face 'comment \"bright-black\" nil '(\"italic\"))";
 
-primitive!(set_face, args, _env, ctx, {
+/// Read what `set-face` and `define-face` both take: a face, and the style to
+/// draw it in.
+fn face_and_style<B: BufferTrait>(
+    args: &[ELispExp<B>],
+) -> Result<(Face, Style), EvalError<EditorState<B>>> {
+    if args.is_empty() || args.len() > 4 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
     let face = face_arg(args.first())?;
     let mut style = Style {
         fg: colour_arg(args.get(1))?,
@@ -92,7 +110,25 @@ primitive!(set_face, args, _env, ctx, {
         ..Style::plain()
     };
     attributes_arg(args.get(3), &mut style)?;
+    Ok((face, style))
+}
+
+primitive!(set_face, args, _env, ctx, {
+    let (face, style) = face_and_style(args)?;
     ctx.set_face_style(face, style);
+    Ok(ELispExp::nil())
+});
+
+pub const DEFINE_FACE_DOC: &str = "(define-face FACE &optional FOREGROUND BACKGROUND ATTRIBUTES): \
+         Give the face called FACE the style it ships with, and draw it so: what `reset-faces' \
+         puts back, and a theme that does not name FACE leaves. It takes what `set-face' takes, \
+         and is for a module that names a face of its own. Return nil.\n\n\
+         Example:\n\
+         (define-face 'doc-comment \"bright-cyan\" nil '(\"italic\"))";
+
+primitive!(define_face, args, _env, ctx, {
+    let (face, style) = face_and_style(args)?;
+    ctx.define_face_style(face, style);
     Ok(ELispExp::nil())
 });
 
@@ -144,8 +180,9 @@ primitive!(list_colors, _args, _env, _ctx, {
     ))
 });
 
-pub const RESET_FACES_DOC: &str = "(reset-faces): Put every face back as the editor ships it: the \
-         ones it styles itself as they were, and any other with no style at all. Return nil.";
+pub const RESET_FACES_DOC: &str = "(reset-faces): Put every face back as the editor ships it: \
+         its own as they are built in, those of the modules as `define-face' gave them, and any \
+         other with no style at all. Return nil.";
 
 primitive!(reset_faces, _args, _env, ctx, {
     ctx.reset_theme();
@@ -164,9 +201,10 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.command(
         "set-face",
         set_face,
-        &["s:Face: ", "s:Foreground: ", "s:Background: "],
+        &["sFace: ", "sForeground: ", "sBackground: "],
         SET_FACE_DOC,
     );
+    into.function("define-face", define_face, DEFINE_FACE_DOC);
     into.function("face-style", face_style, FACE_STYLE_DOC);
     into.function("reset-faces", reset_faces, RESET_FACES_DOC);
     into.function("list-faces", list_faces, LIST_FACES_DOC);

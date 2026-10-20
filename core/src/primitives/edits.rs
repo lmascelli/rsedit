@@ -1342,7 +1342,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.command(
         "set-undo-limit",
         set_undo_limit,
-        &["n:Undo limit in bytes: "],
+        &["nUndo limit in bytes: "],
         SET_UNDO_LIMIT_DOC,
     );
     into.command(

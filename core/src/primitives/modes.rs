@@ -6,28 +6,33 @@ pub const REMOVE_HOOK_DOC: &str = "(remove-hook MODE HOOK FUNCTION): Take FUNCTI
          major mode MODE, or off the hook for every mode when MODE is nil: the arguments \
          `add-hook' took. Return t, or nil when there is no such mode.";
 
-primitive!(remove_hook, args, _env, ctx, {
-    exact_arity(args, 3)?;
-    let mode = crate::primitives::args::optional_name(args.first(), "Mode or nil")?;
-    let (ELispExp::String(hook), ELispExp::Symbol(function)) = (&args[1], &args[2]) else {
+/// The hook and the function `add-hook` and `remove-hook` take, as the hook's
+/// name and the function to call, saying which of the two is wrong when one is.
+fn hook_and_function<B: BufferTrait>(
+    args: &[ELispExp<B>],
+) -> Result<(String, ELispExp<B>), EvalError<EditorState<B>>> {
+    let ELispExp::String(hook) = &args[1] else {
         return Err(EvalError::WrongArgumentType {
-            expected: "String, Symbol".into(),
+            expected: "String naming a hook, such as \"post-command-hook\"".into(),
             got: args[1].clone(),
         });
     };
-    Ok(
-        if ctx.modes_mut(|modes| {
-            modes.remove_hook(
-                mode.as_deref(),
-                hook,
-                &ELispExp::symbol(function.to_string()),
-            )
-        }) {
-            ELispExp::t()
-        } else {
-            ELispExp::nil()
-        },
-    )
+    let ELispExp::Symbol(function) = &args[2] else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "Symbol naming a function".into(),
+            got: args[2].clone(),
+        });
+    };
+    Ok((hook.to_string(), ELispExp::symbol(function.to_string())))
+}
+
+primitive!(remove_hook, args, _env, ctx, {
+    exact_arity(args, 3)?;
+    let mode = args::optional_name(args.first(), "Symbol naming a mode, or nil")?;
+    let (hook, function) = hook_and_function(args)?;
+    Ok(ELispExp::boolean(ctx.modes_mut(|modes| {
+        modes.remove_hook(mode.as_deref(), &hook, &function)
+    })))
 });
 
 pub const MAKE_MODE_DOC: &str = "(make-mode NAME): Make a major mode called NAME, a symbol, with \
@@ -67,59 +72,41 @@ pub const ADD_HOOK_DOC: &str = "(add-hook MODE HOOK FUNCTION): Call FUNCTION, th
 
 primitive!(add_hook, args, _env, ctx, {
     exact_arity(args, 3)?;
-
-    // `nil' for the mode means every mode, the way it does in `define-key'.
-    // Checked before the pattern below, because nil *is* a symbol here and
-    // would otherwise be looked up as a mode named "nil" and reported missing.
-    if args[0].is_nil() {
-        let (ELispExp::String(hook_name), ELispExp::Symbol(func_name)) = (&args[1], &args[2])
-        else {
-            return Err(EvalError::WrongArgumentType {
-                expected: "String, Symbol".into(),
-                got: args[1].clone(),
-            });
-        };
-        ctx.add_global_hook(hook_name, ELispExp::symbol(func_name.to_string()));
+    // nil for the mode means every mode, the way it does in `define-key'.
+    let mode = args::optional_name(args.first(), "Symbol naming a mode, or nil")?;
+    let (hook, function) = hook_and_function(args)?;
+    let Some(mode) = mode else {
+        ctx.add_global_hook(&hook, function);
         return Ok(ELispExp::t());
-    }
-
-    if let (ELispExp::Symbol(mode_name), ELispExp::String(hook_name), ELispExp::Symbol(func_name)) =
-        (&args[0], &args[1], &args[2])
-    {
-        // Reported outside the closure: the diagnostic writes the echo area,
-        // which is a compartment of its own.
-        let added = ctx.modes_mut(|modes| {
-            modes.edit(mode_name.as_str(), |mode| {
-                let hooks = mode.hooks.entry(hook_name.to_string()).or_default();
-                let function = ELispExp::symbol(func_name.to_string());
-                if !hooks.contains(&function) {
-                    hooks.push(function);
-                }
-            })
-        });
-        if added {
-            Ok(ELispExp::symbol("t".into()))
-        } else {
-            ctx.log_diagnostic(&format!("Mode {} does not exist", mode_name));
-            Ok(ELispExp::nil())
-        }
-    } else {
-        Err(EvalError::WrongArgumentType {
-            expected: "Symbol, String, Symbol".into(),
-            got: ELispExp::string("other".into()),
+    };
+    // Reported outside the closure: the diagnostic writes the echo area,
+    // which is a compartment of its own.
+    let added = ctx.modes_mut(|modes| {
+        modes.edit(&mode, |major| {
+            let hooks = major.hooks.entry(hook).or_default();
+            if !hooks.contains(&function) {
+                hooks.push(function);
+            }
         })
+    });
+    if added {
+        Ok(ELispExp::t())
+    } else {
+        ctx.log_diagnostic(&format!("Mode {mode} does not exist"));
+        Ok(ELispExp::nil())
     }
 });
 
-pub const ADD_SYNTAX_RULE_DOC: &str = "(add-syntax-rule MODE REGEX FACE &optional GROUP): Colour \
-         in FACE, in major mode MODE, what the regular expression REGEX matches within a line; \
-         with GROUP, only that capture group of the match. Return t, or nil when there is no such \
-         mode or REGEX is wrong, which the log says.\n\n\
+pub const ADD_SYNTAX_RULE_DOC: &str = "(add-syntax-rule MODE REGEX FACE &optional GROUP NAME): \
+         Colour in FACE, in major mode MODE, what the regular expression REGEX matches within a \
+         line; with GROUP, only that capture group of the match. With NAME, a symbol, the rule \
+         takes the place of the mode's rule of that name, where it stands. Return t, or nil when \
+         there is no such mode or REGEX is wrong, which the log says.\n\n\
          Example:\n\
          (add-syntax-rule 'rust-mode \"\\\\b(fn|let|mut)\\\\b\" 'keyword)";
 
 primitive!(add_syntax_rule, args, _env, ctx, {
-    if !(3..=4).contains(&args.len()) {
+    if !(3..=5).contains(&args.len()) {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 3,
             got: args.len(),
@@ -144,15 +131,33 @@ primitive!(add_syntax_rule, args, _env, ctx, {
         }
     };
 
+    let name = args::optional_name(args.get(4), "Symbol naming the rule, or nil")?;
+
     let Some(pattern) = compile(ctx, regex_str) else {
         return Ok(ELispExp::nil());
     };
+    let rule = SyntaxRule {
+        pattern,
+        face,
+        group,
+        name,
+    };
     Ok(with_grammar(ctx, mode_name.as_str(), |grammar| {
-        grammar.rules.push(SyntaxRule {
-            pattern,
-            face,
-            group,
+        // A rule added under a name the mode has already takes the old rule's
+        // place, so that building one again -- risp-mode's words, as
+        // functions are defined -- neither grows the grammar nor moves the
+        // rule among those it wins or loses against at the same column.
+        let named = rule.name.as_deref();
+        let old = named.and_then(|name| {
+            grammar
+                .rules
+                .iter()
+                .position(|old| old.name.as_deref() == Some(name))
         });
+        match old {
+            Some(at) => grammar.rules[at] = rule,
+            None => grammar.rules.push(rule),
+        }
     }))
 });
 

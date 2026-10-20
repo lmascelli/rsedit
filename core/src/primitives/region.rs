@@ -331,7 +331,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.command(
         "set-kill-ring-max",
         set_kill_ring_max,
-        &["n:Kill ring size: "],
+        &["nKill ring size: "],
         SET_KILL_RING_MAX_DOC,
     );
     // Predicates and accessors rather than things to run from M-x.

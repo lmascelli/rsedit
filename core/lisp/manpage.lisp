@@ -390,8 +390,8 @@ string, or nil: the page C-h f and C-h v name."
 ;; The two faces the page's own emphasis is drawn in. Given an appearance here
 ;; because this module invents them -- the editor has never heard of either
 ;; until these lines name them.
-(set-face 'manpage-bold nil nil '("bold"))
-(set-face 'manpage-underline nil nil '("underline"))
+(define-face 'manpage-bold nil nil '("bold"))
+(define-face 'manpage-underline nil nil '("underline"))
 
 ;; Started now, in the background, so the first `C-h m' has a list waiting
 ;; rather than walking the tree while somebody is holding Tab down. Nothing

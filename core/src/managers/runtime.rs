@@ -52,6 +52,11 @@ pub struct Runtime {
     /// error until something clears it.
     call_stack: Vec<String>,
     theme: Arc<Theme>,
+    /// How every face looks as the editor ships it: the compiled-in defaults,
+    /// and the styles modules gave their own faces with `define-face`. What
+    /// `reset-faces` puts back, since the defaults alone would leave those
+    /// faces plain.
+    shipped: Arc<Theme>,
     /// The newest job Lisp started under each name, so that
     /// `running-workers` can tell Lisp's work from the editor's own in the
     /// WorkManager's list: a name is Lisp's while the job running under it
@@ -66,13 +71,15 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new(fuel: Arc<FuelMeter>) -> Self {
+        let shipped = Arc::new(Theme::default());
         Self {
             goal_column: None,
             isearch: None,
             replace: None,
             fuel,
             call_stack: Vec::new(),
-            theme: Arc::new(Theme::default()),
+            theme: shipped.clone(),
+            shipped,
             lisp_jobs: HashMap::new(),
         }
     }
@@ -211,7 +218,13 @@ impl Runtime {
         Arc::make_mut(&mut self.theme).set(face, style);
     }
 
+    /// Make STYLE what FACE ships with, and draw FACE in it from now on.
+    pub fn define_face_style(&mut self, face: Face, style: Style) {
+        Arc::make_mut(&mut self.shipped).set(face, style);
+        Arc::make_mut(&mut self.theme).set(face, style);
+    }
+
     pub fn reset_theme(&mut self) {
-        self.theme = Arc::new(Theme::default());
+        self.theme = self.shipped.clone();
     }
 }

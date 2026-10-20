@@ -41,6 +41,7 @@ mod tests {
             pattern: Regex::new(pattern).expect("test pattern"),
             face,
             group: 0,
+            name: None,
         }
     }
 
@@ -49,6 +50,7 @@ mod tests {
             pattern: Regex::new(pattern).expect("test pattern"),
             face,
             group,
+            name: None,
         }
     }
 
@@ -847,6 +849,45 @@ mod tests {
         assert_eq!(
             line_faces(&ctx, 1),
             vec![(0, 2, "keyword".to_string()), (3, 6, "type".to_string())]
+        );
+    }
+
+    /// A rule added under a name the mode has already takes the old rule's
+    /// place: the old pattern stops colouring, and the new one keeps the
+    /// position the old one had among the rules.
+    #[test]
+    fn a_rule_added_again_under_its_name_replaces_the_old_one_where_it_stood() {
+        let (ctx, env) = editor_with("one two three\n");
+        define_toy(&ctx, &env);
+        eval_str(
+            r#"(add-syntax-rule 'toy "\\bone\\b" 'type 0 'words)
+               (add-syntax-rule 'toy "\\b(two|three)\\b" 'builtin)
+               (add-syntax-rule 'toy "\\b(two|three)\\b" 'type 0 'words)"#,
+            &env,
+            &ctx,
+        )
+        .expect("named rules");
+        let (count, named_at) = ctx
+            .modes(|modes| {
+                modes.get("toy").map(|mode| {
+                    let rules = &mode.grammar.rules;
+                    (
+                        rules.len(),
+                        rules
+                            .iter()
+                            .position(|rule| rule.name.as_deref() == Some("words")),
+                    )
+                })
+            })
+            .expect("toy is defined");
+        // fn, the named rule, and the unnamed one after it.
+        assert_eq!((count, named_at), (3, Some(1)));
+        colour_fully(&ctx);
+        // Of the two rules for two and three, the named one comes first and
+        // so wins; one is not coloured by anything now.
+        assert_eq!(
+            line_faces(&ctx, 0),
+            vec![(4, 7, "type".to_string()), (8, 13, "type".to_string())]
         );
     }
 

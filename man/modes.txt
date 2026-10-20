@@ -86,9 +86,9 @@ THE LANGUAGES
 
     risp-mode does not list the functions and macros it colours: it asks
     the interpreter, which knows every one there is, yours included. It
-    asks when it loads, so a function defined since is coloured once
-    (risp-refresh-vocabulary) has been evaluated, with M-:. C-M-i asks
-    every time, and needs nothing.
+    asks when it loads, so a function defined since is coloured once M-x
+    risp-refresh-vocabulary has asked again. C-M-i asks every time, and
+    needs nothing.
 
 HOOKS
     A hook is a list of functions the editor calls at a moment of its own,
@@ -127,11 +127,6 @@ HOOKS
 LIMITS
     Loading a mode's file again makes the mode again, empty: the keys and
     hooks other files gave it go, electric-pair's among them.
-
-    `risp-refresh-vocabulary' is not a command, so M-x does not reach it;
-    and each call adds its patterns to the colouring without taking away
-    the ones before, so that colouring a Lisp buffer costs a little more
-    every time.
 
 EXAMPLES
     Open .ino files as C++, at the top of init.lisp:

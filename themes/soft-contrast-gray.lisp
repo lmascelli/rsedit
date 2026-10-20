@@ -13,6 +13,7 @@
        (doc-comment      "#a0a0a0" nil       ("italic"))
        (string           "#bbbbbb" nil       nil)
        (attribute        "#cccccc" nil       nil)
+       (preprocessor     "#cccccc" nil       ("bold"))
        (error            "#ffffff" "#4a2828" ("bold" "underline"))
 
        ;; Editor UI furniture
@@ -24,5 +25,6 @@
        ;; Module & tool marks
        (manpage-bold     "#ffffff" nil       ("bold"))
        (manpage-underline "#cccccc" nil       ("underline"))
-       (compilation-here "#ffffff" "#3a3a3a" nil)
-       (compilation-target "#ffffff" "#3a3a3a" nil)))
+       (results-here     "#ffffff" "#3a3a3a" nil)
+       (results-target   "#ffffff" "#3a3a3a" nil)
+       (preview          "#888888" nil       ("italic"))))

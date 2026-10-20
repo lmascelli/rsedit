@@ -158,7 +158,7 @@ editor was started in. The list fills in as the files are read."
 ;; under them is already coloured. Naming the faces is also what turns the
 ;; marks on: the built-in walk looks them up by name and marks nothing when
 ;; nothing has named them.
-(set-face 'results-here nil "bright-black")
-(set-face 'results-target nil "bright-black")
+(define-face 'results-here nil "bright-black")
+(define-face 'results-target nil "bright-black")
 
 (log "occur loaded")

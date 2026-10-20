@@ -34,7 +34,7 @@
 
 ;; Line comments: a rule, because they end with the line. Doc comments get
 ;; their own face -- which the editor has never heard of until this line names
-;; it, and which `set-face' below then gives an appearance.
+;; it, and which `define-face' below then gives an appearance.
 (add-syntax-rule 'rust-mode "///.*" 'doc-comment)
 (add-syntax-rule 'rust-mode "//!.*" 'doc-comment)
 (add-syntax-rule 'rust-mode "//.*" 'comment)
@@ -88,8 +88,8 @@ is coloured as a type too.")
 
 ;; The two faces this module invented. Every other face it used already had an
 ;; appearance; these did not exist at all until the rules above named them.
-(set-face 'doc-comment "bright-cyan" nil '("italic"))
-(set-face 'attribute "bright-yellow" nil)
+(define-face 'doc-comment "bright-cyan" nil '("italic"))
+(define-face 'attribute "bright-yellow" nil)
 
 ;; What the scanner needs, as opposed to what the grammar above needs: the
 ;; grammar says what text should look like, this says what it means.

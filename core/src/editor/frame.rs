@@ -353,19 +353,26 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on echo_message") = EchoMessage::new(msg);
     }
 
-    /// Bind FACE to STYLE for the whole editor.
-    /// Put every face back to how the editor ships it.
+    /// Put every face back to how the editor ships it: the compiled-in
+    /// defaults, and what modules gave their own faces with `define-face`.
     ///
-    /// The compiled-in defaults rather than a snapshot taken at startup, so
-    /// this means the same thing however many themes have been applied since.
+    /// Not a snapshot taken at startup, so this means the same thing however
+    /// many themes have been applied since, and whatever init.lisp set.
     pub(crate) fn reset_theme(&self) {
         self.runtime_mut(|runtime| runtime.reset_theme());
     }
 
+    /// Bind FACE to STYLE for the whole editor.
     pub(crate) fn set_face_style(&self, face: Face, style: Style) {
         // Copy-on-write: whatever frames are already holding keep the theme
         // they were composed under, and the next one picks this up.
         self.runtime_mut(|runtime| runtime.set_face_style(face, style));
+    }
+
+    /// Make STYLE the one FACE ships with, which `reset_theme` puts back, and
+    /// bind FACE to it now.
+    pub(crate) fn define_face_style(&self, face: Face, style: Style) {
+        self.runtime_mut(|runtime| runtime.define_face_style(face, style));
     }
 
     pub(crate) fn face_style(&self, face: Face) -> Style {

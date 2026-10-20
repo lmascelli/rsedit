@@ -100,6 +100,6 @@ Closing the buffer stops the command as well."
 ;; The command being echoed back at the top.
 (add-syntax-rule 'shell-output-mode "^\\$ .*$" 'keyword)
 
-(set-face 'error "bright-red" nil '("bold"))
+(define-face 'error "bright-red" nil '("bold"))
 
 (log "shell loaded")

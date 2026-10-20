@@ -16,8 +16,9 @@ change.
 
 - Emacs editing: the kill ring, keyboard macros, rectangles, incremental
   search and query-replace, undo with redo.
-- Syntax colouring for Rust, C and C++, and the editor's own Lisp, computed
-  in the background as the text changes; indentation rules for the Lisp.
+- Syntax colouring for Rust, C, C++, Python, TOML, Bash and the editor's own
+  Lisp, computed in the background as the text changes; indentation rules
+  for C/C++, Python, TOML, Bash and Lisp.
 - Completion in every prompt (`M-x`, files, buffers) and at point.
 - A directory editor, a buffer list, occur and project-wide grep, a
   compilation buffer that jumps to errors, and shell commands with their

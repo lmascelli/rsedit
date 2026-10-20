@@ -3,7 +3,7 @@ NAME
 
 SYNOPSIS
     (make-mode NAME)
-    (add-syntax-rule MODE REGEX FACE &optional GROUP)
+    (add-syntax-rule MODE REGEX FACE &optional GROUP NAME)
     (add-syntax-region MODE BEGIN END FACE &optional ESCAPE NESTABLE)
     (set-syntax-pairs MODE PAIRS)
     (set-syntax-entry MODE CHARS CLASS)
@@ -67,12 +67,18 @@ COLOURING
         NESTABLE    BEGIN inside the region opens another, which END closes
                     first: Rust's /* /* */ */ is one comment
 
+    A rule added with a NAME, a symbol, takes the place of the mode's rule
+    of that name, where it stood, rather than coming after the rest. That is
+    how a rule made from something that changes is made again: risp-mode
+    makes the one for the functions there are each time it is asked to.
+
     FACE is any name. The editor's own are keyword, type, function,
     builtin, string and comment, which every theme gives a style; a name no
-    one has used makes a new face, drawn as plain text until `set-face'
-    says otherwise -- see `themes'. A regular expression that is wrong adds
-    nothing, and the log says why. The buffers of the mode are coloured
-    again whenever a rule or a region is added.
+    one has used makes a new face, drawn as plain text until it is given a
+    style. A mode gives its own faces theirs with `define-face', which
+    `themes' describes. A regular expression that is wrong adds nothing,
+    and the log says why. The buffers of the mode are coloured again
+    whenever a rule or a region is added.
 
 WHAT THE TEXT MEANS
     Every mode starts from a table that pairs (), [] and {}, and knows " for
@@ -165,6 +171,11 @@ EXAMPLES
                          (concat "\\b" (regexp-opt conf-words) "\\b")
                          'keyword)
         (put 'conf-mode 'keywords conf-words)
+
+    A face of conf-mode's own, for the [section] lines, and its style:
+
+        (add-syntax-rule 'conf-mode "^\\[.*\\]$" 'conf-section)
+        (define-face 'conf-section "bright-blue" nil '("bold"))
 
     Make - and . part of a name in conf-mode:
 

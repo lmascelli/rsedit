@@ -101,6 +101,6 @@ what it would do.")
 ;; What a preview looks like. Dim rather than coloured, and the same whatever
 ;; the mode: the one thing the reader must never have to wonder is whether what
 ;; they are looking at is in the file.
-(set-face 'preview "bright-black" nil '("italic"))
+(define-face 'preview "bright-black" nil '("italic"))
 
 (log "preview loaded")

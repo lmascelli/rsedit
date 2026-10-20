@@ -9,6 +9,7 @@ SYNOPSIS
     (reset-theme)
     (available-themes)
     (set-face FACE &optional FOREGROUND BACKGROUND ATTRIBUTES)
+    (define-face FACE &optional FOREGROUND BACKGROUND ATTRIBUTES)
     (face-style FACE)
     (reset-faces)
     (list-faces)
@@ -41,7 +42,7 @@ THE LIST OF THEMES
     C-c t shows the themes installed, one to a line, with a * beside the one
     in force. Return applies the theme on the cursor's line, g reads the
     themes again, n and p move, q puts the list away. M-x reset-theme takes
-    the theme away again.
+    the theme away, and the faces look as the editor ships them.
 
 THE FACES
         default              the text itself; no front end draws it yet
@@ -74,9 +75,15 @@ SETTING A FACE
 
     FOREGROUND and BACKGROUND are colours, and nil or "" leaves that side
     to the terminal. ATTRIBUTES is a list of the attributes to turn on:
-    "bold", "italic", "underline" and "reverse". `set-face' replaces the
-    whole face, so what it is not given, the face loses. M-x set-face asks
-    for the face and the two colours.
+    "bold", "italic", "underline" and "reverse"; a name on its own, not in
+    a list, is refused. `set-face' replaces the whole face, so what it is
+    not given, the face loses. M-x set-face asks for the face and the two
+    colours.
+
+    A module that names a face of its own gives it its style with
+    `define-face', which takes what `set-face' takes. That style is the
+    face's as the editor ships it: `reset-faces' puts it back, and a theme
+    that does not name the face leaves it.
 
     A colour is "#rrggbb", "#rgb", or one of sixteen names, which
     `list-colors' gives: black, red, green, yellow, blue, magenta, cyan and
@@ -102,27 +109,14 @@ WRITING A THEME
     Each entry is what `set-face' takes, so a theme is written the way a
     face is set. Loading the file changes nothing; `select-theme' applies
     it, after putting every face back with `reset-faces', so that nothing
-    of the theme before is left. A face a theme does not name goes back to
-    how it ships. In the source tree the themes are in themes/, which the
-    build copies.
+    of the theme before is left. A face a theme does not name looks as it
+    ships, the faces of the modules as `define-face' gave them. In the
+    source tree the themes are in themes/, which the build copies.
 
 LIMITS
     The terminal front end does not draw the face default: the text and the
     background keep the terminal's own colours, whatever the theme says.
     Set the terminal's colours to the ones in the theme's default entry.
-
-    `reset-faces', and so `select-theme' and M-x reset-theme, puts back
-    only the faces the editor itself styles. The ones modules style --
-    doc-comment, attribute, preprocessor, error, preview, results-here,
-    results-target, manpage-bold and manpage-underline -- are left plain,
-    unless the theme names them: after M-x reset-theme the manual's bold
-    and the marks of M-g n are gone. Of the themes that come with the
-    editor, monochrome and soft-contrast-gray do not name preprocessor,
-    preview, results-here and results-target, and name instead two faces
-    nothing draws, compilation-here and compilation-target.
-
-    ATTRIBUTES must be a list: "bold" on its own turns on nothing, and says
-    nothing.
 
 EXAMPLES
     A theme from init.lisp:

@@ -10,16 +10,20 @@ mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyCode, KeyEvent, KeyModifiers};
-    use risp::{Env, LispExp, Parser, eval};
+    use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
 
-    fn run(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> LispExp<Ctx> {
+    fn eval_str(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> Result<LispExp<Ctx>, EvalError<Ctx>> {
         let ast = Parser::new(&format!("(progn {src})"))
             .next()
             .expect("test source must parse");
-        eval(&ast, env.clone(), ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"))
+        eval(&ast, env.clone(), ctx)
+    }
+
+    fn run(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> LispExp<Ctx> {
+        eval_str(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"))
     }
 
     fn editor() -> (Ctx, Arc<Env<Ctx>>) {
@@ -342,5 +346,40 @@ mod tests {
         );
         assert_eq!(run("(buffer-get 'initialized)", &env, &ctx), LispExp::t());
         assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+    }
+
+    /// What `add-hook` refuses, it names: a lambda where the function's name
+    /// goes is reported as the function, and a symbol where the hook's name
+    /// goes as the hook.
+    #[test]
+    fn add_hook_names_the_argument_it_refuses() {
+        let (ctx, env) = editor();
+        for mode in ["nil", "'fundamental-mode"] {
+            let refused = eval_str(
+                &format!(r#"(add-hook {mode} "post-command-hook" (lambda () nil))"#),
+                &env,
+                &ctx,
+            );
+            match refused {
+                Err(EvalError::WrongArgumentType { expected, got }) => {
+                    assert!(expected.contains("function"), "{mode}: {expected}");
+                    assert!(matches!(got, LispExp::Lambda(_)), "{mode}: got {got:?}");
+                }
+                other => panic!("{mode}: a lambda should be refused, got {other:?}"),
+            }
+        }
+        match eval_str("(add-hook nil 'post-command-hook 'ignore)", &env, &ctx) {
+            Err(EvalError::WrongArgumentType { expected, got }) => {
+                assert!(expected.contains("hook"), "{expected}");
+                assert_eq!(got, LispExp::symbol("post-command-hook".into()));
+            }
+            other => panic!("a hook named by a symbol should be refused, got {other:?}"),
+        }
+        match eval_str(r#"(remove-hook nil "post-command-hook" "f")"#, &env, &ctx) {
+            Err(EvalError::WrongArgumentType { expected, .. }) => {
+                assert!(expected.contains("function"), "{expected}");
+            }
+            other => panic!("remove-hook should say so too, got {other:?}"),
+        }
     }
 }

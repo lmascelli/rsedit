@@ -1077,7 +1077,8 @@ esiste lo rifà vuoto, chiavi e hook degli altri moduli compresi (SIN-4 nel
 rapporto), e una finestra flottante non mostra né la colorazione né gli
 overlay (TUI-6).
 
-Il passo ha trovato sei difetti del codice, che non corregge:
+Il passo ha trovato sei difetti del codice, che non corregge: li corregge la
+patch descritta qui sotto.
 
 - `reset-faces` rimette solo le quattordici facce che il Rust conosce; quelle
   che danno i moduli (`doc-comment`, `attribute`, `preprocessor`, `error`,
@@ -1100,6 +1101,31 @@ Il passo ha trovato sei difetti del codice, che non corregge:
   sconosciuto è un errore;
 - quando rifiuta una lambda, `add-hook` riferisce l'argomento sbagliato:
   `got "post-command-hook"` con il modo nil, `got "other"` con un modo.
+
+*I difetti del passo 7 corretti.* Una patch a parte corregge i sei difetti;
+le pagine non li descrivono più tra i limiti, e ognuno ha un test che
+fallisce senza la correzione:
+
+- la primitiva nuova `define-face` dà a una faccia lo stile con cui
+  l'editor la distribuisce, che `reset-faces` rimette e che un tema che non
+  la nomina lascia. I sette moduli che danno uno stile alle loro facce lo
+  fanno con `define-face` invece che con `set-face`, e dopo
+  `M-x reset-theme` il manuale ha di nuovo il grassetto e `M-g n` i suoi
+  segni;
+- `monochrome` e `soft-contrast-gray` nominano `results-here` e
+  `results-target` al posto dei nomi vecchi, e anche `preview` e
+  `preprocessor`; un test controlla che ogni faccia nominata da un tema
+  distribuito sia una faccia che l'editor disegna;
+- le specifiche di `set-face`, `set-kill-ring-max` e `set-undo-limit` non
+  hanno più i due punti, e un test li cerca in tutti i comandi;
+- `add-syntax-rule` prende un quinto argomento, NAME: una regola aggiunta
+  con il nome di una che il modo ha già ne prende il posto, dov'era.
+  `risp-refresh-vocabulary` è un comando, e rifà le sue quattro regole
+  invece di aggiungerne altre;
+- `set-face` rifiuta gli attributi scritti come una stringa, e anche più di
+  quattro argomenti;
+- `add-hook` e `remove-hook` nominano l'argomento che rifiutano: la funzione
+  quando è una lambda, il hook quando non è una stringa.
 
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),

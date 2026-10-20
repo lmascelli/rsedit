@@ -124,6 +124,35 @@ mod tests {
         assert!(after.contains(&"with-thing".to_string()), "got {after:?}");
     }
 
+    /// How many rules colour risp-mode.
+    fn rules(ctx: &Ctx) -> usize {
+        ctx.modes(|modes| modes.get("risp-mode").map(|mode| mode.grammar.rules.len()))
+            .expect("risp-mode is defined")
+    }
+
+    /// Added after the others at each refresh, the rules would have every
+    /// line of Lisp matched against one more list of every name there is.
+    #[test]
+    fn refreshing_the_vocabulary_replaces_its_rules_rather_than_adding_more() {
+        let (ctx, env) = editor();
+        let loaded = rules(&ctx);
+        run(
+            "(risp-refresh-vocabulary) (risp-refresh-vocabulary)",
+            &env,
+            &ctx,
+        );
+        assert_eq!(rules(&ctx), loaded);
+    }
+
+    #[test]
+    fn the_vocabulary_can_be_refreshed_with_m_x() {
+        let (ctx, env) = editor();
+        assert_eq!(
+            run("(commandp 'risp-refresh-vocabulary)", &env, &ctx),
+            LispExp::t()
+        );
+    }
+
     #[test]
     fn a_name_ending_in_punctuation_is_matched_whole() {
         // Why the pattern spells out its own bounds instead of using `\b`: a

@@ -264,6 +264,37 @@ mod tests {
         );
     }
 
+    /// "bold" where the list goes is an error, like a mistyped attribute:
+    /// iterated as a list, it would turn on nothing and say nothing.
+    #[test]
+    fn attributes_that_are_not_a_list_are_reported_rather_than_ignored() {
+        let (ctx, env) = editor();
+        let refused = eval_str("(set-face 'region nil nil \"bold\")", &env, &ctx);
+        assert!(
+            matches!(refused, Err(EvalError::WrongArgumentType { .. })),
+            "a string where the list goes should say so: {refused:?}"
+        );
+        assert!(
+            eval_str("(set-face 'region nil nil 'bold)", &env, &ctx).is_err(),
+            "and so should a symbol"
+        );
+        eval_str("(set-face 'region nil nil '(\"bold\"))", &env, &ctx).expect("a list");
+        assert!(ctx.face_style(Face::REGION).bold);
+    }
+
+    /// The attributes `face-style` answers with follow the colours rather
+    /// than being in a list of their own, and handing them on to `set-face`
+    /// as they come must not lose them in silence.
+    #[test]
+    fn set_face_refuses_more_arguments_than_it_takes() {
+        let (ctx, env) = editor();
+        let refused = eval_str("(set-face 'region nil nil \"bold\" \"italic\")", &env, &ctx);
+        assert!(
+            matches!(refused, Err(EvalError::WrongNumberOfArguments { .. })),
+            "got {refused:?}"
+        );
+    }
+
     // ---------------- binding faces from Lisp ----------------
 
     #[test]
@@ -313,6 +344,31 @@ mod tests {
         let style = ctx.face_style(Face::REGION);
         assert_eq!(style.fg, None, "an empty foreground is not an error");
         assert_eq!(style.bg, Some(Color::BLUE));
+    }
+
+    /// What a module says a face of its own looks like is what `reset-faces`
+    /// puts back, rather than no style at all.
+    #[test]
+    fn reset_faces_puts_back_what_define_face_gave() {
+        let (ctx, env) = editor();
+        eval_str(
+            r#"(define-face 'module-mark nil "bright-black" '("bold"))
+               (set-face 'module-mark "red")
+               (set-face 'keyword "red")
+               (reset-faces)"#,
+            &env,
+            &ctx,
+        )
+        .expect("define-face, set-face and reset-faces");
+        let mark = ctx.face_style(Face::named("module-mark").expect("defined"));
+        assert_eq!(mark.fg, None);
+        assert_eq!(mark.bg, Some(Color::BRIGHT_BLACK));
+        assert!(mark.bold, "the module's style should be back");
+        assert_eq!(
+            ctx.face_style(Face::KEYWORD),
+            Theme::default().style(Face::KEYWORD),
+            "and the editor's own faces as they are built in"
+        );
     }
 
     #[test]

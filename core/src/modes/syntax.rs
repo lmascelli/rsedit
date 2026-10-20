@@ -68,6 +68,9 @@ pub struct SyntaxRule {
     /// without the parenthesis being coloured with it. The scan still steps
     /// over the whole match.
     pub group: usize,
+    /// The name the rule was added under, if any. A rule added again under
+    /// the same name takes this one's place, where it stands among the rest.
+    pub name: Option<String>,
 }
 
 /// A construct with a beginning and an end, which may be on different lines.

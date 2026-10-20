@@ -1,0 +1,1521 @@
+diff --git a/core/lisp/cc-mode.lisp b/core/lisp/cc-mode.lisp
+index 1a8b38a..49f83a1 100644
+--- a/core/lisp/cc-mode.lisp
++++ b/core/lisp/cc-mode.lisp
+@@ -1,95 +1,185 @@
+-;;; cc-mode --- colouring for C/C++ source.
++;;; cc-mode --- shared C/C++ colouring and indentation, with separate modes.
+ 
++(make-mode 'c-mode)
+ (make-mode 'cpp-mode)
+-
+-;; Regions first, so that their opening delimiters are seen before any rule
+-;; that might match inside them. Within a region nothing else applies: a
+-;; string is uniformly a string.
+-
+-(add-syntax-region 'cpp-mode "/\\*" "\\*/" 'comment nil nil)
+-
+-;; A character literal. It supports escapes like '\n', '\0', '\\', '\''.
+-;; Must be defined before strings open so single-quoted characters like '"' 
+-;; don't trigger string regions.
+-(add-syntax-rule 'cpp-mode "'(\\\\.|[^'\\\\])'" 'string)
+-
+-;; Strings and raw strings.
+-;; The escape pattern allows strings with escaped quotes like "hello \"world\"".
+-(add-syntax-region 'cpp-mode "\"" "\"" 'string "\\\\.")
+-
+-;; Line comments and Doxygen doc comments.
+-(add-syntax-rule 'cpp-mode "///.*" 'doc-comment)
+-(add-syntax-rule 'cpp-mode "//!.*" 'doc-comment)
+-(add-syntax-rule 'cpp-mode "//.*" 'comment)
+-
+-;; Preprocessor directives (e.g., #include, #define, #ifdef).
+-(add-syntax-rule 'cpp-mode "^\\s*#\\s*[a-zA-Z_]+" 'preprocessor)
+-
+-;; C++11 Attributes (e.g., [[nodiscard]], [[maybe_unused]]).
+-(add-syntax-rule 'cpp-mode "\\[\\[[^\\]]*\\]\\]" 'attribute)
+-
+-;; The vocabulary, written once and used twice.
++(put 'cpp-mode 'raw-string-styles nil)
++
++(defconst c-keywords
++  '("auto" "break" "case" "const" "continue" "default" "do" "else" "enum"
++    "extern" "for" "goto" "if" "inline" "register" "restrict" "return"
++    "sizeof" "static" "struct" "switch" "typedef" "union" "volatile" "while"
++    "_Alignas" "_Alignof" "_Atomic" "_Generic" "_Noreturn" "_Static_assert"
++    "_Thread_local" "alignas" "alignof" "constexpr" "static_assert"
++    "thread_local" "typeof" "typeof_unqual")
++  "C keywords, including the C11 and C23 additions.")
+ (defconst cpp-keywords
+-  '("auto" "break" "case" "catch" "class" "co_await" "co_return" "co_yield"
+-    "concept" "const" "consteval" "constexpr" "constinit" "continue"
+-    "decltype" "default" "delete" "do" "else" "enum" "explicit" "export"
+-    "extern" "for" "friend" "goto" "if" "inline" "mutable" "namespace"
+-    "new" "noexcept" "operator" "private" "protected" "public" "register"
+-    "requires" "return" "sizeof" "static" "static_assert" "struct" "switch"
+-    "template" "this" "thread_local" "throw" "try" "typedef" "typeid"
+-    "typename" "union" "using" "virtual" "volatile" "while")
+-  "Keywords reserved by C and C++.")
+-
+-(defconst cpp-constants
+-  '("true" "false" "NULL" "nullptr" "stdin" "stdout" "stderr")
+-  "Values spelled as names.")
+-
++  (append (let ((shared nil))
++            (dolist (word c-keywords)
++              (unless (member word '("restrict" "_Alignas" "_Alignof" "_Atomic" "_Generic"
++                                     "_Noreturn" "_Static_assert" "_Thread_local" "typeof" "typeof_unqual"))
++                (setq shared (append shared (list word)))))
++            shared)
++    '("and" "and_eq" "asm" "bitand" "bitor" "catch" "class" "co_await"
++      "co_return" "co_yield" "compl" "concept" "const_cast" "consteval"
++      "constinit" "decltype" "delete" "dynamic_cast" "explicit" "export"
++      "friend" "mutable" "namespace" "new" "noexcept" "not" "not_eq"
++      "operator" "or" "or_eq" "private" "protected" "public"
++      "reinterpret_cast" "requires" "static_cast" "template" "this" "throw"
++      "try" "typeid" "typename" "using" "virtual" "xor" "xor_eq"))
++  "C-family keywords plus C++ casts, alternative operators and modern keywords.")
++(defconst c-constants '("true" "false" "NULL" "nullptr" "stdin" "stdout" "stderr")
++  "Named values offered by the C-family modes.")
++(defconst cpp-constants c-constants
++  "Named values offered in C++ buffers.")
++(defconst c-types
++  '("void" "bool" "char" "short" "int" "long" "float" "double" "signed"
++    "unsigned" "_Bool" "_Complex" "_Imaginary" "size_t" "ssize_t"
++    "intptr_t" "uintptr_t" "ptrdiff_t" "int8_t" "int16_t" "int32_t" "int64_t"
++    "uint8_t" "uint16_t" "uint32_t" "uint64_t" "wchar_t" "char16_t" "char32_t")
++  "C primitive types and common standard-library typedefs.")
+ (defconst cpp-types
+-  '("void" "bool" "char" "short" "int" "long" "float" "double"
+-    "signed" "unsigned" "size_t" "ssize_t" "intptr_t" "uintptr_t"
+-    "ptrdiff_t" "int8_t" "int16_t" "int32_t" "int64_t"
+-    "uint8_t" "uint16_t" "uint32_t" "uint64_t"
+-    "char8_t" "char16_t" "char32_t" "wchar_t")
+-  "Built-in primitives and standard type definitions.")
+-
+-;; All three are offered for completion.
+-(put 'cpp-mode 'keywords
+-     (append cpp-keywords (append cpp-constants cpp-types)))
+-
+-(add-syntax-rule 'cpp-mode (concat "\\b" (regexp-opt cpp-keywords) "\\b") 'keyword)
+-(add-syntax-rule 'cpp-mode (concat "\\b" (regexp-opt cpp-constants) "\\b") 'builtin)
+-(add-syntax-rule 'cpp-mode (concat "\\b" (regexp-opt cpp-types) "\\b") 'type)
+-
+-;; Standard C/POSIX type convention naming (e.g., my_type_t).
+-(add-syntax-rule 'cpp-mode "\\b[a-zA-Z_][a-zA-Z0-9_]*_t\\b" 'type)
+-
+-;; Capitalised identifiers by convention (e.g., class/struct names like MyClass).
+-(add-syntax-rule 'cpp-mode "\\b[A-Z][A-Za-z0-9_]*\\b" 'type)
+-
+-;; Function call matching using a capture group (matching '(' without coloring it).
+-(add-syntax-rule 'cpp-mode "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(" 'function 1)
+-
+-;; Numeric literals (including hex 0x, binary 0b, octal 0, floats, and C++14 single-quote separators).
+-(add-syntax-rule 'cpp-mode "\\b(0[xX][0-9a-fA-F_']+|0[bB][01_']+|[0-9][0-9_']*(\\.[0-9_']*)?)\\b" 'builtin)
+-
+-;; Custom faces invented for this mode.
++  (append (let ((shared nil))
++            (dolist (word c-types)
++              (unless (member word '("_Bool" "_Complex" "_Imaginary"))
++                (setq shared (append shared (list word)))))
++            shared)
++          '("char8_t"))
++  "Primitive and standard types offered in C++ buffers.")
++
++(dolist (mode '(c-mode cpp-mode))
++  (add-syntax-region mode "/\\*" "\\*/" 'comment nil nil)
++  (add-syntax-rule mode "(?:u8|u|U|L)?'(\\\\.|[^'\\\\])+'" 'string)
++  (add-syntax-region mode "\"" "\"" 'string "\\\\.")
++  (add-syntax-rule mode "///.*|//!.*" 'doc-comment)
++  (add-syntax-rule mode "//.*" 'comment)
++  (add-syntax-rule mode "^[ \t]*#[ \t]*[A-Za-z_]+" 'preprocessor)
++  (let ((words (if (eq mode 'c-mode) c-keywords cpp-keywords))
++        (types (if (eq mode 'c-mode) c-types cpp-types)))
++    (put mode 'keywords (append words (append c-constants types)))
++    (add-syntax-rule mode (concat "\\b" (regexp-opt words) "\\b") 'keyword)
++    (add-syntax-rule mode (concat "\\b" (regexp-opt c-constants) "\\b") 'builtin)
++    (add-syntax-rule mode (concat "\\b" (regexp-opt types) "\\b") 'type))
++  (add-syntax-rule mode "\\b[A-Za-z_][A-Za-z0-9_]*_t\\b" 'type)
++  (add-syntax-rule mode "\\b[A-Z][A-Z0-9_]*\\b" 'builtin)
++  (add-syntax-rule mode "\\b[A-Z][A-Za-z0-9_]*\\b" 'type)
++  (add-syntax-rule mode "\\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*\\(" 'function 1)
++  (add-syntax-rule mode "\\b(?:0[xX][0-9a-fA-F']+(?:\\.[0-9a-fA-F']*)?(?:[pP][+-]?[0-9']+)?|0[bB][01']+|[0-9][0-9']*(?:\\.[0-9']*)?(?:[eE][+-]?[0-9']+)?)(?:[uUlLfFzZ]*|_[A-Za-z_][A-Za-z0-9_]*)\\b|\\.[0-9][0-9']*(?:[eE][+-]?[0-9']+)?[fFlL]?\\b" 'builtin)
++  (set-syntax-pairs mode "()[]{}")
++  (set-char-quote mode "'")
++  (set-comment-syntax mode '(("//") ("/*" "*/" nil)))
++  (put mode 'indent-char-literals t)
++  (put mode 'tab-width 4)
++  (put mode 'indent-function 'cc-indent-line))
++
++(add-syntax-rule 'cpp-mode "\\[\\[[^]]*\\]\\]" 'attribute)
+ (set-face 'doc-comment "bright-cyan" nil '("italic"))
+ (set-face 'attribute "bright-yellow" nil)
+ (set-face 'preprocessor "bright-magenta" nil)
+ 
+-;; Syntax matching pairs.
+-(set-syntax-pairs 'cpp-mode "()[]{}")
+-
+-;; Single quote quote character handling for scanner balance.
+-(set-char-quote 'cpp-mode "'")
+-
+-;; C++11 raw string syntactic definitions (e.g., R"(...)" or R"#(...)#").
+-(set-string-syntax 'cpp-mode '(("R\"(" ")\"") ("R\"#(" ")\"#")))
+-
+-;; Comment syntax definition (explicitly non-nesting for block comments).
+-(set-comment-syntax 'cpp-mode '(("//") ("/*" "*/" nil)))
+-
+-;; Auto-mode associations for C and C++ source/header files.
+-(add-auto-mode "\\.(c|h|cpp|hpp|cc|cxx|hxx|C|H)$" 'cpp-mode)
+-
+-(log "cpp-mode loaded")
+\ No newline at end of file
++(defun cpp-add-raw-string-delimiter (delimiter)
++  "(cpp-add-raw-string-delimiter DELIMITER): Recognize a C++ raw-string tag; see `modes'."
++  ;; Fixed delimiters are declared to both engines. The regexp API cannot
++  ;; capture a tag at the opener and use it as a backreference at the closer.
++  (when (or (> (length delimiter) 16) (string-match-p "[ ()\\\\\t\r\n]" delimiter))
++    (error "A C++ raw-string delimiter must have at most 16 non-space characters, excluding () and backslash"))
++  (let ((styles (get 'cpp-mode 'raw-string-styles)))
++    (dolist (prefix '("" "u8" "u" "U" "L"))
++      (let* ((open (concat prefix "R\"" delimiter "("))
++             (close (concat ")" delimiter "\"")))
++        (unless (member (list open close) styles)
++          (add-syntax-region 'cpp-mode (regexp-opt (list open)) (regexp-opt (list close)) 'string)
++          (setq styles (append styles (list (list open close)))))))
++    (put 'cpp-mode 'raw-string-styles styles)
++    (set-string-syntax 'cpp-mode styles))
++  t)
++
++(dolist (tag '("" "raw" "tag" "json" "xml" "sql" "glsl"))
++  (cpp-add-raw-string-delimiter tag))
++
++(defun cc--switch-brace-p (open)
++  "Return t if the brace at OPEN starts a switch body."
++  (goto-char open)
++  (beginning-of-line)
++  (let ((code (prog-indent--trim (prog-indent--code))))
++    (when (string= code "{")
++      (let ((previous (prog-indent--previous)))
++        (when previous
++          (setq code (nth 2 previous))
++          (let ((outer (nth 4 (syntax-ppss (nth 0 previous)))))
++            (while (and outer (string= (prog-indent--char outer) "("))
++              (goto-char outer)
++              (beginning-of-line)
++              (setq code (prog-indent--trim (prog-indent--code))
++                    outer (nth 4 (syntax-ppss))))))))
++    (string-match-p "\\bswitch\\b" code)))
++
++(defun cc--case-before (open start)
++  "Return t if START follows a case label directly inside the brace at OPEN."
++  (goto-char start)
++  (let ((line (prog-indent--previous)) (found nil))
++    (while (and line (> (nth 0 line) open) (not found))
++      (when (and (equal (nth 4 (syntax-ppss (nth 0 line))) open)
++                 (string-match-p "^(case\\b.*|default)[ \t]*:" (nth 2 line)))
++        (setq found t))
++      (unless found (setq line (prog-indent--previous))))
++    found))
++
++(defun cc--control-column (start open)
++  "Return the nearest unbraced if header's column before START within OPEN."
++  (goto-char start)
++  (let ((line (prog-indent--previous)) (column nil))
++    (while (and line (null column) (or (null open) (> (nth 0 line) open)))
++      (when (and (equal (nth 4 (syntax-ppss (nth 0 line))) open)
++                 (string-match-p "^(if|else[ \t]+if)\\b" (nth 2 line)))
++        (setq column (nth 1 line)))
++      (unless column (setq line (prog-indent--previous))))
++    column))
++
++(defun cc-indent-line ()
++  "(cc-indent-line): Return this C or C++ line's indentation; see `indentation'."
++  (beginning-of-line)
++  (let* ((start (point)) (existing (current-indentation)) (state (syntax-ppss))
++         (code (prog-indent--trim (prog-indent--code))) (open (nth 4 state))
++         (previous (progn (goto-char start) (prog-indent--previous)))
++         (before (if previous (nth 2 previous) ""))
++         (header before) (header-column (if previous (nth 1 previous) 0))
++         (width (indent-width)))
++    (when previous
++      (let ((outer (nth 4 (syntax-ppss (nth 0 previous)))))
++        (while (and outer (member (prog-indent--char outer) '("(" "[")))
++          (goto-char outer)
++          (setq header-column (current-indentation))
++          (beginning-of-line)
++          (setq header (prog-indent--trim (prog-indent--code))
++                outer (nth 4 (syntax-ppss))))))
++    (cond
++     ((nth 2 state) existing)
++     ((nth 3 state)
++      (goto-char start)
++      (setq code (prog-indent--trim (current-line)))
++      (goto-char (nth 3 state))
++      (if (string-match-p "^\\*" code) (+ (current-column) 1) existing))
++     ((string-prefix-p "#" code) 0)
++     ((and previous (string-match-p "^#.*\\\\[ \t]*$" before)) width)
++     ((and open (member (prog-indent--char open) '("(" "[")))
++      (prog-indent--under open (string-match-p "^[)\\]]" code)))
++     (t
++      (let* ((base (if open (progn (goto-char open) (current-indentation)) 0))
++             (body (+ base (if open width 0)))
++             (case-body (and open (cc--switch-brace-p open) (cc--case-before open start))))
++        (cond
++         ((string-prefix-p "}" code) base)
++         ((and (eq (major-mode) 'cpp-mode) (string-match-p "^(public|protected|private)[ \t]*:" code)) base)
++         ((string-match-p "^(case\\b.*|default)[ \t]*:" code) body)
++         ((string-match-p "^else\\b" code) (or (cc--control-column start open) body))
++         ((string-match-p "^[A-Za-z_][A-Za-z0-9_]*[ \t]*:[ \t]*$" code) base)
++         ((and previous (not (string-match-p "[;{}][ \t]*$" before))
++               (string-match-p "^(if|for|while|else|do)\\b" header))
++          (+ header-column (if (string-prefix-p "{" code) 0 width)))
++         ((and previous (string-match-p "[=,+*/&|?\\\\-][ \t]*$" before))
++          (+ body width))
++         (t (+ body (if case-body width 0)))))))))
++
++(add-auto-mode "\\.(c|h)$" 'c-mode)
++(add-auto-mode "\\.(cpp|hpp|cc|hh|cxx|hxx|c\\+\\+|h\\+\\+|C|H|ipp|tpp|ixx|cppm)$" 'cpp-mode)
++(log "cc-mode loaded")
+diff --git a/core/lisp/indent.lisp b/core/lisp/indent.lisp
+index 48b2e40..5e4b0c1 100644
+--- a/core/lisp/indent.lisp
++++ b/core/lisp/indent.lisp
+@@ -310,4 +310,84 @@ on."
+ ;; it here, Enter simply stays the built-in `insert-newline'.
+ (define-key nil "<ret>" 'newline)
+ 
++;; Shared readers for the programming-language indenters. They only inspect
++;; text: indent-line restores point and performs the actual edit.
++
++(defun prog-indent--trim (text)
++  "Return TEXT without horizontal whitespace at either end."
++  (let* ((start (or (string-match-p "[^ \t]" text) (length text)))
++         (end (if (string-match "[ \t]+$" text) (match-beginning 0) (length text))))
++    (substring text start (max start end))))
++
++(defun prog-indent--char (at)
++  "Return the character at AT as a string, or an empty string at buffer end."
++  (if (and (>= at 0) (< at (point-max)))
++      (buffer-substring at (+ at 1)) ""))
++
++(defun prog-indent--code ()
++  "Return this line with strings and comments masked, retaining its offsets."
++  (beginning-of-line)
++  (let* ((start (point)) (text (current-line)) (size (length text))
++         (at 0) (out "") (state (syntax-ppss start)))
++    (while (< at size)
++     (let ((before at))
++      (cond
++       ((nth 2 state)
++        (goto-char (nth 2 state))
++        (let ((before (point)))
++          (forward-sexp)
++          (let ((end (if (> (point) before) (min size (- (point) start)) size)))
++            (setq end (max (+ at 1) end))
++            ;; A literal is still an expression, even when it is the whole line.
++            (setq out (concat out "0" (make-string (- end at 1) " ")) at end))))
++       ((nth 3 state)
++        (let* ((open (nth 3 state))
++               (block (string= (buffer-substring open (min (+ open 2) (point-max))) "/*"))
++               (close (if block (string-match-p "\\*/" text at)))
++               (end (if close (+ close 2) size)))
++          (setq out (concat out (make-string (- end at) " ")) at end)))
++       (t
++        (let ((token (string-match-p "[\"'`/#]" text at)))
++          (if (null token)
++              (setq out (concat out (substring text at)) at size)
++              (progn
++                (setq out (concat out (substring text at token)) at token)
++                (setq state (syntax-ppss (+ start at 1)))
++                (unless (or (nth 2 state) (nth 3 state))
++                  ;; The scanner treats a C character literal as an atom, so
++                  ;; it does not report an interior string state for it.
++                  (if (and (get (major-mode) 'indent-char-literals)
++                           (string-match "^'(\\\\.|[^'\\\\])'" (substring text at)))
++                      (let ((count (match-end 0)))
++                        (setq out (concat out "0" (make-string (- count 1) " "))
++                              at (+ at count)))
++                      (setq out (concat out (substring text at (+ at 1))) at (+ at 1)))))))))
++      (when (and (> at before) (< at size)) (setq state (syntax-ppss (+ start at))))))
++    (goto-char start)
++    out))
++
++(defun prog-indent--previous ()
++  "Return the preceding code line as (START COLUMN CODE), skipping blank lines."
++  (beginning-of-line)
++  (let ((found nil))
++    (while (and (not found) (> (point) (point-min)))
++      (backward-char)
++      (beginning-of-line)
++      (let* ((start (point)) (column (current-indentation))
++             (code (prog-indent--trim (prog-indent--code))))
++        (unless (string= code "") (setq found (list start column code)))))
++    found))
++
++(defun prog-indent--under (open closing)
++  "Return a continuation column inside OPEN, or its line's column if CLOSING."
++  (goto-char open)
++  (let* ((base (current-indentation))
++         (line-start (progn (beginning-of-line) (point)))
++         (code (prog-indent--code))
++         (rest (substring code (+ 1 (- open line-start))))
++         (first (string-match-p "[^ \t]" rest)))
++    (cond (closing base)
++          (first (+ (- open line-start) 1 first))
++          (t (+ base (indent-width))))))
++
+ (log "End of the indent.lisp")
+diff --git a/core/lisp/python-mode.lisp b/core/lisp/python-mode.lisp
+new file mode 100644
+index 0000000..058aead
+--- /dev/null
++++ b/core/lisp/python-mode.lisp
+@@ -0,0 +1,108 @@
++;;; python-mode --- Python colouring, completion vocabulary and indentation.
++
++(make-mode 'python-mode)
++
++;; Triple quotes precede the one-quote regions: they start at the same column.
++(add-syntax-region 'python-mode "(?i:[rubf]{0,2})\"\"\"" "\"\"\"" 'string "\\\\.")
++(add-syntax-region 'python-mode "(?i:[rubf]{0,2})'''" "'''" 'string "\\\\.")
++(add-syntax-region 'python-mode "(?i:[rubf]{0,2})\"" "\"" 'string "\\\\.")
++(add-syntax-region 'python-mode "(?i:[rubf]{0,2})'" "'" 'string "\\\\.")
++(add-syntax-rule 'python-mode "#.*" 'comment)
++
++(defconst python-keywords
++  '("and" "as" "assert" "async" "await" "break" "class" "continue" "def"
++    "del" "elif" "else" "except" "finally" "for" "from" "global" "if"
++    "import" "in" "is" "lambda" "nonlocal" "not" "or" "pass" "raise"
++    "return" "try" "while" "with" "yield" "match" "case")
++  "Python keywords and structural-pattern soft keywords.")
++(defconst python-constants '("True" "False" "None" "Ellipsis" "NotImplemented")
++  "Python constants offered for completion.")
++(defconst python-builtins
++  '("abs" "all" "any" "ascii" "bin" "breakpoint" "callable" "chr" "compile"
++    "delattr" "dir" "divmod" "enumerate" "eval" "exec" "filter" "format"
++    "getattr" "globals" "hasattr" "hash" "help" "hex" "id" "input"
++    "isinstance" "issubclass" "iter" "len" "locals" "map" "max" "min"
++    "next" "oct" "open" "ord" "pow" "print" "repr" "reversed" "round"
++    "setattr" "sorted" "sum" "super" "vars" "zip" "__import__")
++  "Python built-in functions offered for completion.")
++(defconst python-types
++  '("bool" "bytearray" "bytes" "classmethod" "complex" "dict" "float"
++    "frozenset" "int" "list" "memoryview" "object" "property" "range"
++    "set" "slice" "staticmethod" "str" "tuple" "type"
++    "BaseException" "Exception" "ValueError" "TypeError" "RuntimeError"
++    "KeyError" "IndexError" "OSError" "StopIteration")
++  "Python built-in types offered for completion.")
++(put 'python-mode 'keywords
++     (append python-keywords (append python-constants (append python-builtins python-types))))
++
++(add-syntax-rule 'python-mode "@[A-Za-z_][A-Za-z0-9_.]*" 'attribute)
++(add-syntax-rule 'python-mode (concat "\\b" (regexp-opt python-keywords) "\\b") 'keyword)
++(add-syntax-rule 'python-mode (concat "\\b" (regexp-opt python-constants) "\\b") 'builtin)
++(add-syntax-rule 'python-mode (concat "\\b" (regexp-opt python-types) "\\b") 'type)
++(add-syntax-rule 'python-mode (concat "\\b" (regexp-opt python-builtins) "\\b") 'builtin)
++(add-syntax-rule 'python-mode "\\b[A-Z][A-Za-z0-9_]*\\b" 'type)
++(add-syntax-rule 'python-mode "\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*(?:\\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?)[jJ]?\\b|\\.[0-9][0-9_]*(?:[eE][+-]?[0-9_]+)?[jJ]?\\b" 'builtin)
++(add-syntax-rule 'python-mode "\\b([\\p{L}_][\\p{L}\\p{N}_]*)[ \t]*\\(" 'function 1)
++(set-face 'attribute "bright-yellow" nil)
++
++(set-syntax-pairs 'python-mode "()[]{}")
++(set-syntax-entry 'python-mode "'" 'string)
++(set-comment-syntax 'python-mode '(("#")))
++(set-string-syntax 'python-mode '(("\"\"\"" "\"\"\"" t) ("'''" "'''" t)))
++(put 'python-mode 'tab-width 4)
++(put 'python-mode 'indent-function 'python-indent-line)
++
++(defun python--clause-column (code limit)
++  "Find a matching compound statement for CODE before point, no deeper than LIMIT."
++  (let* ((pattern (cond
++                   ((string-match-p "^elif\\b" code) "^(async[ \t]+)?(if|elif)\\b")
++                   ((string-match-p "^(except|finally)\\b" code) "^(try|except)\\b")
++                   ((string-match-p "^case\\b" code) "^(match|case)\\b")
++                   (t "^(if|elif|for|while|try|except|async[ \t]+for)\\b")))
++         (line (prog-indent--previous)) (answer nil))
++    (while (and line (null answer))
++      (when (and (<= (nth 1 line) limit) (string-match-p pattern (nth 2 line)))
++        (setq answer (+ (nth 1 line)
++                        (if (and (string-match-p "^case\\b" code)
++                                 (string-match-p "^match\\b" (nth 2 line))) (indent-width) 0))))
++      (unless answer (setq line (prog-indent--previous))))
++    answer))
++
++(defun python-indent-line ()
++  "(python-indent-line): Return this Python line's indentation; see `indentation'."
++  (beginning-of-line)
++  (let* ((start (point)) (existing (current-indentation)) (state (syntax-ppss))
++         (code (prog-indent--trim (prog-indent--code)))
++         (open (nth 4 state)))
++    (cond
++     ((nth 2 state) existing)
++     (open (prog-indent--under open (string-match-p "^[)\\]}]" code)))
++     (t
++      (goto-char start)
++      (let* ((previous (prog-indent--previous))
++             (base (if previous (nth 1 previous) 0))
++             (before (if previous (nth 2 previous) ""))
++             (statement base))
++        ;; A compound header can close its argument list on another line.
++        (when previous
++          (goto-char (nth 0 previous))
++          (let ((earlier (prog-indent--previous)))
++            (while (and earlier (string-match-p "\\\\[ \t]*$" (nth 2 earlier)))
++              (setq statement (nth 1 earlier) earlier (prog-indent--previous))))
++          (let ((outer (nth 4 (syntax-ppss (nth 0 previous)))))
++            (when outer (goto-char outer) (setq statement (current-indentation)))))
++        (cond
++         ((string-match-p "^(elif|else|except|finally|case)\\b" code)
++          (goto-char start)
++          (or (python--clause-column code base) (max 0 (- base (indent-width)))))
++         ((string-match-p ":[ \t]*$" before) (+ statement (indent-width)))
++         ((string-match-p "\\\\[ \t]*$" before) (+ statement (indent-width)))
++         ;; Indentation is Python syntax: keep a written dedent instead of
++         ;; moving a following top-level statement back into the last body.
++         ((and (not (string= code "")) (< existing base)) existing)
++         ((and (string= code "") (string-match-p "^(return|raise|break|continue|pass)\\b" before))
++          (max 0 (- base (indent-width))))
++         (t statement)))))))
++
++(add-auto-mode "\\.(py|pyw|pyi)$" 'python-mode)
++(log "python-mode loaded")
+diff --git a/core/lisp/toml-mode.lisp b/core/lisp/toml-mode.lisp
+new file mode 100644
+index 0000000..d6e9bf9
+--- /dev/null
++++ b/core/lisp/toml-mode.lisp
+@@ -0,0 +1,40 @@
++;;; toml-mode --- TOML strings, keys, tables and continuation indentation.
++
++(make-mode 'toml-mode)
++(add-syntax-region 'toml-mode "\"\"\"" "\"\"\"" 'string "\\\\.")
++(add-syntax-region 'toml-mode "'''" "'''" 'string)
++(add-syntax-region 'toml-mode "\"" "\"" 'string "\\\\.")
++(add-syntax-region 'toml-mode "'" "'" 'string)
++(add-syntax-rule 'toml-mode "#.*" 'comment)
++;; Quoted keys keep their string face; a bare dotted key gets the variable face.
++(add-syntax-rule 'toml-mode "([A-Za-z0-9_-]+(?:[ \t]*\\.[ \t]*[A-Za-z0-9_-]+)*)[ \t]*=" 'variable 1)
++(add-syntax-rule 'toml-mode "^[ \t]*(\\[\\[?[^]#]+\\]\\]?)" 'type 1)
++(defconst toml-constants '("true" "false" "inf" "nan")
++  "TOML named values offered for completion.")
++(put 'toml-mode 'keywords toml-constants)
++(add-syntax-rule 'toml-mode (concat "\\b" (regexp-opt toml-constants) "\\b") 'builtin)
++(add-syntax-rule 'toml-mode "\\b[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[Tt ][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})?)?\\b|\\b[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?\\b" 'builtin)
++(add-syntax-rule 'toml-mode "[+-]?\\b(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|[0-9][0-9_]*(?:\\.[0-9_]+)?(?:[eE][+-]?[0-9_]+)?)\\b" 'builtin)
++
++(set-syntax-pairs 'toml-mode "[]{}")
++(set-syntax-entry 'toml-mode "()" 'punctuation)
++(set-comment-syntax 'toml-mode '(("#")))
++;; Literal strings do not honour backslashes. Ordinary double quotes use
++;; the scanner's escaped string class; triple forms need their own entries.
++(set-string-syntax 'toml-mode '(("\"\"\"" "\"\"\"" t) ("'''" "'''") ("'" "'")))
++(put 'toml-mode 'tab-width 2)
++(put 'toml-mode 'indent-function 'toml-indent-line)
++
++(defun toml-indent-line ()
++  "(toml-indent-line): Return this TOML line's indentation; see `indentation'."
++  (beginning-of-line)
++  (let* ((state (syntax-ppss)) (existing (current-indentation))
++         (code (prog-indent--trim (prog-indent--code))) (open (nth 4 state)))
++    (cond
++     ((nth 2 state) existing)
++     (open (prog-indent--under open (string-match-p "^[\\]}]" code)))
++     (t 0))))
++
++(add-auto-mode "\\.toml$" 'toml-mode)
++(add-auto-mode "(^|[/\\\\])Cargo\\.lock$" 'toml-mode)
++(log "toml-mode loaded")
+diff --git a/core/src/editor/boot.rs b/core/src/editor/boot.rs
+index 6c5a6f5..8011e06 100644
+--- a/core/src/editor/boot.rs
++++ b/core/src/editor/boot.rs
+@@ -43,7 +43,10 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
+ ;; without it, missing exactly that feature and nothing else.
+ (eval-file "rust-mode")   ; colouring for Rust source
+ (eval-file "risp-mode")   ; colouring and indentation for this editor's own Lisp
+-(eval-file "cc-mode")     ; colouring for C/C++ source
++(eval-file "cc-mode")     ; colouring and indentation for C/C++ source
++(eval-file "python-mode") ; colouring and indentation for Python
++(eval-file "toml-mode")   ; colouring and indentation for TOML
++(eval-file "bash-mode")   ; colouring and indentation for Bash
+ (eval-file "dired")       ; a directory in a buffer (C-x d)
+ ;; Makes dired sort directory entries by type (folders, files).
+ (setq dired-sort 'type)
+diff --git a/core/src/modes/sexp.rs b/core/src/modes/sexp.rs
+index 9e2c4ba..f2d7461 100644
+--- a/core/src/modes/sexp.rs
++++ b/core/src/modes/sexp.rs
+@@ -324,14 +324,18 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
+             }
+ 
+             State::StyledStr { style, start } => {
++                if self.table.strings()[style].escaped
++                    && matches!(self.table.class_of(c), SyntaxClass::Escape)
++                {
++                    self.pos += 2;
++                    return Step::Advanced;
++                }
+                 let closer = &self.table.strings()[style].closer;
+                 if self.literal_at(self.pos, closer) {
+                     self.pos += closer.chars().count();
+                     self.state = State::Code;
+                     return self.complete(start, self.pos);
+                 }
+-                // No escape handling, deliberately: a raw string exists so
+-                // that a backslash means a backslash. Only the closer ends it.
+                 self.pos += 1;
+                 Step::Advanced
+             }
+diff --git a/core/src/modes/syntax.rs b/core/src/modes/syntax.rs
+index a6573e4..96f1a5a 100644
+--- a/core/src/modes/syntax.rs
++++ b/core/src/modes/syntax.rs
+@@ -107,12 +107,13 @@ pub enum SyntaxClass {
+ /// three and closes with three, and its first character is already a string
+ /// quote in its own right.
+ ///
+-/// Nothing is escaped inside one. That is usually the point of having them: a
+-/// raw string exists so that a backslash means a backslash.
++/// Raw forms leave backslashes literal; other forms, such as Python triple
++/// quotes and TOML multiline basic strings, honour backslash escapes.
+ #[derive(Clone, Debug)]
+ pub struct StringStyle {
+     pub opener: String,
+     pub closer: String,
++    pub escaped: bool,
+ }
+ 
+ /// One way this language writes a comment.
+diff --git a/core/src/primitives/modes.rs b/core/src/primitives/modes.rs
+index 0a55d55..7bee7d6 100644
+--- a/core/src/primitives/modes.rs
++++ b/core/src/primitives/modes.rs
+@@ -397,14 +397,16 @@ primitive!(set_syntax_pairs, args, _env, ctx, {
+ 
+ pub const SET_STRING_SYNTAX_DOC: &str = "(set-string-syntax MODE STYLES): Declare the strings in \
+          major mode MODE whose delimiters are more than one character. STYLES is a list of \
+-         (OPENER CLOSER). Returns t, or nil (logging a diagnostic) if MODE is unknown.\n\n\
++         (OPENER CLOSER &optional ESCAPED). Returns t, or nil (logging a diagnostic) if MODE is unknown.\n\n\
+          The `string' syntax class says \\\"this character opens a string and the same one ends \
+          it\\\", which is true of the double quote and of nothing else. A Rust raw string opens \
+          with three characters and closes with two; Python's triple quote opens with three and \
+          closes with three, and its first character is already a string quote in its own \
+          right.\n\n\
+          The longest opener wins, so a raw-string opener beats the plain quote it begins with. \
+-         Nothing is escaped inside one, which is usually the point of having them.\n\n\
++         ESCAPED is nil by default, for raw strings. With a non-nil ESCAPED, backslash \
++         escapes the following character, as in Python triple quotes and TOML multiline \
++         basic strings.\n\n\
+          This is about what the text *means* -- what `forward-sexp', the indenter and \
+          `syntax-ppss' read. What it should look like is the grammar's business; a mode \
+          declaring a raw string here will usually want `add-syntax-region' for it too.\n\n\
+@@ -440,7 +442,8 @@ primitive!(set_string_syntax, args, _env, ctx, {
+                 "a string style's opener and closer cannot be empty".into(),
+             ));
+         }
+-        styles.push(StringStyle { opener, closer });
++        let escaped = parts.get(2).is_some_and(|part| part.is_truthy());
++        styles.push(StringStyle { opener, closer, escaped });
+     }
+     let answer = with_syntax_table(ctx, &mode, |table| table.set_strings(styles));
+     if answer.is_nil() {
+diff --git a/core/src/tests/doc_exceptions/homeless.txt b/core/src/tests/doc_exceptions/homeless.txt
+index 4bb670a..d53567d 100644
+--- a/core/src/tests/doc_exceptions/homeless.txt
++++ b/core/src/tests/doc_exceptions/homeless.txt
+@@ -113,10 +113,6 @@ minibuffer-history
+ minibuffer-read
+ 
+ # -- passo 7: modi e aspetto
+-# lisp/cc-mode.lisp
+-cpp-constants
+-cpp-keywords
+-cpp-types
+ # lisp/risp-mode.lisp
+ risp-constants
+ risp-refresh-vocabulary
+diff --git a/core/src/tests/language_mode_tests.rs b/core/src/tests/language_mode_tests.rs
+new file mode 100644
+index 0000000..e969e20
+--- /dev/null
++++ b/core/src/tests/language_mode_tests.rs
+@@ -0,0 +1,651 @@
++//! The shipped language modes as evaluated Lisp, including their real grammars.
++use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
++use crate::editor::{EditorState, create_global_env};
++use crate::modes::{Grammar, SyntaxState, highlight_line};
++use risp::{Env, LispExp, Parser, eval};
++use std::sync::Arc;
++
++type Ctx = EditorState<GapBuffer>;
++
++fn run(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> LispExp<Ctx> {
++    let form = Parser::new(&format!("(progn {src})"))
++        .next()
++        .expect("test must parse");
++    eval(&form, env.clone(), ctx).unwrap_or_else(|why| panic!("{src}: {why:?}"))
++}
++
++fn editor() -> (Ctx, Arc<Env<Ctx>>) {
++    let (ctx, env) = create_global_env::<GapBuffer>().expect("editor");
++    env.set_variable("frame-width".into(), LispExp::number(80.0));
++    env.set_variable("frame-height".into(), LispExp::number(24.0));
++    for source in [
++        include_str!("../../lisp/commands.lisp"),
++        include_str!("../../lisp/debug.lisp"),
++        include_str!("../../lisp/indent.lisp"),
++        include_str!("../../lisp/cc-mode.lisp"),
++        include_str!("../../lisp/python-mode.lisp"),
++        include_str!("../../lisp/toml-mode.lisp"),
++        include_str!("../../lisp/bash-mode.lisp"),
++    ] {
++        run(source, &env, &ctx);
++    }
++    assert!(
++        !ctx.get_logs()
++            .iter()
++            .any(|s| s.contains("Invalid") || s.contains("invalid regex")),
++        "{:?}",
++        ctx.get_logs()
++    );
++    (ctx, env)
++}
++
++fn text(ctx: &Ctx, mode: &str, source: &str) {
++    ctx.with_current_buffer_mut(|b| {
++        b.current_mode = mode.into();
++        b.text = GapBuffer::from(source);
++        let (line, column) = b.text.cursor_1d_to_2d(source.chars().count());
++        b.text.cursor_move(line, column);
++    });
++}
++
++fn columns(mode: &str, cases: &[(&str, usize)]) {
++    let (ctx, env) = editor();
++    for (source, expected) in cases {
++        text(&ctx, mode, source);
++        run("(indent-line)", &env, &ctx);
++        assert_eq!(
++            run("(current-indentation)", &env, &ctx),
++            LispExp::number(*expected as f64),
++            "{mode}: {source:?}"
++        );
++    }
++}
++
++fn grammar(ctx: &Ctx, mode: &str) -> Grammar {
++    ctx.modes(|m| m.get(mode).expect("registered mode").grammar.clone())
++}
++
++fn face_at(grammar: &Grammar, line: &str, at: usize, entering: &SyntaxState) -> Option<String> {
++    highlight_line(grammar, line, entering)
++        .0
++        .iter()
++        .find(|span| span.start <= at && span.end > at)
++        .map(|span| span.face.name().to_string())
++}
++
++#[test]
++fn filenames_select_the_specific_languages_and_do_not_claim_unrelated_files() {
++    let (ctx, _) = editor();
++    for (path, mode) in [
++        ("src/main.c", "c-mode"),
++        ("include/main.h", "c-mode"),
++        ("src/main.cpp", "cpp-mode"),
++        ("src/main.C", "cpp-mode"),
++        ("include/main.hh", "cpp-mode"),
++        ("module.cppm", "cpp-mode"),
++        ("test.py", "python-mode"),
++        ("types.pyi", "python-mode"),
++        ("Cargo.toml", "toml-mode"),
++        ("Cargo.lock", "toml-mode"),
++        ("build.sh", "bash-mode"),
++        ("build.bash", "bash-mode"),
++        ("/home/user/.bashrc", "bash-mode"),
++        (r"C:\Users\user\.bash_profile", "bash-mode"),
++    ] {
++        assert_eq!(ctx.auto_mode_for(path).as_deref(), Some(mode), "{path}");
++    }
++    for path in [
++        "test.py.bak",
++        "notbashrc",
++        "src/main.cpp.old",
++        "Cargo.lock.bak",
++    ] {
++        assert_eq!(ctx.auto_mode_for(path), None, "{path}");
++    }
++}
++
++#[test]
++fn completion_vocabulary_matches_each_language() {
++    let (ctx, env) = editor();
++    for (mode, word) in [
++        ("python-mode", "async"),
++        ("python-mode", "print"),
++        ("toml-mode", "false"),
++        ("bash-mode", "esac"),
++        ("bash-mode", "declare"),
++        ("c-mode", "_Generic"),
++        ("cpp-mode", "co_await"),
++        ("cpp-mode", "static_cast"),
++    ] {
++        assert!(
++            run(
++                &format!("(member \"{word}\" (get '{mode} 'keywords))"),
++                &env,
++                &ctx
++            )
++            .is_truthy(),
++            "{mode}: {word}"
++        );
++    }
++    assert!(run("(member \"class\" (get 'c-mode 'keywords))", &env, &ctx).is_nil());
++    assert!(
++        run(
++            "(member \"_Generic\" (get 'cpp-mode 'keywords))",
++            &env,
++            &ctx
++        )
++        .is_nil()
++    );
++}
++
++#[test]
++fn python_indents_blocks_clauses_and_explicit_continuations() {
++    columns(
++        "python-mode",
++        &[
++            ("if ready:\nwork()", 4),
++            ("if ready: # not a string\n", 4),
++            ("def f():\n    if ready:\nwork()", 8),
++            ("if ready:\n    work()\nelse:", 0),
++            ("if a:\n    if b:\n        work()\n    elif c:", 4),
++            ("try:\n    work()\nexcept ValueError:", 0),
++            ("try:\n    work()\nexcept:\n    recover()\nfinally:", 0),
++            ("match value:\ncase 1:", 4),
++            ("match value:\n    case 1:\n        work()\ncase 2:", 4),
++            ("def f():\n    return 42\n", 0),
++            ("def f():\n    work()\nnext_statement()", 0),
++            ("text = 'not a block:'\n", 0),
++            ("total = one + \\\n", 4),
++            ("total = one + \\\n    two + \\\n", 4),
++        ],
++    );
++}
++
++#[test]
++fn python_continuations_follow_delimiters_and_preserve_multiline_strings() {
++    columns(
++        "python-mode",
++        &[
++            ("values = [\nitem,", 4),
++            ("call(first,\nsecond)", 5),
++            ("values = [\n    item,\n]", 0),
++            ("if (ready\n    and available):\nwork()", 4),
++            ("result = call(\n    first)\n", 0),
++            ("if ready:\n    text = '''hello\n  preserve this", 2),
++            ("if ready:\n    text = \"\"\"hello\n   preserve this", 3),
++        ],
++    );
++}
++
++#[test]
++fn toml_indents_containers_but_not_table_keys() {
++    columns(
++        "toml-mode",
++        &[
++            ("[package]\n    name = 'editor'", 0),
++            ("[[bin]]\n    name = 'editor'", 0),
++            ("values = [\nitem,", 2),
++            ("values = [one,\ntwo,", 10),
++            ("values = [\n  [\nvalue", 4),
++            ("values = [\n  one,\n]", 0),
++            ("settings = {\nkey = true", 2),
++            ("key = '''hello\n   literal text", 3),
++            ("key = \"\"\"hello\n  literal text", 2),
++            ("key = '# [ is text'\n  other = 1", 0),
++        ],
++    );
++}
++
++#[test]
++fn bash_indents_nested_control_flow_without_treating_arguments_as_keywords() {
++    columns(
++        "bash-mode",
++        &[
++            ("if test -f file; then\necho yes", 4),
++            ("if true\nthen", 0),
++            ("if true; then\n  echo yes\nelse", 0),
++            ("if true; then\n  echo yes\nfi", 0),
++            ("for f in *; do\necho \"$f\"", 4),
++            ("for f in *\ndo", 0),
++            ("while true; do\nif true; then\necho ok", 8),
++            ("while true; do\nif true; then\ntrue\nfi\ndone", 0),
++            ("echo if then done\nnext", 0),
++            ("echo ${#items[@]}\nnext", 0),
++            (
++                "if true; then\nvalue=$(if false; then echo no; fi)\nnext",
++                4,
++            ),
++            ("printf '%s' '# if then' # else\nnext", 0),
++            ("if true; then echo yes; fi\nnext", 0),
++            ("f() {\necho ok", 4),
++            ("f() {\n  echo ok\n}", 0),
++            ("printf foo |\ncat", 4),
++            ("echo foo \\\n  bar \\\nbaz", 4),
++        ],
++    );
++}
++
++#[test]
++fn bash_case_patterns_and_bodies_have_distinct_columns() {
++    columns(
++        "bash-mode",
++        &[
++            ("case $x in\none)", 4),
++            ("case $x in\none)\necho yes", 8),
++            ("case $x in\none)\necho yes\n;;\ntwo)", 4),
++            ("case $x in\none) echo yes ;;\nesac", 0),
++            ("if true; then\ncase $x in\none)\necho yes", 12),
++        ],
++    );
++}
++
++#[test]
++fn bash_leaves_heredoc_contents_and_multiline_quotes_untouched() {
++    columns(
++        "bash-mode",
++        &[
++            ("if true; then\ncat <<EOF\n  if text ' done", 2),
++            (
++                "if true; then\ncat <<'EOF'\n  if text ' done\nEOF\necho after",
++                4,
++            ),
++            ("cat <<-EOF\n\tfi\n\tEOF\necho after", 0),
++            (
++                "cat <<ONE <<'TWO'\nif ignored\nONE\ndone ignored\nTWO\necho after",
++                0,
++            ),
++            ("cat <<<EOF\necho after", 0),
++            ("if true; then\nprintf '%s' \"hello\n  preserve this", 2),
++        ],
++    );
++}
++
++#[test]
++fn bash_cache_is_invalidated_by_edits() {
++    let (ctx, env) = editor();
++    text(&ctx, "bash-mode", "if true; then\nbody");
++    run("(indent-line)", &env, &ctx);
++    run(
++        "(goto-char 0) (delete-region 0 13) (insert \"echo changed\") (goto-char (point-max)) (indent-line)",
++        &env,
++        &ctx,
++    );
++    assert_eq!(
++        run("(current-indentation)", &env, &ctx),
++        LispExp::number(0.0)
++    );
++}
++
++#[test]
++fn c_and_cpp_indent_braces_parameters_cases_and_labels() {
++    for mode in ["c-mode", "cpp-mode"] {
++        columns(
++            mode,
++            &[
++                ("int main() {\nreturn 0;", 4),
++                ("int main() {\n    if (ok) {\ncall();", 8),
++                ("int main() {\n    call();\n}", 0),
++                ("int main() {\n    if (ok)\ncall();", 8),
++                ("int main() {\n    if (ok)\n{", 4),
++                ("int main() {\n    if (ok &&\n        more)\ncall();", 8),
++                ("int main() {\n    if (ok)\n        call();\n    next();", 4),
++                ("int main() {\n    if (ok)\n        call();\nelse", 4),
++                ("call(first,\nsecond);", 5),
++                ("int main() {\n    call(\nargument);", 8),
++                ("int main() {\n    call(\n        argument\n);", 4),
++                ("switch (value) {\ncase 1:", 4),
++                ("switch (value) {\n    case 1:\nwork();", 8),
++                ("switch (value)\n{\n    case 1:\nwork();", 8),
++                (
++                    "switch (value +\n        offset)\n{\n    case 1:\nwork();",
++                    8,
++                ),
++                (
++                    "switch (value) {\n    case 1:\n        work();\ndefault:",
++                    4,
++                ),
++                ("int main() {\n  label:", 0),
++                ("int main() {\n    #define VALUE 1", 0),
++                ("const char *s = \"{ //\";\n    next;", 0),
++                ("char c = '}';\nnext;", 0),
++                ("/* comment\n* continued", 1),
++            ],
++        );
++    }
++    columns(
++        "cpp-mode",
++        &[
++            ("class Widget {\npublic:", 0),
++            ("class Widget {\npublic:\nvoid f();", 4),
++        ],
++    );
++}
++
++#[test]
++fn region_indentation_is_repeatable_for_each_language() {
++    let (ctx, env) = editor();
++    for (mode, source, expected) in [
++        ("python-mode", "if yes:\ncall()\n", "if yes:\n    call()\n"),
++        ("toml-mode", "items = [\n1,\n]\n", "items = [\n  1,\n]\n"),
++        (
++            "bash-mode",
++            "if true; then\necho ok\nfi\n",
++            "if true; then\n    echo ok\nfi\n",
++        ),
++        (
++            "c-mode",
++            "int main() {\nreturn 0;\n}\n",
++            "int main() {\n    return 0;\n}\n",
++        ),
++        (
++            "cpp-mode",
++            "class C {\npublic:\nvoid f();\n};\n",
++            "class C {\npublic:\n    void f();\n};\n",
++        ),
++    ] {
++        text(&ctx, mode, source);
++        run(
++            "(goto-char 0) (set-mark) (goto-char (point-max)) (indent-region)",
++            &env,
++            &ctx,
++        );
++        assert_eq!(
++            ctx.with_current_buffer(|b| b.text.to_string()),
++            expected,
++            "{mode}"
++        );
++        run("(indent-region)", &env, &ctx);
++        assert_eq!(
++            ctx.with_current_buffer(|b| b.text.to_string()),
++            expected,
++            "second pass: {mode}"
++        );
++    }
++}
++
++#[test]
++fn python_grammar_faces_keywords_calls_numbers_and_comments() {
++    let (ctx, _) = editor();
++    let g = grammar(&ctx, "python-mode");
++    for (line, needle, expected) in [
++        ("async def f():", "async", "keyword"),
++        ("print(True)", "print", "builtin"),
++        ("print(True)", "True", "builtin"),
++        ("int(value)", "int", "type"),
++        ("class Widget:", "Widget", "type"),
++        ("@package.decorator", "@", "attribute"),
++        ("value = 0xFF", "0x", "builtin"),
++        ("value = 1.5e-3j", "1.5", "builtin"),
++        ("# ' not a string", "#", "comment"),
++        ("f'# not a comment'", "#", "string"),
++    ] {
++        assert_eq!(
++            face_at(
++                &g,
++                line,
++                line[..line.find(needle).unwrap()].chars().count(),
++                &vec![]
++            )
++            .as_deref(),
++            Some(expected),
++            "{line}"
++        );
++    }
++    let state = highlight_line(&g, "text = r'''hello", &vec![]).1;
++    assert_eq!(
++        face_at(&g, "if True: # still string", 0, &state).as_deref(),
++        Some("string")
++    );
++    assert!(highlight_line(&g, "end'''", &state).1.is_empty());
++}
++
++#[test]
++fn toml_grammar_faces_tables_keys_dates_and_quoted_hashes() {
++    let (ctx, _) = editor();
++    let g = grammar(&ctx, "toml-mode");
++    for (line, at, expected) in [
++        ("[[bin]]", 0, "type"),
++        ("package.name = 'hi'", 0, "variable"),
++        ("date = 2026-10-19T10:00:00Z", 7, "builtin"),
++        ("enabled = false", 10, "builtin"),
++        ("value = 1.5e-3", 9, "builtin"),
++        ("value = '# text'", 9, "string"),
++        ("# comment", 0, "comment"),
++    ] {
++        assert_eq!(
++            face_at(&g, line, at, &vec![]).as_deref(),
++            Some(expected),
++            "{line}"
++        );
++    }
++    let state = highlight_line(&g, "text = '''literal", &vec![]).1;
++    assert_eq!(
++        face_at(&g, "[not_a_table]", 0, &state).as_deref(),
++        Some("string")
++    );
++    assert!(highlight_line(&g, "end'''", &state).1.is_empty());
++}
++
++#[test]
++fn bash_grammar_distinguishes_hashes_in_words_parameters_and_comments() {
++    let (ctx, _) = editor();
++    let g = grammar(&ctx, "bash-mode");
++    for (line, at, expected) in [
++        ("if true; then", 0, Some("keyword")),
++        ("echo hi", 0, Some("builtin")),
++        ("value=$HOME", 6, Some("variable")),
++        ("echo ${#items[@]}", 7, Some("variable")),
++        ("echo foo#bar", 8, None),
++        ("echo hi # comment", 8, Some("comment")),
++        ("echo '# not a comment'", 6, Some("string")),
++    ] {
++        assert_eq!(
++            face_at(&g, line, at, &vec![]).as_deref(),
++            expected,
++            "{line}"
++        );
++    }
++}
++
++#[test]
++fn c_and_cpp_grammars_include_modern_keywords_and_literals() {
++    let (ctx, _) = editor();
++    for mode in ["c-mode", "cpp-mode"] {
++        let g = grammar(&ctx, mode);
++        for (line, at, expected) in [
++            ("const int value;", 0, "keyword"),
++            ("uint64_t value;", 0, "type"),
++            ("#include <stdio.h>", 0, "preprocessor"),
++            ("double x = 0x1.fp+3;", 11, "builtin"),
++            ("float x = 1.0e-3f;", 10, "builtin"),
++            ("char c = '\"'; int next;", 9, "string"),
++            ("char c = '\"'; int next;", 14, "type"),
++            ("// \" not a string", 3, "comment"),
++        ] {
++            assert_eq!(
++                face_at(&g, line, at, &vec![]).as_deref(),
++                Some(expected),
++                "{mode}: {line}"
++            );
++        }
++    }
++    let cpp = grammar(&ctx, "cpp-mode");
++    assert_eq!(
++        face_at(&grammar(&ctx, "c-mode"), "_Atomic int value;", 0, &vec![]).as_deref(),
++        Some("keyword")
++    );
++    for (line, at) in [
++        ("static_cast<int>(n)", 0),
++        ("co_await task;", 0),
++        ("a and b", 2),
++    ] {
++        assert_eq!(face_at(&cpp, line, at, &vec![]).as_deref(), Some("keyword"));
++    }
++    assert_eq!(
++        face_at(&cpp, "[[nodiscard]] int f();", 0, &vec![]).as_deref(),
++        Some("attribute")
++    );
++}
++
++#[test]
++fn cpp_raw_string_delimiters_configure_both_highlighting_and_scanning() {
++    let (ctx, env) = editor();
++    run("(cpp-add-raw-string-delimiter \"custom\")", &env, &ctx);
++    for source in [
++        "auto s = R\"(\" } //\n    literal)\";",
++        "auto s = u8R\"json(\" } //\n    literal)json\";",
++        "auto s = R\"custom(\" } //\n    literal)custom\";",
++    ] {
++        text(&ctx, "cpp-mode", source);
++        let g = grammar(&ctx, "cpp-mode");
++        let mut state = vec![];
++        for line in source.lines() {
++            state = highlight_line(&g, line, &state).1;
++        }
++        assert!(state.is_empty(), "{source}");
++        let offset = source.find("literal").unwrap();
++        assert!(
++            run(&format!("(nth 2 (syntax-ppss {offset}))"), &env, &ctx).is_truthy(),
++            "{source}"
++        );
++        run("(indent-line)", &env, &ctx);
++        assert_eq!(ctx.with_current_buffer(|b| b.text.to_string()), source);
++        assert!(run("(nth 2 (syntax-ppss (point-max)))", &env, &ctx).is_nil());
++    }
++}
++
++#[test]
++fn escaped_triple_quotes_do_not_close_python_or_toml_basic_strings() {
++    let (ctx, env) = editor();
++    for mode in ["python-mode", "toml-mode"] {
++        let source = "value = \"\"\"open \\\"\"\" still a string\n  { preserve }\n\"\"\"";
++        text(&ctx, mode, source);
++        let at = source.find("preserve").unwrap();
++        assert!(
++            run(&format!("(nth 2 (syntax-ppss {at}))"), &env, &ctx).is_truthy(),
++            "{mode}"
++        );
++        assert_eq!(
++            run(&format!("(nth 0 (syntax-ppss {at}))"), &env, &ctx),
++            LispExp::number(0.0)
++        );
++        assert!(run("(nth 2 (syntax-ppss (point-max)))", &env, &ctx).is_nil());
++        let g = grammar(&ctx, mode);
++        let state = highlight_line(&g, source.lines().next().unwrap(), &vec![]).1;
++        assert_eq!(
++            face_at(&g, "  { preserve }", 4, &state).as_deref(),
++            Some("string")
++        );
++    }
++    // TOML literal strings and C++ raw strings keep the previous API's
++    // default: a backslash immediately before the closer does not escape it.
++    for (mode, source) in [
++        ("toml-mode", "value = '''literal\\'''\nnext = 1"),
++        ("cpp-mode", "auto s = R\"(literal\\)\";\nint next;"),
++    ] {
++        text(&ctx, mode, source);
++        assert!(
++            run("(nth 2 (syntax-ppss (point-max)))", &env, &ctx).is_nil(),
++            "{source}"
++        );
++    }
++}
++
++#[test]
++fn registered_bash_heredocs_colour_contents_until_the_exact_terminator() {
++    let (ctx, env) = editor();
++    run("(bash-add-heredoc-delimiter \"CUSTOM\")", &env, &ctx);
++    let g = grammar(&ctx, "bash-mode");
++    for opener in ["cat <<EOF", "cat <<'EOF'", "cat <<\"EOF\"", "cat <<CUSTOM"] {
++        let state = highlight_line(&g, opener, &vec![]).1;
++        assert!(!state.is_empty(), "{opener}");
++        assert_eq!(
++            face_at(&g, "if ' not shell code", 0, &state).as_deref(),
++            Some("string")
++        );
++        assert!(!highlight_line(&g, "EOF suffix", &state).1.is_empty());
++        let end = if opener.contains("CUSTOM") {
++            "CUSTOM"
++        } else {
++            "EOF"
++        };
++        assert!(highlight_line(&g, end, &state).1.is_empty());
++    }
++    let tabbed = highlight_line(&g, "cat <<-EOF", &vec![]).1;
++    assert!(highlight_line(&g, "\tEOF", &tabbed).1.is_empty());
++    assert!(!highlight_line(&g, " EOF", &tabbed).1.is_empty());
++}
++
++#[test]
++fn reloading_modes_restores_default_raw_string_and_heredoc_regions() {
++    let (ctx, env) = editor();
++    let cpp_count = grammar(&ctx, "cpp-mode").regions.len();
++    let bash_count = grammar(&ctx, "bash-mode").regions.len();
++    for _ in 0..2 {
++        run(include_str!("../../lisp/cc-mode.lisp"), &env, &ctx);
++        run(include_str!("../../lisp/bash-mode.lisp"), &env, &ctx);
++        let cpp = grammar(&ctx, "cpp-mode");
++        let bash = grammar(&ctx, "bash-mode");
++        assert_eq!(cpp.regions.len(), cpp_count);
++        assert_eq!(bash.regions.len(), bash_count);
++        assert!(
++            !highlight_line(&cpp, "auto s = R\"json(open", &vec![])
++                .1
++                .is_empty()
++        );
++        assert!(!highlight_line(&bash, "cat <<EOF", &vec![]).1.is_empty());
++    }
++}
++
++#[test]
++fn bash_cache_tracks_a_changed_indent_width_and_undo_of_a_prefix_edit() {
++    let (ctx, env) = editor();
++    text(&ctx, "bash-mode", "if true; then\nif true; then\nbody");
++    run("(bash-indent-line)", &env, &ctx);
++    run("(put 'bash-mode 'tab-width 2)", &env, &ctx);
++    assert_eq!(run("(bash-indent-line)", &env, &ctx), LispExp::number(4.0));
++    text(&ctx, "bash-mode", "if true; then\nbody");
++    run(
++        "(goto-char 0) (insert \"#\") (goto-char (point-max))",
++        &env,
++        &ctx,
++    );
++    assert_eq!(run("(bash-indent-line)", &env, &ctx), LispExp::number(0.0));
++    run("(undo) (goto-char (point-max))", &env, &ctx);
++    assert_eq!(run("(bash-indent-line)", &env, &ctx), LispExp::number(2.0));
++}
++
++#[test]
++fn bash_region_indentation_preserves_literal_heredoc_text_and_tabs() {
++    let (ctx, env) = editor();
++    let source = "if true; then\ncat <<-EOF\n\tif this is text\n\tEOF\necho after\nfi\n";
++    text(&ctx, "bash-mode", source);
++    run(
++        "(goto-char 0) (set-mark) (goto-char (point-max)) (indent-region)",
++        &env,
++        &ctx,
++    );
++    assert_eq!(
++        ctx.with_current_buffer(|b| b.text.to_string()),
++        "if true; then\n    cat <<-EOF\n\tif this is text\n\tEOF\n    echo after\nfi\n"
++    );
++}
++
++#[test]
++fn return_uses_the_registered_indenter_in_each_new_mode() {
++    let (ctx, env) = editor();
++    for (mode, source, suffix) in [
++        ("python-mode", "if ready:", "\n    "),
++        ("toml-mode", "values = [", "\n  "),
++        ("bash-mode", "if true; then", "\n    "),
++        ("c-mode", "int main() {", "\n    "),
++        ("cpp-mode", "class Widget {", "\n    "),
++    ] {
++        text(&ctx, mode, source);
++        run("(newline-and-indent)", &env, &ctx);
++        assert_eq!(
++            ctx.with_current_buffer(|b| b.text.to_string()),
++            format!("{source}{suffix}")
++        );
++    }
++}
+diff --git a/core/src/tests/mod.rs b/core/src/tests/mod.rs
+index b99e635..4f432c4 100644
+--- a/core/src/tests/mod.rs
++++ b/core/src/tests/mod.rs
+@@ -41,6 +41,7 @@ mod hooks_tests;
+ mod indent_tests;
+ mod isearch_tests;
+ mod layering_tests;
++mod language_mode_tests;
+ mod line_number_tests;
+ mod lisp_job_tests;
+ mod log_tests;
+diff --git a/man/indentation.txt b/man/indentation.txt
+index 8f03e31..32bf132 100644
+--- a/man/indentation.txt
++++ b/man/indentation.txt
+@@ -20,6 +20,10 @@ SYNOPSIS
+     (lisp-indent-under OPEN)
+     (lisp-head-after OPEN)
+     (lisp-argument-column OPEN HEAD)
++    (python-indent-line)
++    (toml-indent-line)
++    (bash-indent-line)
++    (cc-indent-line)
+     tab-width
+     tab-always-indent
+     indent-region-style
+@@ -77,7 +81,8 @@ RETURN
+ 
+ HOW WIDE A TAB IS
+     `tab-width' is the width of one Tab everywhere, 4 unless it is set. A
+-    mode can have its own: (put 'MODE 'tab-width N). risp-mode uses 2.
++    mode can have its own: (put 'MODE 'tab-width N). risp-mode and toml-mode
++    use 2; python-mode, bash-mode, c-mode and cpp-mode use 4.
+     `indent-width' is the width in force in the current buffer.
+ 
+ WRITING A RULE
+@@ -112,7 +117,48 @@ THE LISP RULE
+     defun, let, when, while, dolist and the others like them. A string
+     keeps the indentation it has.
+ 
++LANGUAGE RULES
++    Python indents after a compound header's colon, aligns elif, else,
++    except and finally with a preceding header, and puts case one level
++    inside match. Arguments align with the first argument on the opener's
++    line, or one level inside an otherwise empty delimiter. Closing
++    delimiters return to the opener's line's indentation. Explicit
++    backslash continuations use one extra level, without accumulating it.
++    Multiline string contents keep their indentation.
++
++    A written Python dedent is meaningful syntax and is preserved. A blank
++    line after return, raise, break, continue or pass dedents one level.
++    Reindentation cannot recover missing block boundaries in Python; use
++    rigid shifting when changing the nesting of an existing block.
++
++    TOML keys and table headers begin at column zero. Array and inline-table
++    continuations align with the first value or one level inside the opening
++    line. A closing delimiter returns to that line's indentation. Multiline
++    string contents, including their closing lines, keep their whitespace.
++
++    Bash follows if/then/elif/else/fi, for/while/until/select/do/done,
++    case/esac, function braces and subshells. A case pattern is one level
++    inside case, and its commands one level further. Pipe, &&, || and
++    backslash continuations add one level. Quoted text and comments do not
++    create control-flow blocks. Literal-word heredocs, including quoted
++    markers, multiple pending heredocs and <<-, keep their contents and
++    terminators untouched. A verified prefix cache avoids reparsing the
++    entire script on each subsequent line and is invalidated by edits.
++
++    C/C++ indent within braces, align continued argument lists, recognize
++    unbraced control statements, and indent case bodies one level beyond
++    their labels. Access labels align with their class's opening line;
++    preprocessor directives begin at column zero. Character literals,
++    registered raw strings and comments do not count as brackets.
++
+ LIMITS
++    These are indentation rules for editing, not complete formatters.
++    Malformed or ambiguous code, complex C/C++ macros and conditional
++    compilation can need manual indentation. Bash arithmetic commands,
++    complex substitutions, escaped or computed heredoc delimiters are not
++    fully parsed. TOML inline tables can be indented while editing even
++    when a TOML version requires them to be on one line.
++
+     A tab character in the text counts as one column, wherever the editor
+     counts columns. The terminal draws it wider, so a line indented with
+     tabs is shown further right than the editor reckons it.
+@@ -128,8 +174,8 @@ EXAMPLES
+ 
+     Wider indentation in C, and shifting rather than reindenting there:
+ 
+-        (put 'cc-mode 'tab-width 8)
+-        (put 'cc-mode 'indent-region-style 'shift)
++        (put 'c-mode 'tab-width 8)
++        (put 'c-mode 'indent-region-style 'shift)
+ 
+     Return as a plain newline:
+ 
+diff --git a/man/modes.txt b/man/modes.txt
+index 7a953f6..abb0717 100644
+--- a/man/modes.txt
++++ b/man/modes.txt
+@@ -1,6 +1,23 @@
+ NAME
+     modes - what a buffer is being edited as
+ 
++SYNOPSIS
++    (cpp-add-raw-string-delimiter DELIMITER)
++    (bash-add-heredoc-delimiter DELIMITER)
++    c-keywords
++    c-constants
++    c-types
++    cpp-keywords
++    cpp-constants
++    cpp-types
++    python-keywords
++    python-constants
++    python-builtins
++    python-types
++    toml-constants
++    bash-keywords
++    bash-builtins
++
+ DESCRIPTION
+     Every buffer has one major mode. It decides three things: how the text is
+     coloured, which keys mean something other than what they usually mean, and
+@@ -9,10 +26,22 @@ DESCRIPTION
+     C-h M says what the current buffer's mode is and what it does.
+ 
+ WHICH MODE A BUFFER GETS
+-    From its file's name. A .rs file gives you rust-mode; .c, .h, .cpp, .hpp,
+-    .cc, .cxx and .hxx give cpp-mode; .lisp and .risp give risp-mode, which is
+-    this editor's own Lisp. Anything else is fundamental-mode, which colours
+-    nothing and takes no keys of its own.
++    From its file's name. A .rs file gives you rust-mode; .c and .h give
++    c-mode, and .cpp, .hpp, .cc, .hh, .cxx, .hxx, .C, .H, .c++, .h++, .ipp,
++    .tpp, .ixx and .cppm give cpp-mode. Python's .py, .pyw and .pyi give
++    python-mode. .toml and Cargo.lock give toml-mode. .sh, .bash, .bashrc,
++    .bash_profile, .bash_login, .bash_logout and .profile give bash-mode.
++    .lisp and .risp give risp-mode, this editor's own Lisp. Anything else
++    is fundamental-mode, which colours nothing and takes no keys of its own.
++
++    An ambiguous .h defaults to C. To use C++ for headers, put this after
++    loading cc-mode in init.lisp; later associations take precedence:
++
++        (add-auto-mode "\\.h$" 'cpp-mode)
++
++    A script without a recognized extension can be switched explicitly:
++
++        (set-major-mode 'bash-mode)
+ 
+     A buffer that is not a file gets the mode whatever made it asked for: a
+     directory listing is dired-mode, a compilation's output is
+@@ -35,7 +64,11 @@ WHAT COLOURING IS
+ MODES THAT SHIP
+         fundamental-mode    no colouring, no keys of its own
+         rust-mode           .rs
+-        cpp-mode            .c, .h, .cpp, .hpp, .cc, .cxx, .hxx
++        c-mode              C source and headers
++        cpp-mode            C++ source, headers and module interfaces
++        python-mode         Python source and type stubs
++        toml-mode           TOML configuration and Cargo.lock
++        bash-mode           Bash and Bourne-style shell scripts
+         risp-mode           .lisp, .risp -- this editor's own Lisp
+         dired-mode          a directory listing
+         compilation-mode    a build's output
+@@ -53,6 +86,46 @@ MODES THAT SHIP
+     Each is a .lisp file you can read, and taking one out of your
+     configuration removes exactly that feature.
+ 
++LANGUAGE CONFIGURATION
++    The new language modules use the same grammar API as rust-mode. The
++    colouring and the structural scanner are configured separately; strings
++    and comments therefore also inform sexp navigation and indentation.
++    Their keyword lists are offered by completion-at-point as well.
++
++    An existing init.lisp is not rewritten by an editor upgrade. Load the
++    modules there, after commands, debug and indent:
++
++        (eval-file "cc-mode")
++        (eval-file "python-mode")
++        (eval-file "toml-mode")
++        (eval-file "bash-mode")
++
++    C/C++ include C11/C23 and modern C++ vocabulary, preprocessor directives,
++    attributes, numeric suffixes and character literals. C++ raw strings
++    with an empty tag or raw, tag, json, xml, sql and glsl are recognized.
++    Register another literal delimiter in both engines with:
++
++        (cpp-add-raw-string-delimiter "shader")
++
++    Bash heredocs ending in EOF, EOT and END are coloured across lines.
++    Another literal marker can be added with:
++
++        (bash-add-heredoc-delimiter "SCRIPT")
++
++    The Bash indenter recognizes literal word heredoc markers independently
++    of this colouring registration, including quoted markers and <<-.
++    See `indentation' for the language-specific rules and their limits.
++
++LANGUAGE LIMITS
++    Colouring uses regular expressions, not a compiler or a full parser.
++    Python f-strings and shell strings are coloured uniformly, including
++    interpolation. Python match and case are treated as keywords everywhere.
++    Arbitrary C++ raw-string tags and Bash heredoc markers need the explicit
++    colouring registrations above: the regexp engine has no backreferences.
++    The Bash structural scanner treats # as a comment opener even inside an
++    unquoted word or parameter expansion; the indenter has its own shell
++    lexer and does not have that limitation. Shebangs are not mode selectors.
++
+ MODE KEYS
+     A mode's keys are consulted before the global ones, so a listing can use
+     plain letters. Nearly all of them agree on four:
+diff --git a/man/rsedit.txt b/man/rsedit.txt
+index 7f71f12..5c47efa 100644
+--- a/man/rsedit.txt
++++ b/man/rsedit.txt
+@@ -23,7 +23,10 @@ MODULES
+     minibuffer           commands built on the built-in prompt
+     rust-mode            colouring for Rust
+     risp-mode            colouring and indentation for rsedit's own Lisp
+-    cc-mode              colouring for C and C++
++    cc-mode              colouring and indentation for C and C++
++    python-mode          colouring and indentation for Python
++    toml-mode            colouring and indentation for TOML
++    bash-mode            colouring and indentation for Bash
+     dired                a directory in a buffer, and C-x C-r
+     completion           the strip that narrows as you type
+     preview              C-x r t shows its replacement before you commit

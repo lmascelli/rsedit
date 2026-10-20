@@ -191,6 +191,36 @@ mod tests {
         );
     }
 
+    /// A prompt is everything after the code's one character, so a spec
+    /// written "s:Face: " asks ":Face: ".
+    #[test]
+    fn no_command_asks_with_a_colon_in_front_of_its_prompt() {
+        let (ctx, env) = bare();
+        crate::tests::shipped::load_default_modules(&env, &ctx);
+        let names = eval_str("(all-commands)", &env, &ctx).expect("all-commands");
+        let mut wrong = Vec::new();
+        for name in names.iter() {
+            let LispExp::String(name) = name else {
+                panic!("a command's name, not {name:?}");
+            };
+            let specs = eval_str(&format!("(command-specs {:?})", name.as_str()), &env, &ctx)
+                .expect("command-specs");
+            for spec in specs.iter() {
+                let LispExp::String(spec) = spec else {
+                    panic!("{name}: a spec is a string, not {spec:?}");
+                };
+                if spec.chars().nth(1) == Some(':') {
+                    wrong.push(format!("{name}: {spec:?}"));
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "prompts that begin with a colon:\n{}",
+            wrong.join("\n")
+        );
+    }
+
     // ---------------------------------------------------------------
     // Key dispatch
     // ---------------------------------------------------------------

@@ -20,6 +20,7 @@
        (doc-comment nil nil ("italic"))
        (string      nil nil ("italic"))
        (attribute   nil nil ("italic"))
+       (preprocessor nil nil ("bold"))
        (error       nil nil ("bold" "underline"))
 
        ;; The editor's own furniture. Reverse video rather than an attribute:
@@ -33,5 +34,6 @@
        ;; The marks other modules make. Reverse, for the same reason.
        (manpage-bold       nil nil ("bold"))
        (manpage-underline  nil nil ("underline"))
-       (compilation-here   nil nil ("reverse"))
-       (compilation-target nil nil ("reverse"))))
+       (results-here       nil nil ("reverse"))
+       (results-target     nil nil ("reverse"))
+       (preview            nil nil ("italic"))))
