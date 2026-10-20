@@ -1,5 +1,5 @@
 use rsedit_core::{
-    BufferTrait, ELispExp, EditorState, Env, GapBuffer, KeyCode, KeyEvent, KeyModifiers, eval,
+    BufferTrait, ELispExp, EditorState, Env, KeyCode, KeyEvent, KeyModifiers, eval,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -73,7 +73,7 @@ impl<'editor, B: BufferTrait> Core<'editor, B> {
     fn new(
         state: &'editor EditorState<B>,
         env: Arc<Env<EditorState<B>>>,
-        font: Option<PathBuf>,
+        _font: Option<PathBuf>,
     ) -> Result<Self, String> {
         // The core loads init.lisp itself, from the same configuration as the TUI.
         let core = Self { state, env };
@@ -658,7 +658,7 @@ mod gui {
                 color,
                 italics: style.italic,
                 underline: if style.underline {
-                    Stroke::new(1., color)
+                    Stroke::new(1_f32, color)
                 } else {
                     Stroke::NONE
                 },
@@ -729,7 +729,7 @@ mod gui {
             painter.rect_stroke(
                 outer.shrink(0.5),
                 3.,
-                Stroke::new(1., color),
+                Stroke::new(1_f32, color),
                 egui::StrokeKind::Inside,
             );
             let title = view.title.as_deref().unwrap_or(&view.buffer_name);
@@ -814,13 +814,13 @@ mod gui {
                     clipped.rect_stroke(
                         caret.shrink(0.5),
                         0.,
-                        Stroke::new(1.5, color),
+                        Stroke::new(1.5_f32, color),
                         egui::StrokeKind::Inside,
                     );
                 } else {
                     clipped.line_segment(
                         [caret.left_top(), caret.left_bottom()],
-                        Stroke::new(1.5, color),
+                        Stroke::new(1.5_f32, color),
                     );
                 }
                 if !preedit.is_empty() {
@@ -948,7 +948,7 @@ mod gui {
                         } else {
                             [area.center_top(), area.center_bottom()]
                         };
-                        painter.line_segment(ends, Stroke::new(1., fg));
+                        painter.line_segment(ends, Stroke::new(1_f32, fg));
                     }
                     let state = self.core.vim_state();
                     let block =
