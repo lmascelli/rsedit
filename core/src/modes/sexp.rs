@@ -324,14 +324,19 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
             }
 
             State::StyledStr { style, start } => {
+                if self.table.strings()[style].escaped
+                    && matches!(self.table.class_of(c), SyntaxClass::Escape)
+                {
+                    self.pos += 2;
+                    return Step::Advanced;
+                }
+
                 let closer = &self.table.strings()[style].closer;
                 if self.literal_at(self.pos, closer) {
                     self.pos += closer.chars().count();
                     self.state = State::Code;
                     return self.complete(start, self.pos);
                 }
-                // No escape handling, deliberately: a raw string exists so
-                // that a backslash means a backslash. Only the closer ends it.
                 self.pos += 1;
                 Step::Advanced
             }

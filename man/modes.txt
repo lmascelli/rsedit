@@ -6,14 +6,26 @@ SYNOPSIS
     (add-hook MODE HOOK FUNCTION)
     (remove-hook MODE HOOK FUNCTION)
     (risp-refresh-vocabulary)
+    risp-special-forms
+    risp-constants
     rust-keywords
     rust-constants
     rust-types
+    (cpp-add-raw-string-delimiter DELIMITER)
+    (bash-add-heredoc-delimiter DELIMITER)
+    c-keywords
+    c-constants
+    c-types
     cpp-keywords
     cpp-constants
     cpp-types
-    risp-special-forms
-    risp-constants
+    python-keywords
+    python-constants
+    python-builtins
+    python-types
+    toml-constants
+    bash-keywords
+    bash-builtins
 
 DESCRIPTION
     Every buffer has one major mode, and the mode says what the buffer is
@@ -31,6 +43,10 @@ WHICH MODE A FILE GETS
         rust-mode           .rs
         cpp-mode            .c .h .cpp .hpp .cc .cxx .hxx .C .H
         risp-mode           .lisp .risp
+        python-mode         .py .pyw .pyi
+        toml-mode           .toml Cargo.toml
+        bash-mode           .sh .bash .bashrc .bash_profile .bash_login
+                            .bash_logout .profile
         fundamental-mode    any other name
 
     `add-auto-mode' adds a name to these. PATTERN is a regular expression
@@ -44,10 +60,25 @@ WHICH MODE A FILE GETS
     writes the buffer under a name that another pattern claims. A name no
     pattern claims leaves the mode as it was.
 
+    An ambiguous .h defaults to C. To use C++ for headers, put this after
+    loading cc-mode in init.lisp; later associations take precedence:
+
+        (add-auto-mode "\\.h$" 'cpp-mode)
+
+    A script without a recognized extension can be switched explicitly:
+
+        (set-major-mode 'bash-mode)
+    
+
 MODES THAT SHIP
         fundamental-mode    plain text: no colours, no keys of its own
         rust-mode           Rust
         cpp-mode            C and C++
+        c-mode              C source and headers
+        cpp-mode            C++ source, headers and module interfaces
+        python-mode         Python source and type stubs
+        toml-mode           TOML configuration and Cargo.lock
+        bash-mode           Bash and Bourne-style shell scripts
         risp-mode           this editor's own Lisp
         dired-mode          a directory listing
         buffer-list-mode    the list of buffers
@@ -89,6 +120,46 @@ THE LANGUAGES
     asks when it loads, so a function defined since is coloured once M-x
     risp-refresh-vocabulary has asked again. C-M-i asks every time, and
     needs nothing.
+    
+LANGUAGE CONFIGURATION
+    The new language modules use the same grammar API as rust-mode. The
+    colouring and the structural scanner are configured separately; strings
+    and comments therefore also inform sexp navigation and indentation.
+    Their keyword lists are offered by completion-at-point as well.
+
+    An existing init.lisp is not rewritten by an editor upgrade. Load the
+    modules there, after commands, debug and indent:
+
+        (eval-file "cc-mode")
+        (eval-file "python-mode")
+        (eval-file "toml-mode")
+        (eval-file "bash-mode")
+
+    C/C++ include C11/C23 and modern C++ vocabulary, preprocessor directives,
+    attributes, numeric suffixes and character literals. C++ raw strings
+    with an empty tag or raw, tag, json, xml, sql and glsl are recognized.
+    Register another literal delimiter in both engines with:
+
+        (cpp-add-raw-string-delimiter "shader")
+
+    Bash heredocs ending in EOF, EOT and END are coloured across lines.
+    Another literal marker can be added with:
+
+        (bash-add-heredoc-delimiter "SCRIPT")
+
+    The Bash indenter recognizes literal word heredoc markers independently
+    of this colouring registration, including quoted markers and <<-.
+    See `indentation' for the language-specific rules and their limits.
+
+LANGUAGE LIMITS
+    Colouring uses regular expressions, not a compiler or a full parser.
+    Python f-strings and shell strings are coloured uniformly, including
+    interpolation. Python match and case are treated as keywords everywhere.
+    Arbitrary C++ raw-string tags and Bash heredoc markers need the explicit
+    colouring registrations above: the regexp engine has no backreferences.
+    The Bash structural scanner treats # as a comment opener even inside an
+    unquoted word or parameter expansion; the indenter has its own shell
+    lexer and does not have that limitation. Shebangs are not mode selectors.
 
 HOOKS
     A hook is a list of functions the editor calls at a moment of its own,

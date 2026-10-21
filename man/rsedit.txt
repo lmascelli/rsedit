@@ -23,7 +23,10 @@ MODULES
     minibuffer           M-:, an expression evaluated at a prompt
     rust-mode            colouring for Rust
     risp-mode            colouring and indentation for rsedit's own Lisp
-    cc-mode              colouring for C and C++
+    cc-mode              colouring and indentation for C and C++
+    python-mode          colouring and indentation for Python
+    toml-mode            colouring and indentation for TOML
+    bash-mode            colouring and indentation for Bash
     dired                a directory in a buffer, and C-x C-r
     completion           the strip that narrows as you type
     preview              C-x r t shows its replacement before you commit

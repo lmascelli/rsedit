@@ -110,12 +110,14 @@ pub enum SyntaxClass {
 /// three and closes with three, and its first character is already a string
 /// quote in its own right.
 ///
-/// Nothing is escaped inside one. That is usually the point of having them: a
-/// raw string exists so that a backslash means a backslash.
+/// Raw forms leave backslashes literal; other forms, such as Python triple
+/// quotes and TOML multiline basic strings, honour backslash escapes.
+
 #[derive(Clone, Debug)]
 pub struct StringStyle {
     pub opener: String,
     pub closer: String,
+    pub escaped: bool,
 }
 
 /// One way this language writes a comment.

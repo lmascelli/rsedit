@@ -20,6 +20,10 @@ SYNOPSIS
     (lisp-indent-under OPEN)
     (lisp-head-after OPEN)
     (lisp-argument-column OPEN HEAD)
+    (python-indent-line)
+    (toml-indent-line)
+    (bash-indent-line)
+    (cc-indent-line)
     tab-width
     tab-always-indent
     indent-region-style
@@ -77,7 +81,8 @@ RETURN
 
 HOW WIDE A TAB IS
     `tab-width' is the width of one Tab everywhere, 4 unless it is set. A
-    mode can have its own: (put 'MODE 'tab-width N). risp-mode uses 2.
+    mode can have its own: (put 'MODE 'tab-width N). risp-mode and toml-mode
+    use 2; python-mode, bash-mode, c-mode and cpp-mode use 4.
     `indent-width' is the width in force in the current buffer.
 
 WRITING A RULE
@@ -94,6 +99,40 @@ WRITING A RULE
     `current-column'; `syntax-ppss' says how deep in brackets a position
     is. `indent-line-to' is what moves a line, for a command that indents
     by itself.
+
+LANGUAGE RULES
+    Python indents after a compound header's colon, aligns elif, else,
+    except and finally with a preceding header, and puts case one level
+    inside match. Arguments align with the first argument on the opener's
+    line, or one level inside an otherwise empty delimiter. Closing
+    delimiters return to the opener's line's indentation. Explicit
+    backslash continuations use one extra level, without accumulating it.
+    Multiline string contents keep their indentation.
+
+    A written Python dedent is meaningful syntax and is preserved. A blank
+    line after return, raise, break, continue or pass dedents one level.
+    Reindentation cannot recover missing block boundaries in Python; use
+    rigid shifting when changing the nesting of an existing block.
+
+    TOML keys and table headers begin at column zero. Array and inline-table
+    continuations align with the first value or one level inside the opening
+    line. A closing delimiter returns to that line's indentation. Multiline
+    string contents, including their closing lines, keep their whitespace.
+
+    Bash follows if/then/elif/else/fi, for/while/until/select/do/done,
+    case/esac, function braces and subshells. A case pattern is one level
+    inside case, and its commands one level further. Pipe, &&, || and
+    backslash continuations add one level. Quoted text and comments do not
+    create control-flow blocks. Literal-word heredocs, including quoted
+    markers, multiple pending heredocs and <<-, keep their contents and
+    terminators untouched. A verified prefix cache avoids reparsing the
+    entire script on each subsequent line and is invalidated by edits.
+
+    C/C++ indent within braces, align continued argument lists, recognize
+    unbraced control statements, and indent case bodies one level beyond
+    their labels. Access labels align with their class's opening line;
+    preprocessor directives begin at column zero. Character literals,
+    registered raw strings and comments do not count as brackets.
 
 THE LISP RULE
     `lisp-indent-line' is the rule for this editor's own Lisp, and
@@ -113,6 +152,13 @@ THE LISP RULE
     keeps the indentation it has.
 
 LIMITS
+    These are indentation rules for editing, not complete formatters.
+    Malformed or ambiguous code, complex C/C++ macros and conditional
+    compilation can need manual indentation. Bash arithmetic commands,
+    complex substitutions, escaped or computed heredoc delimiters are not
+    fully parsed. TOML inline tables can be indented while editing even
+    when a TOML version requires them to be on one line.
+
     A tab character in the text counts as one column, wherever the editor
     counts columns. The terminal draws it wider, so a line indented with
     tabs is shown further right than the editor reckons it.
@@ -128,8 +174,8 @@ EXAMPLES
 
     Wider indentation in C, and shifting rather than reindenting there:
 
-        (put 'cpp-mode 'tab-width 8)
-        (put 'cpp-mode 'indent-region-style 'shift)
+        (put 'c-mode 'tab-width 8)
+        (put 'c-mode 'indent-region-style 'shift)
 
     Return as a plain newline:
 

@@ -43,7 +43,10 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; without it, missing exactly that feature and nothing else.
 (eval-file "rust-mode")   ; colouring for Rust source
 (eval-file "risp-mode")   ; colouring and indentation for this editor's own Lisp
-(eval-file "cc-mode")     ; colouring for C/C++ source
+(eval-file "cc-mode")     ; colouring and indentation for C/C++ source
+(eval-file "python-mode") ; colouring and indentation for Python
+(eval-file "toml-mode")   ; colouring and indentation for TOML
+(eval-file "bash-mode")   ; colouring and indentation for Bash
 (eval-file "dired")       ; a directory in a buffer (C-x d)
 ;; Makes dired sort directory entries by type (folders, files).
 (setq dired-sort 'type)
