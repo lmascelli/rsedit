@@ -1,4 +1,7 @@
 ;;; toml-mode --- TOML strings, keys, tables and continuation indentation.
+;;;
+;;; For the files whose names end in .toml, and Cargo.lock. User manual: the
+;;; `modes' page, and `indentation' for how it indents.
 
 (make-mode 'toml-mode)
 (add-syntax-region 'toml-mode "\"\"\"" "\"\"\"" 'string "\\\\.")
@@ -26,7 +29,7 @@
 (put 'toml-mode 'indent-function 'toml-indent-line)
 
 (defun toml-indent-line ()
-  "(toml-indent-line): Return this TOML line's indentation; see `indentation'."
+  "Return the column the line point is on should start at, in TOML."
   (beginning-of-line)
   (let* ((state (syntax-ppss)) (existing (current-indentation))
          (code (prog-indent--trim (prog-indent--code))) (open (nth 4 state)))

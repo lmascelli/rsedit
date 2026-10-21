@@ -1,4 +1,8 @@
 ;;; bash-mode --- shell colouring and indentation, including literal heredocs.
+;;;
+;;; For the files whose names end in .sh and .bash, and for .bashrc, .profile
+;;; and Bash's other startup files. User manual: the `modes' page, and
+;;; `indentation' for how it indents.
 
 (make-mode 'bash-mode)
 (put 'bash-mode 'heredoc-delimiters nil)
@@ -36,7 +40,9 @@
 (put 'bash-mode 'indent-function 'bash-indent-line)
 
 (defun bash-add-heredoc-delimiter (delimiter)
-  "(bash-add-heredoc-delimiter DELIMITER): Colour a literal heredoc marker; see `modes'."
+  "Colour as a string a heredoc whose marker is DELIMITER, from <<DELIMITER, or
+<<-DELIMITER, or the marker quoted, to the line holding DELIMITER alone.
+DELIMITER is a word, without white space or quotes."
   (when (or (string= delimiter "") (string-match-p "[ \t\r\n'\"]" delimiter))
     (error "A heredoc delimiter must be a nonempty word without whitespace or quotes"))
   (unless (member delimiter (get 'bash-mode 'heredoc-delimiters))
@@ -155,7 +161,7 @@
     out))
 
 (defun bash-indent-line ()
-  "(bash-indent-line): Return this shell line's indentation; see `indentation'."
+  "Return the column the line point is on should start at, in a shell script."
   (beginning-of-line)
   (let* ((target (point)) (existing (current-indentation))
          (cache (buffer-get 'bash-indent-cache))

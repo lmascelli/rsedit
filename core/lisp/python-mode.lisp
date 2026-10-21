@@ -1,4 +1,7 @@
 ;;; python-mode --- Python colouring, completion vocabulary and indentation.
+;;;
+;;; For the files whose names end in .py, .pyw and .pyi. User manual: the
+;;; `modes' page, and `indentation' for how it indents.
 
 (make-mode 'python-mode)
 
@@ -43,7 +46,7 @@
 (add-syntax-rule 'python-mode "\\b[A-Z][A-Za-z0-9_]*\\b" 'type)
 (add-syntax-rule 'python-mode "\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*(?:\\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?)[jJ]?\\b|\\.[0-9][0-9_]*(?:[eE][+-]?[0-9_]+)?[jJ]?\\b" 'builtin)
 (add-syntax-rule 'python-mode "\\b([\\p{L}_][\\p{L}\\p{N}_]*)[ \t]*\\(" 'function 1)
-(set-face 'attribute "bright-yellow" nil)
+(define-face 'attribute "bright-yellow" nil)
 
 (set-syntax-pairs 'python-mode "()[]{}")
 (set-syntax-entry 'python-mode "'" 'string)
@@ -69,7 +72,7 @@
     answer))
 
 (defun python-indent-line ()
-  "(python-indent-line): Return this Python line's indentation; see `indentation'."
+  "Return the column the line point is on should start at, in Python."
   (beginning-of-line)
   (let* ((start (point)) (existing (current-indentation)) (state (syntax-ppss))
          (code (prog-indent--trim (prog-indent--code)))

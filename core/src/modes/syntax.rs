@@ -112,7 +112,6 @@ pub enum SyntaxClass {
 ///
 /// Raw forms leave backslashes literal; other forms, such as Python triple
 /// quotes and TOML multiline basic strings, honour backslash escapes.
-
 #[derive(Clone, Debug)]
 pub struct StringStyle {
     pub opener: String,

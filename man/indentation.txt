@@ -125,8 +125,7 @@ LANGUAGE RULES
     backslash continuations add one level. Quoted text and comments do not
     create control-flow blocks. Literal-word heredocs, including quoted
     markers, multiple pending heredocs and <<-, keep their contents and
-    terminators untouched. A verified prefix cache avoids reparsing the
-    entire script on each subsequent line and is invalidated by edits.
+    terminators untouched.
 
     C/C++ indent within braces, align continued argument lists, recognize
     unbraced control statements, and indent case bodies one level beyond

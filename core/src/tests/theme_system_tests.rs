@@ -212,6 +212,19 @@ mod tests {
         }
     }
 
+    /// And every other face a module styles: one styled with `set-face`
+    /// rather than `define-face` loses its style when a theme is taken away.
+    #[test]
+    fn reset_theme_keeps_every_style_the_shipped_modules_give() {
+        let (ctx, env) = editor_with_modules();
+        let faces = faces(&env, &ctx);
+        let shipped: Vec<_> = faces.iter().map(|face| style(face, &env, &ctx)).collect();
+        run("(reset-theme)", &env, &ctx);
+        for (face, before) in faces.iter().zip(&shipped) {
+            assert_eq!(&style(face, &env, &ctx), before, "{face} after reset-theme");
+        }
+    }
+
     #[test]
     fn the_theme_in_force_is_remembered() {
         let (ctx, env) = editor();

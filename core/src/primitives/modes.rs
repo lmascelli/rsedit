@@ -360,10 +360,10 @@ primitive!(set_syntax_pairs, args, _env, ctx, {
 
 pub const SET_STRING_SYNTAX_DOC: &str = "(set-string-syntax MODE STYLES): Declare the strings of \
          major mode MODE whose delimiters are longer than one character, as a list of (OPENER \
-         CLOSER &optional ESCAPED), in place of those declared before.
-         ESCAPED is nil by default, for raw strings. With a non-nil ESCAPED, backslash \
-         escapes the following character, as in Python triple quotes and TOML multiline \
-         basic strings.\n\n\
+         CLOSER &optional ESCAPED), in place of those declared before. Nothing is escaped \
+         inside one, as in a raw string, unless ESCAPED is non-nil: then a backslash escapes \
+         the character after it, as in Python's triple quotes and TOML's multiline basic \
+         strings. The longest opener wins. \
          Return t, or nil when there is no such mode.\n\n\
          Example:\n\
          (set-string-syntax 'rust-mode '((\"r#\\\"\" \"\\\"#\") (\"r\\\"\" \"\\\"\")))";
@@ -398,7 +398,11 @@ primitive!(set_string_syntax, args, _env, ctx, {
             ));
         }
         let escaped = parts.get(2).is_some_and(|part| part.is_truthy());
-        styles.push(StringStyle { opener, closer, escaped });
+        styles.push(StringStyle {
+            opener,
+            closer,
+            escaped,
+        });
     }
     let answer = with_syntax_table(ctx, &mode, |table| table.set_strings(styles));
     if answer.is_nil() {

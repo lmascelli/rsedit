@@ -1,7 +1,9 @@
-;;; cc-mode --- colouring for C/C++ source.
+;;; cc-mode --- colouring and indentation for C and C++ source.
 ;;;
-;;; The mode is cpp-mode, for the files whose names end in .c, .h, .cpp, .hpp,
-;;; .cc, .cxx and .hxx. User manual: the `modes' page.
+;;; c-mode is for the files whose names end in .c and .h, cpp-mode for .cpp,
+;;; .hpp, .cc, .hh, .cxx, .hxx, .c++, .h++, .C, .H, .ipp, .tpp, .ixx and
+;;; .cppm. User manual: the `modes' page, and `indentation' for how they
+;;; indent.
 
 (make-mode 'c-mode)
 (make-mode 'cpp-mode)
@@ -17,7 +19,7 @@
     "thread_local" "typeof" "typeof_unqual")
   "C keywords, including the C11 and C23 additions.")
 
-(defconst cpp-constants
+(defconst cpp-keywords
   (append (let ((shared nil))
             (dolist (word c-keywords)
               (unless (member word '("restrict" "_Alignas" "_Alignof" "_Atomic" "_Generic"
@@ -81,13 +83,15 @@
   (put mode 'indent-function 'cc-indent-line))
 
 (add-syntax-rule 'cpp-mode "\\[\\[[^]]*\\]\\]" 'attribute)
-          
-(set-face 'doc-comment "bright-cyan" nil '("italic"))
-(set-face 'attribute "bright-yellow" nil)
-(set-face 'preprocessor "bright-magenta" nil)
+
+(define-face 'doc-comment "bright-cyan" nil '("italic"))
+(define-face 'attribute "bright-yellow" nil)
+(define-face 'preprocessor "bright-magenta" nil)
 
 (defun cpp-add-raw-string-delimiter (delimiter)
-  "(cpp-add-raw-string-delimiter DELIMITER): Recognize a C++ raw-string tag; see `modes'."
+  "Make R\"DELIMITER(...)DELIMITER\" a raw string in C++, with or without u8, u,
+U or L before it, for the colouring and for the brackets alike. DELIMITER is
+at most 16 characters, none a space, a parenthesis or a backslash."
   ;; Fixed delimiters are declared to both engines. The regexp API cannot
   ;; capture a tag at the opener and use it as a backreference at the closer.
   (when (or (> (length delimiter) 16) (string-match-p "[ ()\\\\\t\r\n]" delimiter))
@@ -146,7 +150,7 @@
     column))
 
 (defun cc-indent-line ()
-  "(cc-indent-line): Return this C or C++ line's indentation; see `indentation'."
+  "Return the column the line point is on should start at, in C or C++."
   (beginning-of-line)
   (let* ((start (point)) (existing (current-indentation)) (state (syntax-ppss))
          (code (prog-indent--trim (prog-indent--code))) (open (nth 4 state))

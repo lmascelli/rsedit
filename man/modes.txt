@@ -41,10 +41,12 @@ DESCRIPTION
 
 WHICH MODE A FILE GETS
         rust-mode           .rs
-        cpp-mode            .c .h .cpp .hpp .cc .cxx .hxx .C .H
+        c-mode              .c .h
+        cpp-mode            .cpp .hpp .cc .hh .cxx .hxx .c++ .h++ .C .H
+                            .ipp .tpp .ixx .cppm
         risp-mode           .lisp .risp
         python-mode         .py .pyw .pyi
-        toml-mode           .toml Cargo.toml
+        toml-mode           .toml, and Cargo.lock
         bash-mode           .sh .bash .bashrc .bash_profile .bash_login
                             .bash_logout .profile
         fundamental-mode    any other name
@@ -60,20 +62,18 @@ WHICH MODE A FILE GETS
     writes the buffer under a name that another pattern claims. A name no
     pattern claims leaves the mode as it was.
 
-    An ambiguous .h defaults to C. To use C++ for headers, put this after
-    loading cc-mode in init.lisp; later associations take precedence:
+    A .h file is C. To open headers as C++, put this at the top of
+    init.lisp, before the modules, since the first pattern declared wins:
 
         (add-auto-mode "\\.h$" 'cpp-mode)
 
     A script without a recognized extension can be switched explicitly:
 
         (set-major-mode 'bash-mode)
-    
 
 MODES THAT SHIP
         fundamental-mode    plain text: no colours, no keys of its own
         rust-mode           Rust
-        cpp-mode            C and C++
         c-mode              C source and headers
         cpp-mode            C++ source, headers and module interfaces
         python-mode         Python source and type stubs
@@ -101,15 +101,27 @@ MODES THAT SHIP
     C-x C-f works in a directory listing.
 
 THE LANGUAGES
-    rust-mode, cpp-mode and risp-mode colour keywords, strings, comments,
-    numbers and the names of functions; rust-mode and cpp-mode types, doc
-    comments and attributes as well, and cpp-mode the lines of the
-    preprocessor. Each tells the editor its brackets, strings and comments,
-    which C-M-f and M-; go by. risp-mode indents as Lisp; in the other two
-    Tab matches the line above.
+    Each language mode colours the keywords, strings and comments of its
+    language, and tells the editor its brackets, strings and comments,
+    which C-M-f and M-; go by. Each colours more of its own:
+
+        rust-mode     numbers, types, functions, doc comments, attributes
+        c-mode        numbers, types, functions, doc comments, the
+                      preprocessor
+        cpp-mode      what c-mode does, and attributes
+        python-mode   numbers, types, functions, decorators
+        risp-mode     numbers, functions and macros, the names defined
+        toml-mode     numbers, dates, keys, table headers
+        bash-mode     builtins, variables, functions, heredocs
+
+    All of them but rust-mode indent as their language does, as the
+    `indentation' page says; in rust-mode Tab matches the line above.
 
     Their words are lists you can read: `rust-keywords', `rust-constants'
-    and `rust-types', `cpp-keywords', `cpp-constants' and `cpp-types',
+    and `rust-types'; `c-keywords', `c-constants' and `c-types';
+    `cpp-keywords', `cpp-constants' and `cpp-types'; `python-keywords',
+    `python-constants', `python-builtins' and `python-types';
+    `toml-constants'; `bash-keywords' and `bash-builtins';
     `risp-special-forms' and `risp-constants'. C-M-i offers them as
     keywords. The colouring and what C-M-i offers are both made from the
     lists when the module loads, so changing a list afterwards changes
@@ -120,13 +132,8 @@ THE LANGUAGES
     asks when it loads, so a function defined since is coloured once M-x
     risp-refresh-vocabulary has asked again. C-M-i asks every time, and
     needs nothing.
-    
-LANGUAGE CONFIGURATION
-    The new language modules use the same grammar API as rust-mode. The
-    colouring and the structural scanner are configured separately; strings
-    and comments therefore also inform sexp navigation and indentation.
-    Their keyword lists are offered by completion-at-point as well.
 
+LANGUAGE CONFIGURATION
     An existing init.lisp is not rewritten by an editor upgrade. Load the
     modules there, after commands, debug and indent:
 
@@ -150,16 +157,6 @@ LANGUAGE CONFIGURATION
     The Bash indenter recognizes literal word heredoc markers independently
     of this colouring registration, including quoted markers and <<-.
     See `indentation' for the language-specific rules and their limits.
-
-LANGUAGE LIMITS
-    Colouring uses regular expressions, not a compiler or a full parser.
-    Python f-strings and shell strings are coloured uniformly, including
-    interpolation. Python match and case are treated as keywords everywhere.
-    Arbitrary C++ raw-string tags and Bash heredoc markers need the explicit
-    colouring registrations above: the regexp engine has no backreferences.
-    The Bash structural scanner treats # as a comment opener even inside an
-    unquoted word or parameter expansion; the indenter has its own shell
-    lexer and does not have that limitation. Shebangs are not mode selectors.
 
 HOOKS
     A hook is a list of functions the editor calls at a moment of its own,
@@ -198,6 +195,15 @@ HOOKS
 LIMITS
     Loading a mode's file again makes the mode again, empty: the keys and
     hooks other files gave it go, electric-pair's among them.
+
+    Colouring uses regular expressions, not a compiler or a full parser.
+    Python f-strings and shell strings are coloured uniformly, including
+    interpolation. Python match and case are treated as keywords everywhere.
+    Arbitrary C++ raw-string tags and Bash heredoc markers need the explicit
+    colouring registrations above: the regexp engine has no backreferences.
+    The Bash structural scanner treats # as a comment opener even inside an
+    unquoted word or parameter expansion; the indenter has its own shell
+    lexer and does not have that limitation. Shebangs are not mode selectors.
 
 EXAMPLES
     Open .ino files as C++, at the top of init.lisp:
