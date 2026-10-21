@@ -345,6 +345,89 @@ mod tests {
         assert_eq!(text(&ctx), "XabXc");
     }
     #[test]
+    fn a_count_before_at_is_how_many_times_the_macro_plays_and_no_more() {
+        let (ctx, env) = editor("abcdefghij");
+        keys(&ctx, &env, "qaxq");
+        assert_eq!(text(&ctx), "bcdefghij");
+        keys(&ctx, &env, "3@a");
+        assert_eq!(text(&ctx), "efghij");
+        keys(&ctx, &env, "2@@");
+        assert_eq!(text(&ctx), "ghij");
+    }
+    #[test]
+    fn a_count_before_gg_or_ge_is_spent_by_it() {
+        let (ctx, env) = editor("1\n2\n3\n4\n5\n6");
+        keys(&ctx, &env, "4ggdd");
+        assert_eq!(text(&ctx), "1\n2\n3\n5\n6");
+        let (ctx, env) = editor("one two three four");
+        run("(goto-char 15)", &env, &ctx);
+        keys(&ctx, &env, "2gex");
+        assert_eq!(text(&ctx), "one tw three four");
+    }
+    #[test]
+    fn ge_goes_to_the_end_of_the_previous_word_from_its_first_character() {
+        let (ctx, env) = editor("one two three four");
+        run("(goto-char 8)", &env, &ctx);
+        keys(&ctx, &env, "ge");
+        assert_eq!(point(&ctx), 6);
+        run("(goto-char 14)", &env, &ctx);
+        keys(&ctx, &env, "2ge");
+        assert_eq!(point(&ctx), 6);
+        run("(goto-char 8)", &env, &ctx);
+        keys(&ctx, &env, "dge");
+        assert_eq!(text(&ctx), "one twhree four");
+    }
+    #[test]
+    fn ge_from_white_space_or_after_punctuation_stops_at_the_nearest_end() {
+        let (ctx, env) = editor("one  two foo.bar");
+        run("(goto-char 4)", &env, &ctx);
+        keys(&ctx, &env, "ge");
+        assert_eq!(point(&ctx), 2);
+        run("(goto-char 13)", &env, &ctx);
+        keys(&ctx, &env, "ge");
+        assert_eq!(point(&ctx), 12);
+    }
+    #[test]
+    fn ap_takes_the_blank_lines_after_the_paragraph_and_ip_leaves_them() {
+        let (ctx, env) = editor("a\nb\n\n\nc");
+        keys(&ctx, &env, "dap");
+        assert_eq!(text(&ctx), "c");
+        keys(&ctx, &env, "u");
+        keys(&ctx, &env, "dip");
+        assert_eq!(text(&ctx), "\n\nc");
+        let (ctx, env) = editor("a\n  \nb");
+        keys(&ctx, &env, "dap");
+        assert_eq!(text(&ctx), "b");
+    }
+    #[test]
+    fn ap_on_the_last_paragraph_takes_the_blank_lines_before_it() {
+        let (ctx, env) = editor("a\n\nb\nc");
+        run("(goto-char 3)", &env, &ctx);
+        keys(&ctx, &env, "dip");
+        assert_eq!(text(&ctx), "a\n");
+        keys(&ctx, &env, "u");
+        run("(goto-char 3)", &env, &ctx);
+        keys(&ctx, &env, "dap");
+        assert_eq!(text(&ctx), "a");
+    }
+    #[test]
+    fn paragraph_objects_count_a_run_of_blank_lines_as_vim_does() {
+        let (ctx, env) = editor("a\n\n\nb\n\nc");
+        run("(goto-char 2)", &env, &ctx);
+        keys(&ctx, &env, "dip");
+        assert_eq!(text(&ctx), "a\nb\n\nc");
+        keys(&ctx, &env, "u");
+        run("(goto-char 2)", &env, &ctx);
+        keys(&ctx, &env, "dap");
+        assert_eq!(text(&ctx), "a\n\nc");
+        let (ctx, env) = editor("a\n\nb\n\nc");
+        keys(&ctx, &env, "d2ip");
+        assert_eq!(text(&ctx), "b\n\nc");
+        keys(&ctx, &env, "u");
+        keys(&ctx, &env, "d2ap");
+        assert_eq!(text(&ctx), "c");
+    }
+    #[test]
     fn regex_search_wraps_and_repeats_in_both_directions() {
         let (ctx, env) = editor("foo bar foo");
         keys(&ctx, &env, "/");
@@ -1037,10 +1120,37 @@ mod tests {
         toggle.modifiers.alt = true;
         ctx.handle_key_event(toggle.clone(), &env);
         assert_eq!(run("global-vim-mode", &env, &ctx), LispExp::t());
-        ctrl(&ctx, &env, '-');
-        ctx.handle_key_event(toggle, &env);
-        assert!(run("global-vim-mode", &env, &ctx).is_nil());
+        assert!(!run("(vim--state)", &env, &ctx).is_nil());
+        // Where vim is on, C-u is one of its keys, so the prefix is typed in a
+        // buffer vim does not suit. C-u - turns the mode off, and keeps it off.
+        run(
+            r#"(buffer-create "*elsewhere*") (switch-to-buffer "*elsewhere*")"#,
+            &env,
+            &ctx,
+        );
+        for _ in 0..2 {
+            ctrl(&ctx, &env, 'u');
+            keys(&ctx, &env, "-");
+            ctx.handle_key_event(toggle.clone(), &env);
+            assert!(run("global-vim-mode", &env, &ctx).is_nil());
+        }
+        let scratch = r#"(with-current-buffer "*scratch*" (lambda () (vim--state)))"#;
+        assert!(run(scratch, &env, &ctx).is_nil());
+    }
+    #[test]
+    fn negative_prefix_argument_turns_vim_mode_off() {
+        let (ctx, env) = editor("abc");
+        run(
+            r#"(vim-mode-disable) (define-key nil "C-c v" 'vim-mode)"#,
+            &env,
+            &ctx,
+        );
+        ctrl(&ctx, &env, 'u');
+        keys(&ctx, &env, "-");
+        ctrl(&ctx, &env, 'c');
+        keys(&ctx, &env, "v");
         assert!(run("(vim--state)", &env, &ctx).is_nil());
+        assert!(run("(vim-mode t) (vim-mode '-) (vim--state)", &env, &ctx).is_nil());
     }
     #[test]
     fn hidden_initialization_and_global_refresh_preserve_buffer_selection_history() {

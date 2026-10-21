@@ -3,98 +3,193 @@
 ;;; The mode is cpp-mode, for the files whose names end in .c, .h, .cpp, .hpp,
 ;;; .cc, .cxx and .hxx. User manual: the `modes' page.
 
+(make-mode 'c-mode)
 (make-mode 'cpp-mode)
 
-;; Regions first, so that their opening delimiters are seen before any rule
-;; that might match inside them. Within a region nothing else applies: a
-;; string is uniformly a string.
+(put 'cpp-mode 'raw-string-styles nil)
 
-(add-syntax-region 'cpp-mode "/\\*" "\\*/" 'comment nil nil)
-
-;; A character literal. It supports escapes like '\n', '\0', '\\', '\''.
-;; Must be defined before strings open so single-quoted characters like '"' 
-;; don't trigger string regions.
-(add-syntax-rule 'cpp-mode "'(\\\\.|[^'\\\\])'" 'string)
-
-;; Strings and raw strings.
-;; The escape pattern allows strings with escaped quotes like "hello \"world\"".
-(add-syntax-region 'cpp-mode "\"" "\"" 'string "\\\\.")
-
-;; Line comments and Doxygen doc comments.
-(add-syntax-rule 'cpp-mode "///.*" 'doc-comment)
-(add-syntax-rule 'cpp-mode "//!.*" 'doc-comment)
-(add-syntax-rule 'cpp-mode "//.*" 'comment)
-
-;; Preprocessor directives (e.g., #include, #define, #ifdef).
-(add-syntax-rule 'cpp-mode "^\\s*#\\s*[a-zA-Z_]+" 'preprocessor)
-
-;; C++11 Attributes (e.g., [[nodiscard]], [[maybe_unused]]).
-(add-syntax-rule 'cpp-mode "\\[\\[[^\\]]*\\]\\]" 'attribute)
-
-;; The vocabulary, written once and used twice.
-(defconst cpp-keywords
-  '("auto" "break" "case" "catch" "class" "co_await" "co_return" "co_yield"
-    "concept" "const" "consteval" "constexpr" "constinit" "continue"
-    "decltype" "default" "delete" "do" "else" "enum" "explicit" "export"
-    "extern" "for" "friend" "goto" "if" "inline" "mutable" "namespace"
-    "new" "noexcept" "operator" "private" "protected" "public" "register"
-    "requires" "return" "sizeof" "static" "static_assert" "struct" "switch"
-    "template" "this" "thread_local" "throw" "try" "typedef" "typeid"
-    "typename" "union" "using" "virtual" "volatile" "while")
-  "The words C and C++ reserve, which cpp-mode colours as keywords.")
+(defconst c-keywords
+  '("auto" "break" "case" "const" "continue" "default" "do" "else" "enum"
+    "extern" "for" "goto" "if" "inline" "register" "restrict" "return"
+    "sizeof" "static" "struct" "switch" "typedef" "union" "volatile" "while"
+    "_Alignas" "_Alignof" "_Atomic" "_Generic" "_Noreturn" "_Static_assert"
+    "_Thread_local" "alignas" "alignof" "constexpr" "static_assert"
+    "thread_local" "typeof" "typeof_unqual")
+  "C keywords, including the C11 and C23 additions.")
 
 (defconst cpp-constants
-  '("true" "false" "NULL" "nullptr" "stdin" "stdout" "stderr")
-  "The values C and C++ spell as names, which cpp-mode colours as builtins.")
+  (append (let ((shared nil))
+            (dolist (word c-keywords)
+              (unless (member word '("restrict" "_Alignas" "_Alignof" "_Atomic" "_Generic"
+                                     "_Noreturn" "_Static_assert" "_Thread_local" "typeof" "typeof_unqual"))
+                (setq shared (append shared (list word)))))
+            shared)
+    '("and" "and_eq" "asm" "bitand" "bitor" "catch" "class" "co_await"
+      "co_return" "co_yield" "compl" "concept" "const_cast" "consteval"
+      "constinit" "decltype" "delete" "dynamic_cast" "explicit" "export"
+      "friend" "mutable" "namespace" "new" "noexcept" "not" "not_eq"
+      "operator" "or" "or_eq" "private" "protected" "public"
+      "reinterpret_cast" "requires" "static_cast" "template" "this" "throw"
+      "try" "typeid" "typename" "using" "virtual" "xor" "xor_eq"))
+  "C-family keywords plus C++ casts, alternative operators and modern keywords.")
+
+(defconst c-constants '("true" "false" "NULL" "nullptr" "stdin" "stdout" "stderr")
+  "Named values offered by the C-family modes.")
+
+(defconst cpp-constants c-constants
+  "Named values offered in C++ buffers.")
+
+(defconst c-types
+  '("void" "bool" "char" "short" "int" "long" "float" "double" "signed"
+    "unsigned" "_Bool" "_Complex" "_Imaginary" "size_t" "ssize_t"
+    "intptr_t" "uintptr_t" "ptrdiff_t" "int8_t" "int16_t" "int32_t" "int64_t"
+    "uint8_t" "uint16_t" "uint32_t" "uint64_t" "wchar_t" "char16_t" "char32_t")
+  "C primitive types and common standard-library typedefs.")
 
 (defconst cpp-types
-  '("void" "bool" "char" "short" "int" "long" "float" "double"
-    "signed" "unsigned" "size_t" "ssize_t" "intptr_t" "uintptr_t"
-    "ptrdiff_t" "int8_t" "int16_t" "int32_t" "int64_t"
-    "uint8_t" "uint16_t" "uint32_t" "uint64_t"
-    "char8_t" "char16_t" "char32_t" "wchar_t")
-  "The types of C and C++ and of their standard libraries, which cpp-mode
-colours as types; any name that ends in _t or begins with a capital is
-coloured as a type too.")
+  (append (let ((shared nil))
+            (dolist (word c-types)
+              (unless (member word '("_Bool" "_Complex" "_Imaginary"))
+                (setq shared (append shared (list word)))))
+            shared)
+          '("char8_t"))
+  "Primitive and standard types offered in C++ buffers.")
 
-;; All three are offered for completion.
-(put 'cpp-mode 'keywords
-     (append cpp-keywords (append cpp-constants cpp-types)))
+(dolist (mode '(c-mode cpp-mode))
+  (add-syntax-region mode "/\\*" "\\*/" 'comment nil nil)
+  (add-syntax-rule mode "(?:u8|u|U|L)?'(\\\\.|[^'\\\\])+'" 'string)
+  (add-syntax-region mode "\"" "\"" 'string "\\\\.")
+  (add-syntax-rule mode "///.*|//!.*" 'doc-comment)
+  (add-syntax-rule mode "//.*" 'comment)
+  (add-syntax-rule mode "^[ \t]*#[ \t]*[A-Za-z_]+" 'preprocessor)
+  (let ((words (if (eq mode 'c-mode) c-keywords cpp-keywords))
+        (types (if (eq mode 'c-mode) c-types cpp-types)))
+    (put mode 'keywords (append words (append c-constants types)))
+    (add-syntax-rule mode (concat "\\b" (regexp-opt words) "\\b") 'keyword)
+    (add-syntax-rule mode (concat "\\b" (regexp-opt c-constants) "\\b") 'builtin)
+    (add-syntax-rule mode (concat "\\b" (regexp-opt types) "\\b") 'type))
+  (add-syntax-rule mode "\\b[A-Za-z_][A-Za-z0-9_]*_t\\b" 'type)
+  (add-syntax-rule mode "\\b[A-Z][A-Z0-9_]*\\b" 'builtin)
+  (add-syntax-rule mode "\\b[A-Z][A-Za-z0-9_]*\\b" 'type)
+  (add-syntax-rule mode "\\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*\\(" 'function 1)
+  (add-syntax-rule mode "\\b(?:0[xX][0-9a-fA-F']+(?:\\.[0-9a-fA-F']*)?(?:[pP][+-]?[0-9']+)?|0[bB][01']+|[0-9][0-9']*(?:\\.[0-9']*)?(?:[eE][+-]?[0-9']+)?)(?:[uUlLfFzZ]*|_[A-Za-z_][A-Za-z0-9_]*)\\b|\\.[0-9][0-9']*(?:[eE][+-]?[0-9']+)?[fFlL]?\\b" 'builtin)
+  (set-syntax-pairs mode "()[]{}")
+  (set-char-quote mode "'")
+  (set-comment-syntax mode '(("//") ("/*" "*/" nil)))
+  (put mode 'indent-char-literals t)
+  (put mode 'tab-width 4)
+  (put mode 'indent-function 'cc-indent-line))
 
-(add-syntax-rule 'cpp-mode (concat "\\b" (regexp-opt cpp-keywords) "\\b") 'keyword)
-(add-syntax-rule 'cpp-mode (concat "\\b" (regexp-opt cpp-constants) "\\b") 'builtin)
-(add-syntax-rule 'cpp-mode (concat "\\b" (regexp-opt cpp-types) "\\b") 'type)
+(add-syntax-rule 'cpp-mode "\\[\\[[^]]*\\]\\]" 'attribute)
+          
+(set-face 'doc-comment "bright-cyan" nil '("italic"))
+(set-face 'attribute "bright-yellow" nil)
+(set-face 'preprocessor "bright-magenta" nil)
 
-;; Standard C/POSIX type convention naming (e.g., my_type_t).
-(add-syntax-rule 'cpp-mode "\\b[a-zA-Z_][a-zA-Z0-9_]*_t\\b" 'type)
+(defun cpp-add-raw-string-delimiter (delimiter)
+  "(cpp-add-raw-string-delimiter DELIMITER): Recognize a C++ raw-string tag; see `modes'."
+  ;; Fixed delimiters are declared to both engines. The regexp API cannot
+  ;; capture a tag at the opener and use it as a backreference at the closer.
+  (when (or (> (length delimiter) 16) (string-match-p "[ ()\\\\\t\r\n]" delimiter))
+    (error "A C++ raw-string delimiter must have at most 16 non-space characters, excluding () and backslash"))
+  (let ((styles (get 'cpp-mode 'raw-string-styles)))
+    (dolist (prefix '("" "u8" "u" "U" "L"))
+      (let* ((open (concat prefix "R\"" delimiter "("))
+             (close (concat ")" delimiter "\"")))
+        (unless (member (list open close) styles)
+          (add-syntax-region 'cpp-mode (regexp-opt (list open)) (regexp-opt (list close)) 'string)
+          (setq styles (append styles (list (list open close)))))))
+    (put 'cpp-mode 'raw-string-styles styles)
+    (set-string-syntax 'cpp-mode styles))
+  t)
 
-;; Capitalised identifiers by convention (e.g., class/struct names like MyClass).
-(add-syntax-rule 'cpp-mode "\\b[A-Z][A-Za-z0-9_]*\\b" 'type)
+(dolist (tag '("" "raw" "tag" "json" "xml" "sql" "glsl"))
+  (cpp-add-raw-string-delimiter tag))
 
-;; Function call matching using a capture group (matching '(' without coloring it).
-(add-syntax-rule 'cpp-mode "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(" 'function 1)
+(defun cc--switch-brace-p (open)
+  "Return t if the brace at OPEN starts a switch body."
+  (goto-char open)
+  (beginning-of-line)
+  (let ((code (prog-indent--trim (prog-indent--code))))
+    (when (string= code "{")
+      (let ((previous (prog-indent--previous)))
+        (when previous
+          (setq code (nth 2 previous))
+          (let ((outer (nth 4 (syntax-ppss (nth 0 previous)))))
+            (while (and outer (string= (prog-indent--char outer) "("))
+              (goto-char outer)
+              (beginning-of-line)
+              (setq code (prog-indent--trim (prog-indent--code))
+                    outer (nth 4 (syntax-ppss))))))))
+    (string-match-p "\\bswitch\\b" code)))
 
-;; Numeric literals (including hex 0x, binary 0b, octal 0, floats, and C++14 single-quote separators).
-(add-syntax-rule 'cpp-mode "\\b(0[xX][0-9a-fA-F_']+|0[bB][01_']+|[0-9][0-9_']*(\\.[0-9_']*)?)\\b" 'builtin)
+(defun cc--case-before (open start)
+  "Return t if START follows a case label directly inside the brace at OPEN."
+  (goto-char start)
+  (let ((line (prog-indent--previous)) (found nil))
+    (while (and line (> (nth 0 line) open) (not found))
+      (when (and (equal (nth 4 (syntax-ppss (nth 0 line))) open)
+                 (string-match-p "^(case\\b.*|default)[ \t]*:" (nth 2 line)))
+        (setq found t))
+      (unless found (setq line (prog-indent--previous))))
+    found))
 
-;; Custom faces invented for this mode.
-(define-face 'doc-comment "bright-cyan" nil '("italic"))
-(define-face 'attribute "bright-yellow" nil)
-(define-face 'preprocessor "bright-magenta" nil)
+(defun cc--control-column (start open)
+  "Return the nearest unbraced if header's column before START within OPEN."
+  (goto-char start)
+  (let ((line (prog-indent--previous)) (column nil))
+    (while (and line (null column) (or (null open) (> (nth 0 line) open)))
+      (when (and (equal (nth 4 (syntax-ppss (nth 0 line))) open)
+                 (string-match-p "^(if|else[ \t]+if)\\b" (nth 2 line)))
+        (setq column (nth 1 line)))
+      (unless column (setq line (prog-indent--previous))))
+    column))
 
-;; Syntax matching pairs.
-(set-syntax-pairs 'cpp-mode "()[]{}")
+(defun cc-indent-line ()
+  "(cc-indent-line): Return this C or C++ line's indentation; see `indentation'."
+  (beginning-of-line)
+  (let* ((start (point)) (existing (current-indentation)) (state (syntax-ppss))
+         (code (prog-indent--trim (prog-indent--code))) (open (nth 4 state))
+         (previous (progn (goto-char start) (prog-indent--previous)))
+         (before (if previous (nth 2 previous) ""))
+         (header before) (header-column (if previous (nth 1 previous) 0))
+         (width (indent-width)))
+    (when previous
+      (let ((outer (nth 4 (syntax-ppss (nth 0 previous)))))
+        (while (and outer (member (prog-indent--char outer) '("(" "[")))
+          (goto-char outer)
+          (setq header-column (current-indentation))
+          (beginning-of-line)
+          (setq header (prog-indent--trim (prog-indent--code))
+                outer (nth 4 (syntax-ppss))))))
+    (cond
+     ((nth 2 state) existing)
+     ((nth 3 state)
+      (goto-char start)
+      (setq code (prog-indent--trim (current-line)))
+      (goto-char (nth 3 state))
+      (if (string-match-p "^\\*" code) (+ (current-column) 1) existing))
+     ((string-prefix-p "#" code) 0)
+     ((and previous (string-match-p "^#.*\\\\[ \t]*$" before)) width)
+     ((and open (member (prog-indent--char open) '("(" "[")))
+      (prog-indent--under open (string-match-p "^[)\\]]" code)))
+     (t
+      (let* ((base (if open (progn (goto-char open) (current-indentation)) 0))
+             (body (+ base (if open width 0)))
+             (case-body (and open (cc--switch-brace-p open) (cc--case-before open start))))
+        (cond
+         ((string-prefix-p "}" code) base)
+         ((and (eq (major-mode) 'cpp-mode) (string-match-p "^(public|protected|private)[ \t]*:" code)) base)
+         ((string-match-p "^(case\\b.*|default)[ \t]*:" code) body)
+         ((string-match-p "^else\\b" code) (or (cc--control-column start open) body))
+         ((string-match-p "^[A-Za-z_][A-Za-z0-9_]*[ \t]*:[ \t]*$" code) base)
+         ((and previous (not (string-match-p "[;{}][ \t]*$" before))
+               (string-match-p "^(if|for|while|else|do)\\b" header))
+          (+ header-column (if (string-prefix-p "{" code) 0 width)))
+         ((and previous (string-match-p "[=,+*/&|?\\\\-][ \t]*$" before))
+          (+ body width))
+         (t (+ body (if case-body width 0)))))))))
 
-;; Single quote quote character handling for scanner balance.
-(set-char-quote 'cpp-mode "'")
-
-;; C++11 raw string syntactic definitions (e.g., R"(...)" or R"#(...)#").
-(set-string-syntax 'cpp-mode '(("R\"(" ")\"") ("R\"#(" ")\"#")))
-
-;; Comment syntax definition (explicitly non-nesting for block comments).
-(set-comment-syntax 'cpp-mode '(("//") ("/*" "*/" nil)))
-
-;; Auto-mode associations for C and C++ source/header files.
-(add-auto-mode "\\.(c|h|cpp|hpp|cc|cxx|hxx|C|H)$" 'cpp-mode)
-
-(log "cpp-mode loaded")
+(add-auto-mode "\\.(c|h)$" 'c-mode)
+(add-auto-mode "\\.(cpp|hpp|cc|hh|cxx|hxx|c\\+\\+|h\\+\\+|C|H|ipp|tpp|ixx|cppm)$" 'cpp-mode)
+(log "cc-mode loaded")

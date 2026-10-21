@@ -153,12 +153,20 @@ had."
     (remove-overlays 'vim-selection)
     (vim--reset) (deactivate-mark) (set-echo-message "Vim mode disabled")))
 
+(defun vim--turn-on-p (enabled on)
+  "Whether ENABLED, given to a mode that is ON now, leaves it on."
+  ;; ENABLED is a value from Lisp or the raw prefix argument: nil toggles,
+  ;; and - is what C-u - gives, minus one as in Emacs.
+  (cond ((null enabled) (not on))
+        ((eq enabled '-) nil)
+        ((numberp enabled) (> enabled 0))
+        (t t)))
 (defcommand vim-mode (&optional enabled) ("P")
-  "Turn Vim's keys on in this buffer, or off when they are on. ENABLED t or a
-positive number turns them on, 0 or a negative number off. A buffer turned on
-or off so keeps its choice whatever the automatic rules say, until
-`vim-mode-auto'."
-  (if (if enabled (if (numberp enabled) (> enabled 0) t) (not (vim--state)))
+  "Turn Vim's keys on in this buffer, or off when they are on. With ENABLED,
+or a prefix argument, 0, a negative number or the - of C-u - turns them off,
+and anything else on. A buffer turned on or off so keeps its choice whatever
+the automatic rules say, until `vim-mode-auto'."
+  (if (vim--turn-on-p enabled (vim--state))
       (progn (buffer-put 'vim-mode-override 'enabled) (vim--enable))
       (vim-mode-disable)))
 (defcommand vim-mode-enable () nil
@@ -201,11 +209,11 @@ changed. A buffer turned on or off by hand stays so."
   (vim--apply-policy))
 (defcommand global-vim-mode (&optional enabled) ("P")
   "Turn Vim on in every buffer that suits it, those there are and those to
-come, or off when it is on. ENABLED t or a positive number turns it on, 0 or a
-negative number off. A buffer turned on by hand, and one whose major mode is
-in `vim-mode-modes', keeps Vim either way."
-  (setq global-vim-mode
-    (if enabled (if (numberp enabled) (> enabled 0) t) (not global-vim-mode)))
+come, or off when it is on. With ENABLED, or a prefix argument, 0, a negative
+number or the - of C-u - turns it off, and anything else on. A buffer turned
+on by hand, and one whose major mode is in `vim-mode-modes', keeps Vim either
+way."
+  (setq global-vim-mode (vim--turn-on-p enabled global-vim-mode))
   (vim-mode-refresh)
   global-vim-mode)
 (defcommand vim-normal-state () nil
@@ -314,12 +322,17 @@ or nil; ARGUMENT is the character of f, F, t and T."
         ((member key '("b" "B")) (list (vim--word-backward at count (string= key "B")) nil nil))
         ((member key '("e" "E")) (list (vim--word-end at count (string= key "E")) t nil))
         ((string= key "ge")
+         ;; Back past the rest of the word point is in, which is nothing on its
+         ;; first character, then over the white space before it.
          (let ((target at))
            (dotimes (i count)
-             (setq target (vim--word-backward target 1 nil))
-             (setq target (vim--max 0 (- target 1)))
-             (while (and (> target 0) (vim--space-p (vim--char target)))
-               (setq target (- target 1))))
+             (let ((class (vim--class target nil)))
+               (setq target (vim--max 0 (- target 1)))
+               (when (> class 0)
+                 (while (and (> target 0) (= (vim--class target nil) class))
+                   (setq target (- target 1))))
+               (while (and (> target 0) (= (vim--class target nil) 0))
+                 (setq target (- target 1)))))
            (list target t nil)))
         ((member key '("gg" "G"))
          (goto-line (if (string= key "gg") count
@@ -419,6 +432,40 @@ lines."
         (vim--set-state state) (vim--show-visual))))
 
 ;;; Text objects: words/WORDS, balanced delimiters, quotes, paragraphs.
+(defun vim--white-line-p (at)
+  "Whether the line holding AT is empty, or white space only."
+  (string-match-p "^[[:space:]]*$" (buffer-substring (vim--bol at) (vim--eol at))))
+(defun vim--paragraphs (at count around)
+  "The lines of ip, or of ap with AROUND, COUNT times from AT, as (START END),
+or nil when the buffer ends first."
+  ;; Vim's rules. For ip a run of blank lines counts as one, as a paragraph
+  ;; does; ap takes a paragraph with the blank lines after it, and on blank
+  ;; lines the blank lines with the paragraph after them. When ap ends on a
+  ;; paragraph, at the end of the buffer, it takes the blank lines before
+  ;; the first one instead.
+  (let* ((white (vim--white-line-p at)) (start (vim--bol at)) (end nil)
+         (times (if (and white (not around)) (- count 1) count)) (failed nil))
+    (while (and (> start 0) (eq (not (vim--white-line-p (- start 1))) (not white)))
+      (setq start (vim--bol (- start 1))))
+    (setq end start)
+    (while (and (< end (point-max)) (vim--white-line-p end))
+      (setq end (vim--line-end end)))
+    (dotimes (i times)
+      (when (not failed)
+        (if (>= end (point-max))
+            (setq failed t)
+            (let ((blank (and (not around) (vim--white-line-p end))))
+              (when (not blank)
+                (setq end (vim--line-end end))
+                (while (and (< end (point-max)) (not (vim--white-line-p end)))
+                  (setq end (vim--line-end end))))
+              (when (and (or around blank) (not (and around white (= i (- times 1)))))
+                (while (and (< end (point-max)) (vim--white-line-p end))
+                  (setq end (vim--line-end end))))))))
+    (when (and around (not white) (not failed) (not (vim--white-line-p (- end 1))))
+      (while (and (> start 0) (vim--white-line-p (- start 1)))
+        (setq start (vim--bol (- start 1)))))
+    (when (not failed) (list start end))))
 (defun vim--object (key around count)
   "The text object KEY around point, COUNT of them, as (START END TYPE), or
 nil; AROUND for a, not i."
@@ -470,12 +517,8 @@ nil; AROUND for a, not i."
                  (setq candidate scan)))
            (setq scan (+ scan 1)))))
       ((string= key "p")
-       (goto-char at) (backward-paragraph) (setq start (vim--bol (point)))
-       (goto-char at) (dotimes (i count) (forward-paragraph)) (setq end (point) type 'line)
-       (when (not around)
-         (while (and (< start end) (string= (vim--char start) "\n")) (setq start (+ start 1)))
-         (while (and (> end start) (string= (vim--char (- end 1)) "\n")) (setq end (- end 1)))
-         (setq end (vim--line-end (vim--max start (- end 1)))))))
+       (let ((lines (vim--paragraphs at count around)))
+         (when lines (setq start (car lines) end (nth 1 lines) type 'line)))))
     (goto-char at)
     (when start (list start end type))))
 
@@ -948,7 +991,9 @@ nonblank of its line; nil when it is not set."
                                  (list 'range operation (abs (- to from)) (if (string= pending "'") 'line 'char)))))))
        (vim--reset))
       ((string= pending "q") (vim--macro-start key) (vim--reset))
-      ((string= pending "@") (vim--macro-call key count) (vim--reset))
+      ;; The macro plays at once, so the count is cleared first: else its
+      ;; first command would take it as well.
+      ((string= pending "@") (vim--reset) (vim--macro-call key count))
       ((string= pending "r") (vim--replace key count) (vim--reset))
       ((member pending '("f" "F" "t" "T"))
        (setq vim-last-find (list pending key))
@@ -973,7 +1018,8 @@ nonblank of its line; nil when it is not set."
          ((member key '("g" "e"))
           (if (buffer-get 'vim-operator) (vim--operator-motion (concat "g" key) count)
               (let ((motion (vim--motion (concat "g" key) count)))
-                (when motion (goto-char (car motion)) (vim--clamp))) (vim--reset)))
+                (when motion (goto-char (car motion)) (vim--clamp))
+                (vim--reset))))
          ((member key '("U" "u" "~")) (vim--start-operator (concat "g" key)))
          ((string= key "v")
           (let ((selection (buffer-get 'vim-last-visual)))

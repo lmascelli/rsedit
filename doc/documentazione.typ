@@ -1310,6 +1310,47 @@ Il passo ha trovato quattro difetti del codice, che non corregge:
   accorge: preme `C--`, che non è legato a nulla e quindi non dà un prefisso,
   e passa perché il tasto senza prefisso spegne quello che è acceso.
 
+*I difetti del passo 9 corretti.* Una patch a parte corregge i quattro
+difetti, e uno in più trovato correggendoli; la pagina non li descrive più tra
+i limiti, e ognuno ha un test che fallisce senza la correzione:
+
+- `ge` va alla fine della parola prima da ogni punto di una parola, dal primo
+  carattere come dal mezzo; anche da uno spazio, da dove andava una parola più
+  indietro, e dopo un segno di punteggiatura, che saltava. `dge` cancella fino
+  a lì;
+- un conteggio davanti a `@` o `@@` dice solo quante volte la macro si ripete:
+  `vim--reset` lo azzera prima che la macro parta;
+- `ip` e `ap` seguono le regole di Vim, in una funzione nuova,
+  `vim--paragraphs`, invece di `backward-paragraph` e `forward-paragraph`.
+  `ap` prende anche le righe vuote dopo il paragrafo, o quelle prima quando
+  dopo non ce ne sono; su righe vuote `ip` prende quelle, e `ap` quelle e il
+  paragrafo dopo; una riga fatta solo di spazi bianchi è vuota, e un conteggio
+  conta un gruppo di righe vuote come un paragrafo. Così `ip` smette di
+  sbagliare in tre casi: su una riga vuota cancellava il paragrafo prima, con
+  un conteggio contava i paragrafi e non i gruppi di righe vuote, e su un
+  paragrafo in fondo al buffer ne lasciava l'ultima riga;
+- `C-u -` davanti a `M-x vim-mode` o `M-x global-vim-mode` spegne, come
+  `C-u -1`. Il difetto aveva due metà. I due comandi leggevano il simbolo `-`
+  come un valore vero, e una funzione nuova, `vim--turn-on-p`, lo legge come
+  meno uno. E `M-x` non passava il prefisso a nessun comando: lo azzerava
+  quando il suo tasto finiva, prima di leggere il nome, e
+  `C-u 3 M-x forward-char` avanzava di un carattere. Ora `M-x` lo consegna al
+  comando che lancia, come in Emacs, con un secondo argomento facoltativo di
+  `execute-extended-command`, PREFIX, e `completion` lo dice. Il test
+  `interactive_global_toggle_honors_negative_prefix_argument` ora dà davvero
+  `C-u -`, da un buffer in cui vim è spento, perché dove è acceso `C-u` è uno
+  dei suoi tasti; e lo dà due volte, così che un interruttore non basti a
+  farlo passare. La pagina `vim` dice come vim legge un prefisso;
+- il difetto in più: un conteggio davanti a `gg` o `ge` restava al comando
+  dopo, e `4gg` seguito da `dd` cancellava quattro righe. Nel ramo di `g` di
+  `vim--pending-key` un `if` aveva due forme nel ramo else, e il Lisp
+  dell'editor valuta solo la prima: `(vim--reset)` non veniva mai eseguito.
+  Era l'unico `if` così nei moduli e nei temi.
+
+Il Lisp dell'editor ignora in silenzio le forme del ramo else dopo la prima,
+dove Emacs le valuta tutte: è una differenza dell'interprete, che il passo 10
+porta nel rapporto tra le schede di `risp`.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),

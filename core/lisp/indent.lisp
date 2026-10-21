@@ -310,4 +310,86 @@ on."
 ;; it here, Enter simply stays the built-in `insert-newline'.
 (define-key nil "<ret>" 'newline)
 
+;; Shared readers for the programming-language indenters. They only inspect
+;; text: indent-line restores point and performs the actual edit.
+
+(defun prog-indent--trim (text)
+  "Return TEXT without horizontal whitespace at either end."
+  (let* ((start (or (string-match-p "[^ \t]" text) (length text)))
+         (end (if (string-match "[ \t]+$" text) (match-beginning 0) (length text))))
+    (substring text start (max start end))))
+
+(defun prog-indent--char (at)
+  "Return the character at AT as a string, or an empty string at buffer end."
+  (if (and (>= at 0) (< at (point-max)))
+      (buffer-substring at (+ at 1)) ""))
+
+(defun prog-indent--code ()
+  "Return this line with strings and comments masked, retaining its offsets."
+  (beginning-of-line)
+  (let* ((start (point)) (text (current-line)) (size (length text))
+         (at 0) (out "") (state (syntax-ppss start)))
+    (while (< at size)
+     (let ((before at))
+      (cond
+       ((nth 2 state)
+        (goto-char (nth 2 state))
+        (let ((before (point)))
+          (forward-sexp)
+          (let ((end (if (> (point) before) (min size (- (point) start)) size)))
+            (setq end (max (+ at 1) end))
+            ;; A literal is still an expression, even when it is the whole line.
+            (setq out (concat out "0" (make-string (- end at 1) " ")) at end))))
+       ((nth 3 state)
+        (let* ((open (nth 3 state))
+               (block (string= (buffer-substring open (min (+ open 2) (point-max))) "/*"))
+               (close (if block (string-match-p "\\*/" text at)))
+               (end (if close (+ close 2) size)))
+          (setq out (concat out (make-string (- end at) " ")) at end)))
+       (t
+        (let ((token (string-match-p "[\"'`/#]" text at)))
+          (if (null token)
+              (setq out (concat out (substring text at)) at size)
+              (progn
+                (setq out (concat out (substring text at token)) at token)
+                (setq state (syntax-ppss (+ start at 1)))
+                (unless (or (nth 2 state) (nth 3 state))
+                  ;; The scanner treats a C character literal as an atom, so
+                  ;; it does not report an interior string state for it.
+                  (if (and (get (major-mode) 'indent-char-literals)
+                           (string-match "^'(\\\\.|[^'\\\\])'" (substring text at)))
+                      (let ((count (match-end 0)))
+                        (setq out (concat out "0" (make-string (- count 1) " "))
+                              at (+ at count)))
+                      (setq out (concat out (substring text at (+ at 1))) at (+ at 1)))))))))
+      (when (and (> at before) (< at size)) (setq state (syntax-ppss (+ start at))))))
+    (goto-char start)
+    out))
+
+(defun prog-indent--previous ()
+  "Return the preceding code line as (START COLUMN CODE), skipping blank lines."
+  (beginning-of-line)
+  (let ((found nil))
+    (while (and (not found) (> (point) (point-min)))
+      (backward-char)
+      (beginning-of-line)
+      (let* ((start (point)) (column (current-indentation))
+             (code (prog-indent--trim (prog-indent--code))))
+        (unless (string= code "") (setq found (list start column code)))))
+    found))
+
+(defun prog-indent--under (open closing)
+  "Return a continuation column inside OPEN, or its line's column if CLOSING."
+  (goto-char open)
+  (let* ((base (current-indentation))
+         (line-start (progn (beginning-of-line) (point)))
+         (code (prog-indent--code))
+         (rest (substring code (+ 1 (- open line-start))))
+         (first (string-match-p "[^ \t]" rest)))
+    (cond (closing base)
+          (first (+ (- open line-start) 1 first))
+          (t (+ base (indent-width))))))
+
+
+
 (log "End of the indent.lisp")

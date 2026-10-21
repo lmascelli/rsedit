@@ -255,6 +255,11 @@ impl<B: BufferTrait> EditorState<B> {
         self.commands_mut(|commands| commands.clear_prefix_argument());
     }
 
+    /// Give the next command ARG, as if it had been typed.
+    pub(crate) fn set_prefix_argument(&self, arg: Option<PrefixArg>) {
+        self.commands_mut(|commands| commands.set_prefix_argument(arg));
+    }
+
     /// Add EVENT to the sequence being typed, and say what to run.
     ///
     /// `Some(ast)` means the sequence is now a complete binding and has been

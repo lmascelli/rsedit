@@ -37,7 +37,9 @@ DESCRIPTION
     turns it on, and off again; vim-mode-enable turns it on and
     vim-mode-disable off, whatever it was, and turning it off gives the
     buffer back the keymap it had. From Lisp, (vim-mode t), or a positive
-    number, turns it on, and 0 or a negative number off.
+    number, turns it on, and 0 or a negative number off. A prefix argument
+    does the same, C-u - counting as -1, given in a buffer vim is off in:
+    in Normal, Visual and Insert state C-u is one of vim's keys.
 
     Each buffer has a state of its own, and a command half typed in one
     stays there. What vim remembers between commands is shared by all: the
@@ -48,8 +50,10 @@ DESCRIPTION
 TURNING IT ON BY ITSELF
     (global-vim-mode t) turns vim on in every buffer it suits, those there
     are and those still to come, and (global-vim-mode -1) turns that off,
-    leaving on what was turned on by hand. vim-mode-modes names major modes
-    vim is on in, whatever global-vim-mode says:
+    leaving on what was turned on by hand. M-x global-vim-mode turns it on,
+    and off again, and reads a prefix argument as vim-mode does.
+    vim-mode-modes names major modes vim is on in, whatever global-vim-mode
+    says:
 
         (setq vim-mode-modes '(rust-mode risp-mode))
         (vim-mode-refresh)
@@ -143,6 +147,9 @@ TEXT OBJECTS
 
     An object follows an operator, or selects in Visual state: ciw, daW,
     di(, yi", viw. A bracket object takes the innermost pair around point.
+    ap takes the blank lines after the paragraph as well, or those before
+    it when none follow; on blank lines, ip takes them, and ap them and the
+    paragraph after. A line of white space only is blank.
 
 VISUAL STATE
     v V C-v             Select characters, lines, a block.
@@ -283,17 +290,6 @@ LIMITS
     C-w h, j, k and l go to the next window, whichever way it lies, and z
     followed by any key recenters. The paging keys count by the frame's
     height, not the window's.
-
-    ge from the first character of a word goes to the end of the word
-    before the previous one, and dge deletes that much more.
-
-    A count before @ or @@ counts for the macro's first command as well:
-    3@a, where a deletes a character, deletes five.
-
-    ap is ip: the blank lines after the paragraph are left out.
-
-    C-u - before M-x vim-mode or M-x global-vim-mode turns it on rather
-    than off; C-u -1 turns it off.
 
 EXAMPLES
     Vim in every buffer it suits, from init.lisp:

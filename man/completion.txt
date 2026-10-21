@@ -6,7 +6,7 @@ SYNOPSIS
     (minibuffer-choose-completion VALUE)
     (completion-invalidate)
     (command-execute-prompt)
-    (execute-extended-command NAME)
+    (execute-extended-command NAME &optional PREFIX)
     (command-completions PREFIX)
     (all-commands)
     (completion-at-point)
@@ -86,7 +86,9 @@ WHAT MATCHES
 
 RUNNING A COMMAND BY NAME
     M-x, the name and Return run a command, asking for its arguments as its
-    key would. A name that is no command says No such command.
+    key would. A name that is no command says No such command. A prefix
+    argument typed before M-x is the command's: C-u 3 M-x forward-char goes
+    three characters on.
     `all-commands' lists every one there is.
 
 IN A BUFFER

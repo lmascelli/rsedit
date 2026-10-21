@@ -115,6 +115,14 @@ impl<B: BufferTrait> Commands<B> {
         self.reading_prefix = false;
     }
 
+    /// Give the next command ARG, as if it had been typed. M-x needs this:
+    /// the argument typed before it goes with M-x's own key, before the name
+    /// of the command is read.
+    pub fn set_prefix_argument(&mut self, arg: Option<PrefixArg>) {
+        self.prefix_arg = arg;
+        self.reading_prefix = false;
+    }
+
     /// Whether EVENT is the key that starts a prefix argument.
     ///
     /// Read by the reader below and by nothing else on the typing path. It is
@@ -282,6 +290,42 @@ impl<B: BufferTrait> Commands<B> {
     }
 }
 
+/// The prefix argument as `P` gives it: nil, a one-element list for `C-u`, a
+/// number, or the symbol `-`.
+pub(crate) fn raw_prefix<B: BufferTrait>(arg: Option<PrefixArg>) -> ELispExp<B> {
+    match arg {
+        None => ELispExp::nil(),
+        Some(PrefixArg::Raw(times)) => {
+            ELispExp::proper_list(vec![ELispExp::number(4i32.saturating_pow(times) as f64)])
+        }
+        Some(PrefixArg::Number(n)) => ELispExp::number(n as f64),
+        Some(PrefixArg::Negative) => ELispExp::symbol("-".into()),
+    }
+}
+
+/// What [`raw_prefix`] gives, read back; `None` for a value it never gives.
+pub(crate) fn prefix_from_raw<B: BufferTrait>(value: &ELispExp<B>) -> Option<Option<PrefixArg>> {
+    let whole = |n: f64| (n.fract() == 0.0 && n.abs() <= i32::MAX as f64).then_some(n as i32);
+    match value {
+        _ if value.is_nil() => Some(None),
+        ELispExp::Number(n) => whole(*n).map(|n| Some(PrefixArg::Number(n))),
+        ELispExp::Symbol(name) if name.as_str() == "-" => Some(Some(PrefixArg::Negative)),
+        ELispExp::Cons(_) => match value.split_list() {
+            (items, tail) if items.len() == 1 && tail.is_nil() => match items[0] {
+                ELispExp::Number(n) => {
+                    let n = whole(n)?;
+                    (1..16u32)
+                        .find(|times| 4i32.checked_pow(*times) == Some(n))
+                        .map(|times| Some(PrefixArg::Raw(times)))
+                }
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// What the editor hands a command for an argument it answers itself.
 ///
 /// One spec can produce more than one value -- `r` is the region's *two* ends,
@@ -301,14 +345,7 @@ fn answer_spec<B: BufferTrait>(spec: &ArgSpec, invocation: &Invocation) -> Vec<E
         // `P`: the argument as given, so a command can tell "no argument" from
         // "the argument 1", and a bare `C-u` from `C-u 4`. A bare `C-u` is a
         // one-element list, as in Emacs, which is why `p` and `P` both exist.
-        ArgSpec::RawCount => vec![match invocation.prefix_arg {
-            None => ELispExp::nil(),
-            Some(PrefixArg::Raw(times)) => {
-                ELispExp::proper_list(vec![ELispExp::number(4i32.saturating_pow(times) as f64)])
-            }
-            Some(PrefixArg::Number(n)) => ELispExp::number(n as f64),
-            Some(PrefixArg::Negative) => ELispExp::symbol("-".into()),
-        }],
+        ArgSpec::RawCount => vec![raw_prefix(invocation.prefix_arg)],
         // `r`: start then end. `call-interactively` refuses the command before
         // this is reached when there is no region, so the fallback is
         // unreachable rather than a silent default.

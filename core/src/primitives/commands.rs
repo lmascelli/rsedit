@@ -390,24 +390,35 @@ primitive!(all_buffer_names, _args, _env, ctx, {
     ))
 });
 
-pub const EXECUTE_EXTENDED_COMMAND_DOC: &str = "(execute-extended-command NAME): Run the command \
-         NAME as M-x does, asking for its arguments, or say No such command when it is none.\n\n\
+pub const EXECUTE_EXTENDED_COMMAND_DOC: &str = "(execute-extended-command NAME &optional \
+         PREFIX): Run the command NAME as M-x does, asking for its arguments, or say No such \
+         command when it is none. PREFIX, when given, is the prefix argument it runs with, as \
+         \"P\" gives one: nil, (4) for C-u, a number, or - for C-u -.\n\n\
          Example:\n\
          (execute-extended-command \"save-buffer\")";
 
 primitive!(execute_extended_command, args, env, ctx, {
     let name = match args.first() {
-        Some(exp) => args::name(Some(exp))?,
-        None => {
+        Some(exp) if args.len() <= 2 => args::name(Some(exp))?,
+        _ => {
             return Err(EvalError::WrongNumberOfArguments {
-                expected: 1,
-                got: 0,
+                expected: if args.is_empty() { 1 } else { 2 },
+                got: args.len(),
             });
         }
+    };
+    let prefix = match args.get(1) {
+        Some(raw) => Some(crate::managers::prefix_from_raw(raw).ok_or_else(|| {
+            EvalError::RuntimeMessage(format!("{raw:?} is not a prefix argument"))
+        })?),
+        None => None,
     };
     if !ctx.is_command(&name) {
         ctx.set_echo_message(&format!("No such command: {name}"));
         return Ok(ELispExp::nil());
+    }
+    if let Some(prefix) = prefix {
+        ctx.set_prefix_argument(prefix);
     }
     call_interactively(&[ELispExp::string(name)], env, ctx)
 });
@@ -443,11 +454,34 @@ primitive!(command_execute_prompt, _args, env, ctx, {
         Some(hook) if hook.is_truthy() => hook,
         _ => ELispExp::primitive(command_completions, None),
     };
+    // The prefix argument typed before M-x is the command's, as in Emacs. It
+    // goes when M-x's own key has run, before the name is read, so the
+    // callback carries it: (lambda (name) (execute-extended-command name 'P)).
+    let run = match ctx.prefix_argument() {
+        None => ELispExp::primitive(execute_extended_command, None),
+        Some(prefix) => {
+            let name = || ELispExp::symbol("name".into());
+            let quoted = ELispExp::form(vec![
+                ELispExp::symbol("quote".into()),
+                crate::managers::raw_prefix(Some(prefix)),
+            ]);
+            let lambda = ELispExp::form(vec![
+                ELispExp::symbol("lambda".into()),
+                ELispExp::form(vec![name()]),
+                ELispExp::form(vec![
+                    ELispExp::symbol("execute-extended-command".into()),
+                    name(),
+                    quoted,
+                ]),
+            ]);
+            risp::eval(&lambda, env.clone(), ctx)?
+        }
+    };
     call_callable(
         &reader,
         &[
             ELispExp::string("M-x".into()),
-            ELispExp::primitive(execute_extended_command, None),
+            run,
             completer,
             ELispExp::nil(),
         ],

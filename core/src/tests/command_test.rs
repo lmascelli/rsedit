@@ -463,6 +463,50 @@ mod tests {
         );
     }
 
+    /// The prefix argument typed before M-x is the command's, as in Emacs,
+    /// though M-x's own key has finished by the time the name is read.
+    #[test]
+    fn m_x_hands_the_prefix_argument_to_the_command_it_runs() {
+        let (ctx, env) = bare();
+        eval_str(
+            r#"(progn (setq probe nil)
+                      (defun probe-count (n) (setq probe n))
+                      (register-command 'probe-count '("p"))
+                      (defun probe-raw (arg) (setq probe arg))
+                      (register-command 'probe-raw '("P")))"#,
+            &env,
+            &ctx,
+        )
+        .expect("setup");
+        let probe = || env.get_variable("probe").expect("probe must be bound");
+
+        ctx.handle_key_event(key_with('u', true), &env);
+        ctx.handle_key_event(key('3'), &env);
+        ctx.handle_key_event(meta('x'), &env);
+        type_and_confirm(&ctx, &env, "probe-count");
+        assert_eq!(probe(), LispExp::number(3.0));
+
+        ctx.handle_key_event(key_with('u', true), &env);
+        ctx.handle_key_event(key('-'), &env);
+        ctx.handle_key_event(meta('x'), &env);
+        type_and_confirm(&ctx, &env, "probe-raw");
+        assert_eq!(probe(), LispExp::symbol("-".into()));
+
+        // The argument belongs to that one command: the next M-x has none.
+        ctx.handle_key_event(meta('x'), &env);
+        type_and_confirm(&ctx, &env, "probe-raw");
+        assert!(probe().is_nil());
+
+        eval_str(
+            r#"(execute-extended-command "probe-raw" '(16))"#,
+            &env,
+            &ctx,
+        )
+        .expect("a prefix from Lisp");
+        assert_eq!(probe(), LispExp::proper_list(vec![LispExp::number(16.0)]));
+        assert!(eval_str(r#"(execute-extended-command "probe-raw" "x")"#, &env, &ctx).is_err());
+    }
+
     /// A command reached through M-x collects its arguments the same way one
     /// reached by a key does -- a second prompt opens after the first closes.
     #[test]

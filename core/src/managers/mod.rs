@@ -52,6 +52,7 @@ mod windows;
 
 pub use buffers::{Buffers, Removed as BufferRemoved, Renamed as BufferRenamed};
 pub use commands::Commands;
+pub(crate) use commands::{prefix_from_raw, raw_prefix};
 pub use history::{DEFAULT_HISTORY_LENGTH, History, Recalled};
 pub use kill_yank::KillYank;
 pub use log::Log;
