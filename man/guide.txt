@@ -50,7 +50,7 @@ THE REFERENCE
         shell             running a command, and reading what it printed
         regexps           regular expressions, and matching them from Lisp
         background        work that goes on while you type
-        vim               modal editing, for those who would rather
+        vim               modal editing, as Vim does it
 
     Every command and every variable also documents itself. C-h f names a
     function, C-h v a variable, C-h k a key, C-h a searches all of them.

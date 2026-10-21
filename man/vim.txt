@@ -1,133 +1,136 @@
 NAME
-    vim - modal editing in Risp
+    vim - modal editing, as Vim does it
 
 SYNOPSIS
     (vim-mode &optional ENABLED)
+    (vim-mode-enable)
     (vim-mode-disable)
+    (vim-mode-auto)
+    (vim-mode-refresh)
     (global-vim-mode &optional ENABLED)
+    (vim-normal-state)
+    (vim-default-buffer-p)
+    vim-mode-modes
+    vim-mode-excluded-modes
+    vim-mode-predicate
+    vim-shift-width
+    vim-search-wrap
+    vim-registers
+    vim-search-pattern
+    vim-search-direction
+    vim-search-regexp
+    vim-last-find
+    vim-last-change
+    vim-recording-register
+    vim-last-macro-register
 
 DESCRIPTION
-    vim.lisp adds modal editing without replacing the buffer's major mode.
-    Syntax highlighting, indentation, language hooks, minibuffers and the
-    editor's save/quit checks continue to use their existing implementations.
+    M-x vim-mode gives the buffer you are in the keys of Vim: they move and
+    act in Normal state, type in Insert state, overwrite in Replace state
+    and select in Visual state. The buffer keeps its major mode, and with it
+    its colouring, its indentation and its hooks; only what the keys do
+    changes. The status line says the state -- NORMAL, INSERT, REPLACE,
+    VISUAL, V-LINE or V-BLOCK -- where mode-line-format has %s, as it has
+    unless you change it.
 
-    The default init loads the module but does not enable it. For an existing
-    init, load "vim" after "commands", "debug" and "common-keymaps". Loading
-    "indent" and "electric-pair" also gives Insert mode their usual
-    indentation and pairing. M-x vim-mode toggles the current buffer; the
-    optional Lisp argument t enables it explicitly; zero or negative disables
-    it. vim-mode-disable restores the previous local keymap. Each buffer has
-    its own state and pending input. Enabling an already active mode preserves
-    Insert, Visual and pending operators. Interactive commands accept the raw
-    Emacs prefix argument; without one they toggle.
+    The default init.lisp loads the module, and leaves it off. M-x vim-mode
+    turns it on, and off again; vim-mode-enable turns it on and
+    vim-mode-disable off, whatever it was, and turning it off gives the
+    buffer back the keymap it had. From Lisp, (vim-mode t), or a positive
+    number, turns it on, and 0 or a negative number off.
 
-    Escape, C-[ and Normal C-g/C-c cancel incomplete input or return to
-    Normal. The mode line shows NORMAL, INSERT, REPLACE, VISUAL, V-LINE or
-    V-BLOCK. Custom mode-line-format strings can include %s for this
-    buffer-local label.
+    Each buffer has a state of its own, and a command half typed in one
+    stays there. What vim remembers between commands is shared by all: the
+    registers, the last search, the edit . repeats, the macros. Escape and
+    C-[, and C-g and C-c in Normal state, cancel a command half typed, or
+    go back to Normal state.
 
-AUTOMATIC ACTIVATION
-    Enable Vim in existing and future eligible buffers:
-
-        (global-vim-mode t)
-
-    Or enable it only in selected major modes, without enabling the global
-    mode:
+TURNING IT ON BY ITSELF
+    (global-vim-mode t) turns vim on in every buffer it suits, those there
+    are and those still to come, and (global-vim-mode -1) turns that off,
+    leaving on what was turned on by hand. vim-mode-modes names major modes
+    vim is on in, whatever global-vim-mode says:
 
         (setq vim-mode-modes '(rust-mode risp-mode))
         (vim-mode-refresh)
 
-    Rules use exact major-mode symbols. Changing the major mode re-evaluates
-    the policy; merely switching buffers does not initialize Vim again.
-    Changing the visited filename with write-file also re-evaluates
-    eligibility. Use vim-mode-refresh after changing policy settings to update
-    existing buffers; newly created buffers always use the current settings.
+    A buffer suits when all of these hold:
 
-    Automatic activation requires all of these:
+        global-vim-mode is on, or its major mode is in vim-mode-modes
+        its major mode is not in vim-mode-excluded-modes
+        vim-mode-predicate is nil, or answers non-nil in the buffer
+        it is not a prompt
 
-        global-vim-mode is enabled, or the mode is in vim-mode-modes;
-        the mode is absent from vim-mode-excluded-modes;
-        vim-mode-predicate is nil or returns non-nil in that buffer;
-        the buffer is not the active *Minibuffer*.
+    vim-mode-excluded-modes starts with the editor's listings and buffers
+    of its own: dired, help, the manual, the lists of buffers and themes, a
+    backtrace, the output of a command or a build, a list of matches, a
+    prompt and the completion strip. vim-mode-predicate starts as
+    vim-default-buffer-p, which accepts a buffer visiting a file, *scratch*,
+    and any buffer whose name does not begin with a *.
 
-    By default the predicate accepts file buffers, ordinary buffer names and
-    *scratch*. Other names beginning with * are treated as service buffers.
-    The exclusion list also protects help, dired, completion, results, shell
-    output and other built-in service modes. Customize it to opt such a mode
-    in; adapt the predicate too if its buffer has a service name.
+    The rules are applied when a buffer gets a major mode, and when C-x C-w
+    gives it a file; vim-mode-refresh applies them again to every buffer,
+    after they have changed. A buffer turned on or off by vim-mode,
+    vim-mode-enable or vim-mode-disable stays so whatever the rules say,
+    until vim-mode-auto gives it back to them. Applying the rules leaves an
+    Insert or Visual session, and a command half typed, as they were.
 
-    To accept only buffers visiting files:
-
-        (setq vim-mode-predicate (lambda () (buffer-file-name)))
-        (vim-mode-refresh)
-
-    Explicit vim-mode/vim-mode-enable and vim-mode-disable choices take
-    precedence for that buffer, including after major-mode changes. To clear
-    the manual preference and use automatic rules again, run vim-mode-auto.
-
-    (global-vim-mode -1) disables global activation. Buffers enabled solely by
-    it are restored; manually enabled buffers and modes in vim-mode-modes
-    remain enabled. Refreshes preserve active Insert/Visual sessions, pending
-    operators, the current buffer and window focus.
-
-    This is a globalized buffer-local mode, following Emacs's approach. The
-    global keymap and language major mode stay in place. The lifecycle hooks
-    are generic Rust facilities; the eligibility rules and activation are
-    Risp.
-
-NORMAL MOTIONS
-    h j k l             Left, down, up, right; arrow keys also work.
-    Space, Backspace    Right, left, within the line.
+MOVING IN NORMAL STATE
+    h j k l             Left, down, up, right; the arrow keys too.
+    <space> <backspace> Right and left, within the line.
     w b e               Next word, previous word, end of word.
-    W B E               The same with whitespace-separated WORDS.
-    ge                  End of the preceding word.
+    W B E               The same with WORDS, separated by white space.
+    ge                  End of the previous word.
     0 ^ $               Beginning, first nonblank, last character of line.
-    _                   First nonblank on the current line.
+    _                   First nonblank on this line.
     |                   Column COUNT, counting from one.
-    gg G                First/last line, or the specified numbered line.
-    + - Return          First nonblank on the next/previous line.
-    { }                 Paragraph backward/forward.
-    %                   Matching (), [] or {} delimiter.
-    f F t T CHARACTER   Find or stop before a character on this line.
-    ; ,                 Repeat that find in the same/opposite direction.
-    C-d C-u             Down/up half a frame.
-    C-f C-b             Down/up approximately one frame.
-    C-e C-y             Scroll down/up by lines.
+    gg G                First line, last line, or line COUNT.
+    + - <ret>           First nonblank of the next or the previous line.
+    { }                 Paragraph backward and forward.
+    %                   The bracket matching the first one from point on
+                        the line: (, ), [, ], { or }.
+    f F t T CHARACTER   To the character on this line, or just before it.
+    ; ,                 That find again, the same way or the other.
+    C-d C-u             Down and up half a frame.
+    C-f C-b             Down and up a frame, nearly.
+    C-e C-y             Scroll a line at a time.
 
-    Counts compose with motions and operators: 3w, 2dd, d3w and 2d3w. Vertical
-    motions keep the desired column through short lines. Horizontal motions
-    stay on the current line. Normal point sits on the last character rather
-    than beyond it, except on an empty line.
+    A count goes before a motion or an operator, or both: 3w, 2dd, d3w,
+    2d3w. Up and down keep the column through shorter lines; sideways stays
+    on the line. In Normal state point is on a character, the last one at
+    most, unless the line is empty.
 
 EDITING
-    i a I A             Insert before/after point, first nonblank, end of
-                        line.
-    o O                 Open an indented line below/above and enter Insert.
-    R                   Replace until Escape; Backspace restores the previous
-                        overwritten character within the replacement run.
-    d c y MOTION        Delete, change or yank the motion's range.
-    dd cc yy            Operate on complete lines, optionally counted.
-    x X s               Delete forward/backward characters; substitute
-                        forward.
-    D C S Y             Delete/change to EOL; change/yank complete lines.
-    r CHARACTER         Replace COUNT characters without entering Insert.
-    p P                 Put after/before point, preserving register shape.
-    J                   Join lines, removing indentation at the join.
-    > < = MOTION        Shift right/left or reindent; >>, << and == act on
-                        lines.
-    gU gu g~ MOTION     Uppercase, lowercase or toggle case; gUU/guu act on
-                        lines.
-    ~                   Toggle case for COUNT characters or the selection.
-    u C-r               Undo, redo; counts repeat the operation.
-    .                   Repeat the last edit at the new location. A supplied
-                        count replaces the saved count for counted operations.
+    i a I A             Insert before or after point, at the first
+                        nonblank, at the end of the line.
+    o O                 Open a line below or above, indented as this one,
+                        and insert.
+    R                   Overwrite until Escape; <backspace> gives back what
+                        was overwritten.
+    d c y MOTION        Delete, change or yank what the motion covers.
+    dd cc yy            The same on whole lines, COUNT of them.
+    x X s               Delete forward, backward; substitute forward.
+    D C S Y             Delete or change to the end of the line; change or
+                        yank whole lines.
+    r CHARACTER         Replace COUNT characters, without inserting.
+    p P                 Put after or before point, in the register's shape.
+    J                   Join lines, dropping the indentation at the join.
+    > < = MOTION        Shift right, left, or reindent; >>, << and == act
+                        on lines.
+    gU gu g~ MOTION     Upper case, lower case, swap; gUU, guu and g~~ act
+                        on lines.
+    ~                   Swap the case of COUNT characters, or of the
+                        selection.
+    u C-r               Undo and redo, COUNT times.
+    .                   The last edit again, here; a COUNT replaces its own.
 
-    Insert uses native self-insert, so Unicode typing and language hooks work.
-    Insert C-w deletes the preceding word, C-u to the beginning of the line,
-    and C-h deletes backwards. Bracketed paste remains one edit and does not
-    run auto-pairing. A complete Insert/Replace session, including a leading
-    change operator, undoes as one operation. Dot also captures paste and
-    auto-pairing. Counted i/a/I/A repeat the inserted text on Escape.
+    In Insert state keys type as they do without vim, so a mode's pairing
+    and indentation work, and so does any character. C-w deletes the word
+    before point, C-u the line before point, and C-h a character. A paste
+    is one edit, and nothing is paired in it. A whole Insert or Replace
+    session, with the c that began it, is undone at once, and . repeats it,
+    paste and pairing included. i, a, I or A with a COUNT types the text
+    COUNT times when you leave Insert state.
 
 TEXT OBJECTS
     i/a w W             Inner/around word or WORD.
@@ -135,129 +138,197 @@ TEXT OBJECTS
     i/a [ ]             Inner/around brackets.
     i/a { } B           Inner/around braces.
     i/a < >             Inner/around angle brackets.
-    i/a " ' `           Inner/around a pair of quotes on the current line.
+    i/a " ' `           Inner/around a pair of quotes on this line.
     i/a p               Inner/around paragraph.
 
-    Objects work after an operator and in Visual mode: ciw, daW, di(, yi",
-    viw. Delimiter objects select the enclosing nested pair.
+    An object follows an operator, or selects in Visual state: ciw, daW,
+    di(, yi", viw. A bracket object takes the innermost pair around point.
 
-VISUAL
-    v V C-v             Character, line, block selection.
-    o                   Exchange the active end and anchor.
-    gv                  Restore the most recently saved Visual selection.
-    Escape              Leave Visual mode.
-    d c y p P           Delete/change/yank or replace the selection with a
-                        put.
-    > < = gU gu g~ ~     Transform character/line selections.
-    u U                 Lowercase/uppercase character/line selections.
+VISUAL STATE
+    v V C-v             Select characters, lines, a block.
+    o                   Swap point and the other end.
+    gv                  Select again what was selected last.
+    <esc>               Back to Normal state.
+    d c y p P           Delete, change, yank, or put over the selection.
+    > < = gU gu g~ ~    Act on the selected characters or lines.
+    u U                 Lower or upper case.
 
-    Both endpoint characters are included. Line selections cover complete
-    lines. Blocks support delete, yank, put and change; a single-line change
-    inserts the replacement on each selected row when you leave Insert. Block
-    puts pad short lines and create missing lines.
+    Both ends are part of the selection, and a line selection is of whole
+    lines. A block can be deleted, yanked, put and changed: a change on one
+    line is made on every row of the block when you leave Insert state. A
+    block put pads short lines, and adds lines that are missing.
 
 REGISTERS AND MACROS
-    "a COMMAND          Use register a. Named registers are shared by buffers.
+    "a COMMAND          Use register a; the registers are shared by buffers.
     "A COMMAND          Append to register a.
-    "_ COMMAND          Black-hole register: discard without updating
-                        registers
-                        or the kill ring.
-    "0p                 Put the most recent yank, retained across deletions.
-    "1p ... "9p         Put older line/multiline deletions.
-    "-p                 Put the most recent small deletion.
-    qa ... q            Record a keyboard macro into register a.
-    qA ... q            Append to that macro.
-    @a @@               Execute register a / the most recently executed macro.
+    "_ COMMAND          Discard: no register changes, nor the kill ring.
+    "0p                 Put the last yank, which deletions leave alone.
+    "1p ... "9p         Put the deletions of lines, newest first.
+    "-p                 Put the last deletion within a line.
+    qa ... q            Record the keys pressed into register a.
+    qA ... q            Append them to register a.
+    @a @@               Play register a, or the macro played last.
 
-    The unnamed register is selected by default. Text registers remember
-    character, line or block shape. Kills/yanks also go through the editor's
-    kill ring and its configured clipboard output. Macros record physical
-    input, including Insert, Escape and prompt input, and support counts.
+    The unnamed register is used unless another is named, and every
+    register remembers the shape of its text: characters, lines or a
+    block. What is deleted or yanked goes to the kill ring too, and so to
+    the system clipboard when the clipboard module sends it there. A macro
+    is the keys as pressed, Insert state, Escape and the answers to prompts
+    included, and a COUNT plays it COUNT times.
 
-SEARCH AND MARKS
-    /PATTERN Return     Regex search forward.
-    ?PATTERN Return     Regex search backward.
-    n N                 Repeat in the same/opposite direction.
-    * #                 Search for the word at point, forward/backward.
-    m a                 Save a buffer-local mark a.
-    ` a, ' a            Jump exactly / to the mark's first nonblank on its
-                        line.
+SEARCHES AND MARKS
+    /PATTERN <ret>      Search forward.
+    ?PATTERN <ret>      Search backward.
+    n N                 Again, the same way or the other.
+    * #                 Search for the word at point, forward or backward.
+    m a                 Set mark a here.
+    ` a, ' a            Go to mark a, or to the first nonblank of its line.
 
-    Lowercase marks are local; uppercase marks include the buffer name.
-    Searches wrap unless vim-search-wrap is nil. Empty / or ? repeats the
-    existing pattern. Search motions and mark jumps can follow operators.
-    Regex syntax is the editor's Rust regex syntax, not Vim's regex dialect.
-    Marks are character offsets; edits do not track or relocate them.
+    A lowercase mark is this buffer's; an uppercase one remembers its
+    buffer, and going to it goes there. A search goes round the end of the
+    buffer unless vim-search-wrap is nil, and / or ? with nothing typed
+    searches for the last pattern again. A search and a mark can follow an
+    operator. A pattern is one of the editor's regular expressions, which
+    the `regexps' page describes, not one of Vim's.
 
 EX COMMANDS
-    :w, :write          Save through the editor's existing save command.
-    :w PATH             Write and visit PATH.
-    :q, :quit           Quit through the editor's unsaved-work checks.
-    :wq, :x, ZZ         Save, then quit when saving completed successfully.
+    :w, :write, :w!     Save.
+    :w PATH             Write to PATH, and visit it.
+    :q, :quit           Quit, asking about unsaved work.
+    :wq, :x, ZZ         Save, then quit if the save went through.
     :q!, ZQ             Quit without saving.
-    :e, :e PATH         Prompt for/open a file.
-    :b NAME, :bd        Switch buffer / invoke the kill-buffer prompt.
-    :split, :vsplit     Split the window horizontally/vertically.
-    :only, :close       Keep only this window / close this window.
+    :e, :e PATH         Open a file, asked for or given.
+    :b NAME, :bd        Switch to buffer NAME; kill a buffer, asked for.
+    :split, :vsplit     Split the window, below or right.
+    :only, :close       Keep only this window; close it.
     :NUMBER             Go to that line.
-    :set number         Absolute line numbers.
-    :set relativenumber Relative line numbers.
-    :set nonumber       Hide line numbers.
-    :set ignorecase     Case-insensitive searches.
-    :set noignorecase   Case-sensitive searches.
-    :set wrapscan       Wrap searches.
-    :set nowrapscan     Stop at buffer boundaries.
-    :help               Open this manual page.
+    :set number         Line numbers.
+    :set relativenumber Line numbers counted from point.
+    :set nonumber       No line numbers.
+    :set ignorecase     Searches ignore case.
+    :set noignorecase   Searches mind case.
+    :set wrapscan       Searches go round the end.
+    :set nowrapscan     Searches stop at the end.
+    :noh                Deactivate the mark.
+    :help, :h           This page.
 
     :s/PATTERN/REPLACEMENT/FLAGS
-        Replace the first match on the current line; g replaces every match.
-        i/I force case-insensitive/sensitive matching for this substitution.
-        & expands the complete match; \1 through \9 expand capture groups;
-        \& is a literal ampersand and \n/\r insert a newline. The delimiter
-        can be any character, and escaped delimiters are accepted.
+        Replace the first match on this line, or with g every one; i and I
+        ignore or mind case for this replacement. In REPLACEMENT & is the
+        whole match, \1 to \9 its groups, \& an ampersand, \t a tab, and \n
+        and \r a newline. The delimiter can be any character, and one
+        escaped with \ is part of the text.
 
-    :%s/.../.../g        Substitute throughout the buffer.
-    :2,5s/.../.../g      Substitute on numbered lines 2 through 5.
-    :'<,'>s/.../.../g    Substitute on lines of the saved Visual selection.
+    :%s/.../.../g       On every line.
+    :2,5s/.../.../g     On lines 2 to 5.
+    :'<,'>s/.../.../g   On the lines of the last Visual selection.
 
-    Substitution is one undo operation. Invalid expressions and unsupported
-    flags report an error. It does not implement Vim's confirmation flag c.
+    A substitution is undone at once. A pattern that is wrong, or a flag
+    that is not one of these, is reported. In Visual state : leaves the
+    selection, and '<,'> has to be typed.
 
-WINDOWS
-    C-w s/v             Split below/right.
-    C-w w               Select the next window.
-    C-w o/c             Keep only this window / close this window.
-    C-w h/j/k/l         Currently cycle windows; directional focus is absent.
-    z followed by key   Recenter the current window.
-    K                   Look up the word using the editor's manual support.
+WINDOWS AND THE REST
+    C-w s, C-w v        Split below or right.
+    C-w w               The next window.
+    C-w o, C-w c        Keep only this window; close it.
+    z KEY               Recenter.
+    K                   The manual page named by the word at point.
 
-SETTINGS AND EXTENSION
-    vim-shift-width     Spaces added/removed by > and <; default 4.
-    vim-search-wrap     Wrap at buffer boundaries; default t.
-    vim-mode-modes      Major modes selected independently of the global mode.
-    vim-mode-excluded-modes  Modes excluded from automatic activation.
-    vim-mode-predicate  Per-buffer eligibility function; vim-default-buffer-p.
-    vim-normal-map      Local keymap for Normal and Visual.
-    vim-insert-map      Local keymap for Insert.
-    vim-replace-map     Local keymap for Replace.
+SETTINGS
+        vim-shift-width          the columns > and < shift by: 4
+        vim-search-wrap          whether searches go round the end: t
+        vim-mode-modes           the major modes vim is on in by itself
+        vim-mode-excluded-modes  those it is never on in by itself
+        vim-mode-predicate       what says whether a buffer suits
 
-    Normal consumes unsupported printable keys instead of inserting them.
-    Other unbound keys can still reach major/global bindings, including M-x.
-    Transient prompts keep priority over the modal maps.
+WHAT VIM REMEMBERS
+    Shared by every buffer, and there to read from Lisp:
 
-    The generic Rust support exposed to Risp is set-local-keymap, the <char>
-    keymap fallback, inclusive set-mark, undo-join, pre-command-hook, %s and
-    string-diff. The command parser, motions, operators, registers and state
-    transitions are in vim.lisp.
+        vim-registers            the registers: ((NAME TEXT SHAPE) ...)
+        vim-search-pattern       the last pattern searched for
+        vim-search-direction     1 after /, -1 after ?
+        vim-search-regexp        t: a pattern is a regular expression
+        vim-last-find            the last f, F, t or T: (KEY CHARACTER)
+        vim-last-change          the edit . repeats, in a form of vim's own
+        vim-recording-register   the register keys are being recorded into
+        vim-last-macro-register  the register @@ plays
+
+KEYMAPS
+    Normal and Visual state use the keymap of vim-normal-map, Insert state
+    that of vim-insert-map and Replace state that of vim-replace-map, each
+    put on the buffer as its local keymap. A key bound there with
+    define-key replaces what vim does with it:
+
+        (define-key 'vim-normal-map "Q" 'vim-mode-disable)
+
+    In Normal state a printable key that does nothing is swallowed, not
+    typed. A key that no map of vim binds does what it does without vim, so
+    M-x works, and so does C-x C-s; and a question the editor asks takes
+    its keys before vim does.
 
 LIMITS
-    This is an extensive Vim-style mode, not full Vim compatibility. It does
-    not provide Vimscript, arbitrary Ex addresses, :global, folds, jumplists,
-    marks that track edits, Insert C-o, all screen-relative motions or native
-    clipboard reads. Use the terminal's paste command for external text.
-    Block I/A, multiline block insert replication, full Replace count behavior
-    and every Visual/Ex combination are not implemented. Dot records editing
-    commands and Insert/Replace sessions, but does not replay Ex
-    substitutions.
-    = depends on the optional indent module. Window paging uses frame height;
-    z variants currently recenter instead of selecting top/bottom placement.
+    This is much of Vim and not all of it. There is no Vimscript, no
+    :global and no Ex range but those above, no folds, no jump list, no
+    screen-relative motion, and nothing that reads the system clipboard:
+    paste with the terminal. C-o in Insert state does what it does without
+    vim, and opens a line.
+
+    A mark is a position: text inserted before it moves away from it.
+
+    In a block selection I and A insert on the line of point only, and a
+    block change is made on every row only when its text is on one line. A
+    count before R is ignored, and . does not repeat a substitution.
+
+    = reindents with the indent module, which the default init.lisp loads.
+    C-w h, j, k and l go to the next window, whichever way it lies, and z
+    followed by any key recenters. The paging keys count by the frame's
+    height, not the window's.
+
+    ge from the first character of a word goes to the end of the word
+    before the previous one, and dge deletes that much more.
+
+    A count before @ or @@ counts for the macro's first command as well:
+    3@a, where a deletes a character, deletes five.
+
+    ap is ip: the blank lines after the paragraph are left out.
+
+    C-u - before M-x vim-mode or M-x global-vim-mode turns it on rather
+    than off; C-u -1 turns it off.
+
+EXAMPLES
+    Vim in every buffer it suits, from init.lisp:
+
+        (global-vim-mode t)
+
+    Only in Rust and Lisp buffers:
+
+        (setq vim-mode-modes '(rust-mode risp-mode))
+        (vim-mode-refresh)
+
+    Only in buffers visiting files:
+
+        (setq vim-mode-predicate (lambda () (buffer-file-name)))
+        (vim-mode-refresh)
+
+    > and < by two columns:
+
+        (setq vim-shift-width 2)
+
+    Q, which vim leaves unused, to turn vim off in the buffer:
+
+        (define-key 'vim-normal-map "Q" 'vim-mode-disable)
+
+    What register a holds:
+
+        (assoc "a" vim-registers)
+
+KEYS IN VIM INSERT MAP
+    <esc>                   vim-normal-state
+    C-[                     vim-normal-state
+    C-c                     vim-normal-state
+    C-w                     backward-kill-word
+    C-h                     delete-backward-char
+
+SEE ALSO
+    editing, killing, searching, regexps, macros, rectangles, windows,
+    keymaps, modes

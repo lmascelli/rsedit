@@ -1,70 +1,119 @@
-;;; vim --- modal editing written in Risp.
+;;; vim --- modal editing, as Vim does it.
 ;;;
-;;; Load after commands/debug; (vim-mode) toggles the current buffer.
-;;; Syntax, indentation, major-mode hooks and minibuffers keep their own modes.
-;;; Registers, searches, dot and macros are shared; modal input is buffer-local.
+;;; M-x vim-mode gives a buffer Vim's keys, and global-vim-mode gives them to
+;;; every buffer that suits. User manual: the `vim' page.
+;;;
+;;; Load after commands and debug. Syntax, indentation, major-mode hooks and
+;;; prompts keep their own modes: a state is a local keymap over the buffer's
+;;; own. Registers, searches, dot and macros are shared; modal input is
+;;; buffer-local.
 
-(defvar vim-shift-width 4 "Spaces added or removed by > and <.")
-(defvar vim-search-wrap t "Whether Vim searches wrap around the buffer.")
-(defvar vim-registers nil "Alist of register names and (TEXT TYPE) values.")
-(defvar vim-last-change nil "Last repeatable edit, as (ACTION INSERT-DIFF).")
-(defvar vim-search-pattern nil "Last Vim search pattern.")
-(defvar vim-search-direction 1 "Direction of the last / or ? search.")
-(defvar vim-search-regexp t "Whether the last search uses a regular expression.")
-(defvar vim-last-find nil "Last f/F/t/T, as (KEY CHARACTER).")
-(defvar vim-recording-register nil "Register receiving a keyboard macro.")
-(defvar vim-last-macro-register nil "Register last executed by @.")
-(defvar vim--replaying nil "Internal guard against replacing dot during replay.")
-(defvar global-vim-mode nil "Whether to enable Vim automatically in eligible buffers.")
-(defvar vim-mode-modes nil "Major modes that enable Vim even when global-vim-mode is nil.")
+(defvar vim-shift-width 4 "How many columns > and < shift a line by.")
+(defvar vim-search-wrap t
+  "Whether a Vim search goes on from the other end of the buffer when it
+reaches one. :set nowrapscan sets it to nil.")
+(defvar vim-registers nil
+  "Vim's registers, shared by every buffer: a list of (NAME TEXT TYPE), NAME a
+string such as \"a\" and TYPE char, line, block or macro.")
+(defvar vim-last-change nil "The edit . repeats, in a form of Vim's own.")
+(defvar vim-search-pattern nil
+  "The pattern the last Vim search looked for, which n, N and an empty / look
+for again.")
+(defvar vim-search-direction 1
+  "1 when the last Vim search went forward, -1 when it went backward.")
+(defvar vim-search-regexp t
+  "Whether the last Vim search pattern is a regular expression; every search
+Vim makes sets it to t.")
+(defvar vim-last-find nil
+  "The last f, F, t or T, as (KEY CHARACTER), which ; and , repeat.")
+(defvar vim-recording-register nil
+  "The register q is recording keys into, or nil.")
+(defvar vim-last-macro-register nil
+  "The register the last @ played, which @@ plays again.")
+(defvar vim--replaying nil
+  "Non-nil while . replays an edit, so that the replay is not recorded in its
+place.")
+(defvar global-vim-mode nil
+  "Whether Vim turns itself on in every buffer that suits it. The command of
+the same name sets it, and applies it.")
+(defvar vim-mode-modes nil
+  "The major modes Vim turns itself on in, whatever `global-vim-mode' says: a
+list of symbols. Run `vim-mode-refresh' after changing it.")
 (defvar vim-mode-excluded-modes
   '(minibuffer-mode completion-mode dired-mode help-mode manpage-mode
     backtrace-mode buffer-list-mode theme-list-mode shell-output-mode occur-mode compilation-mode)
-  "Major modes excluded from automatic activation. Manual vim-mode still works.")
+  "The major modes Vim never turns itself on in: a list of symbols, at first
+the editor's listings and buffers of its own. M-x vim-mode still turns it on
+there.")
 (defvar vim-mode-predicate 'vim-default-buffer-p
-  "Function called without arguments in each buffer to decide automatic eligibility.
-Nil accepts all buffers outside vim-mode-excluded-modes, except the minibuffer.")
+  "The function, of no arguments, that says whether the current buffer suits
+automatic Vim, or nil for every buffer. At first `vim-default-buffer-p'.")
 
-(defun vim--min (a b) (if (< a b) a b))
-(defun vim--max (a b) (if (> a b) a b))
-(defun vim--state () (buffer-get 'vim-state))
-(defun vim--visual-p () (member (vim--state) '(visual visual-line visual-block)))
+(defun vim--min (a b)
+  "The smaller of A and B."
+  (if (< a b) a b))
+(defun vim--max (a b)
+  "The larger of A and B."
+  (if (> a b) a b))
+(defun vim--state ()
+  "This buffer's Vim state: normal, insert, replace, visual, visual-line or
+visual-block, or nil when Vim is off."
+  (buffer-get 'vim-state))
+(defun vim--visual-p ()
+  "Whether this buffer is in one of the three Visual states."
+  (member (vim--state) '(visual visual-line visual-block)))
 (defun vim--char (at)
+  "The character at AT, as a string, or \"\" outside the buffer."
   (if (and (>= at 0) (< at (point-max))) (buffer-substring at (+ at 1)) ""))
-(defun vim--space-p (c) (or (string= c "") (string-match-p "^[[:space:]]$" c)))
+(defun vim--space-p (c)
+  "Whether the character C is white space, or \"\"."
+  (or (string= c "") (string-match-p "^[[:space:]]$" c)))
 (defun vim--class (at big)
+  "The class of the character at AT for the word motions: 0 for white space,
+1 for a word character, 2 for punctuation; with BIG, 1 for both."
   (let ((c (vim--char at)))
     (cond ((vim--space-p c) 0)
           (big 1)
           ((string-match-p "^[[:alnum:]_]$" c) 1)
           (t 2))))
 (defun vim--bol (at)
+  "Where the line holding AT begins."
   (let ((saved (point)))
     (goto-char at) (beginning-of-line)
     (let ((answer (point))) (goto-char saved) answer)))
 (defun vim--eol (at)
+  "Where the line holding AT ends, before its newline."
   (let ((saved (point)))
     (goto-char at) (end-of-line)
     (let ((answer (point))) (goto-char saved) answer)))
-(defun vim--line-end (at) (vim--min (point-max) (+ (vim--eol at) 1)))
+(defun vim--line-end (at)
+  "Where the line holding AT ends, after its newline."
+  (vim--min (point-max) (+ (vim--eol at) 1)))
 (defun vim--line-number (at)
+  "The number of the line holding AT, from 1."
   (let ((saved (point)))
     (goto-char at)
     (let ((line (line-number-at-point))) (goto-char saved) line)))
 (defun vim--first (at)
+  "The first character of the line holding AT that is not a space or a tab."
   (let ((start (vim--bol at)) (end (vim--eol at)))
     (while (and (< start end) (member (vim--char start) '(" " "\t")))
       (setq start (+ start 1)))
     start))
 (defun vim--clamp ()
-  "Normal point sits on a character, or at the beginning of an empty line."
+  "Put point back on the last character of its line, where Normal state keeps
+it, unless the line is empty."
   (let ((end (vim--eol (point))))
     (when (and (= (point) end) (> end (vim--bol (point))))
       (goto-char (- end 1)))))
 (defun vim--reset ()
+  "Forget the count, the operator, the register and the key waiting for the
+rest of a command."
   (dolist (key '(vim-count vim-operator vim-op-count vim-pending vim-register vim-object))
     (buffer-put key nil)))
 (defun vim--set-state (state)
+  "Put this buffer in Vim state STATE, with its keymap and its name on the
+status line."
   (buffer-put 'vim-state state)
   (set-local-keymap (cond ((eq state 'insert) 'vim-insert-map) ((eq state 'replace) 'vim-replace-map) (t 'vim-normal-map)))
   (buffer-put 'mode-line-state
@@ -77,7 +126,8 @@ Nil accepts all buffers outside vim-mode-excluded-modes, except the minibuffer."
   (set-echo-message (concat "-- " (buffer-get 'mode-line-state) " --")))
 
 (defun vim--enable ()
-  "Enable once, preserving an active Insert/Visual session on subsequent calls."
+  "Turn Vim on in this buffer; when it is on, keep its state, and put its
+keymap back if a mode replaced it."
   (if (vim--state)
       (let ((map (cond ((eq (vim--state) 'insert) 'vim-insert-map)
                        ((eq (vim--state) 'replace) 'vim-replace-map)
@@ -91,6 +141,8 @@ Nil accepts all buffers outside vim-mode-excluded-modes, except the minibuffer."
         (buffer-put 'vim-saved-mode-line-state (buffer-get 'mode-line-state))
         (vim--reset) (deactivate-mark) (vim--set-state 'normal) (vim--clamp))))
 (defun vim--disable ()
+  "Turn Vim off in this buffer, giving back the keymap and the status line it
+had."
   (when (vim--state)
     (when (member (vim--state) '(insert replace)) (vim--finish-insert))
     (when (member (buffer-get 'local-keymap) '(vim-normal-map vim-insert-map vim-replace-map))
@@ -102,25 +154,30 @@ Nil accepts all buffers outside vim-mode-excluded-modes, except the minibuffer."
     (vim--reset) (deactivate-mark) (set-echo-message "Vim mode disabled")))
 
 (defcommand vim-mode (&optional enabled) ("P")
-  "Toggle Vim in this buffer. t/positive enables, zero/negative disables, nil toggles.
-This explicit buffer preference survives automatic refreshes and major-mode changes.
-Use vim-mode-auto to return the buffer to the automatic policy."
+  "Turn Vim's keys on in this buffer, or off when they are on. ENABLED t or a
+positive number turns them on, 0 or a negative number off. A buffer turned on
+or off so keeps its choice whatever the automatic rules say, until
+`vim-mode-auto'."
   (if (if enabled (if (numberp enabled) (> enabled 0) t) (not (vim--state)))
       (progn (buffer-put 'vim-mode-override 'enabled) (vim--enable))
       (vim-mode-disable)))
 (defcommand vim-mode-enable () nil
-  "Enable Vim explicitly without resetting its current editing state."
+  "Turn Vim on in this buffer; when it is on already, keep its state, an
+Insert session or a command half typed."
   (vim-mode t))
 (defcommand vim-mode-disable () nil
-  "Disable Vim explicitly in this buffer and restore its previous local keymap."
+  "Turn Vim off in this buffer, and give it back the keymap it had before."
   (buffer-put 'vim-mode-override 'disabled)
   (vim--disable))
 (defun vim-default-buffer-p ()
-  "Accept file buffers, ordinary named buffers and *scratch*, excluding service buffers."
+  "Non-nil when the current buffer suits automatic Vim: it visits a file, is
+*scratch*, or has a name that does not start with a *, as the editor's own
+buffers do. The first value of `vim-mode-predicate'."
   (or (buffer-file-name) (string= (current-buffer) "*scratch*")
       (not (string-prefix-p "*" (current-buffer)))))
 (defun vim--apply-policy ()
-  "Apply the automatic policy in the current buffer, respecting manual overrides."
+  "Turn Vim on or off in this buffer as the automatic rules say, unless it
+was turned on or off by hand."
   (let ((preference (buffer-get 'vim-mode-override)))
     (cond ((eq preference 'enabled) (vim--enable))
           ((eq preference 'disabled) (vim--disable))
@@ -131,37 +188,47 @@ Use vim-mode-auto to return the buffer to the automatic policy."
            (vim--enable))
           (t (vim--disable)))))
 (defcommand vim-mode-refresh () nil
-  "Reapply current Vim policy to every existing buffer, retaining manual preferences."
+  "Apply the automatic rules again to every buffer, after `global-vim-mode',
+`vim-mode-modes', `vim-mode-excluded-modes' or `vim-mode-predicate' has
+changed. A buffer turned on or off by hand stays so."
   (dolist (name (all-buffer-names))
     (when (major-mode name)
       (with-current-buffer name (lambda () (vim--apply-policy))))))
 (defcommand vim-mode-auto () nil
-  "Clear this buffer's manual preference and apply the current automatic Vim policy."
+  "Give this buffer back to the automatic rules, after `vim-mode',
+`vim-mode-enable' or `vim-mode-disable' turned it on or off, and apply them."
   (buffer-put 'vim-mode-override nil)
   (vim--apply-policy))
 (defcommand global-vim-mode (&optional enabled) ("P")
-  "Toggle automatic Vim activation in existing and future eligible buffers.
-t/positive enables, zero/negative disables, nil toggles. Major modes listed in
-vim-mode-modes remain enabled independently; manual per-buffer choices take precedence."
+  "Turn Vim on in every buffer that suits it, those there are and those to
+come, or off when it is on. ENABLED t or a positive number turns it on, 0 or a
+negative number off. A buffer turned on by hand, and one whose major mode is
+in `vim-mode-modes', keeps Vim either way."
   (setq global-vim-mode
     (if enabled (if (numberp enabled) (> enabled 0) t) (not global-vim-mode)))
   (vim-mode-refresh)
   global-vim-mode)
 (defcommand vim-normal-state () nil
-  "Finish insertion or Visual mode, or cancel an unfinished Vim command."
+  "Go back to Normal state: leave Insert, Replace or Visual state, or cancel
+a command half typed."
   (when (member (vim--state) '(insert replace)) (vim--finish-insert))
   (remove-overlays 'vim-selection)
   (vim--reset) (buffer-put 'vim-anchor nil)
   (deactivate-mark) (vim--set-state 'normal) (vim--clamp))
-(defun vim--number () (or (buffer-get 'vim-count) 1))
+(defun vim--number ()
+  "The count typed before the command, or 1."
+  (or (buffer-get 'vim-count) 1))
 (defun vim--digit (key)
+  "Add the digit KEY to the count being typed."
   (buffer-put 'vim-count (+ (* (or (buffer-get 'vim-count) 0) 10) (string-to-number key)))
   (set-echo-message (number-to-string (buffer-get 'vim-count))))
 (defun vim--remember (action)
+  "Remember ACTION as the edit . repeats, unless . is repeating one."
   (when (not vim--replaying) (setq vim-last-change (list action nil))))
 
 ;;; Motions return (POSITION INCLUSIVE LINEWISE). Failed motions return nil.
 (defun vim--word-forward (at count big)
+  "Where the word COUNT words after AT begins; with BIG, the WORD."
   (dotimes (i count)
     (let ((class (vim--class at big)))
       (when (> class 0)
@@ -171,6 +238,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
         (setq at (+ at 1)))))
   at)
 (defun vim--word-backward (at count big)
+  "Where the word COUNT words before AT begins; with BIG, the WORD."
   (dotimes (i count)
     (setq at (vim--max 0 (- at 1)))
     (while (and (> at 0) (= (vim--class at big) 0)) (setq at (- at 1)))
@@ -179,6 +247,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
         (setq at (- at 1)))))
   at)
 (defun vim--word-end (at count big)
+  "Where the word COUNT words from AT ends; with BIG, the WORD."
   (dotimes (i count)
     (setq at (vim--min (point-max) (+ at 1)))
     (while (and (< at (point-max)) (= (vim--class at big) 0)) (setq at (+ at 1)))
@@ -187,6 +256,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
         (setq at (+ at 1)))))
   (vim--min at (vim--max 0 (- (point-max) 1))))
 (defun vim--find (key c count)
+  "The motion of f, F, t or T, KEY, to the COUNTth C on this line, or nil."
   (let ((at (point)) (step (if (member key '("f" "t")) 1 -1))
         (start (vim--bol (point))) (end (vim--eol (point))) (found t))
     (dotimes (i count)
@@ -198,6 +268,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
       (when (member key '("t" "T")) (setq at (- at step)))
       (list at t nil))))
 (defun vim--match-pair ()
+  "The motion of %, to the bracket matching the first one from point on its
+line, or nil."
   (let ((at (point)) (end (vim--eol (point))) (open nil))
     (while (and (< at end) (not open))
       (when (member (vim--char at) '("(" ")" "[" "]" "{" "}")) (setq open at))
@@ -212,6 +284,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
           (when (> depth 0) (setq at (+ at step))))
         (when (= depth 0) (list at t nil))))))
 (defun vim--motion (key count &optional argument)
+  "Where the motion KEY goes COUNT times, as (POSITION INCLUSIVE LINEWISE),
+or nil; ARGUMENT is the character of f, F, t and T."
   (let ((at (point)) (answer nil))
     (setq answer
       (cond
@@ -278,14 +352,19 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
     answer))
 
 ;;; Registers retain the shape of text: character, line or block.
-(defun vim--register-value (name) (cdr (assoc name vim-registers)))
+(defun vim--register-value (name)
+  "The value of register NAME, (TEXT TYPE), or nil."
+  (cdr (assoc name vim-registers)))
 (defun vim--put-register (name value)
+  "Set register NAME to VALUE, (TEXT TYPE)."
   (setq vim-registers (cons (cons name value)
                           (let ((remaining vim-registers) (kept nil))
                             (dolist (entry remaining)
                               (when (not (string= (car entry) name)) (setq kept (cons entry kept))))
                             (reverse kept)))))
 (defun vim--save-text (text type operation)
+  "Save TEXT, of shape TYPE, deleted or yanked by OPERATION, in the registers
+Vim saves it in: the one named, the unnamed one, and 0, 1 to 9 or -."
   (let ((name (or (buffer-get 'vim-register) "\"")))
     (when (not (string= name "_"))
       (when (string-match-p "^[A-Z]$" name)
@@ -308,17 +387,23 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
                 (vim--put-register "-" value))))
       (kill-new text))))
 (defun vim--line-range (from to)
+  "The whole lines from FROM to TO, as (START END line)."
   (list (vim--bol (vim--min from to)) (vim--line-end (vim--max from to)) 'line))
 (defun vim--range (from motion)
+  "What an operator acts on from FROM to where MOTION goes, as (START END
+TYPE)."
   (let ((to (car motion)))
     (if (nth 2 motion) (vim--line-range from to)
         (list (vim--min from to)
               (vim--min (point-max) (+ (vim--max from to) (if (nth 1 motion) 1 0))) 'char))))
 (defun vim--visual-range ()
+  "The Visual selection, as (START END TYPE)."
   (let ((anchor (buffer-get 'vim-anchor)))
     (if (eq (vim--state) 'visual-line) (vim--line-range anchor (point))
         (list (vim--min anchor (point)) (vim--min (point-max) (+ (vim--max anchor (point)) 1)) 'char))))
 (defun vim--show-visual ()
+  "Draw the Visual selection: the region, a rectangle, or an overlay on its
+lines."
   (remove-overlays 'vim-selection)
   (when (vim--visual-p)
     (set-mark (buffer-get 'vim-anchor) t)
@@ -327,6 +412,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
            (let ((range (vim--visual-range)))
              (make-overlay (car range) (nth 1 range) 'region 100 'vim-selection))))))
 (defun vim--visual (state)
+  "Enter Visual state STATE, or go back to Normal state when already in it."
   (if (eq (vim--state) state) (vim-normal-state)
       (progn
         (when (not (vim--visual-p)) (buffer-put 'vim-anchor (point)))
@@ -334,6 +420,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
 
 ;;; Text objects: words/WORDS, balanced delimiters, quotes, paragraphs.
 (defun vim--object (key around count)
+  "The text object KEY around point, COUNT of them, as (START END TYPE), or
+nil; AROUND for a, not i."
   (let ((at (point)) (start nil) (end nil) (type 'char))
     (cond
       ((member key '("w" "W"))
@@ -392,19 +480,26 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
     (when start (list start end type))))
 
 (defun vim--begin-insert (action)
+  "Enter Insert state for ACTION, remembering the text, so that leaving can
+tell what was typed."
   (buffer-put 'vim-insert-before (buffer-string))
   (buffer-put 'vim-insert-start (point))
   (buffer-put 'vim-insert-action action)
   (buffer-put 'vim-insert-join nil)
   (vim--set-state 'insert))
 (defun vim--pre-command ()
+  "Before each command of an Insert session, join its edits into one undo
+step."
   (when (and (member (vim--state) '(insert replace)) (buffer-get 'vim-insert-join)) (undo-join)))
 (defun vim--post-command ()
+  "After each command, mark an Insert session as under way, and draw the
+Visual selection again."
   (when (member (vim--state) '(insert replace)) (buffer-put 'vim-insert-join t))
   (when (not (eq (vim--state) 'visual-line)) (remove-overlays 'vim-selection))
   (when (vim--visual-p) (vim--show-visual)))
 (defun vim--finish-insert ()
-  "Record a replacement diff, including deletion, auto-pairing and paste."
+  "Leave an Insert or Replace session: type a counted insertion again, and
+record what changed for ."
   (let ((before (buffer-get 'vim-insert-before)) (action (buffer-get 'vim-insert-action)))
     (when before
       (let* ((change (string-diff before (buffer-string)))
@@ -425,6 +520,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
     (buffer-put 'vim-insert-join nil)
     (when (> (point) (vim--bol (point))) (goto-char (- (point) 1)))))
 (defun vim--insert-command (key count)
+  "Run i, a, I, A, o or O, KEY, COUNT times: move, open a line, and enter
+Insert state."
   (when (not (buffer-read-only-p))
     (cond ((string= key "a") (goto-char (vim--min (vim--eol (point)) (+ (point) 1))))
           ((string= key "I") (goto-char (vim--first (point))))
@@ -438,6 +535,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
     (vim--begin-insert (list (if (member key '("o" "O")) 'open 'insert) key count))
     (when (member key '("o" "O")) (buffer-put 'vim-insert-join t))))
 (defun vim--apply-range (operation range action)
+  "Apply the operator OPERATION to RANGE, (START END TYPE), recording ACTION
+for ."
   (let ((start (car range)) (end (nth 1 range)) (type (nth 2 range)))
     (when (and range (or (string= operation "y") (not (buffer-read-only-p))))
       (cond
@@ -483,12 +582,15 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
           (progn (vim--begin-insert action) (buffer-put 'vim-insert-join t))
           (vim--clamp)))))
 (defun vim--toggle-case (text)
+  "TEXT with the case of every letter swapped."
   (let ((result ""))
     (dotimes (i (length text))
       (let ((c (substring text i (+ i 1))))
         (setq result (concat result (if (string= c (upcase c)) (downcase c) (upcase c))))))
     result))
 (defun vim--operator-motion (key count &optional argument)
+  "Apply the pending operator to where the motion KEY goes COUNT times; the
+operator's own key again means whole lines."
   (let* ((operation (buffer-get 'vim-operator)) (from (point))
          (motion-key (if (and (string= operation "c") (member key '("w" "W"))
                              (> (vim--class from (string= key "W")) 0))
@@ -510,6 +612,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
         (vim--apply-range operation range (list 'operator operation key count argument))))
     (vim--reset)))
 (defun vim--start-operator (key)
+  "Start the operator KEY, or apply it to the Visual selection at once."
   (if (vim--visual-p)
       (if (eq (vim--state) 'visual-block)
           (vim--block-operation key)
@@ -521,6 +624,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
              (set-echo-message key))))
 
 (defun vim--block-spans ()
+  "The span on each line of the block selection, as (START END), top first."
   (let* ((at (point)) (anchor (buffer-get 'vim-anchor))
          (left (vim--min (- at (vim--bol at)) (- anchor (vim--bol anchor))))
          (right (+ 1 (vim--max (- at (vim--bol at)) (- anchor (vim--bol anchor)))))
@@ -531,6 +635,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
       (setq start (+ (vim--eol start) 1)))
     (reverse spans)))
 (defun vim--block-sized-spans (width height)
+  "Spans WIDTH wide on HEIGHT lines from point down: where . repeats a block
+operation."
   (let* ((saved (point)) (column (- saved (vim--bol saved)))
          (start (vim--bol saved)) (spans nil))
     (dotimes (i height)
@@ -540,6 +646,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
         (setq start (+ (vim--eol start) 1))))
     (reverse spans)))
 (defun vim--replicate-block-insert (inserted)
+  "Type INSERTED on the other rows of the block a change began with."
   (let ((block (buffer-get 'vim-block-insert)) (saved (point)))
     (when (and block (not (string-match-p "\n" inserted)))
       (dotimes (i (- (car block) 1))
@@ -550,6 +657,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
         (insert inserted)))
     (goto-char saved) (buffer-put 'vim-block-insert nil)))
 (defun vim--block-operation (key &optional given-spans)
+  "Apply d, c or y, KEY, to the block selection, or to GIVEN-SPANS."
   (when (and (member key '("d" "c" "y"))
              (or (string= key "y") (not (buffer-read-only-p))))
     (let ((spans (or given-spans (vim--block-spans))) (text "") (first t))
@@ -570,12 +678,15 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
               (buffer-put 'vim-block-insert (list (length spans) (- (point) (vim--bol (point))) (line-number-at-point))))
             (vim--clamp))))))
 (defun vim--split-lines (text)
+  "TEXT split into its lines, without their newlines."
   (let ((start 0) (rows nil))
     (dotimes (i (length text))
       (when (string= (substring text i (+ i 1)) "\n")
         (setq rows (cons (substring text start i) rows) start (+ i 1))))
     (reverse (cons (substring text start) rows))))
 (defun vim--paste (key count)
+  "Put the register's text COUNT times, after point for p and before it for
+P, KEY, in its shape."
   (let* ((name (or (buffer-get 'vim-register) "\""))
          (value (vim--register-value name)) (at (point)))
     (when (and value (not (buffer-read-only-p)))
@@ -619,6 +730,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
 
 ;;; Search uses the editor's regex scanner and character offsets.
 (defun vim--search-next (direction count)
+  "Go to the COUNTth match of the last search, forward when DIRECTION is
+positive; nil when there is none."
   (when (and vim-search-pattern (not (string= vim-search-pattern "")))
     (let* ((scan (scan-buffer vim-search-pattern vim-search-regexp 1000000))
            (matches (nth 1 scan)) (original (point)) (found nil))
@@ -633,6 +746,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
       (when (not found) (goto-char original) (set-echo-message "Pattern not found"))
       found)))
 (defun vim--search-confirm (input)
+  "Search for INPUT, or for the last pattern when it is empty: what / and ?
+do with their answer."
   (when (not (string= input "")) (setq vim-search-pattern input vim-search-regexp t))
   (let ((from (point)) (operation (buffer-get 'vim-operator))
         (count (* (vim--number) (or (buffer-get 'vim-op-count) 1))))
@@ -645,11 +760,15 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
                                 (list 'search operation vim-search-direction count)))))
       (error (set-echo-message "Invalid search pattern")))
     (vim--reset) (vim--clamp) (vim--show-visual)))
-(defun vim--search-cancel () (vim--reset))
+(defun vim--search-cancel ()
+  "Forget the command a search prompt was part of, as the prompt closes."
+  (vim--reset))
 (defun vim--search-prompt (key)
+  "Ask for a pattern, to search forward for / and backward for ?, KEY."
   (setq vim-search-direction (if (string= key "/") 1 -1))
   (minibuffer-read key 'vim--search-confirm nil 'vim--search-cancel))
 (defun vim--search-word (key count)
+  "Search for the word at point, forward for * and backward for #, KEY."
   (let ((range (vim--object "w" nil 1)))
     (when range
       (setq vim-search-pattern (buffer-substring (car range) (nth 1 range))
@@ -661,6 +780,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
       (vim--search-next vim-search-direction count))))
 
 (defun vim--join (count)
+  "Join COUNT lines, two at least, dropping the indentation of each joined
+one."
   (when (not (buffer-read-only-p))
     (dotimes (i (vim--max 1 (- count 1)))
       (let ((end (vim--eol (point))))
@@ -671,6 +792,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
               (insert " ") (goto-char end))))))
     (vim--remember (list 'join count))))
 (defun vim--replace (c count)
+  "Replace COUNT characters at point with C, for r."
   (let ((at (point)))
     (when (and (not (buffer-read-only-p)) (<= (+ at count) (vim--eol at)))
       (delete-region at (+ at count)) (goto-char at)
@@ -678,6 +800,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
       (goto-char (vim--max at (- (point) 1)))
       (vim--remember (list 'replace c count)))))
 (defun vim--repeat (count explicit)
+  "Repeat the last edit, for .; EXPLICIT when COUNT was typed."
   (when vim-last-change
     (let* ((saved vim-last-change) (action (car saved)) (diff (nth 1 saved))
            (kind (car action)) (was-replaying vim--replaying))
@@ -727,21 +850,27 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
         (setq vim--replaying was-replaying vim-last-change saved)))))
 
 (defun vim--mark-set (key)
+  "Set the mark KEY at point: a lowercase letter for this buffer, an
+uppercase one with the buffer."
   (when (string-match-p "^[a-zA-Z]$" key)
     (if (string-match-p "^[A-Z]$" key)
         (put 'vim-marks (intern key) (list (current-buffer) (point)))
         (buffer-put (concat "vim-mark-" key) (point)))))
 (defun vim--mark-jump (key exact)
+  "Go to the mark KEY: to its character with EXACT, else to the first
+nonblank of its line; nil when it is not set."
   (let ((target (buffer-get (concat "vim-mark-" key))))
     (when (string-match-p "^[A-Z]$" key)
       (let ((saved (get 'vim-marks (intern key))))
         (when saved (switch-to-buffer (car saved)) (setq target (nth 1 saved)))))
     (when target (goto-char target) (when (not exact) (goto-char (vim--first (point)))) t)))
 (defun vim--macro-start (register)
+  "Start recording keys into REGISTER, a letter."
   (when (and (string-match-p "^[a-zA-Z]$" register) (not (kmacro-recording-p)))
     (setq vim-recording-register register)
     (kmacro-start-macro)))
 (defun vim--macro-stop ()
+  "Stop recording, and store the keys in the register they were for."
   (kmacro-end-macro)
   (let ((keys (kbd-macro-keys)) (name vim-recording-register))
     ;; q is dispatched through vim--key, so the recorder sees its terminating key.
@@ -754,6 +883,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
       (vim--put-register name (list keys 'macro))))
   (setq vim-recording-register nil))
 (defun vim--macro-call (key count)
+  "Play the macro in register KEY, or the one played last for @, COUNT times."
   (let* ((name (if (string= key "@") vim-last-macro-register key))
          (value (when name (vim--register-value name))))
     (when (and value (eq (nth 1 value) 'macro))
@@ -762,6 +892,7 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
 
 ;;; Ex commands deliberately use existing save/quit safety and prompts.
 (defun vim--ex-confirm (input)
+  "Run the Ex command INPUT: what : does with its answer."
   (let ((command input))
     (cond
       ((or (string-match-p "^s[^[:alnum:] ]" command) (string-prefix-p "%s" command)
@@ -796,11 +927,13 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
       ((string-match-p "^[0-9]+$" command) (goto-line (string-to-number command)) (vim--clamp))
       (t (set-echo-message (concat "Unsupported Ex command: " command))))))
 (defun vim--ex ()
+  "Ask for an Ex command, leaving Visual state."
   (when (vim--visual-p)
     (vim--set-state 'normal) (deactivate-mark) (remove-overlays 'vim-selection))
   (minibuffer-read ":" 'vim--ex-confirm nil nil))
 
 (defun vim--pending-key (pending key)
+  "Finish with KEY the command PENDING, which waits for one more key."
   (buffer-put 'vim-pending nil)
   (let ((count (* (vim--number) (or (buffer-get 'vim-op-count) 1))))
     (cond
@@ -859,11 +992,13 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
              ((string= key "c") (delete-window))) (vim--reset)))))
 
 (defun vim--key (key)
-  "Dispatch one Normal/Visual key. Counts and incomplete commands are local."
+  "Run the Normal or Visual state key KEY, reporting an error in the echo
+area."
   (condition-case error
       (vim--dispatch key)
     (error (vim--reset) (message "Vim: %s" error))))
 (defun vim--dispatch (key)
+  "Run the Normal or Visual state key KEY."
   (when (string= key " ") (setq key "<space>"))
   (when (vim--visual-p)
     (buffer-put 'vim-last-visual (list (buffer-get 'vim-anchor) (point) (vim--state))))
@@ -935,11 +1070,14 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
 
 ;;; Replace sessions use the same diff and undo contract as Insert.
 (defun vim--replace-mode (count)
+  "Enter Replace state, for R."
   (when (not (buffer-read-only-p))
     (vim--begin-insert (list 'replace-mode count))
     (buffer-put 'vim-replace-stack nil)
     (vim--set-state 'replace)))
 (defun vim--replace-key (key)
+  "Type KEY in Replace state: overwrite a character, give one back for
+Backspace, or leave."
   (cond
     ((member key '("<esc>" "C-[" "C-c")) (vim-normal-state))
     ((member key '("<backspace>" "C-h"))
@@ -960,13 +1098,15 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
        (buffer-put 'vim-replace-stack (cons (list at old (length text)) (buffer-get 'vim-replace-stack)))))))
 
 (defun vim--regexp-quote (text)
+  "TEXT with every character a regular expression gives a meaning to escaped."
   (let ((answer ""))
     (dotimes (i (length text))
       (let ((c (substring text i (+ i 1))))
         (setq answer (concat answer (if (member c '("\\" "." "+" "*" "?" "(" ")" "[" "]" "{" "}" "^" "$" "|")) "\\" "") c))))
     answer))
 (defun vim--ex-field (text start delimiter &optional replacement)
-  "Read one delimiter-separated field, returning (FIELD NEXT), or nil."
+  "The field of TEXT from START to the next DELIMITER, as (FIELD NEXT), or
+nil when no DELIMITER ends it; with REPLACEMENT, the rest of TEXT then."
   (let ((at start) (field "") (finished nil))
     (while (and (< at (length text)) (not finished))
       (let ((c (substring text at (+ at 1))))
@@ -979,6 +1119,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
       (setq at (+ at 1)))
     (if (or finished replacement) (list field at) nil)))
 (defun vim--expand-replacement (replacement subject)
+  "REPLACEMENT with &, \\1 to \\9, \\t, \\n and \\r expanded from the last
+match in SUBJECT."
   (let ((at 0) (answer ""))
     (while (< at (length replacement))
       (let ((c (substring replacement at (+ at 1))))
@@ -993,7 +1135,8 @@ vim-mode-modes remain enabled independently; manual per-buffer choices take prec
       (setq at (+ at 1)))
     answer))
 (defun vim--substitute (input)
-  "Support :s, :%s, :N,Ms and :'<,'>s with g/i flags, & and numbered captures."
+  "Run the substitution INPUT -- :s, :%s, :N,Ms or :'<,'>s -- on the lines it
+names."
   (let ((at 0) (start (vim--bol (point))) (end (vim--line-end (point))) (range nil))
     (cond
       ((string-prefix-p "%s" input) (setq at 1 start 0 end (point-max)))

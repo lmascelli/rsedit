@@ -1236,6 +1236,80 @@ fallisce senza la correzione:
   viene ripresa, e il comando dopo ne apre una sua;
 - `shell-command-start` è una funzione e non più un comando.
 
+*Passo 9, fatto.* `vim` è riscritta sul modello. La SYNOPSIS passa da tre nomi
+a ventuno: i sette comandi, `vim-default-buffer-p` e le tredici variabili che
+si impostano o si leggono, e la pagina è la casa di tutti. Le tabelle dei
+tasti restano, scritte per chi preme i tasti e non per chi ha scritto il
+modulo, e due sezioni sono nuove: WHAT VIM REMEMBERS, le otto variabili che
+vim condivide fra i buffer e che un programma può leggere, e KEYMAPS, le tre
+mappe in cui `define-key` cambia quello che fa un tasto, con un esempio. KEYS
+IN VIM INSERT MAP elenca i cinque tasti di Insert legati a un comando, che i
+test controllano; `C-u`, legato a una forma, è descritto nel testo. I tasti di
+Normal restano nelle tabelle, perché la mappa lega ogni tasto stampabile a una
+forma che lo passa a `vim--key`, e una sezione KEYS direbbe solo questo. EX
+COMMANDS aggiunge `:w!`, `:noh`, `:h` e il `\t` delle sostituzioni, che il
+modulo accettava e la pagina non diceva. Escono i paragrafi per chi sviluppa,
+sulle primitive generiche che il modulo usa e sul «globalized buffer-local
+mode» di Emacs, e il consiglio sull'ordine in cui caricare il modulo, che
+`configuration` dà per tutti i moduli; la SEE ALSO, che mancava, nomina nove
+pagine, e `guide` riporta il NAME nuovo.
+
+Le 76 funzioni e le 15 variabili di `vim.lisp` hanno una docstring sul
+modello. Le 68 funzioni private che non l'avevano ne hanno una di una riga o
+due, che dice che cosa fanno o che cosa restituiscono; quelle dei comandi, di
+`vim-default-buffer-p` e delle variabili sono riscritte per chi le legge con
+`C-h f` e `C-h v`, e la più lunga, quella di `global-vim-mode`, ha 270
+caratteri. L'intestazione di `vim.lisp` dice che cosa fa il modulo e rimanda
+alla pagina; gli altri commenti spiegano il codice, e restano alla fase C.
+L'elenco dei nomi senza casa perde i diciotto nomi del passo 9, e quello delle
+funzioni senza docstring i suoi 68.
+
+Con il passo 9 la fase B è finita. Gli elenchi delle eccezioni che il passo 1
+aveva aperto sono vuoti: ogni nome pubblico ha una casa, ogni funzione dei
+moduli Lisp ha una docstring, nessuna docstring supera i 1 000 caratteri e
+ogni nome citato è un nome che l'editor definisce. Resta pieno solo l'elenco
+dei nomi citati che a ragione non sono dell'editor: le forme speciali come
+`defun` e `yield`, i hook, i simboli che una funzione prende o restituisce. Un
+nome pubblico nuovo senza casa, una funzione nuova senza docstring o una
+docstring troppo lunga fanno fallire i test.
+
+La pagina vecchia era esatta quasi ovunque. Diceva che `I` e `A` in una
+selezione a blocco non ci sono, e invece inseriscono sulla riga del punto,
+come in Normal; e che i comandi prendono il prefisso grezzo di Emacs, mentre
+`C-u -` accende vim invece di spegnerlo (il quarto difetto qui sotto).
+
+La pagina scrive i limiti che il passo ha provato sull'editor, tasto per
+tasto: `C-o` in Insert apre una riga, come senza vim; un mark è una posizione,
+e il testo inserito prima se ne allontana; in un blocco `I` e `A` inseriscono
+sulla riga del punto, e un cambiamento si ripete su ogni riga solo quando il
+suo testo sta su una riga; il conteggio davanti a `R` non conta, e `.` non
+ripete una sostituzione; `=` senza il modulo `indent` non fa nulla; `C-w h`,
+`j`, `k` e `l` vanno alla finestra dopo, e `z` seguito da un tasto qualsiasi
+ricentra la finestra; i tasti che sfogliano contano l'altezza del frame. In
+Visual `:` lascia la selezione, e `'<,'>` va scritto.
+
+Il passo ha trovato quattro difetti del codice, che non corregge:
+
+- `ge` dal primo carattere di una parola va alla fine della parola prima di
+  quella precedente, e `dge` cancella altrettanto di più: dalla `t` di
+  `three`, in `one two three`, va alla `e` di `one`. Il ramo `"ge"` di
+  `vim--motion` va all'inizio della parola con `vim--word-backward`, e da lì
+  alla fine della parola prima; ma dal primo carattere `vim--word-backward` va
+  già all'inizio della parola precedente;
+- un conteggio davanti a `@` o `@@` conta anche per il primo comando della
+  macro: con `a` che cancella un carattere, `3@a` ne cancella cinque.
+  `kmacro-call-keys` ripete i tasti subito, prima che `vim--reset` azzeri il
+  conteggio, e il primo `x` lo trova ancora;
+- `ap` è `ip`, e le righe vuote dopo il paragrafo restano: il ramo `"p"` di
+  `vim--object` prende la fine da `forward-paragraph`, che si ferma prima
+  delle righe vuote, e con `a` non le aggiunge;
+- `C-u -` davanti a `M-x vim-mode` o `M-x global-vim-mode` accende invece di
+  spegnere: il prefisso grezzo è il simbolo `-`, che i due comandi trattano
+  come un valore vero; `C-u -1` spegne. Il test
+  `interactive_global_toggle_honors_negative_prefix_argument` non se ne
+  accorge: preme `C--`, che non è legato a nulla e quindi non dà un prefisso,
+  e passa perché il tasto senza prefisso spegne quello che è acceso.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),
@@ -1246,7 +1320,7 @@ fallisce senza la correzione:
   [6], [prompt, completamento, tasti, aiuto (fatto)], [`completion`, `keymaps`, `getting-help`], [`minibuffer`, `completion`, `help`, `commands`, il resto di `general`], [`minibuffer`, `completion`, `completion-at-point`, `help`, `manpage`, `preview`, `common-keymaps`; nuova: `minibuffer`],
   [7], [modi e aspetto (fatto)], [`modes`, `themes`, `overlays`, `virtual-text`], [`modes`, `theme`, `overlays`, `virtual_text`], [`rust-mode`, `risp-mode`, `cc-mode`, `theme`; nuova: `writing-modes`],
   [8], [estendere l'editor (fatto)], [`writing-commands` \ `background`], [`workers`, `shell`], [`shell`; nuova: `shell`],
-  [9], [vim], [`vim`], [---], [`vim`],
+  [9], [vim (fatto)], [`vim`], [---], [`vim`],
 )
 
 == Fase C --- il codice e i commenti (passi 10--21)

@@ -4,24 +4,3 @@
 # a name here that has a page now, or no longer exists, is taken out. The
 # list only shrinks: each step of doc/documentazione.typ gives a home to the
 # names of its area.
-
-# -- passo 9: vim
-# lisp/vim.lisp
-vim-default-buffer-p
-vim-last-change
-vim-last-find
-vim-last-macro-register
-vim-mode-auto
-vim-mode-enable
-vim-mode-excluded-modes
-vim-mode-modes
-vim-mode-predicate
-vim-mode-refresh
-vim-normal-state
-vim-recording-register
-vim-registers
-vim-search-direction
-vim-search-pattern
-vim-search-regexp
-vim-search-wrap
-vim-shift-width
