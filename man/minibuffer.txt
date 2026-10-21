@@ -14,6 +14,7 @@ SYNOPSIS
     (pending-command)
     (eval-expression-prompt)
     (eval-expression-confirm INPUT)
+    (eval-string-top-level STRING)
     history-length
     minibuffer-width
     minibuffer-height
@@ -62,6 +63,12 @@ EVALUATING AN EXPRESSION
     error in place of => and the value. Both stay in the log, where C-h e
     finds them.
 
+    The expression is evaluated as init.lisp is, outside any function, so
+    what it defines -- a function, a variable, a command -- is the
+    editor's from then on, and a function defined again works the new way
+    at once. `eval-string-top-level' evaluates a string so from Lisp, and
+    returns (t VALUE), or (nil WHY) when it fails.
+
 PREVIEWS
     While C-x r t asks for its string, what you type is drawn on every line
     of the block, and goes when you answer or close the prompt. It is drawn
@@ -101,13 +108,6 @@ REPLACING THE PROMPT
     `minibuffer-complete', and closing it runs `minibuffer-cleanup', which
     makes the buffer you were in current again.
 
-LIMITS
-    What M-: defines lasts only as long as the expression: a defun, a
-    defvar or a defcommand evaluated there, and what a file loaded there
-    with eval-file defines, are gone once it returns. A variable that has
-    a value already is set as asked. The `writing-commands' page says how
-    to load definitions again in a running editor.
-
 EXAMPLES
     A narrower prompt:
 
@@ -128,6 +128,10 @@ EXAMPLES
     Forget the commands M-x remembers:
 
         (clear-minibuffer-history "M-x")
+
+    Define a function from Lisp as M-: would:
+
+        (eval-string-top-level "(defun twice (n) (* 2 n))")
 
 KEYS
     M-:                     eval-expression-prompt

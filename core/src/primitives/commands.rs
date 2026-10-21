@@ -258,11 +258,18 @@ fn argument_title<B: BufferTrait>(spec: &ArgSpec, ctx: &EditorState<B>) -> Strin
     }
 }
 
-/// Convert the raw minibuffer input to the value the command should receive.
-fn convert_arg<B: BufferTrait>(spec: &ArgSpec, input: &str) -> ELispExp<B> {
+/// Convert the raw minibuffer input to the value the command should receive,
+/// or `None` when it is not one: a number argument given anything but a
+/// number, nothing included.
+fn convert_arg<B: BufferTrait>(spec: &ArgSpec, input: &str) -> Option<ELispExp<B>> {
     match spec {
-        ArgSpec::Number { .. } => ELispExp::number(input.trim().parse::<f64>().unwrap_or(0.0)),
-        _ => ELispExp::string(input.to_string()),
+        ArgSpec::Number { .. } => input
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|number| number.is_finite())
+            .map(ELispExp::number),
+        _ => Some(ELispExp::string(input.to_string())),
     }
 }
 
@@ -290,7 +297,14 @@ primitive!(command_arg_confirm, args, env, ctx, {
         return Ok(ELispExp::nil());
     };
 
-    ctx.accept_pending_arg(convert_arg(&spec, &input));
+    // Asked again, as Emacs asks, rather than handed to the command as a
+    // value nobody typed. The prompt has closed already, and what was typed
+    // is in its history.
+    let Some(value) = convert_arg(&spec, &input) else {
+        ctx.set_echo_message("Please enter a number");
+        return prompt_for(&spec, env, ctx);
+    };
+    ctx.accept_pending_arg(value);
     advance_pending(env, ctx)
 });
 

@@ -80,6 +80,7 @@ mod shipped_lisp_tests;
 mod syntax_tests;
 mod theme_system_tests;
 mod theme_tests;
+mod top_level_tests;
 mod topic_source_tests;
 mod transient_tests;
 mod undo_tests;

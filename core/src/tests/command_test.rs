@@ -617,6 +617,39 @@ mod tests {
         );
     }
 
+    /// An answer that is not a number is asked for again, with the reason in
+    /// the echo area, rather than reaching the command as 0; so is no answer.
+    #[test]
+    fn a_numeric_argument_that_is_no_number_is_asked_for_again() {
+        let (ctx, env) = bare();
+        eval_str(
+            r#"(progn (setq probe nil)
+                      (defun probe-cmd (n) (setq probe n))
+                      (register-command 'probe-cmd '("nHow many: ")))"#,
+            &env,
+            &ctx,
+        )
+        .expect("setup");
+
+        ctx.handle_key_event(meta('x'), &env);
+        type_and_confirm(&ctx, &env, "probe-cmd");
+        type_and_confirm(&ctx, &env, "abc");
+        assert!(env.get_variable("probe").expect("bound").is_nil());
+        assert_eq!(ctx.get_echo_message(), "Please enter a number");
+        assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+
+        type_and_confirm(&ctx, &env, "");
+        assert!(env.get_variable("probe").expect("bound").is_nil());
+        assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+
+        type_and_confirm(&ctx, &env, "7");
+        assert_eq!(
+            env.get_variable("probe").expect("bound"),
+            LispExp::number(7.0)
+        );
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+    }
+
     /// A prompt closed by neither confirm nor cancel abandons its command; the
     /// next one must still collect its own argument and run normally.
     ///

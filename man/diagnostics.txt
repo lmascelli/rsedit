@@ -72,8 +72,7 @@ WHEN A MODULE DOES NOT LOAD
 
     A module with a syntax error is skipped without a word, for now. Load
     one you are writing with M-: (eval-file "NAME") and look at what comes
-    back: nil means it was not evaluated. What it defines does not stay,
-    as the `minibuffer' page says.
+    back: nil means it was not evaluated.
 
 WHEN THE EDITOR SEEMS STUCK
     The background work is watched from a thread of its own, and a step

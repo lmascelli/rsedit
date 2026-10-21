@@ -1216,6 +1216,26 @@ Il passo ha trovato quattro difetti del codice, che non corregge:
   `shell-command`, e la versione di `M-x` avvia il comando senza mostrare
   nulla, perché il buffer dell'uscita nasce senza finestra.
 
+*I difetti del passo 8 corretti.* Una patch a parte corregge i quattro
+difetti; le pagine non li descrivono più tra i limiti, e ognuno ha un test che
+fallisce senza la correzione:
+
+- `M-:` valuta l'espressione come `init.lisp`, fuori da ogni funzione, con la
+  primitiva nuova `eval-string-top-level`, che ha casa in `minibuffer`;
+  `eval-file` valuta il file allo stesso modo da dovunque la si chiami, e
+  cerca il file nel `lisp-path` del punto della chiamata. Una `defun`, una
+  `defvar` o una `defcommand` scritte con `M-:`, e ciò che definisce un file
+  caricato con `(eval-file ...)`, restano. `writing-commands` torna a proporre
+  `M-:` per provare un comando, e `configuration` e `diagnostics` tornano come
+  prima del passo 8;
+- con il codice `n`, una risposta che non è un numero, o nessuna risposta, è
+  rifiutata: l'area dei messaggi dice «Please enter a number» e il prompt
+  chiede di nuovo, come in Emacs;
+- `M-!` mostra l'uscita nella striscia del comando di prima, come `compile`
+  riusa la sua; una striscia chiusa con `q`, o data a un altro buffer, non
+  viene ripresa, e il comando dopo ne apre una sua;
+- `shell-command-start` è una funzione e non più un comando.
+
 #ref-table(
   columns: (1.3cm, 3.0cm, 3.5cm, 3.5cm, 1fr),
   header: ([Passo], [Area], [Pagine], [Primitive (`primitives/`)], [Moduli Lisp e pagine nuove]),

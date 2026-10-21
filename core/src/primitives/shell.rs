@@ -591,10 +591,11 @@ primitive!(parse_overstrike, args, _env, _ctx, {
 /// primitive's name, its implementation and its argument spec are one fact in
 /// three pieces, and they were two files apart.
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    into.command(
+    // A function and not a command: run from M-x it would start the command
+    // and show nothing. `shell-command` is the command that shows it.
+    into.function(
         "shell-command-start",
         shell_command_start,
-        &["sShell command: "],
         SHELL_COMMAND_START_DOC,
     );
     into.function(

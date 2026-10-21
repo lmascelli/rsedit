@@ -200,6 +200,65 @@ mod tests {
         assert_eq!(ctx.get_echo_message(), "(setq probe 42) => 42");
     }
 
+    /// Type SOURCE at M-: and press Return.
+    fn evaluate_at_meta_colon(
+        source: &str,
+        env: &Arc<Env<EditorState<GapBuffer>>>,
+        ctx: &EditorState<GapBuffer>,
+    ) {
+        eval_str("(eval-expression-prompt)", env, ctx).unwrap();
+        for c in source.chars() {
+            eval_str(&format!(r#"(self-insert "{c}")"#), env, ctx).unwrap();
+        }
+        eval_str("(minibuffer-confirm)", env, ctx).unwrap();
+    }
+
+    #[test]
+    fn what_meta_colon_defines_outlives_the_expression() {
+        // Evaluated inside `eval-expression-confirm`, a defun was that
+        // function's own and went when it returned; a function defined
+        // before stayed as it was.
+        let (ctx, env) = setup();
+        eval_str("(defun probe-old () 1)", &env, &ctx).unwrap();
+        evaluate_at_meta_colon("(defun probe-new () 7)", &env, &ctx);
+        evaluate_at_meta_colon("(defvar probe-var 5)", &env, &ctx);
+        evaluate_at_meta_colon("(setq probe-fresh 6)", &env, &ctx);
+        evaluate_at_meta_colon("(defun probe-old () 2)", &env, &ctx);
+        assert_eq!(
+            eval_str("(probe-new)", &env, &ctx).unwrap(),
+            LispExp::number(7.0)
+        );
+        assert_eq!(
+            eval_str("probe-var", &env, &ctx).unwrap(),
+            LispExp::number(5.0)
+        );
+        assert_eq!(
+            eval_str("probe-fresh", &env, &ctx).unwrap(),
+            LispExp::number(6.0)
+        );
+        assert_eq!(
+            eval_str("(probe-old)", &env, &ctx).unwrap(),
+            LispExp::number(2.0)
+        );
+    }
+
+    #[test]
+    fn a_command_defined_at_meta_colon_runs_from_m_x() {
+        // It used to be registered and not defined: M-x offered it, and
+        // running it failed with UndefinedFunction.
+        let (ctx, env) = setup();
+        eval_str(include_str!("../../lisp/commands.lisp"), &env, &ctx)
+            .unwrap_or_else(|e| panic!("loading commands.lisp failed: {e:?}"));
+        eval_str("(setq probe-ran nil)", &env, &ctx).unwrap();
+        evaluate_at_meta_colon(
+            "(defcommand probe-cmd () nil (setq probe-ran t))",
+            &env,
+            &ctx,
+        );
+        eval_str(r#"(execute-extended-command "probe-cmd")"#, &env, &ctx).unwrap();
+        assert!(eval_str("probe-ran", &env, &ctx).unwrap().is_truthy());
+    }
+
     #[test]
     fn the_command_m_colon_runs_is_one_m_x_reaches_too() {
         let (ctx, env) = setup();

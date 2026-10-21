@@ -202,6 +202,11 @@ impl<B: BufferTrait> EditorState<B> {
     /// it on the logs and doesn't evaluate anything otherwise evaluate it and if
     /// the evaluation succeeds return a list with the result of the evaluation or
     /// the error of the evaluation.
+    ///
+    /// `lisp_path` is read from ENV, and the file is evaluated at the top
+    /// level of it, as `top_level` finds it, wherever the call comes from: a
+    /// module loaded from inside a function, or with M-:, defines what
+    /// init.lisp would.
     pub fn eval_file(
         &self,
         file: &str,
@@ -278,8 +283,26 @@ impl<B: BufferTrait> EditorState<B> {
         };
 
         let _command = self.begin_command();
-        Ok(ELispExp::proper_list(vec![eval(&ast, env.clone(), self)?]))
+        let value = eval(&ast, top_level(&env), self)?;
+        Ok(ELispExp::proper_list(vec![value]))
     }
+}
+
+/// The environment at the root of ENV's chain: where init.lisp is evaluated.
+///
+/// A `defun`, a `defvar` or the `setq` of a new name binds in the
+/// environment it is evaluated in, so one evaluated inside a function is
+/// that function's own, and goes when it returns. What has to outlive the
+/// call -- a file being loaded, an expression typed at M-: -- is evaluated
+/// here instead.
+pub(crate) fn top_level<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+) -> Arc<Env<EditorState<B>>> {
+    let mut env = env.clone();
+    while let Some(parent) = env.parent.clone() {
+        env = parent;
+    }
+    env
 }
 
 /// Point this process's configuration, and its cache, at directories of its

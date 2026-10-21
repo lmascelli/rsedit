@@ -43,6 +43,10 @@ THE OUTPUT
     beginning and to its end, and q closes its window. The buffer stays
     when its window goes, for C-x b to come back to, until it is closed.
 
+    The next command's output takes the strip of the one before, whose
+    buffer stays. A strip closed with q, or given to another buffer since,
+    is not taken back: the next command opens one of its own.
+
 STOPPING ONE
     C-c C-k in the output stops its command, and so does closing the
     buffer. The command, and everything it started, is asked to stop, and
@@ -77,11 +81,6 @@ FROM LISP
     of PLAIN, from 0.
 
 LIMITS
-    Each M-! opens a strip of its own along the bottom, under those
-    already there, rather than showing its output in the strip of the
-    command before: in a frame of thirty rows the third leaves a single row
-    to the window you were working in. q in a strip closes it.
-
     A command that asks for a password at the terminal, as sudo and ssh
     may, cannot be given one: the system stops it as it asks, and it waits
     there until C-c C-k.
@@ -93,10 +92,6 @@ LIMITS
 
     On Windows a command is stopped at once, without the two seconds, and
     only the shell is: what it started goes on.
-
-    M-x offers shell-command-start beside shell-command, and it runs the
-    command without showing what it prints: the output buffer is made, and
-    no window shows it until C-x b.
 
 EXAMPLES
     The state of a git repository, from a key of its own:

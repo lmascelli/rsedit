@@ -7,9 +7,10 @@
 (defun eval-expression-confirm (input)
   "Evaluate INPUT, a string, and show it in the echo area with its value, or
 with the error when it fails."
-  ;; `eval-string-safe', so that a bad expression is reported rather than
+  ;; At the top level, so that what INPUT defines outlives this function; and
+  ;; with the failure caught, so that a bad expression is reported rather than
   ;; ending the confirm.
-  (let ((outcome (eval-string-safe input)))
+  (let ((outcome (eval-string-top-level input)))
     (if (car outcome)
         (message "%s => %s" input (nth 1 outcome))
         (message "%s !! %s" input (nth 1 outcome)))))

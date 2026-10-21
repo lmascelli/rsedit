@@ -741,4 +741,50 @@ mod tests {
         );
         settle(&ctx);
     }
+
+    #[test]
+    fn the_next_command_is_shown_in_the_strip_of_the_one_before() {
+        // Each used to open a strip of its own under the others, until the
+        // window being worked in was a single row.
+        let (ctx, env) = editor();
+        run(r#"(shell-command "echo one")"#, &env, &ctx);
+        let strips = ctx.window_count();
+        run(r#"(shell-command "echo two")"#, &env, &ctx);
+        run(r#"(shell-command "echo three")"#, &env, &ctx);
+        settle(&ctx);
+        assert_eq!(ctx.window_count(), strips);
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        run("(other-window 1)", &env, &ctx);
+        assert_eq!(ctx.get_current_buffer_name(), "*Shell Output*<3>");
+    }
+
+    #[test]
+    fn a_strip_closed_or_given_away_is_not_taken_back() {
+        let (ctx, env) = editor();
+        run(r#"(shell-command "echo one")"#, &env, &ctx);
+        run("(other-window 1) (delete-window)", &env, &ctx);
+        let alone = ctx.window_count();
+        run(r#"(shell-command "echo two")"#, &env, &ctx);
+        assert_eq!(ctx.window_count(), alone + 1, "a strip again");
+
+        // The strip given to a buffer of the user's: the next output gets a
+        // strip of its own, and the buffer keeps its window.
+        run(
+            r#"(other-window 1) (switch-to-buffer "*scratch*") (other-window 1)"#,
+            &env,
+            &ctx,
+        );
+        run(r#"(shell-command "echo three")"#, &env, &ctx);
+        settle(&ctx);
+        assert_eq!(ctx.window_count(), alone + 2);
+    }
+
+    #[test]
+    fn starting_a_command_without_showing_it_is_no_command() {
+        // From M-x it ran the command and showed nothing; `shell-command` is
+        // the command, and shows it.
+        let (ctx, env) = editor();
+        assert!(run("(commandp 'shell-command-start)", &env, &ctx).is_nil());
+        assert!(run("(commandp 'shell-command)", &env, &ctx).is_truthy());
+    }
 }

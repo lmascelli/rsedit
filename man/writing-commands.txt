@@ -41,8 +41,9 @@ THE ARGUMENTS
                     where it ends
 
     Those with a PROMPT ask for their arguments in turn, each in a prompt
-    that names the command; p, P and r ask nothing. nil for SPECS is a
-    command with no arguments.
+    that names the command; p, P and r ask nothing. An answer to "n" that
+    is not a number is refused, and the prompt asks again. nil for SPECS is
+    a command with no arguments.
 
         (defcommand surround (before after) ("sBefore: " "sAfter: ")
           "Put BEFORE and AFTER around the region."
@@ -117,24 +118,15 @@ WHEN SOMETHING HAPPENS
 
 TRYING IT OUT
     M-: evaluates an expression and says what it returned, so a command
-    can be tried before it has a key, as (surround "<" ">") is. A
-    definition does not outlast the expression, as the `minibuffer' page
-    says, and a defcommand evaluated there leaves M-x a command it cannot
-    run. So a command being written goes in a file of your own, which
-    init.lisp loads as the `configuration' page says, and a key loads the
-    file again:
+    can be tried before it has a key, as (surround "<" ">") is. What it
+    defines is the editor's at once, as what init.lisp defines is, and a
+    command defined again runs the new way the next time its key is
+    pressed. So the way to work is: change the file of your own the
+    command is in, load it again with M-: (eval-file "mine"), press the
+    key. A defvar in the file leaves the value its variable has.
 
-        (define-key nil "C-c r" '(eval-file "mine"))
-
-    Each C-c r puts the file's functions and commands in place of those
-    before, though a defvar leaves the value its variable has, so the way
-    to work is: change the file, press C-c r, try the command.
     C-h e shows the log, where a command that failed says why; with
     debug-on-error set, a failure opens its backtrace as well.
-
-LIMITS
-    An answer to "n" that is not a number reaches the command as 0, and
-    so does no answer: the prompt does not ask again.
 
 EXAMPLES
     How many characters the region holds:

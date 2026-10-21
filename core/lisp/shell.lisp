@@ -17,11 +17,26 @@
 (defvar shell-output-window-height 12
   "How tall the window showing a command's output is, in rows.")
 
+;; The window the newest command's output is shown in: a window id, which may
+;; have been closed since, or given to something else.
+(setq shell--window nil)
+
 (defun shell--show (name)
-  "Show the output buffer NAME in a strip along the bottom."
-  ;; The focus stays: M-! is run from somewhere, and that is where you want to
-  ;; be when the output starts arriving.
-  (display-buffer-at-bottom name shell-output-window-height))
+  "Show the output buffer NAME in the strip along the bottom."
+  ;; One strip for every command, so that the second does not stack another
+  ;; under the first -- while it still shows a command's output: a window
+  ;; given to something else since is left to it. The focus stays: M-! is run
+  ;; from somewhere, and that is where you want to be when the output starts
+  ;; arriving.
+  (let ((from (selected-window)))
+    (if (and shell--window
+             (select-window shell--window)
+             (eq (major-mode) 'shell-output-mode))
+        (progn (switch-to-buffer name)
+               (select-window from))
+        (progn (select-window from)
+               (setq shell--window
+                     (display-buffer-at-bottom name shell-output-window-height))))))
 
 (defcommand shell-command (command) ("sShell command: ")
   "Run COMMAND with the shell, and show what it prints in a strip along the
