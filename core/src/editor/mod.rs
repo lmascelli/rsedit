@@ -85,6 +85,7 @@ mod macros;
 mod modes;
 mod mouse;
 mod replace;
+mod results;
 mod runtime;
 mod settings;
 mod windows;

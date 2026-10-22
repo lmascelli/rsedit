@@ -15,11 +15,6 @@
 (defvar occur-window-height 12
   "How many rows the window showing a list of matches takes.")
 
-;; The window the lists are shown in, and the window the newest was made from,
-;; where its matches open. Window ids; either may have been closed since.
-(setq occur--window nil)
-(setq occur--origin nil)
-
 ;; ---------------------------------------------------------------------------
 ;; Reading the listing
 ;; ---------------------------------------------------------------------------
@@ -32,21 +27,20 @@
   ;; Counted, not parsed: a path with a colon in it reads two ways, and the
   ;; entry already knows where it is.
   (let ((index (- (line-number-at-point) occur-header-lines 1)))
-    (if (and (>= index 0) (< index (or (results-count) 0)))
+    (if (and (>= index 0) (< index (or (results-count (current-buffer)) 0)))
         index
         nil)))
 
 (defun occur--visit (index)
-  "Go to entry INDEX of this list, in the window the list was made from;
-return the entry, or nil."
-  (let ((listing (current-buffer)))
-    ;; Failing that window, the next one: never the list's own, which would
-    ;; put the match over the list.
-    (unless (and occur--origin
-                 (not (= occur--origin (selected-window)))
-                 (select-window occur--origin))
-      (other-window 1))
-    (results-visit index listing)))
+  "Visit entry INDEX using the shared results policy."
+  (results-visit index (current-buffer)))
+
+(defun occur--display (buffer)
+  "Show BUFFER using the shared results policy and give it focus."
+  (results-display buffer occur-window-height t)
+  (goto-line 1)
+  buffer)
+
 
 (defcommand occur-goto () nil
   "Go to the match on the cursor's line, in the window the list was made from."
@@ -55,39 +49,18 @@ return the entry, or nil."
         (message "No result on this line")
         (occur--visit index))))
 
-(defcommand occur-show () nil
-  "Show the match on the cursor's line, and stay in the list."
-  (let ((listing (current-buffer))
-        (here (selected-window))
-        (index (occur--index-here)))
-    (if (null index)
-        (message "No result on this line")
-        (progn (occur--visit index)
-               (select-window here)
-               ;; With one window the match took the list's place.
-               (switch-to-buffer listing)))))
+
 
 ;; ---------------------------------------------------------------------------
 ;; Starting one
 ;; ---------------------------------------------------------------------------
 
-(defun occur--display (buffer)
-  "Show BUFFER in the strip the lists are shown in, give it the focus, and
-return it."
-  (let ((from (selected-window)))
-    ;; Made from the strip itself, a list keeps the window the last one was
-    ;; made from.
-    (unless (and occur--window (= from occur--window))
-      (setq occur--origin from))
-    ;; One strip for every list, so a second search does not stack another.
-    (if (and occur--window (select-window occur--window))
-        (switch-to-buffer buffer)
-        (progn
-          (setq occur--window
-                (display-buffer-at-bottom buffer occur-window-height))
-          (select-window occur--window)))
-    (goto-line 1)
-    buffer))
+(defcommand occur-show () nil
+  "Preview the current result in another window, keeping focus here."
+  (let ((index (occur--index-here)))
+    (if (null index)
+        (message "No result on this line")
+        (results-visit index (current-buffer) t))))
 
 (defcommand occur (pattern) ("sList lines matching: ")
   "List every line of this buffer containing PATTERN, in a buffer of its own."
@@ -145,7 +118,7 @@ editor was started in. The list fills in as the files are read."
 (define-key 'occur-mode "o" 'occur-show)
 (define-key 'occur-mode "n" 'next-line)
 (define-key 'occur-mode "p" 'previous-line)
-(define-key 'occur-mode "q" 'delete-window)
+(define-key 'occur-mode "q" 'results-quit)
 (define-key 'occur-mode "C-c C-k" 'grep-kill)
 
 ;; The header and the trailer, so the shape of the list reads at a glance.

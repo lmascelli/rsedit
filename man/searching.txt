@@ -47,8 +47,13 @@ SYNOPSIS
     (results-count &optional BUFFER)
     (results-entry N &optional BUFFER)
     (results-state &optional BUFFER)
-    (results-visit N &optional BUFFER)
+    (results-visit N &optional BUFFER PREVIEW)
     (results-put PATTERN OVER ENTRIES &optional BUFFER)
+    (results-display BUFFER HEIGHT &optional SELECT)
+    (results-quit)
+    results-visit-same-window
+    results-reuse-buffer
+    results-display-location
 
 DESCRIPTION
     C-s finds text as you type it, and M-% replaces it, asking at each
@@ -243,7 +248,7 @@ KEYS IN OCCUR MODE
     o                       occur-show
     n                       next-line
     p                       previous-line
-    q                       delete-window
+    q                       results-quit
     C-c C-k                 grep-kill
 
 SEE ALSO

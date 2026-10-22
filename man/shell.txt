@@ -5,7 +5,7 @@ SYNOPSIS
     (shell-command COMMAND)
     (shell-command-on-region)
     (shell-command-kill)
-    (shell-command-start COMMAND &optional MODE)
+    (shell-command-start COMMAND &optional MODE PRODUCER)
     (shell-command-to-string COMMAND)
     (shell-command-running-p)
     (parse-overstrike TEXT)

@@ -292,24 +292,40 @@ fn finish<B: BufferTrait>(ctx: &EditorState<B>, listing: Listing, found: usize) 
     listing.write(ctx, &trailer);
 }
 
-/// Open the buffer called NAME that a search will write into, with its header
-/// line in place. NAME is free already: the caller chose it.
+/// Acquire the listing and install its header and result set.
 fn open_results<B: BufferTrait>(
     ctx: &EditorState<B>,
-    name: String,
+    producer: &str,
+    stem: &str,
     mode: &str,
     results: Results,
+    protected: Option<&str>,
     env: &Arc<Env<EditorState<B>>>,
-) -> String {
-    ctx.new_buffer(&name, None, Some(mode.to_string()), env);
-    ctx.append_to_buffer(&name, &format!("{} in {}\n", results.pattern, results.over));
+) -> Option<String> {
+    let name = ctx.prepare_results_buffer(
+        producer,
+        stem,
+        mode,
+        protected,
+        env,
+    )?;
+
+    ctx.append_to_buffer(
+        &name,
+        &format!("{} in {}\n", results.pattern, results.over),
+    );
+
     attach(ctx, &name, results);
-    ctx.with_buffer_mut(&name, |buf| buf.read_only = true);
-    name
+
+    ctx.with_buffer_mut(&name, |buf| {
+        buf.read_only = true;
+    });
+
+    Some(name)
 }
 
 pub const OCCUR_SCAN_DOC: &str = "(occur--scan PATTERN &optional REGEXP MODE): List every line of \
-         this buffer matching PATTERN in a new buffer, in MODE or `occur-mode', and return its \
+         this buffer matching PATTERN in a output buffer, in MODE or `occur-mode', and return its \
          name.";
 
 primitive!(occur_scan, args, env, ctx, {
@@ -326,13 +342,17 @@ primitive!(occur_scan, args, env, ctx, {
     let text = ctx.with_current_buffer(|buf| buf.text.to_string());
     ctx.consume_fuel(u32::try_from(text.chars().count()).unwrap_or(u32::MAX))?;
 
-    let buffer = open_results(
+    let Some(buffer) = open_results(
         ctx,
-        ctx.free_buffer_name("*Occur*"),
+        "occur",
+        "*Occur*",
         &mode,
         Results::new(&source_pattern, &source),
+        Some(&source),
         &env,
-    );
+    ) else {
+        return Ok(ELispExp::nil());
+    };
     let listing = Listing {
         buffer: &buffer,
         writer: None,
@@ -353,7 +373,7 @@ primitive!(occur_scan, args, env, ctx, {
 
 pub const GREP_SCAN_DOC: &str = "(grep--scan PATTERN &optional DIRECTORY REGEXP MODE): Start \
          searching the files under DIRECTORY, or the directory the editor was started in, for \
-         PATTERN, and return the name of the new buffer, in MODE or `occur-mode', that the \
+         PATTERN, and return the name of the output buffer, in MODE or `occur-mode', that the \
          matches go into as they are found.";
 
 primitive!(grep_scan, args, env, ctx, {
@@ -376,15 +396,20 @@ primitive!(grep_scan, args, env, ctx, {
         return Ok(ELispExp::nil());
     }
 
-    // Named so that the search, which takes the name too, cannot stop
-    // whatever work already had it.
-    let buffer = open_results(
+    let Some(buffer) = open_results(
         ctx,
-        ctx.free_name_for_work("*Grep*"),
+        "grep",
+        "*Grep*",
         &mode,
-        Results::new(&source_pattern, &root.to_string_lossy()),
+        Results::new(
+            &source_pattern,
+            &root.to_string_lossy(),
+        ),
+        None,
         &env,
-    );
+    ) else {
+        return Ok(ELispExp::nil());
+    };
     let search = TreeSearch {
         pattern,
         root,
@@ -519,16 +544,22 @@ fn visit_index<B: BufferTrait>(
     env: &std::sync::Arc<Env<EditorState<B>>>,
     buffer: &str,
     index: usize,
+    preview: bool,
 ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
     let Some(entry) = with_results(ctx, buffer, |results| results.get(index).cloned()).flatten()
     else {
         return Ok(ELispExp::nil());
     };
-    // A place is not opened over its own list: from the window showing the
-    // list, it opens in the next one, so the list stays in view.
-    if ctx.focused_window_buffer().as_deref() == Some(buffer) && ctx.window_count() > 1 {
-        ctx.focus_other_window(1);
+    let from = ctx.get_focused_window_id();
+
+    if !ctx.select_results_target(buffer, preview, env) {
+        ctx.set_echo_message(
+            "Cannot select a window for the result",
+        );
+        return Ok(ELispExp::nil());
     }
+
+    ctx.set_current_results(Some(buffer.to_string()));
     // Recorded before the jump: a visit that failed still moved the walk on,
     // or `next-error` would offer the same unreachable file for ever.
     let previous = with_results_mut(ctx, buffer, |results| {
@@ -557,9 +588,16 @@ fn visit_index<B: BufferTrait>(
         ctx.switch_to_buffer(&was);
     }
     let _ = here;
-    if !visit(ctx, env, &entry)? {
+    let visited = visit(ctx, env, &entry);
+
+    if preview {
+        ctx.select_window(from);
+    }
+
+    if !visited? {
         return Ok(ELispExp::nil());
     }
+
     Ok(entry_form(&entry))
 }
 
@@ -586,7 +624,7 @@ fn asked_about<B: BufferTrait>(
 ) -> Option<String> {
     match args.get(index) {
         Some(ELispExp::String(name)) if !name.is_empty() => Some(name.to_string()),
-        Some(ELispExp::Symbol(name)) => Some(name.to_string()),
+        Some(ELispExp::Symbol(name)) if &**name != "nil" => Some(name.to_string()),
         _ => current_buffer_of_results(ctx)
             .or_else(|| Some(ctx.get_current_buffer_name()).filter(|name| has_results(ctx, name))),
     }
@@ -659,10 +697,13 @@ primitive!(results_state, args, _env, ctx, {
     .unwrap_or_else(ELispExp::nil))
 });
 
-pub const RESULTS_VISIT_DOC: &str = "(results-visit N &optional BUFFER): Go to entry N of the \
-         list in BUFFER: open what it is in, put point on its line, and mark the line. Return the \
-         entry, or nil. `next-error' goes on from N.";
-
+pub const RESULTS_VISIT_DOC: &str =
+    "(results-visit N &optional BUFFER PREVIEW): Go to entry N \
+     of the list in BUFFER, open its location and mark the line. \
+     PREVIEW shows it in another window without moving focus. \
+     Ordinary visits follow results-visit-same-window. \
+     Return the entry, or nil. next-error continues from N.";
+     
 primitive!(results_visit, args, env, ctx, {
     let index = match args.first() {
         Some(ELispExp::Number(n)) if *n >= 0.0 => *n as usize,
@@ -671,7 +712,7 @@ primitive!(results_visit, args, env, ctx, {
     let Some(buffer) = asked_about(args, 1, ctx) else {
         return Ok(ELispExp::nil());
     };
-    visit_index(ctx, &env, &buffer, index)
+    visit_index(ctx, &env, &buffer, index, args.get(2).is_some_and(|value| value.is_truthy()),)
 });
 
 /// The name a listing files its refresher under. See [`refresh`].
@@ -744,11 +785,11 @@ fn step_and_visit<B: BufferTrait>(
         });
         return Ok(ELispExp::nil());
     };
-    visit_index(ctx, env, &buffer, next)
+    visit_index(ctx, env, &buffer, next, false)
 }
 
 pub const NEXT_ERROR_DOC: &str = "(next-error): Go to the next place in the newest list -- a \
-         search's, a compilation's -- opening it in the selected window, and return its entry. At \
+         search's, a compilation's -- opening it in the output window, and return its entry. At \
          the end of the list, say so and return nil.";
 
 primitive!(next_error, _args, env, ctx, {
@@ -872,6 +913,56 @@ primitive!(results_put, args, _env, ctx, {
     Ok(ELispExp::number(count as f64))
 });
 
+pub const RESULTS_DISPLAY_DOC: &str =
+    "(results-display BUFFER HEIGHT &optional SELECT): Show \
+     BUFFER according to results-display-location. SELECT gives \
+     it focus. Return its window id, or nil if the buffer is absent.";
+
+primitive!(results_display, args, env, ctx, {
+    if args.len() < 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+
+    let buffer = args::name(args.first())?;
+
+    let Some(ELispExp::Number(height)) = args.get(1) else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "Number".into(),
+            got: args[1].clone(),
+        });
+    };
+
+    let select = args
+        .get(2)
+        .is_some_and(|value| value.is_truthy());
+
+    Ok(ctx
+        .display_results(
+            &buffer,
+            height.max(1.0) as usize,
+            select,
+            &env,
+        )
+        .map(Into::into)
+        .unwrap_or_else(ELispExp::nil))
+});
+
+pub const RESULTS_QUIT_DOC: &str =
+    "(results-quit): Close a managed results strip or restore \
+     the buffer replaced by same-window output. Keep the output \
+     buffer and its job alive.";
+
+primitive!(results_quit, _args, _env, ctx, {
+    Ok(if ctx.quit_results() {
+        ELispExp::t()
+    } else {
+        ELispExp::nil()
+    })
+});
+
 /// Register this module's primitives: lists of places, and walking them.
 ///
 /// Called by [`super::install_primitives`]. Here rather than there because a
@@ -890,4 +981,16 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("results-buffer", results_buffer, RESULTS_BUFFER_DOC);
     into.command("results-select", results_select, &[], RESULTS_SELECT_DOC);
     into.function("results-put", results_put, RESULTS_PUT_DOC);
+    into.function(
+    "results-display",
+    results_display,
+    RESULTS_DISPLAY_DOC,
+);
+
+into.command(
+    "results-quit",
+    results_quit,
+    &[],
+    RESULTS_QUIT_DOC,
+);
 }

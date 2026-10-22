@@ -203,6 +203,21 @@ pub const SETTINGS: &[Setting] = &[
               `read-key-sequence' sets it, and it is nil again once the keys have been handed \
               over.",
     },
+    Setting {
+        name: RESULTS_VISIT_SAME_WINDOW,
+        doc: "Whether result visits replace the selected window's buffer. \
+              With nil, prefer the source window or open another window.",
+    },
+    Setting {
+        name: RESULTS_REUSE_BUFFER,
+        doc: "Whether a new run replaces the newest output of the same producer. \
+              Replacement stops its previous job.",
+    },
+    Setting {
+        name: RESULTS_DISPLAY_LOCATION,
+        doc: "Where output is displayed: same-window or bottom. \
+              An invalid value uses bottom.",
+    },
 ];
 
 /// Gives every setting in [`SETTINGS`] its documentation, where `defvar` puts
@@ -410,4 +425,37 @@ pub(super) fn echo_timeout<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Op
         }
         _ => None,
     }
+}
+
+pub const RESULTS_VISIT_SAME_WINDOW: &str =
+    "results-visit-same-window";
+
+pub const RESULTS_REUSE_BUFFER: &str =
+    "results-reuse-buffer";
+
+pub const RESULTS_DISPLAY_LOCATION: &str =
+    "results-display-location";
+
+pub(super) fn results_visit_same_window<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+) -> bool {
+    env.get_variable(RESULTS_VISIT_SAME_WINDOW)
+        .is_some_and(|value| value.is_truthy())
+}
+
+pub(super) fn results_reuse_buffer<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+) -> bool {
+    env.get_variable(RESULTS_REUSE_BUFFER)
+        .is_some_and(|value| value.is_truthy())
+}
+
+pub(super) fn results_display_same_window<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+) -> bool {
+    matches!(
+        env.get_variable(RESULTS_DISPLAY_LOCATION),
+        Some(ELispExp::Symbol(value) | ELispExp::String(value))
+            if value.as_ref() == "same-window"
+    )
 }

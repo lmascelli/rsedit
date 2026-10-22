@@ -90,7 +90,7 @@ KEYS IN COMPILATION MODE
     p                       compilation-previous
     g                       compilation-recompile
     C-c C-k                 shell-command-kill
-    q                       delete-window
+    q                       results-quit
 
 SEE ALSO
     searching, shell, regexps, windows, buffers

@@ -34,12 +34,6 @@ matches a line decides.")
 ;; off the screen the way the command can.
 (setq compilation--buffer nil)
 
-;; The window outputs are shown in, and the window places open in: the one
-;; the newest build was started from. Window ids; either may have been closed
-;; since.
-(setq compilation--window nil)
-(setq compilation--origin nil)
-
 ;; ---------------------------------------------------------------------------
 ;; Reading a line as a location
 ;; ---------------------------------------------------------------------------
@@ -87,29 +81,14 @@ names none."
         (goto-line here)
         count)))
 
-(defun compilation--select-file-window ()
-  "Select the window the build was started from, while it is there, or make
-a second window when this is the only one."
-  ;; Otherwise the walk opens the place in the next window: never the
-  ;; output's own, which would put the file over the output.
-  (unless (and compilation--origin
-               (not (= compilation--origin (selected-window)))
-               (select-window compilation--origin))
-    (if (= (count-windows) 1) (split-window-below))))
-
 (defcommand compilation-goto () nil
-  "Open the place the cursor's line names, in the window the build was
-started from."
+  "Open this line's location using the shared results policy."
   (let ((index (compilation--index-here))
         (output (current-buffer)))
     (if (null index)
         (message "No file and line on this line")
         (progn
-          ;; Attached again, so that what opens is what is on screen, and
-          ;; opened through the walk, so that M-g n goes on from here and the
-          ;; marks are the walk's.
           (compilation--rebuild output)
-          (compilation--select-file-window)
           (results-visit index output)))))
 
 ;; ---------------------------------------------------------------------------
@@ -210,24 +189,13 @@ started from."
           nil))))
 
 (defun compilation--show (name)
-  "Show the output buffer NAME in the compilation strip, leaving the focus
-where it is."
-  (let ((from (selected-window)))
-    ;; Run again from the output itself, a build keeps the window the last
-    ;; one was started from.
-    (unless (and compilation--window (= from compilation--window))
-      (setq compilation--origin from))
-    ;; One strip for every build, so running one again does not stack another.
-    (if (and compilation--window (select-window compilation--window))
-        (progn (switch-to-buffer name)
-               (select-window from))
-        (setq compilation--window
-              (display-buffer-at-bottom name compilation-window-height)))))
+  "Show NAME using the shared results policy, preserving focus."
+  (results-display name compilation-window-height nil))
 
 (defcommand compile (command) ("sCompile command: ")
   "Run COMMAND, showing its output as it comes; `next-error' walks the places
 it names."
-  (let ((name (shell-command-start command 'compilation-mode)))
+  (let ((name (shell-command-start command 'compilation-mode 'compile)))
     (if (null name)
         nil
         (progn
@@ -262,7 +230,7 @@ it names."
 (define-key 'compilation-mode "n" 'compilation-next)
 (define-key 'compilation-mode "p" 'compilation-previous)
 (define-key 'compilation-mode "g" 'compilation-recompile)
-(define-key 'compilation-mode "q" 'delete-window)
+(define-key 'compilation-mode "q" 'results-quit)
 ;; A compilation is a shell command, and is stopped as one.
 (define-key 'compilation-mode "C-c C-k" 'shell-command-kill)
 

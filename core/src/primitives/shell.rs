@@ -372,11 +372,12 @@ fn abandon(process: &Process) {
     }
 }
 
-pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND &optional MODE): Run \
+pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND &optional MODE PRODUCER): Run \
          COMMAND, a string, with the shell in the background, and return at once the name of the \
          buffer its output goes into. The buffer is read-only and in major mode MODE, \
          `shell-output-mode' unless given; its first line is the command, and its last says how \
-         it ended, as --- exited 0 ---. Each call has a buffer of its own. `stop-worker' with the \
+         it ended, as --- exited 0 ---. Each call has a buffer of its own unless a PRODUCER buffer is
+         specified, in that case that buffer is used as output. `stop-worker' with the \
          buffer's name stops the command, and so does closing the buffer. Return nil, saying why, \
          when the shell cannot be started.\n\n\
          Example:\n\
@@ -392,6 +393,10 @@ primitive!(shell_command_start, args, env, ctx, {
     };
     let mode = args::optional_name(args.get(1), "Symbol naming a mode")?
         .unwrap_or_else(|| "shell-output-mode".to_string());
+    let producer = args::optional_name(
+        args.get(2),
+        "Symbol naming a producer",
+    )?;
     let (child, output) = match start(command) {
         Ok(started) => started,
         Err(why) => {
@@ -400,12 +405,43 @@ primitive!(shell_command_start, args, env, ctx, {
         }
     };
 
-    let name = ctx.free_name_for_work(OUTPUT_BUFFER);
-    ctx.new_buffer(&name, None, Some(mode), &env);
-    ctx.append_to_buffer(&name, &format!("$ {command}\n"));
-    ctx.with_buffer_mut(&name, |buf| buf.read_only = true);
+    let process: Process =
+        Arc::new(Mutex::new(Some(child)));
 
-    let process: Process = Arc::new(Mutex::new(Some(child)));
+    let name = if let Some(producer) = producer {
+        ctx.prepare_results_buffer(
+            &producer,
+            OUTPUT_BUFFER,
+            &mode,
+            None,
+            &env,
+        )
+    } else {
+        let name = ctx.free_name_for_work(OUTPUT_BUFFER);
+
+        ctx.new_buffer(
+            &name,
+            None,
+            Some(mode),
+            &env,
+        )
+        .filter(|name| ctx.has_buffer(name))
+    };
+
+    let Some(name) = name else {
+        abandon(&process);
+        return Ok(ELispExp::nil());
+    };
+
+    ctx.append_to_buffer(
+        &name,
+        &format!("$ {command}\n"),
+    );
+
+    ctx.with_buffer_mut(&name, |buf| {
+        buf.read_only = true;
+    });
+    
     let task = ShellCommand {
         process: process.clone(),
         output,

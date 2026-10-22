@@ -492,6 +492,21 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::number(DEFAULT_LINE_NUMBER_DIGITS as f64),
     );
 
+    env.set_variable(
+        RESULTS_VISIT_SAME_WINDOW.into(),
+        ELispExp::nil(),
+    );
+
+    env.set_variable(
+        RESULTS_REUSE_BUFFER.into(),
+        ELispExp::nil(),
+    );
+
+    env.set_variable(
+        RESULTS_DISPLAY_LOCATION.into(),
+        ELispExp::symbol("bottom".into()),
+    );
+
     document_settings(&env);
 
     // Create the fundamental modes:
