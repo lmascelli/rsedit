@@ -1371,6 +1371,52 @@ codice di quel momento, il campo `stato`, le schede dell'interprete separate
 per il repository `risp`. Va prima del codice perché la classificazione dei
 commenti (@classificazione) deve sapere quali problemi sono risolti.
 
+*Passo 10, fatto.* Il rapporto sui problemi è verificato sul codice di oggi:
+rsedit `3d846f1` e risp `f1ec558`. Ogni scheda ha il campo `stato`; le risolte
+escono dal riepilogo e passano in un'appendice che dà, per ciascuna, il
+titolo, la gravità e il commit che l'ha risolta, mentre il testo completo
+resta nella storia di git. Il campo *Dove* nomina file e funzioni invece delle
+righe, e ogni *Verifica* dice su quale revisione la riproduzione è stata
+eseguita di nuovo, oppure che il codice misurato non è cambiato dall'analisi.
+Le schede sono state rilette sul codice, e nella storia di git è stato cercato
+il commit di ogni correzione; le riproduzioni sono state eseguite di nuovo nel
+banco di prova dei passi precedenti per rsedit, con un test temporaneo per
+risp, e con due editor veri in un terminale virtuale per il registro.
+
+Delle 51 schede di rsedit, 11 sono risolte: AVV-1, AVV-3, AVV-4, BKG-1, SIN-3,
+RIC-6, SHL-1, SHL-2, SHL-3, DOC-3 e DOC-4. Sette lo sono in parte e restano
+aperte, con il testo ridotto a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6,
+MIN-3, FIL-5 e DOC-1. Le 29 schede dell'interprete, LET e INT, sono passate in
+un rapporto nuovo del repository risp, `doc/rapporto-problemi.typ`, a cui il
+manuale `architettura-interprete.typ` già rimandava. Lì cinque sono risolte
+(LET-1, LET-2, LET-3, INT-1, INT-5) e una lo è in parte (INT-13); tutte le
+correzioni sono già nella revisione `b2d000b` che rsedit usa. I rimandi fra i
+due rapporti sono nel testo, per esempio «INT-2, nel rapporto di risp».
+
+Otto schede sono nuove: i difetti trovati dalla verifica, e quelli che i passi
+precedenti avevano trovato senza scriverli nel rapporto:
+
+- AVV-6: due editor aperti insieme scrivono lo stesso `rsedit.log`; il secondo
+  lo tronca, e le righe dei due si sovrappongono;
+- BKG-2: un lavoro dell'editor che va in panic, come l'evidenziatore, è
+  ritirato per tutta la sessione, e lo dice solo il registro;
+- RIC-7: una lista di `M-s o` e una di `M-s g` aprono due strisce, perché
+  `3d846f1` riusa la striscia solo per lo stesso produttore;
+- DOC-5: `3d846f1` lascia `free_buffer_name` senza chiamate, due `if` che
+  clippy chiede di unire e 41 blocchi da formattare;
+- INT-24, in risp: `if` ignora in silenzio le forme del ramo else dopo la
+  prima, la differenza che il passo 9 portava qui;
+- DOC-1, DOC-2 e DOC-3, in risp: il manuale dell'interprete descrive ancora
+  cinque difetti corretti; `reader_tests.rs` non è dichiarato, e dichiarato
+  non compila; `cargo clippy --all-targets` si ferma su un letterale dei test.
+
+Il rapporto di rsedit passa così da 80 schede a 55, di cui 44 aperte: 4 di
+gravità alta, 17 media e 23 bassa. Quello di risp ne ha 33, di cui 28 aperte.
+Sette commenti del codice citano schede ora risolte (AVV-3 e AVV-4 in
+`managers/log.rs` e nei suoi test; SHL-1, SHL-2 e SHL-3 nei test dei comandi
+di shell): sono storia, e li toglie la fase C con gli altri commenti del loro
+sottosistema. Il codice di risp non cita schede.
+
 Gli altri passi seguono l'ordine delle dipendenze di `lib.rs`, dal basso. Ogni
 passo comincia con una proposta breve degli spostamenti --- file da dividere,
 unire o rinominare --- che approvi prima della patch. Poi la patch: il
@@ -1382,7 +1428,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
 #ref-table(
   columns: (1.3cm, 7.4cm, 1.6cm, 1fr),
   header: ([Passo], [Parte], [Righe], [Note]),
-  [10], [`doc/rapporto-problemi.typ`], [1 244], [80 schede da verificare],
+  [10], [`doc/rapporto-problemi.typ` (fatto)], [1 244], [80 schede da verificare],
   [11], [`work/`], [2 935], [assorbe `workmanager.typ`],
   [12], [`paths.rs`, `buffer/`], [3 075], [---],
   [13], [`text/`, `input.rs`, `commands.rs`], [2 047], [---],

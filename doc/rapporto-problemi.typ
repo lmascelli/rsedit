@@ -2,19 +2,24 @@
 //
 // Separato dai due manuali di architettura di proposito: i manuali spiegano
 // come il codice funziona, questo elenca dove non funziona come dovrebbe.
-// Quando un problema viene corretto, la sua scheda si toglie da qui (o si
-// segna come risolta) e i manuali non vanno toccati.
 //
 // Ogni problema e' un elemento della tabella `problemi` qui sotto: il
-// riepilogo iniziale e le schede dettagliate sono generati dallo stesso dato,
-// cosi' non possono raccontare due storie diverse. Per aggiungerne uno basta
-// un nuovo elemento con gli stessi campi.
+// riepilogo iniziale, le schede dettagliate e l'appendice delle schede
+// risolte sono generati dallo stesso dato, cosi' non possono raccontare due
+// storie diverse. Per aggiungerne uno basta un nuovo elemento con gli stessi
+// campi e `stato: "aperto"`. Quando il problema viene corretto, l'elemento
+// passa a `stato: "risolto"`, con il commit che lo risolve in `commit`, e
+// tiene solo identificativo, gravita' e titolo: il resto della storia sta
+// nel messaggio di quel commit.
+//
+// I problemi dell'interprete, le aree LET e INT, sono nel rapporto del
+// repository risp.
 
 #import "style.typ": *
 
 #show: preamble.with(
   title: [rsedit — Rapporto sui problemi del codice],
-  subtitle: [Esito dell'analisi della revisione `08a853d`, tenuto separato dai manuali di architettura],
+  subtitle: [Le schede dell'analisi della revisione `08a853d`, verificate sulla revisione `3d846f1`],
 )
 
 #set text(lang: "it")
@@ -64,8 +69,9 @@
   block(above: 0.75em, below: 0.4em)[*#nome.* #corpo]
 }
 
-// La scheda di un problema. Il titolo e' un'intestazione di terzo livello con
-// l'identificativo come etichetta, cosi' il riepilogo puo' collegarvisi.
+// La scheda di un problema aperto. Il titolo e' un'intestazione di terzo
+// livello con l'identificativo come etichetta, cosi' il riepilogo puo'
+// collegarvisi.
 #let scheda(p) = {
   [#heading(level: 3, outlined: false, numbering: none)[#p.id — #p.titolo] #label(p.id)]
   block(
@@ -100,8 +106,6 @@
 // Le aree, nell'ordine in cui compaiono. La sigla e' il prefisso degli
 // identificativi.
 #let aree = (
-  (sigla: "LET", nome: [Lettore]),
-  (sigla: "INT", nome: [Valutatore e libreria di base dell'interprete]),
   (sigla: "BUF", nome: [Buffer, modifiche e annullamento]),
   (sigla: "CMD", nome: [Tastiera, comandi e primitive dell'editor]),
   (sigla: "MIN", nome: [Minibuffer]),
@@ -122,392 +126,35 @@
 // ---------------------------------------------------------------------------
 
 #let problemi = (
-  // ------------------------------------------------------------------ LET
-  (
-    id: "LET-1",
-    gravita: "alta",
-    verificato: true,
-    titolo: [Un input che finisce dentro un simbolo, con una lista aperta, esaurisce la memoria],
-    breve: [Input che finisce dentro un simbolo con una lista aperta: ciclo infinito, memoria esaurita],
-    dove: [`lisp/parser.rs:456` (gestione della fine dell'input negli stati `InSymbol` e `InNumberMinusStart`); il ciclo che non termina è `parse_list` a `lisp/parser.rs:492`],
-    verifica: [Riprodotto con `eval-string-safe` e con `M-:` nell'editor; trovato dal fuzzer del lettore.],
-    cosa: [Quando l'input finisce mentre il lessico sta leggendo un simbolo, `next_token` restituisce il simbolo accumulato ma *non* riporta lo stato a `Default`. Alla chiamata successiva l'input è ancora finito e lo stato è ancora `InSymbol`, quindi restituisce un altro simbolo, vuoto; e così ad ogni chiamata. `parse_list` aspetta una `)` o la fine dei token (`Token::Void`), riceve invece un flusso infinito di simboli vuoti e li accoda tutti. Per un vettore il ciclo è identico; per una mappa (`{a`) il ciclo gira senza fine anche senza crescita evidente della memoria.],
-    riproduzione: ```lisp
-(eval-string-safe "(foo")      ; abort: memoria esaurita
-(eval-string-safe "(a (b c")   ; idem, anche "[x", "(-", "'(x"
-(eval-string-safe "(foo ")     ; corretto: errore UnclosedList
-;; nell'editor: M-:  (message  RET
-```,
-    effetto: [La memoria cresce di centinaia di megabyte al secondo finché il processo termina («memory allocation of 1610612736 bytes failed») o interviene l'OOM killer del sistema; il terminale resta in raw mode (#link(<TUI-2>)[TUI-2]) e il lavoro non salvato è perso. Basta dimenticare una parentesi in `M-:`. Sono esposti `eval-string`, `eval-string-safe` (quindi `M-:`) e il caricamento dei temi, che passa il testo del file a `eval-string` (`lisp/theme.lisp:101`). `eval_file` non è esposto: avvolge il contenuto in `(progn …)`, e la parentesi aggiunta chiude il simbolo.],
-    correzione: [Riportare `lexer_state` a `Default` in ogni ramo del codice dopo il ciclo che restituisce un token. Come difesa in profondità, `parse_list`, `parse_vector` e `parse_map` possono rifiutare un simbolo vuoto. Il test che avrebbe trovato il difetto: per ogni prefisso di un'espressione valida il lettore deve terminare, con un valore o con un errore.],
-  ),
-  (
-    id: "LET-2",
-    gravita: "alta",
-    verificato: true,
-    titolo: [Un token che non può cominciare un'espressione manda il lettore in panic],
-    breve: [`.` o una parentesi chiusa dopo un apice: panic del lettore],
-    dove: [`lisp/parser.rs:642` (`_ => unreachable!(...)` in `Parser::next`)],
-    verifica: [Riprodotto (uscita 101). Il fuzzer del lettore, su 322 764 stringhe, l'ha trovato 7 477 volte con `Dot`, 295 con `RSquared`, 288 con `RParen` e 8 con `RBracket`.],
-    cosa: [`Parser::next` costruisce un'espressione a partire da simboli, stringhe, numeri, parentesi aperte e prefissi (`'`, #raw("`"), `,`, `,@`). Ogni altro token in posizione di espressione finisce nel ramo `_ => unreachable!`, che è un panic e non un errore. Succede con un punto fuori dalla coda di una lista e con una parentesi chiusa subito dopo un prefisso.],
-    riproduzione: ```lisp
-(eval-string-safe "[1 . 2]")      ; panic: token parse not implemented for Dot
-(eval-string-safe "(list 'a ')")  ; panic: ... for RParen
-;; anche: "{a .}"  ". a"  "'."  "[1 `]"  "(a ,)"  "{:k ,@}"
-```,
-    effetto: [Il panic non è un errore Lisp, quindi `eval-string-safe` e `condition-case` non lo intercettano. Nell'editor `M-: (list 'a ')` termina il programma; in un lavoro di background uccide il thread condiviso (#link(<BKG-1>)[BKG-1]).],
-    correzione: [Una variante `ParserError::UnexpectedToken` restituita al posto del panic, più i casi elencati sopra nei test del lettore.],
-  ),
-  (
-    id: "LET-3",
-    gravita: "media",
-    verificato: true,
-    titolo: [Un annidamento profondo esaurisce lo stack del lettore],
-    breve: [Annidamento profondo: stack overflow nel lettore],
-    dove: [`lisp/parser.rs` — `next` → `parse_list` → `next`, un livello di ricorsione Rust per ogni parentesi],
-    verifica: [In release `'((((…))))` con 20 000 livelli viene letto, con 50 000 il processo abortisce.],
-    cosa: [Il lettore discende ricorsivamente: ogni parentesi aperta è una chiamata Rust in più, senza un contatore di profondità.],
-    effetto: [Uno stack overflow non è intercettabile: il processo termina. Un file di dati generato, o una stringa passata a `eval-string`, basta a chiudere l'editor.],
-    correzione: [Un contatore di profondità nel lettore con un errore oltre un limite (per esempio 10 000), oppure un lettore iterativo con una pila esplicita.],
-  ),
-  (
-    id: "LET-4",
-    gravita: "bassa",
-    verificato: true,
-    titolo: [`.9`, `1e5` e `+5` sono letti come simboli],
-    breve: [`.9`, `1e5`, `+5` letti come simboli],
-    dove: [`lisp/parser.rs:388` (`'0'..'9'`, intervallo che esclude il 9), stati `InNumber*`],
-    verifica: [Riprodotto; clippy segnala `almost_complete_range` proprio alla riga 388.],
-    cosa: [Dopo un punto iniziale il lessico accetta solo le cifre da 0 a 8, quindi `.5` è un numero e `.9` un simbolo. La notazione esponenziale non esiste: `1e5`, `2.5e-3` e `1e300` sono simboli, e valutarli dà `UnboundVariable`. Anche `+5` è un simbolo. `string-to-number`, che usa `f64::from_str`, accetta invece `"1e5"`, `"inf"` e `"NaN"` (#link(<INT-17>)[INT-17]).],
-    correzione: [`'0'..='9'`; esponente e segno `+` nello stato dei numeri; stesse regole per il lettore e per `string-to-number`.],
-  ),
-  (
-    id: "LET-5",
-    gravita: "bassa",
-    verificato: false,
-    titolo: [Stranezze del lessico dei simboli],
-    breve: [`\r`, `"` e `,` dentro i simboli; `#'f` e `?a` simboli],
-    dove: [`lisp/parser.rs:206` (`'\r' => {}` nello stato `InSymbol`), `lisp/parser.rs:190-210`],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Dentro un simbolo un `\r` viene saltato senza chiuderlo (`foo\rbar` diventa `foobar`); `"` e `,` ne fanno parte (`foo"bar"` è un unico simbolo, così come `a,b`). `#'f` e `?a` sono simboli e non la funzione `f` o il carattere `a` come in Emacs Lisp.],
-    correzione: [Trattare `\r` come spazio, chiudere il simbolo su `"`, `'`, #raw("`") e `,`; decidere esplicitamente se `#'` e `?` vanno supportati.],
-  ),
-  (
-    id: "LET-6",
-    gravita: "bassa",
-    verificato: false,
-    titolo: [Un `todo!()` nel lettore e uno stato sporco dopo un numero non valido],
-    breve: [`todo!()` e stato sporco dopo `NumberParseError`],
-    dove: [`lisp/parser.rs:446` (`todo!`), `lisp/parser.rs:381-384`],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Il ramo `Default` del codice dopo il ciclo chiama `todo!()` se il token non è vuoto e non è una parentesi chiusa; oggi sembra irraggiungibile. Dopo un `NumberParseError` nello stato `InNumberAfterDot` lo stato e il token non vengono ripristinati, quindi una nuova chiamata a `next()` sullo stesso `Parser` riparte da uno stato sporco.],
-    correzione: [Sostituire il `todo!` con un errore; azzerare token e stato prima di restituire ogni errore.],
-  ),
-  // ------------------------------------------------------------------ INT
-  (
-    id: "INT-1",
-    gravita: "alta",
-    verificato: true,
-    titolo: [Un ciclo che contiene `unwind-protect` non esaurisce mai il carburante],
-    breve: [`unwind-protect` ricarica il carburante a ogni esecuzione: ciclo infinito inarrestabile],
-    dove: [`lisp/eval.rs:991` (`ctx.begin_unwind()` chiamato sempre), `editor/mod.rs:287-291` (`grant(100_000)`), `lisp/fuel.rs:139` (`grant` porta il residuo ad *almeno* la quantità data)],
-    verifica: [Riprodotto: `(let ((x 0)) (while (< x 2000000) (unwind-protect (setq x (+ x 1)))) x)` restituisce 2 000 000, mentre lo stesso ciclo senza `unwind-protect` si ferma per carburante.],
-    cosa: [Il carburante è l'unica difesa contro un ciclo infinito durante un comando: mentre un comando gira l'editor non legge la tastiera, quindi `C-g` non può interromperlo. `unwind-protect` chiama `begin_unwind` dopo il corpo *sempre*, anche quando il corpo è finito normalmente, e `begin_unwind` alza il carburante rimasto ad almeno 100 000 unità. Un ciclo con un `unwind-protect` nel corpo riceve quindi una ricarica a ogni giro e non scende mai sotto quella soglia.],
-    riproduzione: ```lisp
-(while t (unwind-protect nil))   ; non termina mai
-```,
-    effetto: [L'editor resta bloccato per sempre al primo ciclo infinito che attraversa un `unwind-protect`, anche se questo sta in una funzione di libreria chiamata dal ciclo. L'unica uscita è uccidere il processo, perdendo ciò che non è stato salvato.],
-    correzione: [Chiamare `begin_unwind` solo quando il corpo è fallito con `OutOfFuel`. In alternativa, concedere la ricarica al più una volta per comando, con un indicatore nel `FuelMeter` azzerato da `begin`.],
-  ),
-  (
-    id: "INT-2",
-    gravita: "alta",
-    verificato: true,
-    titolo: [Nessun limite alla profondità della ricorsione: lo stack si esaurisce e il processo termina],
-    breve: [Ricorsione profonda: stack overflow e chiusura del processo],
-    dove: [`lisp/eval.rs` — ogni chiamata che non è in coda è una ricorsione Rust (`eval` → `eval_special_form_or_call_step` → `eval` degli argomenti)],
-    verifica: [Riprodotto: in debug il processo termina tra 200 e 400 livelli, in release tra 5 000 e 6 000 sul thread principale (8 MB di stack). Sui thread dei worker e di `spawn` (2 MB) il limite è circa quattro volte più basso.],
-    cosa: [Il trampolino elimina la crescita dello stack solo per le chiamate in coda. Una chiamata in posizione di argomento discende nello stack Rust, e non esiste un contatore di profondità.],
-    riproduzione: ```lisp
-(defun f (n) (if (= n 0) 0 (+ 1 (f (- n 1)))))
-(f 10000)                        ; stack overflow: il processo termina
-```,
-    effetto: [Un errore banale in una funzione ricorsiva scritta dall'utente chiude l'editor senza un messaggio e senza salvare. Uno stack overflow non è un errore Lisp, quindi nessun `condition-case` lo intercetta. Emacs, con `max-lisp-eval-depth`, solleva invece un errore.],
-    correzione: [Un contatore di profondità per thread, come quello del carburante, incrementato all'ingresso di una chiamata di funzione, con un errore oltre un limite tarato sul thread con meno stack. In aggiunta, i thread dei worker e di `spawn` possono essere creati con `std::thread::Builder::stack_size` per avere lo stesso margine del thread principale.],
-  ),
-  (
-    id: "INT-3",
-    gravita: "media",
-    verificato: true,
-    titolo: [`setq` di una variabile mai definita crea una variabile locale che sparisce],
-    breve: [`setq` su una variabile non definita dentro una funzione o un `let` crea una locale],
-    dove: [`lisp/eval.rs` (ramo `setq`: `update_variable`, altrimenti `set_variable` nell'ambiente corrente), `lisp/environment.rs`],
-    verifica: [Riprodotto: dopo `(defun g () (setq zz 5))` e `(g)`, `zz` è ancora non definita. Lo stesso accade dentro un `let` e nel corpo di una `fiber`. Al livello più esterno `setq` funziona.],
-    cosa: [`setq` cerca la variabile lungo la catena degli ambienti. Se non la trova, la crea nell'ambiente *corrente*, cioè in quello della funzione, del `let` o della fiber che sta eseguendo, e non nell'ambiente globale. Quando la funzione ritorna, la variabile sparisce. In Emacs Lisp un `setq` su una variabile non legata imposta il valore globale.],
-    riproduzione: ```lisp
-(defun conta () (setq contatore 1))
-(conta)
-contatore               ; => UnboundVariable
-```,
-    effetto: [Una configurazione o un modulo che fanno `setq` di uno stato globale dentro una funzione, senza un `defvar` precedente, perdono quello stato in silenzio. È anche la causa per cui `add-to-list` chiamato dentro una funzione non modifica la lista globale (#link(<INT-15>)[INT-15]).],
-    correzione: [Se la variabile non esiste in nessun ambiente, crearla nell'ambiente radice, come fa Emacs. Se invece la semantica attuale è voluta, va documentata in `setq` e va reso disponibile un modo esplicito (`set-default` o `defvar`) da usare dentro le funzioni.],
-  ),
-  (
-    id: "INT-4",
-    gravita: "media",
-    verificato: true,
-    titolo: [Annidamenti profondi esauriscono lo stack anche fuori dal lettore],
-    breve: [Annidamento profondo in valutazione, rilascio, `equal` e stampa: stack overflow],
-    dove: [`lisp/eval.rs` (forme annidate); `lisp/types.rs` (`Drop` di `ConsCell`, iterativo solo lungo il `cdr`); `lisp/lispexp.rs` (`PartialEq` ricorsivo sul `car`, `Debug` ricorsivo)],
-    verifica: [In release: `(list (list …))` annidate abortiscono tra 5 000 e 10 000 livelli; liste annidate nel `car` abortiscono a 300 000 livelli nel rilascio della memoria e in `equal`.],
-    cosa: [Il rilascio di una lista e il confronto con `equal` scorrono la catena dei `cdr` in modo iterativo, ma scendono nei `car` per ricorsione. La valutazione di forme annidate e la stampa sono ricorsive.],
-    effetto: [Abort del processo. È meno probabile del caso del lettore (#link(<LET-3>)[LET-3]), perché servono strutture costruite apposta, ma una struttura dati profonda creata in un ciclo basta.],
-    correzione: [Rilascio, `equal` e stampa con una pila esplicita; per la valutazione vale la correzione di #link(<INT-2>)[INT-2].],
-  ),
-  (
-    id: "INT-5",
-    gravita: "media",
-    verificato: true,
-    titolo: [`dotimes` con il corpo vuoto non consuma carburante],
-    breve: [`dotimes` con corpo vuoto: nessun carburante consumato],
-    dove: [`lisp/eval.rs:866-910`: il ciclo `while i < count` chiama `eval` solo per le forme del corpo],
-    verifica: [Riprodotto: `(dotimes (i 300000000))` gira 300 milioni di volte (24 s in release) invece di fermarsi; con un corpo qualsiasi, anche `nil`, il ciclo si ferma con `OutOfFuel`.],
-    cosa: [Il carburante si consuma in `eval_step`. Il ciclo di `dotimes` è scritto in Rust e, senza forme nel corpo, non chiama mai `eval`.],
-    effetto: [Con un conteggio grande l'editor resta bloccato per ore. Il caso è raro, ma è una via d'uscita dal meccanismo che dovrebbe garantire che ogni comando termini.],
-    correzione: [Consumare un'unità di carburante a ogni giro del ciclo, come fa `while`. Lo stesso vale per `dolist`.],
-  ),
-  (
-    id: "INT-6",
-    gravita: "media",
-    verificato: true,
-    titolo: [Le chiusure che si riferiscono a sé stesse non vengono mai liberate],
-    breve: [Cicli di `Arc` tra chiusure e ambienti: memoria persa],
-    dove: [`lisp/types.rs` (una `Lambda` possiede il suo ambiente con un `Arc`), `lisp/environment.rs`],
-    verifica: [Riprodotto: `(dotimes (i N) (let ((f nil)) (setq f (lambda () 1)) nil))` porta il picco di memoria a 200 MB con N = 300 000 e a 400 MB con N = 600 000, circa 650 byte per giro. Con `(funcall (lambda () 1))` resta a 10 MB.],
-    cosa: [Una lambda tiene in vita l'ambiente in cui è nata. Se quell'ambiente contiene a sua volta la lambda, si forma un ciclo di contatori di riferimenti che non scende mai a zero. Succede quando una lambda viene assegnata a una variabile del `let` che la crea, quando una callback è salvata nel `let` che la definisce, o con un `defun` dentro una funzione. Non esiste un garbage collector che rompa questi cicli.],
-    effetto: [Ogni ripetizione di un idioma comune perde memoria. In una sessione lunga, con hook e callback che creano chiusure, la memoria cresce senza limite.],
-    correzione: [Un raccoglitore di cicli, per esempio un mark-and-sweep periodico degli ambienti raggiungibili dall'ambiente globale e dalle pile delle fiber. Nel frattempo, documentare l'idioma da evitare.],
-  ),
-  (
-    id: "INT-7",
-    gravita: "media",
-    verificato: true,
-    titolo: [`eq` è falso per una lambda, un atomo, una fiber o una primitiva confrontati con sé stessi],
-    breve: [`(eq x x)` falso per lambda, atomi, fiber e primitive],
-    dove: [`lisp/base/predicates.rs:13-33` (`primitive_eq_impl` ha rami solo per numeri, simboli, `nil`, forme, cons, vettori, mappe e stringhe)],
-    verifica: [Riprodotto: `(let ((f (lambda () 1))) (eq f f))` dà `nil`; lo stesso per un atomo. `equal` dà `t`, tranne che per le fiber (#link(<INT-8>)[INT-8]).],
-    cosa: [Per i tipi senza un ramo dedicato `eq` cade nel caso generico e restituisce `nil`, anche quando i due argomenti sono lo stesso oggetto.],
-    effetto: [Viene violata la legge più elementare dell'identità. Il codice che cerca una funzione o un atomo per identità non la trova.],
-    correzione: [Un ramo `Arc::ptr_eq` per `Lambda`, `Atom`, `Fiber` e `Primitive`.],
-  ),
-  (
-    id: "INT-8",
-    gravita: "media",
-    verificato: true,
-    titolo: [Una fiber non è uguale nemmeno a sé stessa],
-    breve: [Una fiber non è `eq` né `equal` a sé stessa],
-    dove: [`lisp/types.rs:179-183`: `std::ptr::eq(self, other)` confronta gli indirizzi dei due *involucri*, non l'`Arc` condiviso],
-    verifica: [Riprodotto: `(setq f (fiber (yield 1)))` e poi `(list (eq f f) (equal f f) (memq f (list f)))` dà `(nil nil nil)`.],
-    cosa: [Ogni volta che una fiber viene letta da una variabile se ne clona l'involucro, cioè l'`Arc`. Due cloni hanno indirizzi diversi, quindi il confronto per indirizzo dell'involucro è sempre falso.],
-    effetto: [Una fiber non si trova in nessuna lista: `memq`, `member`, `assoc` e `delete` falliscono, quindi un registro di fiber non può toglierne una.],
-    correzione: [`Arc::ptr_eq(&self.0, &other.0)`.],
-  ),
-  (
-    id: "INT-9",
-    gravita: "media",
-    verificato: true,
-    titolo: [`resume` di una fiber che sta già girando la uccide],
-    breve: [`resume` di una fiber in esecuzione la marca come finita],
-    dove: [`lisp/base/fibers.rs:52-90`],
-    verifica: [Riprodotto: con `(setq f (fiber (resume f) (yield 1) 2))`, `(resume f)` dà 1 e `(fiber-done-p f)` dà `t`; un nuovo `(resume f)` dà `nil` invece di 2.],
-    cosa: [Mentre una fiber gira, `resume` le toglie la pila dei frame, così un secondo `resume` non può eseguirla due volte. Ma il secondo `resume` trova la pila vuota e la marca come finita (`is_done = true`). Quando la fiber in corso fa `yield`, la pila viene salvata, però `is_done` resta vero e la fiber non riparte più. Il commento nel codice dice che il secondo `resume` «non fa nulla».],
-    effetto: [Un comando che fa `resume` della fiber di un worker mentre lo scheduler la sta eseguendo la uccide in silenzio.],
-    correzione: [Uno stato esplicito «in esecuzione», distinto da «finita». Un `resume` su una fiber in esecuzione restituisce `nil` o un errore senza toccarla.],
-  ),
-  (
-    id: "INT-10",
-    gravita: "media",
-    verificato: true,
-    titolo: [Un `yield` dentro `condition-case` non sospende la fiber: diventa un errore e il gestore lo intercetta],
-    breve: [`yield` dentro `condition-case`: catturato come errore, la fiber non si sospende],
-    dove: [`lisp/eval.rs:1062` (`condition-case`), `lisp/utils.rs` (`condition_matches`)],
-    verifica: [Riprodotto: `(fiber (condition-case e (yield 1) (error 'h)) 3)` restituisce 3 al primo `resume` senza fermarsi; il gestore riceve `(error "YieldNotAllowed")`.],
-    cosa: [Un `yield` è lecito solo dove il valutatore può registrare un punto di ripresa: un'istruzione del corpo o una forma di un `while`. Il corpo di `condition-case` non lo è, quindi il `yield` produce `YieldNotAllowed`. Il gestore generico `error` lo tratta come un errore qualsiasi.],
-    effetto: [Una fiber che protegge con `condition-case` un passo che contiene un `yield` non si sospende mai. Il gestore d'errore parte e la fiber prosegue come se il passo fosse fallito. Il codice sembra corretto e si comporta in un altro modo.],
-    correzione: [Fare in modo che `condition_matches` non intercetti mai `YieldNotAllowed`, così l'errore arriva all'autore. Oppure aggiungere un tipo di frame per `condition-case`, così il `yield` diventa lecito anche lì.],
-  ),
-  (
-    id: "INT-11",
-    gravita: "media",
-    verificato: true,
-    titolo: [Il backquote ignora la coda puntata, le mappe e l'annidamento],
-    breve: [Backquote: coda puntata, mappe e annidamento non elaborati],
-    dove: [`lisp/eval.rs:1195` (`eval_backquote`: le `Cons` e le mappe sono restituite senza modifiche)],
-    verifica: [Riprodotto: #raw("`(a . ,b)") dà `(a . (unquote b))` invece di `(a . 2)`; #raw("`{k ,b}") dà `{k (unquote b)}`; un backquote annidato dà `UndefinedFunction("unquote")`.],
-    cosa: [Il lettore produce una `Cons` per una lista puntata e una mappa per `{…}`, e `eval_backquote` elabora solo le forme proprie e i vettori. Un livello di annidamento è documentato come limite, ma la coda puntata e le mappe no.],
-    effetto: [Le macro che costruiscono liste puntate o mappe con il backquote producono strutture che contengono ancora `unquote`, e falliscono più tardi, lontano dalla causa.],
-    correzione: [Elaborare la coda di una `Cons` e i valori di una mappa nello stesso modo degli elementi di una lista; per l'annidamento, contare i livelli come in Emacs.],
-  ),
-  (
-    id: "INT-12",
-    gravita: "media",
-    verificato: true,
-    titolo: [`format` interpreta le sequenze con backslash della stringa di formato],
-    breve: [`format` interpreta `\b`, `\U`, `\.`… a tempo di esecuzione],
-    dove: [`lisp/base/strings.rs:264-330` (`primitive_format`), errore a `lisp/base/strings.rs:313`],
-    verifica: [Riprodotto: `(format "\\b%s\\b" "w")` e `(format "C:\\Users\\%s" "me")` falliscono con «Wrong escape character»; la sequenza `\n` scritta come due caratteri diventa un a capo.],
-    cosa: [Il lettore ha già trasformato le sequenze di escape della stringa letterale. `format` le interpreta una seconda volta e rifiuta quelle che non conosce.],
-    effetto: [Non si può costruire con `format` un'espressione regolare con `\b` o `\s`, né un percorso Windows. Il testo che arriva da una variabile viene alterato.],
-    correzione: [Togliere l'interpretazione delle sequenze da `format`, che è compito del lettore.],
-  ),
-  (
-    id: "INT-13",
-    gravita: "media",
-    verificato: true,
-    titolo: [`make-string` non ha limiti: un conteggio enorme termina il processo],
-    breve: [`make-string` senza limite: panic o abort],
-    dove: [`lisp/base/strings.rs:16` (`primitive_make_string`)],
-    verifica: [Riprodotto: `(make-string (* 10000000 1000000) "a")` termina il processo (uscita 134); con 1e23 il fuzzer ottiene un panic «capacity overflow».],
-    cosa: [La lunghezza richiesta va direttamente all'allocazione, senza controlli e senza carburante.],
-    effetto: [Chiusura dell'editor. Lo stesso schema si ritrova nelle primitive dell'editor (#link(<CMD-3>)[CMD-3]).],
-    correzione: [Un limite esplicito (per esempio la dimensione massima di un buffer) con un errore `args-out-of-range`, e `try_reserve` al posto dell'allocazione diretta.],
-  ),
-  (
-    id: "INT-14",
-    gravita: "bassa",
-    verificato: true,
-    titolo: [I numeri interi oltre 2#super[63] vengono stampati saturati],
-    breve: [Interi oltre 2#super[63] stampati come 9223372036854775807],
-    dove: [`lisp/base/mod.rs:236-238` (`format_number`: `n as i64`)],
-    verifica: [Riprodotto: `(number-to-string 18446744073709551616)` dà `"9223372036854775807"`.],
-    cosa: [Un numero intero viene stampato convertendolo a `i64`, conversione che satura.],
-    correzione: [Stampare come intero solo se `n.abs() < 2^53`, cioè quando la rappresentazione è esatta; altrimenti usare la forma decimale di `f64`.],
-  ),
-  (
-    id: "INT-15",
-    gravita: "bassa",
-    verificato: true,
-    titolo: [`add-to-list` e funzioni affini: ambiente sbagliato, terzo argomento, costo quadratico],
-    breve: [`add-to-list`: ambiente del chiamante, terzo argomento, O(n·m)],
-    dove: [`lisp/base/lists.rs` (`add-to-list`, `append-to-list`, `remove-from-list`)],
-    verifica: [Riprodotto in una sessione precedente: chiamata dentro una funzione, `add-to-list` lascia invariata la lista globale. Gli altri punti vengono dalla lettura del codice.],
-    cosa: [La lista viene riscritta con `set_variable` nell'ambiente del chiamante (#link(<INT-3>)[INT-3]). Il terzo argomento non ha il significato di APPEND che ha in Emacs: viene aggiunto come elemento. Con più elementi, questi sono aggiunti in ordine inverso, senza controllare i duplicati tra gli argomenti stessi. Il costo è O(n·m) e non consuma carburante.],
-    correzione: [Aggiornare la variabile dove è definita (`update_variable`); allineare la firma a quella di Emacs, `(add-to-list SYMBOL ELEMENT &optional APPEND)`.],
-  ),
-  (
-    id: "INT-16",
-    gravita: "bassa",
-    verificato: false,
-    titolo: [`memq` e `assq` confrontano con `equal`; `member` restituisce una copia],
-    breve: [`memq`/`assq` usano `equal`; `member` copia la coda],
-    dove: [`lisp/base/lists.rs:421` e `:452` (docstring), `lisp/base/mod.rs:321-329` (`find_member`)],
-    verifica: [Dalla lettura del codice; `(memq "a" '("a"))` è vero mentre `(eq "a" "a")` è falso.],
-    cosa: [`memq` e `assq` usano lo stesso confronto strutturale di `member` e `assoc`, e la loro docstring dice ancora «eq is structural here», mentre `eq` ora confronta per identità. `member` e `memq` restituiscono una *copia* della coda (`proper_list(list[pos..].to_vec())`), non la coda condivisa: `(eq (member 2 l) (cdr l))` è falso e il costo è O(n).],
-    correzione: [Confronto con `eq` per `memq` e `assq`, docstring aggiornate, restituzione della coda condivisa scorrendo le `Cons`.],
-  ),
-  (
-    id: "INT-17",
-    gravita: "bassa",
-    verificato: false,
-    titolo: [`string-to-number` accetta `inf` e `NaN`; `substring` oltre la fine restituisce la stringa vuota],
-    breve: [`string-to-number` accetta inf/NaN; `substring` oltre la fine dà ""],
-    dove: [`lisp/base/strings.rs`],
-    verifica: [Dalla lettura del codice.],
-    cosa: [`string-to-number` usa `f64::from_str`, che accetta `"inf"`, `"NaN"` e `"1e5"`, mentre il lettore rifiuta tutte e tre le forme (#link(<LET-4>)[LET-4]). `substring` con un inizio oltre la fine della stringa restituisce `""` invece di un errore `args-out-of-range`.],
-    correzione: [Un unico analizzatore di numeri, condiviso dal lettore e da `string-to-number`; un errore per gli indici fuori dai limiti.],
-  ),
-  (
-    id: "INT-18",
-    gravita: "bassa",
-    verificato: true,
-    titolo: [`spawn` restituisce una forma vuota che è `eq` a `nil` ma non `equal`],
-    breve: [`spawn` restituisce una `Form` vuota],
-    dove: [`lisp/eval.rs:475-510` (ramo `spawn`)],
-    verifica: [Riprodotto: `(list (eq (spawn …) nil) (equal (spawn …) nil) (null (spawn …)))` dà `(t nil t)`.],
-    cosa: [Il valore restituito è `LispExp::form(vec![])`, cioè una lista vuota, invece del `nil` canonico. `is_nil` la considera `nil`, il confronto strutturale no.],
-    correzione: [Restituire `LispExp::nil()`.],
-  ),
-  (
-    id: "INT-19",
-    gravita: "bassa",
-    verificato: true,
-    titolo: [Il controllo all'avvio lascia tre variabili globali],
-    breve: [`bootstrap_vm` lascia `verify-math`, `verify-fiber`, `fiber-step`],
-    dove: [`lisp/handshake.rs:18-29`],
-    verifica: [Riprodotto: `(list verify-math fiber-step)` dà `(8 100)` in una sessione appena avviata.],
-    cosa: [Il programma di verifica gira nell'ambiente globale e usa `setq`. In caso di fallimento, l'errore restituito è `UncorrectFunctionDefinition`, che non dice nulla del problema.],
-    correzione: [Eseguirlo in un ambiente figlio e restituire un errore che descriva il controllo fallito.],
-  ),
-  (
-    id: "INT-20",
-    gravita: "bassa",
-    verificato: true,
-    titolo: [`UncorrectFunctionDefinition` viene usato per errori che non c'entrano],
-    breve: [Errore `UncorrectFunctionDefinition` fuorviante],
-    dove: [`lisp/base/fibers.rs:60-80`, `lisp/base/atoms.rs:54` e `:88` (lock avvelenato), `with-current-buffer` (argomento non funzione), `lisp/handshake.rs`],
-    verifica: [Riprodotto: `(with-current-buffer "*x*" (buffer-string))` dà `UncorrectFunctionDefinition`.],
-    cosa: [Lo stesso errore copre un lock avvelenato, un argomento che non è una funzione e un controllo d'avvio fallito.],
-    correzione: [Usare `WrongArgumentType` per gli argomenti e un errore dedicato per i lock avvelenati.],
-  ),
-  (
-    id: "INT-21",
-    gravita: "bassa",
-    verificato: false,
-    titolo: [Atomi senza aggiornamento atomico],
-    breve: [Atomi senza compare-and-swap],
-    dove: [`lisp/base/atoms.rs`],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Esistono solo `deref` e `reset`. Un incremento da due thread (`(reset a (+ 1 (deref a)))`) perde aggiornamenti, e nessuna primitiva permette di farlo in modo atomico.],
-    correzione: [Una primitiva `swap` che applica una funzione sotto il lock, oppure `compare-and-set`.],
-  ),
-  (
-    id: "INT-22",
-    gravita: "bassa",
-    verificato: false,
-    titolo: [Parametri chiamati `t` o `nil` sono accettati ma irraggiungibili],
-    breve: [Parametri `t`/`nil` irraggiungibili],
-    dove: [`lisp/utils.rs:90` (`bind_lambda_args`), `lisp/eval.rs` (i simboli che valutano a sé stessi sono risolti prima della ricerca)],
-    verifica: [Dalla lettura del codice.],
-    cosa: [`(lambda (t) t)` viene definita senza errori, ma nel corpo `t` vale sempre `t`, perché i simboli che valutano a sé stessi non vengono cercati nell'ambiente. Lo stesso vale per `nil` e per le keyword.],
-    correzione: [Rifiutare questi nomi in `parse_lambda_params`.],
-  ),
-  (
-    id: "INT-23",
-    gravita: "bassa",
-    verificato: false,
-    titolo: [`function-doc` contiene un `unreachable!`],
-    breve: [`unreachable!` in `function-doc`],
-    dove: [`lisp/base/functions.rs:186`],
-    verifica: [Dalla lettura del codice: oggi nessun percorso inserisce nello spazio delle funzioni qualcosa che non sia una lambda o una primitiva.],
-    cosa: [Se un giorno lo spazio delle funzioni contenesse altro (per esempio un alias o una macro con un'altra rappresentazione), `function-doc` andrebbe in panic invece di restituire `nil`.],
-    correzione: [`_ => Ok(LispExp::nil())`.],
-  ),
   // ------------------------------------------------------------------ BUF
   (
     id: "BUF-1",
-    gravita: "alta",
+    gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [`undo` e `redo` modificano il testo senza passare dalle due porte delle modifiche],
-    breve: [`undo`/`redo` scavalcano le porte: sola lettura, versione, cache, overlay],
-    dove: [`primitives/edits.rs:854-890` (`undo.undo(text)` e `undo.redo(text)` scrivono direttamente nel testo), `editor/replace.rs:217` (`replace_back`)],
-    verifica: [Riprodotto: in un file Rust, dopo `fn a() {}`, poi `//` all'inizio, poi `C-/`, la riga torna `fn a() {}` ma resta colorata interamente come commento, anche dopo 800 ms. In una sessione precedente: `undo` svuota un buffer in sola lettura.],
-    cosa: [Ogni modifica dovrebbe passare da `insert_text` o `delete_range`. Sono loro che controllano la sola lettura, incrementano `version`, invalidano le cache di colorazione e di scansione e spostano marcatori, overlay e testo virtuale. `undo` e `redo` applicano invece le modifiche inverse direttamente sul testo con `UndoHistory::undo(text)` e poi si limitano a impostare `is_modified = true`.],
-    riproduzione: ```text
-in un file .rs vuoto:  fn a() {}   C-a  //   C-/
-→ il testo è di nuovo "fn a() {}", colorato come commento
+    breve: [`undo`/`redo` scavalcano le porte: sola lettura, overlay, testo virtuale],
+    dove: [`primitives/edits.rs` (le primitive `undo` e `redo`), `buffer/undo.rs` (`UndoHistory::undo`, `UndoHistory::redo`, `apply_inverse`), `editor/replace.rs` (`EditorState::replace_back`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: dopo `(insert "abc")`, `(undo-boundary)` e `(set-buffer-read-only t)`, `(undo)` svuota il buffer senza messaggi; un overlay su `world` in `XXhello world` resta agli offset 8–13 dopo che `undo` ha tolto `XX`. La colorazione e le cache, che l'analisi aveva trovato vecchie dopo `C-/`, ora si aggiornano: lo provano i test `undo_and_redo_recolour_what_they_change` e `an_undo_does_not_leave_a_stale_answer_behind`.],
+    cosa: [Ogni modifica dovrebbe passare da `insert_text` o `delete_range`. Sono loro che controllano la sola lettura, incrementano `version`, invalidano le cache di colorazione e di scansione, disattivano il mark e spostano overlay e testo virtuale. `undo` e `redo` applicano invece le modifiche inverse direttamente sul testo (`apply_inverse`). Da `9956bed` chiamano poi `changed`, che incrementa la versione, invalida le cache dalla prima riga toccata ed emette `buffer-changed`; il resto delle due porte resta saltato.],
+    riproduzione: ```lisp
+(insert "abc") (undo-boundary)
+(set-buffer-read-only t)
+(undo)                     ; il buffer si svuota, senza «Buffer is read-only»
 ```,
-    effetto: [(1) `undo` modifica i buffer in sola lettura. (2) La versione non cambia, quindi la colorazione resta quella del testo precedente fino alla modifica successiva. La cache di scansione delle espressioni dà risposte sbagliate a `C-M-f`. Il salvataggio automatico crede di aver già salvato quella versione. (3) Overlay, testo virtuale e marcatori restano agli offset del testo vecchio, quindi le evidenziazioni cadono sulle parole sbagliate.],
+    effetto: [(1) `undo` modifica i buffer in sola lettura. (2) Overlay e testo virtuale restano agli offset del testo vecchio, quindi le evidenziazioni cadono sulle parole sbagliate.],
     correzione: [Far applicare a `UndoHistory` i suoi passi attraverso le due porte (o una terza porta che faccia le stesse cose senza registrare l'annullamento), e rifiutare `undo` in un buffer in sola lettura.],
   ),
   (
     id: "BUF-2",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [`cursor_pos()` costa O(posizione): ogni fotogramma rilegge il buffer fino al punto],
     breve: [`GapBuffer::cursor_pos` lineare nella posizione],
-    dove: [`buffer/gap_buffer.rs:94-110`],
-    verifica: [Misurato su un buffer di 8 MB: `snapshot` impiega 7,9 ms con il punto alla fine e 0,03 ms con il punto all'inizio.],
-    cosa: [Per trovare riga e colonna del punto `cursor_pos` scorre tutti i caratteri dall'inizio del buffer, anche se l'indice delle righe permetterebbe una ricerca binaria. `snapshot` la chiama per ogni finestra (posizione del cursore e riga di stato) e circa trenta altri punti la usano.],
+    dove: [`buffer/gap_buffer.rs` (`cursor_pos`); la chiamano a ogni fotogramma `ui/windows.rs` (la composizione delle finestre ed `expand_mode_line`) ed `editor/frame.rs` (`EditorState::snapshot`, per una finestra flottante)],
+    verifica: [Misurato nell'analisi di `08a853d` su un buffer di 8 MB: `snapshot` impiegava 7,9 ms con il punto alla fine e 0,03 ms con il punto all'inizio. `buffer/gap_buffer.rs` non è cambiato da allora.],
+    cosa: [Per trovare riga e colonna del punto `cursor_pos` scorre tutti i caratteri dall'inizio del buffer, mentre `cursor_1d_to_2d`, accanto, cerca già la riga nell'indice dei ritorni a capo. Ogni fotogramma la chiama almeno due volte per finestra (posizione del cursore e riga di stato), e circa trenta altri punti la usano.],
     effetto: [In un file grande ogni tasto costa millisecondi in più, e il costo cresce con la distanza del punto dall'inizio.],
     correzione: [Ricerca binaria della riga nell'indice dei ritorni a capo, poi un conteggio dei soli caratteri della riga.],
   ),
@@ -515,9 +162,10 @@ in un file .rs vuoto:  fn a() {}   C-a  //   C-/
     id: "BUF-3",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [`GapBuffer::clone` è `todo!()` e `find_forward` va in underflow su un buffer vuoto],
     breve: [`GapBuffer::clone` è `todo!()`; `find_forward` underflow],
-    dove: [`buffer/gap_buffer.rs:691-695` (`Clone`), `buffer/gap_buffer.rs:182-196` (`find_forward`)],
+    dove: [`buffer/gap_buffer.rs` (`impl Clone for GapBuffer`, `find_forward`), `buffer/buffer_trait.rs` (`BufferTrait`, che richiede `Clone`)],
     verifica: [Dalla lettura del codice; oggi nessun percorso li raggiunge (`find_forward` è usata solo nei test).],
     cosa: [`BufferTrait` richiede `Clone`, ma l'implementazione per `GapBuffer` è un `todo!()`: il primo che clonerà un buffer manderà l'editor in panic. `find_forward` calcola `self.len() - 1`, che su un testo vuoto va in underflow (panic in debug) e poi arriva a un `unreachable!()`.],
     correzione: [Derivare `Clone`, oppure togliere il vincolo dal trait; in `find_forward` usare `checked_sub`.],
@@ -527,87 +175,92 @@ in un file .rs vuoto:  fn a() {}   C-a  //   C-/
     id: "CMD-1",
     gravita: "media",
     verificato: true,
-    titolo: [I caratteri non ASCII non si possono digitare né legare],
-    breve: [Tasti non ASCII: non digitabili, non legabili],
-    dove: [`input.rs:256` (`for c in ' '..='~'`: solo l'ASCII stampabile è legato a `self-insert`), `primitives/mod.rs:70` (`s.len() == 1` conta byte, non caratteri)],
-    verifica: [Riprodotto: premendo `è` l'area messaggi mostra «è is undefined»; `(define-key nil "è" 'forward-char)` restituisce `nil`.],
-    cosa: [La mappa globale lega a `self-insert` un tasto per ogni carattere da spazio a tilde; ogni altro carattere arriva alla risoluzione dei tasti senza un comando. `define-key` non può rimediare perché `parse_key` accetta un carattere singolo solo se è lungo un byte.],
-    effetto: [L'editor è inutilizzabile per scrivere in italiano, francese, tedesco o in qualunque lingua con lettere accentate, e per i simboli tipografici (`€`, `°`, `«»`).],
-    correzione: [Un ripiego nella risoluzione dei tasti: un `KeyCode::Char` senza modificatori e senza un legame esplicito va a `self-insert`. In `parse_key`, `s.chars().count() == 1`.],
+    stato: "aperto",
+    titolo: [I caratteri non ASCII non si possono digitare],
+    breve: [Tasti non ASCII: non digitabili con la configurazione predefinita],
+    dove: [`input.rs` (`fill_default_keymaps`, che lega a `self-insert` solo l'ASCII stampabile, e `Keymap::binding`, con il ripiego per i caratteri), `editor/keys.rs` (`EditorState::handle_key_event`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: premendo `è` l'area messaggi mostra «è is undefined»; `(define-key nil "è" 'forward-char)` ora restituisce `t`.],
+    cosa: [La mappa globale lega a `self-insert` un tasto per ogni carattere da spazio a tilde; ogni altro carattere arriva alla risoluzione dei tasti senza un comando. Da `0a87fee` `parse_key` conta i caratteri e non i byte, quindi un carattere non ASCII si può legare, e una mappa può dare un comando a tutti i caratteri senza un legame, con `(define-key MAPPA "<char>" COMANDO)`. Ma lo fanno solo le mappe di vim: la mappa globale non ne ha uno.],
+    effetto: [Con la configurazione predefinita l'editor è inutilizzabile per scrivere in italiano, francese, tedesco o in qualunque lingua con lettere accentate, e per i simboli tipografici (`€`, `°`, `«»`).],
+    correzione: [Dare alla mappa globale un comando per i caratteri, che inserisca il carattere premuto, come fa `self-insert-command` di Emacs.],
   ),
   (
     id: "CMD-2",
     gravita: "media",
     verificato: false,
+    stato: "aperto",
     titolo: [Mancano Canc, Inizio, Fine, PagSu, PagGiù e i tasti funzione],
     breve: [`KeyCode` senza Delete/Home/End/PgUp/PgDn/F1…],
-    dove: [`input.rs:5-17` (`KeyCode`), `src/tui.rs:60` (`translate_key` scarta tutto il resto)],
-    verifica: [Dalla lettura del codice: l'enum ha solo `Char`, `Backspace`, `Enter`, `Esc`, `Tab` e le quattro frecce.],
-    cosa: [I tasti non rappresentati vengono scartati dalla TUI con una riga nel registro («no translation for the key»).],
-    effetto: [Tasti che ogni utente si aspetta (Canc in particolare) non fanno nulla e non si possono legare.],
-    correzione: [Estendere `KeyCode` e `translate_key`, e aggiungere i nomi (`<delete>`, `<home>`, `<f1>`…) a `parse_key`.],
+    dove: [`input.rs` (`KeyCode`), `src/tui.rs` (`translate_key`, che scarta tutto il resto), `primitives/mod.rs` (`parse_key`, senza un nome per questi tasti); nella GUI, `src/gui.rs` (`EditorApp::native_key`, `special_key`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: `(define-key nil "<delete>" 'delete-char)`, e lo stesso con `"<home>"` e `"<f1>"`, danno `nil` e «Invalid key sequence» nel registro, dove la stessa riga per `<delete>` c'è già dall'avvio. Il resto dalla lettura del codice: l'enum ha solo `Char`, `Backspace`, `Enter`, `Esc`, `Tab`, le quattro frecce e un segnaposto `None`.],
+    cosa: [I tasti non rappresentati vengono scartati dalla TUI con una riga nel registro («no translation for the key»), e `parse_key` non ha un nome per loro: il modulo `electric-pair` lega `<delete>` e fallisce a ogni avvio. La GUI (`src/gui.rs`) traduce da sé Inizio, Fine, Canc, PagSu e PagGiù in `C-a`, `C-e`, `C-d`, `M-v` e `C-v`, o nei tasti di vim nello stato normale: lì quei tasti funzionano, ma non si possono legare. I tasti funzione mancano in tutte e due. Le pagine `editing` e `keymaps` lo dicono tra i limiti.],
+    effetto: [Tasti che ogni utente si aspetta (Canc in particolare) non fanno nulla nel terminale, e non si possono legare né lì né nella GUI.],
+    correzione: [Estendere `KeyCode` e `translate_key`, aggiungere i nomi (`<delete>`, `<home>`, `<f1>`…) a `parse_key`, e togliere dalla GUI le traduzioni fisse in favore di legami nelle mappe.],
   ),
   (
     id: "CMD-3",
     gravita: "media",
     verificato: true,
-    titolo: [Argomenti numerici enormi: allocazioni che terminano il processo e cicli senza fine],
-    breve: [Conteggi e larghezze senza limite nelle primitive Rust: panic, abort, blocchi],
-    dove: [`primitives/edits.rs:397-424` (`word_forward`, `word_backward`), `primitives/edits.rs:360-369` (`repeat_count`), `primitives/macros.rs:258-270` (`kmacro-insert-counter`), `indent-line-to`],
-    verifica: [Trovato dal fuzzer delle primitive (ogni funzione chiamata con 807 combinazioni di argomenti) e confermato a mano.],
-    cosa: [Diverse primitive scritte in Rust usano un numero dell'utente come quantità da allocare o come numero di giri, senza un limite e senza carburante. `indent-line-to` crea una stringa di spazi lunga quanto la colonna richiesta. `kmacro-insert-counter` passa la larghezza a `format!`, che oltre 65 535 va in panic. `forward-word` e gli altri comandi sulle parole ripetono il passo COUNT volte senza fermarsi quando il punto ha raggiunto il bordo del buffer.],
+    stato: "aperto",
+    titolo: [Argomenti numerici enormi: allocazioni che terminano il processo e panic],
+    breve: [Larghezze e conteggi senza limite nelle primitive Rust: panic e abort],
+    dove: [`primitives/edits.rs` (`indent-line-to`, `repeat_count`), `primitives/macros.rs` (`kmacro-insert-counter`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: `(kmacro-insert-counter 70000)` va in panic con «Formatting argument out of range»; `(forward-word 300000000)` invece si ferma subito alla fine del buffer. `indent-line-to` non è cambiata dall'analisi, che l'aveva trovata con il fuzzer delle primitive.],
+    cosa: [Alcune primitive scritte in Rust usano un numero dell'utente come quantità da allocare, senza un limite e senza carburante. `indent-line-to` crea una stringa di spazi lunga quanto la colonna richiesta. `kmacro-insert-counter` passa la larghezza a `format!`, che oltre 65 535 va in panic. Da `cf0d8ac` i comandi sulle parole si fermano invece al bordo del buffer, e non ripetono più a vuoto il loro passo.],
     riproduzione: ```lisp
 (indent-line-to 300000000000)     ; abort: memory allocation failed
 (kmacro-insert-counter 65536)     ; panic: Formatting argument out of range
-(forward-word 300000000)          ; 0,6 s per 3e8 giri a vuoto
-;; C-u 1000000000000 M-f          → circa mezz'ora di blocco
 ```,
-    effetto: [Un panic nel thread dei comandi chiude l'editor e lascia il terminale in raw mode (#link(<TUI-2>)[TUI-2]); un ciclo lungo lo blocca senza che `C-g` possa interromperlo.],
-    correzione: [Uscire dai cicli quando il punto non si muove più; limitare larghezze e conteggi (per esempio a un milione) con un errore `args-out-of-range`; usare `try_reserve` per le allocazioni guidate dall'utente.],
+    effetto: [Un panic nel thread dei comandi chiude l'editor e lascia il terminale in raw mode (#link(<TUI-2>)[TUI-2]); un'allocazione rifiutata termina il processo senza nemmeno un panic.],
+    correzione: [Limitare larghezze e conteggi (per esempio a un milione) con un errore `args-out-of-range`, a partire da `repeat_count`; usare `try_reserve` per le allocazioni guidate dall'utente.],
   ),
   (
     id: "CMD-4",
     gravita: "bassa",
     verificato: true,
+    stato: "aperto",
     titolo: [Le combinazioni di modificatori in `define-key` sono limitate e un errore va solo nel registro],
     breve: [`parse_key`: un solo prefisso; `define-key` fallisce in silenzio],
-    dove: [`primitives/mod.rs:28-80` (`parse_key`), `primitives/general.rs:43` (`define-key`)],
-    verifica: [Riprodotto: `"M-C-x"` e `"C-S-<up>"` danno `nil`, `"C-M-x"` dà `t`.],
-    cosa: [`parse_key` riconosce un solo prefisso tra `C-M-`, `C-`, `M-` e `S-`, quindi `M-C-x` (stesso tasto di `C-M-x`) e le combinazioni con Shift non si possono scrivere. Una sequenza non valida o un modo inesistente fanno restituire `nil` a `define-key`, con il motivo scritto solo nel registro.],
+    dove: [`primitives/mod.rs` (`parse_key`), `primitives/general.rs` (`define-key`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: `"M-C-x"` e `"C-S-a"` danno `nil`, `"C-M-x"` dà `t`.],
+    cosa: [`parse_key` riconosce un solo prefisso tra `C-M-`, `C-`, `M-` e `S-`, quindi `M-C-x` (stesso tasto di `C-M-x`) e le combinazioni con Shift non si possono scrivere. Una sequenza non valida o un modo inesistente fanno restituire `nil` a `define-key`, con il motivo scritto solo nel registro. La docstring di `define-key` e la pagina `keymaps` ora dicono quali combinazioni non sono tasti.],
     correzione: [Analizzare i prefissi in un ciclo, in qualsiasi ordine, e segnalare l'errore con un errore Lisp.],
   ),
   (
     id: "CMD-5",
     gravita: "bassa",
     verificato: true,
+    stato: "aperto",
     titolo: [`self-insert` ignora l'argomento prefisso],
     breve: [`C-u 3 x` inserisce una sola `x`],
-    dove: [`input.rs:256-266` (il legame è `(self-insert "x")`, una forma che fornisce già i suoi argomenti), `primitives/edits.rs:200`],
-    verifica: [Riprodotto: `C-u 3 x` inserisce una `x`.],
-    cosa: [Una forma che fornisce già i suoi argomenti non riceve l'argomento prefisso. Il manuale `man/editing.txt` descrive il comportamento di Emacs, cioè tre `x`.],
+    dove: [`input.rs` (`fill_default_keymaps`: il legame è `(self-insert "x")`, una forma che fornisce già i suoi argomenti), `editor/keys.rs` (`EditorState::handle_key_event`), `primitives/edits.rs` (`self-insert`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: `C-u 3 x` inserisce una `x`.],
+    cosa: [Una forma che fornisce già i suoi argomenti non riceve l'argomento prefisso, e `self-insert` non lo legge. La pagina `editing` ora lo dice tra i conteggi; in Emacs le `x` sono tre.],
     correzione: [Legare i caratteri a un comando che legge il tasto premuto (come `self-insert-command` di Emacs), oppure passare il prefisso alle forme di `self-insert`.],
   ),
   (
     id: "CMD-6",
     gravita: "bassa",
     verificato: false,
-    titolo: [Un argomento `n` non numerico diventa 0; un conteggio negativo diventa 0],
-    breve: [Argomento `n` non numerico → 0; conteggi negativi → 0],
-    dove: [`primitives/commands.rs:280` (`parse::<f64>().unwrap_or(0.0)`), `primitives/edits.rs:360-369` (`repeat_count`)],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Se l'utente scrive `abc` a una domanda numerica, il comando riceve 0 senza avviso. `repeat_count` trasforma un conteggio negativo in 0, quindi `(forward-word -2)` e `M-- M-f` non fanno nulla, mentre in Emacs vanno all'indietro.],
-    correzione: [Ripetere la domanda su un valore non numerico; interpretare i conteggi negativi come spostamenti nella direzione opposta.],
+    stato: "aperto",
+    titolo: [Un conteggio negativo non inverte i comandi che cancellano],
+    breve: [`kill-word`, `delete-char` e simili: un conteggio negativo vale 0],
+    dove: [`primitives/edits.rs` (`repeat_count`, e i comandi che lo usano: `delete-char`, `kill-word`, `backward-kill-word`, `kill-sexp`, `backward-kill-sexp`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: in `foo bar`, `(kill-word -1)` dalla fine e `(delete-char -1)` da metà non cambiano il testo.],
+    cosa: [`repeat_count` trasforma un conteggio negativo in 0, quindi i comandi che lo usano non fanno nulla, mentre in Emacs agiscono all'indietro. Due parti della scheda sono risolte: da `4506432` una risposta non numerica a una domanda numerica viene chiesta di nuovo, e da `cf0d8ac` gli spostamenti (caratteri, parole, righe, paragrafi, espressioni) usano `movement_count` e con un conteggio negativo vanno all'indietro.],
+    correzione: [Usare `movement_count` anche nei comandi che cancellano, cancellando all'indietro con un conteggio negativo.],
   ),
   // ------------------------------------------------------------------ MIN
   (
     id: "MIN-1",
     gravita: "alta",
     verificato: true,
+    stato: "aperto",
     titolo: [Due domande aperte insieme condividono `*Minibuffer*` e lasciano una finestra fantasma],
     breve: [Prompt annidati: testo perso e finestra flottante fantasma],
-    dove: [`editor/buffers.rs:259-300` (`close_buffer` chiude la *prima* finestra flottante che mostra il buffer), `primitives/minibuffer.rs:322` (`default-minibuffer-prompt` usa sempre il nome `*Minibuffer*`)],
-    verifica: [Riprodotto con la sequenza `M-x one`, `M-x two`, `ESC`.],
-    cosa: [Ogni prompt crea il buffer `*Minibuffer*` e una finestra flottante che lo mostra. Un secondo prompt aperto mentre il primo è ancora aperto (un `M-x` dentro `M-x`, o un comando che fa una domanda mentre un prompt è aperto) riusa lo stesso buffer, quindi il testo del primo si perde e le due finestre mostrano lo stesso testo. `ESC` chiude il buffer e la *prima* finestra trovata, cioè quella del prompt esterno. Resta così a schermo la finestra del prompt interno, senza un buffer valido: il fuoco torna a `*scratch*` e `ESC` risponde «`<esc>` is undefined». Il prompt successivo riusa il nome, e la finestra fantasma ne mostra il testo.],
+    dove: [`primitives/minibuffer.rs` (`default-minibuffer-prompt`, che usa sempre il nome `*Minibuffer*`), `editor/windows.rs` (`EditorState::open_floating_window`), `editor/buffers.rs` (`EditorState::close_buffer`, che chiude la *prima* finestra flottante che mostra il buffer)],
+    verifica: [Riprodotto sulla revisione `3d846f1` con la sequenza `M-x one`, `M-x two`, Escape: con i due prompt aperti ci sono due finestre flottanti su `*Minibuffer*` e `one` è sparito; dopo Escape il fuoco è su `*scratch*` e una finestra flottante su `*Minibuffer*` resta aperta.],
+    cosa: [Ogni prompt crea il buffer `*Minibuffer*` e una finestra flottante che lo mostra. Un secondo prompt aperto mentre il primo è ancora aperto (un `M-x` dentro `M-x`, o un comando che fa una domanda mentre un prompt è aperto) riusa lo stesso buffer, quindi il testo del primo si perde e le due finestre mostrano lo stesso testo. Escape chiude il buffer e la *prima* finestra trovata, cioè quella del prompt esterno. Resta così a schermo la finestra del prompt interno, senza un buffer valido, e il fuoco torna a `*scratch*`. Il prompt successivo riusa il nome, e la finestra fantasma ne mostra il testo.],
     effetto: [Una finestra che non si può più chiudere copre parte dello schermo fino al riavvio, e la risposta che l'utente stava scrivendo nel prompt esterno è persa.],
     correzione: [Nomi di buffer distinti per prompt (`*Minibuffer-1*`…) e una pila di prompt, oppure rifiutare un secondo prompt finché il primo è aperto, come fa Emacs senza `enable-recursive-minibuffers`. In `close_buffer`, chiudere *tutte* le finestre flottanti che mostrano il buffer.],
   ),
@@ -615,35 +268,39 @@ in un file .rs vuoto:  fn a() {}   C-a  //   C-/
     id: "MIN-2",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [`C-g` dentro il minibuffer non annulla la domanda],
     breve: [`C-g` nel minibuffer non chiude il prompt],
-    dove: [`lisp/common-keymaps.lisp:290` (`C-g` → `keyboard-quit` anche nel minibuffer); manca un legame in `minibuffer-mode`],
-    verifica: [Riprodotto: `M-x` poi `C-g` scrive «Quit» e il prompt resta aperto; solo `ESC` lo chiude.],
-    cosa: [`keyboard-quit` abbandona una sequenza di tasti a metà e azzera l'argomento prefisso, ma non sa nulla dei prompt aperti.],
+    dove: [`core/lisp/common-keymaps.lisp` (`C-g` → `keyboard-quit`, anche nel minibuffer), `feature/minibuffer.rs` (`install_minibuffer`: la mappa di `minibuffer-mode` non lega `C-g`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: `M-x` poi `C-g` scrive «Quit» e il prompt resta aperto.],
+    cosa: [`keyboard-quit` abbandona una sequenza di tasti a metà e azzera l'argomento prefisso, ma non sa nulla dei prompt aperti. La pagina `minibuffer` ora lo dice: Escape è la via d'uscita.],
     effetto: [Chi viene da Emacs preme `C-g` per uscire da una domanda e non ottiene nulla; il prompt resta aperto e cattura i tasti successivi.],
     correzione: [Legare `C-g` a `minibuffer-cancel` in `minibuffer-mode`.],
   ),
   (
     id: "MIN-3",
     gravita: "bassa",
-    verificato: false,
-    titolo: [Il contenuto del minibuffer viene sostituito senza passare dalle porte delle modifiche],
-    breve: [`set_minibuffer_content` scavalca le porte],
-    dove: [`feature/minibuffer.rs:46`],
-    verifica: [Dalla lettura del codice.],
-    cosa: [La funzione che scrive la risposta proposta (completamento, cronologia) sostituisce il testo direttamente. Valgono le stesse conseguenze di #link(<BUF-1>)[BUF-1]: versione invariata e cache non invalidate. Nel minibuffer l'effetto visibile è modesto.],
-    correzione: [Usare `delete_range` e `insert_text`.],
+    verificato: true,
+    stato: "aperto",
+    titolo: [Il contenuto del minibuffer viene sostituito senza passare dalle porte delle modifiche, e solo fino al punto],
+    breve: [`set_minibuffer_content` scavalca le porte e lascia il testo dopo il punto],
+    dove: [`feature/minibuffer.rs` (`set_minibuffer_content`), chiamata da `primitives/minibuffer.rs` (`minibuffer_complete`, `minibuffer_choose_completion`, `step_history`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: dopo un `M-x forward-char`, un nuovo `M-x`, `abc`, `C-a` e `M-p` lasciano nel minibuffer `forward-charabc`. Il resto dalla lettura del codice.],
+    cosa: [La funzione che scrive la risposta proposta (completamento, cronologia) cancella il testo prima del punto e inserisce quello nuovo direttamente nel testo: quello che sta dopo il punto resta. Da `c850aee` chiama poi `changed`, quindi versione e cache sono a posto; il resto delle porte resta saltato: nulla per l'annullamento, nessun controllo della sola lettura, overlay e testo virtuale non spostati (#link(<BUF-1>)[BUF-1]).],
+    effetto: [Con il punto a metà della risposta, la cronologia non la sostituisce ma ci si mette davanti, e la risposta che parte è sbagliata.],
+    correzione: [Sostituire tutta la risposta, con `delete_range` e `insert_text`.],
   ),
   // ------------------------------------------------------------------ FIL
   (
     id: "FIL-1",
     gravita: "alta",
     verificato: true,
+    stato: "aperto",
     titolo: [Un salvataggio fallito con `C-x C-s` non viene segnalato],
     breve: [`save-buffer` fallito: solo una riga nel registro],
-    dove: [`primitives/io.rs:139-185` (`save-buffer`), `primitives/io.rs:1419-1441` (`save-buffer--overwrite`)],
-    verifica: [Riprodotto: con un percorso in una directory inesistente l'area messaggi resta invariata e il buffer resta modificato. Anche il successo non viene detto: «Wrote …» va solo nel registro.],
-    cosa: [L'errore di `std::fs::write` viene passato a `log_diagnostic`, che scrive nel registro e non nell'area messaggi. `write-file`, al contrario, lo mostra.],
+    dove: [`primitives/io.rs` (`save-buffer`, `save-buffer--overwrite`, e `write_buffer`, che usano anche `save-some-buffers` e l'uscita); per confronto `write-file`],
+    verifica: [Riprodotto sulla revisione `3d846f1`: `save-buffer` in un buffer senza file lascia l'area messaggi invariata e scrive «No file associated with this buffer» solo nel registro. Il caso dell'analisi, un percorso in una directory inesistente, passa dallo stesso ramo, che non è cambiato.],
+    cosa: [L'errore di `std::fs::write` viene passato a `log_diagnostic`, che scrive nel registro e non nell'area messaggi. `write-file`, al contrario, lo mostra. La docstring di `save-buffer` ora dice che il motivo di un fallimento va nel registro.],
     effetto: [Chi salva su un disco pieno, su un file senza permessi di scrittura o su un percorso che non esiste più crede di aver salvato. L'unico avviso arriva all'uscita, con la domanda «… is unsaved. Quit anyway?», e solo se il buffer è ancora segnato come modificato.],
     correzione: [Mostrare nell'area messaggi sia «Wrote PERCORSO» sia «Cannot save PERCORSO: motivo», come fa `write-file`.],
   ),
@@ -651,9 +308,10 @@ in un file .rs vuoto:  fn a() {}   C-a  //   C-/
     id: "FIL-2",
     gravita: "media",
     verificato: false,
+    stato: "aperto",
     titolo: [I file vengono scritti sul posto: un errore a metà li lascia troncati],
     breve: [Scrittura non atomica dei file],
-    dove: [`primitives/io.rs:169`, `:370`, `:1427`, `:1513` e `modes/autosave.rs:239` (`std::fs::write`)],
+    dove: [`primitives/io.rs` (`save-buffer`, `write-file`, `save-buffer--overwrite`, `write_buffer`) e `modes/autosave.rs` (`EditorState::write_auto_save`): tutti con `std::fs::write`],
     verifica: [Dalla lettura del codice.],
     cosa: [`std::fs::write` tronca il file e poi scrive. Se la scrittura si interrompe (disco pieno, processo terminato, alimentazione), sul disco resta un file troncato o vuoto, e la versione precedente è già persa.],
     effetto: [Possibile perdita del contenuto del file proprio quando qualcosa va storto.],
@@ -663,11 +321,12 @@ in un file .rs vuoto:  fn a() {}   C-a  //   C-/
     id: "FIL-3",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [Un file non UTF-8 non si apre e non viene detto nulla],
     breve: [Aprire un file non UTF-8 fallisce in silenzio],
-    dove: [`editor/buffers.rs:21-45` (`new_buffer`: `read_to_string`, errore solo nel registro)],
-    verifica: [Riprodotto con un file Latin-1: area messaggi e buffer corrente invariati, `find-file` restituisce `nil`.],
-    cosa: [`std::fs::read_to_string` rifiuta qualsiasi byte non UTF-8; l'errore finisce nel registro e il comando non fa nulla di visibile.],
+    dove: [`editor/buffers.rs` (`EditorState::new_buffer`: `read_to_string`, errore solo nel registro), `primitives/io.rs` (`find-file`)],
+    verifica: [Riprodotto sulla revisione `3d846f1` con un file Latin-1: area messaggi e buffer corrente invariati, `find-file` restituisce `nil`, e il registro dice «Error reading file: stream did not contain valid UTF-8».],
+    cosa: [`std::fs::read_to_string` rifiuta qualsiasi byte non UTF-8; l'errore finisce nel registro e il comando non fa nulla di visibile. La docstring di `find-file` ora dice che un file che non si legge dà `nil`.],
     effetto: [File in Latin-1, file binari e file con un solo byte sbagliato sembrano non aprirsi «per nessun motivo».],
     correzione: [Un messaggio nell'area messaggi; in prospettiva un'apertura con `String::from_utf8_lossy` in un buffer in sola lettura, o una decodifica Latin-1 di ripiego.],
   ),
@@ -675,45 +334,43 @@ in un file .rs vuoto:  fn a() {}   C-a  //   C-/
     id: "FIL-4",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [Una modifica fatta durante il salvataggio può restare non salvata ma non segnata],
     breve: [Corsa tra copia del testo e azzeramento di «modificato»],
-    dove: [`primitives/io.rs:139-185` (`save-buffer`), `primitives/io.rs:1503` (`write_buffer`)],
+    dove: [`primitives/io.rs` (`save-buffer`, `save-buffer--overwrite`, `write_buffer`; `write-file` segue lo stesso schema)],
     verifica: [Dalla lettura del codice.],
-    cosa: [Il testo viene copiato sotto il lock, poi scritto senza lock, poi `is_modified` viene azzerato con un secondo lock. Una modifica arrivata nel frattempo (da un worker o da un callback) resta nel buffer ma il buffer risulta salvato.],
+    cosa: [Il testo viene copiato sotto il lock, poi scritto senza lock, poi `is_modified` viene azzerato con un secondo lock, senza guardare `version`. Una modifica arrivata nel frattempo (da un lavoro Lisp in background o da un callback) resta nel buffer ma il buffer risulta salvato. Il salvataggio automatico non ha il problema: ricorda la versione che ha copiato.],
     correzione: [Ricordare la `version` copiata e azzerare `is_modified` solo se è ancora quella.],
   ),
   (
     id: "FIL-5",
     gravita: "bassa",
     verificato: false,
-    titolo: [Il salvataggio automatico copia tutto il testo prima di sapere se serve, e segna come salvato anche un tentativo fallito],
-    breve: [Autosave: copia preventiva; versione segnata anche se la scrittura fallisce],
-    dove: [`modes/autosave.rs:200-251` (`auto_save_for` copia il testo con `to_string()` prima dei controlli; `auto_saved_at` impostato anche dopo un errore)],
-    verifica: [Dalla lettura del codice; il secondo punto è documentato come «tentato».],
-    cosa: [Ogni 30 secondi, per fino a quattro buffer, l'intero testo viene copiato sotto il lock di lettura anche quando il buffer non è modificato o è già stato salvato. Se la scrittura fallisce per un motivo passeggero, la versione viene comunque registrata e non si riprova finché il buffer non cambia.],
-    correzione: [Controllare `is_modified` e `auto_saved_at` prima di copiare; registrare la versione solo dopo una scrittura riuscita.],
+    stato: "aperto",
+    titolo: [Il salvataggio automatico segna come salvato anche un tentativo fallito],
+    breve: [Autosave: versione segnata anche se la scrittura fallisce],
+    dove: [`modes/autosave.rs` (`EditorState::write_auto_save`: `auto_saved_at` impostato anche dopo un errore)],
+    verifica: [Dalla lettura del codice: il commento lo dice, «Recorded whether or not the write worked».],
+    cosa: [Se la scrittura della copia fallisce per un motivo passeggero, la versione viene comunque registrata, e non si riprova finché il buffer non cambia. La prima metà della scheda è risolta da `1aa5cf7`: `auto_save_for` guarda file, sola lettura, modifica e versione già salvata prima di copiare il testo, e ogni giro guarda tutti i buffer e ne scrive al più quattro.],
+    correzione: [Registrare la versione solo dopo una scrittura riuscita.],
   ),
   // ------------------------------------------------------------------ AVV
   (
     id: "AVV-1",
     gravita: "alta",
-    verificato: true,
+    stato: "risolto",
+    commit: "58d0b0d",
     titolo: [L'editor non parte se la directory corrente non è scrivibile],
-    breve: [`rsedit.log` nella directory corrente: senza permessi l'editor non parte],
-    dove: [`src/main.rs:21` (`state.enable_log_file("rsedit.log")?`), `editor/log.rs:14-18` (`File::create`)],
-    verifica: [Riprodotto lanciando l'editor da `/proc`: «Error: Os { code: 2, kind: NotFound … }», uscita 1.],
-    cosa: [Il registro viene creato con un percorso relativo, quindi nella directory da cui l'editor è lanciato, e un errore di creazione viene propagato con `?` fino a `main`. `File::create` inoltre tronca il registro della sessione precedente.],
-    effetto: [Chi lancia `rsedit /etc/hosts` da `/` o da una directory di sola lettura non riesce ad aprire nulla. In ogni progetto compare un file `rsedit.log`.],
-    correzione: [Mettere il registro nella directory di stato dell'utente (`$XDG_STATE_HOME/rsedit/` o accanto alla configurazione); se non si riesce ad aprirlo, continuare senza file di registro.],
   ),
   (
     id: "AVV-2",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [Gli errori di sintassi nei file Lisp caricati vengono ignorati in silenzio],
     breve: [`eval_file`: errori di sintassi silenziosi; un commento finale senza a capo annulla il file],
-    dove: [`editor/boot.rs:165-240` (`eval_file`: contenuto avvolto in `(progn …)`, errore del lettore → `Ok(nil)`)],
-    verifica: [Riprodotto: con una parentesi in più il resto del file viene ignorato, con una parentesi non chiusa viene ignorato tutto. Un `init.lisp` la cui ultima riga è un commento senza a capo finale viene ignorato per intero; aggiungendo l'a capo funziona.],
+    dove: [`editor/boot.rs` (`EditorState::eval_file`: contenuto avvolto in `(progn …)`, errore del lettore → `Ok(nil)`); la usano `create_global_env`, per `init.lisp`, e la primitiva `eval-file`],
+    verifica: [Riprodotto sulla revisione `3d846f1` con `eval-file`: un file con una parentesi non chiusa e un file la cui ultima riga è un commento senza a capo restituiscono `nil` senza messaggi, e nessuna delle loro forme viene valutata.],
     cosa: [Il file viene letto come un'unica forma `(progn CONTENUTO)`. Una parentesi in più chiude la `progn` prima del tempo e il resto non viene mai letto. Una parentesi mancante, o un commento sull'ultima riga senza a capo (la parentesi aggiunta finisce *dentro* il commento), lascia la `progn` aperta. In entrambi i casi il lettore fallisce e `eval_file` restituisce `nil` senza dire nulla.],
     riproduzione: ```text
 init.lisp:
@@ -727,121 +384,135 @@ init.lisp:
   (
     id: "AVV-3",
     gravita: "media",
-    verificato: false,
+    stato: "risolto",
+    commit: "a20f050",
     titolo: [Un errore di scrittura del registro manda l'editor in panic],
-    breve: [Scrittura del registro con `.expect`: panic con disco pieno],
-    dove: [`editor/mod.rs:276-283` (`log_diagnostic`)],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Ogni diagnostica viene scritta nel file di registro con `.expect("Failed to write into log file")`.],
-    effetto: [Con il disco pieno, o se il file diventa non scrivibile, la diagnostica successiva chiude l'editor; e il primo tentativo di salvare su un disco pieno produce proprio una diagnostica.],
-    correzione: [Ignorare l'errore di scrittura del registro, o disattivare il file al primo errore, mantenendo le righe in memoria.],
   ),
   (
     id: "AVV-4",
     gravita: "bassa",
-    verificato: false,
+    stato: "risolto",
+    commit: "a20f050",
     titolo: [Il registro in memoria cresce senza limite],
-    breve: [`Log::lines` senza limite],
-    dove: [`managers/log.rs`],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Ogni diagnostica viene conservata per tutta la sessione, e `all-logs` le copia tutte.],
-    correzione: [Un anello di dimensione fissa (per esempio le ultime 10 000 righe).],
   ),
   (
     id: "AVV-5",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [La configurazione predefinita viene scritta solo se manca],
     breve: [`init.lisp` predefinito scritto solo alla prima esecuzione],
-    dove: [`editor/boot.rs:325-340` e `:480`],
+    dove: [`editor/boot.rs` (`DEFAULT_INIT_LISP`, e in `create_global_env` il blocco che scrive il file solo se manca), `paths.rs` (`app_dir`, per la directory della configurazione)],
     verifica: [Dalla lettura del codice.],
-    cosa: [Il file `init.lisp` predefinito carica i moduli e imposta i legami. Una volta scritto non viene più toccato, quindi chi lo ha già non riceve i moduli aggiunti nelle versioni successive.],
+    cosa: [Il file `init.lisp` predefinito carica i moduli e imposta i legami. Una volta scritto non viene più toccato, quindi chi lo ha già non riceve i moduli aggiunti nelle versioni successive: dall'analisi se ne sono aggiunti quattro, `python-mode`, `toml-mode`, `bash-mode` e `vim`, che un `init.lisp` scritto prima non carica.],
     correzione: [Separare la parte predefinita, caricata sempre dal codice o da un file di sistema, dalla parte personale, che è l'unica scritta nella directory dell'utente.],
+  ),
+  (
+    id: "AVV-6",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [Due editor aperti insieme scrivono lo stesso `rsedit.log` e si cancellano le righe a vicenda],
+    breve: [Due editor insieme: il secondo tronca il registro del primo, e le righe si sovrappongono],
+    dove: [`editor/log.rs` (`EditorState::enable_log_file`, con `File::create`), `managers/log.rs` (`Log::flush`, che scrive dalla posizione a cui era arrivato), `src/main.rs` (`main`, con un nome fisso nella directory della cache)],
+    verifica: [Riprodotto sulla revisione `3d846f1` con due editor veri e la stessa directory di cache: all'avvio il secondo tronca il file e lo riscrive da capo; poi una riga del secondo («no translation for the key F(5)») e una del primo («Keymap not bound <esc>») finiscono nello stesso punto, e il file dice «Keymap not bound <esc>» seguito dal resto dell'altra, «key F(5)».],
+    cosa: [Il registro è sempre `rsedit.log` nella directory della cache, aperto con `File::create`, che tronca il file, e senza `O_APPEND`. Un secondo editor tronca quindi il file del primo e ci scrive dall'inizio; il primo continua a scrivere dalla posizione a cui era arrivato, sopra le righe dell'altro. La pagina `diagnostics` dice che il file ricomincia a ogni avvio, non che due editor lo condividono.],
+    effetto: [Con due editor aperti il registro su disco mescola le righe dei due e ne perde una parte: proprio il file che serve quando un editor si è chiuso da solo.],
+    correzione: [Un file per processo (con il PID nel nome, e un collegamento all'ultimo), oppure l'apertura in append con un blocco sul file, che dica al secondo editor che il registro è già in uso.],
   ),
   // ------------------------------------------------------------------ BKG
   (
     id: "BKG-1",
     gravita: "alta",
-    verificato: true,
+    stato: "risolto",
+    commit: "6de16a1",
     titolo: [Un panic in un lavoro di background uccide per sempre il thread condiviso],
-    breve: [Lo scheduler muore al primo panic: niente colore, autosave, worker],
-    dove: [`background/mod.rs:104-185` (il ciclo dello scheduler, `retain_mut` a riga 170, senza `catch_unwind`), `primitives/workers.rs:82` e `:246`],
-    verifica: [Riprodotto: un worker contatore si ferma a 16 dopo `(background-call 'boom (lambda () (eval-string "[1 . 2]")))`; `(running-workers)` elenca ancora `("boom" "counter")`; `define-worker` e `background-call` restituiscono `nil` senza messaggio.],
-    cosa: [Tutti i lavori a turni (colorazione, prescansione, controllo dei file, salvataggio automatico, worker Lisp e `background-call` con una funzione) girano sullo stesso thread. Un panic in uno qualsiasi di essi termina quel thread, e nessuno lo riavvia. Da quel momento l'invio di nuovo lavoro fallisce. I commenti dicono che questo «succede solo alla chiusura dell'editor».],
-    effetto: [L'editor continua a funzionare ma senza colorazione, senza salvataggio automatico, senza controllo dei file cambiati su disco e senza worker; nessun messaggio lo dice. Il messaggio del panic viene stampato su stderr sopra lo schermo della TUI. Se il panic avviene con un lock in scrittura tenuto, il lock resta avvelenato e il thread principale va in panic al primo `.expect("write lock on …")`.],
-    correzione: [Eseguire ogni turno dentro `std::panic::catch_unwind`, ritirare solo il lavoro che ha fallito e scriverlo nel registro; in più, eliminare le cause note (#link(<LET-2>)[LET-2], #link(<TUI-5>)[TUI-5]).],
+  ),
+  (
+    id: "BKG-2",
+    gravita: "bassa",
+    verificato: false,
+    stato: "aperto",
+    titolo: [Un lavoro dell'editor che va in panic sparisce per tutta la sessione, e lo dice solo il registro],
+    breve: [Un panic ritira il lavoro per sempre: colorazione o salvataggio automatico fermi senza avviso],
+    dove: [`work/core.rs` (`Core::run_step`: il lavoro che va in panic esce con `Exit::Panicked`), `editor/boot.rs` (`EditorState::new`, che sottomette evidenziatore e prescansione, e `create_global_env`, che sottomette controllo dei file e salvataggio automatico, una volta sola)],
+    verifica: [Riprodotto sulla revisione `3d846f1` con un lavoro Lisp: dopo `(background-call 'boom (lambda () (set-face 'region "#aéb12")))` il registro dice «[BKG] panic: boom retired», il messaggio del panic va su stderr e un worker contatore continua a contare. Per i lavori dell'editor dalla lettura del codice.],
+    cosa: [Da quando BKG-1 è risolta, un panic in un passo ritira solo il lavoro che l'ha causato e lo scrive nel registro con il tag `[BKG]`. Per un lavoro Lisp basta. I lavori dell'editor, evidenziatore, prescansione, controllo dei file e salvataggio automatico, sono però sottomessi una volta sola all'avvio, e un lavoro ritirato non torna: dopo un panic dell'evidenziatore la colorazione si ferma fino alla fine della sessione, e l'area messaggi non dice nulla. Un panic che avvenisse con un lock dell'editor in scrittura lo lascerebbe inoltre avvelenato, e il thread dei comandi andrebbe in panic al primo `.expect("write lock on …")`; oggi non si conosce un panic che avvenga sotto un lock.],
+    effetto: [La colorazione, o il salvataggio automatico, smettono di funzionare senza che chi usa l'editor lo sappia.],
+    correzione: [Risottomettere i lavori dell'editor ritirati, con un limite perché un panic che si ripete non diventi un ciclo, e dire nell'area messaggi quale lavoro si è fermato; per i lock, decidere se uno avvelenato si può riprendere (`PoisonError::into_inner`) o deve chiudere l'editor in modo ordinato.],
   ),
   // ------------------------------------------------------------------ SIN
   (
     id: "SIN-1",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [Una regione di sintassi che corrisponde alla stringa vuota blocca il thread di background],
     breve: [Regioni che corrispondono a "": ciclo infinito o memoria esaurita nell'evidenziatore],
-    dove: [`primitives/modes.rs:167-205` (`add-syntax-region` non controlla i pattern), `modes/syntax.rs:333-393` (`highlight_line` non avanza dopo un'apertura, una chiusura o un escape vuoti)],
-    verifica: [Riprodotto: con BEGIN `"x*"` ed END `"y*"` un thread resta al 97 % di CPU e la colorazione di un file di una riga non finisce mai. Con BEGIN vuoto e NESTABLE la memoria cresce di circa 90 MB al secondo. Con un pattern normale lo stesso file si colora in 20 ms.],
+    dove: [`primitives/modes.rs` (`add-syntax-region`, che non controlla i pattern), `modes/syntax.rs` (`highlight_line`, che non avanza dopo un'apertura, una chiusura o un escape vuoti)],
+    verifica: [Riprodotto nell'analisi di `08a853d`: con BEGIN `"x*"` ed END `"y*"` un thread restava al 97 % di CPU e la colorazione di un file di una riga non finiva mai; con BEGIN vuoto e NESTABLE la memoria cresceva di circa 90 MB al secondo; con un pattern normale lo stesso file si colorava in 20 ms. Il ciclo di `highlight_line` non è cambiato da allora.],
     cosa: [`highlight_line` avanza la posizione al punto in cui finisce l'evento trovato. Per una regola protegge il caso vuoto (`pos = resume.max(pos + 1)`), per regioni ed escape no. Una regione che si apre e si chiude con due corrispondenze vuote nella stessa posizione si riapre all'infinito; una regione annidabile con un BEGIN vuoto continua a impilare stati.],
     riproduzione: ```lisp
 (add-syntax-region 'rust-mode "x*" "y*" 'comment)
 ;; poi aprire un file .rs qualsiasi
 ;; errore di battitura realistico: BEGIN "#*" con END "$"
 ```,
-    effetto: [Il thread condiviso resta occupato per sempre (#link(<BKG-1>)[BKG-1] per le conseguenze) oppure il processo esaurisce la memoria. Le grammatiche fornite con l'editor non hanno il problema; basta però un errore di battitura in una grammatica scritta dall'utente.],
+    effetto: [Il passo dell'evidenziatore non finisce, e con lui si ferma l'esecutore del WorkManager: prescansione, controllo dei file, salvataggio automatico, worker Lisp e `background-call` restano fermi; i comandi di shell e le ricerche, che hanno un thread proprio, no. Il watchdog lo scrive nel registro («[BKG] stuck step: highlighter running for 1.0 s», poi a 2 s, a 4 s…). Oppure il processo esaurisce la memoria. Le grammatiche fornite con l'editor, comprese quelle nuove di Python, TOML, Bash e C, non hanno il problema; basta però un errore di battitura in una grammatica scritta dall'utente.],
     correzione: [Rifiutare in `add-syntax-region` i pattern per cui `is_match("")` è vero, e in `highlight_line` forzare l'avanzamento di almeno un carattere dopo un evento vuoto.],
   ),
   (
     id: "SIN-2",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [Colorare una riga molto lunga costa un tempo quadratico nella sua lunghezza],
     breve: [Colorazione quadratica sulle righe lunghe],
-    dove: [`modes/syntax.rs:444-476` (`top_level_event` riprova ogni regione e ogni regola dalla posizione corrente)],
-    verifica: [Misurato su una riga Rust ripetuta (`let a = "x"; `): 65 KB in 0,96 s, 130 KB in 3,7 s, 260 KB in 14,8 s; una riga di 1 MB (un file minificato) richiederebbe circa quattro minuti.],
+    dove: [`modes/syntax.rs` (`top_level_event`, che riprova ogni regione e ogni regola dalla posizione corrente, e `highlight_line`), `buffer/syntax.rs` (`LINES_PER_TURN`)],
+    verifica: [Misurato nell'analisi di `08a853d` su una riga Rust ripetuta (`let a = "x"; `): 65 KB in 0,96 s, 130 KB in 3,7 s, 260 KB in 14,8 s; una riga di 1 MB (un file minificato) richiederebbe circa quattro minuti. `top_level_event` non è cambiata da allora.],
     cosa: [A ogni evento la scansione chiede a ogni pattern la sua prossima corrispondenza a partire dalla posizione corrente. I pattern che non trovano nulla scorrono ogni volta fino alla fine della riga, quindi il lavoro è proporzionale a eventi × lunghezza. Una riga non si può dividere tra due turni, perché `LINES_PER_TURN` conta righe.],
-    effetto: [Mentre il thread condiviso colora la riga, salvataggio automatico, controllo dei file e worker sono fermi.],
+    effetto: [Mentre l'esecutore del WorkManager colora la riga, prescansione, controllo dei file, salvataggio automatico e worker sono fermi, e il watchdog scrive nel registro un passo lungo e poi bloccato.],
     correzione: [Ricordare per ogni pattern la prossima corrispondenza trovata e ricalcolarla solo quando la posizione la supera; oltre una certa lunghezza, non colorare la riga.],
   ),
   (
     id: "SIN-3",
     gravita: "bassa",
-    verificato: false,
+    stato: "risolto",
+    commit: "cf0d8ac",
     titolo: [`write-file` che cambia il modo lascia i colori del modo precedente],
-    breve: [`write-file` con cambio di modo: colori vecchi],
-    dove: [`primitives/io.rs:385-392`],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Se il nuovo nome del file corrisponde a un altro modo, `current_mode` cambia ma la cache di colorazione non viene invalidata. I colori della grammatica precedente restano finché il testo non viene modificato. Non esiste inoltre una primitiva per cambiare il modo di un buffer già aperto.],
-    correzione: [Invalidare `SyntaxCache` e `ScanCache` a ogni cambio di modo; aggiungere una primitiva `set-major-mode`.],
   ),
   (
     id: "SIN-4",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [`make-mode` su un modo esistente lo sostituisce con uno vuoto],
     breve: [`make-mode` ricrea il modo, perdendo legami e hook],
-    dove: [`primitives/modes.rs:13-30` (`modes.insert(mode_name, MajorMode::new(..))`)],
+    dove: [`primitives/modes.rs` (`make-mode`), `editor/modes.rs` (`EditorState::set_mode`), `managers/modes.rs` (`Modes::insert`)],
     verifica: [Dalla lettura del codice.],
-    cosa: [Rivalutare il file di un modo (per esempio dopo una modifica) azzera la sua mappa dei tasti, i suoi hook, la grammatica e la tabella di sintassi, compresi quelli che altri moduli avevano aggiunto (come l'hook di `electric-pair`).],
+    cosa: [Rivalutare il file di un modo (per esempio dopo una modifica) azzera la sua mappa dei tasti, i suoi hook, la grammatica e la tabella di sintassi, compresi quelli che altri moduli avevano aggiunto (come l'hook di `electric-pair`). La docstring di `make-mode` e i limiti della pagina `writing-modes` ora lo dicono.],
     correzione: [Se il modo esiste già, restituirlo senza modificarlo, oppure svuotare solo grammatica e tabella.],
   ),
   (
     id: "SIN-5",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [Il registro delle facce cresce per sempre e l'indice è a 16 bit],
     breve: [Facce: registro globale senza limite, indice `u16`],
-    dove: [`ui/faces.rs:150-175`],
+    dove: [`ui/faces.rs` (`Face::intern`, `Face::all`)],
     verifica: [Dalla lettura del codice.],
-    cosa: [Ogni nome di faccia mai usato resta registrato. `(names.len() - 1) as u16` si avvolge dopo 65 536 nomi distinti, e un nome nuovo prenderebbe l'indice di uno vecchio.],
+    cosa: [Ogni nome di faccia mai usato resta registrato. `(names.len() - 1) as u16` si avvolge dopo 65 536 nomi distinti, e un nome nuovo prenderebbe l'indice di uno vecchio. I nomi arrivano anche da Lisp mentre l'editor gira (`set-face`, `face-style`, le facce di overlay e testo virtuale), quindi il commento che dice il registro limitato dalla configurazione è ottimista.],
     correzione: [Un controllo con errore oltre `u16::MAX`, o un indice a 32 bit.],
   ),
   (
     id: "SIN-6",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [`forward-sexp` dall'interno di un simbolo salta alla fine dell'espressione successiva],
     breve: [`C-M-f` a metà di un simbolo: un'espressione di troppo],
-    dove: [`modes/sexp.rs:563-590` (`forward`), `modes/sexp.rs:525-531` (`run_to`)],
-    verifica: [Riprodotto: in `(foo bar) (baz)`, da 2 (dentro `foo`) `forward-sexp` porta a 8 (fine di `bar`) invece che a 4; da 13 (dentro `baz`) non si muove invece di arrivare a 14.],
+    dove: [`modes/sexp.rs` (`forward`, `Scan::run_to`, `Scan::step`); la usano `forward-sexp`, `kill-sexp` e `backward-sexp` con un conteggio negativo],
+    verifica: [Riprodotto sulla revisione `3d846f1`: in `(foo bar) (baz)`, da 2 (dentro `foo`) `forward-sexp` porta a 8 (fine di `bar`) invece che a 4; da 13 (dentro `baz`) non si muove invece di arrivare a 14.],
     cosa: [`forward` porta la scansione fino a `from` con `run_to`, poi conta le espressioni completate da lì in avanti. Ma un passo della scansione consuma un intero simbolo: se `from` cade dentro un simbolo, `run_to` lo completa (e lo scarta) prima di restituire il controllo, e il primo completamento contato è quello dell'espressione dopo. Sul simbolo finale di una lista non resta nulla da contare a quel livello e il punto non si muove.],
     effetto: [`C-M-f` e `kill-sexp` (che usa la stessa funzione) dall'interno di una parola si comportano in modo diverso da Emacs: il primo salta un'espressione, il secondo cancella anche l'espressione successiva.],
     correzione: [In `run_to` fermarsi prima di un passo che supererebbe il limite, oppure in `forward` controllare se l'ultimo completamento di `run_to` finisce dopo `from` e contarlo.],
@@ -851,21 +522,23 @@ init.lisp:
     id: "RIC-1",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [Una sostituzione con un'espressione che può essere vuota mette tutte le sostituzioni nello stesso punto],
     breve: [`replace-regexp` con match vuoti: tutto nello stesso punto],
-    dove: [`text/search.rs:902-919` (`Replace::accept`), `editor/replace.rs:184` (`replace_rest`)],
-    verifica: [Riprodotto: `(replace-regexp "x*" "-")` su `abc` dà `-----abc` invece di `-a-b-c-`.],
-    cosa: [Dopo una sostituzione di una corrispondenza vuota, la ricerca riprende da `found.start + new_len`, cioè subito dopo il testo appena inserito e *prima* del carattere successivo. Lì trova un'altra corrispondenza vuota, e così via. Si ferma solo per il tetto di sicurezza di `len + 1` sostituzioni.],
-    correzione: [Per una corrispondenza vuota riprendere da `found.start + new_len + 1`, scavalcando un carattere, come fa Emacs.],
+    dove: [`text/search.rs` (`Replace::accept`), `editor/replace.rs` (`EditorState::replace_rest`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: `(replace-regexp "x*" "-")` su `abc` dà `-----abc` invece di `-a-b-c-`, e dice «Replaced 4 occurrences» dopo averne fatte cinque.],
+    cosa: [Dopo una sostituzione di una corrispondenza vuota, la ricerca riprende da `found.start + new_len`, cioè subito dopo il testo appena inserito e *prima* del carattere successivo. Lì trova un'altra corrispondenza vuota, e così via. Si ferma solo per il tetto di sicurezza; il ciclo lo controlla dopo aver già sostituito, quindi le sostituzioni sono `len + 2` e il messaggio ne conta una di meno.],
+    correzione: [Per una corrispondenza vuota riprendere da `found.start + new_len + 1`, scavalcando un carattere, come fa Emacs; e contare le sostituzioni fatte.],
   ),
   (
     id: "RIC-2",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [La ricerca all'indietro con un'espressione regolare costa un tempo quadratico],
     breve: [`C-M-r`: tempo quadratico per tasto],
-    dove: [`text/search.rs:157-188` (`search_backward`, ramo `Regex`), usata da `feature/isearch.rs:134`],
-    verifica: [Misurato con `C-M-r` dalla fine di un file `ab ab ab …`, per il solo tasto `b`: 15 KB in 0,24 s, 30 KB in 0,99 s, 60 KB in 3,59 s.],
+    dove: [`text/search.rs` (`Pattern::search_backward`, ramo `Regex`), usata da `feature/isearch.rs` (`scan`)],
+    verifica: [Misurato nell'analisi di `08a853d` con `C-M-r` dalla fine di un file `ab ab ab …`, per il solo tasto `b`: 15 KB in 0,24 s, 30 KB in 0,99 s, 60 KB in 3,59 s. `text/search.rs` non è cambiato da allora.],
     cosa: [Il motore delle espressioni cerca solo in avanti, quindi `search_backward` chiama `search_forward` in un ciclo e tiene l'ultima corrispondenza trovata. Ma ogni chiamata a `search_forward` copia l'intero buffer in una `String` e converte gli offset con una scansione lineare. È lo stesso costo quadratico che il commento sopra `Pattern::scan` dice di evitare.],
     effetto: [Su un file di qualche centinaio di KB con molte corrispondenze, ogni tasto premuto durante `C-M-r` blocca l'editor per minuti.],
     correzione: [Una sola copia del testo e un solo passaggio con `captures_iter` che tiene l'ultima corrispondenza che finisce prima del limite.],
@@ -874,92 +547,90 @@ init.lisp:
     id: "RIC-3",
     gravita: "bassa",
     verificato: true,
+    stato: "aperto",
     titolo: [Ogni sostituzione è un gruppo di annullamento a sé],
     breve: [Una sostituzione = un passo di `undo`],
-    dove: [`editor/replace.rs:138-160` (`replace_this` chiama `undo.boundary()` a ogni sostituzione)],
-    verifica: [Riprodotto: dopo «Replaced 4 occurrences» servono quattro `C-/` per tornare al testo di partenza.],
+    dove: [`editor/replace.rs` (`EditorState::replace_this`, che chiama `undo.boundary()` a ogni sostituzione)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: dopo `(replace-string "a" "b")` su `aaa`, che dice «Replaced 3 occurrences», un `undo` torna a `bba` e non ad `aaa`.],
     cosa: [Il confine di annullamento serve a `query-replace` per tornare indietro di una sostituzione, ma viene messo anche nelle sostituzioni non interattive.],
     correzione: [Nessun confine tra le sostituzioni di `replace-string` e `replace-regexp`; un confine solo nel percorso interattivo.],
   ),
   (
     id: "RIC-4",
     gravita: "bassa",
-    verificato: false,
+    verificato: true,
+    stato: "aperto",
     titolo: [Limiti della ricerca confinata a una regione e delle scansioni su righe lunghe],
     breve: [Match oltre il limite scartato; colonna ricalcolata per ogni match],
-    dove: [`text/search.rs:118-150` (`search_forward` con LIMIT), `text/search.rs:310-312` (`Cursor::column`)],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Se la prima corrispondenza dopo il punto finisce oltre il limite, viene scartata invece di cercarne una più corta: `a+` su `aaaa` con la regione `[0, 2)` non trova nulla, anche se la regione contiene `aa`. Nella scansione completa (occur, grep), `Cursor::column` ricalcola i caratteri dall'inizio della riga per ogni corrispondenza, quindi una riga lunghissima con molte corrispondenze costa un tempo quadratico.],
+    dove: [`text/search.rs` (`Pattern::search_forward` con LIMIT, `Pattern::search_backward`, `Cursor::column`, `Pattern::scan`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: su `aaaa` con la regione `[0, 2)`, `(replace-regexp "a+" "X")` risponde «No match for a+». Il costo della colonna viene dalla lettura del codice.],
+    cosa: [Se la prima corrispondenza dopo il punto finisce oltre il limite, viene scartata invece di cercarne una più corta: `a+` su `aaaa` con la regione `[0, 2)` non trova nulla, anche se la regione contiene `aa`. Lo stesso vale per la ricerca incrementale all'indietro con un'espressione, che si ferma alla prima corrispondenza che supera il punto. Nella scansione completa (occur, grep), `Cursor::column` ricalcola i caratteri dall'inizio della riga per ogni corrispondenza, quindi una riga lunghissima con molte corrispondenze costa un tempo quadratico; grep però gira ora su un thread suo, e solo occur blocca l'editor.],
     correzione: [Cercare nella sola fetta della regione; tenere la colonna in modo incrementale come già si fa per la riga.],
   ),
   (
     id: "RIC-5",
     gravita: "bassa",
-    verificato: false,
+    verificato: true,
+    stato: "aperto",
     titolo: [I risultati di occur, grep e compile puntano a righe che si spostano],
     breve: [Risultati per numero di riga, non per marcatore],
-    dove: [`text/results.rs` (`Entry`), `primitives/results.rs:455-470`],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Ogni risultato conserva riga e offset come numeri. Dopo una modifica che aggiunge o toglie righe sopra un risultato, `next-error` porta alla riga sbagliata; Emacs usa marcatori che seguono il testo.],
+    dove: [`text/results.rs` (`Entry`, `Results::step`), `primitives/results.rs` (`visit`, `visit_index`, `refresh`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: in `x`, `foo`, `bar`, dopo `(occur--scan "foo")` e una riga aggiunta in cima, `next-error` porta il punto all'inizio della riga di `x`.],
+    cosa: [Ogni risultato conserva riga, colonna e offset come numeri, e `visit` si sposta per riga e colonna. Dopo una modifica che aggiunge o toglie righe sopra un risultato, `next-error` porta alla riga sbagliata; Emacs usa marcatori che seguono il testo. Il solo modo di aggiornare una lista, `results-refresh`, la ricostruisce da capo, e lo usa solo `compile` con l'uscita del compilatore.],
     correzione: [Marcatori nei buffer aperti, aggiornati dalle due porte delle modifiche.],
   ),
   (
     id: "RIC-6",
     gravita: "bassa",
-    verificato: true,
+    stato: "risolto",
+    commit: "1aa5cf7",
     titolo: [Alla fine di una ricerca incrementale il mark non è dove la ricerca è cominciata],
-    breve: [`isearch-exit`: mark sull'altra estremità del match],
-    dove: [`feature/isearch.rs:113-120` (`show`), `primitives/isearch.rs` (`isearch_exit`)],
-    verifica: [Riprodotto: in `hello world foo bar` con il punto a 0, `C-s foo RET` lascia il punto a 15 e il mark a 12, e l'area dei messaggi dice «Mark saved where search started».],
-    cosa: [Durante la ricerca `show` usa il mark per evidenziare la corrispondenza come regione: lo mette all'estremità vicina del match. `isearch-exit` disattiva il mark ma non lo riporta su `origin`. Il messaggio è quello di Emacs, dove però il mark viene davvero salvato al punto di partenza, e `C-x C-x` o `C-u C-SPC` ci riportano.],
-    effetto: [Dopo una ricerca non si può tornare al punto di partenza con il mark, e una regione costruita dopo la ricerca parte dall'inizio del match invece che dal punto di partenza.],
-    correzione: [In `isearch_exit` mettere il mark (inattivo) su `session.origin` quando è diverso dal punto finale, come fa Emacs.],
+  ),
+  (
+    id: "RIC-7",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [Una lista di `M-s o` e una di `M-s g` aprono due strisce, una sopra l'altra],
+    breve: [Liste di occur e di grep in due strisce separate],
+    dove: [`editor/results.rs` (`display_results`, che cerca la striscia da riusare), `primitives/results.rs` (`occur--scan` e `grep--scan`, che si presentano come produttori diversi)],
+    verifica: [Riprodotto nell'editor sulla revisione `3d846f1`: una lista di `M-s o` e poi una di `M-s g` lasciano tre finestre, la lista di grep in una striscia nuova sopra quella di occur. Nessun test prova una lista di un tipo seguita da una dell'altro.],
+    cosa: [`display_results` riusa la striscia in basso solo se la lista che vi è mostrata viene dallo stesso produttore, e occur e grep sono due produttori, `"occur"` e `"grep"`, anche se le loro liste sono entrambe in `occur-mode`. Prima di `3d846f1` una seconda lista, di qualunque dei due comandi, prendeva la striscia della prima.],
+    effetto: [Chi cerca prima nel buffer e poi nella directory si ritrova con lo schermo diviso in tre, e deve chiudere la striscia in più con `q`. La pagina `searching` lo dice tra i limiti.],
+    correzione: [Se le due liste devono condividere la striscia, scegliere la striscia da riusare per tipo di lista (il modo del buffer) invece che per produttore, oppure dare a occur e a grep lo stesso produttore; in entrambi i casi un test con una lista di `M-s o` seguita da una di `M-s g`, e la riga tolta dai limiti della pagina.],
   ),
   // ------------------------------------------------------------------ SHL
   (
     id: "SHL-1",
     gravita: "media",
-    verificato: true,
+    stato: "risolto",
+    commit: "02ea0e7",
     titolo: [Un comando che scrive molto su stderr si blocca],
-    breve: [stderr letto dopo stdout: blocco con più di 64 KB su stderr],
-    dove: [`primitives/shell.rs:76-110` (`ShellTask::execute`)],
-    verifica: [Riprodotto in una sessione precedente con uno script che scrive più di 64 KB su stderr.],
-    cosa: [Lo stdout viene letto fino alla fine, e solo dopo lo stderr. Se il processo riempie il buffer della pipe di stderr (circa 64 KB) prima di chiudere stdout, resta fermo a scrivere su stderr mentre l'editor aspetta stdout: nessuno dei due può proseguire.],
-    effetto: [Un `M-x compile` con molti avvisi del compilatore (che vanno su stderr) non finisce mai; il buffer dei risultati resta a metà e il contatore dei comandi in corso tiene sveglio il disegno.],
-    correzione: [Leggere stderr su un secondo thread, o unire i due flussi (`2>&1`) già nella shell.],
   ),
   (
     id: "SHL-2",
     gravita: "media",
-    verificato: true,
+    stato: "risolto",
+    commit: "02ea0e7",
     titolo: [Un solo byte non UTF-8 nell'output interrompe il comando],
-    breve: [Output non UTF-8: lettura interrotta, comando ucciso da SIGPIPE],
-    dove: [`primitives/shell.rs:79-95`],
-    verifica: [Riprodotto: con `printf 'one\n\377\ntwo\n'; sleep 0.3; echo after` il buffer contiene «one», «[unreadable output: stream did not contain valid UTF-8]» e «--- killed ---»; «two», «after» e lo stderr sono persi.],
-    cosa: [Alla prima riga non UTF-8 il ciclo di lettura esce. La pipe di stdout viene chiusa, e alla scrittura successiva il processo riceve SIGPIPE e muore.],
-    effetto: [Una compilazione che stampa un nome di file in Latin-1, o un `grep` che incontra un file binario, viene uccisa a metà.],
-    correzione: [Leggere byte con `read_until(b'\n')` e convertire ogni riga con `String::from_utf8_lossy`.],
   ),
   (
     id: "SHL-3",
     gravita: "bassa",
-    verificato: false,
+    stato: "risolto",
+    commit: "02ea0e7",
     titolo: [Non c'è modo di fermare un comando in corso],
-    breve: [Nessuna primitiva per interrompere un comando di shell],
-    dove: [`primitives/shell.rs` (`ShellTask` possiede il `Child`)],
-    verifica: [Dalla lettura del codice.],
-    cosa: [Il processo figlio appartiene al thread che ne legge l'output e nessuna primitiva lo raggiunge. Uccidere il buffer non uccide il processo: `append_to_buffer` restituisce `false`, il valore viene ignorato e il processo continua fino alla fine.],
-    correzione: [Un registro dei processi per nome di buffer e una primitiva `kill-process`; alla chiusura del buffer, inviare SIGTERM.],
   ),
   (
     id: "SHL-4",
     gravita: "bassa",
-    verificato: false,
+    verificato: true,
+    stato: "aperto",
     titolo: [Il nome di una pagina di manuale viene passato alla shell senza virgolette],
     breve: [`manpage`: nome interpolato senza quoting nella shell],
-    dove: [`core/lisp/manpage.lisp:93-101` e `:69-79`],
-    verifica: [Dalla lettura del codice.],
-    cosa: [`(format "man -w %s 2>/dev/null" name)` passa il nome così com'è a `/bin/sh -c`. Un nome con spazi o metacaratteri viene interpretato dalla shell: `printf(3)` dà un errore di sintassi, che si presenta come «No manual entry», e `a;b` esegue due comandi. `manpage-at-point` è limitato ai caratteri di un simbolo, ma `*` viene espanso dalla shell. Anche il percorso della pagina interna viene costruito concatenando il nome.],
+    dove: [`core/lisp/manpage.lisp` (`manpage--system-page`, che passa a `shell-command-to-string` il comando `man` con il nome dentro; `manpage--rsedit-page`, che costruisce il percorso della pagina concatenando il nome)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: `(manpage--system-page "printf;touch FILE")` crea FILE.],
+    cosa: [`(format "man -w %s 2>/dev/null" name)` passa il nome così com'è a `/bin/sh -c`. Un nome con spazi o metacaratteri viene interpretato dalla shell: `printf(3)` dà un errore di sintassi, che si presenta come «No manual entry», e `a;b` esegue due comandi. Il nome arriva senza filtri da `M-x manpage` e da `C-h m`; da `manpage-at-point` (e da `K` in vim) è limitato ai caratteri di un simbolo, che comprendono `*`, espanso dalla shell. Anche il percorso della pagina interna viene costruito concatenando il nome, quindi `../` esce dalla directory dei dati.],
     correzione: [Racchiudere il nome tra apici singoli, con gli eventuali apici interni preceduti da escape, oppure rifiutare i nomi che non sono `[A-Za-z0-9._+-]+`.],
   ),
   // ------------------------------------------------------------------ TUI
@@ -967,11 +638,12 @@ init.lisp:
     id: "TUI-1",
     gravita: "alta",
     verificato: true,
+    stato: "aperto",
     titolo: [I caratteri di controllo del testo arrivano al terminale: un file può comandarlo],
     breve: [Caratteri di controllo stampati così come sono: iniezione di sequenze nel terminale],
-    dove: [`ui/layout.rs:219-224` (`visible_text` copia i caratteri senza filtrarli), `src/tui.rs:586-618` (`draw_clipped_row` li stampa con `Print`)],
-    verifica: [Riprodotto: in un file che contiene `ESC ] 52 ; c ; aGk= ESC \` la riga della fotografia contiene la sequenza intatta (`"\u{1b}]52;c;aGk=\u{1b}\\"`), che la TUI scrive sul terminale.],
-    cosa: [Tra il buffer e il terminale nessuno sostituisce i caratteri di controllo (ESC, BEL, CR, BS, DEL, i controlli C1). Il terminale li esegue.],
+    dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Layout::visible_text`: copiano i caratteri senza filtrarli), `src/tui.rs` (`draw_clipped_row`, che li stampa con `Print`)],
+    verifica: [Riprodotto nell'analisi di `08a853d`: in un file che contiene `ESC ] 52 ; c ; aGk= ESC \` la riga della fotografia conteneva la sequenza intatta, che la TUI scrive sul terminale. `ui/layout.rs` non è cambiato da allora, e `src/tui.rs` solo nell'attesa degli eventi.],
+    cosa: [Tra il buffer e il terminale nessuno sostituisce i caratteri di controllo (ESC, BEL, CR, BS, DEL, i controlli C1). Il terminale li esegue. Passa dalla stessa strada l'uscita dei comandi, che da `02ea0e7` arriva decodificata dai byte così com'è. La GUI (`src/gui.rs`) salta invece i caratteri di controllo.],
     effetto: [Aprire un file, guardare l'output di un comando, un risultato di grep o una pagina di manuale che contengono sequenze di escape fa eseguire quelle sequenze al terminale. OSC 52 riscrive gli appunti di sistema: l'utente incollerà poi in una shell un comando scelto da chi ha preparato il file. OSC 0 cambia il titolo della finestra; le sequenze CSI spostano il cursore, cancellano lo schermo o cambiano i colori. Anche senza malizia, un `\r` o un `\b` in un file rovinano la visualizzazione.],
     correzione: [Al momento del disegno, sostituire i controlli (U+0000–U+001F tranne il tab, U+007F, U+0080–U+009F) con una rappresentazione visibile, come `^[` in Emacs o il carattere `␛`, contandone la larghezza nella mappa delle colonne.],
   ),
@@ -979,11 +651,12 @@ init.lisp:
     id: "TUI-2",
     gravita: "alta",
     verificato: false,
+    stato: "aperto",
     titolo: [Un panic o un errore di I/O lasciano il terminale in raw mode],
     breve: [Nessun ripristino del terminale su panic o errore],
-    dove: [`src/tui.rs:681-835` (`tui_main`), `src/main.rs` (nessun `panic::set_hook`, nessun `catch_unwind`)],
-    verifica: [Dalla lettura del codice (nessuna occorrenza di `set_hook` o `catch_unwind` nella TUI); i panic che lo innescano sono verificati altrove (#link(<LET-2>)[LET-2], #link(<CMD-3>)[CMD-3]).],
-    cosa: [`tui_main` attiva il raw mode, il bracketed paste e, a richiesta, la cattura del mouse, e li disattiva solo sul percorso di uscita normale. Un panic risale fuori da `main` senza ripristinarli; ogni `?` su un errore di I/O nel ciclo (`render_frame`, `read`, `poll`) esce da `tui_main` saltando il ripristino.],
+    dove: [`src/tui.rs` (`tui_main`), `src/main.rs` (`main`: nessun `panic::set_hook`, nessun `catch_unwind`; la guardia `ShutDownOnExit` ferma solo il lavoro in background)],
+    verifica: [Dalla lettura del codice: nessun `set_hook`, e `catch_unwind` solo nel WorkManager. Un panic che lo innesca oggi è quello di #link(<TUI-5>)[TUI-5], riprodotto sulla revisione `3d846f1`.],
+    cosa: [`tui_main` attiva il raw mode, il bracketed paste e, a richiesta, la cattura del mouse, e li disattiva solo sul percorso di uscita normale. Un panic nel thread dei comandi risale fuori da `main` senza ripristinarli; ogni `?` su un errore di I/O nel ciclo (`terminal::size`, `render_frame`, la cattura del mouse, un errore del thread che legge il terminale) esce da `tui_main` saltando il ripristino. Anche un panic che il WorkManager intercetta, in un lavoro di background, scrive il suo messaggio su stderr, sopra lo schermo.],
     effetto: [Dopo un crash la shell non mostra ciò che si digita, Invio non funziona e i clic del mouse stampano sequenze di escape. L'utente deve digitare `reset` alla cieca. Il messaggio del panic stesso viene stampato «a scalini», in raw mode.],
     correzione: [Una struttura di guardia il cui `Drop` ripristina il terminale, più un `panic::set_hook` che ripristina prima di stampare il messaggio.],
   ),
@@ -991,11 +664,12 @@ init.lisp:
     id: "TUI-3",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [Le tabulazioni non vengono espanse],
     breve: [Tab non espansi: cursore, colori e riempimento sfasati],
-    dove: [`ui/layout.rs` (nessuna gestione del tab), `src/tui.rs`],
-    verifica: [Riprodotto: la riga della fotografia contiene il carattere `\t`.],
-    cosa: [L'editor conta un tab come una colonna. Il terminale invece lo espande fino alla tabulazione successiva, quindi il resto della riga viene disegnato più a destra di dove l'editor crede. Il commento di `text/rectangle.rs:15` («a tab is drawn in one cell») descrive il modello interno, non ciò che accade sullo schermo.],
+    dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Row::to_screen`, `Row::to_buffer`: una colonna del buffer è una colonna dello schermo), `src/tui.rs` (`render_to`, `draw_clipped_row`)],
+    verifica: [Riprodotto nell'analisi di `08a853d`: la riga della fotografia conteneva il carattere `\t`. `ui/layout.rs` non è cambiato da allora.],
+    cosa: [L'editor conta un tab come una colonna. Il terminale invece lo espande fino alla tabulazione successiva, quindi il resto della riga viene disegnato più a destra di dove l'editor crede. Il commento in cima a `text/rectangle.rs` («a tab is drawn in one cell») descrive il modello interno, non ciò che accade sullo schermo. Esiste ora un'impostazione `tab-width`, nel modulo `indent`, ma serve solo al rientro: il disegno non la legge.],
     effetto: [In un Makefile, in un file Go o in qualsiasi sorgente indentato con tab, il cursore appare nel punto sbagliato, i colori cadono sulle parole sbagliate e il resto della riga precedente può restare visibile.],
     correzione: [Espandere i tab in spazi nella composizione delle righe (`compose_row`), con una larghezza configurabile, e usare la stessa mappa per il cursore e per i clic del mouse.],
   ),
@@ -1003,10 +677,11 @@ init.lisp:
     id: "TUI-4",
     gravita: "media",
     verificato: false,
+    stato: "aperto",
     titolo: [I caratteri larghi contano come una colonna],
     breve: [CJK ed emoji contati come una colonna],
-    dove: [`ui/layout.rs`, `src/tui.rs`],
-    verifica: [Dalla lettura del codice: non si usa la larghezza di visualizzazione (`unicode-width`).],
+    dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Row::to_screen`, `Row::to_buffer`), `src/tui.rs` (`render_to`, che riempie le righe contando i caratteri)],
+    verifica: [Dalla lettura del codice: le larghezze sono tutte `chars().count()`, e nessuna dipendenza calcola la larghezza di visualizzazione (`unicode-width`).],
     cosa: [Un ideogramma o un'emoji occupa due celle del terminale, ma l'editor ne conta una.],
     effetto: [Come per i tab: cursore, evidenziazioni, ritaglio e riempimento delle righe sfasati nei testi in cinese, giapponese, coreano o con emoji.],
     correzione: [Calcolare la larghezza con `unicode-width` nella stessa mappa di #link(<TUI-3>)[TUI-3].],
@@ -1015,21 +690,23 @@ init.lisp:
     id: "TUI-5",
     gravita: "media",
     verificato: true,
+    stato: "aperto",
     titolo: [Un colore esadecimale con caratteri non ASCII manda l'editor in panic],
     breve: [`Color::parse`: panic su colori non ASCII],
-    dove: [`ui/faces.rs:241-255`],
-    verifica: [Riprodotto: `(set-face 'region "#aéb12")` termina il programma con «end byte index 2 is not a char boundary» (uscita 101).],
+    dove: [`ui/faces.rs` (`Color::parse`), chiamata da `primitives/theme.rs` (`colour_arg`, dietro `set-face` e `define-face`)],
+    verifica: [Riprodotto sulla revisione `3d846f1`: `(set-face 'region "#aéb12")` va in panic con «end byte index 2 is not a char boundary».],
     cosa: [`Color::parse` controlla la lunghezza in byte e poi taglia la stringa con `&hex[0..2]`. Con un carattere di due byte il taglio cade a metà del carattere.],
-    effetto: [Chiusura dell'editor. Il caso si presenta anche con un file di tema sbagliato, e se il colore viene applicato da un lavoro di background uccide anche lo scheduler (#link(<BKG-1>)[BKG-1]).],
+    effetto: [Chiusura dell'editor, con il terminale in raw mode (#link(<TUI-2>)[TUI-2]). Il caso si presenta anche con un file di tema sbagliato. In un lavoro di background il panic ritira solo quel lavoro.],
     correzione: [Rifiutare i colori che non sono ASCII (`hex.is_ascii()`) prima di tagliare.],
   ),
   (
     id: "TUI-6",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [Le finestre flottanti non mostrano colori di sintassi né overlay],
     breve: [Finestre flottanti senza sintassi e overlay],
-    dove: [`editor/frame.rs:136-171`],
+    dove: [`editor/frame.rs` (`EditorState::snapshot`, il ciclo sulle finestre flottanti), a confronto con `ui/windows.rs` (`LayoutNode::compute_tiled_views`)],
     verifica: [Dalla lettura del codice: per una finestra flottante si raccolgono solo la regione e il testo virtuale.],
     cosa: [Un buffer mostrato in una finestra flottante appare senza colori e senza le evidenziazioni degli overlay; lo stesso buffer in una finestra affiancata le ha.],
     correzione: [Usare per le finestre flottanti la stessa raccolta delle evidenziazioni delle finestre affiancate.],
@@ -1038,20 +715,22 @@ init.lisp:
     id: "TUI-7",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [`%p` nella riga di stato dice `All` solo per un buffer di una riga],
     breve: [`%p` = `All` solo con una riga],
-    dove: [`ui/windows.rs:1359-1372` (`position_in_buffer`)],
+    dove: [`ui/windows.rs` (`position_in_buffer`, ed `expand_mode_line`, che non riceve l'altezza della finestra)],
     verifica: [Dalla lettura del codice.],
-    cosa: [Il commento dice «`All` quando l'intero buffer sta in una schermata», ma il codice verifica `lines <= 1`.],
+    cosa: [Il commento dice «`All` quando l'intero buffer sta in una schermata», ma il codice verifica `lines <= 1`. Il test `the_position_reads_as_emacs_words_it` fissa il comportamento di oggi.],
     correzione: [Passare l'altezza della finestra e confrontare con quella.],
   ),
   (
     id: "TUI-8",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [La TUI non usa lo schermo alternativo],
     breve: [Niente schermo alternativo: all'uscita lo schermo viene cancellato],
-    dove: [`src/tui.rs:681-835`],
+    dove: [`src/tui.rs` (`tui_main`, `render_to`)],
     verifica: [Dalla lettura del codice: nessun `EnterAlternateScreen`.],
     cosa: [L'editor disegna sullo schermo principale del terminale e all'uscita lo cancella con `Clear(All)`.],
     effetto: [Il contenuto che il terminale mostrava prima di avviare l'editor, per esempio l'output di un comando, va perso.],
@@ -1062,20 +741,19 @@ init.lisp:
     id: "DOC-1",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [Commenti e docstring che descrivono un comportamento che non c'è più],
     breve: [Commenti e docstring superati],
     dove: [vedi l'elenco],
     verifica: [Dalla lettura del codice.],
     cosa: [
-      - `feature/minibuffer.rs:15` e `src/tui.rs:401`: il minibuffer «docked to the last few lines of the frame».
-      - `editor/buffers.rs:269`: «this editor does not yet ask before that kill», mentre `kill-buffer` ora chiede conferma.
-      - `primitives/workers.rs:82` e `:246`: «The scheduler is gone, which happens only as the editor shuts down», falso dopo un panic (#link(<BKG-1>)[BKG-1]).
-      - `buffer/undo.rs:216`: «How many groups this history keeps», mentre il limite è in byte di testo cancellato.
-      - `primitives/shell.rs:215` (`shell-command-to-string`): «the background worker cannot call back into Lisp», superato da `background-call` con ON-DONE.
-      - `text/rectangle.rs:15`: «a tab is drawn in one cell» (#link(<TUI-3>)[TUI-3]).
-      - `lisp/base/atoms.rs:37` e `:69`: gli esempi usano `(atom 0)`, ma il costruttore è `make-atom`.
-      - `lisp/base/lists.rs:423` e `:454`: «eq is structural» (#link(<INT-16>)[INT-16]).
-      - `lisp/base/fibers.rs:55`: il secondo `resume` «does nothing» (#link(<INT-9>)[INT-9]).
+      - `feature/minibuffer.rs` (il commento del modulo) e `src/tui.rs` (`render_to`, il commento sull'area messaggi): il minibuffer «docked to the last few lines of the frame», mentre il prompt predefinito ora è centrato.
+      - `editor/buffers.rs` (`EditorState::close_buffer`): «this editor does not yet ask before that kill», mentre `kill-buffer` ora chiede conferma.
+      - `buffer/undo.rs` (`UndoHistory::limit`): «How many groups this history keeps», mentre il limite è in byte di testo cancellato.
+      - `text/rectangle.rs` (il commento del modulo): «a tab is drawn in one cell» (#link(<TUI-3>)[TUI-3]).
+      - `primitives/shell.rs` (`shell-command-start`): il commento «Only as the editor shuts down» e il messaggio «The editor's background work has shut down» valgono anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta.
+
+      Le voci su `primitives/workers.rs` e su `shell-command-to-string` non valgono più: il codice e la docstring sono stati riscritti (`6de16a1`, `4f05134`). Le tre sui commenti della libreria di base dell'interprete sono nel rapporto di risp, dentro le schede INT-9, INT-16 e INT-21.
     ],
     correzione: [Aggiornarli insieme alle correzioni dei problemi a cui rimandano.],
   ),
@@ -1083,35 +761,40 @@ init.lisp:
     id: "DOC-2",
     gravita: "bassa",
     verificato: false,
+    stato: "aperto",
     titolo: [Codice morto e trappole latenti],
     breve: [`local_keymap` mai usato; `Debug` di `EditorState` è `todo!()`],
-    dove: [`buffer/mod.rs:27` (`local_keymap`), `editor/mod.rs:314-318` (`impl Debug for EditorState`)],
+    dove: [`buffer/mod.rs` (il campo `Buffer::local_keymap`), `editor/mod.rs` (`impl Debug for EditorState`, e accanto `impl PartialEq for EditorState`)],
     verifica: [Dalla lettura del codice.],
-    cosa: [`Buffer::local_keymap` viene inizializzato ma mai letto. `Debug` per `EditorState` è un `todo!()`: un `dbg!`, un `{:?}` o un `assert_eq!` fallito su una struttura che contiene uno stato dell'editor va in panic invece di stampare.],
-    correzione: [Togliere il campo o implementarlo; un `Debug` che stampi almeno i nomi dei buffer.],
+    cosa: [`Buffer::local_keymap` viene inizializzato ma mai letto; la mappa locale che funziona, quella di `set-local-keymap`, sta nei dati del buffer. `Debug` per `EditorState` è un `todo!()` e `PartialEq` un `unreachable!()`: li richiede il trait `LispContext` di risp. Un `dbg!`, un `{:?}` o un `assert_eq!` fallito su una struttura che contiene uno stato dell'editor va in panic invece di stampare; oggi nessun tipo di risp contiene un contesto, e la trappola resta latente.],
+    correzione: [Togliere il campo; un `Debug` che stampi almeno i nomi dei buffer, e un `PartialEq` per identità.],
   ),
   (
     id: "DOC-3",
     gravita: "bassa",
-    verificato: true,
+    stato: "risolto",
+    commit: "f742701",
     titolo: [Lo script di build presume dove si trova la directory `target`],
-    breve: [`build.rs`: percorso di `target` presunto, panic se manca],
-    dove: [`core/build.rs:30-70`],
-    verifica: [Riprodotto: la compilazione in release di un crate che dipende da `rsedit_core` fallisce finché `target/release` non esiste.],
-    cosa: [I moduli Lisp vengono copiati in `$CARGO_WORKSPACE_DIR/target/$PROFILE/data`, ignorando `CARGO_TARGET_DIR`, `--target-dir` e `target/<triple>`. `fs::create_dir` fallisce se la directory genitore non esiste ancora, e il fallimento è un panic. `CARGO_WORKSPACE_DIR` viene da `.cargo/config.toml` ed è letto con `unwrap`.],
-    effetto: [Con una directory di build diversa l'editor si avvia senza moduli; da un altro crate la build fallisce.],
-    correzione: [Usare `OUT_DIR` oppure incorporare i moduli con `include_str!`; in alternativa `create_dir_all`.],
   ),
   (
     id: "DOC-4",
     gravita: "bassa",
-    verificato: true,
+    stato: "risolto",
+    commit: "10598fa",
     titolo: [Un test di prestazioni instabile e clippy che fallisce sui test],
-    breve: [`perf::suite` instabile; `cargo clippy --all-targets` fallisce],
-    dove: [`core/src/tests/perf/mod.rs:256`, `core/src/lisp/tests/parser_tests.rs:163`],
-    verifica: [Riprodotto: su 1 986 test ne fallisce uno, `perf::suite` (confronto di tempi 0,99×). `cargo clippy --all-targets` si ferma su `approx_constant` (`-3.14`), una lint di livello deny.],
-    cosa: [Il test confronta tempi misurati, che su una macchina condivisa variano. Il letterale `-3.14` in un test del lettore viene scambiato da clippy per π.],
-    correzione: [Escludere i test di prestazioni dalla suite normale (`#[ignore]` o una feature); usare un altro letterale, per esempio `-2.5`.],
+  ),
+  (
+    id: "DOC-5",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [Il codice delle liste di risultati lascia un metodo morto, due `if` da unire e righe da formattare],
+    breve: [`free_buffer_name` mai usato; due `if` da unire; 41 blocchi da formattare],
+    dove: [`editor/buffers.rs` (`free_buffer_name`), `editor/results.rs` (`select_results_target`, `quit_results`), e i cinque file toccati da `3d846f1`: `editor/results.rs`, `editor/settings.rs`, `editor/boot.rs`, `primitives/results.rs`, `primitives/shell.rs`],
+    verifica: [Riprodotto sulla revisione `3d846f1`: ogni `cargo build` avvisa che `free_buffer_name` non è mai usato; `cargo clippy` dà tre avvisi in più della revisione precedente, `5f79477`; `cargo fmt --check` trova 41 blocchi da riformattare in quei cinque file, dove prima ne trovava 3, tutti in `src/gui.rs`.],
+    cosa: [Con `3d846f1` le liste di occur si aprono con `prepare_results_buffer`, che sceglie il nome con `free_name_for_work`: se ne va così l'ultima chiamata a `free_buffer_name`, e il metodo resta, con la sua docstring. In `select_results_target` e in `quit_results` un `if let` contiene un solo `if`, che clippy chiede di unire (`collapsible_if`). Il codice nuovo non è passato da `rustfmt`: righe spezzate dove ci starebbero intere, la registrazione di `results-display` e `results-quit` con l'indentazione persa, spazi in fondo a una riga di `primitives/shell.rs`.],
+    effetto: [Nessuno per chi usa l'editor. Un avviso fisso in ogni compilazione nasconde quelli nuovi, e la prossima modifica a questi file, passata da `rustfmt`, porterà con sé decine di righe che non c'entrano.],
+    correzione: [Togliere `free_buffer_name`, unire i due `if`, passare `cargo fmt` sui cinque file, in un commit che non cambia altro.],
   ),
 )
 
@@ -1119,25 +802,33 @@ init.lisp:
 // Il documento
 // ---------------------------------------------------------------------------
 
-#let conta(g) = problemi.filter(p => p.gravita == g).len()
-#let ordinati = problemi.sorted(key: p => (ordine-gravita.at(p.gravita), aree.position(a => a.sigla == area-di(p))))
+#let aperti = problemi.filter(p => p.stato == "aperto")
+#let risolti = problemi.filter(p => p.stato == "risolto")
+#let conta(g) = aperti.filter(p => p.gravita == g).len()
+#let ordinati = aperti.sorted(key: p => (ordine-gravita.at(p.gravita), aree.position(a => a.sigla == area-di(p))))
 
 #outline(depth: 2, indent: 1.2em)
 
 = Che cosa contiene questo rapporto
 
-Questo documento elenca i problemi trovati analizzando il codice di rsedit. È separato di proposito dai due manuali di architettura, `architettura-interprete.typ` e `architettura-editor.typ`. I manuali descrivono come il codice funziona e restano validi anche dopo una correzione; questo rapporto descrive dove il codice non fa ciò che dovrebbe, e ogni sua scheda è destinata a sparire quando il problema viene risolto.
+Questo documento elenca i problemi trovati analizzando il codice di rsedit. È separato di proposito dal manuale di architettura, `architettura-editor.typ`. Il manuale descrive come il codice funziona e resta valido anche dopo una correzione; questo rapporto descrive dove il codice non fa ciò che dovrebbe. Quando un problema viene risolto, la sua scheda passa nell'appendice delle schede risolte, con il commit che lo ha risolto.
 
-Ogni problema ha un identificativo stabile, formato dalla sigla dell'area e da un numero (`LET-1`, `BUF-2`…), che si può citare in un commit o in una discussione. Le schede sono generate da un'unica tabella di dati all'inizio del sorgente: per aggiungerne una, o per toglierne una risolta, basta modificare quella tabella, e il riepilogo si aggiorna da solo.
+Ogni problema ha un identificativo stabile, formato dalla sigla dell'area e da un numero (`BUF-2`, `CMD-1`…), che si può citare in un commit o in una discussione; nel codice lo si cita solo in un `TODO(ID)`, e solo finché la scheda è aperta. Le schede sono generate da un'unica tabella di dati all'inizio del sorgente: per aggiungerne una, o per segnarne una come risolta, basta modificare quella tabella, e il riepilogo si aggiorna da solo.
+
+== Le schede dell'interprete
+
+Le schede delle aree LET (il lettore) e INT (il valutatore e la libreria di base) riguardano l'interprete, che da `6d30567` è il crate esterno `risp`. Sono passate nel rapporto del suo repository, `doc/rapporto-problemi.typ`, con gli stessi identificativi. Le schede di qui che vi rimandano lo dicono nel testo, per esempio «INT-2, nel rapporto di risp». rsedit usa la revisione di risp fissata nel suo `Cargo.lock`, oggi `b2d000b`: una scheda che risp risolve dopo quella revisione resta un difetto di rsedit finché la dipendenza non si aggiorna.
 
 == Come leggere una scheda
 
 Ogni scheda riporta:
 
 - *Gravità*, secondo la scala qui sotto.
-- *Dove*: file e righe della revisione analizzata. I percorsi senza prefisso sono relativi a `core/src/`; quelli che cominciano con `src/` riguardano la TUI e quelli con `core/lisp/` i moduli Lisp.
-- *Verifica*: «verificato» se il comportamento è stato riprodotto eseguendo il codice (il testo dice come), «dal codice» se la conclusione viene dalla sola lettura.
+- *Dove*: i file e le funzioni, o i tipi, in cui sta il difetto. I percorsi senza prefisso sono relativi a `core/src/`; quelli che cominciano con `src/` riguardano la TUI e la GUI, quelli con `core/lisp/` i moduli Lisp.
+- *Verifica*: «verificato» se il comportamento è stato riprodotto eseguendo il codice (il testo dice come, e su quale revisione), «dal codice» se la conclusione viene dalla sola lettura.
 - *Cosa succede*, il meccanismo del difetto; *Come riprodurlo*, quando serve; *Effetto*, ciò che l'utente vede; *Correzione proposta*.
+
+Tutte le schede dell'elenco sono aperte; le risolte sono nell'appendice.
 
 #ref-table(
   columns: (2.2cm, 1fr),
@@ -1149,14 +840,18 @@ Ogni scheda riporta:
 
 == Come è stato condotto l'esame
 
-Il codice è stato letto per intero: l'interprete (`core/src/lisp`), la libreria dell'editor (`core/src`), la TUI (`src/`) e i moduli Lisp (`core/lisp`). Ogni comportamento sospetto è stato riprodotto, dove possibile, con piccoli programmi esterni che usano `rsedit_core` come una libreria:
+Il codice della revisione `08a853d` è stato letto per intero: l'interprete (allora `core/src/lisp`, ora il crate `risp`), la libreria dell'editor (`core/src`), la TUI (`src/`) e i moduli Lisp (`core/lisp`). Ogni comportamento sospetto è stato riprodotto, dove possibile, con piccoli programmi esterni che usano `rsedit_core` come una libreria:
 
 - un *esecutore di scenari* che valuta espressioni Lisp, preme tasti attraverso il percorso reale dei tasti, attende i lavori di background e stampa buffer, area messaggi ed evidenziazioni della fotografia dello schermo;
-- un *fuzzer delle primitive*, che chiama ciascuna delle 628 funzioni registrate (tranne quelle che toccano file o processi esterni) con 807 combinazioni di argomenti anomali (zero, negativi, 10#super[23], infinito, NaN, stringhe vuote e non ASCII, liste puntate, vettori, mappe, lambda), una volta su un buffer vuoto e una su un buffer con testo multiriga, caratteri non ASCII, tab, una regione attiva e finestre divise;
-- un *fuzzer del lettore*, su tutte le stringhe fino a tre caratteri di un alfabeto di 28 simboli sintattici e su 300 000 stringhe casuali più lunghe;
-- un *fuzzer delle forme speciali*, che ha valutato 181 322 forme speciali con sintassi malformata (liste di legami sbagliate, parametri impossibili, `yield` fuori posto) senza trovare alcun panic.
+- un *fuzzer delle primitive*, che chiama ciascuna delle 628 funzioni registrate (tranne quelle che toccano file o processi esterni) con 807 combinazioni di argomenti anomali (zero, negativi, 10#super[23], infinito, NaN, stringhe vuote e non ASCII, liste puntate, vettori, mappe, lambda), una volta su un buffer vuoto e una su un buffer con testo multiriga, caratteri non ASCII, tab, una regione attiva e finestre divise.
 
-Le misure di tempo sono state prese con build di release su una macchina condivisa, quindi vanno lette come ordini di grandezza.
+I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'interprete, sono descritti nel rapporto di risp. Le misure di tempo sono state prese con build di release su una macchina condivisa, quindi vanno lette come ordini di grandezza.
+
+=== La verifica sulla revisione `3d846f1`
+
+Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
+
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5.
 
 == Riepilogo
 
@@ -1164,15 +859,11 @@ Le misure di tempo sono state prese con build di release su una macchina condivi
 #let n-media = conta("media")
 #let n-bassa = conta("bassa")
 
-#key[In totale *#problemi.len() problemi*: *#n-alta di gravità alta*, #n-media di gravità media e #n-bassa di gravità bassa; #problemi.filter(p => p.verificato).len() sono stati riprodotti eseguendo il codice.]
+#key[Sono aperti *#aperti.len() problemi*: *#n-alta di gravità alta*, #n-media di gravità media e #n-bassa di gravità bassa; #aperti.filter(p => p.verificato).len() sono stati riprodotti eseguendo il codice. Altri #risolti.len() sono stati risolti dopo l'analisi, e sono nell'appendice.]
 
-I problemi di gravità alta hanno quasi tutti la stessa forma: un errore in un punto che dovrebbe restituire un errore Lisp (il lettore, un argomento numerico, un colore) diventa un panic o un ciclo infinito. Poiché né il thread dei comandi, né quello di background, né la TUI intercettano i panic, l'effetto è sempre il più grave possibile. Tre correzioni trasversali ridurrebbero da sole l'impatto di gran parte dell'elenco:
+Dei quattro problemi di gravità alta, due riguardano il terminale: un file può mandargli sequenze di controllo (#link(<TUI-1>)[TUI-1]), e un panic o un errore lo lasciano in raw mode (#link(<TUI-2>)[TUI-2]). Gli altri due fanno perdere lavoro senza dirlo: un salvataggio fallito non viene segnalato (#link(<FIL-1>)[FIL-1]), e due prompt aperti insieme perdono il testo del primo e lasciano una finestra che non si chiude (#link(<MIN-1>)[MIN-1]). Delle tre correzioni trasversali che l'analisi proponeva, una c'è: nel WorkManager un panic ritira solo il lavoro che l'ha causato (#link(<BKG-1>)[BKG-1], risolta). Restano da fare la guardia che ripristini il terminale (#link(<TUI-2>)[TUI-2]) e un limite alle quantità guidate dall'utente, nelle primitive dell'editor (#link(<CMD-3>)[CMD-3]) come nell'interprete (INT-2 e INT-13, nel rapporto di risp).
 
-+ una guardia che ripristini il terminale su panic ed errori (#link(<TUI-2>)[TUI-2]);
-+ un `catch_unwind` attorno a ogni turno dello scheduler (#link(<BKG-1>)[BKG-1]) e, nel thread dei comandi, attorno a `run_command_form`, trasformando un panic in un errore del comando;
-+ un limite di profondità e di allocazione nelle operazioni guidate dall'utente (#link(<INT-2>)[INT-2], #link(<CMD-3>)[CMD-3], #link(<INT-13>)[INT-13]).
-
-La tabella seguente elenca tutti i problemi, dal più grave; l'identificativo rimanda alla scheda.
+La tabella seguente elenca i problemi aperti, dal più grave; l'identificativo rimanda alla scheda.
 
 #{
   set text(size: 8.5pt)
@@ -1191,47 +882,68 @@ La tabella seguente elenca tutti i problemi, dal più grave; l'identificativo ri
 
 #{
   let righe = aree.map(a => {
-    let qui = problemi.filter(p => area-di(p) == a.sigla)
+    let qui = aperti.filter(p => area-di(p) == a.sigla)
     (
       [#a.sigla],
       a.nome,
       [#qui.filter(p => p.gravita == "alta").len()],
       [#qui.filter(p => p.gravita == "media").len()],
       [#qui.filter(p => p.gravita == "bassa").len()],
+      [#risolti.filter(p => area-di(p) == a.sigla).len()],
     )
   })
   figure(
     ref-table(
-      columns: (1.2cm, 1fr, 1.2cm, 1.2cm, 1.2cm),
-      header: ([Area], [Descrizione], [Alta], [Media], [Bassa]),
+      columns: (1.2cm, 1fr, 1.2cm, 1.2cm, 1.2cm, 1.4cm),
+      header: ([Area], [Descrizione], [Alta], [Media], [Bassa], [Risolte]),
       ..righe.flatten(),
     ),
-    caption: [Distribuzione per area e gravità],
+    caption: [I problemi aperti per area e gravità, e quelli risolti],
   )
 }
 
-// Le schede, area per area.
-#for a in aree [
-  #heading(level: 1)[#a.nome]
-  #for p in problemi.filter(p => area-di(p) == a.sigla) {
+// Le schede aperte, area per area.
+#for a in aree {
+  let qui = aperti.filter(p => area-di(p) == a.sigla)
+  heading(level: 1)[#a.nome]
+  if qui.len() == 0 [Nessuna scheda aperta: quelle dell'area sono tra le risolte.]
+  for p in qui {
     scheda(p)
   }
-]
+}
 
 = Appendici
 
+== Le schede risolte
+
+Le schede risolte dopo l'analisi, con il commit che le ha risolte. Il testo completo di ciascuna sta nella storia di git di questo file; che cosa è cambiato, e perché, nel messaggio del commit.
+
+#{
+  set text(size: 8.5pt)
+  show: codice-relativo
+  let ordine = risolti.sorted(key: p => (aree.position(a => a.sigla == area-di(p)), int(p.id.split("-").at(1))))
+  ref-table(
+    columns: (1.35cm, 1fr, 1.45cm, 1.7cm),
+    header: ([ID], [Problema], [Gravità], [Risolto in]),
+    ..ordine.map(p => (
+      [#metadata(p.id)#label(p.id)#p.id],
+      p.titolo,
+      etichetta-gravita(p.gravita),
+      raw(p.commit),
+    )).flatten(),
+  )
+}
+
 == Differenze da Emacs che non sono difetti
 
-Alcuni comportamenti differiscono da Emacs per scelta, o comunque senza produrre risultati sbagliati. Sono elencati qui perché chi conosce Emacs non li scambi per errori.
+Alcuni comportamenti differiscono da Emacs per scelta, o comunque senza produrre risultati sbagliati. Sono elencati qui perché chi conosce Emacs non li scambi per errori. Quelle dell'interprete sono nel rapporto di risp.
 
-- `%` ha la stessa semantica di `mod`: il segno del risultato segue il divisore. In Emacs `%` è il resto e segue il dividendo: `(% -7 2)` dà 1 qui e −1 in Emacs.
 - Le espressioni regolari usano la sintassi del crate `regex` di Rust, non quella di Emacs. `\(` è una parentesi letterale e i gruppi si scrivono `( )`. Non esistono lookaround né riferimenti all'indietro, ed è proprio ciò che garantisce un tempo lineare.
-- `out-of-fuel` non si intercetta con `condition-case`. È voluto: un ciclo infinito non deve potersi proteggere dal meccanismo che lo ferma. I gestori di `unwind-protect` girano comunque.
 - Le liste di risultati, le ricerche e le sostituzioni non tornano mai all'inizio da sole: quando la lista finisce lo dicono, come scelta esplicita di progetto.
 
 == Parti esaminate e trovate solide
 
-Queste parti sono state esercitate di proposito sui casi limite senza trovare problemi:
+Nell'analisi queste parti sono state esercitate di proposito sui casi limite senza trovare problemi:
 
 - lo scanner delle espressioni bilanciate (`modes/sexp.rs`): stringhe con escape alla fine del buffer, parentesi sbilanciate in entrambe le direzioni, letterali carattere, lifetime di Rust, stringhe raw, commenti a blocco annidati, commenti che contengono parentesi;
 - la ricerca incrementale: parentesi letterali, espressioni non valide, cancellazione, ricerca fallita e ripresa dopo il fallimento;
@@ -1240,5 +952,4 @@ Queste parti sono state esercitate di proposito sui casi limite senza trovare pr
 - la sostituzione `a` → `aa`, che termina;
 - i comandi di modifica ai bordi del buffer;
 - `delete-file` sui link simbolici a directory, che cancella il link e non il contenuto della directory di destinazione;
-- l'uscita con buffer non salvati: dopo un salvataggio fallito il buffer resta segnato come modificato e l'editor chiede conferma prima di uscire;
-- tutte le forme speciali dell'interprete con sintassi malformata (181 322 forme valutate dal fuzzer, nessun panic).
+- l'uscita con buffer non salvati: dopo un salvataggio fallito il buffer resta segnato come modificato e l'editor chiede conferma prima di uscire.
