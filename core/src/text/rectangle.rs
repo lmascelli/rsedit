@@ -1,43 +1,15 @@
-//! The block of text two corners describe, and where it sits in a buffer.
+//! Rectangles: the block of columns two corners have in common, and where it
+//! sits in a text, line by line. A column is a character, and a tab is one
+//! column, as everywhere in the editor. A line too short to reach the block
+//! takes part with an empty span and the padding it lacks.
 //!
-//! # What a rectangle is here
-//!
-//! Point and the mark are two corners; the rectangle is the block between
-//! them. Not the *region* between them -- the region from the middle of one
-//! line to the middle of a later one is a ragged run that takes in whole
-//! lines on the way, and a rectangle is the columns they have in common.
-//!
-//! That is the whole idea, and everything below is the arithmetic of saying
-//! which characters those are when the lines are not all long enough.
-//!
-//! # Columns are characters
-//!
-//! Nothing in this editor expands a tab: a tab is drawn in one cell, the way
-//! any other character is. So a character column and a screen column are the
-//! same number everywhere, and a rectangle cut by character column is the
-//! block that was drawn. An editor that expanded tabs would have to choose
-//! between the two here, and this one does not have the choice to make.
-//!
-//! # Short lines
-//!
-//! A rectangle is a pair of columns applied to a run of lines, and nothing
-//! says every line reaches them. A line that stops before the left edge is
-//! still one of the rectangle's lines -- leaving it out would change the
-//! block's height depending on its contents -- so it takes part with an empty
-//! span, and [`Span::padding`] says how many spaces would have to be added to
-//! reach the left edge.
-//!
-//! What to do about that is the operation's business, and the two answers are
-//! both right for their own operation. Taking text out -- killing, copying,
-//! clearing -- takes what is there and leaves the line's length alone. Putting
-//! text in -- opening, yanking, `string-rectangle` -- pads first, because a
-//! column that does not exist yet is exactly what those were asked to fill.
+//! Design: `doc/architettura-editor.typ, <rettangoli>`.
 use crate::buffer::BufferTrait;
 
 /// A block of text, as a pair of lines and a pair of columns.
 ///
-/// `bottom` is inclusive and `right` is not, which is not an oversight: the
-/// lines are a run of *things* and the columns are a span of *positions*.
+/// `bottom` is inclusive and `right` is not: the lines are a run of *things*,
+/// and the columns a span of *positions*.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rectangle {
     pub top: usize,
@@ -47,11 +19,8 @@ pub struct Rectangle {
 }
 
 impl Rectangle {
-    /// The block between two corners, given as (line, column) pairs.
-    ///
-    /// Either corner may be either end: a rectangle dragged up and to the
-    /// left is the same rectangle as one dragged down and to the right, and
-    /// no caller should have to know which way round the user made it.
+    /// Returns the block between two corners, given as (line, column) pairs,
+    /// either of which may be either end.
     pub fn between(a: (usize, usize), b: (usize, usize)) -> Self {
         Self {
             top: a.0.min(b.0),
@@ -73,9 +42,9 @@ impl Rectangle {
         rectangle
     }
 
-    /// How many columns wide. Zero is allowed and is useful: a rectangle with
-    /// no width is a position on every line, which is what `string-rectangle`
-    /// wants when it is being used to prefix a run of lines.
+    /// Returns how many columns wide it is. Zero is allowed: a rectangle with
+    /// no width is a position on every line, which `string-rectangle` uses to
+    /// prefix a run of lines.
     pub fn width(&self) -> usize {
         self.right - self.left
     }
@@ -96,18 +65,15 @@ pub struct Span {
 }
 
 impl Span {
-    /// Whether this line has any of the rectangle's text on it.
+    /// Returns whether this line has any of the rectangle's text on it.
     pub fn is_empty(&self) -> bool {
         self.start == self.end
     }
 }
 
-/// Where RECT sits in TEXT, one entry per line, top first.
-///
-/// Top first because that is the order the block reads in. Anything that
-/// *edits* has to walk them backwards -- an edit to one line moves every
-/// offset after it -- which is the caller's business and is why this returns
-/// a list rather than doing the walk itself.
+/// Returns where RECT sits in TEXT, one span per line, top first: the order
+/// the block reads in. Whatever edits walks them from the bottom, since an edit
+/// to one line moves every offset after it.
 pub fn spans<B: BufferTrait>(text: &B, rect: &Rectangle) -> Vec<Span> {
     let last_line = text.line_count().saturating_sub(1);
     (rect.top..=rect.bottom.min(last_line))
@@ -129,11 +95,9 @@ pub fn spans<B: BufferTrait>(text: &B, rect: &Rectangle) -> Vec<Span> {
         .collect()
 }
 
-/// The text RECT covers, one string per line, top first.
-///
-/// A line that does not reach the rectangle contributes an empty string
-/// rather than being left out, so the block keeps the shape it was cut with
-/// and can be put back with its lines still lined up.
+/// Returns the text RECT covers, one string per line, top first. A line that
+/// does not reach the rectangle gives an empty string, so that the block keeps
+/// its shape.
 pub fn text_of<B: BufferTrait>(text: &B, rect: &Rectangle) -> Vec<String> {
     spans(text, rect)
         .into_iter()

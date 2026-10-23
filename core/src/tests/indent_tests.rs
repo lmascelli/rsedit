@@ -593,7 +593,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let parse = |spelling| crate::primitives::parse_key_sequence(spelling);
+        let parse = |spelling| crate::input::parse_key_sequence(spelling);
         assert_eq!(parse("S-<tab>"), Some(vec![shift_tab.clone()]));
         assert_eq!(parse("<backtab>"), Some(vec![shift_tab.clone()]));
         assert_ne!(

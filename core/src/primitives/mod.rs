@@ -1,86 +1,11 @@
 use crate::{
     BufferTrait, ELispExp, EditorState,
-    input::{KeyCode, KeyEvent, KeyModifiers, Keymap, OnUnbound, TransientKeymap},
+    input::{KeyEvent, Keymap, OnUnbound, TransientKeymap, parse_key, parse_key_sequence},
     modes::{CommentStyle, MajorMode, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxTable},
     ui::Face,
 };
 
 use risp::{Env, EvalError, LispContext, LispPrimitive, exact_arity};
-
-/// Parse a whole binding: one or more keys, separated by spaces.
-///
-/// A part that fails to parse fails the whole sequence rather than being
-/// dropped. Silently binding `C-x` when `"C-x C-"` was written would define a
-/// prefix that swallows the real binding underneath it.
-pub(crate) fn parse_key_sequence(seq: &str) -> Option<Vec<KeyEvent>> {
-    let parts: Vec<&str> = seq.split_whitespace().collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let keys: Vec<KeyEvent> = parts.iter().filter_map(|part| parse_key(part)).collect();
-    if keys.len() != parts.len() {
-        return None;
-    }
-    Some(keys)
-}
-
-/// Parse one key: optional `C-`, `M-`, `C-M-` or `S-` modifiers, then a key
-/// name.
-fn parse_key(seq: &str) -> Option<KeyEvent> {
-    let mut modifiers = KeyModifiers::default();
-    let mut chars = seq.chars().peekable();
-
-    // Longest prefix first. Tested after `C-` this branch could never run,
-    // since every `C-M-x` starts with `C-`, so `C-M-` bindings silently became
-    // plain `C-` ones with a stray `M-` left in the key name -- which then
-    // failed to parse and dropped the binding on the floor.
-    if let Some(rest) = seq.strip_prefix("C-M-") {
-        modifiers.ctrl = true;
-        modifiers.alt = true;
-        chars = rest.chars().peekable();
-    } else if let Some(rest) = seq.strip_prefix("C-") {
-        modifiers.ctrl = true;
-        chars = rest.chars().peekable();
-    } else if let Some(rest) = seq.strip_prefix("M-") {
-        modifiers.alt = true;
-        chars = rest.chars().peekable();
-    } else if let Some(rest) = seq.strip_prefix("S-") {
-        // For keys that are not characters -- `S-<tab>`. A shifted character
-        // arrives as its own character, so `S-a` parses but never fires.
-        modifiers.shift = true;
-        chars = rest.chars().peekable();
-    }
-
-    let key_code = match chars.collect::<String>().as_str() {
-        "<ret>" | "<Return>" => KeyCode::Enter,
-        "<esc>" | "<Escape>" => KeyCode::Esc,
-        "tab" | "<tab>" | "<Tab>" => KeyCode::Tab,
-        // What terminals call Shift-Tab, accepted under that name too.
-        "<backtab>" => {
-            modifiers.shift = true;
-            KeyCode::Tab
-        }
-        "<backspace>" => KeyCode::Backspace,
-        // Spelt out because a bare space is impossible to see in a key name,
-        // and `C-<space>` is how `set-mark` is bound.
-        "<space>" | " " => KeyCode::Char(' '),
-        "<up>" => KeyCode::Up,
-        "<down>" => KeyCode::Down,
-        "<left>" => KeyCode::Left,
-        "<right>" => KeyCode::Right,
-        s if s.chars().count() == 1 => KeyCode::Char(
-            s.chars()
-                .next()
-                .expect(&format!("Failed to interpret the sequence {seq}")),
-        ),
-        _ => return None,
-    };
-
-    Some(KeyEvent {
-        code: key_code,
-        modifiers,
-    })
-}
 
 #[macro_export]
 macro_rules! primitive {

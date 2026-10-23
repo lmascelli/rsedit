@@ -1,8 +1,16 @@
+//! Keys and mouse events as the editor takes them in, how a key sequence is
+//! written and read back, and keymaps: what a sequence is bound to, which
+//! sequences lead to longer ones, and the transient maps consulted first. A
+//! binding is a Lisp expression, `ELispExp`.
+//!
+//! Design: `doc/architettura-editor.typ, <tasti>`.
 use crate::{ELispExp, buffer::BufferTrait};
 use std::collections::{HashMap, HashSet};
 
+/// A key, without its modifiers: a character, or one of the named keys.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum KeyCode {
+    /// No key at all. Nothing in the editor or its front-ends makes one.
     None,
     Char(char),
     Backspace,
@@ -13,7 +21,7 @@ pub enum KeyCode {
     Right,
     Up,
     Down,
-    // Add more as needed (Tab, F1...)
+    // TODO(CMD-2): no Delete, Home, End, PageUp, PageDown or function keys.
 }
 
 /// Which button, for the events that have one.
@@ -25,10 +33,6 @@ pub enum MouseButton {
 }
 
 /// What the mouse did.
-///
-/// `Up` and `Drag` are carried although nothing acts on them yet: this type is
-/// the contract with whatever frontend is delivering events, and widening it
-/// later would mean touching every frontend a second time for no gain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MouseKind {
     Down(MouseButton),
@@ -38,7 +42,23 @@ pub enum MouseKind {
     ScrollDown,
 }
 
-/// The mouse, in cells.
+/// A mouse event, in cells of the frame: what a front-end hands to
+/// `handle_mouse_event`.
+///
+/// # Examples
+///
+/// ```
+/// use rsedit_core::{KeyModifiers, MouseButton, MouseEvent, MouseKind};
+///
+/// // A left click on the third cell of the first row.
+/// let click = MouseEvent {
+///     kind: MouseKind::Down(MouseButton::Left),
+///     column: 2,
+///     row: 0,
+///     modifiers: KeyModifiers::default(),
+/// };
+/// assert_eq!(click.kind, MouseKind::Down(MouseButton::Left));
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MouseEvent {
     pub kind: MouseKind,
@@ -48,14 +68,28 @@ pub struct MouseEvent {
     pub modifiers: KeyModifiers,
 }
 
+/// The modifiers held down with a key or a mouse event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct KeyModifiers {
     pub ctrl: bool,
     pub alt: bool,
     pub shift: bool,
-    pub caps_lock_as_ctrl: bool, // Placeholder for future GUI frontends!
 }
 
+/// A key and its modifiers: what a front-end hands to `handle_key_event`.
+///
+/// # Examples
+///
+/// ```
+/// use rsedit_core::{KeyCode, KeyEvent, KeyModifiers};
+///
+/// // C-x, as a front-end builds it.
+/// let ctrl_x = KeyEvent {
+///     code: KeyCode::Char('x'),
+///     modifiers: KeyModifiers { ctrl: true, ..KeyModifiers::default() },
+/// };
+/// assert_ne!(ctrl_x, KeyEvent::new(KeyCode::Char('x')));
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct KeyEvent {
     pub code: KeyCode,
@@ -63,6 +97,7 @@ pub struct KeyEvent {
 }
 
 impl KeyEvent {
+    /// Creates CODE, with no modifiers.
     pub fn new(code: KeyCode) -> Self {
         Self {
             code,
@@ -71,15 +106,14 @@ impl KeyEvent {
     }
 }
 
-/// How a key sequence is written in a binding and shown to the user.
-///
-/// The inverse of the parser in `primitives::parse_key_sequence`, so that what
-/// the echo area shows while a sequence is half-typed is spelt the same way
-/// the binding that will complete it was written.
+/// Returns KEYS as a binding writes them and the echo area shows them:
+/// `C-x C-f`. The inverse of `parse_key_sequence`, so a half-typed sequence
+/// is spelt as the binding that completes it was written.
 pub fn describe_keys(keys: &[KeyEvent]) -> String {
     keys.iter().map(describe_key).collect::<Vec<_>>().join(" ")
 }
 
+/// Returns KEY as a binding writes it.
 fn describe_key(key: &KeyEvent) -> String {
     let mut out = String::new();
     if key.modifiers.ctrl {
@@ -109,26 +143,86 @@ fn describe_key(key: &KeyEvent) -> String {
     out
 }
 
-/// Key sequences bound to expressions, and the prefixes that lead to them.
+/// Returns the keys of a binding written as SEQ: one or more keys, separated
+/// by spaces.
 ///
-/// # Why the prefixes are stored rather than searched for
+/// A part that does not parse fails the whole sequence: binding `C-x` when
+/// `"C-x C-"` was written would define a prefix that swallows the real binding
+/// underneath it.
+pub(crate) fn parse_key_sequence(seq: &str) -> Option<Vec<KeyEvent>> {
+    let parts: Vec<&str> = seq.split_whitespace().collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let keys: Vec<KeyEvent> = parts.iter().filter_map(|part| parse_key(part)).collect();
+    if keys.len() != parts.len() {
+        return None;
+    }
+    Some(keys)
+}
+
+/// Returns the key written as SEQ: optional `C-`, `M-`, `C-M-` or `S-`
+/// modifiers, then a key name.
+pub(crate) fn parse_key(seq: &str) -> Option<KeyEvent> {
+    let mut modifiers = KeyModifiers::default();
+    let mut chars = seq.chars().peekable();
+
+    // TODO(CMD-4): one prefix only, so `M-C-x` and `C-S-a` cannot be written.
+    // Longest prefix first: every `C-M-x` also starts with `C-`.
+    if let Some(rest) = seq.strip_prefix("C-M-") {
+        modifiers.ctrl = true;
+        modifiers.alt = true;
+        chars = rest.chars().peekable();
+    } else if let Some(rest) = seq.strip_prefix("C-") {
+        modifiers.ctrl = true;
+        chars = rest.chars().peekable();
+    } else if let Some(rest) = seq.strip_prefix("M-") {
+        modifiers.alt = true;
+        chars = rest.chars().peekable();
+    } else if let Some(rest) = seq.strip_prefix("S-") {
+        // For keys that are not characters -- `S-<tab>`. A shifted character
+        // arrives as its own character, so `S-a` parses but never fires.
+        modifiers.shift = true;
+        chars = rest.chars().peekable();
+    }
+
+    let key_code = match chars.collect::<String>().as_str() {
+        "<ret>" | "<Return>" => KeyCode::Enter,
+        "<esc>" | "<Escape>" => KeyCode::Esc,
+        "tab" | "<tab>" | "<Tab>" => KeyCode::Tab,
+        // What terminals call Shift-Tab, accepted under that name too.
+        "<backtab>" => {
+            modifiers.shift = true;
+            KeyCode::Tab
+        }
+        "<backspace>" => KeyCode::Backspace,
+        // Spelt out because a bare space is impossible to see in a key name,
+        // and `C-<space>` is how `set-mark` is bound.
+        "<space>" | " " => KeyCode::Char(' '),
+        "<up>" => KeyCode::Up,
+        "<down>" => KeyCode::Down,
+        "<left>" => KeyCode::Left,
+        "<right>" => KeyCode::Right,
+        s if s.chars().count() == 1 => KeyCode::Char(
+            s.chars()
+                .next()
+                .expect(&format!("Failed to interpret the sequence {seq}")),
+        ),
+        _ => return None,
+    };
+
+    Some(KeyEvent {
+        code: key_code,
+        modifiers,
+    })
+}
+
+/// Key sequences bound to Lisp expressions, the prefixes that lead to them,
+/// and a fallback for plain characters.
 ///
-/// Every keystroke asks two questions of a keymap: "is this sequence a
-/// binding?" and "is it the start of one?". The first is a hash lookup. The
-/// second, done honestly, is a scan of every binding in the map -- on the path
-/// between a key being pressed and a character appearing, several hundred
-/// times over for the self-insert bindings alone.
-///
-/// So the answer is maintained instead of computed. The set changes only when
-/// a binding is defined, which happens at startup and when a user edits their
-/// configuration; the question is asked on every key.
-///
-/// # Why this is a type and not two fields
-///
-/// Inserting a binding without registering its prefixes leaves a `C-x C-f`
-/// that can never be reached, because `C-x` alone would be reported undefined
-/// and the sequence thrown away. Putting both behind one `insert` makes that
-/// state unrepresentable rather than merely discouraged.
+/// The prefixes are kept rather than searched for, since every key asks
+/// whether its sequence begins a binding; and one `insert` records both, so a
+/// binding can never be left out of reach behind a prefix nobody registered.
 #[derive(Clone, Debug)]
 pub struct Keymap<B: BufferTrait> {
     bindings: HashMap<Vec<KeyEvent>, ELispExp<B>>,
@@ -147,16 +241,20 @@ impl<B: BufferTrait> Default for Keymap<B> {
 }
 
 impl<B: BufferTrait> Keymap<B> {
+    /// Creates an empty keymap.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// A fallback for unmodified characters, including Unicode. Explicit
-    /// bindings and prefixes in this map take precedence.
+    /// Sets the fallback for unmodified characters, Unicode included, or
+    /// removes it when HANDLER is nil. This map's bindings and prefixes come
+    /// before it.
     pub fn set_character_handler(&mut self, handler: ELispExp<B>) {
         self.character_handler = (!handler.is_nil()).then_some(handler);
     }
 
+    /// Returns what KEYS runs: its binding or, for a single unmodified
+    /// character that begins no binding, the fallback called with it.
     pub fn binding(&self, keys: &[KeyEvent]) -> Option<ELispExp<B>> {
         if let Some(binding) = self.get(keys) {
             return Some(binding.clone());
@@ -184,13 +282,8 @@ impl<B: BufferTrait> Keymap<B> {
         })
     }
 
-    /// Bind KEYS to AST, and register every proper prefix of KEYS.
-    ///
-    /// *Proper*: the sequence itself is not registered. Nothing observable
-    /// depends on that -- a lookup checks `get` before `is_prefix`, so a
-    /// complete binding is found as a binding either way -- but leaving it out
-    /// keeps roughly a hundred single-key bindings from each taking a second
-    /// slot in the set for no purpose.
+    /// Binds KEYS to AST, and registers every proper prefix of KEYS: not the
+    /// sequence itself, which a lookup finds with `get` first anyway.
     pub fn insert(&mut self, keys: Vec<KeyEvent>, ast: ELispExp<B>) {
         for len in 1..keys.len() {
             self.prefixes.insert(keys[..len].to_vec());
@@ -198,14 +291,13 @@ impl<B: BufferTrait> Keymap<B> {
         self.bindings.insert(keys, ast);
     }
 
-    /// Bind a single key. Most bindings are one key long, and writing every
-    /// one of them as a one-element vector would obscure the few that are not.
+    /// Binds a single key.
     pub fn insert_key(&mut self, key: KeyEvent, ast: ELispExp<B>) {
         self.insert(vec![key], ast);
     }
 
-    /// Take away the binding of KEYS, and the prefixes only it needed.
-    /// Returns whether there was one.
+    /// Removes the binding of KEYS, and the prefixes only it needed. Returns
+    /// whether there was one.
     pub fn remove(&mut self, keys: &[KeyEvent]) -> bool {
         if self.bindings.remove(keys).is_none() {
             return false;
@@ -220,39 +312,37 @@ impl<B: BufferTrait> Keymap<B> {
         true
     }
 
-    /// What KEYS is bound to, if it is a complete binding.
+    /// Returns what KEYS is bound to, if it is a complete binding.
     pub fn get(&self, keys: &[KeyEvent]) -> Option<&ELispExp<B>> {
         self.bindings.get(keys)
     }
 
-    /// Whether KEYS is the beginning of some longer binding, and so worth
+    /// Returns whether KEYS begins some longer binding, and so is worth
     /// waiting on rather than reporting as undefined.
     pub fn is_prefix(&self, keys: &[KeyEvent]) -> bool {
         self.prefixes.contains(keys)
     }
 
-    /// Every binding in the map, in no particular order.
-    ///
-    /// The order is a `HashMap`'s and must not be relied on: anything showing
-    /// these to somebody sorts them, and anything comparing two maps compares
-    /// sets. What this exists for is the questions a keymap could not answer
-    /// before it -- what is bound where, and what continues a prefix -- which
-    /// are asked by help commands and by nothing on the typing path.
+    /// Returns every binding in the map, in no particular order: whatever
+    /// shows them sorts them.
     pub fn iter(&self) -> impl Iterator<Item = (&Vec<KeyEvent>, &ELispExp<B>)> {
         self.bindings.iter()
     }
 
+    /// Returns how many bindings there are.
     pub fn len(&self) -> usize {
         self.bindings.len()
     }
 
+    /// Returns whether there are none.
     pub fn is_empty(&self) -> bool {
         self.bindings.is_empty()
     }
 }
 
-/// Fills a keymaps map with all the ascii char self-insert char so the editor
-/// can handle the typing of letters, digits and most of symbols.
+/// Fills KEYMAPS with the few bindings written in Rust: `M-x`, the arrows,
+/// Return, and `self-insert` for every printable ASCII character. Everything
+/// else comes from `common-keymaps.lisp` and the modules.
 pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
     // -------------------------------- EDITOR ---------------------------------
     keymaps.insert_key(
@@ -303,6 +393,9 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
         ELispExp::form(vec![ELispExp::symbol("insert-newline".into())]),
     );
 
+    // TODO(CMD-1): only printable ASCII is bound, so `è` is undefined.
+    // TODO(CMD-5): `(self-insert "x")` carries its own argument, so the prefix
+    // argument never reaches it.
     for c in ' '..='~' {
         let event = KeyEvent {
             code: KeyCode::Char(c),
@@ -325,67 +418,32 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
 /// What a transient keymap does with a key it does not bind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OnUnbound {
-    /// Swallow it. The map stays up until one of its own keys takes it down.
-    ///
-    /// For a map that is a *question*: a half-finished operation must not be
-    /// walked away from by pressing something unrelated, because nothing would
-    /// then say it was still running. Every map of this kind has to bind an
-    /// answer meaning "stop" -- `C-g` included, since a modal map takes that
-    /// too.
+    /// Swallows it, and stays up until one of its own keys takes it down: a
+    /// map that asks a question, which must bind an answer meaning "stop",
+    /// `C-g` included.
     Refuse,
 
-    /// Dismiss the map, and let the key through to the keymaps underneath as
-    /// though the map had never been there.
-    ///
-    /// For a map that is an *offer*: after `C-x o`, a bare `o` moves to the
-    /// next window, and anything else means the user is done cycling and wants
-    /// that other thing to happen. Swallowing it would make the convenience
-    /// cost more than it saves.
+    /// Goes away, and lets the key through to the keymaps underneath: a map
+    /// that offers something, as a bare `o` after `C-x o` does.
     Release,
 
-    /// Hand the key on, and stay up.
-    ///
-    /// For a map that is a *filter*: the completion strip binds `C-n`, `C-p`,
-    /// Return and the ways out, and everything else -- the ordinary typing that
-    /// narrows the list -- goes to the buffer underneath while the strip stays
-    /// on screen and redraws.
-    ///
-    /// The difference from [`Self::Release`] is only that the map survives, and
-    /// that is the whole feature: a strip that dismissed itself the moment a
-    /// letter was typed could not be typed at, and one that swallowed the
-    /// letter could not be narrowed. Neither of the other two answers can be
-    /// bent into this one.
-    ///
-    /// A map of this kind still has to bind a way out, since nothing takes it
-    /// down on its own.
+    /// Lets the key through, and stays up: a map that filters, as the
+    /// completion strip does, which is typed at while it narrows. It still has
+    /// to bind a way out.
     Pass,
 }
 
-/// A keymap consulted before every other, for as long as it is installed.
+/// A keymap consulted before every other, for as long as it is installed: a
+/// question ("press `y` or `n`") or an offer ("press `o` again"). Its answers
+/// are ordinary commands, bound as everything else is.
 ///
-/// # Why one mechanism for two things
-///
-/// "Press `y` or `n`" and "press `o` again to keep going" look like different
-/// features, and underneath they are the same one: a keymap that is consulted
-/// first and then goes away. What differs is only [`OnUnbound`] -- whether a
-/// key the map does not bind is refused or handed on.
-///
-/// Being a *keymap* rather than a bespoke read loop is what makes the answers
-/// ordinary commands: they are bound the way everything else is bound, they
-/// appear in `describe-key`-style listings, and each is its own command for
-/// undo grouping. A bespoke loop would have needed all of that reinvented.
-///
-/// # No exit hook, deliberately
-///
-/// A [`OnUnbound::Release`] map is dismissed by a key that was *not* pressed
-/// for it, and nothing of the map's own runs at that moment. There is therefore
-/// nowhere safe to hang cleanup: the dismissal happens inside key resolution,
-/// under the keymap locks, and calling into the interpreter there is the
-/// deadlock the editor warns about everywhere else.
-///
-/// So a `Release` map must carry no state that needs cleaning up -- which
-/// repeat maps do not. Anything with a session behind it uses `Refuse` and ends
-/// through its own bindings, where a command can clean up properly.
+/// An [`OnUnbound::Release`] map has no exit hook: it goes away inside key
+/// resolution, with the sequence still locked, where the interpreter must not
+/// be called. So it must carry no state that needs cleaning up: a map with a
+/// session behind it should be a `Refuse` one, ending through its own
+/// bindings.
+// TODO(RIC-8): query-replace's view is a `Release` map with a session behind
+// it, and nothing ends the session when the map goes.
 #[derive(Clone, Debug)]
 pub struct TransientKeymap<B: BufferTrait> {
     pub keymap: Keymap<B>,
@@ -396,13 +454,9 @@ pub struct TransientKeymap<B: BufferTrait> {
 }
 
 impl<B: BufferTrait> TransientKeymap<B> {
-    /// A map offering one key, which runs COMMAND and offers it again.
-    ///
-    /// The map is *not* rebuilt by the command it runs: it is reinstalled after
-    /// every command that has a repeat key, so pressing `o` re-runs
-    /// `other-window` and re-offers `o` by the same path that offered it first.
-    /// One rule, applied once, rather than a command that has to remember to
-    /// keep itself alive.
+    /// Returns a map offering KEY, which runs COMMAND and offers it again: not
+    /// rebuilt by the command, but reinstalled after every command that has a
+    /// repeat key.
     pub fn repeating(key: KeyEvent, command: &str) -> Self {
         let mut keymap = Keymap::new();
         keymap.insert_key(key.clone(), ELispExp::symbol(command.into()));

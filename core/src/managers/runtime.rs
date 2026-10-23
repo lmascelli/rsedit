@@ -27,7 +27,7 @@
 //! handed out by clone, so a caller that wants to open a metered scope does
 //! not have to keep this compartment's lock open while it runs.
 use crate::{
-    text::search::{Isearch, Replace},
+    text::{isearch::Isearch, replace::Replace},
     ui::{Face, Style, Theme},
     work::WorkId,
 };

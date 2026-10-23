@@ -191,7 +191,7 @@
     stato: "aperto",
     titolo: [Mancano Canc, Inizio, Fine, PagSu, PagGiù e i tasti funzione],
     breve: [`KeyCode` senza Delete/Home/End/PgUp/PgDn/F1…],
-    dove: [`input.rs` (`KeyCode`), `src/tui.rs` (`translate_key`, che scarta tutto il resto), `primitives/mod.rs` (`parse_key`, senza un nome per questi tasti); nella GUI, `src/gui.rs` (`EditorApp::native_key`, `special_key`)],
+    dove: [`input.rs` (`KeyCode`, e `parse_key`, senza un nome per questi tasti), `src/tui.rs` (`translate_key`, che scarta tutto il resto); nella GUI, `src/gui.rs` (`EditorApp::native_key`, `special_key`)],
     verifica: [Riprodotto sulla revisione `3d846f1`: `(define-key nil "<delete>" 'delete-char)`, e lo stesso con `"<home>"` e `"<f1>"`, danno `nil` e «Invalid key sequence» nel registro, dove la stessa riga per `<delete>` c'è già dall'avvio. Il resto dalla lettura del codice: l'enum ha solo `Char`, `Backspace`, `Enter`, `Esc`, `Tab`, le quattro frecce e un segnaposto `None`.],
     cosa: [I tasti non rappresentati vengono scartati dalla TUI con una riga nel registro («no translation for the key»), e `parse_key` non ha un nome per loro: il modulo `electric-pair` lega `<delete>` e fallisce a ogni avvio. La GUI (`src/gui.rs`) traduce da sé Inizio, Fine, Canc, PagSu e PagGiù in `C-a`, `C-e`, `C-d`, `M-v` e `C-v`, o nei tasti di vim nello stato normale: lì quei tasti funzionano, ma non si possono legare. I tasti funzione mancano in tutte e due. Le pagine `editing` e `keymaps` lo dicono tra i limiti.],
     effetto: [Tasti che ogni utente si aspetta (Canc in particolare) non fanno nulla nel terminale, e non si possono legare né lì né nella GUI.],
@@ -221,7 +221,7 @@
     stato: "aperto",
     titolo: [Le combinazioni di modificatori in `define-key` sono limitate e un errore va solo nel registro],
     breve: [`parse_key`: un solo prefisso; `define-key` fallisce in silenzio],
-    dove: [`primitives/mod.rs` (`parse_key`), `primitives/general.rs` (`define-key`)],
+    dove: [`input.rs` (`parse_key`), `primitives/general.rs` (`define-key`)],
     verifica: [Riprodotto sulla revisione `3d846f1`: `"M-C-x"` e `"C-S-a"` danno `nil`, `"C-M-x"` dà `t`.],
     cosa: [`parse_key` riconosce un solo prefisso tra `C-M-`, `C-`, `M-` e `S-`, quindi `M-C-x` (stesso tasto di `C-M-x`) e le combinazioni con Shift non si possono scrivere. Una sequenza non valida o un modo inesistente fanno restituire `nil` a `define-key`, con il motivo scritto solo nel registro. La docstring di `define-key` e la pagina `keymaps` ora dicono quali combinazioni non sono tasti.],
     correzione: [Analizzare i prefissi in un ciclo, in qualsiasi ordine, e segnalare l'errore con un errore Lisp.],
@@ -525,7 +525,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Una sostituzione con un'espressione che può essere vuota mette tutte le sostituzioni nello stesso punto],
     breve: [`replace-regexp` con match vuoti: tutto nello stesso punto],
-    dove: [`text/search.rs` (`Replace::accept`), `editor/replace.rs` (`EditorState::replace_rest`)],
+    dove: [`text/replace.rs` (`Replace::accept`), `editor/replace.rs` (`EditorState::replace_rest`)],
     verifica: [Riprodotto sulla revisione `3d846f1`: `(replace-regexp "x*" "-")` su `abc` dà `-----abc` invece di `-a-b-c-`, e dice «Replaced 4 occurrences» dopo averne fatte cinque.],
     cosa: [Dopo una sostituzione di una corrispondenza vuota, la ricerca riprende da `found.start + new_len`, cioè subito dopo il testo appena inserito e *prima* del carattere successivo. Lì trova un'altra corrispondenza vuota, e così via. Si ferma solo per il tetto di sicurezza; il ciclo lo controlla dopo aver già sostituito, quindi le sostituzioni sono `len + 2` e il messaggio ne conta una di meno.],
     correzione: [Per una corrispondenza vuota riprendere da `found.start + new_len + 1`, scavalcando un carattere, come fa Emacs; e contare le sostituzioni fatte.],
@@ -538,7 +538,7 @@ init.lisp:
     titolo: [La ricerca all'indietro con un'espressione regolare costa un tempo quadratico],
     breve: [`C-M-r`: tempo quadratico per tasto],
     dove: [`text/search.rs` (`Pattern::search_backward`, ramo `Regex`), usata da `feature/isearch.rs` (`scan`)],
-    verifica: [Misurato nell'analisi di `08a853d` con `C-M-r` dalla fine di un file `ab ab ab …`, per il solo tasto `b`: 15 KB in 0,24 s, 30 KB in 0,99 s, 60 KB in 3,59 s. `text/search.rs` non è cambiato da allora.],
+    verifica: [Misurato nell'analisi di `08a853d` con `C-M-r` dalla fine di un file `ab ab ab …`, per il solo tasto `b`: 15 KB in 0,24 s, 30 KB in 0,99 s, 60 KB in 3,59 s. `Pattern::search_backward` non è cambiata da allora.],
     cosa: [Il motore delle espressioni cerca solo in avanti, quindi `search_backward` chiama `search_forward` in un ciclo e tiene l'ultima corrispondenza trovata. Ma ogni chiamata a `search_forward` copia l'intero buffer in una `String` e converte gli offset con una scansione lineare. È lo stesso costo quadratico che il commento sopra `Pattern::scan` dice di evitare.],
     effetto: [Su un file di qualche centinaio di KB con molte corrispondenze, ogni tasto premuto durante `C-M-r` blocca l'editor per minuti.],
     correzione: [Una sola copia del testo e un solo passaggio con `captures_iter` che tiene l'ultima corrispondenza che finisce prima del limite.],
@@ -598,6 +598,19 @@ init.lisp:
     cosa: [`display_results` riusa la striscia in basso solo se la lista che vi è mostrata viene dallo stesso produttore, e occur e grep sono due produttori, `"occur"` e `"grep"`, anche se le loro liste sono entrambe in `occur-mode`. Prima di `3d846f1` una seconda lista, di qualunque dei due comandi, prendeva la striscia della prima.],
     effetto: [Chi cerca prima nel buffer e poi nella directory si ritrova con lo schermo diviso in tre, e deve chiudere la striscia in più con `q`. La pagina `searching` lo dice tra i limiti.],
     correzione: [Se le due liste devono condividere la striscia, scegliere la striscia da riusare per tipo di lista (il modo del buffer) invece che per produttore, oppure dare a occur e a grep lo stesso produttore; in entrambi i casi un test con una lista di `M-s o` seguita da una di `M-s g`, e la riga tolta dai limiti della pagina.],
+  ),
+  (
+    id: "RIC-8",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [Un `query-replace` lasciato con un altro tasto resta aperto, con la corrispondenza evidenziata],
+    breve: [`query-replace` lasciato: sessione ed evidenziazione restano],
+    dove: [`primitives/replace.rs` (`default_view`, che installa la domanda come mappa `OnUnbound::Release`), `editor/replace.rs` (`EditorState::end_replace`, che in quel caso nessuno chiama)],
+    verifica: [Riprodotto con un test temporaneo durante il passo 13 della documentazione, sul codice di `9fcd84b` con i passi 12 e 13, che non cambiano il comportamento. Su `cat cat`, dopo `(query-replace "cat" "dog")` e il tasto `z`, la domanda sparisce e il testo è `zcat cat`; ma la sostituzione è ancora aperta, l'overlay `replace-match` copre ancora `cat` e `(replace-match)` risponde `(0 3 "zca" "dog")`. Dopo il tasto `y`, che ora inserisce una `y`, `(replace-this)` trasforma `zycat cat` in `dogat cat`.],
+    cosa: [La vista predefinita installa la sua domanda come keymap transitoria `OnUnbound::Release`: un tasto che non è una risposta toglie la mappa e prosegue verso le altre keymap. La mappa se ne va dentro la risoluzione del tasto, che non ha un modo di chiudere ciò che c'è dietro, e nessuno chiama `end_replace`: la sessione resta in `Runtime`, l'overlay resta sul buffer, e le posizioni della sessione non seguono le modifiche successive. È la regola che `TransientKeymap` dichiara, una mappa con una sessione dietro è una `Refuse`, a non essere seguita.],
+    effetto: [La corrispondenza resta evidenziata dopo che la domanda è sparita, finché un'altra sostituzione nello stesso buffer non toglie l'overlay; la pagina `searching` dice che un altro tasto ferma la sostituzione. I verbi della sessione restano attivi: chiamati da Lisp, per esempio da una vista scritta dall'utente, lavorano su posizioni vecchie, e `replace-this` sostituisce il testo sbagliato.],
+    correzione: [Chiudere la sessione quando la sua mappa se ne va: dopo ogni comando, fuori dalla risoluzione dei tasti, chiamare `end_replace` se una sostituzione è aperta e la sua mappa non è più installata. Oppure fare della domanda una mappa `Refuse` che lega anche un'uscita, rinunciando a lasciarla continuando a scrivere. In tutti e due i casi un test che, dopo il tasto in più, controlli la sessione e l'overlay e non solo la domanda.],
   ),
   // ------------------------------------------------------------------ SHL
   (
@@ -669,7 +682,7 @@ init.lisp:
     breve: [Tab non espansi: cursore, colori e riempimento sfasati],
     dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Row::to_screen`, `Row::to_buffer`: una colonna del buffer è una colonna dello schermo), `src/tui.rs` (`render_to`, `draw_clipped_row`)],
     verifica: [Riprodotto nell'analisi di `08a853d`: la riga della fotografia conteneva il carattere `\t`. `ui/layout.rs` non è cambiato da allora.],
-    cosa: [L'editor conta un tab come una colonna. Il terminale invece lo espande fino alla tabulazione successiva, quindi il resto della riga viene disegnato più a destra di dove l'editor crede. Il commento in cima a `text/rectangle.rs` («a tab is drawn in one cell») descrive il modello interno, non ciò che accade sullo schermo. Esiste ora un'impostazione `tab-width`, nel modulo `indent`, ma serve solo al rientro: il disegno non la legge.],
+    cosa: [L'editor conta un tab come una colonna. Il terminale invece lo espande fino alla tabulazione successiva, quindi il resto della riga viene disegnato più a destra di dove l'editor crede. Il commento in cima a `text/rectangle.rs` dice che un tab è una colonna, come in tutto l'editor: è il modello interno, non ciò che accade sullo schermo. Esiste ora un'impostazione `tab-width`, nel modulo `indent`, ma serve solo al rientro: il disegno non la legge.],
     effetto: [In un Makefile, in un file Go o in qualsiasi sorgente indentato con tab, il cursore appare nel punto sbagliato, i colori cadono sulle parole sbagliate e il resto della riga precedente può restare visibile.],
     correzione: [Espandere i tab in spazi nella composizione delle righe (`compose_row`), con una larghezza configurabile, e usare la stessa mappa per il cursore e per i clic del mouse.],
   ),
@@ -749,7 +762,6 @@ init.lisp:
     cosa: [
       - `feature/minibuffer.rs` (il commento del modulo) e `src/tui.rs` (`render_to`, il commento sull'area messaggi): il minibuffer «docked to the last few lines of the frame», mentre il prompt predefinito ora è centrato.
       - `editor/buffers.rs` (`EditorState::close_buffer`): «this editor does not yet ask before that kill», mentre `kill-buffer` ora chiede conferma.
-      - `text/rectangle.rs` (il commento del modulo): «a tab is drawn in one cell» (#link(<TUI-3>)[TUI-3]).
       - `primitives/shell.rs` (`shell-command-start`): il commento «Only as the editor shuts down» e il messaggio «The editor's background work has shut down» valgono anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta.
 
       Le voci su `primitives/workers.rs` e su `shell-command-to-string` non valgono più: il codice e la docstring sono stati riscritti (`6de16a1`, `4f05134`). Le tre sui commenti della libreria di base dell'interprete sono nel rapporto di risp, dentro le schede INT-9, INT-16 e INT-21.
@@ -850,7 +862,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte: RIC-8.
 
 == Riepilogo
 

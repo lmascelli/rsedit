@@ -48,8 +48,8 @@ use crate::{
     modes::watcher::FileWatcher,
     modes::{Grammar, MajorMode, SyntaxTable},
     primitives::{edits::goto_offset, install_primitives},
+    text::isearch::Isearch,
     text::kill_ring::Direction,
-    text::search::Isearch,
     ui::{
         ComposeSettings, Division, Face, FloatingWindow, Focus, FrameSnapshot, GutterSpec,
         LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,

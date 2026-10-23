@@ -1,5 +1,7 @@
 //! Key sequences: a key that completes a binding, one that starts a longer
-//! one, and one that does neither.
+//! one, and one that does neither; and how a sequence is written and read.
+//!
+//! Design: `doc/architettura-editor.typ, <keymap>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -345,7 +347,7 @@ mod tests {
         );
     }
 
-    // ---------------- the bindings this unblocked ----------------
+    // ---------------- default bindings that are sequences ----------------
 
     #[test]
     fn the_prefixed_region_bindings_work() {

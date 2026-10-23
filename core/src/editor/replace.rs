@@ -6,7 +6,7 @@
 //! single keys; something with a window asks with buttons; a script does not
 //! ask at all. None of those can be written as a loop that reads an answer --
 //! there is no blocking read here, and a button press is not a read in any
-//! case -- so the loop is turned inside out. [`crate::text::search::Replace`] holds
+//! case -- so the loop is turned inside out. [`crate::text::replace::Replace`] holds
 //! the place in it, and whoever is asking calls one of these per answer.
 //!
 //! That split is the point, and it is the same one `*minibuffer-read-function*`
@@ -27,7 +27,8 @@
 //! or reads a key.
 use super::*;
 use crate::primitives::edits;
-use crate::text::search::{Pattern, Replace, expand_replacement};
+use crate::text::replace::{Replace, expand_replacement};
+use crate::text::search::Pattern;
 
 /// The overlay category the current match is marked with.
 ///

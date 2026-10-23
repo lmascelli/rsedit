@@ -270,7 +270,6 @@ mod gui {
             ctrl: modifiers.ctrl,
             alt: modifiers.alt,
             shift: modifiers.shift,
-            caps_lock_as_ctrl: false,
         }
     }
 

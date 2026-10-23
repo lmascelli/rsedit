@@ -1,32 +1,16 @@
-//! The command registry: which named functions the user may invoke by name,
-//! and what arguments the editor should collect for them.
+//! What the command registry speaks: the arguments a command declares
+//! ([`ArgSpec`]), the prefix argument, what the editor knew when a command
+//! began ([`Invocation`]), and a command whose arguments are still being
+//! collected ([`PendingCommand`]). A command is an editor idea: to the
+//! interpreter it is an ordinary function.
 //!
-//! # Why this lives in the editor and not the interpreter
-//!
-//! "Command" is an editor concept, not a Lisp one. A command is something a
-//! user can reach with M-x or bind to a key, and whose arguments the *editor*
-//! knows how to ask for -- a file name with completion, a buffer name, a
-//! number. None of that means anything to an interpreter that has no idea it
-//! is embedded in an editor.
-//!
-//! So the interpreter is untouched by any of this. A command is an ordinary
-//! function that happens to have an entry in this registry, which means
-//! `(find-file "/tmp/x")` from Lisp is a plain call with no ceremony, and
-//! nothing on the `Lambda` type or in `eval` has to know commands exist.
-//!
-//! # Why the specs are parsed once
-//!
-//! Registration takes Emacs-style code strings (`"fFind file: "`) and parses
-//! them here, at definition time. A typo like `"zFind file: "` is then an error
-//! when the editor boots rather than a surprise the first time somebody runs
-//! the command.
+//! Design: `doc/architettura-editor.typ, <comandi>`.
 use std::collections::HashMap;
 
 /// The argument `C-u` and the digit keys build for the next command.
 ///
-/// `Raw` and `Number` differ only in what `P` hands to Lisp, and that is the
-/// entire reason Emacs has both `p` and `P`: a command often wants "how many",
-/// but sometimes wants "did the user ask for anything at all, and how".
+/// `Raw` and `Number` differ only in what `P` hands to Lisp: a command often
+/// wants how many, and sometimes whether and how the user asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrefixArg {
     /// `C-u` repeated N times: four to the N.
@@ -38,7 +22,7 @@ pub enum PrefixArg {
 }
 
 impl PrefixArg {
-    /// What `p` gives a command: a plain count.
+    /// Returns what `p` gives a command: a plain count.
     pub fn count(&self) -> i32 {
         match self {
             PrefixArg::Raw(times) => 4i32.saturating_pow(*times),
@@ -47,11 +31,9 @@ impl PrefixArg {
         }
     }
 
-    /// Extend the argument with a digit key.
-    ///
-    /// A digit replaces `Raw`: `C-u 12` means twelve, not four then twelve.
-    /// After a minus the digits build a negative number, so `C-u - 4 2` is
-    /// minus forty-two rather than minus one followed by a number.
+    /// Extends the argument with a digit key. A digit replaces `Raw` --
+    /// `C-u 12` is twelve, not four then twelve -- and after a minus the
+    /// digits build a negative number: `C-u - 4 2` is minus forty-two.
     pub fn push_digit(&mut self, digit: u32) {
         let digit = digit as i32;
         *self = match *self {
@@ -64,7 +46,7 @@ impl PrefixArg {
         };
     }
 
-    /// How the argument reads in the echo area while it is being typed.
+    /// Returns how the argument reads in the echo area while it is typed.
     pub fn describe(&self) -> String {
         match self {
             PrefixArg::Raw(times) => "C-u ".repeat(*times as usize).trim_end().to_string(),
@@ -74,18 +56,10 @@ impl PrefixArg {
     }
 }
 
-/// What the editor knew at the moment a command was invoked.
-///
-/// # Why this is captured rather than read when needed
-///
-/// A command's arguments are not all collected at once: a prompted one arrives
-/// keystrokes later, through a minibuffer that had to *switch buffers* to open.
-/// By the time the last argument is in, the region belongs to a different
-/// buffer and the prefix argument has been cleared for the next command.
-///
-/// So the answers the editor gives on the user's behalf are fixed when the
-/// command starts, which is also when the user meant them. `C-u 4 M-x foo`
-/// passes four to `foo` however long the prompt takes.
+/// What the editor knew when a command was invoked: the prefix argument and
+/// the region, fixed when the command begins, which is when the user meant
+/// them. A prompted argument arrives keystrokes later, from another buffer,
+/// after the prefix argument has been cleared.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Invocation {
     pub prefix_arg: Option<PrefixArg>,
@@ -93,8 +67,7 @@ pub struct Invocation {
     pub region: Option<(usize, usize)>,
 }
 
-/// One argument the editor collects on the user's behalf before invoking a
-/// command.
+/// One argument the editor collects for a command before invoking it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ArgSpec {
     /// Free text.
@@ -115,10 +88,9 @@ pub enum ArgSpec {
 }
 
 impl ArgSpec {
-    /// Parse one Emacs-style spec: a single-character code, then the prompt.
-    ///
-    /// The codes deliberately match Emacs' own so that muscle memory and
-    /// documentation carry over: `s`tring, `n`umber, `b`uffer, `f`ile.
+    /// Parses one Emacs-style spec: a one-character code, then the prompt.
+    /// The codes are Emacs's own: `s`tring, `n`umber, `b`uffer, `f`ile, and
+    /// the three the editor answers itself, `p`, `P` and `r`.
     pub fn parse(code: &str) -> Result<Self, String> {
         let mut chars = code.chars();
         let kind = chars
@@ -147,11 +119,8 @@ impl ArgSpec {
         }
     }
 
-    /// The spec written back out, exactly as `parse` would read it again.
-    ///
-    /// Round-trips: `ArgSpec::parse(&spec.code())` is `spec`, which is what
-    /// makes it safe to show a command's declaration to somebody about to
-    /// copy it into their own `defcommand'.
+    /// Returns the spec written out, as `parse` reads it again:
+    /// `ArgSpec::parse(&spec.code())` is `spec`.
     pub fn code(&self) -> String {
         match self {
             ArgSpec::String { prompt } => format!("s{prompt}"),
@@ -164,8 +133,8 @@ impl ArgSpec {
         }
     }
 
-    /// The symbol Lisp sees for this kind, so the prompting code can dispatch
-    /// on it without re-parsing the original code string.
+    /// Returns the symbol Lisp sees for this kind, so that the prompting code
+    /// dispatches on it without parsing the code again.
     pub fn kind(&self) -> &'static str {
         match self {
             ArgSpec::String { .. } => "string",
@@ -178,11 +147,8 @@ impl ArgSpec {
         }
     }
 
-    /// How many values this spec hands the command.
-    ///
-    /// Almost always one. `r` is the exception -- it is the region's two ends
-    /// -- which is why the arity check counts values rather than specs: a
-    /// command declared `["r"]` really does take two parameters.
+    /// Returns how many values this spec hands the command: one, but two for
+    /// `r`, the region's ends.
     pub fn arity(&self) -> usize {
         match self {
             ArgSpec::Region => 2,
@@ -190,15 +156,14 @@ impl ArgSpec {
         }
     }
 
-    /// Whether this argument has to be asked of the user.
-    ///
-    /// The ones that do not are answered from [`Invocation`], immediately and
-    /// without a minibuffer. A command whose arguments are all of that kind --
-    /// `["p"]`, which is most of them -- runs in one step.
+    /// Returns whether this argument has to be asked of the user. The others
+    /// are answered from [`Invocation`] at once, so a command whose arguments
+    /// are all of that kind -- `["p"]`, most of them -- runs in one step.
     pub fn prompts(&self) -> bool {
         !matches!(self, ArgSpec::Count | ArgSpec::RawCount | ArgSpec::Region)
     }
 
+    /// Returns the prompt, empty for an argument that is not asked.
     pub fn prompt(&self) -> &str {
         match self {
             ArgSpec::String { prompt }
@@ -212,16 +177,10 @@ impl ArgSpec {
 
 /// A command whose arguments are still being collected.
 ///
-/// # Why this exists at all
-///
-/// `minibuffer-read` does not block: it opens a prompt and returns, and its
-/// callback runs on a *later* keystroke. Collecting two arguments therefore
-/// cannot be a loop -- it is a chain, and the state between links has to live
-/// somewhere. This is that somewhere.
-///
-/// A stack rather than a single slot, because a command can be started while
-/// another one is still prompting (M-x from inside a prompt), and the two must
-/// unwind in the order they were begun.
+/// `minibuffer-read` opens a prompt and returns, and its answer arrives with a
+/// later key: collecting arguments is a chain, and this is the state between
+/// its links. The editor keeps them in a stack, since a command can be started
+/// while another is still prompting.
 #[derive(Debug)]
 pub struct PendingCommand<E> {
     /// The command to apply once every argument is in.
@@ -236,6 +195,7 @@ pub struct PendingCommand<E> {
 }
 
 impl<E> PendingCommand<E> {
+    /// Creates a pending NAME, with REMAINING arguments to collect.
     pub fn new(name: String, remaining: Vec<ArgSpec>, invocation: Invocation) -> Self {
         Self {
             name,
@@ -245,15 +205,12 @@ impl<E> PendingCommand<E> {
         }
     }
 
-    /// The argument currently being prompted for.
+    /// Returns the argument being prompted for.
     pub fn current(&self) -> Option<&ArgSpec> {
         self.remaining.first()
     }
 }
 
-/// Name -> the arguments to collect for it.
-///
-/// A `HashMap` rather than a list: `call-interactively` looks a name up on
-/// every invocation, while M-x enumerates only when the user opens the prompt,
-/// so the lookup is the operation worth making cheap.
+/// Command name -> the arguments to collect for it. A `HashMap`, since
+/// `call-interactively` looks a name up at every invocation.
 pub type CommandRegistry = HashMap<String, Vec<ArgSpec>>;

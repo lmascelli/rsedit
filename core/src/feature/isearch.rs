@@ -60,7 +60,8 @@ use crate::{
     buffer::{Buffer, Mark},
     input::{KeyCode, KeyEvent, KeyModifiers},
     modes::MajorMode,
-    text::search::{Direction, Isearch, Match, Pattern},
+    text::isearch::{Direction, Isearch},
+    text::search::{Match, Pattern},
 };
 use risp::Env;
 use std::sync::Arc;

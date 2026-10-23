@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--12 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--13 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -249,7 +249,7 @@ Segue le Rust API Guidelines e le convenzioni della RFC 1574.
   `# Safety` quando si applicano, e `# Examples`.
 - I tipi e le funzioni citati sono link (#raw("[`Log::flush`]")) e devono
   risolversi: `cargo doc --document-private-items` senza avvisi. Oggi ce ne
-  sono 16.
+  sono 15.
 - Campi e varianti: una riga quando il nome non basta, niente quando basta.
 - *La documentazione di modulo* (`//!`) dice in una-cinque righe di che cosa
   il modulo è responsabile, e rimanda al capitolo del manuale con la sua
@@ -1432,7 +1432,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [10], [`doc/rapporto-problemi.typ` (fatto)], [1 244], [80 schede da verificare],
   [11], [`work/` (fatto)], [2 935], [assorbe `workmanager.typ`],
   [12], [`paths.rs`, `buffer/` (fatto)], [3 075], [---],
-  [13], [`text/`, `input.rs`, `commands.rs`], [2 047], [---],
+  [13], [`text/`, `input.rs`, `commands.rs` (fatto)], [2 047], [---],
   [14], [`managers/`], [2 936], [la regola delle coppie con `editor/`],
   [15], [`editor/`], [4 838], [`boot.rs`, `keys.rs`, `frame.rs`],
   [16], [`primitives/`, modifica del testo: `edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`, `match_data`, `scan`], [4 353], [docstring già fatte nella fase B],
@@ -1537,6 +1537,62 @@ apre tutti i file della riga di comando né che c'è un front-end grafico
 (passo 15); `modes/prescan.rs` dice che `GapBuffer` rifiuta deliberatamente di
 essere clonato, mentre il suo `clone` è il `todo!()` di BUF-3 (passo 19); il
 nome di `chars_from_is_lazy` promette una pigrizia che il test non può vedere.
+
+*Passo 13, fatto.* `text/search.rs` è diviso in tre file, uno per concetto:
+`search.rs` tiene che cosa si cerca e come (`Pattern`, `Match`, la ricerca, la
+scansione, le espressioni compilate di `string-match`), `isearch.rs` la
+sessione della ricerca incrementale, `replace.rs` quella della sostituzione,
+con `Casing` ed `expand_replacement`. Il parser dei nomi dei tasti,
+`parse_key_sequence` e `parse_key`, passa da `primitives/mod.rs` a `input.rs`,
+accanto a `describe_keys`, che fa il contrario. `KeyModifiers` perde
+`caps_lock_as_ctrl`, che nessuno leggeva. Le prove del kill ring escono da
+`region_tests` e formano `kill_ring_tests`; i commenti di questi due file, di
+`scan_tests`, `transient_tests`, `prefix_key_tests` e `prefix_arg_tests` seguono
+le regole. Il rustdoc di `text/`, `input.rs` e `commands.rs` segue le regole:
+riassunti alla terza persona, documentazioni di modulo brevi con il rimando al
+manuale, esempi eseguiti per `KeyEvent` e `MouseEvent`, e i `TODO` di CMD-1,
+CMD-2, CMD-4, CMD-5, RIC-1, RIC-2, RIC-4, RIC-5 e RIC-8 dove sta il lavoro. Le
+ventisette sezioni `# Why` e `# What` sono nel manuale: nove decisioni nuove
+nel capitolo sul testo, quattro nella nuova sezione «Le keymap», quattro nel
+capitolo sui comandi; le altre il manuale le diceva già. La mappa di `lib.rs`
+dichiara che `input.rs` usa da più in alto `ELispExp`, e `layering_tests`
+controlla ogni modulo da `work/` a `commands.rs`, non più il solo `buffer/`,
+contro ciò che la sua voce dichiara. Nel rapporto CMD-2, CMD-4 e RIC-1 indicano
+i file nuovi. Il comportamento non è cambiato: tutti i test passano, più uno
+nuovo per il lettore dei percorsi di `layering_tests` e i due esempi.
+
+Il passo ha trovato un difetto di comportamento, che il rapporto ora descrive
+come RIC-8: un `query-replace` lasciato premendo un altro tasto perde la
+domanda ma resta aperto, con la corrispondenza evidenziata e posizioni che
+non seguono più il testo. Il rustdoc di `TransientKeymap` diceva che una mappa
+con una sessione dietro è sempre una `Refuse`: ora lo dice come regola, e un
+`TODO(RIC-8)` accanto dice che la mappa di `query-replace`, una `Release`, non
+la segue.
+
+Gli altri difetti sono in commenti, test e documenti, e la patch li corregge.
+Il lettore dei percorsi di `layering_tests`, scritto al passo 12, non
+espandeva `use crate::{...}` né i gruppi annidati o su più righe: un uso da
+sotto scritto così sarebbe passato senza essere visto. `results.rs` aveva un
+link rotto, e gli avvisi di `cargo doc` passano da 16 a 15. Il commento in cima
+a `rectangle.rs` diceva che un tab è disegnato in una cella, mentre il
+terminale lo espande (TUI-3): la voce esce da DOC-1. La cache delle espressioni
+parlava ancora del worker; un commento di `search_forward` citava `find_at`,
+mentre il codice usa `captures_at`, e un altro un `+ 1` che non c'è.
+`MouseKind` diceva che nessuno usa `Up` e `Drag`, che il trascinamento usa;
+`KeyCode` prometteva di aggiungere `Tab`, che c'è già; il rustdoc di
+`fill_default_keymaps` non nominava `M-x`, le frecce e Invio. Nel manuale il
+parser dei tasti stava in `primitives/`; il ripiego per i caratteri non
+esisteva, mentre c'è con `"<char>"` e la mappa globale non lo usa; la tabella
+di `OnUnbound` metteva `query-replace` tra le `Refuse`; colonna di carattere e
+colonna sullo schermo coincidevano, contro TUI-3; mancavano il campo `at` di
+`Entry` e la cache di `string-match`.
+
+Resta ai passi dei loro capitoli: `primitives/replace.rs` dice che un altro
+tasto chiude la sostituzione (RIC-8, passo 18), e `editor/replace.rs` ha
+ancora le sue sezioni `# Why` e `# What` (passo 15). `KeyCode::None` non la
+costruisce nessuno, né l'editor né i front-end: il rustdoc lo dice, e la
+variante resta, perché toglierla cambia l'interfaccia pubblica; CMD-2, che
+estende `KeyCode`, è il momento di deciderlo.
 
 == Fase D --- il manuale (passo 22)
 

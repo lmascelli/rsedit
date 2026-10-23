@@ -55,7 +55,6 @@ pub fn translate_mouse(event: crossterm::event::MouseEvent) -> Option<MouseEvent
             ctrl: event.modifiers.contains(CrossModifiers::CONTROL),
             alt: event.modifiers.contains(CrossModifiers::ALT),
             shift: event.modifiers.contains(CrossModifiers::SHIFT),
-            caps_lock_as_ctrl: false,
         },
     })
 }
@@ -65,7 +64,6 @@ pub fn translate_key(key_event: crossterm::event::KeyEvent) -> Option<KeyEvent> 
         ctrl: key_event.modifiers.contains(CrossModifiers::CONTROL),
         alt: key_event.modifiers.contains(CrossModifiers::ALT),
         shift: key_event.modifiers.contains(CrossModifiers::SHIFT),
-        caps_lock_as_ctrl: false,
     };
 
     let code = match key_event.code {

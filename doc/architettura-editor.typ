@@ -107,8 +107,8 @@ qui e si toglie la scheda là.
 == Gli strati
 
 `lib.rs` elenca i moduli in ordine di dipendenza: ognuno usa quelli sopra di sé
-e mai quelli sotto. La figura li mostra dal basso verso l'alto, cioè nella
-direzione in cui si costruisce.
+e, di quelli sotto, solo ciò che la sua voce dichiara. La figura li mostra dal
+basso verso l'alto, cioè nella direzione in cui si costruisce.
 
 #canvas(height: 8.6cm)[
   #node(8.1cm, 0.4cm, 15.8cm, 0.7cm, [`src/` --- il front-end TUI (crossterm): traduce gli eventi, disegna la fotografia], fill: accent.lighten(85%))
@@ -131,12 +131,14 @@ un suo argomento senza sapere chi lo ascolta (@argomenti). L'interprete non è
 nella figura: è il crate `risp`, che non conosce l'editor, e lo usano gli strati
 da `managers/` in su.
 
-La regola ha un'eccezione, dichiarata: `buffer/` conserva alcuni tipi che
+La regola ha due eccezioni, dichiarate. `buffer/` conserva alcuni tipi che
 vengono da più in alto, le facce di `ui/` (negli overlay e nel testo virtuale)
 e gli stati della colorazione e della scansione di `modes/` (nelle due cache
-del testo, @cache-testo). Non ne usa altri: `layering_tests` ne tiene l'elenco,
-e un tipo nuovo fa fallire il test finché non lo si aggiunge lì e nella mappa
-di `lib.rs`.
+del testo, @cache-testo). `input.rs` lega i tasti a espressioni Lisp,
+`ELispExp`, il cui tipo nomina `EditorState` di `editor/` (@keymap). Per ogni
+modulo da `work/` a `commands.rs`, `layering_tests` tiene l'elenco di ciò che
+usa da più in alto: vuoto, tranne per questi due. Un uso nuovo fa fallire il
+test finché non lo si aggiunge lì e nella mappa di `lib.rs`.
 
 == Dove sta cosa
 
@@ -146,9 +148,9 @@ di `lib.rs`.
   [`lib.rs`], [Ordine dei moduli e superficie pubblica (`pub use`). Tutto il resto è `pub(crate)`.],
   [`paths.rs`], [Le directory dell'editor, configurazione e cache, secondo le convenzioni di ogni sistema: `app_dir` (@directory).],
   [`buffer/`], [`Buffer`, `BufferTrait`, `GapBuffer`, undo, mark, overlay, testo virtuale, cache di colorazione (`syntax.rs`) e di scansione (`scan.rs`), timbro del file su disco (`disk.rs`).],
-  [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: ricerca e isearch, rettangoli, kill ring, liste di posizioni (`results.rs`).],
-  [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, il parser dei nomi dei tasti, le keymap predefinite.],
-  [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`: il vocabolario dei comandi.],
+  [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`).],
+  [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
+  [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
   [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`.],
   [`editor/`], [`EditorState` e i suoi metodi, divisi per compartimento (`buffers.rs`, `windows.rs`...) o per preoccupazione (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `work.rs`, `background.rs`, `macros.rs`).],
   [`primitives/`], [Le 304 primitive dell'editor, in 28 moduli, e `install_primitives`.],
@@ -589,24 +591,105 @@ lo scope del comando si è chiuso: ognuno riparte con il budget pieno.
 = Dal tasto al comando <tasto>
 // ===========================================================================
 
-== Il vocabolario dei tasti
+== Il vocabolario dei tasti <tasti>
 
 Un `KeyEvent` è un `KeyCode` (`Char(c)`, `Backspace`, `Enter`, `Esc`, `Tab`, le
-quattro frecce) più i modificatori `ctrl`, `alt`, `shift`. Nelle associazioni i
-tasti si scrivono come in Emacs: `C-x`, `M-x`, `C-M-f`, `S-<tab>`, con i nomi
-`<ret>`, `<esc>`, `tab`, `<backtab>`, `<backspace>`, `<space>`, `<left>`,
-`<right>`, `<up>`, `<down>`. Una sequenza è una stringa di tasti separati da
-spazi: `"C-x C-f"`. `parse_key_sequence` (in `primitives/`) legge queste
-stringhe; `describe_keys` fa il contrario.
+quattro frecce, e `None`, che nessuno costruisce) più i modificatori `ctrl`,
+`alt`, `shift`. Canc, Inizio, Fine, PagSu, PagGiù e i tasti funzione non hanno
+un `KeyCode` #rapporto("CMD-2"). Un `MouseEvent` dice che cosa ha fatto il
+mouse (`MouseKind`: un pulsante premuto, rilasciato o trascinato, la rotella),
+in quale cella del frame e con quali modificatori. Sono i tipi che un
+front-end costruisce e consegna a `handle_key_event` e a `handle_mouse_event`.
 
-La keymap globale scritta in Rust contiene pochissimo: `M-x`
-(`command-execute-prompt`), le frecce, Invio e i caratteri stampabili da `' '` a
-`'~'`, legati a `(self-insert "c")`. Tutto il resto --- `C-x C-f`, `C-s`,
-`C-k`, … --- viene da `common-keymaps.lisp` e dagli altri moduli.
+Nelle associazioni i tasti si scrivono come in Emacs: `C-x`, `M-x`, `C-M-f`,
+`S-<tab>`, con i nomi `<ret>`, `<esc>`, `tab`, `<backtab>`, `<backspace>`,
+`<space>`, `<left>`, `<right>`, `<up>`, `<down>`. Un tasto ha al più un
+prefisso di modificatori, quindi `M-C-x` e `C-S-a` non si possono scrivere
+#rapporto("CMD-4"). Una sequenza è una stringa di tasti separati da spazi:
+`"C-x C-f"`. `parse_key_sequence` legge queste stringhe e `describe_keys` le
+riscrive nello stesso modo; stanno in `input.rs`, con i tipi.
 
-Solo i caratteri ASCII stampabili sono legati a `self-insert`, e non esiste
-un'associazione di ripiego per gli altri: un carattere come «è» arriva alla
-risoluzione senza un comando e produce `è is undefined` #rapporto("CMD-1").
+La keymap globale scritta in Rust (`fill_default_keymaps`) contiene
+pochissimo: `M-x` (`command-execute-prompt`), le frecce, Invio e i caratteri
+stampabili da `' '` a `'~'`, legati a `(self-insert "c")`. Tutto il resto ---
+`C-x C-f`, `C-s`, `C-k`, … --- viene da `common-keymaps.lisp` e dagli altri
+moduli.
+
+Solo i caratteri ASCII stampabili sono legati a `self-insert`. Il ripiego per
+gli altri caratteri esiste --- una keymap può dare un comando a ogni carattere
+che non lega, con `(define-key MAPPA "<char>" COMANDO)` --- ma la keymap
+globale non lo usa: un carattere come «è» arriva alla risoluzione senza un
+comando e produce `è is undefined` #rapporto("CMD-1").
+
+== Le keymap <keymap>
+
+Una `Keymap` associa sequenze di tasti a espressioni Lisp: un nome di comando
+(`forward-char`), una forma che porta già i suoi argomenti
+(`(self-insert "x")`) o una lambda. Il tipo è `ELispExp`, che
+`run_command_form` esegue così com'è; ed è l'unica cosa che `input.rs` prende
+da più in alto, perché il suo tipo nomina `EditorState`.
+
+#estratto("input.rs")[
+```rust
+pub struct Keymap<B: BufferTrait> {
+    bindings: HashMap<Vec<KeyEvent>, ELispExp<B>>,  // la sequenza intera
+    prefixes: HashSet<Vec<KeyEvent>>,               // ogni prefisso proprio
+    character_handler: Option<ELispExp<B>>,         // il ripiego dei caratteri
+}
+pub fn insert(&mut self, keys: Vec<KeyEvent>, ast: ELispExp<B>) {
+    for len in 1..keys.len() {
+        self.prefixes.insert(keys[..len].to_vec());
+    }
+    self.bindings.insert(keys, ast);
+}
+```
+]
+
+Ogni tasto chiede due cose a una keymap: se la sequenza è un legame (`get`) e
+se è l'inizio di uno (`is_prefix`). Tutte e due sono la ricerca in una tabella
+hash: `insert` registra i prefissi propri della sequenza insieme al legame, e
+`remove` ricostruisce l'insieme dai legami che restano. `binding` aggiunge il
+ripiego: un carattere senza modificatori che non è un legame né l'inizio di
+uno va al `character_handler`, se c'è; un simbolo diventa `(simbolo "c")`,
+ogni altra funzione `(funcall 'f "c")`. `set_character_handler` lo installa,
+ed è ciò che fa `(define-key MAPPA "<char>" ...)`; con `nil` lo toglie.
+
+Le keymap stanno nel compartimento `Modes`: la globale, quella di ogni modo e
+la #emph[transitoria], consultata prima delle altre finché resta installata.
+Una `TransientKeymap` è una `Keymap`, il messaggio da mostrare mentre è attiva
+e che cosa fare di un tasto che non lega (`OnUnbound`, nella tabella della
+risoluzione). La installano le domande a un tasto (`y-or-n`,
+`save-some-buffers`), la vista predefinita di `query-replace`, la striscia dei
+completamenti e la ripetizione: `TransientKeymap::repeating` costruisce la
+mappa `[o]`, che `install_repeat_keymap` rimette dopo ogni comando con un tasto
+di ripetizione.
+
+=== Le decisioni <decisioni-keymap>
+
++ *I prefissi si conservano, non si cercano.* Ogni tasto chiede se la sequenza
+  è l'inizio di un legame. Rispondere scorrendo i legami vorrebbe dire
+  scorrere tutta la mappa, centinaia di voci per i soli caratteri, sul
+  percorso tra il tasto e il carattere che compare. L'insieme cambia solo
+  quando si definisce un legame, all'avvio o quando l'utente cambia la sua
+  configurazione; la domanda si fa a ogni tasto.
++ *Legame e prefissi si registrano insieme.* Un legame senza i suoi prefissi
+  sarebbe irraggiungibile: `C-x` da solo risulterebbe non definito, e la
+  sequenza verrebbe buttata prima di arrivare a `C-x C-f`. Per questo i campi
+  sono privati e `insert` li scrive tutti e due: lo stato sbagliato non si
+  può costruire, invece di essere solo sconsigliato. Togliere un legame è
+  raro, e `remove` ricostruisce i prefissi invece di contarli.
++ *Domande e offerte sono lo stesso meccanismo.* «Premi `y` o `n`» e «premi
+  ancora `o`» sembrano due funzioni diverse, ma sono una keymap consultata per
+  prima che poi se ne va: cambia solo `OnUnbound`. Essere una keymap, invece di
+  un ciclo che legge le risposte, fa delle risposte comandi normali: si legano
+  come tutto il resto, l'aiuto li descrive, e ognuno è un comando a sé per
+  l'undo.
++ *Una mappa `Release` non ha un'uscita.* Se ne va dentro la risoluzione del
+  tasto, mentre la sequenza è ancora sotto lock, dove non si può chiamare
+  l'interprete. Quindi non deve portare con sé uno stato da ripulire: una
+  mappa con una sessione dietro deve essere una `Refuse`, che finisce con i
+  suoi tasti, dove un comando può ripulire. La vista predefinita di
+  `query-replace` non segue la regola #rapporto("RIC-8").
 
 == `handle_key_event`
 
@@ -760,9 +843,9 @@ meccanismo di ripetizione e dice che cosa fare di un tasto che non conosce:
 #ref-table(
   columns: (2.4cm, 1fr, 1fr),
   header: ([`OnUnbound`], [Comportamento], [Uso tipico]),
-  [`Refuse`], [Il tasto è rifiutato in silenzio; la mappa resta. Il messaggio della mappa occupa la riga dei messaggi.], [Una domanda (`save-some-buffers`, `query-replace`): si risponde solo con i suoi tasti.],
+  [`Refuse`], [Il tasto è rifiutato in silenzio; la mappa resta. Il messaggio della mappa occupa la riga dei messaggi.], [Una domanda (`y-or-n`, `save-some-buffers`): si risponde solo con i suoi tasti.],
   [`Pass`], [Il tasto prosegue verso le altre keymap; la mappa resta.], [La striscia dei completamenti: si può continuare a scrivere.],
-  [`Release`], [Il tasto prosegue; la mappa viene tolta.], [La ripetizione (`C-x o o o`): un'offerta che si può ignorare.],
+  [`Release`], [Il tasto prosegue; la mappa viene tolta.], [La ripetizione (`C-x o o o`): un'offerta che si può ignorare. Anche la vista predefinita di `query-replace` #rapporto("RIC-8").],
 )
 
 Dopo ogni comando, `install_repeat_keymap` controlla se il comando ha un
@@ -882,9 +965,9 @@ invece che con `into.function`; una funzione Lisp con la macro `defcommand` di
 ```
 
 `M-x` completa solo sui nomi registrati; una funzione non registrata si può
-comunque legare a un tasto, e viene chiamata senza argomenti. Le specifiche
-sono analizzate una sola volta, alla registrazione: un codice sbagliato è un
-errore all'avvio, non la prima volta che il comando gira.
+comunque legare a un tasto, e viene chiamata senza argomenti. Il registro,
+`CommandRegistry`, è una tabella dal nome del comando alle sue specifiche, già
+analizzate (`ArgSpec::parse`).
 
 == Le specifiche degli argomenti
 
@@ -933,9 +1016,8 @@ una catena, e lo stato tra un anello e l'altro sta nella pila dei
 ]
 
 `Invocation` --- argomento prefisso e regione --- è catturata quando il comando
-inizia, non quando l'ultimo argomento arriva. È ciò che l'utente intendeva
-premendo `C-u 4 M-x foo`, e nel frattempo il prompt ha cambiato buffer e
-l'argomento prefisso è già stato cancellato.
+inizia (`capture_invocation`), non quando l'ultimo argomento arriva, e risponde
+agli argomenti `p`, `P` e `r` di tutta la catena.
 
 Il titolo del prompt dice chi sta chiedendo: `find-file - Find file:` o, con più
 argomenti, `query-replace (2/2) - With:`. Il prompt viene aperto chiamando
@@ -948,6 +1030,33 @@ dagli orfani rimasti da prompt chiusi in altro modo.
 Il completamento degli argomenti `b` e `f` è fatto in Rust; una funzione in
 `*command-arg-completion-function*`, se impostata, lo sostituisce per tutti i tipi
 ricevendo il tipo come simbolo (`buffer`, `file`, …) e il prefisso.
+
+== Le decisioni <decisioni-comandi>
+
++ *Un comando è un'idea dell'editor, non dell'interprete.* Un comando è
+  qualcosa che si raggiunge con `M-x` o con un tasto, e di cui l'editor sa
+  chiedere gli argomenti: un nome di file con il completamento, un buffer, un
+  numero. Per un interprete che non sa di stare in un editor non significa
+  nulla. Così l'interprete non ne sa niente: un comando è una funzione
+  qualunque con una voce nel registro, `(find-file "/tmp/x")` da Lisp è una
+  chiamata come le altre, e né il tipo `Lambda` né `eval` devono sapere che i
+  comandi esistono.
++ *Le specifiche si analizzano alla registrazione.* Un codice sbagliato, come
+  `"zFind file: "`, diventa un errore all'avvio dell'editor invece di una
+  sorpresa la prima volta che qualcuno esegue il comando. Per la stessa
+  ragione un testo dopo `p`, `P` o `r`, che non chiedono nulla, è un errore e
+  non un dettaglio da ignorare.
++ *Prefisso e regione si fissano quando il comando comincia.* Gli argomenti
+  non arrivano tutti insieme: uno chiesto arriva qualche tasto dopo, da un
+  minibuffer che per aprirsi ha cambiato buffer. Quando arriva l'ultimo, la
+  regione appartiene a un altro buffer e l'argomento prefisso è già stato
+  cancellato per il comando successivo. All'inizio sono invece ciò che
+  l'utente intendeva: `C-u 4 M-x foo` passa quattro a `foo`, per quanto a
+  lungo resti aperto il prompt.
++ *I comandi in attesa sono una pila.* Un comando può cominciare mentre un
+  altro sta ancora chiedendo i suoi argomenti (`M-x` dentro un prompt), e i
+  due devono chiudersi nell'ordine inverso a quello in cui sono cominciati. Un
+  posto solo perderebbe il primo.
 
 // ===========================================================================
 = Minibuffer e ricerca incrementale <minibuffer>
@@ -1501,17 +1610,18 @@ mark, undo, lock o finestre.
 #ref-table(
   columns: (3.4cm, 1fr, 4.2cm),
   header: ([File], [Che cosa contiene], [Chi lo guida]),
-  [`search.rs`], [`Pattern` (che cosa cercare) con `search_forward`, `search_backward`, `scan`; le sessioni `Isearch` e `Replace`; `Casing` ed `expand_replacement`.], [`feature/isearch.rs`, `primitives/isearch.rs`, `editor/replace.rs`, `primitives/scan.rs`],
+  [`search.rs`], [`Pattern` (che cosa cercare) con `search_forward`, `search_backward` e `scan`; le espressioni compilate di `string-match` (`compiled`).], [`feature/isearch.rs`, `editor/replace.rs`, `primitives/scan.rs`, `primitives/match_data.rs`],
+  [`isearch.rs`], [La sessione di ricerca incrementale: `Isearch` e `Direction`.], [`feature/isearch.rs`, `primitives/isearch.rs`],
+  [`replace.rs`], [La sessione di sostituzione, `Replace`, con `Casing` ed `expand_replacement`.], [`editor/replace.rs`],
   [`kill_ring.rs`], [`KillRing`: un anello di stringhe con la regola di rotazione e di accodamento.], [`managers/kill_yank.rs` (`KillYank`)],
-  [`rectangle.rs`], [`Rectangle` e `Span`: l'aritmetica di due angoli e delle righe tra loro.], [`primitives/rectangle.rs`],
-  [`results.rs`], [`Entry` e `Results`: una lista di posti e un cursore che la percorre.], [`primitives/results.rs`],
+  [`rectangle.rs`], [`Rectangle` e `Span`: l'aritmetica di due angoli e delle righe tra loro.], [`primitives/rectangle.rs`, `ui/windows.rs`],
+  [`results.rs`], [`Entry` e `Results`: una lista di posti e un cursore che la percorre.], [`primitives/results.rs`, `editor/results.rs`],
 )
 
-Le sessioni (`Isearch`, `Replace`) sono qui per la stessa ragione: contengono
-lo #emph[stato] di un ciclo che l'editor non può scrivere come ciclo, perché
-non esiste una lettura bloccante di un tasto. Chi le guida tiene la sessione in
-`Runtime` tra un tasto e l'altro e chiama un metodo per ogni risposta
-dell'utente; la sessione conosce il buffer solo per nome.
+Le sessioni (`Isearch`, `Replace`) tengono lo #emph[stato] di una ricerca o di
+una sostituzione tra un tasto e l'altro. Chi le guida le conserva in `Runtime`
+e chiama un metodo per ogni risposta dell'utente; la sessione conosce il
+buffer solo per nome (@decisioni-testo).
 
 == Posizioni: sempre caratteri
 
@@ -1532,7 +1642,7 @@ primo carattere accentato, per questo non è ripetuta nei chiamanti.
   #arrow((12.4cm, 2.05cm), (12.4cm, 0.85cm), label: [`to_match`], label-dx: 6pt, label-dy: -4pt)
 ]
 
-== `Pattern`: che cosa cercare
+== `Pattern`: che cosa cercare <ricerca>
 
 #estratto("text/search.rs")[
 ```rust
@@ -1655,13 +1765,20 @@ corrispondenza #rapporto("RIC-4").
 `in_line()` ed `end_in_line()` danno la posizione della corrispondenza dentro
 `line_text`, che è ciò che serve a una vista per evidenziarla.
 
-== La sessione di ricerca incrementale: `Isearch`
+=== Le espressioni di `string-match`
+
+`string-match` e `string-match-p` non costruiscono un `Pattern`: chiedono a
+`compiled(pattern)` l'espressione già compilata. Ogni thread tiene la sua
+tabella, dalla sorgente all'espressione (`Arc<Regex>`), e la svuota tutta
+quando arriva a `CACHE_LIMIT`, 512 voci.
+
+== La sessione di ricerca incrementale: `Isearch` <isearch>
 
 La parte di interfaccia è descritta nel @minibuffer: `C-s` apre il prompt in
 `isearch-mode` e il `post-command-hook` di quel modo chiama `isearch-update`
 dopo ogni comando. Qui interessa lo stato che passa da un tasto all'altro.
 
-#estratto("text/search.rs")[
+#estratto("text/isearch.rs")[
 ```rust
 pub struct Isearch {
     pub buffer: String,          // il buffer cercato (il corrente è il minibuffer)
@@ -1719,7 +1836,7 @@ corrispondenza è la regione e la disegna lo stesso codice che disegna una
 selezione. `isearch-exit` (Invio) disattiva il mark e lascia il punto dov'è;
 `isearch-abort` (`C-g`, `ESC`) riporta il punto a `origin` #rapporto("RIC-6").
 
-== La sessione di sostituzione: `Replace`
+== La sessione di sostituzione: `Replace` <sostituzione>
 
 `replace-string`, `replace-regexp` e `query-replace` creano una `Replace` con
 `begin_replace` (`editor/replace.rs`). Il campo d'azione è la regione se il mark
@@ -1727,7 +1844,7 @@ selezione. `isearch-exit` (Invio) disattiva il mark e lascia il punto dov'è;
 due estremi. Poi `seek` cerca la prima corrispondenza e un overlay della
 categoria `replace-match` la evidenzia.
 
-#estratto("text/search.rs")[
+#estratto("text/replace.rs")[
 ```rust
 pub struct Replace {
     pub buffer: String, pub pattern: Pattern,
@@ -1746,7 +1863,8 @@ Chi la guida chiama un verbo per ogni risposta. La vista predefinita
 cinque tasti: `y` (`replace-this`), `n` (`replace-skip`), `!` (`replace-rest`),
 `^` (`replace-back`, che usa `unaccept` e l'undo del buffer) e `q`
 (`replace-done`). La keymap è di tipo `OnUnbound::Release`: qualunque altro
-tasto chiude la sostituzione e poi fa ciò che fa di solito. Un'interfaccia
+tasto toglie la domanda e poi fa ciò che fa di solito, ma la sessione resta
+aperta e la corrispondenza evidenziata #rapporto("RIC-8"). Un'interfaccia
 grafica userebbe pulsanti; nessuna delle due si esprime come un ciclo che
 legge una risposta.
 
@@ -1810,7 +1928,7 @@ di undo #rapporto("RIC-3"), chiama `accept` e poi cerca la successiva.
 `replace_this` con un tetto di `len + 1` giri, che è l'unica cosa che ferma
 il caso delle corrispondenze vuote #rapporto("RIC-1").
 
-== Il kill ring
+== Il kill ring <kill-ring>
 
 #estratto("text/kill_ring.rs")[
 ```rust
@@ -1882,7 +2000,7 @@ ogni ridisegno.
 L'ultimo rettangolo ucciso o copiato non va nell'anello: sta in un campo a
 parte di `KillYank`, una riga per stringa, e `yank-rectangle` lo legge da lì.
 
-== I rettangoli
+== I rettangoli <rettangoli>
 
 Il punto e il mark sono due angoli; il rettangolo è il blocco di colonne che le
 righe tra loro hanno in comune. Non è la regione, che dalla metà di una riga
@@ -1903,9 +2021,9 @@ ed è utile: è una posizione su ogni riga, che è ciò che serve a
 `string-rectangle` per anteporre un prefisso a un gruppo di righe. Gli angoli
 possono essere dati in qualsiasi ordine.
 
-Le colonne sono caratteri. rsedit non espande le tabulazioni (ne disegna una
-per cella), quindi colonna di carattere e colonna sullo schermo coincidono
-#rapporto("TUI-3").
+Le colonne sono caratteri, e un tab è una colonna, come in tutto l'editor.
+Sullo schermo il terminale lo espande, quindi su una riga con un tab il
+blocco disegnato non è quello che il rettangolo prende #rapporto("TUI-3").
 
 `spans(text, rect)` traduce il rettangolo in un `Span` per riga, dall'alto:
 
@@ -1945,7 +2063,7 @@ perché una modifica a una riga sposta tutti gli offset successivi.
 `text_of` restituisce il testo di ogni span, con una stringa vuota per le righe
 che non raggiungono il rettangolo, così il blocco mantiene la sua forma.
 
-== Le liste di risultati
+== Le liste di risultati <risultati>
 
 Occur, grep e la lettura dell'output di un compilatore producono la stessa
 cosa: una lista di posti dove andare. `results.rs` la definisce una volta, così
@@ -1959,6 +2077,7 @@ produrre la lista e percorrerla sono lavori separati.
   [`line`, `column`], [Riga da 1, colonna da 0.],
   [`offset`], [Offset in caratteri, per `goto-char`.],
   [`text`, `start`, `end`], [La riga intera e la posizione della corrispondenza al suo interno.],
+  [`at`], [La riga dell'elenco su cui la voce è mostrata, da 1, quando il produttore la dice. La lista di una ricerca ha un'intestazione e poi una voce per riga, e non serve; l'uscita di un compilatore nomina i posti sulle righe dove il compilatore li ha scritti, e serve.],
 )
 
 `Entry::new(kind, source, found)` copia i campi da un `Found` di `scan`;
@@ -1993,6 +2112,68 @@ primo errore. Un insieme di risultati vive nel buffer che lo mostra, in
 viene chiuso i risultati spariscono con lui, e rinominarlo non rompe nulla.
 Le voci conservano numeri di riga e offset, non marcatori che seguono il testo
 #rapporto("RIC-5").
+
+== Le decisioni <decisioni-testo>
+
++ *`text/` è una directory, con una regola d'ammissione.* Un file sta qui se
+  lo potrebbe usare un programma che non è un editor. Messi alla radice del
+  crate, accanto a `editor/` e `ui/`, questi file farebbero una lista di
+  moduli senza un principio, e lo strato sarebbe soltanto descritto. Una
+  directory lo rende visibile e controllabile: `layering_tests` fallisce se un
+  file di qui nomina l'editor o l'interprete.
++ *Ricerca e sessioni stanno sotto l'editor.* La ricerca ha bisogno solo di un
+  testo che dia i caratteri per posizione: né punto, né mark, né undo, né
+  lock. Così si prova su un buffer qualunque, senza un editor intorno, e la
+  ricerca incrementale, la sostituzione e occur non possono avere due idee
+  diverse di che cosa sia una corrispondenza. Lo stesso vale per l'aritmetica
+  di una sostituzione: da dove riparte, di quanto sposta ciò che segue,
+  quando si ferma.
++ *Un'espressione cerca su una copia del testo.* Il motore (`regex`) lavora su
+  una `&str`, quindi la ricerca con un'espressione copia il buffer a ogni
+  chiamata, mentre quella letterale non copia nulla. La ricerca incrementale
+  ricerca a ogni tasto, e su un buffer grande una ricerca con un'espressione
+  costa una copia per tasto. È la versione semplice; quella che scala darebbe
+  il testo a pezzi, senza copiarlo, alla ricerca a flusso di
+  `regex_automata`.
++ *Le espressioni di `string-match` si compilano una volta.* Compilarne una
+  costa circa sette decimi di millisecondo: niente quando un modo dichiara la
+  sua grammatica, un blocco quando succede in un ciclo. I moduli chiamano
+  `string-match` per ogni elemento: la sorgente dei completamenti del manuale
+  toglie l'estensione a ogni pagina che trova, e senza la cache quattromila
+  pagine sarebbero quattromila compilazioni, 2,7 secondi a ogni Tab sul thread
+  che disegna. Con la cache le stesse chiamate costano venti millisecondi.
++ *La cache è per thread, e quando è piena si svuota tutta.* Per thread,
+  perché trovare una corrispondenza non prenda un lock: Lisp gira sul thread
+  dei comandi e su quello dell'esecutore, e una tabella condivisa li
+  metterebbe l'uno sulla strada dell'altro nella chiamata più frequente che
+  c'è. Svuotarla tutta invece di scartare le voci vecchie basta: le
+  espressioni vengono dal sorgente dei moduli e sono qualche decina, e il
+  limite serve solo a un programma che le #emph[genera] dal suo input. Buttare
+  tutto costa una compilazione per ognuna ancora in uso, cioè, nel caso
+  peggiore, il comportamento senza la cache.
++ *Ricerca incrementale e sostituzione sono sessioni, non cicli.* Una ricerca
+  incrementale è un ciclo sui tasti, e una sostituzione un ciclo sulle
+  risposte; ma in rsedit non c'è una lettura bloccante di un tasto, perché i
+  tasti arrivano uno per giro del ciclo degli eventi, e un pulsante di
+  un'interfaccia grafica non è una lettura affatto. Il ciclo è quindi rovesciato,
+  come la raccolta degli argomenti con `PendingCommand` (@comandi): la sessione
+  tiene ciò che il ciclo terrebbe nelle sue variabili, e chi la guida chiama un
+  metodo per ogni giro. La sessione non nomina buffer, finestre o lock, solo il
+  nome del buffer e posizioni nel suo testo: si legge e si scrive senza tenere
+  nulla, e descrive una ricerca in un buffer che non è il corrente, come è
+  sempre mentre il prompt è aperto.
++ *La sostituzione segue le maiuscole di ciò che sostituisce.* Una ricerca che
+  ignora le maiuscole e una sostituzione letterale trovano il posto giusto e
+  ci scrivono la cosa sbagliata: sostituire `colour` con `color` in un
+  documento trasforma il `Colour` a inizio frase in `color`, e ognuno va
+  corretto a mano. È ciò che più si nota quando manca.
++ *Un anello solo per tutto l'editor.* Uccidere in un buffer e incollare in un
+  altro è lo scopo del kill ring: l'anello sta sull'editor, in `KillYank`, e
+  non sul buffer, così il testo passa da uno all'altro.
++ *Una riga corta resta nel rettangolo.* Una riga che finisce prima del bordo
+  sinistro è comunque una delle righe del rettangolo, con uno span vuoto e il
+  suo `padding`. Toglierla farebbe dipendere l'altezza del blocco da ciò che
+  contiene.
 
 // ===========================================================================
 = Modi <modi>

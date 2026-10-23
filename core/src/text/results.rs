@@ -1,36 +1,23 @@
-//! A list of places, and what produced it.
+//! A list of places -- what occur, grep and a compiler's complaints produce --
+//! and a cursor that walks it, so that producing a list and walking it are
+//! separate jobs. A set lives on the buffer that shows it, in
+//! [`crate::buffer::Buffer::data`], and goes when the buffer does.
 //!
-//! # What this is
-//!
-//! Occur, grep, a compiler's complaints, a linter's: all of them are a list of
-//! *somewhere to go*, and every one of them has been written twice in every
-//! editor -- once as a way to produce the list and once as a way to walk it.
-//! This is the list, said once, so that producing and walking are separate
-//! jobs that know nothing about each other.
-//!
-//! An entry says where, and enough to show the line without reading anything
-//! again. The shape is fixed in [`crate::primitives::scan`], where Lisp sees
-//! it, and mirrored here.
-//!
-//! # Where a set lives
-//!
-//! On the buffer that shows it, in [`crate::buffer::Buffer::data`]. That is
-//! not an implementation detail -- it is the lifetime: kill the buffer and the
-//! results go with it, because they *are* the buffer's, and nothing has to
-//! remember to tidy up. The alternative, a table of sets keyed by buffer name,
-//! is wrong the moment a buffer is renamed and still holding memory long after
-//! it is killed.
+//! Design: `doc/architettura-editor.typ, <risultati>`.
 use crate::text::search::Found;
 
 /// The name a result set is attached to its buffer under.
 pub const RESULTS_KEY: &str = "results";
 
-/// What kind of thing an entry is in.
+/// The kind of an entry found in a buffer.
 pub const KIND_BUFFER: &str = "buffer";
-/// The other kind.
+/// The kind of an entry found in a file.
 pub const KIND_FILE: &str = "file";
 
-/// One place, and what is there.
+// TODO(RIC-5): an entry keeps a line and an offset, which an edit above the
+// place moves away from.
+
+/// One place, and what is there: the shape the `scan` primitive hands to Lisp.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     /// `"buffer"` or `"file"` -- a name like `*scratch*` and a path are
@@ -59,7 +46,7 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// An entry for FOUND, which was found in SOURCE.
+    /// Returns an entry of KIND for FOUND, which was found in SOURCE.
     pub fn new(kind: &str, source: &str, found: &Found) -> Self {
         Self {
             kind: kind.to_string(),
@@ -74,14 +61,14 @@ impl Entry {
         }
     }
 
-    /// The line a plain view shows, in the `file:line: text` shape every
-    /// grep-like tool has printed since the first one.
+    /// Returns the line a plain view shows: `file:line: text`, as every
+    /// grep-like tool prints it.
     pub fn rendered(&self) -> String {
         format!("{}:{}: {}", self.source, self.line, self.text)
     }
 }
 
-/// Everything one search found, and where the walk through it has got to.
+/// Everything one search found, and how far the walk through it has got.
 #[derive(Clone, Debug, Default)]
 pub struct Results {
     /// What was searched for, as it was typed. For the header line, and so a
@@ -107,6 +94,7 @@ pub struct Results {
 }
 
 impl Results {
+    /// Creates an empty set for PATTERN, searched over OVER.
     pub fn new(pattern: &str, over: &str) -> Self {
         Self {
             pattern: pattern.to_string(),
@@ -115,20 +103,19 @@ impl Results {
         }
     }
 
+    /// Returns how many entries there are.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Returns the entry at INDEX.
     pub fn get(&self, index: usize) -> Option<&Entry> {
         self.entries.get(index)
     }
 
-    /// The index one STEP away from where the walk is, or `None` at the end.
-    ///
-    /// Not wrapped, deliberately. A list of places is walked *through*: the
-    /// end of it is information -- "that was the last one" -- and a walk that
-    /// silently started again would have you fixing the first error twice
-    /// while believing you were making progress.
+    /// Returns the index one STEP away from where the walk is, or `None` past
+    /// either end. Not wrapped: the end of a list of places says that was the
+    /// last one.
     pub fn step(&self, step: isize) -> Option<usize> {
         if self.entries.is_empty() {
             return None;

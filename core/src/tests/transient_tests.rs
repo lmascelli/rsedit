@@ -1,5 +1,7 @@
-//! Keymaps that last for a moment: repeat keys, and the two things a map can
-//! do with a key it does not bind.
+//! Keymaps that last for a moment: repeat keys, and what a map does with a key
+//! it does not bind.
+//!
+//! Design: `doc/architettura-editor.typ, <keymap>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

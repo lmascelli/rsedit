@@ -1,18 +1,9 @@
-//! Finding every match: the arithmetic, and the shape of what comes back.
+//! Finding every match: where each is in the text, on which line and where in
+//! the line -- three answers one walk computes -- checked where they can
+//! disagree: several matches on a line, a match across a line break, text that
+//! is not ASCII, a pattern that matches nothing everywhere. Then what Lisp sees.
 //!
-//! # What is worth testing here
-//!
-//! A scan is a loop that has to be right about three things at once -- where a
-//! match is in the whole text, which line it is on, and where it sits within
-//! that line -- and the three are computed by one walk that only ever moves
-//! forward. Every way of getting that wrong is quiet: an off-by-one in the
-//! line counter shows up as a result list that opens the wrong line, which
-//! reads as "the search is broken" long after the scan itself is forgotten.
-//!
-//! So the cases below are the ones where the three answers can disagree:
-//! several matches on one line, a match that spans a line break, text that is
-//! not ASCII (where a byte offset and a character offset part company), and a
-//! pattern that matches nothing at all at every position.
+//! Design: `doc/architettura-editor.typ, <ricerca>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -232,11 +223,8 @@ mod tests {
 
     #[test]
     fn scanning_a_large_buffer_is_one_pass_rather_than_one_per_match() {
-        // The reason this function exists. `search_forward` stringifies the
-        // whole text on every call, so asking it for every match costs a pass
-        // per match: at these sizes that is 40 million character copies and
-        // several seconds. One pass is milliseconds, and the difference is
-        // what this test would show as a hang.
+        // One pass: `search_forward` for every match would copy the whole text
+        // once per match, seconds at this size against milliseconds.
         let line = "some text with a needle in it and more text after it\n";
         let haystack = line.repeat(20_000);
         let pattern = Pattern::new("needle", false, false).expect("pattern");

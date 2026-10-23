@@ -5,7 +5,7 @@
 //!
 //! The modules below are listed in **dependency order**, and the list is the
 //! map. Each one may use what is above it, and the interpreter, which is the
-//! `risp` crate; it must not use what is below:
+//! `risp` crate; of what is below, only what its entry names:
 //!
 //! ```text
 //!   work/        where asynchronous work runs: the WorkManager, its
@@ -19,10 +19,13 @@
 //!                Of what is below, it uses only the types it stores: the
 //!                faces of ui/, the colouring and scan states of modes/.
 //!   text/        what can be worked out about text with nothing but
-//!                BufferTrait: searching, rectangles, the kill ring, lists of
+//!                BufferTrait: searching and the sessions of incremental
+//!                search and replace, rectangles, the kill ring, lists of
 //!                places.
 //!   input.rs     keys, mouse events and keymaps: the vocabulary the editor
-//!   commands.rs  takes input in, and the registry of what a name can mean.
+//!                takes input in. Of what is below, it uses only what a key
+//!                is bound to: ELispExp, whose type names EditorState.
+//!   commands.rs  the registry of what a name can mean as a command.
 //!   managers/    the editor's state, in compartments, each under one lock.
 //!   editor/      EditorState: the facade over those compartments, and the
 //!                only thing that may hold two of their locks at once.
@@ -41,7 +44,8 @@
 //! own, so it cannot name an editor type: that is what lets it be tested, and
 //! used, on its own. And `ui/` names nothing from `editor/`, which
 //! `layering_tests` checks: that is what lets a renderer be written against a
-//! snapshot instead of against this crate's internals.
+//! snapshot instead of against this crate's internals. The same test holds
+//! each module from `work/` to `commands.rs` to what its entry names.
 //!
 //! # Why everything is `pub(crate)`
 //!

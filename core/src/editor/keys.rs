@@ -387,7 +387,7 @@ impl<B: BufferTrait> EditorState<B> {
             Some(ELispExp::String(text)) => text.to_string(),
             _ => DEFAULT_HELP_KEY.to_string(),
         };
-        crate::primitives::parse_key_sequence(&spelling)
+        crate::input::parse_key_sequence(&spelling)
             .and_then(|keys| keys.last().cloned())
             .is_some_and(|help| &help == key)
     }

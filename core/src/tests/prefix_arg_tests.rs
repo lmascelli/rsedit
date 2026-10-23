@@ -1,4 +1,6 @@
 //! The prefix argument, and the arguments the editor answers itself.
+//!
+//! Design: `doc/architettura-editor.typ, <comandi>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

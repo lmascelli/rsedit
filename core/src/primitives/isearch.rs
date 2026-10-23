@@ -13,7 +13,8 @@
 use super::*;
 use crate::buffer::Mark;
 use crate::feature::isearch;
-use crate::text::search::{Direction, Isearch, Pattern};
+use crate::text::isearch::{Direction, Isearch};
+use crate::text::search::Pattern;
 use std::sync::Arc;
 
 /// Open the prompt and record where the search began.

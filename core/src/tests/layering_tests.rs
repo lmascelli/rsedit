@@ -1,48 +1,54 @@
-//! That the boundaries `lib.rs` describes are boundaries.
+//! That the boundaries `lib.rs` describes are boundaries:
 //!
-//! # Why a test and not a comment
-//!
-//! The crate's layering was documented in a dozen module headers before it was
-//! a directory structure, and documentation is not a constraint: nothing stopped
-//! `search.rs` reaching for an `EditorState`, and the only thing that would have
-//! noticed is a reader who happened to look. A directory makes the layer
-//! visible; this makes it fail.
-//!
-//! The editor's internal boundaries are checked here. The interpreter now has
-//! its own repository, so its dependency boundary is enforced by Cargo instead.
-//!
-//! - `text/` knows nothing of the editor *or* the interpreter. It is the layer
-//!   that makes searching and rectangles testable against a bare
-//!   [`crate::buffer::BufferTrait`], and reachable from a program that is not
-//!   an editor.
-//! - `ui/` knows nothing of `editor/`. It describes what to draw; a renderer is
-//!   written against that description, not against this crate's internals.
-//! - `buffer/` uses nothing below it in the map but the types it stores: the
-//!   faces of `ui/`, and the colouring and scan states of `modes/`.
+//! - `text/` knows nothing of the editor *or* the interpreter, so that it can
+//!   be used by a program that is not an editor.
+//! - `ui/` knows nothing of `editor/`: a renderer is written against what it
+//!   describes, not against this crate's internals.
+//! - Each module checked here uses, of what is below it in the map, only what
+//!   the map declares: nothing, but for `buffer/` (the types a buffer stores)
+//!   and `input.rs` (`ELispExp`).
 //! - The map in `lib.rs` names every module the crate declares, and nothing
 //!   else.
 //!
-//! # Why `include_str!` and not a file walk
-//!
-//! The paths are resolved by the compiler, relative to this file, so the test
-//! does not depend on the working directory and a renamed or deleted file is a
-//! *compile* error rather than a test that quietly checks nothing. The cost is
-//! that a new file in one of these directories has to be added to the list
-//! below -- which is the one piece of upkeep here, and is why each list says
-//! what it is for.
+//! The files are read with `include_str!`, so that one renamed or deleted is a
+//! compile error rather than a check that quietly checks nothing; a new file
+//! has to be added to its list, and a test counts that it was.
 #[cfg(test)]
 mod tests {
     /// Every file under `text/`.
     const TEXT: &[(&str, &str)] = &[
         ("text/mod.rs", include_str!("../text/mod.rs")),
+        ("text/isearch.rs", include_str!("../text/isearch.rs")),
         ("text/kill_ring.rs", include_str!("../text/kill_ring.rs")),
         ("text/rectangle.rs", include_str!("../text/rectangle.rs")),
+        ("text/replace.rs", include_str!("../text/replace.rs")),
         ("text/results.rs", include_str!("../text/results.rs")),
         ("text/search.rs", include_str!("../text/search.rs")),
     ];
 
     /// The crate's root, whose documentation is the map.
     const LIB: &str = include_str!("../lib.rs");
+
+    /// Every file under `work/`.
+    const WORK: &[(&str, &str)] = &[
+        ("work/mod.rs", include_str!("../work/mod.rs")),
+        ("work/clock.rs", include_str!("../work/clock.rs")),
+        ("work/core.rs", include_str!("../work/core.rs")),
+        ("work/executor.rs", include_str!("../work/executor.rs")),
+        ("work/job.rs", include_str!("../work/job.rs")),
+        ("work/manager.rs", include_str!("../work/manager.rs")),
+        ("work/options.rs", include_str!("../work/options.rs")),
+        ("work/registry.rs", include_str!("../work/registry.rs")),
+        ("work/report.rs", include_str!("../work/report.rs")),
+        ("work/threads.rs", include_str!("../work/threads.rs")),
+        ("work/topic.rs", include_str!("../work/topic.rs")),
+        ("work/watchdog.rs", include_str!("../work/watchdog.rs")),
+    ];
+
+    /// The modules of one file the map orders.
+    const PATHS: &[(&str, &str)] = &[("paths.rs", include_str!("../paths.rs"))];
+    const INPUT: &[(&str, &str)] = &[("input.rs", include_str!("../input.rs"))];
+    const COMMANDS: &[(&str, &str)] = &[("commands.rs", include_str!("../commands.rs"))];
 
     /// Every file under `buffer/`.
     const BUFFER: &[(&str, &str)] = &[
@@ -67,15 +73,29 @@ mod tests {
         ),
     ];
 
-    /// What `buffer/` uses from below it in the map, sorted: the types a
-    /// buffer stores. The whole of the exception, so that it cannot grow
-    /// unnoticed.
-    const BUFFER_STORES: &[&str] = &[
-        "crate::modes::SyntaxSpan",
-        "crate::modes::SyntaxState",
-        "crate::modes::SyntaxTable",
-        "crate::modes::sexp::Resume",
-        "crate::ui::Face",
+    /// The files of a module, each by its path and with its text.
+    type Files = &'static [(&'static str, &'static str)];
+
+    /// Each module checked against the map, its files, and what it uses from
+    /// below it in the map, sorted: the exceptions the map declares, and
+    /// nothing else, so that they cannot grow unnoticed.
+    const FROM_BELOW: &[(&str, Files, &[&str])] = &[
+        ("work/", WORK, &[]),
+        ("paths.rs", PATHS, &[]),
+        (
+            "buffer/",
+            BUFFER,
+            &[
+                "crate::modes::SyntaxSpan",
+                "crate::modes::SyntaxState",
+                "crate::modes::SyntaxTable",
+                "crate::modes::sexp::Resume",
+                "crate::ui::Face",
+            ],
+        ),
+        ("text/", TEXT, &[]),
+        ("input.rs", INPUT, &["crate::ELispExp"]),
+        ("commands.rs", COMMANDS, &[]),
     ];
 
     /// Every file under `ui/`.
@@ -87,12 +107,12 @@ mod tests {
         ("ui/windows.rs", include_str!("../ui/windows.rs")),
     ];
 
-    /// The lines of SOURCE that are code, with comments and doc comments
-    /// dropped.
+    /// Returns the lines of SOURCE that are code, with comments and doc
+    /// comments dropped.
     ///
     /// A module doc *describing* the boundary -- "this must not reach
-    /// `EditorState`" -- would otherwise read as a violation of it, which is the
-    /// one way a test like this reliably goes wrong.
+    /// `EditorState`" -- would otherwise read as a violation of it, which is
+    /// the one way a test like this reliably goes wrong.
     fn code_lines(source: &str) -> impl Iterator<Item = (usize, &str)> {
         source
             .lines()
@@ -101,7 +121,7 @@ mod tests {
             .filter(|(_, line)| !line.starts_with("//"))
     }
 
-    /// Fail if any file in FILES mentions FORBIDDEN in code.
+    /// Fails if any file in FILES mentions FORBIDDEN in code.
     fn assert_never_names(files: &[(&str, &str)], forbidden: &str, because: &str) {
         for (path, source) in files {
             for (number, line) in code_lines(source) {
@@ -134,58 +154,111 @@ mod tests {
         }
     }
 
-    /// Returns the paths under `crate::` that LINE names, with a `use` group
-    /// one level deep expanded: `crate::modes::{A, B}` names
-    /// `crate::modes::A` and `crate::modes::B`.
-    fn crate_paths(line: &str) -> Vec<String> {
+    /// Returns the paths under `crate::` that the code of SOURCE names, with
+    /// `use` groups expanded: `crate::{ELispExp, modes::{A, B}}` names
+    /// `crate::ELispExp`, `crate::modes::A` and `crate::modes::B`.
+    fn crate_paths(source: &str) -> Vec<String> {
+        // One line, so that a group rustfmt spreads over several is read whole.
+        let code: Vec<&str> = code_lines(source).map(|(_, line)| line).collect();
+        let code = code.join(" ");
         let mut paths = Vec::new();
-        let mut rest = line;
-        while let Some(at) = rest.find("crate::") {
-            rest = &rest[at + "crate::".len()..];
-            let end = rest
-                .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
-                .unwrap_or(rest.len());
-            let base = match rest[..end].trim_end_matches(':') {
-                "" => "crate".to_string(),
-                prefix => format!("crate::{prefix}"),
-            };
-            if rest[..end].ends_with("::") && rest[end..].starts_with('{') {
-                let close = rest[end..].find('}').map_or(rest.len(), |i| end + i);
-                for item in rest[end + 1..close].split(',') {
-                    let item = item.trim();
-                    if !item.is_empty() {
-                        paths.push(format!("{base}::{item}"));
-                    }
-                }
-                rest = &rest[close..];
-            } else {
-                paths.push(base);
-                rest = &rest[end..];
-            }
+        for (at, _) in code.match_indices("crate::") {
+            expand(&mut paths, "crate", &code[at + "crate::".len()..]);
         }
         paths
     }
 
+    /// Pushes onto PATHS what the path or `use` tree at the start of TEXT
+    /// names under BASE.
+    fn expand(paths: &mut Vec<String>, base: &str, text: &str) {
+        let end = text
+            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+            .unwrap_or(text.len());
+        let path = match text[..end].trim_end_matches(':') {
+            "" => base.to_string(),
+            name => format!("{base}::{name}"),
+        };
+        let Some(group) = text[end..].strip_prefix('{') else {
+            return paths.push(path);
+        };
+        // Each item is a tree under PATH, up to a comma at its own depth or
+        // the brace that closes the group.
+        let (mut depth, mut start) = (0, 0);
+        for (at, c) in group.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' if depth > 0 => depth -= 1,
+                ',' | '}' if depth == 0 => {
+                    let item = group[start..at].trim();
+                    if !item.is_empty() {
+                        expand(paths, &path, item);
+                    }
+                    if c == '}' {
+                        return;
+                    }
+                    start = at + 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
     #[test]
-    fn the_buffer_uses_only_the_types_it_stores_from_below() {
-        let mut named: Vec<String> = BUFFER
-            .iter()
-            .flat_map(|(_, source)| code_lines(source))
-            .flat_map(|(_, line)| crate_paths(line))
-            .filter(|path| {
-                !["crate::buffer", "crate::work", "crate::paths"]
-                    .iter()
-                    .any(|above| path == above || path.starts_with(&format!("{above}::")))
-            })
-            .collect();
-        named.sort_unstable();
-        named.dedup();
+    fn a_use_group_is_read_however_it_is_written() {
+        let source = "use crate::{ELispExp, buffer::{A, B as C}};
+            use crate::modes::{
+                SyntaxSpan,
+                // A comment.
+                SyntaxState,
+            };
+            let found: crate::text::search::Match;";
         assert_eq!(
-            named, BUFFER_STORES,
-            "`buffer/` may use, of what is below it in the map, only the types a \
-             buffer stores. A new one is a decision: add it here and to the map in \
-             lib.rs, or move the code that needs it below `buffer/`."
+            crate_paths(source),
+            [
+                "crate::ELispExp",
+                "crate::buffer::A",
+                "crate::buffer::B",
+                "crate::modes::SyntaxSpan",
+                "crate::modes::SyntaxState",
+                "crate::text::search::Match",
+            ]
         );
+    }
+
+    #[test]
+    fn each_module_uses_from_below_only_what_the_map_declares() {
+        let map = map_entries(LIB);
+        for (entry, files, declared) in FROM_BELOW {
+            let at = map
+                .iter()
+                .position(|mapped| mapped == entry)
+                .unwrap_or_else(|| panic!("{entry} is not in the map"));
+            // The module itself and everything above it, as paths.
+            let above: Vec<String> = map[..=at]
+                .iter()
+                .map(|mapped| {
+                    let name = mapped.trim_end_matches('/').trim_end_matches(".rs");
+                    format!("crate::{name}")
+                })
+                .collect();
+            let mut named: Vec<String> = files
+                .iter()
+                .flat_map(|(_, source)| crate_paths(source))
+                .filter(|path| {
+                    !above
+                        .iter()
+                        .any(|module| path == module || path.starts_with(&format!("{module}::")))
+                })
+                .collect();
+            named.sort_unstable();
+            named.dedup();
+            assert_eq!(
+                named, *declared,
+                "{entry} uses, of what is below it in the map, only what the map in \
+                 lib.rs declares. A new use is a decision: declare it there and here, \
+                 or move the code that needs it below {entry}."
+            );
+        }
     }
 
     #[test]
@@ -204,15 +277,17 @@ mod tests {
     /// The lists above are the whole of each directory, and a file left out of
     /// one is a file the boundary is not checked for.
     ///
-    /// Counted against the directory as the compiler sees it: `mod.rs` declares
-    /// every file in its directory, so the number of `mod`/`pub mod` lines in it
-    /// plus the `mod.rs` itself is how many files there are. A new file shows up
-    /// here as a count that no longer matches, which is the reminder to add it.
+    /// Counted against the directory as the compiler sees it: `mod.rs`
+    /// declares every file in its directory, so the number of `mod`/`pub mod`
+    /// lines in it plus the `mod.rs` itself is how many files there are. A new
+    /// file shows up here as a count that no longer matches, which is the
+    /// reminder to add it.
     ///
     /// A sub-directory with a list of its own is counted separately.
     #[test]
     fn every_file_in_each_checked_directory_is_listed() {
         for (files, directory, sub_directories) in [
+            (WORK, "work", &[] as &[&str]),
             (BUFFER, "buffer", &[] as &[&str]),
             (TEXT, "text", &[] as &[&str]),
             (UI, "ui", &[] as &[&str]),
