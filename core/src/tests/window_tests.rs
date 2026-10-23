@@ -1,4 +1,6 @@
 //! Splitting the frame, closing windows, and moving between them.
+//!
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -77,14 +79,9 @@ mod tests {
         );
     }
 
-    /// Focus stays where it was, as it does in Emacs: `C-x 2` then typing
-    /// continues in the window you were already in.
-    ///
-    /// *Which* of the two that is matters, and is only observable through
-    /// focus: both windows show the same buffer, so they are otherwise
-    /// identical. The window you were in keeps the first half -- the top after
-    /// `split-window-below`, the left after `split-window-right` -- and the
-    /// new one goes after it, which is what makes the command names true.
+    /// Focus stays where it was, as in Emacs, and the window you were in keeps
+    /// the first half -- the top after `split-window-below`, the left after
+    /// `split-window-right` -- which is what the names say.
     #[test]
     fn a_split_leaves_focus_in_the_first_half() {
         let (ctx, env) = editor();
@@ -273,11 +270,9 @@ mod tests {
 
     #[test]
     fn cycling_reaches_a_floating_window_and_comes_back() {
-        // The bug: focus could be taken off a float -- by a click, by a
-        // command selecting the window it came from, by `other-window' itself
-        // -- and nothing ever gave it back. The float stayed drawn and
-        // unusable, because the walk was over the tiled layout alone and a
-        // float is not in it.
+        // Focus can be taken off a float -- by a click, by a command
+        // selecting the window it came from, by `other-window` itself -- and
+        // the walk has to lead back to it.
         let (ctx, env) = editor();
         let tiled_window = ctx.get_focused_window_id();
         let float = eval_str(
@@ -336,11 +331,7 @@ mod tests {
             vec![top, bottom, first, second],
             "the cycle visits the tiled windows and then the floats"
         );
-        // And where the cycle *starts*, which the walk above cannot show:
-        // [top bottom first second] and [first second top bottom] are the
-        // same cycle, so stepping round one is stepping round the other.
-        // Anything that lists windows rather than walking them can tell the
-        // difference, so the list says which it is.
+        // And where the list starts, which a walk round cannot show.
         assert_eq!(
             ctx.windows(|windows| windows.all_ids()),
             vec![top, bottom, first, second],
@@ -350,10 +341,8 @@ mod tests {
 
     #[test]
     fn one_tiled_window_and_a_float_still_cycle() {
-        // The sharpest form of it. With nothing split, the walk had one
-        // window in it, `other-window' answered "there is only one window"
-        // and did nothing at all -- so a float opened over an unsplit frame
-        // was the one you could never leave, and once left never return to.
+        // With nothing split, the walk still has two windows in it: the tiled
+        // one and the float.
         let (ctx, env) = editor();
         assert_eq!(windows(&ctx), 1);
         let only = ctx.get_focused_window_id();
@@ -389,9 +378,9 @@ mod tests {
 
     #[test]
     fn a_float_answers_with_an_id_that_can_be_selected_again() {
-        // The other half of the same gap, for a module rather than a person:
-        // `selected-window' answers about the window that has focus now, so a
-        // module that let go of its float had nothing left to name it by.
+        // For a module rather than a person: `selected-window` answers about
+        // the window with focus now, so a module names its float by the id it
+        // was given.
         let (ctx, env) = editor();
         let tiled_window = ctx.get_focused_window_id();
         let float = eval_str(
@@ -504,8 +493,7 @@ mod tests {
     }
 
     /// A digit after `C-x` belongs to the key sequence, not to a prefix
-    /// argument -- which is exactly the case the two-pieces-of-state design
-    /// exists to get right, and now has real bindings to get wrong.
+    /// argument.
     #[test]
     fn c_x_2_is_a_binding_not_a_prefix_argument() {
         let (ctx, env) = editor();
@@ -518,10 +506,9 @@ mod tests {
         assert_eq!(ctx.prefix_argument(), None, "the 2 was not a count");
     }
 
-    // ---------------- the mode line, now that there is more than one ----------------
+    // ---------------- the mode line, with two windows ----------------
 
-    /// With two windows only one has focus, so the two mode-line faces are
-    /// finally both reachable.
+    /// With two windows only one has focus, so both mode-line faces are drawn.
     #[test]
     fn only_the_focused_window_is_marked_as_such() {
         let (ctx, env) = editor();
@@ -537,8 +524,8 @@ mod tests {
 
     // ---------------- focus and the current buffer ----------------
 
-    /// The bug: focus moved and the current buffer did not, so the cursor was
-    /// drawn in one window while typing edited the buffer shown in another.
+    /// Focus and the current buffer move together: otherwise the cursor is
+    /// drawn in one window while typing edits the buffer shown in another.
     #[test]
     fn switching_windows_takes_the_current_buffer_with_it() {
         let (ctx, env) = editor();
@@ -561,8 +548,8 @@ mod tests {
         );
     }
 
-    /// What the bug actually looked like: the cursor sat still in the focused
-    /// window while point moved in the buffer that had been left behind.
+    /// After a switch, typing edits the buffer of the window you are looking
+    /// at, not the one left behind.
     #[test]
     fn typing_after_a_switch_edits_the_window_you_are_looking_at() {
         let (ctx, env) = editor();
@@ -640,9 +627,8 @@ mod tests {
         assert_eq!(ctx.get_current_buffer_name(), start);
     }
 
-    /// A prompt is a floating window, and giving it focus has to make its
-    /// buffer current in the same way -- which is what every prompt in the
-    /// editor already depended on.
+    /// A prompt is a floating window, and focusing it makes its buffer
+    /// current in the same way: every prompt depends on it.
     #[test]
     fn a_floating_prompt_still_becomes_current_when_it_opens() {
         let (ctx, env) = editor();
@@ -651,14 +637,8 @@ mod tests {
     }
 
     /// `find-file` and `switch-to-buffer` put the buffer in the window that
-    /// has focus.
-    ///
-    /// They used to put it in the leftmost one, whichever had focus, because
-    /// the lookup they named the focused window to ignored the id it was given
-    /// and returned the first leaf of the layout tree. With one window on
-    /// screen that is the right answer every time, which is why nothing caught
-    /// it; with two, the file opened in the window you were not looking at and
-    /// the one you were kept showing what was there before.
+    /// has focus, not in the first one of the layout: with one window on
+    /// screen the two are the same, so it takes two.
     #[test]
     fn opening_a_buffer_replaces_what_the_focused_window_shows() {
         let (ctx, env) = editor();
@@ -709,8 +689,7 @@ mod tests {
         );
     }
 
-    /// The same for a file, which is the way the bug was actually met: `C-x 2`,
-    /// `C-x o`, `C-x C-f`.
+    /// The same for a file: `C-x 2`, `C-x o`, `C-x C-f`.
     #[test]
     fn finding_a_file_opens_it_in_the_focused_window() {
         let (ctx, env) = editor();
@@ -1063,10 +1042,9 @@ mod tests {
 
     #[test]
     fn a_sized_split_keeps_that_much_for_the_window_being_split() {
-        // The window that asked keeps the columns; the new one takes the rest.
-        // This way round on purpose -- the thing with an opinion about its
-        // width is the one being split, and it should keep that width when the
-        // frame is resized.
+        // The window that asked keeps the columns and the new one takes the
+        // rest: the window being split is the one with an opinion about its
+        // width, and keeps it when the frame is resized.
         let (ctx, env) = editor();
         eval_str("(split-window-right 30)", &env, &ctx).expect("split");
         let views = tiled(&ctx, &env);

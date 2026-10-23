@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--13 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--14 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -249,7 +249,7 @@ Segue le Rust API Guidelines e le convenzioni della RFC 1574.
   `# Safety` quando si applicano, e `# Examples`.
 - I tipi e le funzioni citati sono link (#raw("[`Log::flush`]")) e devono
   risolversi: `cargo doc --document-private-items` senza avvisi. Oggi ce ne
-  sono 15.
+  sono 14.
 - Campi e varianti: una riga quando il nome non basta, niente quando basta.
 - *La documentazione di modulo* (`//!`) dice in una-cinque righe di che cosa
   il modulo è responsabile, e rimanda al capitolo del manuale con la sua
@@ -1433,7 +1433,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [11], [`work/` (fatto)], [2 935], [assorbe `workmanager.typ`],
   [12], [`paths.rs`, `buffer/` (fatto)], [3 075], [---],
   [13], [`text/`, `input.rs`, `commands.rs` (fatto)], [2 047], [---],
-  [14], [`managers/`], [2 936], [la regola delle coppie con `editor/`],
+  [14], [`managers/` (fatto)], [2 936], [la regola delle coppie con `editor/`],
   [15], [`editor/`], [4 838], [`boot.rs`, `keys.rs`, `frame.rs`],
   [16], [`primitives/`, modifica del testo: `edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`, `match_data`, `scan`], [4 353], [docstring già fatte nella fase B],
   [17], [`primitives/`, file, finestre e lavori: `io`, `buffers`, `windows`, `ui`, `mouse`, `ask`, `shell`, `workers`, `lisp_job`, `args`], [4 995], [`io.rs` è il file più lungo: 1 818 righe],
@@ -1593,6 +1593,51 @@ ancora le sue sezioni `# Why` e `# What` (passo 15). `KeyCode::None` non la
 costruisce nessuno, né l'editor né i front-end: il rustdoc lo dice, e la
 variante resta, perché toglierla cambia l'interfaccia pubblica; CMD-2, che
 estende `KeyCode`, è il momento di deciderlo.
+
+*Passo 14, fatto.* `managers/` resta di dieci file, uno per compartimento; i
+tre enum che uscivano con un alias hanno ora lo stesso nome dentro e fuori:
+`BufferRemoved`, `BufferRenamed` e `WindowRemoved`. La regola delle coppie con
+`editor/` è scritta in `lib.rs` e nel manuale: `managers/X` è il
+compartimento, `editor/X` la sua metà della facciata, e le porte dei lock
+stanno in `editor/mod.rs`. Oggi la regola ha tre eccezioni --- le porte di
+`kill_yank` e `macros` stanno nei loro file, e `log` non ne ha una --- che il
+passo 15 toglie. La mappa di `lib.rs` dichiara ciò che `managers/` usa da più
+in alto: i modi e le tabelle sintattiche di `modes/`, finestre, facce e tema di
+`ui/`, ed `ELispExp`; `layering_tests` controlla anche `managers/`. Il rustdoc
+segue le regole: riassunti alla terza persona, documentazioni di modulo brevi
+con il rimando al manuale, e `TODO(AVV-6)`, `TODO(SIN-4)` e `TODO(improve)`
+dove sta il lavoro; le citazioni di AVV-3 e AVV-4, risolte, escono da `log.rs`
+e da `log_tests`. Le trentaquattro sezioni `# Why` e `# What` sono diventate
+le ventinove decisioni del capitolo «Lo stato», che ha anche due sezioni nuove,
+«I compartimenti» e «Le coppie con `editor/`». I commenti di otto file di test
+dei compartimenti seguono le regole. `managers/` scende da 2 990 a 2 393
+righe. Il comportamento non è cambiato: gli stessi test passano.
+
+Il passo ha trovato questi difetti, tutti in commenti e documenti, e la patch
+li corregge. `Runtime` diceva che gli altri compartimenti sono cinque, mentre
+sono otto, e non elencava la sostituzione né i lavori Lisp. Il rustdoc di
+`Modes::global_keymap` rimandava a un `resolve` che non c'è, e quello di
+`Commands::is_prefix_argument_key` diceva che nessun altro la legge sul
+percorso dei tasti, dove la legge anche `handle_key_event`. Un link di
+`Windows::position_in` dava un avviso di `cargo doc`: gli avvisi passano da 15
+a 14. `deadlock_tests` parlava di un `mode_registry` che si chiama `modes`. Nel
+manuale la riga di `Runtime` elencava le «generazioni dei worker», che non ci
+sono più; la regola sul lavoro lento e la riga di `log_diagnostic` dicevano che
+il file del log lo scrive chi registra, mentre lo scrive il watchdog con
+`Log::flush`; e ogni cambio del buffer corrente passava da `make_current`,
+mentre `set-buffer` passa da `bind_current`.
+
+Restano al passo 15, perché sono di `editor/`: nella tabella dei campi di
+`EditorState`, `worker_mailbox` e `background_work` non esistono più, mancano
+`work`, `background_change`, `grammar_epoch` e `syntax_changed`, e alcuni tipi
+escono dalla loro colonna; l'ordine dei lock; la riga di `begin_unwind`, che ora
+è `with_unwind`; le tre eccezioni alla regola delle coppie; i test
+`repeat_tests`, `repeat_key_tests`, `hooks_tests`, `mouse_tests`,
+`window_point_tests` ed `echo_tests`. Al passo 15 va anche una domanda: sopra
+`managers/` la mappa di `lib.rs` non è un ordine di dipendenze --- `editor/` usa
+`primitives/`, `modes/`, `feature/` e `ui/`, `primitives/` usa `modes/`,
+`feature/` e `ui/`, e `ui/` usa `managers::Buffers` --- e va deciso se
+dichiararlo o riordinarla.
 
 == Fase D --- il manuale (passo 22)
 

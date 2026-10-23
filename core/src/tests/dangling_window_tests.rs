@@ -1,17 +1,8 @@
-//! Killing a buffer that more than one window is showing.
+//! Killing a buffer that more than one window is showing: afterwards no
+//! window names a buffer that is not there, and focusing any of them makes a
+//! real buffer current.
 //!
-//! # The crash these pin
-//!
-//! `close_buffer` used to repoint the *focused* window and no other. Open one
-//! buffer in two windows, kill it, and the second window was left naming a
-//! buffer that no longer existed. Nothing complained until focus moved there,
-//! at which point the current buffer name became that dead name and the next
-//! `get_current_buffer` hit its "Corruption in the hashmap of buffers" panic --
-//! taking the editor down, and whatever was unsaved in the other windows with
-//! it.
-//!
-//! A panic is not something a test can catch politely, so these check the
-//! invariant instead: after a kill, no window names a buffer that is not there.
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -77,8 +68,8 @@ mod tests {
 
     #[test]
     fn focusing_the_other_window_afterwards_does_not_crash() {
-        // The step that actually took the editor down: the dangling name only
-        // became fatal once it was made current.
+        // A window left naming the killed buffer would make it current here,
+        // and the next lookup would panic.
         let (ctx, env) = editor();
         run(
             r#"(buffer-create "doomed" 'fundamental-mode)
@@ -89,8 +80,7 @@ mod tests {
             &env,
             &ctx,
         );
-        // Reaching here at all is most of the test -- the old code panicked
-        // inside `get_current_buffer` on the way.
+        // Reaching here at all is most of the test.
         assert!(ctx.has_buffer(&ctx.get_current_buffer_name()));
         assert_no_dangling(&ctx, &env);
     }
@@ -181,7 +171,8 @@ mod tests {
 
     #[test]
     fn what_is_current_and_what_is_on_screen_agree_afterwards() {
-        // Them disagreeing is how the panic was reached at all.
+        // Their disagreeing is the state a window naming a killed buffer
+        // leads to.
         let (ctx, env) = editor();
         run(
             r#"(buffer-create "other" 'fundamental-mode)

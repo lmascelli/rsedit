@@ -1,18 +1,8 @@
-//! Minibuffer history: what a prompt remembers, and walking through it.
+//! Minibuffer history: what a prompt remembers, and walking through it --
+//! which ring an entry lands in, what happens at each end of a ring, and what
+//! closing a prompt does to a walk in progress.
 //!
-//! # What is worth testing here
-//!
-//! Recall is a feature whose failures are all quiet. A history that keys on
-//! the wrong thing still works -- it just mixes two prompts' entries, which
-//! looks like a bug in whichever one you noticed second. A walk that forgets
-//! what was half-typed still works, until the one time you wanted it back. And
-//! a walk whose position survives the prompt it was walking in works perfectly
-//! right up to the next prompt, where the first `M-p' continues somebody
-//! else's journey.
-//!
-//! So these check the boundaries rather than the happy path: which ring an
-//! entry lands in, what happens at each end of a ring, and what a prompt
-//! closing does to a walk in progress.
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -110,9 +100,8 @@ mod tests {
 
     #[test]
     fn two_prompts_keep_separate_histories() {
-        // The point of keying on the prompt at all. Sharing one ring would
-        // offer file names at an eval prompt, which is worse than no history:
-        // it is history that is confidently wrong.
+        // Keyed on the prompt: one ring for all would offer file names at an
+        // eval prompt.
         let (ctx, env) = editor();
         answer("Eval:", "(+ 1 2)", &env, &ctx);
         answer("Find file:", "/tmp/x", &env, &ctx);
@@ -236,10 +225,8 @@ mod tests {
 
     #[test]
     fn the_oldest_entry_is_where_walking_back_stops() {
-        // Left exactly as it is rather than rewritten with a copy of itself:
-        // a step that redraws the same text is indistinguishable from one
-        // that moved, and "you are at the end" is the one thing the key has
-        // to be able to say.
+        // Left exactly as it is, not rewritten with a copy of itself: the key
+        // has to be able to say "you are at the end".
         let (ctx, env) = editor();
         answer("Eval:", "only", &env, &ctx);
         open("Eval:", &env, &ctx);
@@ -276,9 +263,8 @@ mod tests {
 
     #[test]
     fn the_stash_survives_several_steps_back() {
-        // Only the *first* step stashes. A later one would stash the entry
-        // being shown, and walking forward would hand back a history entry
-        // dressed up as what you had typed.
+        // Only the first step stashes: a later one would stash the entry
+        // shown, and walking forward would hand it back as what was typed.
         let (ctx, env) = editor();
         answer("Eval:", "one", &env, &ctx);
         answer("Eval:", "two", &env, &ctx);
@@ -310,10 +296,8 @@ mod tests {
 
     #[test]
     fn a_walk_does_not_survive_the_prompt_it_was_walking_in() {
-        // The position means nothing once the line it was walking through is
-        // gone. Left behind, the next prompt's first step would continue this
-        // one's journey -- from the middle of a ring, with a stash of text
-        // nobody can see.
+        // Left behind, the position would make the next prompt's first step
+        // continue this walk, from the middle of a ring.
         let (ctx, env) = editor();
         answer("Eval:", "one", &env, &ctx);
         answer("Eval:", "two", &env, &ctx);

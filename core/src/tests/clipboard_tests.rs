@@ -1,9 +1,8 @@
-//! Killed text reaching the system clipboard.
+//! Killed text reaching the system clipboard. The editor leaves the text on
+//! the frame for a renderer to send, so these test which kills queue text,
+//! which do not, and that what is queued is handed over once.
 //!
-//! The editor cannot put anything in a clipboard -- it does not know it has a
-//! terminal. What it does is leave the text on the frame for a renderer to
-//! emit, so what is testable here is exactly that: which kills queue text,
-//! which do not, and that a queued payload is handed over once and once only.
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -65,9 +64,8 @@ mod tests {
 
     #[test]
     fn a_kill_that_is_not_the_region_offers_itself_as_well() {
-        // The reason `kill' is the place this hangs off rather than the two
-        // region commands: there are eleven commands that kill, and every one
-        // of them should reach the clipboard without being listed anywhere.
+        // Hung off `kill` rather than the region commands: every command that
+        // kills reaches the clipboard without being listed anywhere.
         let (ctx, env) = editor();
         run(
             r#"(insert "one two") (goto-char 0) (kill-word)"#,
@@ -92,8 +90,7 @@ mod tests {
 
     #[test]
     fn an_editor_that_loaded_no_lisp_offers_nothing() {
-        // Unbound means off, and this is why: every test in this crate kills
-        // something eventually, and none of them has a terminal to send an
+        // Unbound means off: tests kill text, and have no terminal to send an
         // escape to.
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         run(

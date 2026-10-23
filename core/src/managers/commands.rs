@@ -1,32 +1,9 @@
 //! What can be invoked by name, what is part-way through being invoked, and
-//! what was invoked last.
+//! what was invoked last: the life of one command, written in order on the way
+//! through a keystroke. Nothing here evaluates, and every accessor copies out,
+//! so that the Lisp a command runs can register commands of its own.
 //!
-//! # Why this is a compartment and not five fields
-//!
-//! They are the life of one command, in order: the registry says what `M-x`
-//! may run and what arguments it needs, the prefix argument is the count typed
-//! in front of it, the pending stack is what is still being collected, and the
-//! two `last_*` fields are what is left behind for the next command to ask
-//! about. Every one of them is written on the way through a single keystroke,
-//! and the order they are written in *is* the protocol.
-//!
-//! The prefix argument was itself a pair in one lock -- `(Option<PrefixArg>,
-//! bool)` -- with nothing but the tuple position to say which was which. Here
-//! they are two named fields, and `reading` says what it means.
-//!
-//! # What is deliberately not here
-//!
-//! Lisp. The registry holds argument *specifications* and the pending stack
-//! holds collected values, but nothing here evaluates one. That matters more
-//! than usual: `call-interactively` looks a command up and then evaluates,
-//! and that Lisp may call `register-command` -- so every accessor copies out
-//! and gives the lock back rather than handing out a guard. Holding this
-//! across `eval` is the reentrancy that deadlocked `run_hook` once already.
-//!
-//! Hooks. They read as command machinery and are not: a hook belongs to a
-//! *mode*, and the ones registered for every mode are the global half of
-//! `MajorMode::hooks` exactly as the global keymap is the global half of
-//! `MajorMode::keymaps`. They live with the modes.
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 use crate::{
     ELispExp,
     buffer::BufferTrait,
@@ -35,6 +12,8 @@ use crate::{
 };
 use std::sync::Arc;
 
+/// The command registry, the commands still collecting arguments, the prefix
+/// argument, and what ran last.
 pub struct Commands<B: BufferTrait> {
     /// Which named functions the user may invoke by name, and what arguments
     /// the editor collects for each.
@@ -72,26 +51,24 @@ impl<B: BufferTrait> Commands<B> {
     // The registry
     // ------------------------------------------------------------------
 
-    /// Register NAME as a command taking SPECS.
-    ///
-    /// Idempotent by name: re-registering replaces the previous specs, so a
-    /// user can change how an existing command prompts without restarting.
+    /// Registers NAME as a command taking SPECS, replacing what it took
+    /// before: how a command prompts can change without a restart.
     pub fn register(&mut self, name: &str, specs: Vec<ArgSpec>) {
         self.registry.insert(name.to_string(), specs);
     }
 
-    /// The arguments to collect for NAME, or `None` if it is not a command.
-    ///
-    /// Owned, like everything else here. See the note at the top of the file.
+    /// Returns the arguments to collect for NAME, copied out, or `None` if it
+    /// is not a command.
     pub fn specs(&self, name: &str) -> Option<Vec<ArgSpec>> {
         self.registry.get(name).cloned()
     }
 
+    /// Returns whether NAME is a command.
     pub fn is_command(&self, name: &str) -> bool {
         self.registry.contains_key(name)
     }
 
-    /// Every command name, sorted, for `M-x` completion.
+    /// Returns every command's name, sorted, for `M-x` completion.
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.registry.keys().cloned().collect();
         names.sort_unstable();
@@ -102,45 +79,39 @@ impl<B: BufferTrait> Commands<B> {
     // The prefix argument
     // ------------------------------------------------------------------
 
-    /// The argument waiting for the next command, if any.
+    /// Returns the argument waiting for the next command, if any.
     pub fn prefix_argument(&self) -> Option<PrefixArg> {
         self.prefix_arg
     }
 
-    /// Forget the argument. Called after every command, whether or not
-    /// anything consumed it: an argument belongs to exactly one command, and
-    /// one that errors must not leave its argument for the next.
+    /// Forgets the argument. Called after every command, whether or not
+    /// anything used it: an argument belongs to one command, and one that
+    /// fails must not leave it to the next.
     pub fn clear_prefix_argument(&mut self) {
         self.prefix_arg = None;
         self.reading_prefix = false;
     }
 
-    /// Give the next command ARG, as if it had been typed. M-x needs this:
-    /// the argument typed before it goes with M-x's own key, before the name
-    /// of the command is read.
+    /// Gives the next command ARG, as if it had been typed. `M-x` needs it:
+    /// the argument typed before `M-x` belongs to the command it reads.
     pub fn set_prefix_argument(&mut self, arg: Option<PrefixArg>) {
         self.prefix_arg = arg;
         self.reading_prefix = false;
     }
 
-    /// Whether EVENT is the key that starts a prefix argument.
-    ///
-    /// Read by the reader below and by nothing else on the typing path. It is
-    /// a function rather than a condition written twice because something does
-    /// need to ask separately: a `describe-key' has to be able to say that
-    /// `C-u' is read as an argument, and a second copy of the test is a second
-    /// copy to keep in step.
+    /// Returns whether EVENT is the key that starts a prefix argument. The
+    /// key handling asks too, before the reader runs: a key capture reports
+    /// `C-u` as an argument, and a buffer's own keymap may claim the key.
     pub fn is_prefix_argument_key(event: &KeyEvent) -> bool {
         event.modifiers.ctrl && !event.modifiers.alt && event.code == KeyCode::Char('u')
     }
 
-    /// Offer EVENT to the prefix-argument reader, and say whether it was taken.
+    /// Offers EVENT to the prefix-argument reader, and returns whether it was
+    /// taken.
     ///
-    /// Called before the key sequence gets a look, because `C-u` and the digits
-    /// that follow it are not keys the keymaps should ever see. Anything the
-    /// reader does not want falls straight through -- including a digit typed
-    /// when no argument is being built, which is how you can still type the
-    /// number four into a buffer.
+    /// Called before the keymaps see the key: `C-u` and the digits after it
+    /// are not keys for a keymap. Anything else falls through, a digit typed
+    /// when no argument is being built included.
     pub fn read_prefix_argument(&mut self, event: &KeyEvent) -> bool {
         // C-u: start an argument, or multiply the one being built by four.
         if Self::is_prefix_argument_key(event) {
@@ -170,8 +141,7 @@ impl<B: BufferTrait> Commands<B> {
             }
         }
 
-        // Whatever this key is, it is not part of the argument -- so the
-        // argument is finished, even though it has not been used yet.
+        // Not part of the argument, which is finished, though not yet used.
         self.reading_prefix = false;
         false
     }
@@ -180,21 +150,18 @@ impl<B: BufferTrait> Commands<B> {
     // Arguments still being collected
     // ------------------------------------------------------------------
 
-    /// Begin collecting arguments for NAME.
+    /// Begins collecting arguments for NAME.
     pub fn push_pending(&mut self, name: String, remaining: Vec<ArgSpec>, invocation: Invocation) {
         self.pending
             .push(PendingCommand::new(name, remaining, invocation));
     }
 
-    /// Answer every argument the editor can answer itself, in order, and
-    /// return the first one that still needs the user.
+    /// Answers, in order, every argument the editor can answer itself, and
+    /// returns the first one that still needs the user; `None` when the
+    /// command has everything it needs.
     ///
-    /// `None` means the command has everything it needs and is ready to run.
-    ///
-    /// Done in one loop with the prompted arguments rather than as a separate
-    /// pass: a spec list like `["p", "sReplace with: "]` interleaves the two
-    /// kinds, and two code paths that both maintain the pending stack would
-    /// have to agree about it forever.
+    /// One loop for both kinds, since a spec list like
+    /// `["p", "sReplace with: "]` mixes them.
     pub fn fill_answerable_args(&mut self) -> Option<ArgSpec> {
         let pending = self.pending.last_mut()?;
         while let Some(spec) = pending.remaining.first() {
@@ -208,11 +175,9 @@ impl<B: BufferTrait> Commands<B> {
         None
     }
 
-    /// How far through its arguments the innermost pending command is:
-    /// `(command name, 1-based position of the argument being read, total)`.
-    ///
-    /// Used to title the prompt, so that answering the second of two questions
-    /// says which command asked and which question it is.
+    /// Returns how far through its arguments the innermost pending command
+    /// is: its name, the position of the argument being read counting from 1,
+    /// and how many there are. The prompt's title says it.
     pub fn pending_progress(&self) -> Option<(String, usize, usize)> {
         let pending = self.pending.last()?;
         let done = pending.collected.len();
@@ -223,18 +188,15 @@ impl<B: BufferTrait> Commands<B> {
         ))
     }
 
-    /// The argument the innermost pending command is waiting on.
+    /// Returns the argument the innermost pending command is waiting on.
     pub fn pending_current_spec(&self) -> Option<ArgSpec> {
         self.pending
             .last()
             .and_then(|pending| pending.current().cloned())
     }
 
-    /// Record VALUE as the innermost pending command's next argument.
-    ///
-    /// What to do next is [`Commands::fill_answerable_args`]'s answer, not this
-    /// one's: the specs after this may be a mix of answerable and prompted,
-    /// and only one place should know how to walk them.
+    /// Records VALUE as the innermost pending command's next argument. What
+    /// comes next is [`Commands::fill_answerable_args`]'s to say.
     pub fn accept_pending_arg(&mut self, value: ELispExp<B>) {
         let Some(pending) = self.pending.last_mut() else {
             return;
@@ -245,19 +207,18 @@ impl<B: BufferTrait> Commands<B> {
         pending.collected.push(value);
     }
 
-    /// Remove and return the innermost pending command.
+    /// Removes and returns the innermost pending command.
     pub fn take_pending(&mut self) -> Option<(String, Vec<ELispExp<B>>)> {
         self.pending
             .pop()
             .map(|pending| (pending.name, pending.collected))
     }
 
-    /// Drop every pending command.
+    /// Drops every pending command.
     ///
-    /// Called when a fresh command starts with no minibuffer open, which means
-    /// any entry still on the stack belongs to a prompt that was closed by some
-    /// path other than confirm or cancel. Without this, that orphan would be
-    /// fed the *next* command's input.
+    /// Called when a command starts with no minibuffer open: what is left
+    /// belongs to a prompt closed some other way than confirm or cancel, and
+    /// would otherwise be fed the next command's input.
     pub fn clear_pending(&mut self) {
         self.pending.clear();
     }
@@ -266,32 +227,30 @@ impl<B: BufferTrait> Commands<B> {
     // What ran last
     // ------------------------------------------------------------------
 
-    /// Whether the previous command was NAME.
-    ///
-    /// A predicate rather than a getter because the question asked of
-    /// `last-command` is always "was it this one?", and answering it by
-    /// handing out a copy of the name would allocate on a path that runs
-    /// between a key being pressed and the character appearing.
+    /// Returns whether the previous command was NAME: the question
+    /// `last-command` is asked, answered without copying the name.
     pub fn last_was(&self, name: &str) -> bool {
         self.last_name.as_deref().map(String::as_str) == Some(name)
     }
 
+    /// Records NAME as the command that just ran.
     pub fn set_last_name(&mut self, name: Option<Arc<String>>) {
         self.last_name = name;
     }
 
-    /// The last command as a runnable form, for `repeat`.
+    /// Returns the last command as a runnable form, for `repeat`.
     pub fn last_form(&self) -> Option<ELispExp<B>> {
         self.last_form.clone()
     }
 
+    /// Records FORM as what `repeat` runs.
     pub fn set_last_form(&mut self, form: Option<ELispExp<B>>) {
         self.last_form = form;
     }
 }
 
-/// The prefix argument as `P` gives it: nil, a one-element list for `C-u`, a
-/// number, or the symbol `-`.
+/// Returns the prefix argument as `P` gives it: nil, a one-element list for
+/// `C-u`, a number, or the symbol `-`.
 pub(crate) fn raw_prefix<B: BufferTrait>(arg: Option<PrefixArg>) -> ELispExp<B> {
     match arg {
         None => ELispExp::nil(),
@@ -303,7 +262,8 @@ pub(crate) fn raw_prefix<B: BufferTrait>(arg: Option<PrefixArg>) -> ELispExp<B> 
     }
 }
 
-/// What [`raw_prefix`] gives, read back; `None` for a value it never gives.
+/// Returns what [`raw_prefix`] gives, read back; `None` for a value it never
+/// gives.
 pub(crate) fn prefix_from_raw<B: BufferTrait>(value: &ELispExp<B>) -> Option<Option<PrefixArg>> {
     let whole = |n: f64| (n.fract() == 0.0 && n.abs() <= i32::MAX as f64).then_some(n as i32);
     match value {
@@ -326,15 +286,9 @@ pub(crate) fn prefix_from_raw<B: BufferTrait>(value: &ELispExp<B>) -> Option<Opt
     }
 }
 
-/// What the editor hands a command for an argument it answers itself.
-///
-/// One spec can produce more than one value -- `r` is the region's *two* ends,
-/// exactly as `interactive "r"` is in Emacs -- so this returns a list rather
-/// than a single value.
-///
-/// Pure in `(spec, invocation)`: everything it needs was captured when the
-/// command began, which is what lets it run with the compartment's lock held
-/// and nothing else's.
+/// Returns what the editor hands a command for an argument it answers
+/// itself: one value, or two for `r`, the region's ends, as `interactive "r"`
+/// gives in Emacs. Everything it needs was captured when the command began.
 fn answer_spec<B: BufferTrait>(spec: &ArgSpec, invocation: &Invocation) -> Vec<ELispExp<B>> {
     match spec {
         // `p`: a plain count, and one when the user asked for nothing. This is

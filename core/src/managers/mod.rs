@@ -1,45 +1,10 @@
-//! The editor's state, in compartments.
+//! The editor's state, in compartments: groups of fields under one lock each,
+//! changed by operations rather than piece by piece. A compartment reaches no
+//! other, hands out no guard, never evaluates Lisp, answers with a verdict
+//! rather than acting elsewhere, and does nothing slow under its lock;
+//! `EditorState` coordinates them.
 //!
-//! Each module here owns a group of fields that are one fact in several
-//! pieces, holds them under one lock, and exposes operations rather than the
-//! pieces. [`crate::editor::EditorState`] keeps one handle to each and is the
-//! facade: it coordinates between compartments, and it is the only thing that
-//! may hold two of their locks at once.
-//!
-//! # The rules a compartment follows
-//!
-//! - **It does not reach another compartment.** Where an operation needs a
-//!   fact from one, the *value* is passed in and the answer passed back:
-//!   `Windows::scroll_focused` is told a line count rather than being handed a
-//!   buffer. That is what keeps two of these locks from ever being held
-//!   together by anything but the facade.
-//! - **It hands out no guards.** State is reached through a closure, so a lock
-//!   cannot outlive the question that needed it.
-//! - **It never evaluates.** No compartment takes an `Env`, so no compartment
-//!   can be holding a lock when user code re-enters the editor. It may *store*
-//!   a Lisp value -- a command's body, a mode's hook -- because storing one is
-//!   no different from storing a string; what it may not do is hand one to the
-//!   interpreter. The rule used to read "it knows nothing of Lisp", which its
-//!   own next sentence contradicted: `Commands` and `Modes` are full of
-//!   `ELispExp`, and have to be.
-//! - **It answers with a verdict, not a side effect.** Where an operation has
-//!   consequences outside its own fields -- a buffer to repoint, a window to
-//!   refocus -- it returns an enum saying so and lets the facade act.
-//! - **It does nothing slow while holding the lock.** No disk, no network, no
-//!   waiting. `Log::record` only appends the line, and `Log::flush` -- the
-//!   watchdog's, every turn -- copies the new lines out and writes them with
-//!   the list's lock given back, because `log_diagnostic` used to `write_all`
-//!   with the list's write lock still open -- putting a disk write inside a
-//!   lock that every diagnostic in the editor, from the executor as well as
-//!   this thread, had to queue behind.
-//!
-//! The first four rules are about *correctness*: each one removes a way for
-//! two pieces of state to be seen disagreeing. The last is about *latency*,
-//! and it is the one that will be broken by accident, because breaking it
-//! costs nothing until the disk is slow or the tree is large. The tell is a
-//! lock held across a call whose duration you do not control -- I/O, an
-//! allocation the size of a file, a callback. If you cannot say how long the
-//! body takes, copy what you need out and let go first.
+//! Design: `doc/architettura-editor.typ, <regole-compartimenti>`.
 mod buffers;
 mod commands;
 mod history;
@@ -50,7 +15,7 @@ mod modes;
 mod runtime;
 mod windows;
 
-pub use buffers::{Buffers, Removed as BufferRemoved, Renamed as BufferRenamed};
+pub use buffers::{BufferRemoved, BufferRenamed, Buffers};
 pub use commands::Commands;
 pub(crate) use commands::{prefix_from_raw, raw_prefix};
 pub use history::{DEFAULT_HISTORY_LENGTH, History, Recalled};
@@ -59,4 +24,4 @@ pub use log::Log;
 pub use macros::Macros;
 pub use modes::{Binding, BindingSource, Modes};
 pub use runtime::Runtime;
-pub use windows::{ClickCount, Hit, MouseDrag, Removed as WindowRemoved, Scrolled, Windows};
+pub use windows::{ClickCount, Hit, MouseDrag, Scrolled, WindowRemoved, Windows};

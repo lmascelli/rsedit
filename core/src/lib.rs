@@ -27,6 +27,9 @@
 //!                is bound to: ELispExp, whose type names EditorState.
 //!   commands.rs  the registry of what a name can mean as a command.
 //!   managers/    the editor's state, in compartments, each under one lock.
+//!                Of what is below, it uses only what it stores: the modes
+//!                and syntax tables of modes/, the windows, faces and theme
+//!                of ui/, and ELispExp for what Lisp registers.
 //!   editor/      EditorState: the facade over those compartments, and the
 //!                only thing that may hold two of their locks at once.
 //!   primitives/  everything Lisp can call. Without exception -- if it is a
@@ -45,7 +48,13 @@
 //! used, on its own. And `ui/` names nothing from `editor/`, which
 //! `layering_tests` checks: that is what lets a renderer be written against a
 //! snapshot instead of against this crate's internals. The same test holds
-//! each module from `work/` to `commands.rs` to what its entry names.
+//! each module from `work/` to `managers/` to what its entry names.
+//!
+//! `managers/` and `editor/` pair by name. `managers/X` is compartment X: its
+//! fields under one lock, and what can be done to them with nothing else.
+//! `editor/X` is its half of the facade: what needs X together with another
+//! compartment, a buffer's text or the interpreter, and the methods that give
+//! X's operations an editor's name.
 //!
 //! # Why everything is `pub(crate)`
 //!

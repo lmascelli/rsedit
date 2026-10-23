@@ -1,44 +1,9 @@
-//! What a mode is, what keys do, and where completions come from.
+//! What a mode is, what keys do, and where completions come from: the
+//! registry of major modes, the global halves of what a mode holds -- keymap,
+//! completion sources, hooks -- the transient keymap, the repeat keys and the
+//! file-name patterns. Every accessor copies Lisp out.
 //!
-//! # Why this is a compartment and not eight fields
-//!
-//! The registry, the global keymap, the global completion list and the
-//! file-name patterns are four halves of two things: a mode's keymap and the
-//! global one are consulted in that order on every keystroke, and a mode's
-//! completion sources and the global ones are merged on every completion. A
-//! caller that had to reach both had to know there were two places and take
-//! them in the right order.
-//!
-//! The other four were two pairs -- a payload and an atomic gate in front of
-//! it. See below for why those pairs stop existing.
-//!
-//! # What the gates were for, and why they are gone
-//!
-//! `transient_keymap` and `repeat_keys` each had an `AtomicBool` beside them,
-//! so that a keystroke finding no transient map and no repeat key paid a load
-//! rather than a lock. Keeping a flag and a payload in step across two
-//! locations needed a protocol, and the protocol was written down twice: the
-//! gate was opened *after* the map was stored and closed *before* it was
-//! taken away, so that a reader through the gate always found something there.
-//! Key resolution still carried a defensive branch for "the gate was open but
-//! the map had gone", commented as unreachable.
-//!
-//! Under one lock that state cannot be represented, so the protocol, the
-//! comments and the branch are all gone. It also costs less rather than more:
-//! resolving one keystroke used to take the gate, the transient map, the
-//! registry and the global keymap -- four acquisitions where there is now one.
-//!
-//! # What is deliberately not here
-//!
-//! Buffers. A buffer names its mode and this names none of the buffers: where
-//! an operation needs to know what mode is current, the *name* is passed in.
-//! Nothing in this file can reach a buffer's text.
-//!
-//! Lisp. The lists here hold `ELispExp` values, but nothing here calls one.
-//! Every accessor copies the expressions out and gives the lock back, because
-//! a completion source or a hook is arbitrary user code that can re-enter the
-//! editor through any primitive -- and a lock held across that is a lock
-//! offered to arbitrary code.
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 use crate::{
     ELispExp,
     buffer::BufferTrait,
@@ -47,12 +12,8 @@ use crate::{
 };
 use std::collections::HashMap;
 
-/// Which map a binding came from, in the order they are consulted.
-///
-/// Worth carrying beside the binding rather than being worked out again:
-/// "`q' runs `quit-window' *here*, because this buffer is in dired-mode" is
-/// most of what somebody looking a key up wants to know, and the difference
-/// between a binding they can change and one that is about to disappear.
+/// Which map a binding came from, in the order the maps are consulted: what
+/// somebody looking a key up wants to know beside what it runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BindingSource {
     /// A map installed for one question and taken down after it.
@@ -66,7 +27,7 @@ pub enum BindingSource {
 }
 
 impl BindingSource {
-    /// The name Lisp sees.
+    /// Returns the name Lisp sees.
     pub fn name(self) -> &'static str {
         match self {
             BindingSource::Transient => "transient",
@@ -86,6 +47,7 @@ pub struct Binding<B: BufferTrait> {
 }
 
 impl<B: BufferTrait> Binding<B> {
+    /// Creates the binding of KEYS to TARGET, found in SOURCE.
     fn new(keys: &[KeyEvent], target: ELispExp<B>, source: BindingSource) -> Self {
         Self {
             keys: keys.to_vec(),
@@ -94,12 +56,14 @@ impl<B: BufferTrait> Binding<B> {
         }
     }
 
-    /// The keys, spelt the way a binding is written.
+    /// Returns the keys, spelt the way a binding is written.
     pub fn described(&self) -> String {
         describe_keys(&self.keys)
     }
 }
 
+/// The mode registry, the global keymap, completion sources and hooks, the
+/// file-name patterns, the transient keymap and the repeat keys.
 pub struct Modes<B: BufferTrait> {
     registry: HashMap<String, MajorMode<B>>,
     /// The keymap in force in every buffer, whatever its mode -- the global
@@ -109,31 +73,21 @@ pub struct Modes<B: BufferTrait> {
     /// global half of `MajorMode::completion_functions`, and the same
     /// relationship `global_keymap` has to `MajorMode::keymaps`.
     global_completions: Vec<ELispExp<B>>,
-    /// Which file names get which major mode, in the order they were declared.
-    ///
-    /// An ordered list rather than a map: patterns overlap -- `\.rs$` and
-    /// `^Cargo\.` both match `Cargo.rs` -- so which one wins has to be a
-    /// decision somebody made rather than whichever the hash happened to
-    /// answer with.
+    /// Which file names get which major mode, in the order they were
+    /// declared: patterns overlap, and the first declared wins.
     auto_modes: Vec<(regex::Regex, String)>,
-    /// A keymap consulted before every other, for as long as it is installed.
-    /// See [`TransientKeymap`].
-    ///
-    /// A plain `Option` rather than an option behind a gate: the gate existed
-    /// to keep it in step with a flag that is no longer separate from it.
+    /// A keymap consulted before every other, for as long as it is
+    /// installed: see [`TransientKeymap`].
     transient: Option<TransientKeymap<B>>,
     /// Which commands offer to repeat, and with which key.
     repeat_keys: HashMap<String, KeyEvent>,
-    /// Hooks that run in every major mode, keyed by hook name.
-    ///
-    /// The global half of `MajorMode::hooks`, and here for the same reason
-    /// `global_keymap` and `global_completions` are: the two halves are merged
-    /// on every read, so keeping them apart meant every reader knowing there
-    /// were two places and taking them in the right order.
+    /// Hooks that run in every major mode, by hook name: the global half of
+    /// `MajorMode::hooks`.
     global_hooks: HashMap<String, Vec<ELispExp<B>>>,
 }
 
 impl<B: BufferTrait> Modes<B> {
+    /// Creates the compartment, with GLOBAL_KEYMAP in force everywhere.
     pub fn new(global_keymap: Keymap<B>) -> Self {
         Self {
             registry: HashMap::new(),
@@ -150,15 +104,20 @@ impl<B: BufferTrait> Modes<B> {
     // The registry
     // ------------------------------------------------------------------
 
+    /// Returns the mode called NAME.
     pub fn get(&self, name: &str) -> Option<&MajorMode<B>> {
         self.registry.get(name)
     }
 
+    /// Adds MODE as NAME, in place of any mode of that name.
     pub fn insert(&mut self, name: &str, mode: MajorMode<B>) {
+        // TODO(SIN-4): the old mode goes whole, with the keys and hooks other
+        // modules had added to it.
         self.registry.insert(name.to_string(), mode);
     }
 
-    /// Change one mode, reporting whether it was there.
+    /// Changes the mode called NAME with EDIT, and returns whether it was
+    /// there.
     pub fn edit(&mut self, name: &str, edit: impl FnOnce(&mut MajorMode<B>)) -> bool {
         match self.registry.get_mut(name) {
             Some(mode) => {
@@ -169,11 +128,8 @@ impl<B: BufferTrait> Modes<B> {
         }
     }
 
-    /// The syntax table for MODE, or the default one when it has none.
-    ///
-    /// Cloned out, because every caller is about to run a scan with it and a
-    /// scan reads a whole buffer -- far too long to hold this against
-    /// everything else that wants a mode.
+    /// Returns MODE's syntax table, or the default one, cloned out: a scan
+    /// with it reads a whole buffer, far too long to hold this lock.
     pub fn syntax_table(&self, mode: &str) -> SyntaxTable {
         self.registry
             .get(mode)
@@ -185,20 +141,20 @@ impl<B: BufferTrait> Modes<B> {
     // Keymaps
     // ------------------------------------------------------------------
 
-    /// Only a test reads the whole map: the editor resolves a key through
-    /// [`Self::resolve`], which is the same question asked the way the editor
-    /// asks it. Compiled only for tests so that it is not mistaken for the
-    /// supported way in.
+    /// Returns the global keymap itself, for tests only: the editor asks
+    /// [`Modes::binding_for`] and its relatives, which walk the maps as key
+    /// resolution does.
     #[cfg(test)]
     pub fn global_keymap(&self) -> &Keymap<B> {
         &self.global_keymap
     }
 
+    /// Returns the global keymap, to bind keys in.
     pub fn global_keymap_mut(&mut self) -> &mut Keymap<B> {
         &mut self.global_keymap
     }
 
-    /// MODE's own keymap, when it has one.
+    /// Returns MODE's own keymap, when it has one.
     fn mode_keymap(&self, mode: &str) -> Option<&Keymap<B>> {
         self.registry.get(mode).map(|mode| &mode.keymaps)
     }
@@ -207,26 +163,17 @@ impl<B: BufferTrait> Modes<B> {
     // Reading the keymaps back
     // ------------------------------------------------------------------
     //
-    // Everything below answers a question about the *bindings in effect*,
-    // which is not the same as a question about any one keymap: the transient
-    // map is consulted before the mode's, and the mode's before the global
-    // one, so a sequence in two of them means only what the winner says.
-    //
-    // They are here, beside the resolution the editor actually runs, and not
-    // in whatever asks: a second walk written somewhere else is a second
-    // answer to "what does this key do", and the two would disagree the first
-    // time the order changed.
+    // About the bindings in effect rather than any one keymap: the transient
+    // map, then the buffer's modes, then the global map. Written once, here,
+    // and asked by key resolution and by help alike, so that the two agree.
 
-    /// What KEYS would run right now, and which map it came from.
+    /// Returns what KEYS would run now, and from which map, in a buffer whose
+    /// keymaps are MODES' -- the local ones first, the major mode's last.
     ///
-    /// `None` for a sequence that is bound to nothing -- including one that is
-    /// only a *prefix* of a binding, which runs nothing on its own. Ask
-    /// [`Modes::is_prefix`] to tell those two apart.
-    ///
-    /// A transient map that refuses what it does not bind leaves nothing below
-    /// it to run, as key resolution does: a command running while one is up --
-    /// one of its own bindings, or the command that put it up -- would
-    /// otherwise be told about keys that do nothing.
+    /// `None` for a sequence bound to nothing, a prefix of a binding included:
+    /// [`Modes::is_prefix`] tells the two apart. Under a transient map that
+    /// refuses what it does not bind, only its own bindings run, as in key
+    /// resolution.
     pub fn binding_for(&self, modes: &[&str], keys: &[KeyEvent]) -> Option<Binding<B>> {
         if let Some(map) = self.transient() {
             if let Some(target) = map.keymap.get(keys) {
@@ -239,13 +186,9 @@ impl<B: BufferTrait> Modes<B> {
         self.binding_below_transient(modes, keys)
     }
 
-    /// The mode's keymap, then the global one -- the walk key resolution does
-    /// once the transient map has had its say.
-    ///
-    /// Separate from [`Modes::binding_for`] because resolution has to handle
-    /// the transient map itself: a miss there can mean *refuse the key*, which
-    /// is not a thing a binding lookup can express. Sharing the rest is what
-    /// keeps "what would this key do" and "what this key does" the same walk.
+    /// Returns what KEYS runs in the maps below the transient one: MODES'
+    /// keymaps, then the global one. Key resolution asks this after handling
+    /// the transient map itself, where a miss may mean refusing the key.
     pub fn binding_below_transient(&self, modes: &[&str], keys: &[KeyEvent]) -> Option<Binding<B>> {
         for (index, mode) in modes.iter().enumerate() {
             if let Some(keymap) = self.mode_keymap(mode)
@@ -264,9 +207,9 @@ impl<B: BufferTrait> Modes<B> {
             .map(|target| Binding::new(keys, target, BindingSource::Global))
     }
 
-    /// Whether KEYS is the start of a longer binding in any map that is in
-    /// effect -- which is what keeps a half-typed sequence alive. Under a
-    /// transient map that refuses, only its own sequences are.
+    /// Returns whether KEYS begins a longer binding in a map in effect, which
+    /// keeps a half-typed sequence alive. Under a transient map that refuses,
+    /// only its own sequences count.
     pub fn is_prefix(&self, modes: &[&str], keys: &[KeyEvent]) -> bool {
         match self.transient() {
             Some(map) if map.on_unbound == OnUnbound::Refuse => map.keymap.is_prefix(keys),
@@ -275,7 +218,7 @@ impl<B: BufferTrait> Modes<B> {
         }
     }
 
-    /// The same question of the mode's keymap and the global one alone.
+    /// Returns the same, asked of MODES' keymaps and the global one alone.
     pub fn is_prefix_below_transient(&self, modes: &[&str], keys: &[KeyEvent]) -> bool {
         modes.iter().any(|mode| {
             self.mode_keymap(mode)
@@ -283,12 +226,9 @@ impl<B: BufferTrait> Modes<B> {
         }) || self.global_keymap.is_prefix(keys)
     }
 
-    /// Every binding in effect, each sequence once, attributed to the map that
-    /// wins it. Sorted by key sequence, so two calls answer the same way.
-    ///
-    /// A sequence bound in two maps appears once, under the higher one: what a
-    /// reader wants is what the keys do, and listing the hidden binding beside
-    /// the live one would be listing something that cannot happen.
+    /// Returns every binding in effect, each sequence once under the map that
+    /// wins it, sorted by keys. A binding a higher map hides cannot run, and
+    /// is not listed.
     pub fn bindings(&self, modes: &[&str]) -> Vec<Binding<B>> {
         // Lowest priority first, so a later insert overwrites a lower map's
         // claim on the same sequence -- the same order resolution reads them
@@ -337,29 +277,26 @@ impl<B: BufferTrait> Modes<B> {
     // The transient keymap
     // ------------------------------------------------------------------
 
-    /// Install a map consulted before every other until it goes away.
-    ///
-    /// Replaces any map already installed rather than stacking: two maps
-    /// competing for the same keystroke could not both win, and the newer one
-    /// is always the more recent thing the user asked for.
+    /// Installs MAP, consulted before every other until it goes, in place of
+    /// any map already installed: two maps cannot both win a key, and the
+    /// newer is what was asked for last.
     pub fn set_transient(&mut self, map: TransientKeymap<B>) {
         self.transient = Some(map);
     }
 
-    /// Take the map down. Idempotent, so a command that ends one can call it
-    /// without first asking whether one is up.
+    /// Takes the map down, if one is installed.
     pub fn clear_transient(&mut self) {
         self.transient = None;
     }
 
-    /// Compiled only for tests, like the facade method that is its only
-    /// caller: nothing in the editor branches on whether a map is up.
+    /// Returns whether a map is installed, for tests only: nothing in the
+    /// editor asks.
     #[cfg(test)]
     pub fn transient_active(&self) -> bool {
         self.transient.is_some()
     }
 
-    /// What the installed map wants shown, or empty when none is installed.
+    /// Returns what the installed map wants shown, or nothing.
     pub fn transient_message(&self) -> String {
         self.transient
             .as_ref()
@@ -367,6 +304,7 @@ impl<B: BufferTrait> Modes<B> {
             .unwrap_or_default()
     }
 
+    /// Returns the installed map, if any.
     pub fn transient(&self) -> Option<&TransientKeymap<B>> {
         self.transient.as_ref()
     }
@@ -375,11 +313,8 @@ impl<B: BufferTrait> Modes<B> {
     // Completion sources
     // ------------------------------------------------------------------
 
-    /// Everything that could complete in MODE: the mode's own sources first,
-    /// then the global ones.
-    ///
-    /// Copied out, because every one of these is about to be *called* and a
-    /// source is arbitrary Lisp.
+    /// Returns MODE's completion sources, then the global ones, copied out:
+    /// each is about to be called, and is arbitrary Lisp.
     pub fn completion_sources(&self, mode: &str) -> Vec<ELispExp<B>> {
         let mut sources: Vec<ELispExp<B>> = self
             .registry
@@ -390,7 +325,8 @@ impl<B: BufferTrait> Modes<B> {
         sources
     }
 
-    /// One list on its own, unmerged, or `None` if MODE is unknown.
+    /// Returns one list on its own: MODE's, or the global one for `None`;
+    /// `None` if MODE is unknown.
     pub fn completion_list(&self, mode: Option<&str>) -> Option<Vec<ELispExp<B>>> {
         match mode {
             None => Some(self.global_completions.clone()),
@@ -401,8 +337,8 @@ impl<B: BufferTrait> Modes<B> {
         }
     }
 
-    /// Append a source to MODE's list, or to the global one when MODE is
-    /// `None`. False if MODE names a mode that does not exist.
+    /// Appends FUNCTION to MODE's sources, or to the global ones for `None`,
+    /// and returns false if MODE is unknown.
     pub fn add_completion(&mut self, mode: Option<&str>, function: ELispExp<B>) -> bool {
         match mode {
             None => {
@@ -413,8 +349,8 @@ impl<B: BufferTrait> Modes<B> {
         }
     }
 
-    /// Replace a whole list. This is how a source is removed or the order
-    /// changed, which a bare append could not express.
+    /// Replaces a whole list, which is how a source is removed or the order
+    /// changed; false if MODE is unknown.
     pub fn set_completions(&mut self, mode: Option<&str>, functions: Vec<ELispExp<B>>) -> bool {
         match mode {
             None => {
@@ -429,16 +365,13 @@ impl<B: BufferTrait> Modes<B> {
     // File names, and repeat keys
     // ------------------------------------------------------------------
 
-    /// Say that a file whose name matches PATTERN opens in MODE.
+    /// Says that a file whose path matches PATTERN opens in MODE.
     pub fn add_auto_mode(&mut self, pattern: regex::Regex, mode: &str) {
         self.auto_modes.push((pattern, mode.to_string()));
     }
 
-    /// The mode a file called PATH should open in, if any pattern claims it.
-    ///
-    /// Matched against the whole path, so a pattern can key on a directory as
-    /// well as an extension. First declared wins, which is what makes the
-    /// order a decision rather than an accident.
+    /// Returns the mode a file at PATH opens in: the first declared pattern
+    /// matching the whole path, so that a pattern can name a directory.
     pub fn auto_mode_for(&self, path: &str) -> Option<String> {
         self.auto_modes
             .iter()
@@ -446,16 +379,14 @@ impl<B: BufferTrait> Modes<B> {
             .map(|(_, mode)| mode.clone())
     }
 
-    /// Say that COMMAND may be repeated by pressing KEY on its own afterwards.
-    ///
-    /// Declared rather than inferred. The tempting rule -- "after a sequence
-    /// ending in K, a bare K repeats" -- would make `C-x C-f` followed by `f`
-    /// re-open `find-file`, which is not a convenience.
+    /// Says that COMMAND may be repeated by pressing KEY on its own
+    /// afterwards. Declared, not inferred from the binding: after `C-x C-f`,
+    /// a bare `f` must not open another file.
     pub fn set_repeat_key(&mut self, command: &str, key: KeyEvent) {
         self.repeat_keys.insert(command.to_string(), key);
     }
 
-    /// The key that repeats COMMAND, if it has one.
+    /// Returns the key that repeats COMMAND, if it has one.
     pub fn repeat_key(&self, command: &str) -> Option<KeyEvent> {
         self.repeat_keys.get(command).cloned()
     }
@@ -464,7 +395,7 @@ impl<B: BufferTrait> Modes<B> {
     // Hooks
     // ------------------------------------------------------------------
 
-    /// Register FUNCTION to run under HOOK_NAME in every major mode.
+    /// Registers FUNCTION under HOOK_NAME in every major mode, once.
     pub fn add_global_hook(&mut self, hook_name: &str, function: ELispExp<B>) {
         let hooks = self.global_hooks.entry(hook_name.to_string()).or_default();
         if !hooks.contains(&function) {
@@ -472,6 +403,8 @@ impl<B: BufferTrait> Modes<B> {
         }
     }
 
+    /// Removes FUNCTION from HOOK in MODE, or from the global hooks for
+    /// `None`, and returns false if MODE is unknown.
     pub fn remove_hook(&mut self, mode: Option<&str>, hook: &str, function: &ELispExp<B>) -> bool {
         if let Some(mode) = mode {
             return self.edit(mode, |mode| {
@@ -486,17 +419,11 @@ impl<B: BufferTrait> Modes<B> {
         true
     }
 
-    /// Everything registered under HOOK_NAME for MODE: the mode's own first,
-    /// then the ones registered for every mode.
+    /// Returns what is registered under HOOK_NAME for MODE: the mode's own
+    /// first, as the more specific, then the global ones.
     ///
-    /// A mode-specific hook is the more specific statement about this buffer,
-    /// so it gets to act before anything general reacts to the result.
-    ///
-    /// Copied out, and the caller must let this lock go before running any of
-    /// them. A hook can call `add-hook`, `define-key`, `make-mode` or
-    /// `add-syntax-rule`, every one of which wants this lock on the write
-    /// side -- which is not a race but a hang, every time, on one thread,
-    /// from ordinary user Lisp.
+    /// Copied out, and the caller gives this lock back before running them: a
+    /// hook may call `add-hook` or `define-key`, which take it to write.
     pub fn hooks_for(&self, mode: &str, hook_name: &str) -> Vec<ELispExp<B>> {
         let mut hooks: Vec<ELispExp<B>> = self
             .registry

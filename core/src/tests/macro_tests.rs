@@ -1,24 +1,9 @@
-//! Keyboard macros: recording keys, and pressing them again.
+//! Keyboard macros: recording keys, and pressing them again. That a replay
+//! is the keys being pressed -- keys that run no command, the keys that end a
+//! recording, a macro calling a macro -- and that a replay is one undo step
+//! per repetition, and stops at the first key that fails.
 //!
-//! # What is worth testing here
-//!
-//! That a replay really is the keys being pressed. That is the whole claim,
-//! and the ways it can quietly not be true are the interesting ones:
-//!
-//! - A key that runs no command. `C-u` and the digits after it are taken by
-//!   the prefix-argument reader; `zap-to-char` reads its character through a
-//!   key capture. A recorder watching *commands* would lose both, and the
-//!   second replays as a wait for a character that never arrives.
-//! - The keys that ended the recording. They are pressed while recording, so
-//!   without care every macro ends by stopping a recording that is not
-//!   running.
-//! - Replaying while recording. A macro that calls a macro must record the
-//!   call, not what the call expands to, or recording one that calls another
-//!   doubles its body.
-//!
-//! And the two things nobody would look at until much later: that a replay is
-//! one undo step per repetition, and that a replay stops at the first key that
-//! failed rather than pressing the rest into a state the recording never saw.
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::BufferTrait;
@@ -69,11 +54,8 @@ mod tests {
         ctx.with_current_buffer(|buf| buf.text.to_string())
     }
 
-    /// Press a sequence written the way `define-key` writes one.
-    ///
-    /// Through `handle_key_event`, which is the whole point: a macro test that
-    /// called the commands directly would never see a key the recorder has to
-    /// notice before any command runs.
+    /// Presses a sequence written as `define-key` writes one, through
+    /// `handle_key_event`: the recorder sees keys before any command runs.
     fn press(keys: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
         for key in parse(keys) {
             ctx.handle_key_event(key, env);
@@ -211,11 +193,9 @@ mod tests {
 
     #[test]
     fn a_character_read_by_a_command_is_recorded() {
-        // `M-z x' -- `zap-to-char' arms a key capture and the `x' is taken by
-        // it, without a second command running. This is the case that decided
-        // keys over commands: a recorder watching `call-interactively' sees
-        // `(zap-to-char)' and replays it as a wait for a character that is
-        // never coming.
+        // `M-z o`: `zap-to-char` arms a key capture, which takes the `o`
+        // without a second command running. A recorder watching commands
+        // would replay it as a wait for a character.
         let (ctx, env) = editor();
         with_text("hello world", &ctx);
         press("C-x ( M-z o C-x )", &env, &ctx);
@@ -276,15 +256,10 @@ mod tests {
 
     #[test]
     fn replayed_keys_are_not_recorded_again() {
-        // A macro that calls a macro records the *call*. Recording what the
-        // call expands to would double the body, and double it again at a
-        // third level.
-        //
-        // Through a *named* macro, which is the only sane way to call one from
-        // inside another with a single last-macro slot: `C-x e' inside a
-        // recording ends that recording, and a key bound to
-        // `kmacro-call-macro' would call whatever the last macro is by then,
-        // which is the one being recorded.
+        // A macro that calls a macro records the call, not its expansion,
+        // which would double the body. Through a named macro: `C-x e` would
+        // end the recording, and `kmacro-call-macro` would call the macro
+        // being recorded.
         let (ctx, env) = editor();
         with_text("one\ntwo\nthree", &ctx);
         run(
@@ -305,11 +280,9 @@ mod tests {
 
     #[test]
     fn a_macro_that_calls_itself_is_refused_rather_than_crashing() {
-        // The first version of this test aborted the process. Each level of
-        // replay is a real call through the key handler, so a self-calling
-        // macro grows the *stack*, and the stack runs out while the execution
-        // budget -- which was what the docstring claimed would catch it -- is
-        // barely touched.
+        // Each level of replay is a call through the key handler, so a macro
+        // calling itself grows the stack, which runs out -- aborting the
+        // process -- long before the execution budget.
         let (ctx, env) = editor();
         with_text("abcdefghijklmnop", &ctx);
         // A key that calls the last macro without ending a recording, so the
@@ -330,10 +303,9 @@ mod tests {
 
     #[test]
     fn the_key_that_ends_and_calls_is_not_part_of_the_macro() {
-        // `C-x e' ends a recording as much as `C-x )' does, so its keys are as
-        // much not part of one. Leaving it out of the exclusion list made a
-        // recording ended that way contain only `C-x e', which then replayed
-        // itself for ever.
+        // `C-x e` ends a recording as `C-x )` does, so its keys are not part
+        // of it: recorded, they would make a macro that replays itself for
+        // ever.
         let (ctx, env) = editor();
         with_text("one\ntwo\nthree", &ctx);
         press("C-x ( C-a C-k C-k", &env, &ctx);

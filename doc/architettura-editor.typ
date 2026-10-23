@@ -131,14 +131,17 @@ un suo argomento senza sapere chi lo ascolta (@argomenti). L'interprete non è
 nella figura: è il crate `risp`, che non conosce l'editor, e lo usano gli strati
 da `managers/` in su.
 
-La regola ha due eccezioni, dichiarate. `buffer/` conserva alcuni tipi che
+La regola ha tre eccezioni, dichiarate. `buffer/` conserva alcuni tipi che
 vengono da più in alto, le facce di `ui/` (negli overlay e nel testo virtuale)
 e gli stati della colorazione e della scansione di `modes/` (nelle due cache
 del testo, @cache-testo). `input.rs` lega i tasti a espressioni Lisp,
-`ELispExp`, il cui tipo nomina `EditorState` di `editor/` (@keymap). Per ogni
-modulo da `work/` a `commands.rs`, `layering_tests` tiene l'elenco di ciò che
-usa da più in alto: vuoto, tranne per questi due. Un uso nuovo fa fallire il
-test finché non lo si aggiunge lì e nella mappa di `lib.rs`.
+`ELispExp`, il cui tipo nomina `EditorState` di `editor/` (@keymap). E
+`managers/` conserva i modi maggiori e le tabelle sintattiche di `modes/`, le
+finestre, le facce e il tema di `ui/`, e le espressioni Lisp che i comandi, i
+legami e gli hook registrano (@compartimenti). Per ogni modulo da `work/` a
+`managers/`, `layering_tests` tiene l'elenco di ciò che usa da più in alto:
+vuoto, tranne per questi tre. Un uso nuovo fa fallire il test finché non lo si
+aggiunge lì e nella mappa di `lib.rs`.
 
 == Dove sta cosa
 
@@ -479,11 +482,11 @@ lock o un atomico proprio.
   [`windows`], [`Windows`], [Albero delle finestre affiancate, finestre flottanti, focus, prossimo id, trascinamento, ultimo clic.],
   [`modes`], [`Modes<B>`], [Registro dei modi maggiori, keymap globale, completamenti globali, modi per estensione, keymap transitoria, tasti di ripetizione, hook globali.],
   [`commands`], [`Commands<B>`], [Registro dei comandi, pila dei comandi in attesa di argomenti, argomento prefisso, ultimo comando e sua forma.],
-  [`kill_yank`], [`KillYank`], [Kill ring, ultimo yank, flag «il comando precedente ha ucciso/incollato».],
+  [`kill_yank`], [`KillYank`], [Kill ring, ultimo yank, flag «il comando precedente ha ucciso/incollato», ultimo rettangolo ucciso, testo dovuto agli appunti di sistema.],
   [`macros`], [`Macros`], [Macro in registrazione, ultima macro, contatore.],
   [`history`], [`History`], [Storia dei prompt per chiave (100 voci per chiave predefinite).],
   [`log`], [`Log`], [Righe diagnostiche e file a cui sono copiate.],
-  [`runtime`], [`Runtime`], [Colonna obiettivo, isearch e sostituzione in corso, `FuelMeter`, pila delle chiamate per i backtrace, tema, generazioni dei worker.],
+  [`runtime`], [`Runtime`], [Colonna obiettivo, isearch e sostituzione in corso, `FuelMeter`, pila delle chiamate per i backtrace, tema in uso e tema di fabbrica, i lavori avviati da Lisp per nome.],
   [`echo_message`], [`RwLock<EchoMessage>`], [Testo dell'area messaggi con l'istante in cui è stato scritto.],
   [`pending_keys`], [`RwLock<Vec<KeyEvent>>`], [Tasti di una sequenza non ancora completa.],
   [`owed`], [`RwLock<Vec<OwedCallback>>`], [Callback chieste dai lavori di sfondo e non ancora eseguite.],
@@ -497,9 +500,10 @@ lock o un atomico proprio.
 `EditorState` implementa `Debug` e `PartialEq` solo perché `LispContext` li
 richiede; nessuno dei due è pensato per essere usato #rapporto("DOC-2").
 
-== Le regole dei compartimenti
+== Le regole dei compartimenti <regole-compartimenti>
 
-Il commento in testa a `managers/mod.rs` le enuncia; il codice le rispetta.
+Ogni compartimento le segue; la documentazione di `managers/mod.rs` le
+riassume.
 
 #ref-table(
   columns: (5.0cm, 1fr),
@@ -508,8 +512,16 @@ Il commento in testa a `managers/mod.rs` le enuncia; il codice le rispetta.
   [Non consegna guardie.], [Si accede allo stato solo con una closure (`windows(|w| …)`), e il lock non sopravvive alla domanda.],
   [Non valuta mai.], [Nessun compartimento riceve un `Env`. Può conservare valori Lisp (il corpo di un hook), mai eseguirli: Lisp può rientrare nell'editor da qualunque primitiva.],
   [Risponde con un verdetto, non con un effetto.], [Quando un'operazione ha conseguenze altrove (un buffer da ripuntare, una finestra da rifocalizzare) restituisce un enum come `BufferRemoved` o `WindowRemoved`, e la facciata agisce.],
-  [Non fa nulla di lento con il lock preso.], [Niente disco, rete o attese. `Log::record` restituisce il file e la scrittura avviene dopo aver rilasciato il lock.],
+  [Non fa nulla di lento con il lock preso.], [Niente disco, rete o attese. Registrare una diagnostica aggiunge una riga alla lista e basta: il file lo scrive il watchdog con `Log::flush`, che tiene il lock della lista solo per copiare le righe.],
 )
+
+Le prime quattro regole servono alla correttezza: ognuna toglie un modo in
+cui due pezzi dello stato si possono vedere in disaccordo. L'ultima serve alla
+latenza, ed è quella che si rompe per sbaglio, perché romperla non costa nulla
+finché il disco è veloce e l'albero piccolo. Il segnale è un lock tenuto
+attraverso una chiamata di cui non si controlla la durata: una lettura o una
+scrittura, un'allocazione grande quanto un file, una callback. Se non si sa
+dire quanto dura il corpo, si copia fuori ciò che serve e si rilascia prima.
 
 La regola che nasce da tutte queste, e che vale anche fuori dai compartimenti,
 è una sola: #emph[mai tenere un lock attraverso una chiamata all'interprete].
@@ -518,6 +530,57 @@ La regola che nasce da tutte queste, e che vale anche fuori dai compartimenti,
 Lisp subito dopo. Un `RwLock` non è rientrante: un hook che chiama `add-hook`
 mentre lo stesso thread tiene il lock di lettura del registro si blocca per
 sempre, ogni volta.
+
+== I compartimenti <compartimenti>
+
+Ogni compartimento è un tipo di `managers/`, sotto un `RwLock` della facciata,
+e tiene un'invariante che i suoi campi presi uno per uno non terrebbero.
+
+#ref-table(
+  columns: (3.2cm, 1fr),
+  header: ([Compartimento], [Che cosa garantisce]),
+  [`Buffers`], [La tabella non è mai vuota, e `current` nomina sempre un buffer della tabella: `make_current` e `bind_current` rifiutano un nome assente, `rename` e `remove` spostano `current` nello stesso passo.],
+  [`Windows`], [Il focus nomina sempre una finestra che esiste, e l'ultima finestra affiancata non si chiude.],
+  [`Modes`], [Le metà globali e quelle dei modi --- keymap, sorgenti di completamento, hook --- si leggono sotto lo stesso lock, nell'ordine in cui la risoluzione le consulta.],
+  [`Commands`], [L'argomento prefisso appartiene a un comando solo, e i comandi in attesa di argomenti si chiudono in ordine inverso a quello in cui sono cominciati.],
+  [`KillYank`], [I flag «il comando precedente ha ucciso, ha incollato» valgono rispetto all'anello e si spostano insieme, una volta per comando.],
+  [`Macros`], [I tasti di una registrazione diventano l'ultima macro in un passo solo, e nessun tasto riprodotto viene registrato, a qualunque profondità.],
+  [`History`], [Un cammino nella storia vale solo nell'anello e nel prompt in cui è cominciato.],
+  [`Log`], [Ogni riga arriva al file una volta e nell'ordine in cui è stata registrata, salvo le scritture che falliscono e le righe uscite dalla lista prima di essere scritte.],
+  [`Runtime`], [Nessuna: raggruppa ciò che appartiene alla sessione e non a un documento (@decisioni-stato).],
+)
+
+La facciata raggiunge un compartimento con una #emph[porta] che esegue una
+closure: `windows(|w| …)` per leggere, `windows_mut(|w| …)` per cambiare. Il
+lock non sopravvive alla domanda, e dentro la closure non si richiama la
+facciata: un `RwLock` non promette che una seconda lettura sullo stesso thread
+riesca. `Log` è il solo che prende il lock da sé: `Log::append` e `Log::flush`
+ricevono il `RwLock<Log>`, perché il WorkManager registra senza tenere un
+editor, che lo contiene.
+
+== Le coppie con `editor/` <coppie>
+
+`managers/` ed `editor/` si accoppiano per nome, con una regola sola.
+
+- `managers/X` è il compartimento: i campi sotto un lock e le operazioni che
+  non hanno bisogno d'altro.
+- `editor/X` è la sua metà della facciata: i metodi di `EditorState` che danno
+  alle operazioni di X un nome da editor (`command_specs` per
+  `Commands::specs`, perché la facciata ha anche nomi di buffer e di finestre) e
+  ciò che usa X insieme a un altro compartimento, al testo di un buffer o
+  all'interprete.
+- Le porte dei lock stanno tutte in `editor/mod.rs`, accanto ai campi: è il
+  solo file che prende i lock dei compartimenti.
+- Un compartimento senza metodi di facciata non ha un file in `editor/`: oggi
+  `history`, le cui porte bastano.
+- Chi ha bisogno di un compartimento solo, primitive comprese, usa la porta:
+  `ctx.modes(|m| …)` in una primitiva è previsto.
+
+Gli altri file di `editor/` portano il nome di una preoccupazione invece che di
+un compartimento (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`),
+perché ciò che fanno attraversa più compartimenti per natura. Oggi la regola
+ha tre eccezioni: le porte di `kill_yank` e di `macros` stanno nei loro file, e
+`log` non ne ha una, perché `editor/log.rs` prende il lock da sé.
 
 == L'ordine dei lock
 
@@ -562,9 +625,10 @@ indicato.
 ]
 
 `Buffers` non è mai vuoto: nasce con `*scratch*` corrente. Le funzioni che
-cambiano quale buffer è corrente passano tutte da `make_current`, che rifiuta
-un nome assente dalla tabella; questa invariante esiste perché una finestra
-rimasta a mostrare un buffer cancellato aveva già fatto crollare l'editor.
+cambiano quale buffer è corrente passano tutte da `make_current` o, per
+`set-buffer`, che agisce su un buffer senza mostrarlo, da `bind_current`, che
+non tocca l'ordine dei buffer recenti: tutte e due rifiutano un nome assente
+dalla tabella (@decisioni-stato).
 
 == L'editor come contesto dell'interprete
 
@@ -574,7 +638,7 @@ rimasta a mostrare un buffer cancellato aveva già fatto crollare l'editor.
   columns: (5.4cm, 1fr),
   header: ([Metodo del trait], [Implementazione]),
   [`consume_fuel(n)`], [`FuelMeter` di `Runtime` (clonato fuori dal lock); `Exhausted` diventa `OutOfFuel`.],
-  [`log_diagnostic(msg)`], [`Log::record` sotto lock, poi la scrittura sul file senza lock.],
+  [`log_diagnostic(msg)`], [`Log::append`: la riga va nella lista; il file lo scrive il watchdog (`Log::flush`).],
   [`begin_unwind()`], [Alza il carburante ad almeno 100.000 passi #rapporto("INT-1").],
   [`begin_thread_evaluation()`], [`arm_thread()`: il nuovo thread riceve il budget configurato.],
   [`push_call_frame` / `pop_call_frame` / `call_frame_depth` / `truncate_call_frames`], [La pila `call_stack: Vec<String>` di `Runtime`, che `report_error` legge come backtrace.],
@@ -586,6 +650,198 @@ funzione di `after-resize-hook` ed `eval_file`. Solo l'apertura più esterna
 ricarica il budget (10.000.000 di passi), quindi un `eval-file` dentro un
 comando consuma il budget del comando. Gli hook, invece, sono valutati dopo che
 lo scope del comando si è chiuso: ognuno riparte con il budget pieno.
+
+== Le decisioni <decisioni-stato>
+
++ *Lo stato è diviso in compartimenti, ognuno sotto un lock.* Un compartimento
+  raccoglie i campi che sono un fatto in più pezzi. Sotto lock separati si
+  vedrebbero a metà di un cambiamento --- il focus che nomina una finestra che
+  il layout ha già tolto --- e ogni operazione che ne tocca due dovrebbe
+  prenderli in un ordine scritto altrove. Sotto un lock solo non c'è un ordine
+  da rispettare, e il disaccordo non si può vedere.
++ *`current` non nomina mai un buffer assente.* Nella tabella, `current` è una
+  chiave e `recency` una lista di chiavi: due pezzi su tre valgono solo
+  rispetto al terzo. `current` si cambia solo con `make_current` e
+  `bind_current`, che rifiutano un nome assente, e `rename` e `remove` lo
+  spostano nello stesso passo, non lasciandolo al chiamante. Un nome assente
+  diventato corrente farebbe fallire la ricerca successiva con un panic, e con
+  l'editor andrebbe perso ciò che non era salvato nelle altre finestre.
++ *`Buffers` non legge il testo e non conosce le finestre.* Ciò che un buffer
+  contiene è di `Buffer`, e chi lo mostra sono le finestre, che ne tengono il
+  nome. Il rapporto è a senso unico, e i due compartimenti non hanno bisogno
+  l'uno del lock dell'altro: quando un nome cambia o un buffer sparisce,
+  `BufferRenamed` e `BufferRemoved` lo dicono e la facciata ripunta le finestre.
+  `rename` non tocca neppure il campo `name` del buffer: bloccare un buffer
+  tenendo la tabella metterebbe la tabella in coda a chi sta scrivendo nel
+  buffer.
++ *I campi di `Commands` sono la vita di un comando.* Il registro dice che cosa
+  può eseguire `M-x` e con quali argomenti, l'argomento prefisso è il conteggio
+  scritto prima, la pila è ciò che resta da raccogliere, gli ultimi due campi
+  sono ciò che resta al comando successivo. Si scrivono tutti nel corso di un
+  tasto, e l'ordine in cui lo sono è il protocollo. Che il prefisso sia ancora
+  in lettura è un campo a sé: «nessun argomento» e «un argomento finito» sono
+  stati diversi, e una cifra significa cose diverse nei due.
++ *Gli hook stanno con i modi, non con i comandi.* Sembrano macchinario dei
+  comandi, ma un hook appartiene a un modo: quelli registrati per tutti i modi
+  sono la metà globale di `MajorMode::hooks`, come la keymap globale lo è di
+  `MajorMode::keymaps`.
++ *Guardare indietro nella storia non fa perdere ciò che si scriveva.* Il primo
+  passo indietro mette da parte il testo del prompt, e andare avanti oltre la
+  voce più recente lo restituisce. Altrimenti, per tornare a ciò che si stava
+  scrivendo, bisognerebbe annullare il prompt e ricominciare.
++ *La storia non ricorda tutto.* Non ricorda la stringa vuota, che è come si
+  esce da un prompt, né la ripetizione della voce più recente: lo stesso
+  comando eseguito quattro volte lascia una voce, o tornare indietro di un
+  passo costerebbe quattro tasti. Una ripetizione più vecchia resta dov'è e si
+  aggiunge di nuovo in testa: spostarla riordinerebbe la storia sotto l'utente.
+  Il tetto, cento voci come in Emacs, è per prompt, così un prompt usato di
+  continuo non spinge fuori le voci di un altro. Ai due capi di un anello il
+  prompt resta com'è, invece di ricevere una copia di sé: il tasto deve poter
+  dire «sei alla fine».
++ *Anello e flag di `KillYank` stanno insieme.* L'anello da solo sarebbe un
+  campo. Ne fanno un compartimento le due domande che Emacs fa a ogni kill e a
+  ogni yank: il comando precedente ha ucciso? ha incollato? Una serie di `C-k`
+  deve fare una voce sola, e `yank-pop` deve sapere quale testo ha appena
+  inserito uno yank. Sotto lo stesso lock «accodare o aggiungere» e «flag ed
+  estensione dello yank» sono ciascuno un'operazione sola.
++ *Due flag per domanda.* Un comando alza `killed_this` mentre gira, e
+  `roll_over` lo sposta in `killed_last` quando è finito; lo stesso per lo
+  yank. Con un flag solo, un comando non potrebbe chiedere che cosa ha fatto il
+  precedente senza vedere anche ciò che ha appena fatto lui. Le due coppie si
+  spostano insieme, perché un comando chiede di tutte e due.
++ *Il rettangolo ucciso non sta nell'anello.* Un rettangolo è una forma, e
+  l'anello contiene testo: con un rettangolo nell'anello ogni yank dovrebbe
+  chiedersi che forma ha, e un blocco copiato da un terminale non si
+  distinguerebbe dalle righe di cui è fatto. È un posto e non un anello suo,
+  perché non c'è uno `yank-pop` dei rettangoli; e due kill di rettangolo di
+  seguito sono due rettangoli, non un blocco che sullo schermo non c'è mai
+  stato.
++ *La lista del log e il suo file sono una cosa sola.* Il file è lo specchio
+  della lista: abilitarlo scrive tutto ciò che è stato registrato fino a quel
+  momento, così il file contiene la storia intera e non solo ciò che è venuto
+  dopo. Funziona solo se lista e file si sistemano insieme, sotto lo stesso
+  lock: altrimenti una riga registrata in mezzo da un altro thread arriverebbe
+  troppo tardi per la storia e troppo presto per il file.
++ *Il file del log non lo scrive chi registra.* Registrare aggiunge una riga e
+  la conta come non scritta, e basta: niente disco, quindi registrare costa lo
+  stesso con il disco pieno o con la directory di casa in rete, e nessun
+  comando, nessun passo dello scheduler aspetta una scrittura. Scrive
+  `Log::flush`, che il watchdog chiama a ogni giro, un quarto di secondo per
+  impostazione: su un thread che non è bloccato quando il resto lo è, che è
+  quando un log serve. Un'ultima volta alla chiusura.
++ *`Log` prende il suo lock da sé e non va mai in panic.* È il solo
+  compartimento con funzioni che ricevono il proprio `RwLock`, perché il
+  WorkManager registra senza tenere un editor (@sfondo). Una scrittura che
+  fallisce si perde, lasciando un buco nel file, e un lock avvelenato si usa
+  così com'è: `flush` gira sul watchdog, che riporta i panic degli altri e non
+  deve averne di suoi --- con il disco pieno, salvare un file registra una
+  diagnostica la cui scrittura fallisce a sua volta.
++ *Una macro registra tasti, non comandi.* Non ogni tasto diventa un comando:
+  `C-u` e le cifre li prende il lettore dell'argomento prefisso, e
+  `zap-to-char` legge il suo carattere con una cattura di tasti, senza un
+  secondo comando. Un registratore che guardasse i comandi riprodurrebbe
+  `zap-to-char` come l'attesa di un carattere che non arriva. I tasti seguono
+  poi ciò che significano #emph[ora]: si cambia un legame e la macro fa la cosa
+  nuova, come in Emacs. E si scrivono gratis: `describe_keys` e
+  `parse_key_sequence` sono inversi, quindi una macro è una stringa nella
+  sintassi di `define-key`.
++ *Registrazione e riproduzione stanno insieme.* Finire una registrazione
+  sposta i tasti nel posto dell'ultima macro: separati, un lettore in mezzo
+  vedrebbe due copie o nessuna. E se un tasto si registri è una domanda su
+  registrazione e riproduzione insieme: una macro che ne chiama un'altra
+  registra la chiamata, non ciò in cui si espande. I comandi del registratore
+  (`NOT_RECORDED`) non si registrano, perché i tasti che chiudono una
+  registrazione si premono mentre gira: l'elenco è per nome e sta accanto allo
+  stato, perché quali comandi siano del registratore è una domanda sua.
++ *Le riproduzioni annidate hanno un tetto.* Una riproduzione è una chiamata
+  Rust attraverso il gestore dei tasti, quindi una macro che chiama se stessa
+  fa crescere la pila, che finisce molto prima del carburante --- se ne
+  spendono pochi passi per livello --- e una pila finita chiude il processo
+  invece di dare un errore. Sedici livelli bastano: l'annidamento legittimo,
+  una macro che chiama una macro con nome che ne chiama un'altra, ne usa due o
+  tre.
++ *Le metà globali stanno con il registro dei modi.* La keymap di un modo e
+  quella globale si consultano in quest'ordine a ogni tasto, e le sorgenti di
+  completamento del modo e quelle globali si fondono a ogni completamento.
+  Separate, chi le legge dovrebbe sapere che i posti sono due e prenderli
+  nell'ordine giusto. La keymap transitoria e i tasti di ripetizione stanno
+  sotto lo stesso lock, così risolvere un tasto prende un lock solo.
++ *Gli hook e le sorgenti si copiano fuori prima di chiamarli.* Le liste di
+  `Modes` contengono espressioni Lisp, e niente in `Modes` le chiama: ogni
+  lettura le copia e rilascia il lock. Un hook che chiama `add-hook`,
+  `define-key`, `make-mode` o `add-syntax-rule` vuole questo lock in scrittura,
+  e con il lock tenuto si bloccherebbe ogni volta, su un thread solo, con un
+  Lisp qualunque.
++ *Il cammino tra le keymap si scrive una volta.* `binding_for`, `is_prefix` e
+  `bindings` rispondono sui legami in effetto accanto alla risoluzione che
+  l'editor esegue, e ne condividono il cammino. Un secondo cammino scritto
+  altrove sarebbe una seconda risposta a «che cosa fa questo tasto», e le due
+  divergerebbero la prima volta che l'ordine cambiasse. Ogni legame porta con
+  sé la mappa da cui viene (`BindingSource`): «`q` esegue `quit-window` qui,
+  perché il buffer è in `dired-mode`» è quasi tutto ciò che vuole sapere chi
+  cerca un tasto.
++ *I modi per nome di file sono una lista ordinata.* I modelli si
+  sovrappongono --- `\.rs$` e `^Cargo\.` corrispondono entrambi a `Cargo.rs`
+  --- e quale vince deve averlo deciso qualcuno, non un hash: vince il primo
+  dichiarato.
++ *I tasti di ripetizione si dichiarano.* La regola che verrebbe in mente,
+  «dopo una sequenza che finisce con K, un K da solo ripete», farebbe di `f`
+  dopo `C-x C-f` un altro `find-file`.
++ *`Runtime` raggruppa per durata, non per un'invariante.* Gli altri
+  compartimenti tengono insieme un fatto in più pezzi; questi campi no: nessuna
+  operazione ne tocca due, e metterli insieme non chiude nessuna finestra di
+  disaccordo. Il guadagno è più piccolo: la facciata non porta otto lock
+  indipendenti, e chi cerca lo stato dell'editor, distinto da quello di un
+  documento, ha un posto solo. Il tema sta qui in mancanza di meglio: è
+  dell'interfaccia, e si sposterà quando ci sarà un compartimento suo.
++ *Il carburante non sta sotto il lock di `Runtime`.* `FuelMeter` si
+  sincronizza da sé: il budget vivo è una variabile del thread, e l'atomico
+  dietro si legge solo quando si apre uno scope. Si tiene come `Arc` e si dà
+  per clone, così chi apre uno scope, che dura un comando intero, non tiene il
+  lock attraverso l'interprete.
++ *Le finestre non leggono i buffer.* Una finestra nomina un buffer e non sa
+  altro. Dove un'operazione ha bisogno di qualcosa del buffer --- lo
+  scorrimento il numero di righe, `C-l` la riga del punto --- riceve il numero:
+  i due compartimenti non si tengono mai insieme, e le operazioni si provano
+  senza un editor. Per lo stesso motivo un clic risponde con una colonna dello
+  schermo, che `editor/mouse.rs` traduce in una colonna del buffer: una riga
+  con testo virtuale è più larga della sua riga di testo.
++ *I doppi clic li conta l'editor.* Un terminale manda una pressione per volta
+  e nient'altro: «questa è la seconda nello stesso punto» lo sa solo chi tiene
+  la prima, e deve essere l'editor, perché in un front-end sarebbe un calcolo
+  da rifare in ogni front-end. Due clic sono una coppia nella stessa cella
+  entro 400 ms, un po' meno del `double-click-time` di Emacs. La stessa cella e
+  non una vicina, perché un clic subito accanto al precedente sposta il cursore
+  di un carattere, e leggerlo come doppio sarebbe l'errore più fastidioso. Dopo
+  una coppia il primo clic si dimentica: tre pressioni sono una coppia e una
+  singola.
++ *Un trascinamento si ricorda, e scorre a tempo.* È l'unico gesto del mouse
+  che non è un evento solo: dove è cominciato decide che cosa significano gli
+  eventi dopo, ovunque sia andato il puntatore. Un puntatore fermo fuori dalla
+  finestra non manda eventi, ma la selezione deve continuare: per questo lo
+  scorrimento durante il trascinamento è un timer di 60 ms, non una risposta
+  al movimento.
++ *Una striscia divide il frame e non prende il focus.* `open_bottom` apre una
+  finestra alta esattamente quanto chiesto sotto tutte le altre, che cedono
+  ciascuna una parte dello spazio: una striscia è del frame, non di una
+  finestra tagliata a metà. Il focus resta dov'è, perché la striscia si mostra
+  mentre si scrive altrove --- i completamenti sotto un prompt --- e il focus
+  che si spostasse renderebbe corrente il suo buffer: il tasto successivo
+  finirebbe nella lista dei suggerimenti.
++ *I float sono nel giro delle finestre, ma non nel loro conto.* `all_ids`
+  mette i float dopo le finestre affiancate, dal più vecchio, perché un float
+  da cui il focus è uscito sarebbe altrimenti irraggiungibile. `count` conta
+  solo le affiancate, perché decide se una finestra si può chiudere e che cosa
+  annulla `C-x 1`, e un prompt disegnato sopra non divide nulla.
++ *Scorrere sposta la vista, e il punto la segue.* `C-v` sposta la vista e il
+  punto la segue solo se ne è uscito, come in Emacs: spostare il punto e
+  lasciare che il disegno lo insegua lo porterebbe al bordo invece di
+  tenergli il posto sullo schermo. Due righe restano in comune tra una
+  schermata e l'altra. La rotella segue la stessa regola nella finestra con il
+  focus, e nelle altre lascia il punto dov'è: il punto è del buffer, e
+  un'altra finestra può mostrare lo stesso buffer. La rotella porta l'ultima
+  riga fino in cima, `C-v` solo fino in fondo: la prima guarda la fine di un
+  file, il secondo lo legge.
 
 // ===========================================================================
 = Dal tasto al comando <tasto>

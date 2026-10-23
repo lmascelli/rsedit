@@ -1,13 +1,8 @@
-//! Moving the view rather than point: `C-v` and `M-v`.
+//! Moving the view rather than point: `C-v` and `M-v`. The tests compose a
+//! frame first, since a screenful is only a number once the window has been
+//! laid out.
 //!
-//! # Why a frame is rendered before each one
-//!
-//! A screenful is only a number once the frame has been laid out -- it depends
-//! on the frame size, on how the windows are split, and on whether there is a
-//! status line. `compute_tiled_views` works it out and leaves it on the window,
-//! and scrolling reads it back. So a test that never renders is testing a
-//! window that has never been on screen, which is a real case (it falls back to
-//! one line) but not the one anybody cares about.
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -262,11 +257,8 @@ mod tests {
         assert_eq!(ctx.get_echo_message(), "End of buffer");
     }
 
-    /// A window that has never been on screen has no height to scroll by --
-    /// the layout has not run, so nothing has worked one out. One line is a
-    /// poor screenful and a great deal better than none: the key does
-    /// something, says nothing about ends it has not reached, and the next
-    /// frame gives the real answer.
+    /// A window never on screen has no height yet: a screenful is one line,
+    /// and the next frame gives the real answer.
     #[test]
     fn a_window_that_has_never_been_drawn_still_scrolls() {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");

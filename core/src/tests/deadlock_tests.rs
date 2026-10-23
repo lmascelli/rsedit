@@ -1,23 +1,9 @@
-//! Guards against the editor deadlocking itself.
+//! That the editor holds no lock across a call into the interpreter: Lisp
+//! re-enters the editor through any primitive, and a lock it needs again hangs
+//! the thread, every time. Each case runs on a thread of its own with a
+//! deadline, since a hang fails nothing and `cargo test` has no timeout.
 //!
-//! # The rule these enforce
-//!
-//! **Never hold a lock across a callback into the interpreter.**
-//!
-//! Lisp can re-enter the editor through any primitive, so a lock held across
-//! `eval` is a lock handed to arbitrary user code. `std::sync::RwLock` is not
-//! reentrant, so the moment that code needs the same lock the thread waits on
-//! itself. This is not a race that shows up under load on a busy machine -- it
-//! hangs every time, on one thread, from Lisp a user could plausibly write.
-//!
-//! # Why these tests need a watchdog
-//!
-//! A deadlock does not fail a test, it hangs it, and `cargo test` has no
-//! per-test timeout -- so a regression here would stall CI rather than report
-//! anything useful. Each case therefore runs on its own thread and is awaited
-//! with a deadline; the assertion is on whether it finished. A thread that has
-//! genuinely deadlocked is left parked, which is fine: the process is about to
-//! end, and a leaked thread is a far better outcome than a hung suite.
+//! Design: `doc/architettura-editor.typ, <regole-compartimenti>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -31,7 +17,9 @@ mod tests {
     /// enough that a regression reports quickly.
     const DEADLINE: Duration = Duration::from_secs(10);
 
-    /// Run `body` on its own thread and report whether it finished in time.
+    /// Runs BODY on a thread of its own, and returns whether it finished in
+    /// time. A thread that deadlocked is left parked: the process is about to
+    /// end.
     fn completes(body: impl FnOnce() + Send + 'static) -> bool {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
@@ -43,13 +31,9 @@ mod tests {
         rx.recv_timeout(DEADLINE).is_ok()
     }
 
-    /// A `post-command-hook` that registers another hook.
-    ///
-    /// `run_hook` used to hold `mode_registry.read()` for the whole loop,
-    /// including the `eval` of each hook. `add-hook` needs
-    /// `mode_registry.write()`, so this hung the editor permanently. The fix is
-    /// to copy the hook list out and drop the guard before evaluating any of
-    /// it.
+    /// A `post-command-hook` that registers another hook: `add-hook` takes the
+    /// modes' lock to write, which `run_hook` must have given back before
+    /// evaluating.
     #[test]
     fn a_hook_may_register_another_hook() {
         assert!(
@@ -69,9 +53,9 @@ mod tests {
         );
     }
 
-    /// The same hazard reached through the other writers of the mode registry:
-    /// `define-key` with a mode argument, and `make-mode`. A mode that binds
-    /// its keys lazily on first command is ordinary Lisp, not a stress test.
+    /// The same, through the other writers of the modes' lock: `define-key`
+    /// with a mode argument, and `make-mode`. A mode that binds its keys on
+    /// its first command is ordinary Lisp.
     #[test]
     fn a_hook_may_define_keys_and_modes() {
         assert!(

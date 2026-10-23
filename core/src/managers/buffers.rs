@@ -1,45 +1,9 @@
 //! Every buffer the editor holds, which one is current, and which were current
-//! lately.
+//! lately: one fact in three pieces, kept so that `current` can only ever name
+//! a buffer the table holds. A buffer is reached through a closure, with the
+//! table's lock already given back.
 //!
-//! # Why this is a compartment and not three fields
-//!
-//! The three are one fact in three pieces. `current` names a key in `table`,
-//! and `recency` is a list of keys in it -- so two of the three are only
-//! meaningful against the third. Held apart they can be observed disagreeing,
-//! and the editor has already been taken down once by exactly that: a window
-//! left naming a buffer that had been removed, focus moved there, `current`
-//! became a name the table did not hold, and the next lookup hit its
-//! "Corruption in the hashmap of buffers" panic with whatever was unsaved in
-//! the other windows.
-//!
-//! Held as one, `current` cannot be set to a name the table does not hold --
-//! not because everybody remembers to check, but because `make_current` is
-//! the only way to set it, and it checks.
-//!
-//! # The handle rule
-//!
-//! A buffer is reached through a *closure*, never by being handed out. What
-//! the accessor hands the closure is a locked buffer; what it never hands
-//! anybody is a guard that outlives the question.
-//!
-//! The table's lock is **not** held while that closure runs. `handle` clones
-//! the `Arc` out and the caller drops the table lock before locking the
-//! buffer, so editing a buffer does not shut every other thread
-//! out of the table -- which matters because the highlighter and the
-//! prescanner are walking it on their own threads while somebody types.
-//! Holding the table across a buffer's `write()` would make every keystroke
-//! wait for a scan.
-//!
-//! # What is deliberately not here
-//!
-//! What a buffer *contains*. This compartment owns the table, the current
-//! name and the recency list; the text, point, mark and modes belong to
-//! [`Buffer`] itself. Nothing in this file reads a buffer's text.
-//!
-//! Windows, too. A buffer does not know what is showing it -- that is the
-//! other direction of a relationship the `windows` compartment owns the near
-//! end of, and keeping it one-way is what stops the two compartments needing
-//! each other's locks.
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 use crate::buffer::{Buffer, BufferTrait};
 use crate::work::Topic;
 use std::{
@@ -47,16 +11,14 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+/// The buffer table, the current buffer's name, and the recency list.
 pub struct Buffers<B: BufferTrait> {
     table: HashMap<String, Arc<RwLock<Buffer<B>>>>,
-    /// An `Arc<str>` rather than a `String` because every buffer access starts
-    /// by reading this name, and reading a `String` out of a lock means
-    /// copying it. Sharing it instead makes the current-buffer path allocation
-    /// free, on a path that runs several times per keystroke.
+    /// Shared rather than owned: every buffer access starts by reading it,
+    /// several times a keystroke, and sharing it costs no copy.
     current: Arc<str>,
-    /// Most recently current first. Only ever read to answer "what should this
-    /// window show now that what it showed is gone", so it is allowed to name
-    /// buffers that no longer exist -- the reader skips them.
+    /// Most recently current first. It may name buffers that are gone: its
+    /// one reader, [`Buffers::most_recent`], skips them.
     recency: Vec<String>,
     /// What every buffer in the table emits when its text changes: in the
     /// editor, its `buffer-changed`. Handed to each buffer as it comes in, so
@@ -77,11 +39,9 @@ impl<B: BufferTrait> Default for Buffers<B> {
 }
 
 impl<B: BufferTrait> Buffers<B> {
-    /// A table holding `*scratch*`, whose buffers emit CHANGED.
+    /// Creates a table holding `*scratch*`, whose buffers emit CHANGED.
     pub fn new(changed: Topic) -> Self {
-        // Never empty, and never empty from the first instant: an editor with
-        // no buffers has no answer to "what is current", and every path here
-        // is written on the assumption that there is one.
+        // Never empty: every path here assumes there is a current buffer.
         let mut buffers = Self {
             table: HashMap::new(),
             current: Arc::from(SCRATCH),
@@ -96,21 +56,17 @@ impl<B: BufferTrait> Buffers<B> {
     // Handles, for the accessors on the facade
     // ------------------------------------------------------------------
 
-    /// The `Arc` for NAME, cloned out so the caller can drop the table lock
-    /// before taking the buffer's.
+    /// Returns the `Arc` for NAME, cloned out so that the caller can give the
+    /// table back before locking the buffer.
     ///
-    /// Crate-private on purpose. It is the one hole in the closure discipline
-    /// and it exists so that the table is not held across a buffer's lock;
-    /// `EditorState`'s `with_buffer` family is the only thing that should use
-    /// it, and each of those hands the guard to a closure and drops it.
+    /// Only `EditorState`'s `with_buffer` family uses it, and each hands the
+    /// buffer's guard to a closure.
     pub(crate) fn handle(&self, name: &str) -> Option<Arc<RwLock<Buffer<B>>>> {
         self.table.get(name).cloned()
     }
 
-    /// The `Arc` for whatever is current.
-    ///
-    /// Infallible: `current` is only ever set to a name the table holds, which
-    /// is the invariant this whole compartment exists to keep.
+    /// Returns the `Arc` for the current buffer. Infallible: `current` only
+    /// ever names a buffer the table holds.
     pub(crate) fn current_handle(&self) -> Arc<RwLock<Buffer<B>>> {
         self.table
             .get(&*self.current)
@@ -122,32 +78,31 @@ impl<B: BufferTrait> Buffers<B> {
     // Asking
     // ------------------------------------------------------------------
 
-    /// The current buffer's name, without copying it.
+    /// Returns the current buffer's name, without copying it.
     pub fn current_name(&self) -> Arc<str> {
         self.current.clone()
     }
 
+    /// Returns whether a buffer is called NAME.
     pub fn contains(&self, name: &str) -> bool {
         self.table.contains_key(name)
     }
 
+    /// Returns how many buffers there are.
     pub fn count(&self) -> usize {
         self.table.len()
     }
 
-    /// Every live buffer's name, sorted. Used for buffer-name completion.
+    /// Returns every buffer's name, sorted, for completion.
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.table.keys().cloned().collect();
         names.sort_unstable();
         names
     }
 
-    /// Every live buffer's name with FIRST at the head, if it is one of them.
-    ///
-    /// For the background walkers: the highlighter and the prescanner both
-    /// want to reach what is on screen before what is not, and both used to
-    /// read the table directly to do it. The order among the rest is whatever
-    /// the table gives -- the point is only that the focused one is not last.
+    /// Returns every buffer's name, FIRST at the head if it is one of them
+    /// and the rest in no particular order: the background jobs reach what is
+    /// on screen before what is not.
     pub fn names_with_first(&self, first: Option<&str>) -> Vec<String> {
         let first = first.filter(|name| self.table.contains_key(*name));
         first
@@ -162,11 +117,9 @@ impl<B: BufferTrait> Buffers<B> {
             .collect()
     }
 
-    /// The most recently current buffer that still exists and is not EXCEPT.
-    ///
-    /// `None` when there is no such buffer. The caller answers that for
-    /// itself -- there is always `*scratch*`, but falling back to it is a
-    /// policy this does not get to make.
+    /// Returns the most recently current buffer that still exists and is not
+    /// EXCEPT, or `None` when there is none: falling back to `*scratch*` is
+    /// the caller's choice, not this table's.
     pub fn most_recent(&self, except: &str) -> Option<String> {
         self.recency
             .iter()
@@ -178,7 +131,7 @@ impl<B: BufferTrait> Buffers<B> {
     // Changing
     // ------------------------------------------------------------------
 
-    /// Add BUFFER under NAME, replacing anything already there.
+    /// Adds BUFFER under NAME, replacing any buffer already there.
     ///
     /// The buffer is handed this table's topic, which is then emitted: a
     /// buffer that has just come in is text nothing has looked at yet.
@@ -189,19 +142,19 @@ impl<B: BufferTrait> Buffers<B> {
         self.changed.emit();
     }
 
-    /// Make NAME current, and answer what was current before.
-    ///
-    /// `None` when there is no such buffer, having changed nothing. That
-    /// refusal is the invariant: it is not possible from outside this file to
-    /// leave `current` naming a buffer the table does not hold.
+    /// Makes NAME current and returns what was current before; `None`,
+    /// changing nothing, when there is no such buffer.
     pub fn make_current(&mut self, name: &str) -> Option<Arc<str>> {
         let previous = self.bind_current(name)?;
         self.record_use(name);
         Some(previous)
     }
 
-    /// Rebind a Lisp callback's current buffer without recording a user visit.
-    /// Hidden initialization and policy sweeps must not reorder buffer history.
+    /// Makes NAME current without recording a visit, and returns what was
+    /// current before, or `None` as [`Buffers::make_current`] does.
+    ///
+    /// What `set-buffer` does: Lisp acting on a buffer it is not showing, which
+    /// must not reorder the recency list.
     pub fn bind_current(&mut self, name: &str) -> Option<Arc<str>> {
         if !self.table.contains_key(name) {
             return None;
@@ -211,52 +164,36 @@ impl<B: BufferTrait> Buffers<B> {
         Some(previous)
     }
 
-    /// Move NAME to the front of the recency list.
+    /// Moves NAME to the front of the recency list.
     fn record_use(&mut self, name: &str) {
         if self.recency.first().is_some_and(|first| first == name) {
-            // Already the most recent, which is the common case by far: this
-            // runs whenever a buffer is selected, so it is worth not touching
-            // the list at all.
+            // The common case by far: the list stays as it is.
             return;
         }
         self.recency.retain(|existing| existing != name);
         self.recency.insert(0, name.to_string());
     }
 
-    /// Rename OLD to NEW, and say whether the rest of the editor has work to
+    /// Renames OLD to NEW, and says whether the rest of the editor has work to
     /// do about it.
     ///
-    /// Refused when there is no such buffer, and refused when NEW already
-    /// belongs to a different one -- a table keyed by name cannot hold two of
-    /// them, so the alternative to refusing is losing one. Picking a free name
-    /// is the caller's job, and it has a better answer than this file could
-    /// invent: `buffer_name_for` already knows how to make a file's name
-    /// unique, which is where `name<2>` comes from.
+    /// Refused when there is no OLD, and when NEW belongs to another buffer: a
+    /// table keyed by name cannot hold two, and finding a free name is the
+    /// caller's job (`buffer_name_for` makes `name<2>`). Renaming a buffer to
+    /// the name it has succeeds and changes nothing.
     ///
-    /// Renaming to the name it already has is allowed and does nothing, so a
-    /// caller does not have to check first.
-    ///
-    /// # What this deliberately does not do
-    ///
-    /// Touch the buffer. Its own `name` field is the caller's to set, for the
-    /// reason nothing in this file reads a buffer's text: taking a buffer's
-    /// lock while holding the table's would put the table in the way of
-    /// whatever is already writing to that buffer, which is exactly the
-    /// serialisation `handle` exists to avoid.
-    ///
-    /// And windows. A window holds the *name* of what it shows, so every one
-    /// showing OLD is now pointing at nothing -- which is the dangling state
-    /// this compartment's whole doc comment is about. Fixing it needs the
-    /// windows compartment, so this says so and the facade does it.
-    pub fn rename(&mut self, old: &str, new: &str) -> Renamed {
+    /// The buffer's own `name`, and the windows showing OLD, are the caller's
+    /// to update: this does not lock the buffer while it holds the table, and
+    /// does not reach the windows.
+    pub fn rename(&mut self, old: &str, new: &str) -> BufferRenamed {
         if old == new {
-            return Renamed::Yes;
+            return BufferRenamed::Yes;
         }
         if self.table.contains_key(new) {
-            return Renamed::No;
+            return BufferRenamed::No;
         }
         let Some(handle) = self.table.remove(old) else {
-            return Renamed::No;
+            return BufferRenamed::No;
         };
         self.table.insert(new.to_string(), handle);
         for remembered in self.recency.iter_mut() {
@@ -264,64 +201,56 @@ impl<B: BufferTrait> Buffers<B> {
                 *remembered = new.to_string();
             }
         }
-        // Moved here rather than left for the caller: `current` naming a key
-        // the table does not hold is the one state this compartment promises
-        // cannot be observed, and leaving it wrong for even one statement is
-        // the bug the promise is about.
+        // Here rather than left to the caller: `current` must not name a
+        // missing buffer for even one statement.
         if &*self.current == old {
             self.current = Arc::from(new);
         }
-        Renamed::Yes
+        BufferRenamed::Yes
     }
 
-    /// Remove NAME, and say what the caller must now do about what is current.
+    /// Removes NAME, and says what the caller must now do about what is
+    /// current.
     ///
-    /// A fresh `*scratch*` is made when that emptied the table, because an
-    /// editor with no buffers has nothing to be current and every path here
-    /// assumes there is one.
-    ///
-    /// Whether `current` moved is the *caller's* problem to finish: this moves
-    /// it, because leaving it dangling for even one statement is the bug this
-    /// compartment exists to prevent, and then says so, because making a
-    /// buffer current has consequences out in the editor -- a window to
-    /// repoint, a mode line to redraw -- that are none of this file's
-    /// business.
-    pub fn remove(&mut self, name: &str) -> Removed {
+    /// A fresh `*scratch*` is made when that empties the table. When NAME was
+    /// current, the most recent survivor is current now, or `*scratch*`; the
+    /// answer says so, because a window to repoint and a mode line to redraw
+    /// are the caller's.
+    pub fn remove(&mut self, name: &str) -> BufferRemoved {
         if self.table.remove(name).is_none() {
-            return Removed::No;
+            return BufferRemoved::No;
         }
         self.recency.retain(|existing| existing != name);
         if self.table.is_empty() {
             self.insert(SCRATCH, Buffer::new(SCRATCH));
         }
         if &*self.current != name {
-            return Removed::Yes;
+            return BufferRemoved::Yes;
         }
-        // What was current has gone. The most recent survivor, or `*scratch*`,
-        // which the table is guaranteed to hold by the branch above.
+        // The most recent survivor, or `*scratch*`, which the table holds by
+        // the branch above.
         let successor = self
             .most_recent(name)
             .unwrap_or_else(|| SCRATCH.to_string());
         self.current = Arc::from(successor.as_str());
         self.record_use(&successor);
-        Removed::Current(successor)
+        BufferRemoved::Current(successor)
     }
 }
 
 /// What [`Buffers::rename`] did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Renamed {
+pub enum BufferRenamed {
     /// No such buffer, or the new name belongs to a different one. Nothing
     /// changed.
     No,
-    /// Renamed. Every window showing the old name must now be repointed --
-    /// see the method's note on why that is not done here.
+    /// Renamed. Every window showing the old name must now be repointed.
     Yes,
 }
 
 /// What [`Buffers::remove`] did.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Removed {
+pub enum BufferRemoved {
     /// No such buffer.
     No,
     /// Gone, and it was not the current one.

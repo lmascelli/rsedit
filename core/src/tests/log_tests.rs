@@ -1,5 +1,7 @@
 //! The diagnostics log: what it keeps, what reaches its file and when, and
 //! what it must survive.
+//!
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 #[cfg(test)]
 mod tests {
     use crate::managers::Log;
@@ -35,7 +37,7 @@ mod tests {
 
     #[test]
     fn the_log_keeps_only_the_most_recent_lines() {
-        // AVV-4: a long session used to keep every diagnostic it ever logged.
+        // A long session must not grow with every diagnostic.
         let mut log = Log::default();
         for i in 0..Log::MAX_LINES + 5 {
             log.record(&format!("line {i}"));
@@ -51,8 +53,8 @@ mod tests {
 
     #[test]
     fn a_write_the_file_refuses_is_dropped_rather_than_a_panic() {
-        // AVV-3. A file opened only for reading refuses every write, on every
-        // platform: the full disk, without filling one.
+        // A file opened only for reading refuses every write, on every
+        // platform: a full disk, without filling one.
         let scratch = Scratch::new("refused");
         scratch.create();
         let read_only = std::fs::File::open(&scratch.0).expect("opened for reading only");

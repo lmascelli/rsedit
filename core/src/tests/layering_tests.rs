@@ -5,8 +5,8 @@
 //! - `ui/` knows nothing of `editor/`: a renderer is written against what it
 //!   describes, not against this crate's internals.
 //! - Each module checked here uses, of what is below it in the map, only what
-//!   the map declares: nothing, but for `buffer/` (the types a buffer stores)
-//!   and `input.rs` (`ELispExp`).
+//!   the map declares: nothing, but for `buffer/` and `managers/` (the types
+//!   they store) and `input.rs` (`ELispExp`).
 //! - The map in `lib.rs` names every module the crate declares, and nothing
 //!   else.
 //!
@@ -49,6 +49,38 @@ mod tests {
     const PATHS: &[(&str, &str)] = &[("paths.rs", include_str!("../paths.rs"))];
     const INPUT: &[(&str, &str)] = &[("input.rs", include_str!("../input.rs"))];
     const COMMANDS: &[(&str, &str)] = &[("commands.rs", include_str!("../commands.rs"))];
+
+    /// Every file under `managers/`.
+    const MANAGERS: &[(&str, &str)] = &[
+        ("managers/mod.rs", include_str!("../managers/mod.rs")),
+        (
+            "managers/buffers.rs",
+            include_str!("../managers/buffers.rs"),
+        ),
+        (
+            "managers/commands.rs",
+            include_str!("../managers/commands.rs"),
+        ),
+        (
+            "managers/history.rs",
+            include_str!("../managers/history.rs"),
+        ),
+        (
+            "managers/kill_yank.rs",
+            include_str!("../managers/kill_yank.rs"),
+        ),
+        ("managers/log.rs", include_str!("../managers/log.rs")),
+        ("managers/macros.rs", include_str!("../managers/macros.rs")),
+        ("managers/modes.rs", include_str!("../managers/modes.rs")),
+        (
+            "managers/runtime.rs",
+            include_str!("../managers/runtime.rs"),
+        ),
+        (
+            "managers/windows.rs",
+            include_str!("../managers/windows.rs"),
+        ),
+    ];
 
     /// Every file under `buffer/`.
     const BUFFER: &[(&str, &str)] = &[
@@ -96,6 +128,27 @@ mod tests {
         ("text/", TEXT, &[]),
         ("input.rs", INPUT, &["crate::ELispExp"]),
         ("commands.rs", COMMANDS, &[]),
+        (
+            "managers/",
+            MANAGERS,
+            &[
+                "crate::ELispExp",
+                "crate::modes::MajorMode",
+                "crate::modes::SyntaxTable",
+                "crate::ui::Division",
+                "crate::ui::Face",
+                "crate::ui::FloatingWindow",
+                "crate::ui::LayoutNode",
+                "crate::ui::Orientation",
+                "crate::ui::Rect",
+                "crate::ui::Side",
+                "crate::ui::SplitPath",
+                "crate::ui::Style",
+                "crate::ui::Theme",
+                "crate::ui::Window",
+                "crate::ui::WindowId",
+            ],
+        ),
     ];
 
     /// Every file under `ui/`.
@@ -290,6 +343,7 @@ mod tests {
             (WORK, "work", &[] as &[&str]),
             (BUFFER, "buffer", &[] as &[&str]),
             (TEXT, "text", &[] as &[&str]),
+            (MANAGERS, "managers", &[] as &[&str]),
             (UI, "ui", &[] as &[&str]),
         ] {
             let (_, root) = files

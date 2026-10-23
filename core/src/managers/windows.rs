@@ -1,31 +1,10 @@
-//! Every window the frame has, and the only code allowed to change them.
+//! Every window the frame has -- the tiled tree, the floats over it, which one
+//! has focus, the next id -- and what the mouse is in the middle of doing: one
+//! fact in several pieces, and the only code that changes it. A window names a
+//! buffer and knows nothing else of it: what an operation needs from the
+//! buffer is passed in as a number.
 //!
-//! # Why this is a compartment and not five fields
-//!
-//! The layout, the floating windows, which one has focus, what the next id
-//! will be and what a held mouse button is doing are one fact in five pieces.
-//! Held as five locks they can be observed mid-change -- focus naming a window
-//! the layout has already removed -- and every operation touching two of them
-//! had to take them in an order recorded somewhere else. Held as one, that
-//! order is not a rule anybody can break: there is nothing left to order.
-//!
-//! Three things in the previous arrangement stop being possible. `hit_test`
-//! took the floating windows and then the layout, the reverse of the canonical
-//! order, and needed a comment explaining why that was safe. Splitting read
-//! the focused id, then the next id, then took the layout -- three
-//! acquisitions with gaps, across which focus could in principle change. And
-//! the bounds of the tiled area had to be a free function rather than a
-//! method, purely so a caller already holding the layout could ask without
-//! taking a second read lock on it.
-//!
-//! # What is deliberately not here
-//!
-//! Buffers. A window names a buffer and that is all it knows: nothing in this
-//! file reads a buffer's text, its point or its length. Where a window
-//! operation needs one of those -- scrolling needs a line count, recentring
-//! needs the line point is on -- the *number* is passed in. That keeps the two
-//! compartments' locks from ever being held together by anything here, and it
-//! is what makes these operations testable without an editor.
+//! Design: `doc/architettura-editor.typ, <compartimenti>`.
 use crate::ui::{
     Division, FloatingWindow, LayoutNode, Orientation, Rect, Side, SplitPath, Window, WindowId,
 };
@@ -37,18 +16,12 @@ use std::time::{Duration, Instant};
 /// can stop on.
 pub const DRAG_SCROLL_INTERVAL: Duration = Duration::from_millis(60);
 
-/// How long after a click a second one in the same cell counts as a double.
-///
-/// Four hundred milliseconds, a little under Emacs' `double-click-time`. Long
-/// enough not to demand a fast hand, short enough that two deliberate clicks
-/// in the same place -- which is how you put the cursor back where it already
-/// is -- are not mistaken for one gesture.
+/// How long after a click a second one in the same cell counts as a double: a
+/// little under Emacs' `double-click-time`.
 pub const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 
-/// Whether a press is on its own or the second of a pair.
-///
-/// An enum rather than a count, because two is as far as this goes and a
-/// number invites a caller to wonder what three means.
+/// Whether a press is on its own or the second of a pair: two is as far as
+/// counting goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClickCount {
     Single,
@@ -58,32 +31,20 @@ pub enum ClickCount {
 /// What the pointer is over.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Hit {
-    /// Inside a tiled window's text.
-    ///
-    /// LINE is a buffer line, with the window's vertical scroll added.
-    ///
-    /// COLUMN is a **screen** column, with the horizontal scroll added, and is
-    /// not a buffer column: a row that shows virtual text is wider than its
-    /// line, so the two differ. Translating is
-    /// [`Row::to_buffer`](crate::ui::layout::Row::to_buffer), and it needs the
-    /// buffer -- which this compartment does not reach. So the answer is in
-    /// the coordinates this compartment actually has, and `editor/mouse.rs`,
-    /// which reaches both, maps it before a command sees it.
-    ///
-    /// It may be past the end of the row, which the command clamps against the
-    /// buffer rather than the geometry -- the screen has no opinion about how
-    /// long a line is.
+    /// Inside a tiled window's text. LINE is a buffer line, scroll included.
+    /// COLUMN is a *screen* column, scroll included, which `editor/mouse.rs`
+    /// turns into a buffer column with
+    /// [`Row::to_buffer`](crate::ui::layout::Row::to_buffer): a row showing
+    /// virtual text is wider than its line, and the buffer is not this
+    /// compartment's. COLUMN may lie past the end of the row; the command
+    /// clamps it against the buffer.
     Text {
         window: WindowId,
         line: usize,
         column: usize,
     },
-    /// A tiled window's status line.
-    ///
-    /// Named by its window rather than by the split it divides, because a
-    /// *click* on one does nothing and only a drag needs to know: which split
-    /// a status line belongs to is a question about the tree, and asking it on
-    /// every pointer move would be work for nothing.
+    /// A tiled window's status line, named by its window: only a drag needs
+    /// the split it divides, and asks the tree then.
     ModeLine { window: WindowId },
     /// The rule drawn between two windows side by side, and the split it
     /// divides.
@@ -91,32 +52,19 @@ pub enum Hit {
         path: SplitPath,
         orientation: Orientation,
     },
-    /// A floating window -- a prompt, a completion strip.
-    ///
-    /// Reported rather than ignored so that a click on one is *swallowed*. A
-    /// float is drawn over a tiled window, so falling through would move point
-    /// in a buffer the pointer is not actually over and the user cannot see.
+    /// A floating window -- a prompt, a completion strip -- reported so that a
+    /// click on it is swallowed rather than falling through to the window
+    /// drawn under it.
     Floating { window: WindowId },
 }
 
-/// What a held mouse button is in the middle of doing.
-///
-/// # Why this is remembered at all
-///
-/// A drag is the one mouse gesture that is not a single event. Where it
-/// started decides what the events after it mean, and the pointer may by then
-/// be somewhere that would answer differently -- over another window, or off
-/// the frame entirely. Reading the position afresh on each event would make a
-/// selection jump buffers halfway through, and a window resize stop the moment
-/// the pointer overshot the rule it was dragging.
+/// What a held mouse button is in the middle of doing: where a drag started
+/// decides what the events after it mean, wherever the pointer has gone since.
 #[derive(Clone, Debug)]
 pub enum MouseDrag {
-    /// Extending a selection inside one window.
-    ///
-    /// `at` is where the pointer was last seen, in frame cells. Carried
-    /// because a drag that has left the window keeps going while the pointer
-    /// sits still, and a pointer sitting still sends no events -- so the only
-    /// record of where it is, is this one.
+    /// Extending a selection inside one window. `at` is where the pointer
+    /// was last seen, in frame cells: a pointer held still outside the window
+    /// sends no events, and the drag keeps scrolling from there.
     Text {
         window: WindowId,
         at: (isize, isize),
@@ -132,9 +80,6 @@ pub enum MouseDrag {
 }
 
 /// What a scroll did, and what it leaves the caller to do.
-///
-/// Two variants rather than `Option<Option<usize>>`, which says the same thing
-/// and reads wrong six months later.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scrolled {
     /// The view was already as far as it goes.
@@ -147,7 +92,7 @@ pub enum Scrolled {
 
 /// What [`Windows::remove`] did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Removed {
+pub enum WindowRemoved {
     /// Nothing: there was no such window, or it was the last one -- a frame
     /// with no windows has nowhere to draw a cursor.
     No,
@@ -162,30 +107,19 @@ pub enum Removed {
 /// with the last one gives the reader nothing to place themselves by.
 const NEXT_SCREEN_CONTEXT_LINES: usize = 2;
 
+/// The window tree, the floats, focus, the next id, and the mouse's state.
 pub struct Windows {
     root: LayoutNode,
     floating: Vec<FloatingWindow>,
     focused: WindowId,
     /// The id the next window will get.
-    ///
-    /// A plain `usize` rather than an atomic: it lives under the same lock as
-    /// everything else here, so the atomicity it used to need is the lock's
-    /// job now.
     next_id: usize,
+    /// What a held button is doing, if anything.
     drag: Option<MouseDrag>,
-    /// When and where the last left button went down, for telling a second
-    /// click of a pair from a first.
-    ///
-    /// # Why the editor counts clicks itself
-    ///
-    /// A terminal does not report one. It sends a button-down per press and
-    /// nothing else, so "this is the second press in the same place" is
-    /// something only somebody keeping the first press can know -- and that
-    /// has to be the editor, because a frontend that worked it out would be a
-    /// frontend each new one had to work out again, differently.
-    ///
-    /// Cleared rather than kept once a pair is complete, so three presses are
-    /// a pair and then a single rather than two overlapping pairs.
+    /// When and where the last left button went down, for telling the second
+    /// click of a pair: a terminal reports presses, not double clicks.
+    /// Cleared once a pair is complete, so that three presses are a pair and
+    /// then a single.
     last_click: Option<(Instant, isize, isize)>,
 }
 
@@ -202,17 +136,9 @@ impl Default for Windows {
     }
 }
 
-/// Which column of WIN's *text* the screen column X is over.
-///
-/// Zero for anywhere in the window's gutter, which is the honest answer: a
-/// click on a line number is a click on that line, and the beginning of it is
-/// where the nearest character is. Clamped at zero on the other side too, for
-/// a drag that has left the window to the left.
-///
-/// A function rather than the subtraction written out at each call site,
-/// because there are two of them -- one for a click and one for a drag -- and
-/// a gutter that only one of them knew about would be a selection that jumped
-/// sideways the moment the mouse moved.
+/// Returns which column of WIN's text the screen column X is over: zero in
+/// the gutter, where a click means the start of the line, and to the left of
+/// the window. One function for the click and the drag, which must agree.
 fn text_column(win: &Window, x: isize) -> usize {
     (x - win.rect.x - win.gutter_width as isize).max(0) as usize
 }
@@ -222,57 +148,61 @@ impl Windows {
     // The pieces, for the operations that still live on the facade
     // ------------------------------------------------------------------
 
+    /// Returns the tree of tiled windows.
     pub fn root(&self) -> &LayoutNode {
         &self.root
     }
 
+    /// Returns the tree of tiled windows, to change.
     pub fn root_mut(&mut self) -> &mut LayoutNode {
         &mut self.root
     }
 
+    /// Returns the floating windows, oldest first.
     pub fn floating(&self) -> &[FloatingWindow] {
         &self.floating
     }
 
+    /// Returns the floating windows, to change.
     pub fn floating_mut(&mut self) -> &mut Vec<FloatingWindow> {
         &mut self.floating
     }
 
+    /// Returns the window with focus.
     pub fn focused(&self) -> WindowId {
         self.focused
     }
 
+    /// Gives window ID focus.
     pub fn set_focused(&mut self, id: WindowId) {
         self.focused = id;
     }
 
-    /// The id the next window gets, taken.
+    /// Takes the id the next window gets.
     pub fn next_id(&mut self) -> WindowId {
         let id = self.next_id;
         self.next_id += 1;
         WindowId(id)
     }
 
+    /// Returns what a held button is doing.
     pub fn drag(&self) -> Option<MouseDrag> {
         self.drag.clone()
     }
 
+    /// Records what a held button is doing.
     pub fn set_drag(&mut self, drag: Option<MouseDrag>) {
         self.drag = drag;
     }
 
+    /// Takes what a held button was doing, leaving nothing.
     pub fn take_drag(&mut self) -> Option<MouseDrag> {
         self.drag.take()
     }
 
-    /// Repoint every window showing OLD at NEW.
-    ///
-    /// A window holds the *name* of what it shows, so a buffer that has been
-    /// renamed leaves every window that was showing it naming something the
-    /// table no longer holds -- which is the dangling state that once took the
-    /// editor down. Every one of them, tiled and floating, because more than
-    /// one window may be showing the same buffer and fixing only the focused
-    /// one leaves the others exactly as broken.
+    /// Points every window showing OLD at NEW, tiled and floating: a window
+    /// holds the name of what it shows, and any of them may show the buffer
+    /// renamed.
     pub fn rename_buffer(&mut self, old: &str, new: &str) {
         self.root.each_window_mut(&mut |window| {
             if window.buffer_name == old {
@@ -286,14 +216,10 @@ impl Windows {
         }
     }
 
-    /// Record a left button going down at (X, Y), and say whether it is the
-    /// second of a pair.
-    ///
-    /// The same cell, not merely nearby: a terminal reports whole cells, so a
-    /// hand steady enough to double-click is a hand that lands on the same
-    /// one. Allowing a neighbour would make a deliberate click just after a
-    /// previous one -- moving the cursor one character along -- read as a
-    /// double, which is the more annoying mistake of the two.
+    /// Records a left button going down at (X, Y), and returns whether it is
+    /// the second of a pair: in the same cell, within `DOUBLE_CLICK_INTERVAL`.
+    /// The same cell and not a neighbour, since a click just beside the last
+    /// one moves the cursor along.
     pub fn register_click(&mut self, x: isize, y: isize) -> ClickCount {
         let now = Instant::now();
         let doubled = self.last_click.is_some_and(|(when, last_x, last_y)| {
@@ -313,25 +239,22 @@ impl Windows {
     // Asking
     // ------------------------------------------------------------------
 
-    /// How many tiled windows the frame holds.
+    /// Returns how many tiled windows the frame holds.
     pub fn count(&self) -> usize {
         self.root.window_ids().len()
     }
 
-    /// The buffer shown by the focused window, which is not always the current
-    /// buffer: a floating prompt takes the current buffer without taking a
-    /// tiled window's place.
+    /// Returns the buffer the focused tiled window shows, which is not always
+    /// the current one: a floating prompt takes the current buffer, not a
+    /// tiled window.
     pub fn focused_buffer(&self) -> Option<String> {
         self.root
             .window(self.focused)
             .map(|window| window.buffer_name.clone())
     }
 
-    /// What window ID is showing, whether it is tiled or floating.
-    ///
-    /// Both, because a minibuffer prompt is a floating window and giving it
-    /// focus has to make its buffer current in exactly the same way -- that is
-    /// what every prompt in the editor depends on.
+    /// Returns what window ID shows, tiled or floating: focusing a prompt,
+    /// which is a float, makes its buffer current like any other window's.
     pub fn buffer_of(&self, id: WindowId) -> Option<String> {
         if let Some(window) = self.root.window(id) {
             return Some(window.buffer_name.clone());
@@ -342,13 +265,9 @@ impl Windows {
             .map(|float| float.window.buffer_name.clone())
     }
 
-    /// The rectangle the tiled windows were last laid out in.
-    ///
-    /// Rebuilt from what they recorded rather than stored: it is the frame less
-    /// the echo area, and the one place that decides it is the caller of
-    /// `compute_tiled_views`. The separator walk needs it because a rule
-    /// belongs to a *split* rather than to a window, so there is no window's
-    /// own rect to start from.
+    /// Returns the rectangle the tiled windows were last laid out in, rebuilt
+    /// from their own: the caller of `compute_tiled_views` decides it, and
+    /// the rules between windows, which belong to splits, need it.
     pub fn bounds(&self) -> Rect {
         // Every tiled window sits inside it, so its bounds are theirs put
         // together -- which is what the last frame decided, whatever the
@@ -381,10 +300,8 @@ impl Windows {
         bounds.unwrap_or_default()
     }
 
-    /// What the pointer at (X, Y) is over, in cells of the last frame.
-    ///
-    /// `None` when it is over nothing -- the echo area, or a gap no window
-    /// claims.
+    /// Returns what the pointer at (X, Y) is over, in cells of the last frame;
+    /// `None` over the echo area, or a gap no window claims.
     pub fn hit_test(&self, x: isize, y: isize) -> Option<Hit> {
         // Floats first and in reverse, because later ones paint over earlier
         // ones and the last drawn is the one the pointer is really on.
@@ -415,17 +332,10 @@ impl Windows {
         })
     }
 
-    /// Which line and **screen** column the cell (X, Y) is on, clamped to what
-    /// the window is showing.
-    ///
-    /// A screen column, for the reason [`Hit::Text`] gives: the mapping to a
-    /// buffer column needs the buffer, and the caller in `editor/mouse.rs`
-    /// does it.
-    ///
-    /// Clamped rather than refused because this answers a *drag*, and a drag
-    /// that leaves the window is a perfectly ordinary way to select to its
-    /// edge. Dragging beyond an edge selects to that edge and stops; it does
-    /// not scroll the window after the pointer, which `drag_scroll_step` does.
+    /// Returns the line and the *screen* column of WINDOW that the cell
+    /// (X, Y) is on, as `Hit::Text` gives them, clamped to what the window
+    /// shows: this answers a drag, and a drag past an edge selects to the
+    /// edge. Scrolling after the pointer is [`Windows::drag_scroll_step`]'s.
     pub fn position_in(&self, window: WindowId, x: isize, y: isize) -> Option<(usize, usize)> {
         let win = self.root.window(window)?;
         let rows = win.text_height.max(1);
@@ -433,13 +343,9 @@ impl Windows {
         Some((win.scroll_y + row, win.scroll_x + text_column(win, x)))
     }
 
-    /// Which way a drag that has left its window wants the view to move, if it
-    /// has left it at all.
-    ///
-    /// Vertically only. Dragging off the side of a window is a request to
-    /// select to the end of the lines you are over, which clamping already
-    /// gives; dragging off the top or bottom is a request for lines that are
-    /// not on screen, which nothing but scrolling can answer.
+    /// Returns which way a drag that has left WINDOW wants the view to move,
+    /// if it has left it: vertically only, since off a side clamping already
+    /// selects to the ends of the lines.
     pub fn drag_scroll_step(&self, window: WindowId, y: isize) -> Option<isize> {
         let win = self.root.window(window)?;
         let top = win.rect.y;
@@ -451,28 +357,15 @@ impl Windows {
         if y < top {
             return Some(-1);
         }
-        // The top row of a window flush with the top of the frame counts as
-        // being above it, because there is no row above it to be on: a
-        // terminal cannot report row -1, so a drag off the top of the screen
-        // arrives clamped to row 0 and would otherwise read as "inside".
-        //
-        // It costs nothing when the view is already at the start of the
-        // buffer, because then there is nothing to scroll to and `scroll_by`
-        // says so. It only acts when there is text above, which is the only
-        // time anybody drags there.
+        // The top row of a window at the top of the frame counts as above it:
+        // a terminal cannot report row -1, so a drag off the top arrives as
+        // row 0. At the start of the buffer, `scroll_by` has nothing to do.
         (y == top && top == 0).then_some(-1)
     }
 
-    /// How long until a drag that has left its window should scroll again, or
-    /// `None` when none is waiting to.
-    ///
-    /// # Why this is a timer and not an event
-    ///
-    /// A pointer held still outside a window sends nothing at all, and that is
-    /// exactly the position somebody selecting a long passage leaves it in.
-    /// Scrolling only on movement would mean the selection stopped the moment
-    /// they stopped jiggling the mouse, which reads as the editor having lost
-    /// interest.
+    /// Returns how long until a drag that has left its window scrolls again,
+    /// or `None` when none is waiting to: a pointer held still sends nothing,
+    /// and the selection has to keep going.
     pub fn drag_scroll_in(&self) -> Option<Duration> {
         let MouseDrag::Text { window, at: (_, y) } = self.drag()? else {
             return None;
@@ -485,20 +378,16 @@ impl Windows {
     // Changing
     // ------------------------------------------------------------------
 
-    /// Split the focused window, giving the two halves DIVISION, and return
-    /// the new window's id.
-    ///
-    /// Focus stays where it was, as it does in Emacs: `C-x 2` then typing
-    /// continues in the window you were already in.
+    /// Splits the focused window, the halves shared as DIVISION says, and
+    /// returns the new window's id. Focus stays where it was, as in Emacs.
     pub fn split_focused(
         &mut self,
         orientation: Orientation,
         division: Division,
     ) -> Option<WindowId> {
         let focused = self.focused;
-        // The new window shows the same buffer, scrolled the same way, so a
-        // split looks like what it is: one view becoming two of the same
-        // thing rather than a jump somewhere else.
+        // The new window shows the same buffer, scrolled the same way: one
+        // view becomes two.
         let existing = self.root.window(focused)?.clone();
         let new_id = self.next_id();
         let new_window = Window {
@@ -510,29 +399,14 @@ impl Windows {
             .then_some(new_id)
     }
 
-    /// Open a full-width window of exactly HEIGHT rows at the bottom of the
-    /// frame, showing BUFFER, and return its id.
-    ///
-    /// # What makes this different from a split
-    ///
-    /// It divides the *whole frame* rather than one window, so it appears below
-    /// everything and every window above it gives up a share of the space. That
-    /// is what a strip is: a thing the frame has, not a thing one window was
-    /// cut in half to make.
-    ///
-    /// # Focus does not move
-    ///
-    /// Deliberately, and it is the property everything else rests on. A strip
-    /// is shown *while something else is being typed into* -- completions
-    /// beneath a prompt being the case this was built for -- and focus moving
-    /// would make the strip's buffer current, so the next keystroke would be
-    /// typed into the list of suggestions instead of into the prompt.
+    /// Opens a window of exactly HEIGHT rows across the bottom of the whole
+    /// frame, showing BUFFER, and returns its id. Focus does not move: a strip
+    /// is shown while something else is typed into, as the completions under
+    /// a prompt are.
     pub fn open_bottom(&mut self, buffer: &str, height: usize) -> WindowId {
         let id = self.next_id();
         let window = Window {
-            // No status line: the height asked for is the height of what the
-            // caller wanted shown, and spending a row of it saying
-            // "*Completions*" would make six mean five.
+            // No status line: HEIGHT rows of what the caller wants shown.
             show_mode_line: false,
             ..Window::new(id, buffer)
         };
@@ -546,53 +420,43 @@ impl Windows {
         id
     }
 
-    /// Close every window but the focused one.
+    /// Closes every tiled window but the focused one; false, changing
+    /// nothing, when focus is not on a tiled window.
     pub fn delete_others(&mut self) -> bool {
         self.root.keep_only(self.focused)
     }
 
-    /// Remove a window, and say what focus must now do about it.
-    ///
-    /// Focus moves only when the window that went *was* the focused one.
-    /// Closing a strip must not move focus, which would change the current
-    /// buffer out from under whatever asked for the strip in the first place.
-    pub fn remove(&mut self, id: WindowId) -> Removed {
+    /// Removes window ID, and says what focus must now do. Focus moves only
+    /// when ID had it: closing a strip must not change the current buffer
+    /// under whatever opened the strip.
+    pub fn remove(&mut self, id: WindowId) -> WindowRemoved {
         if !self.root.remove_window(id) {
-            return Removed::No;
+            return WindowRemoved::No;
         }
         match (self.focused == id)
             .then(|| self.root.window_ids().first().copied())
             .flatten()
         {
-            // Focus is pointing at a window that no longer exists, so it has
-            // to move before anything tries to draw a cursor in it. The move
-            // is the caller's because it drags the current buffer along, and
-            // buffers are not this compartment's to touch.
+            // Focus names a window that is gone, so it moves now; making the
+            // survivor's buffer current is the caller's.
             Some(survivor) => {
                 self.focused = survivor;
-                Removed::Refocus(survivor)
+                WindowRemoved::Refocus(survivor)
             }
-            None => Removed::Yes,
+            None => WindowRemoved::Yes,
         }
     }
 
-    /// Move focus COUNT windows on, wrapping round, and answer which window it
-    /// landed on so the caller can make its buffer current.
-    ///
-    /// A negative count goes the other way, which is what lets one command
-    /// serve `C-x o` and a reversed `C-x o` alike.
+    /// Moves focus COUNT windows on, round [`Windows::all_ids`] and backwards
+    /// for a negative COUNT, and returns where it landed, for the caller to
+    /// make its buffer current.
     pub fn focus_other(&mut self, count: isize) -> Option<WindowId> {
         let ids = self.all_ids();
         if ids.len() < 2 {
             return None;
         }
-        // `unwrap_or` can only be reached by focus pointing at a window that
-        // is no longer in either list, which nothing here leaves behind --
-        // every removal moves focus. Starting from the beginning is the
-        // recovery, not the normal path, and it used to *be* the normal path
-        // for a focused float: floats were not in this list, so the walk
-        // began from wherever the first tiled window was rather than from
-        // where you actually were.
+        // Every removal moves focus, so it is always in the list: starting
+        // from the beginning is only a recovery.
         let here = ids.iter().position(|id| *id == self.focused).unwrap_or(0) as isize;
         // `rem_euclid` rather than `%`, so a negative count wraps round to the
         // end instead of producing a negative index.
@@ -602,49 +466,26 @@ impl Windows {
         Some(landed)
     }
 
-    /// Every window there is: the tiled ones in layout order, then the floats
-    /// in the order they were opened.
-    ///
-    /// # Why the floats are in it
-    ///
-    /// Because a float that focus has left is otherwise unreachable. Focus
-    /// can be taken off one by anything -- a click, a command that selects
-    /// the window it came from, `other-window` itself -- and with the floats
-    /// left out of this list nothing ever gave it back. A prompt, a strip or
-    /// a module's popup simply sat there, drawn and unusable, until it was
-    /// closed by whatever else knew how.
-    ///
-    /// Tiled first because that is where the work is, and floats after
-    /// because they arrived later; within the floats, oldest first, so the
-    /// walk goes up the stack in the order the screen shows it.
-    ///
-    /// This is deliberately not what [`Self::count`] counts. That answers
-    /// "how many windows is the frame divided into", which is what decides
-    /// whether a window may be closed and what `C-x 1` undoes -- and a prompt
-    /// drawn over the top divides nothing.
+    /// Returns every window: the tiled ones in layout order, then the floats,
+    /// oldest first. The floats are in it so that focus can get back to one it
+    /// has left; [`Windows::count`] counts only the tiled windows, which are
+    /// what divide the frame.
     pub fn all_ids(&self) -> Vec<WindowId> {
         let mut ids = self.root.window_ids();
         ids.extend(self.floating.iter().map(|float| float.window.id));
         ids
     }
 
-    /// Point the focused window at BUFFER. The caller makes it current.
+    /// Points the focused window at NAME; making it current is the caller's.
     pub fn show_in_focused(&mut self, name: &str) {
         if let Some(window) = self.root.window_mut(self.focused) {
             window.show(name);
         }
     }
 
-    /// Move the focused window's view by AMOUNT screenfuls.
-    ///
-    /// # Why point moves second, and elsewhere
-    ///
-    /// Scrolling and moving point are different things, and Emacs keeps them
-    /// different: `C-v` moves the *view*, and point comes along only because it
-    /// has to stay somewhere visible. Moving point first and letting the
-    /// renderer's cursor-following do the scrolling would look similar and be
-    /// wrong in the case that matters -- point would land at the window's edge
-    /// rather than keeping its place on the screen.
+    /// Moves the focused window's view by AMOUNT screenfuls, two lines
+    /// overlapping, and says where point must go if the view has left it: the
+    /// view moves and point follows, as with `C-v` in Emacs.
     pub fn scroll_focused(
         &mut self,
         amount: isize,
@@ -654,18 +495,14 @@ impl Windows {
         let Some(win) = self.root.window_mut(self.focused) else {
             return Scrolled::No;
         };
-        // A window that has never been drawn has no height to scroll by: the
-        // layout has not run, so nothing has worked one out. Treating it as one
-        // row keeps every calculation below sane.
+        // A window never drawn has no height yet: one row keeps the arithmetic
+        // sane.
         let height = win.text_height.max(1);
-        // The floor matters for a genuinely tiny window -- one or two rows --
-        // where the overlap would otherwise be the whole of it and the key
-        // would do nothing at all.
+        // The floor is for a window of one or two rows, which the overlap
+        // would otherwise fill.
         let step = height.saturating_sub(NEXT_SCREEN_CONTEXT_LINES).max(1) as isize;
         // Far enough that the last line sits on the bottom row, and no
-        // further. Past that the window fills with the blank space after the
-        // end of the buffer -- a screen showing nothing at all, which the user
-        // then has to scroll back out of by hand.
+        // further: past that is a screen of nothing.
         let furthest = line_count.saturating_sub(height) as isize;
         let target = (win.scroll_y as isize + amount * step).clamp(0, furthest);
         if target == win.scroll_y as isize {
@@ -674,9 +511,7 @@ impl Windows {
         win.scroll_y = target as usize;
         let top = target as usize;
         let bottom = top + height - 1;
-        // Point only if it fell outside. Inside the new view it keeps the line
-        // it was on, which is what makes two screenfuls of reading leave the
-        // cursor where the eye left it.
+        // Point moves only if it fell outside; inside, it keeps its line.
         let last_line = line_count.saturating_sub(1);
         let drag_point_to = if point_line < top {
             Some(top)
@@ -688,16 +523,9 @@ impl Windows {
         Scrolled::Yes { drag_point_to }
     }
 
-    /// Scroll the focused window so that the line point is on sits `where_to`
-    /// of the way down it: 0.0 the top row, 0.5 the middle, 1.0 the bottom.
-    ///
-    /// Point does not move. This is the opposite of `scroll_focused`, which
-    /// moves the view and drags point along only when it would otherwise fall
-    /// off the screen: here the cursor is the fixed thing and the text slides
-    /// under it, which is what makes `C-l` a way of *looking* rather than a
-    /// way of moving.
-    ///
-    /// False when nothing changed, so a caller can tell a no-op from a scroll.
+    /// Scrolls the focused window so that point's line sits WHERE_TO of the
+    /// way down it: 0.0 the top row, 0.5 the middle, 1.0 the bottom. Point
+    /// does not move; the text does. Returns false when nothing changed.
     pub fn recenter_focused(
         &mut self,
         where_to: f64,
@@ -709,10 +537,8 @@ impl Windows {
         };
         let height = win.text_height.max(1);
         let above = ((height - 1) as f64 * where_to.clamp(0.0, 1.0)).round() as usize;
-        // Clamped at the top, and *not* at the bottom. Near the end of a file
-        // there are not enough lines left to fill the window, and refusing to
-        // scroll past that would make `C-l` do nothing for the last screenful
-        // -- exactly where centring is most wanted.
+        // Clamped at the top only: near the end of a file, `C-l` still
+        // centres.
         let target = point_line
             .saturating_sub(above)
             .min(line_count.saturating_sub(1));
@@ -723,23 +549,10 @@ impl Windows {
         true
     }
 
-    /// Scroll WINDOW by LINES, towards the end of the buffer when positive.
-    ///
-    /// Focus does not move.
-    ///
-    /// # Why point comes along
-    ///
-    /// For the same reason it does in [`Windows::scroll_focused`], and it is
-    /// the same rule deliberately: a view scrolled far enough that point is no
-    /// longer in it leaves the cursor somewhere the reader cannot see, and the
-    /// next arrow key snaps the view back to wherever that was. Two ways of
-    /// scrolling that disagreed about this was the confusing part -- `C-v`
-    /// took the cursor with it and the wheel did not.
-    ///
-    /// Only for the *focused* window. Scrolling a window you are not typing in
-    /// must not move point, because point belongs to the buffer rather than to
-    /// the window, and another window may be showing the same buffer -- and
-    /// because nothing is about to snap back there anyway.
+    /// Scrolls WINDOW by LINES, towards the end when positive, without moving
+    /// focus. In the focused window point follows the view, as in
+    /// [`Windows::scroll_focused`]; in another it stays, since point is the
+    /// buffer's and another window may be showing the buffer.
     pub fn scroll_by(
         &mut self,
         window: WindowId,
@@ -752,13 +565,9 @@ impl Windows {
             return Scrolled::No;
         };
         let height = win.text_height.max(1);
-        // The last line may sit on the top row and no further. Past that the
-        // window fills with the nothing after the end of the buffer, which the
-        // reader then has to scroll back out of by hand.
-        //
-        // Further than `scroll_focused` allows, and on purpose: a wheel is a
-        // way of *looking* at the end of a file, where a screenful key is a
-        // way of reading through it.
+        // The last line may reach the top row: further than `scroll_focused`
+        // goes, since a wheel looks at the end of a file where a screenful key
+        // reads through it.
         let furthest = line_count.saturating_sub(1) as isize;
         let target = (win.scroll_y as isize + lines).clamp(0, furthest);
         if target == win.scroll_y as isize {
@@ -783,7 +592,8 @@ impl Windows {
         Scrolled::Yes { drag_point_to }
     }
 
-    /// Move the boundary of the split at PATH by DELTA cells.
+    /// Moves the boundary of the split at PATH by DELTA cells, and returns
+    /// false when it could not move.
     pub fn resize_split(&mut self, path: &[Side], delta: isize) -> bool {
         let rect = self.bounds();
         self.root.resize_split(path, rect, delta)
