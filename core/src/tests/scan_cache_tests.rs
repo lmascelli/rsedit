@@ -1,17 +1,10 @@
-//! The scan checkpoints: that they are a shortcut and never an answer.
+//! The scan checkpoints: that a scan resuming from one reaches the answer a
+//! scan from the top reaches, checked over a whole file at many positions;
+//! that an edit drops the checkpoints below it and keeps the ones above; and
+//! that a turn computed against text, a mode or a table that has since moved
+//! on is refused.
 //!
-//! # What these are really testing
-//!
-//! One property, from several directions: **a scan that resumes from a
-//! checkpoint reaches the same answer as a scan that started at the top.** A
-//! cache over a stateful lexer is worth having only if that holds, and it is
-//! the kind of thing that holds for every case anybody thought of and fails on
-//! a string that happens to span a checkpoint boundary. So the equivalence is
-//! asserted over a whole file at many positions rather than at a chosen few.
-//!
-//! The rest is the bookkeeping that keeps it true: an edit drops the
-//! checkpoints below it and keeps the ones above, and a turn computed against
-//! text or a mode that has since moved on is refused rather than stored.
+//! Design: `doc/architettura-editor.typ, <cache-testo>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::BufferTrait;
@@ -291,9 +284,7 @@ mod tests {
     }
 
     /// Undo is an edit too, though it reaches the text below the doors every
-    /// other edit goes through. It used to move the text without moving the
-    /// version, and every checkpoint below what it changed went on being
-    /// offered as a shortcut through text that was no longer there.
+    /// other edit goes through: the checkpoints below what it changed go.
     #[test]
     fn an_undo_does_not_leave_a_stale_answer_behind() {
         let (ctx, env) = editor();
@@ -321,7 +312,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // What the worker refuses to store
+    // What the prescanner refuses to store
     // ----------------------------------------------------------------
 
     #[test]
@@ -349,14 +340,9 @@ mod tests {
         );
     }
 
-    /// Put a buffer into another mode, the way nothing else can yet.
-    ///
-    /// A buffer's mode is fixed when it is created, so there is no command for
-    /// this and no Lisp that reaches it. The guard exists anyway, because the
-    /// day there is one the failure would not look like a mode bug: it would
-    /// look like `forward-sexp` occasionally landing somewhere strange in one
-    /// buffer, from a checkpoint taken under the table of a language the text
-    /// is no longer being read as.
+    /// Puts a buffer into another mode by setting the field alone, without
+    /// what `change_major_mode` drops and emits: what is left to refuse a turn
+    /// taken under the old mode is the check where the turn is stored.
     fn remode(ctx: &Ctx, name: &str, mode: &str) {
         ctx.with_buffer_mut(name, |b| b.current_mode = mode.to_string())
             .expect("the buffer is there");
@@ -454,8 +440,8 @@ mod tests {
 
     #[test]
     fn a_syntax_table_change_retires_the_checkpoints_taken_with_the_old_one() {
-        // The text and the mode stay the same: only the table moves, which
-        // used to leave every checkpoint looking as good as new.
+        // The text and the mode stay the same: only the table moves, and every
+        // checkpoint would look as good as new.
         let (ctx, env) = editor();
         // A `<` the new table will open a list at, and never close.
         let text = format!("const A: bool = 1 < 2;\n{}", source());

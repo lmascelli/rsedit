@@ -61,6 +61,18 @@ impl Rectangle {
         }
     }
 
+    /// Returns the block between offsets A and B of TEXT, either of which may
+    /// be either end. With INCLUSIVE, the column at the right edge is part of
+    /// it, as a selection that takes the character at both ends wants.
+    pub fn between_offsets<B: BufferTrait>(text: &B, a: usize, b: usize, inclusive: bool) -> Self {
+        let mut rectangle = Self::between(
+            text.cursor_1d_to_2d(a.min(text.len())),
+            text.cursor_1d_to_2d(b.min(text.len())),
+        );
+        rectangle.right = rectangle.right.saturating_add(usize::from(inclusive));
+        rectangle
+    }
+
     /// How many columns wide. Zero is allowed and is useful: a rectangle with
     /// no width is a position on every line, which is what `string-rectangle`
     /// wants when it is being used to prefix a run of lines.

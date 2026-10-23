@@ -131,12 +131,20 @@ un suo argomento senza sapere chi lo ascolta (@argomenti). L'interprete non è
 nella figura: è il crate `risp`, che non conosce l'editor, e lo usano gli strati
 da `managers/` in su.
 
+La regola ha un'eccezione, dichiarata: `buffer/` conserva alcuni tipi che
+vengono da più in alto, le facce di `ui/` (negli overlay e nel testo virtuale)
+e gli stati della colorazione e della scansione di `modes/` (nelle due cache
+del testo, @cache-testo). Non ne usa altri: `layering_tests` ne tiene l'elenco,
+e un tipo nuovo fa fallire il test finché non lo si aggiunge lì e nella mappa
+di `lib.rs`.
+
 == Dove sta cosa
 
 #ref-table(
   columns: (3.4cm, 1fr),
   header: ([Percorso], [Contenuto]),
   [`lib.rs`], [Ordine dei moduli e superficie pubblica (`pub use`). Tutto il resto è `pub(crate)`.],
+  [`paths.rs`], [Le directory dell'editor, configurazione e cache, secondo le convenzioni di ogni sistema: `app_dir` (@directory).],
   [`buffer/`], [`Buffer`, `BufferTrait`, `GapBuffer`, undo, mark, overlay, testo virtuale, cache di colorazione (`syntax.rs`) e di scansione (`scan.rs`), timbro del file su disco (`disk.rs`).],
   [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: ricerca e isearch, rettangoli, kill ring, liste di posizioni (`results.rs`).],
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, il parser dei nomi dei tasti, le keymap predefinite.],
@@ -161,8 +169,11 @@ Un front-end vede soltanto ciò che `lib.rs` riesporta: `EditorState`,
 `KeyCode`, `KeyModifiers`, `MouseEvent`, `MouseKind`, `MouseButton`), i tipi
 della fotografia (`FrameSnapshot`, `RenderableWindowView`, `Highlight`,
 `GutterCell`, `Separator`, `Rect`, `Face`, `Style`, `Color`, `Theme`,
-`NAMED_COLORS`), dall'interprete `Env`, `LispContext`, `Parser` ed `eval`, più
-`mouse_mode`, `MOUSE_MODE`, `CONFIG_DIR`, `XDG_CONFIG_HOME` e l'alias
+`NAMED_COLORS`), dall'interprete `Env`, `LispContext`, `Parser` ed `eval`, i
+compartimenti `Buffers` e `Windows`, le directory dell'editor (`app_dir`,
+`AppDir`, `DirOptions`, `DirError` e i nomi delle variabili `CONFIG_DIR`,
+`CACHE_DIR`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, @directory), più
+`mouse_mode`, `MOUSE_MODE`, `isolate_config_for_tests` e l'alias
 `ELispExp<B>` (`LispExp<EditorState<B>>`). I metodi di `EditorState` che un
 front-end usa sono pochi:
 
@@ -225,7 +236,7 @@ fermato.
 == Dal `main` al ciclo degli eventi
 
 `src/main.rs` fa quattro cose: chiama `create_global_env::<GapBuffer>()`,
-attiva il file di log `rsedit.log` #emph[nella directory corrente], apre il
+attiva il file di log `rsedit.log` nella directory della cache (@directory), apre il
 file passato come primo argomento valutando `(find-file PERCORSO)` e, se lo
 standard input è un terminale, entra in `tui_main`. Un errore di avvio
 dell'interprete viene stampato e il programma esce; un errore di `find-file`
@@ -256,8 +267,9 @@ finisce nell'area dei messaggi.
 
 + `EditorState::new()` riempie la keymap globale con le poche associazioni
   scritte in Rust (`fill_default_keymaps`), crea ogni compartimento con il suo
-  `Arc<RwLock<…>>`, avvia lo scheduler di sfondo e gli consegna i due lavori
-  che girano sempre: `Highlighter` e `Prescanner`, ogni 40 ms.
+  `Arc<RwLock<…>>`, avvia il WorkManager e gli consegna i due lavori che
+  girano sempre, `Highlighter` e `Prescanner`, che si svegliano quando un
+  buffer o una grammatica cambiano.
 + `bootstrap_vm` crea l'ambiente radice con le 86 primitive di base e
   verifica l'interprete.
 + `lisp-path` diventa `("<directory dell'eseguibile>/data/lisp")`.
@@ -270,26 +282,62 @@ finisce nell'area dei messaggi.
   primitive, i comandi, il modo `minibuffer-mode` e il modo `isearch-mode`.
 + `rsedit-path` riceve il percorso dell'eseguibile.
 + Se manca, `init.lisp` viene creato con `DEFAULT_INIT_LISP` (vedi sotto).
-+ Lo scheduler riceve `FileWatcher` e `AutoSaver`, con gli intervalli letti
++ Il WorkManager riceve `FileWatcher` e `AutoSaver`, con gli intervalli letti
   dalle variabili (`watch-file-interval`, `auto-save-interval`).
 + `eval_file` valuta `init.lisp`, che carica i moduli Lisp.
 
-=== Dove sta la configurazione
+=== Le directory dell'editor <directory>
+
+L'editor tiene due directory sue: quella della configurazione, con
+`init.lisp`, e quella della cache, con ciò che può rifare, come il file di
+log: cancellarla non perde nulla che conti. Le trova `app_dir`, in `paths.rs`:
+le si chiede una directory per ciò a cui serve (`AppDir::Config`,
+`AppDir::Cache`), e risponde con il suo posto su questo sistema, creandola se
+manca e se `DirOptions::create` lo chiede. La usano `create_global_env`, per
+`init.lisp`, e `main.rs`, per il log. Le due directory si trovano con la
+stessa regola:
 
 #ref-table(
-  columns: (1fr, 1.4fr),
+  columns: (1.15fr, 1.4fr),
   header: ([Fonte, in ordine di precedenza], [Directory]),
-  [`RSEDIT_CONFIG_DIR`], [usata così com'è, su ogni piattaforma],
-  [`XDG_CONFIG_HOME` (solo Unix)], [`$XDG_CONFIG_HOME/rsedit`],
-  [la piattaforma], [`%APPDATA%\rsedit` su Windows, `$HOME/.config/rsedit` altrove (anche su macOS)],
+  [`RSEDIT_CONFIG_DIR`, `RSEDIT_CACHE_DIR`], [usata così com'è, su ogni sistema],
+  [`XDG_CONFIG_HOME`, `XDG_CACHE_HOME` (solo Unix, e solo se assoluta)], [la variabile, con `rsedit` aggiunto in fondo],
+  [il sistema], [su Windows `%APPDATA%\rsedit` e `%LOCALAPPDATA%\rsedit\cache`; altrove, macOS compreso, `$HOME/.config/rsedit` e `$HOME/.cache/rsedit`],
 )
+
+Una variabile impostata ma vuota conta come non impostata. Quando nessuna
+fonte risponde, `app_dir` dà `DirError::Undetermined`; gli altri errori sono
+una directory che manca senza che si chieda di crearla (`NotFound`), un file
+al suo posto (`NotADirectory`) e una creazione fallita (`CannotCreate`). Che
+la directory si possa scrivere non viene controllato. La scelta tra le fonti,
+`choose_dir`, riceve i valori invece di leggerli dall'ambiente: così i test
+ne provano la precedenza senza scrivere nell'ambiente del processo, che tutti
+i test vedono. `isolate_config_for_tests` dà invece a ogni processo di test
+due directory sue, attraverso le due variabili `RSEDIT_*`.
+
+Tre decisioni:
+
++ *Su macOS, `~/.config` e `~/.cache`.* È lì che guarda chi usa un editor da
+  terminale su un Mac: gli editor da cui arriva, Emacs con XDG, Neovim e
+  Helix, tengono lì configurazione e cache. Scartato: `~/Library`, la
+  convenzione delle applicazioni impacchettate.
++ *Su Windows la cache è locale.* `%APPDATA%` segue la persona da una
+  macchina all'altra e viene copiato a ogni accesso. Una cache è proprio ciò
+  che si può rifare, e quindi ciò che non va copiato: sta sotto
+  `%LOCALAPPDATA%`.
++ *Su Windows le variabili `XDG_*` non contano.* Le imposta solo chi si porta
+  dietro un'abitudine di Unix; preferirle alla risposta del sistema metterebbe
+  la configurazione dove nessun programma Windows la cerca.
+
+=== Il file `init.lisp` predefinito
 
 Il file `init.lisp` predefinito carica, in quest'ordine: `commands`, `debug`,
 `common-keymaps`, `indent`, `minibuffer`, poi i moduli facoltativi
-`rust-mode`, `risp-mode`, `cc-mode`, `dired`, `completion`, `preview`,
-`clipboard`, `electric-pair`, `buffer-list`, `shell`, `manpage`, `help`,
-`occur`, `compile`, `theme`, `completion-at-point`, e infine imposta
-`dired-sort` a `'type` e `mouse-mode` a `t`. L'ordine conta: `commands`
+`rust-mode`, `risp-mode`, `cc-mode`, `python-mode`, `toml-mode`, `bash-mode`,
+`dired`, `completion`, `preview`, `clipboard`, `electric-pair`,
+`buffer-list`, `shell`, `manpage`, `help`, `occur`, `compile`, `theme`,
+`vim`, `completion-at-point`, e imposta `dired-sort` a `'type` e `mouse-mode`
+a `t`. L'ordine conta: `commands`
 definisce `defcommand`, con cui sono scritti gli altri, e `debug` definisce
 `message` e `report-error`.
 
@@ -979,20 +1027,25 @@ un ciclo «leggi un tasto», che in rsedit non esiste.
   [`overlays`], [`OverlayTable`: facce su intervalli, per categoria, che seguono le modifiche.],
   [`virtual_text`], [Testo mostrato in una posizione senza essere nel buffer (suggerimenti, anteprime).],
   [`version`], [Incrementata da ogni modifica: un risultato calcolato su un'altra versione viene rifiutato.],
+  [`changed`], [L'argomento emesso a ogni modifica del testo: il `buffer-changed` dell'editor, da quando il buffer vi entra (@argomenti).],
   [`syntax`, `scan`], [Cache della colorazione e della scansione delle espressioni.],
   [`file_stamp`, `stale`], [Timbro (istante di modifica e lunghezza) del file all'ultima lettura o scrittura; flag «cambiato sotto di noi».],
   [`auto_saved_at`], [Versione scritta nell'ultimo salvataggio automatico.],
   [`data`], [`HashMap<String, Box<dyn Any>>`: dati che altre parti appendono al buffer e che muoiono con lui.],
-  [`local_keymap`], [Dichiarato ma mai usato #rapporto("DOC-2").],
+  [`writer`], [Il lavoro che scrive nel buffer da un thread suo (un comando di shell, una ricerca); chiudere il buffer lo ferma.],
 )
 
-== `BufferTrait` e `GapBuffer`
+== `BufferTrait` e `GapBuffer` <gap-buffer>
 
 `BufferTrait` è l'unica cosa che il resto dell'editor può assumere sul testo:
 lunghezza, carattere in una posizione, punto in coordinate lineari e in
 (riga, colonna), conversioni tra le due, spostamenti del punto, inserimento e
 cancellazione di un carattere #emph[al punto], righe, `clear`. Gli
-spostamenti e le conversioni lavorano in caratteri, non in byte.
+spostamenti e le conversioni lavorano in caratteri, non in byte. Ciò che ogni
+implementazione deve fare è scritto una volta sola, per un `B` qualunque, in
+`buffer_conformance_tests`: una seconda implementazione è una riga in fondo a
+quel file, e arriva già provata. Il trait chiede anche `Clone`, ma il `clone`
+di `GapBuffer` è un `todo!()` #rapporto("BUF-3").
 
 `GapBuffer` tiene un `Vec<char>` con un buco al punto: inserire e cancellare
 lì costa O(1), spostare il punto costa la distanza percorsa. Accanto al testo
@@ -1059,7 +1112,7 @@ fatto di non poter evitare le porte.
   #carrow((3.3cm, 4.25cm), (3.3cm, 4.65cm))
   #node(3.3cm, 5.05cm, 6.2cm, 0.7cm, [modifica del testo; `is_modified = true`])
   #carrow((6.4cm, 5.05cm), (8.6cm, 5.05cm))
-  #node(12.3cm, 5.05cm, 7.2cm, 1.4cm, [`changed(buf, at)`:\ `version += 1`;\ `syntax.invalidate_from(riga)`, `truncate`;\ `scan.invalidate_from(riga)`], fill: paper)
+  #node(12.3cm, 5.05cm, 7.2cm, 1.4cm, [`changed(buf, at)`:\ `version += 1`;\ `syntax.invalidate_from(riga)`, `truncate`;\ `scan.invalidate_from(riga)`; `changed.emit()`], fill: paper)
   #note(8.6cm, 1.0cm)[Entrambe restituiscono `bool` con `#[must_use]`:\ chi chiama deve dire all'utente se il buffer ha rifiutato\ (`"Buffer is read-only"`).]
   #note(8.6cm, 2.6cm)[Il mark non viene spostato: una modifica lo disattiva,\ e un mark attivo non può quindi aver subito modifiche.\ La posizione resta per `exchange-point-and-mark`.]
 ]
@@ -1089,6 +1142,7 @@ fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     buf.syntax.invalidate_from(buf.version, line);
     buf.syntax.truncate(buf.text.line_count());
     buf.scan.invalidate_from(buf.version, line);
+    buf.changed.emit();                                   // sveglia chi aspetta
 }
 ```
 ]
@@ -1111,11 +1165,12 @@ Tre percorsi oggi scavalcano le porte:
   virtuale, mark e storia dell'undo (conservandone il limite), riporta il punto
   alla stessa riga e colonna;
 - `set_minibuffer_content`, usata dallo scorrimento dei completamenti, scrive
-  direttamente nel testo del minibuffer #rapporto("MIN-3");
+  direttamente nel testo del minibuffer e poi chiama `changed`
+  #rapporto("MIN-3");
 - `undo` e `redo`, che applicano l'inverso di un gruppo direttamente sul testo
-  con `UndoHistory::undo(text)`: non controllano `read_only`, non incrementano
-  la versione, non invalidano le cache e non adattano gli overlay
-  #rapporto("BUF-1").
+  con `UndoHistory::undo(text)` e poi chiamano `changed`: versione e cache sono
+  a posto, ma `read_only` non viene controllato e overlay e testo virtuale non
+  si spostano #rapporto("BUF-1").
 
 == Undo <undo>
 
@@ -1227,44 +1282,49 @@ Restituiscono la posizione in cui riportare il punto.
   `set-undo-limit` lo cambia per buffer. Il gruppo più recente non viene mai
   scartato, anche se da solo supera il limite.
 
-== Mark, regione, overlay e testo virtuale
+== Mark, regione, overlay e testo virtuale <mark-overlay>
 
 Il mark è una posizione con un flag `active`. La regione esiste solo se il mark
 è attivo (`region_bounds` la ordina e la limita alla lunghezza del testo), e
-ogni modifica la disattiva, come in Emacs. Gli #emph[overlay] sono intervalli con
-una faccia e una categoria (le corrispondenze di una ricerca, una diagnostica,
-l'enfasi di una pagina di manuale); sono la prima cosa che deve sopravvivere
-alle modifiche, e le porte li adattano con `adjust_for_insert` e
-`adjust_for_delete`; un overlay che si riduce a lunghezza zero viene cancellato.
+ogni modifica la disattiva, come in Emacs. Il flag `rectangle` dice che la
+regione si disegna come un rettangolo; il rettangolo tra due posizioni lo
+calcola `Rectangle::between_offsets`, in `text/rectangle.rs` (@testo). Gli
+#emph[overlay] sono intervalli con una faccia e una categoria (le
+corrispondenze di una ricerca, una diagnostica, l'enfasi di una pagina di
+manuale); sono, con il testo virtuale, le sole posizioni conservate che
+seguono le modifiche: le porte li adattano con `adjust_for_insert` e
+`adjust_for_delete`. Nessuna delle due estremità cresce, e un overlay che si
+riduce a lunghezza zero viene cancellato.
 Il #emph[testo virtuale] è ancorato a un punto, non a un intervallo, ed è per
 questo una tabella a parte: il layout delle righe lo inserisce nel testo
 mostrato (`ui/layout.rs`), e un clic su di esso viene riportato alla posizione
 vera del buffer.
 
-== Le cache del testo
+== Le cache del testo <cache-testo>
 
 #ref-table(
   columns: (2.6cm, 1fr, 1fr),
   header: ([Cache], [Che cosa conserva], [Chi la riempie]),
-  [`SyntaxCache`], [Gli intervalli colorati di ogni riga e lo stato del lessico (la pila delle regioni aperte) all'inizio di ogni riga, per versione.], [L'evidenziatore, 500 righe per turno, ogni 40 ms.],
-  [`ScanCache`], [Un punto di ripresa ogni 64 righe per la scansione delle espressioni bilanciate, per versione e modo.], [Lo scanner preventivo, 500 righe per turno. `forward-sexp`, l'indentazione e `syntax-ppss` la leggono e partono dal punto di ripresa più vicino invece che dall'inizio.],
+  [`SyntaxCache`], [Gli intervalli colorati di ogni riga e lo stato del lessico (la pila delle regioni aperte) all'inizio di ogni riga, per versione, modo ed edizione delle grammatiche.], [L'evidenziatore, `LINES_PER_TURN` (500) righe per passo, svegliato da `buffer-changed` e `syntax-changed`.],
+  [`ScanCache`], [Un punto di ripresa ogni 64 righe per la scansione delle espressioni bilanciate, per versione, modo ed edizione della tabella sintattica.], [Lo scanner preventivo, 500 righe per passo, svegliato dagli stessi argomenti. `forward-sexp`, l'indentazione e `syntax-ppss` la leggono e partono dal punto di ripresa più vicino invece che dall'inizio.],
 )
 
 Entrambe sono invalidate dalla riga modificata in giù, dalla stessa chiamata
-(`changed`). Una cache che non corrisponde a versione e modo correnti non viene
-usata: il caso peggiore è una scansione dall'inizio, cioè il comportamento che
-c'era prima delle cache.
+(`changed`); la colorazione vecchia resta disegnata finché la nuova non la
+sostituisce. Una cache che non corrisponde a versione, modo ed edizione
+correnti non viene usata: il caso peggiore è una scansione dall'inizio, la
+stessa che si farebbe senza cache.
 
-== File su disco
+== File su disco <file-su-disco>
 
 `find-file` legge il file, imposta `file_path` e il timbro (`FileStamp`:
 istante di modifica e lunghezza, un solo `stat`), e sceglie il modo secondo le
 espressioni regolari di `add-auto-mode`. La lettura usa `read_to_string`, che
-rifiuta un file non UTF-8; il motivo va nel registro #rapporto("FIL-3").
+rifiuta un file non UTF-8; il motivo va nel log #rapporto("FIL-3").
 Salvare scrive l'intero testo con `std::fs::write` (sul posto, senza file
 temporaneo #rapporto("FIL-2")) e aggiorna il timbro, altrimenti ogni
 salvataggio sembrerebbe la scrittura di qualcun altro. `save-buffer` scrive
-l'esito, riuscito o fallito, nel registro e non nell'area messaggi
+l'esito, riuscito o fallito, nel log e non nell'area messaggi
 #rapporto("FIL-1"); `write-file` lo scrive anche nell'area messaggi.
 
 Il #emph[watcher] (`FileWatcher`, ogni `watch-file-interval` secondi, 3 per
@@ -1278,6 +1338,153 @@ la cui versione è cambiata dall'ultima copia in `#nome#`, nella directory del
 file o in `auto-save-directory`; `recover-file` riporta la copia nel buffer.
 La versione salvata viene registrata anche quando la scrittura fallisce
 #rapporto("FIL-5").
+
+== Le decisioni <decisioni-buffer>
+
++ *La sola lettura sta sul buffer e si controlla alle porte.* Un buffer che
+  #emph[presenta] qualcosa --- un elenco di directory, l'elenco delle facce,
+  un backtrace --- è la vista di uno stato che sta altrove: scriverci non
+  cambia quello stato, fa solo dire allo schermo una cosa falsa. I tasti da
+  soli non bastano a proteggerlo: ogni tasto stampabile è legato a
+  `self-insert`, e `M-x kill-line` o una riga di Lisp passerebbero comunque.
+  Dalle porte invece passa ogni modifica, tranne `undo` e `redo`
+  #rapporto("BUF-1"). Il punto si muove liberamente: leggere è lo scopo di un
+  buffer in sola lettura.
++ *I dati appesi vivono quanto il buffer.* Ciò che una funzionalità ricorda
+  #emph[di un buffer] --- i risultati di una ricerca mostrati lì, una tabella,
+  lo stato di una vista --- sta in `data`, sotto un nome, come
+  `Box<dyn Any>`. Uccidere il buffer distrugge la mappa, e ogni valore con il
+  suo `Drop`; un `downcast` del tipo sbagliato risponde `None`. Due
+  funzionalità appendono i loro dati allo stesso buffer senza sapere l'una
+  dell'altra. Scartati: una tabella globale per nome di buffer, sbagliata dopo
+  un cambio di nome e ancora lì dopo la chiusura; il testo del buffer, che va
+  bene solo per ciò che si mostrerebbe comunque; un puntatore grezzo, che non
+  ha distruttore e che con un cast sbagliato è un comportamento indefinito
+  invece di un rifiuto.
++ *`adopt_text` sostituisce il testo in un metodo solo.* Sei istruzioni
+  sparse nei chiamanti sono sei occasioni di dimenticarne una, e quelle facili
+  da dimenticare non si vedono subito: senza la versione l'evidenziatore
+  salverebbe i colori del testo vecchio sul testo nuovo, senza svuotare gli
+  overlay una diagnostica resterebbe su una riga che si è spostata. Butta via
+  undo, mark, overlay e testo virtuale, che descrivono posizioni di un testo
+  che non c'è più: disfare verso uno stato che il file non ha mai avuto è
+  peggio che non poter disfare. Tiene il modo, il limite dell'undo, e la riga
+  e la colonna del punto, perché tornare circa dove si era è lo scopo di
+  ricaricare un file che si sta leggendo.
++ *Il flag del rettangolo sta sul mark.* È una proprietà della selezione, non
+  del buffer: ogni modifica disattiva il mark, e così chiude anche il modo
+  rettangolo, senza una seconda cosa da ricordare di spegnere. Cambia solo ciò
+  che si disegna: i comandi dei rettangoli lavorano da punto e mark in ogni
+  caso.
++ *Gli overlay seguono le modifiche, alle porte.* Le regole di un modo sono
+  espressioni regolari sul testo: dicono «una parola di questa lista è una
+  parola chiave», non «#emph[questo] tratto, per qualcosa che è successo». Per
+  dire la seconda cosa ci sono gli overlay, che quindi devono seguire il
+  testo: le porte chiamano `adjust_for_insert` e `adjust_for_delete`, come per
+  l'undo e la versione. Una posizione che si sposta senza i suoi overlay è
+  un'evidenziazione sulle parole sbagliate, minuti dopo, senza niente che dica
+  perché.
++ *La tabella degli overlay è ordinata per inizio.* Una modifica sposta gli
+  overlay che stanno dopo di lei: con l'ordine sono una ricerca binaria e una
+  coda, invece di tutta la tabella. Le due regole di aggiustamento sono
+  monotone, quindi l'ordine sopravvive e non si ricostruisce mai. Il caso più
+  comune, una modifica dopo l'ultimo overlay, costa un confronto con
+  `furthest_end`.
++ *Nessuna estremità di un overlay cresce.* `start` si sposta quando
+  l'inserimento è prima o proprio lì, `end` solo quando è strettamente prima:
+  un testo inserito all'inizio o alla fine resta fuori, uno inserito dentro
+  entra a farne parte. Una corrispondenza evidenziata resta esattamente il
+  testo che corrispondeva, qualunque cosa si scriva accanto.
++ *Il testo virtuale è un punto, in una tabella sua.* Non è un overlay: un
+  overlay colora caratteri che ci sono, e uno senza larghezza viene
+  cancellato. Non è nemmeno testo inserito davvero: il buffer risulterebbe
+  modificato, l'undo si riempirebbe di cose mai scritte e il salvataggio le
+  scriverebbe nel file. È una posizione che si sposta con il testo e non
+  sparisce mai. La tabella non sa a che cosa serve: suggerimenti, anteprime e
+  il resto sono categorie scelte da chi li produce.
++ *Due cache, perché due lessici.* La grammatica decide che aspetto ha il
+  testo, e il suo stato è la pila delle regioni aperte; la tabella sintattica
+  decide che cosa significa --- dove sono stringhe, commenti e liste --- e il
+  suo stato è un `Resume`. `forward-sexp`, l'indentazione, `syntax-ppss` ed
+  electric-pair leggono la seconda, e nessuno di loro si può servire dalla
+  prima (@modi).
++ *La colorazione tiene uno stato per riga, la scansione un punto ogni 64
+  righe.* Quasi ogni riga di quasi ogni file comincia nello stesso stato
+  vuoto, e gli stati della colorazione, internati, costano poco. Uno stato
+  della scansione contiene invece le #emph[posizioni] delle liste aperte, così
+  due righe alla stessa profondità hanno stati diversi e internarli non
+  risparmia nulla. Un punto di ripresa ogni 64 righe costa un sessantaquattresimo
+  della memoria, e una risposta al più 64 righe di scansione.
++ *Le cache stanno sul buffer.* Ciò che le invalida è una modifica, e le
+  modifiche passano dalle porte; ciò che descrivono è un testo, a cui non
+  devono sopravvivere. Una tabella a parte nell'editor andrebbe ripulita a
+  ogni chiusura di un buffer, e sarebbe sbagliata, invece che assente, il
+  giorno in cui non lo fosse.
++ *Chi legge la cache della scansione non la scrive.* La riempie solo lo
+  scanner preventivo, e i movimenti la leggono con il lock di lettura che
+  hanno già. Riempirla leggendo vorrebbe dire prendere il lock di scrittura del
+  buffer sul percorso di un tasto, nel mezzo della valutazione di Lisp, per
+  far funzionare una cache. Il prezzo: un file appena aperto si scandisce
+  dall'inizio finché lo scanner preventivo non l'ha percorso.
++ *Una modifica tiene ciò che sta sopra.* Una modifica alla riga L non cambia
+  il testo prima di L: i punti di ripresa e gli stati che entrano nelle righe
+  fino a L restano esatti, e si scarta solo da L in giù, senza dover contare
+  le righe aggiunte o tolte.
++ *Il colore vecchio resta disegnato.* Dopo una modifica nulla di ciò che sta
+  sotto è più affidabile, ma gli intervalli restano e si disegnano finché
+  l'evidenziatore non li sostituisce. Cancellarli farebbe passare il resto del
+  file al testo semplice a ogni tasto, che è molto peggio di qualche
+  millisecondo di colore un po' sbagliato.
++ *La versione non basta.* Un cambio di modo, o una regola aggiunta alla
+  grammatica di un modo, non tocca il testo. Per questo le due cache ricordano
+  anche il modo e l'edizione della grammatica o della tabella con cui sono
+  state calcolate, e una cache che ne descrive un'altra ricomincia
+  dall'inizio. Così resta fuori dal lessico anche lo stato di un'altra
+  grammatica, che nomina le regioni con il loro posto in quella.
++ *La colorazione non si risincronizza.* Dopo una modifica si ricalcola fino
+  alla fine del file, invece di fermarsi dove lo stato calcolato torna uguale
+  a quello di prima. Fermarsi lì costerebbe le righe fino alla convergenza
+  invece del resto del file, ma richiede di tenere gli stati della
+  generazione precedente e di contare di quante righe la modifica ha spostato
+  il resto: senza quel conto si confronterebbero le righe sbagliate. Il lavoro
+  a passi limitati tiene comunque l'editor reattivo, e la risincronizzazione
+  riguarda quanto lavoro c'è in tutto: si aggiunge se le misure la chiedono.
++ *Undo scrive sotto le porte.* Rifare la storia non deve registrarsi come
+  storia nuova, quindi `undo` e `redo` applicano le modifiche con
+  `apply_insert` e `apply_delete`, sotto lo strato che registra: non c'è un
+  flag da ricordare. Il chiamante fa poi ciò che le porte farebbero, con
+  `changed` da `Applied::from` #rapporto("BUF-1").
++ *Il testo da rifare si cattura disfacendo.* Disfare un inserimento toglie il
+  testo e lo ricorda nel gruppo inverso, invece di conservarlo prima per un
+  `redo` che può non venire mai.
++ *Una macro è un gruppo solo.* Rieseguire una macro passa ogni comando per la
+  via normale, e lascerebbe cinquanta gruppi dietro una macro di cinquanta
+  comandi: chi la esegue non vuole disfarne un cinquantesimo. `OneGroup` tiene
+  fermo il timbro per tutta la riproduzione, e la regola che c'è già --- un
+  gruppo si chiude alla prima modifica sotto un altro timbro --- fa il resto.
++ *Il file si riconosce da un timbro, non da un hash.* La domanda «il file è
+  cambiato?» si fa per ogni buffer aperto, ogni pochi secondi. Un hash
+  risponde esattamente ma legge tutto il file; un timbro --- istante di
+  modifica e lunghezza --- risponde con un solo `stat`. Sfugge una scrittura
+  che cada nella granularità del filesystem e lasci identica la lunghezza: il
+  buffer resta vecchio fino al cambiamento successivo, senza danni.
++ *Il timbro si confronta per differenza, non per «più recente».* Gli istanti
+  tornano indietro nell'uso normale: `git checkout` rimette istanti vecchi,
+  `touch -d` scrive quello che gli si dice, un filesystem di rete non è
+  d'accordo con l'orologio locale. «Diverso da ciò che ho registrato» è una
+  domanda a cui il filesystem risponde; «più recente del mio» è una domanda su
+  due orologi. Il timbro si registra anche a ogni scrittura dell'editor,
+  altrimenti ogni salvataggio sembrerebbe la scrittura di qualcun altro.
++ *`stale` è un flag, non una domanda.* Il momento in cui fermare la
+  sovrascrittura del lavoro di un altro è il salvataggio, non l'istante in cui
+  il cambiamento si nota: il watcher marca il buffer, e il salvataggio
+  successivo chiede.
++ *L'autosalvataggio confronta versioni.* «Modificato» resta vero dal primo
+  tasto fino al salvataggio, quindi un lavoro che scrivesse a ogni turno ogni
+  buffer modificato riscriverebbe per sempre un buffer fermo. La versione si
+  muove solo quando si muove il testo: `auto_saved_at` la ricorda, e la
+  domanda «c'è qualcosa da scrivere?» diventa un confronto tra due numeri. Un
+  editor lasciato aperto di notte non costa nulla.
 
 // ===========================================================================
 = Il testo: ricerca, sostituzione, kill ring, rettangoli e liste di risultati <testo>

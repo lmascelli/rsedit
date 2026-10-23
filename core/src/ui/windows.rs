@@ -1,6 +1,7 @@
 use crate::ELispExp;
 use crate::buffer::{Buffer, BufferTrait, mark::region_bounds};
 use crate::managers::Buffers;
+use crate::text::rectangle::Rectangle;
 use crate::ui::Face;
 use crate::ui::layout::{self, BufferHighlight, Layout};
 
@@ -1262,7 +1263,10 @@ pub fn region_highlights<B: BufferTrait>(
     let rectangle = buf
         .mark
         .filter(|mark| mark.active && mark.rectangle)
-        .and_then(|mark| crate::buffer::mark::rectangle_corners(Some(mark), &buf.text));
+        .map(|mark| {
+            let point = buf.text.cursor_pos_1d();
+            Rectangle::between_offsets(&buf.text, mark.at, point, mark.inclusive)
+        });
     let (start_line, end_line) = rectangle
         .map(|rectangle| (rectangle.top, rectangle.bottom))
         .unwrap_or((start_line, end_line));

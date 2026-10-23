@@ -1,14 +1,8 @@
-//! The editor's own directories: where each one is, and what asking for one
-//! does on the disk.
-//!
-//! # What these touch
-//!
-//! Never the person's own directories. What is decided from the environment
-//! is checked through the pure functions the environment is read into, as in
-//! `config_path_tests`; what is done on the disk, on directories of each
-//! test's own; and `app_dir` itself only after `isolate_config_for_tests` has
-//! named this process's directories, through the same variables a person
-//! would use.
+//! The editor's own directories: which place wins, and what asking for one
+//! does on the disk. Never the person's own: the precedence is checked through
+//! the functions the environment is read into, the disk on directories of each
+//! test's own, and `app_dir` itself on the directories that
+//! `isolate_config_for_tests` names for this process.
 #[cfg(test)]
 mod tests {
     use crate::paths::{
@@ -40,7 +34,78 @@ mod tests {
         Some(OsString::from(text))
     }
 
-    // -- what is decided --------------------------------------------------
+    fn path(text: &str) -> Option<PathBuf> {
+        Some(PathBuf::from(text))
+    }
+
+    fn chosen(
+        rsedit_dir: Option<PathBuf>,
+        xdg: Option<PathBuf>,
+        platform: Option<PathBuf>,
+    ) -> Option<String> {
+        choose_dir(rsedit_dir, xdg, platform).map(|dir| dir.display().to_string())
+    }
+
+    // -- which place wins -------------------------------------------------
+
+    #[test]
+    fn the_explicit_variable_wins_over_everything() {
+        // One answer that means the same on every platform: a portable
+        // install, a second configuration, a test suite.
+        assert_eq!(
+            chosen(
+                path("/opt/cfg"),
+                path("/home/me/.config"),
+                path("/fallback")
+            ),
+            Some("/opt/cfg".to_string())
+        );
+    }
+
+    #[test]
+    fn the_explicit_variable_is_used_exactly_as_given() {
+        // No `rsedit` joined onto it: it names the directory holding
+        // `init.lisp`, not a parent of application directories.
+        assert_eq!(
+            chosen(path("/tmp/scratch"), None, None),
+            Some("/tmp/scratch".to_string())
+        );
+    }
+
+    #[test]
+    fn xdg_is_a_parent_and_gets_the_application_name_joined_on() {
+        // `XDG_CONFIG_HOME` contains each application's own directory, so
+        // `rsedit` goes on the end.
+        assert_eq!(
+            chosen(None, path("/home/me/.config"), path("/fallback")),
+            Some("/home/me/.config/rsedit".to_string())
+        );
+    }
+
+    #[test]
+    fn the_platform_answer_is_used_when_nothing_overrides_it() {
+        // Already complete: whoever built it knew whether the platform wanted
+        // `.config/rsedit` or `rsedit` under `%APPDATA%`.
+        assert_eq!(
+            chosen(None, None, path("/home/me/.config/rsedit")),
+            Some("/home/me/.config/rsedit".to_string())
+        );
+    }
+
+    #[test]
+    fn nothing_at_all_is_an_answer() {
+        // With no home there is nowhere to keep a configuration -- not a
+        // relative path made out of nothing, in the working directory.
+        assert_eq!(chosen(None, None, None), None);
+    }
+
+    #[test]
+    fn a_missing_middle_step_falls_past_it_rather_than_stopping() {
+        assert_eq!(
+            chosen(None, None, path("/fallback")),
+            Some("/fallback".to_string())
+        );
+    }
 
     #[test]
     fn the_cache_is_chosen_as_the_configuration_is() {
@@ -64,8 +129,8 @@ mod tests {
 
     #[test]
     fn a_variable_set_but_empty_counts_as_not_set() {
-        // An empty RSEDIT_CONFIG_DIR used to name the directory "" -- the one
-        // the editor was started from, where it then wrote an init.lisp.
+        // Otherwise an empty RSEDIT_CONFIG_DIR would name "": the directory
+        // the editor was started from.
         assert_eq!(path_from(os("")), None);
         assert_eq!(path_from(None), None);
         assert_eq!(path_from(os("/opt/cfg")), Some(PathBuf::from("/opt/cfg")));

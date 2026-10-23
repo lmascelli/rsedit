@@ -1,47 +1,9 @@
-//! What a buffer remembers about reading its own text as balanced expressions.
+//! The scan cache: checkpoints of the syntax-table scan, which `forward-sexp`,
+//! the indenter, `syntax-ppss` and electric-pair carry on from. One every
+//! [`LINES_PER_CHECKPOINT`] lines, written by the prescanner alone; an edit
+//! keeps the checkpoints above it.
 //!
-//! # Why this is a second cache and not the colouring one
-//!
-//! Two lexers run over the same text and they are not the same lexer. The
-//! *grammar* decides what the text should look like and its state is a stack of
-//! open regions; the *syntax table* decides what the text means -- where the
-//! strings, comments and lists are -- and its state is
-//! [`crate::modes::sexp::Resume`]. `forward-sexp`, the indenter, `syntax-ppss`
-//! and electric-pair all read the second one, and none of them could be
-//! answered from the first. So the colouring cache next door caches colouring,
-//! and this caches meaning.
-//!
-//! # Why checkpoints rather than a state per line
-//!
-//! The colouring cache keeps a state for every line and interns them, because
-//! almost every line of almost every file is entered in the same empty state. A
-//! scan state is not like that: it carries the *positions* of the lists it is
-//! inside, so two lines at the same depth still differ, and interning would
-//! dedupe nothing.
-//!
-//! So this keeps one snapshot every [`LINES_PER_CHECKPOINT`] lines. Memory is a
-//! sixty-fourth of a state-per-line table, and the cost of an answer is bounded
-//! by the distance from a checkpoint rather than by the distance from the top
-//! of the file -- which was the whole point.
-//!
-//! # Why a reader never writes here
-//!
-//! Filling the cache is the background worker's job (see
-//! [`crate::modes::prescan`]), and the motions only ever read it. A reader that
-//! filled it as it went would need the buffer's write lock -- on the keystroke
-//! path, in the middle of evaluating Lisp -- to make a *performance* cache
-//! work. Handing the writing to the worker keeps every reader on the read lock
-//! it already holds, and costs only that a file just opened is scanned from the
-//! top until the worker has walked it.
-//!
-//! # Why an edit does not throw it all away
-//!
-//! An edit on line L cannot change the text above L, so every checkpoint that
-//! describes entering a line at or before L still describes it exactly.
-//! `invalidate_from` keeps those and drops the rest. That is the whole
-//! bookkeeping -- there is none of the line-shift accounting the colouring
-//! cache's header says is missing, because a checkpoint is identified by the
-//! line it enters and the lines it is kept for are the ones that did not move.
+//! Design: `doc/architettura-editor.typ, <cache-testo>`.
 use crate::modes::sexp::Resume;
 
 /// How many lines apart the snapshots are.
@@ -52,7 +14,7 @@ use crate::modes::sexp::Resume;
 /// sixty-four lines is a few kilobytes for a large file.
 pub const LINES_PER_CHECKPOINT: usize = 64;
 
-/// The line a checkpoint enters, by index.
+/// Returns the line the checkpoint at INDEX enters.
 ///
 /// Index 0 is line [`LINES_PER_CHECKPOINT`], not line 0: the state entering
 /// line 0 is the base state, which needs no remembering.
@@ -65,20 +27,14 @@ pub fn checkpoint_line(index: usize) -> usize {
 pub struct ScanCache {
     /// The buffer version these were computed from.
     version: u64,
-    /// The major mode they were computed under.
-    ///
-    /// Kept because the table comes from the mode, and a checkpoint taken with
-    /// one table is not a shortcut under another -- it is a wrong answer that
+    /// The major mode they were computed under, whose syntax table they were
+    /// taken with: under another table a checkpoint is a wrong answer that
     /// looks like a right one. Changing a buffer's mode does not touch its
-    /// text, so nothing else here would notice.
+    /// text, so the version would not notice.
     mode: String,
     /// The edition of the syntax table they were computed with: see
-    /// [`crate::modes::SyntaxTable::edition`].
-    ///
-    /// For the same reason as the mode, and because the mode is not enough: a
-    /// mode's table can change while the buffer stays in it, and checkpoints
-    /// taken with the old table looked, to the version and the mode, as good
-    /// as new.
+    /// [`crate::modes::SyntaxTable::edition`]. A mode's table can change while
+    /// the buffer stays in the mode.
     table: u64,
     /// `points[i]` enters line `checkpoint_line(i)`.
     points: Vec<Resume>,
@@ -87,21 +43,22 @@ pub struct ScanCache {
 }
 
 impl ScanCache {
+    /// Returns the buffer version these were computed from.
     pub fn version(&self) -> u64 {
         self.version
     }
 
-    /// The edition of the syntax table these were computed with.
+    /// Returns the edition of the syntax table these were computed with.
     pub fn table(&self) -> u64 {
         self.table
     }
 
-    /// How many checkpoints currently describe the text.
+    /// Returns how many checkpoints currently describe the text.
     pub fn checkpoints(&self) -> usize {
         self.valid
     }
 
-    /// How far down the buffer the checkpoints reach.
+    /// Returns how far down the buffer the checkpoints reach.
     pub fn valid_to(&self) -> usize {
         match self.valid.checked_sub(1) {
             None => 0,
@@ -109,8 +66,8 @@ impl ScanCache {
         }
     }
 
-    /// Forget everything: another version entirely, another mode or another
-    /// edition of its syntax table.
+    /// Forgets everything, for another version entirely, another mode or
+    /// another edition of its syntax table.
     pub fn reset(&mut self, version: u64, mode: &str, table: u64) {
         self.version = version;
         mode.clone_into(&mut self.mode);
@@ -119,7 +76,8 @@ impl ScanCache {
         self.valid = 0;
     }
 
-    /// An edit landed on LINE: keep the checkpoints above it, drop the rest.
+    /// Keeps the checkpoints above LINE, where an edit landed, and drops the
+    /// rest.
     ///
     /// "Above it" includes a checkpoint entering LINE itself. It was computed
     /// from the text strictly before that line, and an edit *on* the line did
@@ -132,7 +90,7 @@ impl ScanCache {
         self.points.truncate(self.valid);
     }
 
-    /// Record the checkpoint at INDEX.
+    /// Records the checkpoint at INDEX.
     ///
     /// Only the next one is accepted. Each is computed by carrying on from the
     /// one before it, so a checkpoint written out of order would be a state
@@ -150,14 +108,13 @@ impl ScanCache {
         Ok(())
     }
 
-    /// The checkpoint a scan that will be asked about LINE may carry on from,
-    /// when the cache describes this exact text, in this exact mode, scanned
-    /// with this edition of its table.
+    /// Returns the checkpoint a scan that will be asked about LINE may carry
+    /// on from, when the cache describes this exact text, in this exact mode,
+    /// scanned with this edition of its table.
     ///
-    /// The three are checked here rather than trusted from the caller because
-    /// this is the one place a wrong answer could get in, and the cost of
-    /// refusing is a full scan -- the behaviour that existed before there was
-    /// a cache at all.
+    /// The three are checked here rather than trusted from the caller: this is
+    /// the one place a wrong answer could get in, and refusing costs a full
+    /// scan.
     pub fn resume_for(&self, mode: &str, version: u64, table: u64, line: usize) -> Option<&Resume> {
         if version != self.version || mode != self.mode || table != self.table {
             return None;
@@ -168,17 +125,17 @@ impl ScanCache {
         self.points.get(index.checked_sub(1)?)
     }
 
-    /// The major mode these were computed under.
+    /// Returns the major mode these were computed under.
     pub fn mode(&self) -> &str {
         &self.mode
     }
 
-    /// What the next turn of the worker should carry on from: the index to
+    /// Returns what the prescanner's next turn carries on from: the index to
     /// compute, and the snapshot to start it from.
     ///
     /// Starts over when the cache describes another version, another mode or
     /// another edition of the table, rather than reporting a frontier reached
-    /// under a table that is no longer in force. The worker's store step
+    /// under a table that is no longer in force. The prescanner's store step
     /// resets the cache in the same case, so the two agree about what index 0
     /// means.
     pub fn frontier_for(&self, mode: &str, version: u64, table: u64) -> (usize, Option<&Resume>) {

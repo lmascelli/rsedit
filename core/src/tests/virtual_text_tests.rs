@@ -1,22 +1,9 @@
-//! Text shown in a window that is not in the buffer.
+//! Text shown in a window that is not in the buffer: the mapping between
+//! buffer and screen columns, both ways, and the four things that use it --
+//! what is drawn, where the cursor goes, where a highlight lands, which
+//! character a click is on -- and that none of it reaches the buffer.
 //!
-//! # What is worth testing here
-//!
-//! The mapping, mostly. Everything the editor does with a column used to rest
-//! on buffer column equalling screen column, and the whole of this feature is
-//! that they can now differ. The symptom of getting it wrong is the cursor in
-//! one place and the text in another -- visible, and hard to attribute to the
-//! line that caused it, because the line that caused it is a hint somebody
-//! else put there.
-//!
-//! So: both directions, at every interesting position, and the four things
-//! that consume them -- what is drawn, where the cursor goes, where a
-//! highlight lands, and which character a click is on.
-//!
-//! The other half is that none of it reaches the buffer. A preview that
-//! modified the text and took it back out again would leave the file marked
-//! unsaved and the undo history holding something nobody typed, and both are
-//! invisible until much later.
+//! Design: `doc/architettura-editor.typ, <mark-overlay>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::BufferTrait;
@@ -201,7 +188,7 @@ mod tests {
     fn a_column_past_the_end_of_the_line_maps_past_the_end_of_the_row() {
         // What a multi-line selection depends on: it marks a line's ending as
         // selected by running one column past the last character, and a
-        // mapping that clamped to the text turned every one of those back
+        // mapping that clamped to the text would turn every one of those back
         // into a span that stopped at it.
         let (ctx, env) = editor();
         with_text("abc", &ctx);

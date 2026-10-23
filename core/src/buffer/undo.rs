@@ -1,21 +1,9 @@
-//! Per-buffer undo history.
+//! A buffer's undo history: the changes each command made, as groups, undone
+//! and redone by applying their inverse. The command an edit belongs to is the
+//! stamp its thread carries, and a group closes at the first edit made under
+//! another stamp.
 //!
-//! # What is recorded
-//!
-//! Changes, not snapshots. Each entry says what an edit did to the text, so
-//! the memory cost is proportional to the text *changed* rather than to the
-//! size of the document: typing a hundred characters into a hundred-thousand
-//! line file costs a hundred characters, not a copy of the file.
-//!
-//! # How undo and redo are the same operation
-//!
-//! Applying the inverse of a group turns the text back into what it was, and
-//! produces the group that would undo *that*. So redo is not a second
-//! mechanism -- it is the same [`UndoHistory::apply_inverse`] run against the
-//! other stack. That is also what solves the awkward part of redoing an
-//! insertion: the text to re-insert is captured at the moment undo removes it,
-//! rather than being stored up front against the possibility of a redo that
-//! may never come.
+//! Design: `doc/architettura-editor.typ, <undo>`.
 use crate::buffer::BufferTrait;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,29 +13,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // ---------------------------------------------------------------------------
 //
 // Undo works in commands, not in edits: one press of C-k undoes as one step
-// even though it deletes many characters, and a run of typing undoes as one
-// step even though each keystroke is its own command. So the history has to
-// know where one command ends and the next begins.
-//
-// The editor could tell it directly -- call `boundary` between commands -- and
-// that is what this did at first. It cost a buffer lookup and a write lock on
-// every keystroke, whether or not the key edited anything, and measured as the
-// entire cost of undo on the keystroke path: ~120ns of ~890ns, with the
-// recording itself too small to measure.
-//
-// So the announcement is made cheap instead. Each command stamps a token into
-// a thread-local; a group remembers the token it was opened under; and the
+// even though it deletes many characters. Each command stamps a token into a
+// thread-local; a group remembers the token it was opened under; and the
 // history closes the group lazily, at the first edit that arrives under a
-// different token. A command that edits nothing now costs nothing, which is
-// most of them -- every movement key, every prefix, every unbound key.
+// different token. A command that edits nothing costs nothing.
 
 /// How many characters a run of `self-insert` amalgamates before the next one
-/// starts a fresh undo group.
-///
-/// Without a cap, typing a paragraph without pausing would undo in one step
-/// and lose the lot. Emacs uses 20; there is nothing magic about the number
-/// beyond it being about a word or two -- small enough that an undo feels
-/// local, large enough that undo is not per-keystroke.
+/// starts a fresh undo group: a word or two, as in Emacs. Without a cap, a
+/// paragraph typed without pausing would undo in one step.
 pub const AMALGAMATION_LIMIT: usize = 20;
 
 /// The command an edit is being made by.
@@ -73,37 +46,23 @@ const NO_COMMAND: Command = Command {
     joins_previous: false,
 };
 
+/// The epoch the next command is given. From 1: 0 is [`NO_COMMAND`]'s.
 static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
-    /// The command running on *this* thread. Thread-local because commands are
-    /// dispatched per thread -- the background scheduler and `(spawn ...)`
-    /// each run their own -- and because reading it must cost nothing.
+    /// The command running on *this* thread. Thread-local because each thread
+    /// that edits has its own -- the WorkManager's executor and a `(spawn ...)`
+    /// thread apart from the command thread -- and because reading it must
+    /// cost nothing.
     static CURRENT: Cell<Command> = const { Cell::new(NO_COMMAND) };
 
-    /// How many callers have asked for the stamp above to be held still.
-    ///
-    /// See [`OneGroup`]. Beside `CURRENT` and thread-local for the same
-    /// reason: whose command this is, is a question about this thread.
+    /// How many callers are holding the stamp above still: see [`OneGroup`].
     static PINNED: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Holds the current command's stamp still for as long as it is alive, so
 /// that every edit made under it lands in one undo group however many
-/// commands make them.
-///
-/// # What this is for
-///
-/// A keyboard macro. Replaying one runs the commands it recorded, each
-/// through the ordinary path -- which is what makes a replay indistinguishable
-/// from typing the keys, and which would therefore leave fifty undo groups
-/// behind a fifty-command macro. Taking that back is fifty presses of `C-x u`,
-/// and nobody who ran a macro meant to undo a fiftieth of it.
-///
-/// So the replay says "all of this is one thing I did" by holding the stamp,
-/// and the history's existing rule -- a group closes at the first edit under a
-/// different stamp -- does the rest. Nothing in the history had to learn about
-/// macros.
+/// commands make them: a keyboard macro's replay undoes in one step.
 ///
 /// RAII rather than a pair of calls, so a replay that ends by propagating an
 /// error cannot leave the stamp pinned for everything typed afterwards.
@@ -111,6 +70,7 @@ thread_local! {
 pub(crate) struct OneGroup;
 
 impl OneGroup {
+    /// Starts holding the stamp still, until the value is dropped.
     pub(crate) fn begin() -> Self {
         PINNED.with(|pinned| pinned.set(pinned.get() + 1));
         OneGroup
@@ -123,7 +83,7 @@ impl Drop for OneGroup {
     }
 }
 
-/// Announce that a new command is about to run on this thread.
+/// Announces that a new command is about to run on this thread.
 ///
 /// AMALGAMATING_KIND says whether a run of this command should undo as one
 /// step; only ordinary typing does. Whether it *actually* joins the previous
@@ -146,6 +106,7 @@ pub(crate) fn begin_command(amalgamating_kind: bool) {
     });
 }
 
+/// Returns the command running on this thread.
 fn current_command() -> Command {
     CURRENT.with(|current| current.get())
 }
@@ -160,6 +121,7 @@ pub enum Change {
 }
 
 impl Change {
+    /// Returns how many bytes of deleted text this change holds.
     fn weight(&self) -> usize {
         match self {
             Change::Inserted { .. } => 0,
@@ -178,7 +140,7 @@ pub struct Group {
 }
 
 impl Group {
-    /// The earliest offset any of these changes touches.
+    /// Returns the earliest offset any of these changes touches.
     ///
     /// Every change, applied or inverted, leaves the text before its own
     /// offset alone, so nothing before the smallest of them moves.
@@ -196,13 +158,9 @@ impl Group {
 /// What undoing or redoing a group did, for the caller that has to tell the
 /// rest of the buffer.
 ///
-/// # Why the caller has to be told
-///
-/// Undo and redo write to the text below the two doors every other edit goes
-/// through -- they have to, or replaying history would record itself as new
-/// history -- and the doors are also where the buffer's version moves and its
-/// colouring and scan caches are told what changed. So the caller does that,
-/// and needs to know from where.
+/// Undo and redo write below the two doors, or replaying history would record
+/// itself as new history. So the caller moves the version and the caches on,
+/// as the doors would have, and needs to know from where.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Applied {
     /// Where point should go.
@@ -211,12 +169,15 @@ pub struct Applied {
     pub from: usize,
 }
 
-/// How much deleted text to keep before dropping the oldest history.
+/// How many bytes of deleted text a history keeps, unless told otherwise,
+/// before dropping its oldest groups.
 ///
 /// Only deletions carry text, so this bounds the one part of the history that
 /// can grow with the size of the document rather than with the number of edits.
 pub const DEFAULT_UNDO_LIMIT: usize = 1 << 20;
 
+/// A buffer's undo history: the groups done, the groups undone, and the one
+/// being accumulated.
 #[derive(Debug)]
 pub struct UndoHistory {
     /// Completed groups, most recent last.
@@ -247,7 +208,8 @@ impl Default for UndoHistory {
 }
 
 impl UndoHistory {
-    /// How many groups this history keeps.
+    /// Returns how many bytes of deleted text this history keeps before
+    /// dropping its oldest groups.
     ///
     /// A setting rather than history, which is the distinction that matters
     /// when a buffer's contents are replaced wholesale: the history goes and
@@ -256,21 +218,26 @@ impl UndoHistory {
         self.limit
     }
 
+    /// Sets the limit, dropping the oldest groups that are now past it.
     pub fn set_limit(&mut self, limit: usize) {
         self.limit = limit;
         self.trim();
     }
 
-    /// Note that `len` characters were inserted at `at`.
+    /// Records that LEN characters were inserted at AT. POINT is where point
+    /// was before the edit, kept when the edit opens a group.
     pub fn record_insert(&mut self, at: usize, len: usize, point: usize) {
         self.push(Change::Inserted { at, len }, point);
     }
 
-    /// Note that `text` was deleted from `at`.
+    /// Records that TEXT was deleted from AT. POINT is as for
+    /// [`Self::record_insert`].
     pub fn record_delete(&mut self, at: usize, text: String, point: usize) {
         self.push(Change::Deleted { at, text }, point);
     }
 
+    /// Adds CHANGE to the open group, closing that first when the edit
+    /// belongs to another command.
     fn push(&mut self, change: Change, point: usize) {
         // A fresh edit makes the redo branch unreachable. This is the one
         // cost of a plain two-stack model over a tree, and it is the behaviour
@@ -313,8 +280,8 @@ impl UndoHistory {
         group.changes.push(change);
     }
 
-    /// Close the group being accumulated, if any. Called between commands --
-    /// this is what makes one command undo as one unit.
+    /// Closes the group being accumulated, if any: what makes one command undo
+    /// as one unit.
     pub fn boundary(&mut self) {
         if let Some(group) = self.open.take()
             && !group.changes.is_empty()
@@ -324,13 +291,15 @@ impl UndoHistory {
         }
     }
 
-    /// Let this command continue the open group without ordinary typing's cap.
+    /// Lets this command continue the open group without ordinary typing's
+    /// cap.
     pub fn join_previous_command(&mut self) {
         self.open_epoch = current_command().epoch;
     }
 
-    /// How many characters the open group has inserted so far, for deciding
-    /// whether a run of self-inserts has grown long enough to break up.
+    /// Returns how many characters the open group has inserted so far, for
+    /// deciding whether a run of self-inserts has grown long enough to break
+    /// up.
     pub fn open_insert_len(&self) -> usize {
         self.open
             .as_ref()
@@ -347,7 +316,11 @@ impl UndoHistory {
             .unwrap_or(0)
     }
 
-    /// Undo the most recent group. Returns where point should go and where
+    // TODO(BUF-1): undo and redo write below the two doors, and their callers
+    // only call `edits::changed` after them: a read-only buffer is changed,
+    // and overlays and virtual text stay where the old text had them.
+
+    /// Undoes the most recent group. Returns where point should go and where
     /// the text began to change, or `None` when there is nothing left to undo.
     pub fn undo<B: BufferTrait>(&mut self, text: &mut B) -> Option<Applied> {
         self.boundary();
@@ -364,7 +337,8 @@ impl UndoHistory {
         Some(applied)
     }
 
-    /// Redo the most recently undone group.
+    /// Redoes the most recently undone group, and returns what
+    /// [`Self::undo`] returns.
     pub fn redo<B: BufferTrait>(&mut self, text: &mut B) -> Option<Applied> {
         let group = self.undone.pop()?;
         let applied = Applied {
@@ -377,7 +351,7 @@ impl UndoHistory {
         Some(applied)
     }
 
-    /// Apply the inverse of `group` to the text, and return the group that
+    /// Applies the inverse of GROUP to the text, and returns the group that
     /// would in turn undo what was just done.
     ///
     /// Changes are inverted in reverse order: a group's later edits are
@@ -428,7 +402,7 @@ impl UndoHistory {
         }
     }
 
-    /// Drop the oldest groups until the retained deleted text is under the
+    /// Drops the oldest groups until the deleted text kept is under the
     /// limit. Always keeps at least one group, so a single enormous deletion
     /// stays undoable rather than being discarded for being too big.
     fn trim(&mut self) {
@@ -441,12 +415,13 @@ impl UndoHistory {
     }
 }
 
-/// Remove `[from, to)` from the text, leaving point at `from`.
+/// Removes `[from, to)` from the text without recording it, leaving point at
+/// `from`.
 ///
-/// The unrecorded application step: history is written by the editing layer in
-/// [`crate::primitives::edits`], which notes what an edit is about to do and
-/// then calls this. Undo and redo reuse it directly, since replaying history
-/// must not record itself as new history.
+/// History is written by the editing layer in [`crate::primitives::edits`],
+/// which notes what an edit is about to do and then calls this. Undo and redo
+/// call it directly, since replaying history must not record itself as new
+/// history.
 pub(crate) fn apply_delete<B: BufferTrait>(text: &mut B, from: usize, to: usize) {
     let end = to.min(text.len());
     if from >= end {
@@ -458,7 +433,7 @@ pub(crate) fn apply_delete<B: BufferTrait>(text: &mut B, from: usize, to: usize)
     }
 }
 
-/// Insert `content` at offset `at`, leaving point after it.
+/// Inserts CONTENT at offset AT without recording it, leaving point after it.
 pub(crate) fn apply_insert<B: BufferTrait>(text: &mut B, at: usize, content: &str) {
     seek(text, at.min(text.len()));
     for c in content.chars() {
@@ -466,7 +441,7 @@ pub(crate) fn apply_insert<B: BufferTrait>(text: &mut B, at: usize, content: &st
     }
 }
 
-/// Put point at OFFSET, doing nothing if it is already there.
+/// Puts point at OFFSET, doing nothing if it is already there.
 ///
 /// The guard is not a micro-optimisation: an edit at point is the common case
 /// -- it is what typing is -- and seeking to a place you are already standing

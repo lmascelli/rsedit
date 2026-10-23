@@ -1,41 +1,21 @@
-//! Where the editor keeps what it keeps on disk: its configuration, its cache.
+//! Where the editor keeps what it keeps on disk: its configuration and its
+//! cache. [`app_dir`] is asked for a directory by what it is for, and answers
+//! with where that is on this system, making it when asked to.
 //!
-//! One function, [`app_dir`], asked for a directory by what it is for and
-//! answering with where that is on the system the editor runs on -- and, when
-//! asked to, making it. Everything that needs one of these places asks here,
-//! so that the conventions of each system are written down once.
-//!
-//! Where each directory is, and the variables that choose it, is user
-//! documentation: the `configuration` manual page.
-//!
-//! # Why macOS gets `~/.config` and `~/.cache`
-//!
-//! Because that is where somebody using a terminal editor on a Mac will look.
-//! Apple's `~/Library` is the convention for bundled applications; the editors
-//! a person arrives from -- Emacs under XDG, Neovim, Helix -- all keep their
-//! configuration in `~/.config` and their caches in `~/.cache`, and being the
-//! one that does not would be a correctness nobody asked for.
-//!
-//! # Why the cache is local on Windows
-//!
-//! `%APPDATA%` roams: it follows the person from machine to machine, and is
-//! copied each time they log on. A cache is what can be made again, which is
-//! exactly what must not be copied around, so it goes under `%LOCALAPPDATA%`.
+//! Design: `doc/architettura-editor.typ, <directory>`.
 use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
 
-/// The name of the variable that names the configuration directory outright:
-/// the directory holding `init.lisp`, with nothing joined onto it.
+/// The variable that names the configuration directory outright: the
+/// directory holding `init.lisp`, with nothing joined onto it.
 pub const CONFIG_DIR: &str = "RSEDIT_CONFIG_DIR";
 
-/// The name of the variable that names the cache directory outright.
+/// The variable that names the cache directory outright.
 pub const CACHE_DIR: &str = "RSEDIT_CACHE_DIR";
 
 /// The freedesktop parent of every application's configuration, honoured on
-/// Unix. Windows has `%APPDATA%`, and preferring somebody else's answer to the
-/// platform's own would put a Windows user's configuration somewhere no
-/// Windows program would look for it.
+/// Unix only: on Windows, `%APPDATA%` is where Windows programs look.
 pub const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
 
 /// The freedesktop parent of every application's cache, honoured on Unix.
@@ -47,13 +27,13 @@ pub enum AppDir {
     /// Where `init.lisp` is: what the person writes, and the editor reads at
     /// every start.
     Config,
-    /// What the editor keeps that it can make again: the log, and the
-    /// documentation it collects. Deleting it loses nothing that matters.
+    /// What the editor keeps that it can make again, such as its log.
+    /// Deleting it loses nothing that matters.
     Cache,
 }
 
 impl AppDir {
-    /// What it is called in a message.
+    /// Returns what it is called in a message.
     fn describe(self) -> &'static str {
         match self {
             AppDir::Config => "the configuration directory",
@@ -61,7 +41,7 @@ impl AppDir {
         }
     }
 
-    /// The variable that names it outright, and the freedesktop one.
+    /// Returns the variable that names it outright, and the freedesktop one.
     fn variables(self) -> (&'static str, &'static str) {
         match self {
             AppDir::Config => (CONFIG_DIR, XDG_CONFIG_HOME),
@@ -73,7 +53,6 @@ impl AppDir {
 /// What [`app_dir`] is asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DirOptions {
-    /// Which directory.
     pub dir: AppDir,
     /// Make it, with any parent that is missing, when it is not there.
     pub create: bool,
@@ -83,7 +62,8 @@ pub struct DirOptions {
 #[derive(Debug)]
 pub enum DirError {
     /// Nothing in the environment says where it is: no variable naming it,
-    /// and no home to put it under -- `HOME` unset, or `APPDATA` on Windows.
+    /// and no home to put it under -- `HOME` unset, or on Windows `APPDATA`,
+    /// `LOCALAPPDATA` for the cache.
     Undetermined(AppDir),
     /// It is not there, and making it was not asked for.
     NotFound(PathBuf),
@@ -124,9 +104,18 @@ impl std::error::Error for DirError {
     }
 }
 
-/// The directory OPTIONS asks for, where this system keeps it -- made first,
-/// when it is missing and OPTIONS says to. Where that is: the `configuration`
-/// manual page.
+/// Returns the directory `options.dir` names on this system, creating it and
+/// its parents first when it is missing and `options.create` is set.
+///
+/// Where each directory is: the `configuration` manual page.
+///
+/// # Errors
+///
+/// [`DirError::Undetermined`] when nothing in the environment says where the
+/// directory is; [`DirError::NotFound`] when it is missing and `create` is
+/// false; [`DirError::NotADirectory`] or [`DirError::CannotCreate`] otherwise.
+///
+/// # Examples
 ///
 /// ```no_run
 /// use rsedit_core::{AppDir, DirOptions, app_dir};
@@ -139,7 +128,7 @@ pub fn app_dir(options: DirOptions) -> Result<PathBuf, DirError> {
     ensure_dir(path, options.create)
 }
 
-/// Where DIR is, from the environment, whether or not it is there.
+/// Returns where DIR is, from the environment, whether or not it is there.
 fn locate(dir: AppDir) -> Option<PathBuf> {
     let (named, xdg) = dir.variables();
     let named = env_path(named);
@@ -155,7 +144,7 @@ fn locate(dir: AppDir) -> Option<PathBuf> {
     choose_dir(named, xdg, platform_dir(dir))
 }
 
-/// The platform's own place for DIR, already complete.
+/// Returns the platform's own place for DIR, already complete.
 #[cfg(windows)]
 pub(crate) fn platform_dir(dir: AppDir) -> Option<PathBuf> {
     match dir {
@@ -164,7 +153,7 @@ pub(crate) fn platform_dir(dir: AppDir) -> Option<PathBuf> {
     }
 }
 
-/// The platform's own place for DIR, already complete.
+/// Returns the platform's own place for DIR, already complete.
 #[cfg(not(windows))]
 pub(crate) fn platform_dir(dir: AppDir) -> Option<PathBuf> {
     let home = env_path("HOME")?;
@@ -174,41 +163,34 @@ pub(crate) fn platform_dir(dir: AppDir) -> Option<PathBuf> {
     })
 }
 
-/// The variable NAME as a path, or `None` when it is not set or is empty.
-///
-/// As an `OsString`, not a `String`: a home directory whose name is not UTF-8
-/// is still a home directory.
+/// Returns the variable NAME as a path, or `None` when it is not set or is
+/// empty. Read as an `OsString`, not a `String`: a home directory whose name
+/// is not UTF-8 is still a home directory.
 fn env_path(name: &str) -> Option<PathBuf> {
     path_from(std::env::var_os(name))
 }
 
-/// VALUE, a variable's, as a path: `None` when it is not set or is empty.
+/// Returns VALUE, a variable's, as a path: `None` when it is not set or is
+/// empty.
 pub(crate) fn path_from(value: Option<OsString>) -> Option<PathBuf> {
     value.filter(|value| !value.is_empty()).map(PathBuf::from)
 }
 
-/// VALUE, a freedesktop variable's, as the parent it names: also `None` when
-/// it is not absolute -- the specification's own rule, which calls such a
-/// path invalid and has it ignored.
+/// Returns VALUE, a freedesktop variable's, as the parent it names: also
+/// `None` when it is not absolute, which the specification calls invalid and
+/// has ignored.
 #[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) fn xdg_parent(value: Option<OsString>) -> Option<PathBuf> {
     path_from(value).filter(|path| path.is_absolute())
 }
 
-/// Which candidate wins, given what the environment says.
+/// Returns the candidate that wins: NAMED as given, since it names the
+/// directory itself; else XDG with the application's name joined on, since
+/// it is a parent of application directories; else PLATFORM, which is
+/// already complete.
 ///
-/// # Why this takes its inputs rather than reading them
-///
-/// So that the *precedence* can be tested without touching the environment.
-/// The environment is process-wide and the test runner is threaded, so a test
-/// that checked this by setting a variable would be a test every other test
-/// could see -- which is the shape of the bug this was last fixed for, not a
-/// way to check it.
-///
-/// `named` is used as given: it names the directory itself. `xdg` is a
-/// *parent* of application directories by specification, so the application's
-/// own name is joined onto it. `platform` is whatever the running system calls
-/// the same place, already complete.
+/// Takes its inputs rather than reading them, so that the precedence can be
+/// tested without writing to the environment, which every test can see.
 pub(crate) fn choose_dir(
     named: Option<PathBuf>,
     xdg: Option<PathBuf>,
@@ -219,15 +201,15 @@ pub(crate) fn choose_dir(
         .or(platform)
 }
 
-/// PATH, if it is a directory; made first, when it is missing and CREATE says
-/// to.
+/// Returns PATH, if it is a directory, creating it first when it is missing
+/// and CREATE is set.
 ///
 /// Apart from [`app_dir`] so that what is done on the disk can be tested on a
 /// directory of the test's own, rather than on the person's.
 pub(crate) fn ensure_dir(path: PathBuf, create: bool) -> Result<PathBuf, DirError> {
-    // TODO: whether the directory can be written is not checked. One that is
-    // there but read-only is answered as usable, and it is the first write
-    // into it that fails -- which, for the log, the caller ignores for now.
+    // TODO(improve): whether the directory can be written is not checked. One
+    // that is there but read-only is answered as usable, and the first write
+    // into it fails -- which, for the log, the caller ignores.
     if path.is_dir() {
         return Ok(path);
     }

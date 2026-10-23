@@ -1,23 +1,9 @@
-//! What any [`BufferTrait`] implementation has to do, asked of each of them.
+//! What any [`BufferTrait`] implementation has to do, asked of each of them:
+//! the properties are written once against `B`, and each implementation is
+//! instantiated at the bottom. A property assumes only the trait; a test that
+//! needs to know the implementation belongs with that implementation.
 //!
-//! # Why this is generic and not a set of `GapBuffer` tests
-//!
-//! The trait exists so the editor can be built against a different text
-//! representation without changing anything above it. That is only true if
-//! "different" means *different storage*, not different answers -- and the
-//! cheapest way for a second implementation to be quietly wrong is to differ
-//! somewhere nobody thought to look, at the seam between its chunks, or on a
-//! multi-byte character, or one past the end.
-//!
-//! So the properties live here once, written against `B`, and each
-//! implementation is instantiated at the bottom. Adding a rope is one line, and
-//! it arrives with a suite rather than needing one written for it.
-//!
-//! # What a property is allowed to assume
-//!
-//! Only the trait. Nothing here may mention a gap, a chunk or a rope -- if a
-//! test needs to know which implementation it is running against, it is a test
-//! of that implementation and belongs beside it.
+//! Design: `doc/architettura-editor.typ, <gap-buffer>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::BufferTrait;
@@ -31,12 +17,9 @@ mod tests {
     // The properties
     // ----------------------------------------------------------------
 
-    /// `chars_from` and `at` describe the same text, from every offset.
-    ///
-    /// The one that matters most. An implementation is free to walk its storage
-    /// however it likes, but the two readings cannot disagree -- and where they
-    /// would, it is at an internal boundary, which is why this asks at *every*
-    /// offset rather than at a few interesting ones.
+    /// `chars_from` and `at` describe the same text, from every offset: where
+    /// two readings disagree, it is at an internal boundary, which could be
+    /// anywhere.
     fn streaming_agrees_with_indexing<B: BufferTrait>(buf: &B) {
         let len = buf.len();
         // Past the end as well: a stream that runs off the end must stop, not
@@ -53,13 +36,9 @@ mod tests {
         streaming_agrees_with_indexing(&buf);
     }
 
-    /// The same, with point moved all over the buffer first.
-    ///
-    /// An implementation may keep its storage arranged around where the user
-    /// is -- that is the whole idea of a gap buffer -- so the agreement above
-    /// has to hold wherever that arrangement happens to be. Without this, a
-    /// buffer read at its default position would pass and the same buffer read
-    /// after a keystroke would not.
+    /// The same, with point moved all over the buffer first: an
+    /// implementation may arrange its storage around point, as a gap buffer
+    /// does.
     fn chars_from_agrees_wherever_point_is<B: BufferTrait>() {
         let mut buf = B::from(SAMPLE);
         for line in 0..buf.line_count() {
@@ -109,12 +88,9 @@ mod tests {
         assert_eq!(buf.chars_from(7).count(), 0);
     }
 
-    /// `chars_from` is lazy: asking for one character does not read the rest.
-    ///
-    /// Not a timing assertion -- a stream that collected eagerly would still
-    /// answer correctly, and slowly, on a buffer this size. What this pins is
-    /// that taking one character from a large buffer terminates promptly, which
-    /// is the property the scanner leans on when it stops at a checkpoint.
+    /// Taking a few characters from a large buffer gives those characters.
+    /// Not a timing assertion: a stream that collected eagerly would pass too,
+    /// only slowly.
     fn chars_from_is_lazy<B: BufferTrait>() {
         let buf = B::from("abcdefghij".repeat(10_000).as_str());
         assert_eq!(buf.chars_from(5).next(), Some('f'));
@@ -136,16 +112,12 @@ mod tests {
     // Contract the rest of the editor already depends on
     // ----------------------------------------------------------------
     //
-    // Not new with `chars_from`, but never stated anywhere a second
-    // implementation could read it. Every one of these is a way a rope could be
-    // correct about UTF-8 and wrong about what this editor means by a position.
+    // Each of these is a way an implementation could be right about UTF-8 and
+    // wrong about what this editor means by a position.
 
-    /// Positions are characters, not bytes.
-    ///
-    /// Every offset in this editor -- point, overlays, the sexp scanner's
-    /// snapshots, `syntax-ppss` -- is a character index. An implementation that
-    /// counted bytes would be subtly wrong on exactly the files where it
-    /// mattered, and right on the tests written in ASCII.
+    /// Positions are characters, not bytes: every offset in this editor --
+    /// point, overlays, the scanner's checkpoints, `syntax-ppss` -- is a
+    /// character index.
     fn positions_count_characters_not_bytes<B: BufferTrait>() {
         let buf = B::from("héllo");
         assert_eq!(buf.len(), 5, "five characters, six bytes");
@@ -162,13 +134,6 @@ mod tests {
     }
 
     /// The two ways of naming a position agree, in both directions.
-    ///
-    /// `at_line_col` is deliberately *not* asserted against `at` here, though
-    /// it is the obvious third leg of this property. As things stand the two
-    /// disagree -- see the note in the patch that added this file -- and
-    /// pinning the current behaviour would oblige every future implementation
-    /// to reproduce it. The assertion goes in once the method means what its
-    /// name says, or comes out of the trait.
     fn offsets_and_line_columns_are_the_same_positions<B: BufferTrait>() {
         let buf = B::from(SAMPLE);
         for pos in 0..buf.len() {
@@ -181,14 +146,9 @@ mod tests {
         }
     }
 
-    /// `get_lines` hands back the lines, and a trailing newline opens one.
-    ///
-    /// Deliberately not asserted against `str::lines()`, which says "fn a()\n"
-    /// is one line. A buffer ending in a newline has a cursor position after
-    /// it, which is a place the user can be and therefore a line the editor
-    /// has to have -- `point-max` lives there. An implementation that borrowed
-    /// the `str` convention would be off by one line at the end of every file
-    /// that ends properly.
+    /// `get_lines` hands back the lines, and a trailing newline opens one --
+    /// unlike `str::lines()`: a text ending in a newline has a position after
+    /// it, where `point-max` is, and so a line.
     fn a_trailing_newline_opens_a_line<B: BufferTrait>() {
         let buf = B::from(SAMPLE);
         let shown: Vec<&str> = vec![

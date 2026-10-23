@@ -17,6 +17,8 @@
 //!   an editor.
 //! - `ui/` knows nothing of `editor/`. It describes what to draw; a renderer is
 //!   written against that description, not against this crate's internals.
+//! - `buffer/` uses nothing below it in the map but the types it stores: the
+//!   faces of `ui/`, and the colouring and scan states of `modes/`.
 //! - The map in `lib.rs` names every module the crate declares, and nothing
 //!   else.
 //!
@@ -41,6 +43,40 @@ mod tests {
 
     /// The crate's root, whose documentation is the map.
     const LIB: &str = include_str!("../lib.rs");
+
+    /// Every file under `buffer/`.
+    const BUFFER: &[(&str, &str)] = &[
+        ("buffer/mod.rs", include_str!("../buffer/mod.rs")),
+        (
+            "buffer/buffer_trait.rs",
+            include_str!("../buffer/buffer_trait.rs"),
+        ),
+        ("buffer/disk.rs", include_str!("../buffer/disk.rs")),
+        (
+            "buffer/gap_buffer.rs",
+            include_str!("../buffer/gap_buffer.rs"),
+        ),
+        ("buffer/mark.rs", include_str!("../buffer/mark.rs")),
+        ("buffer/overlay.rs", include_str!("../buffer/overlay.rs")),
+        ("buffer/scan.rs", include_str!("../buffer/scan.rs")),
+        ("buffer/syntax.rs", include_str!("../buffer/syntax.rs")),
+        ("buffer/undo.rs", include_str!("../buffer/undo.rs")),
+        (
+            "buffer/virtual_text.rs",
+            include_str!("../buffer/virtual_text.rs"),
+        ),
+    ];
+
+    /// What `buffer/` uses from below it in the map, sorted: the types a
+    /// buffer stores. The whole of the exception, so that it cannot grow
+    /// unnoticed.
+    const BUFFER_STORES: &[&str] = &[
+        "crate::modes::SyntaxSpan",
+        "crate::modes::SyntaxState",
+        "crate::modes::SyntaxTable",
+        "crate::modes::sexp::Resume",
+        "crate::ui::Face",
+    ];
 
     /// Every file under `ui/`.
     const UI: &[(&str, &str)] = &[
@@ -98,6 +134,60 @@ mod tests {
         }
     }
 
+    /// Returns the paths under `crate::` that LINE names, with a `use` group
+    /// one level deep expanded: `crate::modes::{A, B}` names
+    /// `crate::modes::A` and `crate::modes::B`.
+    fn crate_paths(line: &str) -> Vec<String> {
+        let mut paths = Vec::new();
+        let mut rest = line;
+        while let Some(at) = rest.find("crate::") {
+            rest = &rest[at + "crate::".len()..];
+            let end = rest
+                .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+                .unwrap_or(rest.len());
+            let base = match rest[..end].trim_end_matches(':') {
+                "" => "crate".to_string(),
+                prefix => format!("crate::{prefix}"),
+            };
+            if rest[..end].ends_with("::") && rest[end..].starts_with('{') {
+                let close = rest[end..].find('}').map_or(rest.len(), |i| end + i);
+                for item in rest[end + 1..close].split(',') {
+                    let item = item.trim();
+                    if !item.is_empty() {
+                        paths.push(format!("{base}::{item}"));
+                    }
+                }
+                rest = &rest[close..];
+            } else {
+                paths.push(base);
+                rest = &rest[end..];
+            }
+        }
+        paths
+    }
+
+    #[test]
+    fn the_buffer_uses_only_the_types_it_stores_from_below() {
+        let mut named: Vec<String> = BUFFER
+            .iter()
+            .flat_map(|(_, source)| code_lines(source))
+            .flat_map(|(_, line)| crate_paths(line))
+            .filter(|path| {
+                !["crate::buffer", "crate::work", "crate::paths"]
+                    .iter()
+                    .any(|above| path == above || path.starts_with(&format!("{above}::")))
+            })
+            .collect();
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(
+            named, BUFFER_STORES,
+            "`buffer/` may use, of what is below it in the map, only the types a \
+             buffer stores. A new one is a decision: add it here and to the map in \
+             lib.rs, or move the code that needs it below `buffer/`."
+        );
+    }
+
     #[test]
     fn the_view_knows_nothing_of_the_editors_state() {
         for forbidden in ["EditorState", "crate::editor", "crate::primitives"] {
@@ -122,9 +212,11 @@ mod tests {
     /// A sub-directory with a list of its own is counted separately.
     #[test]
     fn every_file_in_each_checked_directory_is_listed() {
-        for (files, directory, sub_directories) in
-            [(TEXT, "text", &[] as &[&str]), (UI, "ui", &[] as &[&str])]
-        {
+        for (files, directory, sub_directories) in [
+            (BUFFER, "buffer", &[] as &[&str]),
+            (TEXT, "text", &[] as &[&str]),
+            (UI, "ui", &[] as &[&str]),
+        ] {
             let (_, root) = files
                 .iter()
                 .find(|(path, _)| path.ends_with("mod.rs"))

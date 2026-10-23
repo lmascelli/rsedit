@@ -449,7 +449,6 @@ fn layout(report: &mut Report) {
                 current_mode: "fundamental".into(),
                 file_path: None,
                 is_modified: false,
-                local_keymap: None,
                 undo: Default::default(),
                 mark: None,
                 overlays: Default::default(),

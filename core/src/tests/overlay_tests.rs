@@ -1,11 +1,9 @@
 //! Overlays, and the one thing about them that is hard: surviving an edit.
+//! Most of what is below is the adjustment rules, worked through case by case,
+//! because a highlight over the wrong words is noticed minutes later with
+//! nothing to say why.
 //!
-//! Everything else in this editor that knows a position either recomputes it
-//! every frame or is invalidated the moment the text changes. These are the
-//! first stored positions that have to move with the text, so most of what is
-//! below is the adjustment rules -- worked through case by case, because a
-//! highlight over the wrong words is noticed minutes later with nothing to say
-//! why.
+//! Design: `doc/architettura-editor.typ, <mark-overlay>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::overlay::OverlayTable;

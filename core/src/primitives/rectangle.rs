@@ -27,9 +27,22 @@
 //! next rectangle command found nothing to work on. `M-w` leaves point alone
 //! for the same reason, and this is the same command.
 use super::*;
-use crate::buffer::{Buffer, Mark, mark::rectangle_corners};
+use crate::buffer::{Buffer, Mark};
 use crate::primitives::edits::{delete_range, goto_offset, insert_text};
 use crate::text::rectangle::{Rectangle, Span, spans, text_of};
+
+/// Returns the rectangle between point and the mark, or `None` when the mark
+/// is not active.
+fn active_rectangle<B: BufferTrait>(buf: &Buffer<B>) -> Option<Rectangle> {
+    let mark = buf.mark.filter(|mark| mark.active)?;
+    let point = buf.text.cursor_pos_1d();
+    Some(Rectangle::between_offsets(
+        &buf.text,
+        mark.at,
+        point,
+        mark.inclusive,
+    ))
+}
 
 /// The rectangle between point and the mark, or the error a command should
 /// give when there is no mark.
@@ -40,7 +53,7 @@ use crate::text::rectangle::{Rectangle, Span, spans, text_of};
 fn require_rectangle<B: BufferTrait>(
     buf: &Buffer<B>,
 ) -> Result<Rectangle, EvalError<EditorState<B>>> {
-    rectangle_corners(buf.mark, &buf.text).ok_or_else(|| {
+    active_rectangle(buf).ok_or_else(|| {
         EvalError::RuntimeMessage("The mark is not set now, so there is no rectangle".into())
     })
 }
@@ -130,17 +143,15 @@ pub const RECTANGLE_BOUNDS_DOC: &str = "(rectangle-bounds): Return the block bet
          block, so the width is RIGHT-COLUMN minus LEFT-COLUMN.";
 
 primitive!(rectangle_bounds, _args, _env, ctx, {
-    Ok(
-        ctx.with_current_buffer(|buf| match rectangle_corners(buf.mark, &buf.text) {
-            None => ELispExp::nil(),
-            Some(rect) => ELispExp::proper_list(vec![
-                ELispExp::number(rect.top as f64 + 1.0),
-                ELispExp::number(rect.bottom as f64 + 1.0),
-                ELispExp::number(rect.left as f64),
-                ELispExp::number(rect.right as f64),
-            ]),
-        }),
-    )
+    Ok(ctx.with_current_buffer(|buf| match active_rectangle(buf) {
+        None => ELispExp::nil(),
+        Some(rect) => ELispExp::proper_list(vec![
+            ELispExp::number(rect.top as f64 + 1.0),
+            ELispExp::number(rect.bottom as f64 + 1.0),
+            ELispExp::number(rect.left as f64),
+            ELispExp::number(rect.right as f64),
+        ]),
+    }))
 });
 
 // ---------------------------------------------------------------------------

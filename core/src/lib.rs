@@ -16,6 +16,8 @@
 //!   buffer/      text storage, and BufferTrait -- the only thing anything
 //!                else is allowed to assume about it. A buffer emits a topic
 //!                of work/ when its text changes, not knowing who listens.
+//!                Of what is below, it uses only the types it stores: the
+//!                faces of ui/, the colouring and scan states of modes/.
 //!   text/        what can be worked out about text with nothing but
 //!                BufferTrait: searching, rectangles, the kill ring, lists of
 //!                places.

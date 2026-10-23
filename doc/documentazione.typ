@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--11 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--12 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -249,7 +249,7 @@ Segue le Rust API Guidelines e le convenzioni della RFC 1574.
   `# Safety` quando si applicano, e `# Examples`.
 - I tipi e le funzioni citati sono link (#raw("[`Log::flush`]")) e devono
   risolversi: `cargo doc --document-private-items` senza avvisi. Oggi ce ne
-  sono 18.
+  sono 16.
 - Campi e varianti: una riga quando il nome non basta, niente quando basta.
 - *La documentazione di modulo* (`//!`) dice in una-cinque righe di che cosa
   il modulo è responsabile, e rimanda al capitolo del manuale con la sua
@@ -1431,7 +1431,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   header: ([Passo], [Parte], [Righe], [Note]),
   [10], [`doc/rapporto-problemi.typ` (fatto)], [1 244], [80 schede da verificare],
   [11], [`work/` (fatto)], [2 935], [assorbe `workmanager.typ`],
-  [12], [`paths.rs`, `buffer/`], [3 075], [---],
+  [12], [`paths.rs`, `buffer/` (fatto)], [3 075], [---],
   [13], [`text/`, `input.rs`, `commands.rs`], [2 047], [---],
   [14], [`managers/`], [2 936], [la regola delle coppie con `editor/`],
   [15], [`editor/`], [4 838], [`boot.rs`, `keys.rs`, `frame.rs`],
@@ -1487,6 +1487,56 @@ scompaiono dal PDF, perché typst li legge come la fine dell'espressione; si
 scrive `\;`, e restano ai passi dei loro capitoli. In `workmanager.typ` la
 figura degli eventi faceva partire il secondo ritardo dall'emissione, mentre il
 nucleo lo conta dalla fine del passo: il manuale disegna il comportamento vero.
+
+*Passo 12, fatto.* I diciannove test interni di `buffer/gap_buffer.rs` sono in
+`gap_buffer_tests`, con i due di `bug_fix_tests` che provavano il buffer;
+`config_path_tests` e `app_dir_tests` sono diventati `paths_tests`, e
+`path_tests`, che prova i nomi dei file di `primitives/io.rs`, si chiama
+`file_name_tests`. Il campo `Buffer::local_keymap`, che nessuno leggeva, è
+tolto. Il rettangolo tra due posizioni si calcola in `text/rectangle.rs`
+(`Rectangle::between_offsets`), senza il mark, perché `text/` non ne sa
+nulla: il controllo del mark attivo resta ai chiamanti. Così `buffer/` non usa
+più né `text/` né `input.rs`; ciò che usa ancora da sotto, le facce di `ui/`
+e gli stati della colorazione e della scansione di `modes/`, la mappa di
+`lib.rs` lo dichiara e `layering_tests` lo tiene in un elenco chiuso. Il
+rustdoc di `paths.rs` e di `buffer/` segue le regole: riassunti alla terza
+persona, documentazioni di modulo brevi con il rimando al manuale, esempi
+eseguiti per `BufferTrait` e `GapBuffer`, la sezione `# Errors` di `app_dir`,
+e `TODO(BUF-1)`, `TODO(BUF-2)`, `TODO(BUF-3)` e `TODO(improve)` dove serve. Le
+trentaquattro sezioni `# Why` e `# What` sono diventate le ventitré decisioni
+del capitolo «I buffer» e le tre della nuova sezione «Le directory
+dell'editor». La scheda DOC-2 tiene solo `Debug` e `PartialEq` di
+`EditorState`, e da DOC-1 esce il rustdoc di `UndoHistory::limit`, che
+contava gruppi mentre il limite conta i byte di testo cancellato. Restano, come deciso, i due avvisi di clippy di
+`gap_buffer.rs`: un `ToString` scritto a mano e un `let` restituito subito. Il
+comportamento non è cambiato; nei test spostati due asserzioni sulle
+coordinate sono diventate esatte, come la documentazione le promette.
+
+Il passo ha trovato questi difetti, tutti in commenti e documenti, e la patch
+li corregge. Un paragrafo di storia di
+`virtual_text.rs` aveva un link rotto: gli avvisi di `cargo doc` passano da 17
+a 16. `AppDir::Cache` prometteva una documentazione raccolta che nessuno
+scrive, e `DirError::Undetermined` non nominava `LOCALAPPDATA`. Il commento di
+`CURRENT` parlava dello scheduler di sfondo. `buffer_conformance_tests`
+rimandava a un metodo `at_line_col` che non c'è più, e `scan_cache_tests`
+diceva che il modo di un buffer non si può cambiare, mentre c'è
+`change_major_mode`. Il test `reading_a_viewport_costs_the_same_wherever_it_is`
+diceva di contare i caratteri esaminati e controlla soltanto le righe
+restituite: ora si chiama `reading_a_viewport_seeks_to_it`, e il costo resta
+al rapporto di prestazioni. Un commento di `tests/mod.rs` documentava
+`paste_tests` invece di `perf`. Nel manuale `undo` e `redo` non aggiornavano
+versione e cache, mentre lo fanno da `9956bed`; il log stava nella directory
+corrente e l'evidenziatore girava ogni 40 ms; `init.lisp` non caricava
+`python-mode`, `toml-mode`, `bash-mode` e `vim`; la superficie pubblica non
+elencava le directory, `Buffers`, `Windows` e `isolate_config_for_tests`; la
+tabella di `Buffer` non aveva `changed` né `writer`.
+
+Restano ai passi dei loro capitoli: la figura dell'avvio nel manuale disegna
+ancora uno «scheduler» e uno `spawn`, e il testo su `main.rs` non dice che
+apre tutti i file della riga di comando né che c'è un front-end grafico
+(passo 15); `modes/prescan.rs` dice che `GapBuffer` rifiuta deliberatamente di
+essere clonato, mentre il suo `clone` è il `todo!()` di BUF-3 (passo 19); il
+nome di `chars_from_is_lazy` promette una pigrizia che il test non può vedere.
 
 == Fase D --- il manuale (passo 22)
 

@@ -4,7 +4,7 @@
 //! abort, a wrong character -- rather than testing the shape of the fix.
 #[cfg(test)]
 mod tests {
-    use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
+    use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
@@ -118,42 +118,6 @@ mod tests {
         assert_eq!(tail.iter().count(), 1_000, "the shared tail was unlinked");
     }
 
-    /// `at()` used `<=` where it needed `<`, so at the gap it returned whatever
-    /// the gap contained -- usually a stale copy left by an earlier
-    /// `copy_within`. Reading the buffer back character by character produced
-    /// "Xbbc" for the text "Xabc".
-    #[test]
-    fn reading_a_buffer_character_by_character_matches_its_text() {
-        let mut buf = GapBuffer::from("abc");
-        buf.move_gap(0);
-        buf.insert('X');
-
-        let via_at: String = (0..buf.len())
-            .map(|i| buf.at(i).expect("in range"))
-            .collect();
-        assert_eq!(
-            via_at,
-            buf.to_string(),
-            "at() disagreed with the buffer's text"
-        );
-        assert_eq!(via_at, "Xabc");
-
-        // And across a mixture of edits and gap positions.
-        let mut buf = GapBuffer::from("hello\nworld");
-        for target in [0usize, 5, 11, 3, 8] {
-            buf.move_gap(target);
-            buf.insert('.');
-            let via_at: String = (0..buf.len())
-                .map(|i| buf.at(i).expect("in range"))
-                .collect();
-            assert_eq!(
-                via_at,
-                buf.to_string(),
-                "at() disagreed with the gap at {target}"
-            );
-        }
-    }
-
     /// `nth` walked with an iterator that yields nothing for a syntax `Form`,
     /// so it quietly returned nil where every sibling raises.
     #[test]
@@ -223,30 +187,5 @@ mod tests {
             matches!(err, EvalError::UndefinedFunction(_)),
             "expected the cleanup's error, got {err:?}"
         );
-    }
-
-    /// Clearing a buffer deleted one character at a time, moving the gap on
-    /// every step. 60,000 characters took close to two minutes.
-    #[test]
-    fn clearing_a_large_buffer_is_immediate() {
-        let mut buf = GapBuffer::from("a line of text\n".repeat(20_000).as_str());
-        assert!(buf.len() > 250_000);
-
-        let start = std::time::Instant::now();
-        buf.clear();
-        let elapsed = start.elapsed();
-
-        assert_eq!(buf.len(), 0);
-        assert_eq!(buf.to_string(), "");
-        assert_eq!(buf.line_count(), 1, "an empty buffer still has one line");
-        assert_eq!(buf.cursor_pos(), (0, 0));
-        // Generous: the point is that it is not proportional to the text.
-        assert!(
-            elapsed < std::time::Duration::from_millis(100),
-            "clearing took {elapsed:?} -- it is still unwinding character by character"
-        );
-        // The buffer is usable afterwards.
-        buf.insert('x');
-        assert_eq!(buf.to_string(), "x");
     }
 }

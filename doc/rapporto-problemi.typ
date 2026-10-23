@@ -153,7 +153,7 @@
     titolo: [`cursor_pos()` costa O(posizione): ogni fotogramma rilegge il buffer fino al punto],
     breve: [`GapBuffer::cursor_pos` lineare nella posizione],
     dove: [`buffer/gap_buffer.rs` (`cursor_pos`); la chiamano a ogni fotogramma `ui/windows.rs` (la composizione delle finestre ed `expand_mode_line`) ed `editor/frame.rs` (`EditorState::snapshot`, per una finestra flottante)],
-    verifica: [Misurato nell'analisi di `08a853d` su un buffer di 8 MB: `snapshot` impiegava 7,9 ms con il punto alla fine e 0,03 ms con il punto all'inizio. `buffer/gap_buffer.rs` non è cambiato da allora.],
+    verifica: [Misurato nell'analisi di `08a853d` su un buffer di 8 MB: `snapshot` impiegava 7,9 ms con il punto alla fine e 0,03 ms con il punto all'inizio. `cursor_pos` non è cambiata da allora.],
     cosa: [Per trovare riga e colonna del punto `cursor_pos` scorre tutti i caratteri dall'inizio del buffer, mentre `cursor_1d_to_2d`, accanto, cerca già la riga nell'indice dei ritorni a capo. Ogni fotogramma la chiama almeno due volte per finestra (posizione del cursore e riga di stato), e circa trenta altri punti la usano.],
     effetto: [In un file grande ogni tasto costa millisecondi in più, e il costo cresce con la distanza del punto dall'inizio.],
     correzione: [Ricerca binaria della riga nell'indice dei ritorni a capo, poi un conteggio dei soli caratteri della riga.],
@@ -749,7 +749,6 @@ init.lisp:
     cosa: [
       - `feature/minibuffer.rs` (il commento del modulo) e `src/tui.rs` (`render_to`, il commento sull'area messaggi): il minibuffer «docked to the last few lines of the frame», mentre il prompt predefinito ora è centrato.
       - `editor/buffers.rs` (`EditorState::close_buffer`): «this editor does not yet ask before that kill», mentre `kill-buffer` ora chiede conferma.
-      - `buffer/undo.rs` (`UndoHistory::limit`): «How many groups this history keeps», mentre il limite è in byte di testo cancellato.
       - `text/rectangle.rs` (il commento del modulo): «a tab is drawn in one cell» (#link(<TUI-3>)[TUI-3]).
       - `primitives/shell.rs` (`shell-command-start`): il commento «Only as the editor shuts down» e il messaggio «The editor's background work has shut down» valgono anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta.
 
@@ -762,12 +761,12 @@ init.lisp:
     gravita: "bassa",
     verificato: false,
     stato: "aperto",
-    titolo: [Codice morto e trappole latenti],
-    breve: [`local_keymap` mai usato; `Debug` di `EditorState` è `todo!()`],
-    dove: [`buffer/mod.rs` (il campo `Buffer::local_keymap`), `editor/mod.rs` (`impl Debug for EditorState`, e accanto `impl PartialEq for EditorState`)],
+    titolo: [Trappole latenti: `Debug` e `PartialEq` di `EditorState`],
+    breve: [`Debug` di `EditorState` è `todo!()`, `PartialEq` è `unreachable!()`],
+    dove: [`editor/mod.rs` (`impl Debug for EditorState`, e accanto `impl PartialEq for EditorState`)],
     verifica: [Dalla lettura del codice.],
-    cosa: [`Buffer::local_keymap` viene inizializzato ma mai letto; la mappa locale che funziona, quella di `set-local-keymap`, sta nei dati del buffer. `Debug` per `EditorState` è un `todo!()` e `PartialEq` un `unreachable!()`: li richiede il trait `LispContext` di risp. Un `dbg!`, un `{:?}` o un `assert_eq!` fallito su una struttura che contiene uno stato dell'editor va in panic invece di stampare; oggi nessun tipo di risp contiene un contesto, e la trappola resta latente.],
-    correzione: [Togliere il campo; un `Debug` che stampi almeno i nomi dei buffer, e un `PartialEq` per identità.],
+    cosa: [`Debug` per `EditorState` è un `todo!()` e `PartialEq` un `unreachable!()`: li richiede il trait `LispContext` di risp. Un `dbg!`, un `{:?}` o un `assert_eq!` fallito su una struttura che contiene uno stato dell'editor va in panic invece di stampare; oggi nessun tipo di risp contiene un contesto, e la trappola resta latente.],
+    correzione: [Un `Debug` che stampi almeno i nomi dei buffer, e un `PartialEq` per identità.],
   ),
   (
     id: "DOC-3",

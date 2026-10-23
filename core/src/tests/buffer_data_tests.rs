@@ -1,22 +1,9 @@
-//! Things hung on a buffer, and the one property that makes them worth having.
+//! Things hung on a buffer: that an attachment lives exactly as long as its
+//! buffer -- its `Drop` runs when the buffer is killed -- and that it survives
+//! what a global keyed by the buffer's name would not, a rename and a new
+//! buffer taking the old name.
 //!
-//! # What is worth testing here
-//!
-//! That an attachment lives exactly as long as its buffer. Everything else
-//! about this table is ordinary map behaviour; that one property is the reason
-//! it exists rather than a global keyed by buffer name, and it is the one that
-//! cannot be checked by reading the code -- "the destructor runs" is a claim
-//! about what `Drop` does when a `HashMap` entry goes, several types away from
-//! anything written here.
-//!
-//! So there is a test below that attaches a value which *notices* being
-//! dropped, kills the buffer, and asks it. That is the difference between this
-//! and the raw-pointer version the design started as: a pointer would pass
-//! every other test in this file and fail that one silently, by leaking.
-//!
-//! The rest is about the two ways the old arrangements went wrong: a global
-//! keyed by name is wrong after a rename, and a global is still there after
-//! the buffer is killed and a new one takes its name.
+//! Design: `doc/architettura-editor.typ, <buffer>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -56,9 +43,8 @@ mod tests {
 
     #[test]
     fn killing_a_buffer_runs_the_destructor_of_what_was_attached_to_it() {
-        // The whole claim. A raw pointer in a box would pass every other test
-        // in this file and fail this one by doing nothing at all -- which is
-        // to say, by leaking, silently, once per search.
+        // The whole claim: a raw pointer in a box would pass every other test
+        // here, and fail this one by leaking.
         let dropped = Arc::new(AtomicUsize::new(0));
         let (ctx, env) = editor();
         run(r#"(buffer-create "*holder*")"#, &env, &ctx);
@@ -186,9 +172,8 @@ mod tests {
 
     #[test]
     fn a_list_survives_the_round_trip_whole() {
-        // What the result set will be, in the meantime: entries are lists,
-        // and a table that flattened or copied them oddly would be found out
-        // much later.
+        // Entries are lists, as a result set's are: a table that flattened or
+        // copied them oddly would be found out much later.
         let (ctx, env) = editor();
         run(r#"(buffer-put 'entries '(("buffer" "x" 1 2)))"#, &env, &ctx);
         assert_eq!(
@@ -309,11 +294,9 @@ mod tests {
 
     #[test]
     fn reverting_a_buffer_leaves_its_attachments_alone() {
-        // Deliberately unlike the undo history and the overlays, which
-        // `adopt_text' throws away because they describe positions in text
-        // that no longer exists. An attachment describes whatever its owner
-        // says it does, and only its owner knows whether new text invalidates
-        // it.
+        // Unlike the undo history and the overlays, which describe positions
+        // in the old text: only an attachment's owner knows whether new text
+        // invalidates it.
         let (ctx, _env) = editor();
         ctx.with_current_buffer_mut(|buf| {
             buf.put_data("test:count", 5usize);

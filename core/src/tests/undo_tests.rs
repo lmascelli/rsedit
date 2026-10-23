@@ -414,8 +414,8 @@ mod tests {
 
     /// Every editing primitive is undoable because there is no way into the
     /// text except the recording layer. This asserts that for each of them,
-    /// so that a new command added on the old pattern -- straight to
-    /// `buf.text` -- is caught here rather than noticed by a user.
+    /// so that a new command writing straight to `buf.text` is caught here
+    /// rather than noticed by a user.
     #[test]
     fn every_editing_command_is_undoable() {
         let cases: &[(&str, &str)] = &[
@@ -469,8 +469,7 @@ mod tests {
         press(&ctx, &env, KeyCode::Char('_'), ctrl());
         assert_eq!(text_of(&ctx), "alpha beta", "C-_ should undo");
 
-        // Redo was on M-_, which Emacs does not use at all. `C-?' is what
-        // Emacs 28 gave `undo-redo'.
+        // `C-?' is what Emacs 28 gave `undo-redo'.
         press(&ctx, &env, KeyCode::Char('?'), ctrl());
         assert_eq!(text_of(&ctx), " beta", "C-? should redo");
     }
@@ -490,8 +489,7 @@ mod tests {
         assert_eq!(text_of(&ctx), "alpha beta");
     }
 
-    /// The bindings Emacs gives to other commands entirely are gone: `M-_` is
-    /// nothing in Emacs, and pressing it must not quietly redo.
+    /// `M-_` is nothing in Emacs, and pressing it must not quietly redo.
     #[test]
     fn the_bindings_emacs_does_not_use_are_not_bound() {
         let (ctx, env) = editor_with("alpha beta");
