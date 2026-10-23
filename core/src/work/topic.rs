@@ -1,22 +1,16 @@
-//! Topics: events as counters.
+//! Topics: events as counters, with no data in them. Emitting one says "go
+//! and look", and what the job looks at, the state, is the source of truth: an
+//! emission is an atomic increment, and a burst of them is one number that
+//! grew.
 //!
-//! A topic carries no data. Emitting one says "go and look", and what the job
-//! looks at -- the state -- is the source of truth: see `doc/workmanager.typ`,
-//! "Gli eventi". So an emission is an atomic increment, cheap enough to make
-//! with a buffer's lock held, and a burst of emissions is one number that grew
-//! rather than a queue of messages to deliver.
-//!
-//! A job is subscribed to a topic when the topic's count has grown past the
-//! last value the job saw. The core records that value just before each step,
-//! which is what makes an event that arrives *during* the step wake the job
-//! again rather than vanish.
+//! Design: `doc/architettura-editor.typ, <argomenti>`.
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
-/// What an emission calls besides counting: how a sleeping executor will be
-/// woken. A no-op in the core's own tests, which look at the counts when they
-/// choose to.
+/// What an emission calls besides counting: how a sleeping executor is woken.
+/// A no-op in the core's own tests, which look at the counts when they choose
+/// to.
 type Nudge = Arc<dyn Fn() + Send + Sync>;
 
 /// The topics, by name.
@@ -49,7 +43,7 @@ impl Default for Topics {
 }
 
 impl Topics {
-    /// Topics whose every emission also calls NUDGE.
+    /// Returns topics whose every emission also calls NUDGE.
     pub fn with_nudge(nudge: impl Fn() + Send + Sync + 'static) -> Self {
         Self {
             by_name: RwLock::new(HashMap::new()),
@@ -57,10 +51,10 @@ impl Topics {
         }
     }
 
-    /// The topic called NAME, made on first use.
+    /// Returns the topic called NAME, made on first use.
     ///
-    /// Resolve a name once and keep the [`Topic`]: emitting through it then
-    /// touches no lock at all.
+    /// A name resolved once, and the [`Topic`] kept, makes emitting through it
+    /// touch no lock at all.
     pub fn get(&self, name: &str) -> Topic {
         if let Some(topic) = self.by_name.read().expect("topics").get(name) {
             return topic.clone();
@@ -81,9 +75,9 @@ impl Topics {
 }
 
 impl Topic {
-    /// A topic in no registry: it counts, and wakes nobody. What a buffer has
-    /// until it joins an editor, which gives it the editor's own. Nameless,
-    /// since nothing can look it up.
+    /// Returns a topic in no registry: it counts, and wakes nobody. What a
+    /// buffer has until it joins an editor, which gives it the editor's own.
+    /// Nameless, since nothing can look it up.
     pub fn detached() -> Self {
         Topic(Arc::new(Inner {
             name: String::new(),
@@ -92,7 +86,7 @@ impl Topic {
         }))
     }
 
-    /// Say that something this topic stands for has changed.
+    /// Says that something this topic stands for has changed.
     pub fn emit(&self) {
         // Release, paired with the Acquire in `count`: whatever was changed
         // before the emission is visible to a job that has seen the new count.
@@ -100,7 +94,7 @@ impl Topic {
         (self.0.nudge)();
     }
 
-    /// How many times the topic has been emitted.
+    /// Returns how many times the topic has been emitted.
     pub fn count(&self) -> u64 {
         self.0.count.load(Ordering::Acquire)
     }

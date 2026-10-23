@@ -3,17 +3,14 @@
 //!
 //! # How to find your way around
 //!
-//! The modules below are listed in **dependency order**, outwards from the two
-//! things that know nothing about each other, and the list is the map. Each one
-//! may use what is above it and must not use what is below:
+//! The modules below are listed in **dependency order**, and the list is the
+//! map. Each one may use what is above it, and the interpreter, which is the
+//! `risp` crate; it must not use what is below:
 //!
 //! ```text
-//!   lisp/        the interpreter. Knows nothing of editors: no buffer, no
-//!                point, no window. Its context is a type parameter.
 //!   work/        where asynchronous work runs: the WorkManager, its
 //!                scheduler and its dedicated threads. Knows nothing of
-//!                editors either: the state a job works on is a type
-//!                parameter.
+//!                editors: the state a job works on is a type parameter.
 //!   paths.rs     where the editor keeps what it keeps on disk -- its
 //!                configuration, its cache -- by each system's conventions.
 //!   buffer/      text storage, and BufferTrait -- the only thing anything
@@ -38,11 +35,11 @@
 //!                terminal, no window system and no crossterm in here.
 //! ```
 //!
-//! Two of those boundaries are the load-bearing ones, and both are checkable in
-//! a single `grep`: `lisp/` names no editor type, and `ui/` names nothing from
-//! `editor/`. The first is what lets the interpreter be tested, and used, on
-//! its own; the second is what lets a renderer be written against a snapshot
-//! instead of against this crate's internals.
+//! Two boundaries are the load-bearing ones. The interpreter is a crate of its
+//! own, so it cannot name an editor type: that is what lets it be tested, and
+//! used, on its own. And `ui/` names nothing from `editor/`, which
+//! `layering_tests` checks: that is what lets a renderer be written against a
+//! snapshot instead of against this crate's internals.
 //!
 //! # Why everything is `pub(crate)`
 //!
@@ -53,7 +50,7 @@
 //! unreachable *and* reported as dead code, which is worth knowing when the
 //! compiler claims something documented as host-facing is never used.
 
-// -- the interpreter, and the text it has no knowledge of ---------------------
+// -- the text, and what can be worked out about it ---------------------------
 pub(crate) mod buffer;
 pub(crate) mod text;
 
@@ -75,10 +72,10 @@ pub(crate) mod primitives;
 
 // -- where work runs, and what the screen is asked to show -------------------
 pub(crate) mod ui;
-// Where all asynchronous work runs: see `doc/workmanager.typ`. The editor
-// uses all of it but the manual mode's drives, which only tests call, and a
-// few of the re-exports, which are there for the hosts and tests to come:
-// without this the compiler would call those dead code.
+// Where all asynchronous work runs. Design:
+// `doc/architettura-editor.typ, <sfondo>`. Without the allow, the compiler
+// would call dead code what only the tests use: the manual mode's drives, the
+// core's own entry points, some of the re-exports.
 #[allow(dead_code, unused_imports)]
 pub(crate) mod work;
 

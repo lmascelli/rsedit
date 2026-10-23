@@ -1,7 +1,8 @@
 //! Pointers from the code to the developer manual.
 //!
 //! A module's documentation or a comment says where its design is explained
-//! as `Design: doc/FILE.typ, <label>.` (see doc/documentazione.typ). A label
+//! as ``Design: `doc/FILE.typ, <label>`.`` (see doc/documentazione.typ), in
+//! backticks so that rustdoc does not read the label as an HTML tag. A label
 //! that is renamed or removed leaves the pointer pointing nowhere, which only
 //! a test notices.
 #[cfg(test)]
@@ -36,7 +37,7 @@ mod tests {
     #[test]
     fn a_pointer_is_read_as_its_document_and_label() {
         assert_eq!(
-            pointers("//! Design: doc/architettura-editor.typ, <sfondo>."),
+            pointers("//! Design: `doc/architettura-editor.typ, <sfondo>`."),
             vec![("architettura-editor.typ".to_string(), "sfondo".to_string())]
         );
         assert!(pointers(";; see doc/workmanager.typ").is_empty());

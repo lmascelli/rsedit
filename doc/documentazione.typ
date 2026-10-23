@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--5 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--11 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -253,8 +253,9 @@ Segue le Rust API Guidelines e le convenzioni della RFC 1574.
 - Campi e varianti: una riga quando il nome non basta, niente quando basta.
 - *La documentazione di modulo* (`//!`) dice in una-cinque righe di che cosa
   il modulo è responsabile, e rimanda al capitolo del manuale con la sua
-  etichetta: `Design: doc/architettura-editor.typ, <sfondo>.` Un test
-  controlla che l'etichetta esista.
+  etichetta: #raw("Design: `doc/architettura-editor.typ, <sfondo>`."). Il
+  rimando sta tra apici inversi perché il rustdoc, senza, legge `<sfondo>`
+  come un tag HTML e dà un avviso. Un test controlla che l'etichetta esista.
 - In inglese, come oggi.
 
 == I commenti nel codice <regole-commenti>
@@ -494,7 +495,7 @@ Dopo:
 //! copied to. [`Log::append`] only records; [`Log::flush`], which the
 //! WorkManager's watchdog calls, writes what is owed.
 //!
-//! Design: doc/architettura-editor.typ, <log>.
+//! Design: `doc/architettura-editor.typ, <log>`.
 ```
 
 Il primo `# Why` diventa la decisione «La lista e il file si aggiornano
@@ -1429,7 +1430,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   columns: (1.3cm, 7.4cm, 1.6cm, 1fr),
   header: ([Passo], [Parte], [Righe], [Note]),
   [10], [`doc/rapporto-problemi.typ` (fatto)], [1 244], [80 schede da verificare],
-  [11], [`work/`], [2 935], [assorbe `workmanager.typ`],
+  [11], [`work/` (fatto)], [2 935], [assorbe `workmanager.typ`],
   [12], [`paths.rs`, `buffer/`], [3 075], [---],
   [13], [`text/`, `input.rs`, `commands.rs`], [2 047], [---],
   [14], [`managers/`], [2 936], [la regola delle coppie con `editor/`],
@@ -1458,6 +1459,34 @@ I criteri con cui si propongono gli spostamenti:
 - *In un file, prima ciò che è pubblico*, poi gli aiuti privati, nell'ordine
   in cui il lettore li incontra.
 - *Un file di test per argomento*, con il nome del modulo che prova.
+
+*Passo 11, fatto.* `work/manager.rs` è diviso in quattro file, uno per
+concetto: `manager.rs` resta la facciata, `registry.rs` prende il registro,
+`executor.rs` la casella e il ciclo dell'esecutore, `watchdog.rs` il watchdog;
+`core.rs` resta intero. Il rustdoc di `work/` segue le regole: righe di
+riassunto alla terza persona, documentazioni di modulo di poche righe con il
+rimando al manuale, i futuri superati al presente. I perché lunghi e la storia
+sono passati nel capitolo «Il lavoro in background» del manuale, riscritto sul
+WorkManager di oggi con tredici decisioni e otto diagrammi; nello stesso
+manuale l'introduzione, la panoramica, la ricetta e il glossario non nominano
+più `background/` né `lisp/`. `work_manager_tests.rs` è diviso come il codice, in
+`work_manager_tests`, `work_threads_tests` e `work_watchdog_tests`, con gli aiuti
+comuni in `work_support`; i due test che costruiscono un editor sono passati in
+`background_tests` e `log_tests`. La mappa di `lib.rs` non nomina più `lisp/`,
+e `layering_tests` la confronta con le dichiarazioni `mod`. `workmanager.typ`
+dichiara di essere assorbito, e si toglie nella fase D. Il comportamento non è
+cambiato: gli stessi 39 test, spostati, passano.
+
+La verifica ha trovato quattro difetti. Il formato del rimando `Design:` che
+questo documento prescriveva dava un avviso di `cargo doc` per ogni modulo: la
+regola ora lo vuole tra apici inversi. Il thread `stop shell` di
+`primitives/shell.rs`, che manda `KILL` a un comando fermato, nasce fuori dal
+WorkManager, contro la prima regola del capitolo; resta al passo 17. Nel
+manuale tre punti e virgola dopo un `#rapporto(...)` o un `#emph[...]`
+scompaiono dal PDF, perché typst li legge come la fine dell'espressione; si
+scrive `\;`, e restano ai passi dei loro capitoli. In `workmanager.typ` la
+figura degli eventi faceva partire il secondo ritardo dall'emissione, mentre il
+nucleo lo conta dalla fine del passo: il manuale disegna il comportamento vero.
 
 == Fase D --- il manuale (passo 22)
 

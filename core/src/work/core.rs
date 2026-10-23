@@ -1,25 +1,8 @@
 //! The scheduler's core: the jobs, their queues and deadlines, the rule that
-//! picks the next step, and the measurements.
+//! picks the next step, and the measurements. It has no thread and no clock of
+//! its own: a caller drives it a step at a time, on the [`Clock`] it was given.
 //!
-//! See `doc/workmanager.typ`, "La logica dello scheduler". In short:
-//!
-//! - A job is in one place at a time: ready (in the queue of its class),
-//!   running, sleeping until a deadline, or waiting for one of its topics --
-//!   with a deadline too, for [`Step::WaitAtMost`].
-//! - [`Core::run_once`] is one turn of an executor's loop: jobs that are
-//!   leaving leave, deadlines that passed and events that matured make jobs
-//!   ready, and at most one step runs, measured.
-//! - While a step runs, or a job's `exit`, the core says so in its
-//!   [`Underway`], which other threads read: the watchdog, to report a step
-//!   that does not end, and the registry, to list the job as running.
-//! - The next step comes from the high queue, except that after `high-steps`
-//!   high steps in a row a ready normal job gets its turn. Within a queue,
-//!   jobs take turns.
-//!
-//! The core scans its jobs rather than keeping a heap of deadlines: there are
-//! tens of them, not thousands, and a scan cannot go out of step with the jobs
-//! the way a heap with stale entries can. A heap can come if the count ever
-//! says so.
+//! Design: `doc/architettura-editor.typ, <nucleo>`.
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -39,7 +22,7 @@ use super::topic::{Topic, Topics};
 /// that would happen on the executor's thread, outside any step.
 const FURTHEST: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
-/// SPAN after NOW, but no further than [`FURTHEST`].
+/// Returns SPAN after NOW, but no further than [`FURTHEST`].
 fn later(now: Instant, span: Duration) -> Instant {
     now + span.min(FURTHEST)
 }
@@ -57,7 +40,7 @@ pub enum Place {
     Waiting,
 }
 
-/// A job as the core sees it: what `work-list` will show.
+/// A job as the core sees it: what `work-list` shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkInfo {
     pub id: WorkId,
@@ -144,7 +127,7 @@ pub(crate) struct Current {
 }
 
 impl Underway {
-    /// What is running now, if anything.
+    /// Returns what is running now, if anything.
     pub(crate) fn current(&self) -> Option<Current> {
         self.slot().clone()
     }
@@ -157,8 +140,9 @@ impl Underway {
         self.slot().take();
     }
 
-    /// Nothing that can panic runs under this lock, but the watchdog reads it
-    /// and must not be the thread that finds out otherwise.
+    /// Returns the slot, locked. Nothing that can panic runs under this lock,
+    /// but the watchdog reads it and must not be the thread that finds out
+    /// otherwise.
     fn slot(&self) -> MutexGuard<'_, Option<Current>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -183,8 +167,8 @@ impl Load {
         self.steps.push_back((started, ended, name.to_string()));
     }
 
-    /// How busy the last second was, in percent, and with which jobs, busiest
-    /// first -- at most once a second, `None` in between.
+    /// Returns how busy the last second was, in percent, and with which jobs,
+    /// busiest first -- at most once a second, `None` in between.
     fn check(&mut self, now: Instant) -> Option<(u64, Vec<(String, u64)>)> {
         let from = now.checked_sub(Self::WINDOW)?;
         while self
@@ -219,8 +203,7 @@ impl Load {
     }
 }
 
-/// The core of a scheduler. Driven by one thread at a time; see the module
-/// documentation.
+/// The core of a scheduler, driven by one thread at a time.
 pub struct Core<C: 'static> {
     options: Arc<Options>,
     topics: Arc<Topics>,
@@ -266,13 +249,13 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Where this core says what it is running, for other threads to read
-    /// while it runs. See [`Underway`].
+    /// Returns where this core says what it is running, for other threads to
+    /// read while it runs. See [`Underway`].
     pub(crate) fn underway(&self) -> Arc<Underway> {
         self.underway.clone()
     }
 
-    /// Say that the job ID, called NAME, is in a step -- or in its `exit` --
+    /// Says that the job ID, called NAME, is in a step -- or in its `exit` --
     /// from STARTED on.
     fn begin(&mut self, id: WorkId, name: &str, exit: bool, started: Instant) {
         self.serial += 1;
@@ -285,7 +268,7 @@ impl<C: 'static> Core<C> {
         });
     }
 
-    /// Take JOB, under the name in SPEC.
+    /// Takes JOB, under the name in SPEC, and returns its number.
     ///
     /// A job that already has the name leaves, as [`Exit::Cancelled`], on the
     /// next turn. `None` once the core has shut down: the job is not taken, and
@@ -295,7 +278,8 @@ impl<C: 'static> Core<C> {
         self.submit_as(id, spec, job).then_some(id)
     }
 
-    /// [`Self::submit`], under a number the caller has already handed out.
+    /// Takes JOB as [`Self::submit`] does, under a number the caller has
+    /// already handed out.
     ///
     /// For the WorkManager, which answers `submit` at once with the number and
     /// passes the job on to the executor's thread: the number has to exist
@@ -349,7 +333,7 @@ impl<C: 'static> Core<C> {
         true
     }
 
-    /// Stop the job ID. It leaves on the next turn, as [`Exit::Cancelled`],
+    /// Stops the job ID. It leaves on the next turn, as [`Exit::Cancelled`],
     /// without another step. False when there is no such job.
     pub fn cancel(&mut self, id: WorkId) -> bool {
         let Some(mut record) = self.jobs.remove(&id) else {
@@ -373,7 +357,7 @@ impl<C: 'static> Core<C> {
         true
     }
 
-    /// Stop the job called NAME. False when there is none.
+    /// Stops the job called NAME. False when there is none.
     pub fn cancel_named(&mut self, name: &str) -> bool {
         match self.names.get(name) {
             Some(&id) => self.cancel(id),
@@ -381,7 +365,8 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Every job leaves, as [`Exit::Shutdown`], and nothing is taken after.
+    /// Shuts the core down: every job leaves, as [`Exit::Shutdown`], and
+    /// nothing is taken after.
     pub fn shutdown(&mut self, state: &C) {
         self.closed = true;
         for (id, mut record) in std::mem::take(&mut self.jobs) {
@@ -400,9 +385,9 @@ impl<C: 'static> Core<C> {
         self.flush_leaving(state);
     }
 
-    /// One turn of an executor's loop: the jobs that are leaving leave, the
-    /// deadlines that passed and the events that matured make jobs ready, and
-    /// at most one step runs. True when a step ran.
+    /// Runs one turn of an executor's loop: the jobs that are leaving leave,
+    /// the deadlines that passed and the events that matured make jobs ready,
+    /// and at most one step runs. True when a step ran.
     pub fn run_once(&mut self, state: &C) -> bool {
         self.flush_leaving(state);
         let now = self.clock.now();
@@ -416,9 +401,9 @@ impl<C: 'static> Core<C> {
         true
     }
 
-    /// Turns until no job is ready, or until LIMIT steps have run: a job that
-    /// always answers `Continue` would otherwise never let this return. The
-    /// number of steps that ran.
+    /// Runs turns until no job is ready, or until LIMIT steps have run: a job
+    /// that always answers `Continue` would otherwise never let this return.
+    /// Returns the number of steps that ran.
     pub fn run_until_idle(&mut self, state: &C, limit: usize) -> usize {
         let mut steps = 0;
         while steps < limit && self.run_once(state) {
@@ -427,10 +412,9 @@ impl<C: 'static> Core<C> {
         steps
     }
 
-    /// Run SPAN of scheduling on CLOCK -- the clock this core reads -- moving
-    /// it from one wake-up to the next instead of waiting: what the tests, and
-    /// later the manual mode, use. LIMIT bounds the steps, as in
-    /// [`Self::run_until_idle`].
+    /// Runs SPAN of scheduling on CLOCK -- the clock this core reads -- moving
+    /// it from one wake-up to the next instead of waiting: what the core's
+    /// tests use. LIMIT bounds the steps, as in [`Self::run_until_idle`].
     pub fn run_for(
         &mut self,
         state: &C,
@@ -456,9 +440,9 @@ impl<C: 'static> Core<C> {
         steps
     }
 
-    /// When the next turn has something to do: now when a job is ready or
-    /// leaving, otherwise the earliest deadline, maturing event or summary.
-    /// `None` when only a new job or an event can bring work.
+    /// Returns when the next turn has something to do: now when a job is
+    /// ready or leaving, otherwise the earliest deadline, maturing event or
+    /// summary. `None` when only a new job or an event can bring work.
     pub fn next_wakeup(&self) -> Option<Instant> {
         let now = self.clock.now();
         if !self.leaving.is_empty() || !self.high.is_empty() || !self.normal.is_empty() {
@@ -478,18 +462,18 @@ impl<C: 'static> Core<C> {
         jobs.chain([summary]).flatten().min()
     }
 
-    /// The report lines written since the last call, oldest first.
+    /// Returns the report lines written since the last call, oldest first.
     pub fn take_reports(&mut self) -> Vec<String> {
         self.reporter.take()
     }
 
-    /// The jobs that have left since the last call, their `exit` already
-    /// called: what a list of the jobs kept outside the core drops.
+    /// Returns the jobs that have left since the last call, their `exit`
+    /// already called: what a list of the jobs kept outside the core drops.
     pub fn take_departed(&mut self) -> Vec<WorkId> {
         std::mem::take(&mut self.departed)
     }
 
-    /// Every job the core holds, in the order they were submitted.
+    /// Returns every job the core holds, in the order they were submitted.
     pub fn info(&self) -> Vec<WorkInfo> {
         self.jobs
             .iter()
@@ -512,7 +496,7 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Make ready every job whose deadline passed or whose events matured.
+    /// Makes ready every job whose deadline passed or whose events matured.
     fn poll(&mut self, now: Instant) {
         let delay = self.options.event_delay();
         let mut due = Vec::new();
@@ -556,9 +540,9 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// The rule: high first, but after `high-steps` high steps in a row a
-    /// ready normal job goes. Counted in steps, not time, so that it is
-    /// deterministic.
+    /// Chooses the next job by the rule: high first, but after `high-steps`
+    /// high steps in a row a ready normal job goes. Counted in steps, not
+    /// time, so that it is deterministic.
     fn choose(&mut self) -> Option<WorkId> {
         let normal_due = !self.normal.is_empty()
             && (self.high.is_empty() || self.high_streak >= self.options.high_steps());
@@ -572,7 +556,7 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Take one step of ID, measure it, and apply its answer.
+    /// Takes one step of ID, measures it, and applies its answer.
     fn run_step(&mut self, id: WorkId, state: &C) {
         let started = self.clock.now();
         let record = self.jobs.get_mut(&id).expect("a chosen job has a record");
@@ -655,7 +639,7 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Record a step of job ID, called NAME, that took TOOK; report it if it
+    /// Records a step of job ID, called NAME, that took TOOK; reports it if it
     /// was long.
     fn measure(
         &mut self,
@@ -710,7 +694,7 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Make NAMES the topics of job ID, as its step asked: a topic it already
+    /// Makes NAMES the topics of job ID, as its step asked: a topic it already
     /// had keeps the count it last saw, a new one starts from now. True when
     /// one of them is new -- see [`StepContext::subscribe`] for why that
     /// counts as a change.
@@ -748,7 +732,7 @@ impl<C: 'static> Core<C> {
         fresh
     }
 
-    /// Put job ID back where its answer STEP says. FRESH: the step named a
+    /// Puts job ID back where its answer STEP says. FRESH: the step named a
     /// topic the job did not have, which counts as a change.
     fn apply(&mut self, id: WorkId, job: Box<dyn Job<C>>, step: Step, now: Instant, fresh: bool) {
         let delay = self.options.event_delay();
@@ -791,7 +775,7 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Job ID leaves, for WHY. Its `exit` comes with the next state.
+    /// Makes job ID leave, for WHY. Its `exit` comes with the next state.
     fn leave(&mut self, id: WorkId, job: Box<dyn Job<C>>, why: Exit) {
         if let Some(record) = self.jobs.remove(&id) {
             if self.names.get(&record.spec.name) == Some(&id) {
@@ -806,7 +790,7 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Call `exit` on every job that left.
+    /// Calls `exit` on every job that left.
     fn flush_leaving(&mut self, state: &C) {
         for Leaving {
             id,
@@ -832,7 +816,7 @@ impl<C: 'static> Core<C> {
         }
     }
 
-    /// Close what is due to close: the second of load, and the report
+    /// Closes what is due to close: the second of load, and the report
     /// windows.
     fn tick(&mut self, now: Instant) {
         if let Some((share, by_job)) = self.load.check(now)
@@ -854,10 +838,10 @@ impl<C: 'static> Core<C> {
     }
 }
 
-/// TOOK shared out over UNITS, at least one: in milliseconds, or in micro- or
-/// nanoseconds when there is less than a millisecond each. A line of colour
-/// costs milliseconds; a step of fuel costs a fraction of a microsecond, and
-/// "0 ms each" would say nothing.
+/// Returns TOOK shared out over UNITS, at least one: in milliseconds, or in
+/// micro- or nanoseconds when there is less than a millisecond each. A line of
+/// colour costs milliseconds; a step of fuel costs a fraction of a
+/// microsecond, and "0 ms each" would say nothing.
 fn per_unit(took: Duration, units: u64) -> String {
     let each = took.as_nanos() / u128::from(units);
     match each {
@@ -867,7 +851,7 @@ fn per_unit(took: Duration, units: u64) -> String {
     }
 }
 
-/// What a panic said, when it said it with a string.
+/// Returns what a panic said, when it said it with a string.
 pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()

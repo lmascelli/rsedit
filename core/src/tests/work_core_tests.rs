@@ -1,10 +1,9 @@
 //! The scheduler's core, driven by hand on a clock that moves only when told.
+//! No test here starts a thread or waits: a job meant to take time advances
+//! the `ManualClock` from inside its step, so a step takes 30 ms because the
+//! test says so, not because the machine was slow.
 //!
-//! No test here starts a thread or waits. The clock is a `ManualClock`; a job
-//! that is meant to take time advances it from inside its step, and a test
-//! that needs time to pass advances it itself. So every test is exact: a step
-//! takes 30 ms because the test says so, not because the machine was slow.
-//! See `doc/workmanager.typ`, "Come si prova".
+//! Design: `doc/architettura-editor.typ, <prove-sfondo>`.
 #[cfg(test)]
 mod tests {
     use crate::work::{

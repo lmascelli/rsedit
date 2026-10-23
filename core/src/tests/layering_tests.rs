@@ -17,6 +17,8 @@
 //!   an editor.
 //! - `ui/` knows nothing of `editor/`. It describes what to draw; a renderer is
 //!   written against that description, not against this crate's internals.
+//! - The map in `lib.rs` names every module the crate declares, and nothing
+//!   else.
 //!
 //! # Why `include_str!` and not a file walk
 //!
@@ -36,6 +38,9 @@ mod tests {
         ("text/results.rs", include_str!("../text/results.rs")),
         ("text/search.rs", include_str!("../text/search.rs")),
     ];
+
+    /// The crate's root, whose documentation is the map.
+    const LIB: &str = include_str!("../lib.rs");
 
     /// Every file under `ui/`.
     const UI: &[(&str, &str)] = &[
@@ -145,5 +150,54 @@ mod tests {
                 files.len()
             );
         }
+    }
+
+    /// Returns the entries of the map in LIB: the first word of each line of
+    /// its `text` block that starts one, `work/` or `paths.rs`.
+    fn map_entries(lib: &str) -> Vec<&str> {
+        lib.lines()
+            .filter_map(|line| line.strip_prefix("//!"))
+            .skip_while(|line| line.trim() != "```text")
+            .skip(1)
+            .take_while(|line| line.trim() != "```")
+            .filter(|line| line.starts_with("   ") && !line.starts_with("    "))
+            .filter_map(|line| line.split_whitespace().next())
+            .collect()
+    }
+
+    /// Returns the modules LIB declares, but the tests.
+    fn declared_modules(lib: &str) -> Vec<&str> {
+        lib.lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let declared = ["pub(crate) mod ", "pub mod ", "mod "]
+                    .iter()
+                    .find_map(|prefix| line.strip_prefix(prefix))?;
+                declared.strip_suffix(';')
+            })
+            .filter(|name| *name != "tests")
+            .collect()
+    }
+
+    #[test]
+    fn the_map_in_lib_rs_names_every_module_and_nothing_else() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut mapped = Vec::new();
+        for entry in map_entries(LIB) {
+            let (name, is_there) = match (entry.strip_suffix('/'), entry.strip_suffix(".rs")) {
+                (Some(dir), _) => (dir, src.join(dir).join("mod.rs").is_file()),
+                (_, Some(file)) => (file, src.join(entry).is_file()),
+                _ => panic!("a map entry is a directory/ or a file.rs, not {entry}"),
+            };
+            assert!(is_there, "the map names {entry}, which is not in core/src");
+            mapped.push(name);
+        }
+        let mut declared = declared_modules(LIB);
+        mapped.sort_unstable();
+        declared.sort_unstable();
+        assert_eq!(
+            mapped, declared,
+            "the map in lib.rs and its `mod` lines name different modules"
+        );
     }
 }

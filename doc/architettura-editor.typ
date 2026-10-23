@@ -33,8 +33,8 @@
 = Introduzione
 // ===========================================================================
 
-Questo manuale descrive la libreria `rsedit_core` (`core/src/`, esclusa la
-cartella `lisp/`) e il front-end a terminale che la usa (`src/`). È il
+Questo manuale descrive la libreria `rsedit_core` (`core/src/`) e il front-end
+a terminale che la usa (`src/`). È il
 compagno di #emph[L'interprete Lisp di rsedit] (`architettura-interprete.typ`),
 che descrive il linguaggio: qui l'interprete è dato per noto, e si spiega come
 l'editor lo ospita, come trasforma un tasto in un comando, come conserva il
@@ -49,11 +49,11 @@ comandi, lavori di sfondo --- è in `rsedit_core`, e quasi tutto il
 comportamento visibile all'utente è scritto in Lisp nei moduli di `core/lisp/`.
 
 #key[
-  Due confini reggono l'architettura, e sono verificati dai test
-  (`tests::layering_tests`): `lisp/` non nomina alcun tipo dell'editor, e `ui/`
-  non nomina nulla di `editor/`. Il primo permette di provare e riusare
-  l'interprete da solo; il secondo permette di scrivere un renderer contro una
-  fotografia invece che contro gli interni della libreria.
+  Due confini reggono l'architettura. L'interprete è un crate a sé, `risp`, e
+  non può nominare alcun tipo dell'editor: questo permette di provarlo e
+  riusarlo da solo. E `ui/` non nomina nulla di `editor/`, come verificano i
+  test (`tests::layering_tests`): questo permette di scrivere un renderer contro
+  una fotografia invece che contro gli interni della libreria.
 ]
 
 == Come leggere questo manuale
@@ -113,21 +113,23 @@ direzione in cui si costruisce.
 #canvas(height: 8.6cm)[
   #node(8.1cm, 0.4cm, 15.8cm, 0.7cm, [`src/` --- il front-end TUI (crossterm): traduce gli eventi, disegna la fotografia], fill: accent.lighten(85%))
   #node(8.1cm, 1.4cm, 15.8cm, 0.7cm, [`ui/` --- la descrizione dello schermo: finestre, layout, facce, `FrameSnapshot`. Non disegna nulla])
-  #node(8.1cm, 2.4cm, 15.8cm, 0.7cm, [`background/` --- su quale thread gira il lavoro, e la regola che lo decide])
-  #node(4.0cm, 3.4cm, 7.6cm, 0.7cm, [`feature/` --- minibuffer e isearch])
-  #node(12.15cm, 3.4cm, 7.7cm, 0.7cm, [`modes/` --- modi e lavori che li servono])
-  #node(8.1cm, 4.4cm, 15.8cm, 0.7cm, [`primitives/` --- tutto ciò che Lisp può chiamare (304 primitive)])
-  #node(8.1cm, 5.4cm, 15.8cm, 0.7cm, [`editor/` --- `EditorState`, la facciata: l'unico che tiene due lock di compartimento insieme], fill: paper)
-  #node(8.1cm, 6.4cm, 15.8cm, 0.7cm, [`managers/` --- lo stato, in compartimenti, ognuno sotto un lock], fill: paper)
-  #node(4.0cm, 7.4cm, 7.6cm, 0.7cm, [`input.rs`, `commands.rs` --- tasti, keymap, comandi])
-  #node(12.15cm, 7.4cm, 7.7cm, 0.7cm, [`text/` --- ricerca, rettangoli, kill ring])
-  #node(4.0cm, 8.3cm, 7.6cm, 0.6cm, [`lisp/` --- l'interprete], fill: paper)
-  #node(12.15cm, 8.3cm, 7.7cm, 0.6cm, [`buffer/` --- testo, undo, cache], fill: paper)
+  #node(4.0cm, 2.4cm, 7.6cm, 0.7cm, [`feature/` --- minibuffer e isearch])
+  #node(12.15cm, 2.4cm, 7.7cm, 0.7cm, [`modes/` --- modi e lavori che li servono])
+  #node(8.1cm, 3.4cm, 15.8cm, 0.7cm, [`primitives/` --- tutto ciò che Lisp può chiamare (304 primitive)])
+  #node(8.1cm, 4.4cm, 15.8cm, 0.7cm, [`editor/` --- `EditorState`, la facciata: l'unico che tiene due lock di compartimento insieme], fill: paper)
+  #node(8.1cm, 5.4cm, 15.8cm, 0.7cm, [`managers/` --- lo stato, in compartimenti, ognuno sotto un lock], fill: paper)
+  #node(4.0cm, 6.4cm, 7.6cm, 0.7cm, [`input.rs`, `commands.rs` --- tasti, keymap, comandi])
+  #node(12.15cm, 6.4cm, 7.7cm, 0.7cm, [`text/` --- ricerca, rettangoli, kill ring])
+  #node(4.0cm, 7.4cm, 7.6cm, 0.7cm, [`paths.rs` --- le directory dell'editor])
+  #node(12.15cm, 7.4cm, 7.7cm, 0.7cm, [`buffer/` --- testo, undo, cache], fill: paper)
+  #node(8.1cm, 8.3cm, 15.8cm, 0.6cm, [`work/` --- il lavoro in background: il WorkManager, l'esecutore, i thread dedicati], fill: paper)
 ]
 
 Le frecce sono omesse perché la regola è una sola: ogni livello può usare tutti
-quelli disegnati sotto di lui. `lisp/` e `buffer/` non si conoscono; si
-incontrano solo in `editor/`.
+quelli disegnati sotto di lui. `work/` non conosce l'editor: un buffer emette
+un suo argomento senza sapere chi lo ascolta (@argomenti). L'interprete non è
+nella figura: è il crate `risp`, che non conosce l'editor, e lo usano gli strati
+da `managers/` in su.
 
 == Dove sta cosa
 
@@ -140,11 +142,11 @@ incontrano solo in `editor/`.
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, il parser dei nomi dei tasti, le keymap predefinite.],
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`: il vocabolario dei comandi.],
   [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`.],
-  [`editor/`], [`EditorState` e i suoi metodi, divisi per compartimento (`buffers.rs`, `windows.rs`...) o per preoccupazione (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `background.rs`, `macros.rs`).],
+  [`editor/`], [`EditorState` e i suoi metodi, divisi per compartimento (`buffers.rs`, `windows.rs`...) o per preoccupazione (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `work.rs`, `background.rs`, `macros.rs`).],
   [`primitives/`], [Le 304 primitive dell'editor, in 28 moduli, e `install_primitives`.],
   [`modes/`], [`MajorMode`, grammatica di colorazione (`syntax.rs`), tabella sintattica e scanner di espressioni (`sexp.rs`), i lavori di sfondo `Highlighter`, `Prescanner`, `FileWatcher`, `AutoSaver`.],
   [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale.],
-  [`background/`], [Lo scheduler, `ScheduledTask`, `ImmediateTask`, i worker Lisp e `background-call`.],
+  [`work/`], [Il WorkManager: il nucleo dello scheduler, l'esecutore, il registro, i thread dedicati, il watchdog, gli argomenti e le opzioni (@sfondo).],
   [`ui/`], [Albero delle finestre, finestre flottanti, layout delle righe, facce e temi, `FrameSnapshot`.],
   [`tests/`], [Circa ottanta file di test dell'editor, più `perf/`.],
   [`../lisp/`], [I moduli Lisp distribuiti con l'editor (venti file).],
@@ -182,7 +184,8 @@ front-end usa sono pochi:
 == I thread
 
 L'editor usa più thread, ma uno solo esegue i comandi. La figura mostra chi
-esiste e che cosa condividono.
+esiste; tutti tranne il principale appartengono al WorkManager (@sfondo), e
+portano il suo numero nel nome.
 
 #canvas(height: 6.2cm)[
   #group(0.1cm, 0.3cm, 7.6cm, 5.6cm, [thread principale (comandi)])
@@ -191,24 +194,29 @@ esiste e che cosa condividono.
   #node(3.9cm, 3.6cm, 6.8cm, 0.8cm, [hook, callback dovute (`tick`), `snapshot`])
   #node(3.9cm, 4.9cm, 6.8cm, 1.0cm, [l'unico thread che apre prompt\ e su cui girano i comandi], fill: paper)
 
-  #group(8.5cm, 0.3cm, 7.6cm, 2.7cm, [thread dello scheduler (condiviso)])
-  #node(12.3cm, 1.2cm, 6.8cm, 0.8cm, [`Highlighter`, `Prescanner` (ogni 40 ms)])
-  #node(12.3cm, 2.3cm, 6.8cm, 0.8cm, [`FileWatcher`, `AutoSaver`, worker Lisp, job a turni])
+  #group(8.5cm, 0.3cm, 7.6cm, 2.0cm, [esecutore (`w1 executor`)])
+  #node(12.3cm, 0.95cm, 6.8cm, 0.6cm, [`highlighter`, `prescanner` (classe alta)])
+  #node(12.3cm, 1.75cm, 6.8cm, 0.6cm, [`file-watcher`, `auto-saver`, lavori Lisp])
 
-  #group(8.5cm, 3.4cm, 7.6cm, 2.5cm, [un thread per lavoro (`RunNow`)])
-  #node(12.3cm, 4.2cm, 6.8cm, 0.8cm, [comandi di shell (`ShellTask`), ricerca nell'albero (`TreeSearch`)])
-  #node(12.3cm, 5.25cm, 6.8cm, 0.7cm, [e ogni `(spawn ...)` Lisp], fill: paper)
-  #carrow((7.3cm, 2.4cm), (8.9cm, 1.6cm), colour: accent)
+  #group(8.5cm, 2.7cm, 7.6cm, 1.3cm, [watchdog (`w1 watchdog`)])
+  #node(12.3cm, 3.35cm, 6.8cm, 0.6cm, [passi bloccati, thread finiti, file di log])
+
+  #group(8.5cm, 4.4cm, 7.6cm, 1.5cm, [un thread dedicato per lavoro che si blocca])
+  #node(12.3cm, 5.1cm, 6.8cm, 0.6cm, [comandi di shell, ricerche nei file])
+  #carrow((7.3cm, 2.4cm), (8.9cm, 1.4cm), colour: accent)
 ]
 
-La freccia è la mailbox (`worker_mailbox`) con cui il thread dei comandi
-consegna lavoro allo scheduler. Tutti condividono lo stesso `EditorState` (clonato: ogni campo è un `Arc`) e lo
-stesso ambiente Lisp. Il carburante, il permesso di `yield`, il contrassegno
-del comando per l'undo e i dati di `string-match` sono invece per thread
-(variabili `thread_local!`). I lavori di sfondo non chiamano mai Lisp sul
-proprio thread quando l'effetto deve toccare l'interfaccia: lasciano una
-#emph[callback dovuta], che il thread principale esegue tra un comando e
-l'altro (@sfondo).
+La freccia è la casella con cui il thread dei comandi consegna il lavoro
+all'esecutore. Tutti condividono lo stesso `EditorState` (clonato: ogni campo è
+un `Arc`) e, i lavori che lo usano, lo stesso ambiente Lisp. Il carburante, il
+permesso di `yield`, il contrassegno del comando per l'undo, i dati di
+`string-match` e il segno di `in_worker` sono invece per thread (variabili
+`thread_local!`). I lavori di sfondo non chiamano mai Lisp sul proprio thread
+quando l'effetto deve toccare l'interfaccia: lasciano una #emph[callback
+dovuta], che il thread principale esegue tra un comando e l'altro
+(@utenti-sfondo). Fuori dal WorkManager restano i thread di `(spawn ...)`, che
+l'interprete avvia da sé, e il breve `stop shell` di un comando di shell
+fermato.
 
 // ===========================================================================
 = Il ciclo di vita del programma <ciclo-vita>
@@ -1986,252 +1994,854 @@ corsivo, sottolineato, inverso). I colori sono richieste --- un nome o
 = Il lavoro in background <sfondo>
 // ===========================================================================
 
-== La regola
+Tutto il lavoro che l'editor fa lontano dal thread dei comandi passa da un solo
+oggetto, il #emph[WorkManager] di `work/`: la colorazione, la prescansione, il
+controllo dei file, il salvataggio automatico, i lavori Lisp, i comandi di
+shell e le ricerche nei file. Il WorkManager li esegue, li elenca, li ferma e
+ne misura i tempi. Non conosce l'editor: lo stato su cui un lavoro lavora è un
+parametro di tipo, `C`, che nell'editor è `EditorState<B>` e nei test di
+`work/` è `()`.
 
-`background/worker.rs` enuncia sette regole per tutto ciò che gira fuori dal
-thread dei comandi. In breve: ciò che può durare più di un frame è un lavoro di
-sfondo avviato da una sola chiamata; un lavoro non disegna mai; non presume che
-l'editor sia rimasto fermo e ricontrolla prima di salvare; il progresso è un
-segnale, non un ridisegno; le callback girano sul thread dei comandi, tra un
-comando e l'altro; gli errori vanno nel log e il lavoro dichiara comunque di
-aver finito; un lavoro con lo stesso nome di uno in corso lo sostituisce.
-
-== Lo scheduler
-
-`BackgroundScheduler::spawn` avvia un thread che riceve `WorkerMessage` dalla
-mailbox dell'editor.
-
-#canvas(height: 6.0cm)[
-  #node(2.6cm, 0.6cm, 4.8cm, 0.8cm, [`worker_mailbox.send(msg)`], fill: paper)
-  #carrow((5.0cm, 0.6cm), (6.9cm, 0.6cm))
-  #node(10.6cm, 0.6cm, 7.2cm, 0.8cm, [`recv_timeout(prossima scadenza)` o `recv()`], fill: accent.lighten(85%))
-  #carrow((8.5cm, 1.0cm), (6.5cm, 1.9cm))
-  #carrow((12.7cm, 1.0cm), (13.4cm, 1.9cm))
-  #node(4.6cm, 2.5cm, 6.6cm, 1.2cm, [`RunNow(ImmediateTask)`\ un thread nuovo, subito; nessuno lo attende\ (`ShellTask`, `TreeSearch`)])
-  #node(12.8cm, 2.5cm, 6.0cm, 1.2cm, [`Schedule { task, interval }`\ aggiunto alla lista dei lavori])
-  #carrow((12.8cm, 3.1cm), (12.8cm, 3.75cm))
-  #node(12.8cm, 4.4cm, 6.0cm, 1.3cm, [a ogni risveglio: ogni lavoro scaduto\ esegue `execute(&state) -> bool`;\ `false` lo toglie dalla lista])
-  #note(0.3cm, 3.6cm)[Il thread esce quando il canale si chiude. Tutti i lavori a turni\ condividono questo solo thread: un turno che dura troppo\ ritarda la colorazione e ogni altro lavoro.]
+#key[
+  *Le regole, in sei righe.*
+  + *Un solo punto d'ingresso.* Il lavoro asincrono passa dal WorkManager, ha
+    un nome e un `WorkId`, e si può elencare e fermare.
+  + *Due forme di lavoro.* I lavori a passi girano sull'esecutore; ciò che può
+    bloccarsi, un processo o il disco, ha un thread dedicato.
+  + *Un passo non aspetta mai.* Fa una quantità limitata di lavoro e dice come
+    proseguire.
+  + *Lo scheduler misura e segnala, non interrompe.* Un passo troppo lungo
+    finisce nel log; la correzione si fa a mano.
+  + *Gli argomenti non portano dati.* Dicono «vai a guardare»: la fonte della
+    verità è lo stato.
+  + *Tutto si prova senza thread.* Il nucleo riceve l'ora da un orologio che i
+    test muovono a mano.
 ]
 
-#estratto("background/mod.rs")[
+Le parole: nel codice un #emph[job] (lavoro) è ciò che gira a passi, e
+#emph[work] è un lavoro o un thread dedicato; #emph[worker] resta solo nei nomi
+del Lisp, come `define-worker` e `worker-fuel`. Restano fuori dalla prima
+regola i thread che `(spawn ...)` avvia nell'interprete, e quello breve con cui
+un comando di shell fermato riceve `KILL` (@utenti-sfondo).
+
+== Il WorkManager <work-manager>
+
+Ce n'è uno per editor, condiviso da ogni clone di `EditorState`: clonarlo costa
+un `Arc`. La figura mostra che cosa possiede; in azzurro i thread, il resto
+sono dati che qualunque thread raggiunge attraverso il WorkManager.
+
+#canvas(height: 6.4cm)[
+  #group(0cm, 0.35cm, 16.2cm, 5.9cm, [`EditorState`])
+  #group(0.4cm, 1.0cm, 15.4cm, 5.0cm, [WorkManager --- uno per editor, condiviso dai cloni], colour: accent)
+
+  #node(3.1cm, 1.95cm, 4.6cm, 0.8cm, [registro: nomi, lavori, thread], fill: paper)
+  #node(7.65cm, 1.95cm, 3.7cm, 0.8cm, [opzioni], fill: paper)
+  #node(12.55cm, 1.95cm, 5.7cm, 0.8cm, [argomenti: contatori degli eventi], fill: paper)
+
+  #group(0.8cm, 3.0cm, 8.9cm, 2.65cm, [esecutore])
+  #node(3.3cm, 4.35cm, 4.4cm, 1.5cm, [nucleo: \ code, scadenze, sottoscrizioni, regola, misure], fill: paper)
+  #node(7.6cm, 4.35cm, 3.4cm, 1.5cm, [il thread \ `w1 executor`, \ o il test], fill: accent.lighten(85%))
+  #carrow((5.9cm, 4.35cm), (5.5cm, 4.35cm))
+
+  #node(12.55cm, 3.75cm, 5.7cm, 0.8cm, [thread dedicati: handle e `Stop`], fill: accent.lighten(85%))
+  #node(12.55cm, 4.95cm, 5.7cm, 0.8cm, [watchdog: osserva, raccoglie, scrive il log], fill: accent.lighten(85%))
+]
+
+I file di `work/` seguono le parti:
+
+#ref-table(
+  columns: (3.4cm, 1fr),
+  header: ([File], [Che cosa contiene]),
+  [`manager.rs`], [`WorkManager`, la facciata: costruzione, `start`, `submit`, `spawn`, `cancel`, le domande al registro, gli hook, `shutdown` e la modalità manuale; `Shared`, ciò che i suoi cloni condividono.],
+  [`registry.rs`], [`Registry`: che cosa esiste, per numero e per nome (@registro).],
+  [`executor.rs`], [`Msg`, `Executor` ed `executor_main`: la casella dei messaggi e il ciclo che guida il nucleo (@esecutore).],
+  [`watchdog.rs`], [Il thread del watchdog e il suo turno (@watchdog).],
+  [`core.rs`], [`Core`, il nucleo: i lavori, le code, la regola, le scadenze e le misure (@nucleo).],
+  [`job.rs`], [Il contratto di un lavoro: `Job`, `Step`, `Exit`, `Wake`, `StepContext`, `Spec` e `WorkId` (@lavori).],
+  [`topic.rs`], [`Topics` e `Topic`, gli argomenti (@argomenti).],
+  [`threads.rs`], [I thread dedicati: `Stop`, `Lives` e `start_thread` (@thread-dedicati).],
+  [`options.rs`, `report.rs`], [Le opzioni e le righe `[BKG]` del log (@misure).],
+  [`clock.rs`], [`Clock`, `SystemClock` e `ManualClock` (@prove-sfondo).],
+)
+
+=== Due modalità
+
+`WorkManager::threaded` è quello dell'editor: un thread esegue il nucleo
+sull'orologio vero, da `start` a `shutdown`. `WorkManager::manual` è quello dei
+test, e `editor/boot.rs` lo sceglie quando la libreria è compilata per i test
+(`cfg!(test)`): nulla gira da solo, il nucleo legge un `ManualClock`, e il
+lavoro avanza quando il test chiama `run_until_idle` o `run_for`
+(@prove-sfondo). Il resto è uguale nelle due modalità, compreso il modo in cui
+entra un lavoro.
+
+Una chiamata al WorkManager non tocca mai il nucleo. Cambia il registro, che
+risponde subito, e lascia un messaggio nella casella dell'esecutore, che lo
+legge tra un passo e l'altro. Così `submit` dall'interno di un passo è sicuro
+come da qualunque altro punto, anche in modalità manuale, dove l'esecutore è
+il thread del test.
+
+=== Il ciclo di vita
+
++ *Nasce* in `EditorState::new`, prima dei compartimenti, perché i buffer
+  ricevono da lui l'argomento `buffer-changed` (@argomenti). Il `Log`
+  dell'editor nasce ancora prima: le segnalazioni del WorkManager vanno lì.
++ *Parte* con `start(stato)`, appena lo stato esiste: il thread dell'esecutore
+  riceve la sua copia di `EditorState`, e con lui parte il watchdog. Ciò che è
+  stato sottomesso prima aspetta nella casella. In modalità manuale `start`
+  non fa nulla.
++ *Riceve i lavori dell'editor*: evidenziatore e prescansione in
+  `EditorState::new`, controllo dei file e salvataggio automatico in
+  `create_global_env`, dopo `init.lisp`, perché il loro intervallo è
+  un'impostazione (@utenti-sfondo).
++ *Termina* con `shutdown`, che l'editor espone come
+  `EditorState::shutdown(entro)`. Il front-end lo chiama all'uscita, con una
+  guardia che lo chiama anche quando un panic attraversa `main`
+  (`ShutDownOnExit` in `src/main.rs`, con mezzo secondo di attesa).
+
+`shutdown` procede così:
+
++ chiude il registro: da qui `submit` e `spawn` rispondono `None`;
++ mette `Msg::Shutdown` nella casella con il lock del registro preso, così ogni
+  lavoro accettato prima è già nella casella;
++ alza lo `Stop` di ogni thread dedicato ed esegue la sua azione di sblocco;
++ se nessun thread ha preso l'esecutore, in modalità manuale o prima di
+  `start`, lo chiude sul thread del chiamante, e le `exit` dei lavori ricevono
+  lo stato passato a `shutdown`; altrimenti lo chiude il thread
+  dell'esecutore quando legge il messaggio. Ogni lavoro esce con
+  `Exit::Shutdown`;
++ sveglia il watchdog, che si ferma, e aspetta che tutti i thread siano
+  finiti, al massimo per `entro`;
++ fa `join` di ciò che è finito e abbandona il resto, nominandolo nel log: un
+  thread che non si ferma, un passo che non finisce;
++ chiama un'ultima volta l'hook del watchdog, che porta sul file le righe
+  appena scritte.
+
+Una seconda chiamata non fa nulla.
+
+=== Chi parla con chi
+
+#canvas(height: 7.4cm)[
+  #lane(2.0cm, 0cm, 7.3cm, [thread dei comandi], fill: accent.lighten(85%), w: 3.2cm)
+  #lane(6.6cm, 0cm, 7.3cm, [esecutore], fill: accent.lighten(85%), w: 2.6cm)
+  #lane(10.9cm, 0cm, 7.3cm, [thread dedicato], fill: accent.lighten(85%), w: 2.8cm)
+  #lane(14.6cm, 0cm, 7.3cm, [watchdog], fill: accent.lighten(85%), w: 2.4cm)
+
+  #msg(2.0cm, 6.6cm, 1.2cm, [`submit(spec, lavoro)`], colour: accent)
+  #self-msg(2.0cm, 1.65cm, [tasto → `emit`])
+  #msg(2.0cm, 6.6cm, 2.55cm, [`Msg::Nudge`, uno per raffica], dash: "dashed")
+  #self-msg(6.6cm, 2.95cm, [+20 ms: un passo])
+  #msg(6.6cm, 2.0cm, 3.85cm, [callback dovuta (lavoro Lisp)])
+  #msg(2.0cm, 10.9cm, 4.55cm, [`spawn("*Shell Output*", corpo)`], colour: accent)
+  #msg(2.0cm, 10.9cm, 5.2cm, [`cancel`: `Stop` e azione di sblocco])
+  #msg(10.9cm, 14.6cm, 5.85cm, [finito: `join`, un panic nel log], dash: "dashed")
+  #msg(14.6cm, 6.6cm, 6.5cm, [osserva il passo in corso], dash: "dashed", colour: accent)
+]
+
+- *Il thread dei comandi* chiama il WorkManager: sottomette lavori, avvia
+  thread dedicati, ferma, cambia opzioni. Le porte delle modifiche emettono gli
+  argomenti, e una raffica di emissioni manda all'esecutore una sola sveglia.
+  Le chiamate non aspettano: girano sul thread di chi chiama.
+- *L'esecutore* esegue i passi uno alla volta. Un lavoro Lisp non chiama il
+  suo modo: lascia una callback dovuta, che il thread dei comandi esegue tra un
+  comando e l'altro (@utenti-sfondo).
+- *Un thread dedicato* lavora per conto suo, e si ferma con lo `Stop` e con
+  l'azione che lo sblocca.
+- *Il watchdog* osserva il passo in corso, raccoglie i thread finiti e scrive
+  il file di log, così una segnalazione arriva sul file anche quando ciò che
+  segnala è bloccato.
+
+== I lavori <lavori>
+
+Un lavoro implementa `Job<C>`:
+
+#estratto("work/job.rs")[
 ```rust
-std::thread::spawn(move || {
-    let mut scheduled_jobs: Vec<Job<B>> = Vec::new();
-    loop {
-        let now = Instant::now();
-        let time_to_next_job = scheduled_jobs.iter()
-            .map(|job| job.next_run.saturating_duration_since(now)).min();
-        let msg = match time_to_next_job {          // si dorme fino alla prossima scadenza
-            Some(timeout) => receiver.recv_timeout(timeout),
-            None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
-        };
-        match msg {
-            Ok(WorkerMessage::RunNow(task)) => { /* thread::spawn: task.execute(&state) */ }
-            Ok(WorkerMessage::Schedule { task, interval }) =>
-                scheduled_jobs.push(Job {
-                    task, interval, next_run: Instant::now() + interval,
-                }),
-            Err(RecvTimeoutError::Disconnected) => break,   // l'editor è stato distrutto
-            Err(RecvTimeoutError::Timeout) => {}
-        }
-        let current_time = Instant::now();
-        let _off_the_command_thread = WorkerTurn::begin();
-        scheduled_jobs.retain_mut(|job| {
-            if job.next_run > current_time { return true; }
-            let keep_running = job.task.execute(&state);  // false: il lavoro è finito
-            if keep_running { job.next_run = current_time + job.interval; }
-            keep_running
-        });
-    }
-});
+pub trait Job<C>: Send + 'static {
+    fn step(&mut self, cx: &mut StepContext<'_, C>) -> Result<Step, JobError>;
+    fn exit(&mut self, _state: &C, _why: Exit) {}
+}
 ```
 ]
 
-Il thread non ha un ciclo di attesa attiva: dorme in `recv_timeout` fino alla
-scadenza più vicina, o in `recv` se non ha lavori. Un messaggio lo sveglia in
-anticipo. Ogni turno di ogni lavoro gira sullo stesso thread, uno dopo l'altro,
-e nessuno lo protegge da un panic: un turno che va in panic termina il thread
-e con lui tutti i lavori a turni #rapporto("BKG-1").
+Lo `StepContext` porta lo stato (`state`), il motivo del passo (`woken_by`:
+`Start`, `Turn`, `Event` o `Timer`) e il numero del lavoro (`id`). Con
+`cx.worked(unità, su_che_cosa)` il passo dichiara quanto ha fatto, e con
+`cx.subscribe(argomenti)` cambia gli argomenti che lo svegliano. Il passo
+risponde con un `Step`:
 
 #ref-table(
-  columns: (3.5cm, 2.6cm, 1fr),
-  header: ([Lavoro], [Tipo, intervallo], [Che cosa fa a ogni turno]),
-  [`Highlighter`], [a turni, 40 ms], [Per ogni buffer con colorazione da fare: copia fino a 500 righe sotto lock, rilascia, colora, riprende il lock e salva solo se la versione non è cambiata.],
-  [`Prescanner`], [a turni, 40 ms], [Lo stesso per la `ScanCache`: 500 righe, un punto di ripresa ogni 64. Esamina le righe sotto il lock di lettura.],
-  [`FileWatcher`], [a turni, 3 s], [Confronta i timbri di al massimo 8 file; ricarica o marca `stale`.],
-  [`AutoSaver`], [a turni, 30 s], [Scrive al massimo 4 buffer modificati e cambiati dall'ultima copia.],
-  [worker Lisp], [a turni, 40 ms o `INTERVAL`], [`resume` della fiber, con `worker-fuel` passi (200.000 per default).],
-  [`background-call`], [a turni o una volta], [Una fiber a turni, o una funzione eseguita una volta sul thread dello scheduler.],
-  [`ShellTask`], [thread proprio], [Esegue un processo e accoda l'uscita al buffer.],
-  [`TreeSearch`], [thread proprio], [Cerca nei file di una directory e scrive i risultati in un buffer.],
+  columns: (3.0cm, 1fr),
+  header: ([`Step`], [Quando viene il passo successivo]),
+  [`Continue`], [c'è altro da fare: il lavoro torna in fondo alla sua coda, e se nessun altro è pronto riparte subito],
+  [`Sleep(d)`], [dopo `d`; gli eventi nel frattempo non lo svegliano, ma il passo dopo vede lo stato che annunciavano],
+  [`Wait`], [al prossimo evento di uno dei suoi argomenti],
+  [`WaitAtMost(d)`], [al prossimo evento, o dopo `d` al più tardi],
+  [`Done`], [mai: il lavoro ha finito],
 )
 
-== Un turno dell'evidenziatore
+Le regole di un passo:
 
-L'evidenziatore è il lavoro di sfondo più frequente, e il modello per scriverne
-altri. Un turno si divide in tre fasi, e nessuna tiene un lock mentre fa il
-lavoro vero:
+- *Non aspetta mai.* Niente I/O che può bloccarsi, che va su un thread
+  dedicato, e niente `sleep`: chi deve aspettare lo dice nell'esito.
+- *Non tiene lock da un passo all'altro.* Copia sotto lock, lavora senza, e
+  salva solo se la versione non è cambiata.
+- *Non guarda l'orologio per decidere quanto fare.* Divide il lavoro in unità
+  dei suoi dati (righe, file, carburante) e le dichiara con `cx.worked`; il
+  tempo lo misura lo scheduler.
+- *Non si interrompe.* `cancel` ha effetto alla fine del passo in corso.
+- *Gli errori passano dal `Result`.* Lo scheduler li scrive nel log con il nome
+  del lavoro, e il lavoro esce.
+
+Un lavoro sottomesso è pronto, o in attesa della sua scadenza se la `Spec` dice
+`Start::After`. Poi passa da uno stato all'altro così:
+
+#canvas(height: 5.3cm)[
+  #node(2.0cm, 1.6cm, 2.6cm, 0.8cm, [pronto], fill: paper)
+  #node(7.0cm, 1.6cm, 3.0cm, 1.0cm, [in corso \ (un passo)], fill: accent.lighten(85%))
+  #group(10.3cm, 0.35cm, 5.9cm, 3.0cm, [in attesa])
+  #node(13.25cm, 0.95cm, 5.0cm, 0.62cm, [di una scadenza: `Sleep`], fill: paper)
+  #node(13.25cm, 1.8cm, 5.0cm, 0.62cm, [di un evento: `Wait`], fill: paper)
+  #node(13.25cm, 2.65cm, 5.0cm, 0.62cm, [dell'uno o dell'altro: `WaitAtMost`], fill: paper)
+  #node(7.0cm, 3.95cm, 2.6cm, 0.7cm, [uscito: `exit`], fill: paper)
+
+  #carrow((3.3cm, 1.42cm), (5.5cm, 1.42cm), label: [scelto], dy: -0.27cm)
+  #carrow((5.5cm, 1.8cm), (3.3cm, 1.8cm), label: [`Continue`], dy: 0.27cm)
+  #carrow((8.5cm, 1.6cm), (10.3cm, 1.6cm), label: [attende], dy: -0.27cm)
+  #carrow((7.0cm, 2.1cm), (7.0cm, 3.6cm), label: [`Done`, errore, panic], dx: 1.25cm)
+
+  #segment((13.25cm, 3.35cm), (13.25cm, 4.75cm), colour: accent, dash: "dashed")
+  #segment((13.25cm, 4.75cm), (2.0cm, 4.75cm), colour: accent, dash: "dashed")
+  #arrow((2.0cm, 4.75cm), (2.0cm, 2.0cm), colour: accent, dash: "dashed")
+  #note(2.3cm, 4.85cm, colour: accent)[la scadenza o l'evento lo riportano «pronto»]
+]
+
+`cancel` e `shutdown` portano a «uscito» da qualunque stato; un lavoro in corso
+ci arriva alla fine del passo. Il motivo dell'uscita è un `Exit`:
+
+#ref-table(
+  columns: (3.0cm, 1fr),
+  header: ([`Exit`], [Quando]),
+  [`Finished`], [un passo ha risposto `Done`],
+  [`Failed`], [un passo ha restituito un errore, o ha risposto `Wait` senza un argomento che possa svegliarlo],
+  [`Panicked`], [un passo è andato in panic: il nucleo lo intercetta con `catch_unwind`],
+  [`Cancelled`], [qualcuno l'ha fermato, o un lavoro con lo stesso nome l'ha sostituito],
+  [`Shutdown`], [il WorkManager si chiude],
+)
+
+`exit` arriva una volta sola, per qualunque motivo, anche a un lavoro fermato
+prima del primo passo: è il posto della pulizia, per esempio la callback
+`ON-DONE` di un lavoro Lisp. Gira sull'esecutore come un passo, ed è protetta e
+osservata come un passo.
+
+Un lavoro si sottomette con una `Spec`, che ne dà il nome e il modo di
+eseguirlo: `Spec::new(nome)`, poi `class`, `unit` (l'unità di `cx.worked`, come
+le segnalazioni la stampano), `on` (un argomento) e `start`. Il nome è unico:
+sottomettere un lavoro con un nome già preso ferma ciò che lo porta, lavoro o
+thread dedicato. Il `WorkId` è un numero di tutto il processo e non si riusa:
+un numero tenuto dopo la fine del suo lavoro non può nominarne un altro.
+
+== Il nucleo <nucleo>
+
+`Core` tiene i lavori e decide che cosa gira. Non ha un thread né un orologio
+suo: chi lo guida chiama `run_once` un turno alla volta, e il nucleo legge l'ora
+dal `Clock` che ha ricevuto. Un lavoro è in un solo posto alla volta (`Place`):
+pronto, nella coda della sua classe; in corso; in attesa di una scadenza; in
+attesa di un argomento, e forse anche di una scadenza. Un turno:
+
++ chiama `exit` sui lavori usciti, con lo stato che il turno porta;
++ rende pronti i lavori la cui scadenza è passata o i cui eventi sono maturi
+  (`poll`), nell'ordine in cui lo sono diventati;
++ chiude le finestre di segnalazione scadute e controlla il carico
+  dell'ultimo secondo (`tick`, @misure);
++ sceglie un lavoro pronto (`choose`) ed esegue un suo passo, misurato
+  (`run_step`);
++ chiama `exit` sui lavori che il passo ha fatto uscire.
+
+Mentre fa il passo, il lavoro è fuori dal nucleo: il suo record non lo
+contiene, e un lavoro non può girare due volte insieme. Un lavoro fermato
+durante il passo trova il record sparito quando il passo finisce, ed esce
+allora. Mentre un passo o una `exit` è in corso, il nucleo lo scrive in
+`Underway` (il lavoro, l'inizio e un numero d'ordine), che altri thread
+leggono: il watchdog, per segnalare un passo che non finisce, e
+`WorkManager::jobs`, per elencare il lavoro come in corso. È proprio quando un
+passo non finisce che il nucleo non può rispondere da sé.
+
+=== Chi passa prima
+
+Le classi sono due. `Class::High` è per ciò che l'utente aspetta di vedere,
+colore e prescansione; `Class::Normal` è il default, e vi stanno il controllo
+dei file, il salvataggio automatico e tutti i lavori Lisp. Ogni classe ha la sua
+coda, e un lavoro entra in fondo alla sua ogni volta che diventa pronto. Passa
+prima la classe alta, ma dopo `high-steps` passi alti di fila (4 per default)
+tocca a un lavoro normale pronto. La regola si conta in passi e non in tempo,
+così è deterministica.
+
+#canvas(height: 1.7cm)[
+  #for (i, c) in "HHHHNHHHHNHHHHN".clusters().enumerate() {
+    node(0.55cm + i * 1.08cm, 0.55cm, 0.86cm, 0.6cm,
+      if c == "H" [`E`] else [`I`],
+      fill: if c == "H" { accent.lighten(85%) } else { paper })
+  }
+  #note(0.2cm, 1.05cm)[`E` = l'evidenziatore su un file enorme, che risponde sempre `Continue`; `I` = un lavoro Lisp con `(yield 'continue)`: un passo ogni cinque.]
+]
+
+Quando l'evidenziatore ha finito, il lavoro Lisp ha l'esecutore tutto per sé.
+
+=== Le scadenze
+
+Un lavoro ha al più una scadenza, messa da `Sleep`, da `WaitAtMost` o da
+`Start::After`, e contata dalla fine del passo: un lavoro lento non si accoda a
+sé stesso, e un periodo saltato non si recupera. Nessuna scadenza va oltre un
+anno (`FURTHEST`): un
+`Instant` molto più lontano può non esistere, e sommarlo andrebbe in panic
+sull'esecutore, fuori da ogni passo.
+
+== Gli argomenti <argomenti>
+
+Un argomento (`Topic`) è un evento con un nome, e non porta dati: è un
+contatore. Emetterlo (`emit`) costa un incremento atomico e, se l'esecutore non
+ha già una sveglia in arrivo, un `Msg::Nudge` nella sua casella; si può fare
+anche con il lock di un buffer preso. Un nome si risolve una volta
+(`WorkManager::topic`), e da lì l'argomento si emette senza toccare lock.
+
+- *La sottoscrizione è persistente.* Un lavoro ha eventi in sospeso quando il
+  contatore di un suo argomento ha superato l'ultimo valore che ha visto. Il
+  nucleo aggiorna quel valore #emph[prima] del passo: un evento che arriva
+  durante il passo resta non visto, e risveglia il lavoro.
+- *Il ritardo raccoglie le raffiche.* Un lavoro in attesa diventa pronto
+  `event-delay` (20 ms) dopo che il nucleo ha notato il primo evento non visto,
+  e gli eventi che arrivano nel frattempo si sommano a quello. Gli eventi
+  arrivati durante un passo maturano dalla fine del passo.
+- *Un `Wait` senza argomenti è un errore.* Nessuno potrebbe svegliare il
+  lavoro: il nucleo lo segnala, e il lavoro esce con `Exit::Failed`.
+- *Un passo può cambiare i suoi argomenti* con `cx.subscribe`: è ciò a cui si
+  riduce un `(yield '(wait buffer-changed))` del Lisp. Un argomento nuovo
+  conta come cambiato, perché il passo che lo nomina può aver guardato lo stato
+  appena prima di un'emissione.
+- *Un lavoro che dorme ignora gli eventi*, senza perderli: il passo successivo
+  vede lo stato che annunciavano.
+
+Un esempio: tre tasti in 15 ms producono un solo passo, e un quarto tasto che
+arriva durante il passo ne produce un secondo. Le frecce sono le emissioni, con
+il valore del contatore.
+
+#canvas(height: 2.85cm)[
+  // Asse del tempo: 0,28 cm per millisecondo, da 0 a 50 ms.
+  #let t(ms) = 1.0cm + ms * 0.28cm
+  #arrow((t(0), 2.2cm), (t(52), 2.2cm), colour: dim)
+  #for ms in (0, 10, 20, 30, 40, 50) {
+    segment((t(ms), 2.12cm), (t(ms), 2.28cm), colour: dim)
+    note(t(ms) - 0.2cm, 2.35cm)[#ms ms]
+  }
+  // Le emissioni, con il valore che il contatore assume.
+  #for (ms, n) in ((0, 1), (5, 2), (10, 3), (23, 4)) {
+    arrow((t(ms), 1.5cm), (t(ms), 2.15cm), colour: warm)
+    note(t(ms) + 0.08cm, 1.45cm, colour: warm)[#n]
+  }
+  // Il ritardo: dal primo evento non visto, poi dalla fine del passo.
+  #segment((t(0), 1.2cm), (t(20), 1.2cm), colour: accent, dash: "dashed")
+  #segment((t(26), 1.2cm), (t(46), 1.2cm), colour: accent, dash: "dashed")
+  #note(t(1), 0.82cm, colour: accent)[`event-delay`]
+  // I passi.
+  #note(t(20) - 0.1cm, 0.0cm)[visto = 3]
+  #node(t(23), 0.62cm, 6 * 0.28cm, 0.42cm, [passo], fill: accent.lighten(85%), size: 7pt)
+  #note(t(46) - 2.3cm, 0.0cm)[4 > 3: di nuovo]
+  #node(t(48), 0.62cm, 4 * 0.28cm, 0.42cm, [passo], fill: accent.lighten(85%), size: 7pt)
+]
+
+L'editor emette due argomenti, dichiarati in `editor/work.rs`; il Lisp ne
+emette di suoi con `emit-event`.
+
+#ref-table(
+  columns: (3.3cm, 1fr),
+  header: ([Argomento], [Chi lo emette]),
+  [`buffer-changed`], [`edits::changed` (le due porte, undo, redo, `replace-back`), `Buffer::adopt_text`, il cambio di modo maggiore, un buffer che entra nella tabella],
+  [`syntax-changed`], [`set_mode`, `edit_grammar`, `edit_syntax_table`],
+)
+
+Il modulo dei buffer non conosce lo scheduler. Il compartimento `Buffers` riceve
+l'argomento `buffer-changed` già risolto e lo dà a ogni buffer che entra nella
+tabella; fino ad allora un buffer ha un argomento staccato
+(`Topic::detached`), che conta e non sveglia nessuno.
+
+== L'esecutore <esecutore>
+
+L'esecutore (`Executor`) è il nucleo con l'altro capo della casella. Lo guida il
+thread `w1 executor` dell'editor, da `start` a `shutdown` (`executor_main`), o
+il test in modalità manuale; il numero nel nome dei thread è quello del
+WorkManager nel processo. Un turno applica i messaggi in attesa e poi esegue al
+più un passo:
+
+#estratto("work/executor.rs")[
+```rust
+pub(super) fn turn(&mut self, shared: &Shared<C>, state: &C) -> bool {
+    self.drain();
+    if self.shut {
+        return false;
+    }
+    shared.nudged.swap(false, Ordering::AcqRel);
+    let stepped = self.core.run_once(state);
+    self.settle(shared);
+    if stepped {
+        shared.stepped();
+    }
+    stepped
+}
+```
+]
+
+Il ciclo di `executor_main` ripete i turni finché un passo va, e dorme quando
+non c'è niente di pronto:
+
+#canvas(height: 6.4cm)[
+  #node(7.2cm, 0.6cm, 7.4cm, 0.8cm, [*1* #h(0.3em) dorme fino alla prossima scadenza o a un messaggio])
+  #node(7.2cm, 1.85cm, 7.4cm, 0.8cm, [*2* #h(0.3em) applica i messaggi: `Submit`, `Cancel`, `Nudge`, `Shutdown`])
+  #node(7.2cm, 3.1cm, 7.4cm, 0.8cm, [*3* #h(0.3em) `run_once`: uscite, scadenze ed eventi maturi, scelta])
+  #node(7.2cm, 4.35cm, 7.4cm, 0.8cm, [*4* #h(0.3em) un passo: `catch_unwind`, misura, esito], fill: accent.lighten(85%))
+  #node(7.2cm, 5.6cm, 7.4cm, 0.8cm, [*5* #h(0.3em) righe nel log, uscite dal registro, `after_step`])
+
+  #carrow((7.2cm, 1.0cm), (7.2cm, 1.45cm))
+  #carrow((7.2cm, 2.25cm), (7.2cm, 2.7cm))
+  #carrow((7.2cm, 3.5cm), (7.2cm, 3.95cm))
+  #carrow((7.2cm, 4.75cm), (7.2cm, 5.2cm))
+
+  #segment((10.9cm, 5.6cm), (11.6cm, 5.6cm))
+  #segment((11.6cm, 5.6cm), (11.6cm, 1.85cm))
+  #arrow((11.6cm, 1.85cm), (10.9cm, 1.85cm))
+  #note(11.8cm, 3.1cm)[un passo è andato: \ subito al turno dopo, \ le misure ogni 100 ms]
+
+  #segment((3.5cm, 3.1cm), (2.8cm, 3.1cm))
+  #segment((2.8cm, 3.1cm), (2.8cm, 0.6cm))
+  #arrow((2.8cm, 0.6cm), (3.5cm, 0.6cm))
+  #note(0.0cm, 1.45cm)[niente di pronto: \ pubblica le misure \ e torna a dormire]
+]
+
+- *Le sveglie non si perdono.* Il flag `nudged` dice che un `Msg::Nudge` è già
+  nella casella, e fa di una raffica di emissioni una sola sveglia. Il turno lo
+  abbassa con uno scambio atomico #emph[prima] che il nucleo guardi gli
+  argomenti: un'emissione che il nucleo non vedrà trova il flag basso e manda
+  una sveglia, e una che lo trova alto è avvenuta prima, e il nucleo la vede.
+- *Dopo ogni passo, l'hook.* Quando il registro ha già tolto i lavori usciti,
+  il turno chiama l'hook di `after_step`: l'editor lo usa per dire al front-end
+  che lo schermo può essere cambiato (@utenti-sfondo). L'hook gira tra due
+  passi, quindi è breve e non aspetta; un suo panic va nel log.
+- *Le misure si pubblicano.* Le misure dei lavori passano dal nucleo al
+  registro ogni `PUBLISH_EVERY` (100 ms) mentre l'esecutore è occupato, e
+  prima di dormire quando non lo è; in modalità manuale, alla fine di ogni
+  guida.
+- *Dorme fino alla prossima cosa da fare*: la scadenza più vicina, un evento che
+  matura o la chiusura di una finestra di segnalazione (`next_wakeup`), oppure
+  un messaggio, se arriva prima.
+
+== Il registro <registro>
+
+Il registro (`Registry`, dietro il lock `registry` di `Shared`) è la risposta
+del WorkManager a «che cosa esiste», data subito e senza chiedere
+all'esecutore:
+
+#ref-table(
+  columns: (2.4cm, 1fr),
+  header: ([Campo], [Che cosa tiene]),
+  [`closed`], [vero dopo `shutdown`: da lì non entra più nulla],
+  [`names`], [un solo spazio di nomi per lavori e thread: un nome indica una cosa sola, e fermarlo per nome ferma quella, qualunque sia],
+  [`latest`], [il lavoro più recente sottomesso con ogni nome, finché qualcuno non lo ferma; resta anche dopo la sua fine],
+  [`jobs`], [i lavori, con ciò che l'esecutore ha pubblicato di loro (`WorkInfo`)],
+  [`threads`], [i thread dedicati (`Dedicated`): nome, `Stop`, handle, avvio, richiesta di stop],
+)
+
+I messaggi per l'esecutore, tranne `Msg::Nudge`, partono con il lock del
+registro preso: la casella li tiene nell'ordine in cui il registro è cambiato,
+e dopo `Msg::Shutdown` non ne arriva un altro. Togliere un lavoro dal registro
+(`withdraw`) lascia un `Withdrawn` da completare senza lock: l'azione di
+sblocco di un thread gira dopo, sul thread di chi ha chiamato `cancel`,
+protetta come un passo.
+
+Le domande che il registro risponde:
+
+- `jobs()` elenca i lavori nell'ordine di sottomissione, con le misure
+  dell'ultima pubblicazione; un lavoro che l'esecutore non ha ancora visto
+  appare come è stato sottomesso. Il lavoro nel mezzo di un passo è elencato
+  come in corso da ciò che dice `Underway`, perché dopo un passo che non
+  finisce non si pubblica più nulla.
+- `threads()` elenca i thread dedicati ancora vivi, dopo aver raccolto quelli
+  finiti.
+- `is_named(nome)` dice se un nome è preso. Lo usa `free_name_for_work`: un
+  comando di shell prende il nome del buffer in cui scrive, e quel nome deve
+  essere libero sia tra i buffer sia qui.
+- `is_latest(nome, id)` dice se `id` parla ancora per il suo nome. È la domanda
+  delle callback dovute (@utenti-sfondo): un lavoro finito ha ancora diritto
+  alla sua `ON-DONE`, uno sostituito o fermato no.
+
+== I thread dedicati <thread-dedicati>
+
+Un thread dedicato serve a ciò che può bloccarsi e non si divide in passi:
+leggere l'output di un processo, percorrere un albero di directory.
+`WorkManager::spawn(nome, corpo)` lo avvia con il nome `w1 nome` (Linux ne
+mostra 15 byte), lo mette nel registro accanto ai lavori e restituisce il suo
+`WorkId`; il corpo riceve lo `Stop` e il proprio numero.
+
+#canvas(height: 3.7cm)[
+  #node(2.3cm, 1.0cm, 3.0cm, 0.8cm, [in corso], fill: accent.lighten(85%))
+  #node(13.2cm, 1.0cm, 3.0cm, 0.8cm, [finito: `join`], fill: paper)
+  #node(7.7cm, 2.7cm, 3.0cm, 0.8cm, [in chiusura], fill: accent.lighten(85%))
+  #node(13.2cm, 2.7cm, 3.0cm, 0.8cm, [abbandonato], fill: paper)
+
+  #carrow((3.8cm, 1.0cm), (11.7cm, 1.0cm), label: [il corpo ritorna], dy: -0.25cm)
+  #carrow((3.2cm, 1.4cm), (6.2cm, 2.5cm), label: [`cancel`: `Stop` e azione], dx: -1.6cm, dy: 0.35cm)
+  #carrow((9.2cm, 2.5cm), (12.2cm, 1.4cm), label: [si ferma], dx: -0.3cm, dy: -0.35cm)
+  #carrow((9.2cm, 2.7cm), (11.7cm, 2.7cm), label: [allo `shutdown`], dy: 0.3cm)
+  #note(5.9cm, 3.2cm, colour: warm)[dopo `stuck-step`: segnalato]
+]
+
+- *Un thread non si uccide: gli si chiede di fermarsi.* `cancel` alza lo
+  `Stop`, che il corpo controlla nei punti da cui può uscire, ed esegue
+  l'azione registrata con `Stop::on_cancel`, che sblocca ciò su cui il corpo
+  aspetta: per un comando di shell, fermare il processo chiude la pipe che il
+  corpo legge. L'azione gira una volta sola, anche se è registrata dopo la
+  richiesta, e gira sul thread che chiede lo stop: deve essere breve.
+- *Il `join` non blocca nessuno.* Il watchdog, e chi chiede l'elenco dei
+  thread, lo fa solo sui thread che risultano finiti (`is_finished`); un panic
+  nel corpo torna dal `join` e va nel log.
+- *Un thread che non si ferma*, per esempio una `stat` su un disco di rete
+  appeso, resta elencato come in chiusura, viene segnalato dopo `stuck-step` e,
+  allo `shutdown`, abbandonato.
+- *`shutdown` sa quanto aspettare.* Ogni thread del WorkManager porta una quota
+  di `Lives` dall'avvio alla fine; `shutdown` aspetta che il conto torni a
+  zero, al più per il tempo che gli è dato.
+
+L'editor non chiama `spawn` direttamente. `EditorState::spawn_work` passa al
+corpo l'editor, tiene il thread fuori dal thread dei comandi per tutta la sua
+vita (`WorkerTurn`, @utenti-sfondo) e, quando il corpo ritorna, dice al
+front-end di ridisegnare. `spawn_writer` aggiunge un buffer di uscita: il
+thread prende il nome del buffer, il buffer sa chi scrive in lui prima che il
+corpo possa scrivere una riga, e chiudere il buffer ferma il thread.
+
+== Il watchdog <watchdog>
+
+Il watchdog è un thread, `w1 watchdog`, che parte con l'esecutore, o con il
+primo thread dedicato se viene prima, e si sveglia ogni `watchdog-every`
+(250 ms). Guarda ciò che nessun altro può guardare: il passo in corso, che
+l'esecutore non può segnalare finché ci sta dentro. Un turno (`watch_turn`):
+
++ raccoglie i thread dedicati finiti (`reap`), e segnala quelli ancora vivi
+  `stuck-step` dopo la richiesta di stop;
++ segnala il passo in corso se dura da `stuck-step` (1 s), e di nuovo ogni volta
+  che la sua durata raddoppia: 1 s, 2 s, 4 s… Un turno in ritardo segnala una
+  volta sola, con la durata vera, e il segno successivo è il primo raddoppio
+  oltre quella. Il numero d'ordine di `Underway` distingue un passo dal
+  successivo, anche dello stesso lavoro; una `exit` che non finisce è
+  segnalata allo stesso modo, «in its exit»;
++ chiama per ultimo l'hook di `after_watch`, così ciò che il turno ha
+  segnalato è già in ciò che l'hook scrive.
+
+L'editor passa ad `after_watch` la funzione `Log::flush`: il file di log si
+scrive qui, e non da chi scrive una riga. In modalità manuale il watchdog non
+c'è: i thread finiti si raccolgono quando il test guida il WorkManager, e il
+test fa un turno del watchdog con `watch_once`.
+
+== Misure, segnalazioni e opzioni <misure>
+
+Il nucleo misura ogni passo: quanto è durato, quanto il lavoro ha aspettato in
+coda e le unità dichiarate con `cx.worked`, da cui viene il costo per unità.
+Per ogni lavoro tiene i passi, il tempo totale e il passo più lungo; per
+l'esecutore, l'occupazione dell'ultimo secondo, misurata esattamente su una
+finestra che scorre. Quando una misura supera la sua soglia, una riga `[BKG]`
+va nel log. Nessuna segnalazione cambia ciò che un lavoro fa: un lavoro lento si
+corregge a mano, con le segnalazioni come prova.
+
+#ref-table(
+  columns: (2.6cm, 5.6cm, 1fr),
+  header: ([Riga], [Quando (opzione)], [Che cosa riporta]),
+  [`long step`], [un passo dura più di `long-step`], [lavoro, durata, su che cosa, unità e costo per unità],
+  [`late start`], [un lavoro pronto aspetta più di `late-high` o di `late-normal`], [di quanto, e dietro quale lavoro],
+  [`load`], [l'esecutore è occupato per più di `busy-share` dell'ultimo secondo], [la quota, e i tre lavori che la causano],
+  [`summary`], [si chiude una finestra di `summary-every` che ha contato qualcosa], [quante altre occorrenze, e la peggiore],
+  [`stuck step`], [un passo o una `exit` è in corso da `stuck-step`, poi dal doppio], [lavoro e durata; la scrive il watchdog],
+  [`thread`], [un thread dedicato è vivo `stuck-step` dopo la richiesta di stop, o viene abbandonato allo `shutdown`], [nome e tempo trascorso],
+  [`error`, `panic`], [sempre], [lavoro e messaggio; il lavoro esce],
+)
+
+La soglia del ritardo cambia con la classe perché un lavoro normale, per
+progetto, aspetta fino a `high-steps` passi alti. Per ogni coppia di lavoro e
+regola la prima occorrenza va subito nel log e apre una finestra di
+`summary-every`; le successive nella finestra si contano soltanto, e alla
+chiusura un riepilogo dice quante erano e la peggiore. Una finestra che si
+chiude vuota finisce, e la prima occorrenza dopo un periodo tranquillo va di
+nuovo subito nel log. Errori e panic non hanno limite: il lavoro esce, e non
+può ripeterli.
+
+#block(breakable: false)[
+```text
+[BKG] long step: highlighter, 912 ms on app.min.js (3 lines, 304 ms each)
+[BKG] late start: file-watcher started 230 ms late, behind highlighter (6 steps)
+[BKG] load: 64% of the last second (highlighter 41%, manpage-index 20%)
+[BKG] summary: highlighter, 12 more long steps in the last 10 s (worst 912 ms)
+[BKG] stuck step: manpage-index running for 2.0 s
+[BKG] thread: *Shell Output* still running 1000 ms after it was asked to stop
+```
+]
+
+Le opzioni stanno nel WorkManager, in valori atomici che il nucleo legge a ogni
+scelta: una modifica vale dal passo successivo, e chi la fa non aspetta lo
+scheduler. Il Lisp le legge con `work-option` e `work-options` e le cambia con
+`set-work-option`, che rifiuta un valore fuori dall'intervallo. I tempi sono in
+millisecondi.
+
+#ref-table(
+  columns: (3.4cm, 1.7cm, 2.4cm, 1fr),
+  header: ([Opzione], [Default], [Valori], [Che cosa regola]),
+  [`high-steps`], [4], [1--1000], [passi alti di fila prima di uno normale],
+  [`event-delay`], [20], [0--60 000], [il ritardo dopo il primo evento non visto],
+  [`long-step`], [40], [1--3 600 000], [la soglia del passo lungo],
+  [`late-high`], [40], [1--3 600 000], [la soglia del ritardo, classe alta],
+  [`late-normal`], [200], [1--3 600 000], [la soglia del ritardo, classe normale],
+  [`stuck-step`], [1000], [1--3 600 000], [la soglia del passo bloccato e del thread che non si ferma],
+  [`busy-share`], [50 %], [1--100], [la soglia del carico],
+  [`summary-every`], [10 000], [1--3 600 000], [la durata di una finestra di riepilogo],
+  [`watchdog-every`], [250], [1--60 000], [ogni quanto si sveglia il watchdog],
+)
+
+`work-list` elenca ciò che è in background, lavori e thread, con stato e
+misure. La pagina `background` del manuale dell'utente spiega le une e le
+altre a chi scrive in Lisp.
+
+== Gli utenti del WorkManager <utenti-sfondo>
+
+=== I lavori dell'editor
+
+#ref-table(
+  columns: (2.8cm, 1.8cm, 4.4cm, 1fr),
+  header: ([Lavoro], [Classe, unità], [Quando gira], [Che cosa fa a ogni passo]),
+  [`highlighter`], [alta, righe], [a `buffer-changed` e `syntax-changed`: `Continue` finché un buffer è indietro, poi `Wait`], [colora fino a 500 righe del primo buffer indietro, partendo da quello con il focus],
+  [`prescanner`], [alta, righe], [come l'evidenziatore], [porta avanti di fino a 500 righe la `ScanCache` di un buffer, con una fotografia ogni 64 (@modi)],
+  [`file-watcher`], [normale, buffer], [`watch-file-interval` (3 s) dopo l'avvio e dopo ogni passo], [confronta con il disco al più 8 buffer; ricarica o segna],
+  [`auto-saver`], [normale, file], [`auto-save-interval` (30 s) dopo l'avvio e dopo ogni passo], [scrive la copia di al più 4 buffer modificati],
+)
+
+Il codice è in `modes/`: `highlighter.rs`, `prescan.rs`, `watcher.rs` e
+`autosave.rs`.
+
+Evidenziatore e prescansione sono sottomessi in `EditorState::new`: un lavoro
+che aspetta un cambiamento non costa nulla. Controllo dei file e salvataggio
+automatico sono sottomessi in `create_global_env`, dopo `init.lisp`, perché
+l'interruttore che li spegne e il loro intervallo sono impostazioni del Lisp,
+che rileggono a ogni passo. Ognuno è sottomesso una volta sola: un lavoro
+dell'editor che va in panic non torna fino alla fine della sessione
+#rapporto("BKG-2").
+
+Il passo dell'evidenziatore è il modello per scriverne altri:
 
 #estratto("modes/highlighter.rs")[
 ```rust
-pub(crate) fn highlight_one_turn(&self) {
-    let Some(turn) = self.next_highlight_turn() else { return };  // 1. sotto lock: copia
-    let coloured = turn.run();                                     // 2. senza lock: colora
-    self.store_turn(&turn, coloured);                              // 3. sotto lock: salva
-}
-pub(crate) fn store_turn(
-    &self, turn: &Turn, coloured: Vec<(usize, SyntaxState, Vec<SyntaxSpan>)>,
-) {
-    self.with_buffer_mut(&turn.buffer, |buf| {
-        if buf.version != turn.version { return; }   // il testo è cambiato: si butta tutto
-        for (line, entering, spans) in coloured {
-            if buf.syntax.record(line, &entering, spans).is_err() { break; }
-        }
-    });
-}
-```
-]
-
-+ #emph[Copia.] `next_highlight_turn` sceglie il primo buffer, partendo da
-  quello con il focus, la cui cache è indietro rispetto al testo
-  (`syntax.valid_to() < line_count()`) e il cui modo ha una grammatica. Copia
-  fino a `LINES_PER_TURN` (500) righe a partire dalla prima non valida, lo stato
-  del lessico all'inizio di quella riga, la grammatica (clonata dal registro dei
-  modi) e la versione del buffer.
-+ #emph[Colora.] `Turn::run` chiama `highlight_line` su ogni riga, passando lo
-  stato in uscita da una riga come stato in entrata della successiva. Il costo di
-  una riga cresce più che linearmente con la sua lunghezza #rapporto("SIN-2").
-+ #emph[Salva.] Solo se la versione del buffer è ancora quella copiata: un
-  carattere digitato nel frattempo rende inutile tutto il turno, che viene
-  rifatto al giro successivo dalla riga modificata.
-
-Lo stesso schema --- copia sotto lock, lavora senza, ricontrolla la versione
-prima di salvare --- regge il `Prescanner` (che però esamina le righe sotto il
-lock di lettura, perché la scansione è veloce) e l'`AutoSaver`.
-
-== I comandi di shell
-
-`shell-command-start` avvia `/bin/sh -c COMANDO` (o `cmd /C` su Windows) con
-stdin chiuso e stdout e stderr in pipe, crea un buffer `*Shell Output*` (o
-`<2>`, `<3>`… se il nome è occupato) e spedisce allo scheduler un
-`RunNow(ShellTask)`. Il task gira su un thread suo:
-
-#estratto("primitives/shell.rs")[
-```rust
-fn execute(mut self: Box<Self>, state: &EditorState<B>) {
-    if let Some(stdout) = self.child.stdout.take() {
-        for line in BufReader::new(stdout).lines() {           // riga per riga, man mano
-            match line {
-                Ok(line) => { state.append_to_buffer(&self.buffer, &format!("{line}\n")); }
-                Err(why) => { /* "[unreadable output: …]" */ break; }
+impl<B: BufferTrait> Job<EditorState<B>> for Highlighter {
+    fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
+        match cx.state.highlight_one_turn() {
+            Some((buffer, lines)) => {
+                cx.worked(lines as u64, &buffer);
+                Ok(Step::Continue)
             }
+            None => Ok(Step::Wait),
         }
     }
-    if let Some(mut stderr) = self.child.stderr.take() {       // poi stderr, tutto insieme
-        let mut text = String::new();
-        if stderr.read_to_string(&mut text).is_ok() && !text.is_empty() {
-            state.append_to_buffer(&self.buffer, &text);
-        }
-    }
-    let status = /* "--- exited N ---" o "--- killed ---" */;
-    state.append_to_buffer(&self.buffer, &status);
-    state.finish_shell_command();          // il ridisegno periodico può fermarsi
 }
 ```
 ]
 
-`append_to_buffer` toglie per un attimo la sola lettura del buffer e scrive con
-`insert_text`, quindi l'output passa dalle porte come ogni altra modifica e il
-renderer lo vede al primo ridisegno (finché un comando è in corso
-`next_redraw_in` chiede un ridisegno ogni 40 ms). Lo stdout è letto per intero
-prima di cominciare a leggere lo stderr #rapporto("SHL-1"); la prima riga non
-UTF-8 interrompe la lettura #rapporto("SHL-2"); non esiste un modo di fermare il
-processo #rapporto("SHL-3"). `shell-command-to-string`, al contrario, è
-sincrono: aspetta la fine del processo sul thread dei comandi e restituisce lo
-stdout come stringa.
+`highlight_one_turn` copia sotto lock le righe da colorare, lo stato del
+lessico all'inizio della prima e la versione del buffer; colora senza lock;
+riprende il lock e salva solo se la versione e il modo sono ancora quelli
+copiati. Un carattere digitato nel frattempo rende inutile il turno, che il
+passo successivo rifà dalla riga cambiata. Lo stesso schema regge la
+prescansione, che però legge le righe sotto il lock di lettura perché la
+scansione è veloce, il controllo dei file e il salvataggio automatico. Il costo
+di una riga
+cresce più che linearmente con la sua lunghezza #rapporto("SIN-2"), e una
+regione di sintassi che corrisponde alla stringa vuota fa un passo che non
+finisce: il watchdog lo segnala, ma l'esecutore resta fermo #rapporto("SIN-1").
 
-== Worker e lavori in Lisp
+=== I comandi di shell e le ricerche
 
-`(define-worker NOME FIBER [INTERVALLO])` riprende la fiber a ogni turno; la
-fiber è un ciclo che fa `(yield)` dove accetta di essere messa da parte. Ogni
-turno ha un suo budget, impostato sul thread dello scheduler con
-`set_remaining(worker-fuel)`: il carburante è per thread, quindi un comando non
-può accorciare il turno di un worker né un worker spendere quello di un
-comando. Un turno che supera il budget termina, viene segnalato una volta e il
-worker viene ritirato: un `(while t)` senza `yield` fermerebbe altrimenti la
-colorazione per sempre.
+`shell-command-start` e la ricerca nei file (`grep--scan`, in
+`primitives/results.rs`) girano su un thread dedicato avviato con
+`spawn_writer`, con il nome del buffer in cui scrivono: `*Shell Output*`, o
+`<2>`, `<3>`… se il nome è preso tra i buffer o tra i lavori
+(`free_name_for_work`). Un comando legge stdout e stderr da una sola pipe,
+nell'ordine in cui il processo li scrive, e alla fine aggiunge una riga
+`--- exited N ---`. Lo ferma `stop-worker` con il nome del suo buffer, o la
+chiusura del buffer. Su Unix l'azione di sblocco manda `TERM` e `CONT` al
+gruppo del processo, e un thread breve, `stop shell`, avviato fuori dal
+WorkManager, manda `KILL` due secondi dopo a ciò che resta. La pagina `shell`
+del manuale
+dell'utente dice che cosa vede chi lo usa.
 
-`(background-call NOME LAVORO [ON-PROGRESS [ON-DONE [INTERVALLO]]])` avvia un
-lavoro e restituisce subito. `ON-PROGRESS` è chiamata con il nome dopo ogni
-turno tranne l'ultimo; `ON-DONE` una volta, con il nome e `t` (finito) o `nil`
-(errore o arresto). `stop-worker` e `running-workers` valgono per entrambi.
+=== I lavori Lisp
 
-Ogni nome ha una #emph[generazione] in `Runtime`: definire di nuovo lo stesso
-nome, o fermarlo, incrementa il numero, e il lavoro vecchio si ritira al
-prossimo risveglio confrontando la generazione con cui è nato. Non serve un
-canale di cancellazione, e ricaricare un modulo non duplica i suoi worker.
+`define-worker` e `background-call` (`primitives/workers.rs`) sottomettono un
+`LispJob` (`primitives/lisp_job.rs`): classe normale, unità il carburante,
+nessun argomento finché un'attesa non ne nomina. Un passo riprende la fiber una
+volta, o chiama una volta la funzione di `background-call`, e ciò che la fiber
+passa a `yield` dice quando viene il passo dopo: `(yield)` dopo l'intervallo
+del lavoro, 40 ms se non è dato; `(yield 'continue)` appena tocca di nuovo a
+lui; `(yield '(sleep MS))`; `(yield '(wait TOPIC...))`;
+`(yield '(wait-at-most MS TOPIC...))`. La tabella completa, con gli esempi, è
+nella pagina `background`.
 
-== Le callback dovute
+Ogni passo ha il suo carburante, `worker-fuel` (200 000 per default), letto
+quando il lavoro parte, impostato sul thread dell'esecutore all'inizio di ogni
+passo e rimesso com'era alla fine. Il carburante è per thread: un comando non
+accorcia il passo di un lavoro,
+e un lavoro non spende quello di un comando. Un passo che lo esaurisce finisce,
+e il lavoro esce come fallito; altrimenti un `(while t)` senza `yield`
+fermerebbe l'esecutore, e la colorazione con lui. Durante il passo
+`WorkerTurn` segna il thread come «in background» (`in_worker`), e le
+primitive che hanno senso solo sul thread dei comandi lo controllano:
+`minibuffer-read` rifiuta di aprire un prompt.
 
-Una callback chiesta da un lavoro di sfondo non gira sul thread del lavoro: va
-nella lista `owed` dell'editor, con il nome e la generazione del lavoro.
+`ON-PROGRESS` e `ON-DONE` non girano sull'esecutore: il lavoro le lascia come
+callback dovute. `ON-PROGRESS` riceve il nome dopo ogni passo tranne l'ultimo.
+`ON-DONE` riceve il nome e `t` per `Exit::Finished`, `nil` per `Failed` e
+`Panicked`; dopo `Cancelled` e `Shutdown` non è chiamata, perché chi ha fermato
+il lavoro lo sa già.
+
+=== Le callback dovute
+
+Una callback chiesta da un lavoro va nella lista `owed` dell'editor
+(`owe_callback`), con il nome e il numero del lavoro. Il front-end lo sa da
+`next_redraw_in`, che risponde zero finché la lista non è vuota, e la esegue
+chiamando `tick`, che chiama `run_owed_callbacks`:
 
 #canvas(height: 5.8cm)[
-  #lane(1.6cm, 0cm, 5.7cm, [lavoro (scheduler)], fill: accent.lighten(85%), w: 3.0cm)
+  #lane(1.6cm, 0cm, 5.7cm, [lavoro (esecutore)], fill: accent.lighten(85%), w: 3.0cm)
   #lane(5.6cm, 0cm, 5.7cm, [`owed`])
-  #lane(9.4cm, 0cm, 5.7cm, [ciclo TUI], fill: accent.lighten(85%))
+  #lane(9.4cm, 0cm, 5.7cm, [ciclo della TUI], fill: accent.lighten(85%))
   #lane(13.3cm, 0cm, 5.7cm, [`run_owed_callbacks`], w: 3.2cm)
-  #msg(1.6cm, 5.6cm, 1.2cm, [`owe_callback(nome, gen, f, args)`])
+  #msg(1.6cm, 5.6cm, 1.2cm, [`owe_callback(nome, id, f, args)`])
   #msg(9.4cm, 5.6cm, 1.8cm, [`next_redraw_in`: `callbacks_owed()`?])
   #msg(5.6cm, 9.4cm, 2.3cm, [sì → attesa zero], dash: "dashed")
   #msg(9.4cm, 13.3cm, 2.9cm, [scade: `tick(&env)`])
   #msg(13.3cm, 5.6cm, 3.4cm, [`take` della lista intera])
-  #seq-note(13.0cm, 3.7cm)[generazione superata → scartata]
-  #seq-note(10.2cm, 4.45cm)[altrimenti: `begin_command()` + `call_callable`;\ un errore va nel log]
+  #seq-note(13.0cm, 3.7cm)[`is_latest` falso → scartata]
+  #seq-note(10.2cm, 4.45cm)[altrimenti: `begin_command()` e `call_callable`;\ un errore va nel log]
 ]
 
-#estratto("editor/background.rs")[
-```rust
-pub fn run_owed_callbacks(&self, env: &Arc<Env<EditorState<B>>>) -> bool {
-    let owed = std::mem::take(&mut *self.owed.write().unwrap());   // la lista intera
-    let mut ran = false;
-    for callback in owed {
-        if !self.runtime(|r| r.worker_is_latest(&callback.name, callback.generation)) {
-            continue;                       // il lavoro è stato sostituito o fermato
-        }
-        ran = true;
-        let _command = self.begin_command();                         // budget pieno
-        if let Err(error) =
-            call_callable(&callback.function, &callback.args, env.clone(), self)
-        {
-            self.log_diagnostic(/* la callback del lavoro è fallita */);
-        }
-    }
-    ran
-}
-```
-]
+La lista si prende intera con un solo `take` prima di eseguire qualunque
+callback: una callback che ne chiede altre le aggiunge a una lista nuova, che
+girerà al prossimo `tick`, e il lock non resta mai preso mentre gira il Lisp.
+Una callback il cui lavoro non parla più per il suo nome (`is_latest`) si
+scarta. Le altre girano con un budget di carburante proprio
+(`begin_command`), sul thread che possiede l'interfaccia, tra un comando e
+l'altro: possono aprire buffer, scrivere messaggi o cambiare finestra come un
+comando, ma non sono comandi, e non cambiano `last-command`.
 
-La lista viene svuotata con un solo `take` prima di eseguire qualunque
-callback: una callback che chiede altre callback le aggiunge a una lista nuova,
-che girerà al prossimo `tick`, e il lock non resta mai preso mentre gira Lisp.
+=== Quando ridisegnare
 
-È qui che un modo «resta coerente» (regola 5): la callback gira tra un comando e
-l'altro, sul thread che possiede l'interfaccia, e può aprire buffer, scrivere
-messaggi o cambiare la finestra come farebbe un comando.
+Quasi tutto ciò che è sullo schermo cambia perché l'utente ha fatto qualcosa;
+ciò che cambia un lavoro no. Per questo l'editor passa al WorkManager, come hook
+di `after_step`, `BackgroundChange::raise`. Alla fine di ogni passo, e quando un
+thread dedicato scrive nel suo buffer o finisce (`changed_in_background`), `raise`
+chiama una volta la funzione che il front-end ha registrato con
+`on_background_change`, e non di nuovo finché il front-end non prende una
+fotografia. La TUI la usa per svegliare il suo ciclo.
 
-== Quando ridisegnare
-
-`next_redraw_in(&env, &frame)` è il minimo tra: la scadenza del messaggio
+`next_redraw_in(&env, &frame)` è poi il minimo tra: la scadenza del messaggio
 nell'area messaggi (`echo-message-timeout`, 5 s; `nil` non scade mai);
-40 ms se la colorazione è in corso, se c'è un comando di shell attivo o se un
-lavoro di sfondo sta cambiando lo schermo; zero se ci sono callback dovute.
-`None` significa che nulla è in sospeso e il front-end può bloccarsi
-sull'input. `drag_scroll_in()` aggiunge i 60 ms dello scorrimento automatico
-mentre si trascina una selezione oltre il bordo di una finestra.
+`TURN_INTERVAL` (40 ms) se la colorazione è in corso; il tempo che manca perché
+sia passato un `TURN_INTERVAL` dall'ultima fotografia, se un lavoro ha cambiato
+qualcosa da allora (`BackgroundChange::due_in`), così un lavoro che fa un passo
+al millisecondo non ridisegna il terminale a ogni passo; zero se ci sono
+callback dovute. `None` vuol dire che nulla è in sospeso e il front-end può
+bloccarsi sull'input. `drag_scroll_in()` aggiunge i 60 ms dello scorrimento
+automatico mentre si trascina una selezione oltre il bordo di una finestra.
 
+== Come si prova <prove-sfondo>
 
+#ref-table(
+  columns: (3.0cm, 1fr),
+  header: ([Livello], [Come]),
+  [Il nucleo], [`work_core_tests`: un `Core` guidato a mano su un `ManualClock`, senza thread. Un lavoro che deve durare 30 ms sposta l'orologio dall'interno del suo passo, e ogni test è esatto; un minuto di scheduler simulato richiede microsecondi.],
+  [Il WorkManager], [`work_manager_tests`, `work_threads_tests` e `work_watchdog_tests`, con gli aiuti comuni di `work_support`. Quasi tutti usano la modalità manuale; i pochi con thread veri aspettano una condizione con una scadenza, mai un tempo fisso, e chiudono il WorkManager anche quando falliscono.],
+  [L'editor e il Lisp], [L'editor dei test nasce in modalità manuale: i lavori girano solo con `ctx.work().run_until_idle(ctx)` o `run_for(ctx, durata)`, e i thread veri solo dove un test li vuole.],
+)
+
+Gli altri strumenti:
+
+- *Il watchdog in modalità manuale.* Il thread del test è l'esecutore, quindi un
+  test che vuole osservare un passo lo fa eseguire su un altro thread
+  (`drive_elsewhere`), sposta l'orologio e chiama `watch_once`.
+- *Invarianti su sequenze casuali.* `random_sequences_keep_the_invariants`
+  genera sottomissioni, `cancel`, emissioni ed esiti con un generatore scritto
+  nel test, a partire da semi fissi, e controlla dopo ogni operazione che ogni
+  lavoro stia in un solo posto, che `exit` arrivi una volta sola e che la
+  regola di `high-steps` valga.
+- *Nessun thread lasciato indietro.* Su Linux,
+  `shutdown_leaves_no_thread_behind` conta in `/proc` i thread che portano il
+  nome del WorkManager, e dopo `shutdown` non ne trova più.
+- *Gli argomenti alla fonte.* `topic_source_tests` conta ciò che ogni fonte
+  emette, e segue una modifica fino al lavoro che sveglia.
+
+== Le decisioni <decisioni-sfondo>
+
++ *Un solo WorkManager per tutto il lavoro asincrono.* Ogni lavoro, a passi o su
+  un thread, entra dalla stessa porta, ha un nome e un numero, e si può elencare
+  con `work-list` e fermare con `stop-worker`. Scartato: lasciare a ogni
+  sottosistema i suoi thread, che nessuno elenca né ferma e che nessuno
+  aspetta all'uscita.
++ *Lavori a passi su un esecutore, e un thread dedicato per ciò che si blocca.*
+  Un passo non aspetta mai; ciò che deve aspettare ha un thread suo, che il
+  WorkManager avvia e conosce. Comporta che un lavoro a passi si scriva come
+  una macchina che riprende da dove era rimasta. Scartato: un thread per
+  lavoro, che costa uno stack ciascuno e fa girare insieme lavori che
+  prendono gli stessi lock.
++ *Lo scheduler misura e segnala, non interrompe.* Un passo lungo finisce nel
+  log con il suo costo per unità, e si corregge a mano. Scartati: un budget di
+  tempo per passo, che renderebbe il lavoro dipendente dalla macchina e i test
+  non deterministici, e l'interruzione di un passo, che Rust non sa fare in
+  sicurezza. Il carburante dei lavori Lisp non è un budget di tempo: conta i
+  passi del valutatore, uguali su ogni macchina.
++ *Gli argomenti non portano dati.* Un argomento dice «vai a guardare», e ciò
+  che serve sta nello stato, dove nasce. Un messaggio con dati va consegnato
+  uno per uno, invecchia, e quando una coda si riempie va perso: non può essere
+  la fonte della verità. Un contatore costa un incremento, si emette anche
+  sotto il lock di un buffer, e di una raffica fa un numero cresciuto.
++ *Il nucleo non ha thread né orologio.* Chi lo guida gli dà i turni, e l'ora
+  gli arriva da un `Clock`: così si prova tutto senza thread, e in modo esatto.
+  Scartato: un nucleo con il suo thread, che i test potrebbero solo aspettare.
++ *La regola delle classi si conta in passi.* Un passo normale ogni
+  `high-steps` passi alti di fila, e non una quota di tempo: la regola è
+  deterministica e si prova senza orologio.
++ *Il nucleo scandisce i suoi lavori invece di tenere un heap delle scadenze.*
+  I lavori sono decine, non migliaia, e una scansione non può andare fuori
+  passo con i lavori come un heap con voci superate. Un heap si aggiunge se le
+  misure un giorno lo chiedono.
++ *Una chiamata non tocca il nucleo.* Il registro risponde subito, e il resto
+  arriva all'esecutore come messaggio: così `submit` dall'interno di un passo
+  non aspetta l'esecutore, che è il thread stesso che chiama. Comporta che
+  registro e nucleo tengano due viste dei lavori, e che `jobs()` mostri le
+  misure dell'ultima pubblicazione.
++ *Nomi unici, e il nuovo sostituisce il vecchio.* Rivalutare un modulo, o
+  premere due volte lo stesso tasto, non duplica un lavoro. Le callback del
+  lavoro sostituito si scartano con `is_latest`, che il registro cambia insieme
+  al lavoro: due sottomissioni con lo stesso nome, o una sottomissione e uno
+  stop, non possono lasciarlo a indicare il lavoro sbagliato.
++ *Un thread non si uccide: gli si chiede di fermarsi.* Rust non ha un modo
+  sicuro di uccidere un thread, e uno ucciso mentre tiene il lock di un buffer
+  bloccherebbe l'editor al primo accesso. Lo `Stop` e l'azione di sblocco
+  coprono ogni caso tranne il thread che non controlla e non si sblocca, che
+  viene segnalato e abbandonato all'uscita.
++ *`shutdown` è esplicito.* L'esecutore tiene una copia di `EditorState`, che
+  contiene il WorkManager: è un ciclo di riferimenti, e `Drop` non lo rompe.
+  Per questo il front-end chiama `shutdown` all'uscita, con una guardia che lo
+  fa anche dopo un panic, e lo chiama anche ogni test che avvia dei thread.
++ *Il watchdog scrive il file di log.* Una scrittura che si blocca, per un
+  disco pieno o una home di rete, ferma il watchdog e nessun altro, e una
+  segnalazione arriva sul file anche quando ciò che segnala è bloccato. Chi
+  scrive una riga nel log non scrive mai il file.
++ *Le callback dei lavori girano sul thread dei comandi.* Un lavoro non chiama
+  il suo modo: lascia una nota, che il thread dei comandi legge dove leggerebbe
+  un tasto. Se un lavoro chiamasse il modo, del Lisp scritto per il thread dei
+  comandi girerebbe in un istante qualunque su un altro thread: a metà di un
+  inserimento, dentro un hook che scorre una lista. Nessuna cura nella
+  callback lo ripara, perché a essere sbagliata non è la callback.
 
 // ===========================================================================
 = Lo schermo <frame>
@@ -2546,11 +3156,28 @@ il resto una regola. Ricorda che `make-mode` sostituisce un modo esistente.
 == Un lavoro di sfondo
 
 In Lisp: `background-call` con una fiber che fa `(yield)` tra un pezzo e
-l'altro, e una callback `ON-DONE` per il risultato. In Rust: un
-`ScheduledTask` se il lavoro si fa a turni limitati (copia sotto lock, lavora
-senza, ricontrolla la versione prima di salvare), un `ImmediateTask` se può
-bloccarsi; spediscilo con `send_to_worker`. In entrambi i casi l'effetto
-sull'interfaccia passa da una callback dovuta.
+l'altro e una callback `ON-DONE` per il risultato, oppure `define-worker` con
+una fiber che aspetta il suo argomento, `(yield '(wait TOPIC))`. La pagina
+`background` ha gli esempi.
+
+In Rust:
+
++ Scrivi un tipo che implementa `Job<EditorState<B>>`. Ogni `step` fa una
+  quantità limitata di lavoro: copia sotto lock, lavora senza, ricontrolla la
+  versione prima di salvare. Dichiara le unità con `cx.worked`, e risponde
+  `Continue` se resta altro, `Wait` o `Sleep` se no. Il modello è
+  `Highlighter` (@utenti-sfondo).
++ Dagli una `Spec`: un nome unico, la classe (`High` solo se l'utente aspetta
+  di vederne il risultato), l'unità, gli argomenti che lo svegliano, e
+  `Start::After` se il primo passo non serve subito.
++ Sottomettilo con `work().submit(spec, Box::new(lavoro))` dove lo stato
+  esiste: in `EditorState::new`, o in `create_global_env` se legge
+  impostazioni del Lisp, che allora rilegge a ogni passo.
++ Ciò che può bloccarsi non è un lavoro: va su un thread dedicato, con
+  `spawn_work`, o con `spawn_writer` se scrive in un buffer, e con
+  `Stop::on_cancel` per l'azione che lo sblocca.
++ Aggiungi la riga alla tabella di @utenti-sfondo, e i test in modalità
+  manuale (@prove-sfondo).
 
 == Un modulo Lisp nuovo
 
@@ -2582,8 +3209,13 @@ cursore è nella fotografia; `src/tui.rs` è l'esempio completo.
 / Compartimento: un gruppo di campi dello stato sotto un solo lock, in `managers/`.
 / Facciata: `EditorState`, l'unico che tiene più lock di compartimento insieme.
 / Fotografia: il `FrameSnapshot`, ciò che il front-end disegna.
+/ Lavoro: ciò che il WorkManager esegue a passi; implementa `Job`. Nel codice è un #emph[job]\; #emph[work] è un lavoro o un thread dedicato, e #emph[worker] resta solo nei nomi del Lisp (`define-worker`, `stop-worker`, `running-workers`, `worker-fuel`).
+/ Passo: una chiamata a `Job::step`, cioè una quantità limitata di lavoro.
+/ Argomento: un evento con un nome e senza dati, cioè un contatore che cresce a ogni emissione.
+/ Esecutore: il thread del WorkManager che esegue i passi, uno alla volta.
+/ Thread dedicato: un thread del WorkManager per un lavoro che può bloccarsi, fermato con il suo `Stop`.
+/ Watchdog: il thread del WorkManager che osserva il passo in corso e scrive il file di log.
 / Callback dovuta: una chiamata chiesta da un lavoro di sfondo ed eseguita dal thread dei comandi.
-/ Generazione: il numero che distingue l'esecuzione viva di un lavoro con nome dalle precedenti.
 / Epoca: il timbro del comando corrente, con cui l'undo raggruppa le modifiche.
 
 == Mantenere aggiornato questo manuale
@@ -2594,7 +3226,8 @@ cursore è nella fotografia; `src/tui.rs` è l'esempio completo.
   @comandi.
 - Nuova primitiva o nuovo modulo di `primitives/` → @primitive e l'elenco in
   appendice (lo script che lo genera cerca `into.function(` e `into.command(`).
-- Nuovo lavoro di sfondo → la tabella di @sfondo.
+- Nuovo lavoro dell'editor → la tabella di @utenti-sfondo; nuova opzione o
+  nuova segnalazione → @misure.
 - Nuovo campo della fotografia o cambiamento del renderer → @frame.
 - Nuovo modulo Lisp o nuova variabile letta da Rust → @moduli-lisp.
 - Difetto corretto → aggiorna la descrizione, togli il rimando al rapporto e la

@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod tests {
     use crate::managers::Log;
+    use crate::tests::work_support::PATIENCE;
+    use crate::{GapBuffer, create_global_env};
     use std::path::PathBuf;
     use std::sync::{Arc, RwLock};
 
@@ -161,5 +163,24 @@ mod tests {
         Log::flush(&log);
         let expected: String = (0..2_000).map(|i| format!("line {i}\n")).collect();
         assert_eq!(scratch.text(), expected);
+    }
+
+    #[test]
+    fn the_editors_log_file_is_written_by_the_watchdog_and_at_shutdown() {
+        // Not by whoever logs: a diagnostic costs a command no disk write.
+        use crate::LispContext;
+        let path = std::env::temp_dir().join(format!("rsedit-watchdog-log-{}", std::process::id()));
+        let text = || std::fs::read_to_string(&path).unwrap_or_default();
+        let (editor, _env) = create_global_env::<GapBuffer>().expect("global env");
+        editor.enable_log_file(&path).expect("a log file");
+        editor.log_diagnostic("logged by a command");
+        assert!(!text().contains("logged by a command"), "not yet");
+        editor.work().watch_once();
+        assert!(text().contains("\nlogged by a command\n"), "{}", text());
+
+        editor.log_diagnostic("the last word");
+        editor.shutdown(PATIENCE);
+        assert!(text().ends_with("\nthe last word\n"), "{}", text());
+        let _ = std::fs::remove_file(&path);
     }
 }

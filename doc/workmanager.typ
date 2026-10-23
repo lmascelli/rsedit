@@ -1,9 +1,8 @@
 // Il WorkManager e lo scheduler: architettura, logica e uso.
 //
-// Documento di progetto. Descrive la struttura che sostituirà `background/`
-// (BackgroundScheduler, RunNow). Quando una parte del piano è implementata, la
-// sua descrizione passa nel manuale (`architettura-editor.typ`) e qui si
-// accorcia.
+// Documento di progetto, implementato. Ciò che vale ancora è nel capitolo
+// «Il lavoro in background» del manuale (`architettura-editor.typ`); questo
+// file si toglie nella fase D (`documentazione.typ`).
 
 #import "style.typ": *
 
@@ -44,11 +43,15 @@ logica seguono e come si usano da Rust e da Lisp. I termini sono riassunti
 nel glossario in fondo (@glossario).
 
 #caution[
-  *Stato: progetto approvato, da implementare.* Il codice di riferimento è la
-  revisione `cf0d8ac`. Oggi il lavoro di sfondo passa da `background/`
-  (`BackgroundScheduler`, `RunNow`), che verrà sostituito un pezzo alla volta
-  secondo il piano della @piano. Gli esempi mostrano la forma prevista, non il
-  codice definitivo.
+  *Stato: implementato, e assorbito nel manuale.* Le patch del piano (@piano)
+  hanno costruito il WorkManager in `work/`, e `background/` non c'è più. Ciò
+  che di questo documento vale ancora --- architettura, lavori, logica dello
+  scheduler, argomenti, misure, opzioni, thread dedicati, watchdog e prove ---
+  è nel capitolo «Il lavoro in background» del manuale
+  (`architettura-editor.typ`), descritto sul codice di oggi: il riferimento è
+  quello. Qui restano il piano, l'uso da Lisp, che la pagina `background`
+  spiega a chi lo scrive, e le idee per dopo; gli esempi mostrano la forma
+  prevista prima del codice. Il documento si toglie nella fase D.
 ]
 
 #key[

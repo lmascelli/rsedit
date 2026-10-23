@@ -1,22 +1,8 @@
-//! Dedicated threads: work that may block, on a thread of its own.
+//! Dedicated threads: work that may block, on a thread of its own, which the
+//! WorkManager starts, keeps the handle of and lists beside its jobs. A thread
+//! cannot be killed, so stopping one is a request: the [`Stop`].
 //!
-//! A step never waits. What has to -- reading a process's output, a read from
-//! a slow disk -- gets a thread, which the WorkManager starts, keeps the
-//! handle of and lists beside its jobs. See `doc/workmanager.typ`, "I thread
-//! dedicati".
-//!
-//! # Stopping one
-//!
-//! A thread cannot be killed: Rust has no safe way to, and a thread killed
-//! while it held a buffer's lock would leave the editor stuck at the next
-//! access. So stopping is a request, in two parts. [`Stop`] is the signal,
-//! which the body checks where it is safe to leave. The action registered
-//! with [`Stop::on_cancel`] unblocks the body where it is waiting and cannot
-//! check: for a shell command, killing the process closes the pipe the body
-//! is reading.
-//!
-//! A thread that does neither -- a `stat` on a hung network disk -- is
-//! reported, and abandoned when the editor shuts down.
+//! Design: `doc/architettura-editor.typ, <thread-dedicati>`.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -27,8 +13,10 @@ use super::job::WorkId;
 /// What unblocks a dedicated thread's body.
 pub(crate) type Action = Box<dyn FnOnce() + Send>;
 
-/// The request to stop, as a dedicated thread's body sees it. Cheap to clone:
-/// every clone is the same signal.
+/// The request to stop, as a dedicated thread's body sees it: a signal the
+/// body checks where it is safe to leave, and the action registered with
+/// [`Stop::on_cancel`], which unblocks it where it waits and cannot check.
+/// Cheap to clone: every clone is the same signal.
 #[derive(Clone, Default)]
 pub struct Stop(Arc<Signal>);
 
@@ -42,13 +30,14 @@ struct Signal {
 }
 
 impl Stop {
-    /// Whether the thread has been asked to stop. For the body to check where
-    /// it is safe to leave: between two lines of output, between two files.
+    /// Returns whether the thread has been asked to stop: for the body to
+    /// check where it is safe to leave, between two lines of output, between
+    /// two files.
     pub fn is_cancelled(&self) -> bool {
         self.0.raised.load(Ordering::Acquire)
     }
 
-    /// Run ACTION when the thread is asked to stop: what unblocks the body
+    /// Has ACTION run when the thread is asked to stop: what unblocks the body
     /// where it cannot check, such as killing the process it reads from.
     ///
     /// It replaces the action registered before, if any, so a body that moves
@@ -66,8 +55,8 @@ impl Stop {
         }
     }
 
-    /// Raise the signal, and hand back the action to run. Only the first call
-    /// finds one.
+    /// Raises the signal, and hands back the action to run. Only the first
+    /// call finds one.
     pub(crate) fn raise(&self) -> Option<Action> {
         let mut slot = self.0.action.lock().expect("stop action");
         self.0.raised.store(true, Ordering::Release);
@@ -87,7 +76,7 @@ pub(crate) struct Dedicated {
     pub(crate) reported: bool,
 }
 
-/// A dedicated thread as `work-list` will show it.
+/// A dedicated thread as `work-list` shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThreadInfo {
     pub id: WorkId,
@@ -113,13 +102,13 @@ pub(crate) struct Lives {
 pub(crate) struct Life(Arc<Lives>);
 
 impl Lives {
-    /// A share for a thread about to start.
+    /// Returns a share for a thread about to start.
     pub(crate) fn enter(self: &Arc<Self>) -> Life {
         *self.count() += 1;
         Life(self.clone())
     }
 
-    /// Wait until no thread is alive, or for WITHIN at most. True if none
+    /// Waits until no thread is alive, or for WITHIN at most. True if none
     /// is. A span rather than a deadline, so that any span will do: an
     /// `Instant` that far in the future would overflow.
     pub(crate) fn wait(&self, within: Duration) -> bool {
@@ -139,8 +128,9 @@ impl Lives {
         true
     }
 
-    /// The lock is taken while a panicking thread unwinds, where a second
-    /// panic would abort the process: so a poisoned lock is used as it is.
+    /// Returns the count, locked. The lock is taken while a panicking thread
+    /// unwinds, where a second panic would abort the process: so a poisoned
+    /// lock is used as it is.
     /// What it guards is a number, changed by one at a time, which a panic
     /// cannot leave half-written.
     fn count(&self) -> std::sync::MutexGuard<'_, usize> {
@@ -155,7 +145,7 @@ impl Drop for Life {
     }
 }
 
-/// Start F on a thread called NAME, carrying LIFE until its very end.
+/// Starts F on a thread called NAME, carrying LIFE until its very end.
 ///
 /// The name is what a debugger and `top -H` show, cut to 15 bytes by Linux.
 pub(crate) fn start_thread(

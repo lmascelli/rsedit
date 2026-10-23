@@ -60,7 +60,7 @@ directory is and what to put in the file.
 | Manual pages | users: how to use the editor, with examples | `man/`, read in the editor with `C-h m` |
 | Built-in help | users and authors of Lisp: every function, variable and key, from the running editor | `C-h f`, `C-h v`, `C-h k`, `C-h b` |
 | Developer manual | Rust developers: architecture, threads, locks and design decisions | [`doc/architettura-editor.typ`](doc/architettura-editor.typ) |
-| WorkManager design | developers: how background work is scheduled | [`doc/workmanager.typ`](doc/workmanager.typ) |
+| WorkManager design | history: the plan the WorkManager was built by; how background work runs is now in the developer manual | [`doc/workmanager.typ`](doc/workmanager.typ) |
 | Documentation rules | contributors: where each kind of information goes, and the plan to get there | [`doc/documentazione.typ`](doc/documentazione.typ) |
 | Problem report | maintainers: the known defects, each with an ID | [`doc/rapporto-problemi.typ`](doc/rapporto-problemi.typ) |
 | Performance checks | developers: running the performance suite | [`PERFORMANCE.md`](PERFORMANCE.md) |

@@ -93,5 +93,8 @@ mod window_point_tests;
 mod window_tests;
 mod work_core_tests;
 mod work_manager_tests;
+mod work_support;
+mod work_threads_tests;
+mod work_watchdog_tests;
 mod worker_tests;
 mod write_file_tests;

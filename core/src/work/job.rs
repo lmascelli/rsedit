@@ -1,18 +1,17 @@
-//! What a job is, and what it says back.
+//! What a job is, and what it says back: a step, the answer to it, and the
+//! one call made when the job leaves. Everything the scheduler knows about a
+//! job comes through here.
 //!
-//! Everything the scheduler knows about a job comes through here: a step, the
-//! answer to it, and the one call made when the job leaves. See
-//! `doc/workmanager.typ`, "I lavori".
+//! Design: `doc/architettura-editor.typ, <lavori>`.
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Work the scheduler runs a step at a time.
 ///
-/// `C` is what every step is handed. In the editor it will be the editor's
-/// state; in the scheduler's own tests it is `()`. Being generic over it is
-/// what lets the core be tested without building an editor.
+/// `C` is what every step is handed: the editor's state in the editor, and
+/// `()` in the scheduler's own tests, which therefore need no editor.
 pub trait Job<C>: Send + 'static {
-    /// Do a bounded amount of work, and say how to go on.
+    /// Does a bounded amount of work, and says how to go on.
     ///
     /// A step never waits: no I/O that can block, no sleeping, no lock held
     /// into the next step. Whoever has to wait says so in the answer, and the
@@ -22,9 +21,9 @@ pub trait Job<C>: Send + 'static {
     /// to measure.
     fn step(&mut self, cx: &mut StepContext<'_, C>) -> Result<Step, JobError>;
 
-    /// Called exactly once, when the job leaves the scheduler, whatever the
-    /// reason -- including a panic in a step, and including a job that was
-    /// cancelled before it ever ran.
+    /// Ends the job: called exactly once, when it leaves the scheduler,
+    /// whatever the reason -- a panic in a step included, and a cancel before
+    /// it ever ran.
     ///
     /// The place for clean-up that would otherwise be spread over the branches
     /// of `step`: a counter to give back, a callback to queue.
@@ -103,7 +102,7 @@ pub(crate) struct Worked {
 }
 
 impl<C> StepContext<'_, C> {
-    /// Say how much this step did, in the job's own unit, and on what.
+    /// Records how much this step did, in the job's own unit, and on what.
     ///
     /// The deterministic half of a measurement. The scheduler times the step,
     /// and the two together give a cost per unit -- milliseconds per line --
@@ -116,17 +115,15 @@ impl<C> StepContext<'_, C> {
         });
     }
 
-    /// From the end of this step, be woken by TOPICS instead of the topics
-    /// the job had: those it was submitted with, or those an earlier step
+    /// Has the job woken by TOPICS from the end of this step, instead of the
+    /// topics it had: those it was submitted with, or those an earlier step
     /// named here. They hold until a later step names others. What a Lisp
     /// `(yield '(wait buffer-changed))` comes down to.
     ///
-    /// A topic the job was not already subscribed to counts as changed, and
-    /// a waiting job is woken for it, `event-delay` later. The step that named
-    /// it may have looked at the state just before an emission, and the core
-    /// has no count from the start of the step to tell: so the job looks once
-    /// more rather than sleep on work it has to do. Naming the same topics as
-    /// before costs nothing.
+    /// A topic the job was not already subscribed to counts as changed, and a
+    /// waiting job is woken for it `event-delay` later: the step that named it
+    /// may have looked at the state just before an emission. Naming the same
+    /// topics as before costs nothing.
     pub fn subscribe<S: Into<String>>(&mut self, topics: impl IntoIterator<Item = S>) {
         self.topics = Some(topics.into_iter().map(Into::into).collect());
     }
@@ -151,14 +148,14 @@ pub enum Start {
     After(Duration),
 }
 
-/// The number of a job. Never reused, so a number held after its job has gone
-/// can never name a different one.
+/// The number of a job or of a dedicated thread. Never reused, so a number
+/// held after its work has gone can never name different work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WorkId(u64);
 
 impl WorkId {
-    /// The next number. Process-wide rather than per scheduler, so that work
-    /// spread over several executors still has one numbering.
+    /// Returns the next number. Process-wide rather than per WorkManager: a
+    /// number names one piece of work in the whole process.
     pub(crate) fn next() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         WorkId(NEXT.fetch_add(1, Ordering::Relaxed))
@@ -176,10 +173,11 @@ pub struct Spec {
 }
 
 impl Spec {
-    /// A job called NAME: normal class, started at once, no topics.
+    /// Returns the spec of a job called NAME: normal class, started at once,
+    /// no topics.
     ///
-    /// Names are unique. Submitting a job under a name that is taken replaces
-    /// the job that has it.
+    /// Names are unique: submitting a job under a name that is taken replaces
+    /// the work that has it.
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -190,26 +188,27 @@ impl Spec {
         }
     }
 
-    /// Which queue it waits in.
+    /// Sets the queue the job waits in.
     pub fn class(mut self, class: Class) -> Self {
         self.class = class;
         self
     }
 
-    /// What [`StepContext::worked`] counts in, as reports should print it:
+    /// Sets what [`StepContext::worked`] counts in, as reports print it:
     /// `"lines"`, `"files"`.
     pub fn unit(mut self, unit: &str) -> Self {
         self.unit = unit.to_string();
         self
     }
 
-    /// Subscribe to TOPIC: a change to it wakes the job when it is waiting.
+    /// Subscribes the job to TOPIC: a change to it wakes the job when it is
+    /// waiting.
     pub fn on(mut self, topic: &str) -> Self {
         self.topics.push(topic.to_string());
         self
     }
 
-    /// When it takes its first step.
+    /// Sets when the job takes its first step.
     pub fn start(mut self, start: Start) -> Self {
         self.start = start;
         self

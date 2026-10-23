@@ -1,9 +1,8 @@
-//! Reports: the `[BKG]` lines, and what keeps them from flooding the log.
+//! Reports: the `[BKG]` lines, and what keeps them from flooding the log. A
+//! report says that a measurement crossed its threshold, and never changes
+//! what a job does.
 //!
-//! A report says that a measurement crossed its threshold. It never changes
-//! what a job does: a slow job is fixed by hand, in the job or in its timing,
-//! with the reports as the evidence. See `doc/workmanager.typ`, "Misure,
-//! segnalazioni, opzioni".
+//! Design: `doc/architettura-editor.typ, <misure>`.
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -19,7 +18,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    /// How a summary counts occurrences of this rule.
+    /// Returns what a summary calls occurrences of this rule: `long steps`.
     fn plural(self) -> &'static str {
         match self {
             Rule::LongStep => "long steps",
@@ -28,7 +27,7 @@ impl Rule {
         }
     }
 
-    /// The unit of the value a summary calls the worst.
+    /// Returns the unit of the value a summary calls the worst.
     fn unit(self) -> &'static str {
         match self {
             Rule::LongStep | Rule::LateStart => " ms",
@@ -62,8 +61,9 @@ pub struct Reporter {
 }
 
 impl Reporter {
-    /// An occurrence of RULE for JOB, worth VALUE (milliseconds, or percent
-    /// for a busy executor), and the line to write if it is written at once.
+    /// Records an occurrence of RULE for JOB, worth VALUE (milliseconds, or
+    /// percent for a busy executor), with LINE to write if it is written at
+    /// once.
     pub fn report(&mut self, job: &str, rule: Rule, value: u64, line: String, now: Instant) {
         match self.windows.get_mut(&(job.to_string(), rule)) {
             Some(window) => {
@@ -84,12 +84,12 @@ impl Reporter {
         }
     }
 
-    /// A line written whatever came before it.
+    /// Writes LINE, whatever came before it.
     pub fn always(&mut self, line: String) {
         self.lines.push(line);
     }
 
-    /// Close the windows that are EVERY old: a summary for each that counted
+    /// Closes the windows that are EVERY old: a summary for each that counted
     /// something, and an end for each that did not.
     pub fn tick(&mut self, now: Instant, every: Duration) {
         let mut summaries = Vec::new();
@@ -121,7 +121,7 @@ impl Reporter {
         self.lines.extend(summaries);
     }
 
-    /// When the earliest open window closes.
+    /// Returns when the earliest open window closes.
     pub fn next_tick(&self, every: Duration) -> Option<Instant> {
         self.windows
             .values()
@@ -129,13 +129,13 @@ impl Reporter {
             .min()
     }
 
-    /// The lines written since the last call.
+    /// Returns the lines written since the last call.
     pub fn take(&mut self) -> Vec<String> {
         std::mem::take(&mut self.lines)
     }
 }
 
-/// EVERY as a person would say it: seconds when it is whole seconds.
+/// Returns EVERY as a person would say it: seconds when it is whole seconds.
 fn span(every: Duration) -> String {
     if every.as_millis().is_multiple_of(1000) {
         format!("{} s", every.as_secs())

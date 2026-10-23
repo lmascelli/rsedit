@@ -1,9 +1,9 @@
-//! The values that tune the scheduler, changeable while the editor runs.
+//! The values that tune the scheduler, changeable while the editor runs. Lisp
+//! reaches them with `work-option` and `set-work-option`; the core reads them
+//! at every choice it makes, so a change counts from the next step. Times are
+//! in milliseconds.
 //!
-//! Lisp will reach them with `work-option` and `set-work-option`; the core
-//! reads them at every choice it makes, so a change counts from the next step.
-//! Times are in milliseconds. The defaults start from the 40 ms turn that
-//! colouring and the renderer run at today.
+//! Design: `doc/architettura-editor.typ, <misure>`.
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -131,13 +131,13 @@ impl Default for Options {
 }
 
 impl Options {
-    /// The value of NAME, or `None` when there is no such option.
+    /// Returns the value of NAME, or `None` when there is no such option.
     pub fn get(&self, name: &str) -> Option<u64> {
         Self::index(name).map(|i| self.value(i))
     }
 
-    /// Set NAME to VALUE. Refused, with nothing changed, for a name that does
-    /// not exist or a value outside the option's range.
+    /// Sets NAME to VALUE. Refused, with nothing changed, for a name that
+    /// does not exist or a value outside the option's range.
     pub fn set(&self, name: &str, value: u64) -> Result<(), OptionError> {
         let i = Self::index(name).ok_or_else(|| OptionError::Unknown(name.to_string()))?;
         let def = &DEFS[i];
@@ -152,7 +152,7 @@ impl Options {
         Ok(())
     }
 
-    /// Every option with its value, in a fixed order.
+    /// Returns every option with its value, in a fixed order.
     pub fn all(&self) -> Vec<(&'static str, u64)> {
         DEFS.iter()
             .enumerate()
@@ -172,7 +172,8 @@ impl Options {
         self.millis(LONG_STEP)
     }
 
-    /// The longest a ready job of CLASS may wait before it is reported.
+    /// Returns the longest a ready job of CLASS may wait before it is
+    /// reported.
     pub(crate) fn late(&self, class: Class) -> Duration {
         match class {
             Class::High => self.millis(LATE_HIGH),
@@ -184,7 +185,7 @@ impl Options {
         self.millis(STUCK_STEP)
     }
 
-    /// In percent.
+    /// Returns `busy-share`, in percent.
     pub(crate) fn busy_share(&self) -> u64 {
         self.value(BUSY_SHARE)
     }

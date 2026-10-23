@@ -1,11 +1,9 @@
 //! Where the editor's topics are emitted: each kind of change, at the one
-//! place it goes through.
+//! place it goes through. A change that emits nothing is a change no job sees,
+//! so these tests count what each source emits, and one follows an edit all
+//! the way to the job it wakes.
 //!
-//! A job is woken only by what is emitted, so a change that emits nothing is a
-//! change the job never sees -- silently, until the screen shows text that
-//! never got its colour. These tests count what each source the design names
-//! emits, and one follows an edit all the way to the job it wakes. See
-//! `doc/workmanager.typ`, "Gli eventi".
+//! Design: `doc/architettura-editor.typ, <argomenti>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{Buffer, BufferTrait, gap_buffer::GapBuffer};

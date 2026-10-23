@@ -25,6 +25,8 @@ mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use crate::modes::highlighter::TURN_INTERVAL;
+    use crate::tests::work_support::{PATIENCE, Steps, exits, scripted, wakes};
+    use crate::work::{Exit, Spec, Step};
     use risp::{Env, LispExp, Parser, eval};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -79,6 +81,38 @@ mod tests {
     /// in the tree has to do.
     const COUNTING_FIBER: &str =
         "(fiber (let ((left 3)) (while (> left 0) (setq left (- left 1)) (yield))))";
+
+    // ----------------------------------------------------------------
+    // The editor's WorkManager in a test
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn the_editor_runs_its_work_by_hand_in_tests_and_logs_its_reports() {
+        let (editor, _env) = create_global_env::<GapBuffer>().expect("global env");
+        let (job, trace) = scripted(&[Step::Continue]);
+        editor.work().submit(Spec::new("probe"), job).unwrap();
+        assert!(wakes(&trace).is_empty(), "nothing runs by itself in a test");
+        editor.work().run_until_idle(&editor);
+        assert_eq!(exits(&trace), [Exit::Finished]);
+
+        let boom = Steps(|| -> Step { panic!("kaboom") });
+        editor
+            .work()
+            .submit(Spec::new("boom"), Box::new(boom))
+            .unwrap();
+        editor.work().run_until_idle(&editor);
+        assert!(
+            editor
+                .get_logs()
+                .iter()
+                .any(|line| line.contains("[BKG] panic: boom retired: kaboom")),
+            "the editor's log has the report"
+        );
+
+        editor.shutdown(PATIENCE);
+        let (late, _) = scripted(&[]);
+        assert_eq!(editor.work().submit(Spec::new("late"), late), None);
+    }
 
     // ----------------------------------------------------------------
     // Which thread the callback runs on
