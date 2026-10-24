@@ -110,38 +110,46 @@ qui e si toglie la scheda là.
 e, di quelli sotto, solo ciò che la sua voce dichiara. La figura li mostra dal
 basso verso l'alto, cioè nella direzione in cui si costruisce.
 
-#canvas(height: 8.6cm)[
-  #node(8.1cm, 0.4cm, 15.8cm, 0.7cm, [`src/` --- il front-end TUI (crossterm): traduce gli eventi, disegna la fotografia], fill: accent.lighten(85%))
-  #node(8.1cm, 1.4cm, 15.8cm, 0.7cm, [`ui/` --- la descrizione dello schermo: finestre, layout, facce, `FrameSnapshot`. Non disegna nulla])
-  #node(4.0cm, 2.4cm, 7.6cm, 0.7cm, [`feature/` --- minibuffer e isearch])
-  #node(12.15cm, 2.4cm, 7.7cm, 0.7cm, [`modes/` --- modi e lavori che li servono])
-  #node(8.1cm, 3.4cm, 15.8cm, 0.7cm, [`primitives/` --- tutto ciò che Lisp può chiamare (304 primitive)])
-  #node(8.1cm, 4.4cm, 15.8cm, 0.7cm, [`editor/` --- `EditorState`, la facciata: l'unico che tiene due lock di compartimento insieme], fill: paper)
-  #node(8.1cm, 5.4cm, 15.8cm, 0.7cm, [`managers/` --- lo stato, in compartimenti, ognuno sotto un lock], fill: paper)
-  #node(4.0cm, 6.4cm, 7.6cm, 0.7cm, [`input.rs`, `commands.rs` --- tasti, keymap, comandi])
-  #node(12.15cm, 6.4cm, 7.7cm, 0.7cm, [`text/` --- ricerca, rettangoli, kill ring])
-  #node(4.0cm, 7.4cm, 7.6cm, 0.7cm, [`paths.rs` --- le directory dell'editor])
-  #node(12.15cm, 7.4cm, 7.7cm, 0.7cm, [`buffer/` --- testo, undo, cache], fill: paper)
-  #node(8.1cm, 8.3cm, 15.8cm, 0.6cm, [`work/` --- il lavoro in background: il WorkManager, l'esecutore, i thread dedicati], fill: paper)
+#canvas(height: 8.4cm)[
+  #node(8.1cm, 0.4cm, 15.8cm, 0.7cm, [`src/` --- i front-end, il terminale (crossterm) e la finestra (egui): traducono gli eventi, disegnano la fotografia], fill: accent.lighten(85%))
+  #group(0.1cm, 1.2cm, 16.0cm, 2.2cm, [uno strato: si usano a vicenda])
+  #node(4.0cm, 1.9cm, 7.6cm, 0.7cm, [`editor/` --- `EditorState`, la facciata], fill: paper)
+  #node(12.15cm, 1.9cm, 7.7cm, 0.7cm, [`primitives/` --- ciò che Lisp può chiamare])
+  #node(4.0cm, 2.85cm, 7.6cm, 0.7cm, [`modes/` --- modi e lavori che li servono])
+  #node(12.15cm, 2.85cm, 7.7cm, 0.7cm, [`feature/` --- minibuffer e isearch])
+  #node(8.1cm, 3.95cm, 15.8cm, 0.7cm, [`managers/` --- lo stato, in compartimenti, ognuno sotto un lock], fill: paper)
+  #node(8.1cm, 4.95cm, 15.8cm, 0.7cm, [`ui/` --- la descrizione dello schermo: finestre, layout, facce, `FrameSnapshot`. Non disegna nulla])
+  #node(4.0cm, 5.95cm, 7.6cm, 0.7cm, [`input.rs`, `commands.rs` --- tasti, keymap, comandi])
+  #node(12.15cm, 5.95cm, 7.7cm, 0.7cm, [`text/` --- ricerca, rettangoli, kill ring])
+  #node(4.0cm, 6.95cm, 7.6cm, 0.7cm, [`paths.rs` --- le directory dell'editor])
+  #node(12.15cm, 6.95cm, 7.7cm, 0.7cm, [`buffer/` --- testo, undo, cache], fill: paper)
+  #node(8.1cm, 7.9cm, 15.8cm, 0.6cm, [`work/` --- il lavoro in background: il WorkManager, l'esecutore, i thread dedicati], fill: paper)
 ]
 
-Le frecce sono omesse perché la regola è una sola: ogni livello può usare tutti
-quelli disegnati sotto di lui. `work/` non conosce l'editor: un buffer emette
-un suo argomento senza sapere chi lo ascolta (@argomenti). L'interprete non è
-nella figura: è il crate `risp`, che non conosce l'editor, e lo usano gli strati
-da `managers/` in su.
+Fino a `managers/` le frecce sono omesse perché la regola è una sola: ogni
+livello può usare tutti quelli disegnati sotto di lui. `work/` non conosce
+l'editor: un buffer emette un suo argomento senza sapere chi lo ascolta
+(@argomenti). I quattro moduli in alto sono uno strato solo, non un ordine:
+si usano a vicenda --- `editor/` installa le primitive e avvia i lavori dei
+modi, che agiscono sull'editor --- e la mappa li elenca per ciò che sono.
+L'interprete non è nella figura: è il crate `risp`, che non conosce l'editor;
+le sue espressioni compaiono da `input.rs` in su.
 
-La regola ha tre eccezioni, dichiarate. `buffer/` conserva alcuni tipi che
+La regola ha quattro eccezioni, dichiarate. `buffer/` conserva alcuni tipi che
 vengono da più in alto, le facce di `ui/` (negli overlay e nel testo virtuale)
 e gli stati della colorazione e della scansione di `modes/` (nelle due cache
 del testo, @cache-testo). `input.rs` lega i tasti a espressioni Lisp,
-`ELispExp`, il cui tipo nomina `EditorState` di `editor/` (@keymap). E
-`managers/` conserva i modi maggiori e le tabelle sintattiche di `modes/`, le
-finestre, le facce e il tema di `ui/`, e le espressioni Lisp che i comandi, i
-legami e gli hook registrano (@compartimenti). Per ogni modulo da `work/` a
-`managers/`, `layering_tests` tiene l'elenco di ciò che usa da più in alto:
-vuoto, tranne per questi tre. Un uso nuovo fa fallire il test finché non lo si
-aggiunge lì e nella mappa di `lib.rs`.
+`ELispExp`, il cui tipo nomina `EditorState` di `editor/` (@keymap). `ui/`
+compone le finestre sulla tabella dei buffer, `Buffers` di `managers/`, e
+usa `ELispExp` per dare a Lisp l'id di una finestra e per leggere lo stato che
+un modo mette nella riga di stato. E
+`managers/` conserva i modi maggiori e le tabelle sintattiche di `modes/`, e le
+espressioni Lisp che i comandi, i legami e gli hook registrano
+(@compartimenti); le finestre, le facce e il tema che conserva vengono da
+`ui/`, che gli sta sotto. Per ogni modulo da `work/` a `managers/`,
+`layering_tests` tiene l'elenco di ciò che usa da più in alto: vuoto, tranne
+per questi quattro. Un uso nuovo fa fallire il test finché non lo si aggiunge
+lì e nella mappa di `lib.rs`.
 
 == Dove sta cosa
 
@@ -155,7 +163,7 @@ aggiunge lì e nella mappa di `lib.rs`.
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
   [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`.],
-  [`editor/`], [`EditorState` e i suoi metodi, divisi per compartimento (`buffers.rs`, `windows.rs`...) o per preoccupazione (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `work.rs`, `background.rs`, `macros.rs`).],
+  [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `work.rs`). Vedi @coppie.],
   [`primitives/`], [Le 304 primitive dell'editor, in 28 moduli, e `install_primitives`.],
   [`modes/`], [`MajorMode`, grammatica di colorazione (`syntax.rs`), tabella sintattica e scanner di espressioni (`sexp.rs`), i lavori di sfondo `Highlighter`, `Prescanner`, `FileWatcher`, `AutoSaver`.],
   [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale.],
@@ -164,7 +172,7 @@ aggiunge lì e nella mappa di `lib.rs`.
   [`tests/`], [Circa ottanta file di test dell'editor, più `perf/`.],
   [`../lisp/`], [I moduli Lisp distribuiti con l'editor (venti file).],
   [`../build.rs`], [Copia i moduli Lisp in `target/<profilo>/data/lisp`, accanto all'eseguibile.],
-  [`../../src/`], [Il front-end: `main.rs` (avvio) e `tui.rs` (ciclo degli eventi e disegno).],
+  [`../../src/`], [I front-end: `main.rs` (avvio), `tui.rs` (il terminale: ciclo degli eventi e disegno) e `gui.rs` (una finestra grafica, con egui).],
 )
 
 == La superficie pubblica
@@ -193,8 +201,10 @@ front-end usa sono pochi:
   [`snapshot(&env, w, h)`], [La fotografia da disegnare.],
   [`next_redraw_in(&env, &frame)`, `drag_scroll_in()`], [Quanto si può aspettare prima di ridisegnare anche senza eventi.],
   [`tick(&env)`], [Il tempo è scaduto: esegue ciò che era in attesa (callback di sfondo, scorrimento durante il trascinamento).],
+  [`on_background_change(sveglia)`], [Una funzione che il lavoro di sfondo chiama quando ha cambiato lo schermo: sveglia il ciclo del front-end (@utenti-sfondo).],
   [`is_running()`], [Falso dopo `quit`.],
-  [`enable_log_file`, `log_diagnostic`, `set_echo_message`], [Diagnostica.],
+  [`shutdown(entro)`], [All'uscita, anche per un panic: ferma il lavoro di sfondo e scrive nel file le ultime righe del log.],
+  [`enable_log_file`, `log_diagnostic`, `set_echo_message`, `take_backtrace_suffix`], [Diagnostica.],
 )
 
 == I thread
@@ -240,56 +250,64 @@ fermato.
 
 == Dal `main` al ciclo degli eventi
 
-`src/main.rs` fa quattro cose: chiama `create_global_env::<GapBuffer>()`,
-attiva il file di log `rsedit.log` nella directory della cache (@directory), apre il
-file passato come primo argomento valutando `(find-file PERCORSO)` e, se lo
-standard input è un terminale, entra in `tui_main`. Un errore di avvio
-dell'interprete viene stampato e il programma esce; un errore di `find-file`
-finisce nell'area dei messaggi.
+`src/main.rs` legge la riga di comando --- i file da aprire, `--gui`,
+`--font FILE` e `--help` --- e chiama `create_global_env::<GapBuffer>()`; poi
+attiva il file di log `rsedit.log` nella directory della cache (@directory),
+apre ogni file della riga di comando valutando `(find-file PERCORSO)` ed entra
+nel ciclo di un front-end: `tui_main`, il terminale, se lo standard input è un
+terminale e `--gui` non è chiesto, altrimenti `gui_main`, una finestra
+grafica. Un errore di avvio dell'interprete viene stampato e il programma
+esce; un errore di `find-file` finisce nell'area dei messaggi. All'uscita,
+anche per un panic, `ShutDownOnExit` chiama `shutdown`, che ferma il lavoro di
+sfondo e scrive nel file le ultime righe del log.
 
 #canvas(height: 8.4cm)[
   #lane(1.5cm, 0cm, 8.3cm, [`main.rs`], fill: accent.lighten(85%))
   #lane(5.2cm, 0cm, 8.3cm, [`create_global_env`], w: 3.2cm)
   #lane(8.9cm, 0cm, 8.3cm, [`EditorState`])
-  #lane(11.7cm, 0cm, 8.3cm, [scheduler], fill: accent.lighten(85%))
+  #lane(11.7cm, 0cm, 8.3cm, [WorkManager], fill: accent.lighten(85%))
   #lane(14.6cm, 0cm, 8.3cm, [Lisp])
 
   #msg(1.5cm, 5.2cm, 1.2cm, [chiamata])
   #msg(5.2cm, 8.9cm, 1.65cm, [`EditorState::new()`])
-  #msg(8.9cm, 11.7cm, 2.1cm, [`spawn` + `Highlighter`, `Prescanner`], colour: accent)
+  #msg(8.9cm, 11.7cm, 2.1cm, [`start`; `Highlighter`, `Prescanner`], colour: accent)
   #msg(5.2cm, 14.6cm, 2.6cm, [`bootstrap_vm`: radice + 86 primitive])
   #msg(5.2cm, 14.6cm, 3.1cm, [`lisp-path`, variabili di impostazione])
   #msg(5.2cm, 14.6cm, 3.6cm, [`install_primitives`, minibuffer, isearch])
   #seq-note(5.4cm, 3.85cm)[`init.lisp` scritto se manca]
-  #msg(5.2cm, 11.7cm, 4.75cm, [`FileWatcher`, `AutoSaver`], colour: accent)
-  #msg(5.2cm, 14.6cm, 5.25cm, [`eval_file(init.lisp)` → i moduli])
+  #msg(5.2cm, 14.6cm, 4.75cm, [`eval_file(init.lisp)` → i moduli])
+  #msg(5.2cm, 11.7cm, 5.25cm, [`FileWatcher`, `AutoSaver`], colour: accent)
   #msg(5.2cm, 1.5cm, 5.75cm, [`(state, env)`], dash: "dashed")
-  #msg(1.5cm, 14.6cm, 6.3cm, [`(find-file ARGV[1])`])
-  #self-msg(1.5cm, 6.85cm, [`tui_main`: raw mode, incolla, colori])
+  #msg(1.5cm, 14.6cm, 6.3cm, [`(find-file F)` per ogni file])
+  #self-msg(1.5cm, 6.85cm, [`tui_main` o `gui_main`])
 ]
 
-=== I passi di `create_global_env`
+=== I passi di `create_global_env` <avvio>
 
 + `EditorState::new()` riempie la keymap globale con le poche associazioni
   scritte in Rust (`fill_default_keymaps`), crea ogni compartimento con il suo
-  `Arc<RwLock<…>>`, avvia il WorkManager e gli consegna i due lavori che
-  girano sempre, `Highlighter` e `Prescanner`, che si svegliano quando un
+  `Arc<RwLock<…>>`, avvia il WorkManager (`start`) e gli consegna i due lavori
+  che girano sempre, `Highlighter` e `Prescanner`, che si svegliano quando un
   buffer o una grammatica cambiano.
 + `bootstrap_vm` crea l'ambiente radice con le 86 primitive di base e
   verifica l'interprete.
 + `lisp-path` diventa `("<directory dell'eseguibile>/data/lisp")`.
-+ Le impostazioni ricevono il valore iniziale, così che `(setq ...)` in una
-  configurazione modifichi un valore che esiste già: `mouse-mode` (`nil`),
-  `after-resize-hook` (`nil`), `echo-message-timeout` (5),
-  `minibuffer-width` (60), `minibuffer-height` (3), `mode-line-format`,
-  `window-separator` (`│`). Viene creato il modo `fundamental-mode`.
++ Ogni impostazione che l'editor legge (`editor/settings.rs`) riceve il suo
+  valore iniziale, così che `(setq ...)` in una configurazione modifichi un
+  valore che esiste già: per esempio `mouse-mode` (`nil`),
+  `echo-message-timeout` (5), `minibuffer-width` (60), `minibuffer-height` (3),
+  `window-separator` (`│`), `auto-save` e `watch-files` (`t`).
+  `document_settings` dà a ognuna la documentazione che `C-h v` mostra. Viene
+  creato il modo `fundamental-mode`.
 + `install_primitives`, `install_minibuffer` e `install_isearch` registrano le
   primitive, i comandi, il modo `minibuffer-mode` e il modo `isearch-mode`.
 + `rsedit-path` riceve il percorso dell'eseguibile.
 + Se manca, `init.lisp` viene creato con `DEFAULT_INIT_LISP` (vedi sotto).
-+ Il WorkManager riceve `FileWatcher` e `AutoSaver`, con gli intervalli letti
-  dalle variabili (`watch-file-interval`, `auto-save-interval`).
-+ `eval_file` valuta `init.lisp`, che carica i moduli Lisp.
++ `eval_file` valuta `init.lisp`, che carica i moduli Lisp. Un errore di
+  valutazione ferma l'avvio, e `create_global_env` lo restituisce.
++ Il WorkManager riceve `FileWatcher` e `AutoSaver`, che a ogni passo leggono
+  le loro impostazioni (`watch-files`, `watch-file-interval`, `auto-save`,
+  `auto-save-interval`).
 
 === Le directory dell'editor <directory>
 
@@ -320,7 +338,7 @@ ne provano la precedenza senza scrivere nell'ambiente del processo, che tutti
 i test vedono. `isolate_config_for_tests` dà invece a ogni processo di test
 due directory sue, attraverso le due variabili `RSEDIT_*`.
 
-Tre decisioni:
+Quattro decisioni:
 
 + *Su macOS, `~/.config` e `~/.cache`.* È lì che guarda chi usa un editor da
   terminale su un Mac: gli editor da cui arriva, Emacs con XDG, Neovim e
@@ -333,6 +351,15 @@ Tre decisioni:
 + *Su Windows le variabili `XDG_*` non contano.* Le imposta solo chi si porta
   dietro un'abitudine di Unix; preferirle alla risposta del sistema metterebbe
   la configurazione dove nessun programma Windows la cerca.
++ *Ogni processo di test ha le sue directory.* Costruire un editor crea la
+  directory della configurazione e valuta ciò che contiene: sotto la `HOME` di
+  chi lancia i test scriverebbe lì la sua configurazione, e alcuni test
+  spostano `HOME`, che vale per tutto il processo mentre i test girano in
+  parallelo. `isolate_config_for_tests` punta configurazione e cache a due
+  directory temporanee del processo, una volta sola e prima del primo editor,
+  attraverso le due variabili `RSEDIT_*`: la porta di una persona, così i test
+  passano da `app_dir` invece di aggirarla. È pubblica per i test del crate
+  binario, che il `cfg(test)` di una libreria non raggiunge.
 
 === Il file `init.lisp` predefinito
 
@@ -355,8 +382,8 @@ aggiungere a mano le righe `(eval-file ...)` dei moduli nuovi #rapporto("AVV-5")
 non contiene `/`, `\` o `.`, cerca `nome.lisp` in ogni directory di
 `lisp-path`, in ordine. Il contenuto viene avvolto in `(progn …)`, letto con
 #emph[una sola] chiamata a `Parser::next` e valutato dentro uno scope di
-carburante (`begin_command`). Un file mancante produce una riga di log e il
-valore `nil`.
+carburante (`begin_command`), alla radice della catena di ambienti
+(`top_level`). Un file mancante produce una riga di log e il valore `nil`.
 
 #estratto("editor/boot.rs")[
 ```rust
@@ -364,8 +391,9 @@ let content = format!("(progn {})", /* il testo del file, o di nome.lisp in lisp
 let ast = if let Ok(ast) = Parser::new(&content).next() { ast } else {
     return Ok(ELispExp::nil());           // errore di sintassi: nessun messaggio
 };
-let _command = self.begin_command();      // uno scope di carburante
-Ok(ELispExp::proper_list(vec![eval(&ast, env.clone(), self)?]))
+let _command = self.begin_command();             // uno scope di carburante
+let value = eval(&ast, top_level(&env), self)?;  // alla radice dell'ambiente
+Ok(ELispExp::proper_list(vec![value]))
 ```
 ]
 
@@ -377,6 +405,29 @@ commento), lascia la `progn` aperta e il lettore fallisce. In entrambi i casi
 `eval_file` restituisce `nil` senza messaggi #rapporto("AVV-2"). Il primo errore
 di #emph[valutazione], invece, interrompe il file da quel punto e risale come
 errore.
+
+=== Le decisioni <decisioni-avvio>
+
++ *I due lessici partono con l'editor.* L'evidenziatore e la prescansione
+  sono sottomessi in `EditorState::new`, prima che esista un modo: un lavoro
+  che aspetta un cambiamento non costa nulla, e uno mai avviato costerebbe un
+  file senza colori e senza una ragione detta. Sono sottomessi una volta sola
+  #rapporto("BKG-2").
++ *I due osservatori partono dopo `init.lisp`.* Il controllo dei file e il
+  salvataggio automatico leggono le loro impostazioni a ogni passo, e sono
+  sottomessi dopo la configurazione: ciò che dice conta dalla prima occhiata.
++ *Il file predefinito carica moduli e imposta variabili, niente di più.* È
+  valutato con `?`, e i moduli che carica non sono sempre presenti --- un
+  binario di test non ha `data/lisp` accanto ---: senza di loro `defcommand`
+  non è una macro, una forma che la usa diventa una chiamata qualunque, e
+  l'avvio si ferma. Un comando sta in un modulo o in Rust. È una stringa
+  grezza, dove una barra rovesciata è una barra rovesciata; ed è una costante
+  con un nome, perché un test la valuti in un ambiente nudo.
++ *Un file si valuta alla radice dell'ambiente.* Un `defun`, un `defvar` o il
+  `setq` di un nome nuovo legano nell'ambiente in cui sono valutati, e dentro
+  una funzione se ne vanno con lei. `eval_file` valuta alla radice
+  (`top_level`), da dovunque venga la chiamata: un modulo caricato da una
+  funzione, o con `M-:`, definisce ciò che definirebbe `init.lisp`.
 
 == Il ciclo degli eventi della TUI
 
@@ -471,29 +522,33 @@ sullo schermo principale del terminale, non su quello alternativo
 == La facciata
 
 `EditorState<B: BufferTrait>` è una struttura di `Arc`: clonarla costa poco e
-ogni clone vede lo stesso stato. I suoi campi sono privati, e ognuno è o un
-#emph[compartimento] di `managers/` sotto un `RwLock`, o un dato piccolo con un
-lock o un atomico proprio.
+ogni clone vede lo stesso stato. I suoi campi sono privati, e ognuno è un
+#emph[compartimento] di `managers/` sotto un `RwLock`, un dato piccolo con un
+lock o un atomico proprio, o il WorkManager. La tabella dà i tipi senza l'`Arc`
+che li condivide.
 
 #ref-table(
-  columns: (3.4cm, 3.6cm, 1fr),
+  columns: (3.7cm, 5.0cm, 1fr),
   header: ([Campo], [Tipo], [Contenuto]),
-  [`buffers`], [`Buffers<B>`], [Tabella nome → `Arc<RwLock<Buffer>>`, buffer corrente, ordine di recente uso.],
-  [`windows`], [`Windows`], [Albero delle finestre affiancate, finestre flottanti, focus, prossimo id, trascinamento, ultimo clic.],
-  [`modes`], [`Modes<B>`], [Registro dei modi maggiori, keymap globale, completamenti globali, modi per estensione, keymap transitoria, tasti di ripetizione, hook globali.],
-  [`commands`], [`Commands<B>`], [Registro dei comandi, pila dei comandi in attesa di argomenti, argomento prefisso, ultimo comando e sua forma.],
-  [`kill_yank`], [`KillYank`], [Kill ring, ultimo yank, flag «il comando precedente ha ucciso/incollato», ultimo rettangolo ucciso, testo dovuto agli appunti di sistema.],
-  [`macros`], [`Macros`], [Macro in registrazione, ultima macro, contatore.],
-  [`history`], [`History`], [Storia dei prompt per chiave (100 voci per chiave predefinite).],
-  [`log`], [`Log`], [Righe diagnostiche e file a cui sono copiate.],
-  [`runtime`], [`Runtime`], [Colonna obiettivo, isearch e sostituzione in corso, `FuelMeter`, pila delle chiamate per i backtrace, tema in uso e tema di fabbrica, i lavori avviati da Lisp per nome.],
+  [`buffers`], [`RwLock<Buffers<B>>`], [Tabella nome → `Arc<RwLock<Buffer>>`, buffer corrente, ordine di recente uso.],
+  [`windows`], [`RwLock<Windows>`], [Albero delle finestre affiancate, finestre flottanti, focus, prossimo id, trascinamento, ultimo clic.],
+  [`modes`], [`RwLock<Modes<B>>`], [Registro dei modi maggiori, keymap globale, completamenti globali, modi per estensione, keymap transitoria, tasti di ripetizione, hook globali.],
+  [`commands`], [`RwLock<Commands<B>>`], [Registro dei comandi, pila dei comandi in attesa di argomenti, argomento prefisso, ultimo comando e sua forma.],
+  [`kill_yank`], [`RwLock<KillYank>`], [Kill ring, ultimo yank, flag «il comando precedente ha ucciso/incollato», ultimo rettangolo ucciso, testo dovuto agli appunti di sistema.],
+  [`macros`], [`RwLock<Macros>`], [Macro in registrazione, ultima macro, profondità delle riproduzioni, contatore.],
+  [`history`], [`RwLock<History>`], [Storia dei prompt per chiave (100 voci per chiave predefinite).],
+  [`log`], [`RwLock<Log>`], [Righe diagnostiche e file a cui sono copiate.],
+  [`runtime`], [`RwLock<Runtime>`], [Colonna obiettivo, isearch e sostituzione in corso, `FuelMeter`, pila delle chiamate per i backtrace, tema in uso e tema di fabbrica, i lavori avviati da Lisp per nome.],
   [`echo_message`], [`RwLock<EchoMessage>`], [Testo dell'area messaggi con l'istante in cui è stato scritto.],
   [`pending_keys`], [`RwLock<Vec<KeyEvent>>`], [Tasti di una sequenza non ancora completa.],
-  [`owed`], [`RwLock<Vec<OwedCallback>>`], [Callback chieste dai lavori di sfondo e non ancora eseguite.],
+  [`owed`], [`RwLock<Vec<`\ `OwedCallback>>`], [Callback chieste dai lavori di sfondo e non ancora eseguite (@callback-dovute).],
   [`current_results`], [`RwLock<Option<String>>`], [Il buffer di risultati che `next-error` percorre.],
-  [`worker_mailbox`], [`Sender<WorkerMessage>`], [Canale verso lo scheduler.],
+  [`grammar_epoch`], [`AtomicU64`], [Quante volte è cambiata una grammatica: il timbro di una colorazione.],
+  [`syntax_changed`], [`Topic`], [L'argomento `syntax-changed`, risolto una volta (@argomenti).],
+  [`work`], [`WorkManager<`\ `EditorState<B>>`], [Il lavoro asincrono: i lavori dell'esecutore e i thread dedicati (@sfondo).],
+  [`background_change`], [`BackgroundChange`], [Se un lavoro ha cambiato lo schermo dall'ultima fotografia, e come dirlo al front-end (@utenti-sfondo).],
   [`running`], [`AtomicBool`], [Falso dopo `quit`.],
-  [`shell_commands`, `background_work`], [`AtomicUsize`], [Quanti comandi di shell e lavori di sfondo stanno cambiando lo schermo.],
+  [`shell_commands`], [`AtomicUsize`], [Quanti comandi di shell stanno girando.],
   [`command_errors`], [`AtomicUsize`], [Quanti comandi sono falliti: la riproduzione di una macro si ferma al primo.],
 )
 
@@ -554,9 +609,10 @@ La facciata raggiunge un compartimento con una #emph[porta] che esegue una
 closure: `windows(|w| …)` per leggere, `windows_mut(|w| …)` per cambiare. Il
 lock non sopravvive alla domanda, e dentro la closure non si richiama la
 facciata: un `RwLock` non promette che una seconda lettura sullo stesso thread
-riesca. `Log` è il solo che prende il lock da sé: `Log::append` e `Log::flush`
-ricevono il `RwLock<Log>`, perché il WorkManager registra senza tenere un
-editor, che lo contiene.
+riesca; si può chiamare ciò che non prende lock, come fa `set_mode`, che sposta
+il contatore delle grammatiche dentro la porta di `modes`. `Log` è il solo che
+prende il lock da sé: `Log::append` e `Log::flush` ricevono il `RwLock<Log>`,
+perché il WorkManager registra senza tenere un editor, che lo contiene.
 
 == Le coppie con `editor/` <coppie>
 
@@ -570,37 +626,50 @@ editor, che lo contiene.
   ciò che usa X insieme a un altro compartimento, al testo di un buffer o
   all'interprete.
 - Le porte dei lock stanno tutte in `editor/mod.rs`, accanto ai campi: è il
-  solo file che prende i lock dei compartimenti.
+  solo file che prende i lock dei compartimenti. Una porta sola ne tiene due,
+  `windows_mut_with_buffers`, per `snapshot`, che compone ogni finestra sul
+  buffer che mostra (@ordine-lock).
+- Un metodo che inoltra una chiamata sola al compartimento X sta in
+  `editor/X.rs`, chiunque lo chiami: i cinque del tema in `runtime.rs`, quelli
+  che il mouse chiede alle finestre in `windows.rs`.
 - Un compartimento senza metodi di facciata non ha un file in `editor/`: oggi
   `history`, le cui porte bastano.
 - Chi ha bisogno di un compartimento solo, primitive comprese, usa la porta:
   `ctx.modes(|m| …)` in una primitiva è previsto.
 
-Gli altri file di `editor/` portano il nome di una preoccupazione invece che di
-un compartimento (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`),
-perché ciò che fanno attraversa più compartimenti per natura. Oggi la regola
-ha tre eccezioni: le porte di `kill_yank` e di `macros` stanno nei loro file, e
-`log` non ne ha una, perché `editor/log.rs` prende il lock da sé.
+Gli altri file di `editor/` portano il nome di ciò che coordinano --- `keys.rs`,
+`mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`,
+`background.rs` --- e tengono solo ciò che mette insieme più cose: un
+compartimento e il testo di un buffer, l'interprete o un altro compartimento.
+`work.rs` è la facciata del WorkManager, che non è un compartimento: lo si
+raggiunge intero (`work()`), perché non ha un lock che si possa prendere fuori
+ordine o tenere attraverso l'interprete. L'implementazione di `LispContext`,
+il contratto dell'editor con l'interprete, sta in `mod.rs`.
 
-== L'ordine dei lock
+== L'ordine dei lock <ordine-lock>
 
 Quando un'operazione deve tenere più lock insieme, li prende in quest'ordine.
+Sono due a farlo. `snapshot` tiene `windows`, in scrittura, `buffers` e i
+buffer che compone, attraverso la sola porta che apre due compartimenti,
+`windows_mut_with_buffers`. La risoluzione di un tasto tiene `pending_keys`
+mentre legge il buffer corrente e poi interroga `modes`, e lo prende in
+scrittura per togliere una mappa `Release`. Ogni altro percorso copia fuori ciò
+che gli serve e rilascia prima di prendere il lock seguente; `echo_message` e
+gli altri compartimenti si prendono da soli.
 
 #canvas(height: 3.4cm)[
   #node(1.4cm, 1.0cm, 2.4cm, 0.8cm, [ambiente Lisp\ (`Env`)], fill: paper)
-  #node(4.4cm, 1.0cm, 2.6cm, 0.8cm, [`pending_keys`])
-  #node(7.4cm, 1.0cm, 2.4cm, 0.8cm, [`echo_message`])
-  #node(10.2cm, 1.0cm, 2.2cm, 0.8cm, [`windows`])
-  #node(12.8cm, 1.0cm, 2.0cm, 0.8cm, [`buffers`])
+  #node(5.0cm, 1.0cm, 2.8cm, 0.8cm, [`pending_keys`])
+  #node(8.6cm, 1.0cm, 2.4cm, 0.8cm, [`windows`])
+  #node(11.8cm, 1.0cm, 2.2cm, 0.8cm, [`buffers`])
   #node(15.0cm, 1.0cm, 1.9cm, 0.8cm, [un `Buffer`])
-  #carrow((2.6cm, 1.0cm), (3.1cm, 1.0cm))
-  #carrow((5.7cm, 1.0cm), (6.2cm, 1.0cm))
-  #carrow((8.6cm, 1.0cm), (9.1cm, 1.0cm))
-  #carrow((11.3cm, 1.0cm), (11.8cm, 1.0cm))
-  #carrow((13.8cm, 1.0cm), (14.05cm, 1.0cm))
+  #carrow((2.6cm, 1.0cm), (3.6cm, 1.0cm))
+  #carrow((6.4cm, 1.0cm), (7.4cm, 1.0cm))
+  #carrow((9.8cm, 1.0cm), (10.7cm, 1.0cm))
+  #carrow((12.9cm, 1.0cm), (14.05cm, 1.0cm))
   #node(15.0cm, 2.6cm, 1.9cm, 0.7cm, [`modes`])
   #carrow((15.0cm, 1.4cm), (15.0cm, 2.25cm))
-  #note(0.2cm, 2.15cm)[le variabili si leggono #emph[prima] di ogni altro lock: `snapshot` legge le impostazioni,\ poi l'area messaggi, poi `windows` e `buffers` insieme; la risoluzione di un tasto tiene `pending_keys`,\ legge il modo del buffer corrente e solo dopo prende `modes`.]
+  #note(0.2cm, 2.15cm)[le variabili si leggono #emph[prima] di ogni altro lock e mai con uno preso: `snapshot` legge le impostazioni,\ poi l'area messaggi, poi `windows` e `buffers` insieme; la risoluzione di un tasto tiene `pending_keys`,\ legge il modo del buffer corrente e solo dopo prende `modes`.]
 ]
 
 `buffers` ha una particolarità: nel percorso comune non viene tenuto mentre si
@@ -639,7 +708,7 @@ dalla tabella (@decisioni-stato).
   header: ([Metodo del trait], [Implementazione]),
   [`consume_fuel(n)`], [`FuelMeter` di `Runtime` (clonato fuori dal lock); `Exhausted` diventa `OutOfFuel`.],
   [`log_diagnostic(msg)`], [`Log::append`: la riga va nella lista; il file lo scrive il watchdog (`Log::flush`).],
-  [`begin_unwind()`], [Alza il carburante ad almeno 100.000 passi #rapporto("INT-1").],
+  [`with_unwind(cleanup)`], [Esegue la pulizia di un `unwind-protect` con il carburante che resta e, finito quello, con una riserva di 100.000 passi, che non passa alla valutazione ordinaria e non si ricarica fino al prossimo scope esterno.],
   [`begin_thread_evaluation()`], [`arm_thread()`: il nuovo thread riceve il budget configurato.],
   [`push_call_frame` / `pop_call_frame` / `call_frame_depth` / `truncate_call_frames`], [La pila `call_stack: Vec<String>` di `Runtime`, che `report_error` legge come backtrace.],
 )
@@ -648,8 +717,10 @@ Lo scope di carburante dell'editor è `begin_command()`: lo aprono
 `run_command_form`, ogni hook, `report_error`, ogni callback dovuta, ogni
 funzione di `after-resize-hook` ed `eval_file`. Solo l'apertura più esterna
 ricarica il budget (10.000.000 di passi), quindi un `eval-file` dentro un
-comando consuma il budget del comando. Gli hook, invece, sono valutati dopo che
-lo scope del comando si è chiuso: ognuno riparte con il budget pieno.
+comando consuma il budget del comando, e così `pre-command-hook`, che gira
+dentro lo scope del comando. `post-self-insert-hook` e `post-command-hook`,
+invece, girano dopo che lo scope si è chiuso: ogni loro funzione riparte con il
+budget pieno.
 
 == Le decisioni <decisioni-stato>
 
@@ -842,6 +913,62 @@ lo scope del comando si è chiuso: ognuno riparte con il budget pieno.
   un'altra finestra può mostrare lo stesso buffer. La rotella porta l'ultima
   riga fino in cima, `C-v` solo fino in fondo: la prima guarda la fine di un
   file, il secondo lo legge.
++ *La facciata dà ai compartimenti nomi da editor.* `is_command` inoltra a
+  `Commands::is_command`, e sembra un doppione; ma per lo più rinomina:
+  `Commands::specs` è chiaro perché il tipo dice di che cosa parla, mentre
+  `EditorState`, che ha anche nomi di buffer e id di finestre, ha bisogno di
+  `command_specs`. Togliere gli inoltri metterebbe in ogni chiamata quale
+  compartimento tiene che cosa, e spostare un campo tra due compartimenti
+  cambierebbe ogni chiamante invece di un inoltro.
++ *Un inoltro sta con il suo compartimento.* Chi cerca che cosa l'editor
+  offre su un compartimento lo trova in un file, e chi scrive un inoltro nuovo
+  sa dove metterlo, chiunque sia a usarlo. I file di coordinamento restano
+  fatti di coordinamento.
++ *Una porta sola tiene due compartimenti.* `snapshot` compone ogni finestra
+  contro la tabella dei buffer, e ne sposta lo scorrimento: ha bisogno di
+  `windows` in scrittura e di `buffers` insieme. La porta che li apre
+  entrambi li prende nell'ordine dei lock, scritto così in un posto solo
+  (@ordine-lock).
++ *Il contatore delle grammatiche sta accanto al registro, non dentro.* Una
+  colorazione porta il timbro della grammatica sotto cui è stata calcolata, e
+  aggiungere una regola non cambia il testo: senza il contatore nessuno se ne
+  accorgerebbe. Ogni fotografia chiede a ogni buffer se la sua colorazione è
+  indietro, e un atomico fuori dal registro risponde senza prenderne il lock.
+  Si sposta solo sotto il lock in scrittura del registro, dopo il cambio della
+  grammatica, e lo si legge sotto quel lock insieme alla grammatica: le due
+  cose non si vedono mai in disaccordo. Una tabella sintattica che cambia
+  emette `syntax-changed` e non sposta il contatore: è dell'altro lessico.
++ *Il messaggio e il suo istante stanno sotto un lock solo.* Con due lock, chi
+  legge potrebbe accoppiare un messaggio nuovo all'istante del vecchio e
+  nasconderlo appena scritto. Ogni messaggio fa ripartire il suo tempo, e un
+  messaggio scaduto resta nello stato: è la vista che lo dimentica.
++ *Le callback dovute non sono un compartimento.* Ogni compartimento non sa
+  nulla del Lisp, e quella lista ne è fatta: metterla dietro un compartimento
+  romperebbe la regola, o chiederebbe una seconda rappresentazione di una
+  chiamata, inventata per non dire che cos'è. Sta accanto a `current_results`,
+  come stato che la facciata tiene da sé.
++ *Finestra con il focus e buffer corrente cambiano insieme.* Lo fanno in due
+  modi soli: `show_in_focused_window` cambia il buffer e lascia il focus,
+  `set_focused_window_id` sposta il focus e rende corrente ciò che la finestra
+  mostra, e ogni spostamento del focus finisce in `follow_focus`, anche quando
+  è il compartimento a spostarlo. Se i due andassero alla deriva, l'editor
+  disegnerebbe il cursore in una finestra e scriverebbe in un'altra.
++ *In un buffer in sola lettura si scrive sotto il suo lock.* Una trascrizione
+  --- l'uscita di un comando di shell, i risultati di una ricerca --- è in sola
+  lettura perché nessuno ci scriva. `append_to_buffer` abbassa e rialza il
+  flag dentro un solo lock in scrittura: non c'è un momento in cui il buffer è
+  visibile e scrivibile. `dired` fa lo stesso dal Lisp, dove non può tenere un
+  lock e deve fidarsi che nulla giri in mezzo.
++ *Un file che non c'è si apre vuoto e non modificato.* `new_buffer` con un
+  percorso legge il file e fallisce se non può; un file che non esiste non è
+  un errore, è il modo comune di crearne uno. `new_file_buffer` fa un buffer
+  vuoto che ricorda dove andrà, non modificato: lasciarlo non perde nulla, e
+  `C-x C-s` crea il file anche se non si è scritto niente.
++ *Un buffer chiuso con modifiche non salvate lascia la sua copia.* La copia
+  del salvataggio automatico si butta quando ciò che teneva è nel file: a un
+  salvataggio, e alla chiusura di un buffer senza modifiche. `close_buffer` non
+  chiede nulla, e non chiedono `close-buffer` e `kill-buffer-without-saving`
+  che lo chiamano: la copia può essere tutto ciò che resta del lavoro.
 
 // ===========================================================================
 = Dal tasto al comando <tasto>
@@ -956,11 +1083,11 @@ di ripetizione.
   #carrow((7.8cm, 1.6cm), (9.6cm, 1.6cm), label: [sì], dy: -7pt)
   #node(12.9cm, 1.6cm, 6.4cm, 0.8cm, [`capture_key_sequence`: stessa risoluzione,\ poi `(funcall WATCHER KEYS TARGET SOURCE)`])
   #carrow((4.6cm, 2.0cm), (4.6cm, 2.45cm))
-  #node(4.6cm, 2.85cm, 6.4cm, 0.8cm, [`read_prefix_argument`: `C-u`, cifre, `-`?])
+  #node(4.6cm, 2.85cm, 6.4cm, 0.8cm, [`read_prefix_argument`: `C-u`, cifre, `-`?\ (se la keymap locale non lega `C-u`)])
   #carrow((7.8cm, 2.85cm), (9.6cm, 2.85cm), label: [preso], dy: -7pt)
   #node(12.9cm, 2.85cm, 6.4cm, 0.7cm, [registrato per le macro; fine])
   #carrow((4.6cm, 3.25cm), (4.6cm, 3.7cm))
-  #node(4.6cm, 4.15cm, 6.4cm, 0.9cm, [`resolve_key_sequence`:\ transitoria → modo → globale])
+  #node(4.6cm, 4.15cm, 6.4cm, 0.9cm, [`resolve_key_sequence`:\ transitoria → locale → modo → globale])
   #carrow((7.8cm, 4.15cm), (9.6cm, 4.15cm), label: [prefisso], dy: -7pt)
   #node(12.9cm, 4.15cm, 6.4cm, 0.7cm, [tasti conservati in `pending_keys`; fine])
   #carrow((4.6cm, 4.6cm), (4.6cm, 5.05cm))
@@ -985,7 +1112,9 @@ pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) 
         self.capture_key_sequence(event, watcher, env);     // read-key-sequence
         return;
     }
-    if self.read_prefix_argument(&event) {                  // C-u, cifre, -
+    if !(Commands::is_prefix_argument_key(&event) && self.local_key_claims(&event))
+        && self.read_prefix_argument(&event)                // C-u, cifre, -
+    {
         self.record_keys(&[event], None);
         return;
     }
@@ -1011,9 +1140,10 @@ pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) 
 
 == L'argomento prefisso
 
-`C-u` e le cifre non arrivano mai alle keymap: `Commands::read_prefix_argument`
-li prende per primo. Lo stato è la coppia `prefix_arg: Option<PrefixArg>` e
-`reading_prefix: bool`.
+`C-u` e le cifre non arrivano alle keymap: `Commands::read_prefix_argument` li
+prende per primo, a meno che la keymap locale del buffer (`set-local-keymap`)
+non leghi `C-u` lei stessa (`local_key_claims`). Lo stato è la coppia
+`prefix_arg: Option<PrefixArg>` e `reading_prefix: bool`.
 
 #canvas(height: 3.7cm)[
   #node(1.5cm, 1.7cm, 2.4cm, 0.8cm, [nessuno], fill: paper)
@@ -1045,9 +1175,11 @@ non riceve l'argomento prefisso: `C-u 3 x` inserisce una sola «x»
 == La risoluzione: `resolve_key_sequence`
 
 Il tasto si aggiunge a `pending_keys`; poi, con un solo lock di lettura su
-`modes`, la sequenza viene cercata in tre keymap, in ordine:
+`modes`, la sequenza viene cercata in quattro keymap, in ordine:
 
 + la #emph[keymap transitoria], se installata;
++ la keymap locale del buffer corrente, se `set-local-keymap` gliene ha data
+  una;
 + la keymap del modo maggiore del buffer corrente;
 + la keymap globale.
 
@@ -1055,7 +1187,8 @@ Il tasto si aggiunge a `pending_keys`; poi, con un solo lock di lettura su
 ```rust
 let mut pending = self.pending_keys.write().unwrap();
 pending.push(event);
-let current_mode = self.with_current_buffer(|buf| buf.current_mode.clone());
+let names = self.keymap_modes();     // la keymap locale, se c'è, e il modo
+let current_modes: Vec<&str> = names.iter().map(String::as_ref).collect();
 let bound = self.modes(|modes| {
     if let Some(map) = modes.transient() {
         match (
@@ -1070,9 +1203,9 @@ let bound = self.modes(|modes| {
             (None, false, OnUnbound::Release) => release_transient = true,
         }
     }
-    // prima il modo, poi la keymap globale
-    let hit = modes.binding_below_transient(Some(&current_mode), &pending);
-    let prefix = modes.is_prefix_below_transient(Some(&current_mode), &pending);
+    // la keymap locale, poi il modo, poi la keymap globale
+    let hit = modes.binding_below_transient(&current_modes, &pending);
+    let prefix = modes.is_prefix_below_transient(&current_modes, &pending);
     match (hit, prefix) {
         (Some(binding), _) => Bound::Command(binding.target),
         (None, true)  => Bound::Prefix,
@@ -1108,33 +1241,34 @@ Dopo ogni comando, `install_repeat_keymap` controlla se il comando ha un
 #emph[tasto di ripetizione] dichiarato (`define-repeat-key`) e in tal caso
 installa una mappa `Release` che lo associa al comando stesso.
 
-== `run_command_form`: l'esecuzione di un comando
+== `run_command_form`: l'esecuzione di un comando <esecuzione>
 
-Tutto ciò che il tasto, l'incolla, la cattura e la riproduzione di macro fanno
-eseguire passa da qui.
+Tutto ciò che il tasto, l'incolla, il mouse, la cattura e la riproduzione di
+macro fanno eseguire passa da qui.
 
-#canvas(height: 10.4cm)[
-  #lane(1.5cm, 0cm, 10.3cm, [`run_command_form`], w: 2.9cm)
-  #lane(5.3cm, 0cm, 10.3cm, [undo / kill])
-  #lane(8.6cm, 0cm, 10.3cm, [`eval`])
-  #lane(11.7cm, 0cm, 10.3cm, [`Commands`])
-  #lane(14.6cm, 0cm, 10.3cm, [`Modes`])
+#canvas(height: 10.9cm)[
+  #lane(1.5cm, 0cm, 10.8cm, [`run_command_form`], w: 2.9cm)
+  #lane(5.3cm, 0cm, 10.8cm, [undo / kill])
+  #lane(8.6cm, 0cm, 10.8cm, [`eval`])
+  #lane(11.7cm, 0cm, 10.8cm, [`Commands`])
+  #lane(14.6cm, 0cm, 10.8cm, [`Modes`])
 
   #msg(1.5cm, 5.3cm, 1.2cm, [`undo::begin_command(self-insert?)`])
   #msg(1.5cm, 5.3cm, 1.7cm, [`roll_over_command_flags`])
   #seq-note(1.65cm, 1.9cm)[forma senza argomenti `(nome)` o `nome`\ → `(call-interactively "nome")`]
-  #msg(1.5cm, 8.6cm, 3.1cm, [`begin_command()` + `eval(ast)`])
-  #msg(8.6cm, 1.5cm, 3.6cm, [`Ok` / `Err`], dash: "dashed")
-  #msg(1.5cm, 11.7cm, 4.1cm, [`clear_prefix_argument`])
-  #seq-note(1.65cm, 4.3cm)[`Err` → `report_error` → `(report-error MSG FRAMES)`; fine]
-  #msg(1.5cm, 14.6cm, 5.3cm, [`hooks_for(modo, "post-self-insert-hook")`])
-  #msg(1.5cm, 8.6cm, 5.8cm, [ogni hook, con il suo scope], dash: none)
-  #msg(1.5cm, 14.6cm, 6.4cm, [`hooks_for(modo, "post-command-hook")`])
-  #msg(1.5cm, 8.6cm, 6.9cm, [ogni hook, con il suo scope])
-  #msg(1.5cm, 11.7cm, 7.5cm, [`set_last_form(ast)` (non per `repeat`)])
-  #msg(1.5cm, 14.6cm, 8.1cm, [`install_repeat_keymap`])
-  #msg(1.5cm, 11.7cm, 8.7cm, [`set_last_command(nome)`])
-  #seq-note(1.65cm, 9.0cm)[`post-self-insert-hook` solo se il comando è `self-insert`]
+  #msg(1.5cm, 14.6cm, 3.2cm, [`begin_command()`; `hooks_for(modo, "pre-command-hook")`])
+  #msg(1.5cm, 8.6cm, 3.7cm, [ogni hook, poi `eval(ast)`, nello stesso scope])
+  #msg(8.6cm, 1.5cm, 4.15cm, [`Ok` / `Err`], dash: "dashed")
+  #msg(1.5cm, 11.7cm, 4.6cm, [`clear_prefix_argument`])
+  #seq-note(1.65cm, 4.8cm)[`Err` → `report_error` → `(report-error MSG FRAMES)`; fine]
+  #msg(1.5cm, 14.6cm, 5.8cm, [`hooks_for(modo, "post-self-insert-hook")`])
+  #msg(1.5cm, 8.6cm, 6.3cm, [ogni hook, con il suo scope], dash: none)
+  #msg(1.5cm, 14.6cm, 6.9cm, [`hooks_for(modo, "post-command-hook")`])
+  #msg(1.5cm, 8.6cm, 7.4cm, [ogni hook, con il suo scope])
+  #msg(1.5cm, 11.7cm, 8.0cm, [`set_last_form(ast)` (non per `repeat`)])
+  #msg(1.5cm, 14.6cm, 8.6cm, [`install_repeat_keymap`])
+  #msg(1.5cm, 11.7cm, 9.2cm, [`set_last_command(nome)`])
+  #seq-note(1.65cm, 9.5cm)[`post-self-insert-hook` solo se il comando è `self-insert`]
 ]
 
 #estratto("editor/commands.rs")[
@@ -1149,7 +1283,12 @@ pub(super) fn run_command_form(&self, mut ast: ELispExp<B>, env: &Arc<Env<Editor
             ELispExp::symbol("call-interactively"), ELispExp::string(name),
         ]);
     }
-    let outcome = { let _command = self.begin_command(); eval(&ast, env.clone(), self) };
+    let outcome = {
+        let _command = self.begin_command();
+        let mode = self.with_current_buffer(|buf| buf.current_mode.clone());
+        self.run_hook(&mode, "pre-command-hook", env);
+        eval(&ast, env.clone(), self)
+    };
     self.clear_prefix_argument();
     if let Err(e) = outcome {
         self.report_error(&format!("{:?} {:?}", ast, e), env); return;
@@ -1177,7 +1316,8 @@ pub(super) fn run_command_form(&self, mut ast: ELispExp<B>, env: &Arc<Env<Editor
   argomenti dichiarati. Una
   forma che porta già i suoi argomenti --- `(self-insert "a")` --- resta
   com'è: il percorso della digitazione non paga nulla.
-+ #emph[Esecuzione.] `eval` dentro uno scope di carburante.
++ #emph[Esecuzione.] `pre-command-hook`, poi `eval`, dentro lo stesso scope di
+  carburante: l'hook spende il budget del comando.
 + #emph[Argomento prefisso] cancellato, anche se il comando è fallito.
 + #emph[Errore.] `report_error` incrementa `command_errors`, prende la pila
   delle chiamate come backtrace, la svuota e chiama la funzione Lisp
@@ -1200,6 +1340,46 @@ sequenza, la forma che sarebbe stata eseguita (citata) e il nome della keymap
 che la fornisce, o `"prefix-argument"` per `C-u`. È così che `describe-key` e
 `zap-to-char` leggono un tasto: non esiste in rsedit un «leggi un tasto» che
 blocchi, perché i tasti arrivano uno per giro del ciclo degli eventi.
+
+== Le decisioni <decisioni-tasto>
+
++ *Un percorso solo esegue un comando.* Il tasto, l'incolla, il mouse, la
+  cattura e la macro passano tutti da `run_command_form`: un secondo percorso
+  andrebbe tenuto in passo con il primo a mano, per l'undo, gli hook e
+  `last-command`.
++ *Un tasto che allunga una sequenza non è un comando.* `resolve_key_sequence`
+  risponde invece di eseguire. `C-x` non deve chiudere il gruppo di undo in cui
+  si sta scrivendo, né spezzare in due voci una serie di `C-k`: sono cose che
+  succedono tutte dopo il punto in cui la risoluzione restituisce.
++ *La sequenza a metà sta nell'editor, non in un modo.* Una keymap di modo si
+  consulta prima della globale, e una sequenza cominciata sotto l'una non deve
+  restare a metà nell'altra. `pending_keys` è un vettore che si riempie e si
+  svuota, così il tasto che è da solo un legame non alloca nulla.
++ *La cattura segue la risoluzione vera.* `read-key-sequence` non intercetta i
+  tasti prima della risoluzione: li accumula nella stessa sequenza, così un
+  `C-x` a metà si vede come sempre, e devia solo al posto dell'esecuzione. Ciò
+  che fa un tasto ha una sola risposta vera, quella su cui l'editor agirebbe;
+  una seconda implementazione delle precedenze riporterebbe quella vecchia il
+  giorno in cui l'ordine cambia.
++ *Armare la cattura è una variabile.* `*key-capture-function*` è un fatto in un
+  posto solo, che il Lisp legge e imposta come ogni variabile, al prezzo di una
+  ricerca per tasto; nil quando nessuno cattura. Si disarma prima di chiamare
+  la funzione: una funzione che apre un buffer o fallisce non deve lasciare
+  catturato anche il tasto dopo.
++ *Il tasto di aiuto dopo un prefisso è una domanda.* Una sequenza non
+  associata, il cui ultimo tasto è l'ultimo di `help-key` e il cui resto è un
+  prefisso vivo, chiama `describe-prefix-keys`; senza un modulo di aiuto è
+  indefinita come ogni altra. La variabile si legge solo su una sequenza già
+  non associata, mai su un tasto digitato.
++ *Un incolla è un comando solo.* Il terminale dice che un incolla è un
+  incolla. Digitato tasto per tasto sarebbe annullato un carattere alla volta,
+  e `electric-pair` accoppierebbe di nuovo ogni parentesi: arriva invece come
+  `insert-pasted-text`, con un gruppo di undo, un `post-command-hook` e nessun
+  `post-self-insert-hook`.
++ *Dopo un comando senza tasto di ripetizione non si toglie nulla.* Una mappa
+  `Release` l'ha già tolta la risoluzione, passando il tasto oltre; una
+  `Refuse`, una domanda, risponde con i suoi comandi, e `install_repeat_keymap`
+  gira dopo ognuno: toglierla lì la toglierebbe appena ha avuto risposta.
 
 // ===========================================================================
 = Comandi e argomenti <comandi>
@@ -2369,6 +2549,20 @@ viene chiuso i risultati spariscono con lui, e rinominarlo non rompe nulla.
 Le voci conservano numeri di riga e offset, non marcatori che seguono il testo
 #rapporto("RIC-5").
 
+Dove una lista si mostra lo decide `editor/results.rs`. Accanto a ogni lista,
+nei dati del suo buffer, sta una `Presentation`: chi l'ha prodotta, da quale
+finestra e da quale buffer è stata chiesta, quale buffer ha preso il posto e
+in quale finestra si vede. `prepare_results_buffer` sceglie il buffer di
+un'esecuzione nuova: con `results-reuse-buffer`, la lista più recente dello
+stesso produttore e dello stesso modo, fermando il lavoro che vi scriveva;
+altrimenti un buffer nuovo. `display_results` la mostra nella finestra con il
+focus, se `results-display-location` è `same-window`, o in una striscia in
+basso, riusando quella che mostra una lista dello stesso produttore
+#rapporto("RIC-7"). `select_results_target` sceglie la finestra in cui una
+visita apre il posto (la lista stessa con `results-visit-same-window`), e
+`quit_results` chiude la striscia o rimette il buffer che la lista aveva
+sostituito.
+
 == Le decisioni <decisioni-testo>
 
 + *`text/` è una directory, con una regola d'ammissione.* Un file sta qui se
@@ -2430,6 +2624,13 @@ Le voci conservano numeri di riga e offset, non marcatori che seguono il testo
   sinistro è comunque una delle righe del rettangolo, con uno span vuoto e il
   suo `padding`. Toglierla farebbe dipendere l'altezza del blocco da ciò che
   contiene.
++ *Il punto e l'evidenziazione della sostituzione stanno nell'editor, la
+  domanda no.* Spostare il punto sulla corrispondenza serve a ogni vista, e una
+  vista che dovesse farlo da sé potrebbe sbagliarlo; segnare la corrispondenza
+  pure, perché una corrispondenza che non si vede è inutile in ogni vista. Ciò
+  che resta alla vista è chiedere: nulla in `editor/replace.rs` mette una
+  domanda sullo schermo o legge un tasto. Una vista che disegna da sé toglie
+  l'overlay `replace-match`.
 
 // ===========================================================================
 = Modi <modi>
@@ -3347,7 +3548,7 @@ callback dovute. `ON-PROGRESS` riceve il nome dopo ogni passo tranne l'ultimo.
 `Panicked`; dopo `Cancelled` e `Shutdown` non è chiamata, perché chi ha fermato
 il lavoro lo sa già.
 
-=== Le callback dovute
+=== Le callback dovute <callback-dovute>
 
 Una callback chiesta da un lavoro va nella lista `owed` dell'editor
 (`owe_callback`), con il nome e il numero del lavoro. Il front-end lo sa da
@@ -3527,23 +3728,26 @@ minibuffer, il `*Backtrace*`, i popup dei moduli.
 Il compartimento `Windows` tiene l'albero, le flottanti, l'id con il focus, il
 prossimo id, lo stato di un trascinamento del mouse e l'ultimo clic (per il
 doppio clic entro 400 ms). Le operazioni che tolgono una finestra rispondono con
-un `Removed` (`No`, `Yes`, `Refocus(id)`) che dice alla facciata se e verso
-quale finestra spostare il focus.
+un `WindowRemoved` (`No`, `Yes`, `Refocus(id)`) che dice alla facciata se e
+verso quale finestra spostare il focus.
 
-== `snapshot`: dalla memoria alla fotografia
+== `snapshot`: dalla memoria alla fotografia <snapshot>
 
 `snapshot(&env, larghezza, altezza)` costruisce il `FrameSnapshot`. Prende i
 lock in un ordine fisso e non fa I/O; il disegno avviene dopo, senza lock.
 
-+ Legge dalle variabili Lisp e dai compartimenti piccoli tutto ciò che serve
++ Abbassa il segnale del lavoro di sfondo (`BackgroundChange::taken`): ciò che
+  i lavori hanno cambiato fin qui è in questa fotografia.
++ Legge dalle variabili Lisp e dai campi piccoli tutto ciò che serve
   #emph[prima] di toccare finestre e buffer: `echo-message-timeout`, il tema,
   l'input in sospeso (`pending_input`), il messaggio della keymap transitoria,
   `mode-line-format`, `window-separator`, la configurazione del margine
   (`display-line-numbers`), se la colorazione è in corso.
 + Legge l'area messaggi, vuota se il messaggio è scaduto.
 + Con `windows` in scrittura (lo scorrimento può dover seguire il punto) e
-  `buffers` in lettura, compone ogni foglia dell'albero nel rettangolo del
-  frame meno l'ultima riga, raccogliendo i separatori; poi compone le flottanti.
+  `buffers` in lettura, attraverso `windows_mut_with_buffers`, compone ogni
+  foglia dell'albero nel rettangolo del frame meno l'ultima riga, raccogliendo
+  i separatori; poi compone le flottanti.
 + Consuma il testo destinato agli appunti (`take_pending_clipboard`).
 
 Per ogni foglia la composizione fa: scorrimento per mantenere visibile il punto;
@@ -3568,9 +3772,11 @@ né riga di stato, e ricevono solo regione e testo virtuale #rapporto("TUI-6").
 )
 
 La riga di stato segue `mode-line-format` (predefinito
-`" %* %b   %m   L%l C%c   %p "`): `%b` nome del buffer, `%f` file (o nome),
-`%m` modo, `%l` riga (da 1), `%c` colonna (da 0), `%p` posizione (`All`,
-`Top`, `Bot` o percentuale), `%*` `**` se modificato e `--` altrimenti, `%%`.
+`" %* %b   %m %s  L%l C%c   %p "`): `%b` nome del buffer, `%f` file (o nome),
+`%m` modo, `%s` lo stato che il modo tiene nel buffer (`mode-line-state`, come
+il `NORMAL` di vim), `%l` riga (da 1), `%c` colonna (da 0), `%p` posizione
+(`All`, `Top`, `Bot` o percentuale), `%*` `**` se modificato e `--`
+altrimenti, `%%`.
 
 == Il renderer della TUI
 
@@ -3594,7 +3800,7 @@ terminale e un programma esterno (`xclip`, `pbcopy`) non funzionerebbe via SSH.
 In entrata non c'è nulla da leggere: il terminale consegna gli appunti con
 l'incolla «bracketed», che diventa `insert-pasted-text`.
 
-== Il mouse
+== Il mouse <mouse>
 
 Con `mouse-mode` attivo la TUI chiede al terminale di riportare il mouse.
 `handle_mouse_event` traduce l'evento in un `Hit` (testo di una finestra, riga
@@ -3602,7 +3808,45 @@ di stato, separatore, flottante, niente), e da lì in un comando: clic per
 spostare il punto e il focus, doppio clic, trascinamento per selezionare (con
 scorrimento automatico ogni 60 ms oltre il bordo), trascinamento di un
 separatore o di una riga di stato per ridimensionare, rotella per scorrere la
-finestra sotto il puntatore. Risponde `true` solo se ha cambiato qualcosa.
+finestra sotto il puntatore. Risponde `true` solo se ha cambiato qualcosa. Le
+domande sulle finestre --- che cosa c'è sotto il puntatore, il trascinamento in
+corso, l'ultimo clic --- le fa a `windows.rs`; il punto di un clic diventa una
+colonna del buffer in `buffer_column`, che compone la sola riga cliccata,
+perché il testo virtuale fa di una colonna sullo schermo un'altra colonna nel
+buffer.
+
+== Le decisioni <decisioni-frame>
+
++ *Una fotografia sola, presa tutta insieme.* I lavori, i thread dei comandi
+  di shell e quelli di `spawn` cambiano lo stato mentre il front-end disegna:
+  un renderer che leggesse sei lock in sei istanti comporrebbe un frame mai
+  esistito. `snapshot` legge tutto sotto i lock, senza I/O, e il disegno viene
+  dopo, senza lock.
++ *`snapshot` prende le finestre in scrittura.* Comporre una finestra ne sposta
+  lo scorrimento per tenere visibile il punto: disegnare cambia lo stato. Va
+  bene finché disegna un thread solo; per comporre più frame in parallelo,
+  quel raccordo dovrebbe diventare un passo dopo ogni comando.
++ *L'editor dice al front-end quando ridisegnare.* Quasi tutto cambia per un
+  evento, ma un messaggio scade, la colorazione arriva, un lavoro riempie un
+  buffer: il front-end chiede `next_redraw_in` e riceve una durata sola, e un
+  secondo front-end ha lo stesso comportamento chiedendo la stessa cosa.
+  `None` è la risposta comune, e un editor fermo non costa nulla.
++ *Le flottanti non hanno margine né riga di stato.* Una flottante è un prompt
+  o una striscia di scelte, poche righe lette e chiuse: numerarle non dice
+  nulla, e il bordo dice già che cosa sono.
++ *Il mouse calcola dove, un comando decide che cosa.* Dove cade un clic
+  dipende dal layout e dallo scorrimento di ogni finestra, e lo calcola
+  l'editor; che cosa significa passa dai comandi come un tasto: un passo di
+  undo, un `post-command-hook`, un nome che `M-x` e il log conoscono, un
+  legame che il Lisp può cambiare.
++ *Un trascinamento continua nella finestra in cui è cominciato.* Il seguito e
+  la fine di un trascinamento si risolvono prima di chiedere che cosa c'è sotto
+  il puntatore: dopo poche righe il puntatore è spesso su un'altra finestra o
+  fuori dal frame, e una selezione che cambiasse buffer a metà non sarebbe una
+  selezione.
++ *`mouse-mode` vale per ogni front-end.* `handle_mouse_event` lo controlla da
+  sé, non solo dove il terminale accende la cattura: una finestra grafica, che
+  riceve sempre il mouse, gli ubbidisce allo stesso modo.
 
 // ===========================================================================
 = Macro di tastiera <macro>
@@ -3611,10 +3855,40 @@ finestra sotto il puntatore. Risponde `true` solo se ha cambiato qualcosa.
 Una macro registra #emph[tasti], non comandi: `C-u 5`, un tasto letto da
 `read-key-sequence` e perfino un tasto non associato fanno parte di ciò che
 l'utente ha premuto. `handle_key_event` chiama `record_keys` nei punti in
-cui un tasto viene consumato. La riproduzione rimanda i tasti a
-`handle_key_event` dentro un `OneGroup` (un solo gruppo di undo) e si ferma al
-primo comando fallito, confrontando `command_errors` prima e dopo ogni tasto.
-Una macro che richiama macro può annidarsi fino a 16 livelli (`MAX_DEPTH`).
+cui un tasto viene consumato. La riproduzione (`replay_keys`) rimanda i tasti a
+`handle_key_event`, con un `OneGroup` per ripetizione, e si ferma al primo
+comando fallito, confrontando `command_errors` prima e dopo ogni tasto. Una
+macro che richiama macro può annidarsi fino a 16 livelli (`MAX_DEPTH`).
+
+== Le decisioni <decisioni-macro>
+
+Tre decisioni sulla macro stanno con il suo compartimento (@decisioni-stato):
+una macro registra tasti, registrazione e riproduzione stanno insieme, le
+riproduzioni annidate hanno un tetto. Le altre sono della facciata.
+
++ *La riproduzione passa dalla porta dei tasti.* Ogni tasto registrato torna a
+  `handle_key_event`, la stessa porta di un tasto del terminale: un secondo
+  dispatcher sarebbe un secondo insieme di regole su argomenti prefisso, keymap
+  transitorie, catture e prompt, tenuto in passo a mano. Il prezzo è il
+  rientro, ed è già pagato: il carburante conta la profondità e solo lo scope
+  più esterno ricarica, così i comandi di una riproduzione spendono il budget
+  della riproduzione.
++ *Una riproduzione si ferma al primo comando fallito.* Ogni tasto dopo un
+  errore sarebbe premuto in uno stato che la registrazione non ha mai visto.
+  `run_command_form` non restituisce l'errore --- un tasto non ha un chiamante
+  a cui restituirlo ---: `report_error` incrementa `command_errors`, che la
+  riproduzione confronta prima e dopo ogni tasto. Un conteggio, che nessuno
+  deve azzerare.
++ *Nessun tasto interrompe una riproduzione.* Il ciclo non legge tasti: è
+  dentro un comando, e il thread che consegnerebbe `C-g` è quello che lo
+  esegue. Una macro che richiama sé stessa la ferma il tetto di profondità,
+  non il budget: ogni livello è una vera chiamata attraverso il gestore dei
+  tasti, e lo stack finirebbe molto prima, interrompendo il processo. Per lo
+  stesso motivo una riproduzione disegna un frame solo, quando il comando
+  restituisce.
++ *Un gruppo di undo per ripetizione.* Ogni ripetizione ha il suo timbro e il
+  suo `OneGroup`: venti ripetizioni sono venti passi, e una macro andata storta
+  alla diciannovesima si riporta indietro fino lì.
 
 // ===========================================================================
 = Le primitive dell'editor <primitive>

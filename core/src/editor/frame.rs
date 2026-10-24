@@ -1,86 +1,50 @@
-//! What the renderer is told, and when it should ask again.
+//! What the host is told: the snapshot of a frame, the echo area, the size of
+//! the screen, and how long the host may wait before it draws again.
 //!
-//! [`EditorState::snapshot`] is the one place that holds more than one
-//! compartment at a time, and so the one place that defines their order.
+//! Design: `doc/architettura-editor.typ, <snapshot>`.
 
 use super::*;
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Ask the editor for a list of window to be rendered. Those are composed of a rect that tells
-    /// where the window is placed and its size, the name of the buffer it represents, if it's
-    /// focused, the relative cursor position in it, if it has a border and of course the line
-    /// that it contains and that have to be drawn.
-    /// Capture everything the UI needs to draw one frame.
+    /// Returns everything the host needs to draw one frame of SCREEN_WIDTH by
+    /// SCREEN_HEIGHT cells: each window's rectangle, text, highlights, cursor
+    /// and status line, the separators, the echo area and what is being typed,
+    /// the theme, and the text owed to the system clipboard.
     ///
-    /// # Lock order
-    ///
-    /// This is the **canonical order** for the whole editor. It is currently
-    /// the only code path that holds more than one of these at a time, so it
-    /// gets to define the order; anything added later that needs two or more
-    /// must take them in this sequence or risk a deadlock the moment a second
-    /// thread writes:
-    ///
-    /// `echo_message` -> `windows` -> `buffers` -> an individual `Buffer`
-    ///
-    /// It used to be five links long. Three of them -- the focused id, the
-    /// layout and the floating windows -- are one lock now, so the order they
-    /// had to be taken in is not a rule anybody can get wrong any more.
-    ///
-    /// The Lisp environment is read first of all, before any of these, so that
-    /// no editor lock is ever held while touching it.
-    ///
-    /// Cheap scalars first so the structural locks are held for as short a
-    /// time as possible. Every lock is acquired exactly once and released
-    /// before the caller sees the result, so no terminal I/O ever happens with
-    /// a lock held.
-    ///
-    /// # Why one capture rather than field-by-field reads
-    ///
-    /// See [`FrameSnapshot`]. The short version: the WorkManager's jobs, the
-    /// threads of shell commands and `(spawn ...)` already mutate this state
-    /// from other threads, so a
-    /// renderer that reads six locks at six different instants can compose a
-    /// frame that never existed.
-    ///
-    /// # Note on `windows`
-    ///
-    /// A *write* lock, because `compute_tiled_views` adjusts each window's
-    /// `scroll_x`/`scroll_y` to keep the cursor in view -- rendering mutates
-    /// editor state. That works while one thread renders, and is the thing to
-    /// untangle before the UI loop moves off the command thread: hoisting the
-    /// scroll reconciliation into an explicit post-command step would let this
-    /// take a read lock and let renders run concurrently.
+    /// Taken at once, holding the locks and doing no I/O, so that a frame is a
+    /// state the editor was in: the jobs, the threads of the shell commands and
+    /// those of `spawn` change it while the host draws. The Lisp variables are
+    /// read before any lock, the small fields one at a time, and then the
+    /// windows and the buffers together, the windows for writing: composing a
+    /// window scrolls it to keep point in view.
     pub fn snapshot(
         &self,
         env: &Arc<Env<EditorState<B>>>,
         screen_width: usize,
         screen_height: usize,
     ) -> FrameSnapshot {
-        // First of all, before anything is read: whatever the jobs changed up
-        // to here is in this frame, and a step that ends while it is being
-        // composed raises the flag again, to be drawn in the next one.
+        // Before anything is read: what the jobs changed up to here is in this
+        // frame, and a step that ends while it is composed raises the flag
+        // again, for the next.
         self.background_change.taken();
-        // Read *before* the first editor lock is taken. The environment has
-        // locks of its own, and taking one while holding an editor lock would
-        // add an edge to the ordering below that nothing else respects.
+        // Before the first of the editor's locks: the environment has locks of
+        // its own, and taking one under an editor's lock would add an edge to
+        // the order that nothing else keeps.
         let echo_timeout = echo_timeout(env);
-        // The theme is read before the structural locks and never alongside
-        // them, so it stays outside the ordering below rather than becoming
-        // another link in it. It is a small `Copy` value, so this is a memcpy
-        // and the lock is released immediately.
+        // Before the windows and never with them: an `Arc`, cloned out, and the
+        // lock given straight back.
         let theme = self.theme();
         let pending_input = self.pending_input();
         let prompt = self.transient_message();
         let mode_line_format = mode_line_format(env);
         let separator_char = window_separator(env);
         let gutter = line_numbers(env);
-        // Asked before the structural locks, alongside the other independent
-        // reads: it takes the buffers and the mode registry, and the registry
-        // has no place in the ordering that begins below.
+        // With the reads before the windows: it takes the buffers and the
+        // registry of the modes, which has no place in the order below.
         let colouring_pending = self.colouring_pending();
 
-        // An expired message is simply not reported. The state keeps it -- the
-        // view is what forgets, so nothing has to run on a timer to tidy up.
+        // A message that has expired is not reported. The state keeps it, and
+        // the view forgets it: nothing runs on a timer to tidy up.
         let echo_message = {
             let echo = self
                 .echo_message
@@ -92,114 +56,104 @@ impl<B: BufferTrait> EditorState<B> {
             }
         };
 
-        // One acquisition for the tiled tree, the floats and the focused id.
-        // The three used to be read separately, which is how a frame could
-        // report a cursor in a window the layout had already removed.
-        let (views, separators, focused_window_id) = self.windows_mut(|windows| {
-            let buffers = self
-                .buffers
-                .read()
-                .expect("Failed to acquire read lock on buffers");
-
-            let focused_window_id = windows.focused();
-            let mut views = Vec::new();
-            let mut separator_rects = Vec::new();
-            let focus = Focus {
-                id: focused_window_id,
-                tiled: windows.root().contains_window(focused_window_id),
-            };
-            windows.root_mut().compute_tiled_views(
-                Rect {
-                    x: 0,
-                    y: 0,
-                    width: screen_width,
-                    // The bottom row belongs to the echo area, which is drawn over
-                    // whatever is under it. Tiling into it would put a window's
-                    // status line on the same row as a message, and one of the two
-                    // would win at random.
-                    height: screen_height.saturating_sub(1),
-                },
-                focus,
-                &buffers,
-                ComposeSettings {
-                    mode_line_format: &mode_line_format,
-                    gutter,
-                },
-                &mut views,
-                &mut separator_rects,
-            );
-
-            let separators: Vec<Separator> = separator_rects
-                .into_iter()
-                .map(|rect| Separator {
-                    rect,
-                    ch: separator_char,
-                    face: Face::WINDOW_SEPARATOR,
-                })
-                .collect();
-
-            for float in windows.floating().iter() {
-                let is_focused = float.window.id == focused_window_id;
-                // Unlike a tiled window, a float is not auto-scrolled to follow the
-                // cursor; its scroll offsets are whatever whoever opened it set.
-                // Composed first: a float's rows go through the same mapping
-                // a tiled window's do, because a prompt can carry virtual text
-                // as readily as a file can -- and a float that drew its own
-                // way would be the second coordinate system this exists to
-                // avoid.
-                let layout = compose_layout(&float.window, &float.rect, &buffers);
-                let cursor_rel_pos = is_focused
-                    .then(|| buffers.handle(&float.window.buffer_name))
-                    .flatten()
-                    .map(|buf| {
-                        let (c_line, c_col) = buf
-                            .read()
-                            .expect("Failed to acquire read lock on buffer")
-                            .text
-                            .cursor_pos();
-                        let c_screen = layout
-                            .row_of_line(c_line)
-                            .map(|(_, row)| row.to_screen(c_col))
-                            .unwrap_or(c_col);
-                        (
-                            c_screen.saturating_sub(float.window.scroll_x),
-                            c_line.saturating_sub(float.window.scroll_y),
-                        )
-                    });
-                let mut highlights = layout::place(
-                    &layout,
-                    region_highlights(&float.window, &float.rect, &buffers),
-                    float.window.scroll_x,
-                    float.rect.width,
+        // The tiled tree, the floats and the focus in one acquisition, with
+        // the buffers they show.
+        let (views, separators, focused_window_id) =
+            self.windows_mut_with_buffers(|windows, buffers| {
+                let focused_window_id = windows.focused();
+                let mut views = Vec::new();
+                let mut separator_rects = Vec::new();
+                let focus = Focus {
+                    id: focused_window_id,
+                    tiled: windows.root().contains_window(focused_window_id),
+                };
+                windows.root_mut().compute_tiled_views(
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: screen_width,
+                        // The bottom row is the echo area's, drawn over what is
+                        // under it: a window's status line there would share
+                        // the row with a message.
+                        height: screen_height.saturating_sub(1),
+                    },
+                    focus,
+                    buffers,
+                    ComposeSettings {
+                        mode_line_format: &mode_line_format,
+                        gutter,
+                    },
+                    &mut views,
+                    &mut separator_rects,
                 );
-                highlights
-                    .extend(layout.virtual_highlights(float.window.scroll_x, float.rect.width));
 
-                views.push(RenderableWindowView {
-                    rect: float.rect,
-                    buffer_name: float.window.buffer_name.clone(),
-                    title: float.title.clone(),
-                    is_focused,
-                    cursor_rel_pos,
-                    lines: layout.visible_text(float.window.scroll_x, float.rect.width),
-                    highlights,
-                    // A float says what it is on its border, so a status line
-                    // would be a second answer to the same question.
-                    mode_line: None,
-                    has_border: float.has_border,
-                    // No gutter on a float, deliberately. A float is a prompt
-                    // or a strip of choices -- a few rows of something being
-                    // read and then dismissed -- and numbering rows that are
-                    // not lines of a file being edited says nothing. It would
-                    // also spend columns of a window whose width was chosen to
-                    // fit what it is showing.
-                    gutter: Vec::new(),
-                    gutter_width: 0,
-                });
-            }
+                let separators: Vec<Separator> = separator_rects
+                    .into_iter()
+                    .map(|rect| Separator {
+                        rect,
+                        ch: separator_char,
+                        face: Face::WINDOW_SEPARATOR,
+                    })
+                    .collect();
 
-            (views, separators, focused_window_id)
-        });
+                for float in windows.floating().iter() {
+                    let is_focused = float.window.id == focused_window_id;
+                    // A float is not scrolled to follow the cursor: its offsets
+                    // are what whoever opened it set. Its rows are composed as
+                    // a tiled window's are, since a prompt can carry virtual
+                    // text as a file can.
+                    let layout = compose_layout(&float.window, &float.rect, buffers);
+                    let cursor_rel_pos = is_focused
+                        .then(|| buffers.handle(&float.window.buffer_name))
+                        .flatten()
+                        .map(|buf| {
+                            let (c_line, c_col) = buf
+                                .read()
+                                .expect("Failed to acquire read lock on buffer")
+                                .text
+                                .cursor_pos();
+                            let c_screen = layout
+                                .row_of_line(c_line)
+                                .map(|(_, row)| row.to_screen(c_col))
+                                .unwrap_or(c_col);
+                            (
+                                c_screen.saturating_sub(float.window.scroll_x),
+                                c_line.saturating_sub(float.window.scroll_y),
+                            )
+                        });
+                    // TODO(TUI-6): the region and the virtual text only, with
+                    // no colours of the syntax and no overlays.
+                    let mut highlights = layout::place(
+                        &layout,
+                        region_highlights(&float.window, &float.rect, buffers),
+                        float.window.scroll_x,
+                        float.rect.width,
+                    );
+                    highlights
+                        .extend(layout.virtual_highlights(float.window.scroll_x, float.rect.width));
+
+                    views.push(RenderableWindowView {
+                        rect: float.rect,
+                        buffer_name: float.window.buffer_name.clone(),
+                        title: float.title.clone(),
+                        is_focused,
+                        cursor_rel_pos,
+                        lines: layout.visible_text(float.window.scroll_x, float.rect.width),
+                        highlights,
+                        // A float says what it is on its border, and a status
+                        // line would say it again.
+                        mode_line: None,
+                        has_border: float.has_border,
+                        // No gutter on a float: a prompt or a strip of choices
+                        // is a few rows read and dismissed, whose numbers say
+                        // nothing, in a window only as wide as what it shows.
+                        gutter: Vec::new(),
+                        gutter_width: 0,
+                    });
+                }
+
+                (views, separators, focused_window_id)
+            });
 
         FrameSnapshot {
             views,
@@ -216,6 +170,10 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
+    /// Tells the editor that the screen is now NEW_SCREEN_WIDTH by
+    /// NEW_SCREEN_HEIGHT cells: sets `frame-width` and `frame-height`, and
+    /// calls each function of `after-resize-hook` with the two, each with a
+    /// budget of its own (`begin_command`). One that fails is logged.
     pub fn resize(&self, env: Arc<Env<Self>>, new_screen_width: usize, new_screen_height: usize) {
         env.set_variable(
             "frame-width".into(),
@@ -257,11 +215,9 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    /// Return the editor echo string.
-    ///
-    /// The message as stored, whether or not it is still being shown: expiry
-    /// is a question for the view, decided in [`Self::snapshot`], and state is
-    /// not rewritten by the passage of time.
+    /// Returns the echo area's text as stored, whether or not it is still
+    /// shown: when it stops being shown is a question for the view, which
+    /// [`Self::snapshot`] answers.
     pub fn get_echo_message(&self) -> String {
         self.echo_message
             .read()
@@ -270,14 +226,12 @@ impl<B: BufferTrait> EditorState<B> {
             .clone()
     }
 
-    /// How long until the current echo message stops being shown, or `None`
-    /// when nothing is waiting to expire -- there is no message, no timeout is
-    /// set, or the message has already expired.
+    /// Returns how long until the echo area's message stops being shown, or
+    /// `None` when nothing is waiting to expire: no message, no timeout, or a
+    /// message already expired.
     ///
-    /// This is what a UI event loop needs in order to redraw when a message
-    /// vanishes. Without it the loop blocks on the next key and the message
-    /// stays on screen until the user happens to press one, which is not a
-    /// timeout so much as a coincidence.
+    /// A host waiting for input asks, so as to redraw when the message goes,
+    /// and not at whatever key comes next.
     pub fn echo_expiry_in(&self, env: &Arc<Env<EditorState<B>>>) -> Option<Duration> {
         let timeout = echo_timeout(env)?;
         let elapsed = self
@@ -288,56 +242,30 @@ impl<B: BufferTrait> EditorState<B> {
         timeout.checked_sub(elapsed).filter(|left| !left.is_zero())
     }
 
-    /// How long a renderer may wait for input before the screen it has just
-    /// drawn will want drawing again, or `None` when it may wait indefinitely.
+    /// Returns how long the host may wait for input before FRAME, the frame it
+    /// has just drawn, wants drawing again, or `None` when it may wait for
+    /// ever: the soonest of the echo message expiring, the colouring going on,
+    /// a change made in the background, and a callback owed.
     ///
-    /// # Why the renderer asks rather than decides
-    ///
-    /// Almost everything on screen changes because the user did something, so a
-    /// renderer can draw, block on input, and be right. A few things do not:
-    /// an echo message that expires on a timer, colour that arrives from the
-    /// highlighter, output from a shell command, and anything else a job in
-    /// the background changes. A renderer blocked on input sleeps through all
-    /// of them.
-    ///
-    /// The last is the one a timer cannot cover, since nothing says when a
-    /// job will next change something. So a host that waits for input also
-    /// registers [`Self::on_background_change`], which wakes it when a step
-    /// ends -- and then asks here, like at any other wake-up, and is told how
-    /// long until that change should be drawn.
-    ///
-    /// Which of those are outstanding, and how soon each matters, are questions
-    /// about the editor, not about drawing -- so they are answered here and the
-    /// renderer is handed a single duration. A second frontend gets the
-    /// behaviour by asking the same question, rather than by remembering to
-    /// reimplement two special cases.
-    ///
-    /// FRAME is the one just drawn, because the question is whether *that*
-    /// frame goes stale. Taking it from the frame also means the colouring is
-    /// not asked about twice per redraw, once to compose and once to wait.
-    ///
-    /// `None` is the ordinary answer, and it is the one that matters: with
-    /// nothing being coloured and no message pending there is no wake-up at
-    /// all, so an idle editor costs nothing.
+    /// The editor knows which of these are pending and how soon each matters,
+    /// so the host asks rather than knowing them; an idle editor answers
+    /// `None`, and costs nothing. A host that waits for input also registers
+    /// [`Self::on_background_change`], which wakes it when a job has changed
+    /// something, and asks again here.
     pub fn next_redraw_in(
         &self,
         env: &Arc<Env<EditorState<B>>>,
         frame: &FrameSnapshot,
     ) -> Option<Duration> {
-        // Colour arrives a step of the highlighter at a time, as fast as it
-        // can colour. Coming back every interval shows it as it lands, at a
-        // rate that reads as live and costs a frame now and then.
+        // Colour arrives a step of the highlighter at a time: coming back
+        // every interval shows it as it lands.
         let colouring = frame.colouring_pending.then_some(TURN_INTERVAL);
-        // A job on the WorkManager has changed something since the frame was
-        // composed, or a thread of the editor's has -- a line of a command's
-        // output, a search result: draw it, a turn after the last frame at
-        // the soonest.
+        // Something has changed in the background since the frame was composed
+        // -- a job's step, a line of a command's output -- and is drawn a turn
+        // after the last frame at the soonest.
         let stepped = self.background_change.due_in();
-        // A callback a job has already left is not something to wait for: it
-        // is something to do, and the loop does it the moment it is told the
-        // wait is over. Zero rather than the interval, because the work is
-        // ready now and a mode waiting to be told its list grew should not
-        // spend a frame's worth of time not knowing.
+        // A callback owed is work to do now, not something to wait for: zero,
+        // and the host calls `tick`.
         let owed = self.callbacks_owed().then_some(Duration::ZERO);
         [self.echo_expiry_in(env), colouring, stepped, owed]
             .into_iter()
@@ -345,41 +273,11 @@ impl<B: BufferTrait> EditorState<B> {
             .min()
     }
 
-    /// Set the echo message to be MSG, and start its timeout running.
+    /// Shows MSG in the echo area, and starts its timeout.
     pub fn set_echo_message(&self, msg: &str) {
         *self
             .echo_message
             .write()
             .expect("Failed to acquire write lock on echo_message") = EchoMessage::new(msg);
-    }
-
-    /// Put every face back to how the editor ships it: the compiled-in
-    /// defaults, and what modules gave their own faces with `define-face`.
-    ///
-    /// Not a snapshot taken at startup, so this means the same thing however
-    /// many themes have been applied since, and whatever init.lisp set.
-    pub(crate) fn reset_theme(&self) {
-        self.runtime_mut(|runtime| runtime.reset_theme());
-    }
-
-    /// Bind FACE to STYLE for the whole editor.
-    pub(crate) fn set_face_style(&self, face: Face, style: Style) {
-        // Copy-on-write: whatever frames are already holding keep the theme
-        // they were composed under, and the next one picks this up.
-        self.runtime_mut(|runtime| runtime.set_face_style(face, style));
-    }
-
-    /// Make STYLE the one FACE ships with, which `reset_theme` puts back, and
-    /// bind FACE to it now.
-    pub(crate) fn define_face_style(&self, face: Face, style: Style) {
-        self.runtime_mut(|runtime| runtime.define_face_style(face, style));
-    }
-
-    pub(crate) fn face_style(&self, face: Face) -> Style {
-        self.runtime(|runtime| runtime.face_style(face))
-    }
-
-    pub(crate) fn theme(&self) -> Arc<Theme> {
-        self.runtime(|runtime| runtime.theme())
     }
 }

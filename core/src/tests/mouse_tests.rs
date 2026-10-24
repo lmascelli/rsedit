@@ -1,18 +1,12 @@
 //! The mouse: where a click lands, and what it is allowed to do.
 //!
-//! # What is worth testing here
-//!
-//! Almost all of it is arithmetic with an off-by-one in every corner. A click
-//! is a cell on a screen and point is a character in a buffer, and between the
-//! two sit a window's position, its scroll, the row its status line occupies
-//! and the length of the line actually clicked on. Every one of those is a
-//! chance to land one out, and one out is the kind of wrong a user blames on
-//! the terminal rather than reporting.
-//!
-//! So these check the seams rather than the happy path: the far edge of a
-//! rectangle, a window that has never been drawn, a window scrolled away from
-//! the top, a click past the end of a short line, and a float sitting over a
-//! buffer it would be wrong to move point in.
+//! Mostly arithmetic with an off-by-one in every corner: between a cell of the
+//! screen and a character of a buffer sit a window's position, its scroll, the
+//! row of its status line and the length of the line clicked on, and one out
+//! is the kind of wrong a user blames on the terminal. So these check the
+//! seams: the far edge of a rectangle, a window never drawn, a window scrolled
+//! down, a click past the end of a short line, a float over a buffer in which
+//! point must not move.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -371,18 +365,12 @@ mod tests {
 
     #[test]
     fn the_wheel_keeps_going_past_a_screenful() {
-        // The bug this comes from: scrolling stopped dead the moment the
-        // cursor reached an edge. The view had been reconciled with point on
-        // every frame, so as soon as the wheel moved the text far enough for
-        // point to leave the window, the next frame dragged it straight back.
-        //
-        // A frame has to be composed between the notches, because composing is
-        // where that reconciliation happened -- a test that only turned the
-        // wheel would have passed throughout.
-        //
-        // Point riding along with the view is what keeps it fixed now: there
-        // is never a frame in which point is outside the window, so there is
-        // never anything for the reconciliation to undo.
+        // Composing a frame brings the view to point, so a scroll that left
+        // point outside the window would be undone by the next frame, and the
+        // wheel would stop as the cursor reached an edge. Point rides along
+        // with the view instead, and no frame finds it outside. A frame is
+        // composed between the notches, since that is where the view follows
+        // point: a test that only turned the wheel would pass either way.
         let (ctx, env) = editor(400);
         let rows = text_rows(&ctx);
         let notches = rows / 3 + 4;
@@ -398,13 +386,9 @@ mod tests {
 
     #[test]
     fn a_keystroke_after_scrolling_does_not_jump_the_view() {
-        // The complaint this fixes. Scrolling used to leave point behind, so
-        // the first arrow key snapped the view back to wherever the cursor had
-        // been -- undoing the scroll, and looking for all the world like the
-        // editor had ignored it.
-        //
-        // Now the cursor is already in view when the key arrives, so there is
-        // nothing to snap back to and the view stays put.
+        // The cursor is in view when the key arrives, so there is nothing to
+        // snap back to, and the view stays put: left behind, point would have
+        // the first arrow key undo the scroll.
         let (ctx, env) = editor(400);
         for _ in 0..20 {
             wheel(&ctx, &env, MouseKind::ScrollDown, 0, 2);
@@ -501,9 +485,8 @@ mod tests {
 
     #[test]
     fn dragging_off_the_bottom_selects_to_the_last_visible_line() {
-        // Clamped to what the window is showing. Following the pointer off the
-        // window by scrolling is a separate feature and a worse one to get
-        // subtly wrong.
+        // Clamped to what the window shows. Scrolling after the pointer is the
+        // timer's, below, and needs a turn of it.
         let (ctx, env) = editor(400);
         let rows = text_rows(&ctx);
         click(&ctx, &env, 0, 1);
@@ -848,21 +831,13 @@ mod tests {
     // ----------------------------------------------------------------
 
     /// What the editor writes for somebody with no configuration loads into an
-    /// editor with *nothing else in it*.
+    /// editor with nothing else in it.
     ///
-    /// # Why the bare environment is the whole test
-    ///
-    /// That file is evaluated by `create_global_env` with `?`, so anything it
-    /// raises takes the editor down rather than degrading. And the modules it
-    /// loads with `eval-file` are not always there: a test binary has no
-    /// `data/lisp` beside it, and an installation can have a module removed.
-    /// When they are missing, `defcommand` is not a macro -- so a form written
-    /// with it is evaluated as an ordinary call and raises `UnboundVariable`
-    /// on its own name.
-    ///
-    /// An earlier version of this test loaded `commands.lisp` first to make
-    /// the configuration work, which is precisely the condition that does not
-    /// hold when it matters. So: nothing is loaded here on purpose.
+    /// `create_global_env` evaluates that file with `?`, so anything it raises
+    /// takes the editor down; and the modules it loads with `eval-file` are not
+    /// always there -- a test binary has no `data/lisp` beside it. Without
+    /// them `defcommand` is not a macro, and a form written with it is an
+    /// ordinary call, which raises. So nothing is loaded here first.
     #[test]
     fn the_default_configuration_loads_into_a_bare_editor() {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
@@ -935,10 +910,9 @@ mod tests {
 
     #[test]
     fn a_click_somewhere_else_ends_the_selection_rather_than_stretching_it() {
-        // The bug this fixes: a region is the span between the mark and
-        // point, so a click that only moved point dragged one end of it to
-        // wherever you clicked. Clicking across the file left a selection
-        // spanning half of it that nobody had asked for.
+        // A region is the span between the mark and point, so a click that
+        // only moved point would drag one end of it to wherever it landed,
+        // leaving a selection over half the file that nobody asked for.
         let (ctx, env) = editor(20);
         drag_select(&ctx, &env, (0, 1), (4, 1));
         assert!(selection(&ctx).is_some(), "the drag made a selection");
@@ -963,7 +937,7 @@ mod tests {
 
     #[test]
     fn the_mark_is_only_deactivated_and_not_forgotten() {
-        // An inactive mark is a place to go back to. `exchange-point-and-mark'
+        // An inactive mark is a place to go back to. `exchange-point-and-mark`
         // still works after a click, which is what tells "ended" from
         // "erased".
         let (ctx, env) = editor(20);
@@ -980,7 +954,7 @@ mod tests {
     fn a_double_click_starts_a_new_selection() {
         // Two presses in the same cell inside the double-click window. The
         // region starts empty and grows as point moves, so a double click is
-        // the mouse's way of saying `set-mark'.
+        // the mouse's way of saying `set-mark`.
         let (ctx, env) = editor(20);
         click(&ctx, &env, 2, 3);
         click(&ctx, &env, 2, 3);
@@ -1021,9 +995,8 @@ mod tests {
 
     #[test]
     fn a_drag_still_selects_from_where_the_button_went_down() {
-        // The click that begins a drag now deactivates the mark, so the first
-        // drag event has to set a fresh one -- at the click, not at wherever
-        // point happened to be before it.
+        // The click that begins a drag deactivates the mark, so the first drag
+        // event sets a fresh one: at the click, not where point was before.
         let (ctx, env) = editor(20);
         run("(goto-line 15)", &env, &ctx);
         drag_select(&ctx, &env, (0, 2), (5, 2));

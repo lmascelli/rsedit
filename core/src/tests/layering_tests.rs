@@ -6,7 +6,8 @@
 //!   describes, not against this crate's internals.
 //! - Each module checked here uses, of what is below it in the map, only what
 //!   the map declares: nothing, but for `buffer/` and `managers/` (the types
-//!   they store) and `input.rs` (`ELispExp`).
+//!   they store), `input.rs` (`ELispExp`) and `ui/` (`ELispExp`, and the
+//!   buffer table it composes against).
 //! - The map in `lib.rs` names every module the crate declares, and nothing
 //!   else.
 //!
@@ -128,6 +129,7 @@ mod tests {
         ("text/", TEXT, &[]),
         ("input.rs", INPUT, &["crate::ELispExp"]),
         ("commands.rs", COMMANDS, &[]),
+        ("ui/", UI, &["crate::ELispExp", "crate::managers::Buffers"]),
         (
             "managers/",
             MANAGERS,
@@ -135,18 +137,6 @@ mod tests {
                 "crate::ELispExp",
                 "crate::modes::MajorMode",
                 "crate::modes::SyntaxTable",
-                "crate::ui::Division",
-                "crate::ui::Face",
-                "crate::ui::FloatingWindow",
-                "crate::ui::LayoutNode",
-                "crate::ui::Orientation",
-                "crate::ui::Rect",
-                "crate::ui::Side",
-                "crate::ui::SplitPath",
-                "crate::ui::Style",
-                "crate::ui::Theme",
-                "crate::ui::Window",
-                "crate::ui::WindowId",
             ],
         ),
     ];

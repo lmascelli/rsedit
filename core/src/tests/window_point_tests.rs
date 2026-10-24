@@ -1,25 +1,10 @@
 //! Two windows on one buffer: each keeps its own view, and its own point.
 //!
-//! # The two bugs these come from
-//!
-//! **The view.** `scroll_x`/`scroll_y` were already per-window, but every
-//! window reconciled its scroll against the buffer's one point on every frame.
-//! So typing in one window dragged the other's view along with it, and the
-//! second window stopped being a second view of the file and became a copy of
-//! the first.
-//!
-//! The obvious fix -- only the focused window follows -- breaks incremental
-//! search, which moves point from a *floating* window while no tiled window has
-//! focus. Then nothing follows, the match scrolls off the top, and `C-s' looks
-//! like it has stopped finding anything. So the rule is "focused, or no tiled
-//! window is focused", and the test for the second half of that is the one
-//! worth having: it is the regression the obvious fix would have caused.
-//!
-//! **The point.** Fixing the view left the cursor shared, so switching windows
-//! still yanked you back to wherever you had last been in the *other* one. Each
-//! window now remembers where point was while its view was tracking it, and
-//! focus puts it back. Nothing saves explicitly: composing a frame records it,
-//! and a frame is composed after every command.
+//! A window's view follows point when the window has focus, or when no tiled
+//! window has it: incremental search moves point from a float, and its match
+//! must not scroll out of every window. Each window remembers where point was
+//! while its view followed it, and getting focus back puts point there.
+//! Composing a frame records it, and a frame is composed after every command.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -99,7 +84,7 @@ mod tests {
 
     #[test]
     fn moving_point_in_one_window_leaves_the_others_view_alone() {
-        // The reported bug, at its plainest.
+        // Point moving in one window, and the other window's view staying.
         let (ctx, env) = split_editor(400);
         let others_top = top_line_of(&ctx, &env, 1);
 
@@ -115,7 +100,7 @@ mod tests {
 
     #[test]
     fn the_focused_window_still_follows_point() {
-        // The other half: the fix must not be "nothing follows".
+        // The other half: the focused window does follow.
         let (ctx, env) = split_editor(400);
         let mine_top = top_line_of(&ctx, &env, 0);
 
@@ -132,10 +117,9 @@ mod tests {
 
     #[test]
     fn every_window_follows_point_while_a_float_has_focus() {
-        // The regression that "only the focused window follows" would have
-        // caused. Incremental search moves point while the minibuffer holds the
-        // keyboard, so no tiled window is focused -- and if none followed, the
-        // match would scroll off the top and `C-s' would look broken.
+        // Incremental search moves point while the minibuffer has the
+        // keyboard, so no tiled window has focus: if none followed, the match
+        // would scroll off the top, and `C-s` would look broken.
         let (ctx, env) = split_editor(400);
         run(r#"(minibuffer-read "P:" nil nil nil)"#, &env, &ctx);
 
@@ -179,8 +163,7 @@ mod tests {
 
     #[test]
     fn a_window_keeps_its_point_across_an_edit_in_the_other_one() {
-        // Typing in one window must not drag the other's cursor, which is the
-        // form the bug took once the *view* had been fixed.
+        // Typing in one window does not drag the other's cursor along.
         let (ctx, env) = split_editor(400);
         goto_line(&ctx, &env, 5);
         compose(&ctx, &env);

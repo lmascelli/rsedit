@@ -1,16 +1,16 @@
-//! The buffer half of the facade: making buffers, showing them, closing them,
-//! and reaching into one.
+//! The buffers' half of the facade: making a buffer, showing one, closing one
+//! -- with the windows repointed and the mode's hooks run -- and reaching into
+//! one under its own lock.
 //!
-//! The compartment is [`crate::managers::Buffers`]. What lives here is the
-//! coordination it is not allowed to do -- repointing windows at a
-//! replacement, running a mode's `after-close-hook`, keeping the current
-//! buffer and the focused window in step.
+//! Design: `doc/architettura-editor.typ, <coppie>`.
 
 use super::*;
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Open a new empty buffer or load a file into a new buffer if a path is
-    /// provided.
+    /// Makes a buffer NAME in START_MODE: empty, or holding the text of the
+    /// file at PATH, and then shown in the focused window, in the mode its name
+    /// picks unless START_MODE says. Returns NAME, or `None` when the file
+    /// could not be read.
     pub(crate) fn new_buffer(
         &self,
         name: &str,
@@ -22,15 +22,15 @@ impl<B: BufferTrait> EditorState<B> {
             match std::fs::read_to_string(file_path) {
                 Ok(content) => {
                     let mut new_buf = Buffer::from_text(name, &content);
-                    // An explicit mode wins; otherwise the file's own name
-                    // decides, which is how a language module ever gets used.
+                    // A mode asked for wins; otherwise the file's name decides,
+                    // which is how a language's mode is ever chosen.
                     new_buf.current_mode = start_mode
                         .or_else(|| self.auto_mode_for(file_path))
                         .unwrap_or_else(|| "fundamental-mode".into());
                     new_buf.file_path = Some(file_path.to_string());
-                    // Taken *after* the read, so that a file rewritten while
-                    // it was being read is noticed on the next check rather
-                    // than stamped as though we had seen the new version.
+                    // Taken after the read, so that a file rewritten while it
+                    // was read is noticed at the next look, not stamped as
+                    // seen.
                     new_buf.file_stamp = FileStamp::of(file_path);
 
                     self.buffers_mut(|buffers| buffers.insert(name, new_buf));
@@ -40,6 +40,8 @@ impl<B: BufferTrait> EditorState<B> {
                     Some(name.to_string())
                 }
                 Err(e) => {
+                    // TODO(FIL-3): a file that is not UTF-8 fails here, and
+                    // only the log says so.
                     self.log_diagnostic(&format!("Error reading file: {}", e));
                     None
                 }
@@ -55,20 +57,12 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    /// An empty buffer that will be saved to PATH, for a file that is not
-    /// there yet.
+    /// Makes an empty buffer NAME that saves to PATH, for a file that does not
+    /// exist yet, shows it in the focused window, and returns NAME.
     ///
-    /// # Why this is not `new_buffer` with a path
-    ///
-    /// That one reads the file, and reports failure when it cannot. A file
-    /// that does not exist is not a failure here -- it is the ordinary way a
-    /// file gets created, by opening it and typing. So this makes the empty
-    /// buffer and remembers where it goes.
-    ///
-    /// The buffer is *not* modified. An empty buffer with no changes is the
-    /// truth: nothing has been written, so leaving without saving loses
-    /// nothing and should ask nothing. `C-x C-s` creates the file, because
-    /// saving writes `file_path` whether or not anything was typed.
+    /// Not modified: nothing has been written, so leaving it loses nothing and
+    /// asks nothing, and `C-x C-s` creates the file, since saving writes
+    /// whether or not anything was typed.
     pub(crate) fn new_file_buffer(
         &self,
         name: &str,
@@ -87,9 +81,11 @@ impl<B: BufferTrait> EditorState<B> {
         name.to_string()
     }
 
-    /// Lisp sees the completed buffer, in its own context, without changing
-    /// any window. No buffer or manager lock is held while callbacks run.
-    /// Called once per allocation, never when selecting an existing buffer.
+    /// Runs the hooks of the buffer NAME, just made, in its mode and with it
+    /// current, changing no window: `buffer-created-hook`, `major-mode-hook`,
+    /// `after-change-major-mode-hook`, and `find-file-hook` when VISITING_FILE.
+    /// Once per buffer made, never when one is selected; no lock is held while
+    /// they run.
     pub(crate) fn initialize_buffer(
         &self,
         name: &str,
@@ -104,6 +100,8 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
+    /// Runs the hook HOOK of the buffer NAME's mode with NAME current, and
+    /// then makes current again the buffer that was.
     pub(crate) fn run_buffer_hook(&self, name: &str, hook: &str, env: &Arc<Env<EditorState<B>>>) {
         let Some(previous) = self.set_current_buffer(name) else {
             return; // An earlier callback may have closed the new buffer.
@@ -113,33 +111,28 @@ impl<B: BufferTrait> EditorState<B> {
         self.set_current_buffer(&previous);
     }
 
-    /// Rename OLD to NEW everywhere it is known. False when there is no such
-    /// buffer, or when NEW already belongs to a different one.
+    /// Renames the buffer OLD to NEW wherever it is known: in the table, in the
+    /// buffer, in the windows. False when there is no OLD, or NEW belongs to
+    /// another buffer.
     ///
-    /// # Why this is on the facade
-    ///
-    /// Because it spans two compartments, which is the facade's whole job. The
-    /// table can move the entry and fix what is current; it cannot touch the
-    /// windows, because a compartment does not reach another one. So the
-    /// verdict comes back and this finishes it -- and finishes it *before*
-    /// anything else can run, which is what stops a window being observed
-    /// naming a buffer that no longer exists under that name.
+    /// The table moves the entry and what is current, and answers; the windows
+    /// follow before anything else can run, so that none names a buffer gone
+    /// from under that name.
     pub(crate) fn rename_buffer(&self, old: &str, new: &str) -> bool {
         if self.buffers_mut(|buffers| buffers.rename(old, new)) == BufferRenamed::No {
             return false;
         }
-        // The buffer's own idea of its name, which the table deliberately left
-        // alone: taking a buffer's lock while holding the table's would put
-        // the table in the way of whatever is already writing to it.
+        // The buffer's own idea of its name, which the table left alone: a
+        // buffer's lock taken under the table's would put the table in the way
+        // of whatever is writing to the buffer.
         self.with_buffer_mut(new, |buf| buf.name = new.to_string());
         self.windows_mut(|windows| windows.rename_buffer(old, new));
         true
     }
 
-    /// Make the buffer named NAME the one shown in the focused window and
-    /// the current buffer. Returns `false` (logging a diagnostic) if no
-    /// buffer named NAME exists, `true` otherwise. Shared by the
-    /// `switch-to-buffer` primitive and the built-in minibuffer's cleanup.
+    /// Shows the buffer NAME in the focused window, and makes it current;
+    /// false, with a line in the log, when there is no such buffer. For
+    /// `switch-to-buffer`, and for the minibuffer's cleanup.
     pub(crate) fn switch_to_buffer(&self, name: &str) -> bool {
         if !self.has_buffer(name) {
             self.log_diagnostic(&format!("[LOG] buffer {} does not exist.", name));
@@ -149,28 +142,21 @@ impl<B: BufferTrait> EditorState<B> {
         true
     }
 
-    /// Read the buffer named NAME. `None` when there is no such buffer.
+    /// Runs F on the buffer NAME, under its read lock; `None` when there is no
+    /// such buffer.
     ///
-    /// # Why the table's lock is not held while F runs
-    ///
-    /// The handle is cloned out and the table's lock given back *before* the
-    /// buffer's is taken. Holding both would make the table a bottleneck on
-    /// every keystroke: the highlighter and the prescanner walk it from their
-    /// own threads, and a scan that had to wait for whoever was typing -- or a
-    /// keystroke that had to wait for a scan -- is exactly what those threads
-    /// exist to avoid.
-    ///
-    /// The closure gets a locked buffer and cannot keep it. That is the whole
-    /// difference from the `get_buffer` this replaced, which handed back an
-    /// `Arc` and left every caller to remember which lock to take and when to
-    /// let it go.
+    /// The table's lock is given back before the buffer's is taken: the
+    /// highlighter and the prescanner walk the table from their own threads,
+    /// and must not wait for whoever is typing. F gets the buffer locked, and
+    /// cannot keep it.
     pub(crate) fn with_buffer<R>(&self, name: &str, f: impl FnOnce(&Buffer<B>) -> R) -> Option<R> {
         let handle = self.buffers(|buffers| buffers.handle(name))?;
         let guard = handle.read().expect("read lock on buffer");
         Some(f(&guard))
     }
 
-    /// Change the buffer named NAME. `None` when there is no such buffer.
+    /// Runs F on the buffer NAME, under its write lock; `None` when there is no
+    /// such buffer.
     pub(crate) fn with_buffer_mut<R>(
         &self,
         name: &str,
@@ -181,62 +167,50 @@ impl<B: BufferTrait> EditorState<B> {
         Some(f(&mut guard))
     }
 
-    /// Read the current buffer.
-    ///
-    /// Infallible, unlike [`EditorState::with_buffer`]: there is always a
-    /// current buffer, and [`Buffers`] is what makes that true rather than
-    /// hopeful.
+    /// Runs F on the current buffer, under its read lock. There is always one:
+    /// [`Buffers`] makes sure of it.
     pub(crate) fn with_current_buffer<R>(&self, f: impl FnOnce(&Buffer<B>) -> R) -> R {
         let handle = self.buffers(|buffers| buffers.current_handle());
         let guard = handle.read().expect("read lock on buffer");
         f(&guard)
     }
 
-    /// Change the current buffer.
+    /// Runs F on the current buffer, under its write lock.
     pub(crate) fn with_current_buffer_mut<R>(&self, f: impl FnOnce(&mut Buffer<B>) -> R) -> R {
         let handle = self.buffers(|buffers| buffers.current_handle());
         let mut guard = handle.write().expect("write lock on buffer");
         f(&mut guard)
     }
 
-    /// Whether a buffer named NAME exists.
+    /// Returns whether there is a buffer NAME.
     pub(crate) fn has_buffer(&self, name: &str) -> bool {
         self.buffers(|buffers| buffers.contains(name))
     }
 
-    /// Append TEXT to the buffer called NAME, read-only or not. False when
-    /// there is no such buffer, or the write was refused.
+    /// Appends TEXT to the buffer NAME, read-only or not; false when there is
+    /// no such buffer, or the write was refused.
     ///
-    /// # Why the flag goes down and up inside one call
-    ///
-    /// A transcript is read-only so that nobody types into it, and appending
-    /// to one therefore has to turn that off. Done inside a single
-    /// `with_buffer_mut` the write lock is held across the whole of it, so
-    /// there is no moment when the buffer is both visible and writable.
-    /// `dired` does the same from Lisp, where it cannot hold a lock and has to
-    /// trust that nothing runs in between.
-    ///
-    /// Here rather than in the two primitives that wanted it -- a shell
-    /// command's output and a search's results -- which held the same thirteen
-    /// lines each, differing only in the wording of the complaint.
+    /// A transcript is read-only so that nobody types into it. Its flag goes
+    /// down and back up inside one write lock, so that it is never writable
+    /// while anybody else can see it.
     pub(crate) fn append_to_buffer(&self, name: &str, text: &str) -> bool {
         self.with_buffer_mut(name, |buf| append(buf, text)) == Some(true)
     }
 
-    /// [`Self::append_to_buffer`], from the work numbered WRITER, and only
-    /// while the buffer is still the one it writes into.
+    /// Appends TEXT to the buffer NAME as [`Self::append_to_buffer`] does, for
+    /// the work WRITER, and only while the buffer is still the one it writes
+    /// into.
     ///
-    /// A buffer is a name, and names are given out again: close a command's
-    /// output and start another, and the new buffer may well be called what
-    /// the old one was -- while the old command, stopping, still has a last
-    /// line to write. Asking whose buffer it is, under the same lock as the
-    /// write, is what keeps that line out of the new command's output.
+    /// A name is given out again: close a command's output and start another,
+    /// and the new buffer may take the old one's name while the old command,
+    /// stopping, has a last line to write. Asking under the write's own lock
+    /// keeps that line out of the new output.
     pub(crate) fn append_as_writer(&self, name: &str, writer: WorkId, text: &str) -> bool {
         self.with_buffer_mut(name, |buf| buf.writer == Some(writer) && append(buf, text))
             == Some(true)
     }
 
-    /// The work numbered WRITER has stopped writing into NAME, if it still was.
+    /// Records that the work WRITER has stopped writing into NAME, if it was.
     pub(crate) fn release_writer(&self, name: &str, writer: WorkId) {
         self.with_buffer_mut(name, |buf| {
             if buf.writer == Some(writer) {
@@ -245,14 +219,10 @@ impl<B: BufferTrait> EditorState<B> {
         });
     }
 
-    /// STEM, or `STEM<2>`, `STEM<3>` -- the first that no buffer is using.
-    /// For a buffer that work will write into, see
-    /// [`Self::free_name_for_work`].
-    ///
-    /// What makes a second `M-!` or a second `occur` open a buffer of its own
-    /// rather than writing into the first one's. The two callers spelt this out
-    /// separately, one of them with its stem baked in.
+    /// Returns STEM, or `STEM<2>`, `STEM<3>`, the first that no buffer has. For
+    /// a buffer that work will write into, see [`Self::free_name_for_work`].
     pub(crate) fn free_buffer_name(&self, stem: &str) -> String {
+        // TODO(DOC-5): nothing calls it.
         if !self.has_buffer(stem) {
             return stem.to_string();
         }
@@ -265,40 +235,27 @@ impl<B: BufferTrait> EditorState<B> {
         unreachable!("the loop above returns")
     }
 
-    /// Show the buffer named NAME in the focused window, and make it current.
+    /// Shows the buffer NAME in the focused window, and makes it current.
     ///
-    /// # Why this is a method and not five lines at each call site
-    ///
-    /// It is the mirror of [`EditorState::set_focused_window_id`]. That one
-    /// moves focus and brings the current buffer along; this one changes the
-    /// buffer and leaves focus where it is. Between them they are every way
-    /// the pair (focused window, current buffer) is allowed to change, and
-    /// keeping them in step is the whole job -- let them drift and the editor
-    /// draws a cursor in one window and types into another.
-    ///
-    /// It was five lines at each of three call sites, and all three named the
-    /// focused window and then edited whichever window the lookup handed back
-    /// -- which, until [`LayoutNode::window_mut`] was fixed, was the leftmost
-    /// one. Three copies is also three places for the next such bug to be
-    /// fixed in only two of.
+    /// The mirror of [`Self::set_focused_window_id`], which moves focus and
+    /// brings the current buffer along: between them they are every way the
+    /// focused window and the current buffer change, and they keep the two in
+    /// step.
     fn show_in_focused_window(&self, name: &str) {
         self.windows_mut(|windows| windows.show_in_focused(name));
-        // After the window lock is released: the current buffer name sits
-        // before the windows in the canonical order, so taking it while
-        // holding them would invert the two.
+        // Once the windows are let go: a door's closure does not call back
+        // into the editor.
         self.set_current_buffer_name(name);
     }
 
-    /// Close the buffer named NAME: detach it from whatever window is
-    /// showing it (a floating window is removed outright and focus
-    /// returns to whatever had it before that floating window opened;
-    /// a tiled window falls back to `*scratch*`, since there's no
-    /// per-window buffer history to fall back to yet), run that
-    /// buffer's major mode's `after-close-hook`, then remove it from
-    /// the buffer table. If NAME was the last remaining buffer, a fresh
-    /// empty `*scratch*` is created so the editor is never left with
-    /// none. Returns `false` if no buffer named NAME exists, `true`
-    /// otherwise.
+    /// Closes the buffer NAME, and returns false when there is no such buffer.
+    ///
+    /// A float showing it closes, giving focus back to the window that had it.
+    /// Every tiled window showing it shows instead the buffer most recently
+    /// current, or `*scratch*`, and the buffer leaves the table, a fresh
+    /// `*scratch*` taking the place of the last one. The work writing into it
+    /// stops, and its mode's `after-close-hook` runs. Its auto-save file is
+    /// deleted, unless it has unsaved changes.
     pub fn close_buffer(&self, name: &str, env: &Arc<Env<EditorState<B>>>) -> bool {
         let Some((closing_mode, writer)) =
             self.with_buffer(name, |buf| (buf.current_mode.clone(), buf.writer))
@@ -306,18 +263,11 @@ impl<B: BufferTrait> EditorState<B> {
             return false;
         };
 
-        // # Why a modified buffer keeps its recovery copy
-        //
-        // An auto-save file is thrown away when what it held is safely in the
-        // real file -- on a save, and on killing a buffer with nothing
-        // outstanding. Killing a buffer that *does* have unsaved changes is a
-        // different situation: this editor does not yet ask before that kill,
-        // so the copy left behind is the only remaining trace of the work.
-        //
-        // Deleting it here would turn one un-asked keystroke into a
-        // permanent loss, which is the whole thing this tier exists to
-        // prevent. When `kill-buffer` learns to ask, this can become
-        // unconditional.
+        // A buffer with unsaved changes keeps its copy. This asks nothing, and
+        // neither do `close-buffer` and `kill-buffer-without-saving`, which
+        // call it: the copy may be all that is left of the work. It goes when
+        // what it held is in the file -- on a save, and here when nothing is
+        // outstanding.
         let unsaved = self
             .with_buffer(name, |buf| buf.is_modified && buf.file_path.is_some())
             .unwrap_or(false);
@@ -325,12 +275,9 @@ impl<B: BufferTrait> EditorState<B> {
             self.discard_auto_save(name, auto_save_directory(env).as_deref());
         }
 
-        // Detach NAME from wherever it's currently displayed.
-        //
-        // Finding the float and removing it are now one acquisition rather
-        // than a read followed by a write. They were never safe apart: between
-        // the two, another thread opening or closing a float shifts the index,
-        // and what came back was a *different* window than the one looked for.
+        // Found and removed in one acquisition: between the two, another
+        // thread opening or closing a float would shift the index.
+        // TODO(MIN-1): only the first float showing the buffer closes.
         let restore_id = self.windows_mut(|windows| {
             let idx = windows
                 .floating()
@@ -343,27 +290,16 @@ impl<B: BufferTrait> EditorState<B> {
                     .previous_focused_window_id,
             )
         });
-        // Outside the closure, because moving focus makes a buffer current and
-        // takes the window lock again to find out which.
+        // Outside the closure: moving focus makes a buffer current, which takes
+        // the windows' lock again.
         if let Some(restore_id) = restore_id {
             self.set_focused_window_id(restore_id);
         }
 
-        // *Every* tiled window showing it, not only the focused one.
-        //
-        // # The bug this fixes
-        //
-        // This used to repoint the focused window alone. Open one buffer in
-        // two windows, kill it, and the other window was left naming a buffer
-        // that no longer existed. Nothing complained until focus moved there
-        // -- at which point `current_buffer_name` became that dead name and
-        // the next `get_current_buffer` hit its "Corruption in the hashmap of
-        // buffers" panic, taking the editor down with whatever was unsaved in
-        // the other windows.
-        //
-        // Worked out before the window lock is taken: `most_recent_buffer`
-        // reads the buffer compartment, and taking that while holding the
-        // windows would invert the canonical lock order.
+        // Every tiled window showing it, not only the focused one: a window
+        // left naming a closed buffer would make it current again once
+        // focused. The replacement is found before the windows are taken: a
+        // door's closure does not call back into the editor.
         let replacement = self
             .most_recent_buffer(name)
             .unwrap_or_else(|| "*scratch*".to_string());
@@ -375,20 +311,15 @@ impl<B: BufferTrait> EditorState<B> {
             })
         });
 
-        // Removing it and settling what is current are one acquisition. They
-        // used to be four -- remove, re-add `*scratch*` if that emptied the
-        // table, read the current name, then set it -- and between any two of
-        // them the current name could be read by another thread while it
-        // named the buffer that had just gone. That read is the panic
-        // described above.
+        // Removing it and settling what is current in one acquisition: between
+        // two, another thread could read a current name naming a buffer that
+        // had just gone.
         let last_buffer = self.buffers(|buffers| buffers.names().len() == 1);
         if let BufferRemoved::Current(successor) = self.buffers_mut(|buffers| buffers.remove(name))
         {
-            // The compartment picked the most recent survivor. Prefer the one
-            // the windows were just repointed at, when it is still there, so
-            // that what is current and what is on screen agree -- them
-            // disagreeing is how the panic above was reached in the first
-            // place.
+            // The table picked the most recent survivor. What is current should
+            // be what the windows were just pointed at, when that is still
+            // there.
             if replacement != successor {
                 self.set_current_buffer_name(&replacement);
             }
@@ -398,10 +329,10 @@ impl<B: BufferTrait> EditorState<B> {
             self.initialize_buffer("*scratch*", false, env);
         }
 
-        // Whatever is writing into it from a thread of its own stops with it:
-        // a command whose output has nowhere to go is a process nobody can see
-        // and nobody can stop. Asked once the buffer has left the table, so
-        // that nothing it writes from the moment it is asked can land.
+        // The work writing into it from a thread of its own stops with it:
+        // output with nowhere to go is a process nobody can see or stop. Asked
+        // once the buffer has left the table, so that nothing written from then
+        // on can land.
         if let Some(writer) = writer {
             self.work.cancel(writer);
         }
@@ -410,82 +341,69 @@ impl<B: BufferTrait> EditorState<B> {
         true
     }
 
-    /// Whether a minibuffer prompt is currently open.
+    /// Returns whether a minibuffer prompt is open.
     pub(crate) fn minibuffer_is_open(&self) -> bool {
         self.has_buffer("*Minibuffer*")
     }
 
-    /// Every live buffer's name, sorted. Used for buffer-name completion.
+    /// Returns every buffer's name, sorted, for completing a buffer's name.
     pub(crate) fn buffer_names(&self) -> Vec<String> {
         self.buffers(|buffers| buffers.names())
     }
 
-    /// Every live buffer's name with the focused window's at the head.
+    /// Returns every buffer's name, the focused window's first: the background
+    /// walkers reach what is on screen before what is not.
     ///
-    /// For the background walkers, which both want to reach what is on screen
-    /// before what is not. The focused window is asked *before* the table is
-    /// taken: two compartments, never held together.
+    /// The focused window is asked before the table is taken: one compartment
+    /// at a time.
     pub(crate) fn buffer_names_focused_first(&self) -> Vec<String> {
         let focused = self.focused_window_buffer();
         self.buffers(|buffers| buffers.names_with_first(focused.as_deref()))
     }
 
-    /// Get the name of the current buffer
+    /// Returns the current buffer's name.
     pub(crate) fn get_current_buffer_name(&self) -> String {
         self.current_buffer_name_shared().to_string()
     }
 
-    /// The current buffer's name without copying it.
+    /// Returns the current buffer's name, without copying it.
     fn current_buffer_name_shared(&self) -> Arc<str> {
         self.buffers(|buffers| buffers.current_name())
     }
 
-    /// Set the name of the current buffer.
-    ///
-    /// Silently does nothing when there is no such buffer, which is the
-    /// refusal that keeps the invariant: it is no longer possible from
-    /// anywhere in the editor to leave the current name pointing at a buffer
-    /// the table does not hold.
+    /// Makes NAME the current buffer; nothing when there is no such buffer,
+    /// the refusal that keeps the current name naming a buffer of the table.
     pub(crate) fn set_current_buffer_name(&self, name: &str) {
         self.buffers_mut(|buffers| buffers.make_current(name));
     }
 
-    /// The most recently current buffer that still exists and is not EXCEPT.
-    ///
-    /// `None` when there is no such buffer. The caller answers that for
-    /// itself -- there is always `*scratch*`, but falling back to it is a
-    /// policy this does not get to make.
+    /// Returns the buffer most recently current that is not EXCEPT; `None`
+    /// when there is none. Falling back to `*scratch*` is the caller's choice.
     pub(crate) fn most_recent_buffer(&self, except: &str) -> Option<String> {
         self.buffers(|buffers| buffers.most_recent(except))
     }
 
-    /// Make NAME the current buffer without showing it, and give back whatever
-    /// was current before.
+    /// Makes NAME the current buffer without showing it, and returns the one
+    /// current before; `None`, changing nothing, when there is no such buffer.
     ///
-    /// This is Emacs' `set-buffer`, and the difference from `switch-to-buffer`
-    /// is the whole reason it exists: that one also points the focused window
-    /// at the buffer, which is right when a person asked to see it and wrong
-    /// when a piece of Lisp merely wants to *act* on it. Rebinding the window
-    /// for the duration of a computation and putting it back would be a window
-    /// doing something nobody asked for.
-    ///
-    /// Returns `None` when there is no such buffer, having changed nothing.
+    /// Emacs' `set-buffer`. `switch-to-buffer` also points the focused window
+    /// at the buffer, which is right when somebody asked to see it and wrong
+    /// when Lisp only means to act on it.
     pub(crate) fn set_current_buffer(&self, name: &str) -> Option<Arc<str>> {
         self.buffers_mut(|buffers| buffers.bind_current(name))
     }
 }
 
-/// Append TEXT to BUF, read-only or not. See
-/// [`EditorState::append_to_buffer`] for why the flag goes down and up again
-/// under the one lock.
+/// Appends TEXT to BUF, read-only or not, and returns whether it was written.
+/// The flag goes down and back up under the caller's lock: see
+/// [`EditorState::append_to_buffer`].
 fn append<B: BufferTrait>(buf: &mut Buffer<B>, text: &str) -> bool {
     let was_read_only = buf.read_only;
     buf.read_only = false;
     let at = buf.text.len();
-    // Cannot fail here -- the only thing `insert_text` refuses is a read-only
-    // buffer, and the flag was just cleared under this same lock. Checked
-    // rather than discarded so that if it ever grows another reason to refuse,
-    // the text going missing is reported instead of silently not appearing.
+    // `insert_text` refuses only a read-only buffer, and the flag is down under
+    // this same lock. Checked all the same: a new reason to refuse is reported
+    // rather than the text going missing.
     let written = crate::primitives::edits::insert_text(buf, at, text);
     buf.read_only = was_read_only;
     written

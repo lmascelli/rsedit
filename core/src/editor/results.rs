@@ -1,22 +1,40 @@
-//! Buffer lifetime and window selection shared by result producers.
+//! Where a listing goes -- occur, grep, compile: which buffer takes a new
+//! run's output, where it is shown, which window a visit opens, and what
+//! quitting the listing gives back.
+//!
+//! Design: `doc/architettura-editor.typ, <risultati>`.
 
 use super::*;
 use crate::text::results::{RESULTS_KEY, Results};
 
+/// The key a listing's [`Presentation`] is kept under, in its buffer's data.
 const CONTEXT: &str = "results-presentation";
 
+/// How a listing was asked for and where it is shown: kept in the listing's
+/// buffer, so that the next run, a visit and quitting each know.
 #[derive(Clone)]
 struct Presentation {
+    /// What made the listing -- `occur`, `grep`, `compile` -- and so which
+    /// listings a new run may take the place of.
     producer: String,
+    /// When the run began: of several listings, the newest is reused.
     started: Instant,
+    /// The window the listing was asked from, where a visit goes back to,
+    /// and the buffer it showed: kept from the first run when a run starts
+    /// from the listing itself.
     origin_window: WindowId,
     origin_buffer: String,
+    /// The buffer the output took the place of, which quitting shows again.
     restore_buffer: String,
+    /// The window showing the listing, once it is shown.
     window: Option<WindowId>,
+    /// Whether that window is a strip at the bottom of the frame, opened for
+    /// the listing, rather than the window it was asked from.
     bottom: bool,
 }
 
 impl<B: BufferTrait> EditorState<B> {
+    /// Returns how the listing in BUFFER was asked for and shown, if it is one.
     fn results_presentation(
         &self,
         buffer: &str,
@@ -27,7 +45,9 @@ impl<B: BufferTrait> EditorState<B> {
         .flatten()
     }
 
-    /// Capture the logical source, including a run started from its output.
+    /// Returns a presentation for a run of PRODUCER asked from the focused
+    /// window: a run started from a listing in its own window keeps the
+    /// listing's origin.
     fn new_results_presentation(
         &self,
         producer: &str,
@@ -58,7 +78,12 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    /// Acquire output without replacing the source named by PROTECTED.
+    /// Returns the buffer a run of PRODUCER writes into, emptied, read-only,
+    /// in MODE: the newest listing of the same producer and mode when
+    /// `results-reuse-buffer` says so, stopping the work that wrote into it,
+    /// and otherwise a new buffer named after STEM. PROTECTED, the buffer the
+    /// run reads, is never the one taken. `None` when the buffer could not
+    /// be had.
     pub(crate) fn prepare_results_buffer(
         &self,
         producer: &str,
@@ -125,8 +150,8 @@ impl<B: BufferTrait> EditorState<B> {
             }
         }
 
-        // Revoke the writer under the same lock used by its writes.
-        // Cancellation happens outside the buffer lock.
+        // The writer is taken away under the lock it writes under, and its
+        // work stopped once the buffer's lock is given back.
         let (writer, marked) = self.with_buffer_mut(
             &name,
             |buf| {
@@ -161,7 +186,11 @@ impl<B: BufferTrait> EditorState<B> {
         Some(name)
     }
 
-    /// Display output, retaining the caller's focus unless SELECT is set.
+    /// Shows the listing BUFFER, and returns the window it is in: the focused
+    /// window, when `results-display-location` is `same-window`; otherwise
+    /// the strip at the bottom that shows a listing of the same producer, or
+    /// a new one HEIGHT rows high. Focus goes back where it was unless
+    /// SELECT. `None` when there is no such buffer.
     pub(crate) fn display_results(
         &self,
         buffer: &str,
@@ -234,7 +263,12 @@ impl<B: BufferTrait> EditorState<B> {
         Some(window)
     }
 
-    /// Select the destination shared by direct visits and next-error.
+    /// Gives focus to the window a visit to an entry of LISTING opens in, and
+    /// returns false when there was none to give: the listing's own window
+    /// when `results-visit-same-window` says so, and otherwise the window
+    /// the listing was asked from, the focused one, another one, or a new
+    /// split -- never the listing's, and with PREVIEW never the focused one.
+    /// A visit and `next-error` both go there.
     pub(crate) fn select_results_target(
         &self,
         listing: &str,
@@ -286,7 +320,7 @@ impl<B: BufferTrait> EditorState<B> {
             return self.select_window(*window);
         }
 
-        // Reuse another view of the listing before creating a split.
+        // Another window on the listing, before splitting for a new one.
         if let Some((window, _)) =
             windows.iter().find(|(id, _)| *id != from)
         {
@@ -302,7 +336,11 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    /// Close a managed strip or restore the buffer replaced by output.
+    /// Leaves the listing in the focused window: a strip opened for it closes,
+    /// and focus goes back to the window it was asked from; otherwise the
+    /// window shows again the buffer the output took the place of, or the one
+    /// it was asked from, or the most recent. False when there was nothing
+    /// to go back to.
     pub(crate) fn quit_results(&self) -> bool {
         let buffer = self.get_current_buffer_name();
         let here = self.get_focused_window_id();

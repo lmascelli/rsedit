@@ -1,34 +1,9 @@
-//! The facade over the WorkManager: what the host, the primitives and the
-//! tests ask of the editor's asynchronous work, the topics the editor emits
-//! for it, and how the host hears that the work changed the screen.
+//! The facade over the WorkManager: what the host, the primitives and the tests
+//! ask of the editor's asynchronous work, the topics the editor emits, which
+//! say "go and look" where each change of their kind is made, and how the host
+//! hears that the work has changed the screen.
 //!
-//! # The topics
-//!
-//! A topic carries no data: it says "go and look", and what changed is read
-//! from the state, where it happened. So each is emitted where the change is
-//! made, in the one place every change of its kind goes through -- a change
-//! that does not pass there is one no job can be woken for.
-//!
-//! | Topic | Emitted by |
-//! |---|---|
-//! | [`BUFFER_CHANGED`] | `edits::changed` (both doors, undo, redo, `replace-back`), `Buffer::adopt_text`, a change of major mode, a buffer joining the table |
-//! | [`SYNTAX_CHANGED`] | `set_mode`, `edit_grammar`, `edit_syntax_table` |
-//!
-//! Lisp emits topics of its own with `emit-event`.
-//!
-//! # Telling the host
-//!
-//! Almost everything on screen changes because the user did something, and a
-//! host that draws after every event and then waits for the next one is
-//! right about all of it -- except what a job changes. A file reloaded by the
-//! watcher, a variable a Lisp job set, a buffer it filled: none of them comes
-//! with an event, and a host blocked on input sleeps straight through them.
-//!
-//! So the WorkManager calls the editor after every step, and the editor tells
-//! the host -- once, however many steps follow, until the host takes a
-//! snapshot. What the step changed is not said, because it is not known: a
-//! step is free to change anything, so the host looks at the whole frame.
-//! See [`EditorState::on_background_change`].
+//! Design: `doc/architettura-editor.typ, <utenti-sfondo>`.
 use super::*;
 use std::cell::Cell;
 use std::sync::Mutex;
@@ -43,57 +18,38 @@ pub(crate) const BUFFER_CHANGED: &str = "buffer-changed";
 pub(crate) const SYNTAX_CHANGED: &str = "syntax-changed";
 
 thread_local! {
-    /// Whether this thread is part-way through a step of a Lisp job, or is a
-    /// thread the editor started for work in the background.
+    /// Whether this thread is in a step of a Lisp job, or is a thread the
+    /// editor started for work in the background.
     ///
-    /// # What it is for
-    ///
-    /// Some things an editor can do only make sense on the thread the user is
-    /// typing on. Opening a prompt is the clearest: a minibuffer put up by a
-    /// job is a window nobody is typing into, over a command nobody
-    /// started, and the keystroke that answers it goes to whatever the user
-    /// was actually doing.
-    ///
-    /// A job *can* call `minibuffer-read` -- nothing in Rust stops a Lisp
-    /// program from naming a function -- so the refusal has to be somewhere,
-    /// and it has to be somewhere that knows which thread it is on. This is
-    /// that.
+    /// What lets a primitive that makes sense only on the thread the user
+    /// types on refuse to run anywhere else: a prompt opened by a job would be
+    /// a window nobody types into, and the key that answered it would go to
+    /// whatever the user was doing.
     static IN_WORKER: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Whether the caller is running in the background: inside a step of a Lisp
-/// job, or on a thread of its own the editor started.
+/// Returns whether the caller runs in the background: in a step of a Lisp
+/// job, or on a thread of its own that the editor started.
 ///
-/// For the handful of primitives that are meaningless off the thread the user
-/// is typing on. A primitive that merely *reads* editor state has no business
-/// asking: it is as correct here as anywhere, and asking would make jobs a
-/// second class of Lisp rather than the same Lisp somewhere else.
+/// For the few primitives that mean nothing off the thread the user types on.
+/// One that only reads the editor's state has no business asking: asking
+/// would make a job's Lisp a second kind of Lisp.
 pub(crate) fn in_worker() -> bool {
     IN_WORKER.get()
 }
 
-/// Sets [`in_worker`] for as long as it is alive.
+/// Sets [`in_worker`] for as long as it lives, so that a step that ends by
+/// raising an error cannot leave it set.
 ///
-/// RAII rather than a pair of calls so that a step which ends by propagating
-/// an error cannot leave the flag set -- which would make every later
-/// primitive on this thread believe it was in the background.
-///
-/// # Who holds one
-///
-/// A Lisp job, around each of its steps: the executor's thread is shared with
-/// the Rust jobs, which run no Lisp and so have nothing to refuse. And
-/// [`EditorState::spawn_work`], around the whole life of every thread it
-/// starts -- a shell command's, a search's.
-///
-/// # Why it nests
-///
-/// A step driven by hand -- which is how the tests drive one -- may be inside
-/// another holder. So this restores what it found rather than clearing: an
-/// inner step ending inside an outer one must not announce that the thread
-/// has become the command thread.
+/// A Lisp job holds one around each step -- the executor's thread is shared
+/// with the Rust jobs, which run no Lisp -- and [`EditorState::spawn_work`]
+/// around the whole life of each thread it starts. It puts back what it found
+/// rather than clearing: a step driven by hand, as the tests drive one, may be
+/// inside another holder.
 pub(crate) struct WorkerTurn(bool);
 
 impl WorkerTurn {
+    /// Marks this thread as in the background, until the turn is dropped.
     pub(crate) fn begin() -> Self {
         WorkerTurn(IN_WORKER.replace(true))
     }
@@ -120,8 +76,8 @@ pub(crate) struct BackgroundChange {
 }
 
 impl BackgroundChange {
-    /// A step has ended. The host is told the first time since its last
-    /// snapshot, and not again until it has taken another.
+    /// Records that a step has ended, and tells the host the first time since
+    /// its last snapshot, and not again until it has taken another.
     pub(crate) fn raise(&self) {
         if !self.pending.swap(true, Ordering::AcqRel) {
             // Cloned out, so the host's code runs with no lock of ours held.
@@ -132,23 +88,23 @@ impl BackgroundChange {
         }
     }
 
-    /// A snapshot is about to be taken: whatever the steps changed so far is
-    /// in it. Lowered *before* the state is read, so that a step ending while
-    /// it is being read raises the flag again and is drawn in the next frame.
+    /// Records that a snapshot is about to be taken, which holds whatever the
+    /// steps have changed so far. Lowered before the state is read, so that a
+    /// step ending while it is read raises the flag again, and is drawn in the
+    /// next frame.
     pub(crate) fn taken(&self) {
         self.pending.store(false, Ordering::Release);
         *self.snapshot_at.lock().expect("snapshot time") = Some(Instant::now());
     }
 
-    /// How long until the screen should be drawn again for what the steps
-    /// changed, or `None` when they have changed nothing since the last
+    /// Returns how long until the screen should be drawn again for what the
+    /// steps changed, or `None` when they have changed nothing since the last
     /// snapshot.
     ///
-    /// Not at once: a job colouring a large file takes a step every
-    /// millisecond or so, and a frame for each would be a terminal repainted
-    /// continuously. So at most one frame per [`TURN_INTERVAL`], counted from
-    /// the last snapshot, which reads as live and costs little -- the same
-    /// rate colour has always been drawn at.
+    /// Not at once: a job colouring a large file takes a step every millisecond
+    /// or so, and a frame for each would repaint the terminal without pause.
+    /// One frame per [`TURN_INTERVAL`] at most, counted from the last
+    /// snapshot, which reads as live and costs little.
     pub(crate) fn due_in(&self) -> Option<Duration> {
         if !self.pending.load(Ordering::Acquire) {
             return None;
@@ -166,7 +122,7 @@ impl BackgroundChange {
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Have WAKE called whenever work in the background may have changed
+    /// Registers WAKE, called whenever work in the background may have changed
     /// what is on screen: a job's step has ended since the last snapshot.
     ///
     /// For a host whose renderer waits for input: without this, a file the
@@ -187,7 +143,7 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("background waker") = Some(Arc::new(wake));
     }
 
-    /// Stop the editor's asynchronous work, giving it WITHIN to finish.
+    /// Stops the editor's asynchronous work, giving it WITHIN to finish.
     ///
     /// Every job leaves with `Exit::Shutdown`, and every dedicated thread is
     /// asked to stop; what has not finished by then is left behind, named in
@@ -203,8 +159,8 @@ impl<B: BufferTrait> EditorState<B> {
         self.work.shutdown(self, within);
     }
 
-    /// The WorkManager: for the primitives that start, stop and list work,
-    /// and for the tests that drive it by hand.
+    /// Returns the WorkManager: for the primitives that start, stop and list
+    /// work, and for the tests that drive it by hand.
     ///
     /// Handed out whole rather than forwarded a method at a time, unlike the
     /// compartments: it has no lock a caller could take out of order or hold
@@ -213,7 +169,7 @@ impl<B: BufferTrait> EditorState<B> {
         &self.work
     }
 
-    /// Start BODY on a thread of its own called NAME: work that may block,
+    /// Starts BODY on a thread of its own called NAME: work that may block,
     /// which no step may do -- reading a process's output, walking a tree.
     ///
     /// BODY is handed the editor, the [`Stop`] that `stop-worker` raises and
@@ -235,7 +191,7 @@ impl<B: BufferTrait> EditorState<B> {
         })
     }
 
-    /// Start BODY on a thread of its own that writes into BUFFER, and is known
+    /// Starts BODY on a thread of its own that writes into BUFFER, and is known
     /// by its name: a shell command, a search. `stop-worker BUFFER` stops it,
     /// and so does closing the buffer.
     ///
@@ -269,21 +225,21 @@ impl<B: BufferTrait> EditorState<B> {
         Some(id)
     }
 
-    /// Something has changed the screen from a thread of the editor's own --
-    /// output appended, a result found. Tells the host, as the end of a step
-    /// does; see [`Self::on_background_change`]. Cheap enough for every line:
-    /// only the first since the last snapshot does more than set a flag.
+    /// Tells the host that a thread of the editor's own has changed the screen
+    /// -- output appended, a result found -- as the end of a step does: see
+    /// [`Self::on_background_change`]. Cheap enough for every line, since only
+    /// the first since the last snapshot does more than set a flag.
     pub(crate) fn changed_in_background(&self) {
         self.background_change.raise();
     }
 
-    /// STEM, or `STEM<2>`, `STEM<3>` -- the first that no buffer and no work
-    /// is using: the name for a buffer that work started now will write into,
-    /// and will be known by.
+    /// Returns STEM, or `STEM<2>`, `STEM<3>`, the first that no buffer and no
+    /// work has: the name of a buffer that work started now will write into,
+    /// and be known by.
     ///
-    /// Free in both places, because the two share it. A name only the buffers
-    /// had given up -- a command's buffer renamed while it runs -- would
-    /// otherwise stop that command the moment a new one took the name.
+    /// Free in both, since the two share it: a name only the buffers had given
+    /// up -- a command's buffer renamed while it runs -- would stop that
+    /// command as soon as a new one took the name.
     pub(crate) fn free_name_for_work(&self, stem: &str) -> String {
         let taken = |name: &str| self.has_buffer(name) || self.work.is_named(name);
         if !taken(stem) {

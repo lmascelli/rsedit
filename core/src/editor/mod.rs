@@ -1,32 +1,9 @@
-//! The editor facade, and how it is laid out across this directory.
+//! The editor facade: [`EditorState`], its fields, and the doors through which
+//! every compartment is reached. Its methods are spread over the files here: a
+//! file named after a compartment holds that compartment's half of the facade,
+//! and the others are named after what they coordinate.
 //!
-//! [`EditorState`] owns one handle per compartment (see [`crate::managers`])
-//! and nothing else that matters. Its own methods are spread over the files
-//! here, under one rule:
-//!
-//! > A file named after a compartment holds that compartment's facade -- the
-//! > methods that forward to it -- plus any coordination that spans several.
-//! > A method that forwards to exactly one compartment lives in that
-//! > compartment's file, whatever it is called.
-//!
-//! So `buffers.rs`, `windows.rs`, `commands.rs`, `modes.rs`, `kill_yank.rs`,
-//! `runtime.rs` and `log.rs` each pair with the manager of the same name, and
-//! `work.rs` with the WorkManager in [`crate::work`]. The rest are named after
-//! a *concern* rather than a compartment, because what they do spans several
-//! by nature: `keys.rs` resolves a keystroke, `mouse.rs` turns a pointer event
-//! into a command, `frame.rs` composes what the renderer draws, `boot.rs`
-//! brings an editor into existence and `settings.rs` reads the Lisp variables.
-//!
-//! # Why the forwarders are not just removed
-//!
-//! They look like duplication -- `is_command` forwarding to
-//! `Commands::is_command` -- and mostly they rename: `Commands::specs` and
-//! `Commands::names` are unambiguous because the type says what they are
-//! about, where `EditorState` needs `command_specs` and `command_names`
-//! because it has buffer names and window ids too. Collapsing the two layers
-//! would make one naming scheme serve both, and would put "which compartment
-//! holds this" into every call site -- so that moving a field between
-//! compartments edited every caller instead of one forwarder.
+//! Design: `doc/architettura-editor.typ, <coppie>`.
 
 use crate::{
     ELispExp,
@@ -96,21 +73,21 @@ pub use keys::KEY_CAPTURE_FUNCTION;
 pub use settings::*;
 pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED, WorkerTurn, in_worker};
 
-/// What the echo area is showing, and since when.
+/// What the echo area shows, and since when.
 ///
-/// The timestamp lives beside the text rather than in a lock of its own so
-/// that a reader cannot catch a new message paired with the previous one's
-/// clock and hide it a moment after it appeared.
+/// The text and its instant share one lock, so that a reader never pairs a
+/// new message with the old one's instant, and hides it as soon as it is
+/// shown.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EchoMessage {
     pub text: String,
-    /// When [`EditorState::set_echo_message`] last wrote `text`. Each new
-    /// message restarts the clock, so a message is always shown for its full
-    /// timeout however soon it followed the one before.
+    /// When [`EditorState::set_echo_message`] wrote `text`: each message is
+    /// shown for its whole timeout, however soon it followed the last.
     pub set_at: Instant,
 }
 
 impl EchoMessage {
+    /// Returns TEXT as a message set now.
     pub fn new(text: &str) -> Self {
         Self {
             text: text.to_string(),
@@ -118,9 +95,9 @@ impl EchoMessage {
         }
     }
 
-    /// How long this message has been on screen, or `None` once TIMEOUT has
-    /// run out -- and `None` too when there is no message to show, so that an
-    /// empty echo area never counts as something waiting to expire.
+    /// Returns how long the message has been shown, or `None` once TIMEOUT
+    /// has run out, and `None` when there is no message: an empty echo area
+    /// is never waiting to expire.
     fn visible_for(&self, timeout: Option<Duration>) -> Option<Duration> {
         if self.text.is_empty() {
             return None;
@@ -133,167 +110,118 @@ impl EchoMessage {
     }
 }
 
-/// This is the container for all the editor informations.
-/// The whole editor memory should live in an instance of this
-/// struct. It is generic behiond the implementation of the
-/// buffer.
-/// It also provides instruction for an UI provider of what to
-/// render and where.
+/// The editor: its buffers and windows, its modes and commands, the keys being
+/// typed, and the work running in the background -- over B, the storage of a
+/// buffer's text.
+///
+/// A handle: every field is shared, so a clone is cheap and sees the same
+/// editor, which is how the threads of the background work act on it. The
+/// fields are private; each compartment is reached through its doors, below.
 #[derive(Clone)]
 pub struct EditorState<B: BufferTrait> {
+    /// False once `quit` has been asked for.
     running: Arc<AtomicBool>,
 
-    /// Where asynchronous work runs: the scheduler and its executor, the
-    /// dedicated threads and what watches them. See [`crate::work`].
+    /// Where asynchronous work runs: colouring, the prescanner, the file
+    /// watcher, the auto-saver and the Lisp jobs as jobs, shell commands and
+    /// searches on threads of their own. See [`crate::work`].
     ///
-    /// Everything runs on it: colouring, the prescanner, the file watcher, the
-    /// auto-saver and every Lisp job as jobs, and shell commands and searches
-    /// on threads of their own. In this crate's own tests it is in manual
-    /// mode: no job runs unless the test drives it, so no test is raced by a
-    /// thread it did not ask for. A dedicated thread is a real one in both
-    /// modes -- a process does not wait to be driven.
+    /// In this crate's tests it is in manual mode: no job runs unless the test
+    /// drives it. A dedicated thread is a real one in both modes.
     work: WorkManager<EditorState<B>>,
 
     /// Whether a job has changed the screen since the last snapshot, and how
-    /// the host is told. Raised by the WorkManager after every step; see
+    /// the host is told: raised by the WorkManager after every step. See
     /// [`EditorState::on_background_change`].
     background_change: Arc<work::BackgroundChange>,
 
-    /// Every buffer the editor holds, which one is current, and which were
-    /// current lately. See [`Buffers`], which says why those are one lock and
-    /// not three.
-    ///
-    /// Private, like [`EditorState::windows`]'s field, and for the same
-    /// reason: the invariant that `current` names a buffer the table holds is
-    /// only an invariant while nothing outside can set one without the other.
+    /// Every buffer, which one is current, and which were current lately. See
+    /// [`Buffers`].
     buffers: Arc<RwLock<Buffers<B>>>,
-    /// The echo area's text together with when it was set, in one lock so a
-    /// reader can never pair a new message with an old timestamp.
+    /// The echo area's text, with when it was set.
     echo_message: Arc<RwLock<EchoMessage>>,
 
-    /// What a mode is, what keys do, and where completions come from: the
-    /// registry, the global keymap, the global completion list, the file-name
-    /// patterns, the transient keymap and the repeat keys. See [`Modes`],
-    /// which says why those are one lock and not eight.
+    /// The registry of the modes, the keymaps, the completion sources, the
+    /// file-name patterns, the transient keymap, the repeat keys and the
+    /// global hooks. See [`Modes`].
     modes: Arc<RwLock<Modes<B>>>,
 
-    /// How many times a grammar in the registry above has changed.
+    /// How many times a grammar of the registry has changed: what a colouring
+    /// is stamped with, so that one computed under an older grammar is done
+    /// again -- see [`crate::buffer::syntax::SyntaxCache::describes`].
     ///
-    /// # Why it exists
-    ///
-    /// A colouring is stamped with this, so that one computed under a grammar
-    /// that has since changed is recomputed -- see
-    /// [`crate::buffer::syntax::SyntaxCache::describes`]. Nothing about the
-    /// text changes when a rule is added, so nothing else would notice.
-    ///
-    /// # Why beside the registry and not in it
-    ///
-    /// Every frame asks every buffer whether its colouring is behind, and a
-    /// counter here answers that without taking the registry's lock. It is
-    /// only ever moved *under* that lock, though, after the grammar has
-    /// changed, and read under it alongside the grammar it describes -- so
-    /// the highlighter never pairs a grammar with the wrong edition.
+    /// Beside the registry rather than in it, so that a frame asks every
+    /// buffer whether its colouring is behind without taking the registry's
+    /// lock. It moves only under that lock's write side, once the grammar has
+    /// changed, and is read under it with the grammar it describes.
     grammar_epoch: Arc<AtomicU64>,
     /// Emitted when a grammar or a syntax table changes: the editor's
     /// `syntax-changed`, resolved once. See [`work::SYNTAX_CHANGED`].
     ///
-    /// Not the epoch above, though it moves with it for a grammar: a syntax
+    /// Not the epoch above, which moves with it only for a grammar: a syntax
     /// table is the other lexer's, and changing one must not make every
-    /// buffer's colouring look out of date.
+    /// colouring look out of date.
     syntax_changed: Topic,
-    /// Every window the frame has: the tiled tree, the floats drawn over it,
-    /// which one has focus, the next id to hand out and what a held mouse
-    /// button is doing. See [`Windows`], which says why those are one lock and
-    /// not five.
-    ///
-    /// Private, and reached only through [`EditorState::windows`] and
-    /// [`EditorState::windows_mut`]. That is the whole point of the
-    /// compartment: a caller that cannot name the lock cannot take it out of
-    /// order, cannot hold it across a call into the interpreter, and cannot
-    /// leave focus naming a window the layout has already removed.
+    /// Every window: the tiled tree, the floats over it, the focus, the next
+    /// id, and what the mouse is doing. See [`Windows`].
     windows: Arc<RwLock<Windows>>,
 
-    /// What can be invoked by name, what is part-way through being invoked,
-    /// and what was invoked last. See [`Commands`], which says why those are
-    /// one lock and not five.
+    /// What can be run by name, what is waiting for its arguments, and what
+    /// ran last. See [`Commands`].
     commands: Arc<RwLock<Commands<B>>>,
 
-    /// How many shell commands are still running: what
-    /// `shell-command-running-p` answers.
-    ///
-    /// A count rather than a flag because several commands can run at once,
-    /// each into a buffer of its own. It used to keep the renderer waking every
-    /// turn too, for as long as any command ran; now each line of output tells
-    /// the host itself, and a command that says nothing costs nothing.
+    /// How many shell commands are running: what `shell-command-running-p`
+    /// answers. A count, since several can run at once, each into a buffer of
+    /// its own.
     shell_commands: Arc<AtomicUsize>,
 
-    /// The buffer whose result set `next-error` walks, if any.
+    /// The buffer whose results `next-error` walks, if any.
     ///
-    /// Session state rather than buffer state, which is the whole point:
-    /// `M-g n` is pressed *in the file being fixed*, not in the listing, so
-    /// the answer cannot be read off the buffer it is asked in. The set
-    /// itself lives on its own buffer; this is only which one is current.
+    /// The session's rather than a buffer's: `M-g n` is pressed in the file
+    /// being fixed, not in the listing. The results themselves are on their
+    /// own buffer.
     current_results: Arc<RwLock<Option<String>>>,
 
-    /// The keyboard macro being recorded, the last one finished, and the
-    /// counter one can insert. See [`Macros`], which says why those are one
-    /// lock and not four.
+    /// The keyboard macro being recorded, the last one, how deep the replays
+    /// are nested, and the counter. See [`Macros`].
     macros: Arc<RwLock<Macros>>,
 
-    /// How many commands have failed.
-    ///
-    /// # Why the editor counts them
-    ///
-    /// A keyboard macro replays its keys one at a time, and must stop at the
-    /// first one that fails: a macro that carries on past an error is how a
-    /// macro does damage, since every key after it is being pressed in a state
-    /// the recording never saw.
-    ///
-    /// Nothing else answers that question. `run_command_form` reports a
-    /// failure and returns -- there is nobody to return it *to*, a keystroke
-    /// having no caller -- so the replay compares this before and after each
-    /// key. A count rather than a flag, so that nothing has to remember to
-    /// clear it.
+    /// How many commands have failed: a replay compares it before and after
+    /// each key, and stops at the first that failed. A count rather than a
+    /// flag, so that nothing has to clear it.
     command_errors: Arc<AtomicUsize>,
 
     /// Calls that background jobs have asked for and the command thread has
-    /// not made yet. See [`background`], which says why they wait.
+    /// not made yet. See [`background`].
     owed: Arc<RwLock<Vec<background::OwedCallback<B>>>>,
 
-    /// Killed text, what a yank put where, and whether the command before
-    /// this one did either. See [`KillYank`], which says why those are one
-    /// lock and not seven.
+    /// Killed text, what a yank put where, and whether the command before this
+    /// one did either. See [`KillYank`].
     kill_yank: Arc<RwLock<KillYank>>,
 
-    /// Keys pressed so far that do not yet make a complete binding.
+    /// The keys typed so far of a sequence that is not yet a whole binding.
     ///
-    /// On the editor rather than on a mode, because a mode keymap is consulted
-    /// before the global one and a sequence begun under one must not be
-    /// half-remembered by another. One place, whatever mode is active.
-    ///
-    /// Kept as one `Vec` that is pushed to and cleared rather than rebuilt, so
-    /// the common case -- a single key that is a whole binding -- costs a push
-    /// and a clear rather than an allocation on the keystroke path.
+    /// The editor's rather than a mode's, so that a sequence begun under one
+    /// keymap is not half-remembered by another. Pushed to and cleared rather
+    /// than rebuilt: a key that is a whole binding allocates nothing.
     pending_keys: Arc<RwLock<Vec<KeyEvent>>>,
 
-    /// Diagnostics, and the file they are mirrored to when one is enabled.
-    /// See [`Log`].
+    /// The diagnostics, and the file they are copied to. See [`Log`].
     log: Arc<RwLock<Log>>,
 
-    /// What has been typed at each prompt before, and where a walk back
-    /// through one has got to. See [`History`].
+    /// What has been typed at each prompt, and where a walk back through one
+    /// has got to. See [`History`].
     history: Arc<RwLock<History>>,
 
-    /// The execution budget, the call stack, the theme, where vertical
-    /// movement is aiming and the search in progress. See [`Runtime`] -- which
-    /// is candid about grouping by lifetime rather than by a shared invariant.
+    /// The execution budget, the call stack, the theme, the goal column, and
+    /// the search or replace in progress. See [`Runtime`].
     runtime: Arc<RwLock<Runtime>>,
 }
 
 impl<B: BufferTrait> LispContext for EditorState<B> {
     fn consume_fuel(&self, amount: u32) -> Result<(), EvalError<EditorState<B>>> {
-        // The meter reports a host-agnostic `Exhausted`; naming it as a Lisp
-        // error is the host's job, which is the point of the split.
+        // The meter reports a host-agnostic `Exhausted`, and naming it as a
+        // Lisp error is the host's part.
         self.runtime(|runtime| runtime.fuel())
             .consume(amount)
             .map_err(|_| EvalError::OutOfFuel)
@@ -329,6 +257,8 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
     }
 }
 
+// TODO(DOC-2): `LispContext` asks for both, and neither is meant to be used:
+// `{:?}` on an editor panics, and so does comparing two.
 impl<B: BufferTrait> std::fmt::Debug for EditorState<B> {
     fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         todo!()
@@ -340,89 +270,119 @@ impl<B: BufferTrait> std::cmp::PartialEq for EditorState<B> {
     }
 }
 
+// The doors: the only code that takes a compartment's lock. Each runs a closure
+// under it, so that the lock lasts as long as the closure. The closure must not
+// call back into the editor, whose methods may take the same lock again: a
+// second read on one thread can wait for ever behind a writer.
 impl<B: BufferTrait> EditorState<B> {
-    /// Ask the windows something.
-    ///
-    /// A closure rather than a returned guard, so the lock cannot outlive the
-    /// question. Every deadlock this file has had came from a guard living
-    /// longer than the line that needed it -- read into a second lock, held
-    /// across a call into Lisp, taken twice on one thread. A closure makes
-    /// each of those a thing you have to write on purpose.
-    ///
-    /// The one rule for what goes inside: **no call back into `self`**. A
-    /// method on the editor may take this lock again, and `RwLock` does not
-    /// promise that a second read on one thread succeeds -- a writer waiting
-    /// between the two is entitled to make it wait forever. Copy out, let go,
-    /// then ask.
-    pub(crate) fn windows<R>(&self, f: impl FnOnce(&Windows) -> R) -> R {
-        f(&self.windows.read().expect("read lock on windows"))
-    }
-
-    /// Change the windows. The same rule applies, and more sharply.
-    pub(crate) fn windows_mut<R>(&self, f: impl FnOnce(&mut Windows) -> R) -> R {
-        f(&mut self.windows.write().expect("write lock on windows"))
-    }
-
-    // ---------------------------------------------------------------
-    // The buffer compartment
-    // ---------------------------------------------------------------
-
-    /// Ask the buffer table something. Same rules as [`EditorState::windows`].
+    /// Runs F on the buffer table, under its read lock.
     pub(crate) fn buffers<R>(&self, f: impl FnOnce(&Buffers<B>) -> R) -> R {
         f(&self.buffers.read().expect("read lock on buffers"))
     }
 
-    /// Change the buffer table -- add one, remove one, move what is current.
+    /// Runs F on the buffer table, under its write lock.
     pub(crate) fn buffers_mut<R>(&self, f: impl FnOnce(&mut Buffers<B>) -> R) -> R {
         f(&mut self.buffers.write().expect("write lock on buffers"))
     }
 
-    /// Ask the commands something. Same rules as [`EditorState::windows`].
-    pub(crate) fn commands<R>(&self, f: impl FnOnce(&Commands<B>) -> R) -> R {
-        f(&self.commands.read().expect("read lock on commands"))
+    /// Runs F on the windows, under their read lock.
+    pub(crate) fn windows<R>(&self, f: impl FnOnce(&Windows) -> R) -> R {
+        f(&self.windows.read().expect("read lock on windows"))
     }
 
-    /// Change them -- register one, take a prefix argument, push an argument
-    /// onto the pending stack.
-    pub(crate) fn commands_mut<R>(&self, f: impl FnOnce(&mut Commands<B>) -> R) -> R {
-        f(&mut self.commands.write().expect("write lock on commands"))
+    /// Runs F on the windows, under their write lock.
+    pub(crate) fn windows_mut<R>(&self, f: impl FnOnce(&mut Windows) -> R) -> R {
+        f(&mut self.windows.write().expect("write lock on windows"))
     }
 
-    // ---------------------------------------------------------------
-    // The mode compartment
-    // ---------------------------------------------------------------
-
-    /// Ask the modes something. Same rules as [`EditorState::windows`].
+    /// Runs F on the windows, under their write lock, and on the buffer table,
+    /// under its read lock: the one door to two compartments, and the order
+    /// the editor takes them in, windows first.
     ///
-    /// The rule matters more here than anywhere else: the lists this holds are
-    /// Lisp, and calling one re-enters the editor through any primitive it
-    /// likes. Copy out, let go, *then* call.
+    /// For [`Self::snapshot`], which composes each window against the buffer
+    /// it shows, and moves the window's scroll to keep point in view.
+    pub(crate) fn windows_mut_with_buffers<R>(
+        &self,
+        f: impl FnOnce(&mut Windows, &Buffers<B>) -> R,
+    ) -> R {
+        let mut windows = self.windows.write().expect("write lock on windows");
+        let buffers = self.buffers.read().expect("read lock on buffers");
+        f(&mut windows, &buffers)
+    }
+
+    /// Runs F on the modes, under their read lock.
+    ///
+    /// The hooks and completion sources they hold are Lisp: F copies them out,
+    /// and they are called once it has returned.
     pub(crate) fn modes<R>(&self, f: impl FnOnce(&Modes<B>) -> R) -> R {
         f(&self.modes.read().expect("read lock on modes"))
     }
 
-    /// Change the modes -- define one, bind a key, add a completion source.
+    /// Runs F on the modes, under their write lock.
     pub(crate) fn modes_mut<R>(&self, f: impl FnOnce(&mut Modes<B>) -> R) -> R {
         f(&mut self.modes.write().expect("write lock on modes"))
     }
 
-    /// Ask the runtime something. Same rules as [`EditorState::windows`].
-    pub(crate) fn runtime<R>(&self, f: impl FnOnce(&Runtime) -> R) -> R {
-        f(&self.runtime.read().expect("read lock on runtime"))
+    /// Runs F on the commands, under their read lock.
+    pub(crate) fn commands<R>(&self, f: impl FnOnce(&Commands<B>) -> R) -> R {
+        f(&self.commands.read().expect("read lock on commands"))
     }
 
-    /// Change it.
-    pub(crate) fn runtime_mut<R>(&self, f: impl FnOnce(&mut Runtime) -> R) -> R {
-        f(&mut self.runtime.write().expect("write lock on runtime"))
+    /// Runs F on the commands, under their write lock.
+    pub(crate) fn commands_mut<R>(&self, f: impl FnOnce(&mut Commands<B>) -> R) -> R {
+        f(&mut self.commands.write().expect("write lock on commands"))
     }
 
-    /// Ask what has been typed at a prompt before.
+    /// Runs F on the kill ring, under its read lock.
+    pub(crate) fn kill_yank<R>(&self, f: impl FnOnce(&KillYank) -> R) -> R {
+        f(&self.kill_yank.read().expect("read lock on kill_yank"))
+    }
+
+    /// Runs F on the kill ring, under its write lock.
+    pub(crate) fn kill_yank_mut<R>(&self, f: impl FnOnce(&mut KillYank) -> R) -> R {
+        f(&mut self.kill_yank.write().expect("write lock on kill_yank"))
+    }
+
+    /// Runs F on the keyboard macros, under their read lock.
+    pub(crate) fn macros<R>(&self, f: impl FnOnce(&Macros) -> R) -> R {
+        f(&self.macros.read().expect("read lock on macros"))
+    }
+
+    /// Runs F on the keyboard macros, under their write lock.
+    pub(crate) fn macros_mut<R>(&self, f: impl FnOnce(&mut Macros) -> R) -> R {
+        f(&mut self.macros.write().expect("write lock on macros"))
+    }
+
+    /// Runs F on what has been typed at the prompts, under its read lock.
     pub(crate) fn history<R>(&self, f: impl FnOnce(&History) -> R) -> R {
         f(&self.history.read().expect("read lock on history"))
     }
 
-    /// Add to it, or walk through it.
+    /// Runs F on what has been typed at the prompts, under its write lock.
     pub(crate) fn history_mut<R>(&self, f: impl FnOnce(&mut History) -> R) -> R {
         f(&mut self.history.write().expect("write lock on history"))
+    }
+
+    /// Runs F on the log, under its read lock.
+    ///
+    /// Logging does not come through here: [`Log::append`] takes the lock
+    /// itself, for the WorkManager, which logs without an editor.
+    pub(crate) fn log<R>(&self, f: impl FnOnce(&Log) -> R) -> R {
+        f(&self.log.read().expect("read lock on log"))
+    }
+
+    /// Runs F on the log, under its write lock.
+    pub(crate) fn log_mut<R>(&self, f: impl FnOnce(&mut Log) -> R) -> R {
+        f(&mut self.log.write().expect("write lock on log"))
+    }
+
+    /// Runs F on the runtime, under its read lock.
+    pub(crate) fn runtime<R>(&self, f: impl FnOnce(&Runtime) -> R) -> R {
+        f(&self.runtime.read().expect("read lock on runtime"))
+    }
+
+    /// Runs F on the runtime, under its write lock.
+    pub(crate) fn runtime_mut<R>(&self, f: impl FnOnce(&mut Runtime) -> R) -> R {
+        f(&mut self.runtime.write().expect("write lock on runtime"))
     }
 }

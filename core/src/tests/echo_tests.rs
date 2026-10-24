@@ -267,10 +267,9 @@ mod tests {
 
     // ---------------- what the renderer is told to wait for ----------------
 
-    /// The message's clock is what the renderer waits on. It used to ask
-    /// `echo_expiry_in` directly; it now asks `next_redraw_in`, which has a
-    /// second reason to wake in it -- and the message must not have been lost
-    /// in the move, or a message would sit on screen until the next keystroke.
+    /// The message's clock is what the renderer waits on, through
+    /// `next_redraw_in`, which has other reasons to wake in it: the message
+    /// must be one of them, or it would stay on screen until the next key.
     #[test]
     fn a_pending_message_is_reason_enough_to_wake() {
         let (ctx, env) = editor();

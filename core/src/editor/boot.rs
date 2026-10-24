@@ -1,32 +1,23 @@
-//! Bringing an editor into existence: the initial state, the Lisp that
-//! configures it, and the environment the two are wired into.
+//! Bringing an editor into being: its first state, the Lisp environment wired
+//! to it, the settings with their first values, and the configuration loaded.
+//!
+//! Design: `doc/architettura-editor.typ, <avvio>`.
 
 use super::*;
 use crate::paths::{AppDir, CACHE_DIR, CONFIG_DIR, DirOptions, app_dir};
 
-/// Create a global EditorState environment and a Lisp environment associated to it.
-/// It installs in the lisp environment all the primitive functions to use the editor.
-/// It is mandatory that the lisp environment does not outlive the EditorState struct.
-/// The configuration the editor writes for somebody who has none.
+/// The `init.lisp` the editor writes for somebody who has none.
 ///
-/// A named constant rather than a literal inside the function that writes it,
-/// so that a test can evaluate it -- and the test evaluates it into a bare
-/// environment, because that is the situation it is written for.
+/// `eval-file` lines and settings, and nothing that needs a macro: the modules
+/// it loads are what define the macros, and without one -- no `data/lisp`
+/// beside a test binary, a module taken out -- a form using it is an ordinary
+/// call, which fails and takes the editor down with it. A command belongs in a
+/// module, or in Rust.
 ///
-/// # What may go in here
-///
-/// `eval-file` lines, and settings. Nothing that needs a macro: the modules
-/// this file loads are what *define* the macros, and when one of them is
-/// missing -- a test binary with no `data/lisp` beside it, an installation
-/// with a module removed -- `defcommand` is not a macro and a form using it is
-/// evaluated as an ordinary call. That does not degrade, it raises, and this
-/// file is evaluated with `?` so it takes the whole editor down with it.
-/// Anything that wants to be a command belongs in a module or in Rust. It is a Rust *raw* string, which means a
-/// backslash in it is a backslash: Lisp written here with the escaping habits
-/// of an ordinary string literal reaches the parser with the backslashes still
-/// attached. Loading survives that -- `defcommand' does not evaluate its body
-/// -- and the failure waits until somebody runs the command, which is a long
-/// way from here.
+/// A raw string, where a backslash is a backslash: Lisp written here with the
+/// escapes of an ordinary string literal reaches the parser with them still
+/// in, and fails only when the command it is in runs. A named constant, so
+/// that a test can evaluate it, in a bare environment, as it is written to be.
 pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; Add your configuration here.
 ;;
@@ -108,8 +99,8 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 
 "#;
 
-/// The editor's WorkManager, its reports going to LOG and its watchdog
-/// writing LOG's file: manual in this crate's own tests, with an executor
+/// Returns the editor's WorkManager, which reports to LOG, and whose watchdog
+/// writes LOG's file: in manual mode in this crate's tests, with an executor
 /// thread everywhere else.
 fn work_manager<B: BufferTrait>(log: &Arc<RwLock<Log>>) -> WorkManager<EditorState<B>> {
     let report = {
@@ -121,7 +112,7 @@ fn work_manager<B: BufferTrait>(log: &Arc<RwLock<Log>>) -> WorkManager<EditorSta
     } else {
         WorkManager::threaded(report)
     };
-    // Nothing that logs writes the file: the watchdog does, every turn. See
+    // What logs does not write the file: the watchdog does, every turn. See
     // `managers::log`.
     let log = log.clone();
     work.after_watch(move || Log::flush(&log));
@@ -129,15 +120,17 @@ fn work_manager<B: BufferTrait>(log: &Arc<RwLock<Log>>) -> WorkManager<EditorSta
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Create a new EditorState environment. Install the default keymaps,
-    /// provides a default *scratch* buffer in a base window.
+    /// Returns an editor with the bindings written in Rust, one window showing
+    /// `*scratch*`, and the jobs that colour and prescan started, waiting for a
+    /// buffer or a grammar to change.
     fn new() -> Self {
         let mut keymaps = Keymap::new();
         fill_default_keymaps(&mut keymaps);
 
-        // Made before the editor, so the WorkManager's reports can go to it.
+        // Made before the editor, so that the WorkManager's reports can go to
+        // it.
         let log = Arc::new(RwLock::new(Log::default()));
-        // And the WorkManager before the compartments, so the topics they
+        // And the WorkManager before the compartments, so that the topics they
         // emit are its own.
         let work = work_manager(&log);
         let buffers = Buffers::new(work.topic(BUFFER_CHANGED));
@@ -173,23 +166,23 @@ impl<B: BufferTrait> EditorState<B> {
             log,
             history: Arc::new(RwLock::new(History::default())),
         };
-        // The executor's copy of the state, which could not exist before the
-        // state did. A copy is a cycle -- the state holds the WorkManager --
-        // and `shutdown` is what breaks it.
+        // The executor's copy of the editor, which could not exist before the
+        // editor did: a cycle, since the editor holds the WorkManager, which
+        // `shutdown` breaks.
         editor_state.work.start(editor_state.clone());
-        // Colouring runs from here on, a bounded chunk at a time, whenever a
-        // buffer or a grammar changes. Started at construction rather than
-        // when a grammar is first defined, because a job waiting for a change
-        // costs nothing and a job that was never started costs a file with no
-        // colour and no explanation.
+        // Colouring runs from here on, a bounded piece at a time, whenever a
+        // buffer or a grammar changes: started with the editor, since a job
+        // that waits costs nothing, and one never started costs a file with no
+        // colour and nothing saying why.
+        // TODO(BKG-2): submitted once, so a job that panics is gone for the
+        // session, and only the log says so.
         editor_state
             .work
             .submit(Highlighter::spec(), Box::new(Highlighter));
-        // And the other lexer over the same text: the balanced-expression scan
-        // that `forward-sexp', the indenter and `syntax-ppss' read. Same
-        // topics and same bargain -- what it has worked out makes a motion
-        // cheap, and what it has not yet reached makes one scan from the top,
-        // which is what every motion did before this job existed.
+        // And the other lexer over the same text: the scan of balanced
+        // expressions that `forward-sexp`, the indenter and `syntax-ppss` read,
+        // on the same topics. What it has worked out makes a motion cheap, and
+        // where it has not got to yet a motion scans from the top.
         editor_state
             .work
             .submit(Prescanner::spec(), Box::new(Prescanner));
@@ -197,19 +190,16 @@ impl<B: BufferTrait> EditorState<B> {
         editor_state
     }
 
-    /// Eval a lisp file in the editor context. First it look for the file as an
-    /// absolute or relative path and if exists evalues it. If not and if the path
-    /// is instead the name of a file without extension, it looks for
-    /// it in the `lisp_path` paths in order and if it exists evalues it. If the
-    /// file doesn't exists in any of this paths returns nil and simply reports
-    /// it on the logs and doesn't evaluate anything otherwise evaluate it and if
-    /// the evaluation succeeds return a list with the result of the evaluation or
-    /// the error of the evaluation.
+    /// Evaluates the Lisp file FILE, and returns a list holding the value of
+    /// its last form, or the first error its evaluation raised.
     ///
-    /// `lisp_path` is read from ENV, and the file is evaluated at the top
-    /// level of it, as `top_level` finds it, wherever the call comes from: a
-    /// module loaded from inside a function, or with M-:, defines what
-    /// init.lisp would.
+    /// FILE is a path, absolute or relative; when there is no such file and
+    /// FILE is a bare name, with no `/`, `\` or `.`, it is `FILE.lisp` in the
+    /// first directory of `lisp-path`, read from ENV, that has one. A file not
+    /// found, or not read, is logged, and the answer is nil. The file is
+    /// evaluated at the root of ENV's chain, as `top_level` finds it, wherever
+    /// the call comes from: a module loaded inside a function, or with `M-:`,
+    /// defines what `init.lisp` would.
     pub fn eval_file(
         &self,
         file: &str,
@@ -217,21 +207,22 @@ impl<B: BufferTrait> EditorState<B> {
     ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
         let content = format!(
             "(progn {})",
-            // first search the file as a relative path
+            // First, FILE as a path.
             match std::fs::read_to_string(file) {
                 Ok(content) => content,
                 Err(err) => {
-                    // if file wasn't a path to an existing file
+                    // No such file.
                     if let std::io::ErrorKind::NotFound = err.kind() {
-                        // if file is instead a name of a lisp file without extension
+                        // A name with a separator or a dot was meant as a
+                        // path; a bare one is looked for in `lisp-path`.
                         if file.contains('\\') || file.contains('/') || file.contains('.') {
                             self.log_diagnostic(&format!(
                                 "[ERROR] eval_file {file} is not a valid script name"
                             ));
                             return Ok(ELispExp::nil());
                         } else {
-                            // search for file.lisp in every lisp-path folder
-                            // 1. get the lisp-path lists, and check it is a list of strings
+                            // FILE.lisp, in the directories of `lisp-path`:
+                            // first the directories, each a string;
                             let mut lisp_path = vec![];
                             if let Some(lisp_path_list) = env.get_variable(LISP_PATH) {
                                 if matches!(lisp_path_list, ELispExp::Cons(_)) {
@@ -252,7 +243,7 @@ impl<B: BufferTrait> EditorState<B> {
                                     return Ok(ELispExp::symbol("nil".into()));
                                 }
                             };
-                            // 2. check for each path in lisp-path if there is a file in *path*/*file*.lisp
+                            // then the first of them that has the file.
                             let mut script_content = None;
                             for path in lisp_path {
                                 if let Ok(content) =
@@ -279,6 +270,8 @@ impl<B: BufferTrait> EditorState<B> {
             }
         );
 
+        // TODO(AVV-2): read as one form, so that a closing parenthesis too
+        // many or too few evaluates nothing, and nothing says so.
         let ast = if let Ok(ast) = Parser::new(&content).next() {
             ast
         } else {
@@ -291,13 +284,13 @@ impl<B: BufferTrait> EditorState<B> {
     }
 }
 
-/// The environment at the root of ENV's chain: where init.lisp is evaluated.
+/// Returns the environment at the root of ENV's chain, where `init.lisp` is
+/// evaluated.
 ///
-/// A `defun`, a `defvar` or the `setq` of a new name binds in the
-/// environment it is evaluated in, so one evaluated inside a function is
-/// that function's own, and goes when it returns. What has to outlive the
-/// call -- a file being loaded, an expression typed at M-: -- is evaluated
-/// here instead.
+/// A `defun`, a `defvar` or the `setq` of a new name binds in the environment
+/// it is evaluated in, so one evaluated inside a function is that function's,
+/// and goes when it returns. What must outlive the call -- a file being
+/// loaded, an expression typed at `M-:` -- is evaluated here instead.
 pub(crate) fn top_level<B: BufferTrait>(
     env: &Arc<Env<EditorState<B>>>,
 ) -> Arc<Env<EditorState<B>>> {
@@ -308,36 +301,15 @@ pub(crate) fn top_level<B: BufferTrait>(
     env
 }
 
-/// Point this process's configuration, and its cache, at directories of its
-/// own, once.
+/// Points this process's configuration and cache at directories of its own,
+/// in the system's temporary directory, once: building an editor in a test
+/// then neither writes into the configuration of whoever runs the tests, nor
+/// depends on where `HOME` points at that instant, which several tests move.
 ///
-/// # Why a test suite needs this at all
-///
-/// Building an editor *creates* its configuration directory and then
-/// evaluates what is in it. Under a person's real `HOME` that means `cargo
-/// test` writing into their configuration and then running it, so the suite's
-/// behaviour depends on whose machine it is on.
-///
-/// Worse, `HOME` is not stable during a run. Several tests redirect it at a
-/// sandbox to check path expansion, and the redirection is process-wide while
-/// the test runner is threaded -- so an editor built by *any* concurrent test
-/// landed its configuration inside whichever sandbox happened to be installed
-/// at that instant. The symptom was a listing of a two-file sandbox that
-/// occasionally had a `.config/` in it, failing in whichever test was unlucky
-/// rather than in the one that caused it.
-///
-/// Naming a directory of this process's own removes both -- and it does so
-/// through [`CONFIG_DIR`], the same door a person would use, so the
-/// resolution in `crate::paths` is *exercised* by the suite rather than
-/// bypassed by it. The cache through [`CACHE_DIR`], for the same reason:
-/// what the editor keeps there must not land in the person's either.
-///
-/// # Why it is public
-///
-/// The binary crate's tests build editors too, and `cfg(test)` is not active
-/// in a library compiled as a dependency, so nothing conditional in here can
-/// reach them. Hidden from the documentation because it is scaffolding rather
-/// than a feature.
+/// Through [`CONFIG_DIR`] and [`CACHE_DIR`], the doors a person would use, so
+/// that the tests go through what `crate::paths` decides. Public for the
+/// binary crate's tests, which `cfg(test)` does not reach in a library built
+/// as a dependency; hidden from the documentation, since it is scaffolding.
 #[doc(hidden)]
 pub fn isolate_config_for_tests() {
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -345,18 +317,14 @@ pub fn isolate_config_for_tests() {
         let dir = |what: &str| {
             std::env::temp_dir().join(format!("rsedit-test-{what}-{}", std::process::id()))
         };
-        // SAFETY: the environment is a process-wide table, and writing to it
-        // races with any concurrent read. That is why this happens exactly
-        // once and as early as it can -- before the first editor exists, and
-        // so before anything has read `RSEDIT_CONFIG_DIR`. The value is never
-        // changed and never removed, so there is one write in the life of the
-        // process and every later reader sees the same answer.
-        //
-        // The residual is the same one `tests::home_guard` carries: a thread
-        // reading some *other* variable at this instant is racing with this
-        // write, because the table is one table. Doing it first, once, is what
-        // keeps that window as small as it can be made without taking the
-        // environment out of the picture entirely.
+        // SAFETY: the environment is one table for the whole process, and a
+        // write to it races with any read. So this happens once, and as early
+        // as it can -- before the first editor exists, and so before anything
+        // has read `RSEDIT_CONFIG_DIR` -- and the values are never changed or
+        // removed: one write in the life of the process, and every reader
+        // after it sees the same answer. What is left is the race
+        // `tests::home_guard` carries too: a thread reading another variable
+        // at this instant races with this write, since the table is one.
         unsafe {
             std::env::set_var(CONFIG_DIR, dir("config"));
             std::env::set_var(CACHE_DIR, dir("cache"));
@@ -364,21 +332,25 @@ pub fn isolate_config_for_tests() {
     });
 }
 
+/// Builds an editor and the Lisp environment wired to it, and loads the
+/// configuration: the interpreter with every primitive and command, the
+/// settings with their first values, `init.lisp` -- written first when there
+/// is none -- and the jobs that watch the files and save copies of them.
+///
+/// The environment must not outlive the editor. An error that evaluating
+/// `init.lisp` raised is returned.
 pub fn create_global_env<B: BufferTrait>()
 -> Result<(EditorState<B>, Arc<Env<EditorState<B>>>), EvalError<EditorState<B>>> {
-    // Before anything reads the configuration, which is the whole of the
-    // ordering argument in `isolate_config_for_tests`. The binary crate's
-    // tests cannot be reached from here -- `cfg(test)` is not active in a
-    // library compiled as a dependency -- so they call it themselves.
+    // Before anything reads the configuration: see `isolate_config_for_tests`.
+    // The binary crate's tests, which `cfg(test)` does not reach here, call it
+    // themselves.
     #[cfg(test)]
     isolate_config_for_tests();
 
     let editor_state = EditorState::new();
     let env = bootstrap_vm(&editor_state)?;
 
-    // ---------------------- EDITOR ENVIRONMENT CONFIGURATION ----------------------
-
-    // Add the rsedit std lisp sources to *lisp-path*
+    // Where the modules are: `data/lisp`, beside the executable.
     match std::env::current_exe() {
         Ok(exe_path) => {
             env.set_variable(
@@ -400,12 +372,10 @@ pub fn create_global_env<B: BufferTrait>()
         }
     }
 
-    // Off here and turned on by the default init.lisp below. See `mouse_mode`
-    // for why it is a setting rather than simply on.
+    // Off here, and on in the default `init.lisp`: see `mouse_mode`.
     env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
 
-    // Add a list of callbacks that will be called after a resize event.
-    // The list will contain lambdas with arguments (new_width, new_height)
+    // The functions called after a resize, each with the new width and height.
     env.set_variable(AFTER_RESIZE_HOOK.into(), ELispExp::nil());
 
     // Auto-saving and watching files, on, at the pace they keep when nothing
@@ -473,7 +443,7 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::string(DEFAULT_MODE_LINE_FORMAT.to_string()),
     );
 
-    // The char used to draw vertical windows separators.
+    // The character the separators between windows are drawn with.
     env.set_variable(
         WINDOW_SEPARATOR.into(),
         ELispExp::string(DEFAULT_WINDOW_SEPARATOR.to_string()),
@@ -492,6 +462,7 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::number(DEFAULT_LINE_NUMBER_DIGITS as f64),
     );
 
+    // Where a listing is shown, and where a visit to one of its entries goes.
     env.set_variable(
         RESULTS_VISIT_SAME_WINDOW.into(),
         ELispExp::nil(),
@@ -509,20 +480,18 @@ pub fn create_global_env<B: BufferTrait>()
 
     document_settings(&env);
 
-    // Create the fundamental modes:
-    // - fundamental-mode to edit base files
+    // The mode of a buffer that no other mode claims.
     editor_state.set_mode(
         "fundamental-mode",
         MajorMode::new("fundamental-mode".into()),
     );
 
-    // ---------------------- FILLING PRIMITIVE FUNCTIONS -----------------------------
+    // The primitives and the commands, and the two features written in Rust.
     install_primitives(&editor_state, &env);
     install_minibuffer(&editor_state, env.clone());
     install_isearch(&editor_state, env.clone());
 
-    // --------------------- LOADING LISP CONFIGURATION -------------------------------
-    // Set the `rsedit-path' env variable to the path of rsedit
+    // The configuration, and before it `rsedit-path`, the executable's path.
     let current_exe_path =
         std::env::current_exe().expect("Failed to locate the path of rsedit executable");
     env.set_variable(
@@ -530,12 +499,11 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::string(format!("{}", current_exe_path.display())),
     );
 
-    // The configuration directory, made if it is not there yet, and the
-    // init.lisp in it -- written from the default first, when it is missing.
-    // Where that directory is, on each system, is `crate::paths`'s to say.
-    //
-    // An empty path when there is no directory to be had, which `eval_file`
-    // reads as nothing to evaluate.
+    // The configuration's directory, made if it is not there yet, and its
+    // `init.lisp`, written from the default first when it is missing. Where
+    // the directory is, on each system, is `crate::paths`'s to say; when there
+    // is none to be had the path is empty, which `eval_file` reads as nothing
+    // to evaluate.
     let user_config_path = match app_dir(DirOptions {
         dir: AppDir::Config,
         create: true,
@@ -547,6 +515,8 @@ pub fn create_global_env<B: BufferTrait>()
         }
     };
 
+    // TODO(AVV-5): written only when missing, so one written by an older
+    // editor never loads the modules added since.
     if !user_config_path.as_os_str().is_empty()
         && !user_config_path.exists()
         && let Err(err) = fs::write(&user_config_path, DEFAULT_INIT_LISP)
@@ -564,17 +534,16 @@ pub fn create_global_env<B: BufferTrait>()
         env.clone(),
     )?;
 
-    // The third background job, submitted here rather than beside the other
-    // two: it looks *outwards*, at whether the files the buffers came from are
-    // still what they were, and both how often it looks and the switch that
-    // turns it off are settings. So it needs the environment, and comes after
-    // `init.lisp`, so that what that says counts from the first look and not
-    // only from the second. It reads both again at every step.
+    // The third job, submitted here and not with the other two: it looks
+    // outward, at whether the buffers' files are still what they were, and how
+    // often it looks and the switch that turns it off are settings. So it
+    // takes the environment, and comes after `init.lisp`, whose settings then
+    // count from the first look; it reads both again at every step.
     let watcher = FileWatcher::new(env.clone());
     editor_state.work.submit(watcher.spec(), Box::new(watcher));
-    // And the fourth: a copy on disk of whatever has not been saved, for the
-    // one loss nothing else in this tier covers -- the editor stopping without
-    // being asked. Its settings, likewise. See `crate::modes::autosave`.
+    // And the fourth: a copy on disk of what has not been saved, for the one
+    // loss nothing else covers, the editor stopping without being asked. Its
+    // settings likewise. See `crate::modes::autosave`.
     let saver = AutoSaver::new(env.clone());
     editor_state.work.submit(saver.spec(), Box::new(saver));
 

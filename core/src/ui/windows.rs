@@ -1349,8 +1349,8 @@ pub fn expand_mode_line<B: BufferTrait>(format: &str, buffer: &Buffer<B>) -> Str
             Some('f') => out.push_str(buffer.file_path.as_deref().unwrap_or(&buffer.name)),
             Some('m') => out.push_str(&buffer.current_mode),
             Some('s') => {
-                if let Some(crate::ELispExp::String(state)) =
-                    buffer.data::<crate::ELispExp<B>>("lisp:mode-line-state")
+                if let Some(ELispExp::String(state)) =
+                    buffer.data::<ELispExp<B>>("lisp:mode-line-state")
                 {
                     out.push_str(state);
                 }

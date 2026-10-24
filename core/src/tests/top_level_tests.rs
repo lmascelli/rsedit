@@ -4,7 +4,7 @@
 //! A `defun`, a `defvar` or the `setq` of a new name binds in the environment
 //! it is evaluated in. Evaluated inside a function it is that function's own,
 //! and goes when the function returns -- which is what a file loaded from a
-//! command, or an expression typed at M-:, must not do.
+//! command, or an expression typed at `M-:`, must not do.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

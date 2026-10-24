@@ -1,8 +1,5 @@
-//! `EditorState::snapshot` -- the single point where render state is captured.
-//!
-//! These pin the two properties the snapshot exists to provide: that a frame is
-//! captured as one consistent value, and that capture holds no locks past its
-//! own return.
+//! `EditorState::snapshot`, where what the host draws is captured: a frame is
+//! one consistent value, and capturing it holds no lock past its return.
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -23,9 +20,8 @@ mod tests {
     }
 
     /// A snapshot is a plain value: no locks, no borrows, nothing pointing back
-    /// into editor state. That is what will let the renderer move to its own
-    /// thread without an audit of every draw call, so it is worth asserting at
-    /// compile time rather than discovering later.
+    /// into the editor's state. That is what lets a renderer draw on a thread
+    /// of its own, and it is asserted at compile time.
     #[test]
     fn a_snapshot_is_owned_data_that_can_cross_a_thread() {
         fn assert_send_sync_static<T: Send + Sync + 'static>() {}
@@ -57,10 +53,9 @@ mod tests {
         );
     }
 
-    /// Everything the renderer needs is in the snapshot, taken at one instant.
-    /// Before this existed the echo area was read *after* `compose_layout` had
-    /// returned and dropped its locks, so a frame could show a message that was
-    /// set after its own windows were composed.
+    /// Everything the renderer needs is in the snapshot, taken at one instant:
+    /// the echo area with the windows, so that a frame cannot show a message
+    /// set after its windows were composed.
     #[test]
     fn the_echo_area_is_captured_with_the_windows_not_after_them() {
         let (state, env) = editor();
@@ -75,26 +70,17 @@ mod tests {
         assert_eq!(state.snapshot(&env, W, H).echo_message, "second");
     }
 
-    /// The regression this refactor is for.
+    /// Every frame has exactly one focused view, however the writes of other
+    /// threads fall: a capture that read the focus once for the tiled tree
+    /// and again for each float would, with focus moving in between, draw a
+    /// cursor in two windows or in none. The WorkManager's executor and
+    /// threads act on clones of the editor, and so does `(spawn ...)`.
     ///
-    /// Capture used to read `focused_window_id` once for the tiled tree and
-    /// then **again for every floating window**, and to acquire `buffers` four
-    /// separate times. A focus change landing between two of those reads
-    /// produced a frame with two focused windows, or none -- a cursor drawn in
-    /// two places at once. That is not hypothetical: the WorkManager's
-    /// executor and threads run with a clone of `EditorState`, and
-    /// `(spawn ...)` adds more.
-    ///
-    /// This opens a floating window so the float path is actually exercised,
-    /// hammers the buffers from three threads, and checks the one invariant
-    /// that is *not* structurally guaranteed by the composition code: exactly
-    /// one view is focused, in every frame, however the writes interleave.
-    ///
-    /// Note what is deliberately not asserted here. `lines.len() <=
-    /// rect.height` and "the cursor sits inside its window" are both enforced
-    /// by `extract_buffer_lines` and the scroll adjustment respectively, so
-    /// they hold whether or not capture is atomic -- asserting them would look
-    /// like a consistency check while testing nothing.
+    /// This opens a float, so that its path runs; moves focus from one thread
+    /// and writes into the buffer from another while this one captures; and
+    /// checks the one property the composition does not guarantee by its
+    /// shape. `lines.len() <= rect.height`, and the cursor inside its window,
+    /// hold whether or not the capture is atomic, and are not asserted.
     #[test]
     fn every_frame_has_exactly_one_focused_window_under_concurrent_mutation() {
         const SNAPSHOTS: usize = 300;
@@ -115,9 +101,8 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
 
         // The thread that makes this test bite: focus moves between the tiled
-        // window and the float continuously, so any capture that reads
-        // `focused_window_id` more than once will eventually read two
-        // different values while composing a single frame.
+        // window and the float without pause, so a capture that read the focus
+        // more than once would read two values in one frame.
         let flipper = {
             let state = state.clone();
             let stop = stop.clone();
@@ -131,10 +116,9 @@ mod tests {
             })
         };
 
-        // One writer, not a herd. The point is that mutation happens *during*
-        // capture, which one thread achieves just as well -- and both helpers
-        // yield rather than spinning, so this test does not saturate the
-        // machine and skew the timing benchmarks running alongside it.
+        // One writer, not a herd: what matters is that the editor changes
+        // during the capture. Both helpers yield rather than spin, so that the
+        // test does not take the machine from the timings run beside it.
         let writer = {
             let state = state.clone();
             let stop = stop.clone();

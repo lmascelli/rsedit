@@ -1,20 +1,18 @@
-//! The window half of the facade: splitting, closing, focusing and scrolling.
+//! The windows' half of the facade: splitting, closing, focusing and scrolling,
+//! with what each needs of a buffer -- a scroll needs a line count, a move of
+//! focus makes a buffer current -- and what the mouse asks of the windows.
 //!
-//! The compartment is [`crate::managers::Windows`]. What is here is the part
-//! that needs a buffer: a scroll needs a line count, moving focus makes a
-//! buffer current, and closing a window may hand focus to another.
+//! Design: `doc/architettura-editor.typ, <coppie>`.
 
 use super::*;
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Split the focused window, giving the two halves DIVISION, and return
+    /// Splits the focused window, the halves divided by DIVISION, and returns
     /// the new window's id. See [`Windows::split_focused`].
     ///
-    /// `Division::Ratio(0.5)` is the ordinary `C-x 2`/`C-x 3`. A caller that
-    /// wants to keep a particular size -- a directory listing that should stay
-    /// a fixed width while the file beside it takes the rest -- passes
-    /// `Division::FirstFixed` instead, the first child being the window that
-    /// was split.
+    /// `Division::Ratio(0.5)` is `C-x 2` and `C-x 3`. A window that keeps its
+    /// size -- a listing beside the file it lists -- is split with
+    /// `Division::FirstFixed`, the first half being the window split.
     pub(crate) fn split_focused_window(
         &self,
         orientation: Orientation,
@@ -23,24 +21,19 @@ impl<B: BufferTrait> EditorState<B> {
         self.windows_mut(|windows| windows.split_focused(orientation, division))
     }
 
-    /// Open a full-width window of exactly HEIGHT rows at the bottom of the
-    /// frame, showing BUFFER, and return its id.
-    ///
-    /// Focus does not move, which is the property everything else rests on.
-    /// See [`Windows::open_bottom`] for why.
+    /// Opens a window as wide as the frame and HEIGHT rows high at its bottom,
+    /// showing BUFFER, and returns its id. Focus stays where it is: see
+    /// [`Windows::open_bottom`].
     pub(crate) fn open_bottom_window(&self, buffer: &str, height: usize) -> WindowId {
         self.windows_mut(|windows| windows.open_bottom(buffer, height))
     }
 
-    /// Scroll the focused window so that the line point is on sits `where_to`
-    /// of the way down it, without moving point. See
+    /// Scrolls the focused window so that point's line sits WHERE_TO of the
+    /// way down it, without moving point; false when nothing moved. See
     /// [`Windows::recenter_focused`].
     ///
-    /// The coordination here is reading the buffer first: the compartment is
-    /// told the two numbers it needs rather than being handed the buffer, so
-    /// the two locks are never held together.
-    ///
-    /// False when nothing changed, so a caller can tell a no-op from a scroll.
+    /// The buffer is read first, and the compartment is told the two numbers
+    /// it needs: the two locks are never held together.
     pub(crate) fn recenter_focused_window(&self, where_to: f64) -> bool {
         let Some(name) = self.focused_window_buffer() else {
             return false;
@@ -53,13 +46,12 @@ impl<B: BufferTrait> EditorState<B> {
         self.windows_mut(|windows| windows.recenter_focused(where_to, line_count, point_line))
     }
 
-    /// Move the focused window's view by AMOUNT screenfuls, forwards when
-    /// AMOUNT is positive, and drag point along if it would otherwise be left
-    /// outside. See [`Windows::scroll_focused`].
+    /// Moves the focused window's view by AMOUNT screens, forward when AMOUNT
+    /// is positive, and takes point along when it would be left outside. See
+    /// [`Windows::scroll_focused`].
     ///
-    /// Returns false when the view could not move at all -- already showing
-    /// the end and asked to go forward, or the beginning and asked to go back
-    /// -- so the caller can say so rather than leaving the key looking broken.
+    /// False when the view could not move -- at the end going forward, at the
+    /// start going back -- so that the caller can say so.
     pub(crate) fn scroll_focused_window(&self, amount: isize) -> bool {
         let Some(name) = self.focused_window_buffer() else {
             return false;
@@ -70,10 +62,8 @@ impl<B: BufferTrait> EditorState<B> {
         }) else {
             return false;
         };
-        // The window lock is let go before point is touched. Moving point is
-        // a change to a *buffer*, which is why the compartment names a line
-        // rather than making the move itself: it has no business holding a
-        // buffer, and this way it never does.
+        // The windows are let go before point moves: moving point changes a
+        // buffer, and the compartment, which holds none, only names the line.
         let Scrolled::Yes { drag_point_to } =
             self.windows_mut(|windows| windows.scroll_focused(amount, line_count, point_line))
         else {
@@ -85,20 +75,14 @@ impl<B: BufferTrait> EditorState<B> {
         true
     }
 
-    /// Close the window with ID, whoever has focus.
+    /// Closes the window ID, whichever window has focus; false when there is
+    /// no such window, or it is the only one.
     ///
-    /// Separate from `delete_focused_window` because a strip is closed by
-    /// whatever put it there, which by then is running in a different window
-    /// entirely -- giving the strip focus first, just to be able to close it,
-    /// would make its buffer current and defeat the point of never focusing it.
-    ///
-    /// Returns false when there is no such window, or when it is the only one:
-    /// a frame with no windows has nowhere to draw a cursor.
+    /// For a strip, which whatever opened it closes while working in another
+    /// window: focusing the strip first would make its buffer current.
     pub(crate) fn delete_window_by_id(&self, id: WindowId) -> bool {
-        // `Refocus` means the compartment has already moved focus. What is
-        // left is the editor's half of a focus change -- making that window's
-        // buffer current and putting point back where it was -- and it is done
-        // out here, after the lock is given back, because both touch buffers.
+        // `Refocus` means the compartment has moved focus. What is left is the
+        // buffer's half of the move, which needs the lock given back first.
         match self.windows_mut(|windows| windows.remove(id)) {
             WindowRemoved::No => false,
             WindowRemoved::Yes => true,
@@ -109,29 +93,21 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    /// Close the focused window. False when it is the only one.
-    ///
-    /// The same operation as `delete_window_by_id` and now written as one: the
-    /// two used to differ in whether focus moved afterwards, which was never a
-    /// difference between them but a difference between *which* window went.
-    /// [`Windows::remove`] answers that, so there is one rule rather than two
-    /// copies of it that could drift.
+    /// Closes the focused window; false when it is the only one.
     pub(crate) fn delete_focused_window(&self) -> bool {
         self.delete_window_by_id(self.get_focused_window_id())
     }
 
-    /// Close every window but the focused one.
+    /// Closes every window but the focused one.
     pub(crate) fn delete_other_windows(&self) -> bool {
         self.windows_mut(|windows| windows.delete_others())
     }
 
-    /// Move focus COUNT windows on, wrapping round.
-    ///
-    /// A negative count goes the other way, which is what lets one command
-    /// serve `C-x o` and a reversed `C-x o` alike.
+    /// Moves focus COUNT windows on, round the end; a negative count goes the
+    /// other way, so that one command serves `C-x o` both ways.
     pub(crate) fn focus_other_window(&self, count: isize) -> bool {
         // As in `delete_window_by_id`: the compartment moves focus, and the
-        // buffer half of the move happens after the lock is back.
+        // buffer's half of the move comes once the lock is back.
         let Some(landed) = self.windows_mut(|windows| windows.focus_other(count)) else {
             return false;
         };
@@ -139,31 +115,25 @@ impl<B: BufferTrait> EditorState<B> {
         true
     }
 
-    /// How many tiled windows the frame holds.
+    /// Returns how many tiled windows the frame holds.
     pub(crate) fn window_count(&self) -> usize {
         self.windows(|windows| windows.count())
     }
 
-    /// The buffer shown by the focused window, which is not always the current
-    /// buffer: a floating prompt takes the current buffer without taking a
-    /// tiled window's place.
+    /// Returns the buffer the focused window shows. Not always the current
+    /// one: a prompt takes the current buffer without taking a tiled window's
+    /// place.
     pub(crate) fn focused_window_buffer(&self) -> Option<String> {
         self.windows(|windows| windows.focused_buffer())
     }
 
-    /// Create a new buffer named BUF_NAME (in major mode MODE, defaulting
-    /// to fundamental-mode) and open it in a new bordered floating window
-    /// at (X, Y) with the given WIDTH/HEIGHT and optional TITLE, giving
-    /// that window focus. Closing the floating window (`close-buffer` or
-    /// `close-floating-window`) restores focus to whatever window was
-    /// focused before this call. Shared by the `make-floating-window`
-    /// primitive and the built-in minibuffer, so both open a floating
-    /// window exactly the same way.
+    /// Makes a buffer BUF_NAME, in MODE or `fundamental-mode`, shows it in a
+    /// bordered floating window at (X, Y), WIDTH by HEIGHT and titled TITLE,
+    /// gives that window focus, and returns its id. Closing the window gives
+    /// focus back to the one that had it.
     ///
-    /// Returns the new window's id, so that whatever opened it can select it
-    /// again. It used to return nothing, which left a module with no name for
-    /// the window it had just made: `selected-window` answers only while the
-    /// float still has focus, and after that there was nothing to ask.
+    /// The `make-floating-window` primitive and the minibuffer both open their
+    /// windows here.
     pub(crate) fn open_floating_window(
         &self,
         buf_name: &str,
@@ -178,9 +148,8 @@ impl<B: BufferTrait> EditorState<B> {
         let previous_focused_window_id = self.get_focused_window_id();
         self.new_buffer(buf_name, None, mode, env);
 
-        // The id and the push are one acquisition rather than two, which is
-        // what a single lock over the five old fields buys: no other thread
-        // can see an id handed out and not yet used.
+        // The id and the push in one acquisition: no other thread sees an id
+        // handed out and not yet used.
         let new_id = self.windows_mut(|windows| {
             let new_id = windows.next_id();
             windows.floating_mut().push(FloatingWindow {
@@ -198,23 +167,19 @@ impl<B: BufferTrait> EditorState<B> {
             new_id
         });
 
-        // No `set_current_buffer_name` here: the float is in the list before
-        // focus moves, so the chokepoint finds it and makes it current. Setting
-        // it a second time would work today and rot the moment the two
-        // disagree about what "the buffer of window N" means.
+        // The float is in the list before focus moves, so following the focus
+        // makes its buffer current: setting it here too would be a second
+        // answer to "what window N shows".
         self.set_focused_window_id(new_id);
         new_id
     }
 
-    /// Scroll WINDOW by LINES, towards the end of the buffer when positive.
+    /// Scrolls WINDOW by LINES, toward the end of the buffer when LINES is
+    /// positive, without moving focus or point; false when there is no such
+    /// window, or the view was already as far as it goes.
     ///
-    /// Neither focus nor point moves. False when there is no such window or
-    /// the view was already as far as it goes.
-    ///
-    /// The two locks are taken one at a time and given straight back rather
-    /// than nested: the line count has to come from the buffer and the scroll
-    /// has to be written to the window, and holding both would put an edge in
-    /// the ordering for the sake of an operation that does not need one.
+    /// The two locks are taken one after the other, never together: the line
+    /// count from the buffer, then the scroll into the window.
     pub(crate) fn scroll_window_by(&self, window: WindowId, lines: isize) -> bool {
         let Some(name) = self.windows(|windows| windows.buffer_of(window)) else {
             return false;
@@ -225,9 +190,8 @@ impl<B: BufferTrait> EditorState<B> {
         }) else {
             return false;
         };
-        // The window lock is given back before point is touched -- moving point
-        // is a change to a buffer, and the compartment names a line rather than
-        // making the move itself.
+        // As in `scroll_focused_window`: the windows are let go before point
+        // moves.
         let Scrolled::Yes { drag_point_to } =
             self.windows_mut(|windows| windows.scroll_by(window, lines, line_count, point_line))
         else {
@@ -239,19 +203,17 @@ impl<B: BufferTrait> EditorState<B> {
         true
     }
 
-    /// Get the ID of the current focused window
+    /// Returns the id of the window with focus.
     pub fn get_focused_window_id(&self) -> WindowId {
         self.windows(|windows| windows.focused())
     }
 
-    /// Move focus to window ID, and make what it shows the current buffer.
-    ///
-    /// False when there is not, which is the useful answer rather than a
-    /// failure: a window remembered earlier may have been closed since, and
-    /// the caller wants to open a new one rather than be stopped.
+    /// Gives window ID focus, and makes what it shows the current buffer;
+    /// false when there is no such window, which a window remembered earlier
+    /// may have become.
     pub(crate) fn select_window(&self, id: WindowId) -> bool {
-        // Tiled or floating: a prompt is a float, and selecting one has to
-        // work exactly as selecting a tiled window does.
+        // Tiled or floating: a prompt is a float, and selecting one works as
+        // selecting a tiled window does.
         let exists = self.windows(|windows| windows.buffer_of(id).is_some());
         if exists {
             self.set_focused_window_id(id);
@@ -259,22 +221,20 @@ impl<B: BufferTrait> EditorState<B> {
         exists
     }
 
+    /// Gives window ID focus, makes what it shows the current buffer, and
+    /// puts point back where that window left it.
     pub(crate) fn set_focused_window_id(&self, id: WindowId) {
         self.windows_mut(|windows| windows.set_focused(id));
         self.follow_focus(id);
     }
 
-    /// The buffer half of a focus change: make what the newly focused window
-    /// shows the current buffer, and put point back where that window left it.
+    /// The buffer's half of a move of focus: makes what window ID shows the
+    /// current buffer, and puts point back where that window left it.
     ///
-    /// Separate from [`EditorState::set_focused_window_id`] because focus does
-    /// not always move from out here. `Windows::focus_other` and
-    /// `Windows::remove` move it themselves -- they have the lock open and the
-    /// list of survivors in hand -- and what they cannot do is touch a buffer.
-    /// This is the other half, and every path that moves focus ends in it.
-    ///
-    /// Called with no lock held, deliberately. It takes the windows to ask
-    /// what the window shows, and then the buffers to move point.
+    /// Apart from [`EditorState::set_focused_window_id`] because
+    /// `Windows::focus_other` and `Windows::remove` move focus themselves,
+    /// holding the list of survivors, and cannot touch a buffer. Every move of
+    /// focus ends here, with no lock held.
     fn follow_focus(&self, id: WindowId) {
         if let Some(name) = self.window_buffer(id) {
             self.set_current_buffer_name(&name);
@@ -282,29 +242,75 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    /// Put point back where the window taking focus last had it.
-    ///
-    /// Only tiled windows: a floating one is not in the layout, so it answers
-    /// `None` and nothing happens -- which is right, since a prompt's point
-    /// belongs to the prompt.
+    /// Puts point in BUFFER_NAME back where window ID last had it. Only a
+    /// tiled window remembers one: a float answers `None`, and a prompt's point
+    /// is the prompt's own.
     fn restore_window_point(&self, id: WindowId, buffer_name: &str) {
         let remembered = self.windows(|windows| windows.root().window(id).and_then(|w| w.point));
         let Some(offset) = remembered else {
             return;
         };
-        // The window lock is let go above rather than held across the write
-        // below. Windows come before buffers in the ordering, so holding both
-        // would be legal -- but every other path here copies out and lets go,
-        // and the one that does not is the one that eventually deadlocks.
+        // The windows are let go before the buffer is written. Holding both
+        // would keep to the order, windows before buffers, but every other
+        // path here copies out and lets go.
         self.with_buffer_mut(buffer_name, |buf| goto_offset(&mut buf.text, offset));
     }
 
-    /// What window ID is showing, whether it is tiled or floating.
-    ///
-    /// Both, because a minibuffer prompt is a floating window and giving it
-    /// focus has to make its buffer current in exactly the same way -- that is
-    /// what every prompt in the editor depends on.
+    /// Returns what window ID shows, tiled or floating: a prompt is a float,
+    /// and focusing one makes its buffer current as with any window.
     fn window_buffer(&self, id: WindowId) -> Option<String> {
         self.windows(|windows| windows.buffer_of(id))
+    }
+
+    // ------------------------------------------------------------------
+    // What the mouse asks of the windows
+    // ------------------------------------------------------------------
+
+    /// Returns what the pointer at (X, Y) is over, in cells of the last frame;
+    /// `None` over the echo area, or a gap no window claims.
+    pub(crate) fn hit_test(&self, x: isize, y: isize) -> Option<Hit> {
+        self.windows(|windows| windows.hit_test(x, y))
+    }
+
+    /// Records a left button going down at (X, Y), and returns whether it is
+    /// the second of a pair.
+    pub(super) fn register_click(&self, x: isize, y: isize) -> ClickCount {
+        self.windows_mut(|windows| windows.register_click(x, y))
+    }
+
+    /// Ends the drag in progress, and returns it.
+    pub(super) fn take_mouse_drag(&self) -> Option<MouseDrag> {
+        self.windows_mut(|windows| windows.take_drag())
+    }
+
+    /// Moves the boundary of the split at PATH by DELTA cells; false when it
+    /// could not move.
+    pub(crate) fn resize_dragged_split(&self, path: &[Side], delta: isize) -> bool {
+        self.windows_mut(|windows| windows.resize_split(path, delta))
+    }
+
+    /// Records DRAG as the drag in progress, or that there is none.
+    pub(super) fn set_mouse_drag(&self, drag: Option<MouseDrag>) {
+        self.windows_mut(|windows| windows.set_drag(drag));
+    }
+
+    /// Returns the drag in progress, if any.
+    pub(crate) fn mouse_drag(&self) -> Option<MouseDrag> {
+        self.windows(|windows| windows.drag())
+    }
+
+    /// Returns which way a drag that has left WINDOW, at row Y, wants the view
+    /// to move: up or down only, since off a side the clamping already selects
+    /// to the end of the lines.
+    pub(super) fn drag_scroll_step(&self, window: WindowId, y: isize) -> Option<isize> {
+        self.windows(|windows| windows.drag_scroll_step(window, y))
+    }
+
+    /// Returns how long until a drag that has left its window should scroll
+    /// again, or `None` when none is waiting to. A pointer held still outside
+    /// a window sends nothing, and the selection must go on growing all the
+    /// same: the host waits this long, then calls [`Self::tick`].
+    pub fn drag_scroll_in(&self) -> Option<Duration> {
+        self.windows(|windows| windows.drag_scroll_in())
     }
 }

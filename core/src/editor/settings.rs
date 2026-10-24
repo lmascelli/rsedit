@@ -1,9 +1,9 @@
-//! The Lisp variables the editor reads, and their defaults.
+//! The Lisp variables the editor reads: their names, their first values, what
+//! `C-h v` says of them, and a reader for each that copes with one unset or
+//! set to the wrong shape. A reader takes an `Env` and nothing of the editor,
+//! and is called before any of the editor's locks is taken.
 //!
-//! Each is a name Lisp may `setq` and a reader that copes with it being unset
-//! or set to something of the wrong shape. The readers take an `Env` and no
-//! editor state, which is what keeps them callable from anywhere without
-//! raising an ordering question.
+//! Design: `doc/architettura-editor.typ, <avvio>`.
 
 use super::*;
 use crate::feature::isearch::CASE_FOLD;
@@ -14,7 +14,9 @@ use risp::VARIABLE_DOCUMENTATION;
 
 /// A Lisp variable the editor reads, and what `C-h v` says about it.
 pub struct Setting {
+    /// The variable's name.
     pub name: &'static str,
+    /// What `C-h v` shows for it.
     pub doc: &'static str,
 }
 
@@ -242,22 +244,22 @@ pub const ECHO_MESSAGE_TIMEOUT: &str = "echo-message-timeout";
 /// [`ECHO_MESSAGE_TIMEOUT`] to something else.
 pub const DEFAULT_ECHO_MESSAGE_TIMEOUT: f64 = 5.0;
 
-/// The names of the Lisp variables that size a minibuffer prompt.
+/// The name of the Lisp variable holding how wide a prompt is.
 pub const MINIBUFFER_WIDTH: &str = "minibuffer-width";
 
+/// The name of the Lisp variable holding how high a prompt is.
 pub const MINIBUFFER_HEIGHT: &str = "minibuffer-height";
 
-/// How large a prompt is when nothing says otherwise.
+/// How wide a prompt is when nothing says otherwise: wide enough for a path,
+/// and narrow enough to read as a dialogue rather than as part of the frame.
 ///
-/// Wide enough for a path and narrow enough to read as a dialogue rather than
-/// as part of the frame. Both are clamped to what the terminal can actually
-/// hold, so these are a preference and not a promise -- a 40-column terminal
-/// gets a 38-column prompt rather than one running off the edge.
-///
-/// Three rows, of which one is text: a border above and below, and the line
-/// being typed between them.
+/// Clamped, like the height, to what the terminal holds: a preference, not a
+/// promise, and a 40-column terminal gets a 38-column prompt rather than one
+/// running off its edge.
 pub const DEFAULT_MINIBUFFER_WIDTH: f64 = 60.0;
 
+/// How high a prompt is when nothing says otherwise: three rows, the line being
+/// typed between two borders.
 pub const DEFAULT_MINIBUFFER_HEIGHT: f64 = 3.0;
 
 /// The name of the Lisp variable naming the function that opens a prompt.
@@ -292,6 +294,7 @@ pub const MODE_LINE_FORMAT: &str = "mode-line-format";
 /// What a window's status line says when nothing sets [`MODE_LINE_FORMAT`].
 pub const DEFAULT_MODE_LINE_FORMAT: &str = " %* %b   %m %s  L%l C%c   %p ";
 
+/// The name of the Lisp variable that turns the mouse on.
 pub const MOUSE_MODE: &str = "mouse-mode";
 
 /// The name of the Lisp variable holding the function `find-file` hands a
@@ -309,6 +312,8 @@ pub const CASE_REPLACE: &str = "case-replace";
 /// of a replace.
 pub const REPLACE_READ_FUNCTION: &str = "*replace-read-function*";
 
+/// The name of the Lisp variable holding the character the separators between
+/// windows are drawn with.
 pub const WINDOW_SEPARATOR: &str = "window-separator";
 
 /// The name of the Lisp variable that turns the line-number gutter on.
@@ -332,9 +337,11 @@ pub const DISPLAY_LINE_NUMBERS_WIDTH: &str = "display-line-numbers-width";
 /// that a three-line buffer does not lose six columns to whitespace.
 pub const DEFAULT_LINE_NUMBER_DIGITS: usize = 3;
 
+/// What the separators are drawn with when nothing sets [`WINDOW_SEPARATOR`]:
+/// a line, `│`.
 pub const DEFAULT_WINDOW_SEPARATOR: char = '\u{2502}';
 
-/// The mode-line format as Lisp currently defines it.
+/// Returns the format of the status line, as Lisp defines it now.
 ///
 /// Anything that is not a string falls back to the default rather than
 /// blanking every status line in the editor: a mistyped format should look
@@ -346,20 +353,20 @@ pub(super) fn mode_line_format<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -
     }
 }
 
-/// Whether the editor is reading the mouse, as Lisp currently defines it.
+/// Returns whether the editor reads the mouse, as Lisp defines it now.
 ///
-/// Off unless something says otherwise, and the default `init.lisp` says
-/// otherwise. It is a setting at all because it costs something: a terminal
-/// reporting the mouse to the editor is not using it for its own selection, so
-/// turning this on trades the terminal's copy-and-paste for the editor's. That
-/// is the right trade for most people and an unpleasant surprise for anyone
-/// who was never asked -- which is why upgrading does not make it for them.
+/// Off unless something says otherwise, and the `init.lisp` written for
+/// somebody who has none says otherwise. A setting, because it costs
+/// something: a terminal reporting the mouse to the editor no longer selects
+/// with it, so turning it on trades the terminal's copy and paste for the
+/// editor's -- the right trade for most, and a surprise for whoever was never
+/// asked.
 pub fn mouse_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     env.get_variable(MOUSE_MODE)
         .is_some_and(|value| !value.is_nil())
 }
 
-/// How the gutter is configured, as Lisp currently defines it.
+/// Returns how the gutter is set, as Lisp defines it now.
 ///
 /// Read here rather than inside composition for the reason the mode-line
 /// format is: the environment has locks of its own, and composition runs with
@@ -401,6 +408,9 @@ pub(super) fn line_numbers<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Gu
 /// rather than a window that is all gutter.
 const MAX_LINE_NUMBER_DIGITS: usize = 20;
 
+/// Returns the character the separators are drawn with, as Lisp defines it
+/// now: the first of a string, a blank for nil or an empty string, and the
+/// default for anything else.
 pub(super) fn window_separator<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> char {
     match env.get_variable(WINDOW_SEPARATOR) {
         Some(ELispExp::String(text)) => text.chars().next().unwrap_or(' '),
@@ -409,8 +419,8 @@ pub(super) fn window_separator<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -
     }
 }
 
-/// The echo timeout as Lisp currently defines it, or `None` for "never
-/// expires".
+/// Returns how long a message stays in the echo area, as Lisp defines it now,
+/// or `None` for never expiring.
 ///
 /// Only a finite, non-negative number arms the timeout. `nil` means the
 /// message stays until something replaces it, and so does anything else --
@@ -427,15 +437,22 @@ pub(super) fn echo_timeout<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Op
     }
 }
 
+/// The name of the Lisp variable that sends a visit to an entry of a listing
+/// to the listing's own window.
 pub const RESULTS_VISIT_SAME_WINDOW: &str =
     "results-visit-same-window";
 
+/// The name of the Lisp variable that lets a new run take the place of the
+/// newest listing of the same producer.
 pub const RESULTS_REUSE_BUFFER: &str =
     "results-reuse-buffer";
 
+/// The name of the Lisp variable saying where a listing is shown: `bottom` or
+/// `same-window`.
 pub const RESULTS_DISPLAY_LOCATION: &str =
     "results-display-location";
 
+/// Returns whether `results-visit-same-window` is set.
 pub(super) fn results_visit_same_window<B: BufferTrait>(
     env: &Arc<Env<EditorState<B>>>,
 ) -> bool {
@@ -443,6 +460,7 @@ pub(super) fn results_visit_same_window<B: BufferTrait>(
         .is_some_and(|value| value.is_truthy())
 }
 
+/// Returns whether `results-reuse-buffer` is set.
 pub(super) fn results_reuse_buffer<B: BufferTrait>(
     env: &Arc<Env<EditorState<B>>>,
 ) -> bool {
@@ -450,6 +468,8 @@ pub(super) fn results_reuse_buffer<B: BufferTrait>(
         .is_some_and(|value| value.is_truthy())
 }
 
+/// Returns whether `results-display-location` is `same-window`; anything else
+/// is `bottom`.
 pub(super) fn results_display_same_window<B: BufferTrait>(
     env: &Arc<Env<EditorState<B>>>,
 ) -> bool {

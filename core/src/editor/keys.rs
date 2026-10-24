@@ -1,69 +1,58 @@
-//! From a keystroke to a command: the prefix argument, the sequence being
-//! typed, and the keymaps that resolve it.
+//! From a key to a command: the sequence being typed, the keymaps that resolve
+//! it, the prefix argument's reader, the help key, and a sequence captured
+//! instead of run.
+//!
+//! Design: `doc/architettura-editor.typ, <tasto>`.
 
 use super::*;
 
-/// The variable naming what is waiting to be told the next key sequence.
+/// The variable naming what is waiting to be told the next key sequence, and
+/// nil when nothing is.
 ///
-/// The arming *is* the variable: one fact in one place, readable and settable
-/// from Lisp like any other, and nil when nothing is capturing. It costs one
-/// variable lookup per keystroke, which is a hash probe beside the three
-/// compartment locks the same keystroke already takes.
+/// Setting it is what arms a capture: one fact in one place, which Lisp reads
+/// and sets like any other variable, for one lookup per key.
 pub const KEY_CAPTURE_FUNCTION: &str = "*key-capture-function*";
 
-/// The variable naming the key that opens help -- and, half-way through a
-/// sequence, asks what the prefix so far continues with.
-///
-/// Read only when a sequence turns out to be bound to nothing, which is the
-/// one moment it can matter. Nothing on the typing path pays for it.
+/// The variable naming the key that opens help, and that, half-way through a
+/// sequence, asks what the prefix so far goes on with. Read only once a
+/// sequence has turned out to be bound to nothing.
 pub const HELP_KEY: &str = "help-key";
 
-/// What `help-key` is when nothing has said otherwise.
+/// What `help-key` is when nothing says otherwise.
 const DEFAULT_HELP_KEY: &str = "C-h";
 
-/// The function asked to describe a prefix. Absent when no help module is
-/// loaded, and then a prefix followed by the help key is undefined like any
-/// other unbound sequence -- the feature is missing, not broken.
+/// The function asked to describe a prefix. Without a help module it is not
+/// there, and a prefix followed by the help key is undefined like any other
+/// sequence: the feature missing, not broken.
 const DESCRIBE_PREFIX: &str = "describe-prefix-keys";
 
-/// What the keymaps had to say about the key sequence typed so far.
-///
-/// Four answers rather than the `(Option<ELispExp>, bool)` pair this replaced.
-/// That pair could represent `(Some(command), true)` -- bound *and* a prefix --
-/// which is not a thing a keymap can mean, and it had no way at all to say
-/// "bound to nothing, and say nothing about it", which the transient map's
-/// `Refuse` needs; that case had to return early from the middle of the lookup
-/// instead.
+/// What the keymaps say of the sequence typed so far.
 enum Bound<B: BufferTrait> {
     /// Run this.
     Command(ELispExp<B>),
-    /// Part-way through a sequence. The keys are kept.
+    /// Part of a longer sequence: the keys are kept.
     Prefix,
-    /// Bound to nothing, and nothing is to be said about it.
+    /// Bound to nothing, and nothing is to be said: a transient map's
+    /// `Refuse`.
     Refused,
-    /// Bound to nothing. Say so.
+    /// Bound to nothing: say so.
     Unbound,
 }
 
-/// What is to be done once a key sequence has resolved.
-///
-/// The `Option<ELispExp>` this replaced could say "run this" and "do nothing"
-/// and had nowhere to put the third case: a sequence bound to nothing is not
-/// always a mistake -- `C-x` followed by the help key is a *question*, and
-/// answering it needs the sequence, the prefix it was reaching past, and the
-/// key that ended it, none of which survived being flattened to `None`.
+/// What to do once a sequence has resolved.
 enum Dispatch<B: BufferTrait> {
     /// Run this.
     Run(ELispExp<B>),
     /// Nothing to do, and nothing to say.
     Nothing,
-    /// Bound to nothing. The caller decides whether that is a question or a
-    /// mistake, because telling them apart needs the environment.
+    /// Bound to nothing. Whether that is a question or a mistake is the
+    /// caller's to tell, since it needs the environment.
     Unbound {
-        /// The whole sequence, spelt as a binding is written.
+        /// The whole sequence, written as a binding is.
         described: String,
-        /// The sequence without its last key, when that much *is* a live
-        /// prefix. `None` when the sequence was going nowhere from the start.
+        /// The sequence without its last key, when that much is a live prefix:
+        /// `C-x` and then the help key asks about `C-x`. `None` when the
+        /// sequence was going nowhere from its start.
         prefix: Option<String>,
         /// The key that ended it.
         last: KeyEvent,
@@ -71,23 +60,12 @@ enum Dispatch<B: BufferTrait> {
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Handle a key event. An UI provider is responsible to call this function
-    /// every time it want to make the editor react to an user input.
-    /// Offer EVENT to the prefix-argument reader, and say whether it was taken.
+    /// Returns the keymaps of the buffer the keys are typed into, the ones
+    /// after the transient keymap: the buffer's local keymap, when
+    /// `set-local-keymap` gave it one, then its major mode's.
     ///
-    /// Called before the key sequence gets a look, because `C-u` and the digits
-    /// that follow it are not keys the keymaps should ever see. Anything the
-    /// reader does not want falls straight through -- including a digit typed
-    /// when no argument is being built, which is how you can still type the
-    /// number four into a buffer.
-    fn read_prefix_argument(&self, event: &KeyEvent) -> bool {
-        self.commands_mut(|commands| commands.read_prefix_argument(event))
-    }
-
-    /// The mode of the buffer the keys would be typed into.
-    ///
-    /// Taken before the modes lock, everywhere: buffers come before modes in
-    /// the canonical order.
+    /// The buffer is read, and let go, before the modes are taken: buffers
+    /// come before modes.
     fn keymap_modes(&self) -> Vec<String> {
         self.with_current_buffer(|buf| {
             let mut names = Vec::with_capacity(2);
@@ -102,11 +80,12 @@ impl<B: BufferTrait> EditorState<B> {
         })
     }
 
-    /// Explicit buffer-local bindings may claim the argument reader's keys.
+    /// Returns whether the buffer's local keymap binds EVENT itself, and so
+    /// claims it from the prefix argument's reader.
     ///
-    /// Below the transient map, where the local keymap is: a map that
-    /// refuses a key does not stop the buffer from claiming it from the
-    /// reader, and the transient map then refuses it.
+    /// Asked below the transient keymap, where the local keymap is: a map that
+    /// refuses the key does not stop the buffer from claiming it from the
+    /// reader, and then refuses it itself.
     fn local_key_claims(&self, event: &KeyEvent) -> bool {
         let names = self.keymap_modes();
         let modes: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -114,90 +93,44 @@ impl<B: BufferTrait> EditorState<B> {
             .is_some_and(|binding| binding.source == crate::managers::BindingSource::Local)
     }
 
-    /// What KEYS would run if they were typed now, and which map it is from.
+    /// Returns what KEYS would run if typed now, and the keymap it comes from.
     ///
-    /// The same walk the editor itself does -- see [`Modes::binding_for`] --
-    /// so what this reports and what would happen cannot disagree. `None`
-    /// means nothing would run, which includes a sequence that is only the
-    /// start of a longer one.
+    /// The walk the editor itself takes -- see [`Modes::binding_for`] -- so
+    /// that what this reports and what would happen agree. `None` when nothing
+    /// would run, a sequence that only starts a longer one included.
     pub(crate) fn key_binding(&self, keys: &[KeyEvent]) -> Option<Binding<B>> {
         let names = self.keymap_modes();
         let modes: Vec<&str> = names.iter().map(String::as_str).collect();
         self.modes(|registry| registry.binding_for(&modes, keys))
     }
 
-    /// Whether KEYS is the start of a longer binding.
+    /// Returns whether KEYS start a longer binding.
     fn key_is_prefix(&self, keys: &[KeyEvent]) -> bool {
         let names = self.keymap_modes();
         let modes: Vec<&str> = names.iter().map(String::as_str).collect();
         self.modes(|registry| registry.is_prefix(&modes, keys))
     }
 
-    /// Every binding in effect in the current buffer, sorted, each sequence
-    /// once.
+    /// Returns every binding in force in the current buffer, sorted, each
+    /// sequence once.
     pub(crate) fn key_bindings(&self) -> Vec<Binding<B>> {
         let names = self.keymap_modes();
         let modes: Vec<&str> = names.iter().map(String::as_str).collect();
         self.modes(|registry| registry.bindings(&modes))
     }
 
-    /// Install a keymap that is consulted before every other until it goes
-    /// away. See [`TransientKeymap`].
-    pub(crate) fn set_transient_keymap(&self, map: TransientKeymap<B>) {
-        self.modes_mut(|modes| modes.set_transient(map));
-    }
-
-    /// Take the map down. Idempotent, so a command that ends one can call it
-    /// without first asking whether one is up.
-    pub(crate) fn clear_transient_keymap(&self) {
-        self.modes_mut(|modes| modes.clear_transient());
-    }
-
-    /// What the installed map wants shown, or empty when none is installed.
-    pub(crate) fn transient_message(&self) -> String {
-        self.modes(|modes| modes.transient_message())
-    }
-
-    /// Whether a transient keymap is installed. Only for reporting -- and
-    /// only a test does the reporting, so it is compiled only for tests:
-    /// the editor itself never branches on this, because a transient map that
-    /// is up resolves keys and one that is not does not, and that is already
-    /// the answer.
-    #[cfg(test)]
-    pub(crate) fn transient_keymap_active(&self) -> bool {
-        self.modes(|modes| modes.transient_active())
-    }
-
-    /// Say that COMMAND may be repeated by pressing KEYS on its own afterwards.
+    /// Offers COMMAND's repeat key, if it has one, as a `Release` keymap that
+    /// binds the key to COMMAND.
     ///
-    /// Declared rather than inferred. The tempting rule -- "after a sequence
-    /// ending in K, a bare K repeats" -- would make `C-x C-f` followed by `f`
-    /// re-open `find-file`, which is not a convenience.
-    pub(crate) fn set_repeat_key(&self, command: &str, key: KeyEvent) {
-        self.modes_mut(|modes| modes.set_repeat_key(command, key));
-    }
-
-    /// The key that repeats COMMAND, if it has one.
-    fn repeat_key(&self, command: &str) -> Option<KeyEvent> {
-        self.modes(|modes| modes.repeat_key(command))
-    }
-
-    /// Offer to repeat COMMAND, if it said it could be.
-    ///
-    /// Run after every command, which is what makes repeating work by the same
-    /// path whether the command was reached by its full sequence or by the
-    /// repeat key it offered last time.
+    /// Run after every command, so that a command reached by its repeat key
+    /// offers it again.
     pub(super) fn install_repeat_keymap(&self, command: Option<&str>) {
         let Some(key) = command.and_then(|name| self.repeat_key(name)) else {
-            // Nothing to offer, and nothing to take down either: a `Release`
-            // map was already dismissed by key resolution before this command
-            // ran, which is what ends a run of `C-x o o o`.
-            //
-            // Taking one down here as well would be actively wrong. A `Refuse`
-            // map -- a question -- is answered by *its own* commands, and this
-            // runs after every one of them: clearing here would dismiss the
-            // question the moment it was answered, before the next one could
-            // be asked.
+            // Nothing to offer, and nothing to take down: a `Release` map has
+            // gone already, when key resolution handed the key on, which is
+            // what ends a run of `C-x o o o`. Taking a map down here would be
+            // wrong: a `Refuse` map, a question, is answered by its own
+            // commands, and this runs after each of them.
             return;
         };
         self.set_transient_keymap(TransientKeymap::repeating(
@@ -206,16 +139,11 @@ impl<B: BufferTrait> EditorState<B> {
         ));
     }
 
-    /// The argument waiting for the next command, if any.
-    pub(crate) fn prefix_argument(&self) -> Option<PrefixArg> {
-        self.commands(|commands| commands.prefix_argument())
-    }
-
-    /// Abandon whatever is half-finished: a key sequence, a prefix argument.
+    /// Abandons what is half-typed: a key sequence, a prefix argument.
     ///
-    /// The text-level half of `keyboard-quit`. Interrupting a *running* command
-    /// is roadmap #24 and needs more than this; abandoning something not yet
-    /// started needs only this, and is what a mistyped `C-x` calls for.
+    /// What `keyboard-quit` does to the keys. A command already running is not
+    /// stopped by it: keys are read on the thread that runs commands, between
+    /// one command and the next.
     pub(crate) fn abandon_pending_input(&self) {
         self.pending_keys
             .write()
@@ -224,12 +152,11 @@ impl<B: BufferTrait> EditorState<B> {
         self.clear_prefix_argument();
     }
 
-    /// What the editor is part-way through reading, spelt the way a binding
-    /// is written and ending in a dash for the key still to come.
+    /// Returns what the editor is part-way through reading, written as a
+    /// binding is and ending in a dash for the key to come: `C-u 4 C-x-`.
     ///
-    /// The argument and the key sequence appear together -- `C-u 4 C-x-` --
-    /// because they compose, and showing only one of them would misreport
-    /// what pressing the next key will do.
+    /// The argument and the sequence together, since they compose: one without
+    /// the other would misreport what the next key does.
     pub(crate) fn pending_input(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if let Some(arg) = self.prefix_argument() {
@@ -248,33 +175,15 @@ impl<B: BufferTrait> EditorState<B> {
         format!("{}-", parts.join(" "))
     }
 
-    /// Forget the argument. Called after every command, whether or not
-    /// anything consumed it: an argument belongs to exactly one command, and
-    /// one that errors must not leave its argument for the next.
-    pub(crate) fn clear_prefix_argument(&self) {
-        self.commands_mut(|commands| commands.clear_prefix_argument());
-    }
-
-    /// Give the next command ARG, as if it had been typed.
-    pub(crate) fn set_prefix_argument(&self, arg: Option<PrefixArg>) {
-        self.commands_mut(|commands| commands.set_prefix_argument(arg));
-    }
-
-    /// Add EVENT to the sequence being typed, and say what to run.
+    /// Adds EVENT to the sequence being typed, and returns what to do: run a
+    /// command; nothing, when more keys are to come or the key was refused;
+    /// or report a sequence bound to nothing. The sequence is cleared unless
+    /// it is a prefix.
     ///
-    /// `Some(ast)` means the sequence is now a complete binding and has been
-    /// cleared ready for the next one. `None` means there is nothing to run --
-    /// either because more keys are expected, or because the sequence is bound
-    /// to nothing.
-    ///
-    /// # Why this returns rather than dispatching
-    ///
-    /// A key that only lengthens a sequence is **not a command**. It must not
-    /// reach `begin_command`, `roll_over_command_flags` or `set_last_command`,
-    /// all of which live in the caller below the point this returns `None`.
-    /// Letting `C-x` through any of them would silently end the undo group
-    /// being typed into, and split a run of kills into two ring entries --
-    /// neither of which looks like a key-handling bug when you go looking.
+    /// It returns rather than dispatching: a key that only lengthens a
+    /// sequence is not a command, and must not reach the undo group, the flags
+    /// rolled over or `last-command`, which are all past the point where this
+    /// returns.
     fn resolve_key_sequence(&self, event: KeyEvent) -> Dispatch<B> {
         let mut pending = self
             .pending_keys
@@ -282,19 +191,16 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on pending_keys");
         pending.push(event);
 
-        // Asked before the modes are taken: buffers come before modes in the
-        // canonical order.
+        // Read before the modes are taken: buffers come before modes.
         let names = self.keymap_modes();
         let current_modes: Vec<&str> = names.iter().map(String::as_ref).collect();
 
-        // One acquisition answers the whole question -- the transient map, the
-        // mode's keymap and the global one. It used to be three locks and an
-        // atomic gate in front of the first of them, with a written protocol
-        // keeping the gate and the map it guarded in step. See [`Modes`].
+        // One acquisition answers the whole question: the transient keymap,
+        // the buffer's, and the global one.
         let mut release_transient = false;
         let bound = self.modes(|modes| {
-            // A transient keymap is consulted before every other, for as long
-            // as it is installed. See `TransientKeymap`.
+            // A transient keymap comes before every other, for as long as it is
+            // installed. See `TransientKeymap`.
             if let Some(map) = modes.transient() {
                 let hit = map.keymap.get(&pending).cloned();
                 let prefix = map.keymap.is_prefix(&pending);
@@ -302,20 +208,19 @@ impl<B: BufferTrait> EditorState<B> {
                     (Some(ast), _, _) => return Bound::Command(ast),
                     // Part-way through one of the map's own sequences.
                     (None, true, _) => return Bound::Prefix,
-                    // Refused, and nothing said about it: the map's message is
-                    // still in the frame, and anything written to the echo
-                    // area would be drawn under it.
+                    // Refused, and nothing said: the map's message is in the
+                    // frame, and anything written to the echo area would be
+                    // drawn under it.
                     (None, false, OnUnbound::Refuse) => return Bound::Refused,
-                    // Handed on, and the map stays. The key carries on to the
-                    // keymaps below and the map is consulted again next time,
-                    // which is what lets the completion strip be typed at
-                    // without either swallowing the letter or dismissing
-                    // itself.
+                    // Handed on, and the map stays: the key goes on to the
+                    // keymaps below, and the map is asked again next time --
+                    // how the completion strip is typed at without its
+                    // swallowing the letter or going away.
                     (None, false, OnUnbound::Pass) => {}
-                    // Handed on, and the map goes. The key carries on exactly
-                    // as though it had never been there -- which is what makes
-                    // the offer free to ignore. Taken down after this lock is
-                    // given back, since dropping it needs the write side.
+                    // Handed on, and the map goes: the key goes on as though
+                    // the map had never been there, which makes the offer free
+                    // to ignore. Taken down once this lock is given back, since
+                    // that needs the write side.
                     (None, false, OnUnbound::Release) => release_transient = true,
                 }
             }
@@ -329,18 +234,17 @@ impl<B: BufferTrait> EditorState<B> {
             }
         });
         if release_transient {
-            // Holding the bindings of a map nobody can reach would be a small
-            // leak that lasted until the next one was installed.
+            // The bindings of a map nobody can reach would stay until the next
+            // map came.
             self.clear_transient_keymap();
         }
 
-        // Everything the keymaps had to say, said, and the lock given back --
-        // so reporting, which writes the echo area, happens under none of it.
+        // What the keymaps had to say is said, and their lock given back:
+        // reporting writes the echo area, under none of it.
         let described = describe_keys(&pending);
-        // The sequence without its last key, when that much leads somewhere.
-        // Worked out here, while the keys are still to hand: this is what
-        // makes `C-x` followed by the help key answerable as a question about
-        // `C-x` rather than reported as a sequence that means nothing.
+        // The sequence without its last key, when that much leads somewhere:
+        // worked out now, while the keys are at hand, so that `C-x` and then
+        // the help key is a question about `C-x`.
         let reaching_past = match (&bound, pending.len()) {
             (Bound::Unbound, len) if len >= 2 => {
                 let prefix = pending[..len - 1].to_vec();
@@ -360,7 +264,7 @@ impl<B: BufferTrait> EditorState<B> {
         match bound {
             Bound::Command(ast) => Dispatch::Run(ast),
             // Nothing to say: the sequence is in `pending_input`, which the
-            // frame carries and which does not expire the way a message does.
+            // frame carries, and which does not expire as a message does.
             Bound::Prefix | Bound::Refused => Dispatch::Nothing,
             Bound::Unbound => match last {
                 Some(last) => Dispatch::Unbound {
@@ -373,15 +277,12 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    /// Whether KEY is the one that opens help, as `help-key` says.
+    /// Returns whether KEY is the last key of `help-key`: a help key of two
+    /// keys -- `C-c h`, for a terminal that sends Backspace as `C-h` -- still
+    /// has one key to press half-way through a sequence.
     ///
-    /// Asked only about a sequence that turned out to be bound to nothing, so
-    /// the variable is read on a mistyped key and never on a typed one.
-    /// Its *last* key, so that a help prefix of more than one key -- `C-c h`,
-    /// which is what somebody moves it to when their terminal sends Backspace
-    /// as `C-h` -- still has a single key to press half-way through a
-    /// sequence. A sequence that is already going nowhere cannot be made
-    /// worse by it, and that is the only time this is asked.
+    /// Asked only of a sequence already bound to nothing, so the variable is
+    /// read on a mistyped key and never on a typed one.
     fn is_help_key(&self, key: &KeyEvent, env: &Arc<Env<EditorState<B>>>) -> bool {
         let spelling = match env.get_variable(HELP_KEY) {
             Some(ELispExp::String(text)) => text.to_string(),
@@ -392,29 +293,15 @@ impl<B: BufferTrait> EditorState<B> {
             .is_some_and(|help| &help == key)
     }
 
-    /// Read the next key sequence and hand it to WATCHER instead of running
-    /// it.
+    /// Reads the next key sequence and hands it to WATCHER instead of running
+    /// it, as (WATCHER KEYS TARGET SOURCE): KEYS written as a binding is,
+    /// TARGET the form that would have run, quoted, or nil, and SOURCE the
+    /// name of the keymap it came from, or nil when nothing is bound.
     ///
-    /// # Why this sits on the real resolution path
-    ///
-    /// The question "what does this key do" has exactly one truthful answer,
-    /// and it is the one the editor would have acted on: the transient map
-    /// before the mode's, the mode's before the global one, this buffer's
-    /// mode and not another's. Anything that reconstructs that from the
-    /// keymaps is a second implementation of the precedence rules, and the
-    /// day the order changes it reports the old one -- confidently, with no
-    /// test failing, in the command whose entire job is to be right about it.
-    ///
-    /// So capture does not intercept the keys ahead of resolution. It
-    /// accumulates into the same pending sequence -- so a half-typed `C-x`
-    /// shows in the echo area as it always does -- asks the same two
-    /// questions of the same maps, and diverts only at the very end, in place
-    /// of dispatch.
-    ///
-    /// WATCHER is called as (WATCHER KEYS TARGET SOURCE): KEYS as a binding is
-    /// written, TARGET the form that would have run (quoted, so a caller sees
-    /// what it is rather than what it does) or nil, and SOURCE the name of the
-    /// map it came from, or nil when nothing is bound.
+    /// The sequence goes down the real resolution -- the same pending keys, so
+    /// that a half-typed `C-x` shows as always, and the same questions of the
+    /// same keymaps -- and turns aside only where it would be run: what a key
+    /// does has one true answer, the one the editor would act on.
     fn capture_key_sequence(
         &self,
         event: KeyEvent,
@@ -429,9 +316,9 @@ impl<B: BufferTrait> EditorState<B> {
         let keys = pending.clone();
         let described = describe_keys(&keys);
 
-        // `C-u` never reaches a keymap: the argument reader takes it first,
-        // which is exactly what is worth saying about it. Asked through the
-        // reader's own predicate so the two cannot drift.
+        // `C-u` reaches no keymap, since the argument's reader takes it first,
+        // and that is what is worth reporting. Asked with the reader's own
+        // predicate, so that the two agree.
         let prefix_argument = keys.len() == 1
             && Commands::<B>::is_prefix_argument_key(&keys[0])
             && !self.local_key_claims(&keys[0]);
@@ -442,16 +329,15 @@ impl<B: BufferTrait> EditorState<B> {
             self.key_binding(&keys)
         };
         if binding.is_none() && !prefix_argument && self.key_is_prefix(&keys) {
-            // Part-way through a sequence: keep the keys and keep waiting,
-            // the same as the editor would.
+            // Part-way through a sequence: the keys are kept, and the next one
+            // awaited, as the editor would.
             return;
         }
         pending.clear();
         drop(pending);
 
-        // Disarmed before the watcher runs, not after: a watcher that opens a
-        // buffer, prompts, or fails part-way must not leave the next keystroke
-        // captured too.
+        // Disarmed before the watcher runs: a watcher that opens a buffer,
+        // prompts or fails must not leave the next key captured too.
         env.set_root_variable(KEY_CAPTURE_FUNCTION.into(), ELispExp::nil());
 
         let source = match (&binding, prefix_argument) {
@@ -460,11 +346,10 @@ impl<B: BufferTrait> EditorState<B> {
             (None, false) => ELispExp::nil(),
         };
         let target = match &binding {
-            // Quoted: the target is a form like `(find-file)`, and what the
-            // watcher wants is the form itself, not the file it would open.
-            // As *data*, for the reason `binding_form` gives: a keymap holds
-            // syntax, and syntax cannot be taken apart by the Lisp receiving
-            // it.
+            // Quoted, and as data: the target is a form like `(find-file)`, the
+            // watcher wants the form and not the file it would open, and a
+            // keymap holds syntax, which the Lisp given it could not take
+            // apart. See `binding_form`.
             Some(binding) => ELispExp::form(vec![
                 ELispExp::symbol("quote".into()),
                 risp::form_to_data(&binding.target),
@@ -474,13 +359,10 @@ impl<B: BufferTrait> EditorState<B> {
         self.run_command_form(
             ELispExp::form(vec![
                 ELispExp::symbol("funcall".into()),
-                // Quoted like the target below it, and for a nearer reason:
-                // a watcher named by a symbol -- `(read-key-sequence
-                // 'describe-this)` -- would otherwise be *evaluated*, and a
-                // function's name is not a variable, so the call would fail
-                // with the symbol reported as unbound. A lambda passed by
-                // value survives either way, which is exactly how this
-                // manages to work in testing and not in use.
+                // Quoted too: a watcher named by a symbol --
+                // `(read-key-sequence 'describe-this)` -- would otherwise be
+                // evaluated as a variable, and fail as unbound. A lambda
+                // passed by value works either way.
                 ELispExp::form(vec![ELispExp::symbol("quote".into()), watcher]),
                 ELispExp::string(described),
                 target,
@@ -490,60 +372,65 @@ impl<B: BufferTrait> EditorState<B> {
         );
     }
 
+    /// Handles a key pressed: the host calls it for each key event, in order,
+    /// on the thread that runs the commands.
+    ///
+    /// The key is offered to a capture, if one is armed, then to the prefix
+    /// argument's reader, then to the keymaps; what it completes runs as a
+    /// command. A keyboard macro being recorded gets the key wherever it is
+    /// used up, even when it runs nothing.
     pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
-        // Something is waiting to be told what the next key sequence is
-        // rather than have it run. See `capture_key_sequence`.
+        // Something is waiting to be told the next sequence instead of having
+        // it run. See `capture_key_sequence`.
         if let Some(watcher) = env.get_variable(KEY_CAPTURE_FUNCTION)
             && watcher.is_truthy()
         {
-            // Recorded although it runs no command, which is the whole reason
-            // a macro records keys rather than commands: `zap-to-char' reads
-            // its character this way, and a recorder watching commands would
-            // replay it as a wait for a character that never arrives.
+            // Recorded though it runs no command, which is why a macro records
+            // keys and not commands: `zap-to-char` reads its character this
+            // way, and a recorder of commands would replay a wait for a
+            // character that never came.
             self.record_keys(std::slice::from_ref(&event), None);
             self.capture_key_sequence(event, watcher, env);
             return;
         }
 
-        // The argument reader gets first refusal. A key it takes is not a
-        // command and never reaches a keymap.
+        // The prefix argument's reader comes next, unless the buffer's own
+        // keymap claims the key: a key the reader takes is not a command, and
+        // reaches no keymap.
         if !(Commands::<B>::is_prefix_argument_key(&event) && self.local_key_claims(&event))
             && self.read_prefix_argument(&event)
         {
-            // Also recorded, and also not a command: without this a macro
-            // would replay `C-u 5 C-n' as a bare `C-n'.
+            // Recorded too: without it a macro would replay `C-u 5 C-n` as a
+            // bare `C-n`.
             self.record_keys(std::slice::from_ref(&event), None);
             return;
         }
 
         // The keys of the sequence this one completes, read before resolving
-        // it -- which is what consumes them. A recorder wants the whole
-        // sequence rather than one key at a time, so that `C-x )' is one thing
-        // to leave out rather than two.
+        // it, which uses them up: a recorder wants the sequence whole, so that
+        // `C-x )` is one thing to leave out rather than two.
         let mut sequence = self.pending_key_events();
         sequence.push(event.clone());
 
-        // A key may be the whole of a binding, the start of a longer one, or
-        // neither. Deciding which comes first, and two of the three answers
-        // return before anything below runs -- see `resolve_key_sequence`.
+        // A key may be a whole binding, the start of a longer one, or neither:
+        // see `resolve_key_sequence`.
         let mut ast = match self.resolve_key_sequence(event.clone()) {
             Dispatch::Run(ast) => {
                 self.record_keys(&sequence, command_named_by(&ast).as_deref());
                 ast
             }
-            // Only part of a sequence: its keys are still pending and will
-            // arrive with the one that completes it.
+            // Part of a sequence: its keys are pending, and arrive with the one
+            // that completes it.
             Dispatch::Nothing => return,
             Dispatch::Unbound {
                 described,
                 prefix,
                 last,
             } => {
-                // A prefix followed by the help key is a question -- "what
-                // does `C-x` go on to?" -- and the answer is a command in
-                // whatever help module is loaded. With none loaded there is
-                // no such function and the sequence is undefined like any
-                // other, which is the feature being absent rather than broken.
+                // A prefix and then the help key is a question -- what does
+                // `C-x` go on with? -- which a command of the help module
+                // answers. Without one the sequence is undefined like any
+                // other: the feature absent, not broken.
                 if let Some(prefix) = prefix
                     && self.is_help_key(&last, env)
                     && env.get_function(DESCRIBE_PREFIX).is_some()
@@ -556,10 +443,9 @@ impl<B: BufferTrait> EditorState<B> {
                         env,
                     );
                 } else {
-                    // Recorded even though it does nothing: a macro should do
-                    // what was pressed, and leaving a mistake out would make
-                    // the replay differ from the recording in a way nothing
-                    // says.
+                    // Recorded though it does nothing: a macro does what was
+                    // pressed, and a replay that left the mistake out would
+                    // differ from the recording without saying so.
                     self.record_keys(&sequence, None);
                     self.set_echo_message(&format!("{described} is undefined"));
                     self.log_diagnostic(&format!("[INFO] Keymap not bound {described}"));
@@ -568,6 +454,8 @@ impl<B: BufferTrait> EditorState<B> {
             }
         };
 
+        // A key bound to a lambda calls it, with no arguments, since a key has
+        // none to give.
         if let ELispExp::Lambda(ref lambda) = ast {
             if lambda.params.len() != 0 {
                 self.log_diagnostic(&format!("Keymap {event:?} associated to a lambda with some parameters. Associate it to a lambda with 0 parameters."));
@@ -577,48 +465,14 @@ impl<B: BufferTrait> EditorState<B> {
             }
         }
 
-        // A key bound to a bare command invocation -- `(next-line)`, as
-        // `define-key` stores a symbol -- is routed through
-        // `call-interactively` so that the editor collects whatever arguments
-        // the command declared. Without this a command taking arguments simply
-        // cannot be bound to a key: `find-file` needs a path, and a keystroke
-        // has none to give it, which is why it had no binding at all.
-        //
-        // Routing every such binding through one Lisp entry point, rather than
-        // only those that need arguments, is deliberate: it is the single
-        // place to observe or advise command execution, which is what a macro
-        // recorder or a `repeat` command would later hook.
-        //
-        // A binding that already supplies its arguments -- `(self-insert "a")`,
-        // which is every ordinary keystroke -- is left exactly as it was, so
-        // the typing path is untouched and still costs what it always did.
-        // A binding may name its command either way: `define-key` wraps a
-        // symbol into a one-element form, while the keymaps built in Rust
-        // (`install_minibuffer`) store the bare symbol. Both mean "run this
-        // command".
-        //
-        // The bare-symbol case was previously unreachable code: evaluating a
-        // symbol looks up a *variable*, so Enter, Escape and Tab in the
-        // minibuffer all failed with `UnboundVariable` in the real editor. No
-        // test caught it because they all call `(minibuffer-confirm)` through
-        // `eval` rather than pressing the key.
         self.run_command_form(ast, env);
     }
 
-    /// Insert TEXT as a single bracketed paste.
+    /// Inserts TEXT, a bracketed paste, as one command: one undo group, one
+    /// `post-command-hook`, and no `post-self-insert-hook`.
     ///
-    /// # Why paste is not typing
-    ///
-    /// Without bracketed paste a terminal delivers a paste as the keystrokes
-    /// it looks like, and the editor cannot tell the difference: N characters
-    /// become N `self-insert' commands, N undo entries, N runs of every hook.
-    /// Pasting a function and then pressing `undo' would walk back through it
-    /// one character at a time, and auto-pairing would double every bracket in
-    /// it.
-    ///
-    /// The terminal knows the difference and says so, so this takes the whole
-    /// paste as one command: one undo group, one syntax invalidation, one
-    /// `post-command-hook', and no `post-self-insert-hook' at all.
+    /// The terminal says a paste is a paste, and typed key by key it would be
+    /// undone a character at a time, and paired bracket by bracket.
     pub fn handle_paste(&self, text: String, env: &Arc<Env<EditorState<B>>>) {
         if text.is_empty() {
             return;
@@ -631,13 +485,10 @@ impl<B: BufferTrait> EditorState<B> {
             env,
         );
     }
-}
 
-impl<B: BufferTrait> EditorState<B> {
-    /// The keys of the sequence part-way through being typed.
-    ///
-    /// Cloned out rather than lent: the one caller is on the keystroke path
-    /// and is about to take the same lock again to resolve the sequence.
+    /// Returns the keys of the sequence being typed. Cloned out: the one
+    /// caller is on the key path, and takes the same lock again to resolve the
+    /// sequence.
     fn pending_key_events(&self) -> Vec<KeyEvent> {
         self.pending_keys
             .read()
@@ -646,12 +497,9 @@ impl<B: BufferTrait> EditorState<B> {
     }
 }
 
-/// The command a key's binding names, if it names one.
-///
-/// The same shapes `run_command_form` recognises -- a bare symbol, or a form
-/// whose head is one -- because they are the same question asked for a
-/// different reason: that one routes the command, this one decides whether a
-/// recorder should keep the keys that ran it.
+/// Returns the command a key's binding names, if it names one: a bare symbol,
+/// or a form whose head is one. The shapes `run_command_form` reads for the
+/// command it runs; here they decide whether a recorder keeps the keys.
 fn command_named_by<B: BufferTrait>(ast: &ELispExp<B>) -> Option<String> {
     match ast {
         ELispExp::Symbol(name) => Some(name.to_string()),

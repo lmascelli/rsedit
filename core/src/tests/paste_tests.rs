@@ -1,12 +1,9 @@
 //! Bracketed paste: text arriving from the system clipboard as one event.
 //!
-//! The whole value of this is in what it *stops*. Without bracketed paste a
-//! terminal delivers a paste as the keystrokes it resembles, so pasting a
-//! function is indistinguishable from typing it: one undo entry per character,
-//! every hook run per character, and -- once auto-pairing exists -- every
-//! bracket in the pasted text doubled.
-//!
-//! So most of these tests check that a paste is *not* typing.
+//! Its value is in what it stops: typed key by key, a pasted function would be
+//! one undo entry per character, every hook run per character, and every
+//! bracket in it paired again. So most of these tests check that a paste is
+//! not typing.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -143,7 +140,7 @@ mod tests {
         let (ctx, env) = editor();
         ctx.handle_paste("x".to_string(), &env);
         // It went through the command machinery rather than round it, which is
-        // what gets it undo grouping and `post-command-hook' for free.
+        // what gives it its undo group and `post-command-hook`.
         assert!(ctx.last_command_is("insert-pasted-text"));
     }
 
@@ -151,16 +148,12 @@ mod tests {
     // Line endings
     // ----------------------------------------------------------------
     //
-    // A terminal in bracketed-paste mode hands over the selection's bytes
-    // unchanged, and a line break very often arrives as CR -- that is what
-    // Enter sends, so that is what many terminals put between pasted lines.
-    // Nothing else in the editor treats CR as a line break: the line index
-    // counts '\n' and nothing else. So a ten-line paste used to land as one
-    // very long line with nine invisible characters in it.
-    //
-    // The symptom was reported as "pasting multiple lines keeps the line on a
-    // single row", which is why these assert the line *count* as well as the
-    // text: the count is what the user was looking at.
+    // A terminal in bracketed-paste mode hands over the selection's bytes as
+    // they are, and a line break often arrives as CR -- what Enter sends, and
+    // so what many terminals put between pasted lines. Nothing else in the
+    // editor reads CR as a line break: the line index counts '\n' and nothing
+    // else. These assert the line count as well as the text, since the count
+    // is what somebody pasting sees.
 
     fn line_count(ctx: &Ctx) -> usize {
         ctx.with_current_buffer(|b| b.text.line_count())
@@ -176,7 +169,7 @@ mod tests {
 
     #[test]
     fn a_paste_with_bare_carriage_returns_becomes_lines() {
-        // The case the bug was actually about: CR alone, with no LF after it.
+        // CR alone, with no LF after it.
         let (ctx, env) = editor();
         ctx.handle_paste("one\rtwo\rthree".to_string(), &env);
         assert_eq!(contents(&ctx), "one\ntwo\nthree");
@@ -210,10 +203,10 @@ mod tests {
 
     #[test]
     fn a_carriage_return_inserted_deliberately_is_left_alone() {
-        // The asymmetry, stated rather than assumed. Normalising belongs at the
-        // paste door because that is where text arrives from outside; a CR
-        // written from Lisp on purpose is a CR, and an `insert' that quietly
-        // rewrote its argument would be a worse surprise than the bug.
+        // The asymmetry, stated rather than assumed. Line endings are made
+        // plain at the paste's door, where text arrives from outside; a CR
+        // written from Lisp on purpose is a CR, and an `insert` that rewrote
+        // its argument would be a worse surprise.
         let (ctx, env) = editor();
         let _ = &env;
         ctx.with_current_buffer_mut(|buf| {

@@ -1,10 +1,5 @@
-//! Correctness of the editor's fuel policy.
-//!
-//! These moved out of the performance suite, where they had been sitting
-//! because fuel was measured with a clock. Neither one measures anything: both
-//! assert an invariant that either holds or does not, and belong with the rest
-//! of the behaviour tests. What a command actually *costs* is section 4 of
-//! `performance-cost.txt`.
+//! The editor's fuel: what holds or does not. What a command costs is in the
+//! report the performance suite writes, `performance-cost.txt`.
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -21,10 +16,10 @@ mod tests {
         }
     }
 
-    /// Regression guard for the bug the `FuelMeter` exists to fix: fuel used to
-    /// be a single budget for the entire session, never replenished, so after
-    /// roughly five thousand keystrokes every further evaluation failed with
-    /// `OutOfFuel` and the editor stopped accepting input while still running.
+    /// Fuel is refilled for every command: one budget for the whole session
+    /// would run out after some thousands of keys, and every evaluation after
+    /// that would fail with `OutOfFuel`, the editor running and taking no
+    /// input.
     #[test]
     fn fuel_is_replenished_for_every_command() {
         const ATTEMPTS: usize = 20_000;

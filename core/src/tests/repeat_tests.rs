@@ -1,8 +1,6 @@
-//! `repeat`, and the last-command form it runs.
-//!
-//! The complaint this answers: a command bound to a long sequence is tedious
-//! to do several times. `C-x u` three times is three two-key sequences; with
-//! a repeat key on `repeat` itself it becomes one sequence and three taps.
+//! `repeat`, and the form of the last command, which it runs again: `C-x u`
+//! three times is three sequences of two keys, and with a repeat key on
+//! `repeat` itself, one sequence and then taps.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -81,8 +79,8 @@ mod tests {
 
     #[test]
     fn repeat_never_becomes_the_thing_it_repeats() {
-        // Were `repeat' to remember itself, the second call would repeat the
-        // repeating and nothing would ever advance.
+        // Were `repeat` to remember itself, the second call would repeat the
+        // repeating, and nothing would move.
         let (ctx, env) = editor();
         run(r#"(insert "abcdef") (goto-char 0)"#, &env, &ctx);
         press(&ctx, &env, 'f', true);
@@ -94,17 +92,15 @@ mod tests {
 
     #[test]
     fn undo_can_be_repeated() {
-        // The case from the todo list: `C-x u` could not be repeated without
-        // retyping the whole sequence.
+        // `C-x u`, again without typing the whole sequence.
         let (ctx, env) = editor();
         for c in ['a', 'b', 'c'] {
             press(&ctx, &env, c, false);
             run("(undo-boundary)", &env, &ctx);
         }
         assert_eq!(contents(&ctx), "abc");
-        // Through the keyboard, not through `eval': what `repeat' remembers is
-        // the form the *dispatcher* ran, so a command invoked straight from
-        // Lisp is not what gets repeated.
+        // Through the keys, not `eval`: what `repeat` remembers is the form the
+        // key handler ran, and a command called from Lisp is not it.
         press(&ctx, &env, 'x', true); // C-x
         press(&ctx, &env, 'u', false); // u
         assert_eq!(contents(&ctx), "ab", "C-x u undoes once");
@@ -121,8 +117,8 @@ mod tests {
 
     #[test]
     fn a_failed_command_is_not_remembered_as_repeatable() {
-        // Only a command that ran is stored, so `repeat' after an error
-        // repeats the last thing that actually worked.
+        // Only a command that ran is remembered, so `repeat` after an error
+        // repeats the last thing that worked.
         let (ctx, env) = editor();
         run(r#"(insert "ab") (goto-char 0)"#, &env, &ctx);
         press(&ctx, &env, 'f', true);

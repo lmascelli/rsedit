@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn u_after_c_x_u_undoes_again() {
-        // The complaint: `C-x u` three times was three two-key sequences.
+        // `C-x u u u`: three undos, for one sequence and two taps.
         let (ctx, env) = editor();
         typed(&ctx, &env, "abc");
         assert_eq!(contents(&ctx), "abc");

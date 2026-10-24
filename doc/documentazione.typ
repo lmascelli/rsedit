@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--14 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--15 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -249,7 +249,7 @@ Segue le Rust API Guidelines e le convenzioni della RFC 1574.
   `# Safety` quando si applicano, e `# Examples`.
 - I tipi e le funzioni citati sono link (#raw("[`Log::flush`]")) e devono
   risolversi: `cargo doc --document-private-items` senza avvisi. Oggi ce ne
-  sono 14.
+  sono 13.
 - Campi e varianti: una riga quando il nome non basta, niente quando basta.
 - *La documentazione di modulo* (`//!`) dice in una-cinque righe di che cosa
   il modulo è responsabile, e rimanda al capitolo del manuale con la sua
@@ -1434,7 +1434,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [12], [`paths.rs`, `buffer/` (fatto)], [3 075], [---],
   [13], [`text/`, `input.rs`, `commands.rs` (fatto)], [2 047], [---],
   [14], [`managers/` (fatto)], [2 936], [la regola delle coppie con `editor/`],
-  [15], [`editor/`], [4 838], [`boot.rs`, `keys.rs`, `frame.rs`],
+  [15], [`editor/` (fatto)], [4 838], [le porte e gli inoltri; la mappa sopra `managers/`],
   [16], [`primitives/`, modifica del testo: `edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`, `match_data`, `scan`], [4 353], [docstring già fatte nella fase B],
   [17], [`primitives/`, file, finestre e lavori: `io`, `buffers`, `windows`, `ui`, `mouse`, `ask`, `shell`, `workers`, `lisp_job`, `args`], [4 995], [`io.rs` è il file più lungo: 1 818 righe],
   [18], [`primitives/`, il resto: `commands`, `completion`, `general`, `help`, `isearch`, `minibuffer`, `modes`, `overlays`, `replace`, `results`, `theme`, `virtual_text`, `mod`], [5 953], [---],
@@ -1638,6 +1638,71 @@ escono dalla loro colonna; l'ordine dei lock; la riga di `begin_unwind`, che ora
 `primitives/`, `modes/`, `feature/` e `ui/`, `primitives/` usa `modes/`,
 `feature/` e `ui/`, e `ui/` usa `managers::Buffers` --- e va deciso se
 dichiararlo o riordinarla.
+
+*Passo 15, fatto.* Le porte dei compartimenti stanno tutte in
+`editor/mod.rs`: quelle di `kill_yank` e di `macros` vi sono passate dai loro
+file, `log` ne ha ricevute due, che `editor/log.rs` usa, e una porta nuova,
+`windows_mut_with_buffers`, apre insieme `windows` e `buffers` per `snapshot`,
+che prendeva da sé, in `frame.rs`, il lock della tabella dei buffer. I
+venticinque metodi che inoltravano una chiamata sola a un compartimento da un
+file di coordinamento sono passati al file del compartimento: i cinque del tema
+da `frame.rs` a `runtime.rs`; da `keys.rs` i quattro dell'argomento prefisso a
+`commands.rs` e i sei della keymap transitoria e dei tasti di ripetizione a
+`modes.rs`; gli otto del mouse da `mouse.rs` a `windows.rs`; `replace_active` e
+`replace_count` da `replace.rs` a `runtime.rs`. Con loro `run_hook` è passato
+da `commands.rs` a `modes.rs`, perché gli hook stanno con i modi. La regola
+delle coppie, scritta in `lib.rs`, in `editor/mod.rs` e nel manuale, non ha più
+eccezioni. Nella mappa di `lib.rs` `ui/` è salita prima di `managers/`: dichiara
+due usi da più in basso nella mappa, `Buffers` ed `ELispExp`, `managers/` ne
+dichiara 3 invece di 15, e `layering_tests` controlla anche `ui/`; `editor/`,
+`primitives/`, `modes/` e `feature/` sono dichiarati uno strato solo. Il
+rustdoc di `editor/` segue le regole, con i `TODO` di AVV-2, AVV-5, AVV-6,
+BKG-2, BUF-1, CMD-5, DOC-2, DOC-5, FIL-3, MIN-1, RIC-3, RIC-8 e TUI-6 dove sta
+il lavoro; il `TODO(uncertain)` di `enable_log_file` resta con le sue parole.
+Le trentacinque sezioni con titolo (`# Why`, `# What` e simili) sono nel
+manuale, con le altre spiegazioni lunghe dei commenti: trentacinque decisioni
+nuove, quattro sull'avvio, una sulle directory dei test, dieci nel capitolo
+sullo stato, otto in quello sui tasti, una sulla sostituzione, sette sullo
+schermo e il mouse, quattro sulle macro; ciò che il capitolo sul lavoro in
+background diceva già è stato tolto e basta. I commenti di undici file di test
+seguono le regole (in `hooks_tests` non c'era nulla da cambiare). `editor/`
+scende da 5 593 a 5 044 righe, e le righe di commento da 2 106 a 1 539. Il
+comportamento non è cambiato: gli stessi test passano.
+
+Il passo ha trovato questi difetti, tutti in commenti e documenti, e la patch
+li corregge. La documentazione di `create_global_env` stava sopra
+`DEFAULT_INIT_LISP` e quella di `handle_key_event` sopra `read_prefix_argument`,
+e le due funzioni pubbliche non ne avevano; `snapshot` aveva due riassunti, e
+`resolve_key_sequence` descriveva un `Option` che non restituisce più.
+`close_buffer` diceva che una finestra ripiega su `*scratch*`, mentre ripiega
+sul buffer più recente, e che `kill-buffer` non chiede conferma: la voce esce
+da DOC-1. Due commenti di `buffers.rs` davano l'ordine dei lock al contrario;
+`keys.rs` rimandava a un «roadmap \#24» che non c'è; `modes.rs` contava cinque
+metodi che sono quattro; `snapshot` diceva il tema un valore `Copy`, mentre è
+un `Arc`. `fuel_tests` rimandava a una «regola sei» che non c'è, e
+`frame_snapshot_tests` contava tre thread che sono due. Un link nella
+documentazione di `show_in_focused_window` dava un avviso di `cargo doc`: gli
+avvisi passano da 14 a 13. Nel manuale la figura dell'avvio disegnava uno
+scheduler e `spawn`, e metteva `FileWatcher` e `AutoSaver` prima di
+`init.lisp`; il testo su `main.rs` non diceva che apre ogni file della riga di
+comando né che c'è un front-end grafico; l'estratto di `eval_file` non
+valutava alla radice dell'ambiente; quelli di `handle_key_event` e della
+risoluzione ignoravano la keymap locale del buffer; `run_command_form` non
+aveva `pre-command-hook`, che spende il budget del comando, mentre il testo
+diceva che ogni hook riparte con il budget pieno; la tabella dei campi aveva
+`worker_mailbox` e `background_work`, e `begin_unwind`, che ora è
+`with_unwind`, citava INT-1, risolta; «Lo schermo» chiamava `Removed` il
+`WindowRemoved` e dava il formato della riga di stato senza `%s`; una macro
+non è un gruppo di undo solo ma uno per ripetizione; la superficie pubblica non
+elencava `on_background_change`, `shutdown` e `take_backtrace_suffix`, e «Dove
+sta cosa» chiamava `macros.rs` un file di preoccupazione.
+
+Restano ai passi dei loro capitoli: la formattazione di `boot.rs`, `results.rs`
+e `settings.rs` e il metodo morto `free_buffer_name`, che DOC-5 chiede di
+sistemare in un commit a parte (in `settings.rs` le stesse righe da formattare
+fanno ora cinque blocchi invece di tre, perché i commenti nuovi le separano);
+il ciclo degli eventi della TUI e il commento sul log in `main.rs` (passo 20);
+`primitives/replace.rs` e RIC-8 (passo 18).
 
 == Fase D --- il manuale (passo 22)
 

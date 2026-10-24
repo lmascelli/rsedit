@@ -1,40 +1,35 @@
-//! Diagnostics, backtraces, and how an error reaches the user.
+//! Diagnostics: the log and its file, the backtrace of the last error, and how
+//! an uncaught error reaches the user.
+//!
+//! Design: `doc/architettura-editor.typ, <coppie>`.
 
 use super::*;
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Enable writing logs to the specified file.
-    /// Start mirroring diagnostics to a file at PATH, writing out everything
-    /// logged so far first. What is logged after is written by the
-    /// WorkManager's watchdog, a turn at a time, and by [`Self::shutdown`]:
-    /// see `managers::log`.
+    /// Starts copying the log to a new file at PATH, first writing out what has
+    /// been logged so far. What is logged afterwards reaches the file through
+    /// the WorkManager's watchdog, a turn at a time, and [`Self::shutdown`].
     ///
-    /// `&self` rather than `&mut self`: the file used to be the one field here
-    /// not behind a lock, which meant enabling it needed exclusive access to
-    /// the whole editor -- and, because `EditorState` is `Clone`, that a clone
-    /// made afterwards was the only one that mirrored anything.
+    /// The file is under the log's lock, so every clone of the editor logs to
+    /// it, whichever enabled it.
     pub fn enable_log_file<P: AsRef<std::path::Path>>(&self, path: P) -> std::io::Result<()> {
-        // TODO(uncertain) maybe this is an unwanted change, i don't know if it's better to be
-        // able to enable the writing of the logs only at specific times and maybe disable it
-        // to get only some logs.
+        // TODO(uncertain) maybe this is an unwanted change, i don't know if
+        // it's better to be able to enable the writing of the logs only at
+        // specific times and maybe disable it to get only some logs.
+        // TODO(AVV-6): `File::create` empties the file, even while another
+        // editor is writing to it.
         let file = File::create(path)?;
-        self.log
-            .write()
-            .expect("write lock on log")
-            .enable_file(file)
+        self.log_mut(|log| log.enable_file(file))
     }
 
-    /// Return every diagnostic logged so far via `log_diagnostic`, oldest
-    /// first.
+    /// Returns every line logged so far, oldest first.
     pub fn get_logs(&self) -> Vec<String> {
-        self.log.read().expect("read lock on log").lines()
+        self.log(|log| log.lines())
     }
 
-    /// Convenience for error-reporting call sites: returns a
-    /// `" | backtrace: a -> b -> c"` suffix (innermost call first)
-    /// describing the frames captured at the point of the most recent
-    /// uncaught error, or an empty string if there's nothing to report --
-    /// and clears the captured backtrace either way, so the next error
+    /// Returns the backtrace of the last uncaught error as a suffix,
+    /// `" | backtrace: a -> b -> c"`, innermost call first, or an empty string
+    /// when there is none; and clears it either way, so that the next error
     /// starts from a clean stack.
     pub fn take_backtrace_suffix(&self) -> String {
         let frames = self.backtrace();
@@ -46,20 +41,18 @@ impl<B: BufferTrait> EditorState<B> {
         }
     }
 
-    /// Report an uncaught evaluation error to the user. Always logs it. If
-    /// the user's Lisp configuration defines a `report-error` function
-    /// (see `core/lisp/debug.lisp`), hands it MESSAGE and the call stack
-    /// captured at the point of failure (see `backtrace`) as `(report-error
-    /// MESSAGE FRAMES)`, so Lisp decides how to present it -- the default
-    /// implementation echoes it, and additionally opens a *Backtrace*
-    /// popup if `debug-on-error` is set. Falls back to plain logging (the
-    /// same shape `take_backtrace_suffix` produces) if no such hook is
-    /// defined yet, e.g. during early boot before `debug.lisp` has loaded.
+    /// Reports an uncaught evaluation error to the user, and counts it as a
+    /// failed command.
+    ///
+    /// When Lisp defines `report-error`, as `debug.lisp` does, it is called
+    /// with MESSAGE and the backtrace, innermost call first, and decides how to
+    /// show them: the one shipped echoes the message, and opens a
+    /// `*Backtrace*` window when `debug-on-error` is set. Before it exists,
+    /// early in startup, the error is logged, with the suffix
+    /// [`Self::take_backtrace_suffix`] gives.
     pub fn report_error(&self, message: &str, env: &Arc<Env<Self>>) {
-        // Counted first, so that a `report-error` hook which itself fails
-        // cannot stop the failure that called this from being noticed. The one
-        // reader is a keyboard macro, which has to stop at the first key that
-        // did not work -- see `EditorState::replay_keys`.
+        // Counted first, so that a `report-error` that fails itself cannot keep
+        // a replaying macro from noticing the failure.
         self.note_command_error();
         let frames = self.backtrace();
         self.clear_backtrace();

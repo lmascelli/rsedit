@@ -177,8 +177,8 @@ mod tests {
 
     #[test]
     fn a_job_that_fails_still_says_it_is_done() {
-        // Rule six. A mode that is told nothing stays waiting for ever, and
-        // "the index is still building" is a state nothing else can leave.
+        // A mode that is told nothing stays waiting for ever, and "the index
+        // is still building" is a state nothing else can leave.
         let (ctx, env) = editor();
         run(
             "(setq outcome 'unset)
@@ -514,9 +514,9 @@ mod tests {
 
     #[test]
     fn a_job_cannot_open_a_prompt() {
-        // The same refusal a worker gets, for the same reason and through the
-        // same flag: a minibuffer put up by a job is a window nobody is
-        // typing into, over a command nobody started.
+        // The refusal a job of `define-worker` gets, for the same reason and
+        // through the same flag: a minibuffer put up by a job is a window
+        // nobody is typing into, over a command nobody started.
         let (ctx, env) = editor();
         run(
             "(setq asked nil) (setq outcome 'unset)
@@ -653,9 +653,8 @@ mod tests {
 
     #[test]
     fn a_file_the_watcher_reloads_tells_the_host() {
-        // The case that showed the need: a file changed on disk is reloaded
-        // by the watcher, and the screen went on showing the old text until a
-        // key was pressed.
+        // A file changed on disk, which the watcher reloads: unless the host
+        // is told, the screen shows the old text until a key is pressed.
         let (ctx, env, told) = watched();
         let dir = std::env::temp_dir().join(format!(
             "rsedit-watch-redraw-{}-{:?}",
@@ -706,7 +705,7 @@ mod tests {
 
     #[test]
     fn a_thread_of_its_own_still_knows_it_is_not_the_command_thread() {
-        // The flag is what `minibuffer-read' consults before refusing to put
+        // The flag is what `minibuffer-read` consults before refusing to put
         // up a prompt nobody is typing into, and a thread of its own is
         // further from the command thread than anything else here -- so it
         // is the case most in need of the flag and the one most easily left

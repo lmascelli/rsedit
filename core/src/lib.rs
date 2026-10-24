@@ -26,10 +26,15 @@
 //!                takes input in. Of what is below, it uses only what a key
 //!                is bound to: ELispExp, whose type names EditorState.
 //!   commands.rs  the registry of what a name can mean as a command.
+//!   ui/          a description of what to draw: windows and their layout,
+//!                faces and themes, the snapshot of a frame. Draws nothing:
+//!                there is no terminal, no window system and no crossterm in
+//!                here. Of what is below, it uses only the buffer table it
+//!                composes against, Buffers, and ELispExp.
 //!   managers/    the editor's state, in compartments, each under one lock.
 //!                Of what is below, it uses only what it stores: the modes
-//!                and syntax tables of modes/, the windows, faces and theme
-//!                of ui/, and ELispExp for what Lisp registers.
+//!                and syntax tables of modes/, and ELispExp for what Lisp
+//!                registers.
 //!   editor/      EditorState: the facade over those compartments, and the
 //!                only thing that may hold two of their locks at once.
 //!   primitives/  everything Lisp can call. Without exception -- if it is a
@@ -39,22 +44,27 @@
 //!                the file watcher).
 //!   feature/     the two features whose mechanics could not be left to a
 //!                .lisp file: the minibuffer and incremental search.
-//!   ui/          a description of what to draw. Draws nothing: there is no
-//!                terminal, no window system and no crossterm in here.
 //! ```
+//!
+//! The last four are one layer, not an order: they use one another --
+//! `editor/` installs the primitives and starts the modes' jobs, which act on
+//! the editor -- and the map lists them by what they are. `layering_tests`
+//! holds each module from `work/` to `managers/` to what its entry names.
 //!
 //! Two boundaries are the load-bearing ones. The interpreter is a crate of its
 //! own, so it cannot name an editor type: that is what lets it be tested, and
-//! used, on its own. And `ui/` names nothing from `editor/`, which
-//! `layering_tests` checks: that is what lets a renderer be written against a
-//! snapshot instead of against this crate's internals. The same test holds
-//! each module from `work/` to `managers/` to what its entry names.
+//! used, on its own. And `ui/` comes before `editor/` in the map, and names
+//! nothing of it: that is what lets a renderer be written against a snapshot
+//! instead of against this crate's internals.
 //!
 //! `managers/` and `editor/` pair by name. `managers/X` is compartment X: its
 //! fields under one lock, and what can be done to them with nothing else.
 //! `editor/X` is its half of the facade: what needs X together with another
 //! compartment, a buffer's text or the interpreter, and the methods that give
-//! X's operations an editor's name.
+//! X's operations an editor's name. The doors that take the compartments'
+//! locks are all in `editor/mod.rs`; the other files of `editor/` are named
+//! after what they coordinate -- `keys.rs`, `mouse.rs`, `frame.rs` -- and
+//! hold no method that only forwards to a compartment.
 //!
 //! # Why everything is `pub(crate)`
 //!

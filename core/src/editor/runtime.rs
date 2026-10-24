@@ -1,20 +1,17 @@
-//! Odds and ends belonging to the session rather than to any document:
-//! whether the editor is running, how many shell commands are, and the small
-//! pieces of state that reset between commands.
+//! The runtime's half of the facade, and the session's own small state:
+//! whether the editor is running, how many shell commands are, and which
+//! results `next-error` walks.
+//!
+//! Design: `doc/architettura-editor.typ, <coppie>`.
 
 use super::*;
 
-/// Take one off a count of work in flight, and never below zero.
+/// Takes one off COUNTER, and never goes below zero: a stray extra call leaves
+/// the count at zero, rather than at `usize::MAX` with the renderer waking for
+/// the rest of the session.
 ///
-/// Saturating rather than wrapping: a stray extra call would otherwise take
-/// the count to `usize::MAX` and leave the renderer spinning for the rest of
-/// the session. That is the whole reason this is not a `fetch_sub`, and it was
-/// the whole content of two methods that differed only in which field they
-/// named.
-///
-/// `fetch_update` and not `try_update`, which is the same operation under a
-/// newer name that is still unstable (`atomic_try_update`, rust#135894).
-/// There is no toolchain pinned here, so the build simply failed on stable.
+/// `fetch_update`, because `try_update`, its newer name, is not stable yet
+/// (rust#135894).
 fn finish_one(counter: &AtomicUsize) {
     let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
         Some(n.saturating_sub(1))
@@ -22,56 +19,79 @@ fn finish_one(counter: &AtomicUsize) {
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Quit the editor
+    // ------------------------------------------------------------------
+    // Running
+    // ------------------------------------------------------------------
+
+    /// Asks the editor to stop: [`Self::is_running`] answers false from now
+    /// on, and the host's loop ends.
     pub(crate) fn quit(&self) {
         self.running.store(false, Ordering::Relaxed);
     }
 
+    /// Returns whether the editor is running: false once `quit` has been asked
+    /// for.
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
 
-    /// Start, or continue, an incremental search.
+    // ------------------------------------------------------------------
+    // The search and the replace in progress
+    // ------------------------------------------------------------------
+
+    /// Starts an incremental search with SESSION, or goes on with it.
     pub(crate) fn begin_isearch(&self, session: Isearch) {
         self.runtime_mut(|runtime| runtime.begin_isearch(session));
     }
 
-    /// Take the running search *out* of the editor, leaving none behind.
+    /// Takes the incremental search in progress out of the editor, leaving
+    /// none.
     ///
-    /// Out rather than borrowed, because acting on a session means taking
-    /// buffer locks and moving point. Handing a `&mut` to a closure would mean
-    /// holding this lock across all of that, putting an ordering between it and
-    /// the buffers that nothing else in the editor respects. Taking it out owes
-    /// no ordering to anything -- the caller puts it back with
-    /// [`Self::begin_isearch`] when the search continues, and simply drops it
-    /// when it does not.
+    /// Taken rather than lent: acting on a session takes a buffer's lock and
+    /// moves point, and lending it would hold the runtime's lock across that.
+    /// The caller gives it back with [`Self::begin_isearch`] when the search
+    /// goes on.
     pub(crate) fn take_isearch(&self) -> Option<Isearch> {
         self.runtime_mut(|runtime| runtime.take_isearch())
     }
 
-    /// Whether an incremental search is running. Only for reporting -- anything
-    /// that acts on the session takes it.
+    /// Returns whether an incremental search is running. For reporting: what
+    /// acts on the session takes it.
     pub(crate) fn isearch_active(&self) -> bool {
         self.runtime(|runtime| runtime.isearch_active())
     }
 
-    /// Note that a shell command has started.
+    /// Returns whether a replace is running.
+    pub(crate) fn replace_active(&self) -> bool {
+        self.runtime(|runtime| runtime.replace().is_some())
+    }
+
+    /// Returns how many matches the replace in progress has replaced.
+    pub(crate) fn replace_count(&self) -> usize {
+        self.runtime(|runtime| runtime.replace().map_or(0, |session| session.replaced))
+    }
+
+    // ------------------------------------------------------------------
+    // Shell commands, and the results being walked
+    // ------------------------------------------------------------------
+
+    /// Counts a shell command that has started.
     pub(crate) fn begin_shell_command(&self) {
         self.shell_commands.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Note that one has finished. Called from the command's own thread, after
-    /// the last of its output is in the buffer.
+    /// Counts a shell command that has finished: from the command's own
+    /// thread, once the last of its output is in its buffer.
     pub(crate) fn finish_shell_command(&self) {
         finish_one(&self.shell_commands);
     }
 
-    /// How many shell commands are still running.
+    /// Returns how many shell commands are running.
     pub(crate) fn shell_commands_running(&self) -> usize {
         self.shell_commands.load(Ordering::Relaxed)
     }
 
-    /// Which buffer's results `next-error` walks, or `None`.
+    /// Returns the buffer whose results `next-error` walks, if any.
     pub(crate) fn current_results(&self) -> Option<String> {
         self.current_results
             .read()
@@ -79,11 +99,8 @@ impl<B: BufferTrait> EditorState<B> {
             .clone()
     }
 
-    /// Say which listing is the one being walked.
-    ///
-    /// Set by whatever made it, so that the list you just asked for is the
-    /// list `M-g n` walks -- which is what somebody who has just run a search
-    /// means by "the next one".
+    /// Makes NAME the listing `M-g n` walks. Whatever made a listing sets it,
+    /// so that the list just asked for is the one walked.
     pub(crate) fn set_current_results(&self, name: Option<String>) {
         *self
             .current_results
@@ -91,62 +108,92 @@ impl<B: BufferTrait> EditorState<B> {
             .expect("Failed to acquire write lock on current_results") = name;
     }
 
+    // ------------------------------------------------------------------
+    // A command's own state
+    // ------------------------------------------------------------------
+
+    /// Returns the column vertical movement is aiming for, if any.
     pub(crate) fn goal_column(&self) -> Option<usize> {
         self.runtime(|runtime| runtime.goal_column())
     }
 
+    /// Sets the column vertical movement aims for, or forgets it.
     pub(crate) fn set_goal_column(&self, col: Option<usize>) {
         self.runtime_mut(|runtime| runtime.set_goal_column(col));
     }
 
-    /// Open a fresh Lisp execution budget for one top-level command -- a
-    /// keystroke, a hook run, a config file being loaded.
+    /// Opens a fresh execution budget for one entry into the interpreter -- a
+    /// command, a hook, a file being loaded -- for as long as the scope it
+    /// returns lives.
     ///
-    /// What counts as "one command" is editor *policy*, which is why this lives
-    /// here rather than in `FuelMeter`: only the editor knows a keystroke is one
-    /// unit of work. Nesting is safe -- the meter tracks depth and only the
-    /// outermost scope refills -- so a command that re-enters the evaluator, via
-    /// the Lisp-callable `eval-file` primitive for instance, keeps spending the
-    /// budget it already has instead of quietly being handed a new one.
+    /// Only the outermost scope refills, so a command that loads a file spends
+    /// its own budget on it. What counts as one entry is the editor's to say,
+    /// which is why this is here and not in `FuelMeter`.
     pub(crate) fn begin_command(&self) -> FuelScope {
-        // The meter is cloned out and the lock given straight back: a metered
-        // scope lasts a whole command, and holding this lock for that long
-        // would be holding it across the interpreter.
+        // The meter is cloned out and the lock given back: a scope lasts as
+        // long as the command, across the interpreter.
         self.runtime(|runtime| runtime.fuel()).begin()
     }
 
-    /// The execution meter behind [`Self::begin_command`].
-    ///
-    /// Exposed for `risp::measure`, which needs the meter to hold a scope of
-    /// its own for the duration of a measurement.
+    /// Returns the meter behind [`Self::begin_command`], for `risp::measure`,
+    /// which holds a scope of its own while it measures.
     #[cfg(test)]
     pub(crate) fn fuel_meter(&self) -> Arc<FuelMeter> {
         self.runtime(|runtime| runtime.fuel())
     }
 
-    /// Set how much fuel a fresh command receives, and top the current thread's
-    /// remaining fuel up to it. Only tests reach it today, to ask for a
-    /// deliberately tiny budget; a `set-command-fuel` primitive would be the
-    /// first caller outside them.
+    /// Sets how much fuel a command starts with, and tops this thread's up to
+    /// it: for the tests that want a small budget.
     #[cfg(test)]
     pub(crate) fn set_fuel_budget(&self, budget: u32) {
         self.runtime(|runtime| runtime.fuel()).set_budget(budget);
     }
 
-    /// Return the call stack captured at the point of the most recent
-    /// uncaught error, innermost (deepest) call first -- or an empty list
-    /// if nothing has errored since the last `clear_backtrace`. See
-    /// `LispContext::push_call_frame` for the capture protocol and its
-    /// tail-call caveat.
+    /// Returns the call stack captured when the last uncaught error happened,
+    /// innermost call first, or nothing when none has happened since
+    /// [`Self::clear_backtrace`]. How it is captured, and what a tail call
+    /// leaves out of it, is `LispContext::push_call_frame`'s to say.
     pub fn backtrace(&self) -> Vec<String> {
         self.runtime(|runtime| runtime.backtrace())
     }
 
-    /// Discard the captured backtrace, so the next error starts from a
-    /// clean stack instead of stacking on top of a stale one. Callers that
-    /// catch and report an error (a key handler, `eval_file`, ...) should
-    /// call this once they're done reading `backtrace()`.
+    /// Forgets the captured backtrace, so that the next error starts from a
+    /// clean stack: what reports an error clears it once it has read it, as
+    /// [`Self::report_error`] does.
     pub fn clear_backtrace(&self) {
         self.runtime_mut(|runtime| runtime.clear_backtrace());
+    }
+
+    // ------------------------------------------------------------------
+    // The theme
+    // ------------------------------------------------------------------
+
+    /// Puts every face back as the editor ships it: the compiled-in styles,
+    /// and those modules gave with `define-face`, whatever themes and
+    /// `init.lisp` have done since.
+    pub(crate) fn reset_theme(&self) {
+        self.runtime_mut(|runtime| runtime.reset_theme());
+    }
+
+    /// Makes STYLE the one FACE is drawn with, in every window. The frames
+    /// already taken keep the theme they were composed under.
+    pub(crate) fn set_face_style(&self, face: Face, style: Style) {
+        self.runtime_mut(|runtime| runtime.set_face_style(face, style));
+    }
+
+    /// Makes STYLE the one FACE ships with, which [`Self::reset_theme`] puts
+    /// back, and the one it is drawn with now.
+    pub(crate) fn define_face_style(&self, face: Face, style: Style) {
+        self.runtime_mut(|runtime| runtime.define_face_style(face, style));
+    }
+
+    /// Returns the style FACE is drawn with.
+    pub(crate) fn face_style(&self, face: Face) -> Style {
+        self.runtime(|runtime| runtime.face_style(face))
+    }
+
+    /// Returns the theme in force.
+    pub(crate) fn theme(&self) -> Arc<Theme> {
+        self.runtime(|runtime| runtime.theme())
     }
 }

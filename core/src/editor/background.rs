@@ -1,33 +1,14 @@
-//! What background jobs owe the thread that runs commands, and when it pays.
+//! What background jobs owe the thread that runs commands, and when it pays: a
+//! job does not call Lisp from its own thread, it leaves the call owed, and the
+//! command thread makes it between one command and the next.
 //!
-//! # Why there is a queue at all
-//!
-//! A job runs on the WorkManager's executor, and what it was started for -- a
-//! completion list, a listing, an index -- belongs to a mode. Letting the job
-//! call the mode directly would be letting Lisp written for the command
-//! thread run at an arbitrary instant on another one: half-way through an
-//! insertion, inside a hook that is walking a list it is also changing,
-//! between the two halves of something that is one operation to everybody
-//! except the thread that interrupted it.
-//!
-//! No care in the callback fixes that, because the callback is not what is
-//! wrong. So a job does not call; it leaves a note saying what should be
-//! called, and the note is read where a keystroke would be read. See
-//! [`crate::primitives::lisp_job`] for the rule this is the machinery for.
-//!
-//! # Why it is a field and not a compartment
-//!
-//! Every compartment in [`crate::managers`] knows nothing of Lisp, and this
-//! queue is full of it. Putting it behind one would either break that rule or
-//! require a second representation of a function call, invented for the
-//! purpose of not admitting what it is. It sits beside `current_results` as
-//! what it is: state the facade holds directly.
+//! Design: `doc/architettura-editor.typ, <callback-dovute>`.
 use super::*;
 
 /// One call a job has asked for, waiting for the command thread.
 pub(crate) struct OwedCallback<B: BufferTrait> {
-    /// The job that asked, so that one replaced or stopped since can be
-    /// dropped.
+    /// The job that asked, by its name and number: the call of one replaced
+    /// or stopped since is dropped.
     name: String,
     id: WorkId,
     function: ELispExp<B>,
@@ -35,12 +16,12 @@ pub(crate) struct OwedCallback<B: BufferTrait> {
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Note that job ID, running under NAME, wants FUNCTION called with ARGS.
+    /// Records that the job ID, under NAME, wants FUNCTION called with ARGS.
     ///
-    /// Called from the executor. It does not call anything, take a lock
-    /// anyone is holding, or wake anybody itself: the step it is called from
-    /// wakes the renderer when it ends, and [`Self::callbacks_owed`] tells
-    /// the renderer, once awake, that there is something to do now.
+    /// Called from the executor. It calls nothing, takes no lock that is held
+    /// for long, and wakes nobody: the step it is called from wakes the host
+    /// as it ends, and [`Self::callbacks_owed`] then tells the host that there
+    /// is something to do.
     pub(crate) fn owe_callback(
         &self,
         name: &str,
@@ -59,12 +40,11 @@ impl<B: BufferTrait> EditorState<B> {
             });
     }
 
-    /// Whether anything is waiting to be run.
+    /// Returns whether a call is owed.
     ///
-    /// Asked by [`Self::next_redraw_in`]. A job that has queued its last
-    /// callback has finished, and nothing else would tell a renderer that
-    /// there is still something to do for it: without this the renderer
-    /// would draw the frame its step changed and sleep on the note.
+    /// [`Self::next_redraw_in`] asks. A job that has owed its last call has
+    /// finished, and nothing else would tell the host that something is still
+    /// to be done for it.
     pub fn callbacks_owed(&self) -> bool {
         !self
             .owed
@@ -73,26 +53,15 @@ impl<B: BufferTrait> EditorState<B> {
             .is_empty()
     }
 
-    /// Run everything owed, and say whether anything ran.
+    /// Makes every call owed, and returns whether any was made.
     ///
-    /// # What this is and is not
-    ///
-    /// It is the point in the loop where a background job's results become
-    /// visible, and the only one. A callback runs here with the same locks
-    /// free and the same invariants holding as a keystroke, which is what
-    /// makes "the mode keeps itself consistent" a rule a mode can keep.
-    ///
-    /// It is not a command. Nothing here sets `last-command`, offers a repeat
-    /// key or runs `post-command-hook`: a callback is something the editor
-    /// owed, not something the user did, and a mode reading `last-command`
-    /// must not be told that an index finishing was the last thing that
-    /// happened.
-    ///
-    /// The queue is taken whole rather than drained until empty, which bounds
-    /// the pass: a job on the other thread that queues callbacks faster than
-    /// they can be run would otherwise keep this loop going, and the thread
-    /// it would be keeping is the one the user is typing on. Whatever arrives
-    /// while this is running is run next time, a frame later.
+    /// Where a job's results become visible, and the only place: a call runs
+    /// here with the locks free and the invariants holding, as for a key. It
+    /// is not a command -- no `last-command`, no repeat key, no
+    /// `post-command-hook` -- since the editor owed it and the user did not do
+    /// it. The list is taken whole: what is owed while it runs waits for the
+    /// next pass, so that a job owing faster than this pays cannot keep the
+    /// thread the user types on.
     pub fn run_owed_callbacks(&self, env: &Arc<Env<EditorState<B>>>) -> bool {
         let owed: Vec<OwedCallback<B>> =
             std::mem::take(&mut *self.owed.write().expect("write lock on owed callbacks"));
@@ -101,22 +70,17 @@ impl<B: BufferTrait> EditorState<B> {
         }
         let mut ran = false;
         for callback in owed {
-            // Dropped rather than run when a newer job has taken the name, or
-            // the job was stopped. Running it would tell a mode that the job
-            // it is now waiting for had finished, with the previous job's
-            // half-built state as the evidence.
-            //
-            // The question is "does this job still speak for its name", not
-            // "is it still running": a job that has finished is precisely the
-            // one whose callback has to be delivered.
+            // Dropped, not made, when a newer job has the name or the job was
+            // stopped: it would tell a mode that the job it now waits for had
+            // finished, with the old job's half-built state for evidence. The
+            // question is whether the job still speaks for its name, not
+            // whether it runs: a finished job is the one whose call is owed.
             if !self.work.is_latest(&callback.name, callback.id) {
                 continue;
             }
             ran = true;
-            // A budget of its own, like a hook and for the same reason: this
-            // is a top-level entry into the interpreter, and a callback that
-            // loops must be stopped by the same thing that stops a command
-            // that loops.
+            // A budget of its own, as for a hook: an entry into the
+            // interpreter, where a loop is stopped as a command's is.
             let _command = self.begin_command();
             if let Err(error) = call_callable(&callback.function, &callback.args, env.clone(), self)
             {
@@ -129,19 +93,15 @@ impl<B: BufferTrait> EditorState<B> {
         ran
     }
 
-    /// Everything the editor owes when its timer comes due, in one call.
+    /// Does what the editor owes when the host's wait has run out: scrolls a
+    /// drag that has left its window, and makes the calls owed. Returns
+    /// whether the screen is now behind.
     ///
-    /// The renderer asks [`Self::next_redraw_in`] how long it may sleep and
-    /// calls this when that time is up. One call rather than a list of them
-    /// so that a second front end does not have to know what the editor was
-    /// waiting for -- which is the same reason `next_redraw_in` answers with
-    /// one duration rather than four.
-    ///
-    /// True when something changed and the screen is now behind.
+    /// One call, so that a host need not know what the editor was waiting
+    /// for, as [`Self::next_redraw_in`] answers with one duration.
     pub fn tick(&self, env: &Arc<Env<EditorState<B>>>) -> bool {
         // Both, always: `||` would skip the second whenever the first had
-        // something to do, which is exactly when a job is most likely to have
-        // left something too.
+        // work, which is when a job is likeliest to have left some too.
         let scrolled = self.drag_scroll_tick(env);
         let ran = self.run_owed_callbacks(env);
         scrolled || ran
