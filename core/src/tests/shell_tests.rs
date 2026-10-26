@@ -1,12 +1,9 @@
-//! Running a shell command, and reading its output back.
+//! Running a shell command, and reading its output back. These spawn real
+//! processes, since a mock of the spawning would check only that the mock
+//! was called; `settle` polls rather than sleeping a fixed time, so they are
+//! as fast as the machine allows and do not fail on a slow one.
 //!
-//! These actually spawn processes. That is the point -- this is the first
-//! place the editor starts one, and a test that mocked the spawning would
-//! check only that the mock was called.
-//!
-//! Everything here has to wait for a command's own thread. `settle` polls
-//! rather than sleeping a fixed time, so the tests are as fast as the machine
-//! allows and do not fail on a slow one.
+//! Design: `doc/architettura-editor.typ, <comandi-shell>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -219,9 +216,8 @@ mod tests {
 
     #[test]
     fn output_wakes_the_renderer_and_silence_does_not() {
-        // What used to keep the renderer waking every turn for as long as any
-        // command ran, output or not. Now each piece of output says so, and a
-        // command that is quiet costs a frame nothing.
+        // Each piece of output tells the renderer to look, and a command that
+        // is quiet costs a frame nothing.
         let (ctx, env) = editor();
         let told = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         ctx.on_background_change({
@@ -269,10 +265,9 @@ mod tests {
 
     #[test]
     fn a_command_that_fills_standard_error_is_not_stuck() {
-        // SHL-1. Standard output was read to the end before standard error was
-        // read at all, so a command that wrote more than a pipe holds to
-        // standard error -- a build full of warnings -- before closing its
-        // standard output waited on a reader that was waiting on it.
+        // More than a pipe holds written to standard error -- a build full of
+        // warnings -- before standard output closes. Read one stream after the
+        // other, the command would wait on a reader that waited on it.
         let (ctx, env) = editor();
         let name = started(
             r#"(shell-command-start "yes warning | head -c 200000 >&2; echo done")"#,
@@ -307,9 +302,9 @@ mod tests {
 
     #[test]
     fn output_that_is_not_utf8_is_shown_and_the_command_goes_on() {
-        // SHL-2. The first line that was not UTF-8 ended the reading, the pipe
-        // closed under the command, and it died of SIGPIPE at its next write:
-        // a build printing one Latin-1 file name was killed half-way.
+        // A line that is not UTF-8 must not end the reading: the pipe would
+        // close under the command, which would die of SIGPIPE at its next
+        // write, a build half-way through for one Latin-1 file name.
         let (ctx, env) = editor();
         let name = started(
             r#"(shell-command-start "printf 'one\n\377\ntwo\n'; sleep 0.2; echo after")"#,
@@ -372,9 +367,9 @@ mod tests {
 
     #[test]
     fn what_does_not_end_a_line_is_shown_before_the_line_ends() {
-        // A progress bar, or a question: read a line at a time, it waited for
-        // a newline that may never come. Composed by the shell, so that the
-        // command at the top does not say it already.
+        // A progress bar, or a question: read a line at a time, it would wait
+        // for a newline that may never come. Composed by the shell, so that
+        // the command at the top does not say it already.
         let (ctx, env) = editor();
         let name = started(
             r#"(shell-command-start "printf 'wait%s' ing; sleep 30")"#,
@@ -394,8 +389,8 @@ mod tests {
 
     #[test]
     fn a_command_can_be_stopped_by_the_name_of_its_buffer() {
-        // SHL-3. Nothing could reach the process: it belonged to the thread
-        // reading it, and ran to its end whatever happened.
+        // From outside the thread reading it, by the name `stop-worker`
+        // takes.
         let (ctx, env) = editor();
         let name = started(
             r#"(shell-command-start "echo started; sleep 30; echo never")"#,
@@ -505,7 +500,7 @@ mod tests {
     fn a_command_the_system_has_stopped_is_stopped_at_once() {
         // As one that read the terminal is: in a group of its own, it is
         // stopped there. Stopped, it does not hear TERM until it is
-        // continued, and without that it went only with the KILL.
+        // continued, and without the CONT it would go only with the KILL.
         let (ctx, env) = editor();
         let name = started(
             r#"(shell-command-start "echo started; kill -s STOP $$; echo never")"#,
@@ -548,9 +543,8 @@ mod tests {
 
     #[test]
     fn a_command_does_not_outlive_the_editor() {
-        // Shut down, the editor stops its commands as it stops all its work.
-        // Nothing reached them before: a command went on running after the
-        // editor had gone, with nobody left to read what it said.
+        // Shut down, the editor stops its commands as it stops all its work,
+        // and one that goes on TERM is gone before the editor is.
         let (ctx, env) = editor();
         let name = started(
             r#"(shell-command-start "echo started; sleep 41.25")"#,
@@ -625,17 +619,10 @@ mod tests {
 
     #[test]
     fn a_slow_command_does_not_hold_back_another_commands_output() {
-        // What was actually serialised, and what was not.
-        //
-        // The *processes* were always concurrent: `spawn' returns as soon as
-        // the child exists, so two commands have always run at the same time.
-        // What queued was the *reading* -- one task read one pipe to the end
-        // on the shared thread, and every other command's output sat in its
-        // pipe until that finished. So a `git status' started during a build
-        // really did run, and its output really did not appear for as long as
-        // the build lasted; and a command writing more than a pipe will hold
-        // would have blocked part-way through, waiting for a reader that was
-        // busy with somebody else.
+        // Each command has a reader of its own. Read one pipe at a time, a
+        // `git status' started during a build would run and show nothing for
+        // as long as the build lasted, and a command writing more than a pipe
+        // holds would block part-way, waiting for a reader busy with another.
         let (ctx, env) = editor();
         let slow = started(r#"(shell-command-start "sleep 1; echo slow")"#, &env, &ctx);
         let quick = started(r#"(shell-command-start "echo quick")"#, &env, &ctx);
@@ -664,10 +651,9 @@ mod tests {
 
     #[test]
     fn a_command_does_not_hold_up_the_editors_other_background_work() {
-        // The failure this prevents is the one that was actually there: a
-        // `cargo build' read on the shared thread stopped syntax colouring,
-        // the file watcher, the auto-saver and every Lisp worker until the
-        // build finished.
+        // A command is read on a thread of its own, not on the executor: a
+        // `cargo build' must not stop syntax colouring, the file watcher, the
+        // auto-saver and every Lisp worker until it finishes.
         //
         // A background job stands in for all of them, because it is the one
         // that can be *watched* -- it reports when it is done, and the report
@@ -744,8 +730,8 @@ mod tests {
 
     #[test]
     fn the_next_command_is_shown_in_the_strip_of_the_one_before() {
-        // Each used to open a strip of its own under the others, until the
-        // window being worked in was a single row.
+        // A strip each, one under the other, would leave the window being
+        // worked in a single row.
         let (ctx, env) = editor();
         run(r#"(shell-command "echo one")"#, &env, &ctx);
         let strips = ctx.window_count();
@@ -781,8 +767,8 @@ mod tests {
 
     #[test]
     fn starting_a_command_without_showing_it_is_no_command() {
-        // From M-x it ran the command and showed nothing; `shell-command` is
-        // the command, and shows it.
+        // Run from M-x it would start the command and show nothing;
+        // `shell-command` is the command, and shows it.
         let (ctx, env) = editor();
         assert!(run("(commandp 'shell-command-start)", &env, &ctx).is_nil());
         assert!(run("(commandp 'shell-command)", &env, &ctx).is_truthy());

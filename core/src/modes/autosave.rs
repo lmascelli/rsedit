@@ -97,7 +97,7 @@ pub fn auto_save_interval<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Dur
 pub fn auto_save_directory<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Option<String> {
     match env.get_variable(AUTO_SAVE_DIRECTORY) {
         Some(crate::ELispExp::String(dir)) if !dir.is_empty() => {
-            Some(crate::primitives::io::expand_path(&dir))
+            Some(crate::primitives::file_names::expand_path(&dir))
         }
         _ => None,
     }

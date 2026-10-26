@@ -1,17 +1,9 @@
-//! Leaving the editor, and the questions asked on the way out.
+//! Leaving the editor, and the questions asked on the way out. Every failure
+//! here is silent and permanent, so these check the shape of the questions:
+//! which buffers are asked about, what each key does and what the others do,
+//! and that the editor is still running wherever it should be.
 //!
-//! # What is worth testing here
-//!
-//! Every failure in this file is silent and permanent. A quit that does not
-//! ask loses a day's work and says nothing; a question that can be answered by
-//! a stray key is the same thing with an extra step; and a confirmation that
-//! fires when nothing is modified trains people to type `yes' without reading
-//! it, which is how the real one gets answered by reflex.
-//!
-//! So these check the shape of the interrogation rather than that it happens:
-//! which buffers are asked about, what each key does, what *other* keys do,
-//! and -- the one that matters most -- that the editor is still running at
-//! every point where it should be.
+//! Design: `doc/architettura-editor.typ, <uscire>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -164,8 +156,8 @@ mod tests {
 
     #[test]
     fn quitting_with_a_modified_file_asks_before_it_goes() {
-        // The whole point. Before this, `C-x C-c` threw the work away and
-        // said nothing.
+        // The whole point: `C-x C-c` must not throw the work away and say
+        // nothing.
         let sandbox = Sandbox::new("asks");
         let path = sandbox.file("a.txt", "original");
         let (ctx, env) = editor();

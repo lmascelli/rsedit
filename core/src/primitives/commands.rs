@@ -358,7 +358,7 @@ primitive!(command_arg_complete, args, env, ctx, {
         // and redundant. Returned directly for that reason.
         ArgSpec::File { .. } => {
             return Ok(ELispExp::proper_list(
-                super::io::file_completions(&prefix)
+                super::file_names::file_completions(&prefix)
                     .into_iter()
                     .map(ELispExp::string)
                     .collect(),

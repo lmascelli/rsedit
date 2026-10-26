@@ -223,7 +223,7 @@ impl TreeSearch {
         };
         let prune: HashSet<String> = PRUNE.iter().map(|name| name.to_string()).collect();
         let (paths, walk_truncated) =
-            crate::primitives::io::walk_files(&self.root, &prune, &[], FILE_LIMIT, &|| {
+            crate::primitives::filesystem::walk_files(&self.root, &prune, &[], FILE_LIMIT, &|| {
                 !stop.is_cancelled()
             });
         if walk_truncated {
@@ -390,7 +390,7 @@ primitive!(grep_scan, args, env, ctx, {
         crate::feature::isearch::case_fold(&env),
     )
     .map_err(EvalError::RuntimeMessage)?;
-    let root = PathBuf::from(crate::primitives::io::expand_path(&directory));
+    let root = PathBuf::from(crate::primitives::file_names::expand_path(&directory));
     if !root.is_dir() {
         ctx.set_echo_message(&format!("{directory} is not a directory"));
         return Ok(ELispExp::nil());
@@ -498,7 +498,7 @@ fn visit<B: BufferTrait>(
         // Said rather than opened: a path that is not there was written by a
         // build run somewhere else, and an empty buffer of the same name would
         // look like the file.
-        if !Path::new(&crate::primitives::io::expand_path(&entry.source)).exists() {
+        if !Path::new(&crate::primitives::file_names::expand_path(&entry.source)).exists() {
             ctx.set_echo_message(&format!("No such file: {}", entry.source));
             return Ok(false);
         }

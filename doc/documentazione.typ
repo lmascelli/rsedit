@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--16 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--17 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -1436,7 +1436,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [14], [`managers/` (fatto)], [2 936], [la regola delle coppie con `editor/`],
   [15], [`editor/` (fatto)], [4 838], [le porte e gli inoltri; la mappa sopra `managers/`],
   [16], [`primitives/`, modifica del testo: `edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`, `match_data`, `scan` (fatto)], [4 353], [docstring già fatte nella fase B],
-  [17], [`primitives/`, file, finestre e lavori: `io`, `buffers`, `windows`, `ui`, `mouse`, `ask`, `shell`, `workers`, `lisp_job`, `args`], [4 995], [`io.rs` è il file più lungo: 1 818 righe],
+  [17], [`primitives/`, file, finestre e lavori: `io`, `buffers`, `windows`, `ui`, `mouse`, `ask`, `shell`, `workers`, `lisp_job`, `args` (fatto)], [4 995], [`io.rs` è il file più lungo: 1 818 righe],
   [18], [`primitives/`, il resto: `commands`, `completion`, `general`, `help`, `isearch`, `minibuffer`, `modes`, `overlays`, `replace`, `results`, `theme`, `virtual_text`, `mod`], [5 953], [---],
   [19], [`modes/`, `feature/`], [2 896], [---],
   [20], [`ui/`, `src/` (la TUI)], [3 408], [---],
@@ -1760,6 +1760,59 @@ della tabella del registro per gli altri moduli, come quella di `workers`, che
 nomina quattro primitive su nove (passi 17 e 18); il resto di `args.rs` e i due
 test di `recenter`, che restano in `indent_tests` fino a `primitives/ui.rs`
 (passo 17).
+
+*Passo 17, fatto.* `primitives/io.rs` è diviso in cinque file, uno per
+concetto: `files.rs` visita e salva i file; `file_names.rs` compone e smonta i
+nomi, elenca le directory e dà i candidati del completamento; `filesystem.rs`
+interroga il disco e lo cambia, con la visita di un albero; `environment.rs`
+tiene le variabili d'ambiente e la directory dei dati; `quit.rs` l'uscita e
+`save-some-buffers`. `primitives/ui.rs` è entrato in `windows.rs`: `recenter`
+sta con lo scorrimento, le finestre flottanti con le altre. Il codice è lo
+stesso: cambiano i percorsi di chi lo usa, e due funzioni, `write_buffer` e
+`has_unsaved_work`, sono visibili solo ai moduli accanto. Il rustdoc segue le
+regole, con i `TODO` di FIL-1, FIL-2, FIL-3, FIL-4, DOC-1 e delle tre schede
+nuove dove sta il lavoro. I perché lunghi sono nel manuale: nella nuova sezione
+«File, buffer, finestre e domande» del capitolo sulle primitive, con quindici
+decisioni, e nel capitolo sul lavoro in background, che ora descrive i comandi
+di shell e i lavori Lisp, con le regole dei lavori e cinque decisioni in più;
+una decisione nuova è sul mouse. I commenti di undici file di test seguono le
+regole; i test di `recenter` sono passati da `indent_tests` a `scroll_tests`,
+e `primitive_shape_tests` controlla i moduli nuovi e `minibuffer`, che
+mancava. I file del passo scendono da 4 575 a 4 360 righe, e quelle di
+commento da 1 018 a 785; il più lungo è ora `shell.rs`, con 597. Il
+comportamento non è cambiato.
+
+Il passo ha trovato tre difetti di comportamento, che il rapporto ora
+descrive. CMD-8: `close-floating-window` senza finestre flottanti mette il
+focus sulla finestra 0 anche quando non esiste più, e da lì non si può
+dividere. SHL-5: all'uscita un comando di shell che ignora `TERM` resta vivo,
+perché il `KILL` arriva dopo due secondi da `stop shell`, fuori dal WorkManager,
+e l'editor ne aspetta mezzo. BKG-3: `setenv` cambia l'ambiente del processo, e
+il lock di `std` non esclude il codice C che lo legge da sé, come quello delle
+librerie del front-end grafico. La proposta chiamava BKG-4 la scheda dei
+comandi di shell: è diventata SHL-5, nell'area dei comandi di shell.
+
+Gli altri difetti sono in commenti, test e documenti, e la patch li corregge.
+Il commento in `install` di `mouse.rs` parlava di un incolla «bracketed»,
+copiato da `insert-pasted-text`. Alla docstring di `shell-command-start`
+mancava una barra rovesciata, e l'aiuto mostrava un a capo e nove spazi in
+mezzo a una frase che chiamava buffer PRODUCER, che è un simbolo. Il commento
+SAFETY di `setenv` diceva che gli altri thread leggono l'ambiente solo per
+avviare un processo, e dal thread dei comandi. «Only as the editor shuts
+down», in `shell.rs` e in `workers.rs`, taceva i casi in cui il sistema non dà
+un thread e l'esecutore non è partito, e la doc di `WorkManager::submit` il
+secondo. Il rustdoc di `walk_files` non diceva dei suffissi; quello di
+`split_for_completion` divideva sull'ultima `/` invece che sull'ultimo
+separatore, e quello di `directory_entries` metteva una `/` dopo le directory,
+dove va il separatore della piattaforma. Nel manuale `args.rs` leggeva anche
+posizioni, e la decisione su `scan-buffer` faceva pagare a
+`directory-files-recursive` ogni percorso attraversato, mentre paga quelli che
+restituisce.
+
+Restano ai passi dei loro capitoli: `primitives/mod.rs` (passo 18); il resto
+di `modes/autosave.rs`, che chiama `expand_path` (passo 19); il commento di
+`ShutDownOnExit` in `src/main.rs`, che dice che un comando non sopravvive
+all'editor (passo 20, con SHL-5).
 
 == Fase D --- il manuale (passo 22)
 

@@ -1,12 +1,9 @@
-//! What a Lisp job asks for when it yields, and the primitives that reach
-//! the scheduler from Lisp: `emit-event`, the options and `work-list`.
+//! What a Lisp job asks for when it yields, and the primitives that reach the
+//! scheduler from Lisp: `emit-event`, the options and `work-list`. A worker
+//! counts its steps on a WorkManager driven by hand, so "250 ms later" is
+//! exactly 250 ms later, and a wait nothing wakes stays asleep.
 //!
-//! The table of `yield` is checked the way a module meets it: a worker counts
-//! its steps on the editor's WorkManager, which in these tests is driven by
-//! hand on a clock that moves only when told to. So "250 ms later" is exactly
-//! 250 ms later -- one millisecond short and the step has not happened -- and
-//! a wait nothing wakes stays asleep however long the test lets pass. See
-//! `primitives::lisp_job`.
+//! Design: `doc/architettura-editor.typ, <lavori-lisp>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

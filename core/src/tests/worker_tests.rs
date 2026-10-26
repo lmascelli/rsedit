@@ -1,20 +1,9 @@
-//! Background workers: what a step is, and what ends one.
+//! Background workers: what a step is, and what ends one, where every mistake
+//! is silent -- a worker that starts over, a replaced one still running, a
+//! runaway. The WorkManager is in manual mode: the test takes the steps, with
+//! `run_until_idle` or `run_for`, on a clock that moves when told.
 //!
-//! # How these run
-//!
-//! A worker is a job on the editor's WorkManager, which in this crate's tests
-//! is in manual mode: nothing runs until the test drives it, on a clock that
-//! moves when it is told to. So these define a worker the way a module does,
-//! with `define-worker`, and then take its steps with `run_until_idle` -- the
-//! steps that are due now -- or `run_for`, which moves the clock from one
-//! deadline to the next. Nothing waits, and every count is exact.
-//!
-//! The things worth pinning down are the ones that are silent when wrong. A
-//! worker that keeps its place across steps looks identical to one that
-//! starts over, until the log is read in order. A replaced worker looks
-//! identical to a single worker, until both are running and the count is
-//! doubled. And a runaway worker looks like nothing at all -- the editor
-//! simply stops colouring, with no error anywhere.
+//! Design: `doc/architettura-editor.typ, <lavori-lisp>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

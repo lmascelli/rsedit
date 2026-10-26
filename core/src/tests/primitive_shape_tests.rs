@@ -45,8 +45,8 @@ mod tests {
     /// Spread across the arities and the kinds of primitive deliberately:
     /// one-argument and two-argument, a predicate, an accessor, an arithmetic
     /// operation, a string operation and a non-local exit, so that a guard
-    /// lost from any one of the shapes the macros in `lisp/base/mod.rs` generate is
-    /// a failure here.
+    /// lost from any one of the shapes the macros in `lisp/base/mod.rs`
+    /// generate is a failure here.
     #[test]
     fn a_surplus_argument_is_refused() {
         for source in [
@@ -436,18 +436,23 @@ mod registration_tests {
             ("comments", "comment-dwim"),
             ("completion", "completion-at-point"),
             ("edits", "delete-region"),
+            ("environment", "getenv"),
+            ("file_names", "expand-file-name"),
+            ("files", "find-file"),
+            ("filesystem", "delete-file"),
             ("general", "eval-file"),
             ("help", "key-binding"),
             ("indentation", "indent-line-to"),
-            ("io", "quit"),
             ("isearch", "isearch-forward"),
             ("killing", "kill-line"),
             ("macros", "kmacro-start-macro"),
             ("match_data", "string-match"),
+            ("minibuffer", "minibuffer-read"),
             ("modes", "make-mode"),
             ("mouse", "mouse-set-point"),
             ("movement", "forward-char"),
             ("overlays", "make-overlay"),
+            ("quit", "quit"),
             ("rectangle", "rectangle-mark-mode"),
             ("region", "set-mark"),
             ("replace", "query-replace"),
@@ -456,7 +461,6 @@ mod registration_tests {
             ("sexp", "forward-sexp"),
             ("shell", "shell-command-start"),
             ("theme", "set-face"),
-            ("ui", "recenter"),
             ("undo", "undo"),
             ("verbs", "upcase-word"),
             ("virtual_text", "make-virtual-text"),

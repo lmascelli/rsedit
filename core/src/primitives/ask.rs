@@ -1,33 +1,8 @@
-//! Asking the user a question whose answer decides what happens next.
+//! Asking the user a question whose answer decides what happens next. A
+//! question returns at once; the answer arrives later, as a call to the
+//! callback it was given.
 //!
-//! # Why every one of these takes a callback
-//!
-//! The editor never blocks. A command runs to completion and returns; the
-//! answer to a question arrives later, in another command, when the user
-//! presses a key. So a question cannot *return* an answer -- there is nothing
-//! to return it to by the time it exists. What it can do is say what to do
-//! with each answer, which is what these take.
-//!
-//! In Lisp that reads as a `cond` split across two lambdas; in Rust it is a
-//! `match` written as two calls. Neither is as pleasant as an answer that
-//! comes back, and both are the price of an editor that stays responsive while
-//! a question is on screen.
-//!
-//! # Why there are two strictnesses
-//!
-//! Because the cost of a mistaken answer is not the same everywhere. A
-//! question whose wrong answer loses work should be hard to answer by
-//! accident, and a question asked eight times in a row should not need eight
-//! words typed at it. [`yes_or_no`] is the careful one and the default for
-//! anything irreversible; [`y_or_n`] is for the questions you ask in a loop.
-//!
-//! # Why the callbacks are carried in the form rather than in a variable
-//!
-//! Each of these builds the *call* that will answer it -- `(ask--answer (quote
-//! CALLBACK))` -- and hands that to a keymap or to the minibuffer. Nothing is
-//! stored anywhere in the meantime, so a question asked from inside the answer
-//! to another one is simply two forms, not two writes to one slot racing over
-//! which question is live.
+//! Design: `doc/architettura-editor.typ, <domande>`.
 use super::*;
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
 use crate::primitives::args;
@@ -37,8 +12,8 @@ fn nil_or<B: BufferTrait>(value: Option<&ELispExp<B>>) -> ELispExp<B> {
     value.cloned().unwrap_or_else(ELispExp::nil)
 }
 
-/// The call that answers a one-key question: take the map down, then run
-/// CALLBACK.
+/// Returns the call that answers a one-key question: it takes the map down,
+/// then runs CALLBACK.
 fn answer_form<B: BufferTrait>(callback: &ELispExp<B>) -> ELispExp<B> {
     ELispExp::form(vec![
         ELispExp::symbol("ask--answer".into()),
@@ -46,7 +21,7 @@ fn answer_form<B: BufferTrait>(callback: &ELispExp<B>) -> ELispExp<B> {
     ])
 }
 
-/// Put a question on screen that only the listed keys can answer.
+/// Puts a question on screen that only the listed keys can answer.
 ///
 /// `OnUnbound::Refuse` is what makes it a question rather than an offer: a key
 /// that is not an answer does nothing at all, and says nothing, so the
@@ -184,12 +159,9 @@ primitive!(ask_typed, args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-/// Register this module's primitives: asking a question whose answer decides
-/// what happens next.
+/// Registers the primitives that ask a question.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 ///
 /// None of these is a command: a question is asked *by* something, and there
 /// is nothing for `M-x yes-or-no` to ask about.

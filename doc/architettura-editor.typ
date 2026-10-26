@@ -164,7 +164,7 @@ lì e nella mappa di `lib.rs`.
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
   [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`.],
   [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `work.rs`). Vedi @coppie.],
-  [`primitives/`], [Le 318 primitive dell'editor, in 33 moduli, e `install_primitives`.],
+  [`primitives/`], [Le 318 primitive dell'editor, in 36 moduli, e `install_primitives`.],
   [`modes/`], [`MajorMode`, grammatica di colorazione (`syntax.rs`), tabella sintattica e scanner di espressioni (`sexp.rs`), i lavori di sfondo `Highlighter`, `Prescanner`, `FileWatcher`, `AutoSaver`.],
   [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale.],
   [`work/`], [Il WorkManager: il nucleo dello scheduler, l'esecutore, il registro, i thread dedicati, il watchdog, gli argomenti e le opzioni (@sfondo).],
@@ -242,7 +242,7 @@ quando l'effetto deve toccare l'interfaccia: lasciano una #emph[callback
 dovuta], che il thread principale esegue tra un comando e l'altro
 (@utenti-sfondo). Fuori dal WorkManager restano i thread di `(spawn ...)`, che
 l'interprete avvia da sé, e il breve `stop shell` di un comando di shell
-fermato.
+fermato #rapporto("SHL-5").
 
 // ===========================================================================
 = Il ciclo di vita del programma <ciclo-vita>
@@ -1868,6 +1868,8 @@ stessa che si farebbe senza cache.
 istante di modifica e lunghezza, un solo `stat`), e sceglie il modo secondo le
 espressioni regolari di `add-auto-mode`. La lettura usa `read_to_string`, che
 rifiuta un file non UTF-8; il motivo va nel log #rapporto("FIL-3").
+Le primitive sono in `primitives/files.rs`, e `save-some-buffers` e l'uscita,
+che salvano con lo stesso `write_buffer`, in `primitives/quit.rs` (@uscire).
 Salvare scrive l'intero testo con `std::fs::write` (sul posto, senza file
 temporaneo #rapporto("FIL-2")) e aggiorna il timbro, altrimenti ogni
 salvataggio sembrerebbe la scrittura di qualcun altro. `save-buffer` scrive
@@ -3506,22 +3508,33 @@ cresce più che linearmente con la sua lunghezza #rapporto("SIN-2"), e una
 regione di sintassi che corrisponde alla stringa vuota fa un passo che non
 finisce: il watchdog lo segnala, ma l'esecutore resta fermo #rapporto("SIN-1").
 
-=== I comandi di shell e le ricerche
+=== I comandi di shell e le ricerche <comandi-shell>
 
-`shell-command-start` e la ricerca nei file (`grep--scan`, in
-`primitives/results.rs`) girano su un thread dedicato avviato con
-`spawn_writer`, con il nome del buffer in cui scrivono: `*Shell Output*`, o
+`shell-command-start` (`primitives/shell.rs`) e la ricerca nei file
+(`grep--scan`, in `primitives/results.rs`) girano su un thread dedicato avviato
+con `spawn_writer`, con il nome del buffer in cui scrivono: `*Shell Output*`, o
 `<2>`, `<3>`… se il nome è preso tra i buffer o tra i lavori
-(`free_name_for_work`). Un comando legge stdout e stderr da una sola pipe,
-nell'ordine in cui il processo li scrive, e alla fine aggiunge una riga
-`--- exited N ---`. Lo ferma `stop-worker` con il nome del suo buffer, o la
-chiusura del buffer. Su Unix l'azione di sblocco manda `TERM` e `CONT` al
-gruppo del processo, e un thread breve, `stop shell`, avviato fuori dal
-WorkManager, manda `KILL` due secondi dopo a ciò che resta. La pagina `shell`
-del manuale
-dell'utente dice che cosa vede chi lo usa.
+(`free_name_for_work`). Il comando passa dalla shell della piattaforma
+(`/bin/sh -c`, o `cmd /C`), con l'input vuoto e stdout e stderr in una sola
+pipe, che il thread legge come byte: ciò che arriva va nel buffer subito, anche
+una riga non ancora finita, con ciò che non è UTF-8 sostituito e un carattere
+diviso tra due letture tenuto per la successiva. Alla fine il thread aspetta il
+processo e aggiunge una riga `--- exited N ---`, o `--- killed ---`.
 
-=== I lavori Lisp
+Lo ferma `stop-worker` con il nome del suo buffer, o la chiusura del buffer. Il
+comando gira in un gruppo di processi suo, e la richiesta raggiunge tutto ciò
+che ha avviato: su Unix l'azione di sblocco manda `TERM` e `CONT` al gruppo,
+con il `kill` della shell, perché la libreria standard segnala un processo e
+non un gruppo, e un thread breve, `stop shell`, avviato fuori dal WorkManager,
+manda `KILL` due secondi dopo a ciò che resta. All'uscita dell'editor quel
+`KILL` non arriva, e un comando che ignora `TERM` resta vivo
+#rapporto("SHL-5"). Ciò che ha lasciato il gruppo, come un demone, non viene
+raggiunto, e se tiene l'output che ha ricevuto la lettura resta aperta: la riga
+finale aspetta che lo lasci. `shell-command-to-string`, invece, aspetta il comando sul thread che
+lo chiama e ne restituisce lo stdout. La pagina `shell` del manuale dell'utente
+dice che cosa vede chi li usa.
+
+=== I lavori Lisp <lavori-lisp>
 
 `define-worker` e `background-call` (`primitives/workers.rs`) sottomettono un
 `LispJob` (`primitives/lisp_job.rs`): classe normale, unità il carburante,
@@ -3531,7 +3544,12 @@ passa a `yield` dice quando viene il passo dopo: `(yield)` dopo l'intervallo
 del lavoro, 40 ms se non è dato; `(yield 'continue)` appena tocca di nuovo a
 lui; `(yield '(sleep MS))`; `(yield '(wait TOPIC...))`;
 `(yield '(wait-at-most MS TOPIC...))`. La tabella completa, con gli esempi, è
-nella pagina `background`.
+nella pagina `background`. Gli argomenti di un'attesa diventano del lavoro, e
+restano finché un'attesa dopo non ne nomina altri: `(wait)` e
+`(wait-at-most 500)` li tengono. Un altro valore vale l'attesa predefinita,
+così un lavoro che passa a `yield` il suo progresso continua a funzionare; una
+lista che comincia come una delle forme e non lo è, come `(sleep "soon")`, è un
+errore, e il lavoro fallisce con un messaggio che dice la forma.
 
 Ogni passo ha il suo carburante, `worker-fuel` (200 000 per default), letto
 quando il lavoro parte, impostato sul thread dell'esecutore all'inizio di ogni
@@ -3549,6 +3567,30 @@ callback dovute. `ON-PROGRESS` riceve il nome dopo ogni passo tranne l'ultimo.
 `ON-DONE` riceve il nome e `t` per `Exit::Finished`, `nil` per `Failed` e
 `Panicked`; dopo `Cancelled` e `Shutdown` non è chiamata, perché chi ha fermato
 il lavoro lo sa già.
+
+Le regole, per tutto ciò che un programma Lisp fa in background:
+
++ *Ciò che può durare più di un frame è un lavoro in background*, avviato da una
+  chiamata che dice che cosa fare e che cosa fare alla fine; non una funzione
+  che avvia qualcosa e lascia al chiamante di scoprire come è andata.
++ *Un lavoro non disegna.* Cambia lo stato, e il renderer se ne accorge: la
+  fine di ogni passo gli dice di guardare.
++ *Un lavoro non suppone che l'editor sia stato fermo.* Il buffer per cui è
+  partito può non esserci più, la variabile può essere cambiata, la versione
+  letta può essere vecchia di due modifiche: ricontrolla prima di salvare, e ciò
+  che non può ricontrollare non lo tiene.
++ *Il progresso è un segnale, non un ridisegno.* Un lavoro dice «c'è
+  dell'altro»; che cosa voglia dire lo decide il modo.
++ *Il modo si tiene coerente da sé*, e chiederlo è giusto solo se il segnale
+  arriva dove un modo può rispondere senza rischi: per questo le callback girano
+  sul thread dei comandi, tra un comando e l'altro (@callback-dovute).
++ *Gli errori vanno nel log, non si sollevano.* Il comando che ha avviato il
+  lavoro è finito da tempo, e non c'è nessuno a cui sollevarli. Un lavoro fallito
+  dice comunque che è finito, perché un modo che non lo sa aspetta per sempre.
++ *Un lavoro si sostituisce, non si duplica.* Avviarne uno con un nome in uso
+  ferma il vecchio, così rivalutare un modulo o premere due volte un tasto non
+  fa danni; le callback in coda del vecchio si scartano, e il suo `ON-DONE` non
+  viene chiamato, perché chi l'ha sostituito lo sa già.
 
 === Le callback dovute <callback-dovute>
 
@@ -3689,6 +3731,31 @@ Gli altri strumenti:
   comandi girerebbe in un istante qualunque su un altro thread: a metà di un
   inserimento, dentro un hook che scorre una lista. Nessuna cura nella
   callback lo ripara, perché a essere sbagliata non è la callback.
++ *Un comando passa dalla shell.* Ciò che si scrive dopo `M-!` deve voler dire
+  ciò che vorrebbe a un prompt, con pipe, redirezioni e glob. Spezzare sugli
+  spazi cambierebbe `grep -r "due parole" .`, e riscrivere le regole di quoting
+  di una shell darebbe una shell sottilmente diversa da quella che l'utente
+  conosce.
++ *Un comando dice nel suo buffer come è finito.* Il thread ha l'`EditorState` e
+  non l'ambiente Lisp: non può chiamare una callback quando il comando finisce,
+  né mettere un messaggio che scade con un timer che non gira. Scrive nel buffer
+  in cui scrive già una riga `--- exited 0 ---`, che è anche la sola traccia che
+  resta a chi ha guardato altrove.
++ *Stdout e stderr in una pipe sola.* Arrivano nell'ordine in cui il comando li
+  scrive, come a un prompt, e un errore sta accanto all'output di cui parla.
+  Letti uno dopo l'altro, un comando che scrive su stderr più di quanto una pipe
+  tiene prima di chiudere stdout, una build piena di avvisi, aspetterebbe un
+  lettore che aspetta lui.
++ *L'output si legge come byte.* Ciò che arriva si mostra subito, anche una
+  barra di avanzamento o una domanda, che non finiscono una riga. Letto come
+  testo, un byte Latin-1 in un nome di file chiuderebbe la lettura, e il comando
+  morirebbe della pipe chiusa sotto di lui.
++ *Un comando ha un gruppo di processi suo, e niente da leggere.* Fermarlo deve
+  raggiungere ciò che ha avviato, non solo la shell: i figli terrebbero aperta
+  la pipe e sopravviverebbero all'editor. Un gruppo suo è anche un gruppo a cui
+  il terminale non appartiene: un comando che apre il terminale, come una
+  richiesta di password, viene fermato dal sistema invece di prendere i tasti
+  dell'editor, e il `CONT` dopo il `TERM` fa sì che lo senta.
 
 // ===========================================================================
 = Lo schermo <frame>
@@ -3815,7 +3882,9 @@ domande sulle finestre --- che cosa c'è sotto il puntatore, il trascinamento in
 corso, l'ultimo clic --- le fa a `windows.rs`; il punto di un clic diventa una
 colonna del buffer in `buffer_column`, che compone la sola riga cliccata,
 perché il testo virtuale fa di una colonna sullo schermo un'altra colonna nel
-buffer.
+buffer. I comandi sono in `primitives/mouse.rs`, e si registrano senza
+specifiche degli argomenti: i loro argomenti li passa `handle_mouse_event`, non
+un prompt.
 
 == Le decisioni <decisioni-frame>
 
@@ -3841,6 +3910,11 @@ buffer.
   l'editor; che cosa significa passa dai comandi come un tasto: un passo di
   undo, un `post-command-hook`, un nome che `M-x` e il log conoscono, un
   legame che il Lisp può cambiare.
++ *Un clic chiude la selezione.* Una regione va dal mark al punto, e spostare
+  il punto ne sposta un capo: senza questo, ogni clic con una selezione aperta
+  ne trascinerebbe il capo dove si è cliccato, anche lontano, e lascerebbe una
+  selezione su mezzo file che nessuno ha chiesto. Il mark si disattiva e non si
+  cancella: `exchange-point-and-mark` ci torna.
 + *Un trascinamento continua nella finestra in cui è cominciato.* Il seguito e
   la fine di un trascinamento si risolvono prima di chiedere che cosa c'è sotto
   il puntatore: dopo poche righe il puntatore è spesso su un'altra finestra o
@@ -3917,8 +3991,8 @@ Ogni modulo di `primitives/` ha una funzione `install(into: &Registry)` che
 registra le sue primitive con `into.function(nome, puntatore, DOC)` o, per i
 comandi, `into.command(nome, puntatore, specifiche, DOC)`.
 `install_primitives` chiama tutti i moduli. La macro `primitive!` genera la
-firma richiesta da `LispPrimitive`; `args.rs` contiene gli aiuti per leggere gli
-argomenti (nomi come simbolo o stringa, numeri, posizioni).
+firma richiesta da `LispPrimitive`; `args.rs` contiene i lettori degli argomenti
+(@lettori-argomenti).
 
 Ogni docstring comincia con la firma, nella forma `(nome ARG):` seguita da una
 frase: è ciò che mostrano i comandi di aiuto. `doc_faithfulness_tests`
@@ -3928,10 +4002,10 @@ verifica le forme condivise dalle primitive, come il controllo dell'arità.
 #ref-table(
   columns: (2.8cm, 0.8cm, 1fr),
   header: ([Modulo], [N.], [Contenuto]),
-  [`io`], [31], [File: aprire, salvare, rileggere, recuperare, rinominare; percorsi e directory; variabili d'ambiente; `quit` e `save-some-buffers`.],
   [`movement`], [20], [Movimenti per carattere, riga, parola e paragrafo, ai bordi della riga e del buffer, `goto-line`; il punto come numero (`point`, `goto-char`, `current-column`).],
   [`buffers`], [18], [Creare, cambiare, chiudere buffer; contenuto; sola lettura; dati appesi (`buffer-put`, `buffer-get`).],
   [`modes`], [16], [`make-mode`, `add-hook`, regole e regioni di sintassi, `add-auto-mode`, tabella sintattica, `syntax-ppss`.],
+  [`windows`], [15], [Dividere, chiudere, scegliere, scorrere finestre; `recenter`, `display-buffer-at-bottom`, finestre flottanti.],
   [`killing`], [14], [Le kill, `kill-ring-save`, `yank`, `yank-pop`, `kill-new` e il resto del kill ring.],
   [`verbs`], [14], [Maiuscole, spazi, righe vuote, unione e duplicazione di righe, trasposizioni, `zap-to-char`.],
   [`general`], [13], [`eval-file`, `define-key`, `define-repeat-key`, `repeat`, `log`, `backtrace`, `regexp-opt`, keymap transitorie.],
@@ -3939,27 +4013,30 @@ verifica le forme condivise dalle primitive, come il controllo dell'arità.
   [`macros`], [12], [Registrazione e riproduzione delle macro, contatore.],
   [`minibuffer`], [12], [`minibuffer-read`, conferma, annullamento, completamento, storia.],
   [`replace`], [12], [Sostituzione e `query-replace`.],
-  [`windows`], [12], [Dividere, chiudere, scegliere, scorrere finestre; `display-buffer-at-bottom`.],
   [`commands`], [10], [`call-interactively`, `M-x`, `register-command` e il registro dei comandi.],
   [`isearch`], [10], [Ricerca incrementale.],
   [`rectangle`], [10], [Operazioni sui rettangoli.],
   [`region`], [9], [Mark e regione, `keyboard-quit`.],
-  [`workers`], [9], [`define-worker`, `background-call`, `stop-worker`, `running-workers`.],
+  [`workers`], [9], [`define-worker`, `background-call`, `stop-worker`, `running-workers`, `emit-event`, le opzioni dello scheduler, `work-list`.],
   [`completion`], [8], [`completion-at-point`, le sue fonti, `fuzzy-filter`.],
+  [`files`], [8], [Aprire, salvare, rileggere e recuperare un file; `write-file`.],
   [`edits`], [7], [Le due porte; `self-insert`, `insert`, l'incolla, `insert-newline`, `delete-region`, `delete-char`, `delete-backward-char`.],
+  [`file_names`], [7], [Percorsi resi assoluti e smontati, `list-dir`, `match-list`, il completamento dei nomi dei file.],
+  [`filesystem`], [7], [Esistenza, cancellazione e rinomina di file, `directory-files-recursive`, `read-file-to-string`.],
   [`help`], [7], [Ciò che serve all'aiuto: `key-binding`, `where-is`, `keymap-bindings`, `read-key-sequence`. I comandi `describe-*` sono in `help.lisp`.],
   [`match_data`], [7], [`string-match` e i dati della corrispondenza.],
   [`sexp`], [7], [Movimenti e kill per espressioni bilanciate, `up-list`, `down-list`.],
   [`comments`], [6], [Commentare e decommentare.],
-  [`mouse`], [6], [Comandi del mouse.],
+  [`mouse`], [6], [Clic, trascinamenti e rotella.],
   [`theme`], [6], [Facce e stili.],
   [`overlays`], [5], [Overlay.],
+  [`quit`], [5], [`quit`, `save-some-buffers` e le loro risposte.],
   [`undo`], [5], [`undo`, `redo`, `undo-boundary`, `undo-join`, `set-undo-limit`.],
   [`ask`], [4], [Domande sì/no con keymap transitoria.],
-  [`shell`], [4], [Comandi di shell.],
+  [`environment`], [4], [`getenv`, `setenv`, `path-separator`, `data-directory`.],
+  [`shell`], [4], [Comandi di shell, in background o fino alla fine; `parse-overstrike`.],
   [`virtual_text`], [4], [Testo virtuale.],
   [`indentation`], [3], [`current-indentation`, `previous-indentation`, `indent-line-to`.],
-  [`ui`], [3], [`recenter` e finestre flottanti.],
   [`scan`], [1], [`scan-buffer`: tutte le corrispondenze di un modello in un buffer, come voci di una lista di risultati.],
 )
 
@@ -4196,6 +4273,129 @@ un passaggio, per occur, grep o un linter che legge il proprio output. Risponde
 costruite dalle stesse due funzioni, `Entry::new` ed `entry_form`. Si ferma a
 `LIMIT` corrispondenze, 10 000 se nessuno lo dice, e allora TRUNCATED è `t`.
 
+== File, buffer, finestre e domande <primitive-interfaccia>
+
+Le altre primitive stanno anch'esse in un file per concetto. I comandi di shell
+e i lavori Lisp sono nel capitolo sul lavoro in background (@comandi-shell,
+@lavori-lisp).
+
+#ref-table(
+  columns: (3.1cm, 1fr),
+  header: ([File], [Contenuto]),
+  [`files.rs`], [Visitare un file e riscriverlo: `find-file`, `save-buffer`, `write-file`, `revert-buffer`, `recover-file`, con le metà che le loro domande chiamano una volta risposte; `write_buffer` (@file-su-disco).],
+  [`file_names.rs`], [I nomi dei file: `expand_path`, che rende assoluto un percorso, le funzioni che lo smontano, l'elenco di una directory, i candidati del completamento.],
+  [`filesystem.rs`], [Il disco: `file-exists-p`, `delete-file`, `rename-file`, `directory-files-recursive` con `walk_files`, `read-file-to-string`.],
+  [`environment.rs`], [`getenv`, `setenv`, `path-separator`, `data-directory`.],
+  [`quit.rs`], [`quit` e `save-some-buffers`, e `has_unsaved_work`, che dice se chiudere un buffer perderebbe qualcosa.],
+  [`buffers.rs`], [Creare, cambiare, leggere e chiudere buffer; i valori Lisp appesi a un buffer; ciò che un buffer dice di sé.],
+  [`windows.rs`], [Dividere, chiudere, scegliere e scorrere le finestre, `recenter`, le finestre flottanti.],
+  [`mouse.rs`], [I comandi di un clic, di un trascinamento e della rotella (@mouse).],
+  [`ask.rs`], [Le domande: `y-or-n`, `yes-or-no`, e `ask_with_keys` per chi ne fa di sue.],
+  [`args.rs`], [I lettori degli argomenti, che usano tutti gli altri file.],
+  [`shell.rs`], [I comandi di shell (@comandi-shell).],
+  [`workers.rs`, `lisp_job.rs`], [I lavori Lisp e le opzioni dello scheduler (@lavori-lisp).],
+)
+
+=== I nomi dei file <nomi-file>
+
+`expand_path` fa di ciò che l'utente scrive un percorso assoluto: espande `~`
+con `HOME`, o con `USERPROFILE` se `HOME` manca, lo risolve rispetto alla
+directory di lavoro se è relativo, e toglie `.` e `..` per nome, senza chiedere
+al disco. `expand_path_in` fa lo stesso rispetto a un'altra directory: è il
+secondo argomento di `expand-file-name`, per un nome scritto in un elenco di
+file. Ne passano `find-file`, `write-file`, le primitive del disco, la ricerca
+nei file e il salvataggio automatico.
+
+Le altre funzioni smontano un nome senza toccare il disco: `as_directory`
+aggiunge il separatore finale, `without_trailing_separator` lo toglie (una
+radice lo tiene), `directory_part` e `last_component` dividono all'ultimo
+separatore. `directory_entries` elenca una directory in ordine, con il
+separatore dopo ogni sottodirectory, e `list-dir` può mettere prima le
+directory. `file_completions` ne prende i nomi che continuano ciò che è stato
+scritto, come percorsi interi, e i file nascosti solo dopo un punto: lo usa il
+completamento del codice `f`, in `commands.rs`.
+
+=== Il disco <disco>
+
+Le primitive del disco espandono il percorso che ricevono. `directory-entry-count`,
+`delete-file`, `rename-file` e `read-file-to-string`, quando non riescono,
+rispondono nil e scrivono il motivo nel log. `delete-file` toglie un link
+simbolico e mai ciò a cui punta, e una directory piena solo con RECURSIVE;
+`rename-file` non sostituisce un file che c'è.
+
+`walk_files` visita un albero in profondità, con una pila invece della
+ricorsione, e restituisce i percorsi relativi alla radice. Non entra nelle
+directory che PRUNE nomina, scarta i file che finiscono con uno dei suffissi,
+si ferma al limite, e prima di leggere una directory chiede se continuare. La
+usano `directory-files-recursive`, che paga un'unità di carburante per ogni
+percorso che restituisce, e la ricerca nei file, sul suo thread.
+
+=== L'ambiente <ambiente>
+
+`getenv` e `setenv` leggono e cambiano le variabili d'ambiente del processo,
+che i programmi avviati dopo ereditano. `setenv` rifiuta un nome vuoto, o con
+`=` o un byte nullo, che farebbero andare in panic `set_var`. Un lock di `std`
+mette in fila le letture di `std::env` e l'avvio dei processi con le scritture,
+su qualunque thread; non copre il codice C che legge l'ambiente da sé
+#rapporto("BKG-3"). `data-directory` cerca la directory dei dati accanto
+all'eseguibile, e un livello sopra, dove la trovano i binari dei test.
+
+=== Uscire <uscire>
+
+`quit` offre di salvare, uno alla volta, i buffer per cui `has_unsaved_work`
+risponde sì: modificati, scrivibili e con un file. Poi `quit--confirm` esce, o
+chiede di scrivere `yes` se qualcosa è ancora da salvare. `save-some-buffers`
+fa le stesse domande e alla fine chiama AFTER. Ogni domanda è una keymap
+transitoria con quattro tasti, `y`, `n`, `!` e `q`, che chiamano
+`save-some-buffers--answer` con il resto della lista; prima di ogni domanda il
+buffer viene guardato di nuovo, perché una risposta esegue del Lisp che può
+averlo salvato o chiuso. Salva `write_buffer`, in `files.rs`. `close-buffer`
+chiede con la stessa funzione.
+
+=== Le domande <domande>
+
+Una domanda non restituisce la risposta: la primitiva mette la domanda sullo
+schermo e torna, e la risposta arriva dopo, con un altro tasto, come chiamata
+della callback che le è stata data. `y-or-n` installa una keymap transitoria in
+cui rispondono solo `y` e `n` (`OnUnbound::Refuse`: un altro tasto non fa nulla
+e non dice nulla); ogni tasto chiama `ask--answer`, che toglie la keymap prima
+di chiamare la callback. `yes-or-no` apre il minibuffer e passa ciò che viene
+scritto a `ask--typed`, che chiede di nuovo se non è né `yes` né `no`;
+chiudere la domanda vale `no`. `ask_with_keys` è la stessa cosa con i tasti
+scelti da chi chiama: la usa `save-some-buffers`.
+
+=== I buffer <primitive-buffer>
+
+`buffers.rs` crea, cambia, legge e chiude i buffer. `kill-buffer` è il comando,
+e `close-buffer` la stessa funzione sotto un altro nome: un buffer con lavoro da
+salvare chiede prima, con `yes-or-no`, e la risposta lo chiude con
+`kill-buffer-without-saving`. `buffer-put` e `buffer-get` appendono a un buffer
+un valore Lisp, nella tabella dei dati del buffer, sotto il nome `lisp:CHIAVE`.
+`major-mode`, `buffer-modified-p` e `buffer-file-name` leggono il nome del
+buffer allo stesso modo, quello corrente se manca.
+
+=== Le finestre <primitive-finestre>
+
+`windows.rs` divide e chiude le finestre (`split-window-below`,
+`split-window-right`, `delete-window`, `delete-other-windows`,
+`display-buffer-at-bottom` per una striscia in fondo alla cornice), sposta il
+focus (`other-window`, `select-window`), scorre la vista (`scroll-up-command`,
+`scroll-down-command`, `recenter`) e apre e chiude le flottanti
+(`make-floating-window`, `close-floating-window`). Con una misura, una
+divisione fissa le righe o le colonne della finestra divisa (`FirstFixed`), e
+la nuova prende il resto. `close-floating-window` chiude sempre la flottante
+più recente; senza flottanti mette il focus sulla finestra 0
+#rapporto("CMD-8").
+
+=== Gli argomenti <lettori-argomenti>
+
+`args.rs` ha i lettori con cui le primitive leggono i loro argomenti: `text`,
+una stringa; `name`, un simbolo o una stringa; `name_or_empty`, `name_or` e
+`optional_name`, con il valore che danno quando l'argomento manca;
+`movement_count` e `repeat_count`, i conteggi (@primitive-modifica); `quoted`,
+che mette un valore in una forma da valutare dopo, come le callback delle
+domande.
+
 == Le decisioni <decisioni-primitive>
 
 + *Un file per concetto.* Le primitive di modifica stanno in tredici file, e
@@ -4341,7 +4541,87 @@ costruite dalle stesse due funzioni, `Entry::new` ed `entry_form`. Si ferma a
 + *`scan-buffer` paga carburante per carattere percorso.* Un megabyte per
   un'unità permetterebbe a un ciclo un lavoro senza limite dentro un budget
   fatto per limitarlo; è la regola di `directory-files-recursive`, che paga
-  ogni percorso attraversato.
+  un'unità per ogni percorso che restituisce.
++ *Un percorso è assoluto appena entra.* Un percorso relativo ha meno
+  componenti di quanti sembri: l'elenco di `.` avrebbe l'intestazione `./`, e
+  chiedere la directory sopra porterebbe alla radice, a un tasto da dove si era.
+  Il rimedio non è insegnare a ogni chiamante a contare meglio: un percorso è
+  ambiguo finché non è assoluto, e lo è solo nel momento in cui l'utente lo
+  scrive.
++ *`..` si toglie per nome, senza chiedere al disco.* Attraverso un link
+  simbolico le due risposte differiscono: per nome `/a/link/..` è `/a`, sul
+  disco è il genitore della destinazione. Quella per nome è quella che vuole un
+  elenco di file, dove `^` in `/a/link/` mostra `/a/`, da cui si veniva; ed è
+  la sola possibile per un percorso che non esiste ancora, come la destinazione
+  di una rinomina.
++ *I nomi dei file si compongono in Rust.* Che cosa sia un separatore e che
+  cosa una radice lo dice la piattaforma: `/a/b` e `C:\a\b` hanno la stessa
+  forma e nessun carattere in comune. Un modulo Lisp che spezza su `/` scrive la
+  risposta di una piattaforma e la chiama regola.
++ *Un errore sul disco si riferisce, non si segnala.* Cancellare sei file non
+  deve fermarsi al secondo perché uno è stato negato, lasciandone quattro e un
+  elenco non aggiornato: chi chiama vuole sapere quali sono falliti, e
+  continuare. Ogni primitiva risponde nil e scrive il motivo nel log, come
+  `find-file` per un file che non legge.
++ *Le primitive del disco non chiedono, e non sono comandi.* Una conferma
+  dipende dallo stato dell'editor, da una regione attiva, da un file aperto,
+  dall'ultima risposta, e sta in Lisp con il resto dell'interfaccia; una
+  primitiva che chiedesse non si potrebbe chiamare da uno script.
+  `M-x delete-file` sarebbe un comando in cui solo il prompt separa un errore
+  di battitura da un file cancellato: chi cancella usa il gestore di file
+  (`dired.lisp`), che mostra che cosa c'è e chiede di conseguenza.
++ *La potatura sta in Rust, l'elenco arriva da Lisp.* Quali file interessino è
+  politica, e sta in Lisp; non entrare in una directory è l'eccezione, perché
+  non si può fare dopo: `.git` contiene migliaia di oggetti, e una visita che li
+  raccogliesse spenderebbe il limite prima di arrivare a un file sorgente. Così
+  anche i suffissi da scartare: filtrarli in Lisp costerebbe una valutazione per
+  file e per suffisso.
++ *Una visita paga un'unità di carburante per percorso.* L'interprete conta
+  un'unità per chiamata, giusto per un passo e sbagliato per una primitiva che
+  restituisce una lista lunga quanto vuole: ventimila percorsi per tre unità. Il
+  carburante deve limitare il tempo, e una visita che il contatore non vede fa
+  un ciclo di visite che la guardia non ferma.
++ *Si chiede solo di un buffer modificato, scrivibile e con un file.* Un buffer
+  senza un posto dove salvarlo non si salva rispondendo `no`: `*scratch*` e i
+  buffer dell'aiuto e degli elenchi sono modificati di continuo, e chiedere di
+  loro insegna a rispondere senza leggere. Uscire e chiudere un buffer usano la
+  stessa funzione, così sono d'accordo su quali buffer contano.
++ *Due modi di chiedere.* Una risposta sbagliata non costa uguale ovunque: una
+  domanda che sbagliando perde lavoro deve essere difficile da sbagliare
+  (`yes-or-no`), e una fatta otto volte di fila non deve chiedere otto parole
+  (`y-or-n`). Le domande di `save-some-buffers` sono tasti singoli; quella che
+  perde il lavoro, alla fine di `quit`, si scrive per intero.
++ *Una domanda prende una callback.* L'editor non si blocca: un comando finisce
+  e torna, e la risposta arriva dopo, in un altro comando, quando non c'è più
+  nessuno a cui restituirla. In Lisp si legge come un `cond` diviso tra due
+  lambda: è il prezzo di un editor che risponde mentre una domanda è sullo
+  schermo.
++ *La callback sta nella forma, non in una variabile.* Ogni domanda costruisce
+  la chiamata che le risponderà, `(ask--answer (quote CALLBACK))`, e la dà a una
+  keymap o al minibuffer. Niente resta in un posto condiviso, e una domanda
+  fatta dalla risposta a un'altra sono due forme, non due scritture nello stesso
+  posto. Per lo stesso motivo `close-buffer` passa una lambda con dentro il
+  nome del buffer.
++ *I dati appesi a un buffer stanno nel buffer.* Un modulo che deve ricordare
+  qualcosa di un buffer avrebbe due alternative peggiori: una variabile globale
+  con il nome del buffer per chiave, che sbaglia quando il buffer cambia nome e
+  resta dopo che è chiuso, o il testo del buffer, che va bene solo per ciò che
+  si mostrerebbe comunque. La chiave ha il prefisso `lisp:`, perché un valore di
+  Lisp e uno di Rust con lo stesso nome non si scontrino.
++ *Una divisione con una misura fissa la finestra divisa.* Un elenco di file
+  che vuole restare largo 40 colonne deve tenerle quando la cornice cambia
+  misura, ed è il file accanto che deve crescere; ed è ciò che vuol dire
+  `split-window-right SIZE` in Emacs.
++ *Un argomento che manca e uno sbagliato sono lo stesso errore.* Un lettore
+  riceve un `Option`, ciò che dà `args.get(n)`, e riferisce un argomento
+  assente come un nil del tipo sbagliato: chiamare senza niente dove va una
+  stringa è sbagliato come chiamare con un numero, e «expected String, got nil»
+  lo dice in una frase. Una primitiva per cui conta l'arità lo dice da sé, con
+  `WrongNumberOfArguments`, perché è un'altra lamentela.
++ *I lettori leggono, non interpretano.* Nessun lettore sa che cosa significhi
+  un argomento: non c'è un `pattern_arg` né un `prompt_arg`, perché un modello e
+  un prompt sono tutti e due il primo argomento come stringa. Ciò che cambia tra
+  i chiamanti è il messaggio d'errore, che è un parametro.
 
 // ===========================================================================
 = I moduli Lisp <moduli-lisp>
@@ -4475,7 +4755,8 @@ il resto una regola. Ricorda che `make-mode` sostituisce un modo esistente.
 In Lisp: `background-call` con una fiber che fa `(yield)` tra un pezzo e
 l'altro e una callback `ON-DONE` per il risultato, oppure `define-worker` con
 una fiber che aspetta il suo argomento, `(yield '(wait TOPIC))`. La pagina
-`background` ha gli esempi.
+`background` ha gli esempi, e le regole che un lavoro segue sono in
+@lavori-lisp.
 
 In Rust:
 
@@ -4567,10 +4848,13 @@ Generato da `into.function(` e `into.command(` nei file di `primitives/`. Un ast
   [`comments` (6)], [`comment-dwim`\*, `comment-line`\*, `comment-indent`\*, `comment-region`\*, `uncomment-region`\*, `comment-syntax`],
   [`completion` (8)], [`completion-at-point`\*, `fuzzy-filter`, `completion-at-point-choose`, `add-completion-function`, `set-completion-functions`, `completion-functions`, `buffer-words`, `bounds-of-thing-at-point`],
   [`edits` (7)], [`delete-region`, `self-insert`, `insert`, `insert-pasted-text`\*, `insert-newline`\*, `delete-backward-char`\*, `delete-char`\*],
+  [`environment` (4)], [`data-directory`, `getenv`, `setenv`, `path-separator`],
+  [`file_names` (7)], [`list-dir`, `match-list`, `expand-file-name`, `file-name-as-directory`, `directory-file-name`, `file-name-directory`, `file-name-nondirectory`],
+  [`files` (8)], [`find-file`\*, `save-buffer`\*, `save-buffer--overwrite`, `recover-file`\*, `recover-file--adopt`, `revert-buffer`\*, `revert-buffer--reread`, `write-file`\*],
+  [`filesystem` (7)], [`file-exists-p`, `file-directory-p`, `directory-entry-count`, `delete-file`, `rename-file`, `directory-files-recursive`, `read-file-to-string`],
   [`general` (13)], [`eval-file`, `eval-string-top-level`, `define-key`, `set-local-keymap`, `define-repeat-key`, `repeat`\*, `log`, `regexp-opt`, `all-logs`, `backtrace`, `set-echo-message`, `set-transient-keymap`, `clear-transient-keymap`],
   [`help` (7)], [`key-binding`, `keys-with-prefix`, `keymap-bindings`, `where-is`, `command-specs`, `help--macro-doc`, `read-key-sequence`],
   [`indentation` (3)], [`current-indentation`, `previous-indentation`, `indent-line-to`],
-  [`io` (31)], [`quit`\*, `quit-without-saving`\*, `save-some-buffers`\*, `save-some-buffers--answer`, `quit--confirm`, `find-file`\*, `data-directory`, `getenv`, `setenv`, `path-separator`, `list-dir`, `directory-files-recursive`, `read-file-to-string`, `match-list`, `expand-file-name`, `file-name-as-directory`, `directory-file-name`, `file-name-directory`, `file-name-nondirectory`, `save-buffer`\*, `save-buffer--overwrite`, `recover-file`\*, `recover-file--adopt`, `revert-buffer`\*, `revert-buffer--reread`, `write-file`\*, `file-exists-p`, `file-directory-p`, `directory-entry-count`, `delete-file`, `rename-file`],
   [`isearch` (10)], [`isearch-forward`\*, `isearch-backward`\*, `isearch-forward-regexp`\*, `isearch-backward-regexp`\*, `isearch-update`, `isearch-exit`, `isearch-abort`, `isearch-repeat-forward`, `isearch-repeat-backward`, `isearch-active-p`],
   [`killing` (14)], [`kill-line`\*, `kill-whole-line`\*, `kill-word`\*, `backward-kill-word`\*, `kill-paragraph`\*, `backward-kill-paragraph`\*, `kill-region`\*, `kill-ring-save`\*, `yank`\*, `yank-pop`\*, `set-kill-ring-max`\*, `kill-new`, `current-kill`, `kill-ring-length`],
   [`macros` (12)], [`kmacro-start-macro`\*, `kmacro-end-macro`\*, `kmacro-cancel-macro`\*, `kmacro-call-macro`\*, `kmacro-end-and-call-macro`\*, `kmacro-insert-counter`\*, `kmacro-set-counter`\*, `kmacro-counter`, `kmacro-recording-p`, `kbd-macro-keys`, `define-kbd-macro`, `kmacro-call-keys`],
@@ -4580,6 +4864,7 @@ Generato da `into.function(` e `into.command(` nei file di `primitives/`. Un ast
   [`mouse` (6)], [`mouse-set-point`\*, `mouse-start-selection`\*, `mouse-drag-to`\*, `mouse-resize`\*, `mouse-mode-toggle`\*, `mouse-scroll`\*],
   [`movement` (20)], [`backward-char`\*, `forward-char`\*, `previous-line`\*, `next-line`\*, `beginning-of-line`\*, `end-of-line`\*, `forward-word`\*, `backward-word`\*, `forward-paragraph`\*, `backward-paragraph`\*, `beginning-of-buffer`\*, `end-of-buffer`\*, `goto-line`\*, `point`, `point-min`, `point-max`, `goto-char`, `line-number-at-point`, `current-line`, `current-column`],
   [`overlays` (5)], [`make-overlay`, `delete-overlay`, `remove-overlays`, `overlays-at`, `overlay-face`],
+  [`quit` (5)], [`quit`\*, `quit-without-saving`\*, `save-some-buffers`\*, `save-some-buffers--answer`, `quit--confirm`],
   [`rectangle` (10)], [`rectangle-mark-mode`\*, `kill-rectangle`\*, `delete-rectangle`\*, `copy-rectangle-as-kill`\*, `yank-rectangle`\*, `open-rectangle`\*, `clear-rectangle`\*, `string-rectangle`\*, `rectangle-bounds`, `killed-rectangle`],
   [`region` (9)], [`set-mark`\*, `keyboard-quit`\*, `deactivate-mark`\*, `exchange-point-and-mark`\*, `mark-whole-buffer`\*, `mark`, `use-region-p`, `region-beginning`, `region-end`],
   [`replace` (12)], [`query-replace`\*, `query-replace-regexp`\*, `replace-string`\*, `replace-regexp`\*, `replace-this`, `replace-skip`, `replace-rest`, `replace-back`, `replace-done`, `replace-abandon`, `replace-match`, `replace-count`],
@@ -4588,10 +4873,9 @@ Generato da `into.function(` e `into.command(` nei file di `primitives/`. Un ast
   [`sexp` (7)], [`forward-sexp`\*, `backward-sexp`\*, `kill-sexp`\*, `backward-kill-sexp`\*, `up-list`\*, `backward-up-list`\*, `down-list`\*],
   [`shell` (4)], [`shell-command-start`, `shell-command-to-string`, `parse-overstrike`, `shell-command-running-p`],
   [`theme` (6)], [`set-face`\*, `define-face`, `face-style`, `reset-faces`, `list-faces`, `list-colors`],
-  [`ui` (3)], [`recenter`\*, `make-floating-window`, `close-floating-window`],
   [`undo` (5)], [`undo-join`, `undo`\*, `redo`\*, `undo-boundary`\*, `set-undo-limit`\*],
   [`verbs` (14)], [`upcase-word`\*, `downcase-word`\*, `capitalize-word`\*, `delete-horizontal-space`\*, `just-one-space`\*, `delete-blank-lines`\*, `back-to-indentation`\*, `join-line`\*, `duplicate-line`\*, `transpose-lines`\*, `transpose-chars`\*, `transpose-words`\*, `zap-to-char`\*, `zap-to-char--do`],
   [`virtual_text` (4)], [`make-virtual-text`, `clear-virtual-text`, `delete-virtual-text`, `virtual-text-at`],
-  [`windows` (12)], [`split-window-below`\*, `split-window-right`\*, `delete-window`\*, `delete-other-windows`\*, `other-window`\*, `selected-window`, `select-window`, `count-windows`, `scroll-up-command`\*, `scroll-down-command`\*, `display-buffer-at-bottom`, `window-buffer`],
+  [`windows` (15)], [`split-window-below`\*, `split-window-right`\*, `delete-window`\*, `delete-other-windows`\*, `other-window`\*, `selected-window`, `select-window`, `count-windows`, `scroll-up-command`\*, `scroll-down-command`\*, `recenter`\*, `display-buffer-at-bottom`, `window-buffer`, `make-floating-window`, `close-floating-window`],
   [`workers` (9)], [`define-worker`, `stop-worker`, `running-workers`, `background-call`, `emit-event`, `work-option`, `set-work-option`, `work-options`, `work-list`],
 )

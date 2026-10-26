@@ -1,25 +1,9 @@
 //! Background jobs: where their callbacks run, what is dropped, and how the
-//! host hears that the screen changed.
+//! host hears that the screen changed, each silent when wrong. Driven by
+//! hand, as in `worker_tests`: the test takes the steps and drains the
+//! callbacks the way the event loop does.
 //!
-//! # How these run
-//!
-//! As in `worker_tests`: the editor's WorkManager is in manual mode, so a job
-//! started with `background-call` takes its steps when the test drives it,
-//! and then the test drains the callback queue the way the event loop drains
-//! it.
-//!
-//! What that arrangement is *for* is the thing worth pinning down, because
-//! every part of it is silent when wrong:
-//!
-//! - A callback run on the executor looks exactly like one run on the
-//!   command thread, until the day it runs half-way through a command and
-//!   corrupts something once a month.
-//! - A superseded job's callback looks exactly like the new job's, until it
-//!   reports the old job's half-built state as the new one's answer.
-//! - A job that dies without saying so looks exactly like one still working,
-//!   for ever.
-//! - A change nobody tells the renderer about looks exactly like no change,
-//!   until a key is pressed.
+//! Design: `doc/architettura-editor.typ, <callback-dovute>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

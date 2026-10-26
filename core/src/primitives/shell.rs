@@ -1,57 +1,8 @@
-//! Running a shell command, and putting its output in a buffer.
+//! Running a shell command: in the background, its output appended to a
+//! buffer as it comes, by a thread of its own that `stop-worker` or closing
+//! the buffer stops; or at once, for its output as a string.
 //!
-//! The first place this editor starts a process. Everything else it does is
-//! its own work on its own data; this hands a string to a shell and reads back
-//! whatever comes out.
-//!
-//! # Why it runs on a thread of its own
-//!
-//! A shell command takes as long as it takes. `git status` is instant, a build
-//! is not, and `tail -f` never finishes at all. Running one on the thread that
-//! reads the keyboard means the editor stops answering until it is done -- so
-//! each command is read on a dedicated thread of the WorkManager (see
-//! [`crate::work`]), named after the buffer it writes into, and the editor
-//! carries on.
-//!
-//! What that costs is the obvious way of reporting completion. The thread has
-//! an [`EditorState`] and no `Env`, so it cannot call a Lisp callback when the
-//! command finishes, and it cannot set an echo message that expires on a timer
-//! it does not run. It writes into the buffer it is already writing into
-//! instead: a `--- exited 0 ---` trailer, which is also the only record that
-//! survives being scrolled away from.
-//!
-//! # What is read, and how
-//!
-//! Standard output and standard error go into *one* pipe, so they arrive in
-//! the order the command wrote them, as at a prompt. Read one after the other,
-//! as they were, a command that wrote more than a pipe holds to standard error
-//! before closing standard output -- a build full of warnings -- waited for
-//! ever on a reader that was waiting for it.
-//!
-//! What comes out is bytes, shown as they arrive -- a line not ended yet, a
-//! progress bar or a question, as far as it has got -- with anything that is
-//! not UTF-8 replaced. Read as text, one byte of Latin-1 in a file name ended
-//! the reading, and the command died of the pipe closing under it.
-//!
-//! # Stopping one
-//!
-//! A command is stopped by name -- `stop-worker` with its buffer's name -- or
-//! by closing its buffer. It runs in a process group of its own, so the
-//! request reaches everything it started and not only the shell: `TERM` to
-//! the whole group, and `KILL` a moment later to whatever is still there. The
-//! trailer then says `--- killed ---`.
-//!
-//! What has left the group is not reached: a daemon starts a session of its
-//! own. One that kept the output it was given holds the reading open, and
-//! the trailer waits until it lets go.
-//!
-//! A group of its own is also a group the terminal does not belong to. A
-//! command has nothing to read from -- its standard input is empty -- and one
-//! that opens the terminal itself, a password prompt, is stopped by the
-//! system rather than taking the keystrokes meant for the editor. It waits
-//! there until it is stopped from here, which is at once: the `TERM` is
-//! followed by `CONT`, without which a stopped process would not hear it
-//! before the `KILL`.
+//! Design: `doc/architettura-editor.typ, <comandi-shell>`.
 use super::*;
 use crate::work::{Stop, WorkId};
 use std::io::{ErrorKind, PipeReader, Read};
@@ -76,14 +27,9 @@ const GRACE: Duration = Duration::from_secs(2);
 /// buffer in a few edits rather than one per line.
 const BATCH: usize = 64 * 1024;
 
-/// Build the command that runs `command` through the platform's shell.
-///
-/// Through a shell rather than split into words here, because the whole value
-/// of `M-!` is that what you type is what you would have typed at a prompt --
-/// pipes, redirection, globs and all. Splitting on spaces would make
-/// `grep -r "two words" .` mean something else, and re-implementing a shell's
-/// quoting rules to avoid that is how you get a shell that is subtly not the
-/// one the user knows.
+/// Builds the command that runs COMMAND through the platform's shell, so
+/// that what is typed means what it would at a prompt: pipes, redirection,
+/// globs and all.
 fn shell_invocation(command: &str) -> Command {
     #[cfg(windows)]
     let mut child = {
@@ -103,8 +49,8 @@ fn shell_invocation(command: &str) -> Command {
     child
 }
 
-/// Start COMMAND with its standard output and error going into one pipe, and
-/// hand back the process and the pipe's reading end.
+/// Starts COMMAND with its standard output and error going into one pipe, and
+/// returns the process and the pipe's reading end.
 fn start(command: &str) -> std::io::Result<(Child, PipeReader)> {
     let (output, writer) = std::io::pipe()?;
     let mut invocation = shell_invocation(command);
@@ -135,7 +81,7 @@ fn lock(process: &Process) -> std::sync::MutexGuard<'_, Option<Child>> {
     process.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Send each of SIGNALS, in order, to every process in the group GROUP.
+/// Sends each of SIGNALS, in order, to every process in the group GROUP.
 ///
 /// Through the shell's own `kill`, because the standard library can signal a
 /// process but not a group -- and the shell is what the command runs under
@@ -157,7 +103,10 @@ fn signal_group(group: u32, signals: &[&str]) {
         .status();
 }
 
-/// Ask PROCESS to stop: `TERM` to its whole group at once, and `KILL` after
+// TODO(SHL-5): the `KILL` comes from a thread outside the WorkManager, and an
+// editor that exits before it is sent leaves a command that ignores `TERM`
+// running.
+/// Asks PROCESS to stop: `TERM` to its whole group at once, and `KILL` after
 /// [`GRACE`] to whatever of it is still there. `CONT` after the `TERM`, for
 /// whatever of it the system had stopped: until it is continued, a stopped
 /// process does not hear the `TERM`.
@@ -191,7 +140,7 @@ fn stop_process(process: &Process) {
     kill(process);
 }
 
-/// Kill PROCESS, and its group with it, if it has not been waited for.
+/// Kills PROCESS, and its group with it, if it has not been waited for.
 fn kill(process: &Process) {
     let mut guard = lock(process);
     if let Some(child) = guard.as_mut() {
@@ -201,7 +150,7 @@ fn kill(process: &Process) {
     }
 }
 
-/// Wait for PROCESS to end, and take it out: from here on, stopping it does
+/// Waits for PROCESS to end, and takes it out: from here on, stopping it does
 /// nothing.
 ///
 /// A short sleep between looks rather than a blocking wait, so that the lock
@@ -232,9 +181,9 @@ fn reap(process: &Process) -> std::io::Result<ExitStatus> {
     }
 }
 
-/// How many bytes at the end of BYTES are the start of a character that has
-/// not arrived whole: what is kept for the next read, rather than show one
-/// character as two broken ones.
+/// Returns how many bytes at the end of BYTES are the start of a character
+/// that has not arrived whole: what is kept for the next read, rather than
+/// show one character as two broken ones.
 fn incomplete_tail(bytes: &[u8]) -> usize {
     for back in 1..=bytes.len().min(4) {
         let byte = bytes[bytes.len() - back];
@@ -252,9 +201,9 @@ fn incomplete_tail(bytes: &[u8]) -> usize {
     0
 }
 
-/// Read what the command has written into INTO: whatever is waiting in the
-/// pipe, as much as INTO holds, and wait only while nothing is. How many
-/// bytes, `0` at the end of the output.
+/// Reads what the command has written into INTO -- whatever is waiting in the
+/// pipe, as much as INTO holds, waiting only while nothing is -- and returns
+/// how many bytes, `0` at the end of the output.
 ///
 /// Not a line at a time: what does not end a line -- a progress bar, a
 /// question asked before reading the empty input -- is shown as it comes,
@@ -287,9 +236,9 @@ impl<B: BufferTrait> Drop for Running<'_, B> {
 }
 
 impl ShellCommand {
-    /// Read the command's output into its buffer until it ends or is stopped,
-    /// then wait for it and say how it went. ME is the thread's own number:
-    /// what the buffer knows its writer by.
+    /// Reads the command's output into its buffer until it ends or is
+    /// stopped, then waits for it and says how it went. ME is the thread's own
+    /// number: what the buffer knows its writer by.
     fn run<B: BufferTrait>(self, state: &EditorState<B>, stop: &Stop, me: WorkId) {
         // Last of all, after the trailer: `shell-command-running-p` must not
         // say it is over before the buffer does.
@@ -363,8 +312,7 @@ impl ShellCommand {
     }
 }
 
-/// The process started for a command whose thread never ran: killed, and
-/// waited for, here.
+/// Kills, and waits for, the process of a command whose thread never ran.
 fn abandon(process: &Process) {
     kill(process);
     if let Some(mut child) = lock(process).take() {
@@ -376,10 +324,11 @@ pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND &optiona
          COMMAND, a string, with the shell in the background, and return at once the name of the \
          buffer its output goes into. The buffer is read-only and in major mode MODE, \
          `shell-output-mode' unless given; its first line is the command, and its last says how \
-         it ended, as --- exited 0 ---. Each call has a buffer of its own unless a PRODUCER buffer is
-         specified, in that case that buffer is used as output. `stop-worker' with the \
-         buffer's name stops the command, and so does closing the buffer. Return nil, saying why, \
-         when the shell cannot be started.\n\n\
+         it ended, as --- exited 0 ---. Each call has a buffer of its own; with PRODUCER, a \
+         symbol such as compile, the newest buffer that PRODUCER filled in MODE is emptied and \
+         used again when `results-reuse-buffer' is set, and the command still writing into it \
+         is stopped. `stop-worker' with the buffer's name stops the command, and so does \
+         closing the buffer. Return nil, saying why, when the shell cannot be started.\n\n\
          Example:\n\
          (shell-command-start \"git status --short\")\n\
          (shell-command-start \"cargo build\" 'compilation-mode)";
@@ -454,10 +403,12 @@ primitive!(shell_command_start, args, env, ctx, {
         .spawn_writer(&name, move |state, stop, me| task.run(state, stop, me))
         .is_none()
     {
-        // Only as the editor shuts down: the task went without running, so
-        // nothing reads the process and nothing will.
+        // Refused once the editor has shut down, or when the system gives no
+        // thread: the task went without running, so nothing reads the process
+        // and nothing will.
         ctx.finish_shell_command();
         abandon(&process);
+        // TODO(DOC-1): the message speaks of a shutdown in both cases.
         ctx.set_echo_message("The editor's background work has shut down");
         return Ok(ELispExp::nil());
     }
@@ -621,11 +572,9 @@ primitive!(parse_overstrike, args, _env, _ctx, {
     ]))
 });
 
-/// Register this module's primitives: running a child process and collecting its output.
+/// Registers the primitives that run a shell command.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     // A function and not a command: run from M-x it would start the command
     // and show nothing. `shell-command` is the command that shows it.

@@ -1,18 +1,9 @@
-//! `write-file`: saving somewhere else, and following the buffer there.
+//! `write-file`: saving somewhere else, and following the buffer there. The
+//! bytes, the visited file and every window showing the buffer change
+//! together, or a window is left naming a buffer the table no longer holds;
+//! a path another buffer has open, or a failed write, leaves it as it was.
 //!
-//! # What is worth testing here
-//!
-//! "Save as" is three changes that have to happen together or not at all: the
-//! bytes go to the new path, the buffer starts visiting it, and every window
-//! showing that buffer follows it to its new name. Miss the third and a window
-//! is left naming a buffer the table no longer holds -- the dangling state
-//! that has taken this editor down before, and which will not show up in a
-//! test that only checks the file's contents.
-//!
-//! The other half is what happens when it *cannot* work: a path another buffer
-//! already has open, and a write that fails. Both must leave the buffer
-//! visiting whatever it was visiting before, because the next `C-x C-s` has to
-//! go somewhere that still works.
+//! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

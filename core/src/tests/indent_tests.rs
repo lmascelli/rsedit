@@ -1,6 +1,6 @@
 //! Indentation: the primitives that read and rewrite it, and what Tab and
 //! Enter do with them, on a line and on a region, in a mode with a rule and
-//! in one without; and `recenter`.
+//! in one without.
 //!
 //! Design: `doc/architettura-editor.typ, <espressioni-indentazione>`.
 #[cfg(test)]
@@ -607,68 +607,5 @@ mod tests {
         typing(&ctx, "'(a\nb)", 4);
         run("(indent-for-tab-command)", &env, &ctx);
         assert_eq!(contents(&ctx), "'(a\n  b)");
-    }
-
-    // -----------------------------------------------------------------------
-    // recenter
-    // -----------------------------------------------------------------------
-
-    /// The lines the focused window is actually showing.
-    fn visible(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> Vec<String> {
-        ctx.snapshot(env, 80, 24)
-            .views
-            .into_iter()
-            .find(|view| view.is_focused)
-            .expect("a focused window")
-            .lines
-    }
-
-    fn hundred_lines(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
-        let text: String = (0..100).map(|n| format!("line {n}\n")).collect();
-        typing(ctx, &text, 0);
-        run("(goto-line 50)", env, ctx);
-        // Lay the window out once, so it has a height to centre within.
-        let _ = ctx.snapshot(env, 80, 24);
-    }
-
-    #[test]
-    fn recentring_moves_the_text_and_not_the_cursor() {
-        let (ctx, env) = editor();
-        hundred_lines(&ctx, &env);
-        let before = point(&ctx);
-
-        run("(recenter)", &env, &ctx);
-        assert_eq!(point(&ctx), before, "the text slides under the cursor");
-
-        let lines = visible(&ctx, &env);
-        let middle = lines.len() / 2;
-        assert!(
-            lines[middle].contains("line 49"),
-            "the line point is on should be in the middle, got {:?}",
-            lines[middle]
-        );
-    }
-
-    #[test]
-    fn recentring_accepts_where_to_put_the_line() {
-        let (ctx, env) = editor();
-        hundred_lines(&ctx, &env);
-
-        run("(recenter 0)", &env, &ctx);
-        let lines = visible(&ctx, &env);
-        assert!(
-            lines[0].contains("line 49"),
-            "0 puts it on the top row, got {:?}",
-            lines[0]
-        );
-
-        run("(recenter 1)", &env, &ctx);
-        let lines = visible(&ctx, &env);
-        let last = lines.len() - 1;
-        assert!(
-            lines[last].contains("line 49"),
-            "1 puts it on the bottom row, got {:?}",
-            lines[last]
-        );
     }
 }

@@ -276,6 +276,19 @@
     effetto: [Su Windows un testo di più righe incollato lascia un CR alla fine di ogni riga, e un testo con CR isolati diventa una riga sola.],
     correzione: [Decidere che cosa vuole Windows: convertire come sugli altri sistemi, togliendo la variante, oppure scriverne il motivo e limitare i quattro test agli altri sistemi.],
   ),
+  (
+    id: "CMD-8",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [`close-floating-window` senza finestre flottanti sposta il focus sulla finestra 0, anche quando non esiste],
+    breve: [`close-floating-window` senza flottanti: focus su una finestra che può non esserci],
+    dove: [`primitives/windows.rs` (`close-floating-window`), `managers/windows.rs` (`Windows::set_focused`, che non controlla l'id)],
+    verifica: [Riprodotto con un piccolo programma temporaneo durante il passo 17 della documentazione, sul codice di `9fcd84b` con i passi 12--16, che non cambiano il comportamento. Dopo `(split-window-right)` e `(delete-window)` resta la finestra 1, che ha il focus; `(close-floating-window)` restituisce nil, e da lì `(selected-window)` risponde 0, `(window-buffer)` nil e `(split-window-below)` nil, con `(count-windows)` sempre 1; `(other-window)` non sposta il focus. `(select-window 1)` lo riporta sulla finestra che c'è, e la divisione torna a funzionare.],
+    cosa: [La primitiva toglie la flottante più recente e rende il focus alla finestra che questa ricorda. Quando non ce n'è nessuna, l'id da rendere manca e la primitiva mette il focus sull'id 0, che `Windows::set_focused` accetta senza guardare se esiste. La docstring dice che senza flottanti non fa nulla. In `debug.lisp`, `backtrace-dismiss` la chiama con il tasto `q` del modo del buffer `*Backtrace*`.],
+    effetto: [Il focus resta su una finestra che non c'è: non si può dividere, e `other-window` non ne esce.],
+    correzione: [Non toccare il focus quando non c'è una flottante da chiudere, e controllare l'id in `set_focused`.],
+  ),
   // ------------------------------------------------------------------ MIN
   (
     id: "MIN-1",
@@ -324,7 +337,7 @@
     stato: "aperto",
     titolo: [Un salvataggio fallito con `C-x C-s` non viene segnalato],
     breve: [`save-buffer` fallito: solo una riga nel registro],
-    dove: [`primitives/io.rs` (`save-buffer`, `save-buffer--overwrite`, e `write_buffer`, che usano anche `save-some-buffers` e l'uscita); per confronto `write-file`],
+    dove: [`primitives/files.rs` (`save-buffer`, `save-buffer--overwrite`, e `write_buffer`, con cui salvano anche `save-some-buffers` e l'uscita, in `primitives/quit.rs`); per confronto `write-file`],
     verifica: [Riprodotto sulla revisione `3d846f1`: `save-buffer` in un buffer senza file lascia l'area messaggi invariata e scrive «No file associated with this buffer» solo nel registro. Il caso dell'analisi, un percorso in una directory inesistente, passa dallo stesso ramo, che non è cambiato.],
     cosa: [L'errore di `std::fs::write` viene passato a `log_diagnostic`, che scrive nel registro e non nell'area messaggi. `write-file`, al contrario, lo mostra. La docstring di `save-buffer` ora dice che il motivo di un fallimento va nel registro.],
     effetto: [Chi salva su un disco pieno, su un file senza permessi di scrittura o su un percorso che non esiste più crede di aver salvato. L'unico avviso arriva all'uscita, con la domanda «… is unsaved. Quit anyway?», e solo se il buffer è ancora segnato come modificato.],
@@ -337,7 +350,7 @@
     stato: "aperto",
     titolo: [I file vengono scritti sul posto: un errore a metà li lascia troncati],
     breve: [Scrittura non atomica dei file],
-    dove: [`primitives/io.rs` (`save-buffer`, `write-file`, `save-buffer--overwrite`, `write_buffer`) e `modes/autosave.rs` (`EditorState::write_auto_save`): tutti con `std::fs::write`],
+    dove: [`primitives/files.rs` (`save-buffer`, `write-file`, `save-buffer--overwrite`, `write_buffer`) e `modes/autosave.rs` (`EditorState::write_auto_save`): tutti con `std::fs::write`],
     verifica: [Dalla lettura del codice.],
     cosa: [`std::fs::write` tronca il file e poi scrive. Se la scrittura si interrompe (disco pieno, processo terminato, alimentazione), sul disco resta un file troncato o vuoto, e la versione precedente è già persa.],
     effetto: [Possibile perdita del contenuto del file proprio quando qualcosa va storto.],
@@ -350,7 +363,7 @@
     stato: "aperto",
     titolo: [Un file non UTF-8 non si apre e non viene detto nulla],
     breve: [Aprire un file non UTF-8 fallisce in silenzio],
-    dove: [`editor/buffers.rs` (`EditorState::new_buffer`: `read_to_string`, errore solo nel registro), `primitives/io.rs` (`find-file`)],
+    dove: [`editor/buffers.rs` (`EditorState::new_buffer`: `read_to_string`, errore solo nel registro), `primitives/files.rs` (`find-file`)],
     verifica: [Riprodotto sulla revisione `3d846f1` con un file Latin-1: area messaggi e buffer corrente invariati, `find-file` restituisce `nil`, e il registro dice «Error reading file: stream did not contain valid UTF-8».],
     cosa: [`std::fs::read_to_string` rifiuta qualsiasi byte non UTF-8; l'errore finisce nel registro e il comando non fa nulla di visibile. La docstring di `find-file` ora dice che un file che non si legge dà `nil`.],
     effetto: [File in Latin-1, file binari e file con un solo byte sbagliato sembrano non aprirsi «per nessun motivo».],
@@ -363,7 +376,7 @@
     stato: "aperto",
     titolo: [Una modifica fatta durante il salvataggio può restare non salvata ma non segnata],
     breve: [Corsa tra copia del testo e azzeramento di «modificato»],
-    dove: [`primitives/io.rs` (`save-buffer`, `save-buffer--overwrite`, `write_buffer`; `write-file` segue lo stesso schema)],
+    dove: [`primitives/files.rs` (`save-buffer`, `save-buffer--overwrite`, `write_buffer`; `write-file` segue lo stesso schema)],
     verifica: [Dalla lettura del codice.],
     cosa: [Il testo viene copiato sotto il lock, poi scritto senza lock, poi `is_modified` viene azzerato con un secondo lock, senza guardare `version`. Una modifica arrivata nel frattempo (da un lavoro Lisp in background o da un callback) resta nel buffer ma il buffer risulta salvato. Il salvataggio automatico non ha il problema: ricorda la versione che ha copiato.],
     correzione: [Ricordare la `version` copiata e azzerare `is_modified` solo se è ancora quella.],
@@ -466,6 +479,19 @@ init.lisp:
     cosa: [Da quando BKG-1 è risolta, un panic in un passo ritira solo il lavoro che l'ha causato e lo scrive nel registro con il tag `[BKG]`. Per un lavoro Lisp basta. I lavori dell'editor, evidenziatore, prescansione, controllo dei file e salvataggio automatico, sono però sottomessi una volta sola all'avvio, e un lavoro ritirato non torna: dopo un panic dell'evidenziatore la colorazione si ferma fino alla fine della sessione, e l'area messaggi non dice nulla. Un panic che avvenisse con un lock dell'editor in scrittura lo lascerebbe inoltre avvelenato, e il thread dei comandi andrebbe in panic al primo `.expect("write lock on …")`; oggi non si conosce un panic che avvenga sotto un lock.],
     effetto: [La colorazione, o il salvataggio automatico, smettono di funzionare senza che chi usa l'editor lo sappia.],
     correzione: [Risottomettere i lavori dell'editor ritirati, con un limite perché un panic che si ripete non diventi un ciclo, e dire nell'area messaggi quale lavoro si è fermato; per i lock, decidere se uno avvelenato si può riprendere (`PoisonError::into_inner`) o deve chiudere l'editor in modo ordinato.],
+  ),
+  (
+    id: "BKG-3",
+    gravita: "bassa",
+    verificato: false,
+    stato: "aperto",
+    titolo: [`setenv` cambia l'ambiente del processo mentre il codice C di un altro thread può leggerlo],
+    breve: [`setenv`: le letture dell'ambiente fuori da `std` non sono escluse],
+    dove: [`primitives/environment.rs` (`setenv`)],
+    verifica: [Dalla lettura del codice e della libreria standard di Rust.],
+    cosa: [`std::env::set_var` e `remove_var` prendono un lock che prendono anche `std::env::var` e l'avvio di un processo con `std::process::Command`. Le letture dell'editor passano tutte di lì, anche sugli altri thread: un lavoro Lisp sull'esecutore che chiama `getenv` o `shell-command-to-string`, il salvataggio automatico che espande `~`, `stop shell` che avvia `/bin/sh` per il `KILL`. Il lock non copre il codice che legge l'ambiente da sé, con il `getenv` della libreria C, ed è per questo che `set_var` è `unsafe`. Nella TUI non c'è codice del genere su altri thread; nel front-end grafico le librerie di sistema che eframe carica (OpenGL, X11, Wayland) leggono variabili d'ambiente, e niente promette che non lo facciano su un loro thread. `setenv` stesso può girare sull'esecutore, chiamato da un lavoro Lisp. Fino al passo 17 della documentazione il commento SAFETY di `setenv` diceva che gli altri thread leggevano l'ambiente solo per avviare un processo dal thread dei comandi.],
+    effetto: [Nel front-end grafico, un `setenv` mentre una libreria di sistema legge l'ambiente è comportamento indefinito: con glibc può far cadere l'editor. Non è stato osservato.],
+    correzione: [Tenere le variabili dei processi in una tabella dell'editor, letta da `getenv` e passata a ogni `Command` con `env_clear` ed `envs`, senza cambiare mai l'ambiente del processo: `setenv` non avrebbe più bisogno di `unsafe`.],
   ),
   // ------------------------------------------------------------------ SIN
   (
@@ -672,6 +698,19 @@ init.lisp:
     cosa: [`(format "man -w %s 2>/dev/null" name)` passa il nome così com'è a `/bin/sh -c`. Un nome con spazi o metacaratteri viene interpretato dalla shell: `printf(3)` dà un errore di sintassi, che si presenta come «No manual entry», e `a;b` esegue due comandi. Il nome arriva senza filtri da `M-x manpage` e da `C-h m`; da `manpage-at-point` (e da `K` in vim) è limitato ai caratteri di un simbolo, che comprendono `*`, espanso dalla shell. Anche il percorso della pagina interna viene costruito concatenando il nome, quindi `../` esce dalla directory dei dati.],
     correzione: [Racchiudere il nome tra apici singoli, con gli eventuali apici interni preceduti da escape, oppure rifiutare i nomi che non sono `[A-Za-z0-9._+-]+`.],
   ),
+  (
+    id: "SHL-5",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [Un comando di shell che ignora `TERM` sopravvive all'editor],
+    breve: [All'uscita il `KILL` di un comando fermato non parte],
+    dove: [`primitives/shell.rs` (`stop_process`: il `KILL` dopo `GRACE`, 2 s, da un thread fuori dal WorkManager), `src/main.rs` (`SHUTDOWN_WAIT`, 500 ms, e il commento di `ShutDownOnExit`)],
+    verifica: [Riprodotto con un piccolo programma temporaneo durante il passo 17 della documentazione, sul codice di `9fcd84b` con i passi 12--16, che non cambiano il comportamento: un editor avvia un comando, lo fa girare mezzo secondo, chiama `shutdown` con l'attesa di `src/main.rs` ed esce. Con `sleep 37` il processo non c'è più subito dopo; con `trap '' TERM; exec sleep 38` è ancora vivo tre secondi dopo l'uscita. Con l'editor aperto, `stop-worker` sullo stesso comando lo toglie entro tre secondi.],
+    cosa: [Fermare un comando manda `TERM` e `CONT` al suo gruppo e avvia `stop shell`, un thread fuori dal WorkManager che dopo 2 s manda `KILL` a ciò che resta. All'uscita `shutdown` ferma i comandi così e aspetta al più 500 ms; poi il processo dell'editor finisce, e `stop shell` con lui, prima del `KILL`. Un comando che ignora `TERM`, o che lo gestisce senza uscire, resta vivo, in un gruppo che nessun terminale guarda. Il commento di `ShutDownOnExit` dice che un comando non sopravvive all'editor.],
+    effetto: [Un processo dimenticato, che continua a usare CPU, file o porte dopo l'uscita.],
+    correzione: [All'uscita mandare `KILL` a ciò che resta dei gruppi dei comandi, dopo l'attesa di `shutdown`; oppure fare del `KILL` ritardato un lavoro del WorkManager, che `shutdown` aspetta.],
+  ),
   // ------------------------------------------------------------------ TUI
   (
     id: "TUI-1",
@@ -787,9 +826,10 @@ init.lisp:
     verifica: [Dalla lettura del codice.],
     cosa: [
       - `feature/minibuffer.rs` (il commento del modulo) e `src/tui.rs` (`render_to`, il commento sull'area messaggi): il minibuffer «docked to the last few lines of the frame», mentre il prompt predefinito ora è centrato.
-      - `primitives/shell.rs` (`shell-command-start`): il commento «Only as the editor shuts down» e il messaggio «The editor's background work has shut down» valgono anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta.
+      - `primitives/shell.rs` (`shell-command-start`): il messaggio «The editor's background work has shut down» vale anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta. Il commento accanto, che diceva lo stesso, è corretto dal passo 17 della documentazione.
+      - `primitives/workers.rs` (`define-worker` e `background-call`, attraverso `start`): la riga del registro «the editor's work has shut down» vale anche quando l'esecutore non è partito, l'altro caso in cui `WorkManager::submit` rifiuta. Il commento accanto è corretto come quello di `shell.rs`.
 
-      Le voci su `primitives/workers.rs` e su `shell-command-to-string` non valgono più: il codice e la docstring sono stati riscritti (`6de16a1`, `4f05134`). Le tre sui commenti della libreria di base dell'interprete sono nel rapporto di risp, dentro le schede INT-9, INT-16 e INT-21.
+      Le voci dell'analisi su `primitives/workers.rs` e su `shell-command-to-string` non valgono più: il codice e la docstring sono stati riscritti (`6de16a1`, `4f05134`). Le tre sui commenti della libreria di base dell'interprete sono nel rapporto di risp, dentro le schede INT-9, INT-16 e INT-21.
     ],
     correzione: [Aggiornarli insieme alle correzioni dei problemi a cui rimandano.],
   ),
@@ -887,7 +927,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4 e CMD-7.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3 e SHL-5.
 
 == Riepilogo
 

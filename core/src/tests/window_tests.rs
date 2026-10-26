@@ -1,6 +1,6 @@
 //! Splitting the frame, closing windows, and moving between them.
 //!
-//! Design: `doc/architettura-editor.typ, <compartimenti>`.
+//! Design: `doc/architettura-editor.typ, <primitive-finestre>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

@@ -1,81 +1,9 @@
 //! The job a Lisp program starts: a fiber resumed a step at a time, or a
-//! function called once, on the WorkManager.
+//! function called once, on the WorkManager. `define-worker` and
+//! `background-call`, in [`super::workers`], are the two doors, and start one
+//! kind of job: the two differ only in what they say back.
 //!
-//! `define-worker` and `background-call`, in [`super::workers`], are the two
-//! doors; this is what both of them start. One kind of job, because the two
-//! differ only in what they say back: a worker says nothing, a background call
-//! has callbacks.
-//!
-//! # A step, and what a yield asks for
-//!
-//! A step resumes the fiber once, so a job is written as a loop that says,
-//! with `(yield)`, where it is willing to be put down. What it yields says
-//! when it wants the next step:
-//!
-//! ```lisp
-//! (yield)                                     ; the default wait: INTERVAL, 40 ms if not given
-//! (yield 'continue)                           ; as soon as its turn comes again
-//! (yield '(sleep 250))                        ; in 250 ms
-//! (yield '(wait buffer-changed))              ; at the next emission of a topic named
-//! (yield '(wait-at-most 500 buffer-changed))  ; at the next emission, or in 500 ms
-//! (yield 42)                                  ; anything else: the default wait
-//! ```
-//!
-//! The topics of a wait become the job's own and stay so until a later wait
-//! names others: `(wait)` and `(wait-at-most 500)` keep them. The last line
-//! is for the jobs written before the table, which yield their progress as a
-//! value: they go on as they did. A list that starts like one of the shapes
-//! and is not one -- `(sleep "soon")` -- is a mistake rather than a value,
-//! and fails the job with a message saying what the shape is, instead of
-//! quietly waking it every 40 ms.
-//!
-//! # The rule, for everything a Lisp program runs in the background
-//!
-//! 1. **Anything that may take longer than a frame is a background job**, and
-//!    a job is started by one call that names what to do and what to do when
-//!    it is done. Not a function that starts something and leaves the caller
-//!    to find out.
-//!
-//! 2. **A job never draws.** It changes state; the renderer notices -- the
-//!    end of every step tells it to look.
-//!
-//! 3. **A job never assumes the editor stood still.** The buffer it was
-//!    started for may be gone, the variable may have been set again, the
-//!    version it read may be two edits old. So it re-checks before it stores,
-//!    and what it cannot re-check it does not keep.
-//!
-//! 4. **Progress is a signal, not a redraw.** A job says "there is more now";
-//!    what more means is the mode's business.
-//!
-//! 5. **The mode keeps itself consistent.** Which is only a fair thing to ask
-//!    if the signal arrives somewhere a mode can respond safely -- so the
-//!    callbacks run on the thread that runs commands, between commands. See
-//!    [`crate::editor`]'s owed callbacks for why that is not a detail.
-//!
-//! 6. **Errors are logged, never raised.** The command that started the job
-//!    returned long ago; there is nobody to raise to. A job that failed still
-//!    says that it is done, because a mode that is never told stays waiting
-//!    for ever.
-//!
-//! 7. **A job is superseded, not duplicated.** Jobs are named, and starting
-//!    one under a name that has one stops the old -- which is what makes
-//!    re-evaluating a module, or pressing the same key twice, safe. The old
-//!    one's queued callbacks are dropped, and it does not call its ON-DONE:
-//!    whoever replaced it knows already.
-//!
-//! # The allowance, and what it does not do
-//!
-//! Each step is given its own fuel, `worker-fuel`, set on the thread that
-//! takes the step. The budget is thread-local, so a command running on the
-//! command thread can never cut a step short, and a step can never spend a
-//! command's budget.
-//!
-//! What the allowance is for is the other direction. A `(while t)` with no
-//! `(yield)` in it would hold the executor for as long as the process lives,
-//! and stop colouring with it. So a step that runs past its allowance ends,
-//! the job leaves as failed, and the log says why -- a visible failure of one
-//! job rather than an invisible failure of everything. Work that cannot be
-//! bounded that way does not come here at all: it gets a thread of its own.
+//! Design: `doc/architettura-editor.typ, <lavori-lisp>`.
 use crate::{
     BufferTrait, ELispExp, EditorState,
     editor::WorkerTurn,
@@ -105,7 +33,7 @@ pub(crate) enum Body<B: BufferTrait> {
     Fiber(ELispExp<B>),
 }
 
-/// A job started from Lisp. See the module documentation.
+/// A job started from Lisp, by `define-worker` or `background-call`.
 pub(crate) struct LispJob<B: BufferTrait> {
     name: String,
     body: Body<B>,
@@ -120,8 +48,8 @@ pub(crate) struct LispJob<B: BufferTrait> {
     /// Carried rather than looked up because there is nowhere to look it up
     /// from: a step is handed the editor's state and no environment, and the
     /// two are deliberately separate -- the editor does not own the
-    /// interpreter. `Env` crosses threads already; `(spawn ...)` has been
-    /// sending one to a new thread since before this existed.
+    /// interpreter. `Env` crosses threads already: `(spawn ...)` sends one to
+    /// a new thread.
     env: Arc<Env<EditorState<B>>>,
     fuel: u32,
     /// Its number, learnt at its first step: what its callbacks are owed
@@ -129,7 +57,8 @@ pub(crate) struct LispJob<B: BufferTrait> {
     id: Option<WorkId>,
 }
 
-/// What a yielded value asks for. See the module documentation.
+/// What a yielded value asks for: one of the shapes the `background` page
+/// lists.
 #[derive(Debug, PartialEq)]
 enum Ask {
     Pause,
@@ -140,7 +69,7 @@ enum Ask {
 }
 
 impl<B: BufferTrait> LispJob<B> {
-    /// What `define-worker` starts: a fiber, and nobody to tell.
+    /// Makes what `define-worker` starts: a fiber, and nobody to tell.
     pub(crate) fn worker(
         name: String,
         fiber: ELispExp<B>,
@@ -151,7 +80,7 @@ impl<B: BufferTrait> LispJob<B> {
         Self::call(name, Body::Fiber(fiber), pause, None, None, env, fuel)
     }
 
-    /// What `background-call` starts.
+    /// Makes what `background-call` starts.
     pub(crate) fn call(
         name: String,
         body: Body<B>,
@@ -173,7 +102,8 @@ impl<B: BufferTrait> LispJob<B> {
         }
     }
 
-    /// How it is submitted: normal class, started at once, measured in fuel.
+    /// Returns how it is submitted: normal class, started at once, measured
+    /// in fuel.
     ///
     /// Normal because a Lisp job is never what the user is waiting to see:
     /// colouring and the prescanner go first, and a Lisp job gets a step
@@ -183,8 +113,8 @@ impl<B: BufferTrait> LispJob<B> {
         Spec::new(&self.name).unit("fuel")
     }
 
-    /// Resume the body once. The value it stopped with, and whether it has
-    /// finished.
+    /// Resumes the body once, and returns the value it stopped with and
+    /// whether it has finished.
     fn resume(
         &self,
         state: &EditorState<B>,
@@ -310,7 +240,7 @@ impl Drop for RestoreFuel {
     }
 }
 
-/// How much fuel the calling thread has left.
+/// Returns how much fuel the calling thread has left.
 ///
 /// Read by spending it, which is the only way risp's API allows: a meter's
 /// `consume` takes an amount when there is that much left and nothing
@@ -325,8 +255,8 @@ pub(crate) fn fuel_left() -> u32 {
         .sum()
 }
 
-/// What VALUE, yielded by a fiber, asks for. An error for a list that starts
-/// like a shape of the table and is not one.
+/// Returns what VALUE, yielded by a fiber, asks for, or an error for a list
+/// that starts like one of the shapes and is not one.
 fn ask<B: BufferTrait>(value: &ELispExp<B>) -> Result<Ask, String> {
     let ELispExp::Cons(_) = value else {
         return Ok(match value {
@@ -377,9 +307,9 @@ fn ask<B: BufferTrait>(value: &ELispExp<B>) -> Result<Ask, String> {
     }
 }
 
-/// MS, a number of milliseconds from 0 up, as a duration. `None` for anything
-/// else. A span too long to hold is held as the longest there is, which the
-/// scheduler then caps at a year.
+/// Returns MS, a number of milliseconds from 0 up, as a duration, or `None`
+/// for anything else. A span too long to hold is held as the longest there
+/// is, which the scheduler then caps at a year.
 fn millis<B: BufferTrait>(ms: &ELispExp<B>) -> Option<Duration> {
     match ms {
         ELispExp::Number(ms) if ms.is_finite() && *ms >= 0.0 => {

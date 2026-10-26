@@ -1,9 +1,9 @@
 //! Starting, stopping and listing work in the background, and tuning the
-//! scheduler that runs it.
+//! scheduler that runs it: the door Lisp comes through to the editor's
+//! WorkManager, in [`crate::work`]. The job it starts is in
+//! [`super::lisp_job`].
 //!
-//! The job these start is in [`super::lisp_job`], and the scheduler is the
-//! editor's WorkManager, in [`crate::work`]; this is the door Lisp comes
-//! through.
+//! Design: `doc/architettura-editor.typ, <lavori-lisp>`.
 use super::*;
 use crate::editor::WORKER_FUEL;
 use crate::modes::highlighter::TURN_INTERVAL;
@@ -12,7 +12,8 @@ use crate::work::{Class, OptionError, Place};
 use std::collections::HashSet;
 use std::time::Duration;
 
-/// A name written as a symbol or a string, which are the same thing here.
+/// Reads a name written as a symbol or a string, which are the same thing
+/// here.
 ///
 /// `'indexer` reads better at a definition and `"indexer"` reads better when
 /// the name was computed, and a mechanism has no business preferring one.
@@ -22,7 +23,8 @@ fn worker_name<B: BufferTrait>(value: Option<&ELispExp<B>>) -> Option<String> {
         .flatten()
 }
 
-/// The name in VALUE, or the error a primitive gives for one that is not.
+/// Returns the name in VALUE, or the error a primitive gives for one that is
+/// not.
 fn required_name<B: BufferTrait>(
     value: Option<&ELispExp<B>>,
 ) -> Result<String, EvalError<EditorState<B>>> {
@@ -32,8 +34,8 @@ fn required_name<B: BufferTrait>(
     })
 }
 
-/// What a plain `(yield)` waits: INTERVAL milliseconds when it is a number of
-/// at least one, the default wait otherwise.
+/// Returns what a plain `(yield)` waits: INTERVAL milliseconds when it is a
+/// number of at least one, the default wait otherwise.
 fn interval<B: BufferTrait>(value: Option<&ELispExp<B>>) -> Duration {
     match value {
         Some(ELispExp::Number(ms)) if ms.is_finite() && *ms >= 1.0 => {
@@ -43,8 +45,8 @@ fn interval<B: BufferTrait>(value: Option<&ELispExp<B>>) -> Duration {
     }
 }
 
-/// Hand JOB to the editor's WorkManager under NAME, and note that Lisp
-/// started it. NAME, or nil when the work has shut down.
+/// Hands JOB to the editor's WorkManager under NAME, notes that Lisp started
+/// it, and returns NAME, or nil when the WorkManager refused it.
 fn start<B: BufferTrait>(
     ctx: &EditorState<B>,
     door: &str,
@@ -57,8 +59,9 @@ fn start<B: BufferTrait>(
             ctx.runtime_mut(|runtime| runtime.adopt_lisp_job(name, id));
             ELispExp::symbol(name.into())
         }
-        // Only as the editor shuts down.
+        // Refused after a shutdown, or when the executor never started.
         None => {
+            // TODO(DOC-1): the line speaks of a shutdown in both cases.
             ctx.log_diagnostic(&format!(
                 "[ERROR] {door}: {name} was not started: the editor's work has shut down"
             ));
@@ -138,7 +141,7 @@ primitive!(running_workers, _args, _env, ctx, {
     ))
 });
 
-/// The per-step allowance as Lisp currently defines it.
+/// Returns the per-step allowance as Lisp defines it when the job starts.
 ///
 /// Read when the job is started rather than at every step: a job that wants
 /// a different allowance can be started again.
@@ -201,7 +204,7 @@ primitive!(background_call, args, env, ctx, {
     Ok(start(ctx, "background-call", &name, job))
 });
 
-/// Whether VALUE is something [`call_callable`](risp::call_callable)
+/// Answers whether VALUE is something [`call_callable`](risp::call_callable)
 /// could call.
 ///
 /// A symbol is accepted without asking whether it names a function yet: a
@@ -216,7 +219,7 @@ fn is_callable<B: BufferTrait>(value: &ELispExp<B>) -> bool {
     ) && value.is_truthy()
 }
 
-/// A callback argument: nothing, or something callable.
+/// Reads a callback argument: nothing, or something callable.
 fn optional_callback<B: BufferTrait>(
     value: Option<&ELispExp<B>>,
 ) -> Result<Option<ELispExp<B>>, EvalError<EditorState<B>>> {
@@ -375,20 +378,17 @@ primitive!(work_list, args, _env, ctx, {
     Ok(ELispExp::proper_list(jobs.chain(threads).collect()))
 });
 
-/// Register this module's primitives: work in the background, and the
+/// Registers the primitives of the work in the background, and of the
 /// scheduler that runs it.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     // Plain functions rather than commands: a worker is defined by a module
     // at load time, not run from M-x.
     into.function("define-worker", define_worker, DEFINE_WORKER_DOC);
     into.function("stop-worker", stop_worker, STOP_WORKER_DOC);
     into.function("running-workers", running_workers, RUNNING_WORKERS_DOC);
-    // Work that must not happen on the thread that draws. See `lisp_job`,
-    // which states the rule the whole editor follows for it.
+    // Work that must not happen on the thread that draws.
     into.function("background-call", background_call, BACKGROUND_CALL_DOC);
     into.function("emit-event", emit_event, EMIT_EVENT_DOC);
     into.function("work-option", work_option, WORK_OPTION_DOC);

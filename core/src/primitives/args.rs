@@ -1,29 +1,11 @@
-//! Reading one argument out of a primitive's argument list.
+//! Reading one argument out of a primitive's argument list: whether it is
+//! there, whether it is the right kind, and what the error says when it is
+//! not. Nothing here knows what an argument means.
 //!
-//! Every primitive receives a `&[ELispExp]` and has to decide what it was
-//! handed. The deciding is mechanical -- is it there, is it the right kind,
-//! what does the error say if it is not -- and it was written out by hand in
-//! each of them, which is how four files came to hold four spellings of "the
-//! first argument, as a string, or `WrongArgumentType`".
-//!
-//! What lives here is the *reading*, and only that. Nothing here knows what
-//! any argument means, so there is no `pattern_arg` or `prompt_arg`: a pattern
-//! and a prompt are both the first argument as a string, and the two names
-//! were the only difference between two identical functions in two files.
-//!
-//! # Why a missing argument and a wrong one are the same error
-//!
-//! Both of these take an `Option`, which is what `args.get(n)` gives, and both
-//! report an absent argument as a nil of the wrong type. That is deliberate,
-//! and it is what the hand-written copies already did: a primitive called with
-//! nothing where a string belongs has been called wrongly in the same way as
-//! one called with a number there, and `(expected String, got nil)` says so in
-//! the one sentence. A primitive whose *arity* is the point -- which must have
-//! exactly two arguments, no more -- still says so itself, with
-//! `WrongNumberOfArguments`, because that is a different complaint.
+//! Design: `doc/architettura-editor.typ, <lettori-argomenti>`.
 use super::*;
 
-/// ARG as a string, which it must already be.
+/// Returns ARG as a string, which it must already be.
 ///
 /// Strict about the kind: a symbol is not accepted, because the callers are
 /// the ones taking text a person typed or a pattern to search for, and
@@ -40,7 +22,7 @@ pub(crate) fn text<B: BufferTrait>(
     }
 }
 
-/// ARG as a name, written either way.
+/// Returns ARG as a name, written either way.
 ///
 /// A symbol *or* a string, because a name is a name: `(commandp 'find-file)`
 /// and `(commandp "find-file")` ask the same question, and Lisp code that
@@ -57,7 +39,8 @@ pub(crate) fn name<B: BufferTrait>(
     }
 }
 
-/// ARG as a name, or the empty string when there is nothing usable there.
+/// Returns ARG as a name, or the empty string when there is nothing usable
+/// there.
 ///
 /// For the primitives whose missing argument is not an error but a default --
 /// a replacement of nothing is a deletion, and that is a thing to ask for.
@@ -65,7 +48,7 @@ pub(crate) fn name_or_empty<B: BufferTrait>(arg: Option<&ELispExp<B>>) -> String
     name(arg).unwrap_or_default()
 }
 
-/// ARG as a name, or FALLBACK when it is absent or empty.
+/// Returns ARG as a name, or FALLBACK when it is absent or empty.
 ///
 /// The empty string counts as absent here, which the plain [`name`] does not:
 /// a mode named `""` would be looked up, found missing, and leave the buffer
@@ -78,7 +61,7 @@ pub(crate) fn name_or<B: BufferTrait>(arg: Option<&ELispExp<B>>, fallback: &str)
     }
 }
 
-/// ARG as a name, `None` when it was not given at all.
+/// Returns ARG as a name, or `None` when it was not given at all.
 ///
 /// Absent and nil are both "not given": a Lisp caller passing an optional
 /// argument through from its own optional argument hands on a nil rather than
@@ -88,8 +71,7 @@ pub(crate) fn name_or<B: BufferTrait>(arg: Option<&ELispExp<B>>, fallback: &str)
 /// EXPECTED is the one part of this that differs between callers and the one
 /// part a Lisp author ever reads -- "Symbol naming a category" and "String
 /// naming a buffer" are the same check and not the same complaint -- so it
-/// stays a parameter while the four-armed `match` behind it does not stay
-/// copied into eight primitives.
+/// is a parameter, and the four-armed `match` behind it is written once.
 pub(crate) fn optional_name<B: BufferTrait>(
     arg: Option<&ELispExp<B>>,
     expected: &str,
@@ -139,7 +121,8 @@ pub(crate) fn repeat_count<B: BufferTrait>(
     }
 }
 
-/// VALUE as `(quote VALUE)`, so that a form built in Rust hands it back whole.
+/// Returns VALUE as `(quote VALUE)`, so that a form built in Rust hands it
+/// back whole.
 ///
 /// The callbacks the asking primitives are handed are already values -- a
 /// lambda, a symbol naming a function -- and they have to survive being

@@ -1,3 +1,7 @@
+//! Buffers from Lisp: making, switching, reading and killing them, the
+//! values a module keeps with one, and what a buffer answers about itself.
+//!
+//! Design: `doc/architettura-editor.typ, <primitive-buffer>`.
 use super::*;
 use risp::{Lambda, eval};
 
@@ -51,21 +55,10 @@ primitive!(set_buffer_read_only, args, _env, ctx, {
     Ok(args[0].clone())
 });
 
-// ---------------------------------------------------------------------------
-// Things hung on a buffer
-// ---------------------------------------------------------------------------
-//
-// The Lisp front door to [`crate::buffer::Buffer::data`]. A module that needs
-// to remember something about one buffer has had two choices until now: a
-// global keyed by the buffer's name, which is wrong the moment the buffer is
-// renamed and still there after it is killed, or the buffer's own text, which
-// only works when the value is something you would have shown anyway.
-//
-// What goes in is an ordinary Lisp value, held in the same table Rust
-// attaches typed values to, and freed with the buffer like everything else in
-// it.
+// The values a module keeps with one buffer: ordinary Lisp values, in the
+// table `crate::buffer::Buffer::data` reads, and freed with the buffer.
 
-/// The name a Lisp value is filed under inside the buffer's table.
+/// Returns the name a Lisp value is filed under inside the buffer's table.
 ///
 /// Prefixed so that a Lisp key and a Rust one cannot collide: a module
 /// putting `"results"` and a Rust feature attaching its own `"results"` are
@@ -85,7 +78,8 @@ fn data_key<B: BufferTrait>(args: &[ELispExp<B>]) -> Result<String, EvalError<Ed
     }
 }
 
-/// Which buffer a data command was asked about: the named one, or this one.
+/// Returns the buffer a data primitive was asked about: the named one, or the
+/// current one.
 fn data_buffer<B: BufferTrait>(args: &[ELispExp<B>], index: usize, ctx: &EditorState<B>) -> String {
     match args.get(index) {
         Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),
@@ -164,7 +158,7 @@ pub const KILL_BUFFER_DOC: &str = "(kill-buffer &optional BUFFER-OR-NAME): Kill 
          Example:\n\
          (kill-buffer \"*report*\")";
 
-/// Which buffer a close command was asked about.
+/// Returns the buffer a close command was asked about.
 ///
 /// An empty answer is not the buffer called "": the prompt is offered with a
 /// default of "this one", and Return without typing is how that default is
@@ -190,7 +184,7 @@ fn close_target<B: BufferTrait>(
 
 primitive!(close_buffer, args, env, ctx, {
     let target = close_target(args, ctx)?;
-    if crate::primitives::io::has_unsaved_work(ctx, &target) {
+    if super::quit::has_unsaved_work(ctx, &target) {
         // The question is asked and this command is over: the answer arrives
         // later, in another command, and closes the buffer then. See
         // `primitives::ask` for why nothing here can wait for it.
@@ -278,10 +272,10 @@ pub const CLEAR_BUFFER_DOC: &str = "(clear-buffer): Delete the whole text of the
 
 primitive!(clear_buffer, _args, _env, ctx, {
     let happened = ctx.with_current_buffer_mut(|buf| {
-        // Through the recording layer rather than straight to `clear`, so that
-        // emptying a buffer is undoable like any other deletion. The layer
-        // still uses `clear` underneath for a whole-buffer range, so this
-        // costs one pass rather than one deletion per character.
+        // Through the door rather than straight to `clear`, so that emptying
+        // a buffer is undoable like any other deletion. The door uses `clear`
+        // underneath for a whole-buffer range, so this costs one pass rather
+        // than one deletion per character.
         let len = buf.text.len();
         super::edits::delete_range(buf, 0, len)
     });
@@ -384,8 +378,8 @@ primitive!(set_major_mode, args, env, ctx, {
     Ok(ELispExp::symbol(mode))
 });
 
-/// The name of the buffer NAME refers to, or of the current one when it is
-/// omitted.
+/// Returns the name of the buffer the first argument names, or of the
+/// current one when it is omitted.
 ///
 /// Every per-buffer accessor takes its argument the same way -- `major-mode`,
 /// `buffer-modified-p`, `buffer-file-name` -- so that a listing can ask all of
@@ -432,11 +426,10 @@ primitive!(buffer_file_name, args, _env, ctx, {
     })
 });
 
-/// Register this module's primitives: making, naming, killing and switching buffers.
+/// Registers the primitives of the buffers: making, switching, reading and
+/// killing them.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     // Remembering something about one buffer, for as long as it exists.
     into.function("buffer-put", buffer_put, BUFFER_PUT_DOC);

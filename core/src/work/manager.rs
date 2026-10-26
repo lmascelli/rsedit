@@ -182,8 +182,9 @@ impl<C: Send + 'static> WorkManager<C> {
     /// number at once: the job joins its queue at the executor's next turn.
     ///
     /// Work that already has the name -- a job or a thread -- is stopped.
-    /// `None` after [`Self::shutdown`], and then JOB is not kept: its `exit` is
-    /// not called, and the caller knows it was refused.
+    /// `None` after [`Self::shutdown`], or when the executor never started,
+    /// and then JOB is not kept: its `exit` is not called, and the caller
+    /// knows it was refused.
     pub fn submit(&self, spec: Spec, job: Box<dyn Job<C>>) -> Option<WorkId> {
         let shared = &self.shared;
         let id = WorkId::next();

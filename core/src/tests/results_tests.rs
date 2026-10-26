@@ -388,7 +388,7 @@ mod tests {
         sandbox.file("top.txt", "");
         sandbox.file("below/deeper.txt", "");
         let asked = std::cell::Cell::new(0);
-        let (paths, stopped) = crate::primitives::io::walk_files(
+        let (paths, stopped) = crate::primitives::filesystem::walk_files(
             &PathBuf::from(sandbox.path()),
             &std::collections::HashSet::new(),
             &[],

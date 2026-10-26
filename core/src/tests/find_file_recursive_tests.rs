@@ -1,11 +1,9 @@
-//! The recursive walk, and the .gitignore reading built on top of it.
+//! The recursive walk, and the .gitignore reading built on it in
+//! `dired.lisp`. `directory-files-recursive' knows how to walk and how not to
+//! descend; which files are worth offering is Lisp's, and the tests follow
+//! that split.
 //!
-//! The Lisp half lives in `dired.lisp` now rather than in a module of its own:
-//! it is a way of getting at files, which is what that module is for.
-//!
-//! Two layers with a deliberate seam between them. `directory-files-recursive'
-//! knows how to walk and how to *not* descend; everything about which files are
-//! worth offering is Lisp. The tests follow that split.
+//! Design: `doc/architettura-editor.typ, <disco>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -433,16 +431,16 @@ mod tests {
         assert!(!truncated(&answer), "three kept files is the whole of it");
     }
 
-    /// The bug this is here for: gathering the candidates used to cost an
-    /// evaluation per file per .gitignore suffix, so a real project -- a few
-    /// thousand files, forty `*.ext` patterns -- spent more than a command's
-    /// entire fuel budget before the prompt opened, and `C-x C-r` answered
-    /// with nothing at all. It looked exactly like a project with no files.
+    /// Gathering the candidates must not cost an evaluation per file per
+    /// .gitignore suffix: a real project -- a few thousand files, forty
+    /// `*.ext` patterns -- would spend a command's entire fuel before the
+    /// prompt opened, and `C-x C-r` would answer with nothing at all, like a
+    /// project with no files.
     ///
-    /// Measured rather than merely run, because the failure was never a wrong
-    /// answer: it was the right answer costing too much. A threshold catches
-    /// the regression while the tree here stays small enough to build quickly
-    /// -- at this size the old code spent about 1.2 million units.
+    /// Measured rather than merely run, because that failure is not a wrong
+    /// answer but the right one costing too much. A threshold catches it while
+    /// the tree here stays small enough to build quickly: at this size,
+    /// filtering in Lisp costs about 1.2 million units.
     #[test]
     fn gathering_candidates_is_cheap_against_a_long_gitignore() {
         let sandbox = Sandbox::new("fuel");

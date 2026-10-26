@@ -1,25 +1,14 @@
-//! Shaping a file name: making it absolute, and taking it apart.
+//! Shaping a file name: making it absolute, and taking it apart. The code
+//! uses `std::path`, so Windows cannot be asserted from a Unix host: the
+//! expectations use `MAIN_SEPARATOR` where the answer depends on it, and a
+//! hard-coded `/` would fail them on Windows rather than pass everywhere.
 //!
-//! # What these can and cannot check
-//!
-//! The functions under test are written with `std::path`, so what counts as a
-//! separator and what counts as a root come from the platform rather than from
-//! a character literal in this repository. That is what makes them right on
-//! Windows -- and it is also why the Windows behaviour cannot be *asserted*
-//! from here: on a Linux host, `std::path` has Unix semantics and a backslash
-//! is an ordinary character in a file name.
-//!
-//! So these tests check two things. The first is the whole of the logic on the
-//! host platform. The second is that nothing has crept back in that only works
-//! on one platform: the tests below phrase their expectations with
-//! `MAIN_SEPARATOR` where the answer depends on it, so a hard-coded `/` in the
-//! implementation would fail them on Windows rather than passing everywhere and
-//! being wrong on half.
+//! Design: `doc/architettura-editor.typ, <nomi-file>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use crate::primitives::io::{
+    use crate::primitives::file_names::{
         as_directory, directory_part, expand_path, expand_path_in, last_component,
         without_trailing_separator,
     };
@@ -401,7 +390,7 @@ mod tests {
     /// from the directory they are in.
     #[test]
     fn completion_splits_a_path_at_a_separator_the_platform_recognises() {
-        use crate::primitives::io::split_for_completion;
+        use crate::primitives::file_names::split_for_completion;
 
         let (directory, name) = split_for_completion("a\\b");
         if std::path::is_separator('\\') {
@@ -415,7 +404,7 @@ mod tests {
     /// what a user reads to know that Enter will descend.
     #[test]
     fn a_listing_marks_a_directory_with_the_platforms_separator() {
-        use crate::primitives::io::directory_entries;
+        use crate::primitives::file_names::directory_entries;
 
         let sandbox = std::env::temp_dir().join(format!("rsedit-sep-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&sandbox);

@@ -1,9 +1,13 @@
-//! Splitting the frame into windows, and moving between them.
+//! Windows: splitting the frame and closing, choosing and scrolling what it
+//! holds, keeping point's line in view, and the floating windows drawn over
+//! the rest.
+//!
+//! Design: `doc/architettura-editor.typ, <primitive-finestre>`.
 use super::*;
 use crate::ui::Division;
 use crate::ui::Orientation;
 
-/// Read a window count from a `p` argument.
+/// Reads a window count from a `p` argument, 1 when there is none.
 fn count(args: &[ELispExp<impl BufferTrait>]) -> isize {
     match args.first() {
         Some(ELispExp::Number(n)) => *n as isize,
@@ -11,17 +15,12 @@ fn count(args: &[ELispExp<impl BufferTrait>]) -> isize {
     }
 }
 
-/// The division a split gets, given an optional size argument.
+/// Returns the division a split gets, given an optional size argument.
 ///
-/// With no size the two halves share the space evenly, as `C-x 2` and `C-x 3`
-/// always have. With one, *this* window -- the one being split -- keeps exactly
+/// With no size the two halves share the space evenly, as with `C-x 2` and
+/// `C-x 3`. With one, *this* window -- the one being split -- keeps exactly
 /// that many rows or columns and the new one takes the rest, which is what
 /// Emacs' `split-window-right SIZE` means too.
-///
-/// Fixing the window being split rather than the new one is the useful way
-/// round: a directory listing that wants to stay 40 columns wide should keep
-/// those 40 columns when the frame is resized, and it is the file beside it
-/// that should grow.
 fn split_division<B: BufferTrait>(
     size: Option<&ELispExp<B>>,
 ) -> Result<Division, EvalError<EditorState<B>>> {
@@ -181,7 +180,8 @@ primitive!(scroll_down_command, args, _env, ctx, {
     Ok(scrolled(ctx, -count(args), "Beginning of buffer"))
 });
 
-/// Scroll by AMOUNT screenfuls, saying AT_THE_END when there was nowhere to go.
+/// Scrolls by AMOUNT screenfuls, and says AT_THE_END when there was nowhere
+/// to go.
 ///
 /// The report is the point of this being shared. A scroll key that does nothing
 /// and says nothing is indistinguishable from one that is not bound, and the
@@ -194,6 +194,19 @@ fn scrolled<B: BufferTrait>(ctx: &EditorState<B>, amount: isize, at_the_end: &st
         ELispExp::nil()
     }
 }
+
+pub const RECENTER_DOC: &str = "(recenter &optional WHERE): Scroll the window so that point's \
+         line is WHERE of the way down it: 0 the top, 0.5 the middle, which is the default, 1 the \
+         bottom. Point does not move.";
+
+primitive!(recenter, args, _env, ctx, {
+    let where_to = match args.first() {
+        Some(ELispExp::Number(n)) if n.is_finite() => *n,
+        _ => 0.5,
+    };
+    ctx.recenter_focused_window(where_to);
+    Ok(ELispExp::nil())
+});
 
 pub const SELECTED_WINDOW_DOC: &str = "(selected-window): Return the id of the window that has \
          the focus.\n\n\
@@ -226,15 +239,87 @@ primitive!(select_window, args, _env, ctx, {
     })
 });
 
-/// Register this module's primitives: splitting, focusing, resizing and closing windows.
+pub const MAKE_FLOATING_WINDOW_DOC: &str = "(make-floating-window BUFFER-NAME X Y WIDTH HEIGHT \
+         &optional TITLE MODE): Make a buffer called BUFFER-NAME in MODE, fundamental-mode by \
+         default, open it in a bordered window floating at column X and row Y, WIDTH by HEIGHT, \
+         with TITLE on its border, give it the focus, and return its id.\n\n\
+         Example:\n\
+         (make-floating-window \"*note*\" 2 1 40 6 \"Note\")";
+
+primitive!(make_floating_window, args, env, ctx, {
+    if args.len() < 5 {
+        Err(EvalError::WrongNumberOfArguments {
+            expected: 5,
+            got: args.len(),
+        })
+    } else {
+        if let (
+            ELispExp::String(buf_name),
+            ELispExp::Number(x),
+            ELispExp::Number(y),
+            ELispExp::Number(w),
+            ELispExp::Number(h),
+        ) = (&args[0], &args[1], &args[2], &args[3], &args[4])
+        {
+            let title = args.get(5).and_then(|exp| {
+                if let ELispExp::String(t) = exp {
+                    Some(t.to_string())
+                } else {
+                    None
+                }
+            });
+            let mode = args.get(6).and_then(|exp| match exp {
+                ELispExp::Symbol(m) | ELispExp::String(m) => Some(m.to_string()),
+                _ => None,
+            });
+
+            let id = ctx.open_floating_window(
+                buf_name,
+                *x as isize,
+                *y as isize,
+                *w as usize,
+                *h as usize,
+                title,
+                mode,
+                &env,
+            );
+
+            // The id, which is true as well: nothing in this Lisp is false
+            // but nil, so `(if (make-floating-window ...) ...)` works too.
+            Ok(id.into())
+        } else {
+            Err(EvalError::WrongArgumentType {
+                expected: "String, Number, Number, Number, Number".into(),
+                got: ELispExp::string(format!("{:?}", args)),
+            })
+        }
+    }
+});
+
+pub const CLOSE_FLOATING_WINDOW_DOC: &str = "(close-floating-window): Close the newest floating \
+         window and give the focus back to the window that had it before; do nothing when there \
+         is none.";
+
+primitive!(close_floating_window, _args, _env, ctx, {
+    // TODO(improve): only the newest floating window can be closed, not one
+    // named by its id.
+    let restore_id = ctx.windows_mut(|windows| {
+        windows
+            .floating_mut()
+            .pop()
+            .map(|f| f.previous_focused_window_id)
+    });
+    // TODO(CMD-8): with no floating window open, the focus goes to window 0,
+    // which may be gone.
+    ctx.set_focused_window_id(restore_id.unwrap_or(0.into()));
+    Ok(ELispExp::nil())
+});
+
+/// Registers the primitives of the windows: splitting, focusing, scrolling
+/// and closing them, and the floating ones.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // ---------------------------------------------------------------
-    // Windows
-    // ---------------------------------------------------------------
     into.command(
         "split-window-below",
         split_window_below,
@@ -272,10 +357,21 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         &["p"],
         SCROLL_DOWN_COMMAND_DOC,
     );
+    into.command("recenter", recenter, &[], RECENTER_DOC);
     into.function(
         "display-buffer-at-bottom",
         display_buffer_at_bottom,
         DISPLAY_BUFFER_AT_BOTTOM_DOC,
     );
     into.function("window-buffer", window_buffer, WINDOW_BUFFER_DOC);
+    into.function(
+        "make-floating-window",
+        make_floating_window,
+        MAKE_FLOATING_WINDOW_DOC,
+    );
+    into.function(
+        "close-floating-window",
+        close_floating_window,
+        CLOSE_FLOATING_WINDOW_DOC,
+    );
 }

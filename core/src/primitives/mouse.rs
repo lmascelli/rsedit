@@ -1,17 +1,9 @@
-//! What a click and a wheel notch do.
+//! What a click, a drag and a wheel notch do: the commands that
+//! `EditorState::handle_mouse_event` runs once it knows where the pointer
+//! is. Their arguments come from it, not from a prompt, so they register with
+//! no argument specs.
 //!
-//! # Why these are commands and not code in the event handler
-//!
-//! `EditorState::handle_mouse_event` works out *where* the pointer was, which
-//! needs the layout and every window's scroll and so can only happen there.
-//! What that position should *mean* is a separate question, and routing it
-//! through the command machinery buys the same things a keystroke gets: one
-//! undo step, one `post-command-hook`, a name in the logs and in `M-x`, and a
-//! binding that can be replaced without touching the handler.
-//!
-//! Their arguments come from the dispatcher rather than from a prompt, which
-//! is why they register with no argument specs -- the same arrangement
-//! `insert-pasted-text` has.
+//! Design: `doc/architettura-editor.typ, <mouse>`.
 use super::*;
 use crate::buffer::Mark;
 use crate::ui::WindowId;
@@ -67,13 +59,11 @@ enum Selecting {
     No,
 }
 
-/// Focus a window, move point, and either start a selection or end one.
+/// Focuses a window, moves point, and either starts a selection or ends one.
 ///
-/// # Why both clicks go through one function
-///
-/// They differ in a single line, and everything before it -- the window, the
-/// clamping, the order the two happen in -- is the part that is easy to get
-/// subtly wrong. Two copies of it would agree until one of them was fixed.
+/// Both clicks come here: they differ in a single line, and everything before
+/// it -- the window, the clamping, the order the two happen in -- is the part
+/// that is easy to get subtly wrong.
 fn click_at<B: BufferTrait>(
     args: &[ELispExp<B>],
     ctx: &EditorState<B>,
@@ -96,19 +86,9 @@ fn click_at<B: BufferTrait>(
             // Set *after* point has moved, so the region is anchored where the
             // click landed rather than where the cursor used to be.
             Selecting::Yes => buf.mark = Some(Mark::new(buf.text.cursor_pos_1d())),
-            // # Why a click ends the selection
-            //
-            // A region is the span between the mark and point, so moving
-            // point moves one end of it. Without this, every click while a
-            // selection was up dragged that end to wherever you clicked --
-            // including a click far away, which left a selection stretching
-            // across half the file that nobody asked for. Clicking somewhere
-            // is how you say "not there, here", and the selection is the
-            // clearest casualty of it.
-            //
-            // Deactivated rather than forgotten: `exchange-point-and-mark'
-            // can still go back to it, which is exactly what an inactive mark
-            // is for.
+            // A click ends the selection, which would otherwise stretch to
+            // wherever the click landed. Deactivated rather than forgotten:
+            // `exchange-point-and-mark' can still go back to it.
             Selecting::No => {
                 if let Some(mark) = buf.mark.as_mut() {
                     mark.active = false;
@@ -199,15 +179,12 @@ primitive!(mouse_resize, args, _env, ctx, {
     })
 });
 
-/// Register this module's primitives: clicks, drags and the wheel.
+/// Registers the primitives of the mouse: clicks, drags and the wheel.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // A command rather than a plain function, because it is one: the renderer
-    // runs it when the terminal reports a bracketed paste, and it wants the
-    // undo grouping and the `post-command-hook' that being a command brings.
+    // Commands, as keys are: each click is one undo step and runs the
+    // `post-command-hook'.
     into.command("mouse-set-point", mouse_set_point, &[], MOUSE_SET_POINT_DOC);
     into.command(
         "mouse-start-selection",

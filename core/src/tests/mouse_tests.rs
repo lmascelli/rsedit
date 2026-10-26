@@ -1,12 +1,10 @@
-//! The mouse: where a click lands, and what it is allowed to do.
+//! The mouse: where a click lands, and what it is allowed to do. Between a
+//! cell of the screen and a character of a buffer sit a window's position,
+//! its scroll, its status line and the length of the line clicked on, so
+//! these check the seams: the far edge, a window never drawn or scrolled
+//! down, a click past the end of a line, a float over a buffer.
 //!
-//! Mostly arithmetic with an off-by-one in every corner: between a cell of the
-//! screen and a character of a buffer sit a window's position, its scroll, the
-//! row of its status line and the length of the line clicked on, and one out
-//! is the kind of wrong a user blames on the terminal. So these check the
-//! seams: the far edge of a rectangle, a window never drawn, a window scrolled
-//! down, a click past the end of a short line, a float over a buffer in which
-//! point must not move.
+//! Design: `doc/architettura-editor.typ, <mouse>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

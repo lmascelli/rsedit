@@ -1,8 +1,8 @@
-//! Moving the view rather than point: `C-v` and `M-v`. The tests compose a
-//! frame first, since a screenful is only a number once the window has been
-//! laid out.
+//! Moving the view rather than point: `C-v`, `M-v` and `recenter`. The
+//! tests compose a frame first, since a screenful is only a number once the
+//! window has been laid out.
 //!
-//! Design: `doc/architettura-editor.typ, <compartimenti>`.
+//! Design: `doc/architettura-editor.typ, <primitive-finestre>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -357,5 +357,70 @@ mod tests {
 
         press(&ctx, &env, KeyCode::Char('v'), alt());
         assert_eq!(top_line(&ctx, &env), "line 0", "M-v should have moved back");
+    }
+
+    // ---------------- where point's line goes ----------------
+
+    /// The lines the focused window is showing.
+    fn visible(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> Vec<String> {
+        ctx.snapshot(env, W, H)
+            .views
+            .into_iter()
+            .find(|view| view.is_focused)
+            .expect("a focused window")
+            .lines
+    }
+
+    fn point(ctx: &Ctx) -> usize {
+        ctx.with_buffer("*scratch*", |b| b.text.cursor_pos_1d())
+            .expect("*scratch*")
+    }
+
+    /// A hundred lines with point on the fiftieth, and the window laid out
+    /// again, so that it has a height to centre within.
+    fn at_line_fifty() -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = editor_showing(100);
+        run("(goto-line 50)", &env, &ctx);
+        let _ = ctx.snapshot(&env, W, H);
+        (ctx, env)
+    }
+
+    #[test]
+    fn recentring_moves_the_text_and_not_the_cursor() {
+        let (ctx, env) = at_line_fifty();
+        let before = point(&ctx);
+
+        run("(recenter)", &env, &ctx);
+        assert_eq!(point(&ctx), before, "the text slides under the cursor");
+
+        let lines = visible(&ctx, &env);
+        let middle = lines.len() / 2;
+        assert!(
+            lines[middle].contains("line 49"),
+            "the line point is on should be in the middle, got {:?}",
+            lines[middle]
+        );
+    }
+
+    #[test]
+    fn recentring_accepts_where_to_put_the_line() {
+        let (ctx, env) = at_line_fifty();
+
+        run("(recenter 0)", &env, &ctx);
+        let lines = visible(&ctx, &env);
+        assert!(
+            lines[0].contains("line 49"),
+            "0 puts it on the top row, got {:?}",
+            lines[0]
+        );
+
+        run("(recenter 1)", &env, &ctx);
+        let lines = visible(&ctx, &env);
+        let last = lines.len() - 1;
+        assert!(
+            lines[last].contains("line 49"),
+            "1 puts it on the bottom row, got {:?}",
+            lines[last]
+        );
     }
 }
