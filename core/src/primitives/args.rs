@@ -105,6 +105,40 @@ pub(crate) fn optional_name<B: BufferTrait>(
     }
 }
 
+/// Returns the first of ARGS as a signed count of steps: 1 when it is absent,
+/// rounded down, and an error when it is not a finite number. A negative
+/// count is the same move the other way.
+pub(crate) fn movement_count<B: BufferTrait>(
+    args: &[ELispExp<B>],
+) -> Result<isize, EvalError<EditorState<B>>> {
+    match args.first() {
+        None => Ok(1),
+        Some(ELispExp::Number(n)) if n.is_finite() => Ok(n.floor() as isize),
+        Some(other) => Err(EvalError::WrongArgumentType {
+            expected: "finite Number".into(),
+            got: other.clone(),
+        }),
+    }
+}
+
+// TODO(CMD-6): a negative count becomes 0, so the deletions that read it do
+// nothing where Emacs deletes backwards.
+// TODO(CMD-3): nor is a count bounded.
+/// Returns the first of ARGS as a number of repetitions: 1 when it is absent,
+/// rounded down and at least 0, and an error when it is not a number.
+pub(crate) fn repeat_count<B: BufferTrait>(
+    args: &[ELispExp<B>],
+) -> Result<usize, EvalError<EditorState<B>>> {
+    match args.first() {
+        None => Ok(1),
+        Some(ELispExp::Number(n)) => Ok(n.floor().max(0.0) as usize),
+        Some(other) => Err(EvalError::WrongArgumentType {
+            expected: "Number".into(),
+            got: other.clone(),
+        }),
+    }
+}
+
 /// VALUE as `(quote VALUE)`, so that a form built in Rust hands it back whole.
 ///
 /// The callbacks the asking primitives are handed are already values -- a

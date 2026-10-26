@@ -1,36 +1,8 @@
-//! Matching a regular expression against a string, the way Emacs does it.
+//! `string-match` and the match data, as Emacs has them: the match answers
+//! where it starts, and `match-beginning`, `match-end` and `match-string` read
+//! its groups afterwards, in characters. The data is per thread.
 //!
-//! `string-match` answers *where* the match starts, and leaves the details --
-//! where each group began and ended -- in the **match data**, which
-//! `match-beginning`, `match-end` and `match-string` read afterwards. That is
-//! the shape every piece of Emacs Lisp ever written expects, and code ported
-//! from Emacs should work here without being restructured.
-//!
-//! # The cost of the shape, and how it is contained
-//!
-//! Match data is state that survives the call, so a function called between a
-//! match and the read of it can overwrite it. Emacs' answer is
-//! `save-match-data`, defined in `commands.lisp`, and the same convention
-//! applies here: a function that matches on someone else's behalf wraps itself
-//! in it. `string-match-p` sets nothing, for callers that only want a yes/no.
-//!
-//! The data is **per thread**. A Lisp worker on another thread matching its
-//! own strings must not change what the command on the main thread is about to
-//! read, and the two cannot coordinate. Fibers on one thread share it, as
-//! Emacs timers share it with whatever they interrupt -- `save-match-data` is
-//! the answer there too.
-//!
-//! # Positions are characters
-//!
-//! The regex engine reports byte offsets. Lisp sees character indices, as
-//! `substring` and `length` do, so a match in a string containing `è` reports
-//! the same numbers it would in Emacs.
-//!
-//! # What is not Emacs
-//!
-//! The *syntax* of the regular expressions: groups are `(...)`, not `\(...\)`.
-//! It is the engine the syntax rules and the search commands use, which stays
-//! linear by having no lookahead and no backreferences.
+//! Design: `doc/architettura-editor.typ, <dati-corrispondenza>`.
 use super::*;
 use std::cell::RefCell;
 
@@ -39,9 +11,13 @@ use std::cell::RefCell;
 type Groups = Vec<Option<(usize, usize)>>;
 
 thread_local! {
+    /// The groups of the last match on this thread: a Lisp job's step, on the
+    /// executor's thread, cannot change what a command reads.
     static MATCH_DATA: RefCell<Groups> = const { RefCell::new(Vec::new()) };
 }
 
+/// Returns the error for an argument that is not EXPECTED: GOT, or nil when
+/// nothing came.
 fn wrong_type<B: BufferTrait>(
     expected: &str,
     got: Option<&ELispExp<B>>,
@@ -52,7 +28,7 @@ fn wrong_type<B: BufferTrait>(
     }
 }
 
-/// ARG as a whole number, which it must be.
+/// Returns ARG as a whole number, or the error when it is not one.
 fn integer<B: BufferTrait>(arg: Option<&ELispExp<B>>) -> Result<i64, EvalError<EditorState<B>>> {
     match arg {
         Some(ELispExp::Number(n)) if n.fract() == 0.0 => Ok(*n as i64),
@@ -60,8 +36,8 @@ fn integer<B: BufferTrait>(arg: Option<&ELispExp<B>>) -> Result<i64, EvalError<E
     }
 }
 
-/// `(args-out-of-range ...)`, which is what Emacs signals for an index that
-/// is not in the string.
+/// Returns `(args-out-of-range ARGS...)`, the error Emacs signals for an index
+/// that is not in the string.
 fn out_of_range<B: BufferTrait>(args: &[ELispExp<B>]) -> EvalError<EditorState<B>> {
     EvalError::Signal {
         symbol: ELispExp::symbol("args-out-of-range".into()),
@@ -69,7 +45,8 @@ fn out_of_range<B: BufferTrait>(args: &[ELispExp<B>]) -> EvalError<EditorState<B
     }
 }
 
-/// The byte offset of character index CHAR in TEXT, or `None` past the end.
+/// Returns the byte offset of character index CHAR in TEXT, or `None` past
+/// the end.
 fn byte_of(text: &str, char: usize) -> Option<usize> {
     text.char_indices()
         .map(|(byte, _)| byte)
@@ -77,12 +54,12 @@ fn byte_of(text: &str, char: usize) -> Option<usize> {
         .nth(char)
 }
 
-/// Run REGEXP against STRING from character START, answering every group's
-/// span in characters -- or `None` for no match.
+/// Runs REGEXP against STRING from character START, the three taken from
+/// ARGS, and returns every group's span in characters, or `None` for no match.
 ///
-/// An expression that does not compile is an error, `invalid-regexp`, as in
-/// Emacs: a pattern that cannot match anything is a bug in the pattern, and
-/// answering nil would make it look like a string that did not match.
+/// An expression that does not compile signals `invalid-regexp`, as in Emacs:
+/// answering nil would make a broken pattern look like a string that did not
+/// match.
 fn search<B: BufferTrait>(
     args: &[ELispExp<B>],
 ) -> Result<Option<Groups>, EvalError<EditorState<B>>> {
@@ -110,9 +87,9 @@ fn search<B: BufferTrait>(
         }
     };
 
-    // Compiled once per pattern rather than once per call. The modules call
-    // this per element -- per file, per line of output -- and compiling a
-    // pattern costs a hundred times what matching one does.
+    // Compiled once per pattern, not once per call: the modules call this per
+    // file or per line of output, and compiling costs a hundred times what
+    // matching does.
     let compiled = crate::text::search::compiled(&pattern).map_err(|why| EvalError::Signal {
         symbol: ELispExp::symbol("invalid-regexp".into()),
         data: ELispExp::proper_list(vec![ELispExp::string(why.to_string())]),
@@ -126,9 +103,8 @@ fn search<B: BufferTrait>(
         return Ok(None);
     };
 
-    // Bytes to characters. Counted from the front for each position, which is
-    // linear in the string per group -- the strings matched are lines and
-    // names, and a cleverer count would be code to get wrong for no gain.
+    // Bytes to characters, counted from the front for each position: linear
+    // in the string per group, and the strings matched are lines and names.
     let to_char = |byte: usize| subject[..byte].chars().count();
     Ok(Some(
         captures
@@ -170,7 +146,8 @@ primitive!(string_match_p, args, _env, _ctx, {
     })
 });
 
-/// The span of group N of the last match, if it took part.
+/// Returns the span of the group the first of ARGS numbers, if it took part
+/// in the last match; an error for a negative number.
 fn group<B: BufferTrait>(
     args: &[ELispExp<B>],
 ) -> Result<Option<(usize, usize)>, EvalError<EditorState<B>>> {
@@ -278,7 +255,7 @@ primitive!(set_match_data, args, _env, _ctx, {
     Ok(ELispExp::nil())
 });
 
-/// Register the matching primitives.
+/// Registers `string-match` and the primitives of the match data.
 ///
 /// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {

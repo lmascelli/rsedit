@@ -473,7 +473,7 @@ fn mark_line<B: BufferTrait>(ctx: &EditorState<B>, category: &str) {
         buf.overlays.remove_category(Some(category));
         let point = buf.text.cursor_pos_1d();
         let line = buf.text.cursor_1d_to_2d(point).0;
-        let (start, end) = crate::primitives::edits::line_bounds(&buf.text, line);
+        let (start, end) = crate::primitives::movement::line_bounds(&buf.text, line);
         if end > start {
             buf.overlays
                 .add(start, end, face, MARK_PRIORITY, category.into());
@@ -531,7 +531,7 @@ fn visit<B: BufferTrait>(
         let line = entry.line.saturating_sub(1);
         let column = entry
             .column
-            .min(crate::primitives::edits::line_length(&buf.text, line));
+            .min(crate::primitives::movement::line_length(&buf.text, line));
         buf.text.cursor_move(line, column);
     });
     mark_line(ctx, TARGET_CATEGORY);
@@ -601,7 +601,8 @@ fn visit_index<B: BufferTrait>(
     Ok(entry_form(&entry))
 }
 
-/// One entry as Lisp sees it. The shape is `primitives::scan`'s, said once.
+/// Returns ENTRY as Lisp sees it, the list `scan-buffer` and the result
+/// lists hand out: (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END).
 pub(crate) fn entry_form<B: BufferTrait>(entry: &Entry) -> ELispExp<B> {
     ELispExp::proper_list(vec![
         ELispExp::string(entry.kind.clone()),

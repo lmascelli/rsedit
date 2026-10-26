@@ -1,25 +1,9 @@
 //! Blocks of text: what a pair of columns covers, and what each command does
-//! to it.
+//! to it, on lines that stop short above all: taking text out leaves a line's
+//! length alone, putting text in pads the line first, `clear-rectangle` pads
+//! nothing; and every command edits the bottom line first.
 //!
-//! # What is worth testing here
-//!
-//! Almost all of it is the ragged case. A rectangle over lines that are all
-//! long enough is arithmetic nobody gets wrong; a rectangle over real text is
-//! a pair of columns applied to lines that stop in different places, and
-//! every command has its own right answer about what to do with a line that
-//! does not reach:
-//!
-//! - taking text out takes what is there and leaves the line's length alone;
-//! - putting text in pads the line out first, because a column that does not
-//!   exist yet is exactly what it was asked to fill;
-//! - except `clear-rectangle`, which pads nothing: there was nothing there to
-//!   blank, and filling the line with spaces would lengthen it in order to
-//!   erase something that was never written.
-//!
-//! The other silent one is the order edits are applied in. A rectangle
-//! command changes several lines, and a change to one line moves every offset
-//! after it -- so a command that walks top-down corrupts every line but the
-//! first, and does it in a way that looks like a plausible rectangle.
+//! Design: `doc/architettura-editor.typ, <modifiche-multiple>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::BufferTrait;

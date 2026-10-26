@@ -1,5 +1,7 @@
 //! Undo and redo: what gets recorded, how it is grouped, and the symmetry
 //! between undoing and redoing.
+//!
+//! Design: `doc/architettura-editor.typ, <undo>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -37,9 +39,9 @@ mod tests {
             .expect("*scratch*")
     }
 
-    /// Type a character the way the editor does, through the key handler, so
-    /// that the grouping decision in `handle_key_event` is exercised rather
-    /// than bypassed.
+    /// Types a character as the editor does, through the key handler, so that
+    /// the grouping decision in `handle_key_event` is exercised rather than
+    /// bypassed.
     fn type_char(ctx: &Ctx, env: &Arc<Env<Ctx>>, c: char) {
         ctx.handle_key_event(
             KeyEvent {

@@ -1,34 +1,13 @@
-//! Cutting, filling and moving blocks of text.
+//! The commands on a rectangle, the block of columns between point and the
+//! mark. The geometry is in [`crate::text::rectangle`]; here every command
+//! applies its edits bottom line first, and one that changes the buffer
+//! leaves point at the top-left corner.
 //!
-//! The geometry is in [`crate::text::rectangle`]; this is the door Lisp comes
-//! through, and the two rules the commands share.
-//!
-//! # Bottom line first, always
-//!
-//! Every one of these changes several lines, and a change to one line moves
-//! every offset after it. So the spans are computed once, against the buffer
-//! as it is, and then applied from the bottom up -- exactly as
-//! [`super::comments`] applies its edits, and for exactly the same reason.
-//! Computing them again as you go would work and would be one lock and one
-//! walk per line.
-//!
-//! # Where point ends up
-//!
-//! The top-left corner, for every command that *changes* the buffer.
-//!
-//! It is where the block you just acted on begins, which is where the next
-//! thing you do to it starts from, and it is the same answer after all of
-//! them -- a set of commands that leave the cursor somewhere you have to look
-//! for is a set you check after every use.
-//!
-//! `copy-rectangle-as-kill` is the exception, and has to be. It changes
-//! nothing, so the mark survives it -- and moving point to the corner would
-//! move it *onto* the mark and leave a selection with no size, so that the
-//! next rectangle command found nothing to work on. `M-w` leaves point alone
-//! for the same reason, and this is the same command.
+//! Design: `doc/architettura-editor.typ, <modifiche-multiple>`.
 use super::*;
 use crate::buffer::{Buffer, Mark};
-use crate::primitives::edits::{delete_range, goto_offset, insert_text};
+use crate::primitives::edits::{delete_range, insert_text};
+use crate::primitives::movement::goto_offset;
 use crate::text::rectangle::{Rectangle, Span, spans, text_of};
 
 /// Returns the rectangle between point and the mark, or `None` when the mark
@@ -44,12 +23,8 @@ fn active_rectangle<B: BufferTrait>(buf: &Buffer<B>) -> Option<Rectangle> {
     ))
 }
 
-/// The rectangle between point and the mark, or the error a command should
-/// give when there is no mark.
-///
-/// The same message `region` gives, and for the same reason: a command that
-/// quietly does nothing when the user thought they had a selection is worse
-/// than one that says so.
+/// Returns the rectangle between point and the mark, or the error a command
+/// gives when the mark is not active, worded as `region` words its own.
 fn require_rectangle<B: BufferTrait>(
     buf: &Buffer<B>,
 ) -> Result<Rectangle, EvalError<EditorState<B>>> {
@@ -58,18 +33,17 @@ fn require_rectangle<B: BufferTrait>(
     })
 }
 
-/// Put point at the rectangle's top-left corner. See the module docs.
+/// Puts point at RECT's top-left corner.
 fn go_to_corner<B: BufferTrait>(buf: &mut Buffer<B>, rect: &Rectangle) {
     let at = buf.text.cursor_2d_to_1d(rect.top, rect.left);
     goto_offset(&mut buf.text, at);
 }
 
-/// Apply F to every line of RECT, bottom line first.
+/// Calls F with BUF and the span of every line of RECT, bottom line first.
 ///
 /// The spans are worked out before anything changes, so F sees the offsets
-/// the line had when the rectangle was drawn. F is handed the line's span and
-/// the rectangle, because the two things it may need -- what is there, and
-/// how far short of the left edge the line stops -- are one each.
+/// each line had when the rectangle was drawn; a span says what is there and
+/// how far short of the left edge its line stops.
 fn each_line<B: BufferTrait, F>(buf: &mut Buffer<B>, rect: &Rectangle, mut f: F)
 where
     F: FnMut(&mut Buffer<B>, &Span),
@@ -81,12 +55,12 @@ where
     }
 }
 
-/// Insert CONTENT at the rectangle's left edge on SPAN's line, padding the
-/// line out to that column first if it stops short of it.
-///
-/// The padding is what makes `open`, `yank` and `string-rectangle` work on
-/// ragged text: they were asked to put something at a column, and a column
-/// that does not exist yet is the case, not the exception.
+// TODO(BUF-4): a refused insertion is ignored, and the commands that insert
+// answer as though they had.
+/// Inserts CONTENT on SPAN's line at the rectangle's left edge, padding the
+/// line out to that column first when it stops short of it: a column that
+/// does not exist yet is what `open-rectangle`, `yank-rectangle` and
+/// `string-rectangle` were asked to fill.
 fn insert_at_edge<B: BufferTrait>(buf: &mut Buffer<B>, span: &Span, content: &str) {
     if span.padding > 0 {
         let padding = " ".repeat(span.padding);
@@ -158,7 +132,11 @@ primitive!(rectangle_bounds, _args, _env, ctx, {
 // Taking one out
 // ---------------------------------------------------------------------------
 
-/// Delete RECT's text, and hand back what was there if it was wanted.
+// TODO(BUF-4): a refused deletion is ignored: in a read-only buffer
+// `kill-rectangle` keeps the block although it stayed, and the commands
+// answer with the number of lines as though they had cut it.
+/// Deletes RECT's text and returns what was there, a string per line, with
+/// point left at the corner.
 fn cut<B: BufferTrait>(ctx: &EditorState<B>, rect: &Rectangle) -> Vec<String> {
     ctx.with_current_buffer_mut(|buf| {
         let taken = text_of(&buf.text, rect);
@@ -198,12 +176,10 @@ pub const COPY_RECTANGLE_AS_KILL_DOC: &str = "(copy-rectangle-as-kill): Keep the
          lines.";
 
 primitive!(copy_rectangle_as_kill, _args, _env, ctx, {
-    let (rect, taken) = ctx.with_current_buffer(|buf| {
+    let taken = ctx.with_current_buffer(|buf| {
         let rect = require_rectangle(buf)?;
-        let taken = text_of(&buf.text, &rect);
-        Ok::<_, EvalError<EditorState<B>>>((rect, taken))
+        Ok::<_, EvalError<EditorState<B>>>(text_of(&buf.text, &rect))
     })?;
-    let _ = rect;
     let height = taken.len();
     ctx.kill_yank_mut(|kill_yank| kill_yank.set_rectangle(taken));
     Ok(ELispExp::number(height as f64))
@@ -223,11 +199,9 @@ primitive!(killed_rectangle, _args, _env, ctx, {
 // Putting one in
 // ---------------------------------------------------------------------------
 
-/// Insert LINES down the page from point, each at point's column.
-///
-/// Shared by `yank-rectangle` and `string-rectangle`, which differ only in
-/// where the lines come from -- one block from the store, or the same string
-/// on every line of the marked block.
+/// Inserts LINES down the page from point, each at point's column, and
+/// returns how many: what `yank-rectangle` does with the block kept. Point
+/// stays where it was.
 fn insert_block<B: BufferTrait>(ctx: &EditorState<B>, lines: &[String]) -> usize {
     if lines.is_empty() {
         return 0;
@@ -309,10 +283,8 @@ primitive!(clear_rectangle, _args, _env, ctx, {
         let lines = spans(&buf.text, &rect).len();
         each_line(buf, &rect, |buf, span| {
             // `insert_text` at the span's own start, not `insert_at_edge`:
-            // that is the whole of why this is the one command that does
-            // not pad a short line. Going through the edge would fill the
-            // line out to a column in order to blank something that was
-            // never written there.
+            // the one command that pads nothing, since it blanks what is
+            // there, and a short line has nothing there to blank.
             if span.is_empty() {
                 return;
             }
@@ -354,15 +326,10 @@ primitive!(string_rectangle, args, _env, ctx, {
     Ok(ELispExp::number(height as f64))
 });
 
-/// Register this module's primitives: the column-aligned block two corners describe.
+/// Registers the commands on rectangles.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // Blocks of text. See `primitives::rectangle`, and `rectangle` for the
-    // arithmetic of saying which characters a pair of columns covers when the
-    // lines are not all long enough.
     into.command(
         "rectangle-mark-mode",
         rectangle_mark_mode,

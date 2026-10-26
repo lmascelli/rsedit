@@ -1,30 +1,13 @@
-//! Commenting out, and stopping doing so.
+//! Commenting lines out and back in, with the spelling the buffer's mode
+//! declared (`set-comment-syntax`). Every command works its edits out against
+//! the text as it is, then applies them last first.
 //!
-//! # Why this is not a regular expression and a prefix
-//!
-//! A comment is the one piece of syntax whose spelling changes with every
-//! language, and the editor already knows those spellings: `set-comment-syntax`
-//! declared them per mode, and the colouring, `forward-sexp` and the scanner
-//! all read them from the same place. So nothing here decides what a comment
-//! looks like -- it asks -- and a mode that has said nothing gets told so
-//! rather than getting `#` or `//` applied hopefully.
-//!
-//! # The one piece of arithmetic
-//!
-//! Every command here makes several edits at once, and each edit moves
-//! everything after it. Working forwards means every offset after the first
-//! edit is stale -- the classic way a "comment the region" ends up with a
-//! prefix in the middle of the third line.
-//!
-//! So the edits are *computed* against the buffer as it is, sorted, and then
-//! applied last-first, when an edit's own offsets have not been moved by any
-//! edit still to come. Point is put back afterwards from the same list, since
-//! the buffer has no idea that the characters it grew belong in front of where
-//! the user was.
+//! Design: `doc/architettura-editor.typ, <modifiche-multiple>`.
 use super::*;
 use crate::buffer::{Buffer, mark::region_bounds};
 use crate::modes::CommentStyle;
-use crate::primitives::edits::{delete_range, goto_offset, insert_text, line_bounds};
+use crate::primitives::edits::{delete_range, insert_text};
+use crate::primitives::movement::{goto_offset, line_bounds};
 
 /// One change to make, in offsets taken before any of them were made.
 enum Edit {
@@ -33,6 +16,7 @@ enum Edit {
 }
 
 impl Edit {
+    /// Returns where the change starts.
     fn at(&self) -> usize {
         match self {
             Edit::Insert { at, .. } => *at,
@@ -41,19 +25,20 @@ impl Edit {
     }
 }
 
-/// Apply EDITS, which must be in ascending order and must not overlap.
+// TODO(BUF-4): the refusal is not said: the commands answer nil, and the
+// echo area stays empty.
+/// Applies EDITS, which must be in ascending order and must not overlap, last
+/// first, so that each edit's offsets are still those it was worked out
+/// against; then puts point back where the user was, in the text as it is.
 ///
-/// Last first, so that each edit's offsets are still the ones it was worked
-/// out against. Returns false if the buffer refused -- it is read-only -- in
-/// which case nothing at all was done, since the first refusal stops the rest.
+/// Returns false when there was nothing to do, or when the buffer refused:
+/// then nothing was done, since a read-only buffer refuses the first edit.
 fn apply<B: BufferTrait>(buf: &mut Buffer<B>, edits: &[Edit]) -> bool {
     if edits.is_empty() {
         return false;
     }
-    // The precondition, checked rather than described: applying last-first is
-    // only correct while each edit's offsets are untouched by the ones after
-    // it, and a list built out of order would come out subtly wrong in a way
-    // no single test would name.
+    // The order is the precondition of applying last first, checked rather
+    // than described: a list out of order comes out subtly wrong.
     debug_assert!(
         edits.windows(2).all(|pair| pair[0].at() <= pair[1].at()),
         "comment edits must be in ascending order"
@@ -89,12 +74,14 @@ fn apply<B: BufferTrait>(buf: &mut Buffer<B>, edits: &[Edit]) -> bool {
     true
 }
 
+/// Returns the text of LINE, without its newline.
 fn line_text<B: BufferTrait>(text: &B, line: usize) -> String {
     let (start, end) = line_bounds(text, line);
     text.slice(start, end)
 }
 
-/// The lines a comment command works over: the region's, or point's own.
+/// Returns the lines a comment command works over: the region's, or point's
+/// own.
 fn scope<B: BufferTrait>(buf: &Buffer<B>) -> (usize, usize) {
     match region_bounds(buf.mark, buf.text.cursor_pos_1d(), buf.text.len()) {
         Some((from, to)) => {
@@ -112,13 +99,13 @@ fn scope<B: BufferTrait>(buf: &Buffer<B>) -> (usize, usize) {
     }
 }
 
-/// How this buffer's mode writes comments.
+/// Returns how the current buffer's mode writes comments.
 fn styles<B: BufferTrait>(ctx: &EditorState<B>) -> Vec<CommentStyle> {
     let mode = ctx.with_current_buffer(|buf| buf.current_mode.clone());
     ctx.modes(|modes| modes.syntax_table(&mode).comments().to_vec())
 }
 
-/// The first line-comment opener, which is what a whole-line comment uses.
+/// Returns the first line-comment opener, the one a whole-line comment uses.
 fn line_opener(styles: &[CommentStyle]) -> Option<String> {
     styles.iter().find_map(|style| match style {
         CommentStyle::Line { opener } => Some(opener.clone()),
@@ -126,7 +113,8 @@ fn line_opener(styles: &[CommentStyle]) -> Option<String> {
     })
 }
 
-/// The first block opener and closer, for a language that has no line comment.
+/// Returns the first block opener and closer, for a language with no line
+/// comment.
 fn block_style(styles: &[CommentStyle]) -> Option<(String, String)> {
     styles.iter().find_map(|style| match style {
         CommentStyle::Block { opener, closer, .. } => Some((opener.clone(), closer.clone())),
@@ -134,24 +122,27 @@ fn block_style(styles: &[CommentStyle]) -> Option<(String, String)> {
     })
 }
 
+/// Returns how many whitespace characters begin LINE.
 fn indentation(line: &str) -> usize {
     line.chars().take_while(|c| c.is_whitespace()).count()
 }
 
+/// Returns whether LINE is nothing but whitespace.
 fn blank(line: &str) -> bool {
     line.trim().is_empty()
 }
 
-/// Whether LINE is already commented with OPENER.
+/// Returns whether LINE is already commented with OPENER.
 fn commented(line: &str, opener: &str) -> bool {
     line.trim_start().starts_with(opener)
 }
 
-/// Every line of the scope is a comment already, so the command undoes them.
+/// Returns whether every line of FIRST..=LAST with text on it is commented
+/// with OPENER already, so that the command takes the comments off; false
+/// when no line has text.
 ///
-/// Blank lines do not count either way: a region with a blank line in the
-/// middle of it is commented if the lines with text on them are, which is what
-/// somebody looking at it would say.
+/// Blank lines count neither way: a region is commented if its lines with
+/// text are, which is what somebody looking at it would say.
 fn all_commented<B: BufferTrait>(buf: &Buffer<B>, first: usize, last: usize, opener: &str) -> bool {
     let mut seen = false;
     for line in first..=last {
@@ -167,11 +158,11 @@ fn all_commented<B: BufferTrait>(buf: &Buffer<B>, first: usize, last: usize, ope
     seen
 }
 
-/// The edits that comment lines FIRST..=LAST with OPENER.
+/// Returns the edits that comment lines FIRST..=LAST with OPENER.
 ///
-/// The opener goes at the indentation of the least-indented line rather than
-/// at each line's own, so that a commented block keeps its shape: indenting
-/// the openers with the code turns a nested `if` into a staircase of `//`.
+/// The opener goes at the indentation of the least indented line, not at each
+/// line's own, so that a commented block keeps its shape: openers indented
+/// with the code turn a nested `if` into a staircase of `//`.
 fn comment_edits<B: BufferTrait>(
     buf: &Buffer<B>,
     first: usize,
@@ -205,7 +196,8 @@ fn comment_edits<B: BufferTrait>(
     edits
 }
 
-/// The edits that take OPENER off lines FIRST..=LAST.
+/// Returns the edits that take OPENER, and the space after it, off lines
+/// FIRST..=LAST.
 fn uncomment_edits<B: BufferTrait>(
     buf: &Buffer<B>,
     first: usize,
@@ -234,7 +226,8 @@ fn uncomment_edits<B: BufferTrait>(
     edits
 }
 
-/// Wrap the scope in a block comment, for a language with no line comment.
+/// Returns the edits that wrap lines FIRST..=LAST in a block comment, for a
+/// language with no line comment.
 fn wrap_edits<B: BufferTrait>(
     buf: &Buffer<B>,
     first: usize,
@@ -260,15 +253,16 @@ fn wrap_edits<B: BufferTrait>(
     ]
 }
 
-/// The scope's text, trimmed, for deciding whether a block comment is around
-/// it already.
+/// Returns the text of lines FIRST..=LAST, for deciding whether a block
+/// comment is around it already.
 fn scope_text<B: BufferTrait>(buf: &Buffer<B>, first: usize, last: usize) -> String {
     let (start, _) = line_bounds(&buf.text, first);
     let (_, end) = line_bounds(&buf.text, last);
     buf.text.slice(start, end)
 }
 
-/// Take a block comment off the scope, when one is around it.
+/// Returns the edits that take a block comment off lines FIRST..=LAST, or
+/// `None` when no block comment is around them.
 fn unwrap_edits<B: BufferTrait>(
     buf: &Buffer<B>,
     first: usize,
@@ -312,7 +306,9 @@ fn unwrap_edits<B: BufferTrait>(
     ])
 }
 
-/// What every command here does: work out the scope, toggle it, report.
+/// Comments the scope out, or takes its comments off when it is all commented
+/// already, and answers whether the buffer changed. The scope is the region
+/// or point's line; with WHOLE_LINE, point's line whatever the region.
 fn toggle<B: BufferTrait>(ctx: &EditorState<B>, whole_line: bool) -> ELispExp<B> {
     let styles = styles(ctx);
     if styles.is_empty() {
@@ -377,7 +373,9 @@ primitive!(uncomment_region, args, _env, ctx, {
     Ok(over_region(ctx, args, true))
 });
 
-/// `comment-region` and `uncomment-region`, which differ only in direction.
+/// Comments out the lines between the two positions in ARGS, or with
+/// UNDO_THEM takes their comments off, and answers whether the buffer
+/// changed: `comment-region` and `uncomment-region`.
 fn over_region<B: BufferTrait>(
     ctx: &EditorState<B>,
     args: &[ELispExp<B>],
@@ -495,14 +493,10 @@ primitive!(comment_syntax, _args, _env, ctx, {
     Ok(ELispExp::proper_list(found))
 });
 
-/// Register this module's primitives: commenting and uncommenting.
+/// Registers the primitives that comment and uncomment.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // Comments, and the span deletion Lisp was missing. See
-    // `primitives::comments`.
     into.command("comment-dwim", comment_dwim, &[], COMMENT_DWIM_DOC);
     into.command("comment-line", comment_line, &[], COMMENT_LINE_DOC);
     into.command("comment-indent", comment_indent, &[], COMMENT_INDENT_DOC);

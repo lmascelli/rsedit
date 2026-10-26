@@ -1,11 +1,8 @@
-//! `string-match` and the match data, as Emacs has them.
+//! `string-match` and the match data, pinned where they could differ from
+//! Emacs and still look right: byte offsets for characters, `^` matching at
+//! START, a failed match wiping the data, a bad pattern answering nil.
 //!
-//! The contract is Emacs': `string-match` answers where the match starts, and
-//! the groups are read afterwards with `match-beginning`, `match-end` and
-//! `match-string`. Most of what is worth pinning is where this could quietly
-//! differ from Emacs and still look like it works -- byte offsets instead of
-//! characters, `^` matching at START, a failed match wiping the data, a bad
-//! pattern answering nil as though it had simply not matched.
+//! Design: `doc/architettura-editor.typ, <dati-corrispondenza>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -291,8 +288,8 @@ mod tests {
 
     #[test]
     fn another_thread_has_match_data_of_its_own() {
-        // A worker matching its own strings must not change what the command
-        // on the main thread is about to read.
+        // Another thread matching its own strings does not change what a
+        // command on this one is about to read.
         let (ctx, env) = editor();
         run(r#"(string-match "b" "abc")"#, &env, &ctx);
 

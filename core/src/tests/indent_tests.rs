@@ -1,10 +1,8 @@
-//! The sexp commands as a user reaches them, `recenter`, and what Tab does.
+//! Indentation: the primitives that read and rewrite it, and what Tab and
+//! Enter do with them, on a line and on a region, in a mode with a rule and
+//! in one without; and `recenter`.
 //!
-//! The scanner itself is tested in `sexp_tests`, against tables built in Rust.
-//! What is left once that passes is everything between the scanner and a
-//! keystroke: that a command reaches it, that a kill goes through the two
-//! doors, that the same text moves differently in two modes, and that the
-//! indentation dispatch picks the right one of its three cases.
+//! Design: `doc/architettura-editor.typ, <espressioni-indentazione>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -26,7 +24,8 @@ mod tests {
         eval_str(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"))
     }
 
-    /// The editor with the layers `indent.lisp` is written against.
+    /// The editor with `indent.lisp` loaded, and the files it is written
+    /// against.
     fn editor() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
@@ -82,233 +81,6 @@ mod tests {
             LispExp::Number(n) => *n,
             other => panic!("expected a number, got {other:?}"),
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // A kill is an edit like any other
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn killing_an_expression_can_be_undone_in_one_step() {
-        // It goes through `cut_out`, so undo groups it with the command that
-        // made it rather than leaving half of a replacement behind.
-        let (ctx, env) = editor();
-        with_lisp_mode(&ctx, &env);
-        in_mode(&ctx, "toy-lisp");
-        typing(&ctx, "(a (b c)) rest", 0);
-
-        run("(kill-sexp)", &env, &ctx);
-        assert_eq!(contents(&ctx), " rest");
-        run("(undo)", &env, &ctx);
-        assert_eq!(contents(&ctx), "(a (b c)) rest");
-    }
-
-    #[test]
-    fn a_killed_expression_goes_to_the_kill_ring() {
-        let (ctx, env) = editor();
-        with_lisp_mode(&ctx, &env);
-        in_mode(&ctx, "toy-lisp");
-        typing(&ctx, "(a b) rest", 0);
-
-        run("(kill-sexp)", &env, &ctx);
-        run("(yank)", &env, &ctx);
-        assert_eq!(contents(&ctx), "(a b) rest");
-    }
-
-    #[test]
-    fn a_read_only_buffer_refuses_the_kill() {
-        let (ctx, env) = editor();
-        with_lisp_mode(&ctx, &env);
-        in_mode(&ctx, "toy-lisp");
-        typing(&ctx, "(a b) rest", 0);
-        run("(set-buffer-read-only t)", &env, &ctx);
-
-        run("(kill-sexp)", &env, &ctx);
-        assert_eq!(contents(&ctx), "(a b) rest");
-    }
-
-    #[test]
-    fn kill_sexp_removes_exactly_what_forward_sexp_traverses() {
-        // The property the file claims: the kill asks the same function where
-        // the motion ends, so the two cannot drift apart.
-        let (ctx, env) = editor();
-        with_lisp_mode(&ctx, &env);
-        in_mode(&ctx, "toy-lisp");
-
-        for text in ["(a (b)) rest", "(message \"a )\") rest", "'foo rest"] {
-            typing(&ctx, text, 0);
-            run("(forward-sexp)", &env, &ctx);
-            let traversed = point(&ctx);
-
-            typing(&ctx, text, 0);
-            run("(kill-sexp)", &env, &ctx);
-            let mut expected = String::new();
-            expected.push_str(&text[traversed..]);
-            assert_eq!(contents(&ctx), expected, "killing {text:?}");
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Reachable from the keyboard
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn the_sexp_keys_reach_the_commands() {
-        let (ctx, env) = editor();
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("loading common-keymaps.lisp");
-        with_lisp_mode(&ctx, &env);
-        in_mode(&ctx, "toy-lisp");
-        typing(&ctx, "(a b) (c)", 0);
-
-        let ctrl_alt = || KeyModifiers {
-            ctrl: true,
-            alt: true,
-            ..Default::default()
-        };
-        ctx.handle_key_event(
-            KeyEvent {
-                code: KeyCode::Char('f'),
-                modifiers: ctrl_alt(),
-            },
-            &env,
-        );
-        assert_eq!(point(&ctx), 5, "C-M-f steps over the first list");
-
-        ctx.handle_key_event(
-            KeyEvent {
-                code: KeyCode::Char('b'),
-                modifiers: ctrl_alt(),
-            },
-            &env,
-        );
-        assert_eq!(point(&ctx), 0, "C-M-b comes back");
-
-        ctx.handle_key_event(
-            KeyEvent {
-                code: KeyCode::Char('k'),
-                modifiers: ctrl_alt(),
-            },
-            &env,
-        );
-        assert_eq!(contents(&ctx), " (c)", "C-M-k kills it");
-    }
-
-    #[test]
-    fn the_sexp_commands_are_available_from_m_x() {
-        let (ctx, _env) = editor();
-        let names = ctx.command_names();
-        for name in [
-            "forward-sexp",
-            "backward-sexp",
-            "kill-sexp",
-            "backward-kill-sexp",
-            "up-list",
-            "backward-up-list",
-            "down-list",
-            "recenter",
-            "indent-for-tab-command",
-        ] {
-            assert!(names.iter().any(|known| known == name), "{name} is missing");
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // The same text, two modes
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn the_same_text_moves_differently_in_two_modes() {
-        // The point of the whole design. In a Lisp `;` opens a comment, so the
-        // `)` inside it is text and the list runs on; in a mode that never said
-        // so it is punctuation, and the list ends at the first `)` it meets.
-        let (ctx, env) = editor();
-        with_lisp_mode(&ctx, &env);
-        run(
-            "(make-mode 'toy-plain) (set-syntax-pairs 'toy-plain \"()\")",
-            &env,
-            &ctx,
-        );
-
-        let text = "(a ; ) not the end\n b) after";
-
-        in_mode(&ctx, "toy-lisp");
-        typing(&ctx, text, 0);
-        run("(forward-sexp)", &env, &ctx);
-        assert_eq!(point(&ctx), 22, "the `)` in the comment is text");
-
-        in_mode(&ctx, "toy-plain");
-        typing(&ctx, text, 0);
-        run("(forward-sexp)", &env, &ctx);
-        assert_eq!(
-            point(&ctx),
-            6,
-            "with no comment syntax it ends at the first `)`"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // syntax-ppss
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn syntax_ppss_in_a_string_reports_the_string_and_not_a_comment() {
-        let (ctx, env) = editor();
-        with_lisp_mode(&ctx, &env);
-        in_mode(&ctx, "toy-lisp");
-        typing(&ctx, "(a \"bc\" d)", 5);
-
-        let state = run("(syntax-ppss)", &env, &ctx);
-        let parts: Vec<LispExp<Ctx>> = state.iter().collect();
-        assert_eq!(number(&parts[0]), 1.0, "a string does not change the depth");
-        assert_eq!(
-            number(&parts[2]),
-            3.0,
-            "element 2 is where the string began"
-        );
-        assert_eq!(
-            parts[3],
-            LispExp::nil(),
-            "element 3 says it is not a comment"
-        );
-    }
-
-    #[test]
-    fn syntax_ppss_reports_the_delimiter_as_well_as_the_expression() {
-        // Element 4. They differ by the prefix, and indentation lines up
-        // against the delimiter while motion wants the expression.
-        let (ctx, env) = editor();
-        with_lisp_mode(&ctx, &env);
-        in_mode(&ctx, "toy-lisp");
-        typing(&ctx, "'(a b)", 3);
-
-        let parts: Vec<LispExp<Ctx>> = run("(syntax-ppss)", &env, &ctx).iter().collect();
-        assert_eq!(number(&parts[1]), 0.0, "the expression starts at the quote");
-        assert_eq!(
-            number(&parts[4]),
-            1.0,
-            "the delimiter is the paren after it"
-        );
-    }
-
-    #[test]
-    fn bounds_of_enclosing_list_is_the_whole_list() {
-        let (ctx, env) = editor();
-        with_lisp_mode(&ctx, &env);
-        in_mode(&ctx, "toy-lisp");
-        typing(&ctx, "(a (b c) d)", 5);
-
-        let parts: Vec<LispExp<Ctx>> = run("(bounds-of-enclosing-list)", &env, &ctx)
-            .iter()
-            .collect();
-        assert_eq!((number(&parts[0]), number(&parts[1])), (3.0, 8.0));
-
-        typing(&ctx, "(a b)", 0);
-        assert_eq!(
-            run("(bounds-of-enclosing-list)", &env, &ctx),
-            LispExp::nil(),
-            "nothing encloses the top level"
-        );
     }
 
     // -----------------------------------------------------------------------
@@ -446,10 +218,8 @@ mod tests {
     //
     // Two meanings, chosen by the mode. With an `indent-function' every line
     // goes where the rule says. Without one the only rule is "match the line
-    // above", and applied line by line that flattens a block -- each line
-    // copies the one before, so a nested body ends up level with its header.
-    // That was the bug: Tab on a region pulled every line to the same column.
-    // Without a rule, the block now moves right as a whole instead.
+    // above", which applied line by line flattens a block, each line copying
+    // the one before; so without a rule the block moves right as a whole.
     // -----------------------------------------------------------------------
 
     fn select(ctx: &Ctx, env: &Arc<Env<Ctx>>, from: usize, to: usize) {
@@ -831,7 +601,7 @@ mod tests {
 
     #[test]
     fn a_quoted_list_indents_against_its_delimiter_not_its_quote() {
-        // The reason `syntax-ppss` grew a fifth element.
+        // Why `syntax-ppss` has a fifth element.
         let (ctx, env) = editor();
         lisp_indenting(&ctx, &env);
         typing(&ctx, "'(a\nb)", 4);

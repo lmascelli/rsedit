@@ -1,4 +1,7 @@
-//! Deletion commands, and their correspondence with the movement commands.
+//! The deletion and kill commands, and their correspondence with the movement
+//! commands.
+//!
+//! Design: `doc/architettura-editor.typ, <uccidere>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

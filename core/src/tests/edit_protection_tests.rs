@@ -1,9 +1,7 @@
-//! `insert`, and the read-only flag the two editing doors enforce.
+//! `insert`, and the read-only flag the two doors enforce: a property of any
+//! buffer, tested without opening a view such as dired.
 //!
-//! These sit apart from `dired_tests` on purpose. A read-only buffer is not a
-//! dired feature -- it is a property of buffers that any view can ask for --
-//! and the tests that say so should not have to open a directory listing to do
-//! it.
+//! Design: `doc/architettura-editor.typ, <due-porte>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -132,8 +130,8 @@ mod tests {
     }
 
     /// Every door, not just the one a test happened to pick: the flag is
-    /// checked in `insert_text` and `delete_range`, and every editing command
-    /// in the editor goes through one of them.
+    /// checked in `insert_text` and `delete_range`, and each of these commands
+    /// goes through one of them.
     #[test]
     fn a_read_only_buffer_refuses_every_editing_command() {
         let (ctx, env) = setup();

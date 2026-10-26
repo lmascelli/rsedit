@@ -1,32 +1,16 @@
+//! The two doors every change to a buffer's text goes through, and the
+//! primitives that insert and delete characters.
+//!
+//! Design: `doc/architettura-editor.typ, <due-porte>`.
 use super::*;
 use crate::buffer::{Buffer, Mark, undo};
-use crate::modes::sexp;
-use crate::text::kill_ring::Direction;
+use crate::primitives::args::repeat_count;
 
-// ---------------------------------------------------------------------------
-// The recording editing layer
-// ---------------------------------------------------------------------------
-//
-// Every primitive that changes buffer text goes through one of the two
-// functions below. That is the whole reason undo works: history is not
-// something each command has to remember to write, it is a property of the
-// only two doors into the text. A new editing command gets undo by being
-// unable to avoid it.
-//
-// They take the whole `Buffer` rather than its text, because recording needs
-// the history that sits beside the text -- and taking both together is what
-// makes it impossible to hold one without the other.
-//
-// Both return whether the edit happened. A read-only buffer refuses, and the
-// answer is `#[must_use]` so a caller cannot quietly assume it went through
-// and report success to the user -- see `Buffer::read_only`.
-
-/// Delete `[from, to)` from BUF, recording it so it can be undone.
+/// Deletes the text between FROM and TO, in either order and clamped to the
+/// text, and records it so that it can be undone.
 ///
-/// `delete()` removes the character *before* point, so the application step
-/// positions at the far end and deletes backwards. Each of those is O(1) once
-/// the gap is there, so the whole range costs one gap move rather than one per
-/// character.
+/// Returns false, and changes nothing, in a read-only buffer: the caller says
+/// so, with [`edited`]. An empty range is not a refusal.
 #[must_use]
 pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) -> bool {
     if buf.read_only {
@@ -41,10 +25,8 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
     }
     let point = buf.text.cursor_pos_1d();
     let whole_buffer = start == 0 && end == buf.text.len();
-    // Captured before the deletion, since afterwards there is nothing left to
-    // read. Clearing the whole buffer is the one case worth special casing:
-    // `to_string` reads the text in one pass, where the general path pays a
-    // lookup per character.
+    // Read before the deletion, the only time it can be: the whole buffer in
+    // one pass, where `slice` pays a lookup per character.
     let removed: String = if whole_buffer {
         buf.text.to_string()
     } else {
@@ -55,10 +37,11 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
     buf.overlays.adjust_for_delete(start, end);
     buf.virtual_text.adjust_for_delete(start, end);
     if whole_buffer {
-        // `clear` exists precisely so that emptying a large buffer is not
-        // 60,000 gap-moving deletions -- see `BufferTrait::clear`.
+        // One step rather than a deletion per character: see
+        // `BufferTrait::clear`.
         buf.text.clear();
     } else {
+        // From the far end backwards: one move of the gap for the range.
         undo::apply_delete(&mut buf.text, start, end);
     }
     buf.is_modified = true;
@@ -66,7 +49,10 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
     true
 }
 
-/// Insert CONTENT at offset AT in BUF, recording it so it can be undone.
+/// Inserts CONTENT at offset AT, clamped to the text, and records it so that
+/// it can be undone.
+///
+/// Returns false, and changes nothing, in a read-only buffer.
 #[must_use]
 pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, content: &str) -> bool {
     if buf.read_only {
@@ -80,10 +66,8 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
     let inserted = content.chars().count();
     buf.undo.record_insert(at, inserted, point);
     buf.mark = deactivated(buf.mark);
-    // Before the text moves, and through the table's own rule rather than
-    // here: an overlay that did not move with the text under it is a highlight
-    // drawn over the wrong words, noticed minutes later with nothing to say
-    // why. See `buffer::overlay`.
+    // Before the text moves, each by its table's own rule (`buffer::overlay`,
+    // `buffer::virtual_text`).
     buf.overlays.adjust_for_insert(at, inserted);
     buf.virtual_text.adjust_for_insert(at, inserted);
     undo::apply_insert(&mut buf.text, at, content);
@@ -92,43 +76,27 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
     true
 }
 
-/// Note that the text changed at offset AT.
+/// Tells BUF that its text changed from offset AT: bumps the version,
+/// invalidates the colouring and the scan checkpoints from AT's line down,
+/// and emits the buffer's `buffer-changed`.
 ///
-/// One function, called from both doors, because a change that bumped the
-/// version without invalidating the colouring -- or the other way round --
-/// would be a bug that only showed up on screen, minutes later, as colour that
-/// would not settle.
-///
-/// And from undo and redo, which change the text below the doors and so have
-/// to say so themselves. They did not: an undo left the colouring and the
-/// scan checkpoints describing text that was gone, under a version that said
-/// nothing had happened, until a later edit happened to untrust them -- and
-/// then only from that edit down.
-///
-/// Last, it emits the buffer's `buffer-changed`: the same single place, so no
-/// edit can change the text without waking what waits for it.
+/// The two doors call it, and so do the callers of undo and redo, which change
+/// the text below the doors and must say so themselves.
 pub(crate) fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     buf.version = buf.version.wrapping_add(1);
     let line = buf.text.cursor_1d_to_2d(at.min(buf.text.len())).0;
     buf.syntax.invalidate_from(buf.version, line);
     buf.syntax.truncate(buf.text.line_count());
-    // The same rule for the other lexer over the same text. Both caches are
-    // invalidated from the same line by the same call, because a buffer whose
-    // colouring believed one thing about where the edit was and whose scan
-    // believed another would be wrong in a way that only showed up as one
-    // command in ten behaving strangely.
+    // The other lexer's cache, from the same line: two caches that disagreed
+    // about where the edit was would each describe a different text.
     buf.scan.invalidate_from(buf.version, line);
     buf.changed.emit();
 }
 
-/// A mark that survives an edit, but no longer defines a region.
+/// Returns MARK, if there is one, no longer active.
 ///
-/// Every edit goes through the two functions above, so this is every edit:
-/// making a change is what ends a selection, in this editor as in Emacs.
-/// Deactivating rather than clearing keeps the position available to
-/// `exchange-point-and-mark`, and it is also what keeps an active region
-/// honest -- an active mark can never have had an edit under it, so it never
-/// needs adjusting for one.
+/// Every edit passes here, so an edit ends a selection, as in Emacs. The
+/// position stays, for `exchange-point-and-mark`.
 fn deactivated(mark: Option<Mark>) -> Option<Mark> {
     mark.map(|mark| Mark {
         active: false,
@@ -136,14 +104,11 @@ fn deactivated(mark: Option<Mark>) -> Option<Mark> {
     })
 }
 
-/// The answer every editing primitive gives, having said so if the buffer
-/// refused.
+/// Returns what an editing primitive answers, nil, having said "Buffer is
+/// read-only" in the echo area when HAPPENED is false.
 ///
-/// One message for all of them, because the reason is always the same one and
-/// naming the command that was turned away would not tell the user anything
-/// they do not already know: they pressed the key. Silence is the thing to
-/// avoid -- a key that does nothing and says nothing reads as a broken editor
-/// rather than a protected buffer.
+/// Called once the buffer's closure has returned: the echo area is a
+/// compartment of its own, never taken under a buffer's lock.
 pub(crate) fn edited<B: BufferTrait>(ctx: &EditorState<B>, happened: bool) -> ELispExp<B> {
     if !happened {
         ctx.set_echo_message("Buffer is read-only");
@@ -151,11 +116,8 @@ pub(crate) fn edited<B: BufferTrait>(ctx: &EditorState<B>, happened: bool) -> EL
     ELispExp::nil()
 }
 
-/// Line endings as the outside world writes them, as the buffer understands
-/// them.
-///
-/// Borrowed unchanged in the overwhelmingly common case, so a paste with no
-/// carriage returns in it costs nothing.
+/// Returns TEXT with every CRLF and every lone CR made a LF, the only line
+/// break the buffer counts; borrowed when TEXT has no CR in it.
 #[cfg(not(target_os = "windows"))]
 fn normalize_line_endings(text: &str) -> std::borrow::Cow<'_, str> {
     if text.contains('\r') {
@@ -165,39 +127,19 @@ fn normalize_line_endings(text: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+// TODO(CMD-7): on Windows a paste keeps its CRs, with no reason written, and
+// the tests in `paste_tests` that expect lines fail there.
+/// Returns TEXT as it is.
 #[cfg(target_os = "windows")]
 fn normalize_line_endings(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Borrowed(text)
 }
 
-/// Insert CONTENT at point.
+/// Inserts CONTENT at point, through [`insert_text`].
 #[must_use]
 pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str) -> bool {
     let at = buf.text.cursor_pos_1d();
     insert_text(buf, at, content)
-}
-
-/// Delete `[from, to)` and return what was deleted, ready for the kill ring.
-///
-/// The text comes back rather than going straight into the ring because the
-/// caller is holding the buffer lock and the ring is a lock of its own. Taking
-/// the second while holding the first would put an ordering between them that
-/// nothing else in the editor respects -- so every kill command drops the
-/// buffer first and saves afterwards.
-pub(crate) fn cut_out<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) -> String {
-    let start = from.min(to);
-    let end = from.max(to).min(buf.text.len());
-    if start >= end {
-        return String::new();
-    }
-    let text = buf.text.slice(start, end);
-    // Nothing is killed out of a read-only buffer: a kill that reported the
-    // text but left it in place would put it on the ring as though it had been
-    // cut, and the next yank would duplicate it.
-    if !delete_range(buf, start, end) {
-        return String::new();
-    }
-    text
 }
 
 pub const SELF_INSERT_DOC: &str = "(self-insert STRING): Insert the first character of STRING at \
@@ -205,6 +147,7 @@ pub const SELF_INSERT_DOC: &str = "(self-insert STRING): Insert the first charac
          Example:\n\
          (self-insert \"a\")";
 
+// TODO(CMD-5): the prefix argument is not read, so `C-u 3 x` inserts one x.
 primitive!(self_insert, args, _env, ctx, {
     if let Some(ELispExp::String(s)) = args.first() {
         if let Some(c) = s.chars().next() {
@@ -231,9 +174,8 @@ pub const INSERT_DOC: &str = "(insert &rest STRINGS): Insert STRINGS at point, o
          (insert \"total: \" 42 \"\\n\")";
 
 primitive!(insert, args, _env, ctx, {
-    // Joined before the buffer is touched, so that `(insert a b c)` is one
-    // edit rather than three. Three would undo in three steps, and the two
-    // intermediate states would each be published to the syntax worker.
+    // Joined first, so that `(insert a b c)` is one edit: one undo step, and
+    // one change for the highlighter to colour.
     let mut text = String::new();
     for arg in args {
         match arg {
@@ -243,16 +185,6 @@ primitive!(insert, args, _env, ctx, {
     }
     let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, &text));
     Ok(edited(ctx, happened))
-});
-
-pub const UNDO_JOIN_DOC: &str = "(undo-join): Make the edits this command makes next part of the \
-         open undo group, so that they undo together with the ones before. For a change that \
-         spans several keys: call it before editing. Does nothing when no group is open.";
-
-primitive!(undo_join, args, _env, ctx, {
-    exact_arity(args, 0)?;
-    ctx.with_current_buffer_mut(|buf| buf.undo.join_previous_command());
-    Ok(ELispExp::nil())
 });
 
 pub const DELETE_REGION_DOC: &str = "(delete-region FROM TO): Delete the text between FROM and TO \
@@ -294,21 +226,9 @@ primitive!(insert_pasted_text, args, _env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    // Through `insert_at_point' like any other insertion: a paste is not
-    // exempt from read-only buffers, undo, or telling the highlighter that the
-    // text moved. What makes it a paste is that it is *one* call, which is
-    // decided by the caller rather than here.
-    // A terminal in bracketed-paste mode hands over the selection's bytes
-    // unchanged, and a line break very often arrives as CR -- that is what
-    // Enter sends, so that is what many terminals put between pasted lines.
-    // Nothing else here treats CR as a line break: the line index counts '\n'
-    // and nothing else, so without this a ten-line paste lands as one very
-    // long line with nine invisible characters in it.
-    //
-    // Here rather than at the terminal because this is the door every paste
-    // comes through, including a `yank' from a system clipboard that may be
-    // holding CRLF from another machine. Ordinary `insert' is deliberately
-    // left alone: a CR written from Lisp on purpose is a CR.
+    // One call, like any insertion: what makes it a paste is the caller. The
+    // line endings are made plain at this door, which every paste comes
+    // through; `insert` keeps a CR written on purpose.
     let text = normalize_line_endings(text);
     let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, &text));
     Ok(edited(ctx, happened))
@@ -332,393 +252,8 @@ primitive!(delete_backward_char, _args, _env, ctx, {
         let point = buf.text.cursor_pos_1d();
         delete_range(buf, point.saturating_sub(1), point)
     });
-    // Reported outside: the echo area is a lock of its own, and the canonical
-    // order puts it before any individual buffer. The guard used to be `drop`ped
-    // by hand for this; the closure ending is what does it now.
     Ok(edited(ctx, happened))
 });
-
-pub const FORWARD_CHAR_DOC: &str = "(forward-char &optional N): Move point forward N characters, \
-         1 by default, across line ends, stopping at the end of the buffer. A negative N moves \
-         back.";
-
-primitive!(forward_char, args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let step = movement_count(args)?;
-        // Moves by character *offset*, so it crosses line boundaries the way C-f
-        // does. It used to move within the line only, which meant point simply
-        // stopped at the end of a line and would not advance past it.
-        let target = buf.text.cursor_pos_1d().saturating_add_signed(step);
-        goto_offset(&mut buf.text, target);
-        Ok(ELispExp::nil())
-    })
-});
-
-/// Read an optional signed movement count, preserving reverse directions.
-fn movement_count<B: BufferTrait>(
-    args: &[ELispExp<B>],
-) -> Result<isize, EvalError<EditorState<B>>> {
-    match args.first() {
-        None => Ok(1),
-        Some(ELispExp::Number(n)) if n.is_finite() => Ok(n.floor() as isize),
-        Some(other) => Err(EvalError::WrongArgumentType {
-            expected: "finite Number".into(),
-            got: other.clone(),
-        }),
-    }
-}
-
-/// Read a nonnegative repeat count for editing primitives.
-fn repeat_count<B: BufferTrait>(args: &[ELispExp<B>]) -> Result<usize, EvalError<EditorState<B>>> {
-    match args.first() {
-        None => Ok(1),
-        Some(ELispExp::Number(n)) => Ok(n.floor().max(0.0) as usize),
-        Some(other) => Err(EvalError::WrongArgumentType {
-            expected: "Number".into(),
-            got: other.clone(),
-        }),
-    }
-}
-
-/// Move point to a 1-D character offset, clamped to the buffer.
-pub(crate) fn goto_offset<B: BufferTrait>(text: &mut B, offset: usize) {
-    let target = offset.min(text.len());
-    let (line, col) = text.cursor_1d_to_2d(target);
-    text.cursor_move(line, col);
-}
-
-/// Characters that make up a word. Matches what most modes mean by one
-/// without needing a syntax table yet.
-pub(crate) fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
-/// A line with nothing but whitespace on it -- what separates paragraphs.
-fn is_blank_line<B: BufferTrait>(text: &B, line: usize) -> bool {
-    text.get_lines(line, line + 1)
-        .first()
-        .map(|l| l.trim().is_empty())
-        .unwrap_or(true)
-}
-
-/// Offset `count` words forward of `from`.
-///
-/// Factored out so `forward-word` and `kill-word` agree by construction: a
-/// deletion that computed its own target could drift from the movement it is
-/// supposed to mirror.
-pub(crate) fn word_forward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
-    let len = text.len();
-    let mut pos = from;
-    for _ in 0..count {
-        if pos >= len {
-            break;
-        }
-        while pos < len && !text.at(pos).map(is_word_char).unwrap_or(false) {
-            pos += 1;
-        }
-        while pos < len && text.at(pos).map(is_word_char).unwrap_or(false) {
-            pos += 1;
-        }
-    }
-    pos
-}
-
-/// Offset `count` words back of `from`.
-pub(crate) fn word_backward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
-    let mut pos = from;
-    for _ in 0..count {
-        if pos == 0 {
-            break;
-        }
-        while pos > 0 && !text.at(pos - 1).map(is_word_char).unwrap_or(false) {
-            pos -= 1;
-        }
-        while pos > 0 && text.at(pos - 1).map(is_word_char).unwrap_or(false) {
-            pos -= 1;
-        }
-    }
-    pos
-}
-
-/// Line that `forward-paragraph` would land on from `line`.
-fn paragraph_forward<B: BufferTrait>(text: &B, line: usize) -> usize {
-    let last = text.line_count().saturating_sub(1);
-    let mut line = line;
-    while line < last && is_blank_line(text, line) {
-        line += 1;
-    }
-    while line < last && !is_blank_line(text, line) {
-        line += 1;
-    }
-    line
-}
-
-/// Line that `backward-paragraph` would land on from `line`.
-fn paragraph_backward<B: BufferTrait>(text: &B, line: usize) -> usize {
-    let mut line = line;
-    while line > 0 && is_blank_line(text, line) {
-        line -= 1;
-    }
-    while line > 0 && !is_blank_line(text, line) {
-        line -= 1;
-    }
-    line
-}
-
-pub(crate) fn line_length<B: BufferTrait>(text: &B, line: usize) -> usize {
-    text.get_lines(line, line + 1)
-        .first()
-        .map(|l| l.chars().count())
-        .unwrap_or(0)
-}
-
-/// The half-open offsets of LINE, not counting its newline.
-///
-/// Here, and not in the two files that each had their own byte-identical copy,
-/// because it is [`line_length`] and the offset of the line's start, and both
-/// of those live here. A line past the end of the buffer answers with the
-/// clamped offset twice over, so the span is empty rather than invalid.
-pub(crate) fn line_bounds<B: BufferTrait>(text: &B, line: usize) -> (usize, usize) {
-    let start = text.cursor_2d_to_1d(line, 0);
-    (start, start + line_length(text, line))
-}
-
-pub const BACKWARD_CHAR_DOC: &str = "(backward-char &optional N): Move point back N characters, 1 \
-         by default, across line ends, stopping at the start of the buffer. A negative N moves \
-         forward.";
-
-primitive!(backward_char, args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let step = movement_count(args)?.saturating_neg();
-        let target = buf.text.cursor_pos_1d().saturating_add_signed(step);
-        goto_offset(&mut buf.text, target);
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const PREVIOUS_LINE_DOC: &str = "(previous-line &optional N): Move point up N lines, 1 by \
-         default, keeping its column where the line is long enough, and stopping at the first \
-         line. A negative N moves down.";
-
-primitive!(previous_line, args, _env, ctx, {
-    move_line(ctx, movement_count(args)?.saturating_neg())
-});
-
-pub const NEXT_LINE_DOC: &str = "(next-line &optional N): Move point down N lines, 1 by default, \
-         keeping its column where the line is long enough. A negative N moves up.";
-
-primitive!(next_line, args, _env, ctx, {
-    move_line(ctx, movement_count(args)?)
-});
-
-/// Move point one line up or down, keeping the column the user is aiming for.
-///
-/// The subtlety is the *goal column*. Moving down through a short line clamps
-/// the column, so re-reading the cursor on the next move would lose the
-/// original column for good -- go down past a short line and back up, and you
-/// end up somewhere you did not start. The column is therefore remembered
-/// across a run of vertical moves and only re-read when the previous command
-/// was something else, which is what `last-command` is for.
-fn move_line<B: BufferTrait>(
-    ctx: &EditorState<B>,
-    delta: isize,
-) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
-    // Both asked before the buffer is locked. They are other compartments, and
-    // the guarded region should hold exactly the buffer work -- this used to
-    // reach all three of them with the write lock open.
-    let continuing = ctx.last_command_is("next-line") || ctx.last_command_is("previous-line");
-    let remembered = ctx.goal_column();
-    let goal = ctx.with_current_buffer_mut(|buf| {
-        let (line, col) = buf.text.cursor_pos();
-        let goal = match (continuing, remembered) {
-            (true, Some(goal)) => goal,
-            _ => col,
-        };
-
-        let last_line = buf.text.line_count().saturating_sub(1);
-        let target = if delta < 0 {
-            line.saturating_sub(delta.unsigned_abs())
-        } else {
-            line.saturating_add(delta as usize).min(last_line)
-        };
-        // `cursor_move` clamps the column to the line, so a short line in the
-        // middle of a run does not disturb the goal we are steering by.
-        buf.text.cursor_move(target, goal);
-        goal
-    });
-    ctx.set_goal_column(Some(goal));
-    Ok(ELispExp::nil())
-}
-
-// ---------------------------------------------------------------------------
-// Line, word, paragraph and buffer movement
-// ---------------------------------------------------------------------------
-
-pub const BEGINNING_OF_LINE_DOC: &str = "(beginning-of-line): Move point to the start of the line \
-         it is on.";
-
-primitive!(beginning_of_line, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let (line, _) = buf.text.cursor_pos();
-        buf.text.cursor_move(line, 0);
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const END_OF_LINE_DOC: &str = "(end-of-line): Move point to the end of the line it is on, \
-         before the newline.";
-
-primitive!(end_of_line, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let (line, _) = buf.text.cursor_pos();
-        let end = line_length(&buf.text, line);
-        buf.text.cursor_move(line, end);
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const FORWARD_WORD_DOC: &str = "(forward-word &optional N): Move point past the end of the \
-         Nth word after it, 1 by default; a negative N moves back. A word is a run of letters, \
-         digits and underscores.";
-
-primitive!(forward_word, args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let count = movement_count(args)?;
-        let from = buf.text.cursor_pos_1d();
-        let target = if count < 0 {
-            word_backward(&buf.text, from, count.unsigned_abs())
-        } else {
-            word_forward(&buf.text, from, count as usize)
-        };
-        goto_offset(&mut buf.text, target);
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const BACKWARD_WORD_DOC: &str = "(backward-word &optional N): Move point back to the start of \
-         the Nth word before it, 1 by default; a negative N moves forward.";
-
-primitive!(backward_word, args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let count = movement_count(args)?;
-        let from = buf.text.cursor_pos_1d();
-        let target = if count < 0 {
-            word_forward(&buf.text, from, count.unsigned_abs())
-        } else {
-            word_backward(&buf.text, from, count as usize)
-        };
-        goto_offset(&mut buf.text, target);
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const FORWARD_PARAGRAPH_DOC: &str = "(forward-paragraph &optional N): Move point forward N \
-         paragraphs, 1 by default, to the blank line after each, or to the last line. A negative \
-         N moves back.";
-
-primitive!(forward_paragraph, args, _env, ctx, {
-    move_paragraph(ctx, movement_count(args)?)
-});
-
-pub const BACKWARD_PARAGRAPH_DOC: &str = "(backward-paragraph &optional N): Move point back N \
-         paragraphs, 1 by default, to the blank line before each, or to the first line. A \
-         negative N moves forward.";
-
-primitive!(backward_paragraph, args, _env, ctx, {
-    move_paragraph(ctx, movement_count(args)?.saturating_neg())
-});
-
-fn move_paragraph<B: BufferTrait>(
-    ctx: &EditorState<B>,
-    delta: isize,
-) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
-    if delta == 0 {
-        return Ok(ELispExp::nil());
-    }
-    ctx.with_current_buffer_mut(|buf| {
-        let mut line = buf.text.cursor_pos().0;
-        for _ in 0..delta.unsigned_abs() {
-            let target = if delta < 0 {
-                paragraph_backward(&buf.text, line)
-            } else {
-                paragraph_forward(&buf.text, line)
-            };
-            if target == line {
-                break;
-            }
-            line = target;
-        }
-        buf.text.cursor_move(line, 0);
-        Ok(ELispExp::nil())
-    })
-}
-
-pub const BEGINNING_OF_BUFFER_DOC: &str = "(beginning-of-buffer): Move point to the start of the \
-         buffer.";
-
-primitive!(beginning_of_buffer, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        buf.text.cursor_move(0, 0);
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const END_OF_BUFFER_DOC: &str = "(end-of-buffer): Move point to the end of the buffer.";
-
-primitive!(end_of_buffer, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let end = buf.text.len();
-        goto_offset(&mut buf.text, end);
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const GOTO_LINE_DOC: &str = "(goto-line N): Move point to the start of line N, counting from \
-         1; a number past the end goes to the last line. M-x goto-line asks for N.\n\n\
-         Example:\n\
-         (goto-line 42)";
-
-primitive!(goto_line, args, _env, ctx, {
-    let requested = match args.first() {
-        Some(ELispExp::Number(n)) => *n,
-        Some(other) => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "Number".into(),
-                got: other.clone(),
-            });
-        }
-        None => {
-            return Err(EvalError::WrongNumberOfArguments {
-                expected: 1,
-                got: 0,
-            });
-        }
-    };
-    ctx.with_current_buffer_mut(|buf| {
-        // 1-based for the user, 0-based inside, and clamped so a number past the
-        // end lands on the last line rather than failing.
-        let last = buf.text.line_count().saturating_sub(1);
-        let line = (requested.max(1.0) as usize - 1).min(last);
-        buf.text.cursor_move(line, 0);
-        Ok(ELispExp::nil())
-    })
-});
-
-// ---------------------------------------------------------------------------
-// Deletion, mirroring the movement commands above
-// ---------------------------------------------------------------------------
-//
-// Each of these removes exactly the text the corresponding movement command
-// would have travelled over, by asking the same helper where that movement
-// ends. That is why they cannot drift apart: `kill-word` deletes to
-// `word_forward`, which is the offset `forward-word` moves to.
-//
-// A note on the names. In Emacs a *kill* also copies the text to the kill ring
-// so it can be yanked back, while a *delete* discards it. That distinction is
-// live here: the `kill-*` commands below save what they remove, and
-// `delete-char` and `delete-backward-char` do not. Keeping the Emacs names
-// meant the ring could be added to these commands later without renaming them
-// out from under anyone's configuration, which is exactly what happened.
 
 pub const DELETE_CHAR_DOC: &str = "(delete-char &optional N): Delete the N characters after \
          point, 1 by default, across line ends, without putting them on the kill ring.";
@@ -732,576 +267,15 @@ primitive!(delete_char, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
-pub const KILL_LINE_DOC: &str = "(kill-line): Kill from point to the end of the line, or the \
-         newline when point is at the end already, joining the next line on. The text goes on the \
-         kill ring.";
-
-primitive!(kill_line, _args, env, ctx, {
-    let killed = {
-        ctx.with_current_buffer_mut(|buf| {
-            let from = buf.text.cursor_pos_1d();
-            let (line, _) = buf.text.cursor_pos();
-            let end_of_line = line_bounds(&buf.text, line).1;
-            // At the end of a line there is nothing left to kill on it, so the
-            // newline goes instead -- which is what makes repeated C-k swallow a
-            // paragraph rather than stalling on every line ending.
-            let to = if from == end_of_line {
-                from + 1
-            } else {
-                end_of_line
-            };
-            cut_out(buf, from, to)
-        })
-    };
-    ctx.kill(killed, Direction::Forward, &env);
-    Ok(ELispExp::nil())
-});
-
-pub const KILL_WHOLE_LINE_DOC: &str = "(kill-whole-line): Kill the line point is on, with its \
-         newline. The text goes on the kill ring.";
-
-primitive!(kill_whole_line, _args, env, ctx, {
-    let killed = {
-        ctx.with_current_buffer_mut(|buf| {
-            let (line, _) = buf.text.cursor_pos();
-            let (from, end_of_line) = line_bounds(&buf.text, line);
-            let to = (end_of_line + 1).min(buf.text.len());
-            cut_out(buf, from, to)
-        })
-    };
-    ctx.kill(killed, Direction::Forward, &env);
-    Ok(ELispExp::nil())
-});
-
-pub const KILL_WORD_DOC: &str = "(kill-word &optional N): Kill forward to the end of the Nth \
-         word, 1 by default: the text `forward-word' would move over. It goes on the kill ring.";
-
-primitive!(kill_word, args, env, ctx, {
-    // Read before the buffer is locked. It can fail, and a `?` inside the
-    // closure would return from the closure rather than from the primitive.
-    let count = repeat_count(args)?;
-    let killed = ctx.with_current_buffer_mut(|buf| {
-        let from = buf.text.cursor_pos_1d();
-        let to = word_forward(&buf.text, from, count);
-        cut_out(buf, from, to)
-    });
-    ctx.kill(killed, Direction::Forward, &env);
-    Ok(ELispExp::nil())
-});
-
-pub const BACKWARD_KILL_WORD_DOC: &str = "(backward-kill-word &optional N): Kill back to the \
-         start of the Nth word before point, 1 by default: the text `backward-word' would move \
-         over. It goes on the kill ring.";
-
-primitive!(backward_kill_word, args, env, ctx, {
-    let count = repeat_count(args)?;
-    let killed = ctx.with_current_buffer_mut(|buf| {
-        let to = buf.text.cursor_pos_1d();
-        let from = word_backward(&buf.text, to, count);
-        cut_out(buf, from, to)
-    });
-    ctx.kill(killed, Direction::Backward, &env);
-    Ok(ELispExp::nil())
-});
-
-pub const KILL_PARAGRAPH_DOC: &str = "(kill-paragraph): Kill forward to the end of the paragraph: \
-         the text `forward-paragraph' would move over. It goes on the kill ring.";
-
-primitive!(kill_paragraph, _args, env, ctx, {
-    let killed = {
-        ctx.with_current_buffer_mut(|buf| {
-            let from = buf.text.cursor_pos_1d();
-            let (line, _) = buf.text.cursor_pos();
-            let target_line = paragraph_forward(&buf.text, line);
-            let to = buf.text.cursor_2d_to_1d(target_line, 0);
-            cut_out(buf, from, to)
-        })
-    };
-    ctx.kill(killed, Direction::Forward, &env);
-    Ok(ELispExp::nil())
-});
-
-pub const BACKWARD_KILL_PARAGRAPH_DOC: &str = "(backward-kill-paragraph): Kill back to the start \
-         of the paragraph: the text `backward-paragraph' would move over. It goes on the kill \
-         ring.";
-
-primitive!(backward_kill_paragraph, _args, env, ctx, {
-    let killed = {
-        ctx.with_current_buffer_mut(|buf| {
-            let to = buf.text.cursor_pos_1d();
-            let (line, _) = buf.text.cursor_pos();
-            let target_line = paragraph_backward(&buf.text, line);
-            let from = buf.text.cursor_2d_to_1d(target_line, 0);
-            cut_out(buf, from, to)
-        })
-    };
-    ctx.kill(killed, Direction::Backward, &env);
-    Ok(ELispExp::nil())
-});
-
-// ---------------------------------------------------------------------------
-// Undo and redo
-// ---------------------------------------------------------------------------
-
-pub const UNDO_DOC: &str = "(undo): Undo the latest group of changes in the current buffer, and \
-         move point to where it was made. Return t, or nil when there is nothing to undo. A group \
-         is one command, or a word or two of typing.";
-
-primitive!(undo, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        // Split borrow: the history and the text it describes are two fields
-        // of the same buffer, and undo needs to write both.
-        let Buffer { text, undo, .. } = buf;
-        match undo.undo(text) {
-            Some(applied) => {
-                goto_offset(text, applied.point);
-                buf.is_modified = true;
-                changed(buf, applied.from);
-                Ok(ELispExp::symbol("t".into()))
-            }
-            None => Ok(ELispExp::nil()),
-        }
-    })
-});
-
-pub const REDO_DOC: &str = "(redo): Redo the latest group of changes undone in the current \
-         buffer. Return t, or nil when there is nothing to redo. An edit made after an undo \
-         forgets what that undo took back.";
-
-primitive!(redo, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let Buffer { text, undo, .. } = buf;
-        match undo.redo(text) {
-            Some(applied) => {
-                goto_offset(text, applied.point);
-                buf.is_modified = true;
-                changed(buf, applied.from);
-                Ok(ELispExp::symbol("t".into()))
-            }
-            None => Ok(ELispExp::nil()),
-        }
-    })
-});
-
-pub const UNDO_BOUNDARY_DOC: &str = "(undo-boundary): End the current undo group, so that the \
-         next change starts a new one and the two undo separately. Does nothing when no group is \
-         open.\n\n\
-         Example:\n\
-         (self-insert \"a\")\n\
-         (undo-boundary)\n\
-         (self-insert \"b\")   ; (undo) takes back only the b";
-
-primitive!(undo_boundary, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| buf.undo.boundary());
-    Ok(ELispExp::nil())
-});
-
-pub const SET_UNDO_LIMIT_DOC: &str = "(set-undo-limit N): Keep at most N bytes of deleted text in \
-         the current buffer's undo history, letting the oldest changes go past that. The latest \
-         change is kept however large it is.\n\n\
-         Example:\n\
-         (set-undo-limit (* 4 1024 1024))";
-
-primitive!(set_undo_limit, args, _env, ctx, {
-    let limit = match args.first() {
-        Some(ELispExp::Number(n)) => n.floor().max(0.0) as usize,
-        other => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "Number".into(),
-                got: other.cloned().unwrap_or_else(ELispExp::nil),
-            });
-        }
-    };
-    ctx.with_current_buffer_mut(|buf| buf.undo.set_limit(limit));
-    Ok(ELispExp::nil())
-});
-
-// ---------------------------------------------------------------------------
-// Point, as a number
-// ---------------------------------------------------------------------------
-//
-// Everything above moves point by *describing* the move -- a character, a word,
-// a line. That covers editing, and it is useless to anything that has computed
-// a position and simply wants to go there: a search result, a saved place, a
-// jump back to where a command started. These three are that missing half, and
-// they are counted in characters because point, mark, the region and the undo
-// history all are.
-
-pub const LINE_NUMBER_AT_POINT_DOC: &str = "(line-number-at-point): Return the number of the line \
-         point is on, counting from 1 as `goto-line' does.\n\n\
-         Example:\n\
-         (goto-line (+ (line-number-at-point) 10))";
-
-primitive!(line_number_at_point, _args, _env, ctx, {
-    ctx.with_current_buffer(|buf| {
-        let point = buf.text.cursor_pos_1d();
-        let line = buf.text.cursor_1d_to_2d(point).0;
-        Ok(ELispExp::number(line as f64 + 1.0))
-    })
-});
-
-pub const CURRENT_LINE_DOC: &str = "(current-line): Return the text of the line point is on, \
-         without its newline, or \"\" in an empty buffer.\n\n\
-         Example:\n\
-         (current-line) => \"src/\"";
-
-primitive!(current_line, _args, _env, ctx, {
-    ctx.with_current_buffer(|buf| {
-        let point = buf.text.cursor_pos_1d();
-        let line = buf.text.cursor_1d_to_2d(point).0;
-        let text = buf
-            .text
-            .get_lines(line, line + 1)
-            .into_iter()
-            .next()
-            .unwrap_or_default();
-        Ok(ELispExp::string(text))
-    })
-});
-
-pub const POINT_DOC: &str = "(point): Return the position of point: the number of characters \
-         before it, so the first position is 0.";
-
-primitive!(point, _args, _env, ctx, {
-    ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.cursor_pos_1d() as f64)))
-});
-
-pub const POINT_MIN_DOC: &str = "(point-min): Return the first position in the buffer, which is \
-         0.";
-
-primitive!(point_min, _args, _env, _ctx, { Ok(ELispExp::number(0.0)) });
-
-pub const POINT_MAX_DOC: &str = "(point-max): Return the position after the last character in the \
-         buffer.";
-
-primitive!(point_max, _args, _env, ctx, {
-    ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.len() as f64)))
-});
-
-pub const GOTO_CHAR_DOC: &str = "(goto-char POSITION): Move point to POSITION, a number of \
-         characters from the start of the buffer, and return where it went. A position outside \
-         the buffer goes to its nearer end.\n\n\
-         Example:\n\
-         (goto-char (point-max))";
-
-primitive!(goto_char, args, _env, ctx, {
-    let requested = match args.first() {
-        Some(ELispExp::Number(n)) => *n,
-        Some(other) => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "Number".into(),
-                got: other.clone(),
-            });
-        }
-        None => {
-            return Err(EvalError::WrongNumberOfArguments {
-                expected: 1,
-                got: 0,
-            });
-        }
-    };
-    Ok(ELispExp::number(ctx.with_current_buffer_mut(|buf| {
-        // Clamped at both ends: a negative offset is the beginning, and
-        // anything past the text is the end. A position outside the buffer
-        // is almost always one computed before an edit, and putting point
-        // somewhere real is more useful than refusing.
-        let target = requested.max(0.0) as usize;
-        let target = target.min(buf.text.len());
-        let (line, col) = buf.text.cursor_1d_to_2d(target);
-        buf.text.cursor_move(line, col);
-        target as f64
-    })))
-});
-
-pub const FORWARD_SEXP_DOC: &str = "(forward-sexp &optional N): Move point over the next N \
-         balanced expressions, 1 by default: a list, a string or an atom, with any prefix in \
-         front of it. A negative N moves back. A delimiter in a string or a comment is text, and \
-         at the end of a list this does nothing.";
-
-primitive!(forward_sexp, args, _env, ctx, {
-    // Before the write lock: this reads the buffer to find its mode.
-    let table = ctx.current_syntax_table();
-    ctx.with_current_buffer_mut(|buf| {
-        let from = buf.text.cursor_pos_1d();
-        let count = movement_count(args)?;
-        let target = if count < 0 {
-            sexp::backward(&buf.text, &table, from, count.unsigned_abs())
-        } else {
-            sexp::forward(
-                &buf.text,
-                &table,
-                buf.scan_resume(from, &table),
-                from,
-                count as usize,
-            )
-        };
-        goto_offset(&mut buf.text, target);
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const BACKWARD_SEXP_DOC: &str = "(backward-sexp &optional N): Move point back over N balanced \
-         expressions, 1 by default, to the start of the last one, its prefix included: before the \
-         quote of 'foo. A negative N moves forward, and at the start of a list this does nothing.";
-
-primitive!(backward_sexp, args, _env, ctx, {
-    let table = ctx.current_syntax_table();
-    ctx.with_current_buffer_mut(|buf| {
-        let from = buf.text.cursor_pos_1d();
-        let count = movement_count(args)?;
-        let target = if count < 0 {
-            sexp::forward(
-                &buf.text,
-                &table,
-                buf.scan_resume(from, &table),
-                from,
-                count.unsigned_abs(),
-            )
-        } else {
-            sexp::backward(&buf.text, &table, from, count as usize)
-        };
-        goto_offset(&mut buf.text, target);
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const KILL_SEXP_DOC: &str = "(kill-sexp &optional N): Kill forward over N balanced \
-         expressions, 1 by default: the text `forward-sexp' would move over. It goes on the kill \
-         ring.";
-
-primitive!(kill_sexp, args, env, ctx, {
-    let table = ctx.current_syntax_table();
-    let count = repeat_count(args)?;
-    let killed = ctx.with_current_buffer_mut(|buf| {
-        let from = buf.text.cursor_pos_1d();
-        let to = sexp::forward(
-            &buf.text,
-            &table,
-            buf.scan_resume(from, &table),
-            from,
-            count,
-        );
-        cut_out(buf, from, to)
-    });
-    ctx.kill(killed, Direction::Forward, &env);
-    Ok(ELispExp::nil())
-});
-
-pub const BACKWARD_KILL_SEXP_DOC: &str = "(backward-kill-sexp &optional N): Kill back over N \
-         balanced expressions, 1 by default: the text `backward-sexp' would move over. It goes on \
-         the kill ring.";
-
-primitive!(backward_kill_sexp, args, env, ctx, {
-    let table = ctx.current_syntax_table();
-    let count = repeat_count(args)?;
-    let killed = ctx.with_current_buffer_mut(|buf| {
-        let to = buf.text.cursor_pos_1d();
-        let from = sexp::backward(&buf.text, &table, to, count);
-        cut_out(buf, from, to)
-    });
-    ctx.kill(killed, Direction::Backward, &env);
-    Ok(ELispExp::nil())
-});
-
-pub const UP_LIST_DOC: &str = "(up-list): Move point out of the list it is in, past its closing \
-         delimiter. Does nothing at the top level.\n\n\
-         Example:\n\
-         (define-key nil \"C-M-n\" 'up-list)";
-
-primitive!(up_list, _args, _env, ctx, {
-    let table = ctx.current_syntax_table();
-    ctx.with_current_buffer_mut(|buf| {
-        let point = buf.text.cursor_pos_1d();
-        if let Some(found) =
-            sexp::enclosing(&buf.text, &table, buf.scan_resume(point, &table), point)
-        {
-            goto_offset(&mut buf.text, found.end);
-        }
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const BACKWARD_UP_LIST_DOC: &str = "(backward-up-list): Move point back to the start of the \
-         list it is in: onto its opening delimiter, or onto the prefix before it, as in '(a b). \
-         Does nothing at the top level.";
-
-primitive!(backward_up_list, _args, _env, ctx, {
-    let table = ctx.current_syntax_table();
-    ctx.with_current_buffer_mut(|buf| {
-        let point = buf.text.cursor_pos_1d();
-        if let Some(found) =
-            sexp::enclosing(&buf.text, &table, buf.scan_resume(point, &table), point)
-        {
-            goto_offset(&mut buf.text, found.start);
-        }
-        Ok(ELispExp::nil())
-    })
-});
-
-pub const DOWN_LIST_DOC: &str = "(down-list): Move point just inside the next list that opens \
-         after it. Does nothing when none does; a delimiter in a string or a comment does not \
-         count.";
-
-primitive!(down_list, _args, _env, ctx, {
-    let table = ctx.current_syntax_table();
-    ctx.with_current_buffer_mut(|buf| {
-        let point = buf.text.cursor_pos_1d();
-        if let Some(at) = sexp::down(&buf.text, &table, buf.scan_resume(point, &table), point) {
-            goto_offset(&mut buf.text, at);
-        }
-        Ok(ELispExp::nil())
-    })
-});
-// ---------------------------------------------------------------------------
-// Indentation
-// ---------------------------------------------------------------------------
-//
-// Three primitives, and none of them decides anything. What column a line
-// *should* start at is a question about a language, so it is asked in Lisp --
-// `indent-line' looks for an `indent-function' on the mode's symbol and falls
-// back to matching the line above. What is here is only what Lisp cannot do
-// safely or quickly: reading a line's indentation, and rewriting it through the
-// two doors so that undo and the read-only flag still apply.
-
-/// The column of the first character on LINE that is not a space or a tab.
+/// Registers the primitives that insert and delete characters.
 ///
-/// A line with nothing else on it counts as indented all the way across, which
-/// is what Emacs reports and what stops `indent-line-to` treating trailing
-/// whitespace as text it has to preserve.
-fn indentation_of<B: BufferTrait>(text: &B, line: usize) -> usize {
-    text.get_lines(line, line + 1)
-        .first()
-        .map(|line| line.chars().take_while(|c| *c == ' ' || *c == '\t').count())
-        .unwrap_or(0)
-}
-
-fn is_blank<B: BufferTrait>(text: &B, line: usize) -> bool {
-    text.get_lines(line, line + 1)
-        .first()
-        .map(|line| line.trim().is_empty())
-        .unwrap_or(true)
-}
-
-/// The line an optional 1-based argument names, or the one point is on.
-fn line_argument<B: BufferTrait>(args: &[ELispExp<B>], text: &B) -> usize {
-    match args.first() {
-        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 1.0 => {
-            (*n as usize - 1).min(text.line_count().saturating_sub(1))
-        }
-        _ => text.cursor_pos().0,
-    }
-}
-
-pub const CURRENT_INDENTATION_DOC: &str = "(current-indentation &optional LINE): Return how many \
-         spaces and tabs begin LINE, numbered from 1 as `goto-line' numbers lines, or the line \
-         point is on. A blank line counts as indented all the way across.\n\n\
-         Example:\n\
-         (current-indentation 1)";
-
-primitive!(current_indentation, args, _env, ctx, {
-    ctx.with_current_buffer(|buf| {
-        let line = line_argument(args, &buf.text);
-        Ok(ELispExp::number(indentation_of(&buf.text, line) as f64))
-    })
-});
-
-pub const PREVIOUS_INDENTATION_DOC: &str = "(previous-indentation): Return the indentation of the \
-         nearest line above point's that is not blank, or 0 when there is none. A line in a mode \
-         without an `indent-function' is indented to this.";
-
-primitive!(previous_indentation, _args, _env, ctx, {
-    ctx.with_current_buffer(|buf| {
-        let mut line = buf.text.cursor_pos().0;
-        while line > 0 {
-            line -= 1;
-            if !is_blank(&buf.text, line) {
-                return Ok(ELispExp::number(indentation_of(&buf.text, line) as f64));
-            }
-        }
-        Ok(ELispExp::number(0.0))
-    })
-});
-
-pub const INDENT_LINE_TO_DOC: &str = "(indent-line-to COLUMN): Replace the spaces and tabs that \
-         begin the line point is on with COLUMN spaces, as one undo step. Return t if the line \
-         changed, nil if it was already so. Point keeps its character, or goes to the end of the \
-         new indentation when it was inside the old.\n\n\
-         Example:\n\
-         (indent-line-to (previous-indentation))";
-
-primitive!(indent_line_to, args, _env, ctx, {
-    let Some(ELispExp::Number(column)) = args.first() else {
-        return Err(EvalError::WrongArgumentType {
-            expected: "Number".into(),
-            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
-        });
-    };
-    let column = column.max(0.0) as usize;
-
-    // `None` when the line already has that indentation, `Some(false)` when
-    // the buffer refused the change, `Some(true)` when it happened. Three
-    // outcomes rather than a `bool`, because two of them used to `return` out
-    // of the primitive from inside the guarded region -- which a closure
-    // cannot do, and which had to `drop` the guard by hand to avoid holding it
-    // across `edited`.
-    let outcome = ctx.with_current_buffer_mut(|buf| {
-        let (line, _) = buf.text.cursor_pos();
-        let start = buf.text.cursor_2d_to_1d(line, 0);
-        let width = indentation_of(&buf.text, line);
-        if width == column {
-            return None;
-        }
-
-        let point = buf.text.cursor_pos_1d();
-        if !delete_range(buf, start, start + width) {
-            return Some(false);
-        }
-        let padding: String = " ".repeat(column);
-        if !insert_text(buf, start, &padding) {
-            return Some(false);
-        }
-
-        // Where point ends up. Inside the indentation it has no character of
-        // its own to keep, so it goes to the end of the new one; past it, it
-        // keeps whatever it was sitting on, which has moved by the difference.
-        let target = if point <= start + width {
-            start + column
-        } else {
-            (point + column).saturating_sub(width)
-        };
-        let target = target.min(buf.text.len());
-        let (line, col) = buf.text.cursor_1d_to_2d(target);
-        buf.text.cursor_move(line, col);
-        Some(true)
-    });
-    // Out here, with the buffer's lock given back: `edited` puts a message in
-    // the echo area, which is another compartment.
-    Ok(match outcome {
-        None => ELispExp::nil(),
-        Some(false) => edited(ctx, false),
-        Some(true) => ELispExp::t(),
-    })
-});
-
-pub const CURRENT_COLUMN_DOC: &str = "(current-column): Return the column point is on, counting \
-         from 0. Every character is one column, a tab included.";
-
-primitive!(current_column, _args, _env, ctx, {
-    ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.cursor_pos().1 as f64)))
-});
-
-/// Register this module's primitives: point, insertion, deletion and the undo history.
-///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    into.function("undo-join", undo_join, UNDO_JOIN_DOC);
     into.function("delete-region", delete_region, DELETE_REGION_DOC);
+    // Functions, not commands: no argument spec collects arbitrary text, and
+    // a printable key is bound to a form that carries its own character,
+    // `(self-insert "x")`.
     into.function("self-insert", self_insert, SELF_INSERT_DOC);
-    // Not a command: there is no key to bind it to and no argument spec that
-    // could collect arbitrary text. `self-insert` is a command only because
-    // every printable key is bound to it.
     into.function("insert", insert, INSERT_DOC);
     into.command(
         "insert-pasted-text",
@@ -1316,111 +290,5 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         &[],
         DELETE_BACKWARD_CHAR_DOC,
     );
-    into.command("backward-char", backward_char, &["p"], BACKWARD_CHAR_DOC);
-    into.command("forward-char", forward_char, &["p"], FORWARD_CHAR_DOC);
-    into.command("previous-line", previous_line, &["p"], PREVIOUS_LINE_DOC);
     into.command("delete-char", delete_char, &["p"], DELETE_CHAR_DOC);
-    into.command("kill-line", kill_line, &[], KILL_LINE_DOC);
-    into.command("kill-whole-line", kill_whole_line, &[], KILL_WHOLE_LINE_DOC);
-    into.command("kill-word", kill_word, &["p"], KILL_WORD_DOC);
-    into.command(
-        "backward-kill-word",
-        backward_kill_word,
-        &["p"],
-        BACKWARD_KILL_WORD_DOC,
-    );
-    into.command("kill-paragraph", kill_paragraph, &[], KILL_PARAGRAPH_DOC);
-    into.command(
-        "backward-kill-paragraph",
-        backward_kill_paragraph,
-        &[],
-        BACKWARD_KILL_PARAGRAPH_DOC,
-    );
-    into.command("undo", undo, &[], UNDO_DOC);
-    into.command("redo", redo, &[], REDO_DOC);
-    into.command("undo-boundary", undo_boundary, &[], UNDO_BOUNDARY_DOC);
-    into.command(
-        "set-undo-limit",
-        set_undo_limit,
-        &["nUndo limit in bytes: "],
-        SET_UNDO_LIMIT_DOC,
-    );
-    into.command(
-        "beginning-of-line",
-        beginning_of_line,
-        &[],
-        BEGINNING_OF_LINE_DOC,
-    );
-    into.command("end-of-line", end_of_line, &[], END_OF_LINE_DOC);
-    into.command("forward-word", forward_word, &["p"], FORWARD_WORD_DOC);
-    into.command("backward-word", backward_word, &["p"], BACKWARD_WORD_DOC);
-    // Structural motion. `forward-word` and these look alike from the outside
-    // and are not: a word is found by looking at characters, an expression by
-    // lexing the buffer against the mode's syntax table -- a `)` is only a
-    // delimiter when it is not inside a string or a comment.
-    into.command("forward-sexp", forward_sexp, &["p"], FORWARD_SEXP_DOC);
-    into.command("backward-sexp", backward_sexp, &["p"], BACKWARD_SEXP_DOC);
-    into.command("kill-sexp", kill_sexp, &["p"], KILL_SEXP_DOC);
-    into.command(
-        "backward-kill-sexp",
-        backward_kill_sexp,
-        &["p"],
-        BACKWARD_KILL_SEXP_DOC,
-    );
-    into.command("up-list", up_list, &[], UP_LIST_DOC);
-    into.command(
-        "backward-up-list",
-        backward_up_list,
-        &[],
-        BACKWARD_UP_LIST_DOC,
-    );
-    into.command("down-list", down_list, &[], DOWN_LIST_DOC);
-    into.function("current-column", current_column, CURRENT_COLUMN_DOC);
-    into.function(
-        "current-indentation",
-        current_indentation,
-        CURRENT_INDENTATION_DOC,
-    );
-    into.function(
-        "previous-indentation",
-        previous_indentation,
-        PREVIOUS_INDENTATION_DOC,
-    );
-    into.function("indent-line-to", indent_line_to, INDENT_LINE_TO_DOC);
-    into.command(
-        "forward-paragraph",
-        forward_paragraph,
-        &["p"],
-        FORWARD_PARAGRAPH_DOC,
-    );
-    into.command(
-        "backward-paragraph",
-        backward_paragraph,
-        &["p"],
-        BACKWARD_PARAGRAPH_DOC,
-    );
-    into.command(
-        "beginning-of-buffer",
-        beginning_of_buffer,
-        &[],
-        BEGINNING_OF_BUFFER_DOC,
-    );
-    into.command("end-of-buffer", end_of_buffer, &[], END_OF_BUFFER_DOC);
-    // The first built-in command that prompts for an argument, so M-x
-    // goto-line asks for the number rather than failing on arity.
-    into.command("goto-line", goto_line, &["nGoto line: "], GOTO_LINE_DOC);
-    into.command("next-line", next_line, &["p"], NEXT_LINE_DOC);
-    // Point as a number. Plain functions rather than commands: nothing is
-    // usefully reached by typing `M-x point', and everything that moves point
-    // by a described amount -- a word, a line -- already is a command.
-    into.function("point", point, POINT_DOC);
-    into.function("point-min", point_min, POINT_MIN_DOC);
-    into.function("point-max", point_max, POINT_MAX_DOC);
-    into.function("goto-char", goto_char, GOTO_CHAR_DOC);
-    into.function(
-        "line-number-at-point",
-        line_number_at_point,
-        LINE_NUMBER_AT_POINT_DOC,
-    );
-    into.function("current-line", current_line, CURRENT_LINE_DOC);
 }

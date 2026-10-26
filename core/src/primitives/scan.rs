@@ -1,73 +1,31 @@
-//! Finding every match, rather than the next one.
+//! `scan-buffer`: every match of a pattern in a buffer, found in one pass and
+//! answered as the entries of a list of results.
 //!
-//! # What this is for
-//!
-//! `isearch` and `replace` ask "where is the next one" and get on with it.
-//! Occur, grep, a linter reading its own output and anything else that means
-//! to *list* what it found ask a different question, and asking it with
-//! `search-forward` in a loop is quadratic -- see [`crate::text::search::Pattern::scan`],
-//! which is the one pass this hands to Lisp.
-//!
-//! # The entry, and why its shape is fixed here
-//!
-//! Everything that produces a list of places in this editor will answer in the
-//! same eight-element list:
-//!
-//! ```text
-//! (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END)
-//! ```
-//!
-//! so that a view can be written once and shown results from anywhere. `KIND`
-//! tells a buffer from a file, because a name like `*scratch*` and a path are
-//! otherwise only distinguishable by guessing. `TEXT` is the whole line and
-//! `MATCH-START`/`MATCH-END` are offsets *within it*, so a view highlights the
-//! match without searching the line again -- and without being able to
-//! disagree with the scan about where it was.
-//!
-//! Positional rather than named, like every other structured answer here --
-//! `(START END)`, `(FILE LINE COLUMN)`, `(KEYS TARGET SOURCE)` -- and written
-//! down in one place so the next producer copies it rather than inventing a
-//! ninth field.
+//! Design: `doc/architettura-editor.typ, <scan-buffer>`.
 use super::*;
-use crate::text::search::{Found, Pattern, Scan};
-
-/// What a scan answers when it was asked about a buffer.
-///
-/// The other kind is `"file"`, which arrives with the verbs that scan one.
-/// Named here rather than written out at each use so that the two cannot
-/// drift apart by a capital letter.
-pub const KIND_BUFFER: &str = "buffer";
+use crate::primitives::results::entry_form;
+use crate::text::results::{Entry, KIND_BUFFER};
+use crate::text::search::{Pattern, Scan};
 
 /// How many matches a scan collects before it gives up, when nothing says.
 const DEFAULT_LIMIT: usize = 10_000;
 
-/// One match as Lisp sees it. See the module header for the shape.
-pub(crate) fn entry<B: BufferTrait>(kind: &str, source: &str, found: &Found) -> ELispExp<B> {
-    ELispExp::proper_list(vec![
-        ELispExp::string(kind.to_string()),
-        ELispExp::string(source.to_string()),
-        ELispExp::number(found.line as f64),
-        ELispExp::number(found.column as f64),
-        ELispExp::number(found.start as f64),
-        ELispExp::string(found.line_text.clone()),
-        ELispExp::number(found.in_line() as f64),
-        ELispExp::number(found.end_in_line() as f64),
-    ])
-}
-
-/// A whole scan as Lisp sees it: (TRUNCATED ENTRIES).
-pub(crate) fn answer<B: BufferTrait>(kind: &str, source: &str, scan: &Scan) -> ELispExp<B> {
+/// Returns SCAN as Lisp sees it, (TRUNCATED ENTRIES): each entry the list
+/// `entry_form` makes of a match found in SOURCE, of KIND.
+fn answer<B: BufferTrait>(kind: &str, source: &str, scan: &Scan) -> ELispExp<B> {
     ELispExp::proper_list(vec![
         ELispExp::boolean(scan.truncated),
         ELispExp::proper_list(
             scan.found
                 .iter()
-                .map(|found| entry(kind, source, found))
+                .map(|found| entry_form(&Entry::new(kind, source, found)))
                 .collect(),
         ),
     ])
 }
 
+/// Returns the limit at INDEX in ARGS, or the default when there is no
+/// number of at least 0 there.
 fn limit_arg<B: BufferTrait>(args: &[ELispExp<B>], index: usize) -> usize {
     match args.get(index) {
         Some(ELispExp::Number(limit)) if *limit >= 0.0 => *limit as usize,
@@ -107,21 +65,17 @@ primitive!(scan_buffer, args, env, ctx, {
         ctx.log_diagnostic(&format!("scan-buffer: no buffer called {source}"));
         return Ok(ELispExp::nil());
     };
-    // Priced by the text walked, not by the call: a primitive that scans a
-    // megabyte for one unit would let a loop do unbounded work inside a
-    // budget meant to bound it. The same rule `directory-files-recursive'
-    // follows, which charges for every path it walked past.
+    // Priced by the characters walked, not by the call: a megabyte for one
+    // unit would let a loop do unbounded work inside a budget meant to bound
+    // it.
     ctx.consume_fuel(u32::try_from(haystack.chars().count()).unwrap_or(u32::MAX))?;
     let scan = pattern.scan(&haystack, limit);
     Ok(answer(KIND_BUFFER, &source, &scan))
 });
 
-/// Register this module's primitives: the syntax scanner's cache.
+/// Registers `scan-buffer`.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // Finding every match rather than the next one. See `primitives::scan`.
     into.function("scan-buffer", scan_buffer, SCAN_BUFFER_DOC);
 }

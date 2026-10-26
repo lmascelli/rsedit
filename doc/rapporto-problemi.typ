@@ -134,7 +134,7 @@
     stato: "aperto",
     titolo: [`undo` e `redo` modificano il testo senza passare dalle due porte delle modifiche],
     breve: [`undo`/`redo` scavalcano le porte: sola lettura, overlay, testo virtuale],
-    dove: [`primitives/edits.rs` (le primitive `undo` e `redo`), `buffer/undo.rs` (`UndoHistory::undo`, `UndoHistory::redo`, `apply_inverse`), `editor/replace.rs` (`EditorState::replace_back`)],
+    dove: [`primitives/undo.rs` (le primitive `undo` e `redo`), `buffer/undo.rs` (`UndoHistory::undo`, `UndoHistory::redo`, `apply_inverse`), `editor/replace.rs` (`EditorState::replace_back`)],
     verifica: [Riprodotto sulla revisione `3d846f1`: dopo `(insert "abc")`, `(undo-boundary)` e `(set-buffer-read-only t)`, `(undo)` svuota il buffer senza messaggi; un overlay su `world` in `XXhello world` resta agli offset 8–13 dopo che `undo` ha tolto `XX`. La colorazione e le cache, che l'analisi aveva trovato vecchie dopo `C-/`, ora si aggiornano: lo provano i test `undo_and_redo_recolour_what_they_change` e `an_undo_does_not_leave_a_stale_answer_behind`.],
     cosa: [Ogni modifica dovrebbe passare da `insert_text` o `delete_range`. Sono loro che controllano la sola lettura, incrementano `version`, invalidano le cache di colorazione e di scansione, disattivano il mark e spostano overlay e testo virtuale. `undo` e `redo` applicano invece le modifiche inverse direttamente sul testo (`apply_inverse`). Da `9956bed` chiamano poi `changed`, che incrementa la versione, invalida le cache dalla prima riga toccata ed emette `buffer-changed`; il resto delle due porte resta saltato.],
     riproduzione: ```lisp
@@ -170,6 +170,19 @@
     cosa: [`BufferTrait` richiede `Clone`, ma l'implementazione per `GapBuffer` è un `todo!()`: il primo che clonerà un buffer manderà l'editor in panic. `find_forward` calcola `self.len() - 1`, che su un testo vuoto va in underflow (panic in debug) e poi arriva a un `unreachable!()`.],
     correzione: [Derivare `Clone`, oppure togliere il vincolo dal trait; in `find_forward` usare `checked_sub`.],
   ),
+  (
+    id: "BUF-4",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [In un buffer in sola lettura molti comandi non dicono nulla, e `kill-rectangle` conserva un blocco che non ha tolto],
+    breve: [Sola lettura: kill, verbi, commenti e rettangoli tacciono; `kill-rectangle` conserva il blocco],
+    dove: [`primitives/killing.rs` (`cut_out`, e le kill che la usano), `primitives/verbs.rs` (`replace_span` e i verbi), `primitives/comments.rs` (`apply`), `primitives/rectangle.rs` (`cut`, `insert_at_edge`, `insert_block` e i comandi che li usano), `primitives/macros.rs` (`kmacro-insert-counter`)],
+    verifica: [Riprodotto con un test temporaneo durante il passo 16 della documentazione, sul codice di `9fcd84b` con i passi 12--15, che non cambiano il comportamento. In un buffer in sola lettura `kill-line`, `kill-word`, `upcase-word`, `transpose-chars`, `join-line`, `comment-dwim` e `zap-to-char` non cambiano il testo e lasciano vuota l'area messaggi. `kill-rectangle` restituisce 3 e lascia il testo com'è, e dopo `(killed-rectangle)` restituisce le tre righe del blocco; `delete-rectangle`, `open-rectangle` e `string-rectangle` restituiscono 3 senza aver cambiato nulla; `kmacro-insert-counter` segnala l'errore «This buffer is read-only». Che il contatore sia già avanzato viene dalla lettura del codice.],
+    cosa: [Le due porte rifiutano la modifica e restituiscono `false`, e dirlo all'utente tocca a chi le chiama, con `edited`, che scrive «Buffer is read-only». Lo fanno le primitive di `edits.rs`, `kill-region`, `yank`, `yank-pop` e `indent-line-to`. Le kill che passano da `cut_out` ne ricevono una stringa vuota e la danno all'anello, che la ignora; i verbi e i commenti rispondono nil; i comandi dei rettangoli scartano il risultato delle porte e rispondono con il numero di righe. `kill-rectangle` legge il blocco prima di cancellarlo, e lo conserva per `yank-rectangle` anche se la cancellazione è stata rifiutata. `kmacro-insert-counter` fa avanzare il contatore prima di inserire, e segnala un errore al posto del messaggio.],
+    effetto: [(1) Un tasto che non fa nulla e non dice nulla: in una vista in sola lettura, come dired o l'aiuto, sembra un editor rotto e non un buffer protetto. (2) Dopo `kill-rectangle` in un buffer in sola lettura, `yank-rectangle` in un altro buffer inserisce un blocco che non è mai stato tolto, cioè lo duplica.],
+    correzione: [Far usare `edited` a tutti i comandi che modificano, a partire da `cut_out` e da `replace_span`; nei rettangoli fermarsi al primo rifiuto, senza conservare il blocco né spostare il punto; in `kmacro-insert-counter` inserire prima di far avanzare il contatore.],
+  ),
   // ------------------------------------------------------------------ CMD
   (
     id: "CMD-1",
@@ -204,7 +217,7 @@
     stato: "aperto",
     titolo: [Argomenti numerici enormi: allocazioni che terminano il processo e panic],
     breve: [Larghezze e conteggi senza limite nelle primitive Rust: panic e abort],
-    dove: [`primitives/edits.rs` (`indent-line-to`, `repeat_count`), `primitives/macros.rs` (`kmacro-insert-counter`)],
+    dove: [`primitives/indentation.rs` (`indent-line-to`), `primitives/args.rs` (`repeat_count`), `primitives/macros.rs` (`kmacro-insert-counter`)],
     verifica: [Riprodotto sulla revisione `3d846f1`: `(kmacro-insert-counter 70000)` va in panic con «Formatting argument out of range»; `(forward-word 300000000)` invece si ferma subito alla fine del buffer. `indent-line-to` non è cambiata dall'analisi, che l'aveva trovata con il fuzzer delle primitive.],
     cosa: [Alcune primitive scritte in Rust usano un numero dell'utente come quantità da allocare, senza un limite e senza carburante. `indent-line-to` crea una stringa di spazi lunga quanto la colonna richiesta. `kmacro-insert-counter` passa la larghezza a `format!`, che oltre 65 535 va in panic. Da `cf0d8ac` i comandi sulle parole si fermano invece al bordo del buffer, e non ripetono più a vuoto il loro passo.],
     riproduzione: ```lisp
@@ -245,10 +258,23 @@
     stato: "aperto",
     titolo: [Un conteggio negativo non inverte i comandi che cancellano],
     breve: [`kill-word`, `delete-char` e simili: un conteggio negativo vale 0],
-    dove: [`primitives/edits.rs` (`repeat_count`, e i comandi che lo usano: `delete-char`, `kill-word`, `backward-kill-word`, `kill-sexp`, `backward-kill-sexp`)],
+    dove: [`primitives/args.rs` (`repeat_count`), e i comandi che lo usano: `delete-char` in `primitives/edits.rs`, `kill-word` e `backward-kill-word` in `primitives/killing.rs`, `kill-sexp` e `backward-kill-sexp` in `primitives/sexp.rs`],
     verifica: [Riprodotto sulla revisione `3d846f1`: in `foo bar`, `(kill-word -1)` dalla fine e `(delete-char -1)` da metà non cambiano il testo.],
     cosa: [`repeat_count` trasforma un conteggio negativo in 0, quindi i comandi che lo usano non fanno nulla, mentre in Emacs agiscono all'indietro. Due parti della scheda sono risolte: da `4506432` una risposta non numerica a una domanda numerica viene chiesta di nuovo, e da `cf0d8ac` gli spostamenti (caratteri, parole, righe, paragrafi, espressioni) usano `movement_count` e con un conteggio negativo vanno all'indietro.],
     correzione: [Usare `movement_count` anche nei comandi che cancellano, cancellando all'indietro con un conteggio negativo.],
+  ),
+  (
+    id: "CMD-7",
+    gravita: "bassa",
+    verificato: false,
+    stato: "aperto",
+    titolo: [Su Windows un incolla tiene i ritorni a capo CR, e lì quattro test dell'incolla fallirebbero],
+    breve: [Windows: `insert-pasted-text` non converte CR e CRLF],
+    dove: [`primitives/edits.rs` (la variante per Windows di `normalize_line_endings`, che usa `insert-pasted-text`), `tests/paste_tests.rs`],
+    verifica: [Dalla lettura del codice: i test non girano su Windows, e la verifica dei passi compila soltanto per quel sistema.],
+    cosa: [`insert-pasted-text` converte in LF ogni CRLF e ogni CR isolato prima di inserire, perché l'indice delle righe conta solo `\n`. Su Windows invece `normalize_line_endings` restituisce il testo com'è, e nessun commento dice perché. La GUI passa a `handle_paste` gli appunti del sistema, che su Windows hanno di solito i fine riga CRLF. `paste_tests` non esclude Windows, e lì `a_paste_with_crlf_endings_becomes_lines`, `a_paste_with_bare_carriage_returns_becomes_lines`, `a_mix_of_endings_all_become_lines` e `a_trailing_carriage_return_opens_a_line` fallirebbero.],
+    effetto: [Su Windows un testo di più righe incollato lascia un CR alla fine di ogni riga, e un testo con CR isolati diventa una riga sola.],
+    correzione: [Decidere che cosa vuole Windows: convertire come sugli altri sistemi, togliendo la variante, oppure scriverne il motivo e limitare i quattro test agli altri sistemi.],
   ),
   // ------------------------------------------------------------------ MIN
   (
@@ -861,7 +887,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte: RIC-8.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4 e CMD-7.
 
 == Riepilogo
 

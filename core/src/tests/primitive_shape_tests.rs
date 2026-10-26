@@ -409,11 +409,11 @@ mod shape_tests {
 ///
 /// # Why a list of names and not a count
 ///
-/// Each of the twenty-six modules under `primitives/` now registers its own
-/// primitives, and `install_primitives` is the list of modules and nothing
-/// else. That list is the one place a module can be *forgotten*: the code
-/// compiles, every test of that module's own behaviour fails, and if the module
-/// happens to be one whose behaviour is thinly tested, nothing fails at all.
+/// Each module under `primitives/` registers its own primitives, and
+/// `install_primitives` is the list of modules and nothing else. That list is
+/// the one place a module can be *forgotten*: the code compiles, every test of
+/// that module's own behaviour fails, and if the module happens to be one
+/// whose behaviour is thinly tested, nothing fails at all.
 ///
 /// Dropping each of four modules from the list was tried, and the suite caught
 /// all four -- so the cover is real today. What it is not is *structural*: it
@@ -438,20 +438,26 @@ mod registration_tests {
             ("edits", "delete-region"),
             ("general", "eval-file"),
             ("help", "key-binding"),
+            ("indentation", "indent-line-to"),
             ("io", "quit"),
             ("isearch", "isearch-forward"),
+            ("killing", "kill-line"),
             ("macros", "kmacro-start-macro"),
+            ("match_data", "string-match"),
             ("modes", "make-mode"),
             ("mouse", "mouse-set-point"),
+            ("movement", "forward-char"),
             ("overlays", "make-overlay"),
             ("rectangle", "rectangle-mark-mode"),
             ("region", "set-mark"),
             ("replace", "query-replace"),
             ("results", "occur--scan"),
             ("scan", "scan-buffer"),
+            ("sexp", "forward-sexp"),
             ("shell", "shell-command-start"),
             ("theme", "set-face"),
             ("ui", "recenter"),
+            ("undo", "undo"),
             ("verbs", "upcase-word"),
             ("virtual_text", "make-virtual-text"),
             ("windows", "split-window-below"),

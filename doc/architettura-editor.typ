@@ -164,7 +164,7 @@ lì e nella mappa di `lib.rs`.
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
   [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`.],
   [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `work.rs`). Vedi @coppie.],
-  [`primitives/`], [Le 304 primitive dell'editor, in 28 moduli, e `install_primitives`.],
+  [`primitives/`], [Le 318 primitive dell'editor, in 33 moduli, e `install_primitives`.],
   [`modes/`], [`MajorMode`, grammatica di colorazione (`syntax.rs`), tabella sintattica e scanner di espressioni (`sexp.rs`), i lavori di sfondo `Highlighter`, `Prescanner`, `FileWatcher`, `AutoSaver`.],
   [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale.],
   [`work/`], [Il WorkManager: il nucleo dello scheduler, l'esecutore, il registro, i thread dedicati, il watchdog, gli argomenti e le opzioni (@sfondo).],
@@ -1331,7 +1331,7 @@ pub(super) fn run_command_form(&self, mut ast: ELispExp<B>, env: &Arc<Env<Editor
 + #emph[Memoria.] La forma eseguita diventa quella di `repeat`; si offre il
   tasto di ripetizione; `last-command` riceve il nome.
 
-== La cattura di una sequenza
+== La cattura di una sequenza <cattura>
 
 `read-key-sequence` arma `*key-capture-function*`. Il tasto successivo segue la
 stessa risoluzione di un tasto normale --- la sequenza a metà si vede come
@@ -1639,7 +1639,7 @@ dall'inizio del buffer #rapporto("BUF-2").
   #note(0.2cm, 1.9cm)[un carattere costa 4 byte (`char`); il buco cresce raddoppiando quando si esaurisce]
 ]
 
-== Le due porte
+== Le due porte <due-porte>
 
 Ogni primitiva che cambia il testo passa da `edits::insert_text` o da
 `edits::delete_range`. È la proprietà su cui si reggono undo, overlay, cache e
@@ -1681,7 +1681,7 @@ pub(crate) fn insert_text<B: BufferTrait>(
     changed(buf, at);                                     // 5. versione e cache
     true
 }
-fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
+pub(crate) fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     buf.version = buf.version.wrapping_add(1);
     let line = buf.text.cursor_1d_to_2d(at.min(buf.text.len())).0;
     buf.syntax.invalidate_from(buf.version, line);
@@ -1700,7 +1700,9 @@ rimetterlo --- e poi adatta overlay e testo virtuale, cancella e chiama
 stato #emph[prima] della modifica, gli overlay vengono spostati con gli stessi
 numeri che descrivono la modifica, e la versione cambia per ultima, così
 nessun lettore può vedere la versione nuova insieme al testo vecchio (tutto
-avviene sotto lo stesso lock di scrittura del buffer).
+avviene sotto lo stesso lock di scrittura del buffer). Le porte non scrivono
+messaggi: un rifiuto lo riferisce chi le chiama, con `edited`, dopo la closure
+del buffer (@primitive-modifica).
 
 Tre percorsi oggi scavalcano le porte:
 
@@ -3860,11 +3862,20 @@ cui un tasto viene consumato. La riproduzione (`replay_keys`) rimanda i tasti a
 comando fallito, confrontando `command_errors` prima e dopo ogni tasto. Una
 macro che richiama macro può annidarsi fino a 16 livelli (`MAX_DEPTH`).
 
+Le primitive stanno in `primitives/macros.rs`. `define-kbd-macro` fa di una
+stringa di tasti un comando con un nome: una funzione Lisp il cui corpo chiama
+`kmacro-call-keys` con la stringa, e la cui docstring dice quali tasti preme.
+Una stringa che non si legge come sequenza di tasti è rifiutata subito. Il
+contatore (`kmacro-insert-counter`, `kmacro-set-counter`, `kmacro-counter`)
+sta nel compartimento accanto ai tasti; la larghezza di `kmacro-insert-counter`
+non ha limite #rapporto("CMD-3").
+
 == Le decisioni <decisioni-macro>
 
 Tre decisioni sulla macro stanno con il suo compartimento (@decisioni-stato):
 una macro registra tasti, registrazione e riproduzione stanno insieme, le
-riproduzioni annidate hanno un tetto. Le altre sono della facciata.
+riproduzioni annidate hanno un tetto. Le altre sono della facciata, e
+l'ultima delle primitive.
 
 + *La riproduzione passa dalla porta dei tasti.* Ogni tasto registrato torna a
   `handle_key_event`, la stessa porta di un tasto del terminale: un secondo
@@ -3889,6 +3900,12 @@ riproduzioni annidate hanno un tetto. Le altre sono della facciata.
 + *Un gruppo di undo per ripetizione.* Ogni ripetizione ha il suo timbro e il
   suo `OneGroup`: venti ripetizioni sono venti passi, e una macro andata storta
   alla diciannovesima si riporta indietro fino lì.
++ *Una macro con un nome è una funzione Lisp.* Un comando qui è una funzione
+  Lisp, e una macro costruita come chiusura Rust sarebbe invisibile a
+  `describe-function` e a tutto ciò che legge una definizione; la sua docstring
+  dice i tasti, che sono tutto ciò che c'è da sapere di lei. Una stringa
+  sbagliata si rifiuta quando si definisce la macro, perché quando la si esegue
+  l'unica cosa da dire sarebbe che una macro che nessuno vede è vuota.
 
 // ===========================================================================
 = Le primitive dell'editor <primitive>
@@ -3911,38 +3928,420 @@ verifica le forme condivise dalle primitive, come il controllo dell'arità.
 #ref-table(
   columns: (2.8cm, 0.8cm, 1fr),
   header: ([Modulo], [N.], [Contenuto]),
-  [`edits`], [47], [Inserire, cancellare, uccidere, incollare, undo, movimenti per carattere, parola, riga, paragrafo ed espressione.],
   [`io`], [31], [File: aprire, salvare, rileggere, recuperare, rinominare; percorsi e directory; variabili d'ambiente; `quit` e `save-some-buffers`.],
-  [`buffers`], [17], [Creare, cambiare, chiudere buffer; contenuto; sola lettura; dati appesi (`buffer-put`, `buffer-get`).],
-  [`region`], [17], [Mark e regione, `keyboard-quit`, kill ring (`kill-region`, `yank`, `yank-pop`, `kill-new`).],
-  [`modes`], [15], [`make-mode`, `add-hook`, regole e regioni di sintassi, `add-auto-mode`, tabella sintattica, `syntax-ppss`.],
+  [`movement`], [20], [Movimenti per carattere, riga, parola e paragrafo, ai bordi della riga e del buffer, `goto-line`; il punto come numero (`point`, `goto-char`, `current-column`).],
+  [`buffers`], [18], [Creare, cambiare, chiudere buffer; contenuto; sola lettura; dati appesi (`buffer-put`, `buffer-get`).],
+  [`modes`], [16], [`make-mode`, `add-hook`, regole e regioni di sintassi, `add-auto-mode`, tabella sintattica, `syntax-ppss`.],
+  [`killing`], [14], [Le kill, `kill-ring-save`, `yank`, `yank-pop`, `kill-new` e il resto del kill ring.],
   [`verbs`], [14], [Maiuscole, spazi, righe vuote, unione e duplicazione di righe, trasposizioni, `zap-to-char`.],
+  [`general`], [13], [`eval-file`, `define-key`, `define-repeat-key`, `repeat`, `log`, `backtrace`, `regexp-opt`, keymap transitorie.],
+  [`results`], [13], [Liste di posizioni (`occur`, compilazione) e `next-error`.],
   [`macros`], [12], [Registrazione e riproduzione delle macro, contatore.],
   [`minibuffer`], [12], [`minibuffer-read`, conferma, annullamento, completamento, storia.],
   [`replace`], [12], [Sostituzione e `query-replace`.],
   [`windows`], [12], [Dividere, chiudere, scegliere, scorrere finestre; `display-buffer-at-bottom`.],
-  [`general`], [11], [`eval-file`, `define-key`, `define-repeat-key`, `repeat`, `log`, `backtrace`, `regexp-opt`, keymap transitorie.],
-  [`results`], [11], [Liste di posizioni (`occur`, compilazione) e `next-error`.],
   [`commands`], [10], [`call-interactively`, `M-x`, `register-command` e il registro dei comandi.],
   [`isearch`], [10], [Ricerca incrementale.],
   [`rectangle`], [10], [Operazioni sui rettangoli.],
+  [`region`], [9], [Mark e regione, `keyboard-quit`.],
+  [`workers`], [9], [`define-worker`, `background-call`, `stop-worker`, `running-workers`.],
   [`completion`], [8], [`completion-at-point`, le sue fonti, `fuzzy-filter`.],
+  [`edits`], [7], [Le due porte; `self-insert`, `insert`, l'incolla, `insert-newline`, `delete-region`, `delete-char`, `delete-backward-char`.],
+  [`help`], [7], [Ciò che serve all'aiuto: `key-binding`, `where-is`, `keymap-bindings`, `read-key-sequence`. I comandi `describe-*` sono in `help.lisp`.],
   [`match_data`], [7], [`string-match` e i dati della corrispondenza.],
+  [`sexp`], [7], [Movimenti e kill per espressioni bilanciate, `up-list`, `down-list`.],
   [`comments`], [6], [Commentare e decommentare.],
-  [`help`], [6], [Ciò che serve all'aiuto: `key-binding`, `where-is`, `keymap-bindings`, `read-key-sequence`. I comandi `describe-*` sono in `help.lisp`.],
   [`mouse`], [6], [Comandi del mouse.],
+  [`theme`], [6], [Facce e stili.],
   [`overlays`], [5], [Overlay.],
-  [`theme`], [5], [Facce e stili.],
+  [`undo`], [5], [`undo`, `redo`, `undo-boundary`, `undo-join`, `set-undo-limit`.],
   [`ask`], [4], [Domande sì/no con keymap transitoria.],
   [`shell`], [4], [Comandi di shell.],
   [`virtual_text`], [4], [Testo virtuale.],
-  [`workers`], [4], [`define-worker`, `background-call`, `stop-worker`, `running-workers`.],
+  [`indentation`], [3], [`current-indentation`, `previous-indentation`, `indent-line-to`.],
   [`ui`], [3], [`recenter` e finestre flottanti.],
   [`scan`], [1], [`scan-buffer`: tutte le corrispondenze di un modello in un buffer, come voci di una lista di risultati.],
 )
 
-Il totale è 304, a cui si aggiungono le 86 primitive di base dell'interprete.
+Il totale è 318, a cui si aggiungono le 86 primitive di base dell'interprete.
 L'elenco completo dei nomi è nell'appendice (@elenco-primitive).
+
+== Le primitive di modifica <primitive-modifica>
+
+Le primitive che cambiano il testo o spostano il punto stanno in tredici file,
+uno per concetto. Tutte cambiano il testo soltanto dalle due porte
+(@due-porte), e nessuna prende il lock di un altro compartimento dentro la
+closure di un buffer: chiede prima ciò che le serve, lavora nella closure e
+riferisce dopo (@ordine-lock).
+
+#ref-table(
+  columns: (3.1cm, 1fr),
+  header: ([File], [Contenuto]),
+  [`edits.rs`], [Le due porte (`insert_text`, `delete_range`), `changed`, `edited`; le primitive che inseriscono e cancellano caratteri: `self-insert`, `insert`, `insert-pasted-text`, `insert-newline`, `delete-region`, `delete-char`, `delete-backward-char`.],
+  [`undo.rs`], [`undo`, `redo`, `undo-boundary`, `undo-join`, `set-undo-limit` (@undo).],
+  [`movement.rs`], [Il movimento per carattere, riga, parola e paragrafo, ai bordi della riga e del buffer, `goto-line`; il punto come numero; le funzioni che dicono dove finiscono una parola, una riga, un paragrafo.],
+  [`killing.rs`], [Le kill, da `kill-line` a `kill-region`; `kill-ring-save`, `yank`, `yank-pop`, `kill-new` e il resto dell'anello; `cut_out`.],
+  [`sexp.rs`], [Il movimento per espressioni bilanciate, dentro e fuori dalle liste, e le due kill di espressioni.],
+  [`indentation.rs`], [`current-indentation`, `previous-indentation`, `indent-line-to`.],
+  [`verbs.rs`], [Maiuscole, spazi, righe, trasposizioni, `zap-to-char`.],
+  [`region.rs`], [Il mark e la regione, `keyboard-quit`.],
+  [`rectangle.rs`], [I comandi sui rettangoli, la cui geometria è in `text/rectangle.rs` (@rettangoli).],
+  [`comments.rs`], [Commentare e decommentare.],
+  [`macros.rs`], [Registrare e riprodurre i tasti, e il contatore (@macro).],
+  [`match_data.rs`], [`string-match` e i dati della corrispondenza.],
+  [`scan.rs`], [`scan-buffer`.],
+)
+
+I conteggi si leggono con i lettori di `args.rs`: `movement_count`, con un
+segno, per i movimenti, dove un conteggio negativo va all'indietro;
+`repeat_count` per le cancellazioni, dove un conteggio negativo diventa 0
+#rapporto("CMD-6"). Né l'uno né l'altro ha un limite #rapporto("CMD-3").
+
+Le due porte restituiscono `false` in un buffer in sola lettura, e chi le
+chiama lo deve dire: `edited(ctx, happened)` scrive «Buffer is read-only»
+nell'area messaggi e risponde nil, chiamata dopo la closure, perché l'area
+messaggi è un compartimento a sé. La usano le primitive di `edits.rs`,
+`kill-region`, `yank`, `yank-pop` e `indent-line-to`. Le altre kill, i verbi, i
+commenti e i rettangoli tacciono; `kill-rectangle` conserva un blocco che non
+ha tolto, e `kmacro-insert-counter` segnala un errore con altre parole
+#rapporto("BUF-4").
+
+=== Muovere il punto <movimento>
+
+`movement.rs` ha due parti. Le funzioni sul testo conoscono solo
+`BufferTrait`: `goto_offset`, `line_length`, `line_bounds`, `is_blank_line`,
+`is_word_char`, `word_forward`, `word_backward`, `paragraph_forward` e
+`paragraph_backward`. Le usano le primitive del file, e con loro le kill, i
+verbi, i commenti, i rettangoli, il mouse e le liste di risultati: c'è un posto
+solo che dice dove finisce una parola. Una parola è una sequenza di lettere,
+cifre e trattini bassi, senza una tabella sintattica da interrogare; un
+paragrafo finisce alla riga vuota che lo segue.
+
+`forward-char` e `backward-char` si muovono per offset, quindi attraversano un
+fine riga come `C-f`. `next-line` e `previous-line` tengono una #emph[colonna
+obiettivo]:
+
+#estratto("primitives/movement.rs")[
+```rust
+// Chiesti prima del lock del buffer: sono altri compartimenti.
+let continuing = ctx.last_command_is("next-line") || ctx.last_command_is("previous-line");
+let remembered = ctx.goal_column();
+let goal = ctx.with_current_buffer_mut(|buf| {
+    let (line, col) = buf.text.cursor_pos();
+    let goal = match (continuing, remembered) {
+        (true, Some(goal)) => goal,      // in una serie: la colonna di partenza
+        _ => col,                        // altrimenti quella del punto
+    };
+    // ... la riga di arrivo, limitata al buffer
+    buf.text.cursor_move(target, goal);  // limita la colonna alla riga
+    goal
+});
+ctx.set_goal_column(Some(goal));
+```
+]
+
+Il punto come numero --- `point`, `point-min`, `point-max`, `goto-char`,
+`line-number-at-point`, `current-line`, `current-column` --- serve al codice
+che ha calcolato una posizione invece di descrivere un movimento: un risultato
+di ricerca, un posto salvato. Conta in caratteri, come il mark, la regione e la
+storia dell'undo, e una colonna è un carattere, anche un tab.
+
+=== Uccidere e incollare <uccidere>
+
+Ogni kill toglie il testo che il movimento con lo stesso nome attraversa,
+chiedendo alla stessa funzione dove finisce: `kill-word` chiede `word_forward`,
+`kill-paragraph` `paragraph_forward`, `kill-sexp` lo scanner. Una kill mette
+nell'anello ciò che toglie, una cancellazione (`delete-char`,
+`delete-backward-char`, `delete-region`) lo scarta, come in Emacs.
+
+Le kill di testo passano da `cut_out`, che cancella con `delete_range` e
+restituisce ciò che ha tolto, o niente se il buffer ha rifiutato. L'anello lo
+riceve dopo la closure del buffer:
+
+#estratto("primitives/killing.rs")[
+```rust
+primitive!(kill_word, args, env, ctx, {
+    let count = repeat_count(args)?;          // fuori: un `?` nella closure
+    let killed = ctx.with_current_buffer_mut(|buf| {
+        let from = buf.text.cursor_pos_1d();
+        let to = word_forward(&buf.text, from, count);
+        cut_out(buf, from, to)                // il testo tolto, o ""
+    });
+    ctx.kill(killed, Direction::Forward, &env);  // il lock del buffer è reso
+    Ok(ELispExp::nil())
+});
+```
+]
+
+`kill-region` e `kill-ring-save` prendono la regione con `require_region`, di
+`region.rs`. `kill-ring-save` disattiva il mark: copiare non è una modifica, e
+nient'altro lo farebbe. `yank-pop` sostituisce il testo appena incollato con la
+voce precedente, togliendo e rimettendo attraverso le porte. Se accodare a una
+voce o aggiungerne una nuova lo decide il compartimento `KillYank`, e il
+rettangolo ucciso sta in un campo suo (@kill-ring).
+
+=== Espressioni e indentazione <espressioni-indentazione>
+
+I comandi sulle espressioni --- `forward-sexp`, `backward-sexp`, `kill-sexp`,
+`backward-kill-sexp`, `up-list`, `backward-up-list`, `down-list` --- leggono
+la tabella sintattica del modo prima del lock del buffer, perché
+`current_syntax_table` legge il buffer per sapere il suo modo. Poi chiedono
+allo scanner di `modes/sexp.rs` (@modi), che riparte dal punto di ripresa più
+vicino della cache di scansione (`scan_resume`) invece che dall'inizio del
+buffer. Una parola si riconosce guardando i caratteri, un'espressione
+lessicando il testo con la tabella: una `)` in una stringa o in un commento è
+testo, e lo stesso testo si muove in modo diverso in due modi.
+
+Le primitive dell'indentazione non decidono nulla. La colonna giusta per una
+riga è una domanda sulla lingua, e la fa `indent.lisp`: `indent-line` cerca un
+`indent-function` sul simbolo del modo e, se non c'è, allinea alla riga sopra
+con `previous-indentation`. In Rust c'è ciò che Lisp non potrebbe fare in modo
+sicuro o veloce: leggere l'indentazione di una riga (`current-indentation`,
+spazi e tab) e riscriverla attraverso le porte, in un passo di undo
+(`indent-line-to`, che scrive solo spazi). `indent-line-to` risponde nil se la
+riga era già così, ed è ciò che `indent-for-tab-command` legge per scegliere
+il suo terzo caso.
+
+=== I verbi <verbi>
+
+I verbi --- `upcase-word`, `capitalize-word`, `just-one-space`,
+`delete-blank-lines`, `join-line`, `transpose-chars`, `zap-to-char` e gli altri
+--- sono poche lettere di chirurgia, e trovano le parole con le funzioni di
+`movement.rs`: `M-t` traspone esattamente ciò che `M-f` attraversa. Ogni verbo
+dice nella sua docstring dove lascia il punto. I verbi delle maiuscole, con una
+regione, lavorano sulla regione e lasciano il punto dov'è; senza, lavorano
+sulla parola dopo il punto e lo lasciano dopo di essa. `join-line` chiede alla
+tabella sintattica se un carattere apre o chiude, per non mettere uno spazio
+dopo un'apertura o prima di una chiusura.
+
+Quasi tutti passano da `replace_span`, che sostituisce un tratto e mette il
+punto dove il verbo vuole. `zap-to-char` legge il suo carattere con una cattura
+di tasti (@cattura), armata con il nome di `zap-to-char--do`: la cattura cita
+ciò che riceve prima di chiamarlo, e un simbolo si cerca tra le funzioni.
+
+=== Mark e regione <regione>
+
+`set-mark` mette il mark e lo attiva; con INCLUSIVE i caratteri alle due
+estremità sono nella regione, come in una selezione modale. `region-beginning`,
+`region-end`, `kill-region` e `kill-ring-save` senza una regione attiva danno
+un errore, «The mark is not set now, so there is no region».
+`exchange-point-and-mark` funziona anche con un mark non più attivo, e limita
+la sua posizione alla lunghezza del testo: un mark inattivo non segue le
+modifiche, e può indicare oltre la fine. `keyboard-quit` abbandona una
+sequenza di tasti o un argomento prefisso a metà e disattiva il mark; non
+ferma un comando che gira.
+
+=== Più modifiche in un comando <modifiche-multiple>
+
+I comandi dei commenti e dei rettangoli fanno più modifiche in un comando, e
+ogni modifica sposta gli offset di tutto ciò che viene dopo. Le due famiglie
+fanno la stessa cosa: calcolano le modifiche una volta, sul testo com'è, e le
+applicano dall'ultima alla prima, quando gli offset di ciascuna non sono stati
+spostati da nessuna di quelle ancora da fare. Commentare tre righe applicando
+dall'alto le aperture calcolate all'inizio le mette tutte sulla prima:
+
+#block(breakable: false)[#ref-table(
+  columns: (1.4cm, 1fr, 1fr),
+  header: ([Passo], [Dall'alto], [Dal basso]),
+  [---], [`ab\ncd\nef`, aperture a 0, 3, 6], [lo stesso],
+  [1], [a 0: `// ab\ncd\nef`], [a 6: `ab\ncd\n// ef`],
+  [2], [a 3: `// // ab\ncd\nef`], [a 3: `ab\n// cd\n// ef`],
+  [3], [a 6: `// // // ab\ncd\nef`], [a 0: `// ab\n// cd\n// ef`],
+)]
+
+I commenti mettono le loro modifiche in un elenco ordinato, che `apply`
+applica al contrario; poi rimette il punto dove l'utente stava, calcolandolo
+dallo stesso elenco, perché il buffer non sa che i caratteri cresciuti davanti
+al punto vanno contati. La grafia viene dal modo (`set-comment-syntax`), che la
+colorazione, `forward-sexp` e lo scanner leggono dallo stesso posto: un modo
+che non ha detto nulla riceve un messaggio, e un linguaggio con soli commenti
+a blocco riceve le righe avvolte in uno. Decommentare toglie l'apertura e lo
+spazio che il comando aveva messo, non di più: `//   x` tiene l'indentazione
+che era dentro il commento.
+
+I rettangoli calcolano gli span una volta (`spans`, @rettangoli) e
+`each_line` li percorre dal basso. Inserire allunga prima una riga corta fino
+alla colonna (`insert_at_edge`); `clear-rectangle` non allunga nulla;
+`yank-rectangle` aggiunge in fondo al buffer le righe che mancano al blocco, e
+su una riga dove il blocco ha una stringa vuota non scrive spazi. Ogni comando
+che cambia il buffer lascia il punto all'angolo in alto a sinistra;
+`copy-rectangle-as-kill` lo lascia dov'è. In un buffer in sola lettura i
+rettangoli ignorano il rifiuto #rapporto("BUF-4").
+
+=== I dati della corrispondenza <dati-corrispondenza>
+
+`string-match` ha la forma di Emacs: risponde dove comincia la corrispondenza
+e lascia i gruppi nei #emph[dati della corrispondenza], che `match-beginning`,
+`match-end`, `match-string` e `match-data` leggono dopo, e `set-match-data`
+riscrive. Il prezzo è uno stato che sopravvive alla chiamata: una funzione
+chiamata tra la corrispondenza e la lettura può sovrascriverlo, e la risposta è
+quella di Emacs, `save-match-data` (in `commands.lisp`). `string-match-p`
+non scrive nulla.
+
+I dati stanno in una variabile del thread, `MATCH_DATA`: un passo di un lavoro
+Lisp, sul thread dell'esecutore (@sfondo), non cambia ciò che un comando sta
+per leggere, mentre i lavori sullo stesso thread li condividono, e lì la
+risposta è di nuovo `save-match-data`. Le posizioni sono caratteri, come per
+`substring` e `length`: il motore dà byte, e `search` li converte. È diversa da
+Emacs la sintassi delle espressioni: i gruppi si scrivono `(...)`, non
+`\(...\)`, perché il motore è quello della ricerca (@ricerca), lineare perché
+senza lookahead e senza backreference.
+
+=== `scan-buffer` <scan-buffer>
+
+`scan-buffer` dà a Lisp `Pattern::scan` (@ricerca): tutte le corrispondenze in
+un passaggio, per occur, grep o un linter che legge il proprio output. Risponde
+`(TRUNCATED ENTRIES)`, con le voci nella forma delle liste di risultati
+(@risultati), `(KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END)`,
+costruite dalle stesse due funzioni, `Entry::new` ed `entry_form`. Si ferma a
+`LIMIT` corrispondenze, 10 000 se nessuno lo dice, e allora TRUNCATED è `t`.
+
+== Le decisioni <decisioni-primitive>
+
++ *Un file per concetto.* Le primitive di modifica stanno in tredici file, e
+  ognuno ha il nome di ciò che contiene: `kill-word` si trova in `killing.rs`,
+  accanto a `yank` e a `cut_out`, e `indent-line-to` in `indentation.rs`, il
+  nome della pagina che lo descrive.
++ *Le porte prendono il `Buffer` intero, e il loro risultato non si ignora.*
+  Registrare una modifica richiede la storia che sta accanto al testo, e
+  prenderli insieme rende impossibile tenere l'uno senza l'altra. Il `bool` è
+  `#[must_use]`: un chiamante non può supporre in silenzio che la modifica sia
+  avvenuta e dire all'utente che è andata.
++ *Un messaggio solo per il rifiuto.* «Buffer is read-only», lo stesso per ogni
+  primitiva: il motivo è sempre quello, e il nome del comando non direbbe
+  nulla che l'utente non sappia, perché ha premuto il tasto. Il silenzio è ciò
+  da evitare: un tasto che non fa nulla e non dice nulla sembra un editor
+  rotto, non un buffer protetto #rapporto("BUF-4").
++ *Una modifica disattiva il mark, non lo cancella.* Ogni modifica passa dalle
+  porte, quindi una modifica chiude la selezione, come in Emacs. La posizione
+  resta per `exchange-point-and-mark`, e un mark attivo non ha mai avuto una
+  modifica sotto: non va mai spostato.
++ *`changed` è una funzione sola.* Le porte, e i chiamanti di undo e redo, che
+  scrivono sotto le porte, passano dalla stessa funzione per versione,
+  colorazione, punti di ripresa ed evento `buffer-changed`. Una modifica che
+  incrementasse la versione senza invalidare la colorazione, o il contrario, si
+  vedrebbe solo sullo schermo, minuti dopo, come un colore che non si assesta.
++ *`insert` unisce i suoi argomenti.* `(insert a b c)` è una modifica sola: un
+  passo di undo, e un cambiamento solo per l'evidenziatore.
++ *L'incolla normalizza i fine riga, `insert` no.* Un terminale in modalità
+  bracketed paste consegna i byte della selezione, e un a capo arriva spesso
+  come CR, ciò che manda Invio; l'indice delle righe conta solo `\n`, e dieci
+  righe incollate sarebbero una riga lunga con nove caratteri invisibili. La
+  conversione sta alla porta da cui passa ogni incolla, anche uno yank dagli
+  appunti di sistema; un CR scritto da Lisp di proposito resta un CR. Su
+  Windows la conversione non c'è #rapporto("CMD-7").
++ *Una kill restituisce il testo, e l'anello lo riceve dopo.* L'anello è un
+  compartimento che non si prende mai con il lock di un buffer: prenderlo nella
+  closure aggiungerebbe all'ordine dei lock un arco che nient'altro rispetta.
+  Per questo `cut_out` restituisce il testo e ogni kill lo consegna fuori.
++ *Una kill rifiutata non mette nulla nell'anello.* Un testo nell'anello che è
+  ancora nel buffer verrebbe duplicato dallo yank seguente. Lo stesso per
+  `yank`: un'incollatura rifiutata non registra una posizione, che il
+  `yank-pop` seguente userebbe per cancellare altro testo.
++ *I nomi e la distinzione sono quelli di Emacs.* `kill-*` mette nell'anello
+  ciò che toglie, `delete-*` lo scarta: una configurazione scritta per Emacs
+  trova i comandi che si aspetta, e si comportano come lì.
++ *Una cancellazione toglie ciò che il movimento attraversa.* Una kill non
+  calcola da sé dove arriva: chiede alla funzione del movimento con lo stesso
+  nome. Due calcoli separati finirebbero per divergere, e la differenza si
+  vedrebbe solo come «a volte si mangia il trattino basso».
++ *La colonna obiettivo sopravvive a una serie di movimenti verticali.* Riletta
+  dal punto a ogni movimento, una riga corta in mezzo la ridurrebbe per sempre:
+  si scende oltre una riga corta, si risale, e non si torna dove si era. Si
+  rilegge quando il comando precedente non era un movimento verticale
+  (`last-command`), e si chiede prima del lock del buffer.
++ *Il punto come numero: funzioni, non comandi, in caratteri.* Nessuno arriva
+  utilmente a `point` con `M-x`, mentre ogni movimento descritto è un comando.
+  Una posizione fuori dal buffer va al bordo più vicino invece di essere
+  rifiutata: è quasi sempre una posizione calcolata prima di una modifica, e
+  mettere il punto in un posto vero serve più di un errore.
++ *Le espressioni si lessicano, le parole no.* Da fuori `forward-word` e
+  `forward-sexp` si somigliano; dentro, una parola si trova guardando i
+  caratteri, un'espressione lessicando il buffer con la tabella del modo, perché
+  una parentesi è un delimitatore solo fuori da stringhe e commenti.
++ *L'indentazione: il meccanismo in Rust, la politica in Lisp.* La colonna di
+  una riga è una domanda sulla lingua, e un modo nuovo deve poterla rispondere
+  senza ricompilare; leggere e riscrivere l'indentazione attraverso le porte è
+  meccanismo, e sta qui.
++ *Una riga vuota è indentata fino in fondo, e il punto tiene il suo
+  carattere.* Così riporta Emacs, e così `indent-line-to` non conserva gli
+  spazi in coda come testo. Il punto dentro l'indentazione va alla fine di
+  quella nuova; oltre, tiene il carattere su cui stava, spostato della
+  differenza.
++ *I verbi sono primitive.* Sono ciò che un editor #emph[è], come `kill-line`:
+  un utente che toglie un file `.lisp` dalla sua configurazione non deve
+  trovare `M-u` senza effetto.
++ *Ogni verbo dice dove lascia il punto.* È metà di ciò che rende un tasto
+  ripetibile: `M-u M-u M-u` sale di tre parole perché ognuno lascia il punto
+  dopo la parola che ha cambiato. I verbi degli spazi lo lasciano dov'erano gli
+  spazi, così si continua a scrivere da lì.
++ *Una sostituzione che non cambia nulla non è una modifica.* Quando il testo è
+  già quello che diventerebbe, `replace_span` sposta solo il punto. Non è
+  un'ottimizzazione: una modifica che non cambia caratteri segnerebbe comunque
+  il buffer come modificato, aggiungerebbe un passo di undo e sveglierebbe la
+  colorazione, e mettere in maiuscolo ciò che lo è già lascerebbe un file da
+  salvare.
++ *Senza regione, un errore.* Un comando che non fa nulla in silenzio quando
+  l'utente credeva di avere una selezione è peggio di uno che lo dice; i
+  rettangoli dicono lo stesso con le loro parole.
++ *`yank-pop` è un passo di undo.* Toglie e rimette attraverso le porte, nello
+  stesso comando; il secondo passo non si tenta se il primo è stato rifiutato,
+  che lascerebbe il testo nuovo in un buffer da cui quello vecchio non è uscito.
++ *Le modifiche si calcolano prima e si applicano dall'ultima.* Lavorare in
+  avanti rende sbagliato ogni offset dopo la prima modifica, e lo sbaglio sembra
+  plausibile: la prima riga viene giusta, la terza ha l'apertura in mezzo al
+  testo. Ricalcolare a ogni passo funzionerebbe, con un lock e una lettura per
+  riga. Il punto si rimette dallo stesso elenco.
++ *L'apertura va alla colonna della riga meno indentata.* Così un blocco
+  commentato tiene la sua forma: aperture indentate con il codice fanno di un
+  `if` annidato una scala di `//`. Le righe vuote dentro una regione restano
+  vuote, perché un'apertura lascerebbe spazi in coda, e non contano per
+  decidere se la regione è già commentata; una riga vuota da sola si commenta,
+  perché è ciò che è stato chiesto.
++ *Una regione che finisce all'inizio di una riga non la prende.* Selezionare
+  tre righe trascinando lungo il margine sinistro finisce sulla colonna 0 della
+  quarta, che nessuno ha scelto. Vale per i commenti e per `Tab` su una
+  regione.
++ *La grafia dei commenti la dice il modo.* Un commento è la sola sintassi che
+  cambia con ogni lingua, e l'editor ne conosce già la grafia: niente qui decide
+  come è fatto un commento, e un modo che non ha detto nulla lo sente dire,
+  invece di ricevere un `#` o un `//` a caso.
++ *Il punto all'angolo in alto a sinistra.* È dove comincia il blocco appena
+  toccato, da dove parte la prossima cosa da fargli, ed è la stessa risposta
+  per tutti i comandi che cambiano il buffer. `copy-rectangle-as-kill` non lo
+  sposta: il mark sopravvive a una copia, e il punto all'angolo andrebbe sopra
+  il mark, lasciando una selezione senza larghezza; `M-w` fa lo stesso.
++ *Una riga corta si allunga per inserire, non per svuotare.* Una colonna che
+  non esiste ancora è ciò che `open-rectangle`, `yank-rectangle` e
+  `string-rectangle` devono riempire; `clear-rectangle` svuota ciò che c'è, e
+  una riga corta non ha nulla da svuotare. Un blocco incollato arriva intero,
+  con le righe che mancano in fondo al buffer, e senza spazi su una riga dove
+  non porta nulla.
++ *`rectangle-mark-mode` spento torna una regione normale.* Premuto due volte,
+  rende la selezione che c'era, non nessuna selezione; il flag sta sul mark, e
+  non c'è una seconda cosa da ricordarsi di spegnere.
++ *I dati della corrispondenza hanno la forma di Emacs, in caratteri.* È la
+  forma che ogni pezzo di Emacs Lisp si aspetta, e il codice portato funziona
+  senza essere ristrutturato; il prezzo è `save-match-data`. Le posizioni sono
+  caratteri, così una corrispondenza in una stringa con una `è` dà gli stessi
+  numeri che in Emacs.
++ *I dati della corrispondenza sono per thread.* Un lavoro Lisp sul thread
+  dell'esecutore e un comando sul thread principale non possono coordinarsi, e
+  il primo non deve cambiare ciò che il secondo sta per leggere.
++ *Un'espressione sbagliata è un errore, non un nil.* Un'espressione che non
+  compila è un difetto dell'espressione, e un nil la farebbe sembrare una
+  stringa che non corrisponde. Una corrispondenza fallita invece lascia i dati
+  com'erano.
++ *La forma di una voce è scritta una volta.* `scan-buffer` e le liste di
+  risultati costruiscono le voci con le stesse funzioni, così una vista si
+  scrive una volta e mostra risultati da ovunque. La lista è posizionale, come
+  ogni risposta strutturata dell'editor; `KIND` distingue un buffer da un file,
+  e `MATCH-START` e `MATCH-END` sono dentro `TEXT`, così una vista evidenzia
+  senza cercare di nuovo.
++ *`scan-buffer` paga carburante per carattere percorso.* Un megabyte per
+  un'unità permetterebbe a un ciclo un lavoro senza limite dentro un budget
+  fatto per limitarlo; è la regola di `directory-files-recursive`, che paga
+  ogni percorso attraversato.
 
 // ===========================================================================
 = I moduli Lisp <moduli-lisp>
@@ -4163,31 +4562,36 @@ Generato da `into.function(` e `into.command(` nei file di `primitives/`. Un ast
   columns: (3.2cm, 1fr),
   header: ([Modulo], [Primitive]),
   [`ask` (4)], [`y-or-n`, `yes-or-no`, `ask--answer`, `ask--typed`],
-  [`buffers` (17)], [`buffer-put`, `buffer-get`, `buffer-substring`, `switch-to-buffer`, `current-buffer`, `buffer-create`, `close-buffer`, `kill-buffer`\*, `kill-buffer-without-saving`\*, `buffer-string`, `clear-buffer`, `with-current-buffer`, `set-buffer-read-only`, `buffer-read-only-p`, `buffer-modified-p`, `buffer-file-name`, `major-mode`],
+  [`buffers` (18)], [`buffer-put`, `buffer-get`, `buffer-substring`, `switch-to-buffer`, `current-buffer`, `buffer-create`, `close-buffer`, `kill-buffer`\*, `kill-buffer-without-saving`\*, `buffer-string`, `clear-buffer`, `with-current-buffer`, `set-buffer-read-only`, `buffer-read-only-p`, `buffer-modified-p`, `buffer-file-name`, `major-mode`, `set-major-mode`],
   [`commands` (10)], [`register-command`, `commandp`, `command-args`, `all-commands`, `execute-extended-command`, `command-completions`, `command-execute-prompt`\*, `all-buffer-names`, `call-interactively`, `pending-command`],
   [`comments` (6)], [`comment-dwim`\*, `comment-line`\*, `comment-indent`\*, `comment-region`\*, `uncomment-region`\*, `comment-syntax`],
   [`completion` (8)], [`completion-at-point`\*, `fuzzy-filter`, `completion-at-point-choose`, `add-completion-function`, `set-completion-functions`, `completion-functions`, `buffer-words`, `bounds-of-thing-at-point`],
-  [`edits` (47)], [`delete-region`, `self-insert`, `insert`, `insert-pasted-text`\*, `insert-newline`\*, `delete-backward-char`\*, `backward-char`\*, `forward-char`\*, `previous-line`\*, `delete-char`\*, `kill-line`\*, `kill-whole-line`\*, `kill-word`\*, `backward-kill-word`\*, `kill-paragraph`\*, `backward-kill-paragraph`\*, `undo`\*, `redo`\*, `undo-boundary`\*, `set-undo-limit`\*, `beginning-of-line`\*, `end-of-line`\*, `forward-word`\*, `backward-word`\*, `forward-sexp`\*, `backward-sexp`\*, `kill-sexp`\*, `backward-kill-sexp`\*, `up-list`\*, `backward-up-list`\*, `down-list`\*, `current-column`, `current-indentation`, `previous-indentation`, `indent-line-to`, `forward-paragraph`\*, `backward-paragraph`\*, `beginning-of-buffer`\*, `end-of-buffer`\*, `goto-line`\*, `next-line`\*, `point`, `point-min`, `point-max`, `goto-char`, `line-number-at-point`, `current-line`],
-  [`general` (11)], [`eval-file`, `define-key`, `define-repeat-key`, `repeat`\*, `log`, `regexp-opt`, `all-logs`, `backtrace`, `set-echo-message`, `set-transient-keymap`, `clear-transient-keymap`],
-  [`help` (6)], [`key-binding`, `keys-with-prefix`, `keymap-bindings`, `where-is`, `command-specs`, `read-key-sequence`],
+  [`edits` (7)], [`delete-region`, `self-insert`, `insert`, `insert-pasted-text`\*, `insert-newline`\*, `delete-backward-char`\*, `delete-char`\*],
+  [`general` (13)], [`eval-file`, `eval-string-top-level`, `define-key`, `set-local-keymap`, `define-repeat-key`, `repeat`\*, `log`, `regexp-opt`, `all-logs`, `backtrace`, `set-echo-message`, `set-transient-keymap`, `clear-transient-keymap`],
+  [`help` (7)], [`key-binding`, `keys-with-prefix`, `keymap-bindings`, `where-is`, `command-specs`, `help--macro-doc`, `read-key-sequence`],
+  [`indentation` (3)], [`current-indentation`, `previous-indentation`, `indent-line-to`],
   [`io` (31)], [`quit`\*, `quit-without-saving`\*, `save-some-buffers`\*, `save-some-buffers--answer`, `quit--confirm`, `find-file`\*, `data-directory`, `getenv`, `setenv`, `path-separator`, `list-dir`, `directory-files-recursive`, `read-file-to-string`, `match-list`, `expand-file-name`, `file-name-as-directory`, `directory-file-name`, `file-name-directory`, `file-name-nondirectory`, `save-buffer`\*, `save-buffer--overwrite`, `recover-file`\*, `recover-file--adopt`, `revert-buffer`\*, `revert-buffer--reread`, `write-file`\*, `file-exists-p`, `file-directory-p`, `directory-entry-count`, `delete-file`, `rename-file`],
   [`isearch` (10)], [`isearch-forward`\*, `isearch-backward`\*, `isearch-forward-regexp`\*, `isearch-backward-regexp`\*, `isearch-update`, `isearch-exit`, `isearch-abort`, `isearch-repeat-forward`, `isearch-repeat-backward`, `isearch-active-p`],
+  [`killing` (14)], [`kill-line`\*, `kill-whole-line`\*, `kill-word`\*, `backward-kill-word`\*, `kill-paragraph`\*, `backward-kill-paragraph`\*, `kill-region`\*, `kill-ring-save`\*, `yank`\*, `yank-pop`\*, `set-kill-ring-max`\*, `kill-new`, `current-kill`, `kill-ring-length`],
   [`macros` (12)], [`kmacro-start-macro`\*, `kmacro-end-macro`\*, `kmacro-cancel-macro`\*, `kmacro-call-macro`\*, `kmacro-end-and-call-macro`\*, `kmacro-insert-counter`\*, `kmacro-set-counter`\*, `kmacro-counter`, `kmacro-recording-p`, `kbd-macro-keys`, `define-kbd-macro`, `kmacro-call-keys`],
   [`match_data` (7)], [`string-match`, `string-match-p`, `match-beginning`, `match-end`, `match-string`, `match-data`, `set-match-data`],
   [`minibuffer` (12)], [`minibuffer-cleanup`, `minibuffer-confirm`, `minibuffer-cancel`, `minibuffer-complete`, `minibuffer-choose-completion`, `default-minibuffer-prompt`, `minibuffer-read`, `completion-invalidate`, `minibuffer-history`, `clear-minibuffer-history`, `history-previous`\*, `history-next`\*],
-  [`modes` (15)], [`make-mode`, `add-hook`, `add-syntax-rule`, `add-syntax-region`, `add-auto-mode`, `syntax-ppss`, `balance-point`, `bounds-of-enclosing-list`, `set-syntax-pairs`, `set-string-syntax`, `set-char-quote`, `set-syntax-entry`, `set-comment-syntax`, `syntax-class`, `matching-delimiter`],
+  [`modes` (16)], [`make-mode`, `add-hook`, `remove-hook`, `add-syntax-rule`, `add-syntax-region`, `add-auto-mode`, `syntax-ppss`, `balance-point`, `bounds-of-enclosing-list`, `set-syntax-pairs`, `set-string-syntax`, `set-char-quote`, `set-syntax-entry`, `set-comment-syntax`, `syntax-class`, `matching-delimiter`],
   [`mouse` (6)], [`mouse-set-point`\*, `mouse-start-selection`\*, `mouse-drag-to`\*, `mouse-resize`\*, `mouse-mode-toggle`\*, `mouse-scroll`\*],
+  [`movement` (20)], [`backward-char`\*, `forward-char`\*, `previous-line`\*, `next-line`\*, `beginning-of-line`\*, `end-of-line`\*, `forward-word`\*, `backward-word`\*, `forward-paragraph`\*, `backward-paragraph`\*, `beginning-of-buffer`\*, `end-of-buffer`\*, `goto-line`\*, `point`, `point-min`, `point-max`, `goto-char`, `line-number-at-point`, `current-line`, `current-column`],
   [`overlays` (5)], [`make-overlay`, `delete-overlay`, `remove-overlays`, `overlays-at`, `overlay-face`],
   [`rectangle` (10)], [`rectangle-mark-mode`\*, `kill-rectangle`\*, `delete-rectangle`\*, `copy-rectangle-as-kill`\*, `yank-rectangle`\*, `open-rectangle`\*, `clear-rectangle`\*, `string-rectangle`\*, `rectangle-bounds`, `killed-rectangle`],
-  [`region` (17)], [`set-mark`\*, `keyboard-quit`\*, `deactivate-mark`\*, `exchange-point-and-mark`\*, `mark-whole-buffer`\*, `kill-region`\*, `kill-ring-save`\*, `yank`\*, `yank-pop`\*, `set-kill-ring-max`\*, `mark`, `use-region-p`, `region-beginning`, `region-end`, `kill-new`, `current-kill`, `kill-ring-length`],
+  [`region` (9)], [`set-mark`\*, `keyboard-quit`\*, `deactivate-mark`\*, `exchange-point-and-mark`\*, `mark-whole-buffer`\*, `mark`, `use-region-p`, `region-beginning`, `region-end`],
   [`replace` (12)], [`query-replace`\*, `query-replace-regexp`\*, `replace-string`\*, `replace-regexp`\*, `replace-this`, `replace-skip`, `replace-rest`, `replace-back`, `replace-done`, `replace-abandon`, `replace-match`, `replace-count`],
-  [`results` (11)], [`occur--scan`, `grep--scan`, `next-error`\*, `previous-error`\*, `results-count`, `results-entry`, `results-state`, `results-visit`, `results-buffer`, `results-select`\*, `results-put`],
+  [`results` (13)], [`occur--scan`, `grep--scan`, `next-error`\*, `previous-error`\*, `results-count`, `results-entry`, `results-state`, `results-visit`, `results-buffer`, `results-select`\*, `results-put`, `results-display`, `results-quit`\*],
   [`scan` (1)], [`scan-buffer`],
-  [`shell` (4)], [`shell-command-start`\*, `shell-command-to-string`, `parse-overstrike`, `shell-command-running-p`],
-  [`theme` (5)], [`set-face`\*, `face-style`, `reset-faces`, `list-faces`, `list-colors`],
+  [`sexp` (7)], [`forward-sexp`\*, `backward-sexp`\*, `kill-sexp`\*, `backward-kill-sexp`\*, `up-list`\*, `backward-up-list`\*, `down-list`\*],
+  [`shell` (4)], [`shell-command-start`, `shell-command-to-string`, `parse-overstrike`, `shell-command-running-p`],
+  [`theme` (6)], [`set-face`\*, `define-face`, `face-style`, `reset-faces`, `list-faces`, `list-colors`],
   [`ui` (3)], [`recenter`\*, `make-floating-window`, `close-floating-window`],
+  [`undo` (5)], [`undo-join`, `undo`\*, `redo`\*, `undo-boundary`\*, `set-undo-limit`\*],
   [`verbs` (14)], [`upcase-word`\*, `downcase-word`\*, `capitalize-word`\*, `delete-horizontal-space`\*, `just-one-space`\*, `delete-blank-lines`\*, `back-to-indentation`\*, `join-line`\*, `duplicate-line`\*, `transpose-lines`\*, `transpose-chars`\*, `transpose-words`\*, `zap-to-char`\*, `zap-to-char--do`],
   [`virtual_text` (4)], [`make-virtual-text`, `clear-virtual-text`, `delete-virtual-text`, `virtual-text-at`],
   [`windows` (12)], [`split-window-below`\*, `split-window-right`\*, `delete-window`\*, `delete-other-windows`\*, `other-window`\*, `selected-window`, `select-window`, `count-windows`, `scroll-up-command`\*, `scroll-down-command`\*, `display-buffer-at-bottom`, `window-buffer`],
-  [`workers` (4)], [`define-worker`, `stop-worker`, `running-workers`, `background-call`],
+  [`workers` (9)], [`define-worker`, `stop-worker`, `running-workers`, `background-call`, `emit-event`, `work-option`, `set-work-option`, `work-options`, `work-list`],
 )

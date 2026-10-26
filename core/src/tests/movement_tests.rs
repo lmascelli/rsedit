@@ -1,7 +1,8 @@
-//! Cursor movement: characters, lines, words, paragraphs and the whole buffer.
+//! Cursor movement: characters, lines, words, paragraphs and the whole buffer,
+//! driven through `eval` against a real editor rather than by poking the
+//! buffer, so that the tests cover what a keystroke does.
 //!
-//! Driven through `eval` against a real editor rather than by poking the
-//! buffer, so the tests cover what a keystroke actually does.
+//! Design: `doc/architettura-editor.typ, <movimento>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -63,8 +64,7 @@ mod tests {
 
     // ---------------- characters ----------------
 
-    /// `forward-char` used to move within the line only, so point stopped dead
-    /// at the end of a line instead of continuing onto the next.
+    /// `forward-char` crosses the end of a line onto the next, as C-f does.
     #[test]
     fn forward_char_crosses_the_end_of_a_line() {
         let (ctx, env) = editor_with("ab\ncd");
@@ -105,8 +105,8 @@ mod tests {
         assert_eq!(point(&ctx), (1, 0));
     }
 
-    /// The behaviour that was missing: a short line in the middle of a run of
-    /// vertical moves must not cost you the column you started from.
+    /// A short line in the middle of a run of vertical moves does not cost you
+    /// the column you started from.
     #[test]
     fn vertical_movement_keeps_the_goal_column_across_a_short_line() {
         let (ctx, env) = editor_with("aaaaaaaaaa\nbb\ncccccccccc");
@@ -232,8 +232,8 @@ mod tests {
         assert_eq!(point(&ctx).0, 0);
     }
 
-    /// `goto-line` is the first built-in command that takes an argument, so
-    /// M-x must prompt for it rather than fail on arity.
+    /// `goto-line` takes an argument, so M-x prompts for it rather than
+    /// failing on arity.
     #[test]
     fn goto_line_is_a_command_that_prompts_for_its_argument() {
         let (ctx, env) = editor_with("l1\nl2\nl3");
@@ -270,9 +270,8 @@ mod tests {
 
     // ---------------- the keys Emacs actually uses ----------------
 
-    /// Paragraph motion was on `M-n` and `M-p`, which Emacs does not bind
-    /// globally at all -- in a prompt they mean "next/previous history entry".
-    /// `M-}` and `M-{` are the real bindings.
+    /// Paragraph motion is on `M-}` and `M-{`, as in Emacs, which binds `M-n`
+    /// and `M-p` to nothing globally: in a prompt they step through history.
     #[test]
     fn paragraphs_move_on_the_brace_keys() {
         let (ctx, env) = editor_with("one\n\ntwo\n\nthree\n");
@@ -289,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn the_old_paragraph_keys_are_no_longer_bound() {
+    fn m_n_does_not_move_by_a_paragraph() {
         let (ctx, env) = editor_with("one\n\ntwo\n\nthree\n");
         eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
             .expect("common-keymaps.lisp must load");
@@ -297,7 +296,7 @@ mod tests {
 
         press(&ctx, &env, KeyCode::Char('n'), alt());
 
-        assert_eq!(point_1d(&ctx), 0, "M-n no longer moves by a paragraph");
+        assert_eq!(point_1d(&ctx), 0, "M-n does not move by a paragraph");
     }
 
     /// `M-g` is a prefix in Emacs, and both of the keys after it reach
@@ -335,8 +334,8 @@ mod tests {
         }
     }
 
-    /// A bare `M-g` is now a prefix waiting for a second key, so it must not
-    /// go anywhere on its own.
+    /// A bare `M-g` is a prefix waiting for a second key, and goes nowhere on
+    /// its own.
     #[test]
     fn a_bare_m_g_no_longer_prompts() {
         let (ctx, env) = editor_with("one\ntwo\nthree\n");

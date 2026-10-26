@@ -90,7 +90,7 @@ fn click_at<B: BufferTrait>(
         // screen has no opinion about how long a line is, and a click in the
         // blank space to the right of a short one means its end.
         let line = line.min(buf.text.line_count().saturating_sub(1));
-        let column = column.min(edits::line_length(&buf.text, line));
+        let column = column.min(movement::line_length(&buf.text, line));
         buf.text.cursor_move(line, column);
         match selecting {
             // Set *after* point has moved, so the region is anchored where the
@@ -177,7 +177,7 @@ primitive!(mouse_drag_to, args, _env, ctx, {
             buf.mark = Some(Mark::new(buf.text.cursor_pos_1d()));
         }
         let line = line.min(buf.text.line_count().saturating_sub(1));
-        let column = column.min(edits::line_length(&buf.text, line));
+        let column = column.min(movement::line_length(&buf.text, line));
         buf.text.cursor_move(line, column);
     });
     Ok(ELispExp::symbol("t".into()))

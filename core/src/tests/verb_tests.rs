@@ -1,17 +1,9 @@
-//! The small verbs: what each one changes, and where it leaves point.
+//! The small verbs: what each changes and where it leaves point, half of what
+//! makes a key repeatable; and the edges, where a verb either says so or
+//! corrupts something: the first line, the end of a line, a buffer that does
+//! not end in a newline.
 //!
-//! # What is worth testing here
-//!
-//! Two things, and they are not the obvious one. Whether `M-u` upcases a word
-//! is not in much doubt; where it leaves point is, and that is half of what
-//! makes the key usable -- `M-u M-u M-u` walks up three words only because
-//! each press ends after the word it changed. So every test below says where
-//! point ended.
-//!
-//! The other is the edges: the first line has nothing above it, the end of a
-//! line has no character after it, and a buffer can end without a newline.
-//! Each of those is where a verb either says so or corrupts something, and
-//! none of them comes up while trying the feature out by hand.
+//! Design: `doc/architettura-editor.typ, <verbi>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, Mark, gap_buffer::GapBuffer};

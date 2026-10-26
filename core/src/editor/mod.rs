@@ -24,7 +24,7 @@ use crate::{
     modes::prescan::Prescanner,
     modes::watcher::FileWatcher,
     modes::{Grammar, MajorMode, SyntaxTable},
-    primitives::{edits::goto_offset, install_primitives},
+    primitives::{install_primitives, movement::goto_offset},
     text::isearch::Isearch,
     text::kill_ring::Direction,
     ui::{

@@ -1,42 +1,25 @@
 //! The small verbs: case, whitespace, lines, transposition, and zapping.
+//! Each says where it leaves point, and finds words with the functions the
+//! motion commands move by.
 //!
-//! # What these have in common
-//!
-//! Each is a few characters of surgery that everybody does twenty times a day
-//! and nobody wants to think about. They live here rather than in a module for
-//! the reason `kill-line` does: they are what an editor *is*, and a user who
-//! commented out one `.lisp` file should not find that `M-u` has stopped
-//! working.
-//!
-//! # Where a word begins and ends
-//!
-//! Nowhere in this file. `word_forward` and `word_backward` are the same two
-//! functions `forward-word` and `kill-word` move by, so `M-t` transposes
-//! exactly what `M-f` would have stepped over. A second notion of a word,
-//! written here because it was easier, is the kind of difference that is only
-//! ever noticed as "sometimes it eats the underscore".
-//!
-//! # Point, afterwards
-//!
-//! Every verb says in its documentation where point ends up, because that is
-//! half of what makes a verb repeatable: `M-u M-u M-u` walks up three words
-//! only because each one leaves point after the word it changed. The
-//! whitespace verbs leave point where the whitespace was, so that typing
-//! carries on from there.
+//! Design: `doc/architettura-editor.typ, <verbi>`.
 use super::*;
 use crate::buffer::{Buffer, mark::region_bounds};
-use crate::primitives::edits::{
-    cut_out, delete_range, goto_offset, insert_text, is_word_char, line_bounds, word_backward,
-    word_forward,
+use crate::primitives::edits::{delete_range, insert_text};
+use crate::primitives::killing::cut_out;
+use crate::primitives::movement::{
+    goto_offset, is_blank_line, is_word_char, line_bounds, word_backward, word_forward,
 };
 use crate::text::kill_ring::Direction;
 
-/// Replace `[from, to)` with TEXT and put point at POINT.
+// TODO(BUF-4): a read-only buffer's refusal comes back as false, and nothing
+// says so.
+/// Replaces the text from FROM to TO with TEXT, puts point at POINT, and
+/// returns whether the buffer changed.
 ///
-/// Nothing at all happens when the text is already what it would become. That
-/// is not an optimisation: an edit that changed no characters would still mark
-/// the buffer modified, push an undo entry and wake the colouring, so
-/// upcasing something already upcased would leave a file that has to be saved.
+/// When the text is TEXT already, only point moves: an edit that changed no
+/// character would still mark the buffer modified, add an undo step and wake
+/// the colouring.
 fn replace_span<B: BufferTrait>(
     buf: &mut Buffer<B>,
     from: usize,
@@ -58,11 +41,9 @@ fn replace_span<B: BufferTrait>(
     true
 }
 
-/// The region, or the span from point to the end of the next word.
-///
-/// The one rule the case verbs share: with a selection they work on it, and
-/// without one they work on a word. `(usize, usize, bool)` -- the flag says
-/// whether it was a region, which is what decides where point is left.
+/// Returns what a case verb works on: the region, or point to the end of the
+/// next word; and whether it was the region, which decides where point is
+/// left.
 fn case_scope<B: BufferTrait>(buf: &Buffer<B>) -> (usize, usize, bool) {
     match region_bounds(buf.mark, buf.text.cursor_pos_1d(), buf.text.len()) {
         Some((from, to)) => (from, to, true),
@@ -82,8 +63,8 @@ enum Casing {
 }
 
 impl Casing {
-    /// TEXT recased. `Capitalise` works per word, so it does the same thing to
-    /// a selection of six words as `M-c` six times would.
+    /// Returns TEXT recased. `Capitalise` works per word, so a selection of
+    /// six words comes out as six `M-c` would leave it.
     fn apply(self, text: &str) -> String {
         match self {
             Casing::Up => text.to_uppercase(),
@@ -110,6 +91,8 @@ impl Casing {
     }
 }
 
+/// Recases what a case verb works on with CASING, and answers whether the
+/// buffer changed.
 fn recase<B: BufferTrait>(ctx: &EditorState<B>, casing: Casing) -> ELispExp<B> {
     let changed = ctx.with_current_buffer_mut(|buf| {
         let (from, to, was_region) = case_scope(buf);
@@ -155,7 +138,7 @@ primitive!(capitalize_word, _args, _env, ctx, {
 // Whitespace
 // ---------------------------------------------------------------------------
 
-/// The run of spaces and tabs around POINT, as offsets.
+/// Returns the offsets of the run of spaces and tabs around POINT.
 fn horizontal_space<B: BufferTrait>(text: &B, point: usize) -> (usize, usize) {
     let horizontal = |c: char| c == ' ' || c == '\t';
     let mut from = point;
@@ -198,12 +181,6 @@ primitive!(just_one_space, _args, _env, ctx, {
     Ok(ELispExp::boolean(changed))
 });
 
-/// Whether LINE has nothing but whitespace on it.
-fn blank_line<B: BufferTrait>(text: &B, line: usize) -> bool {
-    let (from, to) = line_bounds(text, line);
-    text.slice(from, to).trim().is_empty()
-}
-
 pub const DELETE_BLANK_LINES_DOC: &str = "(delete-blank-lines): On a blank line among others, \
          delete all of them but one; on a blank line alone, delete it; on a line with text, \
          delete the blank lines after it.";
@@ -212,14 +189,14 @@ primitive!(delete_blank_lines, _args, _env, ctx, {
     let changed = ctx.with_current_buffer_mut(|buf| {
         let line = buf.text.cursor_pos().0;
         let last = buf.text.line_count().saturating_sub(1);
-        if blank_line(&buf.text, line) {
+        if is_blank_line(&buf.text, line) {
             // The whole run this line is part of.
             let mut first = line;
-            while first > 0 && blank_line(&buf.text, first - 1) {
+            while first > 0 && is_blank_line(&buf.text, first - 1) {
                 first -= 1;
             }
             let mut end = line;
-            while end < last && blank_line(&buf.text, end + 1) {
+            while end < last && is_blank_line(&buf.text, end + 1) {
                 end += 1;
             }
             let alone = first == end;
@@ -247,7 +224,7 @@ primitive!(delete_blank_lines, _args, _env, ctx, {
         } else {
             // On a line with text: the blank ones under it go.
             let mut end = line;
-            while end < last && blank_line(&buf.text, end + 1) {
+            while end < last && is_blank_line(&buf.text, end + 1) {
                 end += 1;
             }
             if end == line {
@@ -523,13 +500,10 @@ primitive!(zap_to_char_do, args, env, ctx, {
     }
 });
 
-/// Register this module's primitives: the transformations a key applies to a word, a line, a region.
+/// Registers the small verbs.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // The small verbs. See `primitives::verbs`.
     into.command("upcase-word", upcase_word, &[], UPCASE_WORD_DOC);
     into.command("downcase-word", downcase_word, &[], DOWNCASE_WORD_DOC);
     into.command("capitalize-word", capitalize_word, &[], CAPITALIZE_WORD_DOC);

@@ -1,14 +1,15 @@
-//! Recording keys and pressing them again.
+//! Recording keys and pressing them again, and the macro counter. The state
+//! is in [`crate::managers::Macros`], the replay in [`crate::editor`].
 //!
-//! The state is in [`crate::managers::Macros`] and the replay in
-//! [`crate::editor`]; this is the door Lisp comes through.
+//! Design: `doc/architettura-editor.typ, <macro>`.
 use super::*;
 use crate::input::describe_keys;
 
 /// How many times a call should repeat when nothing says.
 const ONCE: usize = 1;
 
-/// The repeat count a prefix argument asks for.
+/// Returns how many times the first of ARGS asks for, once when it asks for
+/// none or for less than one.
 fn repetitions<B: BufferTrait>(args: &[ELispExp<B>]) -> usize {
     match args.first() {
         Some(ELispExp::Number(n)) if n.is_finite() && *n >= 1.0 => *n as usize,
@@ -211,6 +212,7 @@ primitive!(kmacro_insert_counter, args, _env, ctx, {
         _ => 0,
     };
     let value = ctx.macros_mut(|macros| macros.take_counter(1));
+    // TODO(CMD-3): WIDTH is not bounded, and past 65 535 `format!` panics.
     let text = if width == 0 {
         value.to_string()
     } else if value < 0 {
@@ -222,6 +224,8 @@ primitive!(kmacro_insert_counter, args, _env, ctx, {
         let at = buf.text.cursor_pos_1d();
         crate::primitives::edits::insert_text(buf, at, &text)
     });
+    // TODO(BUF-4): a refusal is an error here, worded unlike `edited`'s
+    // message, and the counter has moved on already.
     if !inserted {
         return Err(EvalError::RuntimeMessage("This buffer is read-only".into()));
     }
@@ -254,14 +258,10 @@ primitive!(kmacro_counter, _args, _env, ctx, {
     ))
 });
 
-/// Register this module's primitives: recording and replaying keystrokes.
+/// Registers the primitives of keyboard macros.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // Recording keys and pressing them again. See `primitives::macros`, and
-    // `managers::macros` for why a macro is keys rather than commands.
     into.command(
         "kmacro-start-macro",
         kmacro_start_macro,

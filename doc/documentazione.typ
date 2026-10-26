@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--15 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--16 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -1435,7 +1435,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [13], [`text/`, `input.rs`, `commands.rs` (fatto)], [2 047], [---],
   [14], [`managers/` (fatto)], [2 936], [la regola delle coppie con `editor/`],
   [15], [`editor/` (fatto)], [4 838], [le porte e gli inoltri; la mappa sopra `managers/`],
-  [16], [`primitives/`, modifica del testo: `edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`, `match_data`, `scan`], [4 353], [docstring già fatte nella fase B],
+  [16], [`primitives/`, modifica del testo: `edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`, `match_data`, `scan` (fatto)], [4 353], [docstring già fatte nella fase B],
   [17], [`primitives/`, file, finestre e lavori: `io`, `buffers`, `windows`, `ui`, `mouse`, `ask`, `shell`, `workers`, `lisp_job`, `args`], [4 995], [`io.rs` è il file più lungo: 1 818 righe],
   [18], [`primitives/`, il resto: `commands`, `completion`, `general`, `help`, `isearch`, `minibuffer`, `modes`, `overlays`, `replace`, `results`, `theme`, `virtual_text`, `mod`], [5 953], [---],
   [19], [`modes/`, `feature/`], [2 896], [---],
@@ -1703,6 +1703,63 @@ sistemare in un commit a parte (in `settings.rs` le stesse righe da formattare
 fanno ora cinque blocchi invece di tre, perché i commenti nuovi le separano);
 il ciclo degli eventi della TUI e il commento sul log in `main.rs` (passo 20);
 `primitives/replace.rs` e RIC-8 (passo 18).
+
+*Passo 16, fatto.* `primitives/edits.rs` è diviso in sei file, uno per
+concetto: `edits.rs` tiene le due porte, `changed`, `edited` e le primitive che
+inseriscono e cancellano caratteri; `undo.rs` l'undo; `movement.rs` il
+movimento e il punto come numero, con le funzioni che dicono dove finiscono una
+parola, una riga, un paragrafo, che usano anche le kill, i verbi, i commenti, i
+rettangoli, il mouse e le liste di risultati; `killing.rs` le kill, con la
+parte del kill ring che stava in `region.rs` e con `cut_out`; `sexp.rs` le
+espressioni; `indentation.rs` l'indentazione. `region.rs` tiene il mark e la
+regione. I due lettori di conteggi sono passati in `args.rs`, con gli altri
+lettori di argomenti. Le tre funzioni uguali che dicevano se una riga è vuota
+sono diventate una; `scan.rs` costruisce le sue voci con `Entry::new` ed
+`entry_form`, come le liste di risultati, invece di ripeterne la forma e
+`KIND_BUFFER`; `copy-rectangle-as-kill` non calcola più un rettangolo che poi
+scartava. Il rustdoc segue le regole, con i `TODO` di BUF-1, BUF-4, CMD-3,
+CMD-5, CMD-6 e CMD-7 dove sta il lavoro. Le sezioni con titolo e gli altri
+perché lunghi sono nel manuale, nella nuova sezione «Le primitive di modifica»
+del capitolo sulle primitive, con trentatré decisioni, più una sulle macro. I
+commenti di dieci file di test seguono le regole (in `region_tests` non c'era
+nulla da cambiare); da `indent_tests` i test dei
+comandi sulle espressioni e di `syntax-ppss` sono passati in
+`sexp_command_tests`, e `primitive_shape_tests` controlla anche i moduli nuovi
+e `match_data`, che mancava. I file del passo scendono da 3 981 a 3 805 righe,
+e quelle di commento da 651 a 489; il più lungo è ora `verbs.rs`, con 536. Il
+comportamento non è cambiato: gli stessi test passano, uno con il nome senza
+storia.
+
+Il passo ha trovato due difetti di comportamento, che il rapporto ora
+descrive. BUF-4: in un buffer in sola lettura le kill, i verbi, i commenti e i
+rettangoli non dicono nulla, `kill-rectangle` conserva un blocco che non ha
+tolto, e `kmacro-insert-counter` segnala un errore con altre parole. CMD-7: su
+Windows `insert-pasted-text` lascia i CR, senza un motivo scritto, e quattro
+test di `paste_tests` lì fallirebbero.
+
+Gli altri difetti sono in commenti, test e documenti, e la patch li corregge.
+Il rustdoc di `install` in `scan.rs` diceva che il modulo registra la cache
+dello scanner sintattico; un commento di `comments.rs` vi metteva
+`delete-region`, e uno di `edits.rs` diceva che `self-insert` è un comando,
+mentre è registrata come funzione. `insert_block` si diceva condivisa da
+`yank-rectangle` e da `string-rectangle`, che non la usa; `scope_text` diceva
+di restituire il testo senza gli spazi ai bordi, che non toglie; `replace_span`
+diceva che non succede nulla quando il testo è già quello giusto, mentre il
+punto si sposta. `match_data.rs` parlava di un «Lisp worker» e di «fibers»,
+che sono lavori Lisp sul thread dell'esecutore, e il commento di `insert` di un
+«syntax worker». Un commento di `primitive_shape_tests` contava ventisei
+moduli. Nel manuale l'appendice delle primitive, che si dice generata, dava 47
+primitive a `edits` (erano 48: mancava `undo-join`) e 4 a `workers` (sono 9),
+`shell-command-start` come comando, e 304 in tutto invece di 318: ora è
+rigenerata dal codice, con i numeri della tabella del registro e di «Dove sta
+cosa».
+
+Restano ai passi dei loro capitoli: la documentazione di `primitives/mod.rs`,
+che conta venticinque moduli e 277 registrazioni (passo 18); le descrizioni
+della tabella del registro per gli altri moduli, come quella di `workers`, che
+nomina quattro primitive su nove (passi 17 e 18); il resto di `args.rs` e i due
+test di `recenter`, che restano in `indent_tests` fino a `primitives/ui.rs`
+(passo 17).
 
 == Fase D --- il manuale (passo 22)
 

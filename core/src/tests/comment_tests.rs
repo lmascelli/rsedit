@@ -1,17 +1,9 @@
-//! Commenting out, and the arithmetic that makes it come out straight.
+//! Commenting out, and the arithmetic that makes it come out straight: each
+//! command makes several edits, each moving the ones after it, so the region
+//! cases use enough lines for a drift to show. The spelling comes from the
+//! mode, which may have said nothing, or have only block comments.
 //!
-//! # What is worth testing here
-//!
-//! Every command in this family makes several edits at once, and each edit
-//! moves the ones after it. That is the whole risk, and it fails *plausibly*:
-//! the first line comes out right, the third has its `//` three characters
-//! into the text, and it looks like a rendering fault rather than arithmetic.
-//! So the region cases below all use enough lines for the drift to show.
-//!
-//! The second half is that none of this knows what a comment looks like. The
-//! spelling comes from the mode, so a mode that has said nothing must be told
-//! about rather than guessed at, and a language with only block comments must
-//! still work.
+//! Design: `doc/architettura-editor.typ, <modifiche-multiple>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -61,7 +53,7 @@ mod tests {
         ctx.with_current_buffer(|buf| buf.text.cursor_pos_1d())
     }
 
-    /// Put point at OFFSET and the mark at MARK, making a region.
+    /// Puts point at OFFSET and the mark at MARK, making a region.
     fn select(ctx: &Ctx, mark: usize, point: usize) {
         run_at(ctx, point);
         ctx.with_current_buffer_mut(|buf| {
