@@ -1,36 +1,16 @@
-//! What the editor can be asked about itself: what a key does, where a
-//! command is bound, what arguments it collects.
+//! What the editor can be asked about itself: what a key runs, where a
+//! command is bound, what arguments it collects, and the next key sequence,
+//! read for a page to describe. The answers are the editor's own, and the
+//! pages that show them are `help.lisp`.
 //!
-//! # The split
-//!
-//! Everything here answers a question and draws nothing. `describe-key` is a
-//! page of text in a buffer, and that lives in `help.lisp`, where it can be
-//! replaced by a window with buttons without any of the answers changing.
-//!
-//! The answers themselves cannot be replaced, and are in Rust for the same
-//! reason `query-replace`'s loop is: a help command that a missing module
-//! could quietly make wrong is worse than no help command, because it is
-//! believed.
-//!
-//! # Why none of this re-reads the keymaps itself
-//!
-//! Which map wins is a rule of the editor, written once in [`Modes`] and run
-//! on every keystroke. Everything below asks *that*, through the facade, so a
-//! reported binding and a pressed one cannot disagree -- see
-//! [`crate::editor::keys`], where the capture that `describe-key` is built on
-//! also diverts at the end of the real resolution rather than in front of it.
+//! Design: `doc/architettura-editor.typ, <aiuto>`.
 use super::*;
 use crate::editor::KEY_CAPTURE_FUNCTION;
 use crate::managers::BindingSource;
 
-/// A binding as Lisp sees one: (KEYS TARGET SOURCE).
-///
-/// TARGET goes through `form_to_data` because a keymap stores *syntax* -- the
-/// form the key will evaluate -- and syntax is not a list as far as Lisp is
-/// concerned: `car` and `listp` know cons cells, and a `Form` answers nil to
-/// both. Handed over as it is stored, a binding could only be printed, never
-/// taken apart, so a caller asking which command a key runs would get the
-/// characters `(find-file)` and no way to reach the symbol inside them.
+/// Returns a binding as Lisp sees it, `(KEYS TARGET SOURCE)`, with TARGET
+/// turned from the syntax a keymap stores into data: a `Form` is no list to
+/// `car`, and the command inside it could not be reached.
 fn binding_form<B: BufferTrait>(
     keys: String,
     target: ELispExp<B>,
@@ -133,12 +113,9 @@ primitive!(where_is, args, _env, ctx, {
             });
         }
     };
-    // A binding is stored as whatever `define-key` was handed: a bare
-    // symbol, a source form, or the *data* list a quoted `'(quit)` evaluates
-    // to -- which is a cons list and not a `Form` at all. All three mean the
-    // same thing to key resolution, so all three have to mean the same thing
-    // here; matching only one shape is how a `where-is` comes to answer
-    // "nowhere" about a key somebody is looking at.
+    // A binding is what `define-key` was handed: a symbol, a form, or the
+    // list a quoted `'(quit)` evaluates to. Key resolution runs the three
+    // alike, so here all three name the command.
     let names_command = |target: &ELispExp<B>| match target {
         ELispExp::Symbol(bound) => bound.as_str() == name,
         ELispExp::Form(items) => match items.as_slice() {
@@ -200,7 +177,7 @@ pub const READ_KEY_SEQUENCE_DOC: &str = "(read-key-sequence FUNCTION): Hand the 
          Example:\n\
          (read-key-sequence (lambda (keys target source) (message \"%s runs %s\" keys target)))";
 
-primitive!(read_key_sequence, args, env, ctx, {
+primitive!(read_key_sequence, args, env, _ctx, {
     exact_arity(args, 1)?;
     if args[0].is_nil() {
         return Err(EvalError::WrongArgumentType {
@@ -208,7 +185,6 @@ primitive!(read_key_sequence, args, env, ctx, {
             got: args[0].clone(),
         });
     }
-    let _ = ctx;
     // The root, not here: this is read on a *later* keystroke, and a binding
     // made in the calling function's scope is gone by then -- silently, with
     // the capture simply never happening.
@@ -265,13 +241,10 @@ primitive!(help_macro_doc, args, env, _ctx, {
     ]))
 });
 
-/// Register this module's primitives: the self-documentation commands.
+/// Registers the primitives the help commands are built on.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // What the editor can be asked about itself. See `primitives::help`.
     into.function("key-binding", key_binding, KEY_BINDING_DOC);
     into.function("keys-with-prefix", keys_with_prefix, KEYS_WITH_PREFIX_DOC);
     into.function("keymap-bindings", keymap_bindings, KEYMAP_BINDINGS_DOC);

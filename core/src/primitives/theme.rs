@@ -1,9 +1,12 @@
-//! Binding faces to styles from Lisp.
+//! Faces from Lisp: binding a face to the style it is drawn in, reading the
+//! style back, and listing the faces and the colours there are.
+//!
+//! Design: `doc/architettura-editor.typ, <facce>`.
 use super::*;
 use crate::ui::{Color, Face, Style};
 
-/// Read a colour argument: a string Lisp writes colours in, or nil for "leave
-/// the terminal's own choice alone".
+/// Returns ARG as a colour, written as a string, or `None` for the terminal's
+/// own when it is nil, absent or empty.
 fn colour_arg<B: BufferTrait>(
     arg: Option<&ELispExp<B>>,
 ) -> Result<Option<Color>, EvalError<EditorState<B>>> {
@@ -27,7 +30,7 @@ fn colour_arg<B: BufferTrait>(
     }
 }
 
-/// Read the attribute list: a list of names of attributes to turn on.
+/// Turns on in STYLE the attributes ARG names, a list of their names.
 fn attributes_arg<B: BufferTrait>(
     arg: Option<&ELispExp<B>>,
     style: &mut Style,
@@ -77,10 +80,9 @@ fn face_arg<B: BufferTrait>(arg: Option<&ELispExp<B>>) -> Result<Face, EvalError
             });
         }
     };
-    // Interned rather than looked up: naming a face is how one comes to exist,
-    // now that the set is open. A misspelt name is therefore not an error --
-    // it defines an inert face, which `list-faces` shows, so the mistake is
-    // visible rather than silently falling back to the default.
+    // Made rather than looked up: naming a face is how one comes to exist. A
+    // misspelt name is no error but a face nothing draws, which `list-faces`
+    // shows, rather than a quiet fall back to the default.
     Ok(Face::intern(&name))
 }
 
@@ -92,8 +94,8 @@ pub const SET_FACE_DOC: &str = "(set-face FACE &optional FOREGROUND BACKGROUND A
          Example:\n\
          (set-face 'comment \"bright-black\" nil '(\"italic\"))";
 
-/// Read what `set-face` and `define-face` both take: a face, and the style to
-/// draw it in.
+/// Returns what `set-face` and `define-face` both take: a face, and the
+/// style to draw it in.
 fn face_and_style<B: BufferTrait>(
     args: &[ELispExp<B>],
 ) -> Result<(Face, Style), EvalError<EditorState<B>>> {
@@ -189,15 +191,10 @@ primitive!(reset_faces, _args, _env, ctx, {
     Ok(ELispExp::nil())
 });
 
-/// Register this module's primitives: faces and the colours they are drawn in.
+/// Registers the primitives of faces.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // ---------------------------------------------------------------
-    // Faces and the theme
-    // ---------------------------------------------------------------
     into.command(
         "set-face",
         set_face,

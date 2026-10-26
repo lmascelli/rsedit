@@ -164,7 +164,7 @@ lì e nella mappa di `lib.rs`.
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
   [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`.],
   [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `work.rs`). Vedi @coppie.],
-  [`primitives/`], [Le 318 primitive dell'editor, in 36 moduli, e `install_primitives`.],
+  [`primitives/`], [Le 318 primitive dell'editor, in 42 moduli, e `install_primitives`.],
   [`modes/`], [`MajorMode`, grammatica di colorazione (`syntax.rs`), tabella sintattica e scanner di espressioni (`sexp.rs`), i lavori di sfondo `Highlighter`, `Prescanner`, `FileWatcher`, `AutoSaver`.],
   [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale.],
   [`work/`], [Il WorkManager: il nucleo dello scheduler, l'esecutore, il registro, i thread dedicati, il watchdog, gli argomenti e le opzioni (@sfondo).],
@@ -1047,6 +1047,12 @@ completamenti e la ripetizione: `TransientKeymap::repeating` costruisce la
 mappa `[o]`, che `install_repeat_keymap` rimette dopo ogni comando con un tasto
 di ripetizione.
 
+Da Lisp le keymap si cambiano con le primitive di `primitives/keymaps.rs`:
+`define-key`, `set-local-keymap`, `set-transient-keymap` e
+`clear-transient-keymap`, `define-repeat-key`. Lì sta anche `repeat`, `C-x z`,
+che valuta la forma dell'ultimo comando dentro il comando che la ripete: ne
+eredita il gruppo di undo e gli hook, invece di aprirne altri dentro i suoi.
+
 === Le decisioni <decisioni-keymap>
 
 + *I prefissi si conservano, non si cercano.* Ogni tasto chiede se la sequenza
@@ -1403,7 +1409,8 @@ invece che con `into.function`; una funzione Lisp con la macro `defcommand` di
 `M-x` completa solo sui nomi registrati; una funzione non registrata si può
 comunque legare a un tasto, e viene chiamata senza argomenti. Il registro,
 `CommandRegistry`, è una tabella dal nome del comando alle sue specifiche, già
-analizzate (`ArgSpec::parse`).
+analizzate (`ArgSpec::parse`). Le primitive del registro, `call-interactively`
+e `M-x` sono in `primitives/commands.rs`.
 
 == Le specifiche degli argomenti
 
@@ -1537,13 +1544,16 @@ Un worker di sfondo non può aprire un prompt: `minibuffer-read` controlla
 `in_worker()` e rifiuta con un errore, perché il tasto che risponderebbe
 arriverebbe in mezzo a ciò che l'utente sta facendo.
 
-== La ricerca incrementale
+== La ricerca incrementale <ricerca-incrementale>
 
 `C-s` apre un prompt in `isearch-mode` e ricorda dove era il punto. Da lì il
 lavoro lo fa il `post-command-hook` di quel modo: ogni comando eseguito mentre
 il prompt è aperto --- ogni carattere scritto, ogni cancellazione --- provoca
 un giro di `isearch-update`, che ripete la ricerca e sposta il punto. Non serve
-un ciclo «leggi un tasto», che in rsedit non esiste.
+un ciclo «leggi un tasto», che in rsedit non esiste. Le primitive sono in
+`primitives/isearch.rs`: i quattro comandi che cominciano una ricerca e ciò su
+cui gira una ricerca aperta; dove va il punto e che cosa dice il prompt sono in
+`feature/isearch.rs`, con `isearch-mode`.
 
 #key[
   Mentre il prompt è aperto il buffer corrente è il minibuffer. Tutto ciò che
@@ -1845,7 +1855,8 @@ riduce a lunghezza zero viene cancellato.
 Il #emph[testo virtuale] è ancorato a un punto, non a un intervallo, ed è per
 questo una tabella a parte: il layout delle righe lo inserisce nel testo
 mostrato (`ui/layout.rs`), e un clic su di esso viene riportato alla posizione
-vera del buffer.
+vera del buffer. Le primitive sono in `primitives/overlays.rs` e
+`primitives/virtual_text.rs`.
 
 == Le cache del testo <cache-testo>
 
@@ -2050,12 +2061,12 @@ mark, undo, lock o finestre.
 #ref-table(
   columns: (3.4cm, 1fr, 4.2cm),
   header: ([File], [Che cosa contiene], [Chi lo guida]),
-  [`search.rs`], [`Pattern` (che cosa cercare) con `search_forward`, `search_backward` e `scan`; le espressioni compilate di `string-match` (`compiled`).], [`feature/isearch.rs`, `editor/replace.rs`, `primitives/scan.rs`, `primitives/match_data.rs`],
+  [`search.rs`], [`Pattern` (che cosa cercare) con `search_forward`, `search_backward` e `scan`; le espressioni compilate di `string-match` (`compiled`).], [`feature/isearch.rs`, `editor/replace.rs`, `primitives/isearch.rs`, `primitives/occur.rs`, `primitives/scan.rs`, `primitives/match_data.rs`],
   [`isearch.rs`], [La sessione di ricerca incrementale: `Isearch` e `Direction`.], [`feature/isearch.rs`, `primitives/isearch.rs`],
   [`replace.rs`], [La sessione di sostituzione, `Replace`, con `Casing` ed `expand_replacement`.], [`editor/replace.rs`],
   [`kill_ring.rs`], [`KillRing`: un anello di stringhe con la regola di rotazione e di accodamento.], [`managers/kill_yank.rs` (`KillYank`)],
   [`rectangle.rs`], [`Rectangle` e `Span`: l'aritmetica di due angoli e delle righe tra loro.], [`primitives/rectangle.rs`, `ui/windows.rs`],
-  [`results.rs`], [`Entry` e `Results`: una lista di posti e un cursore che la percorre.], [`primitives/results.rs`, `editor/results.rs`],
+  [`results.rs`], [`Entry` e `Results`: una lista di posti e un cursore che la percorre.], [`primitives/occur.rs`, `primitives/results.rs`, `primitives/scan.rs`, `editor/results.rs`],
 )
 
 Le sessioni (`Isearch`, `Replace`) tengono lo #emph[stato] di una ricerca o di
@@ -2507,7 +2518,10 @@ che non raggiungono il rettangolo, così il blocco mantiene la sua forma.
 
 Occur, grep e la lettura dell'output di un compilatore producono la stessa
 cosa: una lista di posti dove andare. `results.rs` la definisce una volta, così
-produrre la lista e percorrerla sono lavori separati.
+produrre la lista e percorrerla sono lavori separati. Così anche le primitive:
+`primitives/occur.rs` produce le liste di occur e di grep (@ricerche), e
+`primitives/results.rs` le legge, le percorre con `next-error`, ne attacca una
+da Lisp e la mostra.
 
 #ref-table(
   columns: (2.6cm, 1fr),
@@ -2673,7 +2687,7 @@ queste sono lette da `indent.lisp`:
 (put 'rust-mode 'indent-region-style 'shift)
 ```
 
-== Due lessici sullo stesso testo
+== Due lessici sullo stesso testo <lessici>
 
 Il testo di un buffer viene letto in due modi diversi, per due domande diverse.
 
@@ -2705,7 +2719,12 @@ La #emph[tabella sintattica] dice quali caratteri aprono e chiudono liste,
 quali delimitano stringhe (`set-string-syntax`, anche multi-carattere come
 `r#"`), quali commenti (`set-comment-syntax`) e quale carattere quota un
 carattere (`set-char-quote`). Le due descrizioni sono indipendenti: aggiungere
-una forma di stringa a un modo significa aggiungerla in entrambe.
+una forma di stringa a un modo significa aggiungerla in entrambe. Le primitive
+sono divise allo stesso modo: `primitives/grammar.rs` dichiara la grammatica
+(`add-syntax-rule`, `add-syntax-region`), `primitives/syntax_table.rs` la
+tabella, e dà le risposte dello scanner (`syntax-ppss`, `balance-point`,
+`bounds-of-enclosing-list`); `make-mode`, gli hook e `add-auto-mode` sono in
+`primitives/modes.rs`.
 
 == Lo scanner delle espressioni
 
@@ -2827,7 +2846,7 @@ altre; `record` accetta solo la fotografia successiva all'ultima valida.
 `Buffer::scan_resume(pos)` sceglie quella della riga multipla di 64 più vicina
 sotto `pos`, se versione e modo corrispondono.
 
-== Facce e temi
+== Facce e temi <facce>
 
 Una faccia è un `Face(u16)`: un indice in un registro globale. Le prime 14 sono
 predefinite (`default`, `region`, `mode-line`, `mode-line-inactive`,
@@ -2837,7 +2856,8 @@ crea una faccia nuova semplicemente nominandola (`'doc-comment` in
 `rust-mode.lisp`) e le dà un aspetto con `set-face`. Il `Theme` in `Runtime`
 associa a ogni faccia uno `Style` (colori di primo piano e sfondo, grassetto,
 corsivo, sottolineato, inverso). I colori sono richieste --- un nome o
-`#rrggbb` --- e il front-end decide come approssimarli (@frame).
+`#rrggbb` --- e il front-end decide come approssimarli (@frame). Le primitive
+sono in `primitives/theme.rs`.
 
 // ===========================================================================
 = Il lavoro in background <sfondo>
@@ -3511,7 +3531,7 @@ finisce: il watchdog lo segnala, ma l'esecutore resta fermo #rapporto("SIN-1").
 === I comandi di shell e le ricerche <comandi-shell>
 
 `shell-command-start` (`primitives/shell.rs`) e la ricerca nei file
-(`grep--scan`, in `primitives/results.rs`) girano su un thread dedicato avviato
+(`grep--scan`, in `primitives/occur.rs`) girano su un thread dedicato avviato
 con `spawn_writer`, con il nome del buffer in cui scrivono: `*Shell Output*`, o
 `<2>`, `<3>`… se il nome è preso tra i buffer o tra i lavori
 (`free_name_for_work`). Il comando passa dalla shell della piattaforma
@@ -4004,39 +4024,45 @@ verifica le forme condivise dalle primitive, come il controllo dell'arità.
   header: ([Modulo], [N.], [Contenuto]),
   [`movement`], [20], [Movimenti per carattere, riga, parola e paragrafo, ai bordi della riga e del buffer, `goto-line`; il punto come numero (`point`, `goto-char`, `current-column`).],
   [`buffers`], [18], [Creare, cambiare, chiudere buffer; contenuto; sola lettura; dati appesi (`buffer-put`, `buffer-get`).],
-  [`modes`], [16], [`make-mode`, `add-hook`, regole e regioni di sintassi, `add-auto-mode`, tabella sintattica, `syntax-ppss`.],
   [`windows`], [15], [Dividere, chiudere, scegliere, scorrere finestre; `recenter`, `display-buffer-at-bottom`, finestre flottanti.],
   [`killing`], [14], [Le kill, `kill-ring-save`, `yank`, `yank-pop`, `kill-new` e il resto del kill ring.],
   [`verbs`], [14], [Maiuscole, spazi, righe vuote, unione e duplicazione di righe, trasposizioni, `zap-to-char`.],
-  [`general`], [13], [`eval-file`, `define-key`, `define-repeat-key`, `repeat`, `log`, `backtrace`, `regexp-opt`, keymap transitorie.],
-  [`results`], [13], [Liste di posizioni (`occur`, compilazione) e `next-error`.],
   [`macros`], [12], [Registrazione e riproduzione delle macro, contatore.],
   [`minibuffer`], [12], [`minibuffer-read`, conferma, annullamento, completamento, storia.],
-  [`replace`], [12], [Sostituzione e `query-replace`.],
+  [`replace`], [12], [`query-replace`, `replace-string`, le loro versioni con le espressioni e i verbi di una vista.],
+  [`results`], [11], [Le liste di posti: leggerle, percorrerle con `next-error`, attaccarne una da Lisp, mostrarle.],
   [`commands`], [10], [`call-interactively`, `M-x`, `register-command` e il registro dei comandi.],
-  [`isearch`], [10], [Ricerca incrementale.],
+  [`isearch`], [10], [La ricerca incrementale: i quattro comandi che la cominciano e ciò su cui gira.],
   [`rectangle`], [10], [Operazioni sui rettangoli.],
+  [`syntax_table`], [10], [La tabella sintattica, `syntax-class`, `matching-delimiter` e le domande allo scanner: `syntax-ppss`, `balance-point`, `bounds-of-enclosing-list`.],
   [`region`], [9], [Mark e regione, `keyboard-quit`.],
   [`workers`], [9], [`define-worker`, `background-call`, `stop-worker`, `running-workers`, `emit-event`, le opzioni dello scheduler, `work-list`.],
-  [`completion`], [8], [`completion-at-point`, le sue fonti, `fuzzy-filter`.],
   [`files`], [8], [Aprire, salvare, rileggere e recuperare un file; `write-file`.],
+  [`match_data`], [8], [`string-match`, i dati della corrispondenza, `regexp-opt`.],
+  [`completion`], [7], [`completion-at-point`, le sue fonti, `buffer-words`, `bounds-of-thing-at-point`.],
   [`edits`], [7], [Le due porte; `self-insert`, `insert`, l'incolla, `insert-newline`, `delete-region`, `delete-char`, `delete-backward-char`.],
   [`file_names`], [7], [Percorsi resi assoluti e smontati, `list-dir`, `match-list`, il completamento dei nomi dei file.],
   [`filesystem`], [7], [Esistenza, cancellazione e rinomina di file, `directory-files-recursive`, `read-file-to-string`.],
   [`help`], [7], [Ciò che serve all'aiuto: `key-binding`, `where-is`, `keymap-bindings`, `read-key-sequence`. I comandi `describe-*` sono in `help.lisp`.],
-  [`match_data`], [7], [`string-match` e i dati della corrispondenza.],
   [`sexp`], [7], [Movimenti e kill per espressioni bilanciate, `up-list`, `down-list`.],
   [`comments`], [6], [Commentare e decommentare.],
+  [`keymaps`], [6], [`define-key`, `set-local-keymap`, le keymap transitorie, `define-repeat-key`, `repeat`.],
   [`mouse`], [6], [Clic, trascinamenti e rotella.],
-  [`theme`], [6], [Facce e stili.],
-  [`overlays`], [5], [Overlay.],
+  [`theme`], [6], [Le facce e i loro stili, da `set-face` a `list-colors`.],
+  [`overlays`], [5], [Overlay: farli, cercarli, toglierli.],
   [`quit`], [5], [`quit`, `save-some-buffers` e le loro risposte.],
   [`undo`], [5], [`undo`, `redo`, `undo-boundary`, `undo-join`, `set-undo-limit`.],
   [`ask`], [4], [Domande sì/no con keymap transitoria.],
+  [`diagnostics`], [4], [`log`, `all-logs`, `backtrace`, `set-echo-message`.],
   [`environment`], [4], [`getenv`, `setenv`, `path-separator`, `data-directory`.],
+  [`modes`], [4], [`make-mode`, `add-hook`, `remove-hook`, `add-auto-mode`.],
   [`shell`], [4], [Comandi di shell, in background o fino alla fine; `parse-overstrike`.],
-  [`virtual_text`], [4], [Testo virtuale.],
+  [`virtual_text`], [4], [Testo virtuale: metterlo, cercarlo, toglierlo.],
   [`indentation`], [3], [`current-indentation`, `previous-indentation`, `indent-line-to`.],
+  [`evaluation`], [2], [`eval-file`, `eval-string-top-level`.],
+  [`grammar`], [2], [`add-syntax-rule`, `add-syntax-region`.],
+  [`occur`], [2], [`occur--scan`, `grep--scan`: le ricerche che fanno una lista.],
+  [`fuzzy`], [1], [`fuzzy-filter`.],
   [`scan`], [1], [`scan-buffer`: tutte le corrispondenze di un modello in un buffer, come voci di una lista di risultati.],
 )
 
@@ -4264,6 +4290,10 @@ Emacs la sintassi delle espressioni: i gruppi si scrivono `(...)`, non
 `\(...\)`, perché il motore è quello della ricerca (@ricerca), lineare perché
 senza lookahead e senza backreference.
 
+`regexp-opt`, nello stesso file, fa di una lista di parole un modello solo, che
+corrisponde a ognuna, con i caratteri speciali protetti, in un gruppo che non si
+conta; le grammatiche dei modi ne fanno le loro parole chiave.
+
 === `scan-buffer` <scan-buffer>
 
 `scan-buffer` dà a Lisp `Pattern::scan` (@ricerca): tutte le corrispondenze in
@@ -4392,9 +4422,124 @@ più recente; senza flottanti mette il focus sulla finestra 0
 `args.rs` ha i lettori con cui le primitive leggono i loro argomenti: `text`,
 una stringa; `name`, un simbolo o una stringa; `name_or_empty`, `name_or` e
 `optional_name`, con il valore che danno quando l'argomento manca;
-`movement_count` e `repeat_count`, i conteggi (@primitive-modifica); `quoted`,
+`movement_count` e `repeat_count`, i conteggi (@primitive-modifica); `list`,
+gli elementi di una lista in tutte e due le forme in cui arriva, una catena di
+cons o la `Form` di una lista che una macro cita dai suoi argomenti; `quoted`,
 che mette un valore in una forma da valutare dopo, come le callback delle
 domande.
+
+== Comandi, ricerche e modi <primitive-comandi>
+
+Le ultime primitive stanno anch'esse in un file per concetto. Quasi tutte danno
+a Lisp un meccanismo che il manuale descrive nel suo capitolo, e la tabella vi
+rimanda; le sezioni che seguono dicono ciò che non è scritto altrove.
+
+#ref-table(
+  columns: (3.9cm, 1fr),
+  header: ([File], [Contenuto]),
+  [`mod.rs`], [La macro `primitive!`, `Registry` e `install_primitives` (@primitive).],
+  [`commands.rs`], [Il registro dei comandi, `call-interactively`, la catena dei prompt che raccoglie gli argomenti e `M-x` (@comandi).],
+  [`keymaps.rs`], [`define-key`, `set-local-keymap`, le keymap transitorie, i tasti di ripetizione e `repeat` (@keymap).],
+  [`help.rs`], [Ciò che si può chiedere all'editor di sé, per le pagine dell'aiuto (@aiuto).],
+  [`minibuffer.rs`], [Il prompt, le sue risposte, il completamento con Tab e la storia (@minibuffer).],
+  [`completion.rs`], [Il completamento nel buffer: le fonti e chi le interroga (@completamento).],
+  [`fuzzy.rs`], [`fuzzy-filter`, la corrispondenza approssimata (@completamento).],
+  [`isearch.rs`], [La ricerca incrementale (@ricerca-incrementale).],
+  [`replace.rs`], [La sostituzione, i suoi verbi e la vista predefinita (@sostituzione).],
+  [`occur.rs`], [Le ricerche di occur e di grep, che producono una lista (@ricerche).],
+  [`results.rs`], [Le liste di posti: leggerle, percorrerle con `next-error`, attaccarne una da Lisp, mostrarle (@risultati).],
+  [`modes.rs`], [`make-mode`, gli hook e `add-auto-mode` (@modi).],
+  [`grammar.rs`], [Le regole e le regioni della grammatica (@lessici).],
+  [`syntax_table.rs`], [La tabella sintattica e le domande allo scanner: `syntax-ppss`, `balance-point`, `bounds-of-enclosing-list` (@lessici).],
+  [`theme.rs`], [Le facce e i loro stili (@facce).],
+  [`overlays.rs`, `virtual_text.rs`], [Overlay e testo virtuale (@mark-overlay).],
+  [`evaluation.rs`, `diagnostics.rs`], [Valutare un file o un testo, e riferire: il log, il backtrace, l'area dei messaggi (@valutazione).],
+)
+
+=== Il completamento <completamento>
+
+Una #emph[fonte] di completamento è una funzione senza argomenti, chiamata con
+il suo buffer corrente e il punto dove l'utente l'ha lasciato. Risponde nil, «non
+è mio», o `(START END CANDIDATES)`: le posizioni del testo che si offre di
+sostituire e i candidati, stringhe o coppie `(VALUE . DESCRIPTION)`, la forma
+che `*completion-read-function*` mostra già.
+
+`completion-at-point` chiede alle fonti del modo del buffer, poi a quelle di
+tutti i buffer (`add-completion-function`, `set-completion-functions`). La prima
+che risponde fissa il testo da completare, e quelle dopo che reclamano lo
+stesso testo aggiungono i loro candidati; una che ne reclama un altro si salta.
+Una risposta malformata costa quella fonte, e il log lo dice. I candidati si
+confrontano con ciò che è scritto attraverso `*completion-filter-function*`, o
+dall'inizio se è nil; due fonti che offrono lo stesso nome lo danno una volta,
+con la descrizione della prima. Un candidato solo si mette al posto del testo;
+più d'uno vanno al presentatore, `*completion-read-function*`, che chiama
+`completion-at-point-choose` con quello scelto, e senza un presentatore si mette
+quanto hanno in comune e se ne dice il numero.
+
+Il presentatore può scegliere qualche tasto dopo, quando il comando che ha
+offerto è finito. Ciò che la scelta sostituisce sta quindi alla radice
+dell'ambiente, in `*completion-at-point-region*`, come `(START END LENGTH)`, con
+la lunghezza del buffer al momento dell'offerta: ciò che si scrive nel frattempo
+dentro la parola, e che restringe la striscia, sposta la fine della differenza.
+`*completion-at-point-start*` dice dove comincia il testo solo mentre il
+presentatore riceve i candidati, ed è come distingue un completamento in un
+buffer da uno in un prompt. `buffer-words` e `bounds-of-thing-at-point` sono i
+pezzi con cui sono fatte le fonti di `completion-at-point.lisp`, con una regola
+sola per che cosa sia un simbolo: lettere, cifre, `_`, `-` e `*`.
+
+`fuzzy-filter` tiene i candidati in cui i caratteri del modello compaiono in
+ordine, anche separati, ignorando le maiuscole, e li ordina per punteggio. Ogni
+carattere vale uno, nove in più all'inizio di una parola (all'inizio, dopo
+`-`, `_`, `/`, `.`, uno spazio, `:` o `\`, o una maiuscola dopo una minuscola),
+otto in più accanto al precedente; il modello intero nel candidato vale quindici,
+venticinque all'inizio; la lunghezza toglie un quarto di sé. A pari punteggio
+resta l'ordine d'arrivo. Il modulo `completion.lisp` lo lega a
+`*completion-filter-function*`.
+
+=== L'aiuto <aiuto>
+
+`help.rs` dà le risposte di cui sono fatte le pagine dell'aiuto: `key-binding`,
+ciò che una sequenza esegue e la keymap che glielo dà (`transient`, `local`,
+`mode`, `global`), `keys-with-prefix`, `keymap-bindings`, `where-is`,
+`command-specs`, `help--macro-doc` e `read-key-sequence`, che arma la cattura
+(@cattura). Le pagine, `describe-key` e le altre, sono `help.lisp`. Ogni
+risposta passa dalla risoluzione dell'editor, attraverso la facciata, ed è ciò
+che premere i tasti farebbe. Il TARGET di un legame si dà come dati, non come
+la sintassi che la keymap conserva: una `Form` non è una lista per `car`, e il
+comando dentro non si raggiungerebbe.
+
+=== Le ricerche nei buffer e nei file <ricerche>
+
+`occur--scan` cerca nel buffer corrente, subito, sul thread dei comandi, con
+`Pattern::scan`, e paga un'unità di carburante per carattere. `grep--scan`
+cerca nei file sotto una directory su un thread dedicato (@comandi-shell), che
+scrive nella lista man mano che trova. Tutte e due prendono il buffer della lista
+con `prepare_results_buffer` (@risultati), vi scrivono un'intestazione, il
+modello e dove si è cercato, gli attaccano un `Results` e lo rendono di sola
+lettura. Alla fine la lista è segnata come completa e riceve una riga di chiusura,
+`--- N matches ---`, che dice anche se la ricerca si è fermata prima.
+
+La ricerca nei file non entra nelle directory di `PRUNE`, le stesse che salta
+`find-file-recursive` (`.git`, `target`, `node_modules` e simili), si ferma a
+20 000 file e a 10 000 corrispondenze, e salta un file che non è testo senza
+dirlo. Un file aperto in un buffer con modifiche si cerca nel testo del buffer.
+La fermano `stop-worker` con il nome della lista e la chiusura della lista; ciò
+che è stato trovato resta. Occur e grep sono due produttori, e le loro liste non
+si prendono la striscia l'una dell'altra #rapporto("RIC-7").
+
+=== Valutare e riferire <valutazione>
+
+`eval-file` e `eval-string-top-level` valutano alla radice dell'ambiente, come
+`init.lisp` (@avvio): ciò che il testo definisce resta, da qualunque funzione
+siano chiamate. `eval-string-top-level` risponde `(t VALUE)` o `(nil WHY)`, e
+toglie dalla pila delle chiamate le voci che un errore vi ha lasciato; è ciò che
+`M-:` usa, in `minibuffer.lisp`.
+
+`log` aggiunge una riga al log senza mostrarla, `all-logs` lo restituisce,
+`backtrace` dà la pila delle chiamate dell'ultimo errore, senza la propria
+voce, e `set-echo-message` scrive nell'area dei messaggi; `message`, in
+`debug.lisp`, fa le due cose insieme. La pagina `diagnostics` del manuale
+dell'utente li descrive.
 
 == Le decisioni <decisioni-primitive>
 
@@ -4622,6 +4767,149 @@ domande.
   un argomento: non c'è un `pattern_arg` né un `prompt_arg`, perché un modello e
   un prompt sono tutti e due il primo argomento come stringa. Ciò che cambia tra
   i chiamanti è il messaggio d'errore, che è un parametro.
++ *Ogni modulo registra le sue primitive.* Un `Registry` è un valore, e si passa
+  a ogni modulo: le registrazioni stanno accanto al codice che nominano, e
+  `install_primitives` è l'elenco dei moduli e niente altro. Due macro scritte
+  dentro `install_primitives` si potrebbero chiamare solo da lì, e ogni
+  registrazione starebbe a due file dalla sua primitiva.
++ *Un comando in Rust si registra con la sua specifica.* `into.command` lega il
+  nome e registra il comando in una chiamata sola, così la specifica degli
+  argomenti sta accanto all'implementazione e alla docstring, e non in un file
+  `.lisp` che potrebbe divergere o non caricarsi. Un comando scritto in Lisp
+  passa da `defcommand`, che diventa un `defun` e un `register-command`; tutti e
+  due finiscono nello stesso registro.
++ *La raccolta degli argomenti è in Rust.* La catena dei prompt,
+  `advance_pending` con le tre callback di `commands.rs`, è il modo in cui un
+  comando riceve i suoi argomenti, e deve esserci anche se nessun file `.lisp`
+  si è caricato. Le callback leggono il tipo dell'argomento dal comando in
+  attesa, così una primitiva sola serve ogni argomento.
++ *La fonte dice anche i limiti del testo.* Solo la fonte sa che cosa sta
+  completando: in `foo-ba|` un simbolo, in `/usr/lo|` l'ultimo componente del
+  percorso e non la barra prima, dentro una stringa forse la stringa intera. Una
+  fonte che desse solo i candidati lascerebbe a `completion-at-point` di
+  indovinare quali caratteri sostituire: un'ipotesi sola per tutte le fonti,
+  sbagliata per tutte meno una.
++ *Il confronto con ciò che è scritto sta in un posto solo.* Una fonte risponde
+  «che cosa può stare qui», non «che cosa corrisponde a ciò che si è scritto».
+  Un posto solo dà una risposta sola a che cosa voglia dire corrispondere, e un
+  posto solo dove cambiarla: legare `*completion-filter-function*` rende
+  approssimate tutte le fonti insieme, senza toccarne nessuna.
++ *Le fonti si uniscono, non si sfidano.* Emacs prende la prima che risponde, e
+  lì basta, perché le sue fonti sono di un modo. Qui la risposta utile a `comp`
+  in un buffer Lisp sono sia le funzioni `comp…` sia le parole già nel buffer, e
+  una gara ne nasconderebbe una secondo l'ordine di una lista che l'utente non
+  vede. Due fonti che completano testi diversi non possono avere ragione tutte e
+  due, e la seconda si salta: per questo le fonti di nomi hanno una regola sola
+  per che cosa sia un simbolo, e una che leggesse altri caratteri sparirebbe da
+  ogni lista.
++ *Il completamento: il meccanismo in Rust, le fonti in Lisp.* Il registro delle
+  fonti e l'unione sono il meccanismo, da cui passano ogni fonte e ogni
+  presentatore. Ciò che una fonte sa, i nomi dei file, le parole del buffer, i
+  nomi dell'interprete, è Lisp, in `completion-at-point.lisp`, e si sostituisce
+  una fonte alla volta.
++ *Ciò che una scelta sostituisce sta in una variabile alla radice.* Un
+  presentatore può essere un modulo Lisp che decide dopo qualche tasto, quando il
+  comando che ha offerto e chi l'ha chiamato sono finiti:
+  `indent-for-tab-command` completa dal suo corpo, e una variabile legata lì non
+  ci sarebbe più. In una variabile lo stato si vede anche da chi cerca un
+  errore. La fine segue ciò che si scrive nel frattempo, spostata della
+  differenza di lunghezza del buffer: senza, scegliere `abce` dopo aver scritto
+  `e` dietro `ab` lascerebbe `abcee`.
++ *Il punteggio premia gli inizi di parola e i caratteri vicini.* Sono ciò che fa
+  vincere un'abbreviazione delle parti su una dispersione casuale delle stesse
+  lettere: `cap` è fatto degli inizi di `completion-at-point`. Il modello intero
+  vale di più, perché tre lettere ognuna all'inizio di una parola valgono quanto
+  tre di fila, e `abc` metterebbe `a-b-c-x` alla pari con `abc`. La lunghezza
+  conta poco, divisa per quattro: separa candidati molto diversi senza scavalcare
+  una corrispondenza molto migliore.
++ *Ogni carattere si prende dove viene per primo.* Il miglior allineamento del
+  modello in un candidato è un programma dinamico per candidato a ogni tasto, e
+  `find-file-recursive` ne passa cinquemila; il cammino da sinistra è lineare, e
+  dove dà un punteggio diverso le due corrispondenze ci sono comunque.
++ *`fuzzy-filter` paga un'unità di carburante per candidato.* È la regola di
+  `directory-files-recursive` e di `scan-buffer`: il lavoro cresce con la lista,
+  e un'unità per la chiamata lascerebbe un ciclo su liste lunghe oltre il budget
+  fatto per fermarlo. Ventimila candidati sono un cinquecentesimo del budget.
++ *Con un presentatore, Tab chiede i candidati una volta per testo.* Un secondo
+  Tab sullo stesso testo non può cambiare la risposta, e la funzione che la dà
+  può costare: quella del manuale elenca ogni pagina installata, sul thread che
+  disegna. Il testo per cui sono stati chiesti si ricorda, e
+  `completion-invalidate` lo dimentica per una lista che si sta ancora
+  costruendo.
++ *Un prompt si apre sempre.* È come funziona `M-x`, e come l'utente eseguirebbe
+  il comando che corregge un'impostazione sbagliata: una misura più grande del
+  terminale diventa quella del terminale, con una colonna di margine per lato, e
+  un valore senza senso in `minibuffer-width` o `minibuffer-height` vale quello
+  predefinito invece di un errore.
++ *Un legame ha una forma sola.* Un simbolo che nomina una funzione diventa la
+  sua chiamata, `(next-line)`, e il resto si esegue com'è scritto. La
+  risoluzione esegue allo stesso modo un simbolo e una forma di un elemento, e
+  per il tasto premuto non cambia nulla; cambia che una keymap tiene una forma
+  sola, e chi la legge senza eseguirla, per descrivere un legame o trovare dove
+  un comando è legato, non ne deve conoscere due. `define-key` e
+  `set-transient-keymap` passano dalla stessa funzione: un legame scritto in un
+  modo vuol dire ciò che vuol dire scritto nell'altro.
++ *Le risposte dell'aiuto sono in Rust, le pagine in Lisp.* Una pagina di testo
+  in un buffer si può sostituire con una finestra con dei pulsanti senza che le
+  risposte cambino. Le risposte no: un comando d'aiuto è creduto, e uno che un
+  modulo mancante potesse sbagliare in silenzio sarebbe peggio di nessuno. Quale
+  keymap vince è una regola scritta una volta in `Modes` ed eseguita a ogni
+  tasto, e l'aiuto chiede quella: un legame riferito e uno premuto non possono
+  essere diversi.
++ *Si cerca nel buffer, non nel file, quando il buffer ha modifiche.* Il buffer
+  è ciò che è vero: un file aperto con modifiche non salvate non è più la sua
+  copia su disco, e una ricerca che leggesse il disco riferirebbe testo che non
+  c'è più, con posizioni che portano altrove. Un buffer salvato si lascia alla
+  lettura del file, che dà lo stesso testo senza prendere il lock del buffer per
+  ogni file.
++ *Una ricerca nei file ha un thread suo, una nel buffer no.* Una ricerca in un
+  albero dura quanto dura: qualche migliaio di file è un attimo, una home no, e
+  non si sa prima di cominciare. Sul suo thread l'editor continua, e i risultati
+  compaiono man mano, che è anche come si distingue una ricerca lenta da una
+  bloccata. Il testo di un buffer è già in memoria, e la scansione è una passata:
+  un altro thread costerebbe più di quanto risparmia, e farebbe lampeggiare
+  `occur`.
++ *I comandi del percorso lavorano sulla lista corrente.* `M-g n` si preme nel
+  file che si sta correggendo, non nella lista, che quindi non si legge dallo
+  schermo: i comandi lavorano sulla lista prodotta per ultima, finché il suo
+  buffer vive. Sono primitive, e non funzioni di un modulo, così ogni produttore
+  di una lista li ha senza dipendere dal modulo scritto per primo: una
+  compilazione, una ricerca e un linter fanno una lista e la percorrono con gli
+  stessi tre tasti.
++ *Una lista che cresce si aggiorna prima di ogni passo.* Una ricerca sa tutto
+  ciò che ha trovato quando finisce; una compilazione no, la sua uscita arriva
+  riga per riga. Ricostruire la lista a ogni riga sarebbe un'analisi per riga;
+  non ricostruirla farebbe percorrere a `M-g n` ciò che il compilatore diceva
+  trenta secondi prima. Un produttore la cui lista cresce attacca con
+  `buffer-put` una funzione sotto `results-refresh`, chiamata con il nome della
+  lista prima di ogni passo; uno la cui lista è completa non attacca nulla e non
+  paga nulla.
++ *Il percorso sopravvive a una lista sostituita.* Una lista che cresce si
+  attacca di nuovo a ogni passo, e un percorso che ricominciasse ogni volta
+  offrirebbe per sempre il primo errore, sembrando funzionare. Si tiene l'indice
+  e non la voce, perché una lista che cresce cresce in fondo: la terza voce è
+  ancora la terza. Un produttore che riordina ritrova il percorso più o meno
+  dov'era, che è meglio che in cima.
++ *Grammatica e tabella dicono cose che si sovrappongono, separatamente.* Una
+  grammatica dice che aspetto ha il testo, una tabella che cosa è: un modo può
+  colorare un commento di documentazione diversamente da uno normale, e sono
+  tutti e due commenti. E lo scanner deve lavorare su un buffer la cui
+  grammatica non è ancora stata applicata: la colorazione si calcola su un altro
+  thread, e `C-M-f` non la può aspettare.
++ *Un modello sbagliato costa solo sé stesso.* Una grammatica è configurazione:
+  un modello rotto in un modulo di lingua costa quel modello, che il log
+  riferisce, e non tutto il file in cui è scritto. Così un'espressione di
+  `add-auto-mode`, e una risposta malformata di una fonte di completamento, che
+  costa quella fonte e non il completamento.
++ *`regexp-opt` di nessuna parola non corrisponde a niente.* Un'alternativa vuota
+  corrisponde ovunque, e una regola fatta così colorerebbe ogni posizione. Il
+  modello onesto non corrisponde mai: una classe di nessun carattere,
+  `[^\s\S]`, perché il motore non ha il lookahead con cui scrivere `(?!)`.
++ *La vista predefinita della sostituzione è la più semplice che funzioni.* Una
+  keymap transitoria di cinque tasti sul buffer, perché la sostituzione sia
+  completa senza configurazione, come il minibuffer ha un prompt predefinito.
+  Una vista con un'anteprima e due pulsanti lega `*replace-read-function*` e
+  chiama gli stessi verbi; niente in `replace.rs` deve sapere che c'è.
 
 // ===========================================================================
 = I moduli Lisp <moduli-lisp>
@@ -4846,32 +5134,38 @@ Generato da `into.function(` e `into.command(` nei file di `primitives/`. Un ast
   [`buffers` (18)], [`buffer-put`, `buffer-get`, `buffer-substring`, `switch-to-buffer`, `current-buffer`, `buffer-create`, `close-buffer`, `kill-buffer`\*, `kill-buffer-without-saving`\*, `buffer-string`, `clear-buffer`, `with-current-buffer`, `set-buffer-read-only`, `buffer-read-only-p`, `buffer-modified-p`, `buffer-file-name`, `major-mode`, `set-major-mode`],
   [`commands` (10)], [`register-command`, `commandp`, `command-args`, `all-commands`, `execute-extended-command`, `command-completions`, `command-execute-prompt`\*, `all-buffer-names`, `call-interactively`, `pending-command`],
   [`comments` (6)], [`comment-dwim`\*, `comment-line`\*, `comment-indent`\*, `comment-region`\*, `uncomment-region`\*, `comment-syntax`],
-  [`completion` (8)], [`completion-at-point`\*, `fuzzy-filter`, `completion-at-point-choose`, `add-completion-function`, `set-completion-functions`, `completion-functions`, `buffer-words`, `bounds-of-thing-at-point`],
+  [`completion` (7)], [`completion-at-point`\*, `completion-at-point-choose`, `add-completion-function`, `set-completion-functions`, `completion-functions`, `buffer-words`, `bounds-of-thing-at-point`],
+  [`diagnostics` (4)], [`log`, `all-logs`, `backtrace`, `set-echo-message`],
   [`edits` (7)], [`delete-region`, `self-insert`, `insert`, `insert-pasted-text`\*, `insert-newline`\*, `delete-backward-char`\*, `delete-char`\*],
   [`environment` (4)], [`data-directory`, `getenv`, `setenv`, `path-separator`],
+  [`evaluation` (2)], [`eval-file`, `eval-string-top-level`],
   [`file_names` (7)], [`list-dir`, `match-list`, `expand-file-name`, `file-name-as-directory`, `directory-file-name`, `file-name-directory`, `file-name-nondirectory`],
   [`files` (8)], [`find-file`\*, `save-buffer`\*, `save-buffer--overwrite`, `recover-file`\*, `recover-file--adopt`, `revert-buffer`\*, `revert-buffer--reread`, `write-file`\*],
   [`filesystem` (7)], [`file-exists-p`, `file-directory-p`, `directory-entry-count`, `delete-file`, `rename-file`, `directory-files-recursive`, `read-file-to-string`],
-  [`general` (13)], [`eval-file`, `eval-string-top-level`, `define-key`, `set-local-keymap`, `define-repeat-key`, `repeat`\*, `log`, `regexp-opt`, `all-logs`, `backtrace`, `set-echo-message`, `set-transient-keymap`, `clear-transient-keymap`],
+  [`fuzzy` (1)], [`fuzzy-filter`],
+  [`grammar` (2)], [`add-syntax-rule`, `add-syntax-region`],
   [`help` (7)], [`key-binding`, `keys-with-prefix`, `keymap-bindings`, `where-is`, `command-specs`, `help--macro-doc`, `read-key-sequence`],
   [`indentation` (3)], [`current-indentation`, `previous-indentation`, `indent-line-to`],
   [`isearch` (10)], [`isearch-forward`\*, `isearch-backward`\*, `isearch-forward-regexp`\*, `isearch-backward-regexp`\*, `isearch-update`, `isearch-exit`, `isearch-abort`, `isearch-repeat-forward`, `isearch-repeat-backward`, `isearch-active-p`],
+  [`keymaps` (6)], [`define-key`, `set-local-keymap`, `set-transient-keymap`, `clear-transient-keymap`, `define-repeat-key`, `repeat`\*],
   [`killing` (14)], [`kill-line`\*, `kill-whole-line`\*, `kill-word`\*, `backward-kill-word`\*, `kill-paragraph`\*, `backward-kill-paragraph`\*, `kill-region`\*, `kill-ring-save`\*, `yank`\*, `yank-pop`\*, `set-kill-ring-max`\*, `kill-new`, `current-kill`, `kill-ring-length`],
   [`macros` (12)], [`kmacro-start-macro`\*, `kmacro-end-macro`\*, `kmacro-cancel-macro`\*, `kmacro-call-macro`\*, `kmacro-end-and-call-macro`\*, `kmacro-insert-counter`\*, `kmacro-set-counter`\*, `kmacro-counter`, `kmacro-recording-p`, `kbd-macro-keys`, `define-kbd-macro`, `kmacro-call-keys`],
-  [`match_data` (7)], [`string-match`, `string-match-p`, `match-beginning`, `match-end`, `match-string`, `match-data`, `set-match-data`],
+  [`match_data` (8)], [`string-match`, `string-match-p`, `match-beginning`, `match-end`, `match-string`, `match-data`, `set-match-data`, `regexp-opt`],
   [`minibuffer` (12)], [`minibuffer-cleanup`, `minibuffer-confirm`, `minibuffer-cancel`, `minibuffer-complete`, `minibuffer-choose-completion`, `default-minibuffer-prompt`, `minibuffer-read`, `completion-invalidate`, `minibuffer-history`, `clear-minibuffer-history`, `history-previous`\*, `history-next`\*],
-  [`modes` (16)], [`make-mode`, `add-hook`, `remove-hook`, `add-syntax-rule`, `add-syntax-region`, `add-auto-mode`, `syntax-ppss`, `balance-point`, `bounds-of-enclosing-list`, `set-syntax-pairs`, `set-string-syntax`, `set-char-quote`, `set-syntax-entry`, `set-comment-syntax`, `syntax-class`, `matching-delimiter`],
+  [`modes` (4)], [`make-mode`, `add-hook`, `remove-hook`, `add-auto-mode`],
   [`mouse` (6)], [`mouse-set-point`\*, `mouse-start-selection`\*, `mouse-drag-to`\*, `mouse-resize`\*, `mouse-mode-toggle`\*, `mouse-scroll`\*],
   [`movement` (20)], [`backward-char`\*, `forward-char`\*, `previous-line`\*, `next-line`\*, `beginning-of-line`\*, `end-of-line`\*, `forward-word`\*, `backward-word`\*, `forward-paragraph`\*, `backward-paragraph`\*, `beginning-of-buffer`\*, `end-of-buffer`\*, `goto-line`\*, `point`, `point-min`, `point-max`, `goto-char`, `line-number-at-point`, `current-line`, `current-column`],
+  [`occur` (2)], [`occur--scan`, `grep--scan`],
   [`overlays` (5)], [`make-overlay`, `delete-overlay`, `remove-overlays`, `overlays-at`, `overlay-face`],
   [`quit` (5)], [`quit`\*, `quit-without-saving`\*, `save-some-buffers`\*, `save-some-buffers--answer`, `quit--confirm`],
   [`rectangle` (10)], [`rectangle-mark-mode`\*, `kill-rectangle`\*, `delete-rectangle`\*, `copy-rectangle-as-kill`\*, `yank-rectangle`\*, `open-rectangle`\*, `clear-rectangle`\*, `string-rectangle`\*, `rectangle-bounds`, `killed-rectangle`],
   [`region` (9)], [`set-mark`\*, `keyboard-quit`\*, `deactivate-mark`\*, `exchange-point-and-mark`\*, `mark-whole-buffer`\*, `mark`, `use-region-p`, `region-beginning`, `region-end`],
   [`replace` (12)], [`query-replace`\*, `query-replace-regexp`\*, `replace-string`\*, `replace-regexp`\*, `replace-this`, `replace-skip`, `replace-rest`, `replace-back`, `replace-done`, `replace-abandon`, `replace-match`, `replace-count`],
-  [`results` (13)], [`occur--scan`, `grep--scan`, `next-error`\*, `previous-error`\*, `results-count`, `results-entry`, `results-state`, `results-visit`, `results-buffer`, `results-select`\*, `results-put`, `results-display`, `results-quit`\*],
+  [`results` (11)], [`next-error`\*, `previous-error`\*, `results-count`, `results-entry`, `results-state`, `results-visit`, `results-buffer`, `results-select`\*, `results-put`, `results-display`, `results-quit`\*],
   [`scan` (1)], [`scan-buffer`],
   [`sexp` (7)], [`forward-sexp`\*, `backward-sexp`\*, `kill-sexp`\*, `backward-kill-sexp`\*, `up-list`\*, `backward-up-list`\*, `down-list`\*],
   [`shell` (4)], [`shell-command-start`, `shell-command-to-string`, `parse-overstrike`, `shell-command-running-p`],
+  [`syntax_table` (10)], [`set-syntax-pairs`, `set-string-syntax`, `set-char-quote`, `set-syntax-entry`, `set-comment-syntax`, `syntax-class`, `matching-delimiter`, `syntax-ppss`, `balance-point`, `bounds-of-enclosing-list`],
   [`theme` (6)], [`set-face`\*, `define-face`, `face-style`, `reset-faces`, `list-faces`, `list-colors`],
   [`undo` (5)], [`undo-join`, `undo`\*, `redo`\*, `undo-boundary`\*, `set-undo-limit`\*],
   [`verbs` (14)], [`upcase-word`\*, `downcase-word`\*, `capitalize-word`\*, `delete-horizontal-space`\*, `just-one-space`\*, `delete-blank-lines`\*, `back-to-indentation`\*, `join-line`\*, `duplicate-line`\*, `transpose-lines`\*, `transpose-chars`\*, `transpose-words`\*, `zap-to-char`\*, `zap-to-char--do`],

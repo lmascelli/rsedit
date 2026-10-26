@@ -420,7 +420,10 @@ fn push_call_frame(&self, frame: &str) %BODY%
         let (ctx, env) = editor();
         for (name, source) in [
             ("editor/mod.rs", include_str!("../editor/mod.rs")),
-            ("modes.rs", include_str!("../primitives/modes.rs")),
+            (
+                "syntax_table.rs",
+                include_str!("../primitives/syntax_table.rs"),
+            ),
             ("sexp.rs", include_str!("../modes/sexp.rs")),
             ("shell.rs", include_str!("../primitives/shell.rs")),
         ] {

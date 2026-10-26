@@ -1,18 +1,9 @@
 //! Completion at point: the source protocol, the merge, and the five sources
-//! `completion-at-point.lisp` ships.
+//! `completion-at-point.lisp` ships. Two quiet failures above all: a merge
+//! that offers half of what it should or replaces the wrong text, and
+//! completion that needs a presenter, a module or a source that is optional.
 //!
-//! # What these are really protecting
-//!
-//! Two things that are easy to get wrong and silent when they are.
-//!
-//! The first is the **merge**. Sources that claim the same text contribute to
-//! one list; sources that claim different text are passed over. Get that
-//! backwards and completion still appears to work -- it just quietly offers
-//! half of what it should, or replaces the wrong characters.
-//!
-//! The second is that **this works with nothing loaded**. No presenter, no
-//! module, no sources: every one of those is optional, and each has a test
-//! here that runs without it.
+//! Design: `doc/architettura-editor.typ, <completamento>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -728,15 +719,10 @@ mod tests {
     // A language's own words
     // -----------------------------------------------------------------------
     //
-    // A mode's vocabulary is no longer something the editor knows about. A
-    // language module puts a list on its own symbol and `capf-mode-keywords`
-    // reads it back, so what these check is a convention between two Lisp
-    // modules rather than a primitive -- there is no primitive left to check.
-    //
-    // One consequence worth seeing written down: `put` does not care whether
-    // the symbol names a mode that exists. It is a property of a symbol, and a
-    // symbol needs no permission to carry one. The old `set-mode-keywords`
-    // refused an unknown mode; nothing refuses now.
+    // A mode's vocabulary is not something the editor knows about: a language
+    // module puts a list on its own symbol and `capf-mode-keywords` reads it
+    // back, a convention between two Lisp modules. `put` does not ask whether
+    // the symbol names a mode that exists, so nothing refuses an unknown one.
 
     #[test]
     fn a_mode_can_declare_its_vocabulary() {

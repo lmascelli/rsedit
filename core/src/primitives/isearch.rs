@@ -1,15 +1,9 @@
-//! Incremental search, as Lisp sees it.
+//! Incremental search from Lisp: the four commands that start one, and the
+//! primitives an open search runs on, from its prompt's keys and its hook.
+//! Where point lands and what the prompt reports are
+//! [`crate::feature::isearch`], with `isearch-mode`.
 //!
-//! Ten primitives: four that start a search and six that an open prompt's keys
-//! run. The search itself -- the session, where point lands, what the prompt
-//! reports -- is [`crate::feature::isearch`], and so is `isearch-mode`.
-//!
-//! # Why the split is here and not elsewhere
-//!
-//! A primitive is a *name Lisp can call*, and every one of them in this editor
-//! is under `primitives/`. The mechanics are not: they are called by these and
-//! by the mode, and they would be exactly as useful to a second search written
-//! in Lisp.
+//! Design: `doc/architettura-editor.typ, <ricerca-incrementale>`.
 use super::*;
 use crate::buffer::Mark;
 use crate::feature::isearch;
@@ -17,7 +11,7 @@ use crate::text::isearch::{Direction, Isearch};
 use crate::text::search::Pattern;
 use std::sync::Arc;
 
-/// Open the prompt and record where the search began.
+/// Opens the prompt and records where the search began.
 fn begin<B: BufferTrait>(
     env: Arc<Env<EditorState<B>>>,
     ctx: &EditorState<B>,
@@ -139,13 +133,10 @@ primitive!(isearch_update, _args, env, ctx, {
     Ok(ELispExp::nil())
 });
 
-/// `C-s` and `C-r` from inside a search: go to the next match, or turn around.
-///
-/// Changing direction does not move on -- it re-runs the scan the other way
-/// from where it already is, so `C-s C-r` walks back over the same matches
-/// rather than skipping one.
+/// Moves an open search on, for `C-s` and `C-r` inside it: to the next match,
+/// round the buffer after a failure, or the other way. Turning round does not
+/// move on, so that `C-s C-r` walks back over the same matches.
 fn repeat<B: BufferTrait>(
-    env: Arc<Env<EditorState<B>>>,
     ctx: &EditorState<B>,
     direction: Direction,
 ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
@@ -177,7 +168,6 @@ fn repeat<B: BufferTrait>(
     // The scan itself is not repeated here -- `isearch-update` does it, and it
     // runs after this command like it runs after any other. One place searches,
     // so a repeat and a keystroke cannot come to different conclusions.
-    let _ = env;
     Ok(ELispExp::nil())
 }
 
@@ -185,16 +175,16 @@ pub const ISEARCH_REPEAT_FORWARD_DOC: &str = "(isearch-repeat-forward): Go on to
          turning the search round if it was going backward; after a failed search, start again \
          from the top of the buffer. C-s inside a search.";
 
-primitive!(isearch_repeat_forward, _args, env, ctx, {
-    repeat(env, ctx, Direction::Forward)
+primitive!(isearch_repeat_forward, _args, _env, ctx, {
+    repeat(ctx, Direction::Forward)
 });
 
 pub const ISEARCH_REPEAT_BACKWARD_DOC: &str = "(isearch-repeat-backward): Go back to the previous \
          match, turning the search round if it was going forward; after a failed search, start \
          again from the end of the buffer. C-r inside a search.";
 
-primitive!(isearch_repeat_backward, _args, env, ctx, {
-    repeat(env, ctx, Direction::Backward)
+primitive!(isearch_repeat_backward, _args, _env, ctx, {
+    repeat(ctx, Direction::Backward)
 });
 
 // ---------------------------------------------------------------------------
@@ -261,17 +251,11 @@ primitive!(isearch_active_p, _args, _env, ctx, {
     })
 });
 
-/// Register this module's primitives: incremental search.
+/// Registers the primitives of incremental search.
 ///
-/// Called by [`super::install_primitives`]. The four entry points are commands
-/// so that `M-x` reaches them; the six that answer an open prompt are not --
-/// `M-x isearch-repeat-forward` with no search running has nothing to repeat,
-/// and offering it in the completion list would be offering a mistake.
-///
-/// All ten are registered here, including the six that used to be installed by
-/// `install_isearch` alongside the mode. They are Rust either way, so nothing
-/// about a `.lisp` file failing to load is different; what is different is that
-/// "where are the isearch primitives registered" now has one answer.
+/// Called by [`super::install_primitives`]. Only the four that start a search
+/// are commands: the others work on an open search, and `M-x` would offer
+/// them where there is none.
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.command("isearch-forward", isearch_forward, &[], ISEARCH_FORWARD_DOC);
     into.command(

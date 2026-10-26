@@ -1,16 +1,9 @@
-//! The minibuffer, as Lisp sees it.
+//! The minibuffer from Lisp: opening a prompt, which takes what to do with
+//! the answer as a callback, answering it, cancelling it, completing in it,
+//! and walking its history. What the prompt holds and which history it files
+//! under are [`crate::feature::minibuffer`], with `minibuffer-mode`.
 //!
-//! Twelve primitives: opening a prompt, answering it, cancelling it,
-//! completing in it, and walking its history. The prompt's mechanics -- what
-//! its contents are, which history ring it files under, what "no prompt open"
-//! means -- are [`crate::feature::minibuffer`], and so is `minibuffer-mode`.
-//!
-//! # Why every one of these takes its answer as a callback
-//!
-//! The editor never blocks. A prompt opens, the command that opened it
-//! returns, and the answer arrives later -- in another command, when a key is
-//! pressed. So reading a line cannot *return* the line, and what it can do is
-//! say what to do with it.
+//! Design: `doc/architettura-editor.typ, <minibuffer>`.
 use super::*;
 use crate::editor::{
     COMPLETION_INVALIDATED_FUNCTION, COMPLETION_READ_FUNCTION, DEFAULT_MINIBUFFER_HEIGHT,
@@ -105,10 +98,9 @@ primitive!(minibuffer_complete, _args, env, ctx, {
         _ => 0,
     };
 
-    // Still showing one of the last candidates we offered -> advance to
-    // the next one, wrapping around. Otherwise -- either the very first
-    // Tab press, or the user typed something since the last completion --
-    // ask *minibuffer-on-change* for a fresh candidate list.
+    // While the prompt shows one of the candidates offered last, Tab puts in
+    // the next, round the end; at the first Tab, or after typing, ON-CHANGE
+    // is asked for new ones.
     let items: Vec<ELispExp<B>> = completions
         .as_ref()
         .map(|list| list.iter().collect())
@@ -121,12 +113,9 @@ primitive!(minibuffer_complete, _args, env, ctx, {
     if let Some(present) = env.get_variable(COMPLETION_READ_FUNCTION)
         && present.is_truthy()
     {
-        // Asked again only when the input has changed since the last time.
-        //
-        // Pressing Tab a second time cannot change what the answer is, and a
-        // candidate function may be expensive -- the manual's lists every page
-        // installed. This used to ask on every press, so holding Tab down
-        // walked a directory once per keystroke, on the thread that draws.
+        // Asked again only when the input has changed: a second Tab cannot
+        // change the answer, and a candidate function may be costly, as the
+        // manual's is, which lists every page installed.
         let asked_about = match env.get_variable(ASKED_ABOUT) {
             Some(ELispExp::String(text)) => Some(text.to_string()),
             _ => None,
@@ -200,11 +189,8 @@ const HISTORY_NEXT_DOC: &str = "(history-next): Put in the prompt the answer giv
          the one it shows, and past the newest what was being typed. Return t, or nil when the \
          history is not being walked. C-n, M-n and the down arrow in a prompt.";
 
-/// One step through the history, in whichever direction.
-///
-/// Both keys do the same three things -- ask the ring, put the answer in the
-/// buffer, leave the walk where it now is -- and differ only in which question
-/// they ask.
+/// Takes one step through the prompt's history, back or on, and puts what it
+/// finds in the prompt: t, or nil when there is no step to take.
 fn step_history<B: BufferTrait>(
     ctx: &EditorState<B>,
     env: &Arc<Env<EditorState<B>>>,
@@ -294,6 +280,8 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
             got: args.len(),
         });
     }
+    // TODO(MIN-4): a MODE of nil is taken as the mode named nil, which has
+    // none of these keys.
     // The mode the prompt's buffer opens in. Defaults to `minibuffer-mode`,
     // which is what gives it Return, Escape and Tab; a caller that wants the
     // prompt to behave differently -- incremental search, whose keys mean
@@ -352,17 +340,15 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
         sized(&env, MINIBUFFER_HEIGHT, DEFAULT_MINIBUFFER_HEIGHT),
     );
 
+    // TODO(MIN-1): every prompt opens the one buffer, which a second prompt
+    // open at the same time shares.
     ctx.open_floating_window("*Minibuffer*", x, y, width, height, title, Some(mode), &env);
 
     Ok(ELispExp::t())
 });
 
-/// A size asked for in Lisp, or DEFAULT when the variable says nothing usable.
-///
-/// A nonsense value -- nil, a string, a negative -- falls back rather than
-/// signalling. Getting a prompt you did not expect is recoverable; being unable
-/// to open one at all means `M-x` stops working, and the way out of that is
-/// also a prompt.
+/// Returns the size the variable NAME asks for, or DEFAULT when it says
+/// nothing usable, as nil, a string or a negative does: the prompt must open.
 fn sized<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>, name: &str, default: f64) -> usize {
     match env.get_variable(name) {
         Some(ELispExp::Number(n)) if n.is_finite() && n >= 1.0 => n as usize,
@@ -370,23 +356,9 @@ fn sized<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>, name: &str, default: f6
     }
 }
 
-/// A rectangle of WIDTH by HEIGHT in the middle of a frame, clamped to fit.
-///
-/// # Why the middle
-///
-/// Because the bottom is taken. A prompt docked along the bottom edge sits
-/// exactly where anything else wanting a strip there goes -- a list of
-/// completions, and later a compilation log -- and two things drawn in one
-/// place is not a layout, it is a collision. The middle is the one region
-/// nothing else claims.
-///
-/// # Why clamped rather than refused
-///
-/// A prompt must always be openable: it is how `M-x` works, and how the user
-/// would run whatever command fixed the setting. So a width larger than the
-/// terminal becomes the terminal's width rather than an error, and one
-/// character of margin is kept on each side so the border does not merge with
-/// the frame's own edge.
+/// Returns a rectangle of WIDTH by HEIGHT in the middle of a frame of
+/// FRAME_WIDTH by FRAME_HEIGHT, made smaller where it would not fit, with a
+/// column of margin on each side.
 fn centred(
     frame_width: usize,
     frame_height: usize,
@@ -440,15 +412,9 @@ primitive!(minibuffer_read, args, env, ctx, {
             got: args.len(),
         });
     }
-    // A prompt is a conversation with whoever is at the keyboard, and a
-    // background worker is not talking to them. One opened from a worker's
-    // turn would be a window over a command nobody started, and the keystroke
-    // that answered it would arrive in the middle of whatever the user was
-    // actually doing -- so this is refused where it can still be reported as
-    // an error, rather than half-working somewhere confusing.
-    //
-    // A worker that genuinely needs an answer asks for it the way anything
-    // else asynchronous does: it leaves something for a command to find.
+    // Refused in a background job, where it can still be an error: its prompt
+    // would be a window over a command nobody started, answered by a key
+    // meant for whatever the user was doing.
     if crate::editor::in_worker() {
         return Err(EvalError::RuntimeMessage(
             "minibuffer-read: a background worker cannot open a prompt".into(),
@@ -460,15 +426,11 @@ primitive!(minibuffer_read, args, env, ctx, {
     call_callable(&read_fn, args, env.clone(), ctx)
 });
 
-/// Register this module's primitives: reading a line of input.
+/// Registers the primitives of the minibuffer.
 ///
-/// Called by [`super::install_primitives`]. These used to be registered by
-/// `install_minibuffer`, beside the mode -- twelve `env.set_function` calls
-/// spelled out in full, which is what a `Registry` is for.
-///
-/// Only the two history commands are commands: the rest answer a prompt that
-/// is already open, and `M-x minibuffer-confirm` with nothing to confirm is
-/// not an offer worth making.
+/// Called by [`super::install_primitives`]. Only the two history commands are
+/// commands: the rest answer a prompt that is open, and `M-x` would offer
+/// them where there is none.
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function(
         "minibuffer-cleanup",

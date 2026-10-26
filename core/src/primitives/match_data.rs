@@ -1,6 +1,7 @@
 //! `string-match` and the match data, as Emacs has them: the match answers
 //! where it starts, and `match-beginning`, `match-end` and `match-string` read
-//! its groups afterwards, in characters. The data is per thread.
+//! its groups afterwards, in characters. The data is per thread. And
+//! `regexp-opt`, which makes one pattern of a list of words.
 //!
 //! Design: `doc/architettura-editor.typ, <dati-corrispondenza>`.
 use super::*;
@@ -255,7 +256,37 @@ primitive!(set_match_data, args, _env, _ctx, {
     Ok(ELispExp::nil())
 });
 
-/// Registers `string-match` and the primitives of the match data.
+pub const REGEXP_OPT_DOC: &str = "(regexp-opt WORDS): Return a regular expression that matches \
+         any of WORDS, a list of strings or symbols, every character special to a pattern \
+         escaped, in a group that is not numbered. An empty list gives a pattern that matches \
+         nothing.\n\n\
+         Example:\n\
+         (regexp-opt '(\"fn\" \"let\"))   ; \"(?:fn|let)\"";
+
+primitive!(regexp_opt, args, _env, _ctx, {
+    exact_arity(args, 1)?;
+    let words = args::list(&args[0]);
+    let mut parts = Vec::with_capacity(words.len());
+    for word in &words {
+        let (ELispExp::String(text) | ELispExp::Symbol(text)) = word else {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String".into(),
+                got: word.clone(),
+            });
+        };
+        parts.push(regex::escape(text));
+    }
+    // No words, a pattern that matches nothing: an empty alternation matches
+    // everywhere, and a rule made of it would colour every position. A class
+    // of no character, since the engine has no look-ahead to write `(?!)`.
+    if parts.is_empty() {
+        return Ok(ELispExp::string("[^\\s\\S]".into()));
+    }
+    Ok(ELispExp::string(format!("(?:{})", parts.join("|"))))
+});
+
+/// Registers `string-match`, the primitives of the match data, and
+/// `regexp-opt`.
 ///
 /// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
@@ -266,4 +297,5 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("match-string", match_string, MATCH_STRING_DOC);
     into.function("match-data", match_data, MATCH_DATA_DOC);
     into.function("set-match-data", set_match_data, SET_MATCH_DATA_DOC);
+    into.function("regexp-opt", regexp_opt, REGEXP_OPT_DOC);
 }

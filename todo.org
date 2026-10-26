@@ -18,14 +18,6 @@
 
 * Macro todo
 - [ ] Enhance mode system: major mode switch and minor modes
-- [ ] Finding things across files occur (matches in this buffer, in a buffer, RET to jump)
-      then project-wide grep. You already have the compilation-buffer navigation pattern
-      (next-error/compilation-goto), so occur and grep can reuse that entire mechanism
-      — they're the same "list of places, jump to one" shape. And a project grep over
-      a large tree is the second obvious worker.
-- [ ] rectangle commands
-- [ ] Keyboard macros, registers and bookmarks
-- [ ] narrow-to-region
 - [ ] Module dependency system (with functions like provide and requires) with a cached module
       table so that the same dependency is not loaded twice. Following that a module that
       aggregate the main useful modules and the common keymaps must be added to provide a

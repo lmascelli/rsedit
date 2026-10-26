@@ -1,22 +1,9 @@
-//! Lists of places: making one, walking one, and the seams between them.
+//! Lists of places: making one, walking one, and the seams between them. The
+//! index arithmetic, past the listing's header line; who owns the walk, which
+//! `next-error` keeps from the file being fixed, with the listing out of sight
+//! and not once it is killed; and the refresher of a list that grows.
 //!
-//! # What is worth testing here
-//!
-//! Three things, and none of them is "does the search find the word".
-//!
-//! The first is the **index arithmetic**, because a listing has a header line
-//! and the entries are counted from zero: an off-by-one means `RET` on a line
-//! opens the match above it, which looks like a search that is wrong about
-//! where things are.
-//!
-//! The second is **who owns the walk**. `next-error` is pressed in the file
-//! being fixed, not in the listing, so it cannot read the listing off the
-//! screen -- and it has to keep working when the listing is not visible, and
-//! stop working when it has been killed.
-//!
-//! The third is the **refresher**, which exists because a compilation's list
-//! grows while you walk it. A walk that did not ask would show what the
-//! compiler had said thirty seconds ago and give no sign of it.
+//! Design: `doc/architettura-editor.typ, <risultati>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -346,8 +333,8 @@ mod tests {
         id
     }
 
-    fn search(pattern: &str, root: &str, buffer: &str) -> crate::primitives::results::TreeSearch {
-        crate::primitives::results::TreeSearch {
+    fn search(pattern: &str, root: &str, buffer: &str) -> crate::primitives::occur::TreeSearch {
+        crate::primitives::occur::TreeSearch {
             pattern: crate::text::search::Pattern::new(pattern, false, false).expect("a pattern"),
             root: PathBuf::from(root),
             buffer: buffer.to_string(),
@@ -762,8 +749,7 @@ mod tests {
     }
 
     /// The list opens in a strip along the bottom and takes the focus; the
-    /// window you were in keeps your buffer. It took that window's place as
-    /// well, so your buffer went out of sight.
+    /// window you were in keeps your buffer, in sight.
     #[test]
     fn a_list_opens_below_and_your_buffer_stays_in_view() {
         let (ctx, env) = with_view("one TODO\ntwo\nthree TODO\n");

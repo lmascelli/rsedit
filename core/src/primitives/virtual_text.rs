@@ -1,13 +1,10 @@
-//! Showing text in a window that is not in the buffer.
+//! Virtual text from Lisp: text a window shows at a position of the buffer
+//! without it being in the buffer, as an inlay hint or a preview. A category
+//! names who put each piece there, so that a producer replaces its own in one
+//! call. The table is [`crate::buffer::virtual_text`], the drawing
+//! [`crate::ui::layout`].
 //!
-//! The table is in [`crate::buffer::virtual_text`] and the drawing is in
-//! [`crate::ui::layout`]; this is the door Lisp comes through.
-//!
-//! Nothing here knows what the text is *for*. An inlay hint from a language
-//! server, a preview of what a command would insert, a note beside a line --
-//! all three are a string at a position with a category naming whoever put it
-//! there, and the editor's whole involvement is letting that producer replace
-//! its own batch in one call.
+//! Design: `doc/architettura-editor.typ, <mark-overlay>`.
 use super::*;
 use crate::ui::Face;
 
@@ -148,15 +145,10 @@ primitive!(virtual_text_at, args, _env, ctx, {
     }))
 });
 
-/// Register this module's primitives: text shown in the view that is not in the buffer.
+/// Registers the primitives of virtual text.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // Text shown in a window that is not in the buffer: a hint, a preview.
-    // See `primitives::virtual_text`, and `ui::layout` for how a row that is
-    // wider on screen than it is in the buffer is drawn and clicked on.
     into.function(
         "make-virtual-text",
         make_virtual_text,

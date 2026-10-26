@@ -1,22 +1,10 @@
-//! Replace: what gets changed, and how a view drives it.
+//! Replace: what gets changed, and how a view drives it. First the
+//! arithmetic of the loop, whose failures are quiet: where it resumes after an
+//! empty match or a replacement, and the region's limit as the text grows.
+//! Then the split: the editor decides what changes, a view how to ask, and
+//! the editor is driven with no view at all.
 //!
-//! # What is worth testing here
-//!
-//! A replace is a loop over positions that the loop itself keeps moving. Every
-//! interesting failure is in that arithmetic and every one of them is quiet:
-//!
-//! - A resume point that does not advance past an empty match, and the command
-//!   never returns.
-//! - A resume point past the *match* rather than past the replacement, and a
-//!   replacement containing what it replaced is replaced again, forever.
-//! - A region limit that is not moved when the text under it grows, and a
-//!   replace confined to the region creeps past its end.
-//!
-//! None of those show up in a test that replaces `cat` with `dog` once. So the
-//! first half below is about the shape of the loop, and the second is about
-//! the split the whole feature is built on: the controller decides what
-//! changes, the view only decides how you are asked, and the controller has to
-//! be drivable with no view at all.
+//! Design: `doc/architettura-editor.typ, <sostituzione>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

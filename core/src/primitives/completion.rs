@@ -1,102 +1,29 @@
-//! Completion at point: asking a set of functions what could go where the
-//! cursor is, and putting one of their answers there.
+//! Completion at point: the sources a mode and every buffer declare, and the
+//! runner that asks them what could go where point is, merges what they
+//! answer, and puts the chosen candidate in.
 //!
-//! # The protocol
-//!
-//! A **completion function** takes no arguments. It is called with its buffer
-//! current and point where the user left it, and returns either `nil` -- "not
-//! mine" -- or
-//!
-//! ```text
-//!     (START END CANDIDATES)
-//! ```
-//!
-//! START and END are buffer positions: the text this source is offering to
-//! replace. CANDIDATES is a list of strings, or of `(VALUE . DESCRIPTION)`
-//! pairs, which is the shape `*completion-read-function*` already shows.
-//!
-//! # Why the bounds, and not just the candidates
-//!
-//! Because only the source knows what it is completing. In `foo-ba|` the
-//! thing being completed is a symbol; in `/usr/lo|` it is the last path
-//! component and not the slash before it; inside a string it may be the whole
-//! string. A source that returned only candidates would leave this function
-//! to *guess* which characters they were meant to replace -- one guess, shared
-//! by every source, and wrong for all but one of them.
-//!
-//! # Why filtering happens here and not in the sources
-//!
-//! A source answers "what could go here", not "what matches what has been
-//! typed". Keeping the match in one place means there is one answer to what
-//! matching means, and one place to change it: bind
-//! `*completion-filter-function*` and every source becomes fuzzy at once,
-//! without any of them being touched.
-//!
-//! # Why the sources are merged rather than raced
-//!
-//! Emacs takes the first function that answers and stops. That works there
-//! because its sources are specific to a mode. Here the useful answer to
-//! `comp` in a Lisp buffer is *both* the functions called `comp...` and the
-//! words already in the buffer, and a race would silently hide one of them
-//! depending on the order of a list the user never sees.
-//!
-//! So: the first source to answer fixes the region, and every later source
-//! that claims **the same region** has its candidates appended. A source
-//! claiming a different region -- a file path where another saw a symbol --
-//! is passed over, because two sources completing different spans of text
-//! cannot both be right.
+//! Design: `doc/architettura-editor.typ, <completamento>`.
 use super::*;
 use crate::editor::{COMPLETION_FILTER_FUNCTION, COMPLETION_READ_FUNCTION};
 use crate::primitives::edits::{delete_range, edited, insert_text};
 use risp::call_callable;
 
-/// Where the text being completed begins, while a presenter is being handed
-/// the candidates -- and only for that long.
-///
-/// It is how a presenter tells a completion in a buffer from one in a prompt,
-/// and it asks once, as it opens. So this is set just before the presenter is
-/// called and put back to nil the moment it returns. Left set, the next
-/// prompt's strip took a word's start in some buffer as its own, read the
-/// prompt's text from the wrong place, and closed itself on the first key.
+/// Where the text being completed begins, while a presenter is handed the
+/// candidates, and only for that long. A presenter reads it once, as it
+/// opens, to tell a completion in a buffer from one in a prompt: left set, the
+/// next prompt would take a word's start in another buffer for its own.
 const START_VAR: &str = "*completion-at-point-start*";
 
 /// The text a choice replaces, between offering the candidates and hearing
-/// which one was chosen: `(START END LENGTH)`, LENGTH being how long the buffer
-/// was when they were offered.
-///
-/// Variables rather than a field, for the reason the minibuffer keeps
-/// `*minibuffer-completions*` in one: a presenter may be a Lisp module that
-/// takes several keystrokes to make up its mind, so the state has to outlive
-/// this call and be visible to anyone debugging it.
-///
-/// Bound at the root of the environment, because outliving this call means
-/// outliving the caller's too. `indent-for-tab-command` completes from inside
-/// its own body, and a region bound there was gone by the time anything chose.
-///
-/// # Why the length
-///
-/// The keystrokes a presenter waits through can be typed into the word itself
-/// -- typing narrows the strip -- and END is where the word ended before them.
-/// The buffer has grown or shrunk by exactly what was typed, so END is carried
-/// forward by the difference. Without that, typing `e` after `ab` and then
-/// choosing `abce` left `abcee`.
+/// which was chosen: `(START END LENGTH)`, LENGTH being how long the buffer
+/// was when they were offered, so that END can follow what is typed in the
+/// meantime. Bound at the root: the choice comes keystrokes later, after the
+/// command that offered and its caller have returned.
 const REGION_VAR: &str = "*completion-at-point-region*";
 
-/// Read a list that may have arrived as data or as syntax.
-///
-/// A list written `'(a b)` in source is a cons chain, but the same list built
-/// by a macro's backquote is still a `Form`. A caller asking for "a list"
-/// means both.
-fn as_list<B: BufferTrait>(exp: &ELispExp<B>) -> Vec<ELispExp<B>> {
-    match exp {
-        ELispExp::Form(items) => items.to_vec(),
-        other if other.is_nil() => Vec::new(),
-        other => other.iter().collect(),
-    }
-}
-
-/// The text a candidate completes to, whatever shape it arrived in.
-fn candidate_value<B: BufferTrait>(item: &ELispExp<B>) -> Option<String> {
+/// Returns the text ITEM, a candidate, completes to: the string or symbol
+/// itself, or the VALUE of a `(VALUE . DESCRIPTION)` pair.
+pub(super) fn candidate_value<B: BufferTrait>(item: &ELispExp<B>) -> Option<String> {
     match item {
         ELispExp::String(text) | ELispExp::Symbol(text) => Some(text.to_string()),
         ELispExp::Cons(cell) => candidate_value(&cell.car),
@@ -111,11 +38,11 @@ fn position<B: BufferTrait>(exp: &ELispExp<B>) -> Option<usize> {
     }
 }
 
-/// Take a source's answer apart, or say why it made no sense.
+/// Returns a source's ANSWER taken apart, or why it makes no sense.
 fn parse_answer<B: BufferTrait>(
     answer: &ELispExp<B>,
 ) -> Result<(usize, usize, Vec<ELispExp<B>>), String> {
-    let parts = as_list(answer);
+    let parts = args::list(answer);
     if parts.len() < 3 {
         return Err(format!(
             "expected (START END CANDIDATES), got {} element(s)",
@@ -128,19 +55,17 @@ fn parse_answer<B: BufferTrait>(
     if end < start {
         return Err(format!("END ({end}) is before START ({start})"));
     }
-    Ok((start, end, as_list(&parts[2])))
+    Ok((start, end, args::list(&parts[2])))
 }
 
-/// The characters of the current buffer between two offsets.
+/// Returns the characters of the current buffer from START to END.
 fn text_between<B: BufferTrait>(ctx: &EditorState<B>, start: usize, end: usize) -> String {
     ctx.with_current_buffer(|buf| buf.text.slice(start, end))
 }
 
-/// Put TEXT where the region was, and leave point after it.
-///
-/// Both halves run inside one command, so undo already groups them: a
-/// completion is undone in one step without this having to say so. See
-/// `UndoHistory::record`.
+/// Puts TEXT in place of START to END, with point after it, or answers false
+/// when the buffer refuses. Both halves are in one command, so a completion is
+/// one step of undo.
 fn replace_region<B: BufferTrait>(
     ctx: &EditorState<B>,
     start: usize,
@@ -148,16 +73,10 @@ fn replace_region<B: BufferTrait>(
     text: &str,
 ) -> bool {
     ctx.with_current_buffer_mut(|buf| {
-        // No `read_only` check here, deliberately. The refusal lives at the two
-        // doors and this goes through them, so asking again would be a second
-        // copy of the rule -- and a second copy is one that can disagree. What is
-        // needed instead is to notice they refused, so that point does not travel
-        // to the end of text that was never inserted: in a read-only buffer point
-        // moves freely, and it should stay exactly where the user put it.
-        // Both doors report a refusal the same way and both refuse for the same
-        // one reason, so either answering false means the buffer is protected.
-        // They cannot disagree between these two lines: the write lock is held
-        // across both, so there is no window in which half the replacement lands.
+        // No read-only check: the doors refuse, and a second copy of their
+        // rule could disagree with it. A refusal leaves point where it is;
+        // the lock is held across both doors, so half a replacement never
+        // lands.
         if !delete_range(buf, start, end) || !insert_text(buf, start, text) {
             return false;
         }
@@ -168,7 +87,7 @@ fn replace_region<B: BufferTrait>(
     })
 }
 
-/// The longest text every candidate begins with.
+/// Returns the longest text every one of VALUES begins with.
 fn common_prefix(values: &[String]) -> String {
     let Some(first) = values.first() else {
         return String::new();
@@ -200,7 +119,7 @@ pub const ADD_COMPLETION_FUNCTION_DOC: &str = "(add-completion-function MODE FUN
 
 primitive!(add_completion_function, args, _env, ctx, {
     exact_arity(args, 2)?;
-    let mode = mode_argument(&args[0])?;
+    let mode = args::optional_name(args.first(), "Symbol, String or nil")?;
     if ctx.add_completion_function(mode.as_deref(), args[1].clone()) {
         Ok(ELispExp::t())
     } else {
@@ -218,8 +137,8 @@ pub const SET_COMPLETION_FUNCTIONS_DOC: &str = "(set-completion-functions MODE F
 
 primitive!(set_completion_functions, args, _env, ctx, {
     exact_arity(args, 2)?;
-    let mode = mode_argument(&args[0])?;
-    if ctx.set_completion_functions(mode.as_deref(), as_list(&args[1])) {
+    let mode = args::optional_name(args.first(), "Symbol, String or nil")?;
+    if ctx.set_completion_functions(mode.as_deref(), args::list(&args[1])) {
         Ok(ELispExp::t())
     } else {
         ctx.log_diagnostic(&format!("Mode {} does not exist", mode.unwrap_or_default()));
@@ -234,29 +153,12 @@ pub const COMPLETION_FUNCTIONS_DOC: &str = "(completion-functions &optional MODE
          (completion-functions 'manpage-mode)";
 
 primitive!(completion_functions, args, _env, ctx, {
-    let mode = match args.first() {
-        None => None,
-        Some(exp) => mode_argument(exp)?,
-    };
+    let mode = args::optional_name(args.first(), "Symbol, String or nil")?;
     match ctx.completion_function_list(mode.as_deref()) {
         Some(list) => Ok(ELispExp::proper_list(list)),
         None => Ok(ELispExp::nil()),
     }
 });
-
-/// A mode argument that may be a symbol, a string, or nil for "global".
-fn mode_argument<B: BufferTrait>(
-    exp: &ELispExp<B>,
-) -> Result<Option<String>, EvalError<EditorState<B>>> {
-    match exp {
-        other if other.is_nil() => Ok(None),
-        ELispExp::Symbol(name) | ELispExp::String(name) => Ok(Some(name.to_string())),
-        other => Err(EvalError::WrongArgumentType {
-            expected: "Symbol, String or nil".into(),
-            got: other.clone(),
-        }),
-    }
-}
 
 fn current_mode<B: BufferTrait>(ctx: &EditorState<B>) -> String {
     ctx.with_current_buffer(|buf| buf.current_mode.clone())
@@ -266,26 +168,16 @@ fn current_mode<B: BufferTrait>(ctx: &EditorState<B>) -> String {
 // Words lying around in a buffer
 // ---------------------------------------------------------------------------
 
-/// What counts as one symbol, for every source that offers names.
-///
-/// Letters, digits, `_`, `-` and `*`. The last two are in because this
-/// editor's own language spells almost every name with a hyphen and several
-/// with stars -- `*completion-read-function*` is one identifier, not four --
-/// and code that uses them as operators does not write `a-b` against a letter
-/// often enough for the occasional stray token to matter.
-///
-/// **One rule, used by all of them**, and that is the point rather than an
-/// economy: `completion-at-point` merges only the sources that claim the same
-/// span of text, so a source scanning back over a different set of characters
-/// would silently drop out of every list. It is not a syntax table and does
-/// not pretend to be one; when it becomes one, it becomes one here.
+/// Whether C belongs to a symbol, for every source that offers names:
+/// letters, digits, `_`, `-` and `*`, which Lisp spells its names with. One
+/// rule for every source, since only sources that claim the same text merge.
 fn is_symbol_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '-' || c == '*'
 }
 
-/// What counts as part of a file name: a symbol, plus the characters a path is
-/// built out of. Deliberately wider, so that a path claims a different span
-/// from the symbol inside it and the two sources do not merge.
+/// Whether C belongs to a file name: a symbol's characters and those a path
+/// is built of. Wider, so that a path claims other text than the symbol in it,
+/// and the two sources do not merge.
 fn is_file_char(c: char) -> bool {
     is_symbol_char(c) || matches!(c, '/' | '\\' | '.' | '~' | ':' | '+')
 }
@@ -440,7 +332,7 @@ primitive!(completion_at_point, _args, env, ctx, {
 
     let pattern = text_between(ctx, start, end);
     let matching = match env.get_variable(COMPLETION_FILTER_FUNCTION) {
-        Some(filter) if filter.is_truthy() => as_list(&call_callable(
+        Some(filter) if filter.is_truthy() => args::list(&call_callable(
             &filter,
             &[
                 ELispExp::string(pattern.clone()),
@@ -541,7 +433,7 @@ primitive!(completion_at_point_choose, args, env, ctx, {
     };
     let region = env
         .get_variable(REGION_VAR)
-        .map(|region| as_list(&region))
+        .map(|region| args::list(&region))
         .unwrap_or_default();
     let (Some(start), Some(end), Some(offered_length)) = (
         region.first().and_then(position),
@@ -564,184 +456,18 @@ primitive!(completion_at_point_choose, args, env, ctx, {
     Ok(args[0].clone())
 });
 
-// ---------------------------------------------------------------------------
-// Fuzzy matching
-// ---------------------------------------------------------------------------
-
-/// Whether the character at `index` begins a word.
+/// Registers the primitives of completion at point.
 ///
-/// Word starts are where people abbreviate from: typing "cap" for
-/// `completion-at-point` works because `c`, `a` and `p` are each the first
-/// letter of a part. Recognising them is most of what separates a fuzzy match
-/// that feels like it read your mind from one that feels like a coincidence.
-fn is_word_start(chars: &[char], index: usize) -> bool {
-    if index == 0 {
-        return true;
-    }
-    let previous = chars[index - 1];
-    let current = chars[index];
-    // A separator before it, or a lowercase-to-uppercase step -- which is the
-    // same boundary written the other way, in `camelCase` rather than in
-    // `kebab-case`.
-    matches!(previous, '-' | '_' | '/' | '.' | ' ' | ':' | '\\')
-        || (previous.is_lowercase() && current.is_uppercase())
-}
-
-/// How well `candidate` matches `pattern`, or `None` if it does not.
-///
-/// A match means the pattern's characters appear in the candidate in order,
-/// though not necessarily together: "cap" matches `completion-at-point`. The
-/// score then says how good that match is, so that the candidate somebody meant
-/// comes first rather than merely appearing somewhere in the list.
-///
-/// # What is rewarded
-///
-/// Characters landing at word starts, and characters landing next to the one
-/// before them. Between them these are what make an abbreviation of the parts
-/// beat an accidental scattering of the same letters. Longer candidates are
-/// penalised gently, so that when two both match, the tighter one wins.
-///
-/// # Why greedy rather than optimal
-///
-/// Taking the leftmost occurrence of each character can, in principle, score a
-/// candidate lower than some other alignment would. Finding the best alignment
-/// is a dynamic program over pattern by candidate, per candidate, on every
-/// keystroke -- and `find-file-recursive` hands this five thousand candidates.
-/// The greedy walk is linear, and the cases where it differs are ones where
-/// both alignments match anyway.
-fn fuzzy_score(pattern: &str, candidate: &str) -> Option<i64> {
-    let needle: Vec<char> = pattern.chars().flat_map(char::to_lowercase).collect();
-    if needle.is_empty() {
-        return Some(0);
-    }
-    let hay: Vec<char> = candidate.chars().collect();
-    let hay_lower: Vec<char> = hay
-        .iter()
-        .flat_map(|c| c.to_lowercase())
-        .collect::<Vec<_>>();
-    // `to_lowercase` can yield more than one character for some scripts, which
-    // would put the two vectors out of step and make every index below wrong.
-    // Falling back to a plain case-sensitive walk is a worse match for such a
-    // candidate and still a correct one.
-    let hay_lower: &[char] = if hay_lower.len() == hay.len() {
-        &hay_lower
-    } else {
-        &hay
-    };
-
-    let mut score = 0i64;
-    let mut at = 0usize;
-    let mut previous_match: Option<usize> = None;
-    for wanted in needle {
-        let found = hay_lower[at..].iter().position(|c| *c == wanted)? + at;
-        score += 1;
-        if is_word_start(&hay, found) {
-            score += 9;
-        }
-        if previous_match == Some(found.saturating_sub(1)) && found > 0 {
-            score += 8;
-        }
-        previous_match = Some(found);
-        at = found + 1;
-    }
-    // A candidate that contains the pattern *literally* beats one that merely
-    // has the letters scattered through it, and one that starts with it beats
-    // one that has it in the middle.
-    //
-    // Without this, "abc" ranks `a-b-c-x-y-z` level with `abc`: three letters
-    // each sitting at a word start score exactly what a three-letter run
-    // scores, and the tie goes to whichever arrived first. Nobody typing "abc"
-    // means the first of those. Scoring the literal cases explicitly says so,
-    // rather than leaving it to be an accident of how the two bonuses happen
-    // to be weighted against each other.
-    let literal = {
-        let needle_lower: String = pattern.to_lowercase();
-        let hay_lower: String = candidate.to_lowercase();
-        if hay_lower.starts_with(&needle_lower) {
-            25
-        } else if hay_lower.contains(&needle_lower) {
-            15
-        } else {
-            0
-        }
-    };
-    // Gentle, and integer division on purpose: it separates candidates that
-    // differ a lot in length without letting length overrule a much better
-    // match.
-    Some(score + literal - (hay.len() as i64) / 4)
-}
-
-pub const FUZZY_FILTER_DOC: &str = "(fuzzy-filter PATTERN CANDIDATES): Return the candidates \
-         PATTERN matches, best first. A candidate matches when PATTERN's characters come in it in \
-         order, not necessarily together, case ignored; characters at the start of a word or next \
-         to each other count for more, and a longer candidate for less. An empty PATTERN keeps \
-         them all, in their order. A candidate is a string, or a (VALUE . DESCRIPTION) pair \
-         matched by VALUE.\n\n\
-         Example:\n\
-         (fuzzy-filter \"cap\" '(\"completion-at-point\" \"copy\" \"cap\"))";
-
-primitive!(fuzzy_filter, args, _env, ctx, {
-    exact_arity(args, 2)?;
-    let pattern = match &args[0] {
-        ELispExp::String(text) | ELispExp::Symbol(text) => text.to_string(),
-        other if other.is_nil() => String::new(),
-        other => {
-            return Err(EvalError::WrongArgumentType {
-                expected: "String".into(),
-                got: other.clone(),
-            });
-        }
-    };
-    let candidates = as_list(&args[1]);
-    // Charged for the whole list before any of it is scored.
-    //
-    // The evaluator charges one unit per reduction step, which prices this
-    // call at 1 however many candidates it is handed -- and scoring twenty
-    // thousand names is not one step's worth of work. The budget is meant to
-    // bound *time*, so that a runaway loop is stopped in about a second; a
-    // primitive doing n units of work for one unit of fuel is how that
-    // guarantee quietly stops holding. Same reasoning as `expect_list` in
-    // `risp::base`, which is where this rule is written down.
-    //
-    // It costs nothing in practice: twenty thousand candidates against a
-    // budget of ten million is a fifth of a percent.
-    ctx.consume_fuel(u32::try_from(candidates.len()).unwrap_or(u32::MAX))?;
-    let mut scored: Vec<(i64, usize, ELispExp<B>)> = Vec::new();
-    for (position, item) in candidates.into_iter().enumerate() {
-        let Some(value) = candidate_value(&item) else {
-            continue;
-        };
-        if let Some(score) = fuzzy_score(&pattern, &value) {
-            scored.push((score, position, item));
-        }
-    }
-    // Highest score first; ties broken by the order the candidates arrived in,
-    // so a source that sorted its own output keeps that order among equals
-    // rather than having it shuffled by an unstable comparison.
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    Ok(ELispExp::proper_list(
-        scored.into_iter().map(|(_, _, item)| item).collect(),
-    ))
-});
-
-/// Register this module's primitives: completing what has been typed.
-///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // Completion at point. The registry of sources and the merge that runs
-    // them are Rust: they are the mechanism, not a policy, and every source
-    // and every presenter is reached through them. What each source actually
-    // knows -- file names, buffer words, the interpreter's own names -- is
-    // Lisp, in `completion-at-point.lisp`, and replaceable one at a time.
+    // The registry of sources and the merge; what each source knows is Lisp,
+    // in `completion-at-point.lisp`.
     into.command(
         "completion-at-point",
         completion_at_point,
         &[],
         COMPLETION_AT_POINT_DOC,
     );
-    into.function("fuzzy-filter", fuzzy_filter, FUZZY_FILTER_DOC);
     into.function(
         "completion-at-point-choose",
         completion_at_point_choose,

@@ -1,4 +1,6 @@
 //! Faces, the theme that styles them, and the Lisp that binds them.
+//!
+//! Design: `doc/architettura-editor.typ, <facce>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -255,9 +257,9 @@ mod tests {
             eval_str("(set-face 'region nil nil '(\"bolder\"))", &env, &ctx).is_err(),
             "and so should a mistyped attribute"
         );
-        // An unknown *face* name is no longer an error: naming one is how a
-        // face comes to exist. A colour and an attribute still are, because
-        // there is a fixed set of each and nothing a typo could be defining.
+        // An unknown *face* name is no error: naming one is how a face comes
+        // to exist. A colour and an attribute are, since there is a fixed set
+        // of each and nothing a typo could be defining.
         assert!(
             eval_str("(set-face 'nonesuch \"red\")", &env, &ctx).is_ok(),
             "the face set is open -- see `Face`"

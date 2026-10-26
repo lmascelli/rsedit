@@ -1,19 +1,9 @@
-//! The replace, as Lisp sees it: the verbs, and the view that is used when
-//! nothing better is loaded.
+//! Replacing from Lisp: the four commands that start a replace, the verbs a
+//! view answers each match with, and the view used when
+//! `*replace-read-function*` names none, a transient keymap of five keys.
+//! What is replaced, and where, is decided in `editor/replace.rs`.
 //!
-//! # The split
-//!
-//! Everything that decides *what* gets replaced is in Rust and cannot be taken
-//! away by a missing module -- see [`crate::editor::replace`]. Everything that
-//! decides *how you are asked* is named by `*replace-read-function*`, which
-//! anything may rebind. A window-based replace with a preview pane and two
-//! buttons rebinds that one variable and calls the same verbs from its
-//! buttons; nothing below has to know it exists.
-//!
-//! The built-in view is deliberately the plainest thing that works: a
-//! transient keymap over the buffer with five keys. It exists so that the
-//! feature is complete with no configuration at all, which is the same reason
-//! the minibuffer has a built-in prompt.
+//! Design: `doc/architettura-editor.typ, <sostituzione>`.
 use super::*;
 use crate::editor::{CASE_REPLACE, REPLACE_READ_FUNCTION};
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
@@ -31,7 +21,8 @@ fn flag<B: BufferTrait>(
     }
 }
 
-/// Start a session and hand it to whoever is asking.
+/// Starts a replace with a command's arguments, and replaces every match at
+/// once or, when INTERACTIVE, offers the first.
 fn begin<B: BufferTrait>(
     args: &[ELispExp<B>],
     env: std::sync::Arc<Env<EditorState<B>>>,
@@ -45,11 +36,8 @@ fn begin<B: BufferTrait>(
         &source,
         &replacement,
         regexp,
-        // `case-fold-search' is the editor's one answer to "does searching
-        // ignore case", already read by the incremental search and already
-        // bound from Rust. Replace reads it through the same function rather
-        // than deciding for itself -- two commands disagreeing about what one
-        // variable means is the surprise worth avoiding here.
+        // Whether case is ignored is what `case-fold-search' says, read by
+        // the function the incremental search reads it with.
         crate::feature::isearch::case_fold(&env),
         flag(&env, CASE_REPLACE, true),
     ) {
@@ -70,7 +58,8 @@ fn begin<B: BufferTrait>(
     ask(env, ctx)
 }
 
-/// Offer the current match, through whichever view is installed.
+/// Offers the match on offer, through the view `*replace-read-function*`
+/// names or the built-in one; with no match left, ends the replace.
 fn ask<B: BufferTrait>(
     env: std::sync::Arc<Env<EditorState<B>>>,
     ctx: &EditorState<B>,
@@ -97,13 +86,11 @@ fn plural(count: usize) -> String {
     }
 }
 
-/// The view used when nothing has replaced it: five keys over the buffer.
-///
-/// `OnUnbound::Release` rather than `Refuse`, which is the difference between
-/// a question and an offer. Any other key ends the replace and then does what
-/// it always does -- so a replace is abandoned by simply carrying on typing,
-/// which is the convention every editor with this feature shares and the one
-/// thing about it nobody has to be taught.
+// TODO(RIC-8): the replace does not end when another key takes the question
+// down, and its match stays marked.
+/// The view used when `*replace-read-function*` names none: a transient
+/// keymap of five keys over the buffer. `OnUnbound::Release`, an offer rather
+/// than a question: another key takes it down, and does what it always does.
 fn default_view<B: BufferTrait>(ctx: &EditorState<B>) {
     let Some((_, _, text, expansion)) = ctx.replace_match() else {
         return;
@@ -265,14 +252,12 @@ primitive!(replace_count, _args, _env, ctx, {
     Ok(ELispExp::number(ctx.replace_count() as f64))
 });
 
-/// Register this module's primitives: search and replace.
+/// Registers the primitives of replacing.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // Replace. The verbs are plain functions -- a view calls them, not a
-    // person -- and only the four entry points are commands.
+    // Only the four that start a replace are commands: the verbs are called
+    // by a view, not by a person.
     into.command(
         "query-replace",
         query_replace,

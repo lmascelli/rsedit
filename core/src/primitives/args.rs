@@ -87,6 +87,17 @@ pub(crate) fn optional_name<B: BufferTrait>(
     }
 }
 
+/// Returns the elements of EXP, a list in either of the shapes one reaches a
+/// primitive in: a cons chain, which is what a list quoted in source is, or a
+/// `Form`, which is what a list a macro quotes from its own arguments still
+/// is. Anything else, nil among it, has no elements.
+pub(crate) fn list<B: BufferTrait>(exp: &ELispExp<B>) -> Vec<ELispExp<B>> {
+    match exp {
+        ELispExp::Form(items) => items.to_vec(),
+        other => other.iter().collect(),
+    }
+}
+
 /// Returns the first of ARGS as a signed count of steps: 1 when it is absent,
 /// rounded down, and an error when it is not a finite number. A negative
 /// count is the same move the other way.

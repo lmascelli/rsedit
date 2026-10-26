@@ -1,13 +1,9 @@
-//! Putting a face on a particular span of text.
+//! Overlays from Lisp: a face on a span of text, for what a mode's patterns
+//! cannot say, as a search's matches or a diagnostic. An overlay is, with
+//! virtual text, a position the buffer keeps and the two doors move; the
+//! table is [`crate::buffer::overlay`].
 //!
-//! A mode's colouring is a set of patterns: it can say "a word in this list is
-//! a keyword" and cannot say "*this* span, because of something that happened".
-//! A search marking its matches, a diagnostic arriving from elsewhere, a manual
-//! page whose emphasis was in the bytes rather than in the words -- none of
-//! those are expressible as a rule over the text.
-//!
-//! See [`crate::buffer::overlay`] for what makes them work: they are the only
-//! stored positions in the editor, and the two doors move them.
+//! Design: `doc/architettura-editor.typ, <mark-overlay>`.
 use super::*;
 use crate::ui::Face;
 use std::sync::Arc;
@@ -15,7 +11,7 @@ use std::sync::Arc;
 /// The category an overlay made without one belongs to.
 const DEFAULT_CATEGORY: &str = "overlay";
 
-/// Read an optional buffer position argument.
+/// Returns EXP as a buffer position, which must be a number not below 0.
 fn position<B: BufferTrait>(exp: &ELispExp<B>) -> Result<usize, EvalError<EditorState<B>>> {
     match exp {
         ELispExp::Number(n) if n.is_finite() && *n >= 0.0 => Ok(*n as usize),
@@ -167,11 +163,9 @@ primitive!(overlay_face, args, _env, ctx, {
     })
 });
 
-/// Register this module's primitives: colouring a span of a buffer without changing it.
+/// Registers the primitives of overlays.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("make-overlay", make_overlay, MAKE_OVERLAY_DOC);
     into.function("delete-overlay", delete_overlay, DELETE_OVERLAY_DOC);

@@ -1,9 +1,8 @@
-//! Overlays as Lisp reaches them, and as the renderer sees them.
+//! Overlays as Lisp reaches them, and as the renderer draws them: a
+//! `Highlight` in the right place, over the mode's colouring and under the
+//! region. `overlay_tests` checks the table's own rules.
 //!
-//! `overlay_tests` covers the adjustment rules against the table directly.
-//! This is the other two ends: the primitives, and the fact that an overlay
-//! actually becomes a `Highlight` in the right place, over the mode's
-//! colouring and under the region.
+//! Design: `doc/architettura-editor.typ, <mark-overlay>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

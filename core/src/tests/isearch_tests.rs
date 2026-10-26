@@ -1,4 +1,6 @@
 //! Incremental search, and the primitives it is built out of.
+//!
+//! Design: `doc/architettura-editor.typ, <ricerca-incrementale>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -452,8 +454,8 @@ mod tests {
     }
 
     /// What the message says, as in Emacs: the mark goes where the search
-    /// started, so `C-x C-x' goes back there. It was left at the far end of
-    /// the match, which the message did not say.
+    /// started, so `C-x C-x' goes back there, and not at the far end of the
+    /// match.
     #[test]
     fn return_saves_the_mark_where_the_search_started() {
         let (ctx, env) = editor_with("alpha beta gamma");

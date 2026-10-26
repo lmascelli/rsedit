@@ -1,17 +1,9 @@
-//! What asking for completions costs, and the three places it used to be paid
-//! over and over.
+//! What asking for completions costs: how often the same work is done, which
+//! no test of whether completion works can see, since a list computed three
+//! times looks like one computed once. Counted rather than timed, as a timing
+//! test on a shared machine measures the machine.
 //!
-//! # What is worth testing here
-//!
-//! Nothing in this file is about whether completion *works* -- that is tested
-//! elsewhere, and it always worked. It is about how often the same work is
-//! done, which is invisible in every other kind of test: a candidate list
-//! computed three times looks exactly like one computed once.
-//!
-//! The bug these came from was a three-second pause on every press of Tab in
-//! the manual prompt, on the thread that draws. It had three causes stacked on
-//! each other, and each one is checked below by *counting* rather than by
-//! timing: a timing test on a shared machine measures the machine.
+//! Design: `doc/architettura-editor.typ, <minibuffer>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -113,10 +105,10 @@ mod tests {
 
     #[test]
     fn pressing_tab_again_does_not_ask_the_candidate_function_again() {
-        // The second cause. With a presenter installed -- which the
-        // completion module installs -- every press used to call the
-        // candidate function, and for the manual that function walks every
-        // page installed. Pressing Tab cannot change what the answer is.
+        // With a presenter installed, as the completion module installs one,
+        // a second press must not call the candidate function again: for the
+        // manual it walks every page installed, and Tab cannot change the
+        // answer.
         let (ctx, env) = editor();
         run(
             r#"(setq asked 0)
@@ -449,7 +441,7 @@ mod tests {
         // it itself if the background has not got there yet.
         let pages = Pages::new("background", 20);
         let (ctx, env) = with_manpage(&pages);
-        // Re-loading the module is what triggers it, now that the path is set.
+        // Loading the module again triggers it, with the path set.
         run("(manpage--reindex)", &env, &ctx);
         settle(&ctx, &env);
         let built = count(&run("(length manpage--names)", &env, &ctx));
@@ -466,9 +458,9 @@ mod tests {
 
     #[test]
     fn asking_for_candidates_does_not_walk_the_tree_again() {
-        // The three fixes together, from the place the bug was reported: the
-        // completion source for the manual prompt, asked as the prompt asks
-        // it. A thousand pages and ten presses used to be half a minute.
+        // The three costs together, where they add up: the completion source
+        // of the manual's prompt, asked as the prompt asks it, a thousand
+        // pages and ten presses.
         let pages = Pages::new("candidates", 1_000);
         let (ctx, env) = with_manpage(&pages);
         run(r#"(manpage-candidates "page")"#, &env, &ctx);

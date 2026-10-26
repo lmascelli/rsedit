@@ -1,9 +1,7 @@
-//! `fuzzy-filter`: what matches, and in what order.
+//! `fuzzy-filter`: what matches, and in what order, which is the half that
+//! decides whether the candidate meant comes first.
 //!
-//! The order is the interesting half. Whether a pattern matches at all is a
-//! subsequence test anyone would write the same way; which of several matches
-//! comes *first* is the part that decides whether the completion strip feels
-//! like it read your mind.
+//! Design: `doc/architettura-editor.typ, <completamento>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

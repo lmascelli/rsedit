@@ -1,5 +1,7 @@
 //! Listing directories, narrowing a list, and completing a file name at a
 //! command's `f` argument.
+//!
+//! Design: `doc/architettura-editor.typ, <nomi-file>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -236,20 +238,11 @@ mod tests {
         assert_eq!(strings(&listed), vec!["in-home.txt"]);
     }
 
-    /// Building an editor must not write anything into `HOME`.
-    ///
-    /// # What this is really guarding
-    ///
-    /// `HOME` is process-wide and the test runner is threaded, so the moment
-    /// one test points it at a sandbox, *every* concurrently running test's
-    /// editor sees that sandbox as the home directory. A boot that creates
-    /// its configuration directory therefore creates it inside somebody
-    /// else's fixture -- and the test that fails is the one holding the
-    /// sandbox, not the one that wrote into it, which is why this was such a
-    /// confusing intermittent failure of `list_dir_expands_a_tilde` above.
-    ///
-    /// This does the damaging thing on purpose -- redirects `HOME` and *then*
-    /// boots -- so that the guarantee is checked rather than the timing.
+    /// Building an editor must not write anything into `HOME`. `HOME` is the
+    /// process's, and the tests run on threads, so a boot that made its
+    /// configuration directory would make it in another test's sandbox, and
+    /// that test would be the one to fail. This redirects `HOME` and then
+    /// boots, so that the guarantee is checked rather than the timing.
     #[test]
     fn building_an_editor_does_not_write_into_home() {
         let sandbox = Sandbox::new("home-untouched");

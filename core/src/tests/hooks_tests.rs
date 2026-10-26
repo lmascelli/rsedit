@@ -1,10 +1,8 @@
-//! Hooks that belong to every mode rather than to one.
+//! Hooks that belong to every mode rather than to one, for what is not about
+//! a kind of buffer, as the completion strip redrawing after a command: a
+//! hook added to each mode would miss a mode made afterwards.
 //!
-//! A mode's own hooks are right for anything that is about *this kind of
-//! buffer*. Some things are not: the completion strip has to redraw after a
-//! command that changed what was typed, and what the buffer's mode happens to
-//! be has nothing to do with it. Registering such a hook in each mode
-//! separately works until somebody defines a mode afterwards.
+//! Design: `doc/architettura-editor.typ, <modi>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

@@ -1,23 +1,17 @@
-//! Primitives for the command registry: registering commands, asking what a
-//! command is, and invoking one interactively.
+//! The command registry from Lisp, and running a command: `register-command`,
+//! what a command is, `call-interactively` and `M-x`. A command's arguments
+//! are asked for by a chain of prompts, with the pending command keeping what
+//! has been answered between one and the next.
 //!
-//! The split of responsibility here is deliberate. The **registry** is Rust --
-//! it is editor state, looked up on every key press, and parsing specs once at
-//! registration turns a bad spec into a boot-time error. The **prompting** is
-//! Lisp: `minibuffer-read` fires its callback on a later keystroke, so
-//! collecting N arguments is a continuation chain, and a chain is a closure in
-//! Lisp versus a resumable state machine in Rust.
+//! Design: `doc/architettura-editor.typ, <comandi>`.
 use super::*;
 use crate::commands::ArgSpec;
 use crate::editor::{COMMAND_ARG_COMPLETION_FUNCTION, COMMAND_COMPLETION_FUNCTION};
 use crate::primitives::args;
 use risp::call_callable;
 
-/// Read a command name from an argument that may be a symbol or a string, so
-/// `(commandp 'find-file)` and `(commandp "find-file")` both work -- M-x has a
-/// string in hand, Lisp code has a symbol.
-/// `(KIND PROMPT)` for one argument, as Lisp sees it -- already parsed, so the
-/// prompting code dispatches on a symbol instead of re-splitting a string.
+/// Returns SPEC as Lisp sees it, `(KIND PROMPT)`: parsed already, so that
+/// the code that prompts goes by a symbol rather than splitting a string.
 fn spec_to_lisp<B: BufferTrait>(spec: &ArgSpec) -> ELispExp<B> {
     ELispExp::proper_list(vec![
         ELispExp::symbol(spec.kind().into()),
@@ -38,18 +32,7 @@ primitive!(register_command, args, env, ctx, {
     exact_arity(args, 2)?;
     let name = args::name(args.first())?;
 
-    // Accept the spec list whether it arrived as data or as syntax.
-    //
-    // `'("sName: ")` written in source is converted to a cons chain by the
-    // reader, but the same list produced by a macro's backquote is still a
-    // `Form`, and no list primitive traverses one. Rather than make callers
-    // care which they have, this reads both -- it is asking for "a list of
-    // strings", and both representations are that.
-    let codes: Vec<ELispExp<B>> = match &args[1] {
-        ELispExp::Form(items) => items.to_vec(),
-        other if other.is_nil() => Vec::new(),
-        other => other.iter().collect(),
-    };
+    let codes = args::list(&args[1]);
 
     let mut specs = Vec::with_capacity(codes.len());
     for code in &codes {
@@ -65,11 +48,9 @@ primitive!(register_command, args, env, ctx, {
         );
     }
 
-    // When the command is a Lisp function we know its arity, so a spec list
-    // that disagrees with it is caught here -- at definition time -- instead of
-    // becoming a `WrongNumberOfArguments` the first time somebody runs the
-    // command. Primitives have no introspectable arity, so they are taken on
-    // trust.
+    // A Lisp function's arity is known, so specs that disagree with it are
+    // refused now, rather than failing the first time the command runs. A
+    // primitive's arity is not known, and is taken on trust.
     if let Some(ELispExp::Lambda(lambda)) = env.get_function(&name) {
         let required = lambda.params.len();
         let accepted = required + lambda.optionals.len();
@@ -144,13 +125,9 @@ primitive!(call_interactively, args, env, ctx, {
     exact_arity(args, 1)?;
     let name = args::name(args.first())?;
 
-    // Anything left on the stack while no prompt is open belongs to a
-    // minibuffer that was closed by neither confirm nor cancel.
-    //
-    // This is hygiene, not a correctness fix: because these are stacked, a new
-    // command sits above any orphan and pops itself off, so an orphan cannot
-    // steal input -- it just never goes away. Clearing here keeps repeated
-    // abandonment from growing the stack without bound.
+    // What is on the stack while no prompt is open was left by a prompt
+    // closed by neither confirm nor cancel. A new command would sit above it
+    // and never read it; cleared, the stack does not grow.
     if !ctx.minibuffer_is_open() {
         ctx.clear_pending_commands();
     }
@@ -183,12 +160,9 @@ primitive!(call_interactively, args, env, ctx, {
     advance_pending(env, ctx)
 });
 
-/// Answer what the editor can, then either prompt for the next argument or --
-/// nothing left to ask -- run the command.
-///
-/// Both ends of the chain funnel through here: the first call from
-/// `call-interactively`, and every later one from a confirmed prompt. One
-/// place decides what happens next, so the two cannot drift.
+/// Fills the arguments the editor answers itself, then prompts for the next
+/// one or, with nothing left to ask, runs the command. The first call comes
+/// from `call-interactively`, every later one from a confirmed prompt.
 fn advance_pending<B: BufferTrait>(
     env: std::sync::Arc<Env<EditorState<B>>>,
     ctx: &EditorState<B>,
@@ -205,13 +179,9 @@ fn advance_pending<B: BufferTrait>(
     call_callable(&callable, &collected, env.clone(), ctx)
 }
 
-/// Open a minibuffer prompt for SPEC, with this module's own primitives as the
-/// confirm and cancel callbacks.
-///
-/// Going through `minibuffer-read` by name rather than calling the built-in
-/// prompt directly is deliberate: that indirection is what
-/// `*minibuffer-read-function*` exists for, and a replacement prompt should
-/// serve command arguments too.
+/// Opens a prompt for SPEC, with this module's primitives as its callbacks.
+/// Through `minibuffer-read` by name, so that a prompt put in its place by
+/// `*minibuffer-read-function*` asks for arguments too.
 fn prompt_for<B: BufferTrait>(
     spec: &ArgSpec,
     env: std::sync::Arc<Env<EditorState<B>>>,
@@ -233,22 +203,16 @@ fn prompt_for<B: BufferTrait>(
     )
 }
 
-/// The prompt shown while reading one of a command's arguments.
-///
-/// A bare `Find file:` says nothing about who is waiting on the answer, and
-/// with more than one argument it says nothing about which one is being asked
-/// for -- two prompts reading `Replace:` then `With:` look like two unrelated
-/// questions. So the command's own name leads, and a multi-argument command
-/// also shows its position:
+/// Returns the title of the prompt for SPEC: the pending command's name, its
+/// place among the arguments when there is more than one, then SPEC's prompt.
 ///
 /// ```text
 ///   find-file - Find file:
 ///   query-replace (2/2) - With:
 /// ```
 ///
-/// If nothing is pending -- `minibuffer-read` called straight from Lisp, as
-/// `M-:` does -- the caller's prompt is used unchanged, since there is no
-/// command to name.
+/// With no command pending, as when Lisp calls `minibuffer-read` itself, the
+/// prompt alone.
 fn argument_title<B: BufferTrait>(spec: &ArgSpec, ctx: &EditorState<B>) -> String {
     let prompt = spec.prompt();
     match ctx.pending_progress() {
@@ -258,9 +222,8 @@ fn argument_title<B: BufferTrait>(spec: &ArgSpec, ctx: &EditorState<B>) -> Strin
     }
 }
 
-/// Convert the raw minibuffer input to the value the command should receive,
-/// or `None` when it is not one: a number argument given anything but a
-/// number, nothing included.
+/// Returns INPUT as the value a command receives for SPEC, or `None` when it
+/// is not one: anything but a number, nothing included, for a number.
 fn convert_arg<B: BufferTrait>(spec: &ArgSpec, input: &str) -> Option<ELispExp<B>> {
     match spec {
         ArgSpec::Number { .. } => input
@@ -273,13 +236,9 @@ fn convert_arg<B: BufferTrait>(spec: &ArgSpec, input: &str) -> Option<ELispExp<B
     }
 }
 
-// One argument confirmed. Records it, then either prompts for the next or --
-// this being the last -- applies the command.
-//
-// This is the link in the chain, and it is a primitive rather than a Lisp
-// closure because collecting a command's arguments is the mechanism by which
-// commands work at all: it has to be present whether or not any `.lisp` file
-// loaded.
+// The confirm callback of an argument's prompt: records the argument, then
+// prompts for the next or runs the command. A primitive, so that commands
+// collect their arguments whatever `.lisp` file failed to load.
 primitive!(command_arg_confirm, args, env, ctx, {
     let input = match args.first() {
         Some(ELispExp::String(s)) => s.to_string(),
@@ -308,18 +267,16 @@ primitive!(command_arg_confirm, args, env, ctx, {
     advance_pending(env, ctx)
 });
 
-// The prompt was cancelled, so the command is abandoned. Nothing is applied:
-// a half-collected argument list must never reach a command.
+// The cancel callback: the command is dropped, so that an argument list half
+// collected never reaches it.
 primitive!(command_arg_cancel, _args, _env, ctx, {
     ctx.take_pending_command();
     Ok(ELispExp::nil())
 });
 
-// Completion candidates for the argument currently being prompted for.
-//
-// The kind comes from the pending command rather than being captured when the
-// prompt opened, which is what lets one primitive serve every argument without
-// needing a closure to partially apply it.
+// The completion callback: the candidates for the argument being asked for.
+// It reads the argument's kind from the pending command, so one primitive
+// serves every argument.
 primitive!(command_arg_complete, args, env, ctx, {
     let prefix = match args.first() {
         Some(ELispExp::String(s)) => s.to_string(),
@@ -352,10 +309,8 @@ primitive!(command_arg_complete, args, env, ctx, {
             .into_iter()
             .filter(|name| name != "*Minibuffer*")
             .collect(),
-        // Already whole paths, and already filtered against what was typed --
-        // a file name is completed one path component at a time, so the
-        // generic "starts with the prefix" filter below would be both wrong
-        // and redundant. Returned directly for that reason.
+        // Whole paths, filtered already: a file name completes a component
+        // at a time, which the filter below knows nothing of.
         ArgSpec::File { .. } => {
             return Ok(ELispExp::proper_list(
                 super::file_names::file_completions(&prefix)
@@ -503,15 +458,13 @@ primitive!(pending_command, _args, _env, ctx, {
     })
 });
 
-/// Register this module's primitives: the command registry, and running a command by name.
+/// Registers the primitives of the command registry and of running a
+/// command.
 ///
-/// Called by [`super::install_primitives`]. Here rather than there because a
-/// primitive's name, its implementation and its argument spec are one fact in
-/// three pieces, and they were two files apart.
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
-    // The registry itself. These are plain functions, not commands: they are
-    // how Lisp inspects and extends the command set, not things a user runs
-    // from M-x.
+    // The registry, which Lisp reads and extends: functions, not commands a
+    // user would run from M-x.
     into.function("register-command", register_command, REGISTER_COMMAND_DOC);
     into.function("commandp", commandp, COMMANDP_DOC);
     into.function("command-args", command_args, COMMAND_ARGS_DOC);
@@ -538,7 +491,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         call_interactively,
         CALL_INTERACTIVELY_DOC,
     );
-    // Which command's prompt is up, for anything that has to know -- a
-    // preview, a mode line. See `primitives::commands`.
+    // Which command's prompt is up, for what has to know: a preview, a mode
+    // line.
     into.function("pending-command", pending_command, PENDING_COMMAND_DOC);
 }

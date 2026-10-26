@@ -1,20 +1,9 @@
-//! What the editor can be asked about itself, and why the answers are the
-//! editor's own rather than a second opinion.
+//! What the editor can be asked about itself. An answer is believed, so the
+//! tests are mostly of precedence: a mode hides the global map, a transient
+//! map hides both, a sequence appears once, under the map that wins. And the
+//! capture reads a whole sequence without running or inserting anything.
 //!
-//! # What is worth testing here
-//!
-//! Every one of these commands is believed. A `describe-key` that reports the
-//! global binding while the mode's is the one that runs does not look wrong --
-//! it looks authoritative, and the person reading it goes and rebinds the
-//! wrong key. So the tests below are mostly about *precedence*: that a mode
-//! hides the global map, that a transient map hides both, that a sequence
-//! appears once and under the winner.
-//!
-//! The capture that `describe-key` is built on has a second failure of its
-//! own: it must read the whole sequence -- `C-x C-f`, not `C-x` -- and it must
-//! not run, type, or insert anything while doing it. An unbound printable key
-//! self-inserts on the normal path, and a capture that let that through would
-//! answer the question and edit the buffer.
+//! Design: `doc/architettura-editor.typ, <aiuto>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

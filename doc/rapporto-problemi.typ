@@ -234,7 +234,7 @@
     stato: "aperto",
     titolo: [Le combinazioni di modificatori in `define-key` sono limitate e un errore va solo nel registro],
     breve: [`parse_key`: un solo prefisso; `define-key` fallisce in silenzio],
-    dove: [`input.rs` (`parse_key`), `primitives/general.rs` (`define-key`)],
+    dove: [`input.rs` (`parse_key`), `primitives/keymaps.rs` (`define-key`)],
     verifica: [Riprodotto sulla revisione `3d846f1`: `"M-C-x"` e `"C-S-a"` danno `nil`, `"C-M-x"` dà `t`.],
     cosa: [`parse_key` riconosce un solo prefisso tra `C-M-`, `C-`, `M-` e `S-`, quindi `M-C-x` (stesso tasto di `C-M-x`) e le combinazioni con Shift non si possono scrivere. Una sequenza non valida o un modo inesistente fanno restituire `nil` a `define-key`, con il motivo scritto solo nel registro. La docstring di `define-key` e la pagina `keymaps` ora dicono quali combinazioni non sono tasti.],
     correzione: [Analizzare i prefissi in un ciclo, in qualsiasi ordine, e segnalare l'errore con un errore Lisp.],
@@ -328,6 +328,19 @@
     cosa: [La funzione che scrive la risposta proposta (completamento, cronologia) cancella il testo prima del punto e inserisce quello nuovo direttamente nel testo: quello che sta dopo il punto resta. Da `c850aee` chiama poi `changed`, quindi versione e cache sono a posto; il resto delle porte resta saltato: nulla per l'annullamento, nessun controllo della sola lettura, overlay e testo virtuale non spostati (#link(<BUF-1>)[BUF-1]).],
     effetto: [Con il punto a metà della risposta, la cronologia non la sostituisce ma ci si mette davanti, e la risposta che parte è sbagliata.],
     correzione: [Sostituire tutta la risposta, con `delete_range` e `insert_text`.],
+  ),
+  (
+    id: "MIN-4",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [Un `minibuffer-read` con MODE nil apre il prompt nel modo `nil`, dove Invio ed Esc non rispondono],
+    breve: [MODE nil a `minibuffer-read`: il prompt senza i suoi tasti],
+    dove: [`primitives/minibuffer.rs` (`default-minibuffer-prompt`, che prende ogni simbolo come il nome del modo)],
+    verifica: [Riprodotto con un test temporaneo durante il passo 18 della documentazione, sul codice di `71e1554`, che non cambia il comportamento. Dopo `(minibuffer-read "P:" (lambda (s) (setq got s)) nil nil nil "chiave")`, `(major-mode)` nel prompt risponde `nil`; `h`, `i` e Invio lasciano nel prompt `hi` e un a capo senza chiamare ON-CONFIRM, ed Esc non lo chiude. Con MODE omesso, o `'minibuffer-mode`, la stessa sequenza conferma.],
+    cosa: [Il prompt predefinito legge MODE come il nome di un modo quando è un simbolo o una stringa, e nil è il simbolo `nil`: il buffer del prompt si apre nel modo `nil`, che non esiste, senza i tasti di `minibuffer-mode`. La docstring dice che MODE è `minibuffer-mode` se manca, e chi vuole dare KEY senza MODE passa nil, come si fa in Lisp con un argomento facoltativo. Nessun modulo fornito con l'editor lo fa.],
+    effetto: [Il prompt non si conferma né si chiude con i suoi tasti, Invio vi scrive un a capo, e `C-g` non lo chiude (#link(<MIN-2>)[MIN-2]): ne esce solo chi sa chiudere il buffer `*Minibuffer*` in un altro modo.],
+    correzione: [Prendere nil come assente, con `args::optional_name`, come fanno le altre primitive per un nome facoltativo, e un test con MODE nil e KEY.],
   ),
   // ------------------------------------------------------------------ FIL
   (
@@ -501,7 +514,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Una regione di sintassi che corrisponde alla stringa vuota blocca il thread di background],
     breve: [Regioni che corrispondono a "": ciclo infinito o memoria esaurita nell'evidenziatore],
-    dove: [`primitives/modes.rs` (`add-syntax-region`, che non controlla i pattern), `modes/syntax.rs` (`highlight_line`, che non avanza dopo un'apertura, una chiusura o un escape vuoti)],
+    dove: [`primitives/grammar.rs` (`add-syntax-region`, che non controlla i pattern), `modes/syntax.rs` (`highlight_line`, che non avanza dopo un'apertura, una chiusura o un escape vuoti)],
     verifica: [Riprodotto nell'analisi di `08a853d`: con BEGIN `"x*"` ed END `"y*"` un thread restava al 97 % di CPU e la colorazione di un file di una riga non finiva mai; con BEGIN vuoto e NESTABLE la memoria cresceva di circa 90 MB al secondo; con un pattern normale lo stesso file si colorava in 20 ms. Il ciclo di `highlight_line` non è cambiato da allora.],
     cosa: [`highlight_line` avanza la posizione al punto in cui finisce l'evento trovato. Per una regola protegge il caso vuoto (`pos = resume.max(pos + 1)`), per regioni ed escape no. Una regione che si apre e si chiude con due corrispondenze vuote nella stessa posizione si riapre all'infinito; una regione annidabile con un BEGIN vuoto continua a impilare stati.],
     riproduzione: ```lisp
@@ -645,7 +658,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Una lista di `M-s o` e una di `M-s g` aprono due strisce, una sopra l'altra],
     breve: [Liste di occur e di grep in due strisce separate],
-    dove: [`editor/results.rs` (`display_results`, che cerca la striscia da riusare), `primitives/results.rs` (`occur--scan` e `grep--scan`, che si presentano come produttori diversi)],
+    dove: [`editor/results.rs` (`display_results`, che cerca la striscia da riusare), `primitives/occur.rs` (`occur--scan` e `grep--scan`, che si presentano come produttori diversi)],
     verifica: [Riprodotto nell'editor sulla revisione `3d846f1`: una lista di `M-s o` e poi una di `M-s g` lasciano tre finestre, la lista di grep in una striscia nuova sopra quella di occur. Nessun test prova una lista di un tipo seguita da una dell'altro.],
     cosa: [`display_results` riusa la striscia in basso solo se la lista che vi è mostrata viene dallo stesso produttore, e occur e grep sono due produttori, `"occur"` e `"grep"`, anche se le loro liste sono entrambe in `occur-mode`. Prima di `3d846f1` una seconda lista, di qualunque dei due comandi, prendeva la striscia della prima.],
     effetto: [Chi cerca prima nel buffer e poi nella directory si ritrova con lo schermo diviso in tre, e deve chiudere la striscia in più con `q`. La pagina `searching` lo dice tra i limiti.],
@@ -663,6 +676,19 @@ init.lisp:
     cosa: [La vista predefinita installa la sua domanda come keymap transitoria `OnUnbound::Release`: un tasto che non è una risposta toglie la mappa e prosegue verso le altre keymap. La mappa se ne va dentro la risoluzione del tasto, che non ha un modo di chiudere ciò che c'è dietro, e nessuno chiama `end_replace`: la sessione resta in `Runtime`, l'overlay resta sul buffer, e le posizioni della sessione non seguono le modifiche successive. È la regola che `TransientKeymap` dichiara, una mappa con una sessione dietro è una `Refuse`, a non essere seguita.],
     effetto: [La corrispondenza resta evidenziata dopo che la domanda è sparita, finché un'altra sostituzione nello stesso buffer non toglie l'overlay; la pagina `searching` dice che un altro tasto ferma la sostituzione. I verbi della sessione restano attivi: chiamati da Lisp, per esempio da una vista scritta dall'utente, lavorano su posizioni vecchie, e `replace-this` sostituisce il testo sbagliato.],
     correzione: [Chiudere la sessione quando la sua mappa se ne va: dopo ogni comando, fuori dalla risoluzione dei tasti, chiamare `end_replace` se una sostituzione è aperta e la sua mappa non è più installata. Oppure fare della domanda una mappa `Refuse` che lega anche un'uscita, rinunciando a lasciarla continuando a scrivere. In tutti e due i casi un test che, dopo il tasto in più, controlli la sessione e l'overlay e non solo la domanda.],
+  ),
+  (
+    id: "RIC-9",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [`results-put` e `results-select` prendono un BUFFER nil come il buffer chiamato `nil`],
+    breve: [BUFFER nil a `results-put` e `results-select`: il buffer `nil`],
+    dove: [`primitives/results.rs` (`results-put` e `results-select`, che prendono ogni simbolo come il nome del buffer)],
+    verifica: [Riprodotto con un test temporaneo durante il passo 18 della documentazione, sul codice di `71e1554`, che non cambia il comportamento. In `*scratch*`, `(results-put "p" "o" '(("buffer" "*scratch*" 1)) nil)` risponde 1, ma `(results-buffer)` e `(results-count "*scratch*")` rispondono nil, e `next-error` dice «No search results to walk»; senza il quarto argomento la lista si attacca a `*scratch*`. `(results-select nil)` risponde nil, dove `(results-select)` sceglie `*scratch*`.],
+    cosa: [Le due primitive leggono BUFFER come un nome quando è un simbolo, e nil è il simbolo `nil`. `results-put` attacca la lista a un buffer `nil` che non c'è, cioè a nessuno, ne fa la lista che `next-error` percorre e risponde con il numero delle voci come se fosse andata; `results-select` cerca una lista nel buffer `nil`. Le docstring dicono il buffer corrente se manca, e le domande sulle liste (`results-count`, `results-entry`, `results-state`) prendono nil come assente. Nessun modulo fornito con l'editor passa nil.],
+    effetto: [Un modulo che passa a `results-put` il suo argomento facoltativo perde la lista in silenzio, e la risposta dice il contrario.],
+    correzione: [Prendere nil come assente, come fanno le domande sulle liste, e un test per ciascuna primitiva.],
   ),
   // ------------------------------------------------------------------ SHL
   (
@@ -827,6 +853,7 @@ init.lisp:
     cosa: [
       - `feature/minibuffer.rs` (il commento del modulo) e `src/tui.rs` (`render_to`, il commento sull'area messaggi): il minibuffer «docked to the last few lines of the frame», mentre il prompt predefinito ora è centrato.
       - `primitives/shell.rs` (`shell-command-start`): il messaggio «The editor's background work has shut down» vale anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta. Il commento accanto, che diceva lo stesso, è corretto dal passo 17 della documentazione.
+      - `primitives/occur.rs` (`grep--scan`): il messaggio «The editor's background work has shut down» vale anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta. Il commento accanto, che diceva lo stesso, è corretto dal passo 18 della documentazione.
       - `primitives/workers.rs` (`define-worker` e `background-call`, attraverso `start`): la riga del registro «the editor's work has shut down» vale anche quando l'esecutore non è partito, l'altro caso in cui `WorkManager::submit` rifiuta. Il commento accanto è corretto come quello di `shell.rs`.
 
       Le voci dell'analisi su `primitives/workers.rs` e su `shell-command-to-string` non valgono più: il codice e la docstring sono stati riscritti (`6de16a1`, `4f05134`). Le tre sui commenti della libreria di base dell'interprete sono nel rapporto di risp, dentro le schede INT-9, INT-16 e INT-21.
@@ -866,7 +893,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Il codice delle liste di risultati lascia un metodo morto, due `if` da unire e righe da formattare],
     breve: [`free_buffer_name` mai usato; due `if` da unire; 41 blocchi da formattare],
-    dove: [`editor/buffers.rs` (`free_buffer_name`), `editor/results.rs` (`select_results_target`, `quit_results`), e i cinque file toccati da `3d846f1`: `editor/results.rs`, `editor/settings.rs`, `editor/boot.rs`, `primitives/results.rs`, `primitives/shell.rs`],
+    dove: [`editor/buffers.rs` (`free_buffer_name`), `editor/results.rs` (`select_results_target`, `quit_results`), e i file del codice toccato da `3d846f1`: `editor/results.rs`, `editor/settings.rs`, `editor/boot.rs`, `primitives/results.rs` e `primitives/occur.rs`, in cui il passo 18 della documentazione lo ha diviso, `primitives/shell.rs`],
     verifica: [Riprodotto sulla revisione `3d846f1`: ogni `cargo build` avvisa che `free_buffer_name` non è mai usato; `cargo clippy` dà tre avvisi in più della revisione precedente, `5f79477`; `cargo fmt --check` trova 41 blocchi da riformattare in quei cinque file, dove prima ne trovava 3, tutti in `src/gui.rs`.],
     cosa: [Con `3d846f1` le liste di occur si aprono con `prepare_results_buffer`, che sceglie il nome con `free_name_for_work`: se ne va così l'ultima chiamata a `free_buffer_name`, e il metodo resta, con la sua docstring. In `select_results_target` e in `quit_results` un `if let` contiene un solo `if`, che clippy chiede di unire (`collapsible_if`). Il codice nuovo non è passato da `rustfmt`: righe spezzate dove ci starebbero intere, la registrazione di `results-display` e `results-quit` con l'indentazione persa, spazi in fondo a una riga di `primitives/shell.rs`.],
     effetto: [Nessuno per chi usa l'editor. Un avviso fisso in ogni compilazione nasconde quelli nuovi, e la prossima modifica a questi file, passata da `rustfmt`, porterà con sé decine di righe che non c'entrano.],
@@ -927,7 +954,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3 e SHL-5.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4 e RIC-9.
 
 == Riepilogo
 

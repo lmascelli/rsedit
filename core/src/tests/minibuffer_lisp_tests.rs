@@ -1,13 +1,9 @@
-//! End-to-end tests for `core/lisp/minibuffer.lisp`, run against a real
-//! `EditorState` + `install_primitives` stack (not just `setup_base_env`)
-//! since the minibuffer relies on `make-floating-window`, `close-buffer`,
-//! `switch-to-buffer`, and the `after-close-hook`/major-mode machinery,
-//! none of which exist in the bare Lisp-core test environment.
+//! The prompt `minibuffer-read` opens, confirmed, cancelled and completed in,
+//! and `M-:`, which `minibuffer.lisp` defines over it. The module is read
+//! from the source tree, since `eval-file` would look for it where the
+//! installed binary is.
 //!
-//! `minibuffer.lisp` is loaded here by evaluating its contents directly
-//! (`include_str!`) rather than through `eval-file`, since `eval-file`
-//! resolves relative to `lisp-path`, which points at the *installed*
-//! binary's directory and won't find the source tree under `cargo test`.
+//! Design: `doc/architettura-editor.typ, <minibuffer>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -215,9 +211,8 @@ mod tests {
 
     #[test]
     fn what_meta_colon_defines_outlives_the_expression() {
-        // Evaluated inside `eval-expression-confirm`, a defun was that
-        // function's own and went when it returned; a function defined
-        // before stayed as it was.
+        // At the top level, not inside `eval-expression-confirm`, where a
+        // defun would be that function's own and go when it returned.
         let (ctx, env) = setup();
         eval_str("(defun probe-old () 1)", &env, &ctx).unwrap();
         evaluate_at_meta_colon("(defun probe-new () 7)", &env, &ctx);
@@ -244,8 +239,8 @@ mod tests {
 
     #[test]
     fn a_command_defined_at_meta_colon_runs_from_m_x() {
-        // It used to be registered and not defined: M-x offered it, and
-        // running it failed with UndefinedFunction.
+        // Defined as well as registered, so that M-x runs it rather than
+        // failing with UndefinedFunction.
         let (ctx, env) = setup();
         eval_str(include_str!("../../lisp/commands.lisp"), &env, &ctx)
             .unwrap_or_else(|e| panic!("loading commands.lisp failed: {e:?}"));
@@ -278,15 +273,9 @@ mod tests {
 
     #[test]
     fn eval_expression_of_an_invalid_form_does_not_abort_the_confirm_flow() {
-        // Regression test: typing something that isn't a valid function
-        // call (e.g. `(1 2 3)`, whose head `1` isn't callable) used to make
-        // `eval-string`'s error propagate all the way out of
-        // `minibuffer-confirm`, so `(minibuffer-confirm)` itself returned
-        // an Err logged as an opaque "Eval Error: (minibuffer-confirm)
-        // UnvalidFunctionCall" -- no mention of what was actually typed.
-        // `eval-expression-confirm` now goes through `eval-string-safe`,
-        // so a bad expression is reported instead of blowing up the whole
-        // confirm flow.
+        // An expression that does not evaluate, as `(1 2 3)`, whose head is
+        // no function, is reported with what was typed: the failure is caught
+        // by `eval-string-top-level`, and does not end `minibuffer-confirm`.
         let (ctx, env) = setup();
 
         eval_str("(eval-expression-prompt)", &env, &ctx).unwrap();
@@ -294,7 +283,7 @@ mod tests {
             eval_str(&format!(r#"(self-insert "{c}")"#), &env, &ctx).unwrap();
         }
 
-        // Must not error -- the whole point of the fix.
+        // Must not error.
         eval_str("(minibuffer-confirm)", &env, &ctx).unwrap();
 
         // The minibuffer still closes and hands focus back cleanly, exactly

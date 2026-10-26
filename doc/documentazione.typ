@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--17 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--18 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -1437,7 +1437,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [15], [`editor/` (fatto)], [4 838], [le porte e gli inoltri; la mappa sopra `managers/`],
   [16], [`primitives/`, modifica del testo: `edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`, `match_data`, `scan` (fatto)], [4 353], [docstring già fatte nella fase B],
   [17], [`primitives/`, file, finestre e lavori: `io`, `buffers`, `windows`, `ui`, `mouse`, `ask`, `shell`, `workers`, `lisp_job`, `args` (fatto)], [4 995], [`io.rs` è il file più lungo: 1 818 righe],
-  [18], [`primitives/`, il resto: `commands`, `completion`, `general`, `help`, `isearch`, `minibuffer`, `modes`, `overlays`, `replace`, `results`, `theme`, `virtual_text`, `mod`], [5 953], [---],
+  [18], [`primitives/`, il resto: `commands`, `completion`, `general`, `help`, `isearch`, `minibuffer`, `modes`, `overlays`, `replace`, `results`, `theme`, `virtual_text`, `mod` (fatto)], [5 953], [---],
   [19], [`modes/`, `feature/`], [2 896], [---],
   [20], [`ui/`, `src/` (la TUI)], [3 408], [---],
   [21], [`core/lisp/`: intestazioni e commenti], [6 422], [docstring già fatte nella fase B],
@@ -1813,6 +1813,73 @@ Restano ai passi dei loro capitoli: `primitives/mod.rs` (passo 18); il resto
 di `modes/autosave.rs`, che chiama `expand_path` (passo 19); il commento di
 `ShutDownOnExit` in `src/main.rs`, che dice che un comando non sopravvive
 all'editor (passo 20, con SHL-5).
+
+*Passo 18, fatto.* `primitives/general.rs` non c'è più: le sue tredici
+primitive sono passate nei file dei loro concetti, come le raggruppano le pagine
+del manuale dell'utente. `keymaps.rs` prende i legami, le keymap transitorie, i
+tasti di ripetizione e `repeat`, come la pagina `keymaps`; `evaluation.rs`
+prende `eval-file` ed `eval-string-top-level`; `diagnostics.rs` il log, il
+backtrace e l'area dei messaggi, come la pagina `diagnostics`; `regexp-opt` va
+in `match_data.rs`, accanto a `string-match`, come nella pagina `regexps`.
+`modes.rs` tiene i modi, gli hook e `add-auto-mode`; `grammar.rs` prende la
+grammatica e `syntax_table.rs` la tabella sintattica con le domande allo
+scanner, le due domande della pagina `writing-modes`. `results.rs` lascia i
+produttori delle liste, occur e grep, a `occur.rs`, che ha il nome della loro
+vista, `occur.lisp`, e `fuzzy.rs` prende `fuzzy-filter` da `completion.rs`. I
+moduli sono 42, le primitive sempre 318. Il codice è lo stesso: un lettore
+nuovo, `args::list`, prende il posto dei sette che leggevano una lista nelle sue
+due forme, e `args::optional_name` quello di `mode_argument`, che faceva la
+stessa cosa; se ne vanno tre `let _` e la lettura che uno di loro taceva, in
+`visit_index`, che nessuno usava; due funzioni diventano private, e due
+visibili ai moduli accanto. Il rustdoc segue le regole, con i `TODO` di CMD-4, MIN-1, SIN-1, SIN-4,
+RIC-5, RIC-7, RIC-8, DOC-1 e delle due schede nuove dove sta il lavoro. I perché
+lunghi sono nel manuale: nella nuova sezione «Comandi, ricerche e modi» del
+capitolo sulle primitive, con quattro sottosezioni e ventiquattro decisioni, e
+i capitoli che descrivono i meccanismi rimandano ai file nuovi. I commenti di
+tredici file di test seguono le regole; `primitive_shape_tests` controlla i
+moduli nuovi, e `raw_string_tests` legge `syntax_table.rs` invece di
+`modes.rs`. I file del passo scendono da 5 753 a 5 416 righe, e quelle di
+commento da 967 a 633; il più lungo è ora `results.rs`, con 569. Il
+comportamento non è cambiato.
+
+Il passo ha trovato un difetto di comportamento in tre primitive, che il
+rapporto descrive in due schede: un nil passato al posto di un nome facoltativo
+è preso come il nome «nil». MIN-4: `minibuffer-read` con MODE nil apre il
+prompt nel modo `nil`, dove Invio scrive un a capo ed Esc non lo chiude. RIC-9:
+`results-put` con BUFFER nil non attacca la lista a nessun buffer e risponde lo
+stesso con il numero delle voci, e `(results-select nil)` non sceglie il buffer
+corrente.
+
+Gli altri difetti sono in commenti, test e documenti, e la patch li corregge.
+Il commento del modulo `commands.rs` diceva che la raccolta degli argomenti è
+in Lisp, mentre è la catena dei prompt in Rust, e la documentazione di
+`spec_to_lisp` cominciava con un pezzo di un'altra. `isearch.rs` contava sei
+primitive eseguite dai tasti del prompt, tra cui `isearch-update`, eseguita dal
+`post-command-hook` di `isearch-mode`, e `isearch-active-p`, che nessun tasto
+esegue. `overlays.rs` diceva che
+gli overlay sono le sole posizioni conservate dell'editor, che lo è anche il
+testo virtuale, e la sua `position` facoltativa, che non lo è. `default_view`
+diceva che un altro tasto chiude la sostituzione, che resta aperta (RIC-8).
+`results.rs` aveva un pezzo di documentazione tronco attaccato a
+`unsaved_text`, che dava anche un avviso di clippy (da 23 a 22), e la docstring
+di `occur--scan` diceva «in a output buffer»; «Only as the editor shuts down»,
+in `grep--scan`, taceva il sistema che non dà un thread (DOC-1). La
+documentazione di `install` in `modes.rs` parlava di modi minori e di keymap
+che lì non ci sono, e `Registry` contava ancora 277 registrazioni e venticinque
+moduli. Tre link della documentazione di `help.rs` e di `replace.rs` non si
+risolvevano: gli avvisi di `cargo doc` passano da 13 a 10. L'intestazione di
+`minibuffer_lisp_tests` descriveva un `minibuffer.lisp` che costruiva il prompt,
+e un suo commento nominava `eval-string-safe`, dove la valutazione passa da
+`eval-string-top-level`. Nel manuale la tabella del capitolo sul testo non
+nominava, tra chi usa `search.rs`, la ricerca incrementale e quella di occur e
+grep, né `scan.rs` tra chi usa `results.rs`.
+
+Restano ai passi dei loro capitoli: i link di `feature/` alle primitive di
+`isearch.rs` e di `minibuffer.rs`, che `cargo doc` non risolve, il `TODO` di
+MIN-3 in `feature/minibuffer.rs` e i commenti di `raw_string_tests`, che
+nominano ancora il testo grezzo di `editor/mod.rs`, oggi in `boot.rs` (passo
+19); i test dei moduli Lisp, come `completion_ui_tests` e `help_lisp_tests`
+(passo 21).
 
 == Fase D --- il manuale (passo 22)
 

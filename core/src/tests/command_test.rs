@@ -1,11 +1,9 @@
-//! Commands: the registry, `call-interactively`, and M-x.
+//! Commands: the registry, `call-interactively` and M-x, through the real
+//! flow of keys into `handle_key_event`, text typed in the prompt and Return:
+//! a command that takes arguments finishes several events after the key that
+//! started it.
 //!
-//! These drive the real flow -- key events into `handle_key_event`, input typed
-//! into the minibuffer, Return to confirm -- rather than calling the primitives
-//! directly, because the interesting behaviour is precisely what happens
-//! *across* keystrokes. `minibuffer-read` returns immediately and its callback
-//! fires later, so a command that takes arguments only finishes running several
-//! events after the key that started it.
+//! Design: `doc/architettura-editor.typ, <comandi>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -315,14 +313,10 @@ mod tests {
         assert_eq!(length() - before, 3);
     }
 
-    /// Regression test for a bug this routing fixed on the way past.
-    ///
-    /// `install_minibuffer` binds Enter, Escape and Tab to **bare symbols**,
-    /// but evaluating a symbol looks up a *variable* -- so every one of those
-    /// keys failed with `UnboundVariable("minibuffer-confirm")` in the real
-    /// editor, making the minibuffer unusable. The suite never noticed because
-    /// its tests confirm by evaluating `(minibuffer-confirm)` directly rather
-    /// than by pressing the key.
+    /// Return in a prompt confirms it. `install_minibuffer` binds Enter,
+    /// Escape and Tab to bare symbols, which the key path has to run as calls
+    /// rather than read as variables; a test that evaluates
+    /// `(minibuffer-confirm)` itself would not see it.
     #[test]
     fn pressing_return_in_the_minibuffer_confirms_it() {
         let (ctx, env) = setup();
@@ -900,9 +894,9 @@ mod tests {
         assert!(!ctx.has_buffer("here"));
     }
 
-    /// `C-q` is `quoted-insert` in Emacs and `C-s` is `isearch-forward`. Both
-    /// used to be bound here to something else entirely, in Rust, where no
-    /// configuration could take them back.
+    /// `C-q` is `quoted-insert` in Emacs and `C-s` is `isearch-forward`, so
+    /// the keymap Rust fills binds neither: a binding there is one no
+    /// configuration could take back.
     #[test]
     fn the_keys_emacs_gives_other_commands_no_longer_quit_or_save() {
         let (ctx, _env) = bare();
