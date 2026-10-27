@@ -10,6 +10,8 @@
 ;;; it is drawn a page at a time around the selection: the candidates are
 ;;; held here, and the buffer is only a picture of them.
 
+(require 'debug)
+
 (make-mode 'completion-mode)
 
 (defconst completion-buffer-name "*Completions*"
@@ -391,3 +393,4 @@ so and leave it open."
 (setq *command-completion-function* 'completion-commands-fuzzy)
 
 (log "End of the completion.lisp")
+(provide 'completion)

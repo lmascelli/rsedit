@@ -449,8 +449,12 @@ mod tests {
     #[test]
     fn a_prefix_argument_counts_windows_to_move() {
         let (ctx, env) = editor();
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str("(split-window-below) (split-window-below)", &env, &ctx).expect("splits");
         let start = ctx.get_focused_window_id();
 
@@ -472,8 +476,12 @@ mod tests {
     #[test]
     fn the_window_keys_are_bound() {
         let (ctx, env) = editor();
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         press(&ctx, &env, KeyCode::Char('x'), ctrl());
         press(&ctx, &env, KeyCode::Char('2'), plain());
@@ -497,8 +505,12 @@ mod tests {
     #[test]
     fn c_x_2_is_a_binding_not_a_prefix_argument() {
         let (ctx, env) = editor();
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         press(&ctx, &env, KeyCode::Char('x'), ctrl());
         press(&ctx, &env, KeyCode::Char('2'), plain());

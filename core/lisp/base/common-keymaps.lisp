@@ -1,3 +1,6 @@
+(require 'debug)
+(require 'indent)
+
 (define-key nil "<backspace>" 'delete-backward-char)
 
 ;; Moving, typing and the small verbs: the `editing' manual page.
@@ -187,3 +190,4 @@
 (register-command "list-workers" nil)
 
 (log "End of the common-keymaps.lisp")
+(provide 'common-keymaps)

@@ -3,6 +3,8 @@
 ;;; For the files whose names end in .py, .pyw and .pyi. User manual: the
 ;;; `modes' page, and `indentation' for how it indents.
 
+(require 'indent)
+
 (make-mode 'python-mode)
 
 ;; Triple quotes precede the one-quote regions: they start at the same column.
@@ -109,3 +111,4 @@
 
 (add-auto-mode "\\.(py|pyw|pyi)$" 'python-mode)
 (log "python-mode loaded")
+(provide 'python-mode)

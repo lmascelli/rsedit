@@ -3,6 +3,8 @@
 ;;; For the files whose names end in .toml, and Cargo.lock. User manual: the
 ;;; `modes' page, and `indentation' for how it indents.
 
+(require 'indent)
+
 (make-mode 'toml-mode)
 (add-syntax-region 'toml-mode "\"\"\"" "\"\"\"" 'string "\\\\.")
 (add-syntax-region 'toml-mode "'''" "'''" 'string)
@@ -41,3 +43,4 @@
 (add-auto-mode "\\.toml$" 'toml-mode)
 (add-auto-mode "(^|[/\\\\])Cargo\\.lock$" 'toml-mode)
 (log "toml-mode loaded")
+(provide 'toml-mode)

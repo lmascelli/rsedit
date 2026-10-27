@@ -26,7 +26,7 @@ mod tests {
     /// With `commands.lisp`, which is where `save-match-data` lives.
     fn editor() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
-        eval_str(include_str!("../../lisp/commands.lisp"), &env, &ctx)
+        eval_str(include_str!("../../lisp/base/commands.lisp"), &env, &ctx)
             .expect("loading commands.lisp");
         (ctx, env)
     }

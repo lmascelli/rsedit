@@ -9,6 +9,8 @@
 ;;; a hundred chances to mangle a line; and where point ends up afterwards is
 ;;; written once, here and in `indent-line-to', instead of once per language.
 
+(require 'commands)
+
 (defvar tab-width 4
   "How many columns a Tab indents by, in a mode that does not say: see
 `indent-width'.")
@@ -393,3 +395,4 @@ on."
 
 
 (log "End of the indent.lisp")
+(provide 'indent)

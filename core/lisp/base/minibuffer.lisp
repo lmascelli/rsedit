@@ -4,6 +4,8 @@
 ;;; are Rust, so that M-x works whatever fails to load. User manual: the
 ;;; `minibuffer' page.
 
+(require 'debug)
+
 (defun eval-expression-confirm (input)
   "Evaluate INPUT, a string, and show it in the echo area with its value, or
 with the error when it fails."
@@ -26,3 +28,4 @@ with the error when it fails."
 (define-key nil "M-:" 'eval-expression-prompt)
 
 (log "End of the minibuffer.lisp")
+(provide 'minibuffer)

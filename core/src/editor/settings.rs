@@ -61,11 +61,21 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         name: LISP_PATH,
-        doc: "The directories `eval-file' searches, in order, for a module named without a \
-              directory or an extension: (eval-file \"dired\") loads dired.lisp from the first \
-              one that has it. It starts as the lisp folder of the editor's data directory.\n\n\
+        doc: "The directories `require' and `eval-file' search, in order, for a module named \
+              without a directory or an extension: (require 'dired) loads dired.lisp from the \
+              first one that has it. It starts as the lisp folder of the configuration \
+              directory, then each plugin's directory, then the base, features and languages \
+              folders of the editor's data directory.\n\n\
               Example:\n\
               \x20 (setq lisp-path (cons (expand-file-name \"~/lisp\") lisp-path))",
+    },
+    Setting {
+        name: THEME_PATH,
+        doc: "The directories the themes are looked for in, in order: a theme in one shadows \
+              a theme of the same name in the ones after it. It starts as the themes folder of \
+              the configuration directory, then each plugin's, then the editor's own.\n\n\
+              Example:\n\
+              \x20 (setq theme-path (cons (expand-file-name \"~/themes\") theme-path))",
     },
     Setting {
         name: AUTO_SAVE,
@@ -234,8 +244,12 @@ pub fn document_settings<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) {
     }
 }
 
-/// The name of the Lisp variable listing where `eval-file` looks for a module.
+/// The name of the Lisp variable listing where `require` and `eval-file` look
+/// for a module.
 pub const LISP_PATH: &str = "lisp-path";
+
+/// The name of the Lisp variable listing where the themes are looked for.
+pub const THEME_PATH: &str = "theme-path";
 
 /// The name of the Lisp variable that arms the echo area's timeout.
 pub const ECHO_MESSAGE_TIMEOUT: &str = "echo-message-timeout";

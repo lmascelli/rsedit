@@ -220,17 +220,15 @@ mod tests {
         let data = exe.parent().unwrap().parent().unwrap().join("data/lisp");
         core.env.set_variable(
             "lisp-path".into(),
-            ELispExp::proper_list(vec![ELispExp::string(data.to_str().unwrap().into())]),
+            ELispExp::proper_list(
+                ["base", "features", "languages"]
+                    .iter()
+                    .map(|kind| ELispExp::string(data.join(kind).to_str().unwrap().into()))
+                    .collect(),
+            ),
         );
-        for module in [
-            "commands",
-            "debug",
-            "common-keymaps",
-            "minibuffer",
-            "clipboard",
-            "vim",
-        ] {
-            core.value("eval-file", vec![ELispExp::string(module.into())])
+        for module in ["common-keymaps", "minibuffer", "clipboard", "vim"] {
+            core.value("require", vec![ELispExp::symbol(module.into())])
                 .expect("load module");
         }
         assert!(core.env.get_function("vim-mode").is_some());

@@ -1,0 +1,81 @@
+NAME
+    plugins - modules installed beside the ones the editor ships
+
+SYNOPSIS
+    (plugins)
+    (plugin-info NAME)
+
+DESCRIPTION
+    A plugin is a folder of modules, and of themes if it has any, that
+    somebody else wrote: installed in the data directory, found when the
+    editor starts, and loaded by name from init.lisp as a module the editor
+    ships is. Finding one loads nothing of it. Its folder is added to
+    `lisp-path', and its themes folder to `theme-path', so that
+    (require 'NAME) loads it and C-c t lists its themes.
+
+    There is no command to install one yet: a plugin is a folder you put
+    there yourself. What each plugin says of itself is kept so that a
+    package manager can be built on it.
+
+WHERE THEY ARE
+    Each plugin is a folder of plugins, in the data directory, named after
+    the plugin:
+
+        ~/.local/share/rsedit/plugins/hello/plugin.lisp
+        ~/.local/share/rsedit/plugins/hello/hello.lisp
+        ~/.local/share/rsedit/plugins/hello/themes/hello-dark.lisp
+
+    $RSEDIT_DATA_DIR, $XDG_DATA_HOME and, on Windows, %LOCALAPPDATA% move
+    the data directory: the `configuration' page says how. The folders are
+    read once, when the editor starts.
+
+A PLUGIN
+    plugin.lisp says what the plugin is, in one form:
+
+        (define-plugin hello
+          :version "0.1"
+          :requires (dired)
+          :description "Says hello from dired.")
+
+    The name must be the folder's. Each keyword may be left out, and one
+    the editor does not know is passed over. The file is read, never run:
+    what it says is known without running anything of the plugin's. A
+    folder whose plugin.lisp is missing or wrong is passed over, and the
+    log says why.
+
+    The plugin's own modules are ordinary modules: each begins with the
+    `require's it needs and ends with its `provide'. :requires lists the
+    features the plugin needs, for whoever installs it; nothing loads them
+    for it, so its modules require them too.
+
+LOADING ONE
+    In init.lisp, by its name, as any module:
+
+        (require 'hello)
+
+    The plugin's folders come after the configuration's lisp folder and
+    before the editor's own, so a module of yours is found before a
+    plugin's, and a plugin's before one the editor ships with the same
+    name. The log says when one file shadows another.
+
+    `plugins' lists the plugins found, and `plugin-info' tells what one says
+    of itself.
+
+LIMITS
+    Nothing installs, updates or removes a plugin, and the :version and
+    :requires of a plugin are not checked against anything. A plugin added
+    while the editor runs is found at the next start.
+
+EXAMPLES
+    The plugins found, and the version of one:
+
+        (plugins)
+        (cdr (assoc 'version (plugin-info 'hello)))
+
+    Load a plugin only when it is installed:
+
+        (when (memq 'hello (plugins))
+          (require 'hello))
+
+SEE ALSO
+    configuration, themes, writing-modes

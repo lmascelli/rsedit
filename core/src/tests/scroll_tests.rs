@@ -348,8 +348,12 @@ mod tests {
     #[test]
     fn c_v_and_m_v_are_bound() {
         let (ctx, env) = editor_showing(200);
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         press(&ctx, &env, KeyCode::Char('v'), ctrl());
         let after_forward = top_line(&ctx, &env);

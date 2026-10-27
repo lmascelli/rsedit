@@ -397,7 +397,12 @@ mod tests {
         // `'"'` holds a double quote, which would open a string region that
         // never closes, and every line after it would be coloured a string.
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
+        eval_str(
+            include_str!("../../lisp/languages/rust-mode.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading rust-mode");
         let grammar = grammar_of(&ctx, "rust-mode");
 
         let line = "let q = '\"'; let n = 1;";
@@ -426,7 +431,12 @@ mod tests {
         // literal, so the rule needs the closing quote, or `&'a` would open
         // something that runs to the end of the file.
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
+        eval_str(
+            include_str!("../../lisp/languages/rust-mode.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading rust-mode");
         let grammar = grammar_of(&ctx, "rust-mode");
 
         for line in [
@@ -441,7 +451,12 @@ mod tests {
     #[test]
     fn an_escaped_quote_is_still_one_character() {
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
+        eval_str(
+            include_str!("../../lisp/languages/rust-mode.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading rust-mode");
         let grammar = grammar_of(&ctx, "rust-mode");
 
         let line = "let q = '\\''; let n = 1;";
@@ -1130,7 +1145,12 @@ mod tests {
     #[test]
     fn the_rust_module_defines_a_working_grammar() {
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
+        eval_str(
+            include_str!("../../lisp/languages/rust-mode.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading rust-mode");
 
         assert_eq!(ctx.auto_mode_for("src/main.rs"), Some("rust-mode".into()));
         let grammar = grammar_of(&ctx, "rust-mode");
@@ -1159,7 +1179,12 @@ mod tests {
     #[test]
     fn the_rust_module_defines_faces_the_editor_never_heard_of() {
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
+        eval_str(
+            include_str!("../../lisp/languages/rust-mode.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading rust-mode");
 
         let doc = Face::named("doc-comment").expect("the module should have defined it");
         assert_ne!(doc, Face::DEFAULT);

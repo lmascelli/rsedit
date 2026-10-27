@@ -3,10 +3,14 @@
 ;;; M-x vim-mode gives a buffer Vim's keys, and global-vim-mode gives them to
 ;;; every buffer that suits. User manual: the `vim' page.
 ;;;
-;;; Load after commands and debug. Syntax, indentation, major-mode hooks and
-;;; prompts keep their own modes: a state is a local keymap over the buffer's
-;;; own. Registers, searches, dot and macros are shared; modal input is
-;;; buffer-local.
+;;; Syntax, indentation, major-mode hooks and prompts keep their own modes: a
+;;; state is a local keymap over the buffer's own. Registers, searches, dot and
+;;; macros are shared; modal input is buffer-local.
+
+(require 'commands)
+(require 'debug)
+(require 'indent)
+;; Not `manpage': :help and K use it when it is loaded.
 
 (defvar vim-shift-width 4 "How many columns > and < shift a line by.")
 (defvar vim-search-wrap t
@@ -1257,3 +1261,4 @@ names."
 (add-hook nil "after-change-major-mode-hook" 'vim--apply-policy)
 (add-hook nil "after-set-visited-file-name-hook" 'vim--apply-policy)
 (log "End of vim.lisp")
+(provide 'vim)

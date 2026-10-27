@@ -7,6 +7,9 @@
 ;;; As in dired, the buffer is the state: every command reads the name back
 ;;; from the line on screen, by column, since a buffer name may contain spaces.
 
+(require 'commands)
+(require 'debug)
+
 (make-mode 'buffer-list-mode)
 
 (defconst buffer-list-buffer-name "*Buffer List*"
@@ -158,3 +161,4 @@ changes."
 (define-key 'buffer-list-mode "q" '(close-buffer buffer-list-buffer-name))
 
 (log "buffer-list loaded")
+(provide 'buffer-list)

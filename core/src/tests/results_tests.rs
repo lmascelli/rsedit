@@ -657,9 +657,9 @@ mod tests {
     fn with_view(text: &str) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = editor(text);
         for (name, source) in [
-            ("commands", include_str!("../../lisp/commands.lisp")),
-            ("debug", include_str!("../../lisp/debug.lisp")),
-            ("occur", include_str!("../../lisp/occur.lisp")),
+            ("commands", include_str!("../../lisp/base/commands.lisp")),
+            ("debug", include_str!("../../lisp/base/debug.lisp")),
+            ("occur", include_str!("../../lisp/features/occur.lisp")),
         ] {
             let ast = Parser::new(&format!("(progn {source})"))
                 .next()

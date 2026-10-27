@@ -80,3 +80,4 @@ another way."
       (backtrace-show message frames)))
 
 (log "End of the debug.lisp")
+(provide 'debug)

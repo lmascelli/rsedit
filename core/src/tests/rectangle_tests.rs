@@ -78,7 +78,11 @@ mod tests {
         // parser reads differently from how it was meant, is silent until
         // somebody presses it.
         let (ctx, env) = editor();
-        run(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx);
+        run(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        );
         for (keys, command) in [
             ("C-x <space>", "rectangle-mark-mode"),
             ("C-x r k", "kill-rectangle"),

@@ -16,6 +16,9 @@
 ;;; Columns of sizes and dates would make every command that reads a name agree
 ;;; with every command that writes one about where it sits.
 
+(require 'commands)
+(require 'debug)
+
 (make-mode 'dired-mode)
 
 (defconst dired-buffer-name "*dired*"
@@ -437,3 +440,4 @@ part of its path."
 (add-syntax-rule 'dired-mode "^  (.*/)$" 'function 1)
 
 (log "End of the dired.lisp")
+(provide 'dired)

@@ -447,9 +447,9 @@
     stato: "aperto",
     titolo: [Gli errori di sintassi nei file Lisp caricati vengono ignorati in silenzio],
     breve: [`eval_file`: errori di sintassi silenziosi; un commento finale senza a capo annulla il file],
-    dove: [`editor/boot.rs` (`EditorState::eval_file`: contenuto avvolto in `(progn …)`, errore del lettore → `Ok(nil)`); la usano `create_global_env`, per `init.lisp`, e la primitiva `eval-file`],
+    dove: [`editor/loader.rs` (`EditorState::eval_file`: contenuto avvolto in `(progn …)`, errore del lettore → `Ok(nil)`; `EditorState::require`, che avvolge allo stesso modo); la usano `create_global_env`, per `init.lisp`, e le primitive `eval-file` e `require`],
     verifica: [Riprodotto sulla revisione `3d846f1` con `eval-file`: un file con una parentesi non chiusa e un file la cui ultima riga è un commento senza a capo restituiscono `nil` senza messaggi, e nessuna delle loro forme viene valutata.],
-    cosa: [Il file viene letto come un'unica forma `(progn CONTENUTO)`. Una parentesi in più chiude la `progn` prima del tempo e il resto non viene mai letto. Una parentesi mancante, o un commento sull'ultima riga senza a capo (la parentesi aggiunta finisce *dentro* il commento), lascia la `progn` aperta. In entrambi i casi il lettore fallisce e `eval_file` restituisce `nil` senza dire nulla.],
+    cosa: [Il file viene letto come un'unica forma `(progn CONTENUTO)`. Una parentesi in più chiude la `progn` prima del tempo e il resto non viene mai letto. Una parentesi mancante, o un commento sull'ultima riga senza a capo (la parentesi aggiunta finisce *dentro* il commento), lascia la `progn` aperta. In entrambi i casi il lettore fallisce e `eval_file` restituisce `nil` senza dire nulla. `require`, dal passo 19b della documentazione, dà invece un errore quando il lettore fallisce; la parentesi in più, che il lettore non vede, tronca anche lì il file in silenzio, e il `provide` in fondo non arriva: l'errore dice che il file non ha fornito la feature.],
     riproduzione: ```text
 init.lisp:
   (setq my-config-loaded 42)
@@ -497,6 +497,19 @@ init.lisp:
     cosa: [Il registro è sempre `rsedit.log` nella directory della cache, aperto con `File::create`, che tronca il file, e senza `O_APPEND`. Un secondo editor tronca quindi il file del primo e ci scrive dall'inizio; il primo continua a scrivere dalla posizione a cui era arrivato, sopra le righe dell'altro. La pagina `diagnostics` dice che il file ricomincia a ogni avvio, non che due editor lo condividono.],
     effetto: [Con due editor aperti il registro su disco mescola le righe dei due e ne perde una parte: proprio il file che serve quando un editor si è chiuso da solo.],
     correzione: [Un file per processo (con il PID nel nome, e un collegamento all'ultimo), oppure l'apertura in append con un blocco sul file, che dica al secondo editor che il registro è già in uso.],
+  ),
+  (
+    id: "AVV-7",
+    gravita: "media",
+    verificato: true,
+    stato: "aperto",
+    titolo: [Un errore in `init.lisp`, o in un modulo che richiede, impedisce all'editor di partire],
+    breve: [Un errore in `init.lisp` o in un modulo: l'editor stampa l'errore ed esce con 0],
+    dove: [`editor/boot.rs` (`create_global_env`, che valuta `init.lisp` con `?`), `src/main.rs` (`main`, che stampa l'errore ed esce)],
+    verifica: [Riprodotto durante il passo 19b della documentazione con l'editor vero, con `RSEDIT_CONFIG_DIR`, `RSEDIT_CACHE_DIR` e `RSEDIT_DATA_DIR` su tre directory temporanee: un `init.lisp` con `(require 'broken)`, e un `lisp/broken.lisp` che chiama una funzione che non c'è. L'editor stampa `UndefinedFunction("no-such-function")` ed esce con codice 0, senza aprire il terminale; il nome del modulo è solo nel log in memoria, che va perso.],
+    cosa: [`create_global_env` valuta `init.lisp` con `?`, e il primo errore di valutazione, anche in un modulo che `init.lisp` chiede, risale fino a `main`, che lo stampa con `{:?}` e termina con `Ok(())`. Il log su file non è ancora aperto. Le pagine `configuration` e `diagnostics` dicevano che un modulo che fallisce lascia partire l'editor; lo fa solo un modulo che manca.],
+    effetto: [Un errore in un modulo proprio o di un plugin, o in una riga di `init.lisp`, lascia senza editor finché non si corregge il file con un altro, e il messaggio non dice in quale file sta l'errore. Uno script che lancia l'editor lo crede uscito bene.],
+    correzione: [Valutare `init.lisp` forma per forma, o catturare l'errore in `create_global_env`, partire comunque e mostrare l'errore nell'area dei messaggi e nel log, come Emacs con `--debug-init` spento; in ogni caso uscire con un codice diverso da 0 quando l'editor non parte.],
   ),
   // ------------------------------------------------------------------ BKG
   (
@@ -1019,7 +1032,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8 e SIN-9.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8, SIN-9 e AVV-7.
 
 == Riepilogo
 

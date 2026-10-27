@@ -1,5 +1,5 @@
-//! Where the editor keeps what it keeps on disk: its configuration and its
-//! cache. [`app_dir`] is asked for a directory by what it is for, and answers
+//! Where the editor keeps what it keeps on disk: its configuration, its data
+//! and its cache, and where its own data was installed. [`app_dir`] is asked for a directory by what it is for, and answers
 //! with where that is on this system, making it when asked to.
 //!
 //! Design: `doc/architettura-editor.typ, <directory>`.
@@ -14,12 +14,18 @@ pub const CONFIG_DIR: &str = "RSEDIT_CONFIG_DIR";
 /// The variable that names the cache directory outright.
 pub const CACHE_DIR: &str = "RSEDIT_CACHE_DIR";
 
+/// The variable that names the data directory outright.
+pub const DATA_DIR: &str = "RSEDIT_DATA_DIR";
+
 /// The freedesktop parent of every application's configuration, honoured on
 /// Unix only: on Windows, `%APPDATA%` is where Windows programs look.
 pub const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
 
 /// The freedesktop parent of every application's cache, honoured on Unix.
 pub const XDG_CACHE_HOME: &str = "XDG_CACHE_HOME";
+
+/// The freedesktop parent of every application's data, honoured on Unix.
+pub const XDG_DATA_HOME: &str = "XDG_DATA_HOME";
 
 /// Which of the editor's directories.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +36,9 @@ pub enum AppDir {
     /// What the editor keeps that it can make again, such as its log.
     /// Deleting it loses nothing that matters.
     Cache,
+    /// What is installed for the editor rather than written for it, such as
+    /// its plugins.
+    Data,
 }
 
 impl AppDir {
@@ -38,6 +47,7 @@ impl AppDir {
         match self {
             AppDir::Config => "the configuration directory",
             AppDir::Cache => "the cache directory",
+            AppDir::Data => "the data directory",
         }
     }
 
@@ -46,6 +56,7 @@ impl AppDir {
         match self {
             AppDir::Config => (CONFIG_DIR, XDG_CONFIG_HOME),
             AppDir::Cache => (CACHE_DIR, XDG_CACHE_HOME),
+            AppDir::Data => (DATA_DIR, XDG_DATA_HOME),
         }
     }
 }
@@ -63,7 +74,7 @@ pub struct DirOptions {
 pub enum DirError {
     /// Nothing in the environment says where it is: no variable naming it,
     /// and no home to put it under -- `HOME` unset, or on Windows `APPDATA`,
-    /// `LOCALAPPDATA` for the cache.
+    /// `LOCALAPPDATA` for the cache and the data.
     Undetermined(AppDir),
     /// It is not there, and making it was not asked for.
     NotFound(PathBuf),
@@ -128,6 +139,24 @@ pub fn app_dir(options: DirOptions) -> Result<PathBuf, DirError> {
     ensure_dir(path, options.create)
 }
 
+/// Returns the directory the editor's own data was installed in -- its
+/// modules, themes and manual pages -- or `None` when the executable cannot
+/// be found.
+///
+/// `data` beside the executable, or one level up when only that one is
+/// there; when neither is, the one beside it, which is where it should be.
+pub(crate) fn installed_data_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let parent = exe.parent()?;
+    // One level up because a test binary lives in `target/<profile>/deps/`
+    // while the data was put in `target/<profile>/data/` -- so without this
+    // the editor's own pages are unreachable from every test that looks for
+    // them, which is exactly the code that needs testing.
+    let candidates = [parent.join("data"), parent.join("..").join("data")];
+    let found = candidates.iter().find(|path| path.is_dir());
+    Some(found.unwrap_or(&candidates[0]).clone())
+}
+
 /// Returns where DIR is, from the environment, whether or not it is there.
 fn locate(dir: AppDir) -> Option<PathBuf> {
     let (named, xdg) = dir.variables();
@@ -150,6 +179,7 @@ pub(crate) fn platform_dir(dir: AppDir) -> Option<PathBuf> {
     match dir {
         AppDir::Config => env_path("APPDATA").map(|appdata| appdata.join("rsedit")),
         AppDir::Cache => env_path("LOCALAPPDATA").map(|local| local.join("rsedit").join("cache")),
+        AppDir::Data => env_path("LOCALAPPDATA").map(|local| local.join("rsedit").join("data")),
     }
 }
 
@@ -160,6 +190,7 @@ pub(crate) fn platform_dir(dir: AppDir) -> Option<PathBuf> {
     Some(match dir {
         AppDir::Config => home.join(".config").join("rsedit"),
         AppDir::Cache => home.join(".cache").join("rsedit"),
+        AppDir::Data => home.join(".local").join("share").join("rsedit"),
     })
 }
 

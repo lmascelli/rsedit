@@ -449,6 +449,7 @@ mod registration_tests {
             ("isearch", "isearch-forward"),
             ("keymaps", "define-key"),
             ("killing", "kill-line"),
+            ("loading", "require"),
             ("macros", "kmacro-start-macro"),
             ("match_data", "string-match"),
             ("minibuffer", "minibuffer-read"),

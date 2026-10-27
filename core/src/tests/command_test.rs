@@ -45,12 +45,15 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
         for (name, source) in [
-            ("debug.lisp", include_str!("../../lisp/debug.lisp")),
+            ("debug.lisp", include_str!("../../lisp/base/debug.lisp")),
             (
                 "minibuffer.lisp",
-                include_str!("../../lisp/minibuffer.lisp"),
+                include_str!("../../lisp/base/minibuffer.lisp"),
             ),
-            ("commands.lisp", include_str!("../../lisp/commands.lisp")),
+            (
+                "commands.lisp",
+                include_str!("../../lisp/base/commands.lisp"),
+            ),
         ] {
             eval_str(source, &env, &ctx).unwrap_or_else(|e| panic!("loading {name} failed: {e:?}"));
         }
@@ -878,8 +881,12 @@ mod tests {
     #[test]
     fn c_x_k_kills_a_buffer() {
         let (ctx, env) = setup();
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str(
             r#"(buffer-create "here")(switch-to-buffer "here")"#,
             &env,

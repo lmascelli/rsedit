@@ -3,18 +3,18 @@
 //!
 //! # Why this is worth a test of its own
 //!
-//! In the running editor these arrive through `eval-file`, which *logs* a
-//! failure rather than raising one -- deliberately, so that one broken module
-//! cannot stop the editor coming up. The cost of that is silence: a module with
-//! a parse error, or one that calls something the module above it was supposed
-//! to define, simply does not exist, and the only sign is a line in the log
-//! nobody reads. The feature is just missing.
+//! In the running editor these arrive through `require`, which *logs* a
+//! module it cannot find rather than raising -- deliberately, so that one
+//! missing module cannot stop the editor coming up. The cost of that is
+//! silence: a module that is not where the editor looks simply does not
+//! exist, and the only sign is a line in the log nobody reads. The feature is
+//! just missing.
 //!
 //! So this loads them the way init.lisp does and insists on the errors.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
-    use crate::editor::{EditorState, create_global_env};
+    use crate::editor::{EditorState, MODULE_KINDS, create_global_env};
     use crate::tests::shipped::{default_modules, load_default_modules};
     use risp::{Env, LispExp, Parser, eval};
     use std::sync::Arc;
@@ -37,9 +37,10 @@ mod tests {
     #[test]
     fn every_module_the_default_init_loads_is_beside_the_binary() {
         // The editor finds its modules in data/lisp beside the binary, where
-        // build.rs copies the whole of core/lisp. A module the default
-        // init.lisp loads and the built editor cannot find is a feature that
-        // is missing with nothing but a line in the log to say so.
+        // build.rs copies the whole of core/lisp, each kind in its own
+        // directory. A module the default init.lisp loads and the built editor
+        // cannot find is a feature that is missing with nothing but a line in
+        // the log to say so.
         let (ctx, env) = loaded();
         let LispExp::String(dir) = eval(
             &Parser::new("(data-directory \"lisp\")")
@@ -56,9 +57,12 @@ mod tests {
         let missing: Vec<&String> = modules
             .iter()
             .filter(|name| {
-                !std::path::Path::new(&*dir)
-                    .join(format!("{name}.lisp"))
-                    .is_file()
+                !MODULE_KINDS.iter().any(|kind| {
+                    std::path::Path::new(&*dir)
+                        .join(kind)
+                        .join(format!("{name}.lisp"))
+                        .is_file()
+                })
             })
             .collect();
         assert!(

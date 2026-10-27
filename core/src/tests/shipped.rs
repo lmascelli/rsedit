@@ -6,8 +6,8 @@
 //! drift: two such lists missed four modules between them, and a third left
 //! out a manual page.
 use crate::buffer::gap_buffer::GapBuffer;
-use crate::editor::EditorState;
 use crate::editor::boot::DEFAULT_INIT_LISP;
+use crate::editor::{EditorState, MODULE_KINDS};
 use risp::{Env, LispExp, Parser, eval};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -19,22 +19,47 @@ type Ctx = EditorState<GapBuffer>;
 pub(crate) fn default_modules() -> Vec<String> {
     DEFAULT_INIT_LISP
         .lines()
-        .filter_map(|line| line.trim_start().strip_prefix("(eval-file \""))
-        .filter_map(|rest| rest.split('"').next())
+        .filter_map(|line| line.trim_start().strip_prefix("(require '"))
+        .filter_map(|rest| rest.split(')').next())
         .map(str::to_string)
         .collect()
+}
+
+/// Returns every module the editor ships, as (kind, name), sorted: the
+/// `.lisp` files of the directories of `core/lisp`.
+pub(crate) fn shipped_modules() -> Vec<(String, String)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("lisp");
+    let mut modules = Vec::new();
+    for kind in MODULE_KINDS {
+        let dir = root.join(kind);
+        for entry in
+            std::fs::read_dir(&dir).unwrap_or_else(|why| panic!("{}: {why}", dir.display()))
+        {
+            let path = entry.expect("a directory entry").path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "lisp")
+            {
+                let name = path.file_stem().expect("a module has a name");
+                modules.push((kind.to_string(), name.to_string_lossy().into_owned()));
+            }
+        }
+    }
+    modules.sort();
+    modules
 }
 
 /// Returns the source of the shipped module NAME.
 ///
 /// # Panics
 ///
-/// When `core/lisp/NAME.lisp` cannot be read.
+/// When no directory of `core/lisp` has a `NAME.lisp`.
 pub(crate) fn module_source(name: &str) -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("lisp")
-        .join(format!("{name}.lisp"));
-    std::fs::read_to_string(&path).unwrap_or_else(|why| panic!("{}: {why}", path.display()))
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("lisp");
+    MODULE_KINDS
+        .iter()
+        .find_map(|kind| std::fs::read_to_string(root.join(kind).join(format!("{name}.lisp"))).ok())
+        .unwrap_or_else(|| panic!("{name}.lisp is in none of core/lisp/{MODULE_KINDS:?}"))
 }
 
 /// Loads every module the default init.lisp loads into ENV, in its order.

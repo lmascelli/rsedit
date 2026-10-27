@@ -18,7 +18,21 @@ fn main() {
 
     let data_dir = binary_dir.join("data");
 
-    copy_files(&crate_dir.join("lisp"), &data_dir.join("lisp"), "lisp");
+    // The modules, each kind in a directory of its own: `base`, `features`
+    // and `languages`, as they are in `core/lisp`.
+    let lisp = crate_dir.join("lisp");
+    println!("cargo::rerun-if-changed={}", lisp.display());
+    let kinds =
+        fs::read_dir(&lisp).unwrap_or_else(|why| panic!("cannot read {}: {why}", lisp.display()));
+    for kind in kinds {
+        let kind = kind
+            .unwrap_or_else(|why| panic!("cannot read {}: {why}", lisp.display()))
+            .path();
+        if kind.is_dir() {
+            let name = kind.file_name().expect("a directory has a name");
+            copy_files(&kind, &data_dir.join("lisp").join(name), "lisp");
+        }
+    }
 
     for (relative_source, kind, extension) in
         [("../themes", "themes", "lisp"), ("../man", "man", "txt")]

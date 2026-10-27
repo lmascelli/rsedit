@@ -74,7 +74,10 @@ beside it.
 ```text
 core/          rsedit_core: the editor as a library, with no terminal code
   src/         the Rust: state, buffers, windows, commands, primitives
-  lisp/        the Lisp modules the default init.lisp loads
+  lisp/        the Lisp modules the default init.lisp loads, by kind:
+    base/      what the other modules are written with
+    features/  one for each thing the editor does
+    languages/ one for each language it colours
 src/           the terminal front end
 man/           the manual pages
 themes/        the colour themes

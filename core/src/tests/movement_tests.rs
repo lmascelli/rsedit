@@ -275,8 +275,12 @@ mod tests {
     #[test]
     fn paragraphs_move_on_the_brace_keys() {
         let (ctx, env) = editor_with("one\n\ntwo\n\nthree\n");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str("(beginning-of-buffer)", &env, &ctx).expect("start");
 
         press(&ctx, &env, KeyCode::Char('}'), alt());
@@ -290,8 +294,12 @@ mod tests {
     #[test]
     fn m_n_does_not_move_by_a_paragraph() {
         let (ctx, env) = editor_with("one\n\ntwo\n\nthree\n");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str("(beginning-of-buffer)", &env, &ctx).expect("start");
 
         press(&ctx, &env, KeyCode::Char('n'), alt());
@@ -309,8 +317,12 @@ mod tests {
             // to know how big the frame is.
             env.set_variable("frame-width".into(), LispExp::number(80.0));
             env.set_variable("frame-height".into(), LispExp::number(24.0));
-            eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-                .expect("common-keymaps.lisp must load");
+            eval_str(
+                include_str!("../../lisp/base/common-keymaps.lisp"),
+                &env,
+                &ctx,
+            )
+            .expect("common-keymaps.lisp must load");
 
             press(&ctx, &env, KeyCode::Char('g'), alt());
             // M-g g and M-g M-g are both bound; the second press differs only
@@ -341,8 +353,12 @@ mod tests {
         let (ctx, env) = editor_with("one\ntwo\nthree\n");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         press(&ctx, &env, KeyCode::Char('g'), alt());
 

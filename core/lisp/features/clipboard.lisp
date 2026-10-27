@@ -9,6 +9,8 @@
 ;;; to the terminal read the clipboard, and where it is allowed the answer
 ;;; arrives on stdin mixed in with the keystrokes.
 
+(require 'debug)
+
 ;; Read by `EditorState::kill' in Rust, the one funnel every kill and copy
 ;; goes through, so this covers them all. Unbound means off: the test harness
 ;; loads no Lisp, and its kills must not queue clipboard escapes for a
@@ -27,3 +29,4 @@
 (register-command "clipboard-sync-toggle" nil)
 
 (log "clipboard loaded")
+(provide 'clipboard)

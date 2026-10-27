@@ -4,6 +4,9 @@
 ;;; and Bash's other startup files. User manual: the `modes' page, and
 ;;; `indentation' for how it indents.
 
+(require 'commands)
+(require 'indent)
+
 (make-mode 'bash-mode)
 (put 'bash-mode 'heredoc-delimiters nil)
 (add-syntax-region 'bash-mode "\\$'" "'" 'string "\\\\.")
@@ -202,3 +205,4 @@ DELIMITER is a word, without white space or quotes."
 (add-auto-mode "\\.(sh|bash)$" 'bash-mode)
 (add-auto-mode "(^|[/\\\\])\\.?(bashrc|bash_profile|bash_login|bash_logout|profile)$" 'bash-mode)
 (log "bash-mode loaded")
+(provide 'bash-mode)

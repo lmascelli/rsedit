@@ -163,6 +163,10 @@ mod tests {
             platform_dir(AppDir::Cache),
             Some(PathBuf::from("/home/someone/.cache/rsedit"))
         );
+        assert_eq!(
+            platform_dir(AppDir::Data),
+            Some(PathBuf::from("/home/someone/.local/share/rsedit"))
+        );
     }
 
     #[cfg(not(windows))]
@@ -261,13 +265,15 @@ mod tests {
 
     #[test]
     fn the_directories_named_for_the_suite_are_the_ones_answered() {
-        // Through RSEDIT_CONFIG_DIR and RSEDIT_CACHE_DIR, which come first on
-        // every system: what a portable install would set too.
+        // Through RSEDIT_CONFIG_DIR, RSEDIT_CACHE_DIR and RSEDIT_DATA_DIR,
+        // which come first on every system: what a portable install would set
+        // too.
         crate::isolate_config_for_tests();
         let pid = std::process::id();
         for (dir, expected) in [
             (AppDir::Config, format!("rsedit-test-config-{pid}")),
             (AppDir::Cache, format!("rsedit-test-cache-{pid}")),
+            (AppDir::Data, format!("rsedit-test-data-{pid}")),
         ] {
             let expected = std::env::temp_dir().join(expected);
             // Whatever another test has already made: asking without making

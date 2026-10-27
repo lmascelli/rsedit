@@ -26,7 +26,7 @@ mod tests {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("create_global_env failed");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
-        eval_str(include_str!("../../lisp/debug.lisp"), &env, &ctx)
+        eval_str(include_str!("../../lisp/base/debug.lisp"), &env, &ctx)
             .unwrap_or_else(|e| panic!("loading debug.lisp failed: {e:?}"));
         (ctx, env)
     }

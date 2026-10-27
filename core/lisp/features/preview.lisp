@@ -104,3 +104,4 @@ what it would do.")
 (define-face 'preview "bright-black" nil '("italic"))
 
 (log "preview loaded")
+(provide 'preview)

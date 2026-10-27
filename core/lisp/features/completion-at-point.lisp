@@ -118,3 +118,4 @@ or CANDIDATES is empty."
                             capf-buffer-words))
 
 (log "End of the completion-at-point.lisp")
+(provide 'completion-at-point)

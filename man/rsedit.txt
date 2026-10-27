@@ -12,9 +12,10 @@ DESCRIPTION
     Lisp.
 
 MODULES
-    Loaded by your init.lisp, in order, each written against what the ones
-    above it define. Comment one out and the editor comes up without it,
-    missing exactly that feature and nothing else.
+    Loaded by your init.lisp with `require', each after the modules it
+    needs. Comment one out and the editor comes up without it, missing
+    exactly that feature, unless a module still loaded needs it. Plugins,
+    modules written by others, are loaded the same way: see `plugins'.
 
     commands             defcommand, and the command registry's Lisp side
     debug                message, and the *Messages* buffer
@@ -64,4 +65,4 @@ SEE ALSO
     completion, minibuffer, keymaps, modes, writing-modes, configuration,
     diagnostics, writing-commands, buffers, windows, dired, mouse, overlays,
     compile, shell, regexps, themes, background, indentation, rectangles,
-    virtual-text, macros, vim
+    virtual-text, macros, vim, plugins

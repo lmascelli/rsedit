@@ -11,6 +11,10 @@
 ;;; forms are written out, because the evaluator has no binding for them to
 ;;; report. Completion asks the environment every time, and needs neither.
 
+(require 'commands)
+(require 'debug)
+(require 'indent)
+
 (make-mode 'risp-mode)
 
 ;; Kept in step with the evaluator by hand: these have no binding, so
@@ -125,3 +129,4 @@ interpreter for them again."
 (add-auto-mode "\\.risp$" 'risp-mode)
 
 (log "risp-mode loaded")
+(provide 'risp-mode)

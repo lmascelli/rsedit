@@ -9,6 +9,8 @@
 ;;; hangs off `post-self-insert-hook', which a paste does not run: pasted code
 ;;; already has its brackets.
 
+(require 'commands)
+
 (defvar electric-pair-mode t
   "Whether typing an opening delimiter inserts its partner, and deleting half
 of an empty pair deletes both.")
@@ -276,3 +278,4 @@ Example:
 (define-key nil "<delete>" 'electric-pair-delete-forward)
 
 (log "electric-pair loaded")
+(provide 'electric-pair)

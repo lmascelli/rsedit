@@ -6,7 +6,7 @@
 ;; because a command that cannot collect its arguments is not a command, and a
 ;; configuration file should not be able to take that away by failing to load.
 ;; What is left here is sugar: a shorter way to define a command, two small
-;; functions on strings, and `save-match-data'.
+;; functions on strings, `save-match-data' and `with-eval-after-load'.
 ;;
 ;; To define a command without this file:
 ;;   (defun greet (who) (message "hello %s" who))
@@ -81,4 +81,17 @@ Example:
          (progn ,@body)
        (set-match-data save-match-data--saved))))
 
+(defmacro with-eval-after-load (feature &rest body)
+  "Run BODY once FEATURE is loaded: now, if it is already, or else when it is
+provided. FEATURE is evaluated, so a symbol is quoted. `eval-after-load' is
+the same with a function in place of BODY.
+
+Example:
+  (with-eval-after-load 'dired
+    (setq dired-sort 'type))"
+  ;; Not `(lambda () ...)': the empty list a backquote builds is nil, which
+  ;; `lambda' does not take for a parameter list. It is called with none.
+  `(eval-after-load ,feature (lambda (&rest with-eval-after-load--none) ,@body)))
+
 (log "End of the commands.lisp")
+(provide 'commands)

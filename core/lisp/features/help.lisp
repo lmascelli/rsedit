@@ -10,6 +10,10 @@
 ;;; that takes the name, for Lisp. The back stack keeps what it takes to build
 ;;; a page again, so a page gone back to shows the editor as it is now.
 
+(require 'commands)
+(require 'debug)
+;; Not `manpage': the manual's key and links are used when it is loaded.
+
 (make-mode 'help-mode)
 
 (defconst help-buffer-name "*Help*"
@@ -579,3 +583,4 @@ those still bound under the key they were under before."
 (add-syntax-rule 'help-mode "^  ([^ ]+)" 'function 1)
 
 (log "End of the help.lisp")
+(provide 'help)

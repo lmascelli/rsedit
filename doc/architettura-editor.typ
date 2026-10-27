@@ -158,22 +158,22 @@ lì e nella mappa di `lib.rs`.
   columns: (3.4cm, 1fr),
   header: ([Percorso], [Contenuto]),
   [`lib.rs`], [Ordine dei moduli e superficie pubblica (`pub use`). Tutto il resto è `pub(crate)`.],
-  [`paths.rs`], [Le directory dell'editor, configurazione e cache, secondo le convenzioni di ogni sistema: `app_dir` (@directory).],
+  [`paths.rs`], [Le directory dell'editor, configurazione, dati e cache, secondo le convenzioni di ogni sistema: `app_dir` (@directory); e quella dei dati installati con l'editor, `installed_data_dir`.],
   [`buffer/`], [`Buffer`, `BufferTrait`, `GapBuffer`, undo, mark, overlay, testo virtuale, cache di colorazione (`syntax.rs`) e di scansione (`scan.rs`), timbro del file su disco (`disk.rs`).],
   [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`).],
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
-  [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`.],
-  [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `work.rs`). Vedi @coppie.],
-  [`primitives/`], [Le 318 primitive dell'editor, in 42 moduli, e `install_primitives`.],
+  [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`, `Loader`.],
+  [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`, `loader.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `work.rs`). Vedi @coppie.],
+  [`primitives/`], [Le 327 primitive dell'editor, in 43 moduli, e `install_primitives`.],
   [`modes/`], [`MajorMode` (`mod.rs`), la grammatica di colorazione (`grammar.rs`), la tabella sintattica (`syntax_table.rs`) e lo scanner delle espressioni, che la legge (`sexp.rs`) (@modi).],
   [`jobs/`], [I lavori di sfondo dell'editor: `Highlighter`, `Prescanner`, `FileWatcher` e `AutoSaver` (@lavori-editor).],
   [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale (@minibuffer).],
   [`work/`], [Il WorkManager: il nucleo dello scheduler, l'esecutore, il registro, i thread dedicati, il watchdog, gli argomenti e le opzioni (@sfondo).],
   [`ui/`], [Albero delle finestre, finestre flottanti, layout delle righe, facce e temi, `FrameSnapshot`.],
   [`tests/`], [Circa ottanta file di test dell'editor, più `perf/`.],
-  [`../lisp/`], [I moduli Lisp distribuiti con l'editor (venti file).],
-  [`../build.rs`], [Copia i moduli Lisp in `target/<profilo>/data/lisp`, accanto all'eseguibile.],
+  [`../lisp/`], [I venticinque moduli Lisp distribuiti con l'editor, in tre cartelle: `base/`, `features/`, `languages/` (@moduli-lisp).],
+  [`../build.rs`], [Copia ogni cartella dei moduli in `target/<profilo>/data/lisp`, accanto all'eseguibile, e con loro i temi e le pagine del manuale.],
   [`../../src/`], [I front-end: `main.rs` (avvio), `tui.rs` (il terminale: ciclo degli eventi e disegno) e `gui.rs` (una finestra grafica, con egui).],
 )
 
@@ -293,7 +293,6 @@ sfondo e scrive nel file le ultime righe del log.
   buffer o una grammatica cambiano.
 + `bootstrap_vm` crea l'ambiente radice con le 86 primitive di base e
   verifica l'interprete.
-+ `lisp-path` diventa `("<directory dell'eseguibile>/data/lisp")`.
 + Ogni impostazione che l'editor legge (`editor/settings.rs`) riceve il suo
   valore iniziale, così che `(setq ...)` in una configurazione modifichi un
   valore che esiste già: per esempio `mouse-mode` (`nil`),
@@ -304,30 +303,35 @@ sfondo e scrive nel file le ultime righe del log.
 + `install_primitives`, `install_minibuffer` e `install_isearch` registrano le
   primitive, i comandi, il modo `minibuffer-mode` e il modo `isearch-mode`.
 + `rsedit-path` riceve il percorso dell'eseguibile.
++ `set_search_paths` cerca i plugin nella directory dei dati, li registra in
+  `Loader` e dà il primo valore a `lisp-path` e a `theme-path`: la
+  configurazione, poi i plugin, poi l'editor (@percorsi-moduli).
 + Se manca, `init.lisp` viene creato con `DEFAULT_INIT_LISP` (vedi sotto).
-+ `eval_file` valuta `init.lisp`, che carica i moduli Lisp. Un errore di
-  valutazione ferma l'avvio, e `create_global_env` lo restituisce.
++ `eval_file` valuta `init.lisp`, che carica i moduli Lisp con `require`. Un
+  errore di valutazione ferma l'avvio, e `create_global_env` lo restituisce
+  #rapporto("AVV-7").
 + Il WorkManager riceve `FileWatcher` e `AutoSaver`, che a ogni passo leggono
   le loro impostazioni (`watch-files`, `watch-file-interval`, `auto-save`,
   `auto-save-interval`).
 
 === Le directory dell'editor <directory>
 
-L'editor tiene due directory sue: quella della configurazione, con
-`init.lisp`, e quella della cache, con ciò che può rifare, come il file di
-log: cancellarla non perde nulla che conti. Le trova `app_dir`, in `paths.rs`:
-le si chiede una directory per ciò a cui serve (`AppDir::Config`,
-`AppDir::Cache`), e risponde con il suo posto su questo sistema, creandola se
-manca e se `DirOptions::create` lo chiede. La usano `create_global_env`, per
-`init.lisp`, e `main.rs`, per il log. Le due directory si trovano con la
-stessa regola:
+L'editor tiene tre directory sue: quella della configurazione, con
+`init.lisp`; quella dei dati, con ciò che si installa per l'editor invece di
+scriverlo, oggi i plugin; e quella della cache, con ciò che può rifare, come
+il file di log: cancellarla non perde nulla che conti. Le trova `app_dir`, in
+`paths.rs`: le si chiede una directory per ciò a cui serve (`AppDir::Config`,
+`AppDir::Data`, `AppDir::Cache`), e risponde con il suo posto su questo
+sistema, creandola se manca e se `DirOptions::create` lo chiede. La usano
+`create_global_env`, per `init.lisp` e i plugin, e `main.rs`, per il log. Le
+tre directory si trovano con la stessa regola:
 
 #ref-table(
   columns: (1.15fr, 1.4fr),
   header: ([Fonte, in ordine di precedenza], [Directory]),
-  [`RSEDIT_CONFIG_DIR`, `RSEDIT_CACHE_DIR`], [usata così com'è, su ogni sistema],
-  [`XDG_CONFIG_HOME`, `XDG_CACHE_HOME` (solo Unix, e solo se assoluta)], [la variabile, con `rsedit` aggiunto in fondo],
-  [il sistema], [su Windows `%APPDATA%\rsedit` e `%LOCALAPPDATA%\rsedit\cache`; altrove, macOS compreso, `$HOME/.config/rsedit` e `$HOME/.cache/rsedit`],
+  [`RSEDIT_CONFIG_DIR`, `RSEDIT_DATA_DIR`, `RSEDIT_CACHE_DIR`], [usata così com'è, su ogni sistema],
+  [`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` (solo Unix, e solo se assoluta)], [la variabile, con `rsedit` aggiunto in fondo],
+  [il sistema], [su Windows `%APPDATA%\rsedit`, `%LOCALAPPDATA%\rsedit\data` e `%LOCALAPPDATA%\rsedit\cache`; altrove, macOS compreso, `$HOME/.config/rsedit`, `$HOME/.local/share/rsedit` e `$HOME/.cache/rsedit`],
 )
 
 Una variabile impostata ma vuota conta come non impostata. Quando nessuna
@@ -338,7 +342,12 @@ la directory si possa scrivere non viene controllato. La scelta tra le fonti,
 `choose_dir`, riceve i valori invece di leggerli dall'ambiente: così i test
 ne provano la precedenza senza scrivere nell'ambiente del processo, che tutti
 i test vedono. `isolate_config_for_tests` dà invece a ogni processo di test
-due directory sue, attraverso le due variabili `RSEDIT_*`.
+tre directory sue, attraverso le tre variabili `RSEDIT_*`.
+
+I dati installati #emph[con] l'editor --- moduli, temi, pagine --- non sono
+una di queste: stanno in `data` accanto all'eseguibile, e `installed_data_dir`
+li cerca lì o un livello sopra, dove `build.rs` li mette per i binari di test
+in `target/<profilo>/deps/`. La usano `data-directory` e `theme-path`.
 
 Quattro decisioni:
 
@@ -357,45 +366,52 @@ Quattro decisioni:
   directory della configurazione e valuta ciò che contiene: sotto la `HOME` di
   chi lancia i test scriverebbe lì la sua configurazione, e alcuni test
   spostano `HOME`, che vale per tutto il processo mentre i test girano in
-  parallelo. `isolate_config_for_tests` punta configurazione e cache a due
-  directory temporanee del processo, una volta sola e prima del primo editor,
-  attraverso le due variabili `RSEDIT_*`: la porta di una persona, così i test
+  parallelo. `isolate_config_for_tests` punta configurazione, dati e cache a
+  tre directory temporanee del processo, una volta sola e prima del primo
+  editor, attraverso le tre variabili `RSEDIT_*`: senza quella dei dati, i
+  plugin di chi lancia i test entrerebbero in `lisp-path`. È la porta di una
+  persona, così i test
   passano da `app_dir` invece di aggirarla. È pubblica per i test del crate
   binario, che il `cfg(test)` di una libreria non raggiunge.
 
 === Il file `init.lisp` predefinito
 
-Il file `init.lisp` predefinito carica, in quest'ordine: `commands`, `debug`,
-`common-keymaps`, `indent`, `minibuffer`, poi i moduli facoltativi
-`rust-mode`, `risp-mode`, `cc-mode`, `python-mode`, `toml-mode`, `bash-mode`,
-`dired`, `completion`, `preview`, `clipboard`, `electric-pair`,
+Il file `init.lisp` predefinito chiede con `require` i moduli di base,
+`commands`, `debug`, `common-keymaps`, `indent` e `minibuffer`, poi i moduli
+facoltativi `rust-mode`, `risp-mode`, `cc-mode`, `python-mode`, `toml-mode`,
+`bash-mode`, `dired`, `completion`, `preview`, `clipboard`, `electric-pair`,
 `buffer-list`, `shell`, `manpage`, `help`, `occur`, `compile`, `theme`,
-`vim`, `completion-at-point`, e imposta `dired-sort` a `'type` e `mouse-mode`
-a `t`. L'ordine conta: `commands`
-definisce `defcommand`, con cui sono scritti gli altri, e `debug` definisce
-`message` e `report-error`.
+`vim`, `completion-at-point`, e imposta `dired-sort` a `'type` e
+`mouse-mode` a `t`. L'ordine delle righe non conta più: ogni modulo chiede
+quelli che gli servono (@moduli-lisp).
 
 Il file viene scritto solo se manca: chi ha già un `init.lisp` deve
-aggiungere a mano le righe `(eval-file ...)` dei moduli nuovi #rapporto("AVV-5").
+aggiungere a mano le righe dei moduli nuovi #rapporto("AVV-5"). Un file
+scritto prima, con `(eval-file "dired")`, funziona ancora: `lisp-path` nomina
+le tre cartelle dei moduli, ed `eval-file` cerca un nome nudo in ognuna.
 
 === `eval_file`
 
-`eval_file(nome, env)` cerca prima `nome` come percorso. Se non esiste e il nome
-non contiene `/`, `\` o `.`, cerca `nome.lisp` in ogni directory di
-`lisp-path`, in ordine. Il contenuto viene avvolto in `(progn …)`, letto con
-#emph[una sola] chiamata a `Parser::next` e valutato dentro uno scope di
-carburante (`begin_command`), alla radice della catena di ambienti
-(`top_level`). Un file mancante produce una riga di log e il valore `nil`.
+`eval_file(nome, env)`, in `editor/loader.rs`, cerca prima `nome` come
+percorso. Se non esiste e il nome non contiene `/`, `\` o `.`, cerca
+`nome.lisp` in ogni directory di `lisp-path`, in ordine. Il contenuto viene
+avvolto in `(progn …)`, letto con #emph[una sola] chiamata a `Parser::next` e
+valutato da `eval_source` dentro uno scope di carburante (`begin_command`),
+alla radice della catena di ambienti (`top_level`), con il file annotato in
+`Loader` come quello da cui viene un `provide`. Un file mancante produce una
+riga di log e il valore `nil`. Lo valuta ogni volta: è `require` a caricare
+una volta sola.
 
-#estratto("editor/boot.rs")[
+#estratto("editor/loader.rs")[
 ```rust
-let content = format!("(progn {})", /* il testo del file, o di nome.lisp in lisp-path */);
-let ast = if let Ok(ast) = Parser::new(&content).next() { ast } else {
-    return Ok(ELispExp::nil());           // errore di sintassi: nessun messaggio
+let Ok(ast) = Parser::new(&format!("(progn {content})")).next() else {
+    return Ok(ELispExp::nil());          // errore di sintassi: nessun messaggio
 };
-let _command = self.begin_command();             // uno scope di carburante
-let value = eval(&ast, top_level(&env), self)?;  // alla radice dell'ambiente
-Ok(ELispExp::proper_list(vec![value]))
+let _command = self.begin_command();     // uno scope di carburante
+self.loader_mut(|loader| loader.enter_file(path.to_path_buf()));
+let value = eval(ast, top_level(env), self);   // alla radice dell'ambiente
+self.loader_mut(|loader| loader.leave_file());
+Ok(ELispExp::proper_list(vec![value?]))
 ```
 ]
 
@@ -404,9 +420,9 @@ conseguenze. Una parentesi chiusa di troppo chiude la `progn` in anticipo e il
 resto del file non viene letto; una parentesi mancante, o un commento
 sull'ultima riga senza a capo finale (la parentesi aggiunta finisce dentro il
 commento), lascia la `progn` aperta e il lettore fallisce. In entrambi i casi
-`eval_file` restituisce `nil` senza messaggi #rapporto("AVV-2"). Il primo errore
-di #emph[valutazione], invece, interrompe il file da quel punto e risale come
-errore.
+`eval_file` restituisce `nil` senza messaggi #rapporto("AVV-2"); `require`
+invece dà un errore, che dice che il file non si legge. Il primo errore di
+#emph[valutazione] interrompe il file da quel punto e risale come errore.
 
 === Le decisioni <decisioni-avvio>
 
@@ -419,8 +435,9 @@ errore.
   salvataggio automatico leggono le loro impostazioni a ogni passo, e sono
   sottomessi dopo la configurazione: ciò che dice conta dalla prima occhiata.
 + *Il file predefinito carica moduli e imposta variabili, niente di più.* È
-  valutato con `?`, e i moduli che carica non sono sempre presenti --- un
-  binario di test non ha `data/lisp` accanto ---: senza di loro `defcommand`
+  valutato con `?`, e i moduli che chiede non sono sempre presenti --- un
+  binario di test non li ha accanto, e `require` registra il modulo mancante
+  e risponde nil ---: senza di loro `defcommand`
   non è una macro, una forma che la usa diventa una chiamata qualunque, e
   l'avvio si ferma. Un comando sta in un modulo o in Rust. È una stringa
   grezza, dove una barra rovesciata è una barra rovesciata; ed è una costante
@@ -605,6 +622,7 @@ e tiene un'invariante che i suoi campi presi uno per uno non terrebbero.
   [`History`], [Un cammino nella storia vale solo nell'anello e nel prompt in cui è cominciato.],
   [`Log`], [Ogni riga arriva al file una volta e nell'ordine in cui è stata registrata, salvo le scritture che falliscono e le righe uscite dalla lista prima di essere scritte.],
   [`Runtime`], [Nessuna: raggruppa ciò che appartiene alla sessione e non a un documento (@decisioni-stato).],
+  [`Loader`], [Una feature fallita non è mai in vigore, e ciò che è stato fornito durante un `require` fallito se ne va con lui; le funzioni in attesa di una feature si consegnano una volta sola, quando arriva (@moduli-lisp).],
 )
 
 La facciata raggiunge un compartimento con una #emph[porta] che esegue una
@@ -4314,6 +4332,7 @@ verifica le forme condivise dalle primitive, come il controllo dell'arità.
   [`buffers`], [18], [Creare, cambiare, chiudere buffer; contenuto; sola lettura; dati appesi (`buffer-put`, `buffer-get`).],
   [`windows`], [15], [Dividere, chiudere, scegliere, scorrere finestre; `recenter`, `display-buffer-at-bottom`, finestre flottanti.],
   [`killing`], [14], [Le kill, `kill-ring-save`, `yank`, `yank-pop`, `kill-new` e il resto del kill ring.],
+  [`loading`], [9], [`require`, `provide`, ciò che è caricato e da dove, `eval-after-load`, i plugin (@moduli-lisp).],
   [`verbs`], [14], [Maiuscole, spazi, righe vuote, unione e duplicazione di righe, trasposizioni, `zap-to-char`.],
   [`macros`], [12], [Registrazione e riproduzione delle macro, contatore.],
   [`minibuffer`], [12], [`minibuffer-read`, conferma, annullamento, completamento, storia.],
@@ -4354,7 +4373,7 @@ verifica le forme condivise dalle primitive, come il controllo dell'arità.
   [`scan`], [1], [`scan-buffer`: tutte le corrispondenze di un modello in un buffer, come voci di una lista di risultati.],
 )
 
-Il totale è 318, a cui si aggiungono le 86 primitive di base dell'interprete.
+Il totale è 327, a cui si aggiungono le 86 primitive di base dell'interprete.
 L'elenco completo dei nomi è nell'appendice (@elenco-primitive).
 
 == Le primitive di modifica <primitive-modifica>
@@ -4742,6 +4761,7 @@ rimanda; le sezioni che seguono dicono ciò che non è scritto altrove.
   [`theme.rs`], [Le facce e i loro stili (@facce).],
   [`overlays.rs`, `virtual_text.rs`], [Overlay e testo virtuale (@mark-overlay).],
   [`evaluation.rs`, `diagnostics.rs`], [Valutare un file o un testo, e riferire: il log, il backtrace, l'area dei messaggi (@valutazione).],
+  [`loading.rs`], [Caricare un modulo una volta, e ciò che si sa di quelli caricati e dei plugin (@moduli-lisp).],
 )
 
 === Il completamento <completamento>
@@ -5205,33 +5225,160 @@ dell'utente li descrive.
 
 Quasi tutto il comportamento visibile è in `core/lisp/`: le associazioni dei
 tasti, i comandi di alto livello, i modi dei linguaggi, l'interfaccia dei
-completamenti. `build.rs` copia i file in `target/<profilo>/data/lisp` a ogni
-compilazione, da un #emph[elenco esplicito]: un modulo nuovo va aggiunto lì,
-altrimenti non arriva accanto all'eseguibile e `eval-file` non lo trova.
+completamenti. I moduli stanno in tre cartelle, per genere: `base/`, ciò con
+cui gli altri sono scritti; `features/`, una funzionalità ciascuno;
+`languages/`, un linguaggio ciascuno. I temi sono dati e non codice, e stanno
+fuori, in `themes/`. `build.rs` copia ogni cartella di `core/lisp` in
+`target/<profilo>/data/lisp/<genere>` a ogni compilazione, e un modulo nuovo
+arriva accanto all'eseguibile da solo. `MODULE_KINDS`, in `editor/loader.rs`,
+è l'elenco dei generi che `lisp-path` nomina; `loading_tests` controlla che
+coincida con le cartelle e che ogni modulo distribuito sia chiesto
+dall'`init.lisp` predefinito.
 
 #ref-table(
-  columns: (3.4cm, 1fr),
-  header: ([Modulo], [Che cosa aggiunge]),
-  [`commands`], [`defcommand`, `save-match-data` e altre macro di base.],
-  [`debug`], [`message`, `report-error`, il buffer `*Backtrace*`, `debug-on-error`.],
-  [`common-keymaps`], [Le associazioni di Emacs: movimento, kill, file, buffer, finestre, `C-g`.],
-  [`indent`], [Tab, `indent-region`, `newline-and-indent`, `electric-indent-mode`.],
-  [`minibuffer`], [Tasti e comportamenti del prompt.],
-  [`rust-mode`, `risp-mode`, `cc-mode`], [Modi per Rust, per il Lisp dell'editor e per C/C++.],
-  [`dired`], [Una directory in un buffer (`C-x d`).],
-  [`completion`], [La striscia dei completamenti (`*completion-read-function*`).],
-  [`preview`], [Anteprima di `string-rectangle`.],
-  [`clipboard`], [Copia le uccisioni negli appunti di sistema.],
-  [`electric-pair`], [Chiusura automatica di parentesi e virgolette.],
-  [`buffer-list`], [`C-x b` e `C-x C-b`.],
-  [`shell`], [`M-!`.],
-  [`manpage`], [Pagine di manuale.],
-  [`help`], [`C-h f`, `C-h k`, `C-h b`, `describe-prefix-keys`.],
-  [`occur`], [`M-s o`, `M-s g`.],
-  [`compile`], [`C-c c` e `M-g n`.],
-  [`theme`], [`C-c t`: scelta del tema.],
-  [`completion-at-point`], [Le cinque fonti di `C-M-i`.],
+  columns: (2.1cm, 3.4cm, 1fr),
+  header: ([Genere], [Modulo], [Che cosa aggiunge]),
+  [`base`], [`commands`], [`defcommand`, `save-match-data`, `with-eval-after-load` e altre macro di base.],
+  [`base`], [`debug`], [`message`, `report-error`, il buffer `*Backtrace*`, `debug-on-error`.],
+  [`base`], [`common-keymaps`], [Le associazioni di Emacs: movimento, kill, file, buffer, finestre, `C-g`.],
+  [`base`], [`indent`], [Tab, `indent-region`, `newline-and-indent`, `electric-indent-mode`.],
+  [`base`], [`minibuffer`], [`M-:`.],
+  [`languages`], [`rust-mode`, `risp-mode`, `cc-mode`, `python-mode`, `toml-mode`, `bash-mode`], [I modi dei linguaggi.],
+  [`features`], [`dired`], [Una directory in un buffer (`C-x d`).],
+  [`features`], [`completion`], [La striscia dei completamenti (`*completion-read-function*`).],
+  [`features`], [`preview`], [Anteprima di `string-rectangle`.],
+  [`features`], [`clipboard`], [Copia le uccisioni negli appunti di sistema.],
+  [`features`], [`electric-pair`], [Chiusura automatica di parentesi e virgolette.],
+  [`features`], [`buffer-list`], [`C-x b` e `C-x C-b`.],
+  [`features`], [`shell`], [`M-!`.],
+  [`features`], [`manpage`], [Pagine di manuale.],
+  [`features`], [`help`], [`C-h f`, `C-h k`, `C-h b`, `describe-prefix-keys`.],
+  [`features`], [`occur`], [`M-s o`, `M-s g`.],
+  [`features`], [`compile`], [`C-c c` e `M-g n`.],
+  [`features`], [`theme`], [`C-c t`: scelta del tema.],
+  [`features`], [`vim`], [L'editing modale.],
+  [`features`], [`completion-at-point`], [Le cinque fonti di `C-M-i`.],
 )
+
+== Caricare una volta: `require` e `provide` <require>
+
+Ogni modulo comincia con i `require` dei moduli che usa e finisce con il suo
+`provide`. `require` carica il file solo se la feature non è già caricata;
+`provide` la registra in `Loader`, il compartimento di ciò che è stato
+caricato, con il file da cui viene: l'ultimo della pila di file che
+`eval_source` tiene mentre valuta. Il modello è quello di Emacs: `features`,
+`featurep`, `require` e `provide` hanno lì lo stesso nome e lo stesso senso,
+`feature-file` è ciò che Emacs ricava da `load-history`.
+
+`EditorState::require(nome, file, env)`, in `editor/loader.rs`:
+
++ Se `nome` è caricato, risponde `nome` e non fa nulla.
++ Cerca il file: `file`, se dato, come percorso o come nome nudo, o `nome`;
+  un nome nudo è `nome.lisp` nella prima directory di `lisp-path` che lo ha.
+  Se non c'è, una riga di log e `nil`.
++ `Loader::begin_require` lo segna come in corso; se lo era già, più fuori,
+  è un ciclo, e l'errore nomina la catena (`ping -> pong -> ping`).
++ Legge il file, che deve essere Lisp valido, e lo valuta con `eval_source`.
+  Un errore del lettore, un errore di valutazione o un file che non ha
+  fornito `nome` sono un errore, che finisce nel log e risale.
++ `Loader::end_require` chiude il `require`: se è fallito, `nome` diventa
+  `failed` e le feature #emph[fornite per la prima volta] dal suo inizio
+  tornano a non esserlo, come in Emacs; i fallimenti registrati nel frattempo
+  restano, per leggere il log.
+
+`eval-after-load` consegna a `Loader` una funzione per una feature non ancora
+fornita, o la chiama subito se lo è; `provide` le riprende e le chiama in
+ordine, ognuna con il suo errore nel log, come un hook. `with-eval-after-load`
+è una macro di `commands.lisp` sopra la primitiva.
+
+#estratto("managers/loader.rs")[
+```rust
+let mut index = 0;
+self.known.retain(|feature| {        // dopo un require fallito
+    index += 1;
+    index <= mark.known || feature.state != FeatureState::Loaded
+});
+```
+]
+
+Le dipendenze di un modulo sono ciò che usa, al caricamento o dopo. Tre sono
+deboli e non si chiedono: `help` usa `manpage` se c'è, `manpage` usa
+`help-key` se c'è, `vim` usa `manpage` per `:help` e `K`. Ognuno lo controlla
+con `functionp` o `boundp`, e i due moduli si caricano in qualunque ordine.
+
+== Dove si cerca <percorsi-moduli>
+
+`set_search_paths`, in `editor/boot.rs`, dà il primo valore alle due liste,
+ognuna nell'ordine in cui si cerca: prima la persona, poi i plugin, poi
+l'editor.
+
+#ref-table(
+  columns: (2.6cm, 1fr),
+  header: ([Variabile], [Directory, in ordine]),
+  [`lisp-path`], [`<configurazione>/lisp`; la cartella di ogni plugin; `data/lisp/base`, `data/lisp/features`, `data/lisp/languages` accanto all'eseguibile.],
+  [`theme-path`], [`<configurazione>/themes`; la cartella `themes` di ogni plugin; `themes` dei dati installati (`installed_data_dir`).],
+)
+
+Un file in una directory ne nasconde uno con lo stesso nome in una
+successiva, e `find_module` lo scrive nel log. I moduli dell'editor si
+cercano solo accanto all'eseguibile, non un livello sopra come i temi e le
+pagine: un binario di test non ne ha accanto, e così ogni test comincia senza
+moduli caricati, qualunque cosa chieda il suo `init.lisp`. `theme.lisp` legge
+`theme-path` per `available-themes`, che elenca ogni nome una volta, in
+ordine, e per `select-theme`, che prende il primo file trovato.
+
+== I plugin <plugin>
+
+Un plugin è una cartella di `plugins`, nella directory dei dati, con un
+`plugin.lisp` che dice che cos'è:
+
+```lisp
+(define-plugin hello :version "0.1" :requires (dired)
+  :description "Says hello from dired.")
+```
+
+All'avvio `find_plugins` legge il descrittore di ogni cartella con `Parser`,
+come dati e senza valutarlo: il nome deve essere quello della cartella, e
+una parola chiave sconosciuta si salta. Una cartella senza descrittore
+valido si salta, con il perché nel log. I plugin trovati vanno in `Loader`,
+che `plugins` e `plugin-info` leggono, e le loro cartelle in `lisp-path` e
+`theme-path`; del loro codice non si carica nulla finché `init.lisp` non fa
+`(require 'hello)`. `:requires` è un dato per chi installa: i moduli del
+plugin chiedono da sé ciò che usano.
+
+È la base di un gestore di pacchetti, che manca: nessun comando installa,
+aggiorna o toglie un plugin, e versione e dipendenze non si controllano. Un
+gestore aggiungerebbe una cartella e il suo descrittore; il caricamento
+c'è già.
+
+== Le decisioni <decisioni-moduli>
+
++ *Il modello di Emacs.* `require` e `provide`, con la lista `features`,
+  sono ciò che chi scrive Lisp si aspetta, e risolvono i due problemi del
+  caricamento con `eval-file`: un modulo caricato due volte, e l'ordine delle
+  righe di `init.lisp` come unica descrizione delle dipendenze. Scartato: un
+  elenco di dipendenze in Rust, o un'intestazione da leggere come quella di
+  package.el, che direbbero la stessa cosa in un posto in più.
++ *Un modulo che non c'è è un nil, non un errore.* In Emacs `require` di un
+  file che non trova segnala un errore. Qui risponde nil e lo scrive nel log,
+  come faceva `eval-file`: l'`init.lisp` predefinito deve caricarsi in un
+  editor senza moduli, quello dei test, e un modulo tolto non deve fermare
+  l'avvio. Un modulo che c'è e fallisce, invece, è un errore, che ferma
+  `init.lisp` #rapporto("AVV-7").
++ *Il `provide` in fondo.* Una feature è caricata quando il suo file è finito;
+  messo in cima, un `require` dello stesso modulo durante il caricamento lo
+  troverebbe già caricato a metà. Il `require` in cima dice al lettore che
+  cosa il modulo usa, prima di leggerlo; può stare anche in mezzo, dove serve.
++ *Ciò che un `require` fallito ha caricato se ne va.* Come in Emacs: un
+  modulo fermato a metà non è in vigore, e nemmeno ciò che ha caricato per
+  strada, che un secondo `require` caricherebbe di nuovo. I fallimenti restano
+  registrati: `feature-status` dice `failed`, e il prossimo `require` riprova.
++ *Il descrittore di un plugin si legge, non si esegue.* Sapere che cos'è un
+  plugin non deve far girare il suo codice: un gestore di pacchetti potrà
+  elencare, controllare e togliere senza caricare nulla.
++ *I plugin si cercano all'avvio.* La cartella dei dati si legge una volta,
+  prima di `init.lisp`, che può così chiedere un plugin per nome. Un plugin
+  aggiunto mentre l'editor gira si trova al prossimo avvio.
 
 Le variabili che l'editor legge da Lisp:
 
@@ -5247,7 +5394,8 @@ Le variabili che l'editor legge da Lisp:
   [`mouse-mode`], [`nil` (`t` in `init.lisp`)], [Il mouse all'editor invece che al terminale.],
   [`after-resize-hook`], [`nil`], [Funzioni chiamate con larghezza e altezza.],
   [`frame-width`, `frame-height`], [---], [Dimensioni correnti, scritte dal front-end.],
-  [`lisp-path`], [`data/lisp`], [Dove `eval-file` cerca i moduli.],
+  [`lisp-path`], [vedi @percorsi-moduli], [Dove `require` ed `eval-file` cercano i moduli.],
+  [`theme-path`], [vedi @percorsi-moduli], [Dove si cercano i temi.],
   [`help-key`], [`"C-h"`], [Il tasto che, dopo un prefisso, chiede che cosa lo segue.],
   [`worker-fuel`], [200.000], [Passi per turno di un worker.],
   [`watch-files`, `watch-file-interval`], [`t`, 3], [Il watcher dei file.],
@@ -5355,9 +5503,11 @@ In Rust:
 
 == Un modulo Lisp nuovo
 
-Scrivi `core/lisp/nome.lisp`, aggiungilo all'elenco di `core/build.rs`, aggiungi
-`(eval-file "nome")` a `DEFAULT_INIT_LISP` in `editor/boot.rs` (e, a mano, al
-tuo `init.lisp`), e un test che lo carichi.
+Scrivi `core/lisp/<genere>/nome.lisp`, con i `require` di ciò che usa in cima
+e `(provide 'nome)` in fondo; aggiungi `(require 'nome)` a `DEFAULT_INIT_LISP`
+in `editor/boot.rs` (e, a mano, al tuo `init.lisp`), la riga del modulo nella
+sezione MODULES della pagina `rsedit`, e un test che lo carichi. `build.rs` lo
+copia da solo.
 
 == Un nuovo front-end
 
@@ -5437,6 +5587,7 @@ Generato da `into.function(` e `into.command(` nei file di `primitives/`. Un ast
   [`isearch` (10)], [`isearch-forward`\*, `isearch-backward`\*, `isearch-forward-regexp`\*, `isearch-backward-regexp`\*, `isearch-update`, `isearch-exit`, `isearch-abort`, `isearch-repeat-forward`, `isearch-repeat-backward`, `isearch-active-p`],
   [`keymaps` (6)], [`define-key`, `set-local-keymap`, `set-transient-keymap`, `clear-transient-keymap`, `define-repeat-key`, `repeat`\*],
   [`killing` (14)], [`kill-line`\*, `kill-whole-line`\*, `kill-word`\*, `backward-kill-word`\*, `kill-paragraph`\*, `backward-kill-paragraph`\*, `kill-region`\*, `kill-ring-save`\*, `yank`\*, `yank-pop`\*, `set-kill-ring-max`\*, `kill-new`, `current-kill`, `kill-ring-length`],
+  [`loading` (9)], [`eval-after-load`, `feature-file`, `feature-status`, `featurep`, `features`, `plugin-info`, `plugins`, `provide`, `require`],
   [`macros` (12)], [`kmacro-start-macro`\*, `kmacro-end-macro`\*, `kmacro-cancel-macro`\*, `kmacro-call-macro`\*, `kmacro-end-and-call-macro`\*, `kmacro-insert-counter`\*, `kmacro-set-counter`\*, `kmacro-counter`, `kmacro-recording-p`, `kbd-macro-keys`, `define-kbd-macro`, `kmacro-call-keys`],
   [`match_data` (8)], [`string-match`, `string-match-p`, `match-beginning`, `match-end`, `match-string`, `match-data`, `set-match-data`, `regexp-opt`],
   [`minibuffer` (12)], [`minibuffer-cleanup`, `minibuffer-confirm`, `minibuffer-cancel`, `minibuffer-complete`, `minibuffer-choose-completion`, `default-minibuffer-prompt`, `minibuffer-read`, `completion-invalidate`, `minibuffer-history`, `clear-minibuffer-history`, `history-previous`\*, `history-next`\*],

@@ -4,11 +4,11 @@
 //! Design: `doc/architettura-editor.typ, <avvio>`.
 
 use super::*;
-use crate::paths::{AppDir, CACHE_DIR, CONFIG_DIR, DirOptions, app_dir};
+use crate::paths::{AppDir, CACHE_DIR, CONFIG_DIR, DATA_DIR, DirOptions, app_dir};
 
 /// The `init.lisp` the editor writes for somebody who has none.
 ///
-/// `eval-file` lines and settings, and nothing that needs a macro: the modules
+/// `require` lines and settings, and nothing that needs a macro: the modules
 /// it loads are what define the macros, and without one -- no `data/lisp`
 /// beside a test binary, a module taken out -- a form using it is an ordinary
 /// call, which fails and takes the editor down with it. A command belongs in a
@@ -21,40 +21,41 @@ use crate::paths::{AppDir, CACHE_DIR, CONFIG_DIR, DirOptions, app_dir};
 pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; Add your configuration here.
 ;;
-;; The order matters: each of these uses what the ones above it define.
-;; `commands' defines `defcommand', which the modules below are written with,
-;; and `debug' defines `message', which they report through.
-(eval-file "commands")
-(eval-file "debug")
-(eval-file "common-keymaps")
-(eval-file "indent")      ; what Tab does; a mode plugs its own rule in
-(eval-file "minibuffer")
+;; Each `require' loads a module once, after the modules it needs, and asking
+;; again for one already loaded does nothing. See the `configuration' manual
+;; page.
+(require 'commands)
+(require 'debug)
+(require 'common-keymaps)
+(require 'indent)          ; what Tab does; a mode plugs its own rule in
+(require 'minibuffer)
 
 ;; Modules. Each is optional -- comment one out and the editor comes up
-;; without it, missing exactly that feature and nothing else.
-(eval-file "rust-mode")   ; colouring for Rust source
-(eval-file "risp-mode")   ; colouring and indentation for this editor's own Lisp
-(eval-file "cc-mode")     ; colouring and indentation for C/C++ source
-(eval-file "python-mode") ; colouring and indentation for Python
-(eval-file "toml-mode")   ; colouring and indentation for TOML
-(eval-file "bash-mode")   ; colouring and indentation for Bash
-(eval-file "dired")       ; a directory in a buffer (C-x d)
+;; without it, missing exactly that feature, unless a module still loaded
+;; needs it and loads it anyway.
+(require 'rust-mode)       ; colouring for Rust source
+(require 'risp-mode)       ; colouring and indentation for this editor's own Lisp
+(require 'cc-mode)         ; colouring and indentation for C/C++ source
+(require 'python-mode)     ; colouring and indentation for Python
+(require 'toml-mode)       ; colouring and indentation for TOML
+(require 'bash-mode)       ; colouring and indentation for Bash
+(require 'dired)           ; a directory in a buffer (C-x d)
 ;; Makes dired sort directory entries by type (folders, files).
 (setq dired-sort 'type)
 
 
-(eval-file "completion")  ; Tab shows every candidate at once, in a strip
-(eval-file "preview")     ; C-x r t shows its replacement before you commit to it
-(eval-file "clipboard")   ; kills also go to the system clipboard
-(eval-file "electric-pair") ; typing "(" gives you "()"
-(eval-file "buffer-list")  ; C-x b to switch, C-x C-b for the whole list
-(eval-file "shell")       ; M-! runs a command and shows what it said
-(eval-file "manpage")     ; C-h m, and K on a word
-(eval-file "help")        ; C-h f, C-h k, C-h b -- the editor describing itself
-(eval-file "occur")       ; M-s o and M-s g, and the lists M-g n walks
-(eval-file "compile")     ; C-c c, and M-g n to walk what it complained about
-(eval-file "theme")       ; C-c t to choose how faces are drawn
-(eval-file "vim")         ; M-x vim-mode enables modal editing in this buffer
+(require 'completion)      ; Tab shows every candidate at once, in a strip
+(require 'preview)         ; C-x r t shows its replacement before you commit to it
+(require 'clipboard)       ; kills also go to the system clipboard
+(require 'electric-pair)   ; typing "(" gives you "()"
+(require 'buffer-list)     ; C-x b to switch, C-x C-b for the whole list
+(require 'shell)           ; M-! runs a command and shows what it said
+(require 'manpage)         ; C-h m, and K on a word
+(require 'help)            ; C-h f, C-h k, C-h b -- the editor describing itself
+(require 'occur)           ; M-s o and M-s g, and the lists M-g n walks
+(require 'compile)         ; C-c c, and M-g n to walk what it complained about
+(require 'theme)           ; C-c t to choose how faces are drawn
+(require 'vim)             ; M-x vim-mode enables modal editing in this buffer
 ;; (vim-mode t)           ; start the initial buffer in Normal state
 ;; (global-vim-mode t)    ; existing and future text/code buffers
 ;; Or only selected major modes, even without global-vim-mode:
@@ -65,7 +66,12 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; and works without this; what this adds is the five sources it asks. Take one
 ;; out with `set-completion-functions', or add one of your own for a single
 ;; mode with `add-completion-function'.
-(eval-file "completion-at-point")
+(require 'completion-at-point)
+
+;; A plugin, installed in a directory of its own under `plugins' in the data
+;; directory, is found at start and loaded by name as a module is. See the
+;; `plugins' manual page.
+;; (require 'my-plugin)
 
 ;; How much one step of background work may do before it is stopped, and how
 ;; the scheduler that runs it takes turns. See the `background' manual page.
@@ -165,6 +171,7 @@ impl<B: BufferTrait> EditorState<B> {
             ))))),
             log,
             history: Arc::new(RwLock::new(History::default())),
+            loader: Arc::new(RwLock::new(Loader::default())),
         };
         // The executor's copy of the editor, which could not exist before the
         // editor did: a cycle, since the editor holds the WorkManager, which
@@ -189,99 +196,6 @@ impl<B: BufferTrait> EditorState<B> {
 
         editor_state
     }
-
-    /// Evaluates the Lisp file FILE, and returns a list holding the value of
-    /// its last form, or the first error its evaluation raised.
-    ///
-    /// FILE is a path, absolute or relative; when there is no such file and
-    /// FILE is a bare name, with no `/`, `\` or `.`, it is `FILE.lisp` in the
-    /// first directory of `lisp-path`, read from ENV, that has one. A file not
-    /// found, or not read, is logged, and the answer is nil. The file is
-    /// evaluated at the root of ENV's chain, as `top_level` finds it, wherever
-    /// the call comes from: a module loaded inside a function, or with `M-:`,
-    /// defines what `init.lisp` would.
-    pub fn eval_file(
-        &self,
-        file: &str,
-        env: Arc<Env<Self>>,
-    ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
-        let content = format!(
-            "(progn {})",
-            // First, FILE as a path.
-            match std::fs::read_to_string(file) {
-                Ok(content) => content,
-                Err(err) => {
-                    // No such file.
-                    if let std::io::ErrorKind::NotFound = err.kind() {
-                        // A name with a separator or a dot was meant as a
-                        // path; a bare one is looked for in `lisp-path`.
-                        if file.contains('\\') || file.contains('/') || file.contains('.') {
-                            self.log_diagnostic(&format!(
-                                "[ERROR] eval_file {file} is not a valid script name"
-                            ));
-                            return Ok(ELispExp::nil());
-                        } else {
-                            // FILE.lisp, in the directories of `lisp-path`:
-                            // first the directories, each a string;
-                            let mut lisp_path = vec![];
-                            if let Some(lisp_path_list) = env.get_variable(LISP_PATH) {
-                                if matches!(lisp_path_list, ELispExp::Cons(_)) {
-                                    for ipath in lisp_path_list.iter() {
-                                        if let ELispExp::String(path) = &ipath {
-                                            lisp_path.push(path.clone());
-                                        } else {
-                                            self.log_diagnostic(&format!(
-                                                "Element in lisp-path is not a path {:?}",
-                                                ipath
-                                            ));
-                                        }
-                                    }
-                                } else {
-                                    self.log_diagnostic(
-                                        "Variable lisp-path is not a list of paths",
-                                    );
-                                    return Ok(ELispExp::symbol("nil".into()));
-                                }
-                            };
-                            // then the first of them that has the file.
-                            let mut script_content = None;
-                            for path in lisp_path {
-                                if let Ok(content) =
-                                    std::fs::read_to_string(&format!("{path}/{file}.lisp"))
-                                {
-                                    script_content = Some(content);
-                                    break;
-                                }
-                            }
-                            if let Some(content) = script_content {
-                                content
-                            } else {
-                                self.log_diagnostic(&format!(
-                                    "[ERROR] eval_file {file}.lisp was not found in lisp_path"
-                                ));
-                                return Ok(ELispExp::nil());
-                            }
-                        }
-                    } else {
-                        self.log_diagnostic(&format!("[ERROR] Failed eval file {file} {:?}", err));
-                        return Ok(ELispExp::nil());
-                    }
-                }
-            }
-        );
-
-        // TODO(AVV-2): read as one form, so that a closing parenthesis too
-        // many or too few evaluates nothing, and nothing says so.
-        let ast = if let Ok(ast) = Parser::new(&content).next() {
-            ast
-        } else {
-            return Ok(ELispExp::nil());
-        };
-
-        let _command = self.begin_command();
-        let value = eval(&ast, top_level(&env), self)?;
-        Ok(ELispExp::proper_list(vec![value]))
-    }
 }
 
 /// Returns the environment at the root of ENV's chain, where `init.lisp` is
@@ -301,15 +215,17 @@ pub(crate) fn top_level<B: BufferTrait>(
     env
 }
 
-/// Points this process's configuration and cache at directories of its own,
-/// in the system's temporary directory, once: building an editor in a test
-/// then neither writes into the configuration of whoever runs the tests, nor
-/// depends on where `HOME` points at that instant, which several tests move.
+/// Points this process's configuration, data and cache at directories of its
+/// own, in the system's temporary directory, once: building an editor in a
+/// test then neither writes into the configuration of whoever runs the tests,
+/// nor loads their plugins, nor depends on where `HOME` points at that
+/// instant, which several tests move.
 ///
-/// Through [`CONFIG_DIR`] and [`CACHE_DIR`], the doors a person would use, so
-/// that the tests go through what `crate::paths` decides. Public for the
-/// binary crate's tests, which `cfg(test)` does not reach in a library built
-/// as a dependency; hidden from the documentation, since it is scaffolding.
+/// Through [`CONFIG_DIR`], [`DATA_DIR`] and [`CACHE_DIR`], the doors a person
+/// would use, so that the tests go through what `crate::paths` decides.
+/// Public for the binary crate's tests, which `cfg(test)` does not reach in a
+/// library built as a dependency; hidden from the documentation, since it is
+/// scaffolding.
 #[doc(hidden)]
 pub fn isolate_config_for_tests() {
     static ONCE: std::sync::Once = std::sync::Once::new();
@@ -328,8 +244,65 @@ pub fn isolate_config_for_tests() {
         unsafe {
             std::env::set_var(CONFIG_DIR, dir("config"));
             std::env::set_var(CACHE_DIR, dir("cache"));
+            std::env::set_var(DATA_DIR, dir("data"));
         }
     });
+}
+
+/// Sets `lisp-path` and `theme-path` in ENV, each in the order it is
+/// searched: the person's own folder under CONFIG, then each plugin's, then
+/// the editor's own. The plugins are those under `plugins` in the data
+/// directory; they are recorded, and nothing of theirs is loaded.
+///
+/// The editor's modules are looked for beside the executable only, unlike its
+/// themes and pages: a test binary has none there, and so every test starts
+/// with no module loaded, whatever its `init.lisp` requires.
+fn set_search_paths<B: BufferTrait>(
+    editor_state: &EditorState<B>,
+    env: &Arc<Env<EditorState<B>>>,
+    config: Option<&std::path::Path>,
+) {
+    let plugins = match app_dir(DirOptions {
+        dir: AppDir::Data,
+        create: false,
+    }) {
+        Ok(data) => editor_state.find_plugins(&data.join("plugins")),
+        Err(_) => Vec::new(),
+    };
+    let mut lisp_path: Vec<PathBuf> = config.map(|dir| dir.join("lisp")).into_iter().collect();
+    let mut theme_path: Vec<PathBuf> = config.map(|dir| dir.join("themes")).into_iter().collect();
+    for plugin in &plugins {
+        lisp_path.push(plugin.directory.clone());
+        theme_path.push(plugin.directory.join("themes"));
+    }
+    match std::env::current_exe() {
+        Ok(exe) => {
+            let shipped = exe
+                .parent()
+                .expect("Failed to get the parent directory of rsedit")
+                .join("data")
+                .join("lisp");
+            lisp_path.extend(MODULE_KINDS.iter().map(|kind| shipped.join(kind)));
+        }
+        Err(e) => {
+            editor_state.log_diagnostic(&format!(
+                "[ERROR] Failed to find the path of rsedit executable. {:?}",
+                e
+            ));
+        }
+    }
+    theme_path.extend(crate::paths::installed_data_dir().map(|data| data.join("themes")));
+    editor_state.loader_mut(|loader| loader.set_plugins(plugins));
+    let list = |paths: Vec<PathBuf>| {
+        ELispExp::proper_list(
+            paths
+                .into_iter()
+                .map(|path| ELispExp::string(path.display().to_string()))
+                .collect(),
+        )
+    };
+    env.set_variable(LISP_PATH.into(), list(lisp_path));
+    env.set_variable(THEME_PATH.into(), list(theme_path));
 }
 
 /// Builds an editor and the Lisp environment wired to it, and loads the
@@ -349,28 +322,6 @@ pub fn create_global_env<B: BufferTrait>()
 
     let editor_state = EditorState::new();
     let env = bootstrap_vm(&editor_state)?;
-
-    // Where the modules are: `data/lisp`, beside the executable.
-    match std::env::current_exe() {
-        Ok(exe_path) => {
-            env.set_variable(
-                LISP_PATH.into(),
-                ELispExp::proper_list(vec![ELispExp::string(format!(
-                    "{}/data/lisp",
-                    exe_path
-                        .parent()
-                        .expect("Failed to get the parent directory of rsedit")
-                        .display()
-                ))]),
-            );
-        }
-        Err(e) => {
-            editor_state.log_diagnostic(&format!(
-                "[ERROR] Failed to find the path of rsedit executable. {:?}",
-                e
-            ));
-        }
-    }
 
     // Off here, and on in the default `init.lisp`: see `mouse_mode`.
     env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
@@ -504,16 +455,23 @@ pub fn create_global_env<B: BufferTrait>()
     // the directory is, on each system, is `crate::paths`'s to say; when there
     // is none to be had the path is empty, which `eval_file` reads as nothing
     // to evaluate.
-    let user_config_path = match app_dir(DirOptions {
+    let config_dir = match app_dir(DirOptions {
         dir: AppDir::Config,
         create: true,
     }) {
-        Ok(dir) => dir.join("init.lisp"),
+        Ok(dir) => Some(dir),
         Err(why) => {
             editor_state.log_diagnostic(&format!("[ERROR] No configuration: {why}"));
-            PathBuf::new()
+            None
         }
     };
+    let user_config_path = config_dir
+        .as_ref()
+        .map_or_else(PathBuf::new, |dir| dir.join("init.lisp"));
+
+    // Where the modules and the themes are, the plugins among them, before
+    // the configuration that requires them.
+    set_search_paths(&editor_state, &env, config_dir.as_deref());
 
     // TODO(AVV-5): written only when missing, so one written by an older
     // editor never loads the modules added since.
@@ -527,6 +485,8 @@ pub fn create_global_env<B: BufferTrait>()
         ));
     }
 
+    // TODO(AVV-7): the first error stops the editor, a module's included, and
+    // `main` exits with nothing but the error's name.
     editor_state.eval_file(
         user_config_path
             .to_str()

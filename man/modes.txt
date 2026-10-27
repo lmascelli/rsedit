@@ -135,12 +135,12 @@ THE LANGUAGES
 
 LANGUAGE CONFIGURATION
     An existing init.lisp is not rewritten by an editor upgrade. Load the
-    modules there, after commands, debug and indent:
+    modules there; each loads the ones it needs first:
 
-        (eval-file "cc-mode")
-        (eval-file "python-mode")
-        (eval-file "toml-mode")
-        (eval-file "bash-mode")
+        (require 'cc-mode)
+        (require 'python-mode)
+        (require 'toml-mode)
+        (require 'bash-mode)
 
     C/C++ include C11/C23 and modern C++ vocabulary, preprocessor directives,
     attributes, numeric suffixes and character literals. C++ raw strings

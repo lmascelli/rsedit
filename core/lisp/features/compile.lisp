@@ -9,6 +9,10 @@
 ;;; which buffer M-g n walks is kept outside, since that is asked from another
 ;;; buffer.
 
+(require 'commands)
+(require 'debug)
+(require 'shell)
+
 (make-mode 'compilation-mode)
 
 (defvar compilation-window-height 12
@@ -248,3 +252,4 @@ it names."
 (define-face 'results-target nil "bright-black")
 
 (log "compile loaded")
+(provide 'compile)

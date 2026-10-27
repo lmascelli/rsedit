@@ -469,10 +469,10 @@ mod tests {
         // a key that does nothing at all the day somebody presses it.
         let (ctx, env) = editor("");
         for (name, source) in [
-            ("commands", include_str!("../../lisp/commands.lisp")),
+            ("commands", include_str!("../../lisp/base/commands.lisp")),
             (
                 "common-keymaps",
-                include_str!("../../lisp/common-keymaps.lisp"),
+                include_str!("../../lisp/base/common-keymaps.lisp"),
             ),
         ] {
             let ast = Parser::new(&format!("(progn {source})"))

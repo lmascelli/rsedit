@@ -216,8 +216,12 @@ mod tests {
     #[test]
     fn the_deletion_keys_are_bound() {
         let (ctx, env) = editor_with("alpha beta");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         ctx.handle_key_event(
             KeyEvent {

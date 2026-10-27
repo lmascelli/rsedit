@@ -21,7 +21,7 @@ use crate::{
     jobs::watcher::FileWatcher,
     managers::{
         Binding, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit,
-        KillYank, Log, Macros, Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
+        KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
     },
     modes::{Grammar, MajorMode, SyntaxTable},
     primitives::{install_primitives, movement::goto_offset},
@@ -57,6 +57,7 @@ mod commands;
 mod frame;
 mod keys;
 mod kill_yank;
+mod loader;
 mod log;
 mod macros;
 mod modes;
@@ -71,6 +72,7 @@ mod work;
 pub use boot::{create_global_env, isolate_config_for_tests};
 pub(crate) use frame::TURN_INTERVAL;
 pub use keys::KEY_CAPTURE_FUNCTION;
+pub(crate) use loader::MODULE_KINDS;
 pub use settings::*;
 pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED, WorkerTurn, in_worker};
 
@@ -217,6 +219,10 @@ pub struct EditorState<B: BufferTrait> {
     /// The execution budget, the call stack, the theme, the goal column, and
     /// the search or replace in progress. See [`Runtime`].
     runtime: Arc<RwLock<Runtime>>,
+
+    /// The features loaded, the `require`s in progress, what waits for a
+    /// feature, and the plugins. See [`Loader`].
+    loader: Arc<RwLock<Loader<ELispExp<B>>>>,
 }
 
 impl<B: BufferTrait> LispContext for EditorState<B> {
@@ -385,5 +391,15 @@ impl<B: BufferTrait> EditorState<B> {
     /// Runs F on the runtime, under its write lock.
     pub(crate) fn runtime_mut<R>(&self, f: impl FnOnce(&mut Runtime) -> R) -> R {
         f(&mut self.runtime.write().expect("write lock on runtime"))
+    }
+
+    /// Runs F on what has been loaded, under its read lock.
+    pub(crate) fn loader<R>(&self, f: impl FnOnce(&Loader<ELispExp<B>>) -> R) -> R {
+        f(&self.loader.read().expect("read lock on loader"))
+    }
+
+    /// Runs F on what has been loaded, under its write lock.
+    pub(crate) fn loader_mut<R>(&self, f: impl FnOnce(&mut Loader<ELispExp<B>>) -> R) -> R {
+        f(&mut self.loader.write().expect("write lock on loader"))
     }
 }

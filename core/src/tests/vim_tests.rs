@@ -19,13 +19,13 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
         for (name, source) in [
-            ("commands", include_str!("../../lisp/commands.lisp")),
-            ("debug", include_str!("../../lisp/debug.lisp")),
+            ("commands", include_str!("../../lisp/base/commands.lisp")),
+            ("debug", include_str!("../../lisp/base/debug.lisp")),
             (
                 "common-keymaps",
-                include_str!("../../lisp/common-keymaps.lisp"),
+                include_str!("../../lisp/base/common-keymaps.lisp"),
             ),
-            ("vim", include_str!("../../lisp/vim.lisp")),
+            ("vim", include_str!("../../lisp/features/vim.lisp")),
         ] {
             let form = Parser::new(&format!("(progn {source})"))
                 .next()

@@ -24,9 +24,9 @@ mod tests {
         // Included rather than loaded by name: `eval-file` reads the installed
         // data directory, which the tests deliberately do not have.
         for source in [
-            include_str!("../../lisp/commands.lisp"),
-            include_str!("../../lisp/debug.lisp"),
-            include_str!("../../lisp/common-keymaps.lisp"),
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/base/common-keymaps.lisp"),
         ] {
             let ast = Parser::new(&format!("(progn {source})"))
                 .next()

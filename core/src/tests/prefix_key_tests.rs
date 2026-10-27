@@ -211,8 +211,12 @@ mod tests {
     #[test]
     fn an_abandoned_sequence_does_not_break_a_run_of_kills() {
         let (ctx, env) = editor_with("one\ntwo\nthree\n");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         press(&ctx, &env, KeyCode::Char('k'), ctrl());
         press(&ctx, &env, KeyCode::Char('x'), ctrl()); // starts a sequence
@@ -352,8 +356,12 @@ mod tests {
     #[test]
     fn the_prefixed_region_bindings_work() {
         let (ctx, env) = editor_with("alpha beta");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         // C-x h -- the whole buffer becomes the region.
         press(&ctx, &env, KeyCode::Char('x'), ctrl());

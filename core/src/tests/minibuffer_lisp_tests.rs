@@ -33,9 +33,9 @@ mod tests {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("create_global_env failed");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
-        eval_str(include_str!("../../lisp/debug.lisp"), &env, &ctx)
+        eval_str(include_str!("../../lisp/base/debug.lisp"), &env, &ctx)
             .unwrap_or_else(|e| panic!("loading debug.lisp failed: {e:?}"));
-        eval_str(include_str!("../../lisp/minibuffer.lisp"), &env, &ctx)
+        eval_str(include_str!("../../lisp/base/minibuffer.lisp"), &env, &ctx)
             .unwrap_or_else(|e| panic!("loading minibuffer.lisp failed: {e:?}"));
         (ctx, env)
     }
@@ -242,7 +242,7 @@ mod tests {
         // Defined as well as registered, so that M-x runs it rather than
         // failing with UndefinedFunction.
         let (ctx, env) = setup();
-        eval_str(include_str!("../../lisp/commands.lisp"), &env, &ctx)
+        eval_str(include_str!("../../lisp/base/commands.lisp"), &env, &ctx)
             .unwrap_or_else(|e| panic!("loading commands.lisp failed: {e:?}"));
         eval_str("(setq probe-ran nil)", &env, &ctx).unwrap();
         evaluate_at_meta_colon(

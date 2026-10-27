@@ -15,6 +15,7 @@ SYNOPSIS
     (list-faces)
     (list-colors)
     current-theme
+    theme-path
     theme-list-buffer-name
     theme-list-name-column
     theme-suffix
@@ -28,7 +29,7 @@ DESCRIPTION
 
     C-c t lists the themes, and Return on one applies it. To keep a choice,
     put it in init.lisp, after the line that loads the module,
-    (eval-file "theme"):
+    (require 'theme):
 
         (select-theme 'gruvbox-dark)
 
@@ -98,9 +99,13 @@ SETTING A FACE
     attributes after them rather than in a list of their own.
 
 WRITING A THEME
-    A theme is a file of Lisp in the editor's themes directory,
-    (data-directory "themes"), that puts the list of its faces on a symbol:
-    a file called night.lisp puts it on night-theme.
+    A theme is a file of Lisp in one of the directories of `theme-path',
+    that puts the list of its faces on a symbol: a file called night.lisp
+    puts it on night-theme. The list starts with the folder themes of the
+    configuration directory, ~/.config/rsedit/themes, then the themes folder
+    of each plugin, then the editor's own, (data-directory "themes"). A
+    theme found in an earlier one is used in place of a theme of the same
+    name in a later one, and the list of themes names each once.
 
         (put 'night-theme 'faces
              '((keyword "#859900" nil ("bold"))
@@ -111,7 +116,7 @@ WRITING A THEME
     it, after putting every face back with `reset-faces', so that nothing
     of the theme before is left. A face a theme does not name looks as it
     ships, the faces of the modules as `define-face' gave them. In the
-    source tree the themes are in themes/, which the build copies.
+    source tree the editor's themes are in themes/, which the build copies.
 
 LIMITS
     The terminal front end does not draw the face default: the text and the

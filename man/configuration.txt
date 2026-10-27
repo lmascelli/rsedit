@@ -2,6 +2,14 @@ NAME
     configuration - making it yours
 
 SYNOPSIS
+    (require FEATURE &optional FILE)
+    (provide FEATURE)
+    (featurep FEATURE)
+    (features)
+    (feature-file FEATURE)
+    (feature-status FEATURE)
+    (eval-after-load FEATURE FUNCTION)
+    (with-eval-after-load FEATURE BODY...)
     (eval-file FILE)
     (toggle-line-numbers)
     lisp-path
@@ -38,9 +46,18 @@ WHERE THE FILES ARE
         ~/.cache/rsedit
         %LOCALAPPDATA%\rsedit\cache
 
-    A variable that is set but empty counts as not set. Both directories
-    are made when they are missing, and deleting the cache loses nothing
-    that matters.
+    What is installed for the editor rather than written for it, such as
+    its plugins, goes in the data directory:
+
+        $RSEDIT_DATA_DIR
+        $XDG_DATA_HOME/rsedit
+        ~/.local/share/rsedit
+        %LOCALAPPDATA%\rsedit\data
+
+    A variable that is set but empty counts as not set. The configuration
+    and the cache are made when they are missing, and deleting the cache
+    loses nothing that matters. The `plugins' page says what goes in the
+    data directory.
 
 THE FOUR THINGS YOU WILL WRITE
     A setting:
@@ -70,31 +87,68 @@ MODULES
     Each feature above the mechanics is a module: a file, loaded by a line
     in init.lisp.
 
-        (eval-file "completion")   ; Tab shows every candidate at once
-        (eval-file "dired")        ; a directory in a buffer
+        (require 'completion)      ; Tab shows every candidate at once
+        (require 'dired)           ; a directory in a buffer
 
-    The order matters. Each module is written against what the ones above
-    it define: `commands' defines `defcommand' and `debug' defines
-    `message', and the others use both. Comment one out and the editor
-    comes up without that feature and nothing else. The `rsedit' page
-    lists them all, in the order they load.
+    A module is loaded once, however many times it is asked for: `require'
+    loads the file only when the feature is not loaded yet. Each module
+    begins by requiring the modules it needs and ends with `provide', which
+    says it is loaded, so the order of the lines does not matter. Comment
+    one out and the editor comes up without that feature, unless a module
+    still loaded needs it and loads it anyway. The `rsedit' page lists them
+    all.
+
+    `featurep' says whether a module is loaded, `features' lists the ones
+    that are, the latest first, and `feature-file' says which file one came
+    from. A module whose file raised an error is not loaded, and nor are the
+    modules it loaded on its way; `feature-status' says failed, and the log
+    says why.
 
     Since init.lisp is written once, a module a later version adds does not
     reach it by itself: add its line by hand.
 
-    The modules are installed beside the editor, and you can read all of
-    them. The one to read first is rust-mode.lisp: a whole mode in one
-    short file.
+    The modules are installed beside the editor, in three folders of
+    data/lisp: base, what the others are written with; features, one for
+    each thing the editor does; and languages, one for each language it
+    colours. You can read all of them. The one to read first is
+    rust-mode.lisp: a whole mode in one short file.
+
+    An init.lisp written before modules were required loads them with
+    (eval-file "dired"), which still works: `eval-file' finds a bare name
+    in `lisp-path' as `require' does, but loads it again every time.
+
+SETTINGS FOR A MODULE
+    A setting the module defines with `defvar' can be set before the module
+    is loaded, and the module keeps it. To run something once a module is
+    loaded, wherever it is loaded from:
+
+        (with-eval-after-load 'dired
+          (setq dired-sort 'type))
+
+    It runs now if the module is loaded already. `eval-after-load' is the
+    same with a function, and is what `with-eval-after-load' is written
+    with; the macro needs `commands', and the function nothing.
 
 FILES OF YOUR OWN
-    `eval-file' takes a path, relative to the directory the editor was
-    started in, or the name of a module, which it looks for in each
-    directory of `lisp-path' in turn. To keep modules of your own beside
-    init.lisp, put that directory first in the list:
+    `require' looks for FEATURE.lisp in each directory of `lisp-path' in
+    turn, and loads the first it finds. The list starts with the folder lisp
+    of the configuration directory, then the folder of each plugin, then
+    the editor's own three. So a module of your own goes in
+    ~/.config/rsedit/lisp, ends with its `provide', and is loaded by name:
 
-        (setq lisp-path
-              (cons (expand-file-name "~/.config/rsedit") lisp-path))
-        (eval-file "mine")         ; ~/.config/rsedit/mine.lisp
+        ;; ~/.config/rsedit/lisp/mine.lisp
+        (require 'commands)
+        (defcommand hello () nil "Say hello." (message "hello"))
+        (provide 'mine)
+
+        ;; init.lisp
+        (require 'mine)
+
+    A file of yours with the name of one the editor ships is loaded in its
+    place, and the log says which file shadows which. `eval-file' takes a
+    path, relative to the directory the editor was started in, or a bare
+    name, looked for in the same list; it loads the file whether or not it
+    has been loaded, which is what you want while you are writing one.
 
 SETTINGS
     A setting is a variable the editor reads: set it in init.lisp, or with
@@ -112,7 +166,7 @@ SETTINGS
 
 COLOURS
     C-c t lists the themes, and Return on one applies it. To keep a choice,
-    after the line that loads the module, (eval-file "theme"):
+    after the line that loads the module, (require 'theme):
 
         (select-theme 'monochrome)
 
@@ -121,13 +175,21 @@ COLOURS
         (set-face 'keyword "bright-magenta")
 
 WHEN IT WILL NOT LOAD
-    A module that fails says so in the log, and the editor comes up anyway,
-    which is the point of them being separate. A file with a syntax error
-    is skipped without a word, for now: when a change seems to do nothing,
-    try it with M-: first. C-h e shows everything the editor has said, and
-    the `diagnostics' page says where else to look.
+    A module that is not found says so in the log, and the editor comes up
+    without it, which is the point of them being separate. One that is
+    found and fails -- an error, a syntax error, no `provide' -- stops
+    init.lisp there, and the editor with it: it prints the error and exits.
+    The log in memory says which module, and is lost with it. A file loaded
+    with `eval-file' that has a syntax error is skipped without a word, for
+    now: when a change seems to do nothing, try it with M-: first. C-h e
+    shows everything the editor has said, and the `diagnostics' page says
+    where else to look.
 
 EXAMPLES
+    Whether vim is loaded, and from where:
+
+        (list (featurep 'vim) (feature-file 'vim))
+
     Number each line by its distance from point, which is what a count
     before a command wants:
 
@@ -145,4 +207,5 @@ EXAMPLES
         (define-key nil "C-c i" 'insert-date)
 
 SEE ALSO
-    rsedit, keymaps, modes, themes, writing-commands, diagnostics, guide
+    rsedit, plugins, keymaps, modes, themes, writing-commands, diagnostics,
+    guide

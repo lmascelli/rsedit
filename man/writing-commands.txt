@@ -22,8 +22,9 @@ DESCRIPTION
         (define-key nil "C-c d" 'insert-date)
 
     puts it on a key. The `substring' takes off the newline date prints
-    after the date. A definition like this goes in init.lisp, or in a file
-    of your own that init.lisp loads with `eval-file'.
+    after the date. A definition like this goes in init.lisp, or in a module
+    of your own that init.lisp loads with `require': the `configuration'
+    page says where.
 
 THE ARGUMENTS
     SPECS has a code for each parameter, and the editor collects the

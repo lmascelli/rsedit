@@ -10,6 +10,9 @@
 ;;; command has a buffer of its own, since two writing into one would mix
 ;;; their lines into something neither of them said.
 
+(require 'commands)
+(require 'debug)
+
 (make-mode 'shell-output-mode)
 
 ;; A strip rather than half the frame: the output is glanced at while working,
@@ -88,3 +91,4 @@ and ends with --- killed ---."
 (define-face 'error "bright-red" nil '("bold"))
 
 (log "shell loaded")
+(provide 'shell)

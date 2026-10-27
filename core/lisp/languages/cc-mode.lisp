@@ -5,6 +5,9 @@
 ;;; .cppm. User manual: the `modes' page, and `indentation' for how they
 ;;; indent.
 
+(require 'commands)
+(require 'indent)
+
 (make-mode 'c-mode)
 (make-mode 'cpp-mode)
 
@@ -197,3 +200,4 @@ at most 16 characters, none a space, a parenthesis or a backslash."
 (add-auto-mode "\\.(c|h)$" 'c-mode)
 (add-auto-mode "\\.(cpp|hpp|cc|hh|cxx|hxx|c\\+\\+|h\\+\\+|C|H|ipp|tpp|ixx|cppm)$" 'cpp-mode)
 (log "cc-mode loaded")
+(provide 'cc-mode)

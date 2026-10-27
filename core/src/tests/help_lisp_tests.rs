@@ -27,16 +27,19 @@ mod tests {
     /// keymaps it reports on, the minibuffer its prompts open, and the manual
     /// it hands `C-h m` to.
     const SHIPPED: [(&str, &str); 7] = [
-        ("commands", include_str!("../../lisp/commands.lisp")),
-        ("debug", include_str!("../../lisp/debug.lisp")),
+        ("commands", include_str!("../../lisp/base/commands.lisp")),
+        ("debug", include_str!("../../lisp/base/debug.lisp")),
         (
             "common-keymaps",
-            include_str!("../../lisp/common-keymaps.lisp"),
+            include_str!("../../lisp/base/common-keymaps.lisp"),
         ),
-        ("indent", include_str!("../../lisp/indent.lisp")),
-        ("minibuffer", include_str!("../../lisp/minibuffer.lisp")),
-        ("manpage", include_str!("../../lisp/manpage.lisp")),
-        ("help", include_str!("../../lisp/help.lisp")),
+        ("indent", include_str!("../../lisp/base/indent.lisp")),
+        (
+            "minibuffer",
+            include_str!("../../lisp/base/minibuffer.lisp"),
+        ),
+        ("manpage", include_str!("../../lisp/features/manpage.lisp")),
+        ("help", include_str!("../../lisp/features/help.lisp")),
     ];
 
     fn editor() -> (Ctx, Arc<Env<Ctx>>) {

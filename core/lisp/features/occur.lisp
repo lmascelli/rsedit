@@ -10,6 +10,9 @@
 ;;; what its keys do, is all that is decided here. The walking keys are built
 ;;; in, so that no producer of a list depends on this module.
 
+(require 'commands)
+(require 'debug)
+
 (make-mode 'occur-mode)
 
 (defvar occur-window-height 12
@@ -135,3 +138,4 @@ editor was started in. The list fills in as the files are read."
 (define-face 'results-target nil "bright-black")
 
 (log "occur loaded")
+(provide 'occur)

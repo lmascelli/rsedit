@@ -70,6 +70,7 @@ mod tests {
             "managers/kill_yank.rs",
             include_str!("../managers/kill_yank.rs"),
         ),
+        ("managers/loader.rs", include_str!("../managers/loader.rs")),
         ("managers/log.rs", include_str!("../managers/log.rs")),
         ("managers/macros.rs", include_str!("../managers/macros.rs")),
         ("managers/modes.rs", include_str!("../managers/modes.rs")),

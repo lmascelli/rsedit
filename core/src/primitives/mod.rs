@@ -48,6 +48,7 @@ mod isearch;
 mod keymaps;
 mod killing;
 pub(crate) mod lisp_job;
+mod loading;
 mod macros;
 mod match_data;
 mod minibuffer;
@@ -146,6 +147,7 @@ pub fn install_primitives<B: BufferTrait>(
     isearch::install(&into);
     keymaps::install(&into);
     killing::install(&into);
+    loading::install(&into);
     macros::install(&into);
     match_data::install(&into);
     minibuffer::install(&into);

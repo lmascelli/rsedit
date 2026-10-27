@@ -46,6 +46,7 @@ THE REFERENCE
         overlays          a face on one particular span
         virtual-text      text shown and not in the buffer
         themes            how the colours are chosen
+        plugins           modules written by others, and where they go
         compile           running a build, and jumping to its complaints
         shell             running a command, and reading what it printed
         regexps           regular expressions, and matching them from Lisp

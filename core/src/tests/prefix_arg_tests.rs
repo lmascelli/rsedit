@@ -26,8 +26,12 @@ mod tests {
             b.text.cursor_move(0, 0);
             b.is_modified = false;
         });
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         // The minibuffer sizes itself against the frame, so a test that opens
         // a prompt needs one.
         env.set_variable("frame-width".into(), LispExp::number(80.0));

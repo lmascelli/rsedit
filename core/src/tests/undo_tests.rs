@@ -216,8 +216,12 @@ mod tests {
     #[test]
     fn a_command_between_two_runs_of_typing_separates_them() {
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         for c in "ab".chars() {
             type_char(&ctx, &env, c);
@@ -266,8 +270,12 @@ mod tests {
     #[test]
     fn two_presses_of_the_same_kill_command_undo_separately() {
         let (ctx, env) = editor_with("alpha beta gamma");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         press(&ctx, &env, KeyCode::Char('d'), alt());
         press(&ctx, &env, KeyCode::Char('d'), alt());
@@ -460,8 +468,12 @@ mod tests {
     #[test]
     fn the_undo_keys_are_bound() {
         let (ctx, env) = editor_with("alpha beta");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         eval_str("(kill-word)", &env, &ctx).expect("kill");
         assert_eq!(text_of(&ctx), " beta");
@@ -481,8 +493,12 @@ mod tests {
     #[test]
     fn undo_is_also_on_the_prefix_key() {
         let (ctx, env) = editor_with("alpha beta");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str("(kill-word)", &env, &ctx).expect("kill");
 
         press(&ctx, &env, KeyCode::Char('x'), ctrl());
@@ -495,8 +511,12 @@ mod tests {
     #[test]
     fn the_bindings_emacs_does_not_use_are_not_bound() {
         let (ctx, env) = editor_with("alpha beta");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str("(kill-word)", &env, &ctx).expect("kill");
         assert_eq!(text_of(&ctx), " beta");
 

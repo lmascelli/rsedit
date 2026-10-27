@@ -32,9 +32,9 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
         for source in [
-            include_str!("../../lisp/commands.lisp"),
-            include_str!("../../lisp/debug.lisp"),
-            include_str!("../../lisp/indent.lisp"),
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/base/indent.lisp"),
         ] {
             eval_str(source, &env, &ctx).expect("loading the shipped lisp");
         }
@@ -154,8 +154,12 @@ mod tests {
     #[test]
     fn the_sexp_keys_reach_the_commands() {
         let (ctx, env) = editor();
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("loading common-keymaps.lisp");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading common-keymaps.lisp");
         with_lisp_mode(&ctx, &env);
         in_mode(&ctx, "toy-lisp");
         typing(&ctx, "(a b) (c)", 0);

@@ -29,10 +29,10 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
         for source in [
-            include_str!("../../lisp/commands.lisp"),
-            include_str!("../../lisp/debug.lisp"),
-            include_str!("../../lisp/shell.lisp"),
-            include_str!("../../lisp/compile.lisp"),
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/features/shell.lisp"),
+            include_str!("../../lisp/features/compile.lisp"),
         ] {
             eval_str(source, &env, &ctx).expect("loading the shipped lisp");
         }

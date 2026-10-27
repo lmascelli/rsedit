@@ -89,8 +89,12 @@ mod tests {
     #[test]
     fn a_run_of_kills_accumulates_into_one_entry() {
         let (ctx, env) = editor_with("one\ntwo\nthree\n");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         for _ in 0..4 {
             press(&ctx, &env, KeyCode::Char('k'), ctrl());
@@ -117,8 +121,12 @@ mod tests {
     #[test]
     fn a_run_of_backward_kills_reads_the_right_way_round() {
         let (ctx, env) = editor_with("alpha beta gamma");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str("(end-of-buffer)", &env, &ctx).expect("to the end");
 
         press(&ctx, &env, KeyCode::Backspace, alt());
@@ -134,8 +142,12 @@ mod tests {
     #[test]
     fn a_command_between_two_kills_starts_a_new_entry() {
         let (ctx, env) = editor_with("one\ntwo\n");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
 
         press(&ctx, &env, KeyCode::Char('k'), ctrl());
         press(&ctx, &env, KeyCode::Char('n'), ctrl());
@@ -160,8 +172,12 @@ mod tests {
     #[test]
     fn yank_pop_walks_back_through_the_ring_replacing_what_it_yanked() {
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str(
             "(kill-new \"first\") (deactivate-mark) (kill-new \"second\")",
             &env,
@@ -198,8 +214,12 @@ mod tests {
     #[test]
     fn a_yank_and_a_yank_pop_each_undo_in_one_step() {
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str("(kill-new \"first\") (kill-new \"second\")", &env, &ctx).expect("two kills");
 
         press(&ctx, &env, KeyCode::Char('y'), ctrl());
@@ -218,8 +238,12 @@ mod tests {
     #[test]
     fn a_new_kill_resets_where_yank_reads_from() {
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str("(kill-new \"first\") (kill-new \"second\")", &env, &ctx).expect("two kills");
 
         press(&ctx, &env, KeyCode::Char('y'), ctrl());
@@ -246,8 +270,12 @@ mod tests {
     #[test]
     fn yank_pop_refuses_once_another_command_has_run() {
         let (ctx, env) = editor_with("");
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("common-keymaps.lisp must load");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
         eval_str("(kill-new \"first\") (kill-new \"second\")", &env, &ctx).expect("two kills");
 
         press(&ctx, &env, KeyCode::Char('y'), ctrl());

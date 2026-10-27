@@ -117,28 +117,13 @@ primitive!(data_directory, args, _env, ctx, {
             });
         }
     };
-    let Ok(exe) = std::env::current_exe() else {
+    let Some(base) = crate::paths::installed_data_dir() else {
         ctx.log_diagnostic("Cannot find the rsedit executable, so nor its data directory");
         return Ok(ELispExp::nil());
     };
-    let Some(parent) = exe.parent() else {
-        return Ok(ELispExp::nil());
-    };
-    // Beside the executable normally. One level up as well, because a test
-    // binary lives in `target/<profile>/deps/` while the data was put in
-    // `target/<profile>/data/` -- so without this the editor's own pages are
-    // unreachable from every test that looks for them, which is exactly the
-    // code that needs testing.
-    let candidates = [parent.join("data"), parent.join("..").join("data")];
-    let base = candidates
-        .iter()
-        .find(|path| path.is_dir())
-        // Nothing installed. The first candidate is still the right answer to
-        // report: a caller wants to be told where it looked.
-        .unwrap_or(&candidates[0]);
     let path = match kind {
         Some(kind) => base.join(kind),
-        None => base.clone(),
+        None => base,
     };
     Ok(ELispExp::string(path.display().to_string()))
 });

@@ -1439,6 +1439,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [17], [`primitives/`, file, finestre e lavori: `io`, `buffers`, `windows`, `ui`, `mouse`, `ask`, `shell`, `workers`, `lisp_job`, `args` (fatto)], [4 995], [`io.rs` è il file più lungo: 1 818 righe],
   [18], [`primitives/`, il resto: `commands`, `completion`, `general`, `help`, `isearch`, `minibuffer`, `modes`, `overlays`, `replace`, `results`, `theme`, `virtual_text`, `mod` (fatto)], [5 953], [---],
   [19], [`modes/`, `feature/` (fatto)], [2 896], [---],
+  [19b], [`core/lisp/` per genere, `require` e i plugin (fatto)], [1 331 nuove], [cambia il comportamento, per scelta],
   [20], [`ui/`, `src/` (la TUI)], [3 408], [---],
   [21], [`core/lisp/`: intestazioni e commenti], [6 422], [docstring già fatte nella fase B],
 )
@@ -1949,6 +1950,41 @@ in basso (passo 20, con DOC-1); i test dei moduli Lisp, come
 `killing_a_modified_buffer_keeps_the_copy` guarda la copia prima della risposta
 di `kill-buffer`: farne un test della chiusura cambierebbe il test, ed è una
 scelta da fare a parte.
+
+*Passo 19b, fatto.* Un passo aggiunto prima di quello dei moduli Lisp, e il
+solo della fase C che cambia il comportamento, per scelta: i moduli sono
+ordinati per genere e si caricano una volta, e ci sono le fondamenta dei
+plugin. I venticinque moduli stanno in `core/lisp/base` (cinque),
+`core/lisp/features` (quattordici) e `core/lisp/languages` (sei), e `build.rs`
+copia ogni cartella senza un elenco. Ogni modulo comincia con i `require` di
+ciò che usa e finisce con il suo `provide`, e l'`init.lisp` predefinito chiede
+i moduli con `require`; uno scritto prima, con `eval-file`, funziona ancora.
+Il caricatore è in Rust: un compartimento nuovo, `managers/loader.rs`, la sua
+metà della facciata, `editor/loader.rs`, dove è passato anche `eval_file`, e
+nove primitive in `primitives/loading.rs` --- `require`, `provide`,
+`featurep`, `features`, `feature-file`, `feature-status`, `eval-after-load`,
+`plugins`, `plugin-info` ---, con la macro `with-eval-after-load` in
+`commands.lisp`. Un `require` fallito toglie ciò che ha fornito, come in
+Emacs; un ciclo è un errore che nomina la catena. `lisp-path` e `theme-path`
+cominciano dalle cartelle `lisp` e `themes` della configurazione, poi quelle
+dei plugin, poi quelle dell'editor, e un file che ne nasconde un altro lo dice
+nel log. La directory dei dati, `AppDir::Data`, tiene i plugin, ognuno una
+cartella di `plugins` con un `plugin.lisp` letto come dati e mai eseguito.
+`theme.lisp` cerca i temi in `theme-path`. Le pagine `configuration`,
+`themes`, `modes`, `diagnostics`, `writing-commands` e `rsedit` dicono il modo
+nuovo, e `plugins` è una pagina nuova; nel manuale il capitolo «I moduli
+Lisp» ha quattro sezioni nuove, e cambiano l'avvio, le directory, i
+compartimenti e le primitive. Diciotto test nuovi, in `loading_tests`.
+
+Il passo ha trovato un difetto di comportamento, AVV-7: un errore in
+`init.lisp`, o in un modulo che chiede, impedisce all'editor di partire, che
+stampa il nome dell'errore ed esce con 0. Le pagine `configuration` e
+`diagnostics` dicevano che un modulo che fallisce lascia partire l'editor:
+vale solo per un modulo che manca, e lo dicono ora. AVV-2 dice anche di
+`require`. Un limite di risp: `lambda` non accetta nil come lista dei
+parametri, e la lista vuota che un backquote costruisce è nil, così
+`with-eval-after-load` scrive `(&rest …)`; va scritto in una scheda del
+rapporto di risp.
 
 == Fase D --- il manuale (passo 22)
 

@@ -19,13 +19,13 @@ fn editor() -> (Ctx, Arc<Env<Ctx>>) {
     env.set_variable("frame-width".into(), LispExp::number(80.0));
     env.set_variable("frame-height".into(), LispExp::number(24.0));
     for source in [
-        include_str!("../../lisp/commands.lisp"),
-        include_str!("../../lisp/debug.lisp"),
-        include_str!("../../lisp/indent.lisp"),
-        include_str!("../../lisp/cc-mode.lisp"),
-        include_str!("../../lisp/python-mode.lisp"),
-        include_str!("../../lisp/toml-mode.lisp"),
-        include_str!("../../lisp/bash-mode.lisp"),
+        include_str!("../../lisp/base/commands.lisp"),
+        include_str!("../../lisp/base/debug.lisp"),
+        include_str!("../../lisp/base/indent.lisp"),
+        include_str!("../../lisp/languages/cc-mode.lisp"),
+        include_str!("../../lisp/languages/python-mode.lisp"),
+        include_str!("../../lisp/languages/toml-mode.lisp"),
+        include_str!("../../lisp/languages/bash-mode.lisp"),
     ] {
         run(source, &env, &ctx);
     }
@@ -582,8 +582,16 @@ fn reloading_modes_restores_default_raw_string_and_heredoc_regions() {
     let cpp_count = grammar(&ctx, "cpp-mode").regions.len();
     let bash_count = grammar(&ctx, "bash-mode").regions.len();
     for _ in 0..2 {
-        run(include_str!("../../lisp/cc-mode.lisp"), &env, &ctx);
-        run(include_str!("../../lisp/bash-mode.lisp"), &env, &ctx);
+        run(
+            include_str!("../../lisp/languages/cc-mode.lisp"),
+            &env,
+            &ctx,
+        );
+        run(
+            include_str!("../../lisp/languages/bash-mode.lisp"),
+            &env,
+            &ctx,
+        );
         let cpp = grammar(&ctx, "cpp-mode");
         let bash = grammar(&ctx, "bash-mode");
         assert_eq!(cpp.regions.len(), cpp_count);

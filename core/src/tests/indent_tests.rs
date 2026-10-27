@@ -31,9 +31,9 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
         for source in [
-            include_str!("../../lisp/commands.lisp"),
-            include_str!("../../lisp/debug.lisp"),
-            include_str!("../../lisp/indent.lisp"),
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/base/indent.lisp"),
         ] {
             eval_str(source, &env, &ctx).expect("loading the shipped lisp");
         }
@@ -314,8 +314,12 @@ mod tests {
     #[test]
     fn shift_tab_moves_the_region_left_and_stops_at_the_margin() {
         let (ctx, env) = editor();
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("loading common-keymaps.lisp");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading common-keymaps.lisp");
         typing(&ctx, "        a\n  b\n      c", 0);
         select(&ctx, &env, 0, 22);
         key(&ctx, &env, KeyCode::Tab, true);
@@ -342,8 +346,12 @@ mod tests {
     #[test]
     fn shifting_a_region_by_key_is_one_undo_step() {
         let (ctx, env) = editor();
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("loading common-keymaps.lisp");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading common-keymaps.lisp");
         typing(&ctx, "a\nb\nc", 0);
         select(&ctx, &env, 0, 5);
         key(&ctx, &env, KeyCode::Tab, false);
@@ -433,8 +441,12 @@ mod tests {
     #[test]
     fn enter_indents_until_electric_indent_mode_is_turned_off() {
         let (ctx, env) = editor();
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("loading common-keymaps.lisp");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading common-keymaps.lisp");
         typing(&ctx, "    foo", 7);
         key(&ctx, &env, KeyCode::Enter, false);
         assert_eq!(

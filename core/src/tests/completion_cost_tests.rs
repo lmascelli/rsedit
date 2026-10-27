@@ -186,10 +186,13 @@ mod tests {
         let (ctx, env) = editor();
         load(
             &[
-                ("commands", include_str!("../../lisp/commands.lisp")),
-                ("debug", include_str!("../../lisp/debug.lisp")),
-                ("minibuffer", include_str!("../../lisp/minibuffer.lisp")),
-                ("manpage", include_str!("../../lisp/manpage.lisp")),
+                ("commands", include_str!("../../lisp/base/commands.lisp")),
+                ("debug", include_str!("../../lisp/base/debug.lisp")),
+                (
+                    "minibuffer",
+                    include_str!("../../lisp/base/minibuffer.lisp"),
+                ),
+                ("manpage", include_str!("../../lisp/features/manpage.lisp")),
             ],
             &env,
             &ctx,

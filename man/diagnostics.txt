@@ -65,14 +65,22 @@ WHEN A COMMAND FAILS
     ran, the function that made it had returned.
 
 WHEN A MODULE DOES NOT LOAD
-    The editor starts without it and the log says why. A module that is
-    not there is logged as
+    A module that is not there is logged, and the editor starts without
+    it:
 
-        [ERROR] eval_file NAME.lisp was not found in lisp_path
+        [ERROR] require NAME: no NAME.lisp in lisp-path
 
-    A module with a syntax error is skipped without a word, for now. Load
-    one you are writing with M-: (eval-file "NAME") and look at what comes
-    back: nil means it was not evaluated.
+    One that is there and fails -- an error, a syntax error, no `provide'
+    of its name, or a `require' of a module already being loaded further
+    out -- is logged with why, after "[ERROR] require NAME:", and stops
+    init.lisp: the editor prints the error and exits without starting.
+    Loaded later, with M-:, the error is reported as any other, and
+    (feature-status 'NAME) says failed.
+
+    Loaded with `eval-file' instead, a module with a syntax error is
+    skipped without a word, for now. Load one you are writing with
+    M-: (eval-file "NAME") and look at what comes back: nil means it was
+    not evaluated.
 
 WHEN THE EDITOR SEEMS STUCK
     The background work is watched from a thread of its own, and a step

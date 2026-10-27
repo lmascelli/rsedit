@@ -123,8 +123,8 @@ pub use crate::{
     input::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseKind},
     managers::{Buffers, Windows},
     paths::{
-        AppDir, CACHE_DIR, CONFIG_DIR, DirError, DirOptions, XDG_CACHE_HOME, XDG_CONFIG_HOME,
-        app_dir,
+        AppDir, CACHE_DIR, CONFIG_DIR, DATA_DIR, DirError, DirOptions, XDG_CACHE_HOME,
+        XDG_CONFIG_HOME, XDG_DATA_HOME, app_dir,
     },
     ui::{
         Color, Face, FrameSnapshot, GutterCell, Highlight, NAMED_COLORS, Rect,

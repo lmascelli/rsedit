@@ -40,9 +40,9 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
         for source in [
-            include_str!("../../lisp/commands.lisp"),
-            include_str!("../../lisp/debug.lisp"),
-            include_str!("../../lisp/minibuffer.lisp"),
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/base/minibuffer.lisp"),
         ] {
             eval_str(source, &env, &ctx).expect("loading the shipped lisp");
         }
@@ -52,8 +52,12 @@ mod tests {
     /// The same, with the module loaded.
     fn with_module() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = plain();
-        eval_str(include_str!("../../lisp/completion.lisp"), &env, &ctx)
-            .expect("loading completion.lisp");
+        eval_str(
+            include_str!("../../lisp/features/completion.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading completion.lisp");
         (ctx, env)
     }
 
@@ -278,7 +282,7 @@ mod tests {
     #[test]
     fn a_tab_that_completes_puts_the_choice_where_the_word_was() {
         let (ctx, env) = completing_in_buffer("ab");
-        eval_str(include_str!("../../lisp/indent.lisp"), &env, &ctx).expect("indent.lisp");
+        eval_str(include_str!("../../lisp/base/indent.lisp"), &env, &ctx).expect("indent.lisp");
         run(
             r#"(progn (setq tab-always-indent 'complete)
                       (define-key nil "tab" 'indent-for-tab-command))"#,

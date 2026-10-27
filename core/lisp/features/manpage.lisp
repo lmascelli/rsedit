@@ -9,6 +9,10 @@
 ;;; underlining it marks by overstriking become overlays, and the headings are
 ;;; coloured from the layout. The list of names is built in the background.
 
+(require 'commands)
+(require 'debug)
+;; Not `help': its key is used when it is loaded, and C-h when it is not.
+
 (make-mode 'manpage-mode)
 
 (defconst manpage-buffer-name "*Manual*"
@@ -404,3 +408,4 @@ string, or nil: the page C-h f and C-h v name."
 (manpage--reindex)
 
 (log "manpage loaded")
+(provide 'manpage)

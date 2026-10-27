@@ -31,8 +31,8 @@ mod tests {
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
         for source in [
-            include_str!("../../lisp/commands.lisp"),
-            include_str!("../../lisp/debug.lisp"),
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
         ] {
             eval_str(source, &env, &ctx).expect("loading the shipped lisp");
         }
@@ -43,7 +43,7 @@ mod tests {
     fn with_sources() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = plain();
         eval_str(
-            include_str!("../../lisp/completion-at-point.lisp"),
+            include_str!("../../lisp/features/completion-at-point.lisp"),
             &env,
             &ctx,
         )
@@ -558,8 +558,12 @@ mod tests {
                 .any(|name| name == "completion-at-point"),
             "M-x should reach it"
         );
-        eval_str(include_str!("../../lisp/common-keymaps.lisp"), &env, &ctx)
-            .expect("loading common-keymaps.lisp");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading common-keymaps.lisp");
         typed(&ctx, "ab");
         define_source(&env, &ctx, "capf-one", 0, 2, &["abcdef"]);
         use_sources(&env, &ctx, &["capf-one"]);
@@ -1177,7 +1181,12 @@ mod tests {
         // `capf-mode-keywords' offers are the same words the grammar colours,
         // because there is only one list.
         let (ctx, env) = with_sources();
-        eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
+        eval_str(
+            include_str!("../../lisp/languages/rust-mode.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading rust-mode");
         let declared = strings(&run("(get 'rust-mode 'keywords)", &env, &ctx));
         assert!(declared.contains(&"unsafe".to_string()), "got {declared:?}");
         assert!(declared.contains(&"usize".to_string()), "got {declared:?}");

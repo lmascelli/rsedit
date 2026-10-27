@@ -127,3 +127,4 @@ is coloured as a type too.")
 (add-auto-mode "\\.rs$" 'rust-mode)
 
 (log "rust-mode loaded")
+(provide 'rust-mode)

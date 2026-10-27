@@ -5,9 +5,13 @@
 ;;;
 ;;; The list calls `select-theme': a theme is applied one way, and the list
 ;;; only chooses its name. A theme file is data, read when the theme is
-;;; applied, so listing the themes reads only the directory. Every face is
+;;; applied, so listing the themes reads only the directories of
+;;; `theme-path'. Every face is
 ;;; reset before a theme is applied, so that a sparse theme after a full one
 ;;; leaves nothing of it; the price is that themes do not compose.
+
+(require 'commands)
+(require 'debug)
 
 (make-mode 'theme-list-mode)
 
@@ -26,9 +30,31 @@ monochrome.lisp puts them on monochrome-theme.")
 ;; What is installed
 ;; ---------------------------------------------------------------------------
 
-(defun theme--directory ()
-  "Where theme files were installed, or nil."
-  (data-directory "themes"))
+(defun theme--directories ()
+  "The directories of `theme-path' that are there, in its order."
+  (let ((found nil))
+    (mapc (lambda (directory)
+            (if (and (stringp directory) (file-directory-p directory))
+                (setq found (cons directory found))))
+          (if (boundp 'theme-path) theme-path nil))
+    (reverse found)))
+
+(defun theme--file (name)
+  "The file of the theme called NAME: the first in `theme-path', or nil."
+  (let ((found nil))
+    (mapc (lambda (directory)
+            (let ((file (concat (file-name-as-directory directory) name ".lisp")))
+              (if (and (null found) (file-exists-p file))
+                  (setq found file))))
+          (theme--directories))
+    found))
+
+(defun theme--insert-sorted (name names)
+  "NAMES, a sorted list of strings, with NAME in its place, once."
+  (cond ((null names) (list name))
+        ((string= name (car names)) names)
+        ((string< name (car names)) (cons name names))
+        (t (cons (car names) (theme--insert-sorted name (cdr names))))))
 
 (defun theme--name-of (file)
   "The theme name a file is called, or nil if it is not a theme file."
@@ -37,20 +63,19 @@ monochrome.lisp puts them on monochrome-theme.")
         (match-string 1 name)
         nil)))
 
-;; Read from the directory rather than from what has been loaded: a theme
+;; Read from the directories rather than from what has been loaded: a theme
 ;; file is data, and loading one to find out it exists would mean loading all
 ;; of them to list them.
 (defun available-themes ()
-  "The names of the themes installed, sorted."
-  (let ((directory (theme--directory)))
-    (if (or (null directory) (not (file-directory-p directory)))
-        nil
-        (let ((names nil))
-          (mapc (lambda (file)
-                  (let ((name (theme--name-of file)))
-                    (if name (setq names (cons name names)))))
-                (list-dir directory))
-          (reverse names)))))
+  "The names of the themes in `theme-path', sorted, each once."
+  (let ((names nil))
+    (mapc (lambda (directory)
+            (mapc (lambda (file)
+                    (let ((name (theme--name-of file)))
+                      (if name (setq names (theme--insert-sorted name names)))))
+                  (list-dir directory)))
+          (theme--directories))
+    names))
 
 (defun theme--symbol (name)
   "The symbol a theme called NAME defines."
@@ -63,15 +88,13 @@ monochrome.lisp puts them on monochrome-theme.")
   (let ((faces (get (theme--symbol name) 'faces)))
     (if faces
         faces
-        (let ((directory (theme--directory)))
-          (if (null directory)
+        (let ((file (theme--file name)))
+          (if (null file)
               nil
               (progn
                 ;; `eval-file' looks in `lisp-path', which is not where themes
                 ;; live, so the file is read and evaluated directly.
-                (let ((text (read-file-to-string
-                             (concat (file-name-as-directory directory)
-                                     name ".lisp"))))
+                (let ((text (read-file-to-string file)))
                   (if text (eval-string text)))
                 (get (theme--symbol name) 'faces)))))))
 
@@ -171,3 +194,4 @@ apply one."
 (add-syntax-rule 'theme-list-mode "^\\* (.*)$" 'keyword 1)
 
 (log "theme loaded")
+(provide 'theme)
