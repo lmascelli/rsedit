@@ -15,14 +15,14 @@ use crate::{
         KeyEvent, Keymap, MouseButton, MouseEvent, MouseKind, OnUnbound, TransientKeymap,
         describe_keys, fill_default_keymaps,
     },
+    jobs::autosave::{AutoSaver, auto_save_directory},
+    jobs::highlighter::Highlighter,
+    jobs::prescan::Prescanner,
+    jobs::watcher::FileWatcher,
     managers::{
         Binding, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit,
         KillYank, Log, Macros, Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
     },
-    modes::autosave::{AutoSaver, auto_save_directory},
-    modes::highlighter::{Highlighter, TURN_INTERVAL},
-    modes::prescan::Prescanner,
-    modes::watcher::FileWatcher,
     modes::{Grammar, MajorMode, SyntaxTable},
     primitives::{install_primitives, movement::goto_offset},
     text::isearch::Isearch,
@@ -69,6 +69,7 @@ mod windows;
 mod work;
 
 pub use boot::{create_global_env, isolate_config_for_tests};
+pub(crate) use frame::TURN_INTERVAL;
 pub use keys::KEY_CAPTURE_FUNCTION;
 pub use settings::*;
 pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED, WorkerTurn, in_worker};

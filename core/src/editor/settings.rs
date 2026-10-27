@@ -8,8 +8,8 @@
 use super::*;
 use crate::feature::isearch::CASE_FOLD;
 use crate::feature::minibuffer::HISTORY_LENGTH;
-use crate::modes::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
-use crate::modes::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
+use crate::jobs::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
+use crate::jobs::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
 use risp::VARIABLE_DOCUMENTATION;
 
 /// A Lisp variable the editor reads, and what `C-h v` says about it.

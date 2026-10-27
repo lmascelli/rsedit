@@ -7,8 +7,7 @@
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
-    use crate::editor::{EditorState, create_global_env};
-    use crate::modes::highlighter::TURN_INTERVAL;
+    use crate::editor::{EditorState, TURN_INTERVAL, create_global_env};
     use crate::tests::work_support::{PATIENCE, Steps, exits, scripted, wakes};
     use crate::work::{Exit, Spec, Step};
     use risp::{Env, LispExp, Parser, eval};

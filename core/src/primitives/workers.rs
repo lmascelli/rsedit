@@ -5,8 +5,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <lavori-lisp>`.
 use super::*;
-use crate::editor::WORKER_FUEL;
-use crate::modes::highlighter::TURN_INTERVAL;
+use crate::editor::{TURN_INTERVAL, WORKER_FUEL};
 use crate::primitives::lisp_job::{Body, DEFAULT_WORKER_FUEL, LispJob};
 use crate::work::{Class, OptionError, Place};
 use std::collections::HashSet;

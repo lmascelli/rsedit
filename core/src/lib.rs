@@ -39,16 +39,18 @@
 //!                only thing that may hold two of their locks at once.
 //!   primitives/  everything Lisp can call. Without exception -- if it is a
 //!                primitive, it is in here.
-//!   modes/       the major and minor modes built in Rust, and the background
-//!                jobs that serve them (colouring, prescanning, auto-save,
-//!                the file watcher).
+//!   modes/       what a major mode is, and how its text is read: the
+//!                grammar that colours it, the syntax table, and the scanner
+//!                of expressions that reads the table.
+//!   jobs/        the editor's own background jobs: colouring, prescanning,
+//!                the file watcher and auto-save.
 //!   feature/     the two features whose mechanics could not be left to a
 //!                .lisp file: the minibuffer and incremental search.
 //! ```
 //!
-//! The last four are one layer, not an order: they use one another --
-//! `editor/` installs the primitives and starts the modes' jobs, which act on
-//! the editor -- and the map lists them by what they are. `layering_tests`
+//! The last five are one layer, not an order: they use one another --
+//! `editor/` installs the primitives and starts the jobs, which act on the
+//! editor -- and the map lists them by what they are. `layering_tests`
 //! holds each module from `work/` to `managers/` to what its entry names.
 //!
 //! Two boundaries are the load-bearing ones. The interpreter is a crate of its
@@ -86,8 +88,9 @@ pub(crate) mod paths;
 pub(crate) mod commands;
 pub(crate) mod input;
 
-// -- the editor's own state --------------------------------------------------
+// -- the editor's own state, and the jobs that keep it up to date ------------
 pub(crate) mod editor;
+pub(crate) mod jobs;
 pub(crate) mod managers;
 
 // -- what Lisp can reach, and what is built on it ----------------------------

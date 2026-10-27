@@ -1,25 +1,9 @@
-//! Multi-character string delimiters, and the scanner learning to read them.
+//! Strings whose delimiters are more than one character, as the syntax table
+//! declares them: that a raw string is one string, brackets and quotes in it
+//! included, the longest opener winning, that a mode without the style reads
+//! plain strings, and that the editor's own sources with raw strings balance.
 //!
-//! # The bug these come from
-//!
-//! The `string` syntax class says "this character opens a string and the same
-//! one closes it", which is true of the double quote and of nothing else. A
-//! Rust raw string opens with `r#"` and closes with `"#`, and the scanner --
-//! knowing only the class -- read one as a *run* of ordinary strings with code
-//! between them. Every bracket in the content then counted as a bracket.
-//!
-//! This editor's own source is the example. `create_global_env` holds the
-//! default init.lisp in a raw string, and one of its comments reads
-//! `; typing "(" gives you "()"`. That `(` opened a list that never closed, so
-//! `core/src/editor/mod.rs` reported whole-file depth 1 for a file that balances --
-//! and electric-pair, which refuses to pair when the buffer already balances,
-//! paired everywhere in it.
-//!
-//! The fix is in the *table*, not in electric-pair: `forward-sexp`, the
-//! indenter and `syntax-ppss` all read the table and are all fixed by it. This
-//! is the third bug of that shape, after block comments and character
-//! literals; the pattern is always the grammar (what the text looks like)
-//! knowing about a construct that the table (what the text means) does not.
+//! Design: `doc/architettura-editor.typ, <tabella-sintattica>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::BufferTrait;
@@ -41,7 +25,8 @@ mod tests {
         eval_str(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"))
     }
 
-    /// An editor with rust-mode and electric-pair, as the real one has them.
+    /// Returns an editor with rust-mode and electric-pair, as the real one has
+    /// them.
     fn editor() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
@@ -58,7 +43,7 @@ mod tests {
         (ctx, env)
     }
 
-    /// A fresh buffer in `mode` holding `text`, point at `at`.
+    /// Makes NAME a fresh buffer in MODE holding TEXT, with point at AT.
     fn buffer_in(mode: &str, name: &str, text: &str, at: usize, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
         let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
         run(
@@ -79,7 +64,8 @@ mod tests {
         ctx.with_current_buffer(|b| b.text.to_string())
     }
 
-    /// The list depth at the end of the buffer: 0 when every list is closed.
+    /// Returns the list depth at the end of the buffer: 0 when every list is
+    /// closed.
     fn depth_at_end(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> f64 {
         match run("(nth 0 (syntax-ppss (point-max)))", env, ctx) {
             LispExp::Number(n) => n,
@@ -88,7 +74,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // What the scanner now sees
+    // What the scanner sees
     // ----------------------------------------------------------------
 
     #[test]
@@ -125,7 +111,7 @@ mod tests {
 
     #[test]
     fn a_backslash_inside_a_raw_string_escapes_nothing() {
-        // Why `StyledStr` honours no escapes: a raw string exists so that a
+        // Why a raw style honours no escapes: a raw string exists so that a
         // backslash is a backslash. Were `\` an escape here, the `\"` would
         // not close the string and the `{` after it would go uncounted.
         let (ctx, env) = editor();
@@ -165,8 +151,8 @@ mod tests {
 
     #[test]
     fn an_ordinary_string_is_still_an_ordinary_string() {
-        // The style is tried before the class dispatch, so the plain quote had
-        // to keep working -- including its escapes, which the raw form drops.
+        // The style is tried before the class dispatch, and the plain quote
+        // still works, its escapes included, which the raw form drops.
         let (ctx, env) = editor();
         rust_buffer("g", "fn a() {\n  let s = \"a \\\" ( b\";\n}", 0, &env, &ctx);
         assert_eq!(depth_at_end(&env, &ctx), 0.0);
@@ -198,10 +184,9 @@ mod tests {
 
     #[test]
     fn a_mode_without_string_styles_reads_the_same_text_as_plain_strings() {
-        // The other half of the previous tests: this is what rust-mode used to
-        // do, and what a mode that has not declared raw strings still does.
-        // `r#"a " ( b"#` scans as the string `"a "`, then ` ( ` as *code*, and
-        // the bracket counts.
+        // The other half of the tests above: what a mode that has not declared
+        // raw strings does. `r#"a " ( b"#` scans as the string `"a "`, then
+        // ` ( ` as *code*, and the bracket counts.
         let (ctx, env) = editor();
         run("(make-mode 'plain-mode)", &env, &ctx);
         buffer_in("plain-mode", "j", "let s = r#\"a \" ( b\"#;", 0, &env, &ctx);
@@ -300,11 +285,11 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // What it fixes, as a user meets it
+    // As a user meets it
     // ----------------------------------------------------------------
 
-    /// A file shaped like the reported one: a raw string holding text with an
-    /// unbalanced bracket in it, and a perfectly ordinary function below.
+    /// A raw string holding text with an unbalanced bracket in it, and an
+    /// ordinary function below.
     const REPORTED: &str = r####"const INIT: &str = r#"
 (eval-file "electric-pair") ; typing "(" gives you "()"
 "#;
@@ -319,8 +304,8 @@ fn push_call_frame(&self, frame: &str) %BODY%
 
     #[test]
     fn retyping_the_brace_of_a_function_below_a_raw_string_adds_no_second_one() {
-        // The report: delete the `{` after the arguments, type it back, and a
-        // pair appeared -- whose closer was the one already closing the body.
+        // The `{` after the arguments, deleted and typed back, gets no pair:
+        // the body already has its closer.
         let (ctx, env) = editor();
         let text = REPORTED.replace("%BODY%", "");
         let at = text
@@ -337,9 +322,8 @@ fn push_call_frame(&self, frame: &str) %BODY%
 
     #[test]
     fn deleting_a_brace_in_the_same_file_deletes_only_that_brace() {
-        // The other half of the report: having been given a pair it should
-        // not have had, deleting the stray closer took the opener with it.
-        // Nothing here pairs, so nothing here unpairs.
+        // The other half: deleting an opener takes a closer with it only when
+        // the two were a pair. Nothing here pairs, so nothing here unpairs.
         let (ctx, env) = editor();
         let text = REPORTED.replace("%BODY%", "{");
         let at = text.find('{').expect("the brace is there") + 1;
@@ -350,9 +334,8 @@ fn push_call_frame(&self, frame: &str) %BODY%
 
     #[test]
     fn pairing_still_works_below_a_raw_string_where_it_should() {
-        // The check must not have become "never pair in a file with a raw
-        // string in it": with the body's closing brace gone, typing the
-        // opener should give a pair.
+        // The check is not "never pair in a file with a raw string in it":
+        // with the body's closing brace gone, typing the opener gives a pair.
         let (ctx, env) = editor();
         let text = REPORTED.replace("%BODY%", "").replacen("\n}\n", "\n", 1);
         let at = text
@@ -372,8 +355,8 @@ fn push_call_frame(&self, frame: &str) %BODY%
 
     #[test]
     fn forward_sexp_steps_over_a_raw_string_as_one_thing() {
-        // The table is read by more than electric-pair, and all of it is
-        // fixed by the same change.
+        // The table is read by more than electric-pair, and every reader sees
+        // the raw string as one.
         let (ctx, env) = editor();
         rust_buffer("q", "r#\"a \" ( b\"# next", 0, &env, &ctx);
         run("(forward-sexp)", &env, &ctx);
@@ -385,15 +368,13 @@ fn push_call_frame(&self, frame: &str) %BODY%
     }
 
     // ----------------------------------------------------------------
-    // The regression that would have caught it
+    // The editor's own sources
     // ----------------------------------------------------------------
 
-    /// Put `source` in a rust-mode buffer without going through `insert`.
-    ///
-    /// These files run to hundreds of kilobytes; round-tripping them through
-    /// an escaped Lisp string literal costs more than the rest of the suite.
-    /// The version bump is what `edits` would have done, and is what makes the
-    /// syntax cache refuse the stale answer.
+    /// Puts SOURCE in a rust-mode buffer NAME without going through `insert`:
+    /// these files run to hundreds of kilobytes, and an escaped Lisp string of
+    /// them would cost more than the rest of the suite. The version moves, as
+    /// `edits` would move it, so that the caches refuse their stale answers.
     fn rust_buffer_from_source(name: &str, source: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
         run(
             &format!(r#"(buffer-create "{name}" 'rust-mode) (switch-to-buffer "{name}")"#),
@@ -409,23 +390,25 @@ fn push_call_frame(&self, frame: &str) %BODY%
 
     #[test]
     fn the_editors_own_sources_balance() {
-        // The check electric-pair makes is over the whole buffer, so the test
-        // that would have found this bug is one that reads a whole real file.
-        // These four are the ones with raw strings in them; each reported a
-        // depth of 1 or more before the fix, and each balances in fact.
+        // The check electric-pair makes is over the whole buffer, so this reads
+        // whole real files: the four sources with raw strings in them, among
+        // them `boot.rs`, whose raw string is the default init.lisp.
         //
         // If this fails after an honest edit, look at the file first: a
         // genuinely unbalanced bracket in a *string* is fine, one in code is
         // not, and it is nearly always the table missing a construct again.
         let (ctx, env) = editor();
         for (name, source) in [
-            ("editor/mod.rs", include_str!("../editor/mod.rs")),
+            ("editor/boot.rs", include_str!("../editor/boot.rs")),
+            ("commands.rs", include_str!("../commands.rs")),
             (
-                "syntax_table.rs",
-                include_str!("../primitives/syntax_table.rs"),
+                "managers/commands.rs",
+                include_str!("../managers/commands.rs"),
             ),
-            ("sexp.rs", include_str!("../modes/sexp.rs")),
-            ("shell.rs", include_str!("../primitives/shell.rs")),
+            (
+                "primitives/comments.rs",
+                include_str!("../primitives/comments.rs"),
+            ),
         ] {
             rust_buffer_from_source(name, source, &env, &ctx);
             assert_eq!(

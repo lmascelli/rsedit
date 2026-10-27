@@ -307,7 +307,7 @@ primitive!(command_arg_complete, args, env, ctx, {
         ArgSpec::Buffer { .. } => ctx
             .buffer_names()
             .into_iter()
-            .filter(|name| name != "*Minibuffer*")
+            .filter(|name| name != crate::feature::minibuffer::PROMPT_BUFFER)
             .collect(),
         // Whole paths, filtered already: a file name completes a component
         // at a time, which the filter below knows nothing of.

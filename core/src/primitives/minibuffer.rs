@@ -38,7 +38,7 @@ primitive!(minibuffer_confirm, _args, env, ctx, {
         ctx.history_mut(|history| history.remember(&key, &input, limit));
     }
 
-    ctx.close_buffer("*Minibuffer*", &env);
+    ctx.close_buffer(minibuffer::PROMPT_BUFFER, &env);
 
     if let Some(on_confirm) = on_confirm {
         if on_confirm.is_truthy() {
@@ -54,7 +54,7 @@ const MINIBUFFER_CANCEL_DOC: &str = "(minibuffer-cancel): Close the prompt and c
 primitive!(minibuffer_cancel, _args, env, ctx, {
     let on_cancel = env.get_variable("*minibuffer-on-cancel*");
 
-    ctx.close_buffer("*Minibuffer*", &env);
+    ctx.close_buffer(minibuffer::PROMPT_BUFFER, &env);
 
     if let Some(on_cancel) = on_cancel {
         if on_cancel.is_truthy() {
@@ -342,7 +342,16 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
 
     // TODO(MIN-1): every prompt opens the one buffer, which a second prompt
     // open at the same time shares.
-    ctx.open_floating_window("*Minibuffer*", x, y, width, height, title, Some(mode), &env);
+    ctx.open_floating_window(
+        minibuffer::PROMPT_BUFFER,
+        x,
+        y,
+        width,
+        height,
+        title,
+        Some(mode),
+        &env,
+    );
 
     Ok(ELispExp::t())
 });

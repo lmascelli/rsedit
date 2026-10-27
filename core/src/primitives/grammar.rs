@@ -64,6 +64,8 @@ primitive!(add_syntax_rule, args, _env, ctx, {
         });
     };
     let face = face_arg(&args[2])?;
+    // TODO(SIN-7): a GROUP the pattern does not have is taken, and the whole
+    // match is coloured.
     let group = match args.get(3) {
         None => 0,
         Some(exp) if exp.is_nil() => 0,

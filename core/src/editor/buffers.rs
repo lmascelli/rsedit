@@ -343,7 +343,7 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Returns whether a minibuffer prompt is open.
     pub(crate) fn minibuffer_is_open(&self) -> bool {
-        self.has_buffer("*Minibuffer*")
+        self.has_buffer(crate::feature::minibuffer::PROMPT_BUFFER)
     }
 
     /// Returns every buffer's name, sorted, for completing a buffer's name.

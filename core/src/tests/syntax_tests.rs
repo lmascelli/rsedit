@@ -1,5 +1,8 @@
-//! The grammar, the lexer that applies it, the cache that remembers it, and
-//! the worker that fills the cache in.
+//! The grammar, the lexer that applies it a line at a time, the cache that
+//! keeps its states, the highlighter that fills the cache in, and what tells
+//! the renderer that more colour is coming.
+//!
+//! Design: `doc/architettura-editor.typ, <grammatica>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -64,8 +67,8 @@ mod tests {
         }
     }
 
-    /// The faces of one line, as `(start, end, face-name)`, which reads far
-    /// better in a failure than a list of structs.
+    /// Returns the faces of one line as `(start, end, face-name)`, which reads
+    /// far better in a failure than a list of structs.
     fn faces(grammar: &Grammar, line: &str, entering: &SyntaxState) -> Vec<(usize, usize, String)> {
         highlight_line(grammar, line, entering)
             .0
@@ -306,9 +309,8 @@ mod tests {
         );
     }
 
-    /// No rule applies inside a region: a string is uniformly a string. That
-    /// is the v1 contract, and worth pinning so a later `contains` feature is
-    /// a deliberate change rather than an accident.
+    /// No rule applies inside a region: a string is a string throughout, and
+    /// pinned so that a change to it is a deliberate one.
     #[test]
     fn rules_do_not_apply_inside_a_region() {
         let grammar = Grammar {
@@ -392,9 +394,8 @@ mod tests {
     /// not the file it is in.
     #[test]
     fn a_character_literal_holding_a_quote_does_not_open_a_string() {
-        // The bug this guards: `'"'` contains a double quote, which opened a
-        // string region that never closed -- so every line after it in the
-        // file was coloured as a string, and stayed that way.
+        // `'"'` holds a double quote, which would open a string region that
+        // never closes, and every line after it would be coloured a string.
         let (ctx, env) = editor_with("");
         eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
         let grammar = grammar_of(&ctx, "rust-mode");
@@ -421,10 +422,9 @@ mod tests {
 
     #[test]
     fn a_lifetime_is_not_a_character_literal() {
-        // The other half. A lifetime is spelled like an unterminated character
-        // literal, so the rule requires the closing quote -- otherwise `&'a`
-        // would open something that runs to the end of the file, which is the
-        // same bug wearing a different hat.
+        // The other half: a lifetime is spelled like an unterminated character
+        // literal, so the rule needs the closing quote, or `&'a` would open
+        // something that runs to the end of the file.
         let (ctx, env) = editor_with("");
         eval_str(include_str!("../../lisp/rust-mode.lisp"), &env, &ctx).expect("loading rust-mode");
         let grammar = grammar_of(&ctx, "rust-mode");
@@ -500,11 +500,10 @@ mod tests {
         });
     }
 
-    /// Colour the whole buffer the way the editor does: by running its
-    /// WorkManager, which in a test runs only when told to -- no sleeping and
-    /// hoping a background thread got there. A second of it, on a clock that
-    /// moves when it is told to, is more than the event delay and every turn
-    /// the highlighter asks for.
+    /// Colours the whole buffer the way the editor does, by running its
+    /// WorkManager, which in a test runs only when told to. A second of it, on
+    /// a clock that moves when it is told to, is more than the event delay and
+    /// every turn the highlighter asks for.
     fn colour_fully(ctx: &Ctx) {
         ctx.work().run_for(ctx, Duration::from_secs(1));
     }
@@ -723,10 +722,10 @@ mod tests {
     }
 
     /// The same join, where it matters: the last line of the first turn is
-    /// the one that closes the comment. The cache keeps the state *entering*
+    /// the one that closes the comment. The cache keeps the state entering
     /// each line, and a turn that started from the state entering the line
-    /// above -- rather than the state that line left behind -- carried the
-    /// comment straight on into code.
+    /// above, rather than the one that line leaves, would carry the comment on
+    /// into code.
     #[test]
     fn a_region_closing_on_the_last_line_of_a_turn_ends_there() {
         let chunk = crate::buffer::syntax::LINES_PER_TURN;
@@ -917,8 +916,7 @@ mod tests {
     #[test]
     fn the_highlighter_sleeps_once_every_buffer_is_coloured() {
         // Woken by changes rather than by a clock: with nothing behind, it
-        // waits, and running the editor's work takes no step at all. It used to
-        // wake every 40 ms, for the life of the session, to find that out.
+        // waits, and running the editor's work takes no step at all.
         let (ctx, env) = editor_with("fn one\nfn two\n");
         define_toy(&ctx, &env);
         colour_fully(&ctx);
@@ -945,12 +943,11 @@ mod tests {
         );
     }
 
-    /// A state names regions by their place in the grammar, and remaking a
-    /// mode -- `make-mode' again, the first line of every mode's file --
-    /// empties the grammar. A state from before that can name a region that is
-    /// no longer there, and handing one to the lexer was an index out of
-    /// bounds on the worker thread: colouring, and every other job sharing
-    /// that thread, stopped for the rest of the session.
+    /// A state names regions by their place in the grammar, and making a mode
+    /// again, as the first line of every mode's file does, empties the
+    /// grammar. A state from before can name a region that is no longer there,
+    /// and handed to the lexer it would be an index out of bounds on the
+    /// executor, which would stop colouring and every job that shares it.
     #[test]
     fn a_remade_mode_does_not_inherit_states_from_its_old_grammar() {
         let (ctx, env) = editor_with("\"open\nstill\nclose\"\nfn x\n");
@@ -1180,11 +1177,9 @@ mod tests {
     // Telling the renderer that more colour is coming
     // -----------------------------------------------------------------------
     //
-    // The worker runs on a timer and always has: the bug these pin was never
-    // that colour failed to be computed, but that a renderer blocked on input
-    // slept through its arrival, so the file stayed plain until a key was
-    // pressed. From the outside that looks exactly like highlighting that only
-    // runs on changes.
+    // Colour is computed in the background, and a renderer waiting for input
+    // would sleep through its arrival: the file would stay plain until a key
+    // was pressed. These pin what tells the renderer to look again.
 
     #[test]
     fn a_buffer_waiting_to_be_coloured_says_so_in_its_frame() {
@@ -1227,10 +1222,9 @@ mod tests {
         assert!(!ctx.snapshot(&env, W, H).colouring_pending);
     }
 
-    /// The case that would have made this worse than the bug: a mode with no
-    /// grammar never catches up, because there is nothing to catch up to. Read
-    /// as "behind" it would put the renderer on a 40ms timer for the life of
-    /// the session, for a file whose colours can never change.
+    /// A mode with no grammar never catches up, since there is nothing to
+    /// catch up to: read as behind, it would put the renderer on a timer of one
+    /// turn for good, for a file whose colours cannot change.
     #[test]
     fn a_buffer_with_no_grammar_never_asks_to_be_redrawn() {
         let (ctx, env) = editor_with("plain text\nwith no mode\n");
@@ -1281,7 +1275,7 @@ mod tests {
         let frame = ctx.snapshot(&env, W, H);
         assert_eq!(
             ctx.next_redraw_in(&env, &frame),
-            Some(crate::modes::highlighter::TURN_INTERVAL)
+            Some(crate::editor::TURN_INTERVAL)
         );
 
         colour_fully(&ctx);
@@ -1309,7 +1303,7 @@ mod tests {
             .expect("colour is outstanding");
         assert_eq!(
             waited,
-            crate::modes::highlighter::TURN_INTERVAL,
+            crate::editor::TURN_INTERVAL,
             "the turn comes long before the five-second message expires"
         );
         assert!(

@@ -47,7 +47,7 @@ si controlla che non diverga. Poi misura lo stato attuale e propone i passi
 per arrivarci.
 
 #caution[
-  *Stato: approvato; i passi 1--18 sono fatti.* Le misure dell'inventario si
+  *Stato: approvato; i passi 1--19 sono fatti.* Le misure dell'inventario si
   riferiscono alla revisione `58d0b0d`. Le decisioni prese sono raccolte nel
   @domande.
 ]
@@ -1438,7 +1438,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [16], [`primitives/`, modifica del testo: `edits`, `verbs`, `region`, `rectangle`, `macros`, `comments`, `match_data`, `scan` (fatto)], [4 353], [docstring già fatte nella fase B],
   [17], [`primitives/`, file, finestre e lavori: `io`, `buffers`, `windows`, `ui`, `mouse`, `ask`, `shell`, `workers`, `lisp_job`, `args` (fatto)], [4 995], [`io.rs` è il file più lungo: 1 818 righe],
   [18], [`primitives/`, il resto: `commands`, `completion`, `general`, `help`, `isearch`, `minibuffer`, `modes`, `overlays`, `replace`, `results`, `theme`, `virtual_text`, `mod` (fatto)], [5 953], [---],
-  [19], [`modes/`, `feature/`], [2 896], [---],
+  [19], [`modes/`, `feature/` (fatto)], [2 896], [---],
   [20], [`ui/`, `src/` (la TUI)], [3 408], [---],
   [21], [`core/lisp/`: intestazioni e commenti], [6 422], [docstring già fatte nella fase B],
 )
@@ -1880,6 +1880,75 @@ MIN-3 in `feature/minibuffer.rs` e i commenti di `raw_string_tests`, che
 nominano ancora il testo grezzo di `editor/mod.rs`, oggi in `boot.rs` (passo
 19); i test dei moduli Lisp, come `completion_ui_tests` e `help_lisp_tests`
 (passo 21).
+
+*Passo 19, fatto.* `modes/syntax.rs` è diviso in due file, uno per lessico,
+come le primitive al passo 18: `grammar.rs` tiene la grammatica e
+`highlight_line`, `syntax_table.rs` la tabella sintattica, che stava in mezzo
+alla grammatica senza che il commento del modulo la nominasse. I quattro lavori
+di sfondo dell'editor sono passati da `modes/` a una directory nuova, `jobs/`,
+come li raggruppa la sezione «I lavori dell'editor» del manuale: il controllo
+dei file e il salvataggio automatico non hanno a che fare con i modi, e
+`modes/` resta il modo e la lettura del suo testo. `TURN_INTERVAL` è passato da
+`highlighter.rs` a `editor/frame.rs`, accanto a `next_redraw_in`: è il ritmo
+del ridisegno e l'attesa di `(yield)`, e l'evidenziatore non lo usa più.
+`PROMPT_BUFFER` è passato da `feature/isearch.rs` a `feature/minibuffer.rs`, e
+lo usano anche i cinque punti del codice che scrivevano `"*Minibuffer*"`. Il
+codice è lo stesso: un `let _ = ….then(|| …)` di `install_isearch` è diventato
+un `if`. La mappa di `lib.rs` dichiara `jobs/` e non parla più di modi minori
+scritti in Rust, che non ci sono; gli strati in alto sono cinque. Il rustdoc
+segue le regole, con i `TODO` di SIN-1, SIN-2, SIN-6, MIN-2, MIN-3, FIL-2,
+FIL-5 e delle cinque schede nuove dove sta il lavoro. Le trentacinque sezioni
+con titolo, e gli altri perché lunghi, sono nel manuale: nove decisioni nuove
+nel capitolo «Minibuffer e ricerca incrementale», diciotto in «Modi», che ha
+anche due sottosezioni nuove, sulla grammatica e sulla tabella sintattica, e
+dodici sui lavori dell'editor tra quelle del lavoro in background; cinque
+etichette nuove servono ai rimandi `Design:`. I commenti di sette file di test
+seguono le regole. `the_editors_own_sources_balance` legge i quattro file che
+hanno oggi stringhe grezze, tra cui `boot.rs` con l'`init.lisp` predefinito: i
+quattro che leggeva non ne avevano più. Il test sul `!` nei nomi delle copie si
+chiama `a_bang_inside_a_name_is_not_read_as_a_separator`. I file del passo
+scendono da 2 928 a 2 427 righe, e quelle di commento da 1 137 a 638; il più
+lungo è `sexp.rs`, con 653. Il comportamento non è cambiato.
+
+Il passo ha trovato cinque difetti di comportamento, che il rapporto descrive in
+cinque schede nuove. MIN-5: `minibuffer-choose-completion` scrive nel buffer
+corrente anche quando non è il prompt, e in un buffer di file cancella il testo
+prima del punto, anche in sola lettura, senza che l'annullamento lo sappia.
+FIL-6: con `auto-save-directory`, `/a!/b` e `/a/!b` hanno la stessa copia.
+SIN-7: una regola con GROUP colora tutta la corrispondenza quando il gruppo non
+vi prende parte, o il pattern non lo ha. SIN-8: alla fine di una lista
+`forward-sexp` e `kill-sexp` proseguono nella lista che segue, e `down-list`
+entra in una lista annidata più avanti. SIN-9: `forward-sexp` si ferma alla fine
+di un commento a blocchi e scavalca uno di riga; lo fissava già un test, che
+chiede di scegliere. Le prime quattro sono state riprodotte con test
+temporanei, che non fanno parte della patch.
+
+Gli altri difetti sono in commenti, test e documenti, e la patch li corregge.
+`sexp.rs` diceva tre gli stati dello scanner, che sono quattro, e che in una
+stringa multi-carattere niente fa da escape, mentre lo fa se lo stile lo
+dichiara, come diceva anche il manuale; la documentazione di `run_to` era finita
+sopra quella di `snapshot`, e `char_literal_at` diceva di rispondere con una
+lunghezza, mentre risponde con una posizione. `prescan.rs` diceva che
+`GapBuffer` rifiuta di proposito di essere clonato, mentre il suo `clone` è il
+`todo!()` di BUF-3. `set_minibuffer_content` si diceva un aiuto del solo Tab, e
+la usano anche la storia e la scelta di un completamento; `place` nominava un
+POSITION che non c'è; il commento del modulo del minibuffer lo diceva agganciato
+in basso (DOC-1). `top_level_event` diceva che una regola il cui gruppo non
+partecipa non colora nulla (SIN-7). Un commento di `syntax_tests` diceva che
+l'evidenziatore gira con un timer, e uno di `autosave_tests` che `kill-buffer`
+non chiede ancora: chiede, e `killing_a_modified_buffer_keeps_the_copy` guarda
+la copia mentre la domanda è aperta. Nel manuale la tabella sintattica stava in
+`sexp.rs`, e i salvataggi della colorazione e della prescansione controllavano
+solo versione e modo. I link di `feature/` alle primitive non si risolvevano:
+gli avvisi di `cargo doc` passano da 10 a 4. Sono fatti anche i resti lasciati
+a questo passo dai passi 12, 17 e 18.
+
+Restano ai passi dei loro capitoli: il commento di `src/tui.rs` sul minibuffer
+in basso (passo 20, con DOC-1); i test dei moduli Lisp, come
+`language_mode_tests` (passo 21). Il test
+`killing_a_modified_buffer_keeps_the_copy` guarda la copia prima della risposta
+di `kill-buffer`: farne un test della chiusura cambierebbe il test, ed è una
+scelta da fare a parte.
 
 == Fase D --- il manuale (passo 22)
 

@@ -380,19 +380,19 @@ pub fn create_global_env<B: BufferTrait>()
 
     // Auto-saving and watching files, on, at the pace they keep when nothing
     // says otherwise; and no file manager until a module installs one.
-    env.set_variable(crate::modes::autosave::AUTO_SAVE.into(), ELispExp::t());
+    env.set_variable(crate::jobs::autosave::AUTO_SAVE.into(), ELispExp::t());
     env.set_variable(
-        crate::modes::autosave::AUTO_SAVE_INTERVAL.into(),
-        ELispExp::number(crate::modes::autosave::DEFAULT_AUTO_SAVE_INTERVAL.as_secs_f64()),
+        crate::jobs::autosave::AUTO_SAVE_INTERVAL.into(),
+        ELispExp::number(crate::jobs::autosave::DEFAULT_AUTO_SAVE_INTERVAL.as_secs_f64()),
     );
     env.set_variable(
-        crate::modes::autosave::AUTO_SAVE_DIRECTORY.into(),
+        crate::jobs::autosave::AUTO_SAVE_DIRECTORY.into(),
         ELispExp::nil(),
     );
-    env.set_variable(crate::modes::watcher::WATCH_FILES.into(), ELispExp::t());
+    env.set_variable(crate::jobs::watcher::WATCH_FILES.into(), ELispExp::t());
     env.set_variable(
-        crate::modes::watcher::WATCH_FILE_INTERVAL.into(),
-        ELispExp::number(crate::modes::watcher::DEFAULT_WATCH_INTERVAL.as_secs_f64()),
+        crate::jobs::watcher::WATCH_FILE_INTERVAL.into(),
+        ELispExp::number(crate::jobs::watcher::DEFAULT_WATCH_INTERVAL.as_secs_f64()),
     );
     env.set_variable(OPEN_DIRECTORY_CALLBACK.into(), ELispExp::nil());
 
@@ -543,7 +543,7 @@ pub fn create_global_env<B: BufferTrait>()
     editor_state.work.submit(watcher.spec(), Box::new(watcher));
     // And the fourth: a copy on disk of what has not been saved, for the one
     // loss nothing else covers, the editor stopping without being asked. Its
-    // settings likewise. See `crate::modes::autosave`.
+    // settings likewise. See `crate::jobs::autosave`.
     let saver = AutoSaver::new(env.clone());
     editor_state.work.submit(saver.spec(), Box::new(saver));
 

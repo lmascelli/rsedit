@@ -342,6 +342,19 @@
     effetto: [Il prompt non si conferma né si chiude con i suoi tasti, Invio vi scrive un a capo, e `C-g` non lo chiude (#link(<MIN-2>)[MIN-2]): ne esce solo chi sa chiudere il buffer `*Minibuffer*` in un altro modo.],
     correzione: [Prendere nil come assente, con `args::optional_name`, come fanno le altre primitive per un nome facoltativo, e un test con MODE nil e KEY.],
   ),
+  (
+    id: "MIN-5",
+    gravita: "media",
+    verificato: true,
+    stato: "aperto",
+    titolo: [`minibuffer-choose-completion` scrive nel buffer corrente, anche quando non è il prompt],
+    breve: [`minibuffer-choose-completion` fuori da un prompt riscrive il buffer corrente],
+    dove: [`feature/minibuffer.rs` (`set_minibuffer_content`, che scrive nel buffer corrente), `primitives/minibuffer.rs` (`minibuffer-choose-completion`, che la chiama senza guardare se un prompt è aperto)],
+    verifica: [Riprodotto con un test temporaneo durante il passo 19 della documentazione, sul codice di `20f7221`, che non cambia il comportamento. In un buffer `f` con «hello world» e il punto dopo «hello », `(minibuffer-choose-completion "x")` lascia «xworld», e un `(undo)` dopo toglie l'inserimento di «hello world» da un testo che non lo contiene più: il buffer resta vuoto. Dopo `(set-buffer-read-only t)`, `(minibuffer-choose-completion "y")` lascia «y», dove `self-insert` è rifiutato.],
+    cosa: [La primitiva mette il valore scelto «nel prompt» con `set_minibuffer_content`, che lavora sul buffer corrente e non su `*Minibuffer*`, e non guarda se un prompt è aperto. Fuori da un prompt cancella il testo prima del punto del buffer corrente e vi scrive il valore, saltando le porte delle modifiche come in #link(<MIN-3>)[MIN-3]: niente annullamento, niente controllo della sola lettura. Nessun modulo fornito con l'editor la chiama fuori da un prompt: il presentatore di `completion.lisp` la riceve da `minibuffer-complete` e la chiama dai tasti della sua striscia.],
+    effetto: [Una chiamata fuori da un prompt, da `M-:` o da un modulo, cancella parte di un buffer di file, anche in sola lettura, e la storia dell'annullamento non la riporta indietro: il prossimo `undo` lavora su posizioni che non corrispondono più.],
+    correzione: [Scrivere nel buffer `*Minibuffer*` per nome, e non fare nulla, o dare un errore, quando nessun prompt è aperto; con la correzione di #link(<MIN-3>)[MIN-3], la risposta intera e attraverso le porte.],
+  ),
   // ------------------------------------------------------------------ FIL
   (
     id: "FIL-1",
@@ -363,7 +376,7 @@
     stato: "aperto",
     titolo: [I file vengono scritti sul posto: un errore a metà li lascia troncati],
     breve: [Scrittura non atomica dei file],
-    dove: [`primitives/files.rs` (`save-buffer`, `write-file`, `save-buffer--overwrite`, `write_buffer`) e `modes/autosave.rs` (`EditorState::write_auto_save`): tutti con `std::fs::write`],
+    dove: [`primitives/files.rs` (`save-buffer`, `write-file`, `save-buffer--overwrite`, `write_buffer`) e `jobs/autosave.rs` (`EditorState::write_auto_save`): tutti con `std::fs::write`],
     verifica: [Dalla lettura del codice.],
     cosa: [`std::fs::write` tronca il file e poi scrive. Se la scrittura si interrompe (disco pieno, processo terminato, alimentazione), sul disco resta un file troncato o vuoto, e la versione precedente è già persa.],
     effetto: [Possibile perdita del contenuto del file proprio quando qualcosa va storto.],
@@ -401,10 +414,23 @@
     stato: "aperto",
     titolo: [Il salvataggio automatico segna come salvato anche un tentativo fallito],
     breve: [Autosave: versione segnata anche se la scrittura fallisce],
-    dove: [`modes/autosave.rs` (`EditorState::write_auto_save`: `auto_saved_at` impostato anche dopo un errore)],
+    dove: [`jobs/autosave.rs` (`EditorState::write_auto_save`: `auto_saved_at` impostato anche dopo un errore)],
     verifica: [Dalla lettura del codice: il commento lo dice, «Recorded whether or not the write worked».],
     cosa: [Se la scrittura della copia fallisce per un motivo passeggero, la versione viene comunque registrata, e non si riprova finché il buffer non cambia. La prima metà della scheda è risolta da `1aa5cf7`: `auto_save_for` guarda file, sola lettura, modifica e versione già salvata prima di copiare il testo, e ogni giro guarda tutti i buffer e ne scrive al più quattro.],
     correzione: [Registrare la versione solo dopo una scrittura riuscita.],
+  ),
+  (
+    id: "FIL-6",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [Con `auto-save-directory`, due percorsi diversi possono avere la stessa copia],
+    breve: [Copie in `auto-save-directory`: `/a!/b` e `/a/!b` hanno lo stesso nome],
+    dove: [`jobs/autosave.rs` (`flatten`, usata da `auto_save_path`)],
+    verifica: [Riprodotto con un test temporaneo durante il passo 19 della documentazione, sul codice di `20f7221`, che non cambia il comportamento. `auto_save_path("/a!/b", Some("/d"))` e `auto_save_path("/a/!b", Some("/d"))` rispondono entrambe `/d/#!a!!!b#`.],
+    cosa: [Per fare del percorso un solo nome di file, `flatten` cambia ogni separatore (`/`, `\`, `:`) in `!` e raddoppia ogni `!`. Così `/a!b/c` e `/a/b/c` restano distinti, ma un `!` accanto a un separatore no: un `!` seguito da un separatore e un separatore seguito da un `!` danno entrambi `!!!`. Il commento della funzione diceva che due percorsi diversi non possono coincidere. È lo schema di Emacs, che ha lo stesso limite. Senza `auto-save-directory` la copia sta accanto al file, con il solo nome, e il problema non c'è.],
+    effetto: [Due buffer di file come `/a!/b` e `/a/!b` scrivono la stessa copia, e il ripristino di uno può dare il lavoro dell'altro.],
+    correzione: [Una codifica che due percorsi non possano condividere, come quella degli URL per il `%` e i separatori, o un hash del percorso nel nome; un test con i due percorsi di sopra.],
   ),
   // ------------------------------------------------------------------ AVV
   (
@@ -514,7 +540,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Una regione di sintassi che corrisponde alla stringa vuota blocca il thread di background],
     breve: [Regioni che corrispondono a "": ciclo infinito o memoria esaurita nell'evidenziatore],
-    dove: [`primitives/grammar.rs` (`add-syntax-region`, che non controlla i pattern), `modes/syntax.rs` (`highlight_line`, che non avanza dopo un'apertura, una chiusura o un escape vuoti)],
+    dove: [`primitives/grammar.rs` (`add-syntax-region`, che non controlla i pattern), `modes/grammar.rs` (`highlight_line`, che non avanza dopo un'apertura, una chiusura o un escape vuoti)],
     verifica: [Riprodotto nell'analisi di `08a853d`: con BEGIN `"x*"` ed END `"y*"` un thread restava al 97 % di CPU e la colorazione di un file di una riga non finiva mai; con BEGIN vuoto e NESTABLE la memoria cresceva di circa 90 MB al secondo; con un pattern normale lo stesso file si colorava in 20 ms. Il ciclo di `highlight_line` non è cambiato da allora.],
     cosa: [`highlight_line` avanza la posizione al punto in cui finisce l'evento trovato. Per una regola protegge il caso vuoto (`pos = resume.max(pos + 1)`), per regioni ed escape no. Una regione che si apre e si chiude con due corrispondenze vuote nella stessa posizione si riapre all'infinito; una regione annidabile con un BEGIN vuoto continua a impilare stati.],
     riproduzione: ```lisp
@@ -532,7 +558,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Colorare una riga molto lunga costa un tempo quadratico nella sua lunghezza],
     breve: [Colorazione quadratica sulle righe lunghe],
-    dove: [`modes/syntax.rs` (`top_level_event`, che riprova ogni regione e ogni regola dalla posizione corrente, e `highlight_line`), `buffer/syntax.rs` (`LINES_PER_TURN`)],
+    dove: [`modes/grammar.rs` (`top_level_event`, che riprova ogni regione e ogni regola dalla posizione corrente, e `highlight_line`), `buffer/syntax.rs` (`LINES_PER_TURN`)],
     verifica: [Misurato nell'analisi di `08a853d` su una riga Rust ripetuta (`let a = "x"; `): 65 KB in 0,96 s, 130 KB in 3,7 s, 260 KB in 14,8 s; una riga di 1 MB (un file minificato) richiederebbe circa quattro minuti. `top_level_event` non è cambiata da allora.],
     cosa: [A ogni evento la scansione chiede a ogni pattern la sua prossima corrispondenza a partire dalla posizione corrente. I pattern che non trovano nulla scorrono ogni volta fino alla fine della riga, quindi il lavoro è proporzionale a eventi × lunghezza. Una riga non si può dividere tra due turni, perché `LINES_PER_TURN` conta righe.],
     effetto: [Mentre l'esecutore del WorkManager colora la riga, prescansione, controllo dei file, salvataggio automatico e worker sono fermi, e il watchdog scrive nel registro un passo lungo e poi bloccato.],
@@ -581,6 +607,45 @@ init.lisp:
     cosa: [`forward` porta la scansione fino a `from` con `run_to`, poi conta le espressioni completate da lì in avanti. Ma un passo della scansione consuma un intero simbolo: se `from` cade dentro un simbolo, `run_to` lo completa (e lo scarta) prima di restituire il controllo, e il primo completamento contato è quello dell'espressione dopo. Sul simbolo finale di una lista non resta nulla da contare a quel livello e il punto non si muove.],
     effetto: [`C-M-f` e `kill-sexp` (che usa la stessa funzione) dall'interno di una parola si comportano in modo diverso da Emacs: il primo salta un'espressione, il secondo cancella anche l'espressione successiva.],
     correzione: [In `run_to` fermarsi prima di un passo che supererebbe il limite, oppure in `forward` controllare se l'ultimo completamento di `run_to` finisce dopo `from` e contarlo.],
+  ),
+  (
+    id: "SIN-7",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [Una regola con GROUP colora tutta la corrispondenza quando il gruppo non vi prende parte],
+    breve: [GROUP che non partecipa, o che il pattern non ha: tutta la corrispondenza colorata],
+    dove: [`modes/grammar.rs` (`top_level_event`, che ripiega sulla corrispondenza intera), `primitives/grammar.rs` (`add-syntax-rule`, che accetta un GROUP che il pattern non ha)],
+    verifica: [Riprodotto con un test temporaneo durante il passo 19 della documentazione, sul codice di `20f7221`, che non cambia il comportamento. Dopo `(add-syntax-rule 'probe-mode "(foo)?bar" 'keyword 1)`, nella riga «foobar» è colorato solo «foo», ma la riga «bar» è colorata tutta come `keyword`. `(add-syntax-rule 'probe-mode "baz" 'string 5)` risponde t, e «baz» è colorata tutta come `string`.],
+    cosa: [Per il testo da colorare la scansione prende il gruppo GROUP della corrispondenza, e se il gruppo non vi ha preso parte, o il pattern non lo ha, ripiega sulla corrispondenza intera. La docstring di `add-syntax-rule` dice «with GROUP, only that capture group of the match», e la pagina `writing-modes` «not the whole match»; il commento accanto al codice diceva che una regola così non colora nulla. Nessun modo fornito con l'editor ha una regola il cui gruppo sia facoltativo.],
+    effetto: [Una regola scritta per colorare una parte facoltativa colora anche il resto della corrispondenza quando la parte manca.],
+    correzione: [Quando il gruppo non partecipa non colorare nulla, e scavalcare comunque la corrispondenza; in `add-syntax-rule` rifiutare un GROUP oltre i gruppi del pattern, come si rifiuta un REGEX sbagliato.],
+  ),
+  (
+    id: "SIN-8",
+    gravita: "media",
+    verificato: true,
+    stato: "aperto",
+    titolo: [`forward-sexp`, `kill-sexp` e `down-list` alla fine di una lista proseguono nelle liste che seguono],
+    breve: [Alla fine di una lista `forward-sexp` e `down-list` entrano nelle liste dopo],
+    dove: [`modes/sexp.rs` (`forward` e `down`, che non si fermano quando la lista di FROM si chiude); li usano `forward-sexp`, `kill-sexp`, `backward-sexp` con un conteggio negativo e `down-list`],
+    verifica: [Riprodotto con un test temporaneo durante il passo 19 della documentazione, sul codice di `20f7221`, che non cambia il comportamento. Con la tabella di Lisp di `sexp_tests`, `forward` da 4 in `(a b) (c d)` risponde 8, la fine di `c`, e da 3 in `((a) (b c))` risponde 7, la fine di `b`; da 4 in `(a b)` e in `(a b) x` risponde 4. In un buffer in `risp-mode` con `(foo bar) (baz qux)` e il punto a 8, `(forward-sexp)` porta il punto a 14, dopo `baz`, e `(kill-sexp)` lascia `(foo bar qux)`. `down` da 2 in `(a) (b (c))` risponde 8, dentro `(c`, e in `(a) (b)` nil.],
+    cosa: [`forward` conta le espressioni completate dopo FROM alla profondità di FROM, ma non si ferma quando la lista che contiene FROM si chiude: oltre la sua fine la scansione va avanti, e la prima espressione completata di nuovo a quella profondità, dentro una lista che segue, è contata. `down` cerca la prima volta che la profondità supera quella di partenza, e oltre la fine della lista la trova in una lista annidata in una che segue. La docstring di `forward-sexp` dice che alla fine di una lista il comando non fa nulla, e la pagina `editing` che `C-M-f` si ferma alla fine della lista; il test `at_the_end_of_a_list_forward_does_not_escape_it` lo prova solo con nulla dopo la lista.],
+    effetto: [`C-M-f` alla fine di una lista salta dentro la lista seguente, e `kill-sexp` nello stesso punto cancella la chiusura della lista e l'inizio di quella dopo, e le fonde.],
+    correzione: [In `forward` e in `down`, fermarsi, con FROM o `None`, quando la profondità scende sotto quella di partenza; due test, con una lista dopo la fine di quella di FROM.],
+  ),
+  (
+    id: "SIN-9",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [`forward-sexp` si ferma alla fine di un commento a blocchi ma scavalca un commento di riga],
+    breve: [Commenti a blocchi contati come espressioni, quelli di riga no],
+    dove: [`modes/sexp.rs` (`Scan::step`, ramo `Comment`: solo un commento a blocchi chiama `complete_comment`)],
+    verifica: [Lo fissa il test `a_line_comment_is_skipped_but_a_block_comment_is_not` di `sexp_tests`, sul codice di `20f7221`: `forward` da 0 in `/* a */ b` risponde 7, la fine del commento, e in `// a\nb` risponde 6, dopo `b`.],
+    cosa: [Un commento a blocchi completato è un'espressione, che `forward-sexp` raggiunge e su cui si ferma; un commento di riga si passa come uno spazio. Il test lo fissa dicendo che i due casi vanno resi uguali con una scelta esplicita. Emacs, con `parse-sexp-ignore-comments`, li scavalca tutti e due.],
+    effetto: [Da prima di un commento a blocchi `C-M-f` si ferma alla sua fine; da prima di un commento di riga va oltre l'espressione che segue. `kill-sexp` cancella il commento solo nel primo caso.],
+    correzione: [Una regola sola per i due tipi, quella di Emacs, e il test cambiato con la scelta.],
   ),
   // ------------------------------------------------------------------ RIC
   (
@@ -851,7 +916,7 @@ init.lisp:
     dove: [vedi l'elenco],
     verifica: [Dalla lettura del codice.],
     cosa: [
-      - `feature/minibuffer.rs` (il commento del modulo) e `src/tui.rs` (`render_to`, il commento sull'area messaggi): il minibuffer «docked to the last few lines of the frame», mentre il prompt predefinito ora è centrato.
+      - `src/tui.rs` (`render_to`, il commento sull'area messaggi): il minibuffer «docked to the last few lines of the frame», mentre il prompt predefinito ora è centrato. Lo diceva anche il commento del modulo `feature/minibuffer.rs`, corretto dal passo 19 della documentazione.
       - `primitives/shell.rs` (`shell-command-start`): il messaggio «The editor's background work has shut down» vale anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta. Il commento accanto, che diceva lo stesso, è corretto dal passo 17 della documentazione.
       - `primitives/occur.rs` (`grep--scan`): il messaggio «The editor's background work has shut down» vale anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta. Il commento accanto, che diceva lo stesso, è corretto dal passo 18 della documentazione.
       - `primitives/workers.rs` (`define-worker` e `background-call`, attraverso `start`): la riga del registro «the editor's work has shut down» vale anche quando l'esecutore non è partito, l'altro caso in cui `WorkManager::submit` rifiuta. Il commento accanto è corretto come quello di `shell.rs`.
@@ -954,7 +1019,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4 e RIC-9.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8 e SIN-9.
 
 == Riepilogo
 
@@ -1048,7 +1113,7 @@ Alcuni comportamenti differiscono da Emacs per scelta, o comunque senza produrre
 
 Nell'analisi queste parti sono state esercitate di proposito sui casi limite senza trovare problemi:
 
-- lo scanner delle espressioni bilanciate (`modes/sexp.rs`): stringhe con escape alla fine del buffer, parentesi sbilanciate in entrambe le direzioni, letterali carattere, lifetime di Rust, stringhe raw, commenti a blocco annidati, commenti che contengono parentesi;
+- lo scanner delle espressioni bilanciate (`modes/sexp.rs`): stringhe con escape alla fine del buffer, parentesi sbilanciate in entrambe le direzioni, letterali carattere, lifetime di Rust, stringhe raw, commenti a blocco annidati, commenti che contengono parentesi. Fuori da questi casi, più tardi, le verifiche hanno trovato #link(<SIN-6>)[SIN-6] e #link(<SIN-8>)[SIN-8];
 - la ricerca incrementale: parentesi letterali, espressioni non valide, cancellazione, ricerca fallita e ripresa dopo il fallimento;
 - kill e yank, compreso `M-y`, e le macro di tastiera (con il limite alla ricorsione delle macro);
 - `kill-buffer` di un buffer mostrato in due finestre, la chiusura dell'unica finestra, la chiusura di `*scratch*`;

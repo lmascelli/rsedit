@@ -1,15 +1,9 @@
-//! Character literals, and the scanner learning to read them.
+//! Character literals, as the syntax table's character quote declares them:
+//! that `'"'` is one atom, so its `"` opens no string, that a lifetime is not
+//! a literal, and that what reads the table, `electric-pair`, `forward-sexp`
+//! and `syntax-ppss`, reads them so.
 //!
-//! # The bug these come from
-//!
-//! `let c = '"';` in a Rust buffer. The scanner had no notion of a character
-//! literal, so the `"` inside it opened a string that never closed -- and from
-//! there to the end of the file nothing was code. Every brace stopped counting,
-//! which is how a closing brace three lines below became invisible to anything
-//! asking whether the buffer balanced, and electric-pair added a second one.
-//!
-//! The fix is in the *table*, not in electric-pair, so everything that reads
-//! the table is fixed at once: `forward-sexp`, the indenter, `syntax-ppss`.
+//! Design: `doc/architettura-editor.typ, <tabella-sintattica>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -30,7 +24,8 @@ mod tests {
         eval_str(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"))
     }
 
-    /// An editor with rust-mode and electric-pair, as the real one has them.
+    /// Returns an editor with rust-mode and electric-pair, as the real one has
+    /// them.
     fn editor() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
@@ -47,7 +42,7 @@ mod tests {
         (ctx, env)
     }
 
-    /// A fresh rust-mode buffer holding `text`, point at `at`.
+    /// Makes NAME a fresh rust-mode buffer holding TEXT, with point at AT.
     fn rust_buffer(name: &str, text: &str, at: usize, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
         let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
         run(
@@ -64,7 +59,8 @@ mod tests {
         ctx.with_current_buffer(|b| b.text.to_string())
     }
 
-    /// The list depth at the end of the buffer: 0 when every list is closed.
+    /// Returns the list depth at the end of the buffer: 0 when every list is
+    /// closed.
     fn depth_at_end(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> f64 {
         match run("(nth 0 (syntax-ppss (point-max)))", env, ctx) {
             LispExp::Number(n) => n,
@@ -73,12 +69,12 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // What the scanner now sees
+    // What the scanner sees
     // ----------------------------------------------------------------
 
     #[test]
     fn a_quote_inside_a_character_literal_does_not_open_a_string() {
-        // The whole bug, at its root.
+        // At its root: the `"` inside the literal opens nothing.
         let (ctx, env) = editor();
         rust_buffer("a", "fn a() {\n  let c = '\"';\n}", 0, &env, &ctx);
         assert_eq!(
@@ -113,9 +109,8 @@ mod tests {
 
     #[test]
     fn an_apostrophe_inside_a_string_changes_nothing() {
-        // The reason `'` could not simply be an escape character: escapes are
-        // honoured inside strings too, so it would have eaten this closing
-        // quote and the bug would have moved rather than gone.
+        // Why `'` is not an escape character: escapes count inside strings
+        // too, so it would eat this closing quote.
         let (ctx, env) = editor();
         rust_buffer("e", "fn a() {\n  let s = \"it's\";\n}", 0, &env, &ctx);
         assert_eq!(depth_at_end(&env, &ctx), 0.0);
@@ -151,13 +146,13 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // What it fixes, as a user meets it
+    // As a user meets it
     // ----------------------------------------------------------------
 
     #[test]
     fn retyping_a_brace_in_a_file_with_a_character_literal_adds_no_second_one() {
-        // The reported case: delete the `{` from a function whose body holds
-        // `'"'`, and type it back.
+        // The `{` of a function whose body holds `'"'`, deleted and typed
+        // back.
         let (ctx, env) = editor();
         rust_buffer("i", "fn a() \n  let c = '\"';\n}", 7, &env, &ctx);
         run(
@@ -170,7 +165,7 @@ mod tests {
 
     #[test]
     fn pairing_still_works_in_the_same_file_where_it_should() {
-        // The check must not have been turned into "never pair".
+        // The check is not "never pair".
         let (ctx, env) = editor();
         rust_buffer("j", "fn a() \n  let c = '\"';\n", 7, &env, &ctx);
         run(
@@ -183,8 +178,8 @@ mod tests {
 
     #[test]
     fn forward_sexp_steps_over_a_character_literal_as_one_thing() {
-        // The table is read by more than electric-pair, and all of it is
-        // fixed by the same change.
+        // The table is read by more than electric-pair, and every reader sees
+        // the literal as one atom.
         let (ctx, env) = editor();
         rust_buffer("k", "'a' next", 0, &env, &ctx);
         run("(forward-sexp)", &env, &ctx);

@@ -1,18 +1,9 @@
-//! The balanced-expression scanner, and the syntax tables that drive it.
+//! The scanner of balanced expressions, driven by tables built in Rust, as a
+//! function from text, table and offset to offsets: that it counts a delimiter
+//! only where it reads code, in strings, comments, unbalanced text and from
+//! wherever a motion starts. Then that a mode can say all this from Lisp.
 //!
-//! # What these are protecting
-//!
-//! That the scanner never counts a delimiter it is not reading as code. Three
-//! of the four parentheses in `(message "close it with )")` are text, and a
-//! scanner that gets this wrong does not fail -- it silently puts the cursor
-//! somewhere strange, or reports a defun boundary in the middle of a string.
-//! There is nothing downstream that would catch it.
-//!
-//! The tests come in two halves. The first drives `crate::modes::sexp`
-//! directly with tables built in Rust: the scanner is a pure function from
-//! (text, table, offset) to offsets, so it needs no buffer, no mode registry
-//! and no keymap to test. The second checks that a mode can actually *say* any
-//! of this from Lisp.
+//! Design: `doc/architettura-editor.typ, <scanner>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -285,11 +276,11 @@ mod tests {
 
     #[test]
     fn a_line_comment_is_skipped_but_a_block_comment_is_not() {
-        // Pinning an inconsistency rather than endorsing it. The `Line` arm of
-        // the scan never calls `complete`, so a line comment is passed over the
-        // way whitespace is; the `Block` arm calls `complete_comment`, so a
-        // block comment is an expression that `forward-sexp` stops at the end
-        // of. Emacs skips both.
+        // Pinning an inconsistency rather than endorsing it (SIN-9). The
+        // `Line` arm of the scan never calls `complete`, so a line comment is
+        // passed over the way whitespace is; the `Block` arm calls
+        // `complete_comment`, so a block comment is an expression that
+        // `forward-sexp` stops at the end of. Emacs skips both.
         //
         // Whichever way it should go, it should go the same way for both. This
         // test exists so that making them agree is a visible decision and not a
@@ -369,6 +360,8 @@ mod tests {
 
     #[test]
     fn at_the_end_of_a_list_forward_does_not_escape_it() {
+        // Nothing follows the list here: with a list after it, the count goes
+        // on into that one (SIN-8).
         let table = lisp_table();
         assert_eq!(forward(&table, "(a b)", 4), 4);
     }

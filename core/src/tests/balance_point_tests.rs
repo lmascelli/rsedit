@@ -1,21 +1,9 @@
-//! Asking whether an opener already has a closer, and what it costs.
+//! `balance-point`, the question `electric-pair` asks when a `{` is typed:
+//! whether the depth comes back to zero anywhere ahead, rather than whether
+//! the innermost list is closed or the whole buffer balances, and that the
+//! answer is near point however much file is below.
 //!
-//! # The question these are about
-//!
-//! `electric-pair` has to decide, having just seen a `{` typed, whether to put
-//! a `}` after it. Three ways of asking have been tried and two are wrong:
-//!
-//! * *Is the innermost list closed?* A scanner matches a closer to the
-//!   innermost opener, so a new brace inside an already-closed block appears
-//!   to have taken the outer one's closer, and pairing is refused exactly
-//!   where it is wanted.
-//! * *Does the whole buffer balance?* Anything below that is still being typed
-//!   keeps the depth from ever reaching zero at the end, so a brace whose
-//!   partner is on the very next line is reported as unclosed.
-//! * *Does the depth reach zero anywhere ahead?* Neither fault, and it stops
-//!   at the first point of balance rather than the end of the file.
-//!
-//! The second was what shipped, and the test for it is the first one below.
+//! Design: `doc/architettura-editor.typ, <scanner>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -68,7 +56,7 @@ mod tests {
         ctx.with_current_buffer(|b| b.text.to_string())
     }
 
-    /// Type OPENER at point and let the pairing hook decide.
+    /// Types OPENER at point, and lets the pairing hook decide.
     fn type_opener(ctx: &Ctx, env: &Arc<Env<Ctx>>, opener: &str) {
         run(
             &format!(r#"(self-insert "{opener}") (electric-pair-post-self-insert)"#),
@@ -83,10 +71,10 @@ mod tests {
 
     #[test]
     fn an_unfinished_function_below_does_not_earn_a_second_closer() {
-        // The bug the whole-buffer check had. `a`'s closer is on the very next
-        // line; `b` below is half-typed, as any function is while you write
-        // it. Asking whether the *buffer* balances hears "no" -- because of
-        // `b` -- and adds a brace `a` already had.
+        // What the whole-buffer check gets wrong. `a`'s closer is on the very
+        // next line; `b` below is half-typed, as any function is while you
+        // write it. Asking whether the *buffer* balances hears "no", because
+        // of `b`, and adds a brace `a` already has.
         let (ctx, env) = editor();
         rust_buffer("a", "fn a() \n}\nfn b() {\n", 7, &env, &ctx);
         type_opener(&ctx, &env, "{");
@@ -114,8 +102,7 @@ mod tests {
 
     #[test]
     fn repairing_a_brace_adds_nothing() {
-        // The case that started all of this: delete the `{` of a function
-        // whose body is intact, and type it back.
+        // The `{` of a function whose body is intact, deleted and typed back.
         let (ctx, env) = editor();
         rust_buffer("d", "fn a() \n  let c = 1;\n}\n", 7, &env, &ctx);
         type_opener(&ctx, &env, "{");

@@ -4,7 +4,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 use super::*;
-use crate::modes::autosave::{auto_save_directory, auto_save_path};
+use crate::jobs::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::args;
 use crate::primitives::file_names::expand_path;
 use risp::eval;

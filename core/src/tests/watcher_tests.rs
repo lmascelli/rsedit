@@ -1,25 +1,9 @@
-//! Noticing that a file changed under a buffer, and what is done about it.
+//! The file watcher: that a clean buffer follows its file and a modified one
+//! is never touched, only marked, even when it changes while the file is being
+//! read. Most drive one turn at a call; the last drive the job through the
+//! WorkManager, on a clock moved by hand. Timestamps are set, not waited for.
 //!
-//! # What is worth testing here, and how
-//!
-//! The worker runs on a timer on another thread, which is exactly the shape a
-//! test cannot wait on without being a race. So these do not wait: most drive
-//! the turn the job takes, one call at a time, and check what one turn
-//! decided. The last few drive the job itself, through the editor's
-//! WorkManager -- which in a test runs only when told to, on a clock that
-//! moves when told to -- to check when it looks.
-//!
-//! The decisions are asymmetric on purpose, and the asymmetry is the whole
-//! feature. A buffer with nothing unsaved is reloaded silently, because that
-//! loses nothing and is the pleasant half. A buffer with unsaved edits is
-//! never touched by a background job under any circumstances -- it is marked,
-//! and the *save* asks. Every test below is about keeping those two apart,
-//! including in the window where a buffer becomes modified halfway through a
-//! check.
-//!
-//! Timestamps are set explicitly rather than waited for. A test that wrote a
-//! file twice and hoped the clock had moved would pass on a slow filesystem
-//! and fail on a fast one.
+//! Design: `doc/architettura-editor.typ, <lavori-editor>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, FileStamp, OnDisk, disk::compare, gap_buffer::GapBuffer};
@@ -47,11 +31,10 @@ mod tests {
             path.display().to_string()
         }
 
-        /// Write CONTENTS as something *else* would: new bytes, and a
-        /// timestamp that is definitely not the one recorded.
-        ///
-        /// Set rather than waited for, because the granularity of a
-        /// filesystem's clock is not something a test should depend on.
+        /// Writes CONTENTS as something else would: new bytes, and a
+        /// timestamp that is not the one recorded, set rather than waited for,
+        /// since a test must not depend on the granularity of a filesystem's
+        /// clock.
         fn rewrite(&self, name: &str, contents: &str) {
             let path = self.0.join(name);
             std::fs::write(&path, contents).expect("rewriting");
@@ -95,7 +78,7 @@ mod tests {
         }
     }
 
-    /// One turn of the watcher, over every buffer.
+    /// Runs one turn of the watcher over every buffer.
     fn sweep(ctx: &Ctx) {
         ctx.watch_files_turn(0);
     }
@@ -109,13 +92,9 @@ mod tests {
         ctx.with_buffer(name, |buf| buf.stale).unwrap_or(false)
     }
 
-    /// Type INSERT into NAME's buffer the way a person would.
-    ///
-    /// Through the real editing path rather than by poking `text` and setting
-    /// the flag, because the two are not the same: a real edit also bumps the
-    /// version, and the version is what the watcher's store step compares. A
-    /// helper that skipped it would let a test pass against a guard that does
-    /// not work.
+    /// Types INSERT into NAME's buffer the way a person would, through the
+    /// real editing path: a real edit also moves the version, which is what
+    /// the watcher's store step compares.
     fn dirty(ctx: &Ctx, name: &str, insert: &str, env: &Arc<Env<Ctx>>) {
         assert_eq!(
             ctx.get_current_buffer_name(),
@@ -443,9 +422,9 @@ mod tests {
     // Where point ends up
     //
     // A reload replaces the text wholesale, and a fresh text starts with its
-    // cursor at the top -- so a reload that asked where point was *after*
-    // swapping the text in sent every reader back to line one. These pin the
-    // promise instead: same line and column, clamped to the new text.
+    // cursor at the top, so a reload that asked where point was after
+    // swapping the text in would send every reader back to line one. These
+    // pin the promise: same line and column, clamped to the new text.
     // ----------------------------------------------------------------
 
     fn point(ctx: &Ctx, name: &str) -> (usize, usize) {
@@ -632,17 +611,18 @@ mod tests {
         let (ctx, _env) = editor();
         let (next, looked_at) = ctx.watch_files_turn(0);
         assert!(
-            next <= crate::modes::watcher::FILES_PER_TURN,
+            next <= crate::jobs::watcher::FILES_PER_TURN,
             "a turn advanced the cursor by more than its batch: {next}"
         );
-        assert!(looked_at <= crate::modes::watcher::FILES_PER_TURN);
+        assert!(looked_at <= crate::jobs::watcher::FILES_PER_TURN);
     }
 
     // ----------------------------------------------------------------
     // On its own schedule
     // ----------------------------------------------------------------
 
-    /// SPAN of the editor's work, the clock moved for it rather than waited.
+    /// Runs SPAN of the editor's work, moving the clock for it rather than
+    /// waiting.
     fn wait(ctx: &Ctx, span: Duration) {
         ctx.work().run_for(ctx, span);
     }
@@ -676,8 +656,8 @@ mod tests {
 
     #[test]
     fn a_changed_interval_counts_from_the_next_look() {
-        // It used to be read once, when the job was scheduled -- before
-        // init.lisp had been read, so setting it there never did anything.
+        // Read at every step, so that setting it, in init.lisp or later,
+        // counts from the next look.
         let (ctx, env) = editor();
         run("(setq watch-file-interval 10)", &env, &ctx);
         wait(&ctx, Duration::from_millis(3100));
@@ -714,8 +694,8 @@ mod tests {
 
     #[test]
     fn an_interval_too_long_for_the_clock_does_not_stop_the_watcher() {
-        // A number Lisp accepts and a `Duration` cannot hold. Converting it was
-        // safe only while nothing read it after the editor had booted.
+        // A number Lisp accepts and a `Duration` cannot hold, read at a step:
+        // a very long time, not a panic.
         let (ctx, env) = editor();
         run(
             "(setq watch-file-interval 100000000000000000000000000)",

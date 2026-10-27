@@ -138,8 +138,8 @@ mod setting_tests {
     use crate::{
         buffer::gap_buffer::GapBuffer,
         editor::{EditorState, create_global_env},
-        modes::autosave::{AUTO_SAVE_INTERVAL, auto_save_interval},
-        modes::watcher::{WATCH_FILE_INTERVAL, watch_interval},
+        jobs::autosave::{AUTO_SAVE_INTERVAL, auto_save_interval},
+        jobs::watcher::{WATCH_FILE_INTERVAL, watch_interval},
     };
     use risp::{Env, Parser, eval};
     use std::sync::Arc;

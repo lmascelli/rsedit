@@ -1,26 +1,13 @@
-//! Auto-save: keeping a copy of work that has never been written.
+//! Auto-save, whose failures are silent until the copy is needed: the name of
+//! the copy as arithmetic, the decision to write it as a decision, when the
+//! copy is thrown away, getting the work back, and the job's own schedule.
 //!
-//! # What is worth testing here
-//!
-//! This is the only thing in the editor that helps when the editor *stops
-//! without being asked*, so its failures are all discovered at the worst
-//! possible moment and never before. Three of them are silent:
-//!
-//! - A copy that is never written, because the "has this changed" test was
-//!   wrong. Looks identical to a working feature until you need it.
-//! - A copy written for every buffer every turn, because the test was wrong
-//!   the other way. Costs a write every half minute per open file, forever,
-//!   and nothing complains.
-//! - Two files sharing one copy, because the naming did not account for two
-//!   `main.rs` in different directories. Recovers the wrong work.
-//!
-//! So these check the naming as arithmetic, the decision to write as a
-//! decision, and the lifetime of the file at each end.
+//! Design: `doc/architettura-editor.typ, <lavori-editor>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
-    use crate::modes::autosave::auto_save_path;
+    use crate::jobs::autosave::auto_save_path;
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -50,7 +37,7 @@ mod tests {
             dir.display().to_string()
         }
 
-        /// What the auto-save file beside NAME holds, if there is one.
+        /// Returns what the auto-save file beside NAME holds, if there is one.
         fn copy_beside(&self, name: &str) -> Option<String> {
             std::fs::read_to_string(self.0.join(format!("#{name}#"))).ok()
         }
@@ -99,7 +86,7 @@ mod tests {
         }
     }
 
-    /// One turn of the auto-saver over every buffer.
+    /// Runs one turn of the auto-saver over every buffer.
     fn sweep(ctx: &Ctx, directory: Option<&str>) {
         ctx.auto_save_turn(0, directory);
     }
@@ -140,9 +127,10 @@ mod tests {
     }
 
     #[test]
-    fn a_path_containing_a_bang_cannot_collide_with_one_containing_a_separator() {
+    fn a_bang_inside_a_name_is_not_read_as_a_separator() {
         // Without doubling the literal `!`, `/a!b/c` and `/a/b/c` both flatten
-        // to `!a!b!c` and one buffer's recovery file is quietly another's.
+        // to `!a!b!c`, and one buffer's recovery file is quietly another's. A
+        // `!` beside a separator can still meet another path's (FIL-6).
         let bang = auto_save_path("/a!b/c", Some("/tmp"));
         let slash = auto_save_path("/a/b/c", Some("/tmp"));
         assert_ne!(bang, slash);
@@ -276,20 +264,20 @@ mod tests {
     }
 
     /// A ~ in the directory is the home directory, as in a path typed
-    /// anywhere else; it was taken as a directory called ~.
+    /// anywhere else.
     #[test]
     fn a_tilde_in_the_directory_is_the_home_directory() {
         let (ctx, env) = editor();
         run(r#"(setq auto-save-directory "~/saves")"#, &env, &ctx);
-        let directory = crate::modes::autosave::auto_save_directory(&env).expect("a directory");
+        let directory = crate::jobs::autosave::auto_save_directory(&env).expect("a directory");
         assert!(!directory.starts_with('~'), "{directory}");
         assert!(directory.ends_with("saves"), "{directory}");
         let _ = ctx;
     }
 
-    /// A turn writes up to four copies however many buffers are open. It
-    /// looked at four buffers, so with many open, a modified one waited
-    /// several turns for its copy.
+    /// A turn writes up to four copies however many buffers are open, so
+    /// that with many open a modified one does not wait several turns for its
+    /// copy.
     #[test]
     fn a_turn_is_not_used_up_by_buffers_that_need_no_copy() {
         let sandbox = Sandbox::new("many-buffers");
@@ -344,9 +332,9 @@ mod tests {
 
     #[test]
     fn killing_a_modified_buffer_keeps_the_copy() {
-        // `kill-buffer` does not yet ask, so the copy left behind is the only
-        // remaining trace of the work. Deleting it here would turn one
-        // un-asked keystroke into a permanent loss.
+        // `kill-buffer` asks first about a modified buffer, so here it is still
+        // open; closed without saving, it keeps the copy too, which may be all
+        // that is left of the work.
         let sandbox = Sandbox::new("kill-dirty");
         let path = sandbox.file("a.txt", "on disk");
         let (ctx, env) = editor();
@@ -493,7 +481,8 @@ mod tests {
     // On its own schedule
     // ----------------------------------------------------------------
 
-    /// SPAN of the editor's work, the clock moved for it rather than waited.
+    /// Runs SPAN of the editor's work, moving the clock for it rather than
+    /// waiting.
     fn wait(ctx: &Ctx, span: Duration) {
         ctx.work().run_for(ctx, span);
     }
@@ -521,8 +510,8 @@ mod tests {
 
     #[test]
     fn a_changed_interval_counts_from_the_next_write() {
-        // It used to be read once, before init.lisp had been read, so setting
-        // it there never did anything.
+        // Read at every step, so that setting it, in init.lisp or later,
+        // counts from the next write.
         let sandbox = Sandbox::new("rhythm");
         let path = sandbox.file("a.txt", "on disk");
         let (ctx, env) = editor();

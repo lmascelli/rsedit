@@ -3,7 +3,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <uscire>`.
 use super::*;
-use crate::modes::autosave::auto_save_directory;
+use crate::jobs::autosave::auto_save_directory;
 use crate::primitives::files::write_buffer;
 use crate::primitives::{args, ask};
 use risp::{call_callable, eval};

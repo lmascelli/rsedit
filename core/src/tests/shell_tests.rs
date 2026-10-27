@@ -238,7 +238,7 @@ mod tests {
         ctx.work().run_until_idle(&ctx);
         let frame = ctx.snapshot(&env, 80, 24);
         let before = told.load(std::sync::atomic::Ordering::SeqCst);
-        let soon = crate::modes::highlighter::TURN_INTERVAL;
+        let soon = crate::editor::TURN_INTERVAL;
         assert!(
             ctx.next_redraw_in(&env, &frame)
                 .is_none_or(|wait| wait > soon),

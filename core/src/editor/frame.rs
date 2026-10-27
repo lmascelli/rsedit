@@ -5,6 +5,14 @@
 
 use super::*;
 
+/// How often the host draws again while something changes the screen behind
+/// its back -- colour arriving, a shell command's output, a background job --
+/// and how long a Lisp worker's `(yield)` waits when it names no interval.
+///
+/// Short enough that colour follows typing without a visible lag, long enough
+/// that a burst of keystrokes is one frame's work rather than twenty.
+pub const TURN_INTERVAL: Duration = Duration::from_millis(40);
+
 impl<B: BufferTrait> EditorState<B> {
     /// Returns everything the host needs to draw one frame of SCREEN_WIDTH by
     /// SCREEN_HEIGHT cells: each window's rectangle, text, highlights, cursor

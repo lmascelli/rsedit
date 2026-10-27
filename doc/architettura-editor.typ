@@ -115,8 +115,9 @@ basso verso l'alto, cioè nella direzione in cui si costruisce.
   #group(0.1cm, 1.2cm, 16.0cm, 2.2cm, [uno strato: si usano a vicenda])
   #node(4.0cm, 1.9cm, 7.6cm, 0.7cm, [`editor/` --- `EditorState`, la facciata], fill: paper)
   #node(12.15cm, 1.9cm, 7.7cm, 0.7cm, [`primitives/` --- ciò che Lisp può chiamare])
-  #node(4.0cm, 2.85cm, 7.6cm, 0.7cm, [`modes/` --- modi e lavori che li servono])
-  #node(12.15cm, 2.85cm, 7.7cm, 0.7cm, [`feature/` --- minibuffer e isearch])
+  #node(2.77cm, 2.85cm, 5.13cm, 0.7cm, [`modes/` --- modi e lessici])
+  #node(8.1cm, 2.85cm, 5.13cm, 0.7cm, [`jobs/` --- i lavori dell'editor])
+  #node(13.43cm, 2.85cm, 5.13cm, 0.7cm, [`feature/` --- minibuffer, isearch])
   #node(8.1cm, 3.95cm, 15.8cm, 0.7cm, [`managers/` --- lo stato, in compartimenti, ognuno sotto un lock], fill: paper)
   #node(8.1cm, 4.95cm, 15.8cm, 0.7cm, [`ui/` --- la descrizione dello schermo: finestre, layout, facce, `FrameSnapshot`. Non disegna nulla])
   #node(4.0cm, 5.95cm, 7.6cm, 0.7cm, [`input.rs`, `commands.rs` --- tasti, keymap, comandi])
@@ -129,9 +130,9 @@ basso verso l'alto, cioè nella direzione in cui si costruisce.
 Fino a `managers/` le frecce sono omesse perché la regola è una sola: ogni
 livello può usare tutti quelli disegnati sotto di lui. `work/` non conosce
 l'editor: un buffer emette un suo argomento senza sapere chi lo ascolta
-(@argomenti). I quattro moduli in alto sono uno strato solo, non un ordine:
-si usano a vicenda --- `editor/` installa le primitive e avvia i lavori dei
-modi, che agiscono sull'editor --- e la mappa li elenca per ciò che sono.
+(@argomenti). I cinque moduli in alto sono uno strato solo, non un ordine:
+si usano a vicenda --- `editor/` installa le primitive e avvia i lavori, che
+agiscono sull'editor --- e la mappa li elenca per ciò che sono.
 L'interprete non è nella figura: è il crate `risp`, che non conosce l'editor;
 le sue espressioni compaiono da `input.rs` in su.
 
@@ -165,8 +166,9 @@ lì e nella mappa di `lib.rs`.
   [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`.],
   [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `work.rs`). Vedi @coppie.],
   [`primitives/`], [Le 318 primitive dell'editor, in 42 moduli, e `install_primitives`.],
-  [`modes/`], [`MajorMode`, grammatica di colorazione (`syntax.rs`), tabella sintattica e scanner di espressioni (`sexp.rs`), i lavori di sfondo `Highlighter`, `Prescanner`, `FileWatcher`, `AutoSaver`.],
-  [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale.],
+  [`modes/`], [`MajorMode` (`mod.rs`), la grammatica di colorazione (`grammar.rs`), la tabella sintattica (`syntax_table.rs`) e lo scanner delle espressioni, che la legge (`sexp.rs`) (@modi).],
+  [`jobs/`], [I lavori di sfondo dell'editor: `Highlighter`, `Prescanner`, `FileWatcher` e `AutoSaver` (@lavori-editor).],
+  [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale (@minibuffer).],
   [`work/`], [Il WorkManager: il nucleo dello scheduler, l'esecutore, il registro, i thread dedicati, il watchdog, gli argomenti e le opzioni (@sfondo).],
   [`ui/`], [Albero delle finestre, finestre flottanti, layout delle righe, facce e temi, `FrameSnapshot`.],
   [`tests/`], [Circa ottanta file di test dell'editor, più `perf/`.],
@@ -1507,12 +1509,13 @@ ricevendo il tipo come simbolo (`buffer`, `file`, …) e il prefisso.
 
 == Il minibuffer
 
-Il meccanismo del minibuffer è in Rust (`feature/minibuffer.rs`,
-`primitives/minibuffer.rs`) perché troppe cose ne dipendono --- `M-x`, `M-:`,
-gli argomenti dei comandi --- per affidarlo a un file Lisp che potrebbe
-mancare. L'aspetto, invece, è sostituibile: `minibuffer-read` chiama la
+Il meccanismo del minibuffer è in Rust perché troppe cose ne dipendono ---
+`M-x`, `M-:`, gli argomenti dei comandi --- per affidarlo a un file Lisp che
+potrebbe mancare. L'aspetto, invece, è sostituibile: `minibuffer-read` chiama la
 funzione contenuta in `*minibuffer-read-function*`, che per impostazione
-predefinita è `default-minibuffer-prompt`.
+predefinita è `default-minibuffer-prompt`. `feature/minibuffer.rs` installa
+`minibuffer-mode`, con i tasti e gli hook di un prompt, e tiene lo stato del
+prompt aperto e la storia; le primitive sono in `primitives/minibuffer.rs`.
 
 ```lisp
 (minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL [MODE [HISTORY-KEY]])
@@ -1534,11 +1537,15 @@ predefinita è `default-minibuffer-prompt`.
 buffer `*Minibuffer*`, #emph[al centro] del frame, larga `minibuffer-width` (60)
 e alta `minibuffer-height` (3) e ridotta se il terminale è più piccolo. Il
 centro è scelto perché il fondo dello schermo è occupato da altre strisce (i
-completamenti, la compilazione); alcuni commenti descrivono ancora un prompt
-agganciato in basso #rapporto("DOC-1"). Ogni prompt usa lo stesso buffer,
-`*Minibuffer*`: due prompt aperti insieme lo condividono #rapporto("MIN-1").
-`C-g` nel prompt resta `keyboard-quit`, che non lo chiude; lo chiude Esc
-#rapporto("MIN-2").
+completamenti, la compilazione); un commento di `src/tui.rs` descrive ancora un
+prompt agganciato in basso #rapporto("DOC-1"). Ogni prompt usa lo stesso
+buffer, `*Minibuffer*` (`PROMPT_BUFFER`): due prompt aperti insieme lo
+condividono #rapporto("MIN-1"). `C-g` nel prompt resta `keyboard-quit`, che non
+lo chiude; lo chiude Esc #rapporto("MIN-2"). Ciò che Tab, la storia e un
+completamento scelto mettono nel prompt passa da `set_minibuffer_content`, che
+sostituisce solo il testo prima del punto e salta le porte delle modifiche
+#rapporto("MIN-3"), e lo fa nel buffer corrente, qualunque sia
+#rapporto("MIN-5").
 
 Un worker di sfondo non può aprire un prompt: `minibuffer-read` controlla
 `in_worker()` e rifiuta con un errore, perché il tasto che risponderebbe
@@ -1552,8 +1559,9 @@ il prompt è aperto --- ogni carattere scritto, ogni cancellazione --- provoca
 un giro di `isearch-update`, che ripete la ricerca e sposta il punto. Non serve
 un ciclo «leggi un tasto», che in rsedit non esiste. Le primitive sono in
 `primitives/isearch.rs`: i quattro comandi che cominciano una ricerca e ciò su
-cui gira una ricerca aperta; dove va il punto e che cosa dice il prompt sono in
-`feature/isearch.rs`, con `isearch-mode`.
+cui gira una ricerca aperta. Dove va il punto, che cosa è scritto nel prompt e
+come si prepara una ricerca sono in `feature/isearch.rs`, con `isearch-mode` e
+`case_fold`, la sola lettura di `case-fold-search`.
 
 #key[
   Mentre il prompt è aperto il buffer corrente è il minibuffer. Tutto ciò che
@@ -1563,6 +1571,63 @@ cui gira una ricerca aperta; dove va il punto e che cosa dice il prompt sono in
   `an_isearch_searches_the_file_not_the_prompt` esiste per questo. Lo stato della
   sessione e l'algoritmo di ricerca sono descritti nel @testo.
 ]
+
+== Le decisioni <decisioni-minibuffer>
+
++ *Il minibuffer e la ricerca incrementale sono in Rust.* La politica
+  dell'editor sta in `core/lisp/`, dove si ridefinisce o si toglie; queste due
+  sono le eccezioni, per la stessa ragione: troppe cose ne dipendono. `M-x`,
+  `M-:`, `find-file`, la ricerca e la sostituzione sono un prompt con una
+  callback diversa, e un file che non si carica lascerebbe un editor che non sa
+  fare una domanda. La keymap di `isearch-mode` è la prima consultata mentre il
+  prompt è aperto, e senza di lei i tasti non vorrebbero dire ciò che il prompt
+  dice. Una terza candidata dovrebbe portare lo stesso argomento: «sarebbe più
+  veloce in Rust» non lo è.
++ *Il meccanismo in Rust, l'aspetto sostituibile.* `minibuffer-read` chiama la
+  funzione che `*minibuffer-read-function*` nomina, e ogni chiamante usa quella
+  che vi si mette: un meccanismo scritto in Rust non lega il prompt che si
+  vede. Scartato: un prompt fisso.
++ *Le primitive stanno in `primitives/`, senza eccezioni.* `feature/` tiene i
+  meccanismi che le primitive guidano e i modi che ognuna installa: una keymap
+  che deve esistere qualunque cosa si carichi è un fatto dello stesso tipo dei
+  meccanismi che lega. Così «dov'è definita questa primitiva» ha sempre la
+  stessa risposta.
++ *Le variabili del prompt si scrivono con `setq`.* `Env::set_variable` crea
+  sempre un legame nuovo nell'ambiente che riceve: da una primitiva chiamata con
+  un ambiente suo, il globale, `*minibuffer-on-confirm*` per esempio,
+  resterebbe nascosto alle letture che seguono. `setq` aggiorna il legame dove
+  sta, e ne crea uno solo se non c'è.
++ *La storia di un prompt sta sotto il suo testo.* Ogni prompt ha una storia
+  senza che un solo chiamante cambi: `M-x`, `find-file`, `switch-to-buffer` e
+  ciò che un modulo chiede sono tutti `minibuffer-read`, e una storia solo per
+  chi la chiede sarebbe una storia su cui non si conta. Costa che due prompt
+  con le stesse parole condividano un anello, che di solito è giusto, e
+  HISTORY-KEY lo evita. Il cammino nella storia si dimentica quando un prompt
+  si apre e quando si chiude; le voci restano.
++ *La storia in tre grafie, senza condizioni.* `C-p` e `C-n`, che in un prompt
+  di una riga non hanno altro da fare; `M-p` e `M-n`, quelli di Emacs; le
+  frecce. La striscia dei completamenti lega `C-n`, `C-p` e le frecce con una
+  keymap transitoria, consultata prima di ogni altra (@keymap): mentre è aperta
+  li prende lei, e quando si chiude tornano al prompt. Nessuna delle due guarda
+  l'altra, ed è la sola soluzione che resta vera quando una terza vorrà gli
+  stessi tasti.
++ *La ricerca incrementale è un modo del prompt.* Non c'è una lettura bloccante
+  di un tasto: i tasti arrivano uno per giro del ciclo degli eventi, e il ciclo
+  «leggi, estendi, cerca» non si scrive come un ciclo. Il `post-command-hook`
+  scatta una volta per comando, dopo, e solo nel modo del buffer corrente: è «il
+  modello può essere cambiato, guarda di nuovo». Un modo suo perché
+  `minibuffer-mode` è di tutti i prompt, e un hook appeso lì dovrebbe chiedersi
+  ogni volta se il prompt è il suo. Non sostituisce il minibuffer: Invio ed Esc
+  restano i suoi comandi, e la chiusura passa da `minibuffer-cleanup`.
++ *Il buffer cercato si nomina.* Mentre il prompt è aperto il buffer corrente è
+  il prompt, e tutto ciò che riguarda la ricerca lavora sul buffer che la
+  sessione nomina: è la cosa che una modifica sbaglierebbe più facilmente.
++ *`case-fold-search` si legge in un posto solo.* La ricerca incrementale, la
+  sostituzione, occur, grep e `scan-buffer` leggono la stessa variabile con la
+  stessa funzione: una variabile che due comandi leggessero in modo diverso
+  sarebbe peggio di qualunque valore predefinito. Non legata vale attiva, così
+  un file che non si carica non spegne per omissione la ricerca senza
+  maiuscole.
 
 // ===========================================================================
 = I buffer <buffer>
@@ -2657,7 +2722,7 @@ sostituito.
 == Il modo maggiore
 
 Un buffer ha un solo modo maggiore, nominato in `current_mode`. Il modo è un
-`MajorMode` nel registro di `Modes`:
+`MajorMode` (`modes/mod.rs`) nel registro di `Modes`:
 
 #ref-table(
   columns: (4.6cm, 1fr),
@@ -2666,7 +2731,7 @@ Un buffer ha un solo modo maggiore, nominato in `current_mode`. Il modo è un
   [`grammar`], [Regole e regioni di colorazione (`add-syntax-rule`, `add-syntax-region`).],
   [`hooks`], [Hook per nome (`post-command-hook`, `post-self-insert-hook`, `after-close-hook`, …), aggiunti con `(add-hook MODO NOME FUNZIONE)`.],
   [`completion_functions`], [Le fonti di `completion-at-point` per questo modo.],
-  [`syntax_table`], [Delimitatori, stringhe, commenti, quote dei caratteri: ciò che legge lo scanner delle espressioni.],
+  [`syntax_table`], [Delimitatori, stringhe, commenti, quote dei caratteri: ciò che legge lo scanner delle espressioni; `None` per la tabella predefinita.],
 )
 
 `Modes` contiene inoltre la keymap globale, i completamenti globali, la lista
@@ -2695,13 +2760,24 @@ Il testo di un buffer viene letto in due modi diversi, per due domande diverse.
   #node(8.1cm, 0.5cm, 6.0cm, 0.8cm, [testo del buffer (versione N)], fill: paper)
   #carrow((6.5cm, 0.9cm), (4.0cm, 1.6cm))
   #carrow((9.7cm, 0.9cm), (12.2cm, 1.6cm))
-  #node(4.0cm, 2.1cm, 7.2cm, 1.0cm, [#strong[grammatica] (`modes/syntax.rs`)\ «che aspetto ha?» --- regex, riga per riga])
-  #node(12.2cm, 2.1cm, 7.2cm, 1.0cm, [#strong[tabella sintattica] (`modes/sexp.rs`)\ «che cosa è?» --- carattere per carattere])
+  #node(4.0cm, 2.1cm, 7.2cm, 1.0cm, [#strong[grammatica] (`modes/grammar.rs`)\ «che aspetto ha?» --- regex, riga per riga])
+  #node(12.2cm, 2.1cm, 7.2cm, 1.0cm, [#strong[tabella sintattica] (`modes/syntax_table.rs`)\ «che cosa è?» --- carattere per carattere])
   #node(4.0cm, 3.7cm, 7.2cm, 0.9cm, [`Highlighter` → `SyntaxCache` → facce sullo schermo], fill: accent.lighten(90%))
   #node(12.2cm, 3.7cm, 7.2cm, 0.9cm, [`Prescanner` → `ScanCache` → `forward-sexp`,\ indentazione, `syntax-ppss`, `electric-pair`], fill: accent.lighten(90%))
   #carrow((4.0cm, 2.6cm), (4.0cm, 3.25cm))
   #carrow((12.2cm, 2.6cm), (12.2cm, 3.25cm))
 ]
+
+Le due descrizioni sono indipendenti: aggiungere una forma di stringa a un modo
+significa aggiungerla in entrambe. I file sono divisi allo stesso modo: le
+strutture in `modes/grammar.rs` e in `modes/syntax_table.rs`, e le primitive in
+`primitives/grammar.rs`, che dichiara la grammatica (`add-syntax-rule`,
+`add-syntax-region`), e in `primitives/syntax_table.rs`, che dichiara la
+tabella e dà le risposte dello scanner (`syntax-ppss`, `balance-point`,
+`bounds-of-enclosing-list`); `make-mode`, gli hook e `add-auto-mode` sono in
+`primitives/modes.rs`.
+
+=== La grammatica <grammatica>
 
 La #emph[grammatica] colora una riga alla volta portando uno stato da una riga
 all'altra: lo stato è la pila delle regioni aperte (un commento a blocchi che
@@ -2713,20 +2789,24 @@ posizione le regioni vengono prima delle regole. Così `// this /* is not` è un
 commento di riga e non apre un commento a blocchi. Le espressioni regolari
 sono quelle della crate `regex`, senza lookahead, lookbehind né
 backreference: per questo una regola può colorare solo un gruppo
-(`SyntaxRule::group`) e una regione può dichiarare una sequenza di escape.
+(`SyntaxRule::group`) e una regione può dichiarare una sequenza di escape. Se
+il gruppo non prende parte alla corrispondenza, o la regex non lo ha, si colora
+la corrispondenza intera #rapporto("SIN-7"). `highlight_line` colora una riga a
+partire dallo stato con cui vi si entra e restituisce quello con cui se ne
+esce; la applica l'evidenziatore (@lavori-editor).
+
+=== La tabella sintattica <tabella-sintattica>
 
 La #emph[tabella sintattica] dice quali caratteri aprono e chiudono liste,
 quali delimitano stringhe (`set-string-syntax`, anche multi-carattere come
 `r#"`), quali commenti (`set-comment-syntax`) e quale carattere quota un
-carattere (`set-char-quote`). Le due descrizioni sono indipendenti: aggiungere
-una forma di stringa a un modo significa aggiungerla in entrambe. Le primitive
-sono divise allo stesso modo: `primitives/grammar.rs` dichiara la grammatica
-(`add-syntax-rule`, `add-syntax-region`), `primitives/syntax_table.rs` la
-tabella, e dà le risposte dello scanner (`syntax-ppss`, `balance-point`,
-`bounds-of-enclosing-list`); `make-mode`, gli hook e `add-auto-mode` sono in
-`primitives/modes.rs`.
+carattere (`set-char-quote`). Una stringa multi-carattere è uno #emph[stile]:
+l'apertura, la chiusura e se una barra rovesciata vi fa da escape, come nelle
+triple virgolette di Python e non in una stringa grezza. Ogni cambiamento dà
+alla tabella un'edizione nuova (`SyntaxTable::edition`), con cui le fotografie
+dello scanner dicono con quale tabella sono state prese (@riprendere).
 
-== Lo scanner delle espressioni
+== Lo scanner delle espressioni <scanner>
 
 `modes/sexp.rs` risponde alle domande sulla struttura del testo: dove finisce
 l'espressione dopo il punto (`forward-sexp`), dove comincia quella prima
@@ -2742,7 +2822,7 @@ transizioni:
   header: ([Stato], [Ci si entra da `Code` quando…], [Si torna a `Code` quando…]),
   [`Code`], [--- (stato iniziale)], [---],
   [`Str { quote, start }`], [si legge un carattere di classe `StringQuote`.], [si rilegge la stessa virgoletta; un carattere `Escape` fa saltare anche il successivo.],
-  [`StyledStr { style, start }`], [comincia un'apertura multi-carattere dichiarata con `set-string-syntax` (`r#"`, `"""`).], [si legge la chiusura dello stile. Nessun escape: in una stringa grezza `\` è solo `\`.],
+  [`StyledStr { style, start }`], [comincia un'apertura multi-carattere dichiarata con `set-string-syntax` (`r#"`, `"""`).], [si legge la chiusura dello stile. Una barra rovesciata fa da escape solo se lo stile lo dice: in una stringa grezza `\` è solo `\`.],
   [`Comment { style, depth, start }`], [comincia un'apertura di commento di `set-comment-syntax` (vince la più lunga).], [riga: al `\n`. Blocco: alla chiusura con `depth` 0; se lo stile è `nestable` un'altra apertura incrementa `depth`.],
 )
 
@@ -2771,8 +2851,9 @@ pub struct Scan<'a, B: BufferTrait> {
 testo è finito (`End`). In stato `Code` l'ordine dei controlli conta:
 
 + Un'apertura di commento (la più lunga che corrisponde) entra in `Comment` e
-  scarta un prefisso in attesa. Anche un commento completato conta come
-  espressione, così `forward-sexp` lo scavalca.
+  scarta un prefisso in attesa. Un commento a blocchi completato conta come
+  espressione, e `forward-sexp` si ferma alla sua fine; uno di riga si passa
+  come uno spazio #rapporto("SIN-9").
 + Un'apertura di stringa multi-carattere viene prima dei caratteri singoli,
   perché contiene virgolette che altrimenti aprirebbero una stringa normale.
 + Un letterale di carattere (`'a'`, `'"'`) è un'unica espressione. Il `'` non ha
@@ -2796,22 +2877,22 @@ tiene al massimo `keep`. È il limite che rende la scansione economica:
 #ref-table(
   columns: (4.0cm, 1fr),
   header: ([Funzione], [Come usa la scansione]),
-  [`forward(from, n)`], [Scansione fino a `from`, poi passi finché non si completano `n` espressioni #emph[allo stesso livello] che finiscono dopo `from`. Se la lista finisce prima, il punto non si muove: alla fine di una lista il comando non esce verso l'esterno #rapporto("SIN-6").],
+  [`forward(from, n)`], [Scansione fino a `from`, poi passi finché non si completano `n` espressioni #emph[alla profondità di `from`] che finiscono dopo `from`; se il testo finisce prima, il punto non si muove. Da dentro un simbolo il conteggio salta il simbolo #rapporto("SIN-6"), e oltre la fine della lista di `from` prosegue nelle liste che seguono #rapporto("SIN-8").],
   [`backward(from, n)`], [Scansione fino a `from` con `keep = n`; il frame rimasto aperto è la lista in cui si trova il punto, e i suoi `children` sono i fratelli prima del punto. Restituisce l'inizio dell'N-esimo dal fondo, prefisso incluso.],
-  [`down(from)`], [Scansione finché la profondità non supera quella di partenza: il punto è appena entrato in una lista.],
+  [`down(from)`], [Scansione finché la profondità non supera quella di partenza: il punto è appena entrato in una lista. Oltre la fine della lista di `from` la trova in una lista annidata in una che segue #rapporto("SIN-8").],
   [`context_at(pos)`], [Scansione fino a `pos`, poi `context()`: profondità, inizio e delimitatore della lista più interna, inizio della stringa o del commento in corso. È ciò che restituisce `syntax-ppss`.],
   [`balance_point(pos)`], [La prima posizione dopo `pos` in cui tutte le liste aperte in `pos` sono chiuse. Non chiede se il buffer è bilanciato alla fine: una funzione chiusa resta chiusa anche se quella sotto è ancora da finire.],
   [`enclosing(pos)`], [La lista più interna che contiene `pos`, per intero (fino alla fine del testo se non è chiusa); `None` al livello zero.],
 )
 
-=== Riprendere da metà: `Resume` e il `Prescanner`
+=== Riprendere da metà: `Resume` e il `Prescanner` <riprendere>
 
 Andare all'indietro non si può fare localmente: se una `)` prima del punto sia
 codice o testo dipende da tutto ciò che la precede, perché una stringa aperta
 duecento righe sopra la rende testo. Quindi ogni scansione va in avanti, e può
-cominciare solo in una posizione di cui si conosce lo stato. All'inizio
-quella posizione era solo la 0; ora `Scan::begin` accetta un `Resume`, una
-fotografia dello stato presa prima:
+cominciare solo in una posizione di cui si conosce lo stato: l'inizio del
+buffer, o un `Resume`, una fotografia dello stato presa prima, che
+`Scan::begin` accetta:
 
 #estratto("modes/sexp.rs")[
 ```rust
@@ -2835,16 +2916,25 @@ completa, non una risposta sbagliata. Le fotografie sono prese senza i
 riprende mai e scansiona sempre dall'inizio del buffer.
 
 Le fotografie le produce il `Prescanner`, un lavoro di sfondo come
-l'evidenziatore (@sfondo). Ne prende una ogni `LINES_PER_CHECKPOINT` (64)
-righe, all'inizio delle righe 64, 128, 192… (`checkpoint_line`), e le salva
-nella `ScanCache` del buffer insieme alla versione del testo e al nome del
-modo. Una fotografia presa con la tabella di un altro modo sarebbe una risposta
-sbagliata che sembra giusta, e per questo il modo è controllato. Dopo una
+l'evidenziatore, in `jobs/prescan.rs` (@lavori-editor). Ne prende una ogni
+`LINES_PER_CHECKPOINT` (64) righe, all'inizio delle righe 64, 128, 192…
+(`checkpoint_line`), e le salva nella `ScanCache` del buffer insieme alla
+versione del testo, al nome del modo e all'edizione della tabella con cui le ha
+prese. Una fotografia presa con un'altra tabella sarebbe una risposta sbagliata
+che sembra giusta, e per questo modo ed edizione sono controllati. Dopo una
 modifica alla riga L, `invalidate_from` tiene le fotografie delle righe fino a L
 (lo stato all'ingresso di una riga dipende solo dal testo prima) e scarta le
 altre; `record` accetta solo la fotografia successiva all'ultima valida.
-`Buffer::scan_resume(pos)` sceglie quella della riga multipla di 64 più vicina
-sotto `pos`, se versione e modo corrispondono.
+`Buffer::scan_resume(pos, table)` sceglie quella della riga multipla di 64 più
+vicina sotto `pos`, se versione, modo ed edizione corrispondono. A differenza
+dell'evidenziatore, il `Prescanner` scandisce con il lock di lettura del buffer
+preso.
+
+Lo scanner è una funzione pura del testo, della tabella e di una posizione:
+`sexp_tests` lo prova con tabelle costruite in Rust, senza buffer né registro
+dei modi, e poi che un modo sa dire tutto ciò da Lisp; `balance_point_tests`,
+`char_quote_tests` e `raw_string_tests` lo provano come lo incontra un utente,
+con `electric-pair`, e `scan_cache_tests` prova le fotografie.
 
 == Facce e temi <facce>
 
@@ -2858,6 +2948,113 @@ associa a ogni faccia uno `Style` (colori di primo piano e sfondo, grassetto,
 corsivo, sottolineato, inverso). I colori sono richieste --- un nome o
 `#rrggbb` --- e il front-end decide come approssimarli (@frame). Le primitive
 sono in `primitives/theme.rs`.
+
+== Le decisioni <decisioni-modi>
+
++ *Una riga alla volta, con uno stato portato da una riga all'altra.* Un
+  commento aperto alla riga 10 e chiuso alla 40 colora tutto ciò che sta in
+  mezzo, quindi una riga non si colora da sola. I modelli sul buffer intero
+  sarebbero corretti, ma non incrementali: una corrispondenza può cominciare
+  arbitrariamente lontano. Con lo stato all'ingresso di ogni riga in una cache,
+  ricolorare dopo una modifica costa quanto la modifica, non quanto il file.
++ *Vince la corrispondenza più a sinistra.* Tutti i modelli attivi si provano
+  insieme, in un solo passaggio da sinistra a destra. Scartato: prima le
+  regioni, poi le regole, che è l'implementazione ovvia ed è sbagliata: in
+  `// this /* is not` aprirebbe un commento a blocchi che inghiotte il resto del
+  file.
++ *Niente lookahead: gruppi ed escape.* `regex` non ha lookahead, lookbehind né
+  backreference, ed è così che garantisce un tempo lineare. Ciò che
+  servirebbero a fare lo fanno `SyntaxRule::group`, che colora il nome di una
+  chiamata senza la parentesi che lo segue, e `SyntaxRegion::escape`, che dice
+  alla regione che cosa, simile alla fine, non lo è.
++ *Due lessici, ciascuno per la sua domanda.* La grammatica dice che aspetto ha
+  il testo, a regex e riga per riga; la tabella che cosa è, carattere per
+  carattere. Un modo dichiara una forma in tutti e due.
++ *Le forme del linguaggio si dichiarano nella tabella, non in chi la legge.*
+  Commenti a blocchi, letterali di carattere e stringhe grezze hanno avuto lo
+  stesso difetto: la grammatica conosceva una costruzione che la tabella
+  ignorava, e un delimitatore dentro di essa contava. Dichiarata nella tabella,
+  la forma vale per chiunque la legga: `forward-sexp`, l'indentazione,
+  `syntax-ppss`, `electric-pair`. Scartato: correggere `electric-pair`.
++ *Le stringhe multi-carattere sono stili, non classi.* La classe
+  `StringQuote` dice «questo carattere apre una stringa e lo stesso la chiude»,
+  che vale per le virgolette doppie e per nient'altro: una stringa grezza di Rust
+  apre con tre caratteri e chiude con due, una di Python apre con tre, e il
+  primo è già una virgoletta. Vince l'apertura più lunga, così quella di una
+  stringa grezza vince sulla virgoletta con cui comincia, e lo stile si prova
+  prima delle classi.
++ *Il quote dei caratteri è una regola che guarda avanti, non una classe.* `'`
+  quota un carattere in `'a'`, apre una lifetime in `'static` ed è un apostrofo
+  nella prosa, mentre una classe dice che cosa un carattere è una volta per
+  tutte. Come `StringQuote` inghiottirebbe il file dalla prima lifetime; come
+  `Escape` mangerebbe la virgoletta che chiude `"it's"`, perché gli escape
+  valgono anche nelle stringhe. Un letterale è tale solo se si chiude dopo un
+  carattere, con o senza escape.
++ *Si conta un delimitatore solo quando lo si legge come codice.* In
+  `(message "close it with )")` tre parentesi su quattro sono testo, e una
+  risposta che non sa dove stanno stringhe e commenti non fallisce: sposta il
+  cursore in un punto strano, in silenzio. Per questo lo scanner fa un'analisi
+  lessicale invece di contare.
++ *Sempre in avanti, da uno stato noto.* Andare avanti si potrebbe fare
+  localmente, all'indietro no: se una `)` prima del punto sia codice dipende da
+  tutto ciò che la precede, e gli stessi caratteri letti da destra sono
+  ambigui. Le due direzioni fanno lo stesso lessico in avanti, dall'inizio del
+  buffer o da una fotografia.
++ *Una sola porta per l'inizio di una scansione.* `Scan::begin` è il solo punto
+  che sceglie dove una scansione comincia, e la cache arriva lì: i movimenti
+  sono la stessa scansione con domande diverse, e nessuno è cambiato per
+  diventare economico. Una fotografia oltre la domanda si ignora: è una
+  scorciatoia, mai un sostituto, e una che non va bene costa una scansione
+  intera, non una risposta sbagliata.
++ *La fotografia è lo stato intero.* Ricordare solo la profondità sarebbe
+  tentante, ma una `)` è una chiusura o un carattere di una stringa secondo ciò
+  che la scansione sta leggendo, e quanto arriva una lista dipende da dove era
+  la sua apertura: una scansione ripresa da una profondità risponderebbe a
+  `syntax-ppss` con posizioni inventate. Lo stato è piccolo, e tenerlo intero è
+  la sola versione giusta.
++ *Senza i figli dei frame, e `backward` non riprende.* I figli sono ciò che
+  legge `backward-sexp`, e quanti se ne tengono dipende dal `keep` di chi ha
+  avviato la scansione: una fotografia presa con un `keep` risponderebbe in
+  silenzio a un'altra domanda con un altro. Una scansione ripresa conosce la
+  forma delle liste in cui è, non ciò che vi ha passato.
++ *Il punto di equilibrio, non il bilancio del buffer.* `electric-pair`, visto
+  un `{`, deve sapere se ha già una chiusura. Chiedere se la lista più interna è
+  chiusa sbaglia: un `{` nuovo in un blocco già chiuso sembra aver preso la
+  chiusura di fuori, e la coppia si rifiuta dove serve. Chiedere se il buffer
+  intero è bilanciato sbaglia: ciò che si sta scrivendo sotto tiene la
+  profondità sopra zero alla fine, e un `{` con la chiusura alla riga dopo
+  risulta aperto. `balance_point` chiede se la profondità torna a zero più
+  avanti, e si ferma al primo punto di equilibrio: da dentro una funzione,
+  decine di righe e non migliaia.
++ *Un file sbilanciato si scandisce lo stesso.* Una chiusura che non
+  corrisponde all'apertura la chiude lo stesso, e una chiusura senza niente di
+  aperto è testo: un file è sbilanciato per tutto il tempo in cui lo si scrive,
+  e uno scanner che si fermasse lì sarebbe inutile proprio quando serve. Il
+  frame più esterno è il buffer, e non si toglie mai.
++ *La prescansione riempie la cache, non i movimenti.* Riempirla dai movimenti
+  vorrebbe il lock di scrittura del buffer sul percorso dei tasti, in mezzo al
+  Lisp, per far funzionare una cache. Il lavoro di sfondo fa un pezzo limitato
+  per passo, svegliato da una modifica o da una tabella che cambia, e chi legge
+  prende ciò che è pronto e scandisce il resto da sé: senza una fotografia non
+  sbaglia, va solo più piano.
++ *La prescansione legge sotto il lock di lettura.* L'evidenziatore copia le
+  righe e lavora senza lock; lo scanner no, perché lavora in offset assoluti,
+  che le fotografie registrano, e non gli si può dare una lista di righe
+  staccate. Dargli il testo vuol dire dargli il buffer, che non si copia: una
+  copia a ogni turno costerebbe quanto la cache risparmia, e `GapBuffer::clone`
+  è un `todo!()` #rapporto("BUF-3"). Lo rende accettabile la misura del lavoro:
+  un turno di `LINES_PER_TURN` righe di lessico carattere per carattere, senza
+  allocazioni né regex, sono microsecondi, e un lock di lettura blocca solo chi
+  scrive.
++ *Le fotografie portano la versione, il modo e l'edizione della tabella.* Il
+  lock si rilascia tra la scansione e il salvataggio, e nel frattempo il testo o
+  il modo possono cambiare: si salva solo se sono ancora quelli letti. Una
+  fotografia presa con un'altra tabella non è una scorciatoia ma una risposta
+  sbagliata dall'aria giusta, e chi scandisce con un'altra tabella non la
+  riceve.
++ *Gli hook e le fonti di completamento stanno nel modo.* Una variabile sarebbe
+  una lista per tutti i buffer, e ciò che si completa in un buffer Lisp non è
+  ciò che si completa in un elenco di directory.
 
 // ===========================================================================
 = Il lavoro in background <sfondo>
@@ -3476,7 +3673,7 @@ altre a chi scrive in Lisp.
 
 == Gli utenti del WorkManager <utenti-sfondo>
 
-=== I lavori dell'editor
+=== I lavori dell'editor <lavori-editor>
 
 #ref-table(
   columns: (2.8cm, 1.8cm, 4.4cm, 1fr),
@@ -3487,7 +3684,7 @@ altre a chi scrive in Lisp.
   [`auto-saver`], [normale, file], [`auto-save-interval` (30 s) dopo l'avvio e dopo ogni passo], [scrive la copia di al più 4 buffer modificati],
 )
 
-Il codice è in `modes/`: `highlighter.rs`, `prescan.rs`, `watcher.rs` e
+Il codice è in `jobs/`: `highlighter.rs`, `prescan.rs`, `watcher.rs` e
 `autosave.rs`.
 
 Evidenziatore e prescansione sono sottomessi in `EditorState::new`: un lavoro
@@ -3500,7 +3697,7 @@ dell'editor che va in panic non torna fino alla fine della sessione
 
 Il passo dell'evidenziatore è il modello per scriverne altri:
 
-#estratto("modes/highlighter.rs")[
+#estratto("jobs/highlighter.rs")[
 ```rust
 impl<B: BufferTrait> Job<EditorState<B>> for Highlighter {
     fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
@@ -3518,15 +3715,27 @@ impl<B: BufferTrait> Job<EditorState<B>> for Highlighter {
 
 `highlight_one_turn` copia sotto lock le righe da colorare, lo stato del
 lessico all'inizio della prima e la versione del buffer; colora senza lock;
-riprende il lock e salva solo se la versione e il modo sono ancora quelli
-copiati. Un carattere digitato nel frattempo rende inutile il turno, che il
-passo successivo rifà dalla riga cambiata. Lo stesso schema regge la
-prescansione, che però legge le righe sotto il lock di lettura perché la
-scansione è veloce, il controllo dei file e il salvataggio automatico. Il costo
-di una riga
-cresce più che linearmente con la sua lunghezza #rapporto("SIN-2"), e una
-regione di sintassi che corrisponde alla stringa vuota fa un passo che non
-finisce: il watchdog lo segnala, ma l'esecutore resta fermo #rapporto("SIN-1").
+riprende il lock e salva solo se la versione, il modo e l'edizione delle
+grammatiche sono ancora quelli copiati, e una cache di un altro modo o di
+un'altra grammatica si ricolora dall'inizio. Un carattere digitato nel
+frattempo rende inutile il turno, che il passo successivo rifà dalla riga
+cambiata. Lo stesso schema regge la prescansione, che però legge le righe sotto
+il lock di lettura perché la scansione è veloce (@riprendere), il controllo dei
+file e il salvataggio automatico. Il costo di una riga cresce più che
+linearmente con la sua lunghezza #rapporto("SIN-2"), e una regione di sintassi
+che corrisponde alla stringa vuota fa un passo che non finisce: il watchdog lo
+segnala, ma l'esecutore resta fermo #rapporto("SIN-1").
+
+Il controllo dei file confronta il timbro del file su disco (`FileStamp`,
+l'istante della modifica e la lunghezza) con quello registrato quando l'editor
+lo ha letto o scritto l'ultima volta. Un buffer senza modifiche si ricarica;
+uno con modifiche, o che cambia mentre il file si legge, si segna come superato
+(`stale`), e il salvataggio successivo chiede. Il salvataggio automatico scrive
+una copia del buffer, `#nome#` accanto al file o in `auto-save-directory` con il
+percorso appiattito nel nome #rapporto("FIL-6"), quando la versione è cambiata
+dall'ultima copia; la scrive sul posto #rapporto("FIL-2"), e un tentativo
+fallito conta come fatto #rapporto("FIL-5"). È la copia che `recover-file`
+rilegge.
 
 === I comandi di shell e le ricerche <comandi-shell>
 
@@ -3654,7 +3863,7 @@ fotografia. La TUI la usa per svegliare il suo ciclo.
 
 `next_redraw_in(&env, &frame)` è poi il minimo tra: la scadenza del messaggio
 nell'area messaggi (`echo-message-timeout`, 5 s; `nil` non scade mai);
-`TURN_INTERVAL` (40 ms) se la colorazione è in corso; il tempo che manca perché
+`TURN_INTERVAL` (40 ms, in `editor/frame.rs`) se la colorazione è in corso; il tempo che manca perché
 sia passato un `TURN_INTERVAL` dall'ultima fotografia, se un lavoro ha cambiato
 qualcosa da allora (`BackgroundChange::due_in`), così un lavoro che fa un passo
 al millisecondo non ridisegna il terminale a ogni passo; zero se ci sono
@@ -3687,6 +3896,17 @@ Gli altri strumenti:
   nome del WorkManager, e dopo `shutdown` non ne trova più.
 - *Gli argomenti alla fonte.* `topic_source_tests` conta ciò che ogni fonte
   emette, e segue una modifica fino al lavoro che sveglia.
+- *I lavori dell'editor, un turno per chiamata.* `syntax_tests`,
+  `scan_cache_tests`, `watcher_tests` e `autosave_tests` chiamano il turno di un
+  lavoro e guardano ciò che ha deciso; il calcolo e il salvataggio sono funzioni
+  separate (`store_turn`, `store_prescan`, `store_file_check`) perché un test
+  possa cambiare il buffer tra i due. I tempi dei file si impostano invece di
+  aspettarli: un test che scrivesse due volte un file sperando che l'orologio
+  si sia mosso passerebbe su un filesystem lento e fallirebbe su uno veloce.
+  I guasti del salvataggio automatico sono silenziosi --- una copia mai
+  scritta, una riscritta a ogni giro, due file con una copia sola --- e i test
+  provano il nome della copia come aritmetica, la decisione di scriverla come
+  una decisione, e la sua vita ai due capi.
 
 == Le decisioni <decisioni-sfondo>
 
@@ -3776,6 +3996,74 @@ Gli altri strumenti:
   il terminale non appartiene: un comando che apre il terminale, come una
   richiesta di password, viene fermato dal sistema invece di prendere i tasti
   dell'editor, e il `CONT` dopo il `TERM` fa sì che lo senta.
++ *Un lavoro solo per la colorazione, svegliato dai cambiamenti.* Un lavoro per
+  ogni modifica dovrebbe essere breve, o l'editor si inceppa, e «breve» è una
+  speranza, perché dipende dal file. Un lavoro che a ogni passo fa una quantità
+  limitata di lavoro è reattivo per costruzione: ciò che non ha finito è ciò con
+  cui comincia il passo dopo. E accorpa da sé: venti tasti in un secondo non
+  mettono in coda venti lavori, spostano venti volte lo stesso confine. Dorme
+  finché un buffer o una grammatica cambiano, e un editor che non ha niente da
+  colorare non lavora.
++ *Nessun lock mentre si colora.* Le righe si copiano sotto il lock, il lock si
+  rilascia, si colora, e il lock si riprende per salvare. Un lavoro che colorasse
+  sotto il lock bloccherebbe ogni tasto per tutto il tempo.
++ *Un risultato superato non si salva.* Il buffer può cambiare mentre il lavoro
+  è in corso, e gli intervalli calcolati sul testo vecchio descrivono colonne
+  che non vogliono più dire nulla: la versione si ricontrolla al momento di
+  salvare, non solo all'inizio. Né un cambio di modo né una regola aggiunta
+  toccano il testo, quindi la cache ricorda anche il modo e l'edizione delle
+  grammatiche con cui è stata calcolata.
++ *Una sola risposta a «è indietro?».* Il lavoro lo chiede per sapere se fare
+  un turno, la fotografia per sapere se il renderer può dormire: due risposte
+  separate potrebbero non concordare, e il renderer dormirebbe proprio durante il
+  colore che aspetta. La metà economica prima, un lock di buffer; il registro
+  dei modi solo per un buffer davvero indietro, per non metterlo sul percorso di
+  ogni fotografia. Un modo senza grammatica non è mai indietro, o un buffer di
+  testo semplice sveglierebbe il renderer per sempre.
++ *Il controllo dei file ricarica un buffer pulito, mai uno modificato.*
+  L'asimmetria è la funzionalità. Ricaricare un buffer senza modifiche non perde
+  nulla, e si cambia ramo trovando le finestre già aggiornate; ricaricarne uno
+  modificato perderebbe proprio ciò che questo lavoro protegge, e non lo decide
+  un lavoro di sfondo: il buffer si segna, e il salvataggio chiede. Un file
+  sparito non svuota il buffer, che è ora la sola copia.
++ *Pochi file per giro.* `stat` è una chiamata a un filesystem, che può
+  bloccarsi, e l'esecutore che fa girare il controllo colora anche: un giro
+  limitato mette tra l'utente e il suo colore al più `FILES_PER_TURN` attese.
+  Non limita il danno di un solo file bloccato, su un mount di rete morto, e qui
+  niente può: i rimedi sono spegnere il controllo (`watch-files`) o dare ai file
+  un thread loro, che è un progetto diverso, da scegliere apposta.
++ *Il giro è un indice nei nomi.* Il cursore indica una posizione nell'elenco
+  dei buffer com'è a ogni giro, quindi un buffer creato o chiuso sposta ciò che
+  viene dopo. Basta a un giro la cui sola promessa è che nessuno resti indietro:
+  ogni buffer si raggiunge in pochi giri, e ricordare un nome costerebbe una
+  ricerca a ogni giro per un'ingiustizia che nessuno vede.
++ *Le impostazioni si leggono a ogni passo.* Gli interruttori e gli intervalli
+  del controllo dei file e del salvataggio automatico si leggono a ogni passo,
+  come l'attesa che segue: valgono anche quando li cambia `init.lisp`, e spenti
+  parcheggiano il lavoro invece di chiuderlo, così si riaccende senza riavvio.
+  Non legati valgono accesi: ciò che protegge dal perdere lavoro non va chiesto.
+  I due lavori portano con sé l'ambiente, come un lavoro Lisp, perché le
+  impostazioni stanno lì.
++ *Una copia, non un backup.* Un backup è il contenuto precedente del file,
+  scritto una volta al primo salvataggio, e serve a chi ha rotto qualcosa e
+  l'ha salvato; una copia del salvataggio automatico è il contenuto attuale del
+  buffer, riscritto mentre si scrive, e serve quando l'editor si ferma senza che
+  glielo si chieda, per un crash o un terminale perso. File diversi, vite
+  diverse.
++ *`#nome#`, o il percorso intero in una directory.* `#nome#` accanto al file è
+  la convenzione nota. Con `auto-save-directory` tutte le copie vanno lì, con il
+  percorso nel nome, i separatori in `!` e il `!` raddoppiato, perché due
+  `main.rs` di directory diverse non si contendano un nome #rapporto("FIL-6").
+  Il nome non si rovescia, e non serve: il ripristino parte sempre da un
+  percorso che si ha, quello del buffer o uno scritto.
++ *La versione, non il segno di modifica.* «Modificato» resta vero dal primo
+  tasto al salvataggio, e un lavoro che scrivesse ogni buffer modificato a ogni
+  giro riscriverebbe per sempre uno che nessuno tocca. La versione si muove solo
+  con il testo: ricordare l'ultima scritta fa di «c'è qualcosa da salvare» un
+  confronto tra interi.
++ *Al più quattro copie per giro.* Una scrittura costa più di uno `stat`, e
+  l'esecutore colora anche. Il limite è sulle scritture, non sui buffer
+  guardati: una copia dovuta non aspetta quanti altri buffer sono aperti.
 
 // ===========================================================================
 = Lo schermo <frame>

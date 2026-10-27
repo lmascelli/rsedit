@@ -1406,7 +1406,7 @@ pub fn compose_layout<B: BufferTrait>(win: &Window, rect: &Rect, buffers: &Buffe
 /// showing.
 ///
 /// Reads the cache and clips; it never computes. Colouring happens on the
-/// worker (see [`crate::modes::highlighter`]), and a frame that lexed while
+/// worker (see [`crate::jobs::highlighter`]), and a frame that lexed while
 /// composing would be a frame that blocked on whatever file happened to be
 /// open.
 ///

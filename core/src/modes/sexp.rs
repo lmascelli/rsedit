@@ -1,58 +1,39 @@
-//! Balanced-expression scanning, driven by a mode's syntax table.
+//! The scanner of balanced expressions: a forward lex, driven by a mode's
+//! syntax table, that counts a delimiter only while it reads it as code, and
+//! answers where an expression ends or begins and what a position is inside.
+//! A scan starts at the top of the buffer, or at a [`Resume`] taken earlier.
 //!
-//! # Why this cannot be a paren count
-//!
-//! Three of the four parentheses in `(message "close it with )")` are text.
-//! Any answer that doesn't know where strings and comments are is wrong, and
-//! wrong *silently*  the cursor just lands somewhere strange. So this lexes:
-//! a three-state machine that never counts a delimiter it is not currently
-//! reading as code.
-//!
-//! # Why every scan starts at the top of the buffer
-//!
-//! Moving forward could be done locally. Moving backward cannot: whether the
-//! `)` before point is code or text depends on what came before it, arbitrarily
-//! far back  a string opened two hundred lines up makes it text  and the same
-//! characters read right-to-left are ambiguous.
-//!
-//! So both directions run the same forward lex, and the only offset a lex can
-//! start at is one whose state is known. [`Scan::begin`] is the single place
-//! that decides which, which is why making this cheap changed no caller: it now
-//! takes a [`Resume`] -- a state the scan reached earlier, kept per buffer by
-//! [`crate::buffer::scan::ScanCache`] and filled by the background job in
-//! [`crate::modes::prescan`] -- and carries on from there instead of from
-//! character zero. Given none, or one from beyond the position being asked
-//! about, it does what it always did and starts at the top.
+//! Design: `doc/architettura-editor.typ, <scanner>`.
 use crate::BufferTrait;
 use crate::modes::{CommentStyle, SyntaxClass, SyntaxTable};
 use std::collections::VecDeque;
 
-/// One expression: where it begins  prefix included  and where it ends.
+/// One expression: where it begins, prefix included, and where it ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sexp {
     pub start: usize,
     pub end: usize,
 }
 
-/// What point is inside. This is what `syntax-ppss` reports.
+/// What a position is inside, as `syntax-ppss` reports it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Context {
+    /// How many lists are open.
     pub depth: usize,
     /// Where the innermost still-open list begins.
     pub innermost: Option<usize>,
-    /// Where that list's *delimiter* is, as opposed to where its expression
-    /// begins.
-    ///
-    /// The two differ by any prefix: `'(a b)` is one expression starting at
-    /// the quote, but a line inside it lines up against the parenthesis.
-    /// Motion wants the first -- a kill should take the quote with it --
-    /// and indentation wants the second, and neither can be worked out from
-    /// the other without scanning again.
+    /// Where that list's delimiter is, as opposed to where its expression
+    /// begins: `'(a b)` begins at the quote. Motion wants the first, so that a
+    /// kill takes the quote with it, and indentation the second.
     pub innermost_delimiter: Option<usize>,
+    /// Where the string the position is in begins, if it is in one.
     pub string_start: Option<usize>,
+    /// Where the comment the position is in begins, if it is in one.
     pub comment_start: Option<usize>,
 }
 
+/// What the scan is reading: code, a string, a comment, or a string whose
+/// delimiters are more than one character.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum State {
     Code,
@@ -66,8 +47,8 @@ enum State {
         start: usize,
     },
     /// Inside a string whose delimiters are more than one character: a raw
-    /// string, a triple-quoted one. Nothing is escaped in here; only the
-    /// closer ends it.
+    /// string, a triple-quoted one. Only the closer ends it, and a backslash
+    /// escapes only in a style that says so.
     StyledStr {
         style: usize,
         start: usize,
@@ -77,35 +58,20 @@ enum State {
 /// One level of nesting, and the last few expressions completed inside it.
 #[derive(Clone, Debug)]
 struct Frame {
-    /// Where the expression opening this level begins  the prefix, if there
-    /// was one, rather than the delimiter: `'(a b)` opens at the quote.
+    /// Where the expression opening this level begins: at its prefix, if it
+    /// has one, rather than at the delimiter, as `'(a b)` opens at the quote.
     start: usize,
     /// Where the delimiter itself is. See `Context::innermost_delimiter`.
     delimiter: usize,
-    /// Bounded, and that is the point: a whole file's expressions would be
-    /// hundreds of thousands of entries rebuilt on every keystroke, while
-    /// `backward-sexp` with a count of N needs exactly the last N.
+    /// The last `keep` of them, which is what `backward-sexp` with a count
+    /// of N needs, rather than a whole file's at every keystroke.
     children: VecDeque<Sexp>,
 }
 
-/// Everything a scan needs to carry on from an offset it did not start at.
-///
-/// # Why this is the state and not a summary
-///
-/// It would be tempting to remember only the depth. But a `)` is a closing
-/// delimiter or a character in a string depending on which of those the scan
-/// is currently reading, and how far a list reaches depends on where its
-/// opener was -- so a scan resumed with a depth and nothing else answers
-/// `syntax-ppss` with a position it invented. The state is small enough to
-/// keep in full, and keeping it in full is the only version that is right.
-///
-/// # What is deliberately missing
-///
-/// The remembered children of each frame. They are what `backward-sexp` reads,
-/// they are bounded by a `keep` chosen by whoever started the scan, and a
-/// snapshot taken under one `keep` would quietly answer a different question
-/// under another. So a resumed scan knows the shape of the lists it is inside
-/// but not what it passed on the way there, and [`backward`] never resumes.
+/// Everything a scan needs to carry on from an offset it did not start at:
+/// the whole state, not a depth, without the children of the frames, which
+/// depend on the `keep` of the scan that took it. So [`backward`], which
+/// reads them, never resumes.
 #[derive(Clone, Debug)]
 pub struct Resume {
     pos: usize,
@@ -115,11 +81,9 @@ pub struct Resume {
 }
 
 impl Resume {
-    /// Where a scan carrying this on would begin.
-    ///
-    /// Not necessarily the start of a line: a step may consume several
-    /// characters at once, so a snapshot asked for at a line boundary is taken
-    /// at the first position at or after it that the scan actually stopped on.
+    /// Returns where a scan carrying this on begins: not always the start of
+    /// a line, since a step may consume several characters, but the first
+    /// position at or after it that the scan stopped on.
     pub fn offset(&self) -> usize {
         self.pos
     }
@@ -131,9 +95,12 @@ enum Step {
     Completed(usize, Sexp),
     /// Something was consumed; nothing finished.
     Advanced,
+    /// The text ran out.
     End,
 }
 
+/// A forward scan of a text with a syntax table: what it is reading, the
+/// lists open, and the last expressions completed in each.
 pub struct Scan<'a, B: BufferTrait> {
     text: &'a B,
     table: &'a SyntaxTable,
@@ -145,19 +112,11 @@ pub struct Scan<'a, B: BufferTrait> {
 }
 
 impl<'a, B: BufferTrait> Scan<'a, B> {
-    /// Start a scan that will be asked about `before`, carrying on from
-    /// `resume` when there is a usable one.
-    ///
-    /// The one place that chooses a starting offset, which is why the cache
-    /// arrives here rather than at each of the motions below: they are all the
-    /// same scan asked a different question, and none of them had to change to
-    /// become cheap.
-    ///
-    /// A `resume` from at or before `before` is taken; anything else is
-    /// ignored and the scan starts at the top. That guard is the whole safety
-    /// argument for resuming at all -- a snapshot is only ever a *shortcut* to
-    /// a position, never a substitute for reaching it, so a stale or ill-fitting
-    /// one costs a full scan rather than a wrong answer.
+    /// Returns a scan of TEXT with TABLE, to be asked about BEFORE, keeping
+    /// the last KEEP expressions of each list: carried on from RESUME when it
+    /// is at or before BEFORE, and from the top otherwise. The one place a
+    /// scan's start is chosen, so a snapshot that does not fit costs a full
+    /// scan rather than a wrong answer.
     pub fn begin(
         text: &'a B,
         table: &'a SyntaxTable,
@@ -194,10 +153,13 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
         }
     }
 
+    /// Returns how many lists are open.
     fn depth(&self) -> usize {
         self.stack.len() - 1
     }
 
+    /// Records the expression from START to END in the innermost list, which
+    /// keeps the last `keep`, and reports it completed.
     fn complete(&mut self, start: usize, end: usize) -> Step {
         let keep = self.keep;
         let frame = self
@@ -211,12 +173,13 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
         Step::Completed(self.stack.len() - 1, Sexp { start, end })
     }
 
-    /// Where the expression starting at `at` really begins, taking any prefix
-    /// waiting in front of it.
+    /// Returns where the expression starting at AT begins, taking the prefix
+    /// waiting in front of it, if there is one.
     fn opening(&mut self, at: usize) -> usize {
         self.prefix.take().unwrap_or(at)
     }
 
+    /// Returns whether LITERAL is in the text at AT.
     fn literal_at(&self, at: usize, literal: &str) -> bool {
         literal
             .chars()
@@ -224,12 +187,9 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
             .all(|(i, c)| self.text.at(at + i) == Some(c))
     }
 
-    /// Which string style, if any, opens here.
-    ///
-    /// The longest opener wins, so a raw-string opener beats the plain quote
-    /// it begins with. Same rule as `comment_at`, for the same reason: a
-    /// shorter opener that is a prefix of a longer one would always win by
-    /// position and the longer form would be unreachable.
+    /// Returns the string style that opens at AT, if any: the one with the
+    /// longest opener, as in `comment_at`, so that a raw string's opener wins
+    /// over the plain quote it begins with.
     fn string_at(&self, at: usize) -> Option<usize> {
         let c = self.text.at(at)?;
         if !self.table.could_begin_string(c) {
@@ -244,14 +204,14 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
             .map(|(index, _)| index)
     }
 
-    /// Which comment style, if any, opens here.
+    /// Returns the comment style that opens at AT, if any.
     fn comment_at(&self, at: usize) -> Option<usize> {
         let c = self.text.at(at)?;
         if !self.table.may_start_comment(c) {
             return None;
         }
-        // Longest opener first, so `//` is not read as the `/` of something
-        // shorter that happens to share its first character.
+        // The longest opener wins, so that `//` is not read as a shorter one
+        // that shares its first character.
         self.table
             .comments()
             .iter()
@@ -270,6 +230,8 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
             .map(|(index, _)| index)
     }
 
+    /// Takes one step: reads what is at the scan's position in the state it
+    /// is in, and says what that completed.
     fn step(&mut self) -> Step {
         let len = self.text.len();
         if self.pos >= len {
@@ -343,10 +305,9 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
 
             State::Str { quote, start } => {
                 match self.table.class_of(c) {
-                    // Two characters at once: the whole reason `"a \" b"` does
-                    // not end at the middle quote. Escapes are honoured inside
-                    // strings only  a `\` at the end of a `//` comment does
-                    // not continue it.
+                    // Two characters at once, so that `"a \" b"` does not end
+                    // at the middle quote. Escapes count inside strings only:
+                    // a `\` at the end of a `//` comment does not continue it.
                     SyntaxClass::Escape => self.pos += 2,
                     _ if c == quote => {
                         self.pos += 1;
@@ -376,17 +337,11 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                     return Step::Advanced;
                 }
 
-                // A string whose delimiters are more than one character,
-                // before the class dispatch -- and before the character
-                // literal, since an opener may begin with a quote.
-                //
-                // It has to come first because its opener *contains* things
-                // that have classes of their own: the quote in a raw string's
-                // opener is a string quote, and dispatching on it would open
-                // an ordinary string that ends at the first quote inside. That
-                // is precisely how the init.lisp in this editor's own source
-                // -- a raw string holding Lisp with quotes in it -- made the
-                // rest of the file scan as though half of it were code.
+                // A string whose delimiters are more than one character comes
+                // before the class dispatch, and before the character literal,
+                // since an opener may begin with a quote: the quote in a raw
+                // string's opener is a string quote, and dispatching on it
+                // would open a plain string, ending at the first quote inside.
                 if let Some(style) = self.string_at(self.pos) {
                     let start = self.opening(self.pos);
                     self.pos += self.table.strings()[style].opener.chars().count();
@@ -394,17 +349,11 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                     return Step::Advanced;
                 }
 
-                // A character literal, before the class dispatch, because the
-                // character that opens one has no single class: `'` quotes a
-                // character in `'a'`, begins a lifetime in `'static`, and is
-                // an apostrophe in prose. Which it is depends on what follows,
-                // so it is decided by looking rather than by looking up.
-                //
-                // The whole literal is one atom. Without this, the `"` in
-                // `let c = '"';` opens a string that never closes, and every
-                // bracket in the rest of the file stops counting -- which is
-                // how a brace three lines down became invisible to anything
-                // asking whether the buffer balanced.
+                // A character literal comes before the class dispatch, since
+                // the character that opens one has no single class: `'` quotes
+                // a character in `'a'`, begins a lifetime in `'static` and is
+                // an apostrophe in prose. The whole literal is one atom, so
+                // the `"` in `let c = '"';` opens no string.
                 if let Some(end) = self
                     .table
                     .char_literal_at(self.pos, len, |at| self.text.at(at))
@@ -427,10 +376,8 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                     }
                     SyntaxClass::Close(_) => {
                         // A closer that does not match its opener still closes
-                        // it, and a closer with nothing open is stray text.
-                        // Every file is unbalanced while it is being typed, and
-                        // refusing to scan past that would make the motion
-                        // useless exactly when it is being used.
+                        // it, and a closer with nothing open is stray text: a
+                        // file is unbalanced all the while it is being typed.
                         self.pos += 1;
                         self.prefix = None;
                         if self.stack.len() > 1 {
@@ -470,19 +417,16 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                         {
                             end += 1;
                         }
-                        // Never stand still. This branch is reached exactly
-                        // when the character is a symbol constituent, so `end`
-                        // is already past it  but that is an agreement between
-                        // two pieces of code, and a loop whose termination
-                        // depends on one is a loop that hangs the editor the
-                        // day they disagree.
+                        // Never stand still. The branch is reached when the
+                        // character is a symbol constituent, so `end` is past
+                        // it already; the loop does not rest on that alone.
                         self.pos = end.max(self.pos + 1);
                         self.complete(start, end)
                     }
                     SyntaxClass::Punctuation => {
-                        // Whitespace after a prefix detaches it: `' foo` quotes
-                        // the next thing, but the quote is not part of `foo`'s
-                        // text and a kill of `foo` should not take it.
+                        // Whitespace after a prefix detaches it: in `' foo` the
+                        // quote is not part of `foo`, and a kill of `foo` does
+                        // not take it.
                         if c.is_whitespace() {
                             self.prefix = None;
                         }
@@ -494,17 +438,16 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
         }
     }
 
-    /// A comment is an expression too, so `forward-sexp` steps over one rather
-    /// than stopping dead in front of it.
+    // TODO(SIN-9): a line comment is passed over as whitespace is, so the
+    // two kinds of comment move `forward-sexp` differently.
+    /// Records a block comment from START to END as an expression, so that
+    /// `forward-sexp` from in front of it lands at its end.
     fn complete_comment(&mut self, start: usize, end: usize) -> Step {
         self.complete(start, end)
     }
 
-    /// Run until the scan reaches `limit`.
-    /// The scan's state here, for carrying on from later.
-    ///
-    /// The frames are copied without their remembered children -- see
-    /// [`Resume`] for why that is the only honest thing to keep.
+    /// Returns the scan's state here, for carrying on from later, with the
+    /// frames copied without their children: see [`Resume`].
     pub fn snapshot(&self) -> Resume {
         Resume {
             pos: self.pos,
@@ -522,11 +465,13 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
         }
     }
 
-    /// Where the scan has reached.
+    /// Returns where the scan has reached.
     pub fn offset(&self) -> usize {
         self.pos
     }
 
+    /// Runs the scan until it reaches LIMIT or the end of the text. A step
+    /// consumes a whole symbol, so the scan may stop past LIMIT.
     pub(crate) fn run_to(&mut self, limit: usize) {
         while self.pos < limit {
             if matches!(self.step(), Step::End) {
@@ -535,6 +480,7 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
         }
     }
 
+    /// Returns what the scan's position is inside.
     pub fn context(&self) -> Context {
         Context {
             depth: self.depth(),
@@ -549,8 +495,8 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                 None
             },
             string_start: match self.state {
-                // Both kinds count: `syntax-ppss` is asked "am I in a string",
-                // and a raw one is a string.
+                // Both kinds: `syntax-ppss` is asked whether the position is
+                // in a string, and a raw one is a string.
                 State::Str { start, .. } | State::StyledStr { start, .. } => Some(start),
                 _ => None,
             },
@@ -562,9 +508,13 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
     }
 }
 
-/// Where `forward-sexp` lands. `from` unchanged if there are not that many
-/// expressions left at this level  at the end of a list the command does
-/// nothing rather than escaping outwards.
+// TODO(SIN-6): from inside a symbol, `run_to` completes the symbol, and the
+// count starts at the expression after it.
+// TODO(SIN-8): past the end of FROM's list the count goes on, in the lists
+// that follow at the same depth.
+/// Returns where `forward-sexp` lands from FROM with COUNT: the end of the
+/// COUNTth expression completed after FROM at FROM's depth, or FROM when the
+/// text runs out first.
 pub fn forward<B: BufferTrait>(
     text: &B,
     table: &SyntaxTable,
@@ -594,18 +544,17 @@ pub fn forward<B: BufferTrait>(
     }
 }
 
-/// Where `backward-sexp` lands: the first character of the Nth previous
-/// expression, its prefix included.
+/// Returns where `backward-sexp` lands from FROM with COUNT: the first
+/// character of the COUNTth expression before it, prefix included, or FROM
+/// when the level has fewer.
 pub fn backward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, count: usize) -> usize {
     if count == 0 {
         return from;
     }
-    // Scanning only up to `from` is what makes this work: the innermost frame
-    // left open there is the list point is in, and its remembered children are
-    // exactly the siblings behind point, most recent last.
-    // No `resume`, and that is not an oversight: a snapshot carries the shape
-    // of the open lists but not the expressions already passed inside them,
-    // and those expressions are exactly what this reads. See [`Resume`].
+    // Scanned up to `from` only: the innermost frame left open there is the
+    // list `from` is in, and its children are the expressions behind it, the
+    // most recent last. No resume, since a snapshot has no children: see
+    // `Resume`.
     let mut scan = Scan::begin(text, table, from, None, count);
     scan.run_to(from);
     let frame = scan.stack.last().expect("the root frame is never popped");
@@ -615,12 +564,11 @@ pub fn backward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, coun
     frame.children[frame.children.len() - count].start
 }
 
-/// Where `down-list` lands: just inside the next list that opens after `from`.
-///
-/// `None` when there is no list left to enter. Unlike the motions above this is
-/// not looking for a *completed* expression but for an opener, which the scan
-/// passes over silently  so it watches the depth: the moment the scan is one
-/// level deeper than it began, it has just stepped through one.
+// TODO(SIN-8): past the end of FROM's list the scan goes on, and enters a
+// list nested in one that follows.
+/// Returns where `down-list` lands: just inside the first list the scan
+/// enters deeper than FROM's depth, or `None` when there is none. An opener
+/// completes nothing, so the scan watches the depth.
 pub fn down<B: BufferTrait>(
     text: &B,
     table: &SyntaxTable,
@@ -639,6 +587,7 @@ pub fn down<B: BufferTrait>(
     }
 }
 
+/// Returns what POS is inside, as `syntax-ppss` reports it.
 pub fn context_at<B: BufferTrait>(
     text: &B,
     table: &SyntaxTable,
@@ -650,35 +599,12 @@ pub fn context_at<B: BufferTrait>(
     scan.context()
 }
 
-/// The first offset after POS at which every list open at POS has been closed.
+/// Returns the first offset after POS at which every list open at POS has
+/// been closed, or `None` when the text runs out with one still open.
 ///
-/// `None` when the text runs out with something still open.
-///
-/// # Why this is not "does the buffer balance"
-///
-/// A buffer balances when the depth is zero *at the end*. This asks whether
-/// the depth reaches zero *at all*, and stops the moment it does -- which is a
-/// different question and, for anything asking "has my opener already got a
-/// closer", the right one.
-///
-/// They come apart whenever something below is still being typed. In
-///
-/// ```text
-/// fn a() {
-/// }
-/// fn b() {
-/// ```
-///
-/// the depth returns to zero after `a`, and then rises again and stays there.
-/// A caller asking about `a`'s brace wants to hear that it is closed; asking
-/// whether the whole buffer balances hears "no", because of `b`, and acts as
-/// though `a`'s closer were missing.
-///
-/// # Why it is cheaper
-///
-/// It stops at the first point of balance rather than running to the end of
-/// the buffer. From inside a function that is the function's own closing
-/// delimiter -- tens of lines away rather than thousands.
+/// Not whether the buffer balances: a function that is closed stays closed
+/// while the one below it is still being typed, and the scan stops at the
+/// first point of balance rather than at the end of the buffer.
 pub fn balance_point<B: BufferTrait>(
     text: &B,
     table: &SyntaxTable,
@@ -697,7 +623,8 @@ pub fn balance_point<B: BufferTrait>(
     }
 }
 
-/// The innermost list point is inside, whole.
+/// Returns the innermost list POS is inside, whole, up to the end of the
+/// text when it is not closed, or `None` at the top level.
 pub fn enclosing<B: BufferTrait>(
     text: &B,
     table: &SyntaxTable,
