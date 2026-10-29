@@ -308,7 +308,8 @@
     id: "MIN-1",
     gravita: "alta",
     verificato: true,
-    stato: "aperto",
+    stato: "risolto",
+    commit: "b8829ad567399b388a0bc9dedf517a9718ac9b6b",
     titolo: [Due domande aperte insieme condividono `*Minibuffer*` e lasciano una finestra fantasma],
     breve: [Prompt annidati: testo perso e finestra flottante fantasma],
     dove: [`primitives/minibuffer.rs` (`default-minibuffer-prompt`, che usa sempre il nome `*Minibuffer*`), `editor/windows.rs` (`EditorState::open_floating_window`), `editor/buffers.rs` (`EditorState::close_buffer`, che chiude la *prima* finestra flottante che mostra il buffer)],
@@ -1082,7 +1083,7 @@ Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano ape
 
 #key[Sono aperti *#aperti.len() problemi*: *#n-alta di gravità alta*, #n-media di gravità media e #n-bassa di gravità bassa; #aperti.filter(p => p.verificato).len() sono stati riprodotti eseguendo il codice. Altri #risolti.len() sono stati risolti dopo l'analisi, e sono nell'appendice.]
 
-Dei quattro problemi di gravità alta, due riguardano il terminale: un file può mandargli sequenze di controllo (#link(<TUI-1>)[TUI-1]), e un panic o un errore lo lasciano in raw mode (#link(<TUI-2>)[TUI-2]). Gli altri due fanno perdere lavoro senza dirlo: un salvataggio fallito non viene segnalato (#link(<FIL-1>)[FIL-1]), e due prompt aperti insieme perdono il testo del primo e lasciano una finestra che non si chiude (#link(<MIN-1>)[MIN-1]). Delle tre correzioni trasversali che l'analisi proponeva, una c'è: nel WorkManager un panic ritira solo il lavoro che l'ha causato (#link(<BKG-1>)[BKG-1], risolta). Restano da fare la guardia che ripristini il terminale (#link(<TUI-2>)[TUI-2]) e un limite alle quantità guidate dall'utente, nelle primitive dell'editor (#link(<CMD-3>)[CMD-3]) come nell'interprete (INT-2 e INT-13, nel rapporto di risp).
+Dei tre problemi di gravità alta, due riguardano il terminale: un file può mandargli sequenze di controllo (#link(<TUI-1>)[TUI-1]), e un panic o un errore lo lasciano in raw mode (#link(<TUI-2>)[TUI-2]). Gli altri due fanno perdere lavoro senza dirlo: un salvataggio fallito non viene segnalato (#link(<FIL-1>)[FIL-1]), e due prompt aperti insieme perdono il testo del primo e lasciano una finestra che non si chiude (#link(<MIN-1>)[MIN-1]). Delle tre correzioni trasversali che l'analisi proponeva, una c'è: nel WorkManager un panic ritira solo il lavoro che l'ha causato (#link(<BKG-1>)[BKG-1], risolta). Restano da fare la guardia che ripristini il terminale (#link(<TUI-2>)[TUI-2]) e un limite alle quantità guidate dall'utente, nelle primitive dell'editor (#link(<CMD-3>)[CMD-3]) come nell'interprete (INT-2 e INT-13, nel rapporto di risp).
 
 La tabella seguente elenca i problemi aperti, dal più grave; l'identificativo rimanda alla scheda.
 
