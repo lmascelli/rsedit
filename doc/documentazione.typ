@@ -1441,7 +1441,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [19], [`modes/`, `feature/` (fatto)], [2 896], [---],
   [19b], [`core/lisp/` per genere, `require` e i plugin (fatto)], [1 331 nuove], [cambia il comportamento, per scelta],
   [20], [`ui/`, `src/` (la TUI e la GUI) (fatto)], [4 486], [i test della GUI, mai compilati, collegati],
-  [21], [`core/lisp/`: intestazioni e commenti], [6 422], [docstring già fatte nella fase B],
+  [21], [`core/lisp/`: intestazioni e commenti (fatto)], [6 127], [docstring già fatte nella fase B],
 )
 
 I criteri con cui si propongono gli spostamenti:
@@ -2048,7 +2048,48 @@ svegliare la finestra, e c'è, `on_background_change` (GUI-1). Nel manuale il
 ciclo della TUI era ancora quello con `poll`, e l'estratto veniva da
 `src/tui.rs`. Gli avvisi di `cargo doc` passano da 5 a 1.
 
-Resta il passo 21, i moduli Lisp.
+*Passo 21, fatto.* I venticinque moduli Lisp hanno l'intestazione nella forma
+delle regole: `;;; nome --- frase`, che cosa aggiungono, la loro pagina e il
+rimando `Design:`; `commands` e `common-keymaps`, che non l'avevano, la hanno.
+I perché delle intestazioni e dei commenti lunghi sono passati nel manuale, che
+nel capitolo «I moduli Lisp» ha due sezioni nuove: «Come è scritto un modulo»
+e «I moduli distribuiti», con una sottosezione per modulo, una sola per i sei
+linguaggi, e ottantaquattro decisioni; vim, che il manuale non nominava, ha la
+sua. I commenti seguono le regole: niente storia, un perché in una o due righe.
+`vim.lisp` resta un file, diviso in sezioni come gli altri moduli invece che
+dalle righe `;;;` a metà. `electric-pair` ha il `TODO` di CMD-2 sul legame di
+Delete, `manpage` quello di SHL-4. I moduli scendono da 6 127 a 5 786 righe, e
+quelle di commento da 1 144 a 789. Il codice è lo stesso: lo controlla un
+confronto dei file senza commenti e spazi.
+
+I test dei moduli seguono le regole, con il rimando al manuale: sedici file, tra
+cui quelli della documentazione, `guide_tests` e `doc_faithfulness_tests`, che
+hanno una sezione nuova del capitolo dei test. Con loro si chiude la fase C: i
+sedici file di test dei passi precedenti che non avevano il rimando lo hanno.
+`doc_pointer_tests` legge anche i test, che prima saltava, e controlla
+l'intestazione di ogni modulo distribuito: tolta la riga `Design:` da un modulo,
+il test fallisce.
+
+Il passo ha trovato un difetto di comportamento, CMD-9: in vim ogni sessione
+di Insert copia il buffer intero all'ingresso e lo confronta all'uscita, e su un
+file di 2 MB entrare e uscire costa 47 ms, misurati con un test temporaneo che
+non fa parte della patch. Gli altri sono di documentazione, e la patch li
+corregge: `common-keymaps.lisp` rimandava a un «roadmap \#24» che non
+c'è, e diceva di poter fare a meno di `commands.lisp` per un'installazione che
+lo toglie, mentre oggi `indent` lo chiede; resta vero per i test, che valutano
+il file da solo. L'intestazione di `clipboard.lisp` mandava gli appunti al
+terminale, e la finestra grafica li dà a egui. Due commenti di `manpage.lisp`,
+uno di `rust-mode.lisp` e uno di `risp-mode.lisp` raccontavano la storia;
+`rust-mode.lisp` citava la stringa grezza di `create_global_env`, oggi in
+`boot.rs`, e `risp-mode.lisp` rimandava a una distinzione dell'intestazione di
+`rust-mode` che non c'era. Un commento di `completion.lisp` difendeva una riga
+con un'ipotesi sul futuro di `%`. La pagina `writing-modes` dava `rust-mode`
+di centotrenta righe. Nel manuale il capitolo dei test diceva che la suite delle
+prestazioni può fallire su macchine lente (DOC-4), mentre da `10598fa` è esclusa
+dalla suite ordinaria e si esegue da sola. Nel rapporto MIN-2 e SHL-4 citavano
+i percorsi dei moduli di prima del passo 19b.
+
+Resta la fase D, il passo 22.
 
 == Fase D --- il manuale (passo 22)
 

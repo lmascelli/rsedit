@@ -3,6 +3,8 @@
 //! the functions the environment is read into, the disk on directories of each
 //! test's own, and `app_dir` itself on the directories that
 //! `isolate_config_for_tests` names for this process.
+//!
+//! Design: `doc/architettura-editor.typ, <directory>`.
 #[cfg(test)]
 mod tests {
     use crate::paths::{

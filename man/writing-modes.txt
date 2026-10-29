@@ -39,7 +39,7 @@ DESCRIPTION
 
     A mode's keys are `define-key' with its name, as the `keymaps' page
     says, and its hooks `add-hook', as `modes' says. rust-mode.lisp is a
-    mode of a hundred and thirty lines, and the one to copy.
+    mode of under a hundred lines, and the one to copy.
 
 COLOURING
     A rule colours what its regular expression matches, within a line. A

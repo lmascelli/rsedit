@@ -3,11 +3,7 @@
 ;;; C-h m asks for a page, completing over every one installed, and K opens
 ;;; the page named by the word under the cursor; this editor's pages come
 ;;; first. User manual: the `getting-help' page.
-;;;
-;;; `man' formats the system's pages, with `manpage-path' as MANPATH, so the
-;;; variable decides what is found as well as what is listed. The bold and the
-;;; underlining it marks by overstriking become overlays, and the headings are
-;;; coloured from the layout. The list of names is built in the background.
+;;; Design: `doc/architettura-editor.typ, <mod-manpage>`.
 
 (require 'commands)
 (require 'debug)
@@ -54,29 +50,27 @@ places when there is none.")
         (read-file-to-string
          (concat (file-name-as-directory directory) name ".txt")))))
 
+;; TODO(SHL-4): NAME reaches the shell unquoted, and `manpage--rsedit-page'
+;; joins it to a path.
 (defun manpage--system-page (name)
   "The text of the system's page NAME, formatted by man, or nil."
   (setenv "MANPATH" (manpage--join manpage-path (path-separator)))
-  ;; Asked whether the page exists *before* asking for it. `man -w' prints the
-  ;; file it would format and nothing at all when there is none, which is the
-  ;; documented way to ask -- whereas `man' itself writes "No manual entry for
-  ;; x" to standard output on some systems, so an absent page comes back
-  ;; looking exactly like a found one.
+  ;; `man -w' first: `man' alone prints "No manual entry" on stdout on some
+  ;; systems, which reads like a page.
   (let ((located (shell-command-to-string
                   (format "man -w %s 2>/dev/null" name))))
     (if (not (manpage--located-p located))
         nil
-        ;; `-P cat' stops `man' starting a pager of its own, which would sit
-        ;; there waiting for a keypress that is never coming. The output still
-        ;; carries overstrike, which is stripped when it is shown.
+        ;; `-P cat': no pager waiting for a key. The overstrike is stripped
+        ;; when the page is shown.
         (let ((text (shell-command-to-string
                      (format "man -P cat %s 2>/dev/null" name))))
           (if (or (null text) (string= text "")) nil text)))))
 
 (defun manpage--located-p (located)
   "Whether LOCATED, what man -w printed, is the path of a page."
-  ;; The shape, not the exit status: a system with its manuals stripped out
-  ;; ships a man that prints an apology and exits 0 whatever it is asked.
+  ;; The shape, not the exit status: a system without manuals may have a man
+  ;; that apologises and exits 0.
   (and located
        (let ((trimmed (manpage--trim located)))
          (and (not (string= trimmed ""))
@@ -117,9 +111,7 @@ places when there is none.")
     (clear-buffer)
     (insert plain)
     (set-buffer-read-only t)
-    ;; The old overlays first: a buffer reused for a second page would
-    ;; otherwise keep the first one's emphasis at the first one's offsets,
-    ;; which is emphasis scattered over unrelated words.
+    ;; The old overlays first, which would mark the new page's words.
     (remove-overlays 'manpage)
     (mapc (lambda (span)
             (make-overlay (nth 0 span)
@@ -157,8 +149,8 @@ page."
 
 (defun manpage--strip-extensions (file)
   "FILE without its section and compression suffixes: \"ls.1.gz\" => \"ls\"."
-  ;; One `string-match': `length' on a string charges per character, so a
-  ;; loop asking it was quadratic, and ran out of fuel on a full system.
+  ;; One `string-match': `length' costs per character, so a loop asking it
+  ;; would be quadratic.
   (let ((name (file-name-nondirectory file)))
     (if (string-match "^[^.]+" name)
         (match-string 0 name)
@@ -181,30 +173,15 @@ page."
   "Every manual page name found, this editor's first: the list the background
 build fills in, or, when nothing has been built for `manpage-path', one built
 now."
-  ;; Kept, not walked on every call: a completion source is asked on every Tab,
-  ;; and stripping thousands of names took seconds. While a build runs, what
-  ;; it has found so far is a short answer but not a wrong one, since it adds
-  ;; whole directories; the list is built again when `manpage-path' changes.
+  ;; Kept, not walked on every Tab: built in the background, below.
   (cond
-   ;; Being built for the path in force now, and there is something to hand
-   ;; out: the previous complete list until the first directory of the new
-   ;; walk lands, and the new one growing after that. Asked before
-   ;; `manpage--names-for', which a rebuild of the *same* path leaves looking
-   ;; true while the list underneath it is half replaced.
-   ;;
-   ;; `manpage--names' being non-empty is half the condition and not a
-   ;; formality. The first moments of a session are exactly when a build is
-   ;; running and has produced nothing, and an empty list is not a short
-   ;; answer -- it is a wrong one, and it is what `C-h m' would get for
-   ;; pressing Tab promptly enough. The walk below is what that press is
-   ;; worth waiting for; it is also what stops the build, since the two are
-   ;; walking the same directories for the same answer.
+   ;; Being built for this path, with something to hand out. Asked first: a
+   ;; rebuild of the same path leaves `manpage--names-for' looking true.
    ((and manpage--names (equal manpage--building-for manpage-path)) manpage--names)
    ;; Built, and for the path in force now.
    ((equal manpage--names-for manpage-path) manpage--names)
-   ;; Never asked before, or the path has changed since and nothing is
-   ;; building for the new one. Walked here, because the caller wants an
-   ;; answer now and an empty list is a wrong one.
+   ;; Nothing built or building for this path: walked now, since an empty
+   ;; list is a wrong answer.
    (t (manpage--reindex-now))))
 
 (defun manpage--directories ()
@@ -215,8 +192,7 @@ now."
 
 (defun manpage--names-in (directory)
   "The page names in DIRECTORY and below it."
-  ;; `mapcar', not appending one at a time, which is quadratic and ran out of
-  ;; fuel on a system with thousands of pages.
+  ;; `mapcar': appending one at a time would be quadratic.
   (mapcar 'manpage--strip-extensions
           (nth 1 (directory-files-recursive directory 20000))))
 
@@ -225,22 +201,18 @@ now."
 ;; ---------------------------------------------------------------------------
 ;;
 ;; The shape `background-call' asks for: a job that computes and stores, and
-;; two callbacks that run where a command runs and are where anything is told
-;; anything. See the `background' manual page for the rule.
+;; callbacks that run where a command runs and tell.
 
 (defun manpage--index-fiber (for-path)
   "A fiber that fills `manpage--names' for FOR-PATH, a directory at a time."
-  ;; One directory per yield, so that the list grows where it can be seen, and
-  ;; `continue', since there is nothing to wait for. FOR-PATH is carried: if
-  ;; `manpage-path' changes meanwhile, the build gives up.
+  ;; A directory per yield, so that the list grows in sight; the build gives
+  ;; up if `manpage-path' is no longer FOR-PATH.
   (fiber
    (let ((gathered nil)
          (left (manpage--directories)))
      (while left
        (if (not (equal for-path manpage-path))
-           ;; The path changed underneath. What has been gathered is for a
-           ;; question nobody is asking; the job that was started for the new
-           ;; path will answer the one they are.
+           ;; The path changed: the new path's job answers.
            (setq left nil)
            (progn
              (setq gathered (append gathered (manpage--names-in (car left))))
@@ -272,10 +244,8 @@ the end."
 (defun manpage--reindex ()
   "Start building the list of page names in the background, and return the
 job's name. A build already running is replaced."
-  ;; `manpage--names' is left alone. It is the previous answer, which is a
-  ;; better thing to hand out for the moment before the first directory lands
-  ;; than an empty list would be -- and `manpage--names-for' going to nil is
-  ;; what stops it being called complete in the meantime.
+  ;; The previous names stay, handed out until the first directory lands;
+  ;; `manpage--names-for' at nil says they are not complete.
   (setq manpage--names-for nil)
   (setq manpage--building-for manpage-path)
   (background-call manpage-index-job
@@ -312,8 +282,7 @@ C-h m."
                    'manpage-candidates
                    nil))
 
-;; A completion source, so `C-M-i' in a manual buffer offers page names -- and
-;; so anything else that wants them has a function to call.
+;; A completion source: `C-M-i' in a manual buffer offers page names.
 (add-completion-function 'manpage-mode 'capf-manpage-names)
 
 (defun capf-manpage-names ()
@@ -381,8 +350,7 @@ string, or nil: the page C-h f and C-h v name."
 (define-key 'manpage-mode "p" 'previous-line)
 (define-key 'manpage-mode "K" 'manpage-at-point)
 
-;; The emphasis, recovered from the structure rather than from the overstrike
-;; that was stripped -- see the module header.
+;; The headings, recovered from the layout.
 
 ;; A section heading is a word alone at the left margin, in capitals.
 (add-syntax-rule 'manpage-mode "^[A-Z][A-Z0-9 ]*$" 'keyword)
@@ -391,20 +359,12 @@ string, or nil: the page C-h f and C-h v name."
 ;; The name being documented, as `man' writes it in the header line.
 (add-syntax-rule 'manpage-mode "^([A-Za-z0-9_.-]+)\\([0-9][a-zA-Z]*\\)" 'type 1)
 
-;; The two faces the page's own emphasis is drawn in. Given an appearance here
-;; because this module invents them -- the editor has never heard of either
-;; until these lines name them.
+;; The faces of the page's own emphasis, which this module names.
 (define-face 'manpage-bold nil nil '("bold"))
 (define-face 'manpage-underline nil nil '("underline"))
 
-;; Started now, in the background, so the first `C-h m' has a list waiting
-;; rather than walking the tree while somebody is holding Tab down. Nothing
-;; waits for it: while it runs `manpage-names' answers with what has been
-;; found so far, and if nothing has it walks the tree itself. That is what
-;; makes this an optimisation rather than a race.
-;;
-;; Re-loading this file starts it again rather than a second time, because the
-;; job has a name -- see `background-call'.
+;; Started now, so that the first `C-h m' has a list waiting. A job with a
+;; name: loading this file again starts it again, not twice.
 (manpage--reindex)
 
 (log "manpage loaded")

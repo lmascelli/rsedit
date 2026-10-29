@@ -1,15 +1,8 @@
-//! `HOME` and `USERPROFILE`, set for the duration of one test and put back.
+//! `HOME` and `USERPROFILE`, set for the duration of one test and put back,
+//! under one lock that every test leaning on the home directory takes: the
+//! environment is process-wide and the tests run in threads.
 //!
-//! # Why this is not two guards in two files
-//!
-//! The environment is process-wide and the test runner is threaded, so a test
-//! that sets `HOME` is writing to something every other test can see. A lock
-//! makes that safe -- but only if it is *the same* lock. Two files each with a
-//! mutex of their own is the shape of the bug it looks like the fix for: each
-//! is certain no other test is inside it, and both are wrong.
-//!
-//! So there is one guard, here, and every test that leans on the home
-//! directory takes it.
+//! Design: `doc/architettura-editor.typ, <directory>`.
 #[cfg(test)]
 pub(crate) mod guard {
     use std::sync::{Mutex, MutexGuard};

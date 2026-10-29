@@ -1,4 +1,6 @@
 //! The echo area's timeout: how long a message stays, and what controls it.
+//!
+//! Design: `doc/architettura-editor.typ, <snapshot>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

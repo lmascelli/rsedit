@@ -1,13 +1,9 @@
 ;;; indent --- what Tab and Return do.
 ;;;
-;;; Tab indents the region, or the line, at the column the mode's
-;;; `indent-function' returns, or like the line above in a mode without one;
-;;; Return indents the line it opens. User manual: the `indentation' page.
-;;;
-;;; A rule returns a column rather than doing the work. A mode can only be
-;;; wrong about a number; `indent-region' can call it a hundred times without
-;;; a hundred chances to mangle a line; and where point ends up afterwards is
-;;; written once, here and in `indent-line-to', instead of once per language.
+;;; Tab indents the region or the line at the column the mode's rule returns,
+;;; or like the line above; Return indents the line it opens. User manual:
+;;; the `indentation' page.
+;;; Design: `doc/architettura-editor.typ, <mod-indent>`.
 
 (require 'commands)
 
@@ -29,12 +25,8 @@ tab-width property on the mode, or `tab-width'."
   "Indent the line point is on at the column its mode's `indent-function'
 returns, or like the line above. Return t if the line moved, nil if it was
 already there."
-  ;; Point is put back before the line is touched. An indent function has no
-  ;; way to look at the buffer except by moving point -- `lisp-indent-line'
-  ;; walks to the enclosing delimiter and back -- so by the time it answers,
-  ;; point is wherever it finished, and `indent-line-to' would indent that line
-  ;; instead of this one. Saving the offset is safe because nothing has been
-  ;; edited yet: the rule only reads.
+  ;; Point is put back before the line is touched: a rule reads the buffer by
+  ;; moving point, and leaves it wherever it finished.
   (let* ((here (point))
          (indenter (get (major-mode) 'indent-function))
          (column (if indenter (funcall indenter) (previous-indentation))))
@@ -45,25 +37,13 @@ already there."
 ;; Regions
 ;; ---------------------------------------------------------------------------
 ;;
-;; Everything below works on a region by line *number*, not by position:
-;; indenting a line changes every offset below it, so a loop that remembered
-;; where the region ended would be indenting the wrong text by the third line.
-;;
-;; And everything puts the region back when it is done, because it cannot be
-;; preserved -- every edit deactivates the mark at the chokepoint, so it is
-;; gone by the second line. Putting it back is what makes pressing Tab twice
-;; work on the same block.
+;; By line number, since indenting a line moves every offset below it; and the
+;; region is selected again at the end, since every edit deactivates the mark.
 
 (defun indent--region-lines ()
   "The first and last line numbers the region covers, as (FROM TO)."
-  ;; A region that ends at the very start of a line does not cover that line:
-  ;; selecting whole lines from the left margin ends there, on the line after
-  ;; the last one meant.
-  ;;
-  ;; Both ends first, before anything moves. The region is the span between
-  ;; mark and point, so `(goto-char (region-beginning))' collapses it -- and
-  ;; `region-end' then answers with the mark rather than the end that was
-  ;; there a moment ago.
+  ;; Both ends first: moving point moves one end of the region. A region that
+  ;; ends at the start of a line does not cover that line.
   (let* ((start (region-beginning))
          (end (region-end))
          (from (progn (goto-char start) (line-number-at-point)))
@@ -117,8 +97,8 @@ A mode can have its own: (put 'rust-mode 'indent-region-style 'shift).")
     (cond
      ((eq style 'reindent) 'reindent)
      ((eq style 'shift) 'shift)
-     ;; `auto', and anything not understood -- a typo should get the sensible
-     ;; behaviour rather than an error on every Tab.
+     ;; `auto', and anything not understood: a typo gets the sensible
+     ;; behaviour, not an error on every Tab.
      ((get (major-mode) 'indent-function) 'reindent)
      (t 'shift))))
 
@@ -144,11 +124,8 @@ select the same lines again."
                (to (nth 1 lines)))
           (indent-rigidly-lines from to amount)
           (indent--reselect from to))
-        ;; Point is put back before the line moves, so that `indent-line-to''s
-        ;; own rule -- point keeps the character it was on -- applies to where
-        ;; the user was rather than to wherever measuring the line left it. A
-        ;; blank line still shifts here, unlike in a region: it is the line
-        ;; the user asked about, not one swept up with the others.
+        ;; Point is put back first, so that it keeps its character. A blank line
+        ;; shifts here, unlike in a region: it is the one asked about.
         (let* ((here (point))
                (column (or (indent--text-column) (current-indentation))))
           (goto-char here)
@@ -180,23 +157,18 @@ what `tab-always-indent' says."
 ;; Indenting a Lisp
 ;; ---------------------------------------------------------------------------
 ;;
-;; The rule risp-mode uses. It reads the structure rather than the text:
-;; `syntax-ppss' says how deep point is and where its enclosing list opened,
-;; so it needs no regular expressions and no list of keywords, and works in
-;; any mode whose syntax table pairs parentheses.
+;; The rule risp-mode uses. It reads the structure from `syntax-ppss', not the
+;; text, and works in any mode whose syntax table pairs parentheses.
 
 (defun lisp-indent-line ()
   "Return the column the line point is on should start at, in a Lisp."
   (let ((state (syntax-ppss)))
     (cond
-     ;; Inside a string the line's leading whitespace is content, not layout.
-     ;; Reporting the indentation it already has is how a rule says "leave this
-     ;; alone" without needing a way to say it.
+     ;; In a string the leading whitespace is content: the line stays as it is.
      ((nth 2 state) (current-indentation))
      ((= 0 (nth 0 state)) 0)
-     ;; Element 4, not element 1: the delimiter rather than the start of the
-     ;; expression. They differ by any prefix, and `'(a b)' lines its body up
-     ;; against the parenthesis, not against the quote.
+     ;; Element 4, the delimiter, not 1, the expression: `'(a b)' lines its body
+     ;; up against the parenthesis, not the quote.
      (t (lisp-indent-under (nth 4 state))))))
 
 (defun lisp-indent-under (open)
@@ -211,8 +183,7 @@ what `tab-always-indent' says."
      ;; anything up under. Just inside the delimiter.
      ((null head) (+ column 1))
      ;; (foo bar
-     ;;      baz) -- line up under the first argument, when it shares a line
-     ;; with the head. When it does not there is nothing to line up with.
+     ;;      baz) -- under the first argument, when it shares the head's line.
      (t (or (lisp-argument-column open head) (+ column 1))))))
 
 (defun lisp-head-after (open)
@@ -226,11 +197,8 @@ another list starts there."
 (defun lisp-argument-column (open head)
   "Return the column of the first argument after HEAD in the list at OPEN,
 or nil when there is none on OPEN's line."
-  ;; OPEN's line first, because everything below moves point and there is no
-  ;; way to ask a position's line without going there. `forward-sexp' lands at
-  ;; the argument's end, so its start is forward and then back; and it does
-  ;; nothing at the end of a list, so a point that did not move means there
-  ;; was no argument.
+  ;; Forward and back to the argument's start; a point that did not move
+  ;; means there was no argument.
   (let ((open-line (progn (goto-char open) (line-number-at-point))))
     (goto-char (+ open 1 (length head)))
     (let ((before (point)))
@@ -242,10 +210,8 @@ or nil when there is none on OPEN's line."
             (if (= (line-number-at-point) open-line)
                 (current-column)))))))
 
-;; The forms whose bodies are indented by a fixed amount rather than lined up
-;; under an argument. On the symbols themselves, globally, exactly as Emacs
-;; keeps `lisp-indent-function' -- a language's shape is a property of its
-;; names, not of one mode that happens to read them.
+;; The forms whose bodies are indented by a fixed amount, on the symbols
+;; themselves, as Emacs keeps `lisp-indent-function'.
 (dolist (name '("defun" "defmacro" "defcommand" "lambda" "let" "let*" "when"
                 "unless" "while" "dolist" "dotimes" "progn" "cond" "if"
                 "condition-case" "unwind-protect" "catch" "with-current-buffer"))
@@ -255,9 +221,8 @@ or nil when there is none on OPEN's line."
   "Open COUNT blank lines below this one, and leave point on the first,
 indented."
   (end-of-line)
-  ;; Where the first new line will begin, taken before the text moves: after
-  ;; COUNT newlines point is on the *last* of them, and stepping back by lines
-  ;; would have to care about how `previous-line' treats a goal column.
+  ;; Where the first new line begins, taken before the text moves: after COUNT
+  ;; newlines point is on the last of them.
   (let ((start (+ (point) 1)))
     (dotimes (n count)
       (insert "\n"))
@@ -306,14 +271,15 @@ on."
       (newline-and-indent)
       (insert-newline)))
 
-;; Bound here rather than in common-keymaps.lisp, beside Tab, because of what
-;; happens when this file is not loaded. Without it the binding would name a
-;; command that does not exist and Enter would stop working altogether; with
-;; it here, Enter simply stays the built-in `insert-newline'.
+;; Bound here, not beside Tab: without this file Return stays the built-in
+;; `insert-newline' rather than naming a command that is not there.
 (define-key nil "<ret>" 'newline)
 
-;; Shared readers for the programming-language indenters. They only inspect
-;; text: indent-line restores point and performs the actual edit.
+;; ---------------------------------------------------------------------------
+;; Readers for the language modes' rules
+;; ---------------------------------------------------------------------------
+;;
+;; They only read: `indent-line' puts point back and makes the edit.
 
 (defun prog-indent--trim (text)
   "Return TEXT without horizontal whitespace at either end."

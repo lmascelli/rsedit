@@ -3,18 +3,7 @@
 ;;; A file manager written as a module: a mode, a keymap and a handful of
 ;;; commands, over primitives that know nothing of file managers -- `list-dir',
 ;;; `delete-file', `rename-file'. User manual: the `dired' page.
-;;;
-;;; The buffer is the state. No variable holds the current directory and no
-;;; table maps lines to names: the first line says which directory this is,
-;;; each entry line carries a name, and every command reads back what is on
-;;; screen. A directory remembered beside the buffer could disagree with the
-;;; one displayed, and `D' would then delete a file from a directory the user
-;;; is not looking at.
-;;;
-;;; The layout stays plain -- the header, then one name per line indented by
-;;; two spaces -- so that the indent alone tells an entry from the header.
-;;; Columns of sizes and dates would make every command that reads a name agree
-;;; with every command that writes one about where it sits.
+;;; Design: `doc/architettura-editor.typ, <mod-dired>`.
 
 (require 'commands)
 (require 'debug)
@@ -34,9 +23,8 @@ for the directories first and then the files.")
 
 (defun dired--parent (directory)
   "The directory above DIRECTORY, or the root at the root."
-  ;; Asked of the platform rather than worked out by splitting on "/": a
-  ;; Windows path has none to split on. `expand-file-name' first, because a
-  ;; relative DIRECTORY such as "./" has no component to drop.
+  ;; Asked of the platform, not split on "/"; expanded first, since "./" has
+  ;; no component to drop.
   (file-name-directory (directory-file-name (expand-file-name directory))))
 
 ;; ---------------------------------------------------------------------------
@@ -71,33 +59,25 @@ trailing slash."
 
 (defun dired--draw (directory)
   "Replace the listing with one of DIRECTORY."
-  ;; Writable only while it is written: the read-only flag is enforced where
-  ;; every edit goes through, so nothing else changes the text.
+  ;; Writable only while it is written.
   (set-buffer-read-only nil)
   (clear-buffer)
   (insert directory ":\n")
-  ;; `..' is listed, and not only reachable through `^', because a listing that
-  ;; shows no way out of itself reads as a dead end. `list-dir' leaves it out
-  ;; on purpose, so it is put back here.
+  ;; `..' listed, which `list-dir' leaves out: a listing shows its way out.
   (insert "  ..\n")
-  ;; `list-dir' does the ordering. It has already asked the filesystem what
-  ;; each entry is -- that is where the trailing separator comes from -- so
-  ;; sorting here would mean asking again, once per entry, from Lisp.
+  ;; `list-dir' sorts: it has already asked what each entry is.
   (mapc (lambda (entry) (insert "  " entry "\n"))
         (list-dir directory dired-sort))
   (set-buffer-read-only t))
 
 (defun dired--show (directory)
   "Show a listing of DIRECTORY in the dired buffer, and go to its first entry."
-  ;; Expanded first: what arrives here may be relative -- typed as ".", or
-  ;; completed from the prompt -- and a relative path in the header is a path
-  ;; whose parent cannot be worked out.
+  ;; Expanded: a relative path in the header has no parent to work out.
   (let ((directory (file-name-as-directory (expand-file-name directory))))
     (buffer-create dired-buffer-name 'dired-mode)
     (switch-to-buffer dired-buffer-name)
     (dired--draw directory)
-    ;; Line 2 is `..', the first thing that can be acted on. Line 1 is the
-    ;; header, where every key that wants a file would report nothing.
+    ;; Line 2, `..', the first line a key can act on.
     (goto-line 2)))
 
 (defcommand dired (directory) ("fDired: ")
@@ -108,8 +88,7 @@ trailing slash."
 
 (defcommand dired-refresh () nil
   "Read the directory being listed again, keeping the cursor on the same line."
-  ;; Every change to the filesystem ends here: the buffer is rebuilt from what
-  ;; is there rather than edited to match what was expected.
+  ;; Every change ends here: rebuilt from the disk, not edited to match.
   (let ((here (line-number-at-point)))
     (dired--draw (dired--directory))
     (goto-line here)))
@@ -124,9 +103,8 @@ trailing slash."
 
 (defun dired--visit (path)
   "Open PATH: a directory as the listing, a file in this window."
-  ;; `file-directory-p' decides, not the trailing separator: which character
-  ;; that is belongs to the platform, and the listing may be seconds old.
-  ;; `..' goes up rather than in, so the header does not grow a `..'.
+  ;; `file-directory-p' decides, not the separator, which belongs to the
+  ;; platform; `..' goes up, so the header does not grow a `..'.
   (cond
    ((string= "  .." (current-line)) (dired-up-directory))
    ((file-directory-p path) (dired--show path))
@@ -139,14 +117,12 @@ trailing slash."
         (dired--visit path)
         (message "No file on this line"))))
 
-;; Columns rather than a share of the frame: a listing is as wide as its
-;; names, whatever the terminal, and the file beside it takes a resize.
+;; Columns, not a share of the frame: a listing is as wide as its names.
 (defvar dired-window-width 40
   "How many columns the listing keeps when `o' opens a file beside it.")
 
-;; The window `o' last opened a file into, so that pressing it again replaces
-;; that file instead of splitting the frame a second time. nil when `o' has not
-;; been pressed, or when the window it used has since been closed.
+;; The window `o' last opened a file into, which it opens the next into; nil
+;; before the first `o', or once that window is closed.
 (setq dired--file-window nil)
 
 (defcommand dired-find-file-other-window () nil
@@ -155,17 +131,13 @@ trailing slash."
   (let ((path (dired--path-here)))
     (cond
      ((null path) (message "No file on this line"))
-     ;; A directory in another window would be a second listing in the one
-     ;; buffer both windows show -- see the module header on why there is only
-     ;; one. It opens here instead, which is what `RET' would have done.
+     ;; A directory opens here: there is one listing buffer.
      ((file-directory-p path) (dired--visit path))
      (t (dired--visit-other-window path)))))
 
 (defun dired--visit-other-window (path)
   "Open PATH beside the listing, in the window `o' last used if it is there."
-  ;; `select-window' answers nil for a window that has been closed since, which
-  ;; is what makes "reuse it if it is still there" a single question rather than
-  ;; a search through the layout.
+  ;; `select-window' answers nil for a window closed since.
   (if (and dired--file-window (select-window dired--file-window))
       (find-file path)
       (progn
@@ -178,9 +150,8 @@ trailing slash."
 ;; Changing the filesystem
 ;; ---------------------------------------------------------------------------
 ;;
-;; Both ask with a typed answer: nothing in the editor can give a file back.
-;; The prompt's callback closes over the path, so nothing is remembered in a
-;; variable while the user is free to move, refresh or ask something else.
+;; Both ask for a typed answer, since a file cannot be given back; the
+;; callback closes over the path, kept in no variable.
 
 (defun dired--affirmative (answer)
   "Whether ANSWER is a yes. Anything else, including empty, is a no."
@@ -195,10 +166,8 @@ everything in it, and the question says how many entries that is."
      ((string= "  .." (current-line)) (message "Refusing to delete .."))
      (t (let* ((directory (file-directory-p path))
                (count (if directory (directory-entry-count path) 0))
-               ;; Whether this is the recursive question, decided now: the
-               ;; answer the user gives is an answer to the question they were
-               ;; shown, so what `delete-file' is allowed to do has to be
-               ;; settled at the same moment the wording is.
+               ;; Settled with the wording: the answer is to the question
+               ;; shown.
                (deep (and directory count (> count 0))))
           (minibuffer-read
            (if deep
@@ -221,11 +190,7 @@ everything in it, and the question says how many entries that is."
   "Rename what the cursor is on, asking for the new name: a path in it is
 taken from the directory being listed."
   (let ((path (dired--path-here))
-        ;; Read now, and closed over, rather than read again when the answer
-        ;; comes back. The question is about the directory that was listed when
-        ;; it was asked -- and `dired--directory' answers about whatever buffer
-        ;; is current, which during a callback is whatever the editor happens
-        ;; to have restored.
+        ;; Read now: in the callback the current buffer may be another.
         (directory (dired--directory))
         (name (dired--name-here)))
     (cond
@@ -241,9 +206,8 @@ taken from the directory being listed."
 
 (defun dired--destination (directory new-name)
   "Where a rename to NEW-NAME lands, for a file listed in DIRECTORY."
-  ;; Against the listing on screen, not the working directory, which the user
-  ;; cannot see. `expand-file-name' takes an absolute NEW-NAME as it is and
-  ;; expands a ~, on every platform.
+  ;; Against the listing on screen, not the working directory, which is not
+  ;; shown.
   (expand-file-name new-name directory))
 
 (defun dired--renamed (path outcome)
@@ -257,9 +221,8 @@ taken from the directory being listed."
 ;; Keys
 ;; ---------------------------------------------------------------------------
 ;;
-;; The mode's keymap is consulted before the global one, and what it does not
-;; bind falls through. Nothing has to be unbound to protect the text: the
-;; buffer is read-only.
+;; What the mode does not bind falls through to the global keymap; the
+;; buffer is read-only, so nothing needs unbinding.
 
 (define-key 'dired-mode "<ret>" 'dired-find-file)
 (define-key 'dired-mode "o" 'dired-find-file-other-window)
@@ -277,9 +240,8 @@ taken from the directory being listed."
 ;; Finding a file anywhere below here
 ;; ---------------------------------------------------------------------------
 ;;
-;; The walk is `directory-files-recursive', a primitive, because pruning cannot
-;; be done afterwards: `.git' alone holds thousands of objects, and a walk that
-;; collected them would reach its limit before any source file.
+;; The walk is a primitive, `directory-files-recursive', which prunes as it
+;; goes: `.git' alone would exhaust its limit.
 
 (defvar find-file-recursive-ignore
   '(".git" ".hg" ".svn" ".jj"
@@ -295,9 +257,8 @@ taken from the directory being listed."
 ;; .gitignore, approximately
 ;; ---------------------------------------------------------------------------
 ;;
-;; An approximation on purpose: what it does not understand it skips, so the
-;; search may offer a file git would hide but never hides one it would show.
-;; The `dired' page lists what is understood.
+;; Approximate on purpose: a pattern not understood is skipped, so a file git
+;; would hide may be offered, but none it would show is hidden.
 
 (defun find-file-recursive--gitignore-lines (directory)
   "The meaningful lines of DIRECTORY's .gitignore, or nil if it has none."
@@ -305,12 +266,8 @@ taken from the directory being listed."
                                            ".gitignore"))))
     (if (null text)
         nil
-        ;; Blank lines and comments dropped here so that nothing downstream has
-        ;; to keep checking for them.
-        ;; Built with `cons' and reversed once at the end rather than with
-        ;; `append', which walks everything gathered so far on each element and
-        ;; so costs the square of the list's length. See
-        ;; `find-file-recursive--candidates' for where that mattered.
+        ;; Blank lines and comments dropped; consed and reversed, since
+        ;; `append' would copy the list for every line.
         (let ((kept nil))
           (mapc (lambda (line)
                   (let ((trimmed (find-file-recursive--trim line)))
@@ -335,8 +292,7 @@ taken from the directory being listed."
 
 (defun find-file-recursive--ignored-directories (directory)
   "Directory names DIRECTORY's .gitignore asks to leave out."
-  ;; A pattern ending in `/', or a plain name: git reads the second as a file
-  ;; or a directory, and reading it as a directory here costs nothing.
+  ;; A plain name is a file or a directory to git; read as a directory here.
   (let ((names nil))
     (mapc (lambda (pattern)
             ;; Anchored and multi-segment patterns are the ones this does not
@@ -386,9 +342,8 @@ taken from the directory being listed."
 
 (defun find-file-recursive--candidates (directory)
   "Every file under DIRECTORY worth offering, as (TRUNCATED PATHS)."
-  ;; Both exclusions go to the walk: filtering what it returns would cost an
-  ;; evaluation per file per pattern, more than a command's budget on a large
-  ;; tree with a long .gitignore.
+  ;; Both exclusions go to the walk: filtering after would cost an evaluation
+  ;; per file per pattern.
   (directory-files-recursive directory
                              find-file-recursive-limit
                              (append find-file-recursive-ignore
@@ -397,8 +352,7 @@ taken from the directory being listed."
 
 (defun dired-find-recursive--candidates (input)
   "The paths found when the prompt opened that match INPUT, best first."
-  ;; Narrowed from one walk rather than walking again on every key, which on a
-  ;; real project would be thousands of directory reads per character.
+  ;; One walk, narrowed on every key, not a walk per key.
   (fuzzy-filter input dired--recursive-candidates))
 
 (defcommand dired-find-recursive () nil
@@ -410,8 +364,7 @@ part of its path."
     (cond
      ((null paths) (message "No files under %s" (expand-file-name ".")))
      (t (progn
-          ;; Held for the life of the prompt. The completion function reads it
-          ;; rather than walking again, which is what keeps typing responsive.
+          ;; Held for the life of the prompt.
           (setq dired--recursive-candidates paths)
           (if truncated
               (message "%s files (truncated at %s -- narrow the directory or raise find-file-recursive-limit)"
@@ -425,8 +378,7 @@ part of its path."
                            'dired-find-recursive--candidates
                            nil))))))
 
-;; The snapshot the prompt narrows. Emptied when the prompt is answered, so a
-;; stale list cannot be offered to a later one.
+;; The list the prompt narrows, emptied when it is answered.
 (setq dired--recursive-candidates nil)
 
 (define-key nil "C-x d" 'dired)

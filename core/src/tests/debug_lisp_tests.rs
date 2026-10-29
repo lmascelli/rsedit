@@ -1,5 +1,6 @@
-//! End-to-end tests for `core/lisp/debug.lisp` and the `backtrace`/
-//! `all-logs` primitives it builds on.
+//! `debug.lisp`, and the `backtrace` and `all-logs` primitives it builds on.
+//!
+//! Design: `doc/architettura-editor.typ, <mod-debug>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -31,10 +32,8 @@ mod tests {
         (ctx, env)
     }
 
-    /// A key bound (globally) to a call to an undefined function, so
-    /// dispatching it through `handle_key_event` always produces a real,
-    /// uncaught `UndefinedFunction` error -- exercising the same path a
-    /// mistyped keybinding or a buggy command would.
+    /// A key bound to a call to an undefined function: a real, uncaught
+    /// error through `handle_key_event`.
     fn bind_a_failing_key(
         env: &Arc<Env<EditorState<GapBuffer>>>,
         ctx: &EditorState<GapBuffer>,

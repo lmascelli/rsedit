@@ -1,9 +1,7 @@
-//! Reading manual pages, and the primitives underneath.
+//! Reading manual pages, and the primitives underneath. The tests that need
+//! `man` skip when it is missing.
 //!
-//! The tests that need `man` say so and skip when it is missing, so the suite
-//! passes on a machine with no manual pages installed. Everything that does
-//! not need it -- the lookup order, the overstrike stripping, the environment
-//! primitives -- is tested unconditionally.
+//! Design: `doc/architettura-editor.typ, <mod-manpage>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

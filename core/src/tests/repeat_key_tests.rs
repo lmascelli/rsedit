@@ -4,6 +4,8 @@
 //! shorthand: after `C-x u`, a bare `u` undoes again. What makes it worth
 //! testing separately is the thing a repeat key costs -- the letter stops
 //! doing its ordinary job for exactly one keystroke, and only that one.
+//!
+//! Design: `doc/architettura-editor.typ, <keymap>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

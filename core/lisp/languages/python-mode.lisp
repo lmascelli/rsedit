@@ -2,6 +2,7 @@
 ;;;
 ;;; For the files whose names end in .py, .pyw and .pyi. User manual: the
 ;;; `modes' page, and `indentation' for how it indents.
+;;; Design: `doc/architettura-editor.typ, <mod-linguaggi>`.
 
 (require 'indent)
 

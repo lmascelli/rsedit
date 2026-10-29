@@ -4,6 +4,8 @@
 //! one undo entry per character, every hook run per character, and every
 //! bracket in it paired again. So most of these tests check that a paste is
 //! not typing.
+//!
+//! Design: `doc/architettura-editor.typ, <ciclo-tui>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

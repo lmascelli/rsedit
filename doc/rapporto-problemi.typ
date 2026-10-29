@@ -290,6 +290,19 @@
     effetto: [Il focus resta su una finestra che non c'è: non si può dividere, e `other-window` non ne esce.],
     correzione: [Non toccare il focus quando non c'è una flottante da chiudere, e controllare l'id in `set_focused`.],
   ),
+  (
+    id: "CMD-9",
+    gravita: "bassa",
+    verificato: true,
+    stato: "aperto",
+    titolo: [In vim ogni sessione di Insert copia e confronta il buffer intero],
+    breve: [vim: entrare e uscire da Insert costa quanto il file],
+    dove: [`core/lisp/features/vim.lisp` (`vim--begin-insert`, che ricorda `(buffer-string)`, e `vim--finish-insert`, che lo confronta con `string-diff`)],
+    verifica: [Misurato con un test temporaneo durante il passo 21 della documentazione, compilato in release: su un buffer di 100 KB `i`, `x` ed Esc costano 1,3 ms, su uno di 2 MB 47 ms, mentre un movimento costa 0,2 ms in tutti e due.],
+    cosa: [Per sapere che cosa la sessione ha cambiato, e farlo ripetere a `.`, `vim--begin-insert` copia il testo del buffer intero in una proprietà del buffer, e `vim--finish-insert` ne fa un'altra copia e confronta le due con `string-diff`. Il costo è proporzionale al file, non a ciò che si è scritto, e lo pagano ogni `i`, `a`, `o`, `c` e Replace, anche quando la sessione non cambia nulla; la copia resta in memoria per tutta la sessione.],
+    effetto: [In un file di qualche megabyte entrare e uscire da Insert ha un ritardo visibile, che cresce con il file: decine di millisecondi a 2 MB, circa duecento a 8 MB. Sui file piccoli non si nota.],
+    correzione: [Ricordare l'intervallo toccato, dal punto d'ingresso e dalle modifiche che le porte registrano (l'undo le conosce già), invece del testo intero; oppure confrontare solo le righe tra la prima e l'ultima modificata.],
+  ),
   // ------------------------------------------------------------------ MIN
   (
     id: "MIN-1",
@@ -311,7 +324,7 @@
     stato: "aperto",
     titolo: [`C-g` dentro il minibuffer non annulla la domanda],
     breve: [`C-g` nel minibuffer non chiude il prompt],
-    dove: [`core/lisp/common-keymaps.lisp` (`C-g` → `keyboard-quit`, anche nel minibuffer), `feature/minibuffer.rs` (`install_minibuffer`: la mappa di `minibuffer-mode` non lega `C-g`)],
+    dove: [`core/lisp/base/common-keymaps.lisp` (`C-g` → `keyboard-quit`, anche nel minibuffer), `feature/minibuffer.rs` (`install_minibuffer`: la mappa di `minibuffer-mode` non lega `C-g`)],
     verifica: [Riprodotto sulla revisione `3d846f1`: `M-x` poi `C-g` scrive «Quit» e il prompt resta aperto.],
     cosa: [`keyboard-quit` abbandona una sequenza di tasti a metà e azzera l'argomento prefisso, ma non sa nulla dei prompt aperti. La pagina `minibuffer` ora lo dice: Escape è la via d'uscita.],
     effetto: [Chi viene da Emacs preme `C-g` per uscire da una domanda e non ottiene nulla; il prompt resta aperto e cattura i tasti successivi.],
@@ -811,7 +824,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Il nome di una pagina di manuale viene passato alla shell senza virgolette],
     breve: [`manpage`: nome interpolato senza quoting nella shell],
-    dove: [`core/lisp/manpage.lisp` (`manpage--system-page`, che passa a `shell-command-to-string` il comando `man` con il nome dentro; `manpage--rsedit-page`, che costruisce il percorso della pagina concatenando il nome)],
+    dove: [`core/lisp/features/manpage.lisp` (`manpage--system-page`, che passa a `shell-command-to-string` il comando `man` con il nome dentro; `manpage--rsedit-page`, che costruisce il percorso della pagina concatenando il nome)],
     verifica: [Riprodotto sulla revisione `3d846f1`: `(manpage--system-page "printf;touch FILE")` crea FILE.],
     cosa: [`(format "man -w %s 2>/dev/null" name)` passa il nome così com'è a `/bin/sh -c`. Un nome con spazi o metacaratteri viene interpretato dalla shell: `printf(3)` dà un errore di sintassi, che si presenta come «No manual entry», e `a;b` esegue due comandi. Il nome arriva senza filtri da `M-x manpage` e da `C-h m`; da `manpage-at-point` (e da `K` in vim) è limitato ai caratteri di un simbolo, che comprendono `*`, espanso dalla shell. Anche il percorso della pagina interna viene costruito concatenando il nome, quindi `../` esce dalla directory dei dati.],
     correzione: [Racchiudere il nome tra apici singoli, con gli eventuali apici interni preceduti da escape, oppure rifiutare i nomi che non sono `[A-Za-z0-9._+-]+`.],
@@ -1059,7 +1072,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8, SIN-9, AVV-7, AVV-8 e GUI-1.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8, SIN-9, AVV-7, AVV-8, GUI-1 e CMD-9.
 
 == Riepilogo
 

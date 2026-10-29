@@ -1,18 +1,7 @@
-//! The help pages themselves: what goes on them, and getting back.
+//! The help pages: what goes on them, made of the editor's own answers, and
+//! getting back. `describe-key` is tested with keys pressed.
 //!
-//! # What is worth testing here
-//!
-//! A help page is believed, so the failures that matter are the quiet ones:
-//! a page that says a key runs the global binding while the mode's is what
-//! runs, a page for a name that does not exist that looks like a page for a
-//! name that does, a back stack that walks between the last two pages for
-//! ever.
-//!
-//! The other half is that the pages are made of the *editor's* answers rather
-//! than the module's own reading of the keymaps. `describe-key` is the test of
-//! that: it goes through the real key path -- keys are pressed here, not
-//! simulated -- so a page reporting anything but what those keys would have
-//! done is a failing test rather than a surprise months later.
+//! Design: `doc/architettura-editor.typ, <mod-help>`.
 #[cfg(test)]
 mod tests {
     use crate::editor::{EditorState, create_global_env};
@@ -302,11 +291,7 @@ mod tests {
         press('h', true, &ctx, &env);
         assert_eq!(page(&ctx), "", "C-h should no longer ask anything");
 
-        // Its last key is what asks half-way through a sequence: there is
-        // only ever one key to press there. `j' rather than `h' because
-        // `C-x h' is mark-whole-buffer -- a real binding wins over the
-        // question, which is the whole reason this only fires on sequences
-        // that mean nothing.
+        // `C-x j': `C-x h' is a real binding, which wins over the question.
         press('x', true, &ctx, &env);
         press('j', false, &ctx, &env);
         assert_says(&page(&ctx), "C-x continues with:");
@@ -410,8 +395,7 @@ mod tests {
 
     #[test]
     fn going_back_twice_reaches_the_third_page_rather_than_oscillating() {
-        // The bug this is here for: a back that pushes the page it is leaving
-        // walks between the last two for ever, and looks like it is working.
+        // A back that pushed the page left would swap the last two for ever.
         let (ctx, env) = editor();
         run(
             r#"(help-function "find-file")
@@ -502,10 +486,8 @@ mod tests {
 
     #[test]
     fn a_bindings_page_revisited_still_describes_the_buffer_it_was_about() {
-        // Going back happens from inside the help buffer, so a page that
-        // asked "what is bound here" when it was made must not answer it
-        // again from where it is being read -- that would describe the help
-        // buffer, which binds `q' and `l' and nothing anybody asked about.
+        // Read back from the help buffer, the page still describes the buffer
+        // it was made for.
         let (ctx, env) = editor();
         run(
             r#"(make-mode 'probe-mode)

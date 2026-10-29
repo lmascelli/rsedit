@@ -3,6 +3,7 @@
 ;;; For the files whose names end in .sh and .bash, and for .bashrc, .profile
 ;;; and Bash's other startup files. User manual: the `modes' page, and
 ;;; `indentation' for how it indents.
+;;; Design: `doc/architettura-editor.typ, <mod-linguaggi>`.
 
 (require 'commands)
 (require 'indent)
@@ -173,8 +174,8 @@ DELIMITER is a word, without white space or quotes."
                      (string= (nth 1 cache) (buffer-substring (point-min) (nth 0 cache)))))
          (stack (if valid (nth 2 cache))) (quote (if valid (nth 3 cache)))
          (heredocs (if valid (nth 4 cache))) (continued (if valid (nth 5 cache))))
-    ;; Cache only a verified prefix. Edits anywhere in it, including undo,
-    ;; invalidate it; adding a new line does not reparse the whole file.
+    ;; The cache holds for a prefix that is unchanged, so that a new line does
+    ;; not read the whole file again.
     (goto-char (if valid (nth 0 cache) (point-min)))
     (while (< (point) target)
       (let ((text (current-line)))

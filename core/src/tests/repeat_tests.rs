@@ -1,6 +1,8 @@
 //! `repeat`, and the form of the last command, which it runs again: `C-x u`
 //! three times is three sequences of two keys, and with a repeat key on
 //! `repeat` itself, one sequence and then taps.
+//!
+//! Design: `doc/architettura-editor.typ, <esecuzione>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

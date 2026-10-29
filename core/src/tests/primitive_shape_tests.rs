@@ -1,27 +1,10 @@
-//! The shapes the primitives share, tested where they are shared.
+//! The shapes the primitives share, tested where they are shared: the six
+//! macros of risp's `lisp/base/` that generate predicates, number and string
+//! operations, folds and non-local exits, and `exact_arity`, which a hundred
+//! primitives check their arguments with -- from Lisp, with too few arguments
+//! and with too many.
 //!
-//! `lisp/base/` generates its type predicates, its one-argument number and
-//! string operations, its folds and its non-local exits from six macros, and
-//! every fixed-arity primitive in the editor checks its arity through one
-//! function. That is a hundred-odd primitives resting on seven pieces of code,
-//! and these are the tests of those seven pieces -- from Lisp, which is the
-//! only side any of it is visible from.
-//!
-//! # Why this file exists
-//!
-//! The six-line arity guard at the top of a hundred primitives was replaced by
-//! one call to `risp::exact_arity`, and the replacement was *ablated* to check
-//! the suite would notice if it went wrong: `!=` was changed to `<`, so that
-//! every one of those primitives would accept any number of surplus arguments.
-//! All 1929 tests passed.
-//!
-//! So the guard had never been tested from the Lisp side at all. Plenty of
-//! tests call a primitive with too *few* arguments -- that is the shape a
-//! half-written expression has -- and none had ever passed a surplus one,
-//! which is the shape a *renamed* or *reordered* primitive is called with. A
-//! check nothing tests is a check that can be deleted by accident, and
-//! collapsing a hundred copies of it into one place makes that one accident
-//! reach a hundred primitives.
+//! Design: `doc/architettura-editor.typ, <primitive>`.
 #[cfg(test)]
 mod tests {
     use crate::{buffer::gap_buffer::GapBuffer, editor::create_global_env};

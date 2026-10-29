@@ -2,6 +2,8 @@
 //! and its line index, checked against a scan of the text after every change.
 //! What every implementation of `BufferTrait` has to do is checked in
 //! `buffer_conformance_tests`.
+//!
+//! Design: `doc/architettura-editor.typ, <gap-buffer>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

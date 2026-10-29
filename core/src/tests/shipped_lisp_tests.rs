@@ -1,16 +1,7 @@
 //! Every shipped Lisp module, loaded in the order the default init.lisp loads
-//! them.
+//! them, with the errors that `require' would only log.
 //!
-//! # Why this is worth a test of its own
-//!
-//! In the running editor these arrive through `require`, which *logs* a
-//! module it cannot find rather than raising -- deliberately, so that one
-//! missing module cannot stop the editor coming up. The cost of that is
-//! silence: a module that is not where the editor looks simply does not
-//! exist, and the only sign is a line in the log nobody reads. The feature is
-//! just missing.
-//!
-//! So this loads them the way init.lisp does and insists on the errors.
+//! Design: `doc/architettura-editor.typ, <test-documentazione>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -36,11 +27,8 @@ mod tests {
 
     #[test]
     fn every_module_the_default_init_loads_is_beside_the_binary() {
-        // The editor finds its modules in data/lisp beside the binary, where
-        // build.rs copies the whole of core/lisp, each kind in its own
-        // directory. A module the default init.lisp loads and the built editor
-        // cannot find is a feature that is missing with nothing but a line in
-        // the log to say so.
+        // The editor finds its modules where build.rs copies them, beside the
+        // binary, each kind in its own directory.
         let (ctx, env) = loaded();
         let LispExp::String(dir) = eval(
             &Parser::new("(data-directory \"lisp\")")
@@ -98,11 +86,7 @@ mod tests {
 
     #[test]
     fn the_docstrings_the_modules_already_carry_are_readable() {
-        // Every `defvar' and `defconst' in these files was written with a
-        // docstring, and until `defvar' learned to keep one they were all
-        // being parsed and thrown away. This is the test that says they
-        // arrived: pick module-level variables from three different files
-        // and read back what their definitions say.
+        // Module variables from three files, read back with their docstrings.
         let (ctx, env) = loaded();
         for (name, expected_start) in [
             ("manpage-buffer-name", "The one buffer pages are shown in"),

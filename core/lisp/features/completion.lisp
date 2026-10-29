@@ -3,12 +3,7 @@
 ;;; Tab at a prompt, and C-M-i in a buffer, show the candidates in a strip
 ;;; along the bottom of the frame, which typing narrows. Without this module
 ;;; Tab cycles through them in the prompt. User manual: the `completion' page.
-;;;
-;;; The editor only calls `*completion-read-function*', which this module
-;;; sets, and the module knows nothing of where the candidates came from.
-;;; The strip never takes the focus, so typing still reaches the prompt, and
-;;; it is drawn a page at a time around the selection: the candidates are
-;;; held here, and the buffer is only a picture of them.
+;;; Design: `doc/architettura-editor.typ, <mod-completion>`.
 
 (require 'debug)
 
@@ -23,39 +18,27 @@
 (defvar completion-columns 3
   "How many candidates the strip shows side by side.")
 
-;; The module's own state: the candidates, the one selected, what to call with
-;; the answer and the strip's window. Cleared when the strip closes, so that a
-;; stale answer never reaches a question nobody asked.
+;; The candidates, the one selected, what to call with the answer and the
+;; strip's window. Cleared when the strip closes.
 (setq *completion--items* nil)
 (setq *completion--index* 0)
 (setq *completion--on-choose* nil)
 (setq *completion--window* nil)
 
-;; The candidates as they were offered, before anything was typed to narrow
-;; them. Kept because narrowing has to be redone from the whole list on every
-;; keystroke: filtering the already-filtered list would make backspace unable
-;; to widen the selection again.
+;; The candidates as offered, before any narrowing, so that backspace can
+;; widen the list again.
 (setq *completion--all-items* nil)
 
-;; Where the text being completed begins, for an in-buffer completion, or nil
-;; when the strip was opened by the minibuffer. This is what tells the refresh
-;; below which of the two questions it is looking at -- the text between here
-;; and point, or the minibuffer's contents.
+;; Where the text being completed begins in a buffer, or nil for a prompt:
+;; which of the two texts the strip narrows by.
 (setq *completion--anchor* nil)
 
-;; What had been typed the last time the strip was narrowed. The refresh runs
-;; after *every* command, including the strip's own `C-n' -- so without
-;; something to compare against, moving the selection would immediately reset
-;; it to the first candidate and the arrow keys would do nothing at all.
+;; What was typed when the strip was last narrowed: the refresh runs after the
+;; strip's own C-n too, and must not reset the selection then.
 (setq *completion--pattern* nil)
 
-;; Set by `completion-at-point' just before it calls a presenter, and left nil
-;; by the minibuffer. Given a value here because a presenter may also be called
-;; directly -- by the minibuffer, or by a test -- and reading a variable that
-;; nothing has set yet is an error rather than nil.
-;;
-;; Set only for as long as the presenter is being called, so it is read as the
-;; strip opens and never afterwards: by the next keystroke it is nil again.
+;; Set by `completion-at-point' while it calls a presenter, nil otherwise;
+;; bound here, since reading an unbound variable is an error.
 (setq *completion-at-point-start* nil)
 
 ;; ---------------------------------------------------------------------------
@@ -75,17 +58,14 @@ nil."
 (defun completion--cell (item width)
   "ITEM in exactly WIDTH characters, cut short or padded, the last always a
 space."
-  ;; Exactly, padding included: where each candidate is in the buffer is
-  ;; computed, not searched for -- see `completion--offset'. The last column
-  ;; is kept blank so that a long candidate does not run into the next.
+  ;; Exactly WIDTH: `completion--offset' computes where each candidate is.
   (let* ((description (completion-description item))
          (text (if description
                    (concat (completion-value item) " " description)
                    (completion-value item)))
          (room (max 0 (- width 1)))
          (shown (if (< room (length text)) (substring text 0 room) text)))
-    ;; Cut rather than wrapped: a candidate spilling onto the next row would
-    ;; put two things in one cell.
+    ;; Cut, not wrapped, so that a cell holds one candidate.
     (concat shown (make-string (- width (length shown)) " "))))
 
 ;; ---------------------------------------------------------------------------
@@ -116,16 +96,14 @@ space."
 
 (defun completion--draw ()
   "Fill the completions buffer with the page the selection is on."
-  ;; A lambda, because `with-current-buffer' here takes a function rather than a
-  ;; body -- a primitive receives its arguments already evaluated, so a body
-  ;; would have run in the wrong buffer before it ever arrived.
+  ;; A lambda: this `with-current-buffer' is a primitive, which takes a
+  ;; function, since a body would be evaluated before it is called.
   (with-current-buffer completion-buffer-name
     (lambda ()
       (set-buffer-read-only nil)
       (clear-buffer)
-      ;; Nothing matches what is typed. The strip stays -- the keystrokes went
-      ;; to the buffer, so one backspace brings the list straight back, and a
-      ;; strip that closed itself here would have to be reopened by hand.
+      ;; Nothing matches: the strip stays, so that a backspace brings the list
+      ;; back.
       (if (null *completion--items*) (insert "No matches"))
       (let* ((width (completion--cell-width))
              (start (completion--page-start))
@@ -133,9 +111,7 @@ space."
              (index start))
         (dotimes (row completion-window-height)
           (dotimes (column completion-columns)
-            ;; Past the end of the list, the cell is still written -- as
-            ;; spaces. A short last row would make every position below it
-            ;; wrong.
+            ;; Past the end of the list, spaces: the offsets count every cell.
             (insert (if (< index total)
                         (completion--cell (nth index *completion--items*) width)
                         (make-string width " ")))
@@ -146,8 +122,8 @@ space."
 
 (defun completion--highlight ()
   "Mark the selected candidate as the region, so that it is drawn highlighted."
-  ;; The region rather than a marker character, which would push that cell
-  ;; out of its column; it is drawn in a window without the focus too.
+  ;; The region, not a marker character, which would shift the cell; it is
+  ;; drawn in a window without the focus too.
   (if (null *completion--items*)
       nil
       (completion--highlight-selected)))
@@ -174,21 +150,15 @@ space."
 What `*completion-read-function*' names."
   (cond
    ((null items) (message "No completions"))
-   ;; One candidate is not a choice. Taking it saves a keystroke and, more to
-   ;; the point, opening a window to ask a question with one answer reads as
-   ;; the editor not knowing what it is doing.
+   ;; One candidate is not a choice: taken, without a strip.
    ((= 1 (length items)) (funcall on-choose (completion-value (car items))))
    (t (progn
         (setq *completion--items* items)
-        ;; Kept unnarrowed, so that backspace can widen the list again. Only
-        ;; ever filtered *from* here, never in place.
+        ;; Kept unnarrowed: filtered from, never in place.
         (setq *completion--all-items* items)
         (setq *completion--index* 0)
         (setq *completion--on-choose* on-choose)
-        ;; Which question this is. `*completion-at-point-start*' is set by
-        ;; `completion-at-point' before it calls a presenter and left nil by
-        ;; the minibuffer, so it doubles as the answer to "where does the text
-        ;; I am matching against come from".
+        ;; In a buffer or at a prompt: see `*completion-at-point-start*'.
         (setq *completion--anchor* *completion-at-point-start*)
         (setq *completion--pattern* (completion--current-text))
         (buffer-create completion-buffer-name 'completion-mode)
@@ -200,17 +170,15 @@ What `*completion-read-function*' names."
 
 (defun completion--install-keys ()
   "Bind the keys that move and choose, and let every other key through."
-  ;; A filter: typing reaches the prompt or the buffer, and narrows the list.
-  ;; Nothing takes such a keymap down by itself, so Escape and C-g both close;
-  ;; C-n and C-p rather than n and p, which have to reach the text.
+  ;; A filter: typing reaches the text and narrows the list. C-n and C-p, since
+  ;; n and p are typed; Escape and C-g close, since nothing else would.
   (set-transient-keymap
    (list (cons "C-n" 'completion-next)
          (cons "C-p" 'completion-previous)
          (cons "<down>" 'completion-next)
          (cons "<up>" 'completion-previous)
          (cons "<ret>" 'completion-choose)
-         ;; Tab is usually what opened the strip, so pressing it again taking
-         ;; the selection is the natural second tap.
+         ;; Tab opened the strip, and a second Tab takes the selection.
          (cons "<tab>" 'completion-choose)
          (cons "<esc>" 'completion-abandon)
          (cons "C-g" 'completion-abandon))
@@ -224,17 +192,14 @@ What `*completion-read-function*' names."
 
 (defun completion--minibuffer-text ()
   "What is in the minibuffer, or nil if there is no minibuffer open."
-  ;; The minibuffer may already have been taken down -- a command that closed
-  ;; it can run before this hook does -- and `with-current-buffer' signals
-  ;; rather than returning nil for a buffer that is not there.
+  ;; The prompt may be closed already, and `with-current-buffer' signals for a
+  ;; buffer that is not there.
   (if (member completion-minibuffer-name (all-buffer-names))
       (with-current-buffer completion-minibuffer-name (lambda () (buffer-string)))
       nil))
 
 (defun completion--current-text ()
   "The text the candidates are matched against."
-  ;; What has been typed since the completion began in a buffer, the whole
-  ;; prompt at a prompt, and nothing for a strip opened by neither.
   (cond
    (*completion--anchor*
     (if (>= (point) *completion--anchor*)
@@ -245,9 +210,8 @@ What `*completion-read-function*' names."
 
 (defun completion--narrow (text)
   "Make the candidates those for TEXT."
-  ;; In a buffer they are filtered from the ones the strip opened with, since
-  ;; typing does not change what could go there. A prompt is asked again: for
-  ;; a path, a `/' typed means another directory's entries.
+  ;; In a buffer, filtered from the first list; a prompt is asked again, since
+  ;; a `/' typed in a path means another directory's entries.
   (if *completion--anchor*
       (setq *completion--items* (fuzzy-filter text *completion--all-items*))
       (let ((fresh (if *minibuffer-on-change*
@@ -259,22 +223,14 @@ What `*completion-read-function*' names."
 (defun completion--refresh ()
   "Narrow the strip again when what is typed has changed. On
 `post-command-hook'."
-  ;; Compared with the last text, because the strip's own C-n is a command
-  ;; too, and narrowing after it would put the selection back at the top.
   (if *completion--window*
       (cond
-       ;; Backspaced past where the completion began. There is no longer a word
-       ;; being completed, so there is nothing to be completing -- and the span
-       ;; between the anchor and point has turned inside out, which nothing
-       ;; below could read.
+       ;; Backspaced past where the completion began: nothing is being
+       ;; completed.
        ((and *completion--anchor* (< (point) *completion--anchor*))
         (completion--close))
-       ;; A strip nothing is typing into -- opened by a module calling the
-       ;; presenter directly rather than by `completion-at-point' or the
-       ;; minibuffer. There is no text to narrow by, so it is left as it was
-       ;; rather than being closed: closing it here would take down every strip
-       ;; that did not come from one of the two built-in callers, including the
-       ;; one a `completion-choose' callback had just opened.
+       ;; A strip opened by calling the presenter directly has no text to
+       ;; narrow by: left as it is, not closed.
        ((and (null *completion--anchor*) (null (completion--minibuffer-text)))
         nil)
        (t (let ((text (completion--current-text)))
@@ -294,9 +250,7 @@ keeping the selection. What `completion-invalidate' reaches, through
       (let ((text (completion--current-text)))
         (completion--narrow text)
         (setq *completion--pattern* text)
-        ;; A list that has grown can still have shrunk under the cursor -- a
-        ;; rebuild, not an append -- so the selection is clamped rather than
-        ;; assumed to be in range.
+        ;; A rebuild, not an append: the selection may be out of range.
         (if (>= *completion--index* (length *completion--items*))
             (setq *completion--index* 0))
         (completion--draw))))
@@ -312,17 +266,10 @@ keeping the selection. What `completion-invalidate' reaches, through
 (defun completion--move (step)
   "Move the selection by STEP, and redraw when that turns the page."
   (let* ((total (length *completion--items*))
-         ;; Nothing to move through, and `mod' by zero is an error rather than
-         ;; a no-op. Reachable by pressing `C-n' while "No matches" is up.
+         ;; C-n under "No matches": a modulus by zero is an error.
          (total (if (= total 0) 1 total))
-         ;; `+ total' before the modulus so that stepping back from the first
-         ;; candidate reaches the last rather than a negative index.
-         ;;
-         ;; It cannot be observed today: this `mod' already gives 2 for
-         ;; (% -1 3), so `p' on the first candidate wraps either way. It stays
-         ;; because that is a property of `mod', documented in the Rust source
-         ;; as *not* following Elisp's rule in every case -- and the day it is
-         ;; made to, this line should not be what breaks.
+         ;; `+ total', so that stepping back from the first candidate wraps
+         ;; whatever sign `%' gives.
          (next (% (+ *completion--index* step total) total))
          (page (completion--page-start)))
     (setq *completion--index* next)
@@ -341,9 +288,7 @@ so and leave it open."
   "Hand the selected candidate to whoever asked for one."
   (let ((chosen (completion-value (nth *completion--index* *completion--items*)))
         (on-choose *completion--on-choose*))
-    ;; Closed before the callback runs, not after: the callback may open a
-    ;; prompt, or another completion, and it must not find this one's window
-    ;; still on screen or its state still set.
+    ;; Closed before the callback, which may open another strip.
     (completion--close)
     (funcall on-choose chosen)))
 
@@ -353,7 +298,7 @@ so and leave it open."
 
 (defun completion--close ()
   "Take down the strip, its keymap and its state."
-  ;; All three, every time, so that no way out leaves the keys captured.
+  ;; Window, state and keymap, so that no way out leaves the keys captured.
   (if *completion--window* (delete-window *completion--window*))
   (setq *completion--window* nil)
   (setq *completion--items* nil)
@@ -368,8 +313,8 @@ so and leave it open."
 ;; Taking over
 ;; ---------------------------------------------------------------------------
 ;;
-;; The line below is what makes any of this run; setting the variable back to
-;; nil brings back the cycling the editor does on its own.
+;; `*completion-read-function*' set back to nil brings back the cycling the
+;; editor does on its own.
 
 (defconst completion-minibuffer-name "*Minibuffer*"
   "The buffer a prompt reads into, whose text the strip narrows by.")

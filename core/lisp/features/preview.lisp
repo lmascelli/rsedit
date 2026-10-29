@@ -3,10 +3,7 @@
 ;;; While the prompt of a command in `preview-commands' is open, what is typed
 ;;; is drawn in the buffer as virtual text, which changes nothing, and goes
 ;;; when the prompt closes. User manual: the `minibuffer' page.
-;;;
-;;; `string-rectangle' and `make-virtual-text' know nothing of each other; this
-;;; module, run on `post-command-hook', is the only thing that knows both, and
-;;; `pending-command' says which command the open prompt belongs to.
+;;; Design: `doc/architettura-editor.typ, <mod-preview>`.
 
 ;; Named here as well as in completion.lisp: each module loads on its own.
 (defconst preview-minibuffer-name "*Minibuffer*"
@@ -20,19 +17,16 @@ nothing else with it.")
   "The names of the commands previewed. Each needs a function here that knows
 what it would do.")
 
-;; Which buffer the preview was last drawn in, so it can be cleared from there
-;; rather than from wherever the cursor has since gone.
+;; Which buffer the preview was drawn in, to clear it there.
 (setq preview--buffer nil)
-;; What was last previewed, so an unchanged prompt costs a comparison rather
-;; than a redraw of every line.
+;; What was last previewed: an unchanged prompt costs a comparison.
 (setq preview--showing nil)
 
 (defun preview--clear ()
   "Take down whatever is being previewed."
   (if preview--buffer
       (progn
-        ;; The buffer may have been killed since -- a preview is drawn over
-        ;; whatever was in front of you, and nothing stops you closing it.
+        ;; The buffer may have been killed since.
         (if (member preview--buffer (all-buffer-names))
             (with-current-buffer preview--buffer
               (lambda () (clear-virtual-text preview-category))))
@@ -56,10 +50,8 @@ what it would do.")
           (while (<= line last)
             (goto-line line)
             (beginning-of-line)
-            ;; The column may be past the end of a short line, and
-            ;; `goto-char' with the line's end is what that comes to -- the
-            ;; preview then shows at the end of the line, which is where
-            ;; `string-rectangle' would pad out to and put it.
+            ;; Past the end of a short line, the preview shows at its end,
+            ;; where `string-rectangle' would pad out to.
             (forward-char column)
             (make-virtual-text (point) text 'preview 0 preview-category)
             (setq line (+ line 1)))))))
@@ -75,9 +67,8 @@ what it would do.")
           (with-current-buffer
               target
             (lambda ()
-              ;; Cleared first, every time: this draws the whole preview
-              ;; rather than working out what changed, which for a handful of
-              ;; lines is cheaper than being clever and cannot drift.
+              ;; Cleared and drawn whole, every time: a few lines, and
+              ;; nothing to drift.
               (clear-virtual-text preview-category)
               (if (and (equal command "string-rectangle") (not (string= text "")))
                   (preview--rectangle text))))))))
@@ -89,18 +80,13 @@ what it would do.")
         (let ((text (preview--input)))
           (if (and text (not (equal text preview--showing)))
               (preview--draw command text)))
-        ;; No prompt, or not one this module previews. Either way whatever was
-        ;; being previewed is no longer being asked about.
+        ;; No prompt, or not one previewed.
         (preview--clear))))
 
-;; Registered for every mode -- `add-hook' with nil -- because which major mode
-;; the buffer happens to be in has nothing to do with whether a prompt is open
-;; in front of it.
+;; For every mode: a prompt can be open in front of any buffer.
 (add-hook nil "post-command-hook" 'preview--refresh)
 
-;; What a preview looks like. Dim rather than coloured, and the same whatever
-;; the mode: the one thing the reader must never have to wonder is whether what
-;; they are looking at is in the file.
+;; Dim and the same in every mode: plainly not in the file.
 (define-face 'preview "bright-black" nil '("italic"))
 
 (log "preview loaded")

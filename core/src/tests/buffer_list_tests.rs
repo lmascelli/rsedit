@@ -1,10 +1,7 @@
-//! `buffer-list.lisp`: the listing, and `C-x b`.
+//! `buffer-list.lisp`: the listing and `C-x b`, and the names read back off
+//! the screen, by column, refused when the buffer is gone.
 //!
-//! Like `dired`, this module keeps no state beside the buffer -- each line
-//! carries a name and every command reads back what is on screen. Several of
-//! these tests are about that: that a name is read by column rather than by
-//! splitting on spaces, and that a line naming a buffer that has since been
-//! killed is refused rather than acted on.
+//! Design: `doc/architettura-editor.typ, <mod-buffer-list>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

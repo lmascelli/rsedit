@@ -5697,6 +5697,465 @@ aggiorna o toglie un plugin, e versione e dipendenze non si controllano. Un
 gestore aggiungerebbe una cartella e il suo descrittore; il caricamento
 c'è già.
 
+== Come è scritto un modulo <scrivere-moduli>
+
+Un modulo è un file di `core/lisp/<genere>/`, con il nome della feature che
+fornisce. Comincia con un'intestazione `;;;` di poche righe --- il nome e una
+frase, che cosa aggiunge, la sua pagina del manuale utente (`User manual:`) e
+la sua sezione di questo capitolo (`Design:`) ---, poi i `require` di ciò che
+usa; finisce con una riga di log e il suo `provide`. `doc_pointer_tests`
+controlla che ogni modulo distribuito abbia l'intestazione, e che il suo
+rimando porti a un'etichetta che il manuale ha.
+
+Dentro, le parti sono separate da intestazioni `;; ----` (lo stato, il disegno,
+i comandi, i tasti e le facce), nell'ordine in cui chi legge le incontra; i
+tasti e le facce stanno in fondo, accanto a ciò che legano. I nomi privati
+hanno il prefisso del modulo e un doppio trattino, `dired--parent`; quelli
+pubblici solo il prefisso. Un commento dice in una o due righe un perché che
+il codice non dice; i perché più lunghi sono le decisioni qui sotto.
+
+Quattro moduli --- `debug`, `minibuffer` e `common-keymaps` di `base/`,
+`clipboard` di `features/` --- definiscono i loro comandi con `defun` e
+`register-command` invece che con `defcommand`: si caricano anche senza
+`commands.lisp`, come quando un test valuta il file da solo, e lì un
+`defcommand` sarebbe la chiamata a una funzione che non c'è.
+
+Molti moduli di `features/` hanno la stessa forma: un modo maggiore per un
+buffer di servizio (`*dired*`, `*Buffer List*`, `*Themes*`), in sola lettura
+tranne mentre lo si riscrive, i cui comandi rileggono dallo schermo ciò su cui
+agiscono. Altri mostrano il loro buffer in una striscia in fondo al frame
+(`display-buffer-at-bottom`, o `results-display` per le liste di posti), che
+non prende il focus.
+
+#ref-table(
+  columns: (3.2cm, 1fr),
+  header: ([Forma], [Moduli]),
+  [buffer come stato], [`dired`, `buffer-list`, `theme`, `compile` (la prima riga è il comando)],
+  [striscia in fondo], [`shell`, `compile`, `occur`, `completion`],
+  [solo un hook], [`preview`, `electric-pair`, `completion` (il restringimento)],
+  [Rust risponde, il modulo mostra], [`help`, `occur`, `completion-at-point`, `minibuffer`, `shell`],
+)
+
+== I moduli distribuiti <moduli-distribuiti>
+
+Una sottosezione per modulo: che cosa fa, come, e le sue decisioni. Dove un
+altro capitolo descrive già il meccanismo, la sottosezione vi rimanda.
+
+=== `commands` <mod-commands>
+
+Il registro dei comandi, la raccolta degli argomenti e `M-x` sono in Rust
+(@comandi); il modulo aggiunge `defcommand`, `string-prefix-p`,
+`string-suffix-p`, `save-match-data` e `with-eval-after-load`.
+
++ *Il necessario in Rust, lo zucchero qui.* Un comando che non sa raccogliere
+  i suoi argomenti non è un comando, e un file di configurazione che non si
+  carica non deve poterlo togliere. Senza questo modulo un comando si
+  definisce lo stesso, con `defun` e `register-command`.
++ *`defcommand` passa il nome come stringa e le specifiche con `list`.* Il
+  lettore trasforma una forma citata in dati mentre legge, e un unquote dentro
+  una citazione (`',name`) è già un dato quando il backquote si espande.
++ *`save-match-data` senza gensym.* Il Lisp non ne ha: i dati salvati stanno
+  sotto un nome che un corpo vedrebbe solo nominandolo.
+
+=== `debug` <mod-debug>
+
+`message` scrive nell'area dei messaggi e nel log; `switch-to-messages`
+mostra il log in `*Messages*`, come istantanea; `report-error` è ciò che
+l'editor chiama quando un comando fallisce, e con `debug-on-error` apre la pila
+delle chiamate in una flottante `*Backtrace*`.
+
++ *L'errore di un comando passa da una funzione Lisp.* `report-error` si può
+  ridefinire, e il modo di riferire un fallimento cambia senza toccare il Rust.
++ *Il buffer da cui si torna è ricordato.* `close-floating-window` rende il
+  focus alla finestra, non il buffer corrente: il modulo ricorda il buffer
+  della prima apertura, e una seconda flottante non lo sovrascrive.
+
+=== `common-keymaps` <mod-common-keymaps>
+
+I legami della keymap globale, sui tasti di Emacs, a gruppi: ogni gruppo
+comincia con un commento che nomina la pagina che lo descrive. I tasti di un
+modo stanno nel suo modulo; Return sta in `indent`, accanto al comando che
+esegue.
+
++ *Un gruppo per pagina.* Il file fa da indice dei tasti: chi cerca dove un
+  tasto è spiegato lo trova qui, e `guide_tests` controlla le sezioni KEYS
+  delle pagine contro questi legami.
++ *Due tasti dove i terminali ne mandano uno.* `C-/` e `C-_`, `C-M-i` e
+  `M-<tab>` arrivano come lo stesso tasto su molti terminali: si legano
+  entrambi.
++ *I numeri di riga senza tasto.* Costano colonne; `M-x toggle-line-numbers`
+  li accende.
+
+=== `indent` <mod-indent>
+
+Tab indenta la regione o la riga alla colonna che la regola del modo
+(`indent-function`) restituisce, o come la riga sopra; Return indenta la
+riga che apre (`electric-indent-mode`). Il modulo ha anche la regola dei Lisp
+(`lisp-indent-line`) e i lettori comuni delle regole dei linguaggi
+(`prog-indent--code`, che maschera stringhe e commenti mantenendo le colonne).
+
++ *Una regola restituisce una colonna, non fa il lavoro.* Un modo può
+  sbagliare solo un numero; `indent-region` può chiamarla cento volte senza
+  cento occasioni di rovinare una riga; dove va il punto dopo è scritto una
+  volta, in `indent-line-to`, non una per linguaggio.
++ *Il punto si rimette prima di toccare la riga.* Una regola legge il buffer
+  muovendo il punto, e lo lascia dove ha finito.
++ *Le regioni per numero di riga, e riselezionate.* Indentare una riga sposta
+  gli offset di tutte quelle sotto; ogni modifica disattiva il mark, e la
+  regione si riseleziona alla fine perché un secondo Tab agisca sullo stesso
+  blocco. Una regione che finisce all'inizio di una riga non la copre.
++ *Uno stile sconosciuto vale `auto`.* Un refuso in `indent-region-style` dà
+  il comportamento sensato, non un errore a ogni Tab.
++ *La regola dei Lisp legge la struttura.* `syntax-ppss` dice la profondità e
+  dove si è aperta la lista: niente espressioni regolari né elenchi di parole,
+  e vale per ogni modo che accoppia le parentesi. In una stringa la riga resta
+  com'è; si allinea al delimitatore (elemento 4), non all'inizio
+  dell'espressione, perché `'(a b)` si allinea alla parentesi.
++ *Le forme a corpo fisso sono proprietà dei simboli.* Come
+  `lisp-indent-function` di Emacs: la forma di un linguaggio è dei suoi nomi,
+  non di un modo che li legge.
++ *Return si lega qui.* Senza il modulo resta `insert-newline`, invece di un
+  legame a un comando che non c'è.
+
+=== `minibuffer` <mod-minibuffer>
+
+Il prompt è in Rust (@minibuffer): `minibuffer-read`, i suoi tasti e la sua
+storia, perché `M-x` funzioni qualunque modulo non si carichi. Il modulo
+aggiunge `M-:`, che valuta l'espressione al livello più alto, perché ciò che
+definisce sopravviva al comando, e con l'errore catturato, perché un'espressione
+sbagliata si riferisca invece di chiudere il prompt.
+
+=== `buffer-list` <mod-buffer-list>
+
+`C-x b` sceglie un buffer con il completamento (`fuzzy-filter`), `C-x C-b`
+li elenca in `*Buffer List*`, uno per riga, con i tasti per passarvi e
+ucciderli.
+
++ *Il buffer è lo stato, come in dired.* Ogni comando rilegge il nome dalla
+  riga, per colonna e non dividendo sugli spazi, che un nome può contenere. Un
+  nome che non è più vivo dice che l'elenco è vecchio: lo si dice, non si
+  agisce.
++ *L'elenco non si uccide dall'interno.* Lascerebbe il cursore in un buffer
+  che non c'è; `q` lo chiude. Dopo `close-buffer` si torna all'elenco prima di
+  ridisegnarlo, perché la finestra può mostrare ormai un altro buffer.
+
+=== `clipboard` <mod-clipboard>
+
+Ogni uccisione e ogni copia va anche agli appunti di sistema: il front-end
+la riceve dalla fotografia (@snapshot) e la consegna, con OSC 52 o con egui.
+Il modulo è una variabile, `clipboard-sync`, e un comando che la inverte.
+
++ *Un imbuto solo.* `EditorState::kill`, da cui passano tutte le uccisioni e
+  le copie, legge la variabile: poche righe coprono tutto. Non legata vale
+  spenta, come nei test, che non caricano Lisp e non devono accodare sequenze
+  per un terminale che non c'è.
++ *Gli appunti non si chiedono al terminale.* I terminali disattivano quella
+  metà di OSC 52, che lascerebbe leggere gli appunti a chiunque scriva sul
+  terminale, e la risposta arriverebbe mescolata ai tasti. Il testo entra con
+  l'incolla, come `insert-pasted-text`.
+
+=== `compile` <mod-compile>
+
+`C-c c` esegue un comando e ne mostra l'uscita in una striscia; `M-g n` e
+`M-g p` percorrono i posti che nomina. L'esecuzione è `shell-command-start`
+(@comandi-shell); il modulo è il modo del buffer d'uscita e la navigazione.
+
++ *Lo stato nel buffer.* La prima riga, `$ cargo build`, è il comando che `g`
+  riesegue. Fuori dal buffer c'è solo quale buffer `M-g n` percorre, perché
+  lo si chiede da un altro buffer.
++ *I formati sono una lista.* I compilatori non concordano, e aggiungerne uno
+  è una riga di `compilation-patterns`; vince il primo che corrisponde, e i più
+  specifici vengono prima.
++ *La lista di tutti.* `next-error` percorre una lista di risultati (@risultati),
+  la stessa di una ricerca. L'uscita di un compilatore arriva ancora mentre la
+  si percorre: `compilation--rebuild` è il suo `results-refresh`, chiamato prima
+  di ogni passo. Ricostruire è un'analisi per riga dell'uscita, qualche
+  centinaio; analizzare ogni riga all'arrivo farebbe lo stesso lavoro più
+  spesso e nel momento peggiore.
++ *`M-g n` sta in `common-keymaps`.* Percorre l'ultima lista fatta, da
+  chiunque: legato qui, ogni produttore di liste dipenderebbe da questo modulo.
++ *I segni come sfondi.* Il testo sotto ha già i suoi colori.
+
+=== `completion-at-point` <mod-completion-at-point>
+
+Il comando `completion-at-point`, che chiede alle fonti e unisce ciò che
+offrono, è in Rust (@completamento); il modulo è le cinque fonti --- percorsi,
+parole del linguaggio, nomi dell'interprete, buffer, parole dei buffer --- e il
+loro ordine.
+
++ *Una fonte di nomi prende i limiti da `bounds-of-thing-at-point`.* Così
+  rivendica lo stesso testo delle altre, e i candidati si uniscono; solo
+  `capf-file-name` rivendica un percorso intero.
++ *Nulla, non una lista vuota.* Una lista vuota fisserebbe la regione e
+  chiuderebbe fuori le altre fonti.
++ *La parola che si scrive non si offre.* Sarebbe l'inizio comune di tutti i
+  candidati, e senza la striscia il tasto sembrerebbe non fare nulla.
++ *La più specifica prima.* La prima fonte che risponde fissa la regione, e di
+  un nome offerto due volte resta la prima descrizione; le fonti di un modo
+  vengono prima di tutte.
+
+=== `completion` <mod-completion>
+
+Tab a un prompt e `C-M-i` in un buffer mostrano i candidati in una striscia
+in fondo al frame, che si restringe scrivendo. L'editor chiama solo
+`*completion-read-function*`, che il modulo imposta; senza il modulo Tab scorre
+i candidati nel prompt.
+
++ *Il modulo non sa da dove vengono i candidati.* Riceve una lista e una
+  funzione da chiamare con la scelta.
++ *La striscia non prende il focus.* Si continua a scrivere nel prompt o nel
+  buffer, attraverso una keymap transitoria che lascia passare i tasti che non
+  lega: `C-n` e `C-p`, non `n` e `p`, che si scrivono; Esc e `C-g` la chiudono,
+  perché nient'altro toglie una keymap così.
++ *Il buffer è un'immagine.* I candidati stanno nel modulo, e la striscia ne
+  mostra una pagina intorno alla selezione. Le celle hanno larghezza fissa,
+  tagliate e non a capo, scritte anche oltre la fine: la posizione di un
+  candidato si calcola, non si cerca. La selezione è la regione, che si vede
+  anche in una finestra senza focus.
++ *Si restringe da tutta la lista.* Un backspace allarga di nuovo. In un buffer
+  si filtra la lista iniziale; a un prompt si richiede, perché un `/` scritto
+  in un percorso vuol dire le voci di un'altra directory. Il testo si confronta
+  con l'ultimo, perché il restringimento gira dopo ogni comando, anche dopo il
+  `C-n` della striscia.
++ *Nessuna corrispondenza non chiude.* Un backspace riporta la lista. Un
+  candidato solo si prende senza striscia: una finestra per una domanda con una
+  risposta.
++ *Si chiude prima della risposta.* Chi la riceve può aprire un'altra striscia;
+  ogni uscita chiude finestra, stato e keymap insieme.
+
+=== `dired` <mod-dired>
+
+Un file manager scritto come modulo: un modo, una keymap e pochi comandi, su
+primitive che non sanno di file manager --- `list-dir`, `delete-file`,
+`rename-file`. Cerca anche un file in tutto l'albero sotto la directory, con
+una lettura approssimata di `.gitignore`.
+
++ *Il buffer è lo stato.* Nessuna variabile tiene la directory, nessuna
+  tabella lega le righe ai nomi: la prima riga dice la directory, ogni riga
+  porta un nome, e ogni comando rilegge lo schermo. Una directory ricordata a
+  parte potrebbe non essere quella mostrata, e `D` cancellerebbe in una
+  directory che l'utente non sta guardando.
++ *Un formato semplice.* L'intestazione, poi un nome per riga rientrato di due
+  spazi: il rientro distingue una voce dall'intestazione. Colonne di dimensioni
+  e date obbligherebbero ogni comando che legge un nome ad accordarsi con ogni
+  comando che lo scrive.
++ *`..` si elenca.* Un elenco che non mostra la sua uscita sembra un vicolo
+  cieco; `list-dir` lo omette, e il modulo lo rimette.
++ *Dopo ogni modifica si rilegge il disco.* L'elenco si ricostruisce da ciò che
+  c'è, non si corregge per accordarsi a ciò che ci si aspettava.
++ *Un buffer di elenco.* Una directory aperta in un'altra finestra sarebbe un
+  secondo elenco nello stesso buffer: si apre qui. `o` riusa la finestra in cui
+  ha aperto l'ultimo file.
++ *Domande con risposta scritta.* Nulla nell'editor ridà un file cancellato.
+  La risposta chiude sul percorso, in nessuna variabile, mentre l'utente fa
+  altro; se la cancellazione è ricorsiva si decide insieme alla domanda.
++ *Un walk primitivo che pota.* `directory-files-recursive` salta `.git` e i
+  modelli ignorati mentre cammina: `.git` da solo esaurirebbe il limite, e
+  filtrare dopo costerebbe una valutazione per file e per modello. Un walk per
+  prompt, ristretto a ogni tasto.
++ *`.gitignore` approssimato di proposito.* Ciò che non capisce lo salta: può
+  offrire un file che git nasconderebbe, mai nascondere uno che mostrerebbe.
+
+=== `electric-pair` <mod-electric-pair>
+
+Scrivere un delimitatore di apertura inserisce il suo compagno, scrivere quello
+di chiusura lo scavalca, cancellare metà di una coppia vuota cancella
+entrambi. Sta su `post-self-insert-hook`, nei modi che `electric-pair-enable`
+nomina; la cancellazione è un comando sui tasti di `delete-backward-char` e
+`delete-char`.
+
++ *Le coppie vengono dalla tabella sintattica.* La stessa di `forward-sexp` e
+  dell'indentazione: nessuna seconda lista da tenere allineata.
++ *Un incolla non accoppia.* `post-self-insert-hook` non gira per un incolla,
+  e il codice incollato ha già le sue parentesi.
++ *Lo stato prima del carattere scritto.* Al punto, descriverebbe la stringa o
+  il commento che quel carattere ha appena aperto. In un commento nulla si
+  accoppia.
++ *Le virgolette prima della regola delle stringhe.* Davanti a una virgoletta
+  di chiusura si è dentro la stringa che chiude: la regola le rifiuterebbe
+  tutte. Una virgoletta apre o chiude secondo ciò che le sta accanto.
++ *Prima di una parola non si accoppia.* Una `(` davanti a `foo` sta per
+  avvolgerlo. Emacs lo rende configurabile; qui è la regola.
++ *Una lista già chiusa non si accoppia.* Una `{` cancellata e riscritta ha
+  ancora la sua `}` più sotto: un'altra la raddoppierebbe. `balance-point`
+  dice se la profondità torna a zero più avanti (@scanner).
++ *Una chiusura in più va alla fine del blocco.* Se il buffer è bilanciato
+  senza di essa e c'è una lista da cui uscire; al livello più alto è un
+  carattere voluto. Tolta e rimessa nello stesso comando, è un passo di undo.
++ *Rust non accoppia le virgolette.* Le lifetime lo renderebbero sbagliato più
+  spesso che giusto.
+
+=== `help` <mod-help>
+
+`C-h f`, `C-h v`, `C-h k`, `C-h b`, `C-h a` e `C-h ?`: le pagine dell'aiuto,
+in `*Help*`, con una pila per tornare indietro.
+
++ *Le risposte sono primitive.* `key-binding`, `where-is`, `function-doc` e le
+  altre sono in Rust (@aiuto): nessun modulo può sbagliarle. Il modulo è le
+  pagine.
++ *Due metà per comando.* Una chiede, ed è legata a un tasto; l'altra prende il
+  nome, per il Lisp.
++ *Una pagina è una lista di righe.* Le funzioni che le costruiscono non
+  toccano un buffer: si provano senza, e si sostituiscono senza toccare ciò di
+  cui sono fatte.
++ *La pila tiene come ricostruire una pagina.* Una pagina ritrovata mostra
+  l'editor com'è ora. Tornare indietro non spinge la pagina lasciata, o `l`
+  scambierebbe le ultime due per sempre; la pila ha un limite,
+  `help-history-length`.
++ *`describe-key` legge come l'editor.* Passa da `read-key-sequence`: ciò che
+  dice è ciò che sarebbe successo.
++ *Documentata e non legata è uno stato.* Una variabile documentata prima che
+  qualcosa la imposti non vale nil, e la pagina lo dice.
+
+=== `manpage` <mod-manpage>
+
+`C-h m` chiede una pagina, completando su tutte quelle installate, e `K` apre
+quella nominata dalla parola sotto il cursore; le pagine dell'editor vengono
+prima. `man` formatta quelle del sistema, con `manpage-path` come `MANPATH`.
+#rapporto("SHL-4")
+
++ *La variabile decide ciò che si trova.* `manpage-path` è il `MANPATH` di
+  `man`, non solo l'elenco del completamento.
++ *Prima `man -w`.* `man` da solo, su alcuni sistemi, scrive «No manual entry»
+  sull'uscita, che sembra una pagina; e un sistema senza manuali può avere un
+  `man` che si scusa ed esce con 0: conta la forma della risposta, non il
+  codice d'uscita. `-P cat` evita un pager che aspetterebbe un tasto.
++ *L'enfasi diventa overlay.* Il grassetto e il sottolineato che `man` segna
+  sovrascrivendo diventano overlay; le intestazioni si colorano dal layout.
++ *L'elenco dei nomi si tiene, e si costruisce in background.* Una fonte di
+  completamento si chiede a ogni Tab, e spogliare migliaia di nomi costa
+  secondi. Durante la costruzione, ciò che si è trovato è una risposta corta ma
+  non sbagliata, perché si aggiungono directory intere; una lista vuota invece
+  è sbagliata, e allora si percorre subito. Si ricostruisce quando
+  `manpage-path` cambia.
++ *Avviato al caricamento, ma nessuno lo aspetta.* È un'ottimizzazione, non una
+  gara. Il lavoro ha un nome: ricaricare il file lo riavvia, non lo raddoppia.
+
+=== `occur` <mod-occur>
+
+`M-s o` elenca le righe del buffer che corrispondono a un modello, `M-s g`
+quelle dei file sotto una directory.
+
++ *Il modulo è solo la vista.* `occur--scan` e `grep--scan` trovano le
+  corrispondenze e le attaccano all'elenco come lista di risultati
+  (@risultati), che `results-visit` e `next-error` leggono; qui si decide quale
+  finestra mostra l'elenco e che cosa fanno i suoi tasti.
++ *I tasti per percorrere sono in Rust.* Nessun produttore di liste dipende da
+  questo modulo.
++ *La riga si conta, non si legge.* Un percorso con i due punti si legge in due
+  modi, e la voce sa già dov'è.
++ *Nominare le facce dei segni li accende.* Il percorso le cerca per nome, e
+  con facce che nessuno ha nominato non segna nulla.
+
+=== `preview` <mod-preview>
+
+Mentre il prompt di un comando di `preview-commands` è aperto, ciò che si
+scrive si disegna nel buffer come testo virtuale, che non cambia nulla, e se ne
+va quando il prompt si chiude. Oggi il comando è uno, `string-rectangle`.
+
++ *Il solo che conosce entrambi.* `string-rectangle` e `make-virtual-text` non
+  sanno l'uno dell'altro; il modulo, su `post-command-hook` per ogni modo,
+  li unisce, e `pending-command` dice a quale comando appartiene il prompt
+  aperto.
++ *Ridisegnata intera.* A ogni cambiamento si cancella e si ridisegna: poche
+  righe, e nulla che possa divergere; un prompt invariato costa un confronto.
++ *Un aspetto riconoscibile.* Attenuato e uguale in ogni modo: chi guarda non
+  deve mai chiedersi se ciò che vede è nel file.
+
+=== `shell` <mod-shell>
+
+`M-!` esegue un comando e mostra ciò che stampa in una striscia; `C-c !`
+esegue la regione. L'esecuzione è `shell-command-start` (@comandi-shell); il
+modulo è il modo del buffer d'uscita, i suoi tasti e colori, e i comandi.
+
++ *Un buffer per comando.* Due comandi nello stesso buffer mescolerebbero le
+  loro righe.
++ *Una striscia, non mezzo schermo.* L'uscita si guarda di sfuggita mentre si
+  lavora. La striscia è una, riusata finché mostra un'uscita; il focus resta
+  dove si è premuto `M-!`.
++ *La riga d'uscita ha una forma fissa.* Così si colora secondo il numero, e un
+  fallimento si vede senza leggere.
+
+=== `theme` <mod-theme>
+
+`C-c t` elenca i temi installati in `*Themes*`, e Return ne applica uno;
+`select-theme` fa lo stesso da `init.lisp` (@facce).
+
++ *Un tema si applica in un modo solo.* La lista sceglie il nome e chiama
+  `select-theme`.
++ *Un file di tema è dati.* Si legge quando il tema si applica, direttamente e
+  non con `eval-file`, che cerca in `lisp-path`; elencare i temi legge solo le
+  directory di `theme-path`.
++ *Ogni faccia si azzera prima.* Un tema sparso dopo uno completo non ne lascia
+  nulla; il prezzo è che i temi non si compongono.
++ *L'elenco si legge dallo schermo*, come quelli di dired e dei buffer.
+
+=== `vim` <mod-vim>
+
+L'editing modale di Vim, in un modulo. `M-x vim-mode` lo accende in un buffer,
+`global-vim-mode` in ogni buffer adatto.
+
+Uno stato --- Normal, Insert, Replace, Visual --- è una keymap locale
+(`vim-normal-map`, `vim-insert-map`, `vim-replace-map`) messa sopra quella del
+buffer, che si salva e si rende quando Vim si spegne. In Normal ogni tasto
+stampabile è legato a `(vim--key TASTO)`, così nessun tasto scrive testo:
+`vim--dispatch` interpreta il conteggio, l'operatore, il registro e il tasto
+in attesa, che stanno in proprietà del buffer. Un movimento restituisce
+`(POSIZIONE INCLUSIVA PER-RIGHE)`, e un operatore lo applica come intervallo; un
+registro tiene la forma del testo: caratteri, righe o blocco.
+
+Una sessione di Insert ricorda il testo del buffer all'ingresso e lo confronta
+con `string-diff` all'uscita: ciò che è cambiato, con l'azione che ha aperto la
+sessione, è ciò che `.` ripete #rapporto("CMD-9"); i comandi della sessione si
+uniscono in un passo di undo (`undo-join` su `pre-command-hook`). Replace fa lo
+stesso. I comandi `:`
+leggono la riga con `minibuffer-read` e passano dai comandi dell'editor; la
+ricerca usa lo scanner di espressioni regolari dell'editor, in offset di
+caratteri.
+
++ *Uno stato è una keymap locale.* Sintassi, indentazione, hook del modo e
+  prompt restano del loro modo, sotto. Un hook di modo che installa un'altra
+  keymap locale la vede rimessa sotto quella di Vim.
++ *Condiviso e per buffer.* Registri, ricerche, `.` e macro sono dell'editor
+  intero, come in Vim; lo stato modale è di ogni buffer.
++ *Quando accendersi.* `global-vim-mode`, `vim-mode-modes`, i modi esclusi ---
+  le liste e i buffer dell'editor --- e `vim-mode-predicate` decidono; una
+  scelta fatta a mano in un buffer resta finché `vim-mode-auto` non la rende.
+  Le regole si riapplicano quando cambia il modo maggiore o il file visitato.
++ *I comandi `:` passano dall'editor.* `:w` e `:q` sono `save-buffer` e
+  `quit`, con le loro domande.
++ *Un file solo.* Una funzionalità, una pagina, una feature: divisa in più
+  moduli darebbe feature che nessuno chiede da sole.
+
+=== I modi dei linguaggi <mod-linguaggi>
+
+`rust-mode`, `risp-mode`, `cc-mode` (C e C++), `python-mode`, `toml-mode` e
+`bash-mode`: ognuno crea il suo modo, ne dichiara i due lessici (@lessici) ---
+la grammatica che colora e la tabella che dice che cos'è il testo ---, le
+parole che si completano, la regola d'indentazione e le estensioni dei file.
+`rust-mode` è il modello che la pagina `writing-modes` indica da copiare.
+
++ *Due lessici, e una forma in tutti e due.* La grammatica dice come appare il
+  testo; la tabella che cosa è, ed è ciò che `C-M-f`, l'indentazione ed
+  electric-pair leggono. Una stringa grezza di Rust si dichiara in entrambi, o
+  lo scanner la legge come stringhe con codice in mezzo.
++ *Senza lookahead.* Il motore non ha lookahead, lookbehind né backreference:
+  una regola prende di più e colora un gruppo, e dove servirebbe `(?<!\\)` una
+  regione nomina un escape. Il letterale di carattere di Rust è una regola, che
+  comincia una colonna prima della stringa e vince; non una regione, che una
+  lifetime aprirebbe fino alla fine del file. Le stringhe grezze di C++ con
+  delimitatore si dichiarano una per una.
++ *Il vocabolario scritto una volta.* La lista sotto la proprietà `keywords`
+  è ciò che `capf-mode-keywords` offre, e `regexp-opt` ne fa il modello che
+  colora: due copie divergerebbero in silenzio, con una parola che si colora e
+  non si completa.
++ *risp-mode chiede il vocabolario.* Funzioni e macro vengono da
+  `all-functions` e `all-macros`, al caricamento e con
+  `risp-refresh-vocabulary`, non a ogni visita, che compilerebbe un modello su
+  ogni nome per ogni file aperto. Si scrivono solo le forme speciali, che non
+  hanno un legame da riportare. I confini sono scritti, non `\b`, perché un
+  nome può finire con `+` o `<`.
+
 == Le decisioni <decisioni-moduli>
 
 + *Il modello di Emacs.* `require` e `provide`, con la lista `features`,
@@ -5756,21 +6215,63 @@ Le variabili che l'editor legge da Lisp:
 // ===========================================================================
 
 I test dell'editor stanno in `core/src/tests/`, uno o più file per
-funzionalità (circa ottanta), più `tests/perf/` per le misure e i test del
-front-end in `src/tests/`. Costruiscono un editor con `create_global_env`,
-caricano i moduli Lisp che servono con `include_str!` e valutano Lisp o
-simulano tasti con `handle_key_event`. `isolate_config_for_tests` punta
-`RSEDIT_CONFIG_DIR` a una directory temporanea del processo, una volta sola,
-così i test non scrivono nella configurazione di chi li esegue.
+funzionalità (circa cento), più `tests/perf/` per le misure; quelli del
+front-end in `src/tests/` e, per la finestra grafica, in `src/gui/tests.rs`.
+Costruiscono un editor con `create_global_env`, caricano i moduli Lisp che
+servono con `include_str!` e valutano Lisp o simulano tasti con
+`handle_key_event`. `isolate_config_for_tests` punta `RSEDIT_CONFIG_DIR` a una
+directory temporanea del processo, una volta sola, così i test non scrivono
+nella configurazione di chi li esegue. Ogni file comincia con ciò che prova e
+con il rimando `Design:` alla parte del manuale che lo spiega.
 
 Alcuni file meritano di essere conosciuti prima di cambiare il codice che
-proteggono: `layering_tests` (i due confini), `deadlock_tests` (i lock
-attraverso Lisp), `doc_faithfulness_tests` e `primitive_shape_tests` (le
-docstring), `edit_protection_tests` (sola lettura), `undo_tests`,
-`frame_snapshot_tests`, `shipped_lisp_tests` (ogni modulo distribuito, caricato
-nell'ordine di `init.lisp`: nell'editor reale un errore di caricamento finisce
-solo nel log). `perf::suite` misura tempi reali con più thread e può fallire su
-macchine lente o condivise #rapporto("DOC-4").
+proteggono: `layering_tests` (i confini e la mappa di `lib.rs`),
+`deadlock_tests` (i lock attraverso Lisp), `primitive_shape_tests` (le forme
+condivise dalle primitive), `edit_protection_tests` (sola lettura),
+`undo_tests`, `frame_snapshot_tests`. `perf::editor_performance_suite` misura
+tempi reali ed è esclusa dalla suite ordinaria: si esegue da sola, come dice
+`PERFORMANCE.md`.
+
+== I test della documentazione <test-documentazione>
+
+Una parte dei test controlla ciò che l'editor dice di sé contro l'editor che
+gira: `guide_tests` le pagine del manuale utente, `doc_faithfulness_tests` le
+docstring e i legami, `doc_pointer_tests` i rimandi dal codice a questo
+manuale e le intestazioni dei moduli Lisp, `shipped_lisp_tests` i moduli
+distribuiti. `shipped.rs` dice a tutti che cosa è distribuito, letto da dove è
+definito: i moduli che l'`init.lisp` predefinito carica, le pagine di `man/`,
+i nomi che l'editor aggiunge al suo Lisp. Le eccezioni di oggi stanno in
+`doc_exceptions/`, e un nome che vi resta dopo essere stato sistemato fa
+fallire il test.
+
++ *Una pagina che sbaglia è peggio di nessuna.* Chi preme un tasto che la
+  pagina promette e riceve «undefined» smette di credere anche alle parti
+  vere; e nulla impedisce da sé che succeda, perché un tasto spostato o un
+  comando rinominato non fanno pensare alla prosa di un'altra directory.
+  `guide_tests` risolve ogni riga delle sezioni KEYS come l'editor risolve i
+  tasti, e controlla le pagine nominate da SEE ALSO, l'indice della guida, i
+  moduli di `rsedit` e i nomi delle SYNOPSIS.
++ *La prosa non si controlla.* Un tasto citato in una frase non si verifica:
+  per questo i tasti che una pagina insegna stanno anche nella sua sezione
+  KEYS, dove un test li legge. È un limite vero, la parte della deriva che si
+  prende a buon mercato.
++ *Le affermazioni che possono essere false.* `doc_faithfulness_tests`
+  controlla che una primitiva cominci la sua documentazione con la propria
+  chiamata, che ogni comando e ogni funzione dei moduli abbiano una docstring,
+  che ogni nome registrato come comando abbia una funzione, che ogni tasto sia
+  legato a qualcosa che esiste, che ogni variabile dei moduli sia documentata
+  e che i nomi citati fra un apice inverso e un apostrofo esistano. Gli esempi e lo stile no: un esempio non
+  può essere sbagliato come una firma che nomina un'altra funzione, e un test
+  con un'opinione sullo stile verrebbe aggirato.
++ *Un elenco solo.* I test prendono da `shipped.rs` ciò che è distribuito,
+  invece di tenerne elenchi propri, che si allontanano dal vero.
++ *I moduli si caricano come in `init.lisp`, ma con gli errori.* Nell'editor
+  `require` scrive nel log un modulo che non trova, perché un modulo mancante
+  non fermi l'avvio; il silenzio è il prezzo, e `shipped_lisp_tests` carica i
+  moduli nello stesso ordine pretendendo gli errori.
++ *Ogni rimando porta a un'etichetta.* Un'etichetta rinominata lascia un
+  rimando che non porta da nessuna parte, e solo un test se ne accorge:
+  `doc_pointer_tests` legge il codice, i test e i moduli Lisp.
 
 // ===========================================================================
 = Ricette <ricette>
@@ -5849,8 +6350,10 @@ In Rust:
 
 == Un modulo Lisp nuovo
 
-Scrivi `core/lisp/<genere>/nome.lisp`, con i `require` di ciò che usa in cima
-e `(provide 'nome)` in fondo; aggiungi `(require 'nome)` a `DEFAULT_INIT_LISP`
+Scrivi `core/lisp/<genere>/nome.lisp` come dice @scrivere-moduli:
+l'intestazione con la pagina e il rimando a una sottosezione nuova di
+@moduli-distribuiti, i `require` di ciò che usa in cima e `(provide 'nome)` in
+fondo; aggiungi `(require 'nome)` a `DEFAULT_INIT_LISP`
 in `editor/boot.rs` (e, a mano, al tuo `init.lisp`), la riga del modulo nella
 sezione MODULES della pagina `rsedit`, e un test che lo carichi. `build.rs` lo
 copia da solo.

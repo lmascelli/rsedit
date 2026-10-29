@@ -4,6 +4,7 @@
 ;;; .hpp, .cc, .hh, .cxx, .hxx, .c++, .h++, .C, .H, .ipp, .tpp, .ixx and
 ;;; .cppm. User manual: the `modes' page, and `indentation' for how they
 ;;; indent.
+;;; Design: `doc/architettura-editor.typ, <mod-linguaggi>`.
 
 (require 'commands)
 (require 'indent)
@@ -95,8 +96,8 @@
   "Make R\"DELIMITER(...)DELIMITER\" a raw string in C++, with or without u8, u,
 U or L before it, for the colouring and for the brackets alike. DELIMITER is
 at most 16 characters, none a space, a parenthesis or a backslash."
-  ;; Fixed delimiters are declared to both engines. The regexp API cannot
-  ;; capture a tag at the opener and use it as a backreference at the closer.
+  ;; One delimiter at a time, to both lexicons: a regexp cannot use a tag
+  ;; captured at the opener as a backreference at the closer.
   (when (or (> (length delimiter) 16) (string-match-p "[ ()\\\\\t\r\n]" delimiter))
     (error "A C++ raw-string delimiter must have at most 16 non-space characters, excluding () and backslash"))
   (let ((styles (get 'cpp-mode 'raw-string-styles)))

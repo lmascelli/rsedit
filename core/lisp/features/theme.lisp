@@ -2,13 +2,7 @@
 ;;;
 ;;; C-c t lists the themes installed, and Return applies one; `select-theme'
 ;;; does the same from init.lisp. User manual: the `themes' page.
-;;;
-;;; The list calls `select-theme': a theme is applied one way, and the list
-;;; only chooses its name. A theme file is data, read when the theme is
-;;; applied, so listing the themes reads only the directories of
-;;; `theme-path'. Every face is
-;;; reset before a theme is applied, so that a sparse theme after a full one
-;;; leaves nothing of it; the price is that themes do not compose.
+;;; Design: `doc/architettura-editor.typ, <mod-theme>`.
 
 (require 'commands)
 (require 'debug)
@@ -63,9 +57,7 @@ monochrome.lisp puts them on monochrome-theme.")
         (match-string 1 name)
         nil)))
 
-;; Read from the directories rather than from what has been loaded: a theme
-;; file is data, and loading one to find out it exists would mean loading all
-;; of them to list them.
+;; Read from the directories: listing the themes loads none of them.
 (defun available-themes ()
   "The names of the themes in `theme-path', sorted, each once."
   (let ((names nil))
@@ -92,8 +84,7 @@ monochrome.lisp puts them on monochrome-theme.")
           (if (null file)
               nil
               (progn
-                ;; `eval-file' looks in `lisp-path', which is not where themes
-                ;; live, so the file is read and evaluated directly.
+                ;; Read directly: `eval-file' looks in `lisp-path'.
                 (let ((text (read-file-to-string file)))
                   (if text (eval-string text)))
                 (get (theme--symbol name) 'faces)))))))
@@ -146,9 +137,7 @@ and a space.")
               themes)))
   (set-buffer-read-only t))
 
-;; Read off the screen, the way dired and the buffer list read theirs: a
-;; table built beside the buffer can disagree with what is displayed, and
-;; reading the screen cannot.
+;; Read off the screen, as in dired and the buffer list.
 (defun theme-list--name-here ()
   "The theme named on the cursor's line, or nil."
   (let ((line (current-line)))
@@ -171,8 +160,7 @@ apply one."
     (if (null name)
         (message "No theme on this line")
         (if (select-theme name)
-            ;; Redrawn so the mark moves to the line just chosen. The listing
-            ;; is the only thing that knows it has changed.
+            ;; Redrawn, so that the mark moves to the line chosen.
             (let ((here (line-number-at-point)))
               (theme-list--draw)
               (goto-line here))))))

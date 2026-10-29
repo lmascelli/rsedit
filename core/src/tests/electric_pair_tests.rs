@@ -1,9 +1,7 @@
-//! `electric-pair.lisp`, and the `post-self-insert-hook` it hangs off.
+//! `electric-pair.lisp`, and the `post-self-insert-hook` it hangs off, which
+//! runs for a typed character and not for a paste.
 //!
-//! The hook is the interesting part. It has to fire for a typed character and
-//! *not* for a paste -- otherwise pasted code gets every bracket in it doubled,
-//! which is the failure bracketed paste exists to prevent. Several of these
-//! tests are about that distinction rather than about pairing.
+//! Design: `doc/architettura-editor.typ, <mod-electric-pair>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -144,10 +142,7 @@ mod tests {
     fn a_quote_pairs_and_the_state_read_is_the_one_before_it() {
         let (ctx, env) = editor();
         type_char("\"", &env, &ctx);
-        // The subtle one. After the quote is typed, point *is* inside a string
-        // -- the one this very quote opened. Reading the state at point would
-        // report "in a string" and refuse to pair. It has to be read at the
-        // position before the character.
+        // The state is read before the quote, which opened the string at point.
         assert_eq!(contents(&ctx), "\"\"");
         assert_eq!(point(&ctx), 1);
     }
@@ -299,10 +294,7 @@ mod tests {
 
     #[test]
     fn retyping_a_deleted_opener_does_not_add_a_second_closer() {
-        // The reported case. Delete the `{` from a function and type it back:
-        // the `}` below is still there, so a new one would leave the brace
-        // doubled -- and the delete rules would then treat `{}` as an empty
-        // pair and take both out together.
+        // A `{` deleted and typed back: the `}` below is still there.
         let (ctx, env) = editor();
         braces_buffer("fn a() \n  body\n}", 7, &env, &ctx);
         type_char("{", &env, &ctx);

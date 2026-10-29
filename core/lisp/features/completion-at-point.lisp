@@ -1,13 +1,8 @@
 ;;; completion-at-point --- the sources C-M-i asks what could go at point.
 ;;;
-;;; The command, which merges what the sources offer and puts the answer in,
-;;; is built in; this module is the sources, each of which
-;;; `set-completion-functions' can take out on its own. User manual: the
-;;; `completion' page.
-;;;
-;;; A source of names takes its bounds from `bounds-of-thing-at-point', so that
-;;; it claims the same text as the others and its candidates are merged with
-;;; theirs; only `capf-file-name' claims different text, a whole path.
+;;; The command, which merges what the sources offer, is built in; this module
+;;; is the five sources and their order. User manual: the `completion' page.
+;;; Design: `doc/architettura-editor.typ, <mod-completion-at-point>`.
 
 ;; ---------------------------------------------------------------------------
 ;; Files
@@ -15,9 +10,8 @@
 
 (defun capf-file-name ()
   "Complete a path when point is in one, over the entries of its directory."
-  ;; `file-name-directory' is the test as well as the answer: nil for text with
-  ;; no separator, on every platform. An empty or missing directory gives nil,
-  ;; not an empty list, which would fix the region and shut the others out.
+  ;; nil, not an empty list, for text with no directory or an empty one: an
+  ;; empty list would fix the region and shut the other sources out.
   (let ((bounds (bounds-of-thing-at-point 'filename)))
     (if bounds
         (let* ((start (nth 0 bounds))
@@ -77,8 +71,7 @@ where it was found. The word being typed is not offered."
 (defun capf--words-except (typed)
   "Every word in every buffer but TYPED, as (WORD . WHERE), this buffer's
 first."
-  ;; Consed and reversed rather than appended to, which would copy the list
-  ;; for every word of every buffer.
+  ;; Consed and reversed: appending would copy the list for every word.
   (let ((here (current-buffer))
         (found nil))
     (dolist (word (buffer-words))
@@ -107,8 +100,7 @@ or CANDIDATES is empty."
 ;; ---------------------------------------------------------------------------
 ;;
 ;; Most specific first: the first source to answer fixes the region, and of a
-;; name offered twice the first description stays. A mode's own sources come
-;; before all of these.
+;; name offered twice the first description stays.
 
 (set-completion-functions nil
                           '(capf-file-name

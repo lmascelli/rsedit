@@ -1,33 +1,9 @@
-//! The editor's account of itself, checked against the editor.
+//! The editor's account of itself, checked against the running editor with
+//! the shipped modules loaded: the docstrings of every primitive and module
+//! function, the variables' documentation, the commands' specs and every
+//! binding. Examples and wording are not checked.
 //!
-//! # Why this file exists
-//!
-//! Everything the help commands show is *written down* somewhere: a
-//! docstring beside a primitive, a `defvar`'s third form, the specs a command
-//! registered with. Written-down things drift. A primitive is renamed and its
-//! docstring goes on saying the old name; a copied docstring keeps naming the
-//! function it was copied from; a key is bound to a command that was never
-//! defined, or was renamed, and the key silently does nothing until somebody
-//! presses it.
-//!
-//! None of that fails a test anywhere else, and none of it looks wrong when
-//! read: a help page is believed precisely because it is confident. So the
-//! rules below are the ones that can be *checked against the running editor*
-//! rather than against another piece of prose, and they are checked over
-//! every primitive, every module function, every command and every binding
-//! there is, with all the shipped modules loaded.
-//!
-//! # What is deliberately not checked
-//!
-//! An `Example:` section. Sixty primitives have none, and for most of them --
-//! `isearch-exit`, `region-end` -- an example would be a line of ceremony
-//! rather than an explanation. More to the point, an example cannot be
-//! *wrong* the way a signature naming another function is wrong, and this
-//! file is about the claims that can be false.
-//!
-//! The wording, likewise. A docstring that is accurate and terse and one that
-//! is accurate and long are both fine, and a test that had an opinion about
-//! which would be a test somebody routes around.
+//! Design: `doc/architettura-editor.typ, <test-documentazione>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -41,9 +17,7 @@ mod tests {
 
     type Ctx = EditorState<GapBuffer>;
 
-    /// The editor with every module the default init.lisp loads, so that the
-    /// checks below cover the modules' own functions, variables and bindings
-    /// and not just the Rust ones.
+    /// The editor with every module the default init.lisp loads.
     fn loaded() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
@@ -96,10 +70,8 @@ mod tests {
 
     /// The functions bound after everything is loaded, split by what they are.
     ///
-    /// Told apart from Rust, which is the only place the difference is
-    /// visible: `function-arglist` answers nil both for a primitive and for a
-    /// Lisp function of no arguments, and the rules below differ between the
-    /// two.
+    /// Told apart here: `function-arglist` answers nil both for a primitive
+    /// and for a Lisp function of no arguments.
     fn primitives_and_lambdas(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> (Vec<String>, Vec<String>) {
         let mut primitives = Vec::new();
         let mut lambdas = Vec::new();
@@ -125,12 +97,8 @@ mod tests {
 
     #[test]
     fn every_primitive_says_what_it_is_called() {
-        // A primitive is a Rust function: it has no parameter list anything
-        // can read, so the first line of its documentation *is* its
-        // signature -- `help--signature` in help.lisp takes it from there
-        // and shows it as the call. A first line naming another function
-        // therefore shows somebody the wrong call, confidently, on the page
-        // they opened to find out what the right one was.
+        // A primitive has no parameter list: the first line of its
+        // documentation is the call a help page shows.
         let (ctx, env) = loaded();
         let (primitives, _) = primitives_and_lambdas(&env, &ctx);
         let mut wrong = Vec::new();
@@ -157,9 +125,7 @@ mod tests {
 
     #[test]
     fn every_function_the_modules_define_is_documented() {
-        // Including the internal ones. `apropos` lists them, `describe-
-        // function` will show them, and a module's own reader is the person
-        // most likely to need them explained.
+        // The internal ones too: `apropos` lists them.
         let (ctx, env) = loaded();
         let (_, lambdas) = primitives_and_lambdas(&env, &ctx);
         let listed = exceptions(include_str!("doc_exceptions/undocumented.txt"));
@@ -185,12 +151,8 @@ mod tests {
 
     #[test]
     fn a_module_function_that_writes_a_signature_agrees_with_its_parameters() {
-        // The modules follow the other convention -- a sentence about what
-        // the function answers, with the parameters named in it -- so today
-        // this passes over an empty set. It is here for the day somebody
-        // writes `(foo A B)` at the top of a docstring and the function later
-        // grows a third parameter: that is the drift this can catch and
-        // nothing else can, since the two are never read together.
+        // The modules write a sentence instead, so this passes over an empty
+        // set: it is there for a `(foo A B)` that falls behind its function.
         let (ctx, env) = loaded();
         let (_, lambdas) = primitives_and_lambdas(&env, &ctx);
         let mut wrong = Vec::new();
@@ -224,8 +186,7 @@ mod tests {
 
     #[test]
     fn every_command_is_documented() {
-        // A command is what `M-x` offers and what a key runs. An undocumented
-        // one is a name in a completion list with nothing behind it.
+        // An undocumented command is a name in `M-x` with nothing behind it.
         let (ctx, env) = loaded();
         let undocumented: Vec<String> = strings(&run("(all-commands)", &env, &ctx))
             .into_iter()
@@ -239,10 +200,8 @@ mod tests {
 
     #[test]
     fn every_command_names_a_function_that_exists() {
-        // `register-command` records specs against a *name*; nothing checks
-        // that the name has a function, because the two can legitimately be
-        // written in either order. A name that never gets one is an `M-x`
-        // entry that offers itself, completes, and then fails.
+        // `register-command` records specs against a name, in either order with
+        // the function; a name that never gets one fails when run.
         let (ctx, env) = loaded();
         let missing: Vec<String> = strings(&run("(all-commands)", &env, &ctx))
             .into_iter()
@@ -260,10 +219,7 @@ mod tests {
 
     #[test]
     fn every_binding_names_something_that_exists() {
-        // A key bound to a misspelt command is the quietest failure in the
-        // editor: nothing complains at load time, `describe-bindings` lists
-        // it, and it does nothing at all the day somebody presses it. The
-        // keymaps are readable now, so this can be asked.
+        // A key bound to a misspelt command does nothing, and nothing says so.
         let (ctx, env) = loaded();
         let mut dead = Vec::new();
         for binding in run("(keymap-bindings)", &env, &ctx).iter() {
@@ -292,12 +248,8 @@ mod tests {
 
     #[test]
     fn every_variable_the_modules_define_is_documented() {
-        // Read out of the sources rather than from `all-variables`, which
-        // cannot tell a module's own variable from one the editor set in
-        // Rust or one a test left lying about. What is being checked is that
-        // the modules keep documenting what they define -- which they all do
-        // today, and did silently and uselessly for months before `defvar`
-        // learned to keep a docstring at all.
+        // Read out of the sources: `all-variables` cannot tell a module's own
+        // variable from one set in Rust or by a test.
         let (ctx, env) = loaded();
         let defined = module_variables();
         assert!(
@@ -408,9 +360,7 @@ mod tests {
 
     #[test]
     fn every_name_quoted_in_a_page_or_a_docstring_is_known() {
-        // `name' is how a page or a docstring says "this is something you can
-        // look up". Following it to nothing tells the reader the text is
-        // wrong, and from then on they stop following.
+        // `name' says "look this up"; it must lead somewhere.
         let (ctx, env) = loaded();
         let known = known_names(&env, &ctx);
         let elsewhere = exceptions(include_str!("doc_exceptions/quoted_elsewhere.txt"));

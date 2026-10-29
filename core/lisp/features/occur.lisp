@@ -3,12 +3,7 @@
 ;;; M-s o lists the lines of this buffer that match a pattern, M-s g those of
 ;;; the files under a directory, and M-g n and M-g p walk the list from
 ;;; wherever you are. User manual: the `searching' page.
-;;;
-;;; This module is only the view. `occur--scan' and `grep--scan' find the
-;;; matches and attach them to the listing as a result set, which
-;;; `results-visit' and `next-error' read; which window shows the listing, and
-;;; what its keys do, is all that is decided here. The walking keys are built
-;;; in, so that no producer of a list depends on this module.
+;;; Design: `doc/architettura-editor.typ, <mod-occur>`.
 
 (require 'commands)
 (require 'debug)
@@ -27,8 +22,7 @@
 
 (defun occur--index-here ()
   "The index of the entry on the cursor's line, or nil."
-  ;; Counted, not parsed: a path with a colon in it reads two ways, and the
-  ;; entry already knows where it is.
+  ;; Counted, not parsed: a path with a colon reads two ways.
   (let ((index (- (line-number-at-point) occur-header-lines 1)))
     (if (and (>= index 0) (< index (or (results-count (current-buffer)) 0)))
         index
@@ -130,10 +124,8 @@ editor was started in. The list fills in as the files are read."
 ;; contain a colon; the *last* colon-number-colon is the one the scan wrote.
 (add-syntax-rule 'occur-mode "^(.*):[0-9]+: " 'type 1)
 
-;; The two marks, as a compilation has them. Backgrounds, because the text
-;; under them is already coloured. Naming the faces is also what turns the
-;; marks on: the built-in walk looks them up by name and marks nothing when
-;; nothing has named them.
+;; The two marks, as backgrounds, as a compilation has them. Naming the faces
+;; turns the marks on: the walk marks nothing with faces nobody named.
 (define-face 'results-here nil "bright-black")
 (define-face 'results-target nil "bright-black")
 

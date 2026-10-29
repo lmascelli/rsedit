@@ -1,16 +1,8 @@
-;; Convenience on top of the command system. User manual: the
-;; `writing-commands' page.
-;;
-;; Nothing here is required. The registry, argument collection and M-x are all
-;; hardcoded in Rust (`core/src/commands.rs' and `core/src/primitives/commands.rs'),
-;; because a command that cannot collect its arguments is not a command, and a
-;; configuration file should not be able to take that away by failing to load.
-;; What is left here is sugar: a shorter way to define a command, two small
-;; functions on strings, `save-match-data' and `with-eval-after-load'.
-;;
-;; To define a command without this file:
-;;   (defun greet (who) (message "hello %s" who))
-;;   (register-command 'greet '("sGreet whom: "))
+;;; commands --- a shorter way to define a command, and a few macros.
+;;;
+;;; `defcommand', `string-prefix-p', `string-suffix-p', `save-match-data' and
+;;; `with-eval-after-load'. User manual: the `writing-commands' page.
+;;; Design: `doc/architettura-editor.typ, <mod-commands>`.
 
 (defmacro defcommand (name params specs &rest body)
   "Define NAME as a function of PARAMS that runs BODY, and make it a command
@@ -26,12 +18,8 @@ Example:
   (defcommand greet (who) (\"sGreet whom: \")
     \"Say hello to WHO.\"
     (message \"hello %s\" who))"
-  ;; Note the shapes used here. `,(symbol-name name)' passes the command's name
-  ;; as a string literal, and `(list ,@specs)' builds the spec list at run time
-  ;; from string literals -- neither needs a quote. That is deliberate: the
-  ;; reader converts a quoted form to *data* as it parses, so an unquote written
-  ;; inside one (`',name') is already data by the time the backquote expander
-  ;; sees it, and never gets expanded.
+  ;; The name as a string, the specs through `list': an unquote inside a quote,
+  ;; `',name', is data before the backquote is expanded.
   `(progn
      (defun ,name ,params ,@body)
      (register-command ,(symbol-name name) (list ,@specs))))
@@ -49,12 +37,8 @@ Example:
 
 Example:
   (string-suffix-p \".rs\" (buffer-file-name))"
-  ;; The length test states the precondition rather than earning its keep:
-  ;; `substring' clamps an index out of range -- (substring "abc" -1) is "c"
-  ;; and (substring "abc" 5) is "" -- so a SUFFIX longer than S would come out
-  ;; nil anyway, by luck rather than by reasoning. The day `substring'
-  ;; complains about a range that is not there, this should not be what
-  ;; breaks.
+  ;; The length test is the precondition: that `substring' clamps a range out
+  ;; of bounds is not relied on.
   (and (<= (length suffix) (length s))
        (string= suffix (substring s (- (length s) (length suffix))))))
 

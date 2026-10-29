@@ -1,9 +1,7 @@
-//! Themes: what one is, applying it, and choosing it.
+//! Themes: what one is, a style and not only a colour, applying one in place
+//! of the last, and choosing it.
 //!
-//! The claim worth testing is that a theme can say "bold" where it cannot say
-//! "blue" -- a monochrome theme is the whole reason the entry is a style
-//! rather than a colour -- and that applying one really replaces the last
-//! rather than layering on top of it.
+//! Design: `doc/architettura-editor.typ, <mod-theme>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -269,10 +267,8 @@ mod tests {
         }
     }
 
-    /// A theme that names a face nothing draws styles nothing, and nothing
-    /// says so: setting a face by a name no one has used makes a new face.
-    /// So every face a shipped theme names has to be one the editor and its
-    /// modules draw.
+    /// Every face a shipped theme names is one something draws: a new name
+    /// makes a new face, which nothing draws, in silence.
     #[test]
     fn every_face_a_shipped_theme_names_is_one_the_editor_draws() {
         let (ctx, env) = editor_with_modules();

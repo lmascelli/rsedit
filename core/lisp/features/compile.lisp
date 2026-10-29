@@ -2,12 +2,7 @@
 ;;;
 ;;; C-c c runs a command and shows its output in a strip along the bottom;
 ;;; M-g n and M-g p walk the places it names. User manual: the `compile' page.
-;;;
-;;; The running is `shell-command-start', unchanged: this module is the mode of
-;;; its output buffer and the navigation. The state is in the buffer, as in
-;;; dired: the first line, `$ cargo build', is the command `g' runs again. Only
-;;; which buffer M-g n walks is kept outside, since that is asked from another
-;;; buffer.
+;;; Design: `doc/architettura-editor.typ, <mod-compile>`.
 
 (require 'commands)
 (require 'debug)
@@ -126,24 +121,13 @@ names none."
 ;; Joining the list everything else is walked with
 ;; ---------------------------------------------------------------------------
 ;;
-;; `next-error' and `previous-error' are built in, and they walk a *result
-;; set* -- the same one a search attaches to its listing. A compilation has one
-;; complication a search does not: its output is still arriving, so the list
-;; grows while you are walking it. That is what `results-refresh' is for. The
-;; function below is registered against the compilation buffer and called
-;; before each step, so `M-g n' sees what the compiler has said since the last
-;; time you asked.
-;;
-;; Rebuilding means parsing the buffer again, which is a parse per line of
-;; output -- for a compilation, a few hundred lines. The alternative is
-;; parsing on every line as it arrives, which is the same work done more often
-;; and at a worse moment.
+;; The built-in walk reads a result set; the output still arrives, so
+;; `compilation--rebuild' is its `results-refresh', called before each step.
 
 (defun compilation--entries ()
   "Every place this buffer names, as entries of a result set."
-  ;; (KIND SOURCE LINE COLUMN) is all a complaint says, so the offset, the
-  ;; text and the match are left empty; the ninth element is the line of the
-  ;; output the place is on, for the walk's mark.
+  ;; Offset, text and match left empty; the ninth element is the output's line,
+  ;; for the walk's mark.
   (let ((line 1)
         (last (progn (end-of-buffer) (line-number-at-point)))
         (entries nil))
@@ -205,10 +189,8 @@ it names."
         (progn
           (setq compilation--buffer name)
           (remove-overlays 'results-here)
-          ;; The list starts empty and grows as the compiler talks. Attached
-          ;; now so that `M-g n' has something to walk from the first
-          ;; complaint, and given a refresher so that what it walks is what
-          ;; has arrived rather than what had arrived when this was attached.
+          ;; Attached empty now, with its refresher, so that `M-g n' walks
+          ;; what has arrived by then.
           (results-put command name nil name)
           (buffer-put 'results-refresh 'compilation--rebuild name)
           (compilation--show name)))))
@@ -226,9 +208,7 @@ it names."
 
 (define-key nil "C-c c" 'compile)
 ;; `M-g n' and `M-g p' are bound in common-keymaps.lisp: they walk whatever
-;; list was made last -- a compilation, a search, anything that attached one --
-;; and binding them here would make every other producer of a list depend on
-;; this module being loaded.
+;; list was made last, by any producer.
 
 (define-key 'compilation-mode "<ret>" 'compilation-goto)
 (define-key 'compilation-mode "n" 'compilation-next)
@@ -245,9 +225,7 @@ it names."
 (add-syntax-rule 'compilation-mode "^--- (killed|could not be waited for).*$" 'error)
 (add-syntax-rule 'compilation-mode "^\\$ .*$" 'keyword)
 
-;; The two marks. Backgrounds rather than foregrounds: the text under them is
-;; already coloured by the rules above, and a background says "you are here"
-;; without arguing with what the text is.
+;; The two marks, as backgrounds: the text under them keeps its colours.
 (define-face 'results-here nil "bright-black")
 (define-face 'results-target nil "bright-black")
 

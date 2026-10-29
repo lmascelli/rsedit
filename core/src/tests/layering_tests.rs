@@ -14,6 +14,8 @@
 //! The files are read with `include_str!`, so that one renamed or deleted is a
 //! compile error rather than a check that quietly checks nothing; a new file
 //! has to be added to its list, and a test counts that it was.
+//!
+//! Design: `doc/architettura-editor.typ, <panoramica-editor>`.
 #[cfg(test)]
 mod tests {
     /// Every file under `text/`.

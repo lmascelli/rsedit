@@ -1,8 +1,8 @@
 ;;; minibuffer --- M-:, an expression evaluated at a prompt.
 ;;;
-;;; The prompt itself is built in: `minibuffer-read', its keys and its history
-;;; are Rust, so that M-x works whatever fails to load. User manual: the
-;;; `minibuffer' page.
+;;; The prompt itself is built in, so that M-x works whatever fails to load.
+;;; User manual: the `minibuffer' page.
+;;; Design: `doc/architettura-editor.typ, <mod-minibuffer>`.
 
 (require 'debug)
 

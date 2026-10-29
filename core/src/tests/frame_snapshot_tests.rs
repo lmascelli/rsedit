@@ -1,5 +1,7 @@
 //! `EditorState::snapshot`, where what the host draws is captured: a frame is
 //! one consistent value, and capturing it holds no lock past its return.
+//!
+//! Design: `doc/architettura-editor.typ, <snapshot>`.
 #[cfg(test)]
 mod tests {
     use crate::{

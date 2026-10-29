@@ -1,3 +1,9 @@
+;;; common-keymaps --- the default bindings, on Emacs' keys.
+;;;
+;;; The global keymap, a group of keys for each manual page that tells them;
+;;; a mode's own keys are in its module. User manual: the `keymaps' page.
+;;; Design: `doc/architettura-editor.typ, <mod-common-keymaps>`.
+
 (require 'debug)
 (require 'indent)
 
@@ -40,9 +46,8 @@
 (define-key nil "M-d" 'kill-word)
 (define-key nil "M-<backspace>" 'backward-kill-word)
 
-;; Undo and redo. C-/ and C-_ are the same keystroke on most terminals -- the
-;; terminal reports C-/ as C-_ -- so both are bound, and whichever one the
-;; terminal sends arrives at the same command.
+;; Undo and redo: the `editing' manual page. Both C-/ and C-_, since most
+;; terminals report C-/ as C-_.
 (define-key nil "C-/" 'undo)
 (define-key nil "C-_" 'undo)
 (define-key nil "C-x u" 'undo)
@@ -157,8 +162,7 @@
 (define-key nil "tab" 'indent-for-tab-command)
 (define-key nil "S-<tab>" 'indent-rigidly-left)
 
-;; C-g: the `editing' manual page. It does not interrupt a running command:
-;; roadmap #24.
+;; C-g: the `editing' manual page.
 (define-key nil "C-g" 'keyboard-quit)
 
 ;; The mode line and the line numbers: `mode-line-format' and
@@ -166,11 +170,8 @@
 ;; `configuration' manual page. Line numbers are off and bound to no key,
 ;; because they cost columns; `M-x toggle-line-numbers' turns them on.
 
-;; Written out as a `defun' plus a `register-command' rather than with
-;; `defcommand', because this file is loaded on its own by tests and by an
-;; installation with `commands.lisp' commented out. Where that macro is
-;; missing a form using it is not a definition, it is a call -- and the call
-;; raises, taking the rest of this file with it.
+;; A `defun' and a `register-command' rather than `defcommand': tests evaluate
+;; this file on its own, where `require' finds no modules.
 (defun toggle-line-numbers ()
   "Turn the line-number gutter on, or off if it is already on."
   (setq display-line-numbers (if display-line-numbers nil t))

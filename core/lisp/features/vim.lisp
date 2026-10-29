@@ -2,10 +2,7 @@
 ;;;
 ;;; M-x vim-mode gives a buffer Vim's keys, and global-vim-mode gives them to
 ;;; every buffer that suits. User manual: the `vim' page.
-;;;
-;;; Syntax, indentation, major-mode hooks and prompts keep their own modes: a
-;;; state is a local keymap over the buffer's own. Registers, searches, dot and
-;;; macros are shared; modal input is buffer-local.
+;;; Design: `doc/architettura-editor.typ, <mod-vim>`.
 
 (require 'commands)
 (require 'debug)
@@ -52,6 +49,10 @@ there.")
 (defvar vim-mode-predicate 'vim-default-buffer-p
   "The function, of no arguments, that says whether the current buffer suits
 automatic Vim, or nil for every buffer. At first `vim-default-buffer-p'.")
+
+;; ---------------------------------------------------------------------------
+;; Reading the text
+;; ---------------------------------------------------------------------------
 
 (defun vim--min (a b)
   "The smaller of A and B."
@@ -110,6 +111,11 @@ it, unless the line is empty."
   (let ((end (vim--eol (point))))
     (when (and (= (point) end) (> end (vim--bol (point))))
       (goto-char (- end 1)))))
+
+;; ---------------------------------------------------------------------------
+;; States, and turning Vim on
+;; ---------------------------------------------------------------------------
+
 (defun vim--reset ()
   "Forget the count, the operator, the register and the key waiting for the
 rest of a command."
@@ -238,7 +244,12 @@ a command half typed."
   "Remember ACTION as the edit . repeats, unless . is repeating one."
   (when (not vim--replaying) (setq vim-last-change (list action nil))))
 
-;;; Motions return (POSITION INCLUSIVE LINEWISE). Failed motions return nil.
+;; ---------------------------------------------------------------------------
+;; Motions
+;; ---------------------------------------------------------------------------
+;;
+;; A motion returns (POSITION INCLUSIVE LINEWISE), or nil when it fails.
+
 (defun vim--word-forward (at count big)
   "Where the word COUNT words after AT begins; with BIG, the WORD."
   (dotimes (i count)
@@ -368,7 +379,12 @@ or nil; ARGUMENT is the character of f, F, t and T."
     (when (not (member key '("j" "k" "<down>" "<up>"))) (buffer-put 'vim-goal-column nil))
     answer))
 
-;;; Registers retain the shape of text: character, line or block.
+;; ---------------------------------------------------------------------------
+;; Registers and Visual state
+;; ---------------------------------------------------------------------------
+;;
+;; A register keeps the shape of its text: characters, lines or a block.
+
 (defun vim--register-value (name)
   "The value of register NAME, (TEXT TYPE), or nil."
   (cdr (assoc name vim-registers)))
@@ -435,7 +451,12 @@ lines."
         (when (not (vim--visual-p)) (buffer-put 'vim-anchor (point)))
         (vim--set-state state) (vim--show-visual))))
 
-;;; Text objects: words/WORDS, balanced delimiters, quotes, paragraphs.
+;; ---------------------------------------------------------------------------
+;; Text objects
+;; ---------------------------------------------------------------------------
+;;
+;; Words and WORDS, balanced delimiters, quotes and paragraphs.
+
 (defun vim--white-line-p (at)
   "Whether the line holding AT is empty, or white space only."
   (string-match-p "^[[:space:]]*$" (buffer-substring (vim--bol at) (vim--eol at))))
@@ -526,6 +547,11 @@ nil; AROUND for a, not i."
     (goto-char at)
     (when start (list start end type))))
 
+;; ---------------------------------------------------------------------------
+;; Insert state, operators and putting text
+;; ---------------------------------------------------------------------------
+
+;; TODO(CMD-9): the whole text is kept here and compared on leaving.
 (defun vim--begin-insert (action)
   "Enter Insert state for ACTION, remembering the text, so that leaving can
 tell what was typed."
@@ -775,7 +801,12 @@ P, KEY, in its shape."
         (vim--remember (list 'paste key count name))
         (vim--clamp)))))
 
-;;; Search uses the editor's regex scanner and character offsets.
+;; ---------------------------------------------------------------------------
+;; Searching
+;; ---------------------------------------------------------------------------
+;;
+;; With the editor's regexp scanner, in character offsets.
+
 (defun vim--search-next (direction count)
   "Go to the COUNTth match of the last search, forward when DIRECTION is
 positive; nil when there is none."
@@ -825,6 +856,10 @@ do with their answer."
                 (concat "\\b" (vim--regexp-quote vim-search-pattern) "\\b")
                 (vim--regexp-quote vim-search-pattern)))
       (vim--search-next vim-search-direction count))))
+
+;; ---------------------------------------------------------------------------
+;; Small edits, repeating, marks and macros
+;; ---------------------------------------------------------------------------
 
 (defun vim--join (count)
   "Join COUNT lines, two at least, dropping the indentation of each joined
@@ -920,7 +955,7 @@ nonblank of its line; nil when it is not set."
   "Stop recording, and store the keys in the register they were for."
   (kmacro-end-macro)
   (let ((keys (kbd-macro-keys)) (name vim-recording-register))
-    ;; q is dispatched through vim--key, so the recorder sees its terminating key.
+    ;; q goes through vim--key, so that the recorder sees the key that ends it.
     (when keys
       (setq keys (if (string= keys "q") "" (substring keys 0 (- (length keys) 2))))
       (when (string-match-p "^[A-Z]$" name)
@@ -937,7 +972,13 @@ nonblank of its line; nil when it is not set."
       (setq vim-last-macro-register name)
       (kmacro-call-keys (car value) count))))
 
-;;; Ex commands deliberately use existing save/quit safety and prompts.
+;; ---------------------------------------------------------------------------
+;; Ex commands
+;; ---------------------------------------------------------------------------
+;;
+;; Through the editor's own commands, with their questions before a save or
+;; a quit.
+
 (defun vim--ex-confirm (input)
   "Run the Ex command INPUT: what : does with its answer."
   (let ((command input))
@@ -978,6 +1019,10 @@ nonblank of its line; nil when it is not set."
   (when (vim--visual-p)
     (vim--set-state 'normal) (deactivate-mark) (remove-overlays 'vim-selection))
   (minibuffer-read ":" 'vim--ex-confirm nil nil))
+
+;; ---------------------------------------------------------------------------
+;; Keys
+;; ---------------------------------------------------------------------------
 
 (defun vim--pending-key (pending key)
   "Finish with KEY the command PENDING, which waits for one more key."
@@ -1118,7 +1163,12 @@ area."
              (when motion (goto-char (car motion)) (vim--clamp) (vim--show-visual))
              (vim--reset)))))))
 
-;;; Replace sessions use the same diff and undo contract as Insert.
+;; ---------------------------------------------------------------------------
+;; Replace state, and :s
+;; ---------------------------------------------------------------------------
+;;
+;; Replace state records its change as Insert state does.
+
 (defun vim--replace-mode (count)
   "Enter Replace state, for R."
   (when (not (buffer-read-only-p))
@@ -1223,7 +1273,7 @@ names."
                     (let ((from (nth 4 entry)) (to (+ (nth 4 entry) (- (nth 7 entry) (nth 6 entry)))))
                       (when (and (>= from start) (< from end) (<= to end)
                                  (or (string-match-p "g" flags) (not (equal last-line (nth 2 entry)))))
-                        ;; Match data belongs to this match until expansion finishes.
+                        ;; The match data is this match's until expanded.
                         (string-match (if case-fold-search (concat "(?i)" pattern) pattern)
                                       (nth 5 entry) (nth 6 entry))
                         (setq changes (cons (list from to (vim--expand-replacement replacement (nth 5 entry))) changes))
@@ -1235,13 +1285,17 @@ names."
           (message "%s substitutions" (length changes))
           t)))))
 
+;; ---------------------------------------------------------------------------
+;; Keymaps and hooks
+;; ---------------------------------------------------------------------------
+
 (make-mode 'vim-normal-map)
 (make-mode 'vim-insert-map)
 (make-mode 'vim-replace-map)
 (define-key 'vim-normal-map "<char>" 'vim--key)
 (define-key 'vim-insert-map "<char>" 'self-insert)
 (define-key 'vim-replace-map "<char>" 'vim--replace-key)
-;; Bind every printable ASCII key so unsupported Normal keys cannot insert text.
+;; Every printable ASCII key, so that no key types text in Normal state.
 (let ((keys " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"))
   (dotimes (i (length keys))
     (let* ((key (substring keys i (+ i 1))) (spelling (if (string= key " ") "<space>" key)))

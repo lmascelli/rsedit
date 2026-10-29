@@ -1,10 +1,8 @@
-//! Pointers from the code to the developer manual.
+//! Pointers from the code, the tests and the Lisp modules to the developer
+//! manual, written ``Design: `doc/FILE.typ, <label>`.``, and the header every
+//! shipped Lisp module begins with.
 //!
-//! A module's documentation or a comment says where its design is explained
-//! as ``Design: `doc/FILE.typ, <label>`.`` (see doc/documentazione.typ), in
-//! backticks so that rustdoc does not read the label as an HTML tag. A label
-//! that is renamed or removed leaves the pointer pointing nowhere, which only
-//! a test notices.
+//! Design: `doc/architettura-editor.typ, <test-documentazione>`.
 #[cfg(test)]
 mod tests {
     use regex::Regex;
@@ -19,15 +17,13 @@ mod tests {
             .collect()
     }
 
-    /// The files under DIR with EXTENSION, outside the test directories.
+    /// Adds the files under DIR with EXTENSION to INTO.
     fn sources(dir: &Path, extension: &str, into: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap_or_else(|why| panic!("{}: {why}", dir.display()))
         {
             let path = entry.expect("a directory entry").path();
             if path.is_dir() {
-                if path.file_name().is_some_and(|name| name != "tests") {
-                    sources(&path, extension, into);
-                }
+                sources(&path, extension, into);
             } else if path.extension().is_some_and(|found| found == extension) {
                 into.push(path);
             }
@@ -71,6 +67,42 @@ mod tests {
             broken.is_empty(),
             "these point at labels the manual does not have:\n  {}",
             broken.join("\n  ")
+        );
+    }
+
+    /// A shipped module begins with `;;; NAME --- `, NAME its file's, and its
+    /// header names its manual page and the manual's design.
+    #[test]
+    fn every_shipped_module_has_the_header() {
+        let lisp = Path::new(env!("CARGO_MANIFEST_DIR")).join("lisp");
+        let mut files = Vec::new();
+        sources(&lisp, "lisp", &mut files);
+        assert!(files.len() > 20, "the modules are not being found");
+        let mut wrong = Vec::new();
+        for file in files {
+            let text = std::fs::read_to_string(&file)
+                .unwrap_or_else(|why| panic!("{}: {why}", file.display()));
+            let name = file
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("");
+            let header: Vec<&str> = text
+                .lines()
+                .take_while(|line| line.starts_with(";;;"))
+                .collect();
+            let first = header.first().copied().unwrap_or("");
+            let body = header.join("\n");
+            if !first.starts_with(&format!(";;; {name} --- "))
+                || !body.contains("User manual:")
+                || pointers(&body).is_empty()
+            {
+                wrong.push(file.display().to_string());
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "these modules lack the header, its page or its Design:\n  {}",
+            wrong.join("\n  ")
         );
     }
 }

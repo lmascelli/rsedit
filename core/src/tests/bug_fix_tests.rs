@@ -2,6 +2,8 @@
 //!
 //! Each one reproduces the failure as it actually presented -- a panic, an
 //! abort, a wrong character -- rather than testing the shape of the fix.
+//!
+//! Design: `doc/architettura-editor.typ, <test>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

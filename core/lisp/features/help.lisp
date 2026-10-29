@@ -3,12 +3,7 @@
 ;;; C-h f a function, C-h v a variable, C-h k a key, C-h b the bindings, C-h a
 ;;; the names that match, C-h ? the help keys. User manual: the
 ;;; `getting-help' page.
-;;;
-;;; The answers are built in -- `key-binding', `where-is', `function-doc' and
-;;; the rest -- so that no module can make them wrong; this module is the
-;;; pages. Each command has a half that prompts, bound to a key, and a half
-;;; that takes the name, for Lisp. The back stack keeps what it takes to build
-;;; a page again, so a page gone back to shows the editor as it is now.
+;;; Design: `doc/architettura-editor.typ, <mod-help>`.
 
 (require 'commands)
 (require 'debug)
@@ -84,9 +79,7 @@ it again: (KIND ARGUMENTS...).")
 ;; ---------------------------------------------------------------------------
 ;; The pages themselves
 ;;
-;; Each returns a list of lines. None of them touches a buffer, which is what
-;; makes them testable without one and replaceable without touching what they
-;; are made of.
+;; Each returns a list of lines and touches no buffer.
 ;; ---------------------------------------------------------------------------
 
 (defun help--signature (name)
@@ -201,10 +194,7 @@ it again: (KIND ARGUMENTS...).")
         (append
          (list name
                ""
-               ;; Bound and documented are different questions, and a variable
-               ;; documented before anything sets it is a real state -- see
-               ;; `variable-doc'. Saying "nil" for it would be a lie about a
-               ;; value it does not have.
+               ;; Documented but unbound is a state of its own, not a nil.
                (if (boundp symbol)
                    (format "Value: %s" (symbol-value symbol))
                    "Not set. Whatever reads it will fail until something does.")
@@ -217,8 +207,7 @@ it again: (KIND ARGUMENTS...).")
   ;; Given, not looked up again: they come from the editor's own lookup.
   (append
    (list (concat "Key: " keys) "")
-   ;; `null' first: `string=' is asked about a string, and a key bound to
-   ;; nothing has no source at all.
+   ;; `null' first: a key bound to nothing has no source.
    (cond ((null source)
           (list (concat keys " is not bound to anything.")
                 ""
@@ -370,8 +359,7 @@ it again: (KIND ARGUMENTS...).")
 
 (defun help--draw (page)
   "Put PAGE in the help buffer, leaving the history alone."
-  ;; Built before the help buffer is shown, so that it reads the editor as the
-  ;; reader left it.
+  ;; Built before the help buffer is shown, from the editor as it was left.
   (let ((lines (help--build page)))
     (buffer-create help-buffer-name 'help-mode)
     (switch-to-buffer help-buffer-name)
@@ -386,8 +374,7 @@ it again: (KIND ARGUMENTS...).")
   "Show PAGE, remembering the one being left."
   (when help--current
     (setq help--history (cons help--current help--history))
-    ;; Trimmed here rather than when walking back: a stack that only ever grew
-    ;; would hold every page of a long session, and nothing would ever say so.
+    ;; Trimmed here, so that the stack does not grow for a whole session.
     (when (> (length help--history) help-history-length)
       (setq help--history (help--take help--history help-history-length))))
   (help--draw page))
@@ -409,9 +396,8 @@ it again: (KIND ARGUMENTS...).")
       (message "No earlier help page")
       (let ((previous (car help--history)))
         (setq help--history (cdr help--history))
-        ;; `help--draw' rather than `help--goto': going back must not push the
-        ;; page being left, or `l' would walk between the last two pages for
-        ;; ever and never reach the third.
+        ;; `help--draw', not `help--goto': going back does not push the page
+        ;; left, or `l' would only swap the last two.
         (help--draw previous))))
 
 ;; ---------------------------------------------------------------------------
@@ -477,8 +463,7 @@ it again: (KIND ARGUMENTS...).")
 (defcommand describe-key () nil
   "Press a key sequence and be told what it runs, and from which keymap.
 Nothing is run."
-  ;; Read by the editor's own lookup, through `read-key-sequence', so that what
-  ;; is told is what would have happened.
+  ;; Through `read-key-sequence': the editor's own lookup.
   (message "Describe key: press a key sequence")
   (read-key-sequence 'help--describe-key-answer))
 
@@ -567,7 +552,7 @@ those still bound under the key they were under before."
 
 (install-help-keys)
 
-;; This module takes `M' for the mode, since `m' was the manual's first.
+;; `M' is the mode's page: `m' is the manual's.
 
 (define-key 'help-mode "q" '(close-buffer help-buffer-name))
 (define-key 'help-mode "l" 'help-back)

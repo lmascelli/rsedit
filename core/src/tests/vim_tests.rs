@@ -1,4 +1,6 @@
-//! Exercise Vim through physical input and the shipped Risp, not a Rust Vim engine.
+//! Vim, through pressed keys and the shipped module.
+//!
+//! Design: `doc/architettura-editor.typ, <mod-vim>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

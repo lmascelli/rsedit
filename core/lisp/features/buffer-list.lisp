@@ -3,9 +3,7 @@
 ;;; C-x b switches to a buffer chosen by completion, and C-x C-b lists them all,
 ;;; one per line, with keys to switch to them and kill them. User manual: the
 ;;; `buffers' page.
-;;;
-;;; As in dired, the buffer is the state: every command reads the name back
-;;; from the line on screen, by column, since a buffer name may contain spaces.
+;;; Design: `doc/architettura-editor.typ, <mod-buffer-list>`.
 
 (require 'commands)
 (require 'debug)
@@ -61,9 +59,7 @@ along rather than being cut.")
         nil
         (let ((name (buffer-list--trim-right
                      (substring line buffer-list-name-column end))))
-          ;; A name that is still live. One that is not means the listing is
-          ;; stale -- the buffer was killed from somewhere else since it was
-          ;; drawn -- and saying so beats acting on it.
+          ;; A name no longer live means a stale listing: said, not acted on.
           (if (member name (all-buffer-names)) name nil)))))
 
 (defun buffer-list--trim-right (text)
@@ -104,8 +100,7 @@ changes."
     (cond
      ((null name) (message "No buffer on this line"))
      ((string= name buffer-list-buffer-name)
-      ;; Killing the listing from inside the listing would leave the cursor in
-      ;; a buffer that no longer exists. `q' is how you close it.
+      ;; Killed from inside, the listing would leave the cursor nowhere.
       (message "Use q to put the listing away"))
      ((buffer-modified-p name)
       (minibuffer-read
@@ -124,10 +119,8 @@ changes."
 (defun buffer-list--killed (name)
   "Kill NAME and redraw, reporting what happened."
   (close-buffer name)
-  ;; Back to the listing before redrawing: `close-buffer' may have moved the
-  ;; focused window to whatever replaced the buffer it killed, and drawing into
-  ;; whatever that turned out to be is how a listing ends up written over a
-  ;; file.
+  ;; Back to the listing first: `close-buffer' may have shown another buffer
+  ;; in the window, which the redraw would write over.
   (switch-to-buffer buffer-list-buffer-name)
   (buffer-list-refresh)
   (message "Killed %s" name))

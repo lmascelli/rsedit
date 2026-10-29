@@ -1,5 +1,7 @@
 //! The editor's fuel: what holds or does not. What a command costs is in the
 //! report the performance suite writes, `performance-cost.txt`.
+//!
+//! Design: `doc/architettura-editor.typ, <stato>`.
 #[cfg(test)]
 mod tests {
     use crate::{

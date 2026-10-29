@@ -5,6 +5,8 @@
 //! must not scroll out of every window. Each window remembers where point was
 //! while its view followed it, and getting focus back puts point there.
 //! Composing a frame records it, and a frame is composed after every command.
+//!
+//! Design: `doc/architettura-editor.typ, <composizione>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};

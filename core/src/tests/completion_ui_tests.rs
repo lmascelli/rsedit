@@ -1,14 +1,8 @@
-//! `core/lisp/completion.lisp`, and the three mechanisms it is built out of:
-//! a split that holds a size, a keymap that is a question, and the seam in
-//! `minibuffer-complete` that lets a module take over presenting candidates.
+//! `completion.lisp`, and what it is built on: a split that holds a size, a
+//! keymap that lets keys through, and `*completion-read-function*`. The first
+//! block loads no module, and checks that Tab still cycles without it.
 //!
-//! # The one thing these must protect above all
-//!
-//! That the editor works *without* this module. It is optional, and "optional"
-//! is a claim that rots the moment something in the base system quietly starts
-//! depending on it. So the first block below loads no module at all and checks
-//! that Tab still cycles -- if that ever fails, the module has stopped being a
-//! module.
+//! Design: `doc/architettura-editor.typ, <mod-completion>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -180,11 +174,8 @@ mod tests {
 
     #[test]
     fn a_strip_redraws_when_the_candidates_are_invalidated() {
-        // The case a completion list built in the background puts the strip
-        // in: nothing was typed, and the answer changed anyway. `post-command
-        // -hook' cannot see it -- it compares against what was typed, and
-        // that is the same -- so there has to be a way of saying so, and this
-        // is it being said from the other side.
+        // A list built in the background changes with nothing typed, which
+        // `post-command-hook' cannot see: the list says so itself.
         let (ctx, env) = with_module();
         run(r#"(setq *test-names* '("alpha" "beta"))"#, &env, &ctx);
         run(
@@ -275,10 +266,8 @@ mod tests {
         assert_eq!(scratch(&ctx), "abce");
     }
 
-    /// `tab-always-indent' set to `complete' -- Emacs' default for programming
-    /// modes, and offered in `indent.lisp' -- runs `completion-at-point' from
-    /// inside `indent-for-tab-command'. The strip it opens still has to know
-    /// where the word began, to narrow as you type and to put the choice there.
+    /// `tab-always-indent' at `complete': the strip opened from Tab knows
+    /// where the word began.
     #[test]
     fn a_tab_that_completes_puts_the_choice_where_the_word_was() {
         let (ctx, env) = completing_in_buffer("ab");
@@ -303,11 +292,8 @@ mod tests {
         assert_eq!(scratch(&ctx), "abce");
     }
 
-    /// A completion in a buffer put away without a choice must leave nothing
-    /// behind for the next strip to take as its own. A prompt's strip that
-    /// inherited the word's start as its anchor read the prompt from the wrong
-    /// place -- and, the word having started further in than anything typed in
-    /// the prompt, closed itself on the first keystroke.
+    /// A buffer's strip put away leaves no anchor for a prompt's strip, which
+    /// would read the prompt from the wrong place.
     #[test]
     fn an_abandoned_completion_in_a_buffer_does_not_follow_a_prompt() {
         let (ctx, env) = completing_in_buffer("some words ab");
@@ -330,13 +316,8 @@ mod tests {
 
     // ---------------- one prompt's answer is not the next one's ----------------
 
-    /// What Tab was last asked about is remembered, so that a second Tab on the
-    /// same input does not ask the candidate function again. That memory is a
-    /// fact about *one* prompt: the list it vouches for is cleared when the
-    /// prompt closes. Kept past that, it made the next prompt's first Tab -- on
-    /// the same text, which for a prompt nobody has typed into yet is the empty
-    /// string -- be answered with the cleared list. "No completions", from a
-    /// prompt that had plenty.
+    /// What Tab was last asked about is one prompt's, and the next prompt's
+    /// first Tab asks again.
     #[test]
     fn the_first_tab_in_a_new_prompt_asks_that_prompt() {
         let (ctx, env) = with_module();
@@ -492,11 +473,8 @@ mod tests {
 
     #[test]
     fn a_strip_nobody_is_typing_into_is_left_alone() {
-        // A module may call the presenter directly, with no prompt and no
-        // buffer position behind it. There is no text to narrow by, and the
-        // refresh must leave such a strip standing rather than closing it --
-        // which is exactly what a `completion-choose' callback opening a
-        // second strip relies on.
+        // A strip opened by calling the presenter directly has no text to
+        // narrow by, and stays.
         let (ctx, env) = with_module();
         run(
             r#"(completion--present (list "one" "two")
@@ -799,11 +777,8 @@ mod tests {
         );
     }
 
-    /// The strip used to swallow every key it did not bind, so a list of forty
-    /// candidates could only be walked through one `n` at a time. It passes
-    /// them on now -- and stays up, which is the part neither of the other two
-    /// `OnUnbound` answers could give: `Refuse` could not be typed at, and
-    /// `Release` would vanish at the first letter.
+    /// A key the strip does not bind reaches the prompt, and the strip stays:
+    /// neither `Refuse` nor `Release` would allow both.
     #[test]
     fn a_key_the_strip_does_not_bind_reaches_the_prompt_and_leaves_the_strip_up() {
         let (ctx, env) = with_module();
@@ -897,10 +872,8 @@ mod tests {
         assert_eq!(selected(&env, &ctx), "item4");
     }
 
-    /// Every cell is padded to the same width even past the end of the list,
-    /// because the position of a candidate is computed rather than searched
-    /// for -- a short row would put every position below it out by however
-    /// many characters were missing.
+    /// Every cell is padded, past the end of the list too: positions are
+    /// computed, not searched for.
     #[test]
     fn every_row_is_the_same_length_even_when_the_candidates_run_out() {
         let (ctx, env) = with_module();
@@ -950,12 +923,8 @@ mod tests {
         assert_eq!(run("*completion--on-choose*", &env, &ctx), LispExp::nil());
     }
 
-    /// The strip is taken down *before* the chosen value is handed on, because
-    /// what receives it may start another completion -- picking a directory and
-    /// then completing inside it is the obvious case. Handing on first would
-    /// have the second completion open while the first one's window and state
-    /// were still standing, and the close that followed would take down the
-    /// second one's window instead of the first one's.
+    /// The strip is closed before the value is handed on, which may open
+    /// another strip.
     #[test]
     fn the_strip_is_gone_before_the_chosen_value_is_handed_on() {
         let (ctx, env) = with_module();
@@ -1046,12 +1015,7 @@ mod tests {
 
     // ---------------- the prompt and the strip share the frame ----------------
 
-    /// The bug: the prompt used to be docked along the bottom edge, which is
-    /// exactly where the completion strip goes. Two things drawn in one place
-    /// is not a layout.
-    ///
-    /// Checked at several sizes, because one size proves nothing here -- the
-    /// answer depends on how much of the frame the strip is taking.
+    /// The prompt is not where the strip goes, at several sizes of frame.
     #[test]
     fn on_a_frame_with_room_the_prompt_and_the_strip_do_not_overlap() {
         for (width, height) in [(80, 24), (100, 40), (60, 20)] {
@@ -1068,13 +1032,8 @@ mod tests {
         }
     }
 
-    /// And on a frame too small to hold both, they do overlap -- there is
-    /// nowhere else for a *centred* prompt to go when a six-row strip is most
-    /// of the screen. What matters then is which one wins: a float is drawn
-    /// after the tiled windows, so the prompt is on top and can still be read
-    /// and typed into. Losing sight of some candidates is survivable; losing
-    /// the prompt is not, because a prompt is how you would run the command
-    /// that made the strip smaller.
+    /// On a frame too small for both they overlap, and the prompt, a float,
+    /// is drawn on top.
     #[test]
     fn on_a_frame_too_small_for_both_the_prompt_is_drawn_over_the_strip() {
         let (ctx, env) = with_module();
@@ -1202,11 +1161,8 @@ mod tests {
         );
     }
 
-    /// A nonsense size falls back to the *default*, not merely to something
-    /// legal. One column wide is technically a window and is no more use than
-    /// none: the point of falling back is that the prompt stays usable, and a
-    /// prompt that cannot open -- or cannot be read -- leaves no way to run the
-    /// command that would put the setting right.
+    /// A nonsense size falls back to the default, not merely to something
+    /// legal: the prompt stays usable.
     #[test]
     fn a_nonsense_size_falls_back_to_the_default() {
         for (setting, width, height) in [
@@ -1247,10 +1203,7 @@ mod tests {
         }
     }
 
-    /// The echo area owns the bottom row, so a prompt is centred in what is
-    /// left rather than in the whole frame. Only a tall prompt can tell the
-    /// difference -- and a tall prompt whose last row sat under a message
-    /// would hide the line being typed.
+    /// A prompt is centred above the echo area, not in the whole frame.
     #[test]
     fn a_prompt_as_tall_as_the_frame_still_leaves_the_echo_row_clear() {
         let (ctx, env) = with_module();

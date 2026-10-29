@@ -1,16 +1,8 @@
-//! `core/lisp/dired.lisp` -- a directory in a buffer -- and the filesystem
-//! primitives it is built out of.
+//! `dired.lisp`, end to end with the module loaded, and the filesystem
+//! primitives it is built on. Each test that touches the filesystem has a
+//! directory of its own.
 //!
-//! Driven end to end against a real editor with the module loaded, because
-//! almost everything worth checking is a collaboration: a listing is
-//! `list-dir` and `insert` and `set-buffer-read-only` together, and what makes
-//! `D` safe is the confirmation prompt, the primitive's refusal to recurse,
-//! *and* the refresh afterwards. Testing the pieces separately would leave the
-//! joins untested, and the joins are where a file manager loses somebody's
-//! work.
-//!
-//! Every test that touches the filesystem gets a directory of its own, named
-//! after the test, so two running in parallel cannot see each other's files.
+//! Design: `doc/architettura-editor.typ, <mod-dired>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -42,10 +34,8 @@ mod tests {
         }
     }
 
-    /// An editor with the whole shipped Lisp stack loaded, in the order the
-    /// default `init.lisp` loads it: `dired.lisp` is written with
-    /// `defcommand` from `commands.lisp` and reports through `message` from
-    /// `debug.lisp`, so neither can be left out.
+    /// Returns an editor with the shipped modules loaded, in the order the
+    /// default `init.lisp` loads them.
     fn setup() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
@@ -104,12 +94,8 @@ mod tests {
         }
     }
 
-    /// Open a listing of the sandbox and put the cursor on NAME.
-    ///
-    /// Positioning by searching the listing rather than by counting lines: the
-    /// tests should say "the cursor is on `keep.txt`", not "the cursor is on
-    /// line 4", which would have to be recounted every time the fixture gains
-    /// a file.
+    /// Opens a listing of the sandbox with the cursor on NAME, found by
+    /// searching rather than by a line number.
     fn open_on(sandbox: &Sandbox, name: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
         run(&format!(r#"(dired "{}")"#, sandbox.lisp()), env, ctx);
         goto_entry(name, env, ctx);
@@ -185,11 +171,8 @@ mod tests {
         }
     }
 
-    /// The bug this module actually had: a listing opened by a relative name
-    /// -- `.`, or anything tab-completed from the working directory -- had a
-    /// header with fewer components than it looked like it had, and going up
-    /// from it walked off the front and landed at the filesystem root. One
-    /// keystroke from where you were to `/`.
+    /// A listing opened by a relative name, `.`, goes up to its parent, not
+    /// to the root.
     #[test]
     fn going_up_from_a_listing_opened_by_a_relative_name_does_not_jump_to_the_root() {
         let sandbox = Sandbox::new("relative-up");
@@ -416,11 +399,8 @@ mod tests {
         assert_eq!(run("(buffer-read-only-p)", &env, &ctx), LispExp::t());
     }
 
-    /// The keys a mode does not bind still reach `self-insert`, because a mode
-    /// keymap only shadows what it binds and every printable key is bound
-    /// globally. What stops the listing being typed into is the flag at the
-    /// edit chokepoint, not the keymap -- so this is the test that the
-    /// protection is in the right place.
+    /// Typing reaches `self-insert`, and the read-only flag, not the keymap,
+    /// refuses the edit.
     #[test]
     fn typing_an_unbound_letter_into_a_listing_changes_nothing_and_says_so() {
         let sandbox = Sandbox::new("typing");
@@ -504,10 +484,7 @@ mod tests {
         assert_eq!(run("(dired--path-here)", &env, &ctx), LispExp::nil());
     }
 
-    /// The directory comes out of the buffer's first line, and asking for it
-    /// leaves the cursor where it was -- otherwise every command that needed
-    /// to know which directory this is would move the cursor off the file the
-    /// user is pointing at.
+    /// The directory is read off the first line, and the cursor stays.
     #[test]
     fn reading_the_directory_does_not_move_the_cursor() {
         let sandbox = Sandbox::new("no-move");
@@ -659,10 +636,8 @@ mod tests {
         assert!(windows.contains(&"*dired*".to_string()), "{windows:?}");
     }
 
-    /// A second listing would have to live in the one buffer both windows
-    /// show, so a directory opens here instead of splitting. Better a
-    /// keystroke that does the obvious thing than two windows showing the same
-    /// listing.
+    /// A directory opens here, not in another window: there is one listing
+    /// buffer.
     #[test]
     fn o_on_a_directory_lists_it_here_rather_than_splitting() {
         let sandbox = Sandbox::new("other-window-dir");
@@ -1062,14 +1037,8 @@ mod tests {
         assert!(!tree.exists());
     }
 
-    /// A link to a directory is unlinked, not descended into. Which needs
-    /// saying because `is_dir` follows symlinks, so without asking
-    /// `symlink_metadata` first the link would be treated as the directory it
-    /// points at -- refused as "not empty" when asked politely, and emptied
-    /// when asked recursively.
-    ///
-    /// Asked politely here, which is the case that actually distinguishes the
-    /// two: `remove_dir` on a link fails, `remove_file` unlinks it.
+    /// A link to a directory is unlinked, not descended into, though `is_dir`
+    /// follows links.
     #[cfg(unix)]
     #[test]
     fn a_symlink_to_a_directory_is_unlinked_rather_than_descended_into() {
@@ -1318,10 +1287,7 @@ mod tests {
 
     // ---------------- keys ----------------
 
-    /// Pressed, not looked up. A mode keymap is consulted before the global
-    /// one, so `g` here has to reach `dired-refresh` even though `g` globally
-    /// is bound to `self-insert` like every other printable key -- and that
-    /// shadowing is the whole mechanism the module's keys rest on.
+    /// Pressed, not looked up: the mode's `g` shadows the global one.
     #[test]
     fn the_dired_letters_do_dired_things_rather_than_typing_themselves() {
         let sandbox = Sandbox::new("keys-refresh");

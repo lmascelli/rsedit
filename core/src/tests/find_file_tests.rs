@@ -1,7 +1,7 @@
-//! What `find-file` does with a path that is not an ordinary readable file.
+//! What `find-file` does with a path that is not an ordinary readable file:
+//! a directory, a file that does not exist yet, and a file already open.
 //!
-//! Three cases that used to be one error message: a directory, a file that
-//! does not exist yet, and a file that is already open.
+//! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

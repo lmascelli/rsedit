@@ -1,8 +1,8 @@
 ;;; debug --- messages, the log, and what happens when a command fails.
 ;;;
-;;; `message' shows a line in the echo area and keeps it in the log,
-;;; `switch-to-messages' shows the log, and `report-error' is what the editor
+;;; `message', the *Messages* buffer, and `report-error', which the editor
 ;;; calls when a command fails. User manual: the `diagnostics' page.
+;;; Design: `doc/architettura-editor.typ, <mod-debug>`.
 
 (defun message (fmt-string &rest args)
   "Show FMT-STRING, formatted with ARGS as `format' does, in the echo area, and

@@ -1,31 +1,9 @@
-//! The manual pages, checked against the editor they describe.
+//! The manual pages, checked against the editor they describe: every line of
+//! a `KEYS` section resolved as the editor resolves keys, every page a
+//! `SEE ALSO` names, the module lists and the SYNOPSIS names. Prose is not
+//! checked.
 //!
-//! # Why a guide needs a test at all
-//!
-//! Because a page that lists a key which does nothing is worse than no page.
-//! A reader who presses it and gets "undefined" has learnt that the manual
-//! lies, and from then on will not trust the parts that are true.
-//!
-//! Nothing stops that happening by itself. A key moved in
-//! `common-keymaps.lisp`, a command renamed, a module whose binding went --
-//! each is an ordinary change with no reason to think about prose in a
-//! directory somewhere else.
-//!
-//! # What is checked, and what is not
-//!
-//! Each page may carry a `KEYS` section listing key sequences and the
-//! commands they run, and `KEYS IN <mode>` sections for a mode's own. Every
-//! line of those is resolved through the same walk the editor itself does, so
-//! a page and the editor cannot disagree about a key without this failing.
-//!
-//! Every page named in a `SEE ALSO` must exist, and every `(name)` mentioned
-//! there must be a function the editor has.
-//!
-//! Prose is *not* checked. A key mentioned in a sentence is not verified, and
-//! the `KEYS` block at the foot of a page is there so that the keys it teaches
-//! are somewhere a test can read them. That is a real limit and not a claim
-//! that the pages cannot drift; it is the part of the drift that can be
-//! caught cheaply.
+//! Design: `doc/architettura-editor.typ, <test-documentazione>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -65,12 +43,8 @@ mod tests {
         command: String,
     }
 
-    /// Every `KEYS` and `KEYS IN <mode>` line in every page.
-    ///
-    /// A line counts when it is indented, has two or more spaces between two
-    /// fields, and the second field looks like a command name. That shape is
-    /// what the blocks are written in, and anything else in a page -- prose,
-    /// a code example, a blank line -- fails it and is skipped.
+    /// Returns every `KEYS` and `KEYS IN <mode>` line in every page: indented,
+    /// two fields two spaces apart, the second a command name.
     fn claims() -> Vec<Claim> {
         let mut out = Vec::new();
         for (page, body) in man_pages() {
@@ -80,12 +54,8 @@ mod tests {
                     // A heading at column zero ends whatever block we were in.
                     mode = match line.trim() {
                         "KEYS" => Some(None),
-                        // `KEYS IN DIRED MODE` names `dired-mode`. Spelt in
-                        // capitals because `manpage-mode` colours a heading
-                        // only when it is one -- its rule is
-                        // `^[A-Z][A-Z0-9 ]*$`, which a hyphen fails -- so a
-                        // heading written the obvious way would be read as
-                        // body text by the very mode these pages are for.
+                        // `KEYS IN DIRED MODE` names `dired-mode`: a
+                        // heading in capitals, as `manpage-mode` colours.
                         heading => heading
                             .strip_prefix("KEYS IN ")
                             .map(|mode| Some(mode.trim().to_lowercase().replace(' ', "-"))),
@@ -150,10 +120,7 @@ mod tests {
             // decides the walk, so a claim about a mode is checked in one.
             let mode = claim.mode.as_deref().unwrap_or("fundamental-mode");
             ctx.with_current_buffer_mut(|buf| buf.current_mode = mode.to_string());
-            // The target is a bare symbol when the binding was built in Rust
-            // and a one-element form when `define-key' made it, and both mean
-            // "run this command". Asking for the car of a symbol is an error,
-            // so which it is has to be decided before taking it.
+            // A bare symbol from Rust, a one-element form from `define-key'.
             let found = run(
                 &format!(
                     r#"(let ((target (nth 1 (key-binding "{}"))))
@@ -187,10 +154,6 @@ mod tests {
 
     #[test]
     fn every_page_a_page_points_at_exists() {
-        // The bug this was written for: `rsedit.txt` pointed at `completion',
-        // `modes' and `keymaps', none of which had been written. A reader
-        // following a cross-reference was told the page did not exist, by the
-        // manual, about itself.
         let pages = man_pages();
         let known: BTreeSet<&str> = pages.iter().map(|(name, _)| name.as_str()).collect();
         let mut missing = Vec::new();
@@ -268,10 +231,8 @@ mod tests {
                 if line.starts_with(' ') || line.trim().is_empty() {
                     continue;
                 }
-                // `manpage-mode`'s own rule, which is what decides whether
-                // this is drawn as a heading: a capital, then capitals,
-                // digits and spaces. A comma or a hyphen in one leaves it
-                // looking like body text that happens to shout.
+                // `manpage-mode`'s rule for a heading: a capital, then
+                // capitals, digits and spaces.
                 let mut characters = line.chars();
                 let heading = characters.next().is_some_and(|c| c.is_ascii_uppercase())
                     && characters.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ' ');
@@ -295,10 +256,8 @@ mod tests {
             .find(|(name, _)| name == "guide")
             .expect("the guide")
             .1;
-        // The *index* entries, not the whole text. Looking anywhere in the
-        // page was the first version and it passed an ablation that deleted
-        // an index line, because the name was still in the SEE ALSO at the
-        // foot -- which is not the reader finding it.
+        // The index entries, not the whole text: the SEE ALSO at the foot is
+        // not the reader finding a page.
         let listed: BTreeSet<&str> = guide
             .lines()
             .filter(|line| line.starts_with("        "))

@@ -2,9 +2,9 @@
 //! default init.lisp loads, the manual pages in `man/`, and the names the
 //! editor adds to its Lisp.
 //!
-//! Tests take these from here rather than keeping lists of their own, which
-//! drift: two such lists missed four modules between them, and a third left
-//! out a manual page.
+//! Tests take these from here rather than keeping lists of their own.
+//!
+//! Design: `doc/architettura-editor.typ, <test-documentazione>`.
 use crate::buffer::gap_buffer::GapBuffer;
 use crate::editor::boot::DEFAULT_INIT_LISP;
 use crate::editor::{EditorState, MODULE_KINDS};

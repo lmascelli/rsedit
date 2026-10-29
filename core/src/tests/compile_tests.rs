@@ -1,9 +1,7 @@
-//! Compilation mode: reading a line of output as a place in a file, and going
-//! there.
+//! Compilation mode: a line of real compiler output read as a place in a
+//! file, going there, and the command read back off the buffer.
 //!
-//! The parsing is most of what can go wrong, so most of this is a table of
-//! real compiler output. The rest is the navigation, and the fact that the
-//! command is read back off the buffer rather than kept beside it.
+//! Design: `doc/architettura-editor.typ, <mod-compile>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
@@ -426,10 +424,8 @@ mod tests {
         assert_eq!(marks_on(3, &env, &ctx), 1);
     }
 
-    /// The walk's mark goes on the line that names the place. It went on the
-    /// line one past the entry's index -- right for a search's listing, with
-    /// its header line, and wrong for output where the compiler writes other
-    /// lines between its complaints.
+    /// The walk's mark goes on the line that names the place, also when the
+    /// compiler writes other lines between its complaints.
     #[test]
     fn m_g_n_marks_the_line_that_names_the_place() {
         let (ctx, env) = editor();

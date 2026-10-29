@@ -1,4 +1,6 @@
-//! The shipped language modes as evaluated Lisp, including their real grammars.
+//! The shipped language modes as evaluated Lisp, with their real grammars.
+//!
+//! Design: `doc/architettura-editor.typ, <mod-linguaggi>`.
 use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
 use crate::editor::{EditorState, create_global_env};
 use crate::modes::{Grammar, SyntaxState, highlight_line};

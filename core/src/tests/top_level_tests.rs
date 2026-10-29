@@ -5,6 +5,8 @@
 //! it is evaluated in. Evaluated inside a function it is that function's own,
 //! and goes when the function returns -- which is what a file loaded from a
 //! command, or an expression typed at `M-:`, must not do.
+//!
+//! Design: `doc/architettura-editor.typ, <valutazione>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

@@ -1,14 +1,9 @@
-//! What things cost, as the fuel budget sees it.
+//! What things cost, as the fuel budget sees it: Lisp that does quadratic
+//! work without meaning to, and primitives that do much work for one unit of
+//! fuel. The budget stops a runaway loop in about a second only while a
+//! charge is proportional to the work.
 //!
-//! The budget is a runaway-loop guard: it exists so a mistyped `(while t ...)`
-//! cannot hang the editor, and it is sized so that happens in about a second.
-//! That guarantee only holds while the charge for a piece of work is
-//! proportional to the work -- which is why `expect_list` charges per element
-//! rather than per call.
-//!
-//! These tests are about the two ways that goes wrong: Lisp that does
-//! quadratic work without meaning to, and primitives that do a lot of work for
-//! one unit of fuel.
+//! Design: `doc/architettura-editor.typ, <stato>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;

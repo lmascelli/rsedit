@@ -2,6 +2,7 @@
 ;;;
 ;;; For the files whose names end in .toml, and Cargo.lock. User manual: the
 ;;; `modes' page, and `indentation' for how it indents.
+;;; Design: `doc/architettura-editor.typ, <mod-linguaggi>`.
 
 (require 'indent)
 
@@ -24,8 +25,8 @@
 (set-syntax-pairs 'toml-mode "[]{}")
 (set-syntax-entry 'toml-mode "()" 'punctuation)
 (set-comment-syntax 'toml-mode '(("#")))
-;; Literal strings do not honour backslashes. Ordinary double quotes use
-;; the scanner's escaped string class; triple forms need their own entries.
+;; Literal strings take no backslashes; plain double quotes are the scanner's
+;; own string class, and the other forms need entries.
 (set-string-syntax 'toml-mode '(("\"\"\"" "\"\"\"" t) ("'''" "'''") ("'" "'")))
 (put 'toml-mode 'tab-width 2)
 (put 'toml-mode 'indent-function 'toml-indent-line)

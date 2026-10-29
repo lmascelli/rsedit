@@ -1,11 +1,7 @@
-//! `risp-mode.lisp`: the mode for the editor's own Lisp.
+//! `risp-mode.lisp`: a vocabulary asked of the interpreter, which picks up a
+//! function defined afterwards, not a list in the file.
 //!
-//! The claim worth testing is that its vocabulary comes from the interpreter
-//! rather than from a list in the file. A mode that merely *had* the right
-//! words on the day it was written would pass a test that checked `defun` is a
-//! keyword; what distinguishes this one is that a function defined afterwards
-//! can be picked up, and that the words it knows are the words this editor
-//! actually has.
+//! Design: `doc/architettura-editor.typ, <mod-linguaggi>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
