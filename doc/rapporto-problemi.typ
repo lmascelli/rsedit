@@ -850,7 +850,7 @@ init.lisp:
     gravita: "alta",
     verificato: true,
     stato: "risolto",
-    commit: "",
+    commit: "543ef5f737128145564112ee107c058f11835942",
     titolo: [I caratteri di controllo del testo arrivano al terminale: un file può comandarlo],
     breve: [Caratteri di controllo stampati così come sono: iniezione di sequenze nel terminale],
     dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Layout::visible_text`: copiano i caratteri senza filtrarli), `src/tui/render.rs` (`draw_clipped_row`, che li stampa con `Print`)],
