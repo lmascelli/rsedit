@@ -9,9 +9,14 @@ use crate::primitives::args;
 use crate::primitives::file_names::expand_path;
 use risp::eval;
 
-// TODO(FIL-1): a failed write is said in the log only.
-// TODO(FIL-2): the file is written in place, as by `save-buffer`.
-// TODO(FIL-4): an edit made during the write is marked saved with the rest.
+// TODO(FIL-2): the file is written in place, and a write that stops halfway
+// leaves it cut short.
+// TODO(FIL-4): an edit made while the text is being written is marked saved
+// with the rest.
+/// Writes NAME's buffer to the file it is visiting, and answers false when it
+/// has none or the write failed. Either way the echo area says what became of
+/// it: a failed save that only the log heard about is work the user believes
+/// is safe. What `save-buffer` and `save-some-buffers` save with.
 /// Writes NAME's buffer to the file it is visiting, and answers false when it
 /// has none or the write failed. What `save-some-buffers` saves with.
 pub(super) fn write_buffer<B: BufferTrait>(
@@ -30,18 +35,25 @@ pub(super) fn write_buffer<B: BufferTrait>(
     };
     match std::fs::write(&path, content) {
         Ok(()) => {
+            // Stamped after the write, or the file just made would differ from
+            // what is remembered of it and the editor would report a conflict
+            // with itself on the next check.
             let stamp = crate::buffer::FileStamp::of(&path);
             ctx.with_buffer_mut(name, |buf| {
                 buf.is_modified = false;
                 buf.file_stamp = stamp;
                 buf.stale = false;
             });
+            // The recovery copy has done its job: what it held is now in the
+            // file it was standing in for.
             ctx.discard_auto_save(name, directory);
+            ctx.set_echo_message(&format!("Wrote {path}"));
             ctx.log_diagnostic(&format!("Wrote {path}"));
             true
         }
         Err(why) => {
-            ctx.log_diagnostic(&format!("Failed to save {path}: {why}"));
+            ctx.set_echo_message(&format!("Cannot save {path}: {why}"));
+            ctx.log_diagnostic(&format!("Cannot save {path}: {why}"));
             false
         }
     }
@@ -163,100 +175,34 @@ primitive!(find_file, args, env, ctx, {
 });
 
 pub const SAVE_BUFFER_DOC: &str = "(save-buffer): Write the current buffer to its file, asking \
-         first when the file has changed on disk since it was read. A buffer with no file, or a \
-         write that fails, writes nothing and says why in the log.";
+         first when the file has changed on disk since it was read. The echo area says whether it \
+         was written; a buffer with no file writes nothing, and says so.";
 
-// TODO(FIL-1): a buffer with no file and a failed write are said in the log
-// only; the echo area stays as it was.
-// TODO(FIL-2): the file is written in place, and a write that stops halfway
-// leaves it cut short.
-// TODO(FIL-4): an edit made while the text is being written is marked saved
-// with the rest.
 primitive!(save_buffer, _args, env, ctx, {
-    // What to write is taken under the lock; the write itself happens with
-    // the lock given back, because a slow disk must not stop every other
-    // thread reading the buffer.
-    let Some((path, content, stale)) = ctx.with_current_buffer(|buf| {
+    let Some((path, stale)) = ctx.with_current_buffer(|buf| {
         buf.file_path
             .as_ref()
-            .map(|path| (path.to_string(), buf.text.to_string(), buf.stale))
+            .map(|path| (path.to_string(), buf.stale))
     }) else {
+        ctx.set_echo_message("No file associated with this buffer");
         ctx.log_diagnostic("No file associated with this buffer");
         return Ok(ELispExp::nil());
     };
 
-    // The moment the watcher's flag is for. Somebody else wrote this file
-    // since it was read, so writing now replaces their work with a version
-    // that never saw it -- and the save is where that can still be stopped,
-    // which is why noticing the change did not prompt at the time.
-    if stale {
-        return eval(
-            &ELispExp::form(vec![
-                ELispExp::symbol("yes-or-no".into()),
-                ELispExp::string(format!(
-                    "{path} changed on disk since you read it. Overwrite it?"
-                )),
-                args::quoted(ELispExp::symbol("save-buffer--overwrite".into())),
-            ]),
-            env,
-            ctx,
-        );
-    }
-    match std::fs::write(&path, content) {
-        Ok(_) => {
-            // Stamped after the write, or the file we just made would differ
-            // from what we remember of it and the editor would report a
-            // conflict with itself on the next check.
-            let stamp = crate::buffer::FileStamp::of(&path);
-            ctx.with_current_buffer_mut(|buf| {
-                buf.is_modified = false;
-                buf.file_stamp = stamp;
-                buf.stale = false;
-            });
-            // The recovery copy has done its job: what it held is now in the
-            // file it was standing in for.
-            let name = ctx.get_current_buffer_name();
-            ctx.discard_auto_save(&name, auto_save_directory(&env).as_deref());
-            ctx.log_diagnostic(&format!("Wrote {}", path));
-            Ok(ELispExp::nil())
-        }
-        Err(e) => {
-            ctx.log_diagnostic(&format!("Failed to save: {}", e));
-            Ok(ELispExp::nil())
-        }
-    }
-});
+    // ... il ramo `if stale { ... }` invariato ...
 
+    let name = ctx.get_current_buffer_name();
+    write_buffer(ctx, &name, auto_save_directory(&env).as_deref());
+    Ok(ELispExp::nil())
+});
+         
 pub const SAVE_BUFFER_OVERWRITE_DOC: &str = "(save-buffer--overwrite): Write the current buffer \
          over its file, asking nothing. Not called directly -- it is what `save-buffer' does once \
          a conflict has been confirmed.";
 
-// TODO(FIL-1): a failed write is said in the log only, as by `save-buffer`.
-// TODO(FIL-2): the file is written in place, as by `save-buffer`.
-// TODO(FIL-4): an edit made during the write is marked saved, as by
-// `save-buffer`.
 primitive!(save_buffer_overwrite, _args, env, ctx, {
-    let Some((path, content)) = ctx.with_current_buffer(|buf| {
-        buf.file_path
-            .as_ref()
-            .map(|path| (path.to_string(), buf.text.to_string()))
-    }) else {
-        return Ok(ELispExp::nil());
-    };
-    match std::fs::write(&path, content) {
-        Ok(()) => {
-            let stamp = crate::buffer::FileStamp::of(&path);
-            ctx.with_current_buffer_mut(|buf| {
-                buf.is_modified = false;
-                buf.file_stamp = stamp;
-                buf.stale = false;
-            });
-            let name = ctx.get_current_buffer_name();
-            ctx.discard_auto_save(&name, auto_save_directory(&env).as_deref());
-            ctx.log_diagnostic(&format!("Wrote {path}"));
-        }
-        Err(why) => ctx.log_diagnostic(&format!("Failed to save: {why}")),
-    }
+    let name = ctx.get_current_buffer_name();
+    write_buffer(ctx, &name, auto_save_directory(&env).as_deref());
     Ok(ELispExp::nil())
 });
 

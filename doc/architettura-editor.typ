@@ -2042,11 +2042,11 @@ Le primitive sono in `primitives/files.rs`, e `save-some-buffers` e l'uscita,
 che salvano con lo stesso `write_buffer`, in `primitives/quit.rs` (@uscire).
 Salvare scrive l'intero testo con `std::fs::write` (sul posto, senza file
 temporaneo #rapporto("FIL-2")) e aggiorna il timbro, altrimenti ogni
-salvataggio sembrerebbe la scrittura di qualcun altro. `save-buffer` scrive
-l'esito, riuscito o fallito, nel log e non nell'area messaggi
-#rapporto("FIL-1"); `write-file` lo scrive anche nell'area messaggi. Una
-modifica fatta mentre il file si scrive può restare non salvata senza che il
-buffer lo segni #rapporto("FIL-4").
+salvataggio sembrerebbe la scrittura di qualcun altro. Ogni salvataggio, che
+venga da save-buffer, da save-some-buffers o da write-file, scrive l’esito,
+riuscito o fallito, nell’area messaggi e nel log.; `write-file` lo scrive anche
+nell'area messaggi. Una modifica fatta mentre il file si scrive può restare non
+salvata senza che il buffer lo segni #rapporto("FIL-4").
 
 Il #emph[watcher] (`FileWatcher`, ogni `watch-file-interval` secondi, 3 per
 default, al massimo 8 file per turno; spento da `(setq watch-files nil)`)

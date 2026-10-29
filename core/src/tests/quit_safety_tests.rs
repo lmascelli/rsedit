@@ -472,6 +472,47 @@ mod tests {
     }
 
     #[test]
+    fn a_save_says_in_the_echo_area_that_it_wrote() {
+        let sandbox = Sandbox::new("save-said");
+        let path = sandbox.file("said.txt", "one\n");
+        let (ctx, env) = editor();
+        open_and_dirty(&path, "more", &env, &ctx);
+        run("(save-buffer)", &env, &ctx);
+        assert_eq!(ctx.get_echo_message(), format!("Wrote {path}"));
+    }
+
+    #[test]
+    fn a_failed_save_says_so_in_the_echo_area_and_stays_modified() {
+        // The directory goes from under the file: the write cannot land, and
+        // the user must not come away believing it did.
+        let sandbox = Sandbox::new("save-failed");
+        let path = sandbox.file("lost.txt", "one\n");
+        let (ctx, env) = editor();
+        let name = open_and_dirty(&path, "more", &env, &ctx);
+        std::fs::remove_dir_all(&sandbox.0).expect("removing the sandbox");
+
+        run("(save-buffer)", &env, &ctx);
+        let echo = ctx.get_echo_message();
+        assert!(
+            echo.starts_with(&format!("Cannot save {path}: ")),
+            "the echo area should say the save failed: {echo:?}"
+        );
+        assert!(ctx.with_buffer(&name, |buf| buf.is_modified).unwrap());
+    }
+
+    #[test]
+    fn saving_a_buffer_with_no_file_says_so_in_the_echo_area() {
+        let (ctx, env) = editor();
+        run(
+            r#"(buffer-create "*notes*") (switch-to-buffer "*notes*") (insert "typed")"#,
+            &env,
+            &ctx,
+        );
+        run("(save-buffer)", &env, &ctx);
+        assert_eq!(ctx.get_echo_message(), "No file associated with this buffer");
+    }
+    
+    #[test]
     fn a_buffer_with_nowhere_to_save_to_is_killed_without_a_question() {
         // `*scratch*`, every help page, every listing: modified constantly and
         // rescuable by nothing, so a question about them is the one that
