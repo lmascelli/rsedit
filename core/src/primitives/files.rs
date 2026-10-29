@@ -189,8 +189,24 @@ primitive!(save_buffer, _args, env, ctx, {
         return Ok(ELispExp::nil());
     };
 
-    // ... il ramo `if stale { ... }` invariato ...
-
+    // The moment the watcher's flag is for. Somebody else wrote this file
+    // since it was read, so writing now replaces their work with a version
+    // that never saw it -- and the save is where that can still be stopped,
+    // which is why noticing the change did not prompt at the time.
+    if stale {
+        return eval(
+            &ELispExp::form(vec![
+                ELispExp::symbol("yes-or-no".into()),
+                ELispExp::string(format!(
+                    "{path} changed on disk since you read it. Overwrite it?"
+                )),
+                args::quoted(ELispExp::symbol("save-buffer--overwrite".into())),
+            ]),
+            env,
+            ctx,
+        );
+    }
+    
     let name = ctx.get_current_buffer_name();
     write_buffer(ctx, &name, auto_save_directory(&env).as_deref());
     Ok(ELispExp::nil())
