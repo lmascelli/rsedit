@@ -1,6 +1,0 @@
-# Public names that no manual page lists in its SYNOPSIS yet.
-#
-# Checked by guide_tests: a public name is in a page's SYNOPSIS or here, and
-# a name here that has a page now, or no longer exists, is taken out. The
-# list only shrinks: each step of doc/documentazione.typ gives a home to the
-# names of its area.

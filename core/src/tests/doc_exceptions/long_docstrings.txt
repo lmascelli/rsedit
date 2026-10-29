@@ -1,4 +1,0 @@
-# Docstrings over the limit in doc_faithfulness_tests, as they were when the
-# limit came in. Each is shortened, and what it explains moved to a manual
-# page, in the step of doc/documentazione.typ for its area; the list only
-# shrinks.

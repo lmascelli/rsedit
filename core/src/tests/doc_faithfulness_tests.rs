@@ -128,24 +128,13 @@ mod tests {
         // The internal ones too: `apropos` lists them.
         let (ctx, env) = loaded();
         let (_, lambdas) = primitives_and_lambdas(&env, &ctx);
-        let listed = exceptions(include_str!("doc_exceptions/undocumented.txt"));
         let undocumented: Vec<&String> = lambdas
             .iter()
             .filter(|name| documentation(name, &env, &ctx).is_none())
-            .filter(|name| !listed.contains(name))
-            .collect();
-        let stale: Vec<&String> = listed
-            .iter()
-            .filter(|name| !lambdas.contains(name) || documentation(name, &env, &ctx).is_some())
             .collect();
         assert!(
             undocumented.is_empty(),
             "these module functions have no docstring: {undocumented:?}"
-        );
-        assert!(
-            stale.is_empty(),
-            "doc_exceptions/undocumented.txt lists these, which are documented now or no \
-             longer exist; take them out: {stale:?}"
         );
     }
 
@@ -326,35 +315,15 @@ mod tests {
     fn no_docstring_is_longer_than_the_limit() {
         let (ctx, env) = loaded();
         let docstrings = docstrings(&env, &ctx);
-        let listed = exceptions(include_str!("doc_exceptions/long_docstrings.txt"));
-        let long: Vec<&String> = docstrings
+        let too_long: Vec<&str> = docstrings
             .iter()
             .filter(|(_, doc)| doc.chars().count() > DOCSTRING_LIMIT)
-            .map(|(name, _)| name)
+            .map(|(name, _)| name.as_str())
             .collect();
-        let too_long: Vec<&&String> = long
-            .iter()
-            .filter(|name| !listed.contains(**name))
-            .collect();
-        let stale: Vec<&String> = listed.iter().filter(|name| !long.contains(name)).collect();
         assert!(
             too_long.is_empty(),
             "longer than {DOCSTRING_LIMIT} characters; move what they explain to a manual page:\n{}",
-            too_long
-                .iter()
-                .map(|name| name.as_str())
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        assert!(
-            stale.is_empty(),
-            "doc_exceptions/long_docstrings.txt lists these, which are short enough now or no \
-             longer exist; take them out:\n{}",
-            stale
-                .iter()
-                .map(|name| name.as_str())
-                .collect::<Vec<_>>()
-                .join("\n")
+            too_long.join("\n")
         );
     }
 
@@ -364,7 +333,6 @@ mod tests {
         let (ctx, env) = loaded();
         let known = known_names(&env, &ctx);
         let elsewhere = exceptions(include_str!("doc_exceptions/quoted_elsewhere.txt"));
-        let unknown = exceptions(include_str!("doc_exceptions/quoted_unknown.txt"));
         let mut quoted: std::collections::BTreeMap<String, Vec<String>> = Default::default();
         for (page, body) in man_pages() {
             for name in quoted_names(&body) {
@@ -380,7 +348,7 @@ mod tests {
         let unlisted: Vec<String> = quoted
             .iter()
             .filter(|(name, _)| !known.contains(*name))
-            .filter(|(name, _)| !elsewhere.contains(name) && !unknown.contains(name))
+            .filter(|(name, _)| !elsewhere.contains(name))
             .map(|(name, by)| {
                 let mut by = by.clone();
                 by.dedup();
@@ -389,7 +357,6 @@ mod tests {
             .collect();
         let stale: Vec<&String> = elsewhere
             .iter()
-            .chain(&unknown)
             .filter(|name| !quoted.contains_key(*name) || known.contains(*name))
             .collect();
         assert!(
@@ -399,7 +366,7 @@ mod tests {
         );
         assert!(
             stale.is_empty(),
-            "the doc_exceptions/quoted_*.txt lists name these, which nothing quotes now or the \
+            "doc_exceptions/quoted_elsewhere.txt lists these, which nothing quotes now or the \
              editor has; take them out:\n{}",
             stale
                 .iter()

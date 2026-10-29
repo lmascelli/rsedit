@@ -1,3 +1,0 @@
-# Names the manual pages and docstrings quote, as `name', that the editor
-# does not define: mistakes, fixed in the step of doc/documentazione.typ
-# for their area. The list only shrinks.

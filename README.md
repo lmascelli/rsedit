@@ -1,7 +1,7 @@
 # rsedit
 
-A terminal text editor written in Rust and programmed in its own embedded
-Lisp.
+A text editor written in Rust and programmed in its own embedded Lisp. It
+runs in a terminal or in a window.
 
 rsedit follows the design of Emacs. A core in Rust provides the mechanisms:
 buffers, windows, the display, the Lisp interpreter and the scheduling of
@@ -29,8 +29,9 @@ change.
   support, line numbers.
 - Vim emulation, turned on with `M-x vim-mode`.
 - A core library, `rsedit_core`, that knows nothing of terminals: it describes
-  the screen and a front end draws it. The one in this repository is a
-  terminal front end built on crossterm.
+  the screen and a front end draws it. This repository has two: one for the
+  terminal, built on crossterm, and one for a window, built on eframe
+  (`--gui`).
 
 ## Getting started
 
@@ -60,8 +61,7 @@ directory is and what to put in the file.
 | Manual pages | users: how to use the editor, with examples | `man/`, read in the editor with `C-h m` |
 | Built-in help | users and authors of Lisp: every function, variable and key, from the running editor | `C-h f`, `C-h v`, `C-h k`, `C-h b` |
 | Developer manual | Rust developers: architecture, threads, locks and design decisions | [`doc/architettura-editor.typ`](doc/architettura-editor.typ) |
-| WorkManager design | history: the plan the WorkManager was built by; how background work runs is now in the developer manual | [`doc/workmanager.typ`](doc/workmanager.typ) |
-| Documentation rules | contributors: where each kind of information goes, and the plan to get there | [`doc/documentazione.typ`](doc/documentazione.typ) |
+| Documentation rules | contributors: where each kind of information goes, how it is written and how it is checked | [`doc/documentazione.typ`](doc/documentazione.typ) |
 | Problem report | maintainers: the known defects, each with an ID | [`doc/rapporto-problemi.typ`](doc/rapporto-problemi.typ) |
 | Performance checks | developers: running the performance suite | [`PERFORMANCE.md`](PERFORMANCE.md) |
 | The Lisp | the interpreter itself, in its own repository | [lmascelli/risp](https://github.com/lmascelli/risp) |
@@ -78,7 +78,7 @@ core/          rsedit_core: the editor as a library, with no terminal code
     base/      what the other modules are written with
     features/  one for each thing the editor does
     languages/ one for each language it colours
-src/           the terminal front end
+src/           the editor's two front ends: the terminal and a window
 man/           the manual pages
 themes/        the colour themes
 doc/           the documents for developers

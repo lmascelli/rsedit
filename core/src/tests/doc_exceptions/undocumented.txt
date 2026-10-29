@@ -1,2 +1,0 @@
-# Module functions with no docstring, as they were when every module came
-# under doc_faithfulness_tests. The list only shrinks.

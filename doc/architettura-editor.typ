@@ -2,7 +2,7 @@
 
 #show: preamble.with(
   title: "L'editor di rsedit",
-  subtitle: [Architettura della libreria `rsedit_core` e del front-end TUI --- manuale per lo sviluppatore],
+  subtitle: [Architettura della libreria `rsedit_core` e dei suoi due front-end --- manuale per lo sviluppatore],
 )
 
 #set text(lang: "it")
@@ -33,12 +33,14 @@
 = Introduzione
 // ===========================================================================
 
-Questo manuale descrive la libreria `rsedit_core` (`core/src/`) e il front-end
-a terminale che la usa (`src/`). È il
-compagno di #emph[L'interprete Lisp di rsedit] (`architettura-interprete.typ`),
-che descrive il linguaggio: qui l'interprete è dato per noto, e si spiega come
-l'editor lo ospita, come trasforma un tasto in un comando, come conserva il
-testo, come lavora in background e come descrive lo schermo a chi lo disegna.
+Questo manuale descrive la libreria `rsedit_core` (`core/src/`), i moduli Lisp
+che ne fanno l'editor (`core/lisp/`) e i due front-end che la usano (`src/`):
+il terminale e una finestra grafica. Il linguaggio è descritto a parte, nel
+manuale dell'interprete del repository `risp`: qui l'interprete è dato per
+noto, e si spiega come l'editor lo ospita, come trasforma un tasto in un
+comando, come conserva il testo, come lavora in background e come descrive lo
+schermo a chi lo disegna. Le regole con cui è scritta tutta la documentazione
+di rsedit, questo manuale compreso, sono in `documentazione.typ`.
 
 La libreria è un editor #emph[senza testa]. Non apre un terminale, non legge la
 tastiera e non disegna: riceve eventi già tradotti nel proprio vocabolario
@@ -64,12 +66,18 @@ percorso di un tasto: lo stato che attraversa (@stato), la risoluzione e
 l'esecuzione del comando (@tasto, @comandi, @minibuffer), il testo che il
 comando modifica (@buffer, @testo), i modi che lo interpretano (@modi), il
 lavoro che continua in background (@sfondo) e la fotografia che il front-end
-disegna (@frame). Gli ultimi capitoli sono di riferimento.
+disegna (@frame). Gli ultimi capitoli sono di riferimento: le macro (@macro),
+le primitive dell'editor (@primitive), i moduli Lisp (@moduli-lisp), i test
+(@test) e le ricette per i cambiamenti più comuni (@ricette). Ogni capitolo
+finisce con le sue decisioni: il problema, la scelta, che cosa comporta e
+l'alternativa scartata.
 
 Gli estratti di codice sono presi dal sorgente e semplificati: commenti tolti,
 parametri generici abbreviati, rami ripetitivi riassunti. Ogni riga di un
 estratto corrisponde a una riga del file indicato sopra di esso; il percorso è
-relativo a `core/src/`.
+relativo a `core/src/`. I file sorgente rimandano al manuale con
+``Design: `doc/architettura-editor.typ, <etichetta>`.``, e le etichette dei
+capitoli e delle sezioni non cambiano, perché il codice le nomina.
 
 Ogni affermazione è stata letta nel codice; i comportamenti che dipendono
 dall'esecuzione (avvio, undo, comandi di shell, colorazione) sono stati
@@ -84,7 +92,7 @@ e una correzione proposta, nel #emph[Rapporto sui problemi del codice]
 (`rapporto-problemi.typ`). Dove il manuale descrive un punto che il rapporto
 considera un difetto, un rimando come #rapporto("BUF-1") indica la scheda
 corrispondente; quando il difetto viene corretto si aggiorna la descrizione
-qui e si toglie la scheda là.
+qui, si toglie il rimando, e la scheda passa tra le risolte.
 
 == Convenzioni
 
@@ -171,7 +179,7 @@ lì e nella mappa di `lib.rs`.
   [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale (@minibuffer).],
   [`work/`], [Il WorkManager: il nucleo dello scheduler, l'esecutore, il registro, i thread dedicati, il watchdog, gli argomenti e le opzioni (@sfondo).],
   [`ui/`], [La descrizione dello schermo: l'albero delle finestre e le flottanti (`windows.rs`), la composizione di una finestra (`compose.rs`), le righe e le loro colonne (`layout.rs`), il margine dei numeri (`gutter.rs`), la riga di stato (`mode_line.rs`), facce e temi (`faces.rs`), `FrameSnapshot` (`frame.rs`) (@frame).],
-  [`tests/`], [Circa ottanta file di test dell'editor, più `perf/`.],
+  [`tests/`], [Circa cento file di test dell'editor, più `perf/` (@test).],
   [`../lisp/`], [I venticinque moduli Lisp distribuiti con l'editor, in tre cartelle: `base/`, `features/`, `languages/` (@moduli-lisp).],
   [`../build.rs`], [Copia ogni cartella dei moduli in `target/<profilo>/data/lisp`, accanto all'eseguibile, e con loro i temi e le pagine del manuale.],
   [`../../src/`], [I front-end: `main.rs` (la riga di comando e l'avvio); `tui/`, il terminale, con il ciclo in `mod.rs`, i tasti e il mouse in `input.rs`, i colori in `colour.rs` e il disegno in `render.rs` (@ciclo-tui, @tui); `gui/`, una finestra grafica con egui, con `Core` in `mod.rs`, il ciclo in `app.rs`, i tasti in `keys.rs` e il disegno in `paint.rs` (@gui).],
@@ -199,7 +207,7 @@ front-end usa sono pochi:
   [`handle_key_event(ev, &env)`], [Un tasto premuto.],
   [`handle_paste(text, &env)`], [Un incolla «bracketed», come un solo comando.],
   [`handle_mouse_event(ev, &env)`], [Un evento del mouse; risponde se ha cambiato qualcosa.],
-  [`resize(env, w, h)`], [Nuove dimensioni del terminale.],
+  [`resize(env, w, h)`], [Nuove dimensioni del terminale o della finestra, in celle.],
   [`snapshot(&env, w, h)`], [La fotografia da disegnare.],
   [`next_redraw_in(&env, &frame)`, `drag_scroll_in()`], [Quanto si può aspettare prima di ridisegnare anche senza eventi.],
   [`tick(&env)`], [Il tempo è scaduto: esegue ciò che era in attesa (callback di sfondo, scorrimento durante il trascinamento).],
@@ -211,13 +219,16 @@ front-end usa sono pochi:
 
 == I thread
 
-L'editor usa più thread, ma uno solo esegue i comandi. La figura mostra chi
-esiste; tutti tranne il principale appartengono al WorkManager (@sfondo), e
-portano il suo numero nel nome.
+L'editor usa più thread, ma uno solo esegue i comandi: il principale, su cui
+gira il ciclo del front-end, quello del terminale o quello di eframe per la
+finestra. La figura mostra chi esiste. Gli altri thread dell'editor
+appartengono al WorkManager (@sfondo), e portano il suo numero nel nome; la TUI
+ha in più un thread suo, che legge il terminale e manda gli eventi nel canale
+del ciclo (@ciclo-tui).
 
-#canvas(height: 6.2cm)[
+#canvas(height: 7.6cm)[
   #group(0.1cm, 0.3cm, 7.6cm, 5.6cm, [thread principale (comandi)])
-  #node(3.9cm, 1.2cm, 6.8cm, 0.8cm, [ciclo degli eventi della TUI], fill: accent.lighten(85%))
+  #node(3.9cm, 1.2cm, 6.8cm, 0.8cm, [ciclo del front-end (TUI o finestra)], fill: accent.lighten(85%))
   #node(3.9cm, 2.4cm, 6.8cm, 0.8cm, [`handle_key_event` → `run_command_form`])
   #node(3.9cm, 3.6cm, 6.8cm, 0.8cm, [hook, callback dovute (`tick`), `snapshot`])
   #node(3.9cm, 4.9cm, 6.8cm, 1.0cm, [l'unico thread che apre prompt\ e su cui girano i comandi], fill: paper)
@@ -232,6 +243,9 @@ portano il suo numero nel nome.
   #group(8.5cm, 4.4cm, 7.6cm, 1.5cm, [un thread dedicato per lavoro che si blocca])
   #node(12.3cm, 5.1cm, 6.8cm, 0.6cm, [comandi di shell, ricerche nei file])
   #carrow((7.3cm, 2.4cm), (8.9cm, 1.4cm), colour: accent)
+
+  #group(0.1cm, 6.2cm, 7.6cm, 1.2cm, [lettore del terminale (`terminal input`)])
+  #node(3.9cm, 6.85cm, 6.8cm, 0.6cm, [`read()` di crossterm → canale del ciclo], fill: accent.lighten(85%))
 ]
 
 La freccia è la casella con cui il thread dei comandi consegna il lavoro
@@ -255,7 +269,8 @@ fermato #rapporto("SHL-5").
 `src/main.rs` legge la riga di comando --- i file da aprire, `--gui`,
 `--font FILE` e `--help` --- e chiama `create_global_env::<GapBuffer>()`; poi
 attiva il file di log `rsedit.log` nella directory della cache (@directory),
-apre ogni file della riga di comando valutando `(find-file PERCORSO)` ed entra
+senza dirlo se non ci riesce #rapporto("AVV-8") e senza separarlo da quello di
+un altro editor aperto insieme #rapporto("AVV-6"), apre ogni file della riga di comando valutando `(find-file PERCORSO)` ed entra
 nel ciclo di un front-end: `tui_main`, il terminale, se lo standard input è un
 terminale e `--gui` non è chiesto, altrimenti `gui_main`, una finestra
 grafica. Un errore di avvio dell'interprete viene stampato e il programma
@@ -928,7 +943,7 @@ budget pieno.
   l'editor esegue, e ne condividono il cammino. Un secondo cammino scritto
   altrove sarebbe una seconda risposta a «che cosa fa questo tasto», e le due
   divergerebbero la prima volta che l'ordine cambiasse. Ogni legame porta con
-  sé la mappa da cui viene (`BindingSource`): «`q` esegue `quit-window` qui,
+  sé la mappa da cui viene (`BindingSource`): «`g` esegue `dired-refresh` qui,
   perché il buffer è in `dired-mode`» è quasi tutto ciò che vuole sapere chi
   cerca un tasto.
 + *I modi per nome di file sono una lista ordinata.* I modelli si
@@ -1609,7 +1624,8 @@ prompt aperto e la storia; le primitive sono in `primitives/minibuffer.rs`.
   [`HISTORY-KEY`], [La chiave della storia (`M-p`, `M-n`); per default il testo del prompt, così ogni prompt ha una storia senza chiederla. Fino a `history-length` voci, 100 per default.],
 )
 
-`default-minibuffer-prompt` salva le callback in variabili globali
+`default-minibuffer-prompt` prende come nome del modo qualunque simbolo, nil
+compreso #rapporto("MIN-4"), salva le callback in variabili globali
 (`*minibuffer-on-confirm*`, `*minibuffer-on-change*`, `*minibuffer-on-cancel*`,
 `*minibuffer-previous-buffer*`, …) e apre una finestra flottante con bordo sul
 buffer `*Minibuffer*`, #emph[al centro] del frame, larga `minibuffer-width` (60)
@@ -2027,7 +2043,9 @@ Salvare scrive l'intero testo con `std::fs::write` (sul posto, senza file
 temporaneo #rapporto("FIL-2")) e aggiorna il timbro, altrimenti ogni
 salvataggio sembrerebbe la scrittura di qualcun altro. `save-buffer` scrive
 l'esito, riuscito o fallito, nel log e non nell'area messaggi
-#rapporto("FIL-1"); `write-file` lo scrive anche nell'area messaggi.
+#rapporto("FIL-1"); `write-file` lo scrive anche nell'area messaggi. Una
+modifica fatta mentre il file si scrive può restare non salvata senza che il
+buffer lo segni #rapporto("FIL-4").
 
 Il #emph[watcher] (`FileWatcher`, ogni `watch-file-interval` secondi, 3 per
 default, al massimo 8 file per turno; spento da `(setq watch-files nil)`)
@@ -2426,8 +2444,9 @@ a metà di `[a-z]`) è trattata come una ricerca fallita, non come un errore:
 il carattere successivo la renderà valida. Quando trova, `show` mette il punto
 sull'estremità lontana della corrispondenza e il mark su quella vicina, così la
 corrispondenza è la regione e la disegna lo stesso codice che disegna una
-selezione. `isearch-exit` (Invio) disattiva il mark e lascia il punto dov'è;
-`isearch-abort` (`C-g`, `ESC`) riporta il punto a `origin` #rapporto("RIC-6").
+selezione. `isearch-exit` (Invio) lascia il punto sulla corrispondenza e mette
+il mark, disattivato, dove la ricerca è cominciata, come Emacs, così `C-x C-x`
+ci torna; `isearch-abort` (`C-g`, `ESC`) riporta il punto a `origin`.
 
 == La sessione di sostituzione: `Replace` <sostituzione>
 
@@ -3024,7 +3043,8 @@ crea una faccia nuova semplicemente nominandola (`'doc-comment` in
 associa a ogni faccia uno `Style` (colori di primo piano e sfondo, grassetto,
 corsivo, sottolineato, inverso), in un vettore indicizzato dalla faccia: una
 faccia oltre la fine si disegna semplice. I colori sono richieste --- un nome o
-`#rrggbb` --- e il front-end decide come approssimarli (@tui); i sedici nomi
+`#rrggbb` (`Color::parse`) #rapporto("TUI-5") --- e il front-end decide come
+approssimarli (@tui); i sedici nomi
 convenzionali stanno in `NAMED_COLORS`, nell'ordine della tavolozza dei
 terminali. Il tema predefinito usa quei colori, il video inverso dove una cosa
 deve vedersi su ogni sfondo (la regione, la riga di stato, `replace-match`),
@@ -4720,7 +4740,8 @@ verifica le forme condivise dalle primitive, come il controllo dell'arità.
 )
 
 Il totale è 327, a cui si aggiungono le 86 primitive di base dell'interprete.
-L'elenco completo dei nomi è nell'appendice (@elenco-primitive).
+I nomi li elenca l'editor stesso: `C-h a` cerca fra tutti, e `C-h f` ne
+descrive uno.
 
 == Le primitive di modifica <primitive-modifica>
 
@@ -5073,7 +5094,8 @@ più recente; senza flottanti mette il focus sulla finestra 0
 === Gli argomenti <lettori-argomenti>
 
 `args.rs` ha i lettori con cui le primitive leggono i loro argomenti: `text`,
-una stringa; `name`, un simbolo o una stringa; `name_or_empty`, `name_or` e
+una stringa; `name`, un simbolo o una stringa, nil compreso, che diventa il nome
+`nil` #rapporto("RIC-9"); `name_or_empty`, `name_or` e
 `optional_name`, con il valore che danno quando l'argomento manca;
 `movement_count` e `repeat_count`, i conteggi (@primitive-modifica); `list`,
 gli elementi di una lista in tutte e due le forme in cui arriva, una catena di
@@ -6096,8 +6118,9 @@ L'editing modale di Vim, in un modulo. `M-x vim-mode` lo accende in un buffer,
 `global-vim-mode` in ogni buffer adatto.
 
 Uno stato --- Normal, Insert, Replace, Visual --- è una keymap locale
-(`vim-normal-map`, `vim-insert-map`, `vim-replace-map`) messa sopra quella del
-buffer, che si salva e si rende quando Vim si spegne. In Normal ogni tasto
+(`vim-normal-map`, `vim-insert-map`, `vim-replace-map`), consultata prima della
+keymap del modo; la keymap locale che il buffer aveva si salva e si rende
+quando Vim si spegne. In Normal ogni tasto
 stampabile è legato a `(vim--key TASTO)`, così nessun tasto scrive testo:
 `vim--dispatch` interpreta il conteggio, l'operatore, il registro e il tasto
 in attesa, che stanno in proprietà del buffer. Un movimento restituisce
@@ -6108,14 +6131,13 @@ Una sessione di Insert ricorda il testo del buffer all'ingresso e lo confronta
 con `string-diff` all'uscita: ciò che è cambiato, con l'azione che ha aperto la
 sessione, è ciò che `.` ripete #rapporto("CMD-9"); i comandi della sessione si
 uniscono in un passo di undo (`undo-join` su `pre-command-hook`). Replace fa lo
-stesso. I comandi `:`
-leggono la riga con `minibuffer-read` e passano dai comandi dell'editor; la
+stesso. I comandi `:` leggono la riga con `minibuffer-read` e passano dai comandi dell'editor; la
 ricerca usa lo scanner di espressioni regolari dell'editor, in offset di
 caratteri.
 
 + *Uno stato è una keymap locale.* Sintassi, indentazione, hook del modo e
-  prompt restano del loro modo, sotto. Un hook di modo che installa un'altra
-  keymap locale la vede rimessa sotto quella di Vim.
+  prompt restano del loro modo, sotto. Una keymap locale che un hook di modo
+  installa mentre Vim è acceso si salva, e torna quando Vim si spegne.
 + *Condiviso e per buffer.* Registri, ricerche, `.` e macro sono dell'editor
   intero, come in Vim; lo stato modale è di ogni buffer.
 + *Quando accendersi.* `global-vim-mode`, `vim-mode-modes`, i modi esclusi ---
@@ -6240,9 +6262,10 @@ docstring e i legami, `doc_pointer_tests` i rimandi dal codice a questo
 manuale e le intestazioni dei moduli Lisp, `shipped_lisp_tests` i moduli
 distribuiti. `shipped.rs` dice a tutti che cosa è distribuito, letto da dove è
 definito: i moduli che l'`init.lisp` predefinito carica, le pagine di `man/`,
-i nomi che l'editor aggiunge al suo Lisp. Le eccezioni di oggi stanno in
-`doc_exceptions/`, e un nome che vi resta dopo essere stato sistemato fa
-fallire il test.
+i nomi che l'editor aggiunge al suo Lisp. L'unica eccezione è
+`doc_exceptions/quoted_elsewhere.txt`: i nomi che le pagine e le docstring
+citano come #raw("`nome'") senza che siano dell'editor, come le forme speciali
+del Lisp; un nome che nessuno cita più fa fallire il test.
 
 + *Una pagina che sbaglia è peggio di nessuna.* Chi preme un tasto che la
   pagina promette e riceve «undefined» smette di credere anche alle parti
@@ -6391,74 +6414,43 @@ cursore è nella fotografia; `src/tui/` è l'esempio completo (@ciclo-tui).
 / Watchdog: il thread del WorkManager che osserva il passo in corso e scrive il file di log.
 / Callback dovuta: una chiamata chiesta da un lavoro di sfondo ed eseguita dal thread dei comandi.
 / Epoca: il timbro del comando corrente, con cui l'undo raggruppa le modifiche.
+/ Porta: uno dei due punti da cui passa ogni modifica di un buffer, che la registra nell'undo e sposta mark, overlay e testo virtuale (@due-porte).
+/ Keymap locale: la keymap di un buffer, consultata prima di quella del suo modo e di quella globale; vim vi mette i suoi stati.
+/ Finestra flottante: una finestra disegnata sopra quelle affiancate, in un rettangolo suo: un prompt, il `*Backtrace*`.
+/ Striscia: una finestra bassa in fondo al frame che mostra un buffer di servizio, l'uscita di un comando o i candidati di un completamento.
+/ Lessico: uno dei due modi in cui un modo legge il testo: la grammatica, che colora, e la tabella sintattica, che dice che cosa il testo è (@lessici).
+/ Modulo: un file Lisp di `core/lisp/` che fornisce una feature con `provide` e si carica con `require`.
+/ Feature: il nome con cui un modulo si fornisce e si chiede; `features` elenca quelle caricate.
+/ Plugin: una cartella di moduli scritti da altri, nella directory dei dati, con un descrittore letto come dati (@plugin).
+/ Front-end: il programma che legge gli eventi e disegna la fotografia: la TUI o la finestra grafica.
 
 == Mantenere aggiornato questo manuale
+
+Le regole sono in `documentazione.typ`: dove sta ogni informazione, come si
+scrivono il rustdoc, i commenti e questo manuale, che cosa controllano i test.
+Quando il codice cambia:
 
 - Nuovo campo di `EditorState` o nuovo compartimento → @stato (tabelle e ordine
   dei lock).
 - Cambiamento del percorso di un tasto → @tasto; di `call-interactively` →
   @comandi.
-- Nuova primitiva o nuovo modulo di `primitives/` → @primitive e l'elenco in
-  appendice (lo script che lo genera cerca `into.function(` e `into.command(`).
+- Nuova primitiva o nuovo modulo di `primitives/` → @primitive, la tabella dei
+  moduli e il totale.
 - Nuovo lavoro dell'editor → la tabella di @utenti-sfondo; nuova opzione o
   nuova segnalazione → @misure.
-- Nuovo campo della fotografia o cambiamento del renderer → @frame.
-- Nuovo modulo Lisp o nuova variabile letta da Rust → @moduli-lisp.
-- Difetto corretto → aggiorna la descrizione, togli il rimando al rapporto e la
-  scheda da `rapporto-problemi.typ`.
+- Nuovo campo della fotografia o cambiamento di un front-end → @frame,
+  @ciclo-tui o @gui.
+- Nuovo modulo Lisp → una sottosezione di @moduli-distribuiti, con
+  l'etichetta a cui rimanda la sua intestazione; nuova variabile letta da Rust
+  → la tabella di @moduli-lisp.
+- Nuovo file sorgente → la sua documentazione rimanda alla sezione che lo
+  spiega; nuova sezione → un'etichetta, che poi non cambia.
+- Difetto corretto → aggiorna la descrizione e togli il rimando al rapporto;
+  la scheda passa tra le risolte.
 
 Gli estratti di codice vanno riletti quando cambia la funzione da cui vengono.
-I diagrammi usano gli aiuti di `style.typ` descritti nel manuale
-dell'interprete. Dopo ogni modifica conviene compilare e guardare le pagine.
-
-== Elenco delle primitive dell'editor <elenco-primitive>
-
-Generato da `into.function(` e `into.command(` nei file di `primitives/`. Un asterisco indica un comando, raggiungibile con `M-x`.
-
-#ref-table(
-  columns: (3.2cm, 1fr),
-  header: ([Modulo], [Primitive]),
-  [`ask` (4)], [`y-or-n`, `yes-or-no`, `ask--answer`, `ask--typed`],
-  [`buffers` (18)], [`buffer-put`, `buffer-get`, `buffer-substring`, `switch-to-buffer`, `current-buffer`, `buffer-create`, `close-buffer`, `kill-buffer`\*, `kill-buffer-without-saving`\*, `buffer-string`, `clear-buffer`, `with-current-buffer`, `set-buffer-read-only`, `buffer-read-only-p`, `buffer-modified-p`, `buffer-file-name`, `major-mode`, `set-major-mode`],
-  [`commands` (10)], [`register-command`, `commandp`, `command-args`, `all-commands`, `execute-extended-command`, `command-completions`, `command-execute-prompt`\*, `all-buffer-names`, `call-interactively`, `pending-command`],
-  [`comments` (6)], [`comment-dwim`\*, `comment-line`\*, `comment-indent`\*, `comment-region`\*, `uncomment-region`\*, `comment-syntax`],
-  [`completion` (7)], [`completion-at-point`\*, `completion-at-point-choose`, `add-completion-function`, `set-completion-functions`, `completion-functions`, `buffer-words`, `bounds-of-thing-at-point`],
-  [`diagnostics` (4)], [`log`, `all-logs`, `backtrace`, `set-echo-message`],
-  [`edits` (7)], [`delete-region`, `self-insert`, `insert`, `insert-pasted-text`\*, `insert-newline`\*, `delete-backward-char`\*, `delete-char`\*],
-  [`environment` (4)], [`data-directory`, `getenv`, `setenv`, `path-separator`],
-  [`evaluation` (2)], [`eval-file`, `eval-string-top-level`],
-  [`file_names` (7)], [`list-dir`, `match-list`, `expand-file-name`, `file-name-as-directory`, `directory-file-name`, `file-name-directory`, `file-name-nondirectory`],
-  [`files` (8)], [`find-file`\*, `save-buffer`\*, `save-buffer--overwrite`, `recover-file`\*, `recover-file--adopt`, `revert-buffer`\*, `revert-buffer--reread`, `write-file`\*],
-  [`filesystem` (7)], [`file-exists-p`, `file-directory-p`, `directory-entry-count`, `delete-file`, `rename-file`, `directory-files-recursive`, `read-file-to-string`],
-  [`fuzzy` (1)], [`fuzzy-filter`],
-  [`grammar` (2)], [`add-syntax-rule`, `add-syntax-region`],
-  [`help` (7)], [`key-binding`, `keys-with-prefix`, `keymap-bindings`, `where-is`, `command-specs`, `help--macro-doc`, `read-key-sequence`],
-  [`indentation` (3)], [`current-indentation`, `previous-indentation`, `indent-line-to`],
-  [`isearch` (10)], [`isearch-forward`\*, `isearch-backward`\*, `isearch-forward-regexp`\*, `isearch-backward-regexp`\*, `isearch-update`, `isearch-exit`, `isearch-abort`, `isearch-repeat-forward`, `isearch-repeat-backward`, `isearch-active-p`],
-  [`keymaps` (6)], [`define-key`, `set-local-keymap`, `set-transient-keymap`, `clear-transient-keymap`, `define-repeat-key`, `repeat`\*],
-  [`killing` (14)], [`kill-line`\*, `kill-whole-line`\*, `kill-word`\*, `backward-kill-word`\*, `kill-paragraph`\*, `backward-kill-paragraph`\*, `kill-region`\*, `kill-ring-save`\*, `yank`\*, `yank-pop`\*, `set-kill-ring-max`\*, `kill-new`, `current-kill`, `kill-ring-length`],
-  [`loading` (9)], [`eval-after-load`, `feature-file`, `feature-status`, `featurep`, `features`, `plugin-info`, `plugins`, `provide`, `require`],
-  [`macros` (12)], [`kmacro-start-macro`\*, `kmacro-end-macro`\*, `kmacro-cancel-macro`\*, `kmacro-call-macro`\*, `kmacro-end-and-call-macro`\*, `kmacro-insert-counter`\*, `kmacro-set-counter`\*, `kmacro-counter`, `kmacro-recording-p`, `kbd-macro-keys`, `define-kbd-macro`, `kmacro-call-keys`],
-  [`match_data` (8)], [`string-match`, `string-match-p`, `match-beginning`, `match-end`, `match-string`, `match-data`, `set-match-data`, `regexp-opt`],
-  [`minibuffer` (12)], [`minibuffer-cleanup`, `minibuffer-confirm`, `minibuffer-cancel`, `minibuffer-complete`, `minibuffer-choose-completion`, `default-minibuffer-prompt`, `minibuffer-read`, `completion-invalidate`, `minibuffer-history`, `clear-minibuffer-history`, `history-previous`\*, `history-next`\*],
-  [`modes` (4)], [`make-mode`, `add-hook`, `remove-hook`, `add-auto-mode`],
-  [`mouse` (6)], [`mouse-set-point`\*, `mouse-start-selection`\*, `mouse-drag-to`\*, `mouse-resize`\*, `mouse-mode-toggle`\*, `mouse-scroll`\*],
-  [`movement` (20)], [`backward-char`\*, `forward-char`\*, `previous-line`\*, `next-line`\*, `beginning-of-line`\*, `end-of-line`\*, `forward-word`\*, `backward-word`\*, `forward-paragraph`\*, `backward-paragraph`\*, `beginning-of-buffer`\*, `end-of-buffer`\*, `goto-line`\*, `point`, `point-min`, `point-max`, `goto-char`, `line-number-at-point`, `current-line`, `current-column`],
-  [`occur` (2)], [`occur--scan`, `grep--scan`],
-  [`overlays` (5)], [`make-overlay`, `delete-overlay`, `remove-overlays`, `overlays-at`, `overlay-face`],
-  [`quit` (5)], [`quit`\*, `quit-without-saving`\*, `save-some-buffers`\*, `save-some-buffers--answer`, `quit--confirm`],
-  [`rectangle` (10)], [`rectangle-mark-mode`\*, `kill-rectangle`\*, `delete-rectangle`\*, `copy-rectangle-as-kill`\*, `yank-rectangle`\*, `open-rectangle`\*, `clear-rectangle`\*, `string-rectangle`\*, `rectangle-bounds`, `killed-rectangle`],
-  [`region` (9)], [`set-mark`\*, `keyboard-quit`\*, `deactivate-mark`\*, `exchange-point-and-mark`\*, `mark-whole-buffer`\*, `mark`, `use-region-p`, `region-beginning`, `region-end`],
-  [`replace` (12)], [`query-replace`\*, `query-replace-regexp`\*, `replace-string`\*, `replace-regexp`\*, `replace-this`, `replace-skip`, `replace-rest`, `replace-back`, `replace-done`, `replace-abandon`, `replace-match`, `replace-count`],
-  [`results` (11)], [`next-error`\*, `previous-error`\*, `results-count`, `results-entry`, `results-state`, `results-visit`, `results-buffer`, `results-select`\*, `results-put`, `results-display`, `results-quit`\*],
-  [`scan` (1)], [`scan-buffer`],
-  [`sexp` (7)], [`forward-sexp`\*, `backward-sexp`\*, `kill-sexp`\*, `backward-kill-sexp`\*, `up-list`\*, `backward-up-list`\*, `down-list`\*],
-  [`shell` (4)], [`shell-command-start`, `shell-command-to-string`, `parse-overstrike`, `shell-command-running-p`],
-  [`syntax_table` (10)], [`set-syntax-pairs`, `set-string-syntax`, `set-char-quote`, `set-syntax-entry`, `set-comment-syntax`, `syntax-class`, `matching-delimiter`, `syntax-ppss`, `balance-point`, `bounds-of-enclosing-list`],
-  [`theme` (6)], [`set-face`\*, `define-face`, `face-style`, `reset-faces`, `list-faces`, `list-colors`],
-  [`undo` (5)], [`undo-join`, `undo`\*, `redo`\*, `undo-boundary`\*, `set-undo-limit`\*],
-  [`verbs` (14)], [`upcase-word`\*, `downcase-word`\*, `capitalize-word`\*, `delete-horizontal-space`\*, `just-one-space`\*, `delete-blank-lines`\*, `back-to-indentation`\*, `join-line`\*, `duplicate-line`\*, `transpose-lines`\*, `transpose-chars`\*, `transpose-words`\*, `zap-to-char`\*, `zap-to-char--do`],
-  [`virtual_text` (4)], [`make-virtual-text`, `clear-virtual-text`, `delete-virtual-text`, `virtual-text-at`],
-  [`windows` (15)], [`split-window-below`\*, `split-window-right`\*, `delete-window`\*, `delete-other-windows`\*, `other-window`\*, `selected-window`, `select-window`, `count-windows`, `scroll-up-command`\*, `scroll-down-command`\*, `recenter`\*, `display-buffer-at-bottom`, `window-buffer`, `make-floating-window`, `close-floating-window`],
-  [`workers` (9)], [`define-worker`, `stop-worker`, `running-workers`, `background-call`, `emit-event`, `work-option`, `set-work-option`, `work-options`, `work-list`],
-)
+I diagrammi usano gli aiuti di `style.typ`. `doc_pointer_tests` controlla che
+ogni rimando dal codice porti a un'etichetta del manuale, che ogni rimando al
+rapporto nomini una scheda aperta e che ogni estratto venga da un file che
+esiste. Dopo ogni modifica si compila il PDF, si guardano le pagine toccate e
+lo si mette nello stesso commit del sorgente.

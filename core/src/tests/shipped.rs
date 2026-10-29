@@ -155,8 +155,8 @@ pub(crate) fn is_private(name: &str) -> bool {
     name.contains("--")
 }
 
-/// Returns the names in one of the lists in `doc_exceptions/`: one per line,
-/// with blank lines and `#` comments skipped.
+/// Returns the names in a list in `doc_exceptions/`: one per line, with
+/// blank lines and `#` comments skipped.
 pub(crate) fn exceptions(list: &str) -> Vec<String> {
     list.lines()
         .map(|line| line.split('#').next().unwrap_or("").trim())

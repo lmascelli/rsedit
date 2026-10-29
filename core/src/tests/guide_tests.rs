@@ -9,7 +9,7 @@ mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, SETTINGS, create_global_env};
     use crate::tests::shipped::{
-        default_modules, editor_functions, exceptions, is_private, load_default_modules, man_pages,
+        default_modules, editor_functions, is_private, load_default_modules, man_pages,
         module_variables,
     };
     use risp::{Env, LispExp, Parser, VARIABLE_DOCUMENTATION, eval};
@@ -399,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn every_public_name_has_a_home_or_is_listed_as_homeless() {
+    fn every_public_name_has_a_home() {
         let (ctx, env) = editor();
         let homed: BTreeSet<String> = synopses(&env, &ctx)
             .into_iter()
@@ -412,35 +412,15 @@ mod tests {
             .filter(|name| !is_private(name))
             .collect();
         assert!(public.len() > 300, "too few public names: {}", public.len());
-        let listed: BTreeSet<String> = exceptions(include_str!("doc_exceptions/homeless.txt"))
-            .into_iter()
-            .collect();
-        let unlisted: Vec<&String> = public
+        let homeless: Vec<&str> = public
             .iter()
-            .filter(|name| !homed.contains(*name) && !listed.contains(*name))
-            .collect();
-        let stale: Vec<&String> = listed
-            .iter()
-            .filter(|name| homed.contains(*name) || !public.contains(*name))
+            .filter(|name| !homed.contains(*name))
+            .map(String::as_str)
             .collect();
         assert!(
-            unlisted.is_empty(),
+            homeless.is_empty(),
             "no page lists these in its SYNOPSIS; list each in the page that documents it:\n{}",
-            unlisted
-                .iter()
-                .map(|name| name.as_str())
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        assert!(
-            stale.is_empty(),
-            "doc_exceptions/homeless.txt lists these, which have a page now or no longer \
-             exist; take them out:\n{}",
-            stale
-                .iter()
-                .map(|name| name.as_str())
-                .collect::<Vec<_>>()
-                .join("\n")
+            homeless.join("\n")
         );
     }
 }

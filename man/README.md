@@ -72,10 +72,9 @@ check that:
 - every key a KEYS line teaches runs the command it names;
 - every page and every function a SEE ALSO names exists;
 - every name a SYNOPSIS lists exists, and no name has two homes;
-- every public name has a home, or is listed in
-  `core/src/tests/doc_exceptions/homeless.txt`, a list that only shrinks;
-- every name quoted as `` `name' `` exists, or is listed in one of the
-  `quoted_*.txt` files beside it;
+- every public name has a home;
+- every name quoted as `` `name' `` exists, or is listed in
+  `core/src/tests/doc_exceptions/quoted_elsewhere.txt`;
 - `guide.txt` lists every page, and `rsedit.txt` lists the modules the
   default init.lisp loads, in its order;
 - every page is laid out the way `manpage-mode` colours one.
