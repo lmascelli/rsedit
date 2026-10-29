@@ -69,6 +69,43 @@ mod tests {
     }
 
     #[test]
+    fn a_second_prompt_is_refused_while_one_is_open() {
+        let (ctx, env) = setup();
+
+        eval_str(
+            r#"
+            (setq *first* nil)
+            (setq *second* nil)
+            (minibuffer-read "One" (lambda (input) (setq *first* input)) nil nil)
+            (self-insert "a")
+            "#,
+            &env,
+            &ctx,
+        )
+        .unwrap();
+        // Refused, and the first prompt keeps its text, its callback and
+        // its window.
+        assert!(
+            eval_str(
+                r#"(minibuffer-read "Two" (lambda (input) (setq *second* t)) nil nil)"#,
+                &env,
+                &ctx,
+            )
+            .is_err()
+        );
+        assert_eq!(ctx.windows(|windows| windows.floating().len()), 1);
+        eval_str("(minibuffer-confirm)", &env, &ctx).unwrap();
+
+        assert_eq!(
+            eval_str("*first*", &env, &ctx).unwrap(),
+            LispExp::string("a".into())
+        );
+        assert_eq!(eval_str("*second*", &env, &ctx).unwrap(), LispExp::nil());
+        assert!(ctx.windows(|windows| windows.floating().is_empty()));
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+    }
+    
+    #[test]
     fn cancel_flow_calls_on_cancel_without_touching_on_confirm() {
         let (ctx, env) = setup();
 

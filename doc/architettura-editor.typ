@@ -1632,13 +1632,14 @@ buffer `*Minibuffer*`, #emph[al centro] del frame, larga `minibuffer-width` (60)
 e alta `minibuffer-height` (3) e ridotta se il terminale è più piccolo. Il
 centro è scelto perché il fondo dello schermo è occupato da altre strisce (i
 completamenti, la compilazione). Ogni prompt usa lo stesso
-buffer, `*Minibuffer*` (`PROMPT_BUFFER`): due prompt aperti insieme lo
-condividono #rapporto("MIN-1"). `C-g` nel prompt resta `keyboard-quit`, che non
-lo chiude; lo chiude Esc #rapporto("MIN-2"). Ciò che Tab, la storia e un
-completamento scelto mettono nel prompt passa da `set_minibuffer_content`, che
-sostituisce solo il testo prima del punto e salta le porte delle modifiche
-#rapporto("MIN-3"), e lo fa nel buffer corrente, qualunque sia
-#rapporto("MIN-5").
+buffer, `*Minibuffer*` (`PROMPT_BUFFER`): per questo ne aperto uno alla volta.
+Un secondo prompt, chiesto mentre il primo aperto, viene rifiutato con errore,
+come in Emacs senza enable-recursive-minibuffers. `C-g` nel prompt resta
+`keyboard-quit`, che non lo chiude; lo chiude Esc #rapporto("MIN-2").
+Ciò che Tab, la storia e un completamento scelto mettono nel prompt passa da
+`set_minibuffer_content`, che sostituisce solo il testo prima del punto e salta
+le porte delle modifiche #rapporto("MIN-3"), e lo fa nel buffer corrente, qualunque
+sia #rapporto("MIN-5").
 
 Un worker di sfondo non può aprire un prompt: `minibuffer-read` controlla
 `in_worker()` e rifiuta con un errore, perché il tasto che risponderebbe

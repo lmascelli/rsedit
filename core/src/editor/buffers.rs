@@ -276,20 +276,23 @@ impl<B: BufferTrait> EditorState<B> {
         }
 
         // Found and removed in one acquisition: between the two, another
-        // thread opening or closing a float would shift the index.
-        // TODO(MIN-1): only the first float showing the buffer closes.
+        // thread opening or closing a float would shift the indices. Every
+        // float showing it goes, since one left would name a buffer that is
+        // gone; focus returns to where the first of them took it from, which
+        // was opened before the others and so is none of them.
         let restore_id = self.windows_mut(|windows| {
-            let idx = windows
-                .floating()
-                .iter()
-                .position(|f| f.window.buffer_name == name)?;
-            Some(
-                windows
-                    .floating_mut()
-                    .remove(idx)
-                    .previous_focused_window_id,
-            )
+            let mut restore = None;
+            windows.floating_mut().retain(|f| {
+                if f.window.buffer_name != name {
+                    true
+                } else {
+                    restore.get_or_insert(f.previous_focused_window_id);
+                    false
+                }
+            });
+            restore
         });
+        
         // Outside the closure: moving focus makes a buffer current, which takes
         // the windows' lock again.
         if let Some(restore_id) = restore_id {

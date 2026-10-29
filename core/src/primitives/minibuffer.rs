@@ -291,6 +291,17 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
         Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => name.to_string(),
         _ => "minibuffer-mode".to_string(),
     };
+
+    // One prompt at a time, as in Emacs without recursive minibuffers: a
+    // second would share the first's buffer and its callbacks, and take the
+    // first's answer with it. Refused before anything below is set, since
+    // all of it belongs to the prompt that is open.
+    if ctx.minibuffer_is_open() {
+        return Err(EvalError::RuntimeMessage(
+            "Command attempted to use minibuffer while in minibuffer".into(),
+        ));
+    }
+    
     let title = if let ELispExp::String(s) = &args[0] {
         Some(s.to_string())
     } else {
@@ -340,8 +351,6 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
         sized(&env, MINIBUFFER_HEIGHT, DEFAULT_MINIBUFFER_HEIGHT),
     );
 
-    // TODO(MIN-1): every prompt opens the one buffer, which a second prompt
-    // open at the same time shares.
     ctx.open_floating_window(
         minibuffer::PROMPT_BUFFER,
         x,

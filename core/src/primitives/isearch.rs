@@ -29,7 +29,7 @@ fn begin<B: BufferTrait>(
     let reader = env
         .get_function("minibuffer-read")
         .ok_or_else(|| EvalError::UndefinedFunction("minibuffer-read".into()))?;
-    risp::call_callable(
+    let opened = risp::call_callable(
         &reader,
         &[
             ELispExp::string(prompt),
@@ -42,7 +42,14 @@ fn begin<B: BufferTrait>(
         ],
         env.clone(),
         ctx,
-    )
+    );
+
+    // A prompt refused, as one is while another is open, leaves no search
+    // behind it to follow the keys typed in the prompt that is.
+    if opened.is_err() {
+        ctx.take_isearch();
+    }
+    opened
 }
 
 pub const ISEARCH_FORWARD_DOC: &str = "(isearch-forward): Search forward as you type: a prompt \
