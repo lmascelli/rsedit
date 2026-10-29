@@ -574,9 +574,11 @@ loro #rapporto("CMD-2"). Shift con un carattere diventa la maiuscola; `BackTab`
 diventa `Tab` con Shift. Gli altri eventi del terminale, come il focus, si
 ignorano.
 
-All'uscita normale la TUI disattiva la cattura del mouse e l'incolla, pulisce lo
-schermo e lascia la modalità raw. Lo stesso ripristino non avviene se il ciclo
-esce per un errore di I/O o per un panic #rapporto("TUI-2"). La TUI disegna
+Il terminale è preso da una guardia, TakenTerminal, il cui Drop disattiva la
+cattura del mouse e l’incolla, pulisce lo schermo, mostra il cursore e lascia
+la modalità raw: all’uscita normale come a un errore di I/O o a un panic.
+Un panic sul thread che disegna restituisce il terminale già nel hook, prima
+che il messaggio venga stampato.
 sullo schermo principale del terminale, non su quello alternativo
 #rapporto("TUI-8"). Il thread lettore non si aspetta: finisce al primo errore,
 o al primo evento dopo che il ciclo se n'è andato.

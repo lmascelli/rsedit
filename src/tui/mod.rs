@@ -21,6 +21,7 @@ use std::{
     io::stdout,
     sync::{
         Arc,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, RecvTimeoutError, Sender},
     },
 };
@@ -53,7 +54,70 @@ fn read_terminal(sink: Sender<Wakeup>) -> std::io::Result<()> {
         .map(drop)
 }
 
-// TODO(TUI-2): an I/O error or a panic leaves the terminal in raw mode.
+/// Whether the terminal is the editor's: in raw mode, with bracketed paste
+/// and maybe the mouse, and not yet given back.
+static TERMINAL_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// Gives the terminal back as the shell expects it, once: the mouse and
+/// bracketed paste off, the screen cleared, the cursor shown, raw mode left.
+/// Every step is tried whatever the one before did, since there is nobody
+/// left to tell of a failure.
+fn restore_terminal() {
+    if !TERMINAL_TAKEN.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let _ = execute!(
+        stdout(),
+        DisableMouseCapture,
+        DisableBracketedPaste,
+        terminal::Clear(terminal::ClearType::All),
+        cursor::MoveTo(0, 0),
+        cursor::Show
+    );
+    let _ = terminal::disable_raw_mode();
+}
+
+/// The terminal while the editor has it: given back when this is dropped,
+/// however `tui_main` is left -- a quit, a `?` on an I/O error, or a panic
+/// unwinding through it.
+struct TakenTerminal;
+
+impl TakenTerminal {
+    /// Puts the terminal in raw mode, with bracketed paste: a paste arrives as
+    /// one event, not as keystrokes, one step of undo, and the way the system
+    /// clipboard comes in.
+    fn take() -> std::io::Result<Self> {
+        terminal::enable_raw_mode()?;
+        TERMINAL_TAKEN.store(true, Ordering::SeqCst);
+        // From here on the terminal is given back however this is left.
+        let taken = TakenTerminal;
+        execute!(stdout(), EnableBracketedPaste)?;
+        Ok(taken)
+    }
+}
+
+impl Drop for TakenTerminal {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
+}
+
+/// Makes a panic on this thread, the one that draws, give the terminal back
+/// before its message is printed: the guard's drop comes only as the panic
+/// unwinds, after the message, which raw mode would print in steps across
+/// the screen. A panic on another thread leaves the terminal alone: the
+/// background work catches its own, and the editor goes on.
+fn give_back_terminal_on_panic() {
+    let drawing_thread = std::thread::current().id();
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().id() == drawing_thread {
+            restore_terminal();
+        }
+        previous(info);
+    }));
+}
+
 // TODO(TUI-8): drawn on the terminal's main screen, not the alternate one.
 /// Runs the editor in the terminal until it quits: raw mode, bracketed paste,
 /// the mouse while `mouse-mode` asks for it, and the loop.
@@ -61,10 +125,9 @@ pub fn tui_main<B: BufferTrait>(
     state: &EditorState<B>,
     env: Arc<Env<EditorState<B>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    terminal::enable_raw_mode()?;
-    // A paste arrives as one event, not as keystrokes: one step of undo, and
-    // the way the system clipboard comes in.
-    execute!(stdout(), EnableBracketedPaste)?;
+    give_back_terminal_on_panic();
+    let _terminal = TakenTerminal::take()?;
+    
     // Asked once: the terminal does not change while it runs.
     let depth = ColorDepth::detect();
     // The frame's first size.
@@ -195,15 +258,6 @@ pub fn tui_main<B: BufferTrait>(
         }
     }
 
-    if capturing {
-        execute!(stdout(), DisableMouseCapture)?;
-    }
-    execute!(
-        stdout(),
-        DisableBracketedPaste,
-        terminal::Clear(terminal::ClearType::All),
-        cursor::MoveTo(0, 0)
-    )?;
-    terminal::disable_raw_mode()?;
+    // The terminal is given back as `_terminal` goes.
     Ok(())
 }
