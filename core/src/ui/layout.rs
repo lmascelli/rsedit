@@ -190,7 +190,6 @@ impl Layout {
     }
 }
 
-// TODO(TUI-1): the text is copied as it is, control characters included.
 /// Returns the row of LINE, whose TEXT starts at offset LINE_START, with the
 /// virtual text that sits inside it.
 fn compose_row(line: usize, text: &str, line_start: usize, virtual_text: &VirtualTextTable) -> Row {

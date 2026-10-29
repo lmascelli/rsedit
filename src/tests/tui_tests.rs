@@ -19,7 +19,7 @@ use crate::tests::tui_tests::ColorDepth::Ansi16;
 use crate::tests::tui_tests::ColorDepth::Ansi256;
 use crate::tui::colour::{ColorDepth, resolve};
 use crate::tui::input::translate_key;
-use crate::tui::render::{base64_encode, osc52_copy, render_to};
+use crate::tui::render::{base64_encode, osc52_copy, printable, render_to};
 
 const COLS: u16 = 80;
 const ROWS: u16 = 24;
@@ -928,6 +928,64 @@ fn a_line_is_clipped_to_the_window_it_is_in() {
         .max()
         .expect("the float drew something");
     assert_eq!(widest, 20, "never wider than the rect");
+}
+
+// ---------------------------------------------------------------------------
+// Control characters in the text
+// ---------------------------------------------------------------------------
+
+/// A file holding an OSC 52 sequence would otherwise set the clipboard the
+/// moment it is shown: the sequence is drawn as pictures, column for column.
+#[test]
+fn a_control_sequence_in_the_text_is_shown_not_obeyed() {
+    let rendered = frame_with(&["a\u{1b}]52;c;aGk=\u{7}b"], vec![]);
+    assert!(
+        !rendered.contains("\u{1b}]"),
+        "no OSC sequence may reach the terminal: {rendered:?}"
+    );
+    assert!(!rendered.contains('\u{7}'), "nor a BEL");
+    assert!(rendered.contains("a\u{241b}]52;c;aGk=\u{2407}b"));
+}
+
+/// The same through the editor, where the text and the echo area come from
+/// a buffer and a message rather than a frame built by hand.
+#[test]
+fn control_characters_in_a_buffer_and_a_message_are_shown_not_obeyed() {
+    let (state, env) = editor();
+    let ast = rsedit_core::Parser::new("(insert \"x\u{1b}]0;title\u{7}y\")")
+        .next()
+        .expect("source must parse");
+    rsedit_core::eval(&ast, env.clone(), &state).expect("insert must work");
+    state.set_echo_message("said\u{1b}[6n\r\u{8}");
+    let rendered = frame(&state, &env);
+    assert!(
+        rendered.contains("x\u{241b}]0;title\u{2407}y"),
+        "{rendered:?}"
+    );
+    assert!(!rendered.contains("\u{1b}]"), "{rendered:?}");
+    assert!(!rendered.contains("\u{1b}[6n"), "{rendered:?}");
+    for c in ['\u{7}', '\r', '\u{8}'] {
+        assert!(!rendered.contains(c), "{c:?} reached the terminal");
+    }
+}
+
+/// Every control character but the Tab becomes something visible, and
+/// nothing else changes.
+#[test]
+fn printable_replaces_exactly_the_control_characters() {
+    for code in (0..0x20).chain(0x7f..0xa0) {
+        let c = char::from_u32(code).unwrap();
+        if c == '\t' {
+            assert_eq!(printable(c), '\t');
+        } else {
+            assert!(!printable(c).is_control(), "{c:?} must be replaced");
+        }
+    }
+    assert_eq!(printable('\u{1b}'), '\u{241b}');
+    assert_eq!(printable('\u{7f}'), '\u{2421}');
+    for c in ['a', ' ', '\u{a0}', 'è', '─'] {
+        assert_eq!(printable(c), c);
+    }
 }
 
 // ---------------------------------------------------------------------------

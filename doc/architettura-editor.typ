@@ -4336,8 +4336,9 @@ selezione che continua sulla linea dopo mostra selezionato l'a capo.
 mappa attraverso la riga, la sposta dello scorrimento orizzontale e la taglia
 alla larghezza. Sintassi, overlay e regione passano tutti di lì. Un carattere
 è una colonna: anche un tab #rapporto("TUI-3") e un carattere largo
-#rapporto("TUI-4"); e i caratteri di controllo passano così come sono fino al
-renderer #rapporto("TUI-1").
+#rapporto("TUI-4"); I caratteri di controllo arrivano così come sono fino al
+renderer, che li disegna come figure larghe una colonna (␛, ␇…) invece di
+mandarli al terminale; la GUI li salta).
 
 == Il margine dei numeri <margine>
 

@@ -282,10 +282,11 @@ fn apply_style<W: Write>(out: &mut W, style: &Style, depth: ColorDepth) -> std::
     Ok(())
 }
 
-// TODO(TUI-1): the text goes to the terminal as it is, control characters
-// included.
 /// Prints CONTENT from column START_X of row Y, cut to the frame, FRAME_W by
 /// FRAME_H: START_X and Y may be off it, and nothing is drawn of what is.
+/// Every control character in it is printed as [`printable`] has it: this is
+/// the one way text reaches the terminal, so nothing a file, a command's
+/// output or a message holds can be obeyed by it.
 fn draw_clipped_row<W: Write>(
     stdout: &mut W,
     start_x: isize,
@@ -315,10 +316,28 @@ fn draw_clipped_row<W: Write>(
 
     let visible: String = chars[clip_left as usize..(clip_left + clip_len) as usize]
         .iter()
+        .map(|&c| printable(c))
         .collect();
     stdout.queue(cursor::MoveTo(visible_start_x as u16, y as u16))?;
     stdout.queue(Print(visible))?;
     Ok(())
+}
+
+/// Returns C as the terminal is given it. A control character, which the
+/// terminal would obey rather than show -- ESC starting a sequence that can
+/// set the clipboard or the title, CR and BS moving the cursor -- becomes a
+/// picture of itself one column wide, so that every column stays where the
+/// editor counted it: `␛` for ESC, `␡` for DEL, and the replacement
+/// character for the C1 controls, which have no picture. The Tab is left as
+/// it is (TUI-3).
+pub(crate) fn printable(c: char) -> char {
+    match c {
+        '\t' => c,
+        '\u{0}'..='\u{1f}' => char::from_u32(0x2400 + c as u32).unwrap_or('\u{fffd}'),
+        '\u{7f}' => '\u{2421}',
+        '\u{80}'..='\u{9f}' => '\u{fffd}',
+        _ => c,
+    }
 }
 
 /// Draws the border of a floating window around RECT, outside it, TITLE in
