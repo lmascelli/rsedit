@@ -145,9 +145,12 @@ mod tests {
     /// Every file under `ui/`.
     const UI: &[(&str, &str)] = &[
         ("ui/mod.rs", include_str!("../ui/mod.rs")),
+        ("ui/compose.rs", include_str!("../ui/compose.rs")),
         ("ui/faces.rs", include_str!("../ui/faces.rs")),
         ("ui/frame.rs", include_str!("../ui/frame.rs")),
+        ("ui/gutter.rs", include_str!("../ui/gutter.rs")),
         ("ui/layout.rs", include_str!("../ui/layout.rs")),
+        ("ui/mode_line.rs", include_str!("../ui/mode_line.rs")),
         ("ui/windows.rs", include_str!("../ui/windows.rs")),
     ];
 

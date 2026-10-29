@@ -1,20 +1,8 @@
 //! The line-number gutter: how wide it is, what it says, and what it moves.
+//! It takes columns from the text, so these check the seams: the text rect,
+//! the cursor, the scroll, the click, and a window with no room for numbers.
 //!
-//! # What is worth testing here
-//!
-//! A gutter is not a decoration bolted on beside the text -- it *takes
-//! columns away from it*, and everything that was measured in columns has to
-//! be measured again against what is left. The cursor's position, the
-//! horizontal scroll, every syntax and region highlight, and where a click
-//! lands are five separate pieces of arithmetic that were all correct before
-//! the gutter existed and are all wrong by exactly its width if one of them
-//! is missed.
-//!
-//! So these check the seams rather than the look of it: that the text rect
-//! moved, that the numbers are in the columns the text gave up and not over
-//! the text, that a click four columns into a four-column gutter is column
-//! zero, and that a window with no room for numbers shows none rather than
-//! showing numbers instead of a file.
+//! Design: `doc/architettura-editor.typ, <margine>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -40,7 +28,8 @@ mod tests {
         eval_str(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"));
     }
 
-    /// An editor showing LINES numbered lines of *scratch*, point at the top.
+    /// Returns an editor showing LINES numbered lines of *scratch*, point at
+    /// the top.
     fn editor(lines: usize) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
@@ -53,7 +42,7 @@ mod tests {
         (ctx, env)
     }
 
-    /// The window showing *scratch*, as of a freshly composed frame.
+    /// Returns the window showing *scratch*, in a freshly composed frame.
     fn view(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> RenderableWindowView {
         ctx.snapshot(env, W, H)
             .views
@@ -62,7 +51,7 @@ mod tests {
             .expect("*scratch* must be on screen")
     }
 
-    /// What the gutter says, row by row, trailing space and all.
+    /// Returns what the gutter says, row by row, trailing space and all.
     fn numbers(view: &RenderableWindowView) -> Vec<String> {
         view.gutter.iter().map(|cell| cell.text.clone()).collect()
     }
@@ -344,9 +333,8 @@ mod tests {
 
     #[test]
     fn a_click_lands_on_the_column_under_it_and_not_the_gutter_out() {
-        // The regression the whole `Window::gutter_width` field exists for.
-        // Without it every click in a numbered window is off to the right by
-        // the width of its own numbers.
+        // What `Window::gutter_width` is for: a click in a numbered window is
+        // not off to the right by the width of its numbers.
         let (ctx, env) = editor(10);
         run(
             "(setq mouse-mode t) (setq display-line-numbers t)",

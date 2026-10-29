@@ -1,83 +1,22 @@
-//! Faces, the styles bound to them, and the theme that holds the bindings.
+//! Faces, the styles bound to them, and the theme that holds the bindings: a
+//! face says what is drawn, a style how, and a colour is a request the front
+//! end approximates.
 //!
-//! # The indirection, and why it is worth one hop
-//!
-//! Nothing that decides *what* to highlight also decides *how*. The region
-//! code says [`Face::Region`]; a syntax rule says [`Face::Keyword`]; neither
-//! knows a colour. A [`Theme`] maps faces to [`Style`]s, and the renderer is
-//! the only thing that turns a `Style` into escape sequences.
-//!
-//! That buys three things at the cost of one lookup per drawn run:
-//!
-//! - Recolouring is data, not code. `(set-face "region" "#eeeeee" "#3a5fcd")`
-//!   from Lisp, no recompile, no renderer change.
-//! - A new frontend re-implements one function -- "apply this `Style`" --
-//!   rather than a rule per highlighted thing.
-//! - A new highlighted feature adds a face and a default, and is drawn
-//!   correctly by every frontend that already exists.
-//!
-//! # What a face asks for, and what a renderer shows
-//!
-//! A face names a colour; it does not pick one. [`Color`] is a *request* -- a
-//! plain colour, in terms every display surface can read -- and the renderer
-//! turns the request into whatever it can actually draw. A truecolor terminal
-//! draws it as asked; a 256-colour one picks the nearest entry in its cube; a
-//! sixteen-colour one picks the nearest palette slot, which is the user's own
-//! configured colour. A GUI would do something else again.
-//!
-//! This is the same split as the interpreter and its host context: the editor
-//! knows what it means, and stays ignorant of how the thing in front of the
-//! user renders it. An ANSI palette index in this file would break that -- it
-//! is not a colour, it is a terminal's encoding of one.
-//!
+//! Design: `doc/architettura-editor.typ, <facce>`.
 
-/// A thing that can be drawn differently, named rather than coloured.
+/// Something drawn in a style of its own, named rather than coloured: a name
+/// interned to a small integer, which a [`Highlight`] carries and a [`Theme`]
+/// indexes by. A name is defined by being named, from Lisp as from Rust.
 ///
-/// # Why this is an interned name and not an enum
-///
-/// It was an enum, and that was right while the set was closed: the region, the
-/// mode line, and the handful of kinds a syntax rule could name. A *grammar*
-/// breaks that. Every language wants faces nothing else does -- a macro, an
-/// attribute, a doc comment, an operator -- and a closed enum makes each of
-/// them a change to this file, a change every frontend recompiles for, and a
-/// decision someone has to ask permission for.
-///
-/// So a face is now a **name**, interned to a small integer. `(set-face
-/// 'rust-attribute "yellow" nil)` defines one, and nothing in Rust had to know
-/// it was coming.
-///
-/// # Why an integer rather than the name itself
-///
-/// A `Face` is copied into every [`Highlight`], of which a coloured screen has
-/// hundreds, and looked up in a [`Theme`] for each one. An integer keeps the
-/// highlight small and the lookup an array index; the string is paid for once,
-/// when the face is first named.
-///
-/// # Why it has a `Default`
-///
-/// Id zero is [`Face::DEFAULT`] -- text with nothing said about it -- so the
-/// derived default is the right one rather than an accident of the
-/// representation. It is there so that anything holding a face can derive its
-/// own default, which is what a [`GutterCell`] with nothing in it needs.
+/// The default is [`Face::DEFAULT`], id zero.
 ///
 /// [`Highlight`]: crate::ui::Highlight
-/// [`GutterCell`]: crate::ui::GutterCell
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Face(u16);
 
-/// The names of every face interned so far, indexed by id.
-///
-/// # Why this is global
-///
-/// A face is a name, and a name means the same thing everywhere -- `keyword` in
-/// one buffer is `keyword` in another, and a `Theme` is per-editor precisely so
-/// that the *style* can differ while the face does not. Threading a registry
-/// through `Highlight`, `SyntaxRule` and `Theme` would put a context on three
-/// types that have no other use for one, to describe something that never
-/// varies.
-///
-/// It only ever grows, and only by the names Lisp mentions, so it is bounded by
-/// the configuration rather than by anything the editor does at runtime.
+// TODO(SIN-5): the registry only grows, and the id is 16 bits.
+/// The names of every face interned so far, indexed by id: one registry for
+/// the process, since a face's name means the same thing everywhere.
 static FACE_NAMES: std::sync::LazyLock<std::sync::RwLock<Vec<std::sync::Arc<str>>>> =
     std::sync::LazyLock::new(|| {
         std::sync::RwLock::new(
@@ -112,14 +51,10 @@ impl Face {
     /// The match a replace is currently offering.
     pub const REPLACE_MATCH: Face = Face(13);
 
-    /// The faces the editor names itself, with the ids they are interned at.
-    ///
-    /// These are pre-interned so that Rust can refer to them as constants: the
-    /// region code says [`Face::REGION`] without asking a registry, and the ids
-    /// are fixed because this array is what fills the registry to begin with.
-    /// The order and the constants above have to agree, and
-    /// `built_in_faces_are_interned_at_their_own_ids` in the tests is what
-    /// checks they do.
+    /// The faces the editor names itself, with their ids: the first entries
+    /// of the registry, so that Rust names them as constants. The order and
+    /// the constants above agree, as
+    /// `built_in_faces_are_interned_at_their_own_ids` checks.
     pub const BUILT_IN: [(Face, &'static str); 14] = [
         (Face::DEFAULT, "default"),
         (Face::REGION, "region"),
@@ -137,20 +72,12 @@ impl Face {
         (Face::REPLACE_MATCH, "replace-match"),
     ];
 
-    /// The face called NAME, defining it if nothing has named it yet.
-    ///
-    /// Defining-on-use is the point: a grammar written in Lisp names the faces
-    /// it wants and they exist. A name nobody styles is inert rather than an
-    /// error, which is the same outcome a misspelt face had when the set was
-    /// closed -- except that the name survives, so `list-faces` shows it and
-    /// the mistake is visible.
+    /// Returns the face called NAME, defining it if nothing has named it yet.
+    /// A name nobody styles is drawn plain, and `list-faces` shows it.
     pub fn intern(name: &str) -> Face {
-        // The write lock is taken even to answer "already known", rather than
-        // checking under a read lock first and taking the write lock only on a
-        // miss. That would be two checks doing one job -- and the second would
-        // still have to be there, since two threads could both miss the first.
-        // Interning happens when configuration is read and a grammar is
-        // defined, never while drawing, so there is nothing here to optimise.
+        // The write lock even for a name already known: a check under the
+        // read lock first would need a second one under this lock anyway, and
+        // interning happens while configuring, never while drawing.
         let mut names = FACE_NAMES
             .write()
             .expect("Failed to acquire write lock on the face registry");
@@ -161,11 +88,8 @@ impl Face {
         Face((names.len() - 1) as u16)
     }
 
-    /// The face called NAME, or `None` if nothing has named it.
-    ///
-    /// A linear scan, deliberately: naming a face happens when configuration is
-    /// read and a grammar is defined, never while drawing, and a few dozen
-    /// short strings are quicker to walk than to hash.
+    /// Returns the face called NAME, or `None` if nothing has named it. A
+    /// linear scan: a few dozen short names, and never while drawing.
     pub fn named(name: &str) -> Option<Face> {
         FACE_NAMES
             .read()
@@ -175,23 +99,21 @@ impl Face {
             .map(|id| Face(id as u16))
     }
 
-    /// The name Lisp uses for this face, in `set-face` and `add-syntax-rule`.
-    ///
-    /// One mapping, used by both, so a face a syntax rule can name is a face a
-    /// theme can style.
+    /// Returns the name this face has in Lisp, for `set-face` and
+    /// `add-syntax-rule` alike.
     pub fn name(self) -> std::sync::Arc<str> {
         FACE_NAMES
             .read()
             .expect("Failed to acquire read lock on the face registry")
             .get(self.index())
             .cloned()
-            // Only reachable for a `Face` built by hand out of a raw id, which
-            // nothing outside this module can do.
+            // Only for a `Face` built out of a raw id, which only this module
+            // can do.
             .unwrap_or_else(|| "default".into())
     }
 
-    /// Every face named so far, built-ins first and then in the order they were
-    /// defined.
+    /// Returns every face named so far, the built-in ones first and then in
+    /// the order they were defined.
     pub fn all() -> Vec<Face> {
         let count = FACE_NAMES
             .read()
@@ -200,13 +122,14 @@ impl Face {
         (0..count as u16).map(Face).collect()
     }
 
-    /// Where this face sits in a [`Theme`].
+    /// Returns where this face sits in a [`Theme`].
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
-/// A colour a face asks for.
+/// A colour a face asks for: a request, which the front end draws as near as
+/// it can.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color {
     pub r: u8,
@@ -215,6 +138,7 @@ pub struct Color {
 }
 
 impl Color {
+    /// Returns the colour R, G, B.
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
@@ -236,8 +160,10 @@ impl Color {
     pub const BRIGHT_CYAN: Color = Color::rgb(85, 255, 255);
     pub const BRIGHT_WHITE: Color = Color::rgb(255, 255, 255);
 
-    /// Parse a colour as Lisp writes it: `"#rgb"`, `"#rrggbb"`, or one of the
-    /// names in [`NAMED_COLORS`].
+    // TODO(TUI-5): a hexadecimal colour with a character outside ASCII
+    // panics, sliced off a character boundary.
+    /// Returns the colour TEXT writes, as Lisp does: `"#rgb"`, `"#rrggbb"`,
+    /// or one of the names in [`NAMED_COLORS`]; `None` for anything else.
     pub fn parse(text: &str) -> Option<Color> {
         if let Some(hex) = text.strip_prefix('#') {
             return match hex.len() {
@@ -261,18 +187,16 @@ impl Color {
             .map(|(_, color)| *color)
     }
 
-    /// How Lisp writes this colour back out, so `face-style` round-trips
-    /// through `set-face`.
+    /// Returns this colour as `#rrggbb`, which [`Self::parse`] reads back: what
+    /// `face-style` answers and `set-face` takes.
     pub fn to_text(&self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
     }
 }
 
-/// The colour names Lisp understands, and what they conventionally mean.
-///
-/// Ordered as the sixteen terminal palette slots are, because a renderer that
-/// has to approximate uses this same table to find the nearest one -- so the
-/// order carries meaning and is not just a list.
+/// The colour names Lisp understands, and what they conventionally mean, in
+/// the order of the sixteen slots of a terminal's palette: a renderer finds
+/// the nearest slot by its index here.
 pub const NAMED_COLORS: [(&str, Color); 16] = [
     ("black", Color::BLACK),
     ("red", Color::RED),
@@ -292,8 +216,8 @@ pub const NAMED_COLORS: [(&str, Color); 16] = [
     ("bright-white", Color::BRIGHT_WHITE),
 ];
 
-/// How a face is drawn. `None` means "leave the terminal's own choice alone",
-/// which is what lets a face set only a background, or only an attribute.
+/// How a face is drawn. A colour of `None` leaves the front end's own, so
+/// that a face can set only a background, or only an attribute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Style {
     pub fg: Option<Color>,
@@ -301,13 +225,12 @@ pub struct Style {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
-    /// Swap foreground and background. The one attribute that needs no colour
-    /// decision, and therefore the only one that is legible on every terminal
-    /// and in every scheme.
+    /// Foreground and background swapped: legible whatever the colours are.
     pub reverse: bool,
 }
 
 impl Style {
+    /// Returns the style that changes nothing.
     pub const fn plain() -> Self {
         Self {
             fg: None,
@@ -319,6 +242,7 @@ impl Style {
         }
     }
 
+    /// Returns the style that sets only the foreground, to COLOR.
     pub const fn fg(color: Color) -> Self {
         Self {
             fg: Some(color),
@@ -326,14 +250,14 @@ impl Style {
         }
     }
 
-    /// Whether this style would change anything, so a renderer can skip a run
-    /// that would be drawn exactly as it already is.
+    /// Returns whether this style changes nothing, so that a renderer can
+    /// skip a run drawn in it.
     pub fn is_plain(&self) -> bool {
         *self == Style::plain()
     }
 
-    /// Set or clear one named attribute. Returns false for a name it does not
-    /// know, so a caller can report it rather than silently ignoring a typo.
+    /// Sets the attribute NAME, or clears it, and returns true; false for a
+    /// name it does not know, for the caller to report.
     pub fn set_attribute(&mut self, name: &str, on: bool) -> bool {
         match name {
             "bold" => self.bold = on,
@@ -345,7 +269,8 @@ impl Style {
         true
     }
 
-    /// The attributes that are on, in the names [`Self::set_attribute`] takes.
+    /// Returns the attributes that are on, as [`Self::set_attribute`] names
+    /// them.
     pub fn attribute_names(&self) -> Vec<&'static str> {
         let mut names = Vec::new();
         for (on, name) in [
@@ -362,22 +287,15 @@ impl Style {
     }
 }
 
-/// The style bound to each face.
-///
-/// A `Vec` indexed by face id rather than a map: ids are dense and small, so a
-/// lookup stays an array index even though the face set is now open. A face
-/// beyond the end is simply unstyled, which is what lets a grammar name a face
-/// nobody has themed without every lookup having to check first.
-///
-/// Cloned into each frame snapshot. That is one allocation per frame where it
-/// used to be a memcpy -- worth watching in the perf suite rather than assuming
-/// either way, and worth an `Arc` if it ever shows up there.
+/// The style bound to each face, indexed by the face's id. A face past the
+/// end is drawn plain.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Theme {
     styles: Vec<Style>,
 }
 
 impl Theme {
+    /// Returns the style FACE is drawn in.
     pub fn style(&self, face: Face) -> Style {
         self.styles
             .get(face.index())
@@ -385,6 +303,7 @@ impl Theme {
             .unwrap_or_else(Style::plain)
     }
 
+    /// Binds FACE to STYLE.
     pub fn set(&mut self, face: Face, style: Style) {
         if self.styles.len() <= face.index() {
             self.styles.resize(face.index() + 1, Style::plain());
@@ -392,8 +311,8 @@ impl Theme {
         self.styles[face.index()] = style;
     }
 
-    /// Every face and its style, in id order -- for `list-faces` and for
-    /// anything that wants to show the user what is bound.
+    /// Returns every face with its style, in the order of the ids: what
+    /// `list-faces` shows.
     pub fn bindings(&self) -> Vec<(Face, Style)> {
         Face::all()
             .into_iter()
@@ -403,9 +322,9 @@ impl Theme {
 }
 
 impl Default for Theme {
-    /// Conventional colours, so a renderer that has to approximate lands on
-    /// the palette slot of the same name -- and the region uses reverse video,
-    /// which needs no colour decision at all and so cannot clash with one.
+    /// Returns the theme the editor ships: conventional colours, which an
+    /// approximating renderer draws in the palette slot of the same name, and
+    /// reverse video where a face must show on any background.
     fn default() -> Self {
         let mut theme = Theme {
             styles: vec![Style::plain(); Face::BUILT_IN.len()],
@@ -417,8 +336,6 @@ impl Default for Theme {
                 ..Style::plain()
             },
         );
-        // Reverse video for the same reason the region uses it: a status bar
-        // has to be visible against a background this code cannot know.
         theme.set(
             Face::MODE_LINE,
             Style {
@@ -426,8 +343,6 @@ impl Default for Theme {
                 ..Style::plain()
             },
         );
-        // Distinguishable without being another colour decision -- an
-        // unfocused window's status line is present but not competing.
         theme.set(
             Face::MODE_LINE_INACTIVE,
             Style {
@@ -448,12 +363,7 @@ impl Default for Theme {
         );
         theme.set(Face::FUNCTION, Style::fg(Color::CYAN));
         theme.set(Face::BUILTIN, Style::fg(Color::BLUE));
-        // Present but receding: numbers are read when looked for and ignored
-        // the rest of the time, which is what dimming them says.
         theme.set(Face::LINE_NUMBER, Style::fg(Color::BRIGHT_BLACK));
-        // Reverse video, for the reason the region uses it: the one thing the
-        // eye must not miss is what is about to be changed, and reverse needs
-        // no colour decision to be visible on any background.
         theme.set(
             Face::REPLACE_MATCH,
             Style {

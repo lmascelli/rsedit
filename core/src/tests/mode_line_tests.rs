@@ -1,4 +1,6 @@
 //! The mode line, and the pending-input display beside the echo area.
+//!
+//! Design: `doc/architettura-editor.typ, <riga-di-stato>`.
 #[cfg(test)]
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
@@ -30,7 +32,7 @@ mod tests {
         (ctx, env)
     }
 
-    /// The window showing *scratch*.
+    /// Returns the window showing *scratch*.
     fn view(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> RenderableWindowView {
         ctx.snapshot(env, W, H)
             .views

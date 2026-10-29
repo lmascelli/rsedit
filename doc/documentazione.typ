@@ -1440,7 +1440,7 @@ passano senza modifiche, salvo gli spostamenti che seguono quelli del codice.
   [18], [`primitives/`, il resto: `commands`, `completion`, `general`, `help`, `isearch`, `minibuffer`, `modes`, `overlays`, `replace`, `results`, `theme`, `virtual_text`, `mod` (fatto)], [5 953], [---],
   [19], [`modes/`, `feature/` (fatto)], [2 896], [---],
   [19b], [`core/lisp/` per genere, `require` e i plugin (fatto)], [1 331 nuove], [cambia il comportamento, per scelta],
-  [20], [`ui/`, `src/` (la TUI)], [3 408], [---],
+  [20], [`ui/`, `src/` (la TUI e la GUI) (fatto)], [4 486], [i test della GUI, mai compilati, collegati],
   [21], [`core/lisp/`: intestazioni e commenti], [6 422], [docstring già fatte nella fase B],
 )
 
@@ -1945,7 +1945,7 @@ gli avvisi di `cargo doc` passano da 10 a 4. Sono fatti anche i resti lasciati
 a questo passo dai passi 12, 17 e 18.
 
 Restano ai passi dei loro capitoli: il commento di `src/tui.rs` sul minibuffer
-in basso (passo 20, con DOC-1); i test dei moduli Lisp, come
+in basso (passo 20, con DOC-1, fatto); i test dei moduli Lisp, come
 `language_mode_tests` (passo 21). Il test
 `killing_a_modified_buffer_keeps_the_copy` guarda la copia prima della risposta
 di `kill-buffer`: farne un test della chiusura cambierebbe il test, ed è una
@@ -1985,6 +1985,70 @@ vale solo per un modulo che manca, e lo dicono ora. AVV-2 dice anche di
 parametri, e la lista vuota che un backquote costruisce è nil, così
 `with-eval-after-load` scrive `(&rest …)`; va scritto in una scheda del
 rapporto di risp.
+
+*Passo 20, fatto.* `ui/windows.rs` è diviso in quattro file, uno per concetto:
+`windows.rs` tiene l'albero delle finestre, le flottanti e la loro geometria,
+`gutter.rs` il margine dei numeri, `compose.rs` la composizione di una finestra
+e le sue evidenziazioni, `mode_line.rs` la riga di stato; i nomi pubblici di
+`ui` sono gli stessi, e `layering_tests` controlla anche i tre file nuovi. La
+TUI e la GUI sono due cartelle. `src/tui/` ha il ciclo in `mod.rs`, i tasti e il
+mouse in `input.rs`, i colori in `colour.rs` e il disegno in `render.rs`;
+`src/gui/` ha `Core` in `mod.rs`, il ciclo in `app.rs`, i tasti in `keys.rs`
+e il disegno in `paint.rs`, riformattati per intero da `rustfmt`, che vi
+trovava tre blocchi. `Core::new` non prende più il carattere, che non usava. I
+test della TUI sono in `src/tests/tui_tests.rs`, e quello della riga di
+comando in `src/tests/options_tests.rs`, con `--gui` al posto di un `--vim`
+che non esiste più. `--help` dice le scorciatoie di oggi. Il rustdoc segue le
+regole, con i `TODO` di TUI-1, TUI-2, TUI-3, TUI-4, TUI-5, TUI-7, TUI-8,
+SIN-5, CMD-2 e delle due schede nuove. Nel manuale il capitolo «Lo schermo»
+ha cinque sezioni nuove --- la composizione, le righe e le loro colonne, il
+margine, la riga di stato, la finestra grafica --- e ventisette decisioni nuove;
+«Il ciclo degli eventi della TUI» è riscritto sul thread che legge il terminale
+e sul canale, con sei decisioni sue, e «Facce e temi» ne ha tre. La pagina
+`rsedit` ha una sezione sulla finestra grafica. I commenti di cinque file di
+test seguono le regole: `tui_tests` non racconta più la storia dei difetti, e
+il test che la diceva nel nome si chiama
+`a_window_with_no_gutter_starts_its_text_at_the_left_edge`. I file del passo
+scendono da 4 486 a 3 962 righe, e quelle di commento da 1 234 a 694; il più
+lungo è `ui/windows.rs`, con 530. Il comportamento non è cambiato.
+
+`src/tests/gui_tests.rs` non era mai stato compilato: nessun `mod` lo
+dichiarava, dal commit che aveva aggiunto la GUI. Ora i suoi test sono in
+`src/gui/tests.rs`, un modulo figlio, che vede i tipi privati della GUI senza
+renderli pubblici al crate; il test della riga di comando che conteneva è in
+`options_tests`. Portati sull'API di oggi, quindici test passano, e la suite del
+binario passa da 47 a 63 test. Uno è cambiato:
+`intercepted_ctrl_x_still_opens_a_file_prompt_and_preserves_its_first_letter`
+mandava il testo «f» senza il tasto che lo produce, una sequenza che
+egui-winit non manda mai: ogni pressione è un evento di tasto, e il testo
+arriva solo senza Ctrl. Con il tasto prima del testo il test passa, e prova ciò
+che la finestra riceve davvero. La modifica che il passo 19b aveva fatto a quel
+file non era mai stata provata, e non funzionava: chiamava `require` con un
+simbolo non citato.
+
+Il passo ha trovato due difetti di comportamento, in due schede nuove. AVV-8:
+senza la directory della cache, o senza un file di registro scrivibile,
+l'editor gira senza `rsedit.log` e non lo dice. GUI-1: la finestra grafica non
+si fa svegliare dal lavoro di sfondo, e si aggiorna ogni 250 ms anche ferma.
+Vengono dalla lettura del codice. Le schede TUI-1, TUI-2, TUI-3, TUI-4, TUI-6,
+TUI-7, TUI-8, BUF-2 e CMD-2 nominano i file nuovi.
+
+Gli altri difetti sono in commenti e documenti, e la patch li corregge.
+`faces.rs` nominava `Face::Region` e `Face::Keyword`, che non ci sono più, e
+diceva il tema da avvolgere in un `Arc`, che lo avvolge già; la documentazione
+di `region_highlights` stava sopra `overlay_highlights`, e parlava di
+coordinate dello schermo, mentre risponde in colonne del buffer; quella di
+`compose_layout` aveva una frase ripetuta a metà, e l'ordine delle
+evidenziazioni era spiegato due volte. `expand_mode_line` nominava un «WIN» che
+non riceve, e il commento di `position_in_buffer` diceva `All` per un buffer che
+sta in una schermata (TUI-7). Il commento del base64 diceva il core con una
+sola dipendenza; quello dell'area messaggi in `render_to` diceva il minibuffer
+agganciato in basso (DOC-1); `app.rs` diceva che il core non ha un modo di
+svegliare la finestra, e c'è, `on_background_change` (GUI-1). Nel manuale il
+ciclo della TUI era ancora quello con `poll`, e l'estratto veniva da
+`src/tui.rs`. Gli avvisi di `cargo doc` passano da 5 a 1.
+
+Resta il passo 21, i moduli Lisp.
 
 == Fase D --- il manuale (passo 22)
 

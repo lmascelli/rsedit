@@ -170,11 +170,11 @@ lì e nella mappa di `lib.rs`.
   [`jobs/`], [I lavori di sfondo dell'editor: `Highlighter`, `Prescanner`, `FileWatcher` e `AutoSaver` (@lavori-editor).],
   [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale (@minibuffer).],
   [`work/`], [Il WorkManager: il nucleo dello scheduler, l'esecutore, il registro, i thread dedicati, il watchdog, gli argomenti e le opzioni (@sfondo).],
-  [`ui/`], [Albero delle finestre, finestre flottanti, layout delle righe, facce e temi, `FrameSnapshot`.],
+  [`ui/`], [La descrizione dello schermo: l'albero delle finestre e le flottanti (`windows.rs`), la composizione di una finestra (`compose.rs`), le righe e le loro colonne (`layout.rs`), il margine dei numeri (`gutter.rs`), la riga di stato (`mode_line.rs`), facce e temi (`faces.rs`), `FrameSnapshot` (`frame.rs`) (@frame).],
   [`tests/`], [Circa ottanta file di test dell'editor, più `perf/`.],
   [`../lisp/`], [I venticinque moduli Lisp distribuiti con l'editor, in tre cartelle: `base/`, `features/`, `languages/` (@moduli-lisp).],
   [`../build.rs`], [Copia ogni cartella dei moduli in `target/<profilo>/data/lisp`, accanto all'eseguibile, e con loro i temi e le pagine del manuale.],
-  [`../../src/`], [I front-end: `main.rs` (avvio), `tui.rs` (il terminale: ciclo degli eventi e disegno) e `gui.rs` (una finestra grafica, con egui).],
+  [`../../src/`], [I front-end: `main.rs` (la riga di comando e l'avvio); `tui/`, il terminale, con il ciclo in `mod.rs`, i tasti e il mouse in `input.rs`, i colori in `colour.rs` e il disegno in `render.rs` (@ciclo-tui, @tui); `gui/`, una finestra grafica con egui, con `Core` in `mod.rs`, il ciclo in `app.rs`, i tasti in `keys.rs` e il disegno in `paint.rs` (@gui).],
 )
 
 == La superficie pubblica
@@ -448,25 +448,30 @@ invece dà un errore, che dice che il file non si legge. Il primo errore di
   (`top_level`), da dovunque venga la chiamata: un modulo caricato da una
   funzione, o con `M-:`, definisce ciò che definirebbe `init.lisp`.
 
-== Il ciclo degli eventi della TUI
+== Il ciclo degli eventi della TUI <ciclo-tui>
 
-`tui_main` (`src/tui.rs`) attiva la modalità raw e l'incolla «bracketed»,
+`tui_main` (`src/tui/mod.rs`) attiva la modalità raw e l'incolla «bracketed»,
 rileva la profondità di colore (`COLORTERM`, `TERM`), comunica le dimensioni
 iniziali in `frame-width` e `frame-height`, e poi gira finché `is_running()` è
-vero.
+vero. Il ciclo aspetta su un canale solo, che porta due generi di risveglio
+(`Wakeup`): gli eventi del terminale, che un thread lettore («terminal input»,
+avviato da `read_terminal`) legge con `read()` e manda nel canale, e la notizia
+che un lavoro di sfondo ha cambiato qualcosa, che l'editor dà alla callback
+registrata con `on_background_change`.
 
-#canvas(height: 9.0cm)[
+#canvas(height: 9.6cm)[
   #node(4.2cm, 0.45cm, 7.6cm, 0.7cm, [cattura del mouse = `mouse_mode(&env)`?])
   #carrow((4.2cm, 0.8cm), (4.2cm, 1.25cm))
-  #node(4.2cm, 1.65cm, 7.6cm, 0.8cm, [se `dirty`: `snapshot` (lock, niente I/O)\ poi `render_frame` (I/O, niente lock)])
+  #node(4.2cm, 1.65cm, 7.6cm, 0.8cm, [se `dirty`: `snapshot` (lock, niente I/O)\ poi `render_frame` se `forced` o diversa])
   #carrow((4.2cm, 2.05cm), (4.2cm, 2.5cm))
-  #node(4.2cm, 2.95cm, 7.6cm, 0.9cm, [attesa = min(`next_redraw_in`, `drag_scroll_in`)\ `None` → blocca su `read()`])
+  #node(4.2cm, 2.95cm, 7.6cm, 0.9cm, [attesa = min(`next_redraw_in`, `drag_scroll_in`)\ `None` → `recv()` senza limite])
   #carrow((4.2cm, 3.4cm), (4.2cm, 3.95cm))
-  #node(4.2cm, 4.35cm, 7.6cm, 0.8cm, [`poll(attesa)`: arriva un evento prima?])
+  #node(4.2cm, 4.35cm, 7.6cm, 0.8cm, [`recv_timeout(attesa)`: arriva qualcosa prima?])
   #carrow((8.0cm, 4.35cm), (10.1cm, 4.35cm), label: [no], dy: -7pt)
   #node(12.9cm, 4.35cm, 5.4cm, 0.8cm, [`tick(&env)`; `dirty = true`])
   #carrow((4.2cm, 4.75cm), (4.2cm, 5.3cm), label: [sì], dx: 10pt)
-  #node(4.2cm, 5.7cm, 7.6cm, 0.8cm, [`read()`], fill: accent.lighten(85%))
+  #node(4.2cm, 5.7cm, 7.6cm, 0.8cm, [`Wakeup::Terminal(evento)`], fill: accent.lighten(85%))
+  #note(8.3cm, 5.55cm)[`Wakeup::Background`: in cima, senza `dirty`]
   #carrow((2.2cm, 6.1cm), (1.4cm, 6.75cm))
   #carrow((3.6cm, 6.1cm), (3.6cm, 6.75cm))
   #carrow((5.0cm, 6.1cm), (6.0cm, 6.75cm))
@@ -474,8 +479,9 @@ vero.
   #node(1.4cm, 7.35cm, 2.6cm, 1.1cm, [tasto (solo\ `Press`)\ `handle_key_event`])
   #node(4.0cm, 7.35cm, 2.4cm, 1.1cm, [`Resize`\ `resize`])
   #node(6.5cm, 7.35cm, 2.4cm, 1.1cm, [`Paste`\ `handle_paste`])
-  #node(9.4cm, 7.35cm, 3.2cm, 1.1cm, [mouse\ `handle_mouse_event`\ (sporca solo se agisce)])
-  #note(0.3cm, 8.1cm)[ogni ramo, tranne un mouse ignorato, imposta `dirty = true` e torna in cima]
+  #node(9.4cm, 7.35cm, 3.2cm, 1.1cm, [mouse\ `handle_mouse_event`\ (solo se agisce)])
+  #note(0.3cm, 8.1cm)[ogni ramo, tranne un mouse ignorato, imposta `dirty` e `forced` e torna in cima]
+  #note(0.3cm, 8.6cm)[il thread lettore manda ogni evento nel canale; la callback di `on_background_change`, un `Background`]
   #segment((15.6cm, 4.35cm), (15.9cm, 4.35cm))
   #segment((15.9cm, 4.35cm), (15.9cm, 0.45cm))
   #carrow((15.9cm, 0.45cm), (8.0cm, 0.45cm))
@@ -483,56 +489,110 @@ vero.
 
 Il cuore del ciclo, senza la gestione della cattura del mouse:
 
-#estratto("../../src/tui.rs")[
+#estratto("../../src/tui/mod.rs")[
 ```rust
 while state.is_running() {
     if dirty {
         let (cols, rows) = terminal::size()?;
-        frame = state.snapshot(&env, cols as usize, rows as usize);  // lock, niente I/O
-        render_frame(&frame, depth)?;                               // I/O, niente lock
-        dirty = false;
+        let next = state.snapshot(&env, cols as usize, rows as usize); // lock, niente I/O
+        if forced || next != frame || next.clipboard.is_some() {
+            render_frame(&next, depth)?;                              // I/O, niente lock
+        }
+        frame = next; dirty = false; forced = false;
     }
     let wake = [state.next_redraw_in(&env, &frame), state.drag_scroll_in()]
         .into_iter().flatten().min();
-    if let Some(remaining) = wake && !poll(remaining)? {
-        state.tick(&env);         // l'attesa è scaduta: callback dovute, scorrimento
-        dirty = true;
-        continue;
-    }
-    match read()? {
-        Event::Key(k) => if let Some(ev) = translate_key(k)
-                             && k.kind == KeyEventKind::Press {
-            state.handle_key_event(ev, &env); dirty = true;
+    let wakeup = match wake {
+        Some(remaining) => match inbox.recv_timeout(remaining) {
+            Ok(wakeup) => wakeup,
+            Err(RecvTimeoutError::Timeout) => {
+                state.tick(&env);    // l'attesa è scaduta: callback dovute, scorrimento
+                dirty = true;
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        },
+        None => match inbox.recv() { Ok(wakeup) => wakeup, Err(_) => break },
+    };
+    let event = match wakeup {
+        Wakeup::Background => continue,     // in cima: l'editor ridice quanto aspettare
+        Wakeup::Terminal(event) => event?,
+    };
+    match event {
+        Event::Key(k) => match translate_key(k) {
+            Some(ev) => if k.kind == KeyEventKind::Press {
+                state.handle_key_event(ev, &env); dirty = true; forced = true;
+            },
+            None => state.log_diagnostic(/* "no translation for the key" */),
         },
         Event::Resize(w, h) => {
-            state.resize(env.clone(), w as usize, h as usize); dirty = true;
+            state.resize(env.clone(), w as usize, h as usize); dirty = true; forced = true;
         }
-        Event::Paste(text)  => { state.handle_paste(text, &env); dirty = true; }
+        Event::Paste(text) => {
+            state.handle_paste(text, &env); dirty = true; forced = true;
+        }
         Event::Mouse(m) => if let Some(ev) = translate_mouse(m)
-                               && state.handle_mouse_event(ev, &env) { dirty = true; },
+                               && state.handle_mouse_event(ev, &env) {
+            dirty = true; forced = true;
+        },
         _ => (),
     }
 }
 ```
 ]
 
-Tre dettagli contano. Il ridisegno avviene solo se qualcosa è cambiato
-(`dirty`): un terminale che riporta il mouse manda decine di movimenti al
-secondo, e ridisegnare per ognuno farebbe sfarfallare lo schermo. L'attesa è
-guidata dall'editor: se nulla è in sospeso `next_redraw_in` risponde `None` e il
-ciclo si blocca su `read()` senza consumare CPU. E `tick` viene chiamato solo
-quando l'attesa scade, non a ogni giro.
+Quattro dettagli contano. Il frame si compone solo se qualcosa è successo
+(`dirty`), e si disegna solo se è diverso da quello sullo schermo, o se
+qualcosa è stato fatto dall'utente (`forced`), o se porta testo per gli appunti.
+L'attesa è guidata dall'editor: se nulla è in sospeso `next_redraw_in` risponde
+`None` e il ciclo si blocca sul canale senza consumare CPU. Un `Background` non
+sporca nulla: riporta il ciclo in cima, dove `next_redraw_in` vede il
+cambiamento e risponde con il tempo che manca a un turno dall'ultimo frame; poi
+l'attesa scade, e `tick` e il frame seguono come per il tempo. E `tick` viene
+chiamato solo quando l'attesa scade, non a ogni giro.
 
-Un tasto che `translate_key` non sa tradurre --- `Delete`, `Home`, `End`,
-`PageUp`, `PageDown`, `Insert`, i tasti funzione --- viene soltanto registrato
-nel log: `KeyCode` non ha varianti per loro #rapporto("CMD-2"). Shift con un
-carattere diventa la maiuscola; `BackTab` diventa `Tab` con Shift.
+La cattura del mouse segue `mouse-mode` a ogni giro, prima del frame:
+`mouse-mode-toggle` vale dal clic dopo. Un tasto che `translate_key` non sa
+tradurre --- `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `Insert`, i tasti
+funzione --- viene soltanto registrato nel log: `KeyCode` non ha varianti per
+loro #rapporto("CMD-2"). Shift con un carattere diventa la maiuscola; `BackTab`
+diventa `Tab` con Shift. Gli altri eventi del terminale, come il focus, si
+ignorano.
 
 All'uscita normale la TUI disattiva la cattura del mouse e l'incolla, pulisce lo
 schermo e lascia la modalità raw. Lo stesso ripristino non avviene se il ciclo
 esce per un errore di I/O o per un panic #rapporto("TUI-2"). La TUI disegna
 sullo schermo principale del terminale, non su quello alternativo
-#rapporto("TUI-8").
+#rapporto("TUI-8"). Il thread lettore non si aspetta: finisce al primo errore,
+o al primo evento dopo che il ciclo se n'è andato.
+
+=== Le decisioni <decisioni-tui>
+
++ *Un thread che legge il terminale, e un canale.* crossterm sa aspettare un
+  evento con un limite, ma nessuno può interrompere quell'attesa da un altro
+  thread: un lavoro di sfondo che cambia un buffer, un file ricaricato,
+  resterebbero fuori dallo schermo fino al tasto dopo. Con il canale il ciclo
+  aspetta una cosa sola, e sia il terminale sia l'editor possono svegliarlo.
++ *Un evento che non cambia nulla non compone un frame.* Un terminale che
+  riporta il mouse manda decine di movimenti al secondo: comporre e disegnare
+  per ognuno costerebbe e farebbe sfarfallare lo schermo.
++ *Dopo un'azione dell'utente si disegna anche un frame uguale.* Un altro
+  programma può aver scritto sul terminale, e un tasto è il modo naturale di
+  ripararlo. Un frame composto perché il tempo è passato si disegna solo se è
+  diverso: il controllo dei file ogni pochi secondi e un lavoro ogni 40 ms non
+  ridisegnano uno schermo fermo.
++ *La cattura del mouse si ricontrolla a ogni giro.* `mouse-mode` è una
+  variabile che il Lisp cambia quando vuole; seguendola a ogni giro il
+  cambiamento vale subito, e un terminale non resta a riportare il mouse a un
+  editor che non lo vuole.
++ *L'incolla è un evento solo.* Con l'incolla «bracketed» il testo arriva tutto
+  insieme e diventa `insert-pasted-text`: un passo di undo, gli hook una volta,
+  nessuna parentesi chiusa da `electric-pair` a ogni apertura. È anche l'unica
+  strada da cui gli appunti di sistema entrano nella TUI.
++ *Gli eventi che l'editor non conosce si ignorano.* Il focus e ciò che un
+  terminale riporta oltre ai tasti, al mouse, all'incolla e alle dimensioni non
+  sono un errore: un ciclo che li rifiutasse si fermerebbe per un evento che
+  nessuno ha chiesto.
 
 // ===========================================================================
 = Lo stato: `EditorState` e i compartimenti <stato>
@@ -1555,8 +1615,7 @@ prompt aperto e la storia; le primitive sono in `primitives/minibuffer.rs`.
 buffer `*Minibuffer*`, #emph[al centro] del frame, larga `minibuffer-width` (60)
 e alta `minibuffer-height` (3) e ridotta se il terminale è più piccolo. Il
 centro è scelto perché il fondo dello schermo è occupato da altre strisce (i
-completamenti, la compilazione); un commento di `src/tui.rs` descrive ancora un
-prompt agganciato in basso #rapporto("DOC-1"). Ogni prompt usa lo stesso
+completamenti, la compilazione). Ogni prompt usa lo stesso
 buffer, `*Minibuffer*` (`PROMPT_BUFFER`): due prompt aperti insieme lo
 condividono #rapporto("MIN-1"). `C-g` nel prompt resta `keyboard-quit`, che non
 lo chiude; lo chiude Esc #rapporto("MIN-2"). Ciò che Tab, la storia e un
@@ -2148,7 +2207,7 @@ mark, undo, lock o finestre.
   [`isearch.rs`], [La sessione di ricerca incrementale: `Isearch` e `Direction`.], [`feature/isearch.rs`, `primitives/isearch.rs`],
   [`replace.rs`], [La sessione di sostituzione, `Replace`, con `Casing` ed `expand_replacement`.], [`editor/replace.rs`],
   [`kill_ring.rs`], [`KillRing`: un anello di stringhe con la regola di rotazione e di accodamento.], [`managers/kill_yank.rs` (`KillYank`)],
-  [`rectangle.rs`], [`Rectangle` e `Span`: l'aritmetica di due angoli e delle righe tra loro.], [`primitives/rectangle.rs`, `ui/windows.rs`],
+  [`rectangle.rs`], [`Rectangle` e `Span`: l'aritmetica di due angoli e delle righe tra loro.], [`primitives/rectangle.rs`, `ui/compose.rs`],
   [`results.rs`], [`Entry` e `Results`: una lista di posti e un cursore che la percorre.], [`primitives/occur.rs`, `primitives/results.rs`, `primitives/scan.rs`, `editor/results.rs`],
 )
 
@@ -2963,9 +3022,14 @@ predefinite (`default`, `region`, `mode-line`, `mode-line-inactive`,
 crea una faccia nuova semplicemente nominandola (`'doc-comment` in
 `rust-mode.lisp`) e le dà un aspetto con `set-face`. Il `Theme` in `Runtime`
 associa a ogni faccia uno `Style` (colori di primo piano e sfondo, grassetto,
-corsivo, sottolineato, inverso). I colori sono richieste --- un nome o
-`#rrggbb` --- e il front-end decide come approssimarli (@frame). Le primitive
-sono in `primitives/theme.rs`.
+corsivo, sottolineato, inverso), in un vettore indicizzato dalla faccia: una
+faccia oltre la fine si disegna semplice. I colori sono richieste --- un nome o
+`#rrggbb` --- e il front-end decide come approssimarli (@tui); i sedici nomi
+convenzionali stanno in `NAMED_COLORS`, nell'ordine della tavolozza dei
+terminali. Il tema predefinito usa quei colori, il video inverso dove una cosa
+deve vedersi su ogni sfondo (la regione, la riga di stato, `replace-match`),
+numeri di riga attenuati e una riga di stato inattiva grigia. Tutto questo sta
+in `ui/faces.rs`; le primitive sono in `primitives/theme.rs`.
 
 == Le decisioni <decisioni-modi>
 
@@ -3073,6 +3137,21 @@ sono in `primitives/theme.rs`.
 + *Gli hook e le fonti di completamento stanno nel modo.* Una variabile sarebbe
   una lista per tutti i buffer, e ciò che si completa in un buffer Lisp non è
   ciò che si completa in un elenco di directory.
++ *Una faccia è un nome, non una variante di un enum.* Ogni linguaggio vuole
+  facce sue, `doc-comment` o `attribute`: con un enum chiuso, ognuna sarebbe una
+  modifica qui e la ricompilazione di ogni front-end. Il nome si interna in un
+  intero e non resta una stringa perché si copia in ogni evidenziazione e si
+  cerca nel tema per ognuna: un indice di vettore costa meno di un confronto di
+  stringhe.
++ *Il registro delle facce è globale.* Un nome significa la stessa cosa in
+  ogni buffer e in ogni tema, e un registro per contesto andrebbe portato da
+  `Highlight`, da `SyntaxRule` e da `Theme` senza dire nulla di più. Cresce con
+  i soli nomi che il Lisp usa #rapporto("SIN-5"). `intern` prende il lock in
+  scrittura anche per un nome già noto: si chiama mentre si configura, mai
+  mentre si disegna.
++ *Un colore è una richiesta, non un indice ANSI.* Il core non sa quanti
+  colori ha il terminale, e una finestra grafica non ne ha una tavolozza: dice
+  `"blue"` o `"#3a5fcd"`, e ogni front-end risponde con ciò che può mostrare.
 
 // ===========================================================================
 = Il lavoro in background <sfondo>
@@ -4087,7 +4166,7 @@ Gli altri strumenti:
 = Lo schermo <frame>
 // ===========================================================================
 
-== Finestre
+== Finestre <finestre>
 
 Le finestre affiancate formano un albero (`LayoutNode`): una foglia è una
 `Window` (id, nome del buffer, scorrimento orizzontale e verticale, punto
@@ -4126,6 +4205,19 @@ doppio clic entro 400 ms). Le operazioni che tolgono una finestra rispondono con
 un `WindowRemoved` (`No`, `Yes`, `Refocus(id)`) che dice alla facciata se e
 verso quale finestra spostare il focus.
 
+L'albero, le flottanti e la loro geometria stanno in `ui/windows.rs`: `Rect`,
+`split_rects`, che dice come una divisione taglia un rettangolo, la stessa
+aritmetica per comporre e per sapere che cosa c'è sotto il puntatore, e
+`SplitPath`, la strada dalla radice a una divisione, che non ha un id suo. Una
+`Window` ricorda anche ciò che l'ultimo frame ha deciso per lei: il rettangolo
+in cui è stata disegnata (`rect`, riga di stato compresa; vuoto se non è stata
+disegnata, e allora un clic non la trova), le righe di testo (`text_height`) e
+la larghezza del margine (`gutter_width`). Li leggono i comandi di scorrimento
+e il mouse, tra un frame e l'altro. `point` è il punto della finestra quando
+non ha il focus, `None` per una finestra nuova, che adotta quello del buffer;
+`show_mode_line` è falso per le strisce, che mostrano le righe chieste e non
+una di meno.
+
 == `snapshot`: dalla memoria alla fotografia <snapshot>
 
 `snapshot(&env, larghezza, altezza)` costruisce il `FrameSnapshot`. Prende i
@@ -4145,13 +4237,8 @@ lock in un ordine fisso e non fa I/O; il disegno avviene dopo, senza lock.
   i separatori; poi compone le flottanti.
 + Consuma il testo destinato agli appunti (`take_pending_clipboard`).
 
-Per ogni foglia la composizione fa: scorrimento per mantenere visibile il punto;
-layout delle righe visibili, compreso il testo virtuale; margine dei numeri di
-riga (assoluti o relativi, larghezza minima `display-line-numbers-width`, 3 per
-default, massimo 20); evidenziazioni nell'ordine #emph[sintassi → overlay →
-regione → testo virtuale], perché le ultime vincono; posizione del cursore
-relativa alla finestra; riga di stato. Le finestre flottanti non hanno margine
-né riga di stato, e ricevono solo regione e testo virtuale #rapporto("TUI-6").
+Ogni foglia si compone come dice @composizione. Le finestre flottanti si
+compongono dopo, ognuna nel suo rettangolo, senza margine né riga di stato.
 
 #ref-table(
   columns: (4.4cm, 1fr),
@@ -4166,16 +4253,109 @@ né riga di stato, e ricevono solo regione e testo virtuale #rapporto("TUI-6").
   [`clipboard`], [Testo che il front-end deve mettere negli appunti di sistema, se presente.],
 )
 
-La riga di stato segue `mode-line-format` (predefinito
+== La composizione di una finestra <composizione>
+
+`compute_tiled_views` (`ui/compose.rs`) percorre l'albero delle finestre: una
+divisione taglia il suo rettangolo con `split_rects` e registra la linea tra i
+due figli, una foglia si compone in un `RenderableWindowView`. Le impostazioni
+lette dal Lisp prima dei lock --- il formato della riga di stato e il margine
+--- viaggiano insieme, in un `ComposeSettings`. Per ogni foglia, in
+quest'ordine:
+
++ registra sulla finestra il rettangolo intero, riga di stato compresa: è ciò
+  contro cui si prova un clic;
++ toglie l'ultima riga per la riga di stato (@riga-di-stato), se la finestra ne
+  ha almeno due, e registra le righe che restano (`text_height`);
++ legge il punto e il numero di righe del buffer sotto un'acquisizione sola del
+  suo lock;
++ calcola il margine (@margine) e lo toglie dal rettangolo, a sinistra: da qui
+  in poi scorrimento, cursore ed evidenziazioni conoscono solo le colonne del
+  testo;
++ compone le righe visibili (@righe), segue il punto se si è mosso o se la
+  finestra ha cambiato forma, e ricompone le righe se lo scorrimento verticale
+  è cambiato; le righe servono prima dello scorrimento perché ciò che deve
+  restare visibile è la colonna del cursore sullo schermo, che il testo
+  virtuale può spostare;
++ raccoglie le evidenziazioni in colonne del buffer, nell'ordine #emph[sintassi
+  → overlay → regione], e le porta sullo schermo con `place`; aggiunge per
+  ultime le facce del testo virtuale, perché le ultime vincono;
++ dopo lo scorrimento, che decide quali righe si numerano, calcola le celle del
+  margine.
+
+Segue il punto la finestra con il focus, e ogni finestra affiancata mentre la
+tastiera è in una flottante, come durante una ricerca incrementale; il cursore
+lo disegna solo la finestra con il focus. I colori della sintassi vengono dalla
+cache della colorazione (`syntax_highlights`), che la composizione legge e non
+riempie mai. Gli overlay si chiedono alla loro tabella per le sole righe
+visibili (`overlay_highlights`); la regione (`region_highlights`) è un
+intervallo per riga, o le stesse colonne su ogni riga per un rettangolo. Un
+buffer che non c'è più dà una finestra vuota, non un errore (`compose_layout`).
+Le finestre flottanti ricevono solo regione e testo virtuale #rapporto("TUI-6").
+
+== Le righe e le loro colonne <righe>
+
+`Layout::compose` (`ui/layout.rs`) compone le righe di una finestra: una `Row`
+per riga dello schermo, con la linea del buffer che mostra, il suo testo, e i
+pezzi di cui è fatto, testo del buffer o testo virtuale. Una riga mostra una
+linea intera: le linee lunghe non vanno a capo, e lo scorrimento orizzontale le
+taglia (`visible_text`). Il testo virtuale si chiede alla sua tabella una volta
+per riga, non per carattere, e una riga senza testo virtuale è un pezzo solo.
+
+I pezzi fanno la corrispondenza tra le colonne. `to_screen` dice in quale
+colonna dello schermo si disegna una colonna del buffer, `to_buffer` il
+contrario. Il testo virtuale ancorato a una colonna si disegna prima di lei,
+così il punto non cade mai dentro il testo virtuale; una colonna dello schermo
+dentro il testo virtuale risponde con la colonna dell'ancora, e un clic su un
+suggerimento mette il punto sul carattere davanti a cui sta. Oltre la fine
+della linea le due funzioni vanno una colonna per colonna, senza fermarsi: una
+selezione che continua sulla linea dopo mostra selezionato l'a capo.
+
+`place` è il solo punto in cui un'evidenziazione in colonne del buffer
+(`BufferHighlight`) diventa una in colonne dello schermo (`Highlight`): la
+mappa attraverso la riga, la sposta dello scorrimento orizzontale e la taglia
+alla larghezza. Sintassi, overlay e regione passano tutti di lì. Un carattere
+è una colonna: anche un tab #rapporto("TUI-3") e un carattere largo
+#rapporto("TUI-4"); e i caratteri di controllo passano così come sono fino al
+renderer #rapporto("TUI-1").
+
+== Il margine dei numeri <margine>
+
+`display-line-numbers` accende il margine a sinistra del testo (`LineNumbers`):
+i numeri delle righe, contati da uno, o con `relative` la distanza dalla riga
+del punto, che mostra il proprio numero. `gutter_columns` (`ui/gutter.rs`) dice
+quante colonne prende: le cifre del numero più grande, almeno
+`display-line-numbers-width` (3 per default, al massimo 20), più lo spazio
+prima del testo; zero se al testo resterebbero meno di
+`MIN_TEXT_WIDTH_FOR_GUTTER` (8) colonne. `gutter_cells` ne dà una cella per
+riga dello schermo, larga esattamente quanto il margine, vuota oltre la fine
+del buffer, con la faccia `line-number`, o `line-number-current` sulla riga del
+punto. Un numero troppo largo per il margine perde le cifre di sinistra. Le
+impostazioni si leggono in un `GutterSpec` prima che la composizione prenda un
+lock.
+
+== La riga di stato <riga-di-stato>
+
+La riga di stato prende l'ultima riga del rettangolo di una finestra affiancata
+alta almeno due righe: una finestra di una riga la tiene per il testo, e le
+strisce e le flottanti non ne hanno. Sta fuori dal rettangolo del testo come il
+margine, ed è larga quanto la finestra, margine compreso.
+
+`expand_mode_line` (`ui/mode_line.rs`) la scrive seguendo `mode-line-format`
+(predefinito
 `" %* %b   %m %s  L%l C%c   %p "`): `%b` nome del buffer, `%f` file (o nome),
 `%m` modo, `%s` lo stato che il modo tiene nel buffer (`mode-line-state`, come
 il `NORMAL` di vim), `%l` riga (da 1), `%c` colonna (da 0), `%p` posizione
 (`All`, `Top`, `Bot` o percentuale), `%*` `**` se modificato e `--`
-altrimenti, `%%`.
+altrimenti, `%%`. `%p` dice `All` solo per un buffer di una riga, perché lì l'altezza della
+finestra non si conosce #rapporto("TUI-7"). Una sequenza `%` che non conosce
+resta com'è scritta, e un formato che non è una stringa ricade su quello
+predefinito.
 
-== Il renderer della TUI
+== Il renderer della TUI <tui>
 
-`render_to` disegna una fotografia in quest'ordine: nasconde il cursore e pulisce
+`render_frame` (`src/tui/render.rs`) disegna una fotografia sullo standard
+output attraverso `render_to`, che scrive in qualunque `Write` e disegna in
+quest'ordine: nasconde il cursore e pulisce
 lo schermo; disegna i separatori (prima delle finestre, perché una flottante
 deve poterli coprire); per ogni vista disegna bordo e titolo, ogni riga del
 rettangolo riempita fino alla larghezza (così una flottante è opaca), il
@@ -4194,6 +4374,46 @@ Gli appunti in uscita passano da OSC 52 perché l'editor non sa di avere un
 terminale e un programma esterno (`xclip`, `pbcopy`) non funzionerebbe via SSH.
 In entrata non c'è nulla da leggere: il terminale consegna gli appunti con
 l'incolla «bracketed», che diventa `insert-pasted-text`.
+
+== La finestra grafica <gui>
+
+`gui_main` (`src/gui/mod.rs`) apre una finestra con eframe, la libreria di
+applicazioni di egui, quando lo standard input non è un terminale o quando la
+riga di comando chiede `--gui`; `--font` le dà un file di caratteri a larghezza
+fissa. La finestra raggiunge l'editor attraverso `Core`, che passa da dove passa
+il terminale: i tasti per `handle_key_event`, il resto per il Lisp. Così vim, le
+macro e gli hook vedono ciò che si fa nella finestra come ciò che si fa nel
+terminale. All'avvio `Core` lega `<char>` a `self-insert` se nessuno lega `é`:
+la mappa scritta in Rust lega solo l'ASCII stampabile.
+
+A ogni aggiornamento (`EditorApp::update`, in `src/gui/app.rs`) la finestra
+legge gli eventi una volta per frame, chiama `tick`, disegna la barra dei
+comandi, adatta la griglia alla finestra e chiama `resize` se è cambiata,
+compone la fotografia con `snapshot` e la disegna (`src/gui/paint.rs`); poi
+chiede il prossimo aggiornamento entro il minimo tra `next_redraw_in`,
+`drag_scroll_in` e `BACKGROUND_POLL`, 250 ms. Il lavoro di sfondo non la
+sveglia: aggiorna ogni 250 ms anche quando nulla cambia #rapporto("GUI-1").
+Chiudere la finestra chiede all'editor di uscire come `C-x C-c`, con le domande
+sui buffer modificati.
+
+I comandi della barra (Open, Save, Save as, Copy, Cut, Undo, Vim) passano per
+`M-x`, con i loro hook, il loro passo di undo e la macro in registrazione, e si
+rifiutano mentre un prompt è aperto. I tasti si traducono in `src/gui/keys.rs`.
+Con Ctrl o Alt vince il testo che la tastiera riporta, se c'è, perché la
+punteggiatura dipende dalla disposizione dei tasti; il testo di AltGr, e quello
+non ASCII di Option, resta testo da scrivere. egui prende per sé Ctrl-C, Ctrl-X
+e Ctrl-V e li consegna come Copy, Cut e Paste: Copy e Cut tornano `C-c` e
+`C-x`, e sono `kill-ring-save` e `kill-region` solo con Shift o su macOS;
+Paste incolla con Shift o su macOS, altrimenti è `C-v`. Inizio,
+Fine, Canc, PagSu e PagGiù la finestra li traduce da sé, e diversamente nello
+stato normale di vim, perché il core non ha un nome per loro
+#rapporto("CMD-2").
+
+Il disegno usa una griglia di celle come il terminale, un carattere per cella;
+gli stili delle evidenziazioni si fondono con quelli del testo sotto, dove la
+TUI ridisegna sopra. Il testo che un metodo di input sta componendo si disegna
+al cursore, e il rettangolo del cursore passa a egui, che vi apre la finestra
+del metodo di input.
 
 == Il mouse <mouse>
 
@@ -4249,6 +4469,132 @@ un prompt.
 + *`mouse-mode` vale per ogni front-end.* `handle_mouse_event` lo controlla da
   sé, non solo dove il terminale accende la cattura: una finestra grafica, che
   riceve sempre il mouse, gli ubbidisce allo stesso modo.
++ *La fotografia cresce di un campo, mai di un lock del renderer.* Ciò che un
+  front-end deve sapere entra in `FrameSnapshot`: un renderer che leggesse lo
+  stato da sé tornerebbe a vedere un frame mai esistito. Il tema è nella
+  fotografia per la stessa ragione: disegnare non tocca nulla di condiviso, e la
+  fotografia sa i suoi colori.
++ *L'input in sospeso e l'offerta della keymap transitoria sono campi propri.*
+  Un messaggio dice che cosa è successo, e scade; questi dicono che cosa è vero
+  ora, e restano finché lo è. L'offerta prende il posto del messaggio, e non
+  entra nell'input in sospeso, che finisce con il trattino della sequenza.
++ *La colorazione in corso e gli appunti viaggiano nella fotografia.* Il colore
+  arriva da solo, a passi: un renderer fermo su un evento dormirebbe con il file
+  ancora in bianco e nero, e `colouring_pending` gli dice di tornare. Gli
+  appunti di sistema li raggiunge solo il front-end, che ha un terminale o una
+  finestra: il testo si prende una volta, con la fotografia, e il front-end lo
+  consegna.
++ *Righe, non linee.* Una `Row` ricorda la linea che mostra, ma non c'è un
+  genere di riga che nessuno crea: una decorazione su una riga sua, o una linea
+  spezzata su più righe, saranno un produttore nuovo di righe, non un caso in
+  più di questa.
++ *Una lista di pezzi, non una colonna del buffer per cella.* Il caso comune è
+  una riga senza testo virtuale, un pezzo solo: la mappa costa una somma. Una
+  tabella per cella costerebbe in ogni riga di ogni frame.
++ *Un tipo per le evidenziazioni in colonne del buffer.* `BufferHighlight` e
+  `Highlight` hanno gli stessi campi e un significato diverso: con un tipo solo,
+  un'evidenziazione non portata sullo schermo si disegnerebbe sfasata del testo
+  virtuale e dello scorrimento, senza errori. E `place` è il solo punto che le
+  porta: mappare, scorrere e tagliare in un posto solo, per le tre fonti.
++ *La finestra ricorda ciò che l'ultimo frame ha deciso.* Il rettangolo, le
+  righe di testo, il margine, come lo scorrimento: i comandi e il mouse li
+  leggono tra un frame e l'altro, e un clic e il disegno non possono non
+  concordare, perché leggono la stessa cosa. Un rettangolo vuoto è una finestra
+  non ancora disegnata, che nessun clic trova.
++ *Un punto per finestra.* Due finestre sullo stesso buffer sono due viste, e
+  ognuna resta dove la si è lasciata. Il punto si scrive nella composizione,
+  per le finestre che lo seguono, e non si salva all'uscita da ogni comando, che
+  avrebbe troppi posti da cui uscire. Mostrare un altro buffer dimentica punto e
+  scorrimento: l'offset 4000 di un file non dice nulla di un altro.
++ *Le divisioni fisse.* `FirstFixed` tiene larga la lista di dired mentre la
+  finestra cresce; `SecondFixed` tiene la striscia aggiunta in basso, come
+  `split-window-right` con una dimensione in Emacs. `SplitPath` esiste perché
+  le divisioni non hanno un id: si trovano per la strada dalla radice.
++ *L'albero non ha misure.* Le misure le dà `split_rects` a ogni composizione:
+  nessuna finestra è troppo piccola da dividere, e l'ultima finestra non si
+  chiude. Trascinare una riga di stato o un separatore cambia la divisione
+  senza cambiarne il genere, con un minimo di 2 righe e 4 colonne; la riga di
+  stato fa da confine tra due finestre impilate, e l'ultima in basso non è un
+  confine, perché sotto c'è l'area messaggi. Un frame piccolo può comunque
+  dividere una finestra più piccola di così.
++ *Il margine ha una larghezza minima, non adatta.* Adattato al numero di righe,
+  il testo scivolerebbe di una colonna appena un file supera le 99 righe o
+  scende sotto le 100; con un minimo resta fermo, e si allarga solo se serve.
+  Sotto le 8 colonne di testo i numeri non si mostrano: sarebbero quasi tutto
+  ciò che la finestra mostra.
++ *Una cella del margine per riga, anche oltre la fine.* Celle e righe vanno a
+  coppie per indice, e nessun renderer disegna i numeri di righe che non ci
+  sono più. `gutter_columns` risponde con una larghezza, zero per nessuna, non
+  con un `Option`: chi la usa fa la stessa cosa nei due casi.
++ *Il margine e la riga di stato stanno fuori dal rettangolo del testo.* Lo
+  scorrimento, il cursore e le evidenziazioni non sanno del margine, e un
+  renderer che non conosce il margine disegna tutto dov'era. La larghezza del
+  margine è dichiarata perché la riga di stato lo attraversa, e una finestra
+  senza righe non ha celle da cui misurarlo.
++ *Seguire il punto solo quando si muove.* Se lo scorrimento seguisse il punto a
+  ogni frame, la rotella sarebbe ricondotta subito dov'era: come in Emacs,
+  scorrere è guardare altrove finché non si dice dove si è. Mentre la tastiera è
+  in una flottante seguono il punto anche le finestre senza il focus: durante
+  una ricerca incrementale il punto si muove nel buffer sotto, e un `C-s` che
+  portasse la corrispondenza fuori dallo schermo sembrerebbe fermo.
++ *Ricomporre, non aggiustare.* Quando lo scorrimento cambia le righe si
+  compongono di nuovo: correggere le righe già composte sarebbe una seconda
+  implementazione del layout, da tenere d'accordo con la prima.
++ *L'ordine delle evidenziazioni è una precedenza.* Un overlay batte il colore,
+  perché una diagnostica su una parola chiave deve vedersi; la regione batte
+  tutto, perché ciò che si è selezionato si deve vedere. Le evidenziazioni sono
+  una lista di eccezioni accanto alle righe, non celle con uno stile: una riga
+  senza evidenziazioni è una stringa.
++ *Le impostazioni si leggono prima dei lock, e viaggiano insieme.* Il Lisp ha
+  lock suoi, e la composizione gira con quelli delle finestre e dei buffer già
+  presi; `ComposeSettings` le porta come un gruppo, al posto di una firma di
+  otto argomenti.
++ *La composizione legge la cache dei colori, non colora.* Un file grande si
+  apre senza colore e si colora mentre lo si guarda: colorare nella composizione
+  bloccherebbe il primo frame sul file intero.
++ *Il renderer prende la fotografia, mai l'editor.* Così l'I/O avviene senza
+  lock, e il disegno potrà passare su un thread suo senza rivedere ogni
+  funzione. `render_to` scrive in qualunque `Write` perché i test leggano le
+  sequenze che produce, per esempio dove finisce il cursore.
++ *Il cursore per ultimo, i separatori per primi.* Ogni riga scritta sposta il
+  cursore del terminale, e l'area messaggi lo lascerebbe alla fine del suo
+  testo. Una linea tra le finestre occupa una colonna che nessuna finestra
+  affiancata usa, e una flottante deve poterla coprire.
++ *Ogni riga del rettangolo si riempie fino alla larghezza.* Così una flottante
+  è opaca, e il buffer sotto non si vede tra le sue righe corte; costa nulla,
+  perché gli spazi stanno nella stessa stringa. Le evidenziazioni si ridisegnano
+  sopra le righe: una riga semplice è una sola scrittura. La riga di stato è
+  larga anche sul margine: una barra con una tacca non è una barra.
++ *Gli appunti escono con OSC 52.* L'editor non sa quale programma degli appunti
+  ci sia (`pbcopy`, `xclip`), e via SSH un programma scriverebbe gli
+  appunti della macchina remota. La sequenza finisce con ST e non con BEL perché
+  tmux lo passa senza trattamenti. Gli appunti non si leggono con OSC 52: molti
+  terminali lo disattivano, e la risposta arriverebbe mescolata ai tasti; entrano
+  con l'incolla. Il base64 è scritto a mano: venti righe, dove un crate sarebbe
+  una dipendenza in più per un alfabeto.
++ *Nel dubbio, meno colori.* La profondità si legge da `COLORTERM` e `TERM`, e
+  si indovina in basso: un terminale a 24 bit che riceve un indice della
+  tavolozza mostra un colore vicino, mentre uno a 16 colori che riceve una
+  sequenza a 24 bit non mostra nulla di utile. La tavolozza è la tabella
+  `NAMED_COLORS` del core, una sola: il colore di una voce è quello che l'utente
+  ha dato al suo terminale. Con 256 colori vince il più vicino tra il cubo e la
+  scala di grigi, che rende meglio i grigi.
++ *La finestra grafica passa da dove passa il terminale.* Tasti e Lisp, non le
+  primitive chiamate da Rust: vim, le macro e gli hook vedono tutto, e la barra
+  dei comandi è `M-x` con i suoi hook, il suo undo e la sua macro.
++ *Ctrl-V resta dell'editor.* È la pagina in giù di Emacs e il blocco visivo
+  di vim: incollare con Ctrl-V li toglierebbe a tutti e due. Incolla
+  Ctrl+Shift+V su Linux e Windows, e Cmd+V su macOS. Con gli appunti vuoti
+  egui-winit non manda la pressione di Ctrl-V, e allora il rilascio vale `C-v`.
+  egui-winit manda un evento di tasto per ogni pressione, e il testo solo
+  quando Ctrl non è premuto: lo stesso tasto non si scrive due volte.
++ *La griglia di celle.* La finestra disegna come un terminale, un carattere per
+  cella: la fotografia è fatta di righe e colonne, e il mouse e le
+  evidenziazioni parlano in colonne. Dove la TUI ridisegna sopra, la finestra
+  fonde gli stili, perché non può riscrivere una cella.
++ *Un frame legge l'input una volta.* `update` può essere chiamato di nuovo
+  per lo stesso frame, e gli eventi letti una seconda volta premerebbero due
+  volte lo stesso tasto: `last_input_frame` ricorda il frame già letto.
 
 // ===========================================================================
 = Macro di tastiera <macro>
@@ -5515,9 +5861,10 @@ Un front-end deve: tradurre gli eventi nei tipi di `rsedit_core`; chiamare
 `handle_key_event`, `handle_paste`, `handle_mouse_event` e `resize`; comunicare
 `frame-width` e `frame-height`; in un ciclo, chiedere `snapshot` e disegnarlo
 senza tenere nulla dell'editor; aspettare al massimo `next_redraw_in` (e
-`drag_scroll_in`) e chiamare `tick` quando l'attesa scade; mettere
+`drag_scroll_in`) e chiamare `tick` quando l'attesa scade; farsi svegliare da
+`on_background_change` quando un lavoro di sfondo cambia qualcosa; mettere
 `frame.clipboard` negli appunti. Tutto ciò che c'è da sapere su colori, bordi e
-cursore è nella fotografia; `src/tui.rs` è l'esempio completo.
+cursore è nella fotografia; `src/tui/` è l'esempio completo (@ciclo-tui).
 
 // ===========================================================================
 = Appendice

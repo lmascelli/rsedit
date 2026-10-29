@@ -60,6 +60,25 @@ FINDING YOUR WAY
     Backspace as C-h, (setq help-key "C-c h") and (install-help-keys) move
     the whole tree.
 
+IN A WINDOW
+    rsedit runs in the terminal it is started from. With --gui, or when its
+    standard input is not a terminal, it opens a window of its own instead,
+    drawn with the monospace font file --font names, or a built-in one.
+
+    The window is the same editor: keys go through the same keymaps, and the
+    toolbar's Open, Save, Save as, Copy, Cut, Undo and Vim run their
+    commands as M-x would; they are greyed out while a prompt is open. Its
+    - and + buttons make the text smaller and larger, and a file dropped on
+    the window is opened.
+
+    On Linux and Windows, Ctrl+Shift+C, Ctrl+Shift+X and Ctrl+Shift+V copy,
+    cut and paste; Ctrl+C, Ctrl+X and Ctrl+V keep their bindings, so C-x
+    and C-v still work. On macOS, Cmd+C, Cmd+X and Cmd+V copy, cut and paste,
+    and Cmd+O, Cmd+S, Cmd+Shift+S, Cmd+Q, Cmd+Z and Cmd+Shift+Z open, save,
+    save as, quit, undo and redo. Home, End, Delete, Page Up and Page Down
+    move as they do in other programs, and as vim has them in its normal
+    state; they cannot be bound.
+
 SEE ALSO
     guide, first-steps, editing, killing, files, searching, getting-help,
     completion, minibuffer, keymaps, modes, writing-modes, configuration,

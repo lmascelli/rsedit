@@ -1,46 +1,7 @@
-//! What a window's rows actually say, and how a screen cell relates to a
-//! buffer position.
+//! What a window's rows say, and how a column of the buffer maps to a column
+//! of the screen and back, with virtual text drawn between them.
 //!
-//! # The identity this replaces
-//!
-//! Everything in the editor used to rest on one equality:
-//!
-//! > buffer column == screen column minus `scroll_x`
-//!
-//! It held because a row on screen was a line of the buffer and nothing else.
-//! Five things depended on it: the strings a window shows, where the cursor is
-//! drawn, how far the window scrolls sideways to keep the cursor visible,
-//! where a highlight's columns are, and which buffer position a click is on.
-//!
-//! [`crate::buffer::virtual_text`] breaks it. A row that shows an inlay hint
-//! is longer than the line it came from, and every one of those five has to
-//! ask rather than assume. This module is the thing they ask.
-//!
-//! # Rows, not lines
-//!
-//! A [`Row`] is one row of the screen, and it records which buffer line it
-//! came from. Today that is always one row per line -- nothing produces a row
-//! that is not a line -- but the five callers are written against rows, so a
-//! decoration that occupies a row of its own, or a long line wrapped across
-//! two, is a new kind of producer rather than a fifth coordinate system
-//! threaded through the editor again.
-//!
-//! What is deliberately *not* here is an enum of row kinds with variants
-//! nothing creates. [`Row::line`] is a buffer line number because that is
-//! what every caller needs today; when something does produce a row belonging
-//! to no line, it becomes the thing that says so, and the change is to one
-//! type and the handful of places that read it.
-//!
-//! # Why a list of pieces
-//!
-//! A row is a few runs: some of the buffer, some not. Mapping either way is a
-//! walk over them, and a row with no virtual text on it has exactly one piece
-//! -- which is every row of every window in the ordinary case, so the common
-//! path is a single comparison and an addition.
-//!
-//! The alternative, a buffer column per screen cell, is simpler to read and
-//! allocates per cell per row per window per frame for a mapping that is
-//! almost always the identity.
+//! Design: `doc/architettura-editor.typ, <righe>`.
 use crate::buffer::{BufferTrait, VirtualTextTable};
 use crate::ui::{Face, Highlight};
 
@@ -53,7 +14,8 @@ enum Piece {
     Virtual { width: usize },
 }
 
-/// One row of a window, composed.
+/// One row of a window, composed: the text it shows and the pieces it is
+/// made of, buffer text or virtual text.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     /// Which line of the buffer this row shows.
@@ -67,7 +29,9 @@ pub struct Row {
 }
 
 impl Row {
-    /// A row that is exactly its line, with nothing added.
+    // TODO(TUI-3): a Tab is one column here.
+    // TODO(TUI-4): so is a wide character.
+    /// Returns a row that is exactly its line, with nothing added.
     fn plain(line: usize, text: String) -> Self {
         let width = text.chars().count();
         Self {
@@ -78,15 +42,12 @@ impl Row {
         }
     }
 
-    /// Where buffer column COLUMN is drawn.
+    /// Returns the screen column buffer column COLUMN is drawn at.
     ///
-    /// Virtual text anchored at a column comes *before* it, so a position with
-    /// a hint in front of it maps past the hint and onto the character itself.
-    /// That is what keeps the cursor on real text: a hint is not somewhere
-    /// point can be, and point is never drawn inside one.
-    ///
-    /// A column past the end of the line maps past the end of the row, which
-    /// is what the cursor sitting on a line's newline needs.
+    /// Virtual text anchored at a column is drawn before it, so the column
+    /// maps past the virtual text, onto its own character: point is never
+    /// drawn inside virtual text. A column past the end of the line maps past
+    /// the end of the row, one screen column per buffer column.
     pub fn to_screen(&self, column: usize) -> usize {
         let mut screen = 0;
         let mut text_width = 0;
@@ -102,21 +63,17 @@ impl Row {
                 Piece::Virtual { width } => screen += width,
             }
         }
-        // Past the end of the line, one screen column per buffer column.
-        //
-        // Not clamped to the row, which is what this did first and what two
-        // tests caught: a span that runs one column past a line's last
-        // character is how a multi-line selection shows its line endings as
-        // selected, and clamping turned every one of those back into a span
-        // that stopped at the text.
+        // Past the end of the line, one screen column per buffer column, and
+        // not clamped: a selection runs one column past a line's end to show
+        // the newline as selected.
         screen + (column - text_width.min(column))
     }
 
-    /// Which buffer column screen column SCREEN is on.
+    /// Returns the buffer column screen column SCREEN is on.
     ///
-    /// A column inside virtual text answers the buffer column the text is
-    /// anchored at -- clicking a hint puts point on the character it is in
-    /// front of, because there is nowhere else for point to go.
+    /// A column inside virtual text answers the column the text is anchored
+    /// at: a click on virtual text puts point on the character it is in
+    /// front of.
     pub fn to_buffer(&self, screen: usize) -> usize {
         let mut walked = 0;
         let mut last_buffer = 0;
@@ -145,7 +102,8 @@ impl Row {
         last_buffer + (screen - walked.min(screen))
     }
 
-    /// The faces the virtual text on this row asked for, as highlights at ROW.
+    /// Returns the faces the virtual text on this row asked for, as
+    /// highlights at ROW.
     fn virtual_highlights(&self, row: usize) -> impl Iterator<Item = Highlight> + '_ {
         self.faces.iter().map(move |(start, end, face)| Highlight {
             row,
@@ -156,7 +114,7 @@ impl Row {
     }
 }
 
-/// The rows a window is showing.
+/// The rows a window is showing, composed from its buffer's lines.
 #[derive(Clone, Debug, Default)]
 pub struct Layout {
     rows: Vec<Row>,
@@ -166,12 +124,9 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// Compose the rows for the buffer lines `[first_line, first_line + height)`.
+    /// Composes the rows of the buffer lines from FIRST_LINE, HEIGHT of them.
     ///
-    /// `virtual_text` is read once per row rather than searched per character:
-    /// a frame does this for every visible row of every window, and a search
-    /// per column would be the kind of cost that only shows up on somebody
-    /// else's machine.
+    /// VIRTUAL_TEXT is asked once per row, not once per character.
     pub fn compose<B: BufferTrait>(
         text: &B,
         virtual_text: &VirtualTextTable,
@@ -179,8 +134,7 @@ impl Layout {
         height: usize,
     ) -> Self {
         let lines = text.get_lines(first_line, first_line + height);
-        // The ordinary case, and worth not paying for: with nothing to add,
-        // every row is its line.
+        // The ordinary case: with nothing to add, every row is its line.
         if virtual_text.is_empty() {
             return Self {
                 rows: lines
@@ -203,19 +157,20 @@ impl Layout {
         Self { rows, first_line }
     }
 
-    /// The row showing buffer line LINE, if it is on screen.
+    /// Returns the row showing buffer line LINE, with its index, if it is on
+    /// screen.
     pub fn row_of_line(&self, line: usize) -> Option<(usize, &Row)> {
         let index = line.checked_sub(self.first_line)?;
         self.rows.get(index).map(|row| (index, row))
     }
 
-    /// The row at index ROW of the window.
+    /// Returns the row at index ROW of the window.
     pub fn row(&self, row: usize) -> Option<&Row> {
         self.rows.get(row)
     }
 
-    /// Every row's text, scrolled sideways by SCROLL_X and cut to WIDTH --
-    /// what the renderer draws.
+    /// Returns every row's text, scrolled sideways by SCROLL_X and cut to
+    /// WIDTH: what the renderer draws.
     pub fn visible_text(&self, scroll_x: usize, width: usize) -> Vec<String> {
         self.rows
             .iter()
@@ -223,7 +178,7 @@ impl Layout {
             .collect()
     }
 
-    /// The highlights the virtual text itself asks for, clipped like any
+    /// Returns the highlights the virtual text asks for, clipped like any
     /// other.
     pub fn virtual_highlights(&self, scroll_x: usize, width: usize) -> Vec<Highlight> {
         self.rows
@@ -235,7 +190,9 @@ impl Layout {
     }
 }
 
-/// Compose one row out of its line and whatever sits inside it.
+// TODO(TUI-1): the text is copied as it is, control characters included.
+/// Returns the row of LINE, whose TEXT starts at offset LINE_START, with the
+/// virtual text that sits inside it.
 fn compose_row(line: usize, text: &str, line_start: usize, virtual_text: &VirtualTextTable) -> Row {
     let line_width = text.chars().count();
     // The newline's own offset is in range, so virtual text at the end of a
@@ -288,12 +245,9 @@ fn compose_row(line: usize, text: &str, line_start: usize, virtual_text: &Virtua
     }
 }
 
-/// A highlight in buffer coordinates, before it is placed on a row.
-///
-/// A distinct type from [`Highlight`] so that the compiler catches the two
-/// being mixed up: they are the same four numbers in two coordinate systems,
-/// and getting them the wrong way round draws a colour on the wrong words
-/// rather than failing.
+/// A highlight in buffer coordinates, before it is placed on a row: a type
+/// apart from [`Highlight`], the same four numbers in screen coordinates, so
+/// that the compiler tells the two apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BufferHighlight {
     pub line: usize,
@@ -303,12 +257,9 @@ pub struct BufferHighlight {
     pub face: Face,
 }
 
-/// Place HIGHLIGHTS on the rows they belong to, scrolled and clipped.
-///
-/// One function for all three producers -- syntax, overlays and the region.
-/// Each of them used to subtract `scroll_x`, clamp to the width and drop the
-/// empties itself, which was three copies of a clipping rule and three places
-/// for a mapping to be forgotten.
+/// Returns HIGHLIGHTS placed on the rows of LAYOUT, scrolled by SCROLL_X and
+/// cut to WIDTH, without those left empty. The one place colouring, overlays
+/// and the region are mapped onto the screen.
 pub fn place(
     layout: &Layout,
     highlights: impl IntoIterator<Item = BufferHighlight>,
@@ -333,8 +284,8 @@ pub fn place(
         .collect()
 }
 
-/// Shift a highlight by the sideways scroll and cut it to the window, or drop
-/// it when nothing of it is left.
+/// Returns HIGHLIGHT shifted by the sideways scroll and cut to WIDTH, or
+/// `None` when nothing of it is left.
 fn clip(highlight: Highlight, scroll_x: usize, width: usize) -> Option<Highlight> {
     let start_col = highlight.start_col.saturating_sub(scroll_x);
     let end_col = highlight.end_col.saturating_sub(scroll_x).min(width);

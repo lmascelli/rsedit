@@ -1,4 +1,9 @@
-use crate::tests::tui_test::ColorDepth::TrueColor;
+//! The terminal front end: keys and the mouse from crossterm, the frame
+//! drawn as escape sequences, colours resolved to what the terminal can
+//! show, and the clipboard through OSC 52.
+//!
+//! Design: `doc/architettura-editor.typ, <tui>`.
+use crate::tests::tui_tests::ColorDepth::TrueColor;
 use crossterm::event::{KeyCode as CrossKeyCode, KeyModifiers as CrossModifiers};
 use crossterm::style::Color as CrossColor;
 use rsedit_core::ELispExp;
@@ -10,36 +15,24 @@ use rsedit_core::{Color, Face, FrameSnapshot, Highlight, NAMED_COLORS, Rect, Sty
 use rsedit_core::{create_global_env, isolate_config_for_tests};
 use std::sync::Arc;
 
-use crate::tests::tui_test::ColorDepth::Ansi16;
-use crate::tests::tui_test::ColorDepth::Ansi256;
-use crate::tui::ColorDepth;
-use crate::tui::base64_encode;
-use crate::tui::osc52_copy;
-use crate::tui::render_to;
-use crate::tui::resolve;
-use crate::tui::translate_key;
+use crate::tests::tui_tests::ColorDepth::Ansi16;
+use crate::tests::tui_tests::ColorDepth::Ansi256;
+use crate::tui::colour::{ColorDepth, resolve};
+use crate::tui::input::translate_key;
+use crate::tui::render::{base64_encode, osc52_copy, render_to};
 
 const COLS: u16 = 80;
 const ROWS: u16 = 24;
 
-/// An editor, with this process's configuration pointed somewhere harmless
-/// first.
-///
-/// # Why these tests have to ask and the library's own do not
-///
-/// Building an editor creates its configuration directory and evaluates what
-/// is in it, so a test suite that does not redirect it writes into the
-/// person's real `~/.config/rsedit` and then runs whatever they keep there.
-/// `rsedit_core` handles that for its own tests inside `create_global_env` --
-/// but `cfg(test)` is not active in a library compiled as a dependency, so
-/// nothing it does conditionally can reach this crate. Hence the explicit
-/// call; it is idempotent, so every test may make it.
+/// Returns an editor, with this process's configuration pointed somewhere
+/// harmless first: the core's `cfg(test)` does not reach a crate that
+/// depends on it, so these tests ask for it themselves.
 fn editor() -> (EditorState<GapBuffer>, Arc<Env<EditorState<GapBuffer>>>) {
     isolate_config_for_tests();
     create_global_env::<GapBuffer>().expect("global env")
 }
 
-/// Render one frame into memory and return the bytes.
+/// Returns one frame, rendered into memory.
 fn frame(state: &EditorState<GapBuffer>, env: &Arc<Env<EditorState<GapBuffer>>>) -> String {
     let mut out: Vec<u8> = Vec::new();
     let snapshot = state.snapshot(env, COLS as usize, ROWS as usize);
@@ -47,11 +40,8 @@ fn frame(state: &EditorState<GapBuffer>, env: &Arc<Env<EditorState<GapBuffer>>>)
     String::from_utf8(out).expect("crossterm emits valid UTF-8")
 }
 
-/// Every cursor placement in the stream, as (col, row), in order.
-///
-/// `MoveTo(x, y)` is written as `ESC [ y+1 ; x+1 H`, so this reads the
-/// output the way a terminal would rather than trusting a hard-coded
-/// escape string.
+/// Returns every cursor placement in the stream, as (col, row), in order,
+/// read from `ESC [ y+1 ; x+1 H` as a terminal reads it.
 fn placements(rendered: &str) -> Vec<(u16, u16)> {
     let mut out = Vec::new();
     for chunk in rendered.split('\u{1b}').skip(1) {
@@ -93,7 +83,7 @@ fn expected_cursor(
 
 use crossterm::event::{KeyEvent as CrossKeyEvent, KeyEventKind, KeyEventState};
 
-/// One key as crossterm would report it.
+/// Returns one key as crossterm reports it.
 fn terminal_key(code: CrossKeyCode, modifiers: CrossModifiers) -> CrossKeyEvent {
     CrossKeyEvent {
         code,
@@ -103,12 +93,8 @@ fn terminal_key(code: CrossKeyCode, modifiers: CrossModifiers) -> CrossKeyEvent 
     }
 }
 
-/// The bug this file is being fixed for.
-///
-/// `minibuffer-mode` has bound Escape to `minibuffer-cancel` since the
-/// minibuffer was written, and Escape did nothing: the translation below
-/// had no arm for it, so the key was dropped here and never reached a
-/// keymap at all.
+/// Escape translates, so `minibuffer-cancel`, bound to it by
+/// `minibuffer-mode`, can be reached.
 #[test]
 fn escape_reaches_the_editor() {
     assert_eq!(
@@ -119,9 +105,8 @@ fn escape_reaches_the_editor() {
     );
 }
 
-/// Every key the editor can name has to survive the trip. A missing arm
-/// here is invisible from the outside -- the key simply does nothing --
-/// which is exactly how the one above went unnoticed.
+/// Every key the editor can name translates: a missing arm is invisible
+/// from the outside, as the key simply does nothing.
 #[test]
 fn every_key_the_editor_can_name_translates() {
     for (from, to) in [
@@ -190,12 +175,8 @@ fn a_key_the_editor_cannot_name_is_refused() {
     assert!(translate_key(terminal_key(CrossKeyCode::F(5), CrossModifiers::NONE)).is_none());
 }
 
-/// And the whole path, joined up: a terminal Escape closes an open prompt.
-///
-/// The core already had a test that Escape cancels the minibuffer, and it
-/// passed throughout -- it called `handle_key_event` directly, entering one
-/// step below the step that was broken. This one starts where the terminal
-/// does.
+/// The whole path: a terminal Escape closes an open prompt. The core's own
+/// test enters at `handle_key_event`, one step after the translation.
 #[test]
 fn a_terminal_escape_closes_the_minibuffer() {
     let (state, env) = editor();
@@ -214,9 +195,7 @@ fn a_terminal_escape_closes_the_minibuffer() {
         .expect("Escape must translate");
     state.handle_key_event(escape, &env);
 
-    // Asserted on the frame rather than on editor state: what was broken
-    // was that the prompt stayed up, and the frame is where "up" is
-    // decided.
+    // Asserted on the frame, which is where a prompt is up or not.
     assert!(
         !frame(&state, &env).contains("P:"),
         "Escape should have cancelled the prompt and taken it off the screen"
@@ -290,12 +269,8 @@ fn the_rule_is_drawn_with_the_window_separator_face() {
     );
 }
 
-/// The border of a titled window shows its title, not its buffer name.
-///
-/// This was dead data before: `minibuffer-read` computed a prompt,
-/// `open_floating_window` stored it, and the renderer drew
-/// `Some(view.buffer_name)` instead -- so every prompt was labelled
-/// `*Minibuffer*` and the question being asked was never shown at all.
+/// The border of a titled window shows its title, not its buffer name: a
+/// prompt shows its question, not `*Minibuffer*`.
 #[test]
 fn a_titled_window_is_labelled_with_its_title() {
     let (state, env) = editor();
@@ -317,12 +292,8 @@ fn a_titled_window_is_labelled_with_its_title() {
     );
 }
 
-/// The regression this guards.
-///
-/// The cursor used to be positioned inside the window loop, so the echo
-/// area -- drawn afterwards, and like every other row emitting `MoveTo`
-/// then `Print` -- left the terminal cursor at the end of its message
-/// instead of at point.
+/// The cursor is placed last: the echo area, drawn after the windows with
+/// a `MoveTo` of its own, does not leave it at the end of its message.
 #[test]
 fn the_cursor_is_placed_after_the_echo_area_not_before_it() {
     let (state, env) = editor();
@@ -364,24 +335,20 @@ fn the_cursor_is_hidden_while_drawing_and_shown_at_the_end() {
     );
 }
 
-/// A one-window frame showing LINES, with HIGHLIGHTS over them.
-///
-/// Built by hand rather than captured from an editor: what is under test
-/// here is the escape sequences the renderer emits for a highlight, and
-/// driving that through a buffer, a mark and a snapshot would test the
-/// region machinery instead -- which has its own tests, in the core.
+/// Returns a one-window frame showing LINES, with HIGHLIGHTS over them.
+/// Built by hand: what is under test is the renderer's escape sequences,
+/// and the region machinery has its own tests, in the core.
 fn frame_with(lines: &[&str], highlights: Vec<Highlight>) -> String {
     frame_themed(lines, highlights, Theme::default())
 }
 
-/// The same, with a theme of the caller's choosing.
+/// Returns the same, with a theme of the caller's choosing.
 fn frame_themed(lines: &[&str], highlights: Vec<Highlight>, theme: Theme) -> String {
     frame_at_depth(lines, highlights, theme, ColorDepth::TrueColor)
 }
 
-/// The same again, pretending the terminal can show only so much. Stated
-/// rather than detected, so a test never depends on the environment it
-/// happens to run in.
+/// Returns the same again, for a terminal of DEPTH: stated rather than
+/// detected, so that no test depends on the terminal it runs in.
 fn frame_at_depth(
     lines: &[&str],
     highlights: Vec<Highlight>,
@@ -416,7 +383,7 @@ fn frame_at_depth(
     String::from_utf8(out).expect("crossterm emits valid UTF-8")
 }
 
-/// What lies between START and the next full reset.
+/// Returns what lies between START and the next full reset.
 fn styled_run(rendered: &str, start_seq: &str) -> String {
     let start = rendered
         .find(start_seq)
@@ -428,7 +395,7 @@ fn styled_run(rendered: &str, start_seq: &str) -> String {
     rest[..end].to_string()
 }
 
-/// What lies between turning reverse video on and turning it off again.
+/// Returns what lies between reverse video turned on and turned off.
 fn reversed(rendered: &str) -> String {
     let start = rendered
         .find("\u{1b}[7m")
@@ -524,10 +491,7 @@ fn a_mode_line_is_drawn_below_the_text_as_a_bar() {
     );
 }
 
-/// An unfocused window's status line is drawn with the other face. There
-/// is only ever one tiled window until splits exist (#17), so this is
-/// built by hand -- the alternative is a rule nothing checks until the
-/// feature that needs it arrives.
+/// An unfocused window's status line is drawn with the other face.
 #[test]
 fn an_unfocused_window_uses_the_inactive_mode_line_face() {
     fn window(name: &str, y: isize, focused: bool) -> rsedit_core::RenderableWindowView {
@@ -669,11 +633,8 @@ fn a_face_bound_to_nothing_is_not_redrawn() {
 
 // ---------------- resolving colour requests ----------------
 
-/// The property that replaces "a name is a slot": ask for a conventional
-/// colour on a terminal that has to approximate, and you get the palette
-/// slot of that name -- which shows whatever the user configured it to.
-/// Asking for "blue" still reaches *their* blue, without the editor ever
-/// referring to a palette.
+/// A conventional colour, on a terminal that approximates, is the palette
+/// slot of that name: "blue" reaches the person's own blue.
 #[test]
 fn a_conventional_colour_approximates_to_the_slot_of_its_own_name() {
     for (slot, (name, color)) in NAMED_COLORS.iter().enumerate() {
@@ -749,8 +710,8 @@ fn an_approximated_colour_lands_on_something_close() {
 }
 
 /// The same face, drawn on two terminals, produces different escape
-/// sequences from identical editor state. That is the whole point of the
-/// split: the editor said "#3a5fcd" once, and each renderer answered it.
+/// sequences from the same editor state: the editor says "#3a5fcd", and
+/// each renderer answers it.
 #[test]
 fn the_same_face_renders_differently_on_different_terminals() {
     let mut theme = Theme::default();
@@ -837,10 +798,8 @@ fn the_cursor_lands_at_point_with_no_echo_message() {
     assert_eq!(last, expected_cursor(&state, &env));
 }
 
-/// Every `MoveTo` with the text printed straight after it.
-///
-/// `placements` answers where the renderer went; this answers what it put
-/// there, which is what a test about painting a rectangle has to look at.
+/// Returns every `MoveTo` with the text printed straight after it: what
+/// the renderer put where.
 fn printed(rendered: &str) -> Vec<(u16, u16, String)> {
     let mut out = Vec::new();
     for chunk in rendered.split('\u{1b}').skip(1) {
@@ -864,7 +823,8 @@ fn printed(rendered: &str) -> Vec<(u16, u16, String)> {
     out
 }
 
-/// A tiled window covering the frame, with a small floating one over it.
+/// Returns a tiled window covering the frame, with a small floating one
+/// over it.
 fn frame_with_float() -> String {
     let under: Vec<String> = (0..6)
         .map(|n| format!("UNDERNEATH-{n} and more text past the float"))
@@ -922,13 +882,8 @@ fn frame_with_float() -> String {
     String::from_utf8(out).expect("utf8")
 }
 
-/// A floating window is opaque.
-///
-/// The bug this guards: rows were drawn only for the lines a buffer had, and
-/// only as wide as each line's text. A prompt three rows tall showing one short
-/// line left the other two rows -- and the rest of that row -- showing the
-/// buffer underneath, so the window had another buffer's text running through
-/// it.
+/// A floating window is opaque: each of its rows is drawn across its whole
+/// width, however few and short the lines of its buffer.
 #[test]
 fn a_floating_window_paints_every_cell_of_its_rect() {
     let rendered = frame_with_float();
@@ -1053,7 +1008,7 @@ fn a_frame_with_no_clipboard_text_emits_no_escape() {
 // Getting the mouse from the terminal to the editor
 // -----------------------------------------------------------------
 
-use crate::tui::translate_mouse;
+use crate::tui::input::translate_mouse;
 use crossterm::event::{
     MouseButton as CrossMouseButton, MouseEvent as CrossMouseEvent,
     MouseEventKind as CrossMouseKind,
@@ -1108,9 +1063,8 @@ fn a_bare_move_is_refused() {
 
 #[test]
 fn the_other_buttons_and_drags_survive_translation() {
-    // Nothing is bound to them yet. They translate anyway, because the type is
-    // the contract with the frontend and widening it later would mean touching
-    // this file a second time for no gain.
+    // Nothing is bound to them yet; they translate anyway, as the type is the
+    // contract with the front end.
     for (from, to) in [
         (
             CrossMouseKind::Up(CrossMouseButton::Left),
@@ -1148,16 +1102,9 @@ fn modifiers_are_carried_across_a_click() {
     assert!(!translated.modifiers.alt);
 }
 
-/// A float covers whatever is under it -- including a rule.
-///
-/// The rules used to be drawn last, after every window, so a prompt opened over
-/// a vertical split had the separator painted back through it. They go down
-/// first now: a rule occupies a column no *tiled* window claims, so nothing
-/// tiled can paint over it, and a float is supposed to.
-///
-/// Asserted by order in the byte stream rather than by inspecting a cell: both
-/// writes target the same position, so whichever is emitted last is the one the
-/// terminal shows.
+/// A float covers whatever is under it, a rule included. Asserted by order
+/// in the byte stream: both writes go to the same cell, and the terminal
+/// shows the last.
 #[test]
 fn a_floating_window_is_drawn_over_the_rule_it_covers() {
     let snapshot = FrameSnapshot {
@@ -1214,13 +1161,9 @@ fn a_floating_window_is_drawn_over_the_rule_it_covers() {
 // The line-number gutter
 // ---------------------------------------------------------------------
 
-/// A window with a four-column gutter, whose text therefore starts at column
-/// four of the frame.
-///
-/// Built by hand rather than composed from an editor, because what is under
-/// test here is the *renderer's* half of the arrangement: composition already
-/// has its own tests, and the bug this guards against -- numbers painted over
-/// the first characters of every line -- is one only a renderer can commit.
+/// Returns a window with a four-column gutter, whose text therefore starts
+/// at column four of the frame. Built by hand: what is under test is the
+/// renderer's half, and composition has its own tests.
 fn frame_with_gutter(mode_line: Option<&str>) -> String {
     use rsedit_core::{Face, GutterCell};
     let cell = |text: &str, face| GutterCell {
@@ -1325,9 +1268,7 @@ fn the_mode_line_spans_the_gutter_as_well_as_the_text() {
 }
 
 #[test]
-fn a_window_with_no_gutter_is_drawn_exactly_as_it_was_before() {
-    // The property that makes the field safe to add: nothing changes for a
-    // view that declares none.
+fn a_window_with_no_gutter_starts_its_text_at_the_left_edge() {
     let rendered = frame_themed(&["alpha"], Vec::new(), Theme::default());
     let printed = printed(&rendered);
     assert!(

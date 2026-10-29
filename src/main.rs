@@ -1,3 +1,8 @@
+//! The editor's entry point: the command line, the editor built and its log
+//! opened, the files asked for opened, and then a front end, the terminal or
+//! a window.
+//!
+//! Design: `doc/architettura-editor.typ, <ciclo-vita>`.
 mod gui;
 mod tui;
 use rsedit_core::{
@@ -23,11 +28,9 @@ const LOG_FILE: &str = "rsedit.log";
 /// short enough that quitting never feels stuck.
 const SHUTDOWN_WAIT: Duration = Duration::from_millis(500);
 
-/// Shuts the editor's background work down when it goes: when `main` returns,
-/// and when a panic unwinds through it. Either way every job is told, every
-/// dedicated thread is asked to stop -- a shell command does not outlive the
-/// editor -- and the log's last lines reach the file, which a panic is what
-/// they are most likely to be about.
+/// Shuts the editor's background work down when it is dropped, as `main`
+/// returns or a panic unwinds through it: every job is told, every dedicated
+/// thread is asked to stop, and the log's last lines reach its file.
 struct ShutDownOnExit<'a>(&'a EditorState<BufferType>);
 
 impl Drop for ShutDownOnExit<'_> {
@@ -36,15 +39,22 @@ impl Drop for ShutDownOnExit<'_> {
     }
 }
 
+/// What the command line asks for.
 #[derive(Debug, Default)]
 struct Options {
+    /// The files to open, in order.
     files: Vec<PathBuf>,
+    /// `--gui`: a window, even from a terminal.
     gui: bool,
+    /// `--font FILE`: the monospace font the window draws with.
     font: Option<PathBuf>,
+    /// `--help` or `-h`.
     help: bool,
 }
 
 impl Options {
+    /// Returns what ARGS ask for, the program's name left out. After `--`
+    /// every argument is a file; before it, an unknown option is an error.
     fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
         let mut options = Self::default();
         let mut args = args.into_iter();
@@ -67,14 +77,17 @@ impl Options {
     }
 }
 
+/// Runs the editor with what the command line asks for, until it quits.
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = Options::parse(std::env::args_os().skip(1))?;
     if options.help {
         println!(
-            "rsedit-egui [--font MONOSPACE.ttf] [--] [FILES...]\n\
+            "rsedit [--gui] [--font MONOSPACE.ttf] [--] [FILES...]\n\
+            In the terminal; in a window with --gui, or when stdin is not a terminal.\n\
             M-x: commands; C-x C-f: open; C-x C-s: save; C-x C-c: quit.\n\
-            Linux/Windows: Ctrl+Shift+V pastes; Ctrl+V retains its core binding.\n\
-            macOS: Cmd+O/S/Q, Cmd+C/X/V and Cmd+Z are native shortcuts."
+            In the window, on Linux and Windows: Ctrl+Shift+V pastes; Ctrl+V keeps its binding.\n\
+            On macOS: Cmd+O/S/Q, Cmd+C/X/V and Cmd+Z are native shortcuts.\n\
+            The manual, from inside the editor: C-h m guide."
         );
         return Ok(());
     }
@@ -87,14 +100,9 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let _shut_down = ShutDownOnExit(&state);
-    // The log goes in the cache directory, made if it is not there yet --
-    // no longer in whatever directory the editor was started from, where it
-    // left a file in every project and, in one that could not be written,
-    // stopped the editor from starting at all.
-    //
-    // TODO: a cache directory that cannot be had, or a log file that cannot
-    // be written in it, is ignored for now: the editor runs without a log
-    // file, and nothing says so. It should say so where the user will see it.
+    // The log, in the cache directory, made if it is not there yet.
+    // TODO(AVV-8): without a cache directory, or a log file that can be
+    // written in it, the editor runs with no log file, and nothing says so.
     if let Ok(cache) = app_dir(DirOptions {
         dir: AppDir::Cache,
         create: true,

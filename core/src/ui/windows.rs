@@ -1,16 +1,21 @@
+//! The windows and how they share the frame: a window, its geometry, the
+//! tree the tiled ones form and the floating ones over it, and how a split
+//! divides its rectangle.
+//!
+//! Design: `doc/architettura-editor.typ, <finestre>`.
 use crate::ELispExp;
-use crate::buffer::{Buffer, BufferTrait, mark::region_bounds};
-use crate::managers::Buffers;
-use crate::text::rectangle::Rectangle;
-use crate::ui::Face;
-use crate::ui::layout::{self, BufferHighlight, Layout};
+use crate::buffer::BufferTrait;
 
+/// Which way a split divides its rectangle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Orientation {
+    /// One window above the other.
     Horizontal,
+    /// Side by side.
     Vertical,
 }
 
+/// A rectangle of cells: its top-left corner, from the frame's, and its size.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
     pub x: isize,
@@ -20,11 +25,8 @@ pub struct Rect {
 }
 
 impl Rect {
-    /// Whether the cell at (X, Y) is inside this rectangle.
-    ///
-    /// Half-open on the far edges, as a rectangle of cells has to be: a window
-    /// at x=0 with width 80 owns columns 0 to 79, and column 80 belongs to
-    /// whatever is beside it.
+    /// Returns whether the cell at (X, Y) is inside this rectangle: from its
+    /// corner, included, to its far edges, excluded.
     pub fn contains(&self, x: isize, y: isize) -> bool {
         x >= self.x
             && y >= self.y
@@ -33,7 +35,8 @@ impl Rect {
     }
 }
 
-/// Which window, as opposed to how many lines or how far down.
+/// A window's identity, apart from the numbers of lines and columns it sits
+/// beside.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WindowId(pub usize);
 
@@ -55,11 +58,8 @@ impl<B: BufferTrait> From<WindowId> for ELispExp<B> {
     }
 }
 
-/// Which window has the keyboard, and whether that window is one of the tiled
-/// ones at all.
-///
-/// The second half is only interesting to a window *without* focus, which uses
-/// it to decide whether to follow point. See `compute_tiled_views`.
+/// Which window has the keyboard, and whether it is a tiled one: a window
+/// without focus follows point when the keyboard is in a floating window.
 #[derive(Clone, Copy, Debug)]
 pub struct Focus {
     pub id: WindowId,
@@ -68,113 +68,47 @@ pub struct Focus {
     pub tiled: bool,
 }
 
+/// A window: the buffer it shows, how far it is scrolled, and what the last
+/// frame composed for it, which the commands and the mouse read between
+/// frames.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Window {
     pub id: WindowId,
 
+    /// The buffer it shows, by name.
     pub buffer_name: String,
 
+    /// The first column and the first line it shows.
     pub scroll_x: usize,
     pub scroll_y: usize,
 
-    /// How many rows of text this window had the last time a frame was
-    /// composed, or 0 if it has never been on screen.
-    ///
-    /// # Why a render fact is stored on the window
-    ///
-    /// A window's height is worked out while the frame is being laid out and
-    /// exists nowhere else: it depends on the frame size, on how the tree is
-    /// split, and on whether there is a status line. But "scroll down a
-    /// screenful" is a *command*, and a command runs between frames, when none
-    /// of that is in hand.
-    ///
-    /// So the layout leaves the answer behind. This is the same bargain
-    /// `scroll_x`/`scroll_y` already make -- they are also written during
-    /// composition -- and the honest way to read all three is as what the last
-    /// frame decided, which is exactly what the user is looking at when they
-    /// press the key.
+    /// How many rows of text it had when the last frame was composed, or 0
+    /// if it has never been on screen: what a screenful is to a scrolling
+    /// command.
     pub text_height: usize,
 
-    /// The rectangle this window was last drawn in, status line included, or a
-    /// zero-sized one if it has never been on screen.
-    ///
-    /// # Why another render fact is stored on the window
-    ///
-    /// The same bargain [`Window::text_height`] makes, for the same reason. The
-    /// layout works this out while composing a frame and it exists nowhere
-    /// else -- but *what is under the pointer* is asked between frames, when
-    /// none of that is in hand. So the layout leaves the answer behind.
-    ///
-    /// Reading what composition recorded also means hit-testing and drawing
-    /// cannot disagree. Recomputing the geometry instead would be two copies of
-    /// the same arithmetic, agreeing until the day they did not, and the
-    /// disagreement would be a click landing a column out in a narrow split --
-    /// the kind of wrong that gets blamed on the terminal.
-    ///
-    /// Zero-sized until the first frame, which is exactly what makes a window
-    /// that has never been drawn impossible to click on.
+    /// The rectangle it was last drawn in, status line included, or a
+    /// zero-sized one if it has never been on screen: what a click is tested
+    /// against.
     pub rect: Rect,
 
-    /// Whether this window draws a status line along its bottom row.
-    ///
-    /// True for a window somebody is working in, which is all of them but one
-    /// kind: a *strip* -- a few rows of completions or of output, opened to be
-    /// read and then dismissed -- has no state worth a status line, and giving
-    /// it one would spend a row of a window whose whole size was chosen
-    /// deliberately. A caller asking for six rows should get six rows of what
-    /// it asked to show.
+    /// Whether it draws a status line along its bottom row: all windows but
+    /// a strip, a few rows opened to be read and dismissed.
     pub show_mode_line: bool,
 
-    /// Where point was, last time this window's view was tracking it.
-    ///
-    /// # Why a window remembers a point
-    ///
-    /// A buffer has one point and a window is a view onto it, so two windows
-    /// on one buffer shared a cursor: switching between them dragged you back
-    /// to wherever you had last been in the *other* one. Two views of a file
-    /// are only two views if you can be in two places in it.
-    ///
-    /// # Why nothing explicitly saves it
-    ///
-    /// It is written during frame composition, below, for every window whose
-    /// view is following point. A save-on-leave would have to be repeated at
-    /// every place focus can change; a frame is composed after every command,
-    /// so this one cannot be skipped.
-    ///
-    /// `None` until this window has been composed at all -- a window just made
-    /// by a split. Nothing is restored for those, because the right thing for
-    /// a new window is to adopt the point already there rather than drag it to
-    /// the top of the file.
+    /// Where point was when its view last followed point, given back to the
+    /// buffer when it is focused again; `None` until it has been composed,
+    /// as a window just made by a split.
     pub point: Option<usize>,
 
-    /// How many columns this window gave to its gutter, last time a frame was
-    /// composed. Zero when it draws none.
-    ///
-    /// # Why a third render fact is stored on the window
-    ///
-    /// The same bargain [`Window::text_height`] makes, for the same reason.
-    /// How wide the numbers have to be depends on how many lines the buffer
-    /// has and on what `display-line-numbers` is set to, and it is worked out
-    /// while the frame is laid out -- but *what is under the pointer* is asked
-    /// between frames, when none of that is in hand.
-    ///
-    /// Without it, a click four columns into a window with a four-column
-    /// gutter would land on column four of the text rather than on column
-    /// zero: every click in a numbered window would be off by the width of
-    /// its own numbers.
+    /// How many columns it gave to its gutter when the last frame was
+    /// composed, zero for none: what a click's column is counted from.
     pub gutter_width: usize,
 }
 
 impl Window {
-    /// Point this window at another buffer.
-    ///
-    /// Everything the window remembered describes the buffer it is leaving --
-    /// how far down it was scrolled, and where point was in it -- and none of
-    /// it means anything about the new one. Offset 4,000 of a long file is the
-    /// end of a short one, or past it.
-    ///
-    /// A method rather than an assignment at each call site so that forgetting
-    /// is not something a caller has to remember.
+    /// Shows BUFFER_NAME in this window, from its top, forgetting the scroll
+    /// and the point that belonged to the buffer it showed.
     pub fn show(&mut self, buffer_name: &str) {
         buffer_name.clone_into(&mut self.buffer_name);
         self.scroll_x = 0;
@@ -182,7 +116,8 @@ impl Window {
         self.point = None;
     }
 
-    /// A window showing BUFFER, scrolled to the top, with a status line.
+    /// Returns window ID showing BUFFER_NAME, from its top, with a status
+    /// line.
     pub fn new(id: impl Into<WindowId>, buffer_name: &str) -> Self {
         Self {
             id: id.into(),
@@ -199,38 +134,23 @@ impl Window {
 }
 
 /// How a split shares its space between its two children.
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Division {
-    /// The first child takes this fraction of the space; the second takes what
-    /// is left.
+    /// The first child takes this fraction of the space, the second the rest.
     Ratio(f32),
 
-    /// The first child is exactly this many rows (stacked) or columns (side by
-    /// side), and the second takes what is left.
-    ///
-    /// The mirror of `SecondFixed`, and needed for the case where the window
-    /// being *split* is the one whose size matters: a directory listing wants
-    /// to stay a fixed width while the file opened beside it takes the rest,
-    /// and to keep that width when the frame is resized. Sizing the new window
-    /// instead would fix the file and let the listing absorb every resize,
-    /// which is backwards.
-    ///
-    /// This is also what Emacs' `split-window-right SIZE` means: SIZE is the
-    /// width the left window keeps.
+    /// The first child is this many rows, stacked, or columns, side by side,
+    /// and keeps them when the frame is resized: the window split keeps its
+    /// size, as with Emacs's `split-window-right SIZE`.
     FirstFixed(usize),
 
-    /// The second child is exactly this many rows (stacked) or columns (side by
-    /// side), and the first takes what is left.
-    ///
-    /// The second rather than the first, because the fixed one is always the
-    /// thing being added -- a strip appears below what was already there, and
-    /// what was already there gives up the space.
+    /// The second child is this many rows or columns, and keeps them: the
+    /// window added keeps its size, as a strip does.
     SecondFixed(usize),
 }
 
 impl Division {
-    /// How much of TOTAL the first child gets.
+    /// Returns how much of TOTAL the first child gets.
     fn first_share(&self, total: usize) -> usize {
         match self {
             Division::Ratio(ratio) => ((total as f32) * ratio).round() as usize,
@@ -240,271 +160,39 @@ impl Division {
     }
 }
 
+/// The tiled windows, as a tree: a window, or a split of a rectangle into two
+/// trees.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LayoutNode {
     Leaf(Window),
     Split {
         orientation: Orientation,
+        /// How the space is shared; `left` is the first child, above or to
+        /// the left.
         division: Division,
         left: Box<LayoutNode>,
         right: Box<LayoutNode>,
     },
 }
 
+/// A window drawn over the tiled ones, in a rectangle of its own: a prompt, a
+/// strip, a popup.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FloatingWindow {
     pub window: Window,
     pub rect: Rect,
     pub has_border: bool,
+    /// What its border is labelled with, the prompt for the minibuffer.
     pub title: Option<String>,
-    /// The window that was focused right before this floating window was
-    /// opened. Restored when the floating window closes, so closing one
-    /// (including a floating window opened while another one already had
-    /// focus) always lands back exactly where the user was.
+    /// The window focused when it opened, which has the focus back when it
+    /// closes, another floating window included.
     pub previous_focused_window_id: WindowId,
 }
 
-/// A run of characters in one drawn row that should be drawn differently.
-///
-/// In *screen* coordinates relative to the window's rect, already clipped to
-/// it, so a renderer needs no knowledge of scrolling or of the buffer to draw
-/// one. Kept beside `lines` rather than replacing them with styled cells: the
-/// plain text is what almost every row is, and a list of exceptions is both
-/// smaller and easier for a renderer to ignore than a parallel array of
-/// attributes.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Highlight {
-    /// Row within the window, 0 being its first drawn line.
-    pub row: usize,
-    /// Half-open column range within the row, in characters.
-    pub start_col: usize,
-    pub end_col: usize,
-    pub face: Face,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Separator {
-    pub rect: Rect,
-    pub ch: char,
-    pub face: Face,
-}
-
-/// What Lisp says about how a window is drawn, read once per frame.
-///
-/// # Why these travel together
-///
-/// They are the same kind of thing -- settings that the environment owns,
-/// read before any editor lock is taken and then carried down the layout
-/// tree -- and composition takes them as a group rather than one parameter
-/// each. The second one made the signature eight arguments long; the third
-/// would have made it nine, and every recursion into a split would have
-/// repeated all of them.
-#[derive(Clone, Copy, Debug)]
-pub struct ComposeSettings<'a> {
-    pub mode_line_format: &'a str,
-    pub gutter: GutterSpec,
-}
-
-/// One cell of a window's gutter -- the columns to the left of its text.
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct GutterCell {
-    /// Exactly [`RenderableWindowView::gutter_width`] characters, padded, so a
-    /// renderer prints it without measuring.
-    pub text: String,
-    pub face: Face,
-}
-
-/// What a window puts in its gutter, as Lisp currently has it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum LineNumbers {
-    /// No gutter at all: the text starts at the window's left edge.
-    #[default]
-    Off,
-    /// Each line's own number, counted from one.
-    Absolute,
-    /// How far each line is from the one point is on, with point's own line
-    /// showing its absolute number instead of a nought.
-    ///
-    /// The absolute number on that one row is not an inconsistency: a
-    /// distance of zero is the one number nobody needs, and the line you are
-    /// on is the one you want to be able to read off the screen.
-    Relative,
-}
-
-/// How a window's gutter is configured.
-///
-/// Passed into composition rather than read there, for the reason everything
-/// from Lisp is: the environment has locks of its own, and composition runs
-/// with the window and buffer locks held.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct GutterSpec {
-    pub numbers: LineNumbers,
-    /// The fewest columns the numbers themselves may take, not counting the
-    /// space between them and the text.
-    ///
-    /// A minimum rather than a fit, so that the text does not shuffle
-    /// sideways as a file grows past its ninth line and then its
-    /// ninety-ninth. Widening still happens when it must -- a number that
-    /// does not fit is worse than a column of whitespace -- it just does not
-    /// happen for every file that is merely short.
-    pub min_digits: usize,
-}
-
-/// The narrowest a window's text may be left after a gutter is taken out of
-/// it.
-///
-/// A window this small is not somewhere line numbers help: they would be most
-/// of what it showed. The text wins, and the numbers go, which is a visible
-/// answer rather than a window full of digits.
-pub const MIN_TEXT_WIDTH_FOR_GUTTER: usize = 8;
-
-/// Digits in N written out in base ten.
-fn decimal_width(n: usize) -> usize {
-    let mut width = 1;
-    let mut rest = n / 10;
-    while rest > 0 {
-        width += 1;
-        rest /= 10;
-    }
-    width
-}
-
-/// How many columns a gutter should take in a window WIDTH columns wide,
-/// showing a buffer of LINE_COUNT lines.
-///
-/// Zero when there is to be no gutter -- either because nothing asked for one
-/// or because the window is too narrow to give up the space. Either way the
-/// caller does the same thing with it, which is why this answers with a width
-/// rather than an `Option`.
-pub fn gutter_columns(spec: GutterSpec, line_count: usize, width: usize) -> usize {
-    if spec.numbers == LineNumbers::Off {
-        return 0;
-    }
-    // An empty buffer still has a line one, so it is numbered like a
-    // one-line one rather than like a zero-digit one.
-    let digits = decimal_width(line_count.max(1)).max(spec.min_digits);
-    // One more for the space between the numbers and the text. Without it a
-    // line starting in column zero runs straight into its own number.
-    let wanted = digits + 1;
-    if width < wanted + MIN_TEXT_WIDTH_FOR_GUTTER {
-        return 0;
-    }
-    wanted
-}
-
-/// The gutter for ROWS rows of a window showing LINE_COUNT lines from
-/// FIRST_LINE, with point on POINT_LINE.
-///
-/// One cell per row drawn, including the rows past the end of the buffer:
-/// those are blank rather than absent, so a renderer can pair cells with rows
-/// by index and a window scrolled past its own text does not show the
-/// previous frame's numbers down its left edge.
-pub fn gutter_cells(
-    spec: GutterSpec,
-    width: usize,
-    first_line: usize,
-    rows: usize,
-    line_count: usize,
-    point_line: usize,
-) -> Vec<GutterCell> {
-    if width == 0 {
-        return Vec::new();
-    }
-    (0..rows)
-        .map(|row| {
-            let line = first_line + row;
-            if line >= line_count {
-                return GutterCell {
-                    text: " ".repeat(width),
-                    face: Face::LINE_NUMBER,
-                };
-            }
-            let current = line == point_line;
-            let shown = match spec.numbers {
-                LineNumbers::Relative if !current => line.abs_diff(point_line),
-                // Lines are counted from zero inside the editor and from one
-                // everywhere a person reads them.
-                _ => line + 1,
-            };
-            // Right-aligned in every column but the last, which is the space
-            // before the text. Truncated from the left if a number somehow
-            // overruns -- a wide number pushed against the text reads better
-            // than one that shifts the whole row.
-            let mut text = format!("{:>pad$} ", shown, pad = width - 1);
-            if text.chars().count() > width {
-                text = text.chars().skip(text.chars().count() - width).collect();
-            }
-            GutterCell {
-                text,
-                face: if current {
-                    Face::LINE_NUMBER_CURRENT
-                } else {
-                    Face::LINE_NUMBER
-                },
-            }
-        })
-        .collect()
-}
-
-/// One window, resolved to exactly what should appear on screen.
-///
-/// Owned data with no borrows back into editor state, so a [`FrameSnapshot`]
-/// built from these can outlive the locks it was captured under.
-///
-/// `Default` is a window of nothing, nowhere -- there so that a caller who
-/// cares about two fields is not made to write the other ten.
-///
-/// [`FrameSnapshot`]: crate::ui::FrameSnapshot
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct RenderableWindowView {
-    pub rect: Rect,
-    pub buffer_name: String,
-    /// What the window's border should be labelled, when it has one.
-    ///
-    /// A floating window carries the caller's title -- for the minibuffer that
-    /// is the prompt, which is the entire point of showing a border. Tiled
-    /// windows have none and fall back to the buffer name.
-    pub title: Option<String>,
-    pub is_focused: bool,
-    pub cursor_rel_pos: Option<(usize, usize)>,
-    pub lines: Vec<String>,
-    /// The status line for this window, drawn on the row immediately below
-    /// `rect` -- outside it, as a border is. `None` for a window with no room
-    /// for one, and for floating windows, which say what they are with a title
-    /// on their border instead.
-    pub mode_line: Option<String>,
-    /// Runs within `lines` to draw with a face other than the default.
-    pub highlights: Vec<Highlight>,
-    pub has_border: bool,
-    /// The gutter, one cell per row of the window, or empty when it draws
-    /// none.
-    ///
-    /// Drawn in the `gutter_width` columns immediately *left* of `rect` --
-    /// outside it, as the status line is drawn on the row immediately below.
-    /// The rect is what the buffer gets; decoration goes around it.
-    ///
-    /// That is what makes this safe to add. A renderer that has never heard
-    /// of a gutter draws everything else exactly where it did before and
-    /// leaves those columns blank, rather than painting numbers over the
-    /// first few characters of every line.
-    pub gutter: Vec<GutterCell>,
-    /// How many columns [`Self::gutter`] occupies. Zero when there is none.
-    ///
-    /// Stated rather than measured from the cells: the status line spans the
-    /// gutter as well as the text -- a bar with a notch cut out of its left
-    /// end is not a bar -- and a window with no rows on screen has no cell to
-    /// measure.
-    pub gutter_width: usize,
-}
-
-/// The smallest a window may be dragged to.
-///
-/// Two rows so a stacked window keeps a row of text under its status line, and
-/// four columns so a side-by-side one can show something. Smaller is not
-/// forbidden -- a split of a tiny frame still divides it -- it is just not
-/// somewhere a drag will take you, because a window you cannot see is a window
-/// you cannot drag back.
+/// The fewest rows a drag leaves a stacked window: a row of text and its
+/// status line. A split of a small frame may still make one smaller.
 pub const MIN_DRAGGED_HEIGHT: usize = 2;
+/// The fewest columns a drag leaves a window side by side.
 pub const MIN_DRAGGED_WIDTH: usize = 4;
 
 /// Which half of a split.
@@ -512,28 +200,17 @@ pub const MIN_DRAGGED_WIDTH: usize = 4;
 pub enum Side {
     /// The upper one when stacked, the left one when side by side.
     First,
+    /// The lower one, or the right one.
     Second,
 }
 
-/// The way from the root of a layout to one of its nodes.
-///
-/// Splits have no ids, and giving them one would put an identity on a node
-/// that exists only to hold two others. A path is what a tree already offers
-/// instead, and it stays meaningful exactly as long as the shape does -- which
-/// is the whole of a drag and no longer.
+/// The way from the root of a layout to one of its splits, which have no ids:
+/// valid as long as the tree keeps its shape, as it does for a drag.
 pub type SplitPath = Vec<Side>;
 
-/// How a split divides RECT: a rect for each child, and the rule between them
-/// when there is room for one.
-///
-/// # Why this is a function
-///
-/// Composing a frame and asking what is under the pointer have to agree about
-/// where the windows are, and the second cannot read the first's answer for a
-/// *rule*, because a rule is not stored anywhere -- unlike a window, it has
-/// nothing to remember it. Two copies of this arithmetic would agree until the
-/// day they did not, and the disagreement would be a drag that grabbed nothing
-/// in a narrow split.
+/// Returns how a split ORIENTATION, DIVISION divides RECT: a rectangle for
+/// each child, and the rule between them when there is room for one. The one
+/// arithmetic composition and the pointer both use.
 pub fn split_rects(
     orientation: &Orientation,
     division: &Division,
@@ -552,8 +229,8 @@ pub fn split_rects(
                     height: rect.height.saturating_sub(first_height),
                     ..rect
                 },
-                // Stacked windows are divided by the upper one's status line,
-                // which is a row it already owns. There is no rule to draw.
+                // Stacked windows are divided by the upper one's status line:
+                // no rule.
                 None,
             )
         }
@@ -583,11 +260,7 @@ pub fn split_rects(
 }
 
 impl LayoutNode {
-    /// Every window in this subtree, in layout order.
-    ///
-    /// Added for the one job that has to touch all of them rather than one by
-    /// id: when a buffer is killed, *every* window showing it is left naming
-    /// something that no longer exists, not only the focused one.
+    /// Calls VISIT on every window of this tree, in layout order.
     pub fn each_window_mut(&mut self, visit: &mut impl FnMut(&mut Window)) {
         match self {
             LayoutNode::Leaf(window) => visit(window),
@@ -598,7 +271,7 @@ impl LayoutNode {
         }
     }
 
-    /// The window with this id, to be read. See [`LayoutNode::window_mut`].
+    /// Returns window ID, if it is in this tree.
     pub fn window(&self, id: WindowId) -> Option<&Window> {
         match self {
             LayoutNode::Leaf(window) => (window.id == id).then_some(window),
@@ -606,6 +279,7 @@ impl LayoutNode {
         }
     }
 
+    /// Returns window ID to change, if it is in this tree.
     pub fn window_mut(&mut self, id: WindowId) -> Option<&mut Window> {
         match self {
             LayoutNode::Leaf(window) => {
@@ -621,11 +295,8 @@ impl LayoutNode {
         }
     }
 
-    /// Every window, in the order they are laid out on screen.
-    ///
-    /// Left-to-right, top-to-bottom, because that is the order the tree is
-    /// built in -- which is what makes "the next window" mean what a user
-    /// expects when they cycle through them.
+    /// Returns the ids of every window, left to right and top to bottom: the
+    /// order `other-window` goes round in.
     pub fn window_ids(&self) -> Vec<WindowId> {
         let mut ids = Vec::new();
         self.collect_window_ids(&mut ids);
@@ -642,16 +313,9 @@ impl LayoutNode {
         }
     }
 
-    /// Turn the window with ID into a split holding it and NEW_WINDOW.
-    ///
-    /// The existing window keeps the first half, so a split "below" or "right"
-    /// puts the new window where its name says. Returns false when no window
-    /// has that id.
-    ///
-    /// The tree knows nothing about sizes -- those are computed at render time
-    /// from whatever rect the frame gives it -- so there is no "too small to
-    /// split" to check here. A split of a one-row window yields two windows,
-    /// one of which draws nothing until the frame grows.
+    /// Makes window ID a split ORIENTATION, DIVISION of itself, first, and
+    /// NEW_WINDOW, and returns true; false when no window has that id. The
+    /// tree has no sizes, so no window is too small to split.
     pub fn split_window(
         &mut self,
         id: WindowId,
@@ -678,21 +342,18 @@ impl LayoutNode {
         }
     }
 
-    /// Remove the window with ID, and collapse the split it was half of.
-    ///
-    /// Returns false when no window has that id, and when the window is the
-    /// only one there is -- a frame with no windows has nowhere to put the
-    /// cursor, so the last one cannot be closed.
+    /// Removes window ID, its sibling taking the place of their split, and
+    /// returns true; false when no window has that id, or when it is the only
+    /// one.
     pub fn remove_window(&mut self, id: WindowId) -> bool {
         let LayoutNode::Split { left, right, .. } = self else {
-            // A lone leaf. Even if it matches, it cannot go.
+            // The only window: it stays.
             return false;
         };
         let is_target = |node: &LayoutNode| matches!(node, LayoutNode::Leaf(w) if w.id == id);
 
         if is_target(left) || is_target(right) {
-            // The sibling takes the place of the split entirely, which is what
-            // makes the remaining window grow into the space.
+            // The sibling takes the split's place, and its space.
             let survivor = if is_target(left) { right } else { left };
             *self = std::mem::replace(&mut **survivor, LayoutNode::Leaf(placeholder_window()));
             return true;
@@ -700,7 +361,8 @@ impl LayoutNode {
         left.remove_window(id) || right.remove_window(id)
     }
 
-    /// Replace the whole tree with just the window with ID.
+    /// Makes window ID the whole tree, and returns true; false when no window
+    /// has that id.
     pub fn keep_only(&mut self, id: impl Into<WindowId>) -> bool {
         let Some(window) = self.window(id.into()).cloned() else {
             return false;
@@ -709,10 +371,9 @@ impl LayoutNode {
         true
     }
 
-    /// The rule under (X, Y), and the split it divides.
-    ///
-    /// Walks the same arithmetic composition used, because a rule is not
-    /// stored anywhere -- see [`split_rects`].
+    /// Returns the path to the split whose rule is under (X, Y), in a tree
+    /// drawn in RECT, and the split's orientation. Worked out with
+    /// [`split_rects`], since a rule is stored nowhere.
     pub fn separator_at(&self, rect: Rect, x: isize, y: isize) -> Option<(SplitPath, Orientation)> {
         let LayoutNode::Split {
             orientation,
@@ -740,7 +401,7 @@ impl LayoutNode {
         })
     }
 
-    /// The way from here to the window with ID.
+    /// Returns the path from here to window ID.
     pub fn path_to_window(&self, id: WindowId) -> Option<SplitPath> {
         match self {
             LayoutNode::Leaf(win) => (win.id == id).then(Vec::new),
@@ -759,7 +420,7 @@ impl LayoutNode {
         }
     }
 
-    /// Which way the split at PATH divides, if there is one there.
+    /// Returns which way the split at PATH divides, if there is one there.
     pub fn orientation_at(&self, path: &[Side]) -> Option<Orientation> {
         let LayoutNode::Split {
             orientation,
@@ -777,13 +438,9 @@ impl LayoutNode {
         }
     }
 
-    /// The split that the status line of window ID divides, if any.
-    ///
-    /// A stacked pair has no drawn rule: the upper window's status line is the
-    /// boundary, and it is a row that window already owns. So dragging a
-    /// status line resizes the nearest split the window sits in the *top* half
-    /// of -- and the bottom window of the frame has no such split, which is
-    /// right, because the row under it is the echo area.
+    /// Returns the path to the split the status line of window ID divides:
+    /// the nearest stacked split it is in the upper half of. None for the
+    /// bottom window, above the echo area.
     pub fn mode_line_divider(&self, id: WindowId) -> Option<SplitPath> {
         let path = self.path_to_window(id)?;
         (0..path.len()).rev().find_map(|cut| {
@@ -793,12 +450,9 @@ impl LayoutNode {
         })
     }
 
-    /// Move the boundary of the split at PATH by DELTA cells, towards the
-    /// second child when positive. False when it could not move.
-    ///
-    /// RECT is what this node was last given, which is needed because a
-    /// division is a share of something and the share has to be worked out
-    /// against a size.
+    /// Moves the boundary of the split at PATH by DELTA cells, towards the
+    /// second child when positive, and returns whether it moved. RECT is the
+    /// rectangle this tree was last drawn in.
     pub fn resize_split(&mut self, path: &[Side], rect: Rect, delta: isize) -> bool {
         let LayoutNode::Split {
             orientation,
@@ -824,8 +478,7 @@ impl LayoutNode {
                 MIN_DRAGGED_WIDTH,
             ),
         };
-        // Too small to hold two windows worth looking at: leave it alone
-        // rather than pick a winner.
+        // Too small for two windows a drag may leave: left as it is.
         if usable < floor * 2 {
             return false;
         }
@@ -834,9 +487,8 @@ impl LayoutNode {
         if wanted == current {
             return false;
         }
-        // The *kind* of division is kept, not converted. A strip that was
-        // opened at a fixed height and then dragged is still a strip: it
-        // wanted a size rather than a share, and it still does.
+        // The kind of division is kept: a strip dragged still wants a size,
+        // not a share.
         *division = match division {
             Division::Ratio(_) => Division::Ratio(wanted as f32 / usable as f32),
             Division::FirstFixed(_) => Division::FirstFixed(wanted as usize),
@@ -845,10 +497,8 @@ impl LayoutNode {
         true
     }
 
-    /// The window whose last drawn rectangle contains (X, Y).
-    ///
-    /// Reads what composition left behind rather than walking the layout's
-    /// arithmetic again -- see [`Window::rect`] for why that matters.
+    /// Returns the window whose last drawn rectangle, [`Window::rect`],
+    /// contains (X, Y).
     pub fn window_at(&self, x: isize, y: isize) -> Option<&Window> {
         match self {
             LayoutNode::Leaf(win) => win.rect.contains(x, y).then_some(win),
@@ -858,7 +508,7 @@ impl LayoutNode {
         }
     }
 
-    /// Whether any window in this tree is the one with the given id.
+    /// Returns whether window ID is in this tree.
     pub fn contains_window(&self, id: WindowId) -> bool {
         match self {
             LayoutNode::Leaf(win) => win.id == id,
@@ -869,573 +519,12 @@ impl LayoutNode {
     }
 }
 
-/// A window that exists only long enough to be overwritten.
-///
-/// `std::mem::replace` needs something to leave behind while a subtree is
-/// moved out of the tree it is part of. Nothing ever reads this, and it is
-/// gone by the time the function it is used in returns.
+/// Returns a window nothing reads, left by `std::mem::replace` in place of a
+/// subtree being moved, and gone before the move returns.
 fn placeholder_window() -> Window {
     Window::new(usize::MAX, "")
 }
 
-/// The narrowest a rect can be and still give a column to a divider.
-///
-/// Three: one for each window and one for the rule.
+/// The narrowest a rectangle can be and still give a column to a rule: one
+/// for each window and one for the rule.
 const MIN_WIDTH_FOR_SEPARATOR: usize = 3;
-
-impl LayoutNode {
-    pub fn compute_tiled_views<B: BufferTrait>(
-        &mut self,
-        rect: Rect,
-        focus: Focus,
-        buffers: &Buffers<B>,
-        settings: ComposeSettings<'_>,
-        out_views: &mut Vec<RenderableWindowView>,
-        out_separators: &mut Vec<Rect>,
-    ) {
-        match self {
-            LayoutNode::Leaf(win) => {
-                let is_focused = win.id == focus.id;
-                // Whether the window changed shape since it was last drawn.
-                // See the reconciliation below: a view that has been scrolled
-                // away from point stays there, but one whose height just
-                // changed has to be reconsidered, or a resize can leave the
-                // cursor off the bottom of its own window.
-                let resized = win.rect != rect;
-                // The whole window, status line included, and recorded before
-                // the status line is taken out of the rect below: a pointer
-                // lands in the window, and `text_height` says where its text
-                // stops.
-                win.rect = rect;
-
-                // The status line takes the window's bottom row, so the text
-                // gets one fewer -- computed here, before anything reads the
-                // rect, so scrolling and the cursor agree with what is drawn.
-                // A window with only one row keeps it for text: a status line
-                // with nothing under it says nothing useful.
-                let mode_line = buffers.handle(&win.buffer_name).and_then(|buffer| {
-                    (win.show_mode_line && rect.height >= 2).then(|| {
-                        expand_mode_line(
-                            settings.mode_line_format,
-                            &buffer
-                                .read()
-                                .expect("Failed to acquire read lock on buffer"),
-                        )
-                    })
-                });
-                let rect = if mode_line.is_some() {
-                    Rect {
-                        height: rect.height - 1,
-                        ..rect
-                    }
-                } else {
-                    rect
-                };
-
-                // Recorded here, after the status line has been taken out of
-                // the rect and before anything reads it, so that what is left
-                // behind is the number of rows of *text* -- which is what a
-                // screenful means to somebody pressing a key.
-                win.text_height = rect.height;
-
-                let mut cursor_rel_pos = None;
-
-                // Scrolling follows point whether or not this window has
-                // focus; only *drawing* the cursor depends on focus.
-                //
-                // # Why not just when focused
-                //
-                // A buffer has one point, and a window is a view onto it. When
-                // something moves that point while a floating window holds the
-                // keyboard -- which is exactly what incremental search does,
-                // match after match -- the tiled window showing the buffer is
-                // not the focused one, so a focus-gated reconciliation never
-                // runs. The match is found, point is moved, and the view stays
-                // where it was: the search silently walks off the top of the
-                // screen and `C-s' looks like it has stopped finding anything.
-                //
-                // Two windows on one buffer therefore both follow. That is not
-                // a new asymmetry -- they already share the single point and
-                // already both draw it -- and it is the behaviour that makes a
-                // search visible in whichever window is showing the file.
-
-                let follows_points = is_focused || !focus.tiled;
-
-                // Read once, before the gutter is sized and before the view is
-                // reconciled with point: sizing the gutter needs the line
-                // count, numbering it needs point's line, and reconciling
-                // needs all three. Three acquisitions of one lock to answer
-                // one question about one instant is exactly the shape
-                // `FrameSnapshot` exists to stop.
-                let point_and_size = buffers.handle(&win.buffer_name).map(|buf| {
-                    let buf = buf.read().expect("Failed to acquire read lock on buffer");
-                    let (line, col) = buf.text.cursor_pos();
-                    (line, col, buf.text.cursor_pos_1d(), buf.text.line_count())
-                });
-                // A window showing no buffer at all still has to be numbered
-                // consistently with one showing an empty buffer, so the
-                // fallback is the empty buffer's answer rather than a special
-                // case further down.
-                let (point_line, line_count) = point_and_size
-                    .map(|(line, _, _, count)| (line, count))
-                    .unwrap_or((0, 0));
-
-                // The gutter comes out of the rect here, before anything reads
-                // it -- exactly as the status line came out of the height
-                // above, and for the same reason. Scrolling, the cursor and
-                // every highlight are worked out against the columns the
-                // *text* gets, so none of them has to know a gutter exists.
-                let gutter_width = gutter_columns(settings.gutter, line_count, rect.width);
-                win.gutter_width = gutter_width;
-                let rect = Rect {
-                    x: rect.x + gutter_width as isize,
-                    width: rect.width.saturating_sub(gutter_width),
-                    ..rect
-                };
-
-                // Composed before the scroll is reconciled, because what has
-                // to stay visible is the cursor's *screen* column, and that is
-                // a question about the row it is on rather than about the
-                // buffer. Composed from `scroll_y`, which the block below may
-                // then change -- so it is composed again afterwards if it did.
-                let mut layout = compose_layout(win, &rect, buffers);
-                if let Some((c_line, c_col, c_offset, _)) = point_and_size
-                    && follows_points
-                {
-                    // Whether point has moved since this window last drew
-                    // it. Compared *before* it is recorded, and it is what
-                    // decides whether the view is dragged back below.
-                    //
-                    // # Why the view does not simply always follow
-                    //
-                    // A view that reconciled itself with point on every
-                    // frame could never be scrolled away from it. The
-                    // wheel would move the text until point reached an
-                    // edge and then stop, because the next frame put it
-                    // back -- which reads as the scroll jamming.
-                    //
-                    // Following when point *moves* is the honest rule, and
-                    // the one Emacs uses: scrolling is a way of looking
-                    // somewhere else, and it lasts until you do something
-                    // that says where you are. Typing, searching or moving
-                    // point all say so; turning a wheel does not.
-                    let point_moved = win.point != Some(c_offset);
-                    // Where this window will put point when it is focused
-                    // again -- recorded alongside the scroll, and for the
-                    // same reason: these are exactly the windows whose
-                    // view is tracking point.
-                    win.point = Some(c_offset);
-
-                    if point_moved || resized {
-                        let scrolled_from = win.scroll_y;
-                        if c_line < win.scroll_y {
-                            win.scroll_y = c_line;
-                        } else if c_line >= win.scroll_y + rect.height {
-                            win.scroll_y = c_line - rect.height + 1;
-                        }
-
-                        // A vertical scroll changes which lines the rows
-                        // show, so the layout composed above is of the wrong
-                        // rows. Re-composed rather than adjusted: adjusting it
-                        // would be a second implementation of composing.
-                        if win.scroll_y != scrolled_from {
-                            layout = compose_layout(win, &rect, buffers);
-                        }
-
-                        // The screen column, not the buffer column. With
-                        // anything drawn on the row that is not in the buffer,
-                        // the two differ, and it is the screen column that has
-                        // to be on the screen.
-                        let c_screen = layout
-                            .row_of_line(c_line)
-                            .map(|(_, row)| row.to_screen(c_col))
-                            .unwrap_or(c_col);
-                        if c_screen < win.scroll_x {
-                            win.scroll_x = c_screen;
-                        } else if c_screen >= win.scroll_x + rect.width {
-                            win.scroll_x = c_screen - rect.width + 1;
-                        }
-                    }
-
-                    if is_focused {
-                        let c_screen = layout
-                            .row_of_line(c_line)
-                            .map(|(_, row)| row.to_screen(c_col))
-                            .unwrap_or(c_col);
-                        cursor_rel_pos = Some((
-                            c_screen.saturating_sub(win.scroll_x),
-                            c_line.saturating_sub(win.scroll_y),
-                        ));
-                    }
-                }
-
-                let lines = layout.visible_text(win.scroll_x, rect.width);
-                // Syntax first, then the region: the renderer draws later
-                // entries over earlier ones, and a selection has to stay
-                // visible on top of coloured text.
-                // Syntax, then overlays, then the region. Later entries are
-                // drawn over earlier ones, so this is the order of the rules:
-                // an overlay wins over colouring -- a diagnostic has to be
-                // visible on a keyword -- and the selection wins over
-                // everything, which is what the eye depends on.
-                let mut in_buffer = syntax_highlights(win, &rect, buffers);
-                in_buffer.extend(overlay_highlights(win, &rect, buffers));
-                in_buffer.extend(region_highlights(win, &rect, buffers));
-                // Placed on the rows, scrolled and clipped in one go. The
-                // three producers above answer in buffer columns and know
-                // nothing about what is drawn on a row -- which is what stops
-                // there being three places for the mapping to be forgotten.
-                let mut highlights = layout::place(&layout, in_buffer, win.scroll_x, rect.width);
-                // Last, so a hint's own face is drawn over the colouring the
-                // row around it has -- it is not part of that text and should
-                // not be coloured as though it were.
-                highlights.extend(layout.virtual_highlights(win.scroll_x, rect.width));
-
-                // After the scroll reconciliation above, which is what
-                // decides which lines these number.
-                let gutter_cells = gutter_cells(
-                    settings.gutter,
-                    gutter_width,
-                    win.scroll_y,
-                    rect.height,
-                    line_count,
-                    point_line,
-                );
-
-                out_views.push(RenderableWindowView {
-                    rect,
-                    buffer_name: win.buffer_name.clone(),
-                    title: None,
-                    is_focused,
-                    cursor_rel_pos,
-                    lines,
-                    highlights,
-                    mode_line,
-                    has_border: false,
-                    gutter: gutter_cells,
-                    gutter_width,
-                });
-            }
-
-            LayoutNode::Split {
-                orientation,
-                division,
-                left,
-                right,
-            } => {
-                let (first, second, rule) = split_rects(orientation, division, rect);
-                // Pushed before the children recurse, so the rules come out in
-                // the order they were found and later ones paint over earlier.
-                if let Some(rule) = rule {
-                    out_separators.push(rule);
-                }
-                left.compute_tiled_views(
-                    first,
-                    focus,
-                    buffers,
-                    settings,
-                    out_views,
-                    out_separators,
-                );
-                right.compute_tiled_views(
-                    second,
-                    focus,
-                    buffers,
-                    settings,
-                    out_views,
-                    out_separators,
-                );
-            }
-        }
-    }
-}
-
-/// The active region of WIN's buffer, as spans within the rows WIN is
-/// showing.
-///
-/// Returns nothing when there is no active region, when the buffer is not the
-/// one on screen, or when the region lies entirely outside the visible rows --
-/// so a selection made and then scrolled away from costs nothing to not draw.
-///
-/// Coordinates come back relative to the window, with horizontal scrolling
-/// already applied and both ends clipped to the window's width, because the
-/// renderer knows about the screen and should not have to know about the
-/// buffer.
-/// The window's overlays, clipped to what it is showing.
-///
-/// The third producer of [`Highlight`], beside the mode's colouring and the
-/// region -- and the only one reading positions that were *stored* rather than
-/// recomputed. What makes that safe is that the two doors move them; see
-/// [`crate::buffer::overlay`].
-///
-/// # Why this walks the visible rows rather than the overlays
-///
-/// An overlay may be anywhere in a buffer of any size, and almost all of them
-/// are off screen at any moment. Asking the table what overlaps the visible
-/// span once, and then cutting that answer into rows, keeps the work
-/// proportional to what is being drawn instead of to what the buffer holds.
-pub fn overlay_highlights<B: BufferTrait>(
-    win: &Window,
-    rect: &Rect,
-    buffers: &Buffers<B>,
-) -> Vec<BufferHighlight> {
-    let Some(buf) = buffers.handle(&win.buffer_name) else {
-        return Vec::new();
-    };
-    let buf = buf
-        .read()
-        .expect("Failed to acquire read lock on buffer for highlighting");
-    if buf.overlays.is_empty() {
-        // The state almost every buffer is in. Worth its own exit so that a
-        // frame with no overlays anywhere costs one comparison per window.
-        return Vec::new();
-    }
-
-    // The character range on screen, as one span. The last visible line runs
-    // to the end of the buffer rather than to a computed offset: a window
-    // showing the end of a file has fewer lines than it has rows.
-    let first_line = win.scroll_y;
-    let last_line = (win.scroll_y + rect.height).min(buf.text.line_count());
-    if first_line >= last_line {
-        return Vec::new();
-    }
-    let visible_from = buf.text.cursor_2d_to_1d(first_line, 0);
-    let visible_to = buf.text.len();
-
-    let mut highlights = Vec::new();
-    for overlay in buf.overlays.overlapping(visible_from, visible_to) {
-        let (start_line, start_col) = buf.text.cursor_1d_to_2d(overlay.start);
-        let (end_line, end_col) = buf.text.cursor_1d_to_2d(overlay.end);
-        for line in start_line.max(first_line)..=end_line.min(last_line.saturating_sub(1)) {
-            // Only the two ends of an overlay are partial lines; everything
-            // between is covered whole. The same shape `region_highlights`
-            // uses, and for the same reason.
-            let from = if line == start_line { start_col } else { 0 };
-            let to = if line == end_line {
-                end_col
-            } else {
-                // One past the last character, so a multi-line overlay reads
-                // as covering whole lines rather than stopping raggedly.
-                line_width(&buf.text, line) + 1
-            };
-            // Buffer columns, left where they are: the scroll, the mapping
-            // through whatever is drawn on the row, and the clipping are all
-            // `layout::place`'s, which is the one place that knows them.
-            highlights.push(BufferHighlight {
-                line,
-                start: from,
-                end: to,
-                face: overlay.face,
-            });
-        }
-    }
-    highlights
-}
-
-pub fn region_highlights<B: BufferTrait>(
-    win: &Window,
-    rect: &Rect,
-    buffers: &Buffers<B>,
-) -> Vec<BufferHighlight> {
-    let Some(buf) = buffers.handle(&win.buffer_name) else {
-        return Vec::new();
-    };
-    let buf = buf
-        .read()
-        .expect("Failed to acquire read lock on buffer for highlighting");
-    let Some((start, end)) = region_bounds(buf.mark, buf.text.cursor_pos_1d(), buf.text.len())
-    else {
-        return Vec::new();
-    };
-
-    let (start_line, start_col) = buf.text.cursor_1d_to_2d(start);
-    let (end_line, end_col) = buf.text.cursor_1d_to_2d(end);
-
-    let first_visible = win.scroll_y;
-    let last_visible = win.scroll_y + rect.height;
-    let mut highlights = Vec::new();
-
-    // A rectangular mark selects the columns the lines have in common, so
-    // every line is drawn with the same two edges and a line too short to
-    // reach them is drawn with none. It is the one thing that makes a
-    // rectangle usable before it is cut: the ragged run drawn otherwise is
-    // not the block the commands would take.
-    let rectangle = buf
-        .mark
-        .filter(|mark| mark.active && mark.rectangle)
-        .map(|mark| {
-            let point = buf.text.cursor_pos_1d();
-            Rectangle::between_offsets(&buf.text, mark.at, point, mark.inclusive)
-        });
-    let (start_line, end_line) = rectangle
-        .map(|rectangle| (rectangle.top, rectangle.bottom))
-        .unwrap_or((start_line, end_line));
-
-    for line in start_line.max(first_visible)..=end_line.min(last_visible.saturating_sub(1)) {
-        let (from, to): (usize, usize) = if let Some(rectangle) = rectangle {
-            // Clamped to the line, so a line that stops short of the left
-            // edge is drawn with nothing rather than with a highlight hanging
-            // past its end.
-            let width = line_width(&buf.text, line);
-            (rectangle.left.min(width), rectangle.right.min(width))
-        } else {
-            // A line in the middle of the region is selected from its first
-            // character to its last; only the two ends of the region are
-            // partial.
-            let from = if line == start_line { start_col } else { 0 };
-            let to = if line == end_line {
-                end_col
-            } else {
-                // One past the last character, so the newline shows as
-                // selected -- which is how a multi-line selection reads as
-                // covering whole lines rather than stopping raggedly at each
-                // line's end.
-                line_width(&buf.text, line) + 1
-            };
-            (from, to)
-        };
-
-        highlights.push(BufferHighlight {
-            line,
-            start: from,
-            end: to,
-            face: Face::REGION,
-        });
-    }
-    highlights
-}
-
-/// How many characters LINE holds, not counting its newline.
-fn line_width<B: BufferTrait>(text: &B, line: usize) -> usize {
-    text.get_lines(line, line + 1)
-        .first()
-        .map(|l| l.chars().count())
-        .unwrap_or(0)
-}
-
-/// Expand a mode-line format string against WIN's buffer.
-///
-/// The escapes are Emacs' own, so a format copied from an Emacs configuration
-/// means the same thing here:
-///
-/// | escape | shows                                        |
-/// |--------|----------------------------------------------|
-/// | `%b`   | buffer name                                  |
-/// | `%f`   | file path, or the buffer name when unvisited |
-/// | `%s`   | buffer-local mode-line-state string          |
-/// | `%m`   | major mode                                   |
-/// | `%l`   | line number, counting from one               |
-/// | `%c`   | column, counting from zero as Emacs does     |
-/// | `%p`   | how far down the buffer point is             |
-/// | `%*`   | `**` when modified, `--` when not            |
-/// | `%%`   | a literal per cent                           |
-///
-/// An unknown escape is left as it was written rather than swallowed: a format
-/// that silently loses a chunk of itself is harder to debug than one that
-/// shows you the `%q` you meant to be something else.
-pub fn expand_mode_line<B: BufferTrait>(format: &str, buffer: &Buffer<B>) -> String {
-    let (line, column) = buffer.text.cursor_pos();
-    let lines = buffer.text.line_count().max(1);
-    let mut out = String::with_capacity(format.len() + 16);
-    let mut chars = format.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('b') => out.push_str(&buffer.name),
-            Some('f') => out.push_str(buffer.file_path.as_deref().unwrap_or(&buffer.name)),
-            Some('m') => out.push_str(&buffer.current_mode),
-            Some('s') => {
-                if let Some(ELispExp::String(state)) =
-                    buffer.data::<ELispExp<B>>("lisp:mode-line-state")
-                {
-                    out.push_str(state);
-                }
-            }
-            Some('l') => out.push_str(&(line + 1).to_string()),
-            Some('c') => out.push_str(&column.to_string()),
-            Some('p') => out.push_str(&position_in_buffer(line, lines)),
-            Some('*') => out.push_str(if buffer.is_modified { "**" } else { "--" }),
-            Some('%') => out.push('%'),
-            Some(other) => {
-                out.push('%');
-                out.push(other);
-            }
-            None => out.push('%'),
-        }
-    }
-    out
-}
-
-/// Where point sits in the buffer, as Emacs words it: `All` when the whole
-/// buffer is one screen's worth of lines, otherwise `Top`, `Bot` or a
-/// percentage.
-fn position_in_buffer(line: usize, lines: usize) -> String {
-    if lines <= 1 {
-        return "All".to_string();
-    }
-    if line == 0 {
-        return "Top".to_string();
-    }
-    if line + 1 >= lines {
-        return "Bot".to_string();
-    }
-    format!("{}%", (line * 100) / (lines - 1))
-}
-
-/// The rows WIN is showing, composed out of its buffer and whatever virtual
-/// text sits in the lines on screen.
-///
-/// Returns an empty layout for a window whose buffer has gone, which is the
-/// An empty layout for a window whose buffer has gone: one naming a buffer
-/// that is not there draws blank rather than refusing to draw.
-pub fn compose_layout<B: BufferTrait>(win: &Window, rect: &Rect, buffers: &Buffers<B>) -> Layout {
-    let Some(buf) = buffers.handle(&win.buffer_name) else {
-        return Layout::default();
-    };
-    let buf = buf
-        .read()
-        .expect("Failed to acquire read lock on buffer for composing");
-    Layout::compose(&buf.text, &buf.virtual_text, win.scroll_y, rect.height)
-}
-
-/// The syntax colouring of WIN's buffer, as spans within the rows it is
-/// showing.
-///
-/// Reads the cache and clips; it never computes. Colouring happens on the
-/// worker (see [`crate::jobs::highlighter`]), and a frame that lexed while
-/// composing would be a frame that blocked on whatever file happened to be
-/// open.
-///
-/// Lines that have never been coloured contribute nothing, which is what makes
-/// a large file open as plain text and fill in rather than making the editor
-/// wait for it.
-pub fn syntax_highlights<B: BufferTrait>(
-    win: &Window,
-    rect: &Rect,
-    buffers: &Buffers<B>,
-) -> Vec<BufferHighlight> {
-    let Some(buf) = buffers.handle(&win.buffer_name) else {
-        return Vec::new();
-    };
-    let buf = buf
-        .read()
-        .expect("Failed to acquire read lock on buffer for highlighting");
-
-    let mut highlights = Vec::new();
-    for row in 0..rect.height {
-        let line = win.scroll_y + row;
-        for span in buf.syntax.spans(line) {
-            highlights.push(BufferHighlight {
-                line,
-                start: span.start,
-                end: span.end,
-                face: span.face,
-            });
-        }
-    }
-    highlights
-}

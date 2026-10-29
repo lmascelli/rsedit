@@ -116,6 +116,7 @@
   (sigla: "RIC", nome: [Ricerca, sostituzione e liste di risultati]),
   (sigla: "SHL", nome: [Comandi di shell]),
   (sigla: "TUI", nome: [Disegno e terminale]),
+  (sigla: "GUI", nome: [La finestra grafica]),
   (sigla: "DOC", nome: [Documentazione, commenti, codice morto, build e test]),
 )
 
@@ -152,7 +153,7 @@
     stato: "aperto",
     titolo: [`cursor_pos()` costa O(posizione): ogni fotogramma rilegge il buffer fino al punto],
     breve: [`GapBuffer::cursor_pos` lineare nella posizione],
-    dove: [`buffer/gap_buffer.rs` (`cursor_pos`); la chiamano a ogni fotogramma `ui/windows.rs` (la composizione delle finestre ed `expand_mode_line`) ed `editor/frame.rs` (`EditorState::snapshot`, per una finestra flottante)],
+    dove: [`buffer/gap_buffer.rs` (`cursor_pos`); la chiamano a ogni fotogramma `ui/compose.rs` (`LayoutNode::compute_tiled_views`), `ui/mode_line.rs` (`expand_mode_line`) ed `editor/frame.rs` (`EditorState::snapshot`, per una finestra flottante)],
     verifica: [Misurato nell'analisi di `08a853d` su un buffer di 8 MB: `snapshot` impiegava 7,9 ms con il punto alla fine e 0,03 ms con il punto all'inizio. `cursor_pos` non è cambiata da allora.],
     cosa: [Per trovare riga e colonna del punto `cursor_pos` scorre tutti i caratteri dall'inizio del buffer, mentre `cursor_1d_to_2d`, accanto, cerca già la riga nell'indice dei ritorni a capo. Ogni fotogramma la chiama almeno due volte per finestra (posizione del cursore e riga di stato), e circa trenta altri punti la usano.],
     effetto: [In un file grande ogni tasto costa millisecondi in più, e il costo cresce con la distanza del punto dall'inizio.],
@@ -204,9 +205,9 @@
     stato: "aperto",
     titolo: [Mancano Canc, Inizio, Fine, PagSu, PagGiù e i tasti funzione],
     breve: [`KeyCode` senza Delete/Home/End/PgUp/PgDn/F1…],
-    dove: [`input.rs` (`KeyCode`, e `parse_key`, senza un nome per questi tasti), `src/tui.rs` (`translate_key`, che scarta tutto il resto); nella GUI, `src/gui.rs` (`EditorApp::native_key`, `special_key`)],
+    dove: [`input.rs` (`KeyCode`, e `parse_key`, senza un nome per questi tasti), `src/tui/input.rs` (`translate_key`, che scarta tutto il resto); nella GUI, `src/gui/app.rs` (`EditorApp::native_key`) e `src/gui/keys.rs` (`special_key`)],
     verifica: [Riprodotto sulla revisione `3d846f1`: `(define-key nil "<delete>" 'delete-char)`, e lo stesso con `"<home>"` e `"<f1>"`, danno `nil` e «Invalid key sequence» nel registro, dove la stessa riga per `<delete>` c'è già dall'avvio. Il resto dalla lettura del codice: l'enum ha solo `Char`, `Backspace`, `Enter`, `Esc`, `Tab`, le quattro frecce e un segnaposto `None`.],
-    cosa: [I tasti non rappresentati vengono scartati dalla TUI con una riga nel registro («no translation for the key»), e `parse_key` non ha un nome per loro: il modulo `electric-pair` lega `<delete>` e fallisce a ogni avvio. La GUI (`src/gui.rs`) traduce da sé Inizio, Fine, Canc, PagSu e PagGiù in `C-a`, `C-e`, `C-d`, `M-v` e `C-v`, o nei tasti di vim nello stato normale: lì quei tasti funzionano, ma non si possono legare. I tasti funzione mancano in tutte e due. Le pagine `editing` e `keymaps` lo dicono tra i limiti.],
+    cosa: [I tasti non rappresentati vengono scartati dalla TUI con una riga nel registro («no translation for the key»), e `parse_key` non ha un nome per loro: il modulo `electric-pair` lega `<delete>` e fallisce a ogni avvio. La GUI (`src/gui/app.rs`) traduce da sé Inizio, Fine, Canc, PagSu e PagGiù in `C-a`, `C-e`, `C-d`, `M-v` e `C-v`, o nei tasti di vim nello stato normale: lì quei tasti funzionano, ma non si possono legare. I tasti funzione mancano in tutte e due. Le pagine `editing` e `keymaps` lo dicono tra i limiti.],
     effetto: [Tasti che ogni utente si aspetta (Canc in particolare) non fanno nulla nel terminale, e non si possono legare né lì né nella GUI.],
     correzione: [Estendere `KeyCode` e `translate_key`, aggiungere i nomi (`<delete>`, `<home>`, `<f1>`…) a `parse_key`, e togliere dalla GUI le traduzioni fisse in favore di legami nelle mappe.],
   ),
@@ -510,6 +511,19 @@ init.lisp:
     cosa: [`create_global_env` valuta `init.lisp` con `?`, e il primo errore di valutazione, anche in un modulo che `init.lisp` chiede, risale fino a `main`, che lo stampa con `{:?}` e termina con `Ok(())`. Il log su file non è ancora aperto. Le pagine `configuration` e `diagnostics` dicevano che un modulo che fallisce lascia partire l'editor; lo fa solo un modulo che manca.],
     effetto: [Un errore in un modulo proprio o di un plugin, o in una riga di `init.lisp`, lascia senza editor finché non si corregge il file con un altro, e il messaggio non dice in quale file sta l'errore. Uno script che lancia l'editor lo crede uscito bene.],
     correzione: [Valutare `init.lisp` forma per forma, o catturare l'errore in `create_global_env`, partire comunque e mostrare l'errore nell'area dei messaggi e nel log, come Emacs con `--debug-init` spento; in ogni caso uscire con un codice diverso da 0 quando l'editor non parte.],
+  ),
+  (
+    id: "AVV-8",
+    gravita: "bassa",
+    verificato: false,
+    stato: "aperto",
+    titolo: [Senza la directory della cache l'editor gira senza file di registro, e non lo dice],
+    breve: [Senza cache, niente `rsedit.log`, in silenzio],
+    dove: [`src/main.rs` (`main`, che ignora l'errore di `app_dir` e quello di `enable_log_file`)],
+    verifica: [Dalla lettura del codice, durante il passo 20 della documentazione.],
+    cosa: [`main` attiva il file di registro solo se `app_dir` trova, o crea, la directory della cache, e scarta con `let _` l'errore di `enable_log_file`. In tutti e due i casi l'editor parte con il solo registro in memoria (`*Log*`), senza un messaggio nell'area dei messaggi né una riga nel registro stesso.],
+    effetto: [Su una macchina con la cache non scrivibile, o con `RSEDIT_CACHE_DIR` sbagliata, il file che la pagina `diagnostics` indica non esiste, e chi lo cerca dopo un crash non trova nulla e non sa perché.],
+    correzione: [Scrivere nel registro in memoria, e nell'area dei messaggi, che il file non si è potuto aprire, con il percorso e l'errore.],
   ),
   // ------------------------------------------------------------------ BKG
   (
@@ -823,9 +837,9 @@ init.lisp:
     stato: "aperto",
     titolo: [I caratteri di controllo del testo arrivano al terminale: un file può comandarlo],
     breve: [Caratteri di controllo stampati così come sono: iniezione di sequenze nel terminale],
-    dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Layout::visible_text`: copiano i caratteri senza filtrarli), `src/tui.rs` (`draw_clipped_row`, che li stampa con `Print`)],
-    verifica: [Riprodotto nell'analisi di `08a853d`: in un file che contiene `ESC ] 52 ; c ; aGk= ESC \` la riga della fotografia conteneva la sequenza intatta, che la TUI scrive sul terminale. `ui/layout.rs` non è cambiato da allora, e `src/tui.rs` solo nell'attesa degli eventi.],
-    cosa: [Tra il buffer e il terminale nessuno sostituisce i caratteri di controllo (ESC, BEL, CR, BS, DEL, i controlli C1). Il terminale li esegue. Passa dalla stessa strada l'uscita dei comandi, che da `02ea0e7` arriva decodificata dai byte così com'è. La GUI (`src/gui.rs`) salta invece i caratteri di controllo.],
+    dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Layout::visible_text`: copiano i caratteri senza filtrarli), `src/tui/render.rs` (`draw_clipped_row`, che li stampa con `Print`)],
+    verifica: [Riprodotto nell'analisi di `08a853d`: in un file che contiene `ESC ] 52 ; c ; aGk= ESC \` la riga della fotografia conteneva la sequenza intatta, che la TUI scrive sul terminale. `ui/layout.rs` non è cambiato da allora, e il disegno della TUI, oggi in `src/tui/render.rs`, solo di posto.],
+    cosa: [Tra il buffer e il terminale nessuno sostituisce i caratteri di controllo (ESC, BEL, CR, BS, DEL, i controlli C1). Il terminale li esegue. Passa dalla stessa strada l'uscita dei comandi, che da `02ea0e7` arriva decodificata dai byte così com'è. La GUI (`src/gui/paint.rs`) salta invece i caratteri di controllo.],
     effetto: [Aprire un file, guardare l'output di un comando, un risultato di grep o una pagina di manuale che contengono sequenze di escape fa eseguire quelle sequenze al terminale. OSC 52 riscrive gli appunti di sistema: l'utente incollerà poi in una shell un comando scelto da chi ha preparato il file. OSC 0 cambia il titolo della finestra; le sequenze CSI spostano il cursore, cancellano lo schermo o cambiano i colori. Anche senza malizia, un `\r` o un `\b` in un file rovinano la visualizzazione.],
     correzione: [Al momento del disegno, sostituire i controlli (U+0000–U+001F tranne il tab, U+007F, U+0080–U+009F) con una rappresentazione visibile, come `^[` in Emacs o il carattere `␛`, contandone la larghezza nella mappa delle colonne.],
   ),
@@ -836,7 +850,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Un panic o un errore di I/O lasciano il terminale in raw mode],
     breve: [Nessun ripristino del terminale su panic o errore],
-    dove: [`src/tui.rs` (`tui_main`), `src/main.rs` (`main`: nessun `panic::set_hook`, nessun `catch_unwind`; la guardia `ShutDownOnExit` ferma solo il lavoro in background)],
+    dove: [`src/tui/mod.rs` (`tui_main`), `src/main.rs` (`main`: nessun `panic::set_hook`, nessun `catch_unwind`; la guardia `ShutDownOnExit` ferma solo il lavoro in background)],
     verifica: [Dalla lettura del codice: nessun `set_hook`, e `catch_unwind` solo nel WorkManager. Un panic che lo innesca oggi è quello di #link(<TUI-5>)[TUI-5], riprodotto sulla revisione `3d846f1`.],
     cosa: [`tui_main` attiva il raw mode, il bracketed paste e, a richiesta, la cattura del mouse, e li disattiva solo sul percorso di uscita normale. Un panic nel thread dei comandi risale fuori da `main` senza ripristinarli; ogni `?` su un errore di I/O nel ciclo (`terminal::size`, `render_frame`, la cattura del mouse, un errore del thread che legge il terminale) esce da `tui_main` saltando il ripristino. Anche un panic che il WorkManager intercetta, in un lavoro di background, scrive il suo messaggio su stderr, sopra lo schermo.],
     effetto: [Dopo un crash la shell non mostra ciò che si digita, Invio non funziona e i clic del mouse stampano sequenze di escape. L'utente deve digitare `reset` alla cieca. Il messaggio del panic stesso viene stampato «a scalini», in raw mode.],
@@ -849,7 +863,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Le tabulazioni non vengono espanse],
     breve: [Tab non espansi: cursore, colori e riempimento sfasati],
-    dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Row::to_screen`, `Row::to_buffer`: una colonna del buffer è una colonna dello schermo), `src/tui.rs` (`render_to`, `draw_clipped_row`)],
+    dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Row::to_screen`, `Row::to_buffer`: una colonna del buffer è una colonna dello schermo), `src/tui/render.rs` (`render_to`, `draw_clipped_row`)],
     verifica: [Riprodotto nell'analisi di `08a853d`: la riga della fotografia conteneva il carattere `\t`. `ui/layout.rs` non è cambiato da allora.],
     cosa: [L'editor conta un tab come una colonna. Il terminale invece lo espande fino alla tabulazione successiva, quindi il resto della riga viene disegnato più a destra di dove l'editor crede. Il commento in cima a `text/rectangle.rs` dice che un tab è una colonna, come in tutto l'editor: è il modello interno, non ciò che accade sullo schermo. Esiste ora un'impostazione `tab-width`, nel modulo `indent`, ma serve solo al rientro: il disegno non la legge.],
     effetto: [In un Makefile, in un file Go o in qualsiasi sorgente indentato con tab, il cursore appare nel punto sbagliato, i colori cadono sulle parole sbagliate e il resto della riga precedente può restare visibile.],
@@ -862,7 +876,7 @@ init.lisp:
     stato: "aperto",
     titolo: [I caratteri larghi contano come una colonna],
     breve: [CJK ed emoji contati come una colonna],
-    dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Row::to_screen`, `Row::to_buffer`), `src/tui.rs` (`render_to`, che riempie le righe contando i caratteri)],
+    dove: [`ui/layout.rs` (`Row::plain`, `compose_row`, `Row::to_screen`, `Row::to_buffer`), `src/tui/render.rs` (`render_to`, che riempie le righe contando i caratteri)],
     verifica: [Dalla lettura del codice: le larghezze sono tutte `chars().count()`, e nessuna dipendenza calcola la larghezza di visualizzazione (`unicode-width`).],
     cosa: [Un ideogramma o un'emoji occupa due celle del terminale, ma l'editor ne conta una.],
     effetto: [Come per i tab: cursore, evidenziazioni, ritaglio e riempimento delle righe sfasati nei testi in cinese, giapponese, coreano o con emoji.],
@@ -888,7 +902,7 @@ init.lisp:
     stato: "aperto",
     titolo: [Le finestre flottanti non mostrano colori di sintassi né overlay],
     breve: [Finestre flottanti senza sintassi e overlay],
-    dove: [`editor/frame.rs` (`EditorState::snapshot`, il ciclo sulle finestre flottanti), a confronto con `ui/windows.rs` (`LayoutNode::compute_tiled_views`)],
+    dove: [`editor/frame.rs` (`EditorState::snapshot`, il ciclo sulle finestre flottanti), a confronto con `ui/compose.rs` (`LayoutNode::compute_tiled_views`)],
     verifica: [Dalla lettura del codice: per una finestra flottante si raccolgono solo la regione e il testo virtuale.],
     cosa: [Un buffer mostrato in una finestra flottante appare senza colori e senza le evidenziazioni degli overlay; lo stesso buffer in una finestra affiancata le ha.],
     correzione: [Usare per le finestre flottanti la stessa raccolta delle evidenziazioni delle finestre affiancate.],
@@ -900,9 +914,9 @@ init.lisp:
     stato: "aperto",
     titolo: [`%p` nella riga di stato dice `All` solo per un buffer di una riga],
     breve: [`%p` = `All` solo con una riga],
-    dove: [`ui/windows.rs` (`position_in_buffer`, ed `expand_mode_line`, che non riceve l'altezza della finestra)],
+    dove: [`ui/mode_line.rs` (`position_in_buffer`, ed `expand_mode_line`, che non riceve l'altezza della finestra)],
     verifica: [Dalla lettura del codice.],
-    cosa: [Il commento dice «`All` quando l'intero buffer sta in una schermata», ma il codice verifica `lines <= 1`. Il test `the_position_reads_as_emacs_words_it` fissa il comportamento di oggi.],
+    cosa: [Il codice verifica `lines <= 1`: `expand_mode_line` non riceve l'altezza della finestra, e non può sapere se il buffer intero sta in una schermata, che è quando Emacs dice `All`. Il commento di `position_in_buffer` diceva il contrario; dal passo 20 della documentazione descrive il comportamento di oggi. Il test `the_position_reads_as_emacs_words_it` lo fissa.],
     correzione: [Passare l'altezza della finestra e confrontare con quella.],
   ),
   (
@@ -912,11 +926,25 @@ init.lisp:
     stato: "aperto",
     titolo: [La TUI non usa lo schermo alternativo],
     breve: [Niente schermo alternativo: all'uscita lo schermo viene cancellato],
-    dove: [`src/tui.rs` (`tui_main`, `render_to`)],
+    dove: [`src/tui/mod.rs` (`tui_main`), `src/tui/render.rs` (`render_to`)],
     verifica: [Dalla lettura del codice: nessun `EnterAlternateScreen`.],
     cosa: [L'editor disegna sullo schermo principale del terminale e all'uscita lo cancella con `Clear(All)`.],
     effetto: [Il contenuto che il terminale mostrava prima di avviare l'editor, per esempio l'output di un comando, va perso.],
     correzione: [`EnterAlternateScreen` all'avvio e `LeaveAlternateScreen` all'uscita, nella stessa guardia di #link(<TUI-2>)[TUI-2].],
+  ),
+  // ------------------------------------------------------------------ GUI
+  (
+    id: "GUI-1",
+    gravita: "bassa",
+    verificato: false,
+    stato: "aperto",
+    titolo: [La finestra grafica si aggiorna ogni 250 ms anche quando nulla cambia],
+    breve: [GUI: un aggiornamento ogni 250 ms anche da ferma],
+    dove: [`src/gui/app.rs` (`EditorApp::update`, `BACKGROUND_POLL`)],
+    verifica: [Dalla lettura del codice, durante il passo 20 della documentazione.],
+    cosa: [La TUI registra `on_background_change`, e l'editor la sveglia quando un lavoro di sfondo cambia qualcosa; la GUI no. Per vedere ciò che i lavori fanno chiede a egui un aggiornamento entro `BACKGROUND_POLL`, 250 ms, anche quando `next_redraw_in` risponde `None`. A ogni aggiornamento chiama `tick`, compone la fotografia con `snapshot` e la ridisegna, anche con l'editor fermo.],
+    effetto: [Una finestra aperta e ferma consuma CPU, e un portatile la batteria, quattro volte al secondo; ciò che un lavoro di sfondo cambia compare fino a 250 ms dopo.],
+    correzione: [Registrare con `on_background_change` una callback che chiami `request_repaint` sul contesto di egui, e chiedere un aggiornamento solo quando `next_redraw_in` o `drag_scroll_in` danno una durata.],
   ),
   // ------------------------------------------------------------------ DOC
   (
@@ -929,12 +957,11 @@ init.lisp:
     dove: [vedi l'elenco],
     verifica: [Dalla lettura del codice.],
     cosa: [
-      - `src/tui.rs` (`render_to`, il commento sull'area messaggi): il minibuffer «docked to the last few lines of the frame», mentre il prompt predefinito ora è centrato. Lo diceva anche il commento del modulo `feature/minibuffer.rs`, corretto dal passo 19 della documentazione.
       - `primitives/shell.rs` (`shell-command-start`): il messaggio «The editor's background work has shut down» vale anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta. Il commento accanto, che diceva lo stesso, è corretto dal passo 17 della documentazione.
       - `primitives/occur.rs` (`grep--scan`): il messaggio «The editor's background work has shut down» vale anche quando il sistema non dà un thread nuovo, l'altro caso in cui `WorkManager::spawn` rifiuta. Il commento accanto, che diceva lo stesso, è corretto dal passo 18 della documentazione.
       - `primitives/workers.rs` (`define-worker` e `background-call`, attraverso `start`): la riga del registro «the editor's work has shut down» vale anche quando l'esecutore non è partito, l'altro caso in cui `WorkManager::submit` rifiuta. Il commento accanto è corretto come quello di `shell.rs`.
 
-      Le voci dell'analisi su `primitives/workers.rs` e su `shell-command-to-string` non valgono più: il codice e la docstring sono stati riscritti (`6de16a1`, `4f05134`). Le tre sui commenti della libreria di base dell'interprete sono nel rapporto di risp, dentro le schede INT-9, INT-16 e INT-21.
+      La voce su `src/tui.rs` (`render_to`, il commento sull'area messaggi, che diceva il minibuffer agganciato alle ultime righe del frame) è corretta dal passo 20 della documentazione, e il commento è oggi in `src/tui/render.rs`. Le voci dell'analisi su `primitives/workers.rs` e su `shell-command-to-string` non valgono più: il codice e la docstring sono stati riscritti (`6de16a1`, `4f05134`). Le tre sui commenti della libreria di base dell'interprete sono nel rapporto di risp, dentro le schede INT-9, INT-16 e INT-21.
     ],
     correzione: [Aggiornarli insieme alle correzioni dei problemi a cui rimandano.],
   ),
@@ -1032,7 +1059,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8, SIN-9 e AVV-7.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8, SIN-9, AVV-7, AVV-8 e GUI-1.
 
 == Riepilogo
 

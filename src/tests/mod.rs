@@ -1,1 +1,2 @@
-mod tui_test;
+mod options_tests;
+mod tui_tests;

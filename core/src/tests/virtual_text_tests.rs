@@ -39,7 +39,7 @@ mod tests {
         });
     }
 
-    /// The rows the window would draw.
+    /// Returns the rows the window draws.
     fn rows(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> Vec<String> {
         ctx.snapshot(env, W, H)
             .views
@@ -49,7 +49,7 @@ mod tests {
             .clone()
     }
 
-    /// The layout the renderer composes, to ask about directly.
+    /// Returns the layout the renderer composes, to ask about directly.
     fn layout(ctx: &Ctx) -> Layout {
         ctx.with_current_buffer(|buf| Layout::compose(&buf.text, &buf.virtual_text, 0, H))
     }
@@ -363,7 +363,7 @@ mod tests {
         );
     }
 
-    /// A left drag to a cell of the last frame.
+    /// Drags with the left button to a cell of the last frame.
     fn drag(ctx: &Ctx, env: &Arc<Env<Ctx>>, column: u16, row: u16) {
         ctx.handle_mouse_event(
             crate::input::MouseEvent {
@@ -376,7 +376,7 @@ mod tests {
         );
     }
 
-    /// A left click at a cell of the last frame.
+    /// Clicks the left button on a cell of the last frame.
     fn click(ctx: &Ctx, env: &Arc<Env<Ctx>>, column: u16, row: u16) {
         ctx.handle_mouse_event(
             crate::input::MouseEvent {
