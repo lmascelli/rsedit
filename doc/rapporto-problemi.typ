@@ -864,7 +864,7 @@ init.lisp:
     gravita: "alta",
     verificato: false,
     stato: "risolto",
-    commit: "",
+    commit: "67a6a1d7a4e09d2854c57137dcaa564cd3360de0",
     titolo: [Un panic o un errore di I/O lasciano il terminale in raw mode],
     breve: [Nessun ripristino del terminale su panic o errore],
     dove: [`src/tui/mod.rs` (`tui_main`), `src/main.rs` (`main`: nessun `panic::set_hook`, nessun `catch_unwind`; la guardia `ShutDownOnExit` ferma solo il lavoro in background)],
