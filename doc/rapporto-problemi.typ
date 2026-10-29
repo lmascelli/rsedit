@@ -376,7 +376,7 @@
     gravita: "alta",
     verificato: true,
     stato: "risolto",
-    commit: "",
+    commit: "7d922071baf5fa4d98fbf1c02654c1f137fc8796",
     titolo: [Un salvataggio fallito con `C-x C-s` non viene segnalato],
     breve: [`save-buffer` fallito: solo una riga nel registro],
     dove: [`primitives/files.rs` (`save-buffer`, `save-buffer--overwrite`, e `write_buffer`, con cui salvano anche `save-some-buffers` e l'uscita, in `primitives/quit.rs`); per confronto `write-file`],
