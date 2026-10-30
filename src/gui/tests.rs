@@ -37,7 +37,6 @@ fn editor() -> Core<'static, GapBuffer> {
             .expect("load module");
     }
     assert!(core.env.get_function("vim-mode").is_some());
-    core.enable_unicode_typing().unwrap();
     core
 }
 

@@ -127,7 +127,7 @@ pub fn tui_main<B: BufferTrait>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     give_back_terminal_on_panic();
     let _terminal = TakenTerminal::take()?;
-    
+
     // Asked once: the terminal does not change while it runs.
     let depth = ColorDepth::detect();
     // The frame's first size.

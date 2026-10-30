@@ -377,4 +377,17 @@ mod tests {
         press(&ctx, &env, KeyCode::Char('x'), ctrl());
         assert_eq!(point_1d(&ctx), 10, "point should be where the mark was");
     }
+    
+    #[test]
+    fn the_listing_has_the_character_rule_once_and_no_character_on_its_own() {
+        let (ctx, env) = editor_with("");
+        assert_eq!(
+            eval_str("(car (keymap-bindings))", &env, &ctx).unwrap(),
+            eval_str(r#"(list "<char>" 'self-insert "global")"#, &env, &ctx).unwrap()
+        );
+        assert_eq!(
+            eval_str(r#"(assoc "a" (keymap-bindings))"#, &env, &ctx).unwrap(),
+            LispExp::nil()
+        );
+    }
 }

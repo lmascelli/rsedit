@@ -342,10 +342,7 @@ primitive!(shell_command_start, args, env, ctx, {
     };
     let mode = args::optional_name(args.get(1), "Symbol naming a mode")?
         .unwrap_or_else(|| "shell-output-mode".to_string());
-    let producer = args::optional_name(
-        args.get(2),
-        "Symbol naming a producer",
-    )?;
+    let producer = args::optional_name(args.get(2), "Symbol naming a producer")?;
     let (child, output) = match start(command) {
         Ok(started) => started,
         Err(why) => {
@@ -354,27 +351,15 @@ primitive!(shell_command_start, args, env, ctx, {
         }
     };
 
-    let process: Process =
-        Arc::new(Mutex::new(Some(child)));
+    let process: Process = Arc::new(Mutex::new(Some(child)));
 
     let name = if let Some(producer) = producer {
-        ctx.prepare_results_buffer(
-            &producer,
-            OUTPUT_BUFFER,
-            &mode,
-            None,
-            &env,
-        )
+        ctx.prepare_results_buffer(&producer, OUTPUT_BUFFER, &mode, None, &env)
     } else {
         let name = ctx.free_name_for_work(OUTPUT_BUFFER);
 
-        ctx.new_buffer(
-            &name,
-            None,
-            Some(mode),
-            &env,
-        )
-        .filter(|name| ctx.has_buffer(name))
+        ctx.new_buffer(&name, None, Some(mode), &env)
+            .filter(|name| ctx.has_buffer(name))
     };
 
     let Some(name) = name else {
@@ -382,15 +367,12 @@ primitive!(shell_command_start, args, env, ctx, {
         return Ok(ELispExp::nil());
     };
 
-    ctx.append_to_buffer(
-        &name,
-        &format!("$ {command}\n"),
-    );
+    ctx.append_to_buffer(&name, &format!("$ {command}\n"));
 
     ctx.with_buffer_mut(&name, |buf| {
         buf.read_only = true;
     });
-    
+
     let task = ShellCommand {
         process: process.clone(),
         output,

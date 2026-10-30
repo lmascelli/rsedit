@@ -119,6 +119,14 @@ impl<B: BufferTrait> EditorState<B> {
         self.modes(|registry| registry.bindings(&modes))
     }
 
+    /// Returns what a character no map binds runs in the current buffer, and
+    /// from which map. See [`Modes::character_binding`].
+    pub(crate) fn character_binding(&self) -> Option<(ELispExp<B>, BindingSource)> {
+        let names = self.keymap_modes();
+        let modes: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.modes(|registry| registry.character_binding(&modes))
+    }
+
     /// Offers COMMAND's repeat key, if it has one, as a `Release` keymap that
     /// binds the key to COMMAND.
     ///

@@ -20,8 +20,9 @@ use crate::{
     jobs::prescan::Prescanner,
     jobs::watcher::FileWatcher,
     managers::{
-        Binding, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands, History, Hit,
-        KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime, Scrolled, WindowRemoved, Windows,
+        Binding, BindingSource, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands,
+        History, Hit, KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime, Scrolled,
+        WindowRemoved, Windows,
     },
     modes::{Grammar, MajorMode, SyntaxTable},
     primitives::{install_primitives, movement::goto_offset},

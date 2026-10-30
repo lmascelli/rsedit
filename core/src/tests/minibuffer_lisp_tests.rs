@@ -104,7 +104,7 @@ mod tests {
         assert!(ctx.windows(|windows| windows.floating().is_empty()));
         assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
     }
-    
+
     #[test]
     fn cancel_flow_calls_on_cancel_without_touching_on_confirm() {
         let (ctx, env) = setup();

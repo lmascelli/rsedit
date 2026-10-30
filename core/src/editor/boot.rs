@@ -414,15 +414,9 @@ pub fn create_global_env<B: BufferTrait>()
     );
 
     // Where a listing is shown, and where a visit to one of its entries goes.
-    env.set_variable(
-        RESULTS_VISIT_SAME_WINDOW.into(),
-        ELispExp::nil(),
-    );
+    env.set_variable(RESULTS_VISIT_SAME_WINDOW.into(), ELispExp::nil());
 
-    env.set_variable(
-        RESULTS_REUSE_BUFFER.into(),
-        ELispExp::nil(),
-    );
+    env.set_variable(RESULTS_REUSE_BUFFER.into(), ELispExp::nil());
 
     env.set_variable(
         RESULTS_DISPLAY_LOCATION.into(),

@@ -1090,16 +1090,10 @@ prefisso di modificatori, quindi `M-C-x` e `C-S-a` non si possono scrivere
 riscrive nello stesso modo; stanno in `input.rs`, con i tipi.
 
 La keymap globale scritta in Rust (`fill_default_keymaps`) contiene
-pochissimo: `M-x` (`command-execute-prompt`), le frecce, Invio e i caratteri
-stampabili da `' '` a `'~'`, legati a `(self-insert "c")`. Tutto il resto ---
+pochissimo: `M-x` (`command-execute-prompt`), le frecce, e `self-insert` che
+inserisce ogni carattere premuto da solo, ASCII o no. Tutto il resto ---
 `C-x C-f`, `C-s`, `C-k`, … --- viene da `common-keymaps.lisp` e dagli altri
 moduli.
-
-Solo i caratteri ASCII stampabili sono legati a `self-insert`. Il ripiego per
-gli altri caratteri esiste --- una keymap può dare un comando a ogni carattere
-che non lega, con `(define-key MAPPA "<char>" COMANDO)` --- ma la keymap
-globale non lo usa: un carattere come «è» arriva alla risoluzione senza un
-comando e produce `è is undefined` #rapporto("CMD-1").
 
 == Le keymap <keymap>
 
@@ -4407,8 +4401,7 @@ riga di comando chiede `--gui`; `--font` le dà un file di caratteri a larghezza
 fissa. La finestra raggiunge l'editor attraverso `Core`, che passa da dove passa
 il terminale: i tasti per `handle_key_event`, il resto per il Lisp. Così vim, le
 macro e gli hook vedono ciò che si fa nella finestra come ciò che si fa nel
-terminale. All'avvio `Core` lega `<char>` a `self-insert` se nessuno lega `é`:
-la mappa scritta in Rust lega solo l'ASCII stampabile.
+terminale.
 
 A ogni aggiornamento (`EditorApp::update`, in `src/gui/app.rs`) la finestra
 legge gli eventi una volta per frame, chiama `tick`, disegna la barra dei

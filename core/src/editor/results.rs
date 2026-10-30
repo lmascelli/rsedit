@@ -35,23 +35,15 @@ struct Presentation {
 
 impl<B: BufferTrait> EditorState<B> {
     /// Returns how the listing in BUFFER was asked for and shown, if it is one.
-    fn results_presentation(
-        &self,
-        buffer: &str,
-    ) -> Option<Presentation> {
-        self.with_buffer(buffer, |buf| {
-            buf.data::<Presentation>(CONTEXT).cloned()
-        })
-        .flatten()
+    fn results_presentation(&self, buffer: &str) -> Option<Presentation> {
+        self.with_buffer(buffer, |buf| buf.data::<Presentation>(CONTEXT).cloned())
+            .flatten()
     }
 
     /// Returns a presentation for a run of PRODUCER asked from the focused
     /// window: a run started from a listing in its own window keeps the
     /// listing's origin.
-    fn new_results_presentation(
-        &self,
-        producer: &str,
-    ) -> Presentation {
+    fn new_results_presentation(&self, producer: &str) -> Presentation {
         let window = self.get_focused_window_id();
 
         let buffer = self
@@ -92,8 +84,7 @@ impl<B: BufferTrait> EditorState<B> {
         protected: Option<&str>,
         env: &Arc<Env<Self>>,
     ) -> Option<String> {
-        let mut presentation =
-            self.new_results_presentation(producer);
+        let mut presentation = self.new_results_presentation(producer);
 
         let reusable = if results_reuse_buffer(env) {
             self.buffer_names()
@@ -103,18 +94,15 @@ impl<B: BufferTrait> EditorState<B> {
                         return None;
                     }
 
-                    let previous =
-                        self.results_presentation(&name)?;
+                    let previous = self.results_presentation(&name)?;
 
                     let eligible = self
                         .with_buffer(&name, |buf| {
-                            buf.file_path.is_none()
-                                && buf.current_mode == mode
+                            buf.file_path.is_none() && buf.current_mode == mode
                         })
                         .unwrap_or(false);
 
-                    (eligible && previous.producer == producer)
-                        .then_some((previous.started, name))
+                    (eligible && previous.producer == producer).then_some((previous.started, name))
                 })
                 .max_by_key(|(started, _)| *started)
                 .map(|(_, name)| name)
@@ -127,50 +115,39 @@ impl<B: BufferTrait> EditorState<B> {
             None => {
                 let name = self.free_name_for_work(stem);
 
-                self.new_buffer(
-                    &name,
-                    None,
-                    Some(mode.into()),
-                    env,
-                )?;
+                self.new_buffer(&name, None, Some(mode.into()), env)?;
 
                 name
             }
         };
 
-        if let Some(previous) =
-            self.results_presentation(&name)
-        {
+        if let Some(previous) = self.results_presentation(&name) {
             presentation.window = previous.window;
             presentation.bottom = previous.bottom;
 
             if presentation.restore_buffer == name {
-                presentation.restore_buffer =
-                    previous.restore_buffer;
+                presentation.restore_buffer = previous.restore_buffer;
             }
         }
 
         // The writer is taken away under the lock it writes under, and its
         // work stopped once the buffer's lock is given back.
-        let (writer, marked) = self.with_buffer_mut(
-            &name,
-            |buf| {
-                let writer = buf.writer.take();
+        let (writer, marked) = self.with_buffer_mut(&name, |buf| {
+            let writer = buf.writer.take();
 
-                let marked = buf
-                    .data::<Results>(RESULTS_KEY)
-                    .and_then(|results| results.marked.clone());
+            let marked = buf
+                .data::<Results>(RESULTS_KEY)
+                .and_then(|results| results.marked.clone());
 
-                buf.adopt_text("");
-                buf.text.cursor_move(0, 0);
-                buf.forget_data(RESULTS_KEY);
-                buf.forget_data("lisp:results-refresh");
-                buf.read_only = true;
-                buf.put_data(CONTEXT, presentation);
+            buf.adopt_text("");
+            buf.text.cursor_move(0, 0);
+            buf.forget_data(RESULTS_KEY);
+            buf.forget_data("lisp:results-refresh");
+            buf.read_only = true;
+            buf.put_data(CONTEXT, presentation);
 
-                (writer, marked)
-            },
-        )?;
+            (writer, marked)
+        })?;
 
         if let Some(writer) = writer {
             self.work().cancel(writer);
@@ -178,8 +155,7 @@ impl<B: BufferTrait> EditorState<B> {
 
         if let Some(marked) = marked {
             self.with_buffer_mut(&marked, |buf| {
-                buf.overlays
-                    .remove_category(Some("results-target"))
+                buf.overlays.remove_category(Some("results-target"))
             });
         }
 
@@ -206,9 +182,7 @@ impl<B: BufferTrait> EditorState<B> {
 
         let mut presentation = self
             .results_presentation(buffer)
-            .unwrap_or_else(|| {
-                self.new_results_presentation("results")
-            });
+            .unwrap_or_else(|| self.new_results_presentation("results"));
 
         let same = results_display_same_window(env);
 
@@ -218,20 +192,15 @@ impl<B: BufferTrait> EditorState<B> {
             self.buffer_names()
                 .into_iter()
                 .filter_map(|name| {
-                    let previous =
-                        self.results_presentation(&name)?;
+                    let previous = self.results_presentation(&name)?;
 
                     let window = previous.window?;
 
-                    let showing = self.windows(|windows| {
-                        windows.buffer_of(window)
-                    });
+                    let showing = self.windows(|windows| windows.buffer_of(window));
 
                     (previous.bottom
-                        && previous.producer
-                            == presentation.producer
-                        && showing.as_deref()
-                            == Some(name.as_str()))
+                        && previous.producer == presentation.producer
+                        && showing.as_deref() == Some(name.as_str()))
                     .then_some((previous.started, window))
                 })
                 .max_by_key(|(started, _)| *started)
@@ -286,27 +255,19 @@ impl<B: BufferTrait> EditorState<B> {
                 .root()
                 .window_ids()
                 .into_iter()
-                .filter_map(|id| {
-                    windows.buffer_of(id).map(|name| (id, name))
-                })
+                .filter_map(|id| windows.buffer_of(id).map(|name| (id, name)))
                 .collect::<Vec<_>>()
         });
 
         let usable = |id: WindowId| {
             windows.iter().any(|(window, name)| {
-                *window == id
-                    && name != listing
-                    && (!preview || *window != from)
+                *window == id && name != listing && (!preview || *window != from)
             })
         };
 
-        if let Some(presentation) =
-            self.results_presentation(listing)
-        {
+        if let Some(presentation) = self.results_presentation(listing) {
             if usable(presentation.origin_window) {
-                return self.select_window(
-                    presentation.origin_window,
-                );
+                return self.select_window(presentation.origin_window);
             }
         }
 
@@ -314,23 +275,16 @@ impl<B: BufferTrait> EditorState<B> {
             return true;
         }
 
-        if let Some((window, _)) =
-            windows.iter().find(|(id, _)| usable(*id))
-        {
+        if let Some((window, _)) = windows.iter().find(|(id, _)| usable(*id)) {
             return self.select_window(*window);
         }
 
         // Another window on the listing, before splitting for a new one.
-        if let Some((window, _)) =
-            windows.iter().find(|(id, _)| *id != from)
-        {
+        if let Some((window, _)) = windows.iter().find(|(id, _)| *id != from) {
             return self.select_window(*window);
         }
 
-        match self.split_focused_window(
-            Orientation::Horizontal,
-            Division::Ratio(0.5),
-        ) {
+        match self.split_focused_window(Orientation::Horizontal, Division::Ratio(0.5)) {
             Some(window) => self.select_window(window),
             None => false,
         }
@@ -344,36 +298,24 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn quit_results(&self) -> bool {
         let buffer = self.get_current_buffer_name();
         let here = self.get_focused_window_id();
-        let presentation =
-            self.results_presentation(&buffer);
+        let presentation = self.results_presentation(&buffer);
 
         if let Some(presentation) = &presentation {
             if presentation.bottom
                 && presentation.window == Some(here)
                 && self.delete_window_by_id(here)
             {
-                self.select_window(
-                    presentation.origin_window,
-                );
+                self.select_window(presentation.origin_window);
                 return true;
             }
         }
 
         let previous = presentation
             .into_iter()
-            .flat_map(|presentation| {
-                [
-                    presentation.restore_buffer,
-                    presentation.origin_buffer,
-                ]
-            })
-            .find(|name| {
-                name != &buffer && self.has_buffer(name)
-            })
+            .flat_map(|presentation| [presentation.restore_buffer, presentation.origin_buffer])
+            .find(|name| name != &buffer && self.has_buffer(name))
             .or_else(|| self.most_recent_buffer(&buffer));
 
-        previous.is_some_and(|name| {
-            self.switch_to_buffer(&name)
-        })
+        previous.is_some_and(|name| self.switch_to_buffer(&name))
     }
 }

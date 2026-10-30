@@ -23,6 +23,14 @@ fn binding_form<B: BufferTrait>(
     ])
 }
 
+/// Returns, as `keymap-bindings` lists it, what a character typed alone runs
+/// when no keymap binds it: under the key `<char>`, as `define-key` takes it,
+/// since it stands for all of those characters. `None` when nothing does.
+fn character_rule<B: BufferTrait>(ctx: &EditorState<B>) -> Option<ELispExp<B>> {
+    ctx.character_binding()
+        .map(|(target, source)| binding_form("<char>".into(), target, source))
+}
+
 fn key_argument<B: BufferTrait>(args: &[ELispExp<B>]) -> Option<Vec<KeyEvent>> {
     match args.first() {
         Some(ELispExp::String(text)) => parse_key_sequence(text),
@@ -74,24 +82,39 @@ primitive!(keys_with_prefix, args, _env, ctx, {
             }
         }
     };
-    let found: Vec<ELispExp<B>> = ctx
-        .key_bindings()
+    
+    // The rule for the characters begins with no key, so only the empty
+    // prefix, which asks for everything, has it.
+    let rule = prefix.is_empty().then(|| character_rule(ctx)).flatten();
+    let found: Vec<ELispExp<B>> = rule
         .into_iter()
-        .filter(|binding| binding.keys.len() > prefix.len() && binding.keys.starts_with(&prefix))
-        .map(|binding| binding_form(binding.described(), binding.target, binding.source))
+        .chain(
+            ctx.key_bindings()
+                .into_iter()
+                .filter(|binding| {
+                    binding.keys.len() > prefix.len() && binding.keys.starts_with(&prefix)
+                })
+                .map(|binding| binding_form(binding.described(), binding.target, binding.source)),
+        )
         .collect();
     Ok(ELispExp::proper_list(found))
 });
 
 pub const KEYMAP_BINDINGS_DOC: &str = "(keymap-bindings): Return every binding in effect in the \
          current buffer, sorted by key, each as (KEYS TARGET SOURCE) under the keymap that wins \
-         it; a binding another keymap hides is left out.";
+         it; a binding another keymap hides is left out. First, as (\"<char>\" TARGET SOURCE), \
+         what a character typed alone runs when no keymap binds it, if anything does.";
 
 primitive!(keymap_bindings, _args, _env, ctx, {
+    // The rule first: it stands for many keys, so it sorts with none of them.
     Ok(ELispExp::proper_list(
-        ctx.key_bindings()
+        character_rule(ctx)
             .into_iter()
-            .map(|binding| binding_form(binding.described(), binding.target, binding.source))
+            .chain(
+                ctx.key_bindings().into_iter().map(|binding| {
+                    binding_form(binding.described(), binding.target, binding.source)
+                }),
+            )
             .collect(),
     ))
 });

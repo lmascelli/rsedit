@@ -301,7 +301,7 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
             "Command attempted to use minibuffer while in minibuffer".into(),
         ));
     }
-    
+
     let title = if let ELispExp::String(s) = &args[0] {
         Some(s.to_string())
     } else {

@@ -246,6 +246,11 @@ impl<B: BufferTrait> Keymap<B> {
         Self::default()
     }
 
+    /// Returns the fallback for unmodified characters, if this map has one.
+    pub fn character_handler(&self) -> Option<&ELispExp<B>> {
+        self.character_handler.as_ref()
+    }
+
     /// Sets the fallback for unmodified characters, Unicode included, or
     /// removes it when HANDLER is nil. This map's bindings and prefixes come
     /// before it.
@@ -341,8 +346,9 @@ impl<B: BufferTrait> Keymap<B> {
 }
 
 /// Fills KEYMAPS with the few bindings written in Rust: `M-x`, the arrows,
-/// Return, and `self-insert` for every printable ASCII character. Everything
-/// else comes from `common-keymaps.lisp` and the modules.
+/// Return, and `self-insert` as the character handler, for every character
+/// typed alone. Everything else comes from `common-keymaps.lisp` and the
+/// modules.
 pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
     // -------------------------------- EDITOR ---------------------------------
     keymaps.insert_key(
@@ -393,22 +399,13 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
         ELispExp::form(vec![ELispExp::symbol("insert-newline".into())]),
     );
 
-    // TODO(CMD-1): only printable ASCII is bound, so `è` is undefined.
-    // TODO(CMD-5): `(self-insert "x")` carries its own argument, so the prefix
-    // argument never reaches it.
-    for c in ' '..='~' {
-        let event = KeyEvent {
-            code: KeyCode::Char(c),
-            modifiers: KeyModifiers::default(),
-        };
-        keymaps.insert_key(
-            event,
-            ELispExp::form(vec![
-                ELispExp::symbol("self-insert".into()),
-                ELispExp::string(c.into()),
-            ]),
-        );
-    }
+    // Every character typed alone -- `a`, `è`, `€` -- is inserted: the
+    // character handler, as `(define-key nil "<char>" 'self-insert)` would
+    // set it, and not a binding for each, since there are too many to bind
+    // one by one. A binding of one of them, here or in a mode, still wins.
+    // TODO(CMD-5): the call made, `(self-insert "x")`, carries its own
+    // argument, so the prefix argument never reaches it.
+    keymaps.set_character_handler(ELispExp::symbol("self-insert".into()));
 }
 
 // ---------------------------------------------------------------------------

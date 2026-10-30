@@ -23,11 +23,10 @@ struct Core<'editor, B: BufferTrait> {
 impl<'editor, B: BufferTrait> Core<'editor, B> {
     /// Returns the editor STATE, with ENV, sized for a first frame and able to
     /// type characters past ASCII; init.lisp has been read already.
-    fn new(state: &'editor EditorState<B>, env: Arc<Env<EditorState<B>>>) -> Result<Self, String> {
+    fn new(state: &'editor EditorState<B>, env: Arc<Env<EditorState<B>>>) -> Self {
         let core = Self { state, env };
         core.state.resize(core.env.clone(), 100, 32);
-        core.enable_unicode_typing()?;
-        Ok(core)
+        core
     }
 
     /// Returns the form `'NAME`.
@@ -36,31 +35,6 @@ impl<'editor, B: BufferTrait> Core<'editor, B> {
             ELispExp::symbol("quote".into()),
             ELispExp::symbol(name.into()),
         ])
-    }
-
-    /// Binds `<char>` to `self-insert` when nothing binds `é`: the keymap
-    /// written in Rust binds printable ASCII only.
-    fn enable_unicode_typing(&self) -> Result<(), String> {
-        if self
-            .value("key-binding", vec![ELispExp::string("é".into())])?
-            .is_nil()
-        {
-            let installed = self.value(
-                "define-key",
-                vec![
-                    ELispExp::nil(),
-                    ELispExp::string("<char>".into()),
-                    Self::quote("self-insert"),
-                ],
-            )?;
-            if !installed.is_truthy() {
-                return Err(
-                    "This frontend requires the core patch supporting <char> keymap fallbacks"
-                        .into(),
-                );
-            }
-        }
-        Ok(())
     }
 
     /// Returns the value of `(NAME ARGS...)`, or the error with its backtrace.
@@ -179,7 +153,7 @@ pub fn gui_main<B: BufferTrait>(
     env: Arc<Env<EditorState<B>>>,
     font: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let core = Core::new(state, env)?;
+    let core = Core::new(state, env);
     let native = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1000., 720.])

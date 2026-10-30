@@ -292,7 +292,7 @@ impl<B: BufferTrait> EditorState<B> {
             });
             restore
         });
-        
+
         // Outside the closure: moving focus makes a buffer current, which takes
         // the windows' lock again.
         if let Some(restore_id) = restore_id {

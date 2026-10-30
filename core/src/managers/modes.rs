@@ -207,6 +207,32 @@ impl<B: BufferTrait> Modes<B> {
             .map(|target| Binding::new(keys, target, BindingSource::Global))
     }
 
+    /// Returns what a character typed alone runs when no map in effect binds
+    /// it, and from which map: the first character handler, in the order key
+    /// resolution reads the maps. `None` when none has one, or under a
+    /// transient map that refuses what it does not bind.
+    pub fn character_binding(&self, modes: &[&str]) -> Option<(ELispExp<B>, BindingSource)> {
+        if self
+            .transient()
+            .is_some_and(|map| map.on_unbound == OnUnbound::Refuse)
+        {
+            return None;
+        }
+        for (index, mode) in modes.iter().enumerate() {
+            if let Some(handler) = self.mode_keymap(mode).and_then(Keymap::character_handler) {
+                let source = if index + 1 < modes.len() {
+                    BindingSource::Local
+                } else {
+                    BindingSource::Mode
+                };
+                return Some((handler.clone(), source));
+            }
+        }
+        self.global_keymap
+            .character_handler()
+            .map(|handler| (handler.clone(), BindingSource::Global))
+    }
+
     /// Returns whether KEYS begins a longer binding in a map in effect, which
     /// keeps a half-typed sequence alive. Under a transient map that refuses,
     /// only its own sequences count.

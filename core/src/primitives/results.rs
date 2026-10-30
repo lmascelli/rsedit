@@ -147,9 +147,7 @@ fn visit_index<B: BufferTrait>(
     let from = ctx.get_focused_window_id();
 
     if !ctx.select_results_target(buffer, preview, env) {
-        ctx.set_echo_message(
-            "Cannot select a window for the result",
-        );
+        ctx.set_echo_message("Cannot select a window for the result");
         return Ok(ELispExp::nil());
     }
 
@@ -290,13 +288,12 @@ primitive!(results_state, args, _env, ctx, {
     .unwrap_or_else(ELispExp::nil))
 });
 
-pub const RESULTS_VISIT_DOC: &str =
-    "(results-visit N &optional BUFFER PREVIEW): Go to entry N \
+pub const RESULTS_VISIT_DOC: &str = "(results-visit N &optional BUFFER PREVIEW): Go to entry N \
      of the list in BUFFER, open its location and mark the line. \
      PREVIEW shows it in another window without moving focus. \
      Ordinary visits follow results-visit-same-window. \
      Return the entry, or nil. next-error continues from N.";
-     
+
 primitive!(results_visit, args, env, ctx, {
     let index = match args.first() {
         Some(ELispExp::Number(n)) if *n >= 0.0 => *n as usize,
@@ -305,7 +302,13 @@ primitive!(results_visit, args, env, ctx, {
     let Some(buffer) = asked_about(args, 1, ctx) else {
         return Ok(ELispExp::nil());
     };
-    visit_index(ctx, &env, &buffer, index, args.get(2).is_some_and(|value| value.is_truthy()),)
+    visit_index(
+        ctx,
+        &env,
+        &buffer,
+        index,
+        args.get(2).is_some_and(|value| value.is_truthy()),
+    )
 });
 
 /// The name a listing files its refresher under. See [`refresh`].
@@ -491,8 +494,7 @@ primitive!(results_put, args, _env, ctx, {
     Ok(ELispExp::number(count as f64))
 });
 
-pub const RESULTS_DISPLAY_DOC: &str =
-    "(results-display BUFFER HEIGHT &optional SELECT): Show \
+pub const RESULTS_DISPLAY_DOC: &str = "(results-display BUFFER HEIGHT &optional SELECT): Show \
      BUFFER according to results-display-location. SELECT gives \
      it focus. Return its window id, or nil if the buffer is absent.";
 
@@ -513,23 +515,15 @@ primitive!(results_display, args, env, ctx, {
         });
     };
 
-    let select = args
-        .get(2)
-        .is_some_and(|value| value.is_truthy());
+    let select = args.get(2).is_some_and(|value| value.is_truthy());
 
     Ok(ctx
-        .display_results(
-            &buffer,
-            height.max(1.0) as usize,
-            select,
-            &env,
-        )
+        .display_results(&buffer, height.max(1.0) as usize, select, &env)
         .map(Into::into)
         .unwrap_or_else(ELispExp::nil))
 });
 
-pub const RESULTS_QUIT_DOC: &str =
-    "(results-quit): Close a managed results strip or restore \
+pub const RESULTS_QUIT_DOC: &str = "(results-quit): Close a managed results strip or restore \
      the buffer replaced by same-window output. Keep the output \
      buffer and its job alive.";
 
@@ -554,16 +548,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("results-buffer", results_buffer, RESULTS_BUFFER_DOC);
     into.command("results-select", results_select, &[], RESULTS_SELECT_DOC);
     into.function("results-put", results_put, RESULTS_PUT_DOC);
-    into.function(
-    "results-display",
-    results_display,
-    RESULTS_DISPLAY_DOC,
-);
+    into.function("results-display", results_display, RESULTS_DISPLAY_DOC);
 
-into.command(
-    "results-quit",
-    results_quit,
-    &[],
-    RESULTS_QUIT_DOC,
-);
+    into.command("results-quit", results_quit, &[], RESULTS_QUIT_DOC);
 }

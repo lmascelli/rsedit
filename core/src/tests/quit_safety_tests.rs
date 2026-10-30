@@ -509,9 +509,12 @@ mod tests {
             &ctx,
         );
         run("(save-buffer)", &env, &ctx);
-        assert_eq!(ctx.get_echo_message(), "No file associated with this buffer");
+        assert_eq!(
+            ctx.get_echo_message(),
+            "No file associated with this buffer"
+        );
     }
-    
+
     #[test]
     fn a_buffer_with_nowhere_to_save_to_is_killed_without_a_question() {
         // `*scratch*`, every help page, every listing: modified constantly and

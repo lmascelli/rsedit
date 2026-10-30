@@ -241,18 +241,9 @@ fn open_results<B: BufferTrait>(
     protected: Option<&str>,
     env: &Arc<Env<EditorState<B>>>,
 ) -> Option<String> {
-    let name = ctx.prepare_results_buffer(
-        producer,
-        stem,
-        mode,
-        protected,
-        env,
-    )?;
+    let name = ctx.prepare_results_buffer(producer, stem, mode, protected, env)?;
 
-    ctx.append_to_buffer(
-        &name,
-        &format!("{} in {}\n", results.pattern, results.over),
-    );
+    ctx.append_to_buffer(&name, &format!("{} in {}\n", results.pattern, results.over));
 
     attach(ctx, &name, results);
 
@@ -340,10 +331,7 @@ primitive!(grep_scan, args, env, ctx, {
         "grep",
         "*Grep*",
         &mode,
-        Results::new(
-            &source_pattern,
-            &root.to_string_lossy(),
-        ),
+        Results::new(&source_pattern, &root.to_string_lossy()),
         None,
         &env,
     ) else {

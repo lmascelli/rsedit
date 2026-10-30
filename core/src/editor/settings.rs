@@ -453,40 +453,31 @@ pub(super) fn echo_timeout<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Op
 
 /// The name of the Lisp variable that sends a visit to an entry of a listing
 /// to the listing's own window.
-pub const RESULTS_VISIT_SAME_WINDOW: &str =
-    "results-visit-same-window";
+pub const RESULTS_VISIT_SAME_WINDOW: &str = "results-visit-same-window";
 
 /// The name of the Lisp variable that lets a new run take the place of the
 /// newest listing of the same producer.
-pub const RESULTS_REUSE_BUFFER: &str =
-    "results-reuse-buffer";
+pub const RESULTS_REUSE_BUFFER: &str = "results-reuse-buffer";
 
 /// The name of the Lisp variable saying where a listing is shown: `bottom` or
 /// `same-window`.
-pub const RESULTS_DISPLAY_LOCATION: &str =
-    "results-display-location";
+pub const RESULTS_DISPLAY_LOCATION: &str = "results-display-location";
 
 /// Returns whether `results-visit-same-window` is set.
-pub(super) fn results_visit_same_window<B: BufferTrait>(
-    env: &Arc<Env<EditorState<B>>>,
-) -> bool {
+pub(super) fn results_visit_same_window<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     env.get_variable(RESULTS_VISIT_SAME_WINDOW)
         .is_some_and(|value| value.is_truthy())
 }
 
 /// Returns whether `results-reuse-buffer` is set.
-pub(super) fn results_reuse_buffer<B: BufferTrait>(
-    env: &Arc<Env<EditorState<B>>>,
-) -> bool {
+pub(super) fn results_reuse_buffer<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     env.get_variable(RESULTS_REUSE_BUFFER)
         .is_some_and(|value| value.is_truthy())
 }
 
 /// Returns whether `results-display-location` is `same-window`; anything else
 /// is `bottom`.
-pub(super) fn results_display_same_window<B: BufferTrait>(
-    env: &Arc<Env<EditorState<B>>>,
-) -> bool {
+pub(super) fn results_display_same_window<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
     matches!(
         env.get_variable(RESULTS_DISPLAY_LOCATION),
         Some(ELispExp::Symbol(value) | ELispExp::String(value))

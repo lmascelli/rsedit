@@ -727,8 +727,13 @@ mod tests {
             &ctx,
         );
         assert_eq!(
-            run("(nth 2 (assoc \"x\" (keymap-bindings)))", &env, &ctx),
+            run("(nth 2 (assoc \"<char>\" (keymap-bindings)))", &env, &ctx),
             LispExp::string("local".into())
+        );
+        assert_eq!(
+            run("(assoc \"x\" (keymap-bindings))", &env, &ctx),
+            LispExp::nil(),
+            "a character no map binds is listed under the rule, not on its own"
         );
     }
 

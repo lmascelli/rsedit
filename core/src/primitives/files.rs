@@ -206,12 +206,12 @@ primitive!(save_buffer, _args, env, ctx, {
             ctx,
         );
     }
-    
+
     let name = ctx.get_current_buffer_name();
     write_buffer(ctx, &name, auto_save_directory(&env).as_deref());
     Ok(ELispExp::nil())
 });
-         
+
 pub const SAVE_BUFFER_OVERWRITE_DOC: &str = "(save-buffer--overwrite): Write the current buffer \
          over its file, asking nothing. Not called directly -- it is what `save-buffer' does once \
          a conflict has been confirmed.";
