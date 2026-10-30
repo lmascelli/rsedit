@@ -190,6 +190,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
+    commit: "b9873db",
     titolo: [I caratteri non ASCII non si possono digitare],
     breve: [Tasti non ASCII: non digitabili con la configurazione predefinita],
     dove: [`input.rs` (`fill_default_keymaps`, che lega a `self-insert` solo l'ASCII stampabile, e `Keymap::binding`, con il ripiego per i caratteri), `editor/keys.rs` (`EditorState::handle_key_event`)],
