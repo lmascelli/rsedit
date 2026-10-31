@@ -6106,6 +6106,37 @@ va quando il prompt si chiude. Oggi il comando è uno, `string-rectangle`.
 + *Un aspetto riconoscibile.* Attenuato e uguale in ogni modo: chi guarda non
   deve mai chiedersi se ciò che vede è nel file.
 
+=== `risp-repl` <mod-risp-repl>
+
+`M-x risp-repl` apre `*risp*`, un buffer in `risp-mode` dove `C-j` valuta il
+blocco di espressioni che finisce al punto e ne scrive il valore sotto, in una
+riga di commento: il `*scratch*` di Emacs con `eval-print-last-sexp`. Il
+modulo è tutto in Lisp, sopra `backward-sexp`, `forward-sexp`, `syntax-ppss` ed
+`eval-string-top-level`, la stessa valutazione di `M-:` (@mod-minibuffer).
+
++ *Una mappa locale, non un modo maggiore.* I modi non ereditano: un modo
+  `risp-repl-mode` dovrebbe ripetere la colorazione, la tabella e
+  l'indentazione di `risp-mode`, o dividerle in una funzione da chiamare per
+  due modi. `risp-repl-map` è un modo creato solo per la sua mappa, che
+  `set-local-keymap` dà al buffer, il cui modo resta `risp-mode`; per la
+  stessa via `risp-repl-mode` la dà a qualunque buffer. Il prezzo è che la
+  mappa locale è una sola: dove Vim è acceso, le sue mappe prendono il posto
+  di questa.
++ *Il blocco si trova per espressioni, non per righe.* Da `backward-sexp` in
+  `backward-sexp`, ci si ferma quando fra due espressioni c'è una riga vuota o
+  un valore scritto (`;; =>`, `;; !!`): una riga vuota dentro una `defun` non
+  la spezza, perché `backward-sexp` la salta per intero, e un valore scritto
+  chiude il blocco di sopra senza un segnaposto nel buffer. Scartato: un
+  marcatore della fine dell'ultimo output, come fa ielm, che non sopravvive a
+  un taglio o a un salvataggio su file.
++ *Una forma alla volta.* `eval-string-top-level` legge una sola espressione:
+  il modulo divide il blocco con `forward-sexp` e le valuta in ordine,
+  fermandosi alla prima che fallisce, così il resto non gira su uno stato a
+  metà.
++ *Il valore va nel buffer da cui si è partiti.* Se la valutazione rende
+  corrente un altro buffer, la riga va nell'area dell'eco: tornare a `*risp*`
+  con `switch-to-buffer` disferebbe ciò che l'espressione voleva.
+
 === `shell` <mod-shell>
 
 `M-!` esegue un comando e mostra ciò che stampa in una striscia; `C-c !`

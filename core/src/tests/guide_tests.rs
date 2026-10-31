@@ -423,4 +423,69 @@ mod tests {
             homeless.join("\n")
         );
     }
+
+    #[test]
+    fn the_editing_index_names_each_function_under_its_home_and_misses_none() {
+        let (ctx, env) = editor();
+        let synopses = synopses(&env, &ctx);
+        let homes: std::collections::BTreeMap<&str, &str> = synopses
+            .iter()
+            .flat_map(|(page, names)| names.iter().map(move |name| (name.as_str(), page.as_str())))
+            .collect();
+        let index = man_pages()
+            .into_iter()
+            .find(|(name, _)| name == "editing-index")
+            .expect("the editing index")
+            .1;
+        // An entry is a name eight spaces in; the page it is on is the one
+        // the last line ending in "page:" named, within the same section.
+        let mut page: Option<String> = None;
+        let mut listed = BTreeSet::new();
+        let mut wrong = Vec::new();
+        for line in index.lines() {
+            if !line.starts_with(' ') && !line.trim().is_empty() {
+                page = None;
+            } else if line.trim_end().ends_with("page:") {
+                page = line
+                    .split('`')
+                    .nth(1)
+                    .and_then(|rest| rest.split('\'').next())
+                    .map(str::to_string);
+            } else if line.starts_with("        ") && !line.starts_with("         ") {
+                let name = line.split_whitespace().next().expect("an entry has a name");
+                listed.insert(name.to_string());
+                if homes.get(name).copied() != page.as_deref() {
+                    wrong.push(format!(
+                        "{name}: under {page:?}, its home is {:?}",
+                        homes.get(name)
+                    ));
+                }
+            }
+        }
+        assert!(
+            listed.len() > 100,
+            "the entries are not being found: {}",
+            listed.len()
+        );
+        // Every function these pages are the home of is in the index.
+        let missing: Vec<String> = synopses
+            .iter()
+            .filter(|(page, _)| {
+                ["editing", "killing", "rectangles", "indentation"].contains(&page.as_str())
+            })
+            .flat_map(|(_, names)| names)
+            .filter(|name| env.get_function(name).is_some() && !listed.contains(*name))
+            .cloned()
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "listed under the wrong page:\n  {}",
+            wrong.join("\n  ")
+        );
+        assert!(
+            missing.is_empty(),
+            "not in the editing index:\n  {}",
+            missing.join("\n  ")
+        );
+    }
 }

@@ -1,0 +1,268 @@
+NAME
+    editing-index - every function that moves, reads or changes the text
+
+DESCRIPTION
+    Every function that moves point, reads the text of a buffer or changes
+    it, grouped by what it is for, with a few words on each. This page is
+    a map, not the reference: each group says which page explains its
+    functions, with their examples and their limits, and C-h f on a name
+    gives its exact arguments.
+
+    Commands and plain functions are listed together. A command can also
+    be run with M-x or bound to a key; the keys that run one are on its
+    page, and C-h w names them. The variables that change how these
+    functions behave are on the same pages, and are not listed here.
+
+    Where a function takes a count, N, it does its work N times, 1 by
+    default, and a negative N goes the other way.
+
+MOVING POINT
+    On the `editing' page:
+
+        forward-char              a character forward
+        backward-char             a character back
+        next-line                 a line down, keeping the column
+        previous-line             a line up, keeping the column
+        forward-word              past the end of the next word
+        backward-word             to the start of the word before
+        forward-paragraph         to the blank line after the paragraph
+        backward-paragraph        to the blank line before it
+        forward-sexp              over the next balanced expression
+        backward-sexp             back over the one before
+        up-list                   out of the list, past its closer
+        backward-up-list          back to the start of the list
+        down-list                 just inside the next list
+        beginning-of-line         to the start of the line
+        end-of-line               to the end of the line
+        beginning-of-buffer       to the start of the buffer
+        end-of-buffer             to the end of the buffer
+        goto-char                 to POSITION
+        goto-line                 to the start of line N
+
+    On the `indentation' page:
+
+        back-to-indentation       to the first character that is not blank
+
+WHERE POINT IS
+    On the `editing' page:
+
+        point                     where point is, counted from 0
+        point-min                 the first position, 0
+        point-max                 the position after the last character
+        line-number-at-point      the number of point's line, from 1
+        current-line              the text of point's line
+
+    On the `indentation' page:
+
+        current-column            the column point is on, from 0
+
+READING THE TEXT
+    On the `buffers' page:
+
+        buffer-string             the whole text of the buffer
+        buffer-substring          the text between START and END
+
+    On the `completion' page:
+
+        bounds-of-thing-at-point  where the symbol at point begins and ends
+        buffer-words              the distinct words of a buffer
+
+    On the `regexps' page:
+
+        scan-buffer               every match of a pattern, and where
+
+    On the `writing-modes' page:
+
+        syntax-ppss               whether point is in a list, string or
+                                  comment
+        bounds-of-enclosing-list  where the list around point begins and
+                                  ends
+        balance-point             where every list open at a position
+                                  has closed
+
+TYPING AND INSERTING
+    On the `editing' page:
+
+        self-insert               one character, as a key types it
+        insert                    strings, one after another
+        insert-newline            a newline, not indented
+        open-line-above           blank lines above this one, indented
+        open-line-below           blank lines below this one, indented
+        duplicate-line            a copy of this line, below it
+
+    On the `indentation' page:
+
+        newline                   a newline, indented if the mode says so
+        newline-and-indent        a newline, and the new line indented
+
+    On the `killing' page:
+
+        insert-pasted-text        text as a paste: one step, nothing paired
+
+DELETING
+    Nothing deleted goes on the kill ring.
+    On the `editing' page:
+
+        delete-char               the N characters after point
+        delete-backward-char      the character before point
+        delete-region             the text between FROM and TO
+        delete-blank-lines        the blank lines around here, but one
+        just-one-space            the spaces around point, but one
+        delete-horizontal-space   the spaces and tabs around point
+
+    On the `buffers' page:
+
+        clear-buffer              the whole text of the buffer
+
+KILLING AND YANKING
+    What a kill takes goes on the kill ring, for C-y to put back.
+    On the `killing' page:
+
+        kill-line                 to the end of the line
+        kill-whole-line           the whole line, with its newline
+        kill-word                 to the end of the Nth word
+        backward-kill-word        back to the start of the Nth word
+        kill-sexp                 over N balanced expressions
+        backward-kill-sexp        back over N balanced expressions
+        kill-paragraph            to the end of the paragraph
+        backward-kill-paragraph   back to the start of the paragraph
+        kill-region               the region
+        kill-ring-save            the region, without deleting it
+        kill-new                  a string, as if it had been killed
+        yank                      insert the latest kill
+        yank-pop                  swap what was yanked for the kill before
+        current-kill              the kill N back, changing nothing
+        kill-ring-length          how many kills the ring holds
+        set-kill-ring-max         how many kills it may hold
+        clipboard-sync-toggle     keep kills out of the system clipboard,
+                                  or let them in again
+
+THE REGION
+    On the `killing' page:
+
+        set-mark                  put the mark, and start the region
+        mark                      where the mark is
+        exchange-point-and-mark   swap point and the mark
+        mark-whole-buffer         make the whole buffer the region
+        deactivate-mark           end the region, keeping the mark
+        use-region-p              whether there is a region
+        region-beginning          where the region begins
+        region-end                where the region ends
+
+CHANGING TEXT IN PLACE
+    On the `editing' page:
+
+        transpose-chars           swap the characters either side of point
+        transpose-words           swap the words either side of point
+        transpose-lines           swap this line with the one above
+        upcase-word               upcase the word, or the region
+        downcase-word             downcase the word, or the region
+        capitalize-word           capitalize the word, or the region
+        join-line                 join this line to the one above
+        zap-to-char               kill up to and including a character
+
+COMMENTS
+    On the `editing' page:
+
+        comment-dwim              comment the region or the line, or
+                                  take the comments off
+        comment-line              comment this line, or uncomment it
+        comment-indent            start a comment at the end of the line
+        comment-region            comment the lines between FROM and TO
+        uncomment-region          uncomment the lines between them
+        comment-syntax            how this buffer's mode writes comments
+
+INDENTING
+    On the `indentation' page:
+
+        indent-for-tab-command    what Tab does
+        indent-line               indent this line as its mode says
+        indent-region             indent every line of the region
+        indent-rigidly-right      shift the region, or the line, right
+        indent-rigidly-left       shift the region, or the line, left
+        indent-rigidly-lines      shift lines FROM to TO by AMOUNT
+        indent-line-to            indent this line to COLUMN
+        current-indentation       how far a line is indented
+        previous-indentation      how far the line above is indented
+        indent-width              how many columns a Tab indents by
+
+    The rules modes plug in, as their indent-function, and what the Lisp
+    one is built from, also on the `indentation' page:
+
+        lisp-indent-line          the column of this line, in Lisp
+        lisp-indent-under         the column inside the list at OPEN
+        lisp-head-after           the name that opens the list at OPEN
+        lisp-argument-column      the column of the first argument
+        python-indent-line        the column of this line, in Python
+        toml-indent-line          the column of this line, in TOML
+        bash-indent-line          the column of this line, in a script
+        cc-indent-line            the column of this line, in C or C++
+
+RECTANGLES
+    A rectangle is the block of columns between point and the mark.
+    On the `rectangles' page:
+
+        rectangle-mark-mode       show the region as a block, or stop
+        kill-rectangle            delete the block, and keep it
+        copy-rectangle-as-kill    keep the block, without deleting it
+        delete-rectangle          delete the block, keeping nothing
+        yank-rectangle            insert the block kept last
+        open-rectangle            push the block right with spaces
+        clear-rectangle           blank the block out with spaces
+        string-rectangle          put STRING on every line of the block
+        rectangle-bounds          the lines and columns of the block
+        killed-rectangle          the block kept last, as strings
+
+REPLACING
+    On the `searching' page:
+
+        query-replace             replace FROM with TO, asking each time
+        query-replace-regexp      the same, FROM a regular expression
+        replace-string            replace every FROM with TO
+        replace-regexp            the same, FROM a regular expression
+
+PAIRS
+    On the `editing' page:
+
+        electric-pair-enable      pair delimiters in the buffers of MODE
+        electric-pair-delete-backward
+                                  delete back, or the whole empty pair
+        electric-pair-delete-forward
+                                  delete forward, or the whole empty pair
+        electric-pair-post-self-insert
+                                  the hook that types the partner
+
+UNDOING AND REPEATING
+    On the `editing' page:
+
+        undo                      take back the latest change
+        redo                      put back what undo took
+        undo-boundary             start a new undo step
+        undo-join                 make the next edits part of this step
+        set-undo-limit            how much deleted text undo keeps
+        keyboard-quit             give up what is half done
+
+    On the `keymaps' page:
+
+        repeat                    run the last command again
+
+    For more than one command, record them and play them back: see the
+    `macros' page.
+
+EVALUATING
+    On the `repl' page:
+
+        risp-repl-eval-print-block
+                                  the expressions before point, their
+                                  value written under them
+
+PROTECTING A BUFFER
+    On the `buffers' page:
+
+        set-buffer-read-only      refuse every change, or accept them
+        buffer-read-only-p        whether the buffer refuses changes
+        buffer-modified-p         whether it has unsaved changes
+
+SEE ALSO
+    editing, killing, indentation, rectangles, searching, buffers,
+    writing-modes, macros, repl

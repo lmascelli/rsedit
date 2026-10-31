@@ -69,6 +69,9 @@ EVALUATING AN EXPRESSION
     at once. `eval-string-top-level' evaluates a string so from Lisp, and
     returns (t VALUE), or (nil WHY) when it fails.
 
+    To evaluate a few expressions at a time, and keep them where they can
+    be changed and evaluated again, use a buffer: see `repl'.
+
 PREVIEWS
     While C-x r t asks for its string, what you type is drawn on every line
     of the block, and goes when you answer or close the prompt. It is drawn
@@ -149,4 +152,4 @@ KEYS IN MINIBUFFER MODE
     <down>                  history-next
 
 SEE ALSO
-    completion, keymaps, writing-commands, rectangles, virtual-text
+    completion, keymaps, writing-commands, rectangles, virtual-text, repl

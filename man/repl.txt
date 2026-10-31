@@ -1,0 +1,96 @@
+NAME
+    repl - a buffer to try Lisp in, a block at a time
+
+SYNOPSIS
+    (risp-repl)
+    (risp-repl-eval-print-block)
+    (risp-repl-mode)
+    risp-repl-buffer
+
+DESCRIPTION
+    M-x risp-repl opens *risp*, a buffer to write the editor's Lisp in and
+    evaluate it as you go, as *scratch* is in Emacs. It is in risp-mode,
+    coloured and indented as a .lisp file is, and C-j after an expression
+    evaluates it and writes its value on the line below:
+
+        (+ 1 2)
+        ;; => 3
+
+    What you evaluate is evaluated as M-: evaluates it, as init.lisp is,
+    outside any function: a function or a variable it defines is the
+    editor's from then on, until it quits. The buffer is the history. Go
+    back to an expression, change it, and C-j after it again.
+
+    The first time, *risp* is made with a line saying what it is for. M-x
+    risp-repl again goes back to it as you left it; closing the buffer
+    throws it away, and the next M-x risp-repl makes a new one.
+
+WHAT ONE PRESS EVALUATES
+    C-j evaluates the block of expressions that ends at point, one after
+    the other: the expression just before point, and those before it, up
+    to the first blank line, or the first value written, that comes
+    between two of them. Write a few lines together, and one C-j runs them
+    all:
+
+        (defun twice (n)
+          (* 2 n))
+        ;; one comment or more between them is fine
+        (twice 21)
+        ;; => 42
+
+    A blank line, or a value written, inside an expression does not split
+    it: what counts is what comes between two. So a value written ends the
+    block above it, and the expression typed after a value is a block of
+    its own.
+
+    Only the value of the last expression is written. The first that
+    fails stops the block, and its error is written with !! in place of =>,
+    as M-: shows it:
+
+        (no-such-function)
+        ;; !! UndefinedFunction("no-such-function")
+
+    A value is written as the reader would read it back: a string in
+    quotes, a list with its strings in quotes. A value of more than one
+    line takes as many comment lines.
+
+    With point inside a list, C-j evaluates only the expression before
+    point, as C-x C-e does in Emacs: the expressions around it are the
+    arguments of a call, not a program. With point inside a string or a
+    comment, it evaluates nothing, and says so.
+
+IN ANOTHER BUFFER
+    M-x risp-repl-mode gives the buffer you are in the keys of *risp*, C-j
+    above all, and takes them away again the second time. The buffer keeps
+    its mode: a .lisp file becomes a place to try what you are writing,
+    and the values C-j writes go into the file as comments, saved with it
+    unless you delete them.
+
+LIMITS
+    The keys of the REPL are the buffer's local keymap, the one Vim's
+    states use as well: in a buffer where Vim is on, C-j is Vim's again.
+    *risp* starts with a * in its name, so Vim does not turn itself on
+    there unless you ask it to.
+
+    An expression that makes another buffer current -- switch-to-buffer,
+    find-file -- leaves the value out of *risp*: it is shown in the echo
+    area instead.
+
+    A value goes where point was when C-j was pressed, even when what was
+    evaluated moved point or wrote into the buffer.
+
+EXAMPLES
+    A key that opens the REPL from anywhere:
+
+        (define-key nil "C-c l" 'risp-repl)
+
+    The keys of the REPL in every Lisp file you open:
+
+        (defun my-repl-keys () (set-local-keymap 'risp-repl-map))
+        (add-hook 'risp-mode "find-file-hook" 'my-repl-keys)
+
+KEYS IN RISP REPL MAP
+    C-j                     risp-repl-eval-print-block
+
+SEE ALSO
+    minibuffer, modes, keymaps, configuration, writing-commands

@@ -37,6 +37,7 @@ MODULES
     shell                M-! and its output buffer
     manpage              this
     help                 C-h f, C-h k, C-h b -- the editor describing itself
+    risp-repl            M-x risp-repl, Lisp evaluated as you write it
     occur                M-s o, M-s g, and the lists M-g n walks
     compile              C-c c, and jumping to what it complained about
     theme                C-c t, and how faces are drawn

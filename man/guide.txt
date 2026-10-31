@@ -31,6 +31,7 @@ THE REFERENCE
     the keys.
 
         rsedit            the editor's own shape, and the help tree
+        editing-index     every function that edits, and its page
         buffers           what is being edited
         windows           what shows a buffer
         dired             a directory in a buffer
@@ -40,6 +41,7 @@ THE REFERENCE
         writing-modes     colouring a language, and its brackets
         completion        how candidates are found and shown
         minibuffer        the prompt, its history, and M-:
+        repl              a buffer to try Lisp in, a block at a time
         indentation       what Tab and Return do
         macros            record what you pressed, press it again
         rectangles        blocks of text, cut by column

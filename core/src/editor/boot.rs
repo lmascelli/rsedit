@@ -52,6 +52,7 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 (require 'shell)           ; M-! runs a command and shows what it said
 (require 'manpage)         ; C-h m, and K on a word
 (require 'help)            ; C-h f, C-h k, C-h b -- the editor describing itself
+(require 'risp-repl)       ; M-x risp-repl, a buffer where C-j evaluates Lisp
 (require 'occur)           ; M-s o and M-s g, and the lists M-g n walks
 (require 'compile)         ; C-c c, and M-g n to walk what it complained about
 (require 'theme)           ; C-c t to choose how faces are drawn
