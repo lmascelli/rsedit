@@ -5,8 +5,8 @@
 //! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 use super::*;
 use crate::jobs::autosave::{auto_save_directory, auto_save_path};
+use crate::paths::expand_path_from_start;
 use crate::primitives::args;
-use crate::primitives::file_names::expand_path;
 use risp::eval;
 
 // TODO(FIL-2): the file is written in place, and a write that stops halfway
@@ -115,7 +115,7 @@ primitive!(find_file, args, env, ctx, {
     };
     // Expanded before anything else looks at it, so that the `~/...` a
     // completion candidate offers is a path that can actually be opened.
-    let path_str = expand_path(path_str);
+    let path_str = ctx.expand_path(path_str);
     let path = std::path::Path::new(&path_str);
 
     // A directory is somebody else's job. The editor knows only that there is
@@ -359,7 +359,7 @@ primitive!(write_file, args, env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    let path = expand_path(path_str);
+    let path = ctx.expand_path(path_str);
     let current = ctx.get_current_buffer_name();
 
     // What the buffer should be called once it lives at this path -- and, on

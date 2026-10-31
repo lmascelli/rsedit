@@ -82,7 +82,7 @@ primitive!(keys_with_prefix, args, _env, ctx, {
             }
         }
     };
-    
+
     // The rule for the characters begins with no key, so only the empty
     // prefix, which asks for everything, has it.
     let rule = prefix.is_empty().then(|| character_rule(ctx)).flatten();

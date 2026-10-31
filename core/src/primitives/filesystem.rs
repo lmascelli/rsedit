@@ -4,7 +4,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <disco>`.
 use super::*;
-use crate::primitives::file_names::expand_path;
+use crate::paths::expand_path_from_start;
 
 /// Collects every file under ROOT, depth-first, as paths relative to it, and
 /// answers whether the walk stopped early.
@@ -88,8 +88,8 @@ pub(crate) fn walk_files(
 pub const FILE_EXISTS_P_DOC: &str = "(file-exists-p PATH): Return t when something is at PATH, a \
          broken symbolic link included, nil otherwise. A leading ~ is expanded.";
 
-primitive!(file_exists_p, args, _env, _ctx, {
-    let path = path_arg(args.first())?;
+primitive!(file_exists_p, args, _env, ctx, {
+    let path = path_arg(ctx, args.first())?;
     // `symlink_metadata` rather than `exists`, which follows the link and so
     // calls a dangling symlink absent -- when in fact it is there, and is
     // exactly the kind of thing a file manager is asked to delete.
@@ -101,8 +101,8 @@ primitive!(file_exists_p, args, _env, _ctx, {
 pub const FILE_DIRECTORY_P_DOC: &str = "(file-directory-p PATH): Return t when PATH is a \
          directory, or a symbolic link to one, nil otherwise. A leading ~ is expanded.";
 
-primitive!(file_directory_p, args, _env, _ctx, {
-    let path = path_arg(args.first())?;
+primitive!(file_directory_p, args, _env, ctx, {
+    let path = path_arg(ctx, args.first())?;
     Ok(bool_exp(std::path::Path::new(&path).is_dir()))
 });
 
@@ -113,7 +113,7 @@ pub const DIRECTORY_ENTRY_COUNT_DOC: &str = "(directory-entry-count PATH): Retur
          (directory-entry-count \"/etc\")";
 
 primitive!(directory_entry_count, args, _env, ctx, {
-    let path = path_arg(args.first())?;
+    let path = path_arg(ctx, args.first())?;
     match std::fs::read_dir(&path) {
         Ok(entries) => Ok(ELispExp::number(entries.count() as f64)),
         Err(why) => {
@@ -138,7 +138,7 @@ primitive!(delete_file, args, _env, ctx, {
             got: args.len(),
         });
     }
-    let path = path_arg(args.first())?;
+    let path = path_arg(ctx, args.first())?;
     let recursive = args.get(1).is_some_and(|flag| flag.is_truthy());
     let as_given = std::path::Path::new(&path);
     // The link itself, not its target: `is_dir` follows symlinks, and a link
@@ -177,8 +177,8 @@ pub const RENAME_FILE_DOC: &str = "(rename-file FROM TO): Rename FROM to TO, whi
 
 primitive!(rename_file, args, _env, ctx, {
     exact_arity(args, 2)?;
-    let from = path_arg(args.first())?;
-    let to = path_arg(args.get(1))?;
+    let from = path_arg(ctx, args.first())?;
+    let to = path_arg(ctx, args.get(1))?;
     let from_path = std::path::Path::new(&from);
     let to_path = std::path::Path::new(&to);
     // Same file, so there is nothing to refuse and nothing to do. Checked
@@ -208,10 +208,11 @@ primitive!(rename_file, args, _env, ctx, {
 /// Reads a path argument: a string, expanded, so that every one of these
 /// takes `~`.
 fn path_arg<B: BufferTrait>(
+    ctx: &EditorState<B>,
     arg: Option<&ELispExp<B>>,
 ) -> Result<String, EvalError<EditorState<B>>> {
     match arg {
-        Some(ELispExp::String(path)) => Ok(expand_path(path)),
+        Some(ELispExp::String(path)) => Ok(ctx.expand_path(path)),
         other => Err(EvalError::WrongArgumentType {
             expected: "String".into(),
             got: other.cloned().unwrap_or_else(ELispExp::nil),
@@ -299,7 +300,7 @@ primitive!(directory_files_recursive, args, _env, ctx, {
         }
     }
 
-    let root = expand_path(&directory);
+    let root = expand_path_from_start(&directory);
     let root = std::path::Path::new(&root);
     if !root.is_dir() {
         ctx.log_diagnostic(&format!("Cannot walk {directory}: not a directory"));
@@ -324,7 +325,7 @@ pub const READ_FILE_TO_STRING_DOC: &str = "(read-file-to-string PATH): Return th
          (read-file-to-string \"~/.gitignore\")";
 
 primitive!(read_file_to_string, args, _env, ctx, {
-    let path = path_arg(args.first())?;
+    let path = path_arg(ctx, args.first())?;
     match std::fs::read_to_string(&path) {
         Ok(contents) => Ok(ELispExp::string(contents)),
         Err(why) => {

@@ -31,6 +31,11 @@ pub struct Buffer<B: BufferTrait> {
     pub name: String,
     pub text: B,
     pub file_path: Option<String>,
+    /// The directory this buffer's relative names are read in, when it has
+    /// one of its own: a command's output, for the paths it prints. `None`
+    /// follows the editor's working directory. See
+    /// [`crate::editor::EditorState::directory_of`].
+    pub directory: Option<String>,    
     pub is_modified: bool,
     pub current_mode: String,
     /// This buffer's edit history: recorded changes for undo and redo.
@@ -112,6 +117,7 @@ impl<B: BufferTrait> Buffer<B> {
             name: name.to_string(),
             text: B::default(),
             file_path: None,
+            directory: None,
             is_modified: false,
             current_mode: "fundamental-mode".into(),
             undo: UndoHistory::default(),
@@ -213,6 +219,7 @@ impl<B: BufferTrait> Buffer<B> {
             name: name.to_string(),
             text: B::from(text),
             file_path: None,
+            directory: None,
             is_modified: false,
             current_mode: "fundamental-mode".into(),
             undo: UndoHistory::default(),

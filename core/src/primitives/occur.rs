@@ -320,7 +320,7 @@ primitive!(grep_scan, args, env, ctx, {
         crate::feature::isearch::case_fold(&env),
     )
     .map_err(EvalError::RuntimeMessage)?;
-    let root = PathBuf::from(crate::primitives::file_names::expand_path(&directory));
+    let root = PathBuf::from(crate::paths::expand_path_from_start(&directory));
     if !root.is_dir() {
         ctx.set_echo_message(&format!("{directory} is not a directory"));
         return Ok(ELispExp::nil());

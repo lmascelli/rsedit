@@ -313,7 +313,7 @@ primitive!(command_arg_complete, args, env, ctx, {
         // at a time, which the filter below knows nothing of.
         ArgSpec::File { .. } => {
             return Ok(ELispExp::proper_list(
-                super::file_names::file_completions(&prefix)
+                crate::paths::file_completions(&prefix, &ctx.default_directory())
                     .into_iter()
                     .map(ELispExp::string)
                     .collect(),

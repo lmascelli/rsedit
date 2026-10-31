@@ -377,7 +377,7 @@ mod tests {
         press(&ctx, &env, KeyCode::Char('x'), ctrl());
         assert_eq!(point_1d(&ctx), 10, "point should be where the mark was");
     }
-    
+
     #[test]
     fn the_listing_has_the_character_rule_once_and_no_character_on_its_own() {
         let (ctx, env) = editor_with("");

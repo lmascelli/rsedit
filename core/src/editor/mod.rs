@@ -55,6 +55,7 @@ mod background;
 pub(crate) mod boot;
 mod buffers;
 mod commands;
+mod directory;
 mod frame;
 mod keys;
 mod kill_yank;
@@ -224,6 +225,10 @@ pub struct EditorState<B: BufferTrait> {
     /// The features loaded, the `require`s in progress, what waits for a
     /// feature, and the plugins. See [`Loader`].
     loader: Arc<RwLock<Loader<ELispExp<B>>>>,
+
+    /// The directory relative names are read in and commands start in, for
+    /// a buffer with none of its own. See [`directory`].
+    working_directory: Arc<RwLock<String>>,
 }
 
 impl<B: BufferTrait> LispContext for EditorState<B> {

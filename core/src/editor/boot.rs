@@ -172,6 +172,11 @@ impl<B: BufferTrait> EditorState<B> {
             log,
             history: Arc::new(RwLock::new(History::default())),
             loader: Arc::new(RwLock::new(Loader::default())),
+            working_directory: Arc::new(RwLock::new(
+                crate::paths::starting_directory()
+                    .to_string_lossy()
+                    .to_string(),
+            )),
         };
         // The executor's copy of the editor, which could not exist before the
         // editor did: a cycle, since the editor holds the WorkManager, which

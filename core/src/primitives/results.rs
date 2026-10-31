@@ -91,7 +91,7 @@ fn visit<B: BufferTrait>(
         // Said rather than opened: a path that is not there was written by a
         // build run somewhere else, and an empty buffer of the same name would
         // look like the file.
-        if !Path::new(&crate::primitives::file_names::expand_path(&entry.source)).exists() {
+        if !Path::new(&crate::paths::expand_path_from_start(&entry.source)).exists() {
             ctx.set_echo_message(&format!("No such file: {}", entry.source));
             return Ok(false);
         }
