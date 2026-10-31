@@ -4,7 +4,6 @@
 //!
 //! Design: `doc/architettura-editor.typ, <disco>`.
 use super::*;
-use crate::paths::expand_path_from_start;
 
 /// Collects every file under ROOT, depth-first, as paths relative to it, and
 /// answers whether the walk stopped early.
@@ -226,7 +225,7 @@ fn bool_exp<B: BufferTrait>(yes: bool) -> ELispExp<B> {
 }
 
 pub const DIRECTORY_FILES_RECURSIVE_DOC: &str = "(directory-files-recursive &optional DIRECTORY \
-         LIMIT PRUNE SUFFIXES): Return (TRUNCATED PATHS): the files under DIRECTORY, the current \
+         LIMIT PRUNE SUFFIXES): Return (TRUNCATED PATHS): the files under DIRECTORY, the working \
          directory by default, as a sorted list of paths relative to it, and whether the walk \
          stopped at LIMIT files, 10000 by default. The directory names in PRUNE are not entered \
          at any depth, and files ending in one of SUFFIXES are left out and not counted. \
@@ -300,7 +299,7 @@ primitive!(directory_files_recursive, args, _env, ctx, {
         }
     }
 
-    let root = expand_path_from_start(&directory);
+    let root = ctx.expand_path(&directory);
     let root = std::path::Path::new(&root);
     if !root.is_dir() {
         ctx.log_diagnostic(&format!("Cannot walk {directory}: not a directory"));

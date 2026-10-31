@@ -29,6 +29,9 @@ SYNOPSIS
     (delete-file PATH &optional RECURSIVE)
     (rename-file FROM TO)
 
+    (working-directory)
+    (cd DIRECTORY)
+    (pwd)
     (expand-file-name PATH &optional DIRECTORY)
     (file-name-directory PATH)
     (file-name-nondirectory PATH)
@@ -144,12 +147,20 @@ FILES FROM LISP
     A leading ~ is the home directory to all of these except
     directory-files-recursive, which takes its directory as it is given.
 
+THE WORKING DIRECTORY
+    A relative path, typed at C-x C-f or given to a function, is read in
+    the working directory: the directory the editor was started in, until
+    M-x cd moves it. M-x grep searches under it. M-x pwd says which it is,
+    and `working-directory' returns it.
+
+    Moving it changes nothing that has started already: a command still
+    running stays where it began.
+
 PATHS
     `expand-file-name' makes a path absolute: ~ becomes the home
     directory, a relative path is taken from DIRECTORY or from the
-    directory the editor was started in, and . and .. are resolved by
-    name, without looking at the disk. The other four take a path apart
-    or put it together:
+    working directory, and . and .. are resolved by name, without looking
+    at the disk. The other four take a path apart or put it together:
 
         (file-name-directory "/a/b/c")          "/a/b/"
         (file-name-nondirectory "/a/b/c")       "c"

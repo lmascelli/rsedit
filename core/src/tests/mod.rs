@@ -100,4 +100,5 @@ mod work_support;
 mod work_threads_tests;
 mod work_watchdog_tests;
 mod worker_tests;
+mod working_directory_tests;
 mod write_file_tests;

@@ -166,7 +166,7 @@ lì e nella mappa di `lib.rs`.
   columns: (3.4cm, 1fr),
   header: ([Percorso], [Contenuto]),
   [`lib.rs`], [Ordine dei moduli e superficie pubblica (`pub use`). Tutto il resto è `pub(crate)`.],
-  [`paths.rs`], [Le directory dell'editor, configurazione, dati e cache, secondo le convenzioni di ogni sistema: `app_dir` (@directory); e quella dei dati installati con l'editor, `installed_data_dir`.],
+  [`paths.rs`], [Le directory dell'editor, configurazione, dati e cache, secondo le convenzioni di ogni sistema: `app_dir` (@directory); quella dei dati installati con l'editor, `installed_data_dir`; e i nomi dei file, resi assoluti e smontati senza chiedere al disco (@nomi-file).],
   [`buffer/`], [`Buffer`, `BufferTrait`, `GapBuffer`, undo, mark, overlay, testo virtuale, cache di colorazione (`syntax.rs`) e di scansione (`scan.rs`), timbro del file su disco (`disk.rs`).],
   [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`).],
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
@@ -4984,7 +4984,7 @@ e i lavori Lisp sono nel capitolo sul lavoro in background (@comandi-shell,
   columns: (3.1cm, 1fr),
   header: ([File], [Contenuto]),
   [`files.rs`], [Visitare un file e riscriverlo: `find-file`, `save-buffer`, `write-file`, `revert-buffer`, `recover-file`, con le metà che le loro domande chiamano una volta risposte; `write_buffer` (@file-su-disco).],
-  [`file_names.rs`], [I nomi dei file: `expand_path`, che rende assoluto un percorso, le funzioni che lo smontano, l'elenco di una directory, i candidati del completamento.],
+  [`file_names.rs`], [I nomi dei file dal Lisp: `list-dir`, `expand-file-name` e le funzioni che smontano un nome, sopra quelle di `paths.rs` (@nomi-file); la directory di lavoro, `working-directory`, `cd` e `pwd` (@directory-di-lavoro).],
   [`filesystem.rs`], [Il disco: `file-exists-p`, `delete-file`, `rename-file`, `directory-files-recursive` con `walk_files`, `read-file-to-string`.],
   [`environment.rs`], [`getenv`, `setenv`, `path-separator`, `data-directory`.],
   [`quit.rs`], [`quit` e `save-some-buffers`, e `has_unsaved_work`, che dice se chiudere un buffer perderebbe qualcosa.],
@@ -4999,22 +4999,47 @@ e i lavori Lisp sono nel capitolo sul lavoro in background (@comandi-shell,
 
 === I nomi dei file <nomi-file>
 
-`expand_path` fa di ciò che l'utente scrive un percorso assoluto: espande `~`
-con `HOME`, o con `USERPROFILE` se `HOME` manca, lo risolve rispetto alla
-directory di lavoro se è relativo, e toglie `.` e `..` per nome, senza chiedere
-al disco. `expand_path_in` fa lo stesso rispetto a un'altra directory: è il
-secondo argomento di `expand-file-name`, per un nome scritto in un elenco di
-file. Ne passano `find-file`, `write-file`, le primitive del disco, la ricerca
-nei file e il salvataggio automatico.
+Le funzioni sui nomi stanno in `paths.rs`, accanto alle directory
+dell'editor; le primitive che le offrono al Lisp in `primitives/file_names.rs`.
+
+`expand_path_in` fa di un nome un percorso assoluto: espande `~` con `HOME`, o
+con `USERPROFILE` se `HOME` manca, lo risolve rispetto a una directory se è
+relativo, e toglie `.` e `..` per nome, senza chiedere al disco. Ciò che
+l'utente scrive passa da `EditorState::expand_path`, che la chiama con la
+directory di lavoro (@directory-di-lavoro): ne passano `find-file`,
+`write-file`, `eval-file`, le primitive del disco, `list-dir`, la ricerca nei
+file, la visita dei risultati e `expand-file-name`, anche per il suo secondo
+argomento. `expand_path_from_start` la chiama con la directory in cui l'editor
+è partito, per un'impostazione che non deve spostarsi con `cd`: la directory
+del salvataggio automatico.
 
 Le altre funzioni smontano un nome senza toccare il disco: `as_directory`
 aggiunge il separatore finale, `without_trailing_separator` lo toglie (una
 radice lo tiene), `directory_part` e `last_component` dividono all'ultimo
-separatore. `directory_entries` elenca una directory in ordine, con il
-separatore dopo ogni sottodirectory, e `list-dir` può mettere prima le
-directory. `file_completions` ne prende i nomi che continuano ciò che è stato
-scritto, come percorsi interi, e i file nascosti solo dopo un punto: lo usa il
-completamento del codice `f`, in `commands.rs`.
+separatore. `directory_entries` elenca in ordine una directory, che riceve già
+assoluta, con il separatore dopo ogni sottodirectory, e `list-dir` può mettere
+prima le directory. `file_completions` ne prende i nomi che continuano ciò che
+è stato scritto, letto nella directory che riceve, come percorsi interi, e i
+file nascosti solo dopo un punto: lo usa il completamento del codice `f`, in
+`commands.rs`, con la directory di lavoro.
+
+=== La directory di lavoro <directory-di-lavoro>
+
+L'editor ha una directory di lavoro sua, in `EditorState` (`editor/directory.rs`),
+che parte da quella del processo e che `cd` sposta. La directory del processo
+non cambia mai: un comando già partito resta dove è partito, i thread in
+background non la vedono muoversi, e ogni `EditorState` dei test ha la sua.
+
+Un buffer può avere una directory propria, `Buffer::directory`; `None` segue
+quella dell'editor. `directory_of` sceglie tra le due, ed è l'unico punto che lo
+fa: un buffer che segue la directory del suo file, come in Emacs, è una modifica
+lì e in ciò che imposta `Buffer::directory`, non nei chiamanti.
+`default_directory` è la directory del buffer corrente, quella in cui
+`expand_path` legge un nome relativo e il completamento del codice `f` cerca i
+candidati; `working-directory` la restituisce al Lisp, e `pwd` la scrive
+nell'area messaggi. `cd` legge il suo argomento come ogni nome scritto, quindi
+`cd ..` sale di un livello, e rifiuta ciò che non è una directory senza cambiare
+nulla.
 
 === Il disco <disco>
 

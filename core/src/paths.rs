@@ -1,8 +1,16 @@
 //! Where the editor keeps what it keeps on disk: its configuration, its data
-//! and its cache, and where its own data was installed. [`app_dir`] is asked for a directory by what it is for, and answers
-//! with where that is on this system, making it when asked to.
+//! and its cache, and where its own data was installed. [`app_dir`] is asked
+//! for a directory by what it is for, and answers with where that is on this
+//! system, making it when asked to.
 //!
-//! Design: `doc/architettura-editor.typ, <directory>`.
+//! And file names, shaped without asking the disk, which is read only to list
+//! a directory: a path made absolute against a directory, taken apart, the
+//! entries of a directory, and the candidates file-name completion offers.
+//! Which directory a typed name is read in is the editor's to say, in
+//! [`crate::editor::EditorState::expand_path`].
+//!
+//! Design: `doc/architettura-editor.typ, <directory>`, and
+//! `doc/architettura-editor.typ, <nomi-file>` for the names.
 use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
@@ -261,7 +269,8 @@ pub(crate) fn ensure_dir(path: PathBuf, create: bool) -> Result<PathBuf, DirErro
 /// Returns PATH as an absolute, normalised path, read in the directory the
 /// editor was started in: for a setting, such as `auto-save-directory`, whose
 /// meaning must not move with `cd`. A name the user types is read in the
-/// working directory instead, by [`EditorState::expand_path`].
+/// working directory instead, by
+/// [`crate::editor::EditorState::expand_path`].
 pub(crate) fn expand_path_from_start(path: &str) -> String {
     expand_path_in(path, &starting_directory())
 }
@@ -292,10 +301,11 @@ pub(crate) fn expand_path_in(path: &str, base: &std::path::Path) -> String {
     normalise(&joined)
 }
 
-/// Returns the directory the editor is running in, or the root if even that
-/// cannot be had.
+/// Returns the directory the editor was started in, or the root if even that
+/// cannot be had. The process's directory, which nothing changes: `cd` moves
+/// the editor's own, in [`crate::editor::EditorState::working_directory`].
 ///
-/// A failure here means the working directory was deleted out from under the
+/// A failure here means the directory was deleted out from under the
 /// process. The root is a poor answer but a usable one, and better than
 /// refusing to expand anything for the rest of the session.
 pub(crate) fn starting_directory() -> std::path::PathBuf {
@@ -412,7 +422,8 @@ pub(crate) fn last_component(path: &str) -> String {
 }
 
 /// Returns everything in DIRECTORY, sorted, with the platform's separator
-/// after each subdirectory.
+/// after each subdirectory. DIRECTORY is read as it is given: the caller
+/// makes it absolute, in the directory it means.
 ///
 /// The trailing separator is the whole reason this is useful for completion:
 /// it is what tells the caller -- and the user reading a cycled candidate --
@@ -442,7 +453,7 @@ pub(crate) fn directory_entries_ordered(
     dirs_first: bool,
 ) -> Result<Vec<String>, std::io::Error> {
     let mut names: Vec<(bool, String)> = Vec::new();
-    for entry in std::fs::read_dir(expand_path_from_start(directory))? {
+    for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
         let mut name = entry.file_name().to_string_lossy().to_string();
         // `file_type` rather than `metadata`, so a symlink to a directory is
@@ -480,8 +491,8 @@ pub(crate) fn split_for_completion(prefix: &str) -> (String, &str) {
     }
 }
 
-/// Returns the file names that could complete PREFIX, as whole paths ready to
-/// be confirmed.
+/// Returns the file names that could complete PREFIX, read in BASE when it is
+/// relative, as whole paths ready to be confirmed.
 ///
 /// Whole paths rather than bare names because the minibuffer replaces its
 /// entire contents with the candidate it is showing: handing back `hosts` for
@@ -493,9 +504,13 @@ pub(crate) fn split_for_completion(prefix: &str) -> (String, &str) {
 pub(crate) fn file_completions(prefix: &str, base: &str) -> Vec<String> {
     let (directory, name) = split_for_completion(prefix);
     let listed = directory_entries(&expand_path_in(
-        if directory.is_empty() { "." } else { &directory },
+        if directory.is_empty() {
+            "."
+        } else {
+            &directory
+        },
         std::path::Path::new(base),
-    ));    
+    ));
     listed
         .unwrap_or_default()
         .into_iter()

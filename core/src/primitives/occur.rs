@@ -302,7 +302,7 @@ primitive!(occur_scan, args, env, ctx, {
 });
 
 pub const GREP_SCAN_DOC: &str = "(grep--scan PATTERN &optional DIRECTORY REGEXP MODE): Start \
-         searching the files under DIRECTORY, or the directory the editor was started in, for \
+         searching the files under DIRECTORY, or the working directory, for \
          PATTERN, and return the name of the output buffer, in MODE or `occur-mode', that the \
          matches go into as they are found.";
 
@@ -320,7 +320,7 @@ primitive!(grep_scan, args, env, ctx, {
         crate::feature::isearch::case_fold(&env),
     )
     .map_err(EvalError::RuntimeMessage)?;
-    let root = PathBuf::from(crate::paths::expand_path_from_start(&directory));
+    let root = PathBuf::from(ctx.expand_path(&directory));
     if !root.is_dir() {
         ctx.set_echo_message(&format!("{directory} is not a directory"));
         return Ok(ELispExp::nil());

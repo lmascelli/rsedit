@@ -1,16 +1,17 @@
-//! File names: a path made absolute and taken apart, the entries of a
-//! directory, and the candidates file-name completion offers. Names are
-//! shaped without asking the disk, which is read only to list a directory.
+//! File names from Lisp: `list-dir`, `expand-file-name` and the functions
+//! that take a name apart, over the helpers in [`crate::paths`]; and the
+//! working directory, `working-directory`, `cd` and `pwd`, over
+//! [`crate::editor::EditorState::working_directory`].
 //!
 //! Design: `doc/architettura-editor.typ, <nomi-file>`.
 use super::*;
 use crate::paths::{
-    as_directory, directory_entries_ordered, directory_part, expand_path_from_start, expand_path_in,
-    last_component, without_trailing_separator,
+    as_directory, directory_entries_ordered, directory_part, expand_path_in, last_component,
+    without_trailing_separator,
 };
 
 pub const LIST_DIR_DOC: &str = "(list-dir &optional DIRECTORY ORDER): Return the names in \
-         DIRECTORY, the current directory by default, as a sorted list of strings with a / after \
+         DIRECTORY, the working directory by default, as a sorted list of strings with a / after \
          each subdirectory; . and .. are left out. ORDER is name, the default, for one \
          alphabetical run, or type for the subdirectories first. A leading ~ is expanded, and a \
          directory that cannot be read gives nil.\n\n\
@@ -47,7 +48,7 @@ primitive!(list_dir, args, _env, ctx, {
             });
         }
     };
-    match directory_entries_ordered(&directory, dirs_first) {
+    match directory_entries_ordered(&ctx.expand_path(&directory), dirs_first) {
         Ok(names) => Ok(ELispExp::proper_list(
             names.into_iter().map(ELispExp::string).collect(),
         )),
@@ -84,13 +85,13 @@ primitive!(match_list, args, _env, _ctx, {
 
 pub const EXPAND_FILE_NAME_DOC: &str = "(expand-file-name PATH &optional DIRECTORY): Return PATH \
          made absolute: a leading ~ becomes the home directory, a relative PATH is taken from \
-         DIRECTORY or from the directory the editor was started in, and . and .. are resolved by \
+         DIRECTORY or from the working directory, and . and .. are resolved by \
          name, without looking at the disk.\n\n\
          Example:\n\
          (expand-file-name \"~/notes.txt\")    => \"/home/me/notes.txt\"\n\
          (expand-file-name \"..\" \"/a/b/c/\")   => \"/a/b\"";
 
-primitive!(expand_file_name, args, _env, _ctx, {
+primitive!(expand_file_name, args, _env, ctx, {
     let path = match args.first() {
         Some(ELispExp::String(path)) => path.to_string(),
         other => {
@@ -101,13 +102,13 @@ primitive!(expand_file_name, args, _env, _ctx, {
         }
     };
     Ok(ELispExp::string(match args.get(1) {
-        None => expand_path_from_start(&path),
-        Some(exp) if exp.is_nil() => expand_path_from_start(&path),
+        None => ctx.expand_path(&path),
+        Some(exp) if exp.is_nil() => ctx.expand_path(&path),
         Some(ELispExp::String(base)) => {
             // The base is expanded too, so that a relative or `~`-prefixed
             // DIRECTORY does not quietly produce a relative answer -- the
             // whole point of this function is that what comes out is absolute.
-            expand_path_in(&path, std::path::Path::new(&expand_path_from_start(base)))
+            expand_path_in(&path, std::path::Path::new(&ctx.expand_path(base)))
         }
         Some(other) => {
             return Err(EvalError::WrongArgumentType {
@@ -180,7 +181,65 @@ fn path_string<B: BufferTrait>(
 /// Registers the primitives that shape a file name and list a directory.
 ///
 /// Called by [`super::install_primitives`].
+pub const WORKING_DIRECTORY_DOC: &str = "(working-directory): Return the directory a relative \
+         file name is read in, from the current buffer: the editor's working directory, which \
+         `cd' changes, unless the buffer has a directory of its own.\n\n\
+         Example:\n\
+         (expand-file-name \"notes.txt\" (working-directory))";
+
+primitive!(working_directory, args, _env, ctx, {
+    if !args.is_empty() {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 0,
+            got: args.len(),
+        });
+    }
+    Ok(ELispExp::string(ctx.default_directory()))
+});
+
+pub const CD_DOC: &str = "(cd DIRECTORY): Make DIRECTORY, read in the working directory, the \
+         editor's working directory, and return it; nil, and a message, when it is not a \
+         directory. Relative file names are read in it from then on. A command already running \
+         stays where it started.\n\n\
+         Example:\n\
+         (cd \"~/src/rsedit\")";
+
+primitive!(cd, args, _env, ctx, {
+    let Some(ELispExp::String(path)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+        });
+    };
+    match ctx.set_working_directory(path) {
+        Ok(directory) => {
+            ctx.set_echo_message(&format!("Directory {directory}"));
+            Ok(ELispExp::string(directory))
+        }
+        Err(why) => {
+            ctx.set_echo_message(&why);
+            Ok(ELispExp::nil())
+        }
+    }
+});
+
+pub const PWD_DOC: &str = "(pwd): Say in the echo area which directory relative file names are \
+         read in, the value of `working-directory', and return it.";
+
+primitive!(pwd, _args, _env, ctx, {
+    let directory = ctx.default_directory();
+    ctx.set_echo_message(&format!("Directory {directory}"));
+    Ok(ELispExp::string(directory))
+});
+
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.function(
+        "working-directory",
+        working_directory,
+        WORKING_DIRECTORY_DOC,
+    );
+    into.command("cd", cd, &["fChange directory: "], CD_DOC);
+    into.command("pwd", pwd, &[], PWD_DOC);
     into.function("list-dir", list_dir, LIST_DIR_DOC);
     into.function("match-list", match_list, MATCH_LIST_DOC);
     into.function("expand-file-name", expand_file_name, EXPAND_FILE_NAME_DOC);

@@ -82,9 +82,11 @@ impl<B: BufferTrait> EditorState<B> {
         file: &str,
         env: Arc<Env<Self>>,
     ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
-        // First, FILE as a path.
-        let (path, content) = match std::fs::read_to_string(file) {
-            Ok(content) => (PathBuf::from(file), content),
+        // First, FILE as a path, read in the working directory as any name
+        // the user writes.
+        let as_path = self.expand_path(file);
+        let (path, content) = match std::fs::read_to_string(&as_path) {
+            Ok(content) => (PathBuf::from(as_path), content),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 // A name with a separator or a dot was meant as a path; a bare
                 // one is looked for in `lisp-path`.

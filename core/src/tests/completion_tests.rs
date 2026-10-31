@@ -7,7 +7,7 @@ mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
     use crate::input::{KeyCode, KeyEvent, KeyModifiers};
-    use crate::primitives::file_names::{expand_path, file_completions, split_for_completion};
+    use crate::paths::{expand_path_from_start, file_completions, split_for_completion};
     use crate::tests::home_guard::guard::HomeAs;
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::path::PathBuf;
@@ -219,8 +219,11 @@ mod tests {
         let _home = HomeAs::directory(&sandbox.0);
         let home = sandbox.0.display().to_string();
 
-        assert_eq!(expand_path("~"), home);
-        assert_eq!(expand_path("~/notes.txt"), format!("{home}/notes.txt"));
+        assert_eq!(expand_path_from_start("~"), home);
+        assert_eq!(
+            expand_path_from_start("~/notes.txt"),
+            format!("{home}/notes.txt")
+        );
     }
 
     /// Expansion has to happen on the way *into* the filesystem, not just in
@@ -266,7 +269,7 @@ mod tests {
         let _home = HomeAs::directory(&sandbox.0);
 
         assert_eq!(
-            file_completions("~/tar"),
+            file_completions("~/tar", "."),
             vec!["~/target.txt".to_string()],
             "the candidate stays written the way the user typed it"
         );
@@ -297,11 +300,11 @@ mod tests {
     fn a_tilde_that_is_not_the_home_directory_is_not_a_home_directory() {
         let here = std::env::current_dir().expect("a working directory");
         assert_eq!(
-            expand_path("~other/file"),
+            expand_path_from_start("~other/file"),
             here.join("~other/file").to_string_lossy()
         );
         // An absolute path keeps its tilde and needs no resolving at all.
-        assert_eq!(expand_path("/tmp/~backup"), "/tmp/~backup");
+        assert_eq!(expand_path_from_start("/tmp/~backup"), "/tmp/~backup");
     }
 
     #[test]
@@ -339,7 +342,7 @@ mod tests {
         let sandbox = Sandbox::new("whole-paths");
         sandbox.file("notes.txt").file("nonsense.txt").file("other");
 
-        let completions = file_completions(&format!("{}no", sandbox.inside()));
+        let completions = file_completions(&format!("{}no", sandbox.inside()), ".");
 
         assert_eq!(
             completions,
@@ -355,7 +358,7 @@ mod tests {
         let sandbox = Sandbox::new("descend");
         sandbox.dir("project").file("project.txt");
 
-        let completions = file_completions(&format!("{}proj", sandbox.inside()));
+        let completions = file_completions(&format!("{}proj", sandbox.inside()), ".");
 
         assert!(
             completions.contains(&format!("{}project/", sandbox.inside())),
@@ -373,11 +376,11 @@ mod tests {
         sandbox.dir("sub");
         std::fs::write(sandbox.0.join("sub/inner.txt"), "x").expect("writing inside");
 
-        let first = file_completions(&format!("{}s", sandbox.inside()));
+        let first = file_completions(&format!("{}s", sandbox.inside()), ".");
         let directory = first.first().expect("the directory must be offered");
 
         assert_eq!(
-            file_completions(directory),
+            file_completions(directory, "."),
             vec![format!("{directory}inner.txt")],
             "completing again from the directory candidate must descend into it"
         );
@@ -389,7 +392,7 @@ mod tests {
         sandbox.file("a").file("b");
 
         assert_eq!(
-            file_completions(&sandbox.inside()),
+            file_completions(&sandbox.inside(), "."),
             vec![
                 format!("{}a", sandbox.inside()),
                 format!("{}b", sandbox.inside()),
@@ -406,12 +409,12 @@ mod tests {
         sandbox.file(".hidden").file("visible");
 
         assert_eq!(
-            file_completions(&sandbox.inside()),
+            file_completions(&sandbox.inside(), "."),
             vec![format!("{}visible", sandbox.inside())],
             "a bare listing must not be swamped by dotfiles"
         );
         assert_eq!(
-            file_completions(&format!("{}.", sandbox.inside())),
+            file_completions(&format!("{}.", sandbox.inside()), "."),
             vec![format!("{}.hidden", sandbox.inside())],
             "but typing a dot asks for exactly them"
         );
@@ -419,7 +422,7 @@ mod tests {
 
     #[test]
     fn completing_inside_a_directory_that_is_not_there_offers_nothing() {
-        assert!(file_completions("/no/such/place/at/all/x").is_empty());
+        assert!(file_completions("/no/such/place/at/all/x", ".").is_empty());
     }
 
     // -----------------------------------------------------------------------

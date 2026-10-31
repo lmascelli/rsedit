@@ -7,7 +7,7 @@ use super::*;
 pub const EVAL_FILE_DOC: &str = "(eval-file FILE): Evaluate the Lisp in FILE, and return a \
          one-element list holding the value of its last form, or nil when there is nothing to \
          evaluate.\n\n\
-         FILE is a path, relative to the directory the editor was started in. When no such file \
+         FILE is a path, relative to the working directory. When no such file \
          exists and FILE has no directory, extension or dot in it, FILE.lisp is looked for in \
          each directory of `lisp-path' in turn. A file that is not found is logged; a file that \
          does not parse is skipped. The file is evaluated as init.lisp is, outside any function, \

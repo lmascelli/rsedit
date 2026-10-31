@@ -74,8 +74,8 @@
         (occur--display buffer))))
 
 (defcommand grep (pattern) ("sSearch the tree for: ")
-  "List every line containing PATTERN in the files under the directory the
-editor was started in. The list fills in as the files are read."
+  "List every line containing PATTERN in the files under the working
+directory. The list fills in as the files are read."
   (let ((buffer (grep--scan pattern nil nil)))
     (if (null buffer)
         (message "Nothing to search")

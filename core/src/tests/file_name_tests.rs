@@ -8,8 +8,8 @@
 mod tests {
     use crate::buffer::gap_buffer::GapBuffer;
     use crate::editor::{EditorState, create_global_env};
-    use crate::primitives::file_names::{
-        as_directory, directory_part, expand_path, expand_path_in, last_component,
+    use crate::paths::{
+        as_directory, directory_part, expand_path_from_start, expand_path_in, last_component,
         without_trailing_separator,
     };
     use crate::tests::home_guard::guard::HomeAs;
@@ -57,11 +57,11 @@ mod tests {
         let here = std::env::current_dir().expect("a working directory");
 
         assert_eq!(
-            expand_path("notes.txt"),
+            expand_path_from_start("notes.txt"),
             here.join("notes.txt").to_string_lossy()
         );
         assert_eq!(
-            expand_path("src/main.rs"),
+            expand_path_from_start("src/main.rs"),
             here.join("src/main.rs").to_string_lossy()
         );
     }
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn dots_in_the_middle_of_a_path_are_collapsed_too() {
         assert_eq!(
-            expand_path(&abs(&["a", "b", "..", "c", ".", "d"])),
+            expand_path_from_start(&abs(&["a", "b", "..", "c", ".", "d"])),
             abs(&["a", "c", "d"])
         );
     }
@@ -96,7 +96,7 @@ mod tests {
         let root = std::path::MAIN_SEPARATOR_STR.to_string();
         assert_eq!(expand_path_in("..", Path::new(&root)), root);
         assert_eq!(expand_path_in("../../..", Path::new(&root)), root);
-        assert_eq!(expand_path(&abs(&["a", "..", ".."])), root);
+        assert_eq!(expand_path_from_start(&abs(&["a", "..", ".."])), root);
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         let _guard = HomeAs::vars(None, Some("/windows/home"));
 
         assert_eq!(
-            expand_path("~/notes.txt"),
+            expand_path_from_start("~/notes.txt"),
             abs(&["windows", "home", "notes.txt"])
         );
     }
@@ -333,7 +333,7 @@ mod tests {
         let _guard = HomeAs::vars(Some("/unix/home"), Some("/windows/home"));
 
         assert_eq!(
-            expand_path("~/notes.txt"),
+            expand_path_from_start("~/notes.txt"),
             abs(&["unix", "home", "notes.txt"])
         );
     }
@@ -346,7 +346,7 @@ mod tests {
         let here = std::env::current_dir().expect("a working directory");
 
         assert_eq!(
-            expand_path("~/notes.txt"),
+            expand_path_from_start("~/notes.txt"),
             here.join("~/notes.txt").to_string_lossy()
         );
     }
@@ -390,7 +390,7 @@ mod tests {
     /// from the directory they are in.
     #[test]
     fn completion_splits_a_path_at_a_separator_the_platform_recognises() {
-        use crate::primitives::file_names::split_for_completion;
+        use crate::paths::split_for_completion;
 
         let (directory, name) = split_for_completion("a\\b");
         if std::path::is_separator('\\') {
@@ -404,7 +404,7 @@ mod tests {
     /// what a user reads to know that Enter will descend.
     #[test]
     fn a_listing_marks_a_directory_with_the_platforms_separator() {
-        use crate::primitives::file_names::directory_entries;
+        use crate::paths::directory_entries;
 
         let sandbox = std::env::temp_dir().join(format!("rsedit-sep-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&sandbox);
