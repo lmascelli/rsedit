@@ -1306,6 +1306,9 @@ names."
   (define-key 'vim-normal-map key (list 'vim--key key)))
 (dolist (key '("<esc>" "C-[" "C-c" "<backspace>" "C-h" "<ret>" "<left>" "<right>" "<up>" "<down>"))
   (define-key 'vim-replace-map key (list 'vim--replace-key key)))
+;; The keys made for moving and deleting, as the Vim keys that do the same.
+(dolist (pair '(("<home>" "0") ("<end>" "$") ("<delete>" "x") ("<prior>" "C-b") ("<next>" "C-f")))
+  (define-key 'vim-normal-map (car pair) (list 'vim--key (car (cdr pair)))))
 (dolist (key '("<esc>" "C-[" "C-c")) (define-key 'vim-insert-map key 'vim-normal-state))
 (define-key 'vim-insert-map "C-w" 'backward-kill-word)
 (define-key 'vim-insert-map "C-h" 'delete-backward-char)

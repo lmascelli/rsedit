@@ -22,6 +22,11 @@
 (define-key nil "M-{" 'backward-paragraph)
 (define-key nil "M-<" 'beginning-of-buffer)
 (define-key nil "M->" 'end-of-buffer)
+;; The same, on the keys made for them.
+(define-key nil "<home>" 'beginning-of-line)
+(define-key nil "<end>" 'end-of-line)
+(define-key nil "C-<home>" 'beginning-of-buffer)
+(define-key nil "C-<end>" 'end-of-buffer)
 
 (define-key nil "C-o" 'open-line-above)
 
@@ -38,10 +43,13 @@
 ;; Scrolling: the `windows' manual page.
 (define-key nil "C-v" 'scroll-up-command)
 (define-key nil "M-v" 'scroll-down-command)
+(define-key nil "<next>" 'scroll-up-command)
+(define-key nil "<prior>" 'scroll-down-command)
 
 ;; Deleting and killing: the `editing' and `killing' manual pages.
-;; electric-pair.lisp takes Backspace and C-d over when it is loaded.
+;; electric-pair.lisp takes Backspace, C-d and Delete over when it is loaded.
 (define-key nil "C-d" 'delete-char)
+(define-key nil "<delete>" 'delete-char)
 (define-key nil "C-k" 'kill-line)
 (define-key nil "M-d" 'kill-word)
 (define-key nil "M-<backspace>" 'backward-kill-word)

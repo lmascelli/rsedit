@@ -36,8 +36,6 @@ pub fn translate_mouse(event: crossterm::event::MouseEvent) -> Option<MouseEvent
     })
 }
 
-// TODO(CMD-2): Delete, Home, End, PageUp, PageDown, Insert and the function
-// keys are refused.
 /// Returns KEY_EVENT as the editor's key, or `None` for a key the editor has
 /// no name for. Shift with a character is the capital; Shift-Tab is Tab with
 /// Shift held, as `S-<tab>` names it.
@@ -66,6 +64,13 @@ pub fn translate_key(key_event: crossterm::event::KeyEvent) -> Option<KeyEvent> 
             KeyCode::Tab
         }
         CrossKeyCode::Esc => KeyCode::Esc,
+        CrossKeyCode::Delete => KeyCode::Delete,
+        CrossKeyCode::Insert => KeyCode::Insert,
+        CrossKeyCode::Home => KeyCode::Home,
+        CrossKeyCode::End => KeyCode::End,
+        CrossKeyCode::PageUp => KeyCode::PageUp,
+        CrossKeyCode::PageDown => KeyCode::PageDown,
+        CrossKeyCode::F(n) => KeyCode::F(n),
         _ => return None,
     };
 

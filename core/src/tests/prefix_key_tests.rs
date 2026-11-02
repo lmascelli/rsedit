@@ -390,4 +390,81 @@ mod tests {
             LispExp::nil()
         );
     }
+
+    // ---------------- Delete, Home, End, the page keys, the function keys ----------------
+
+    /// Each name parses, and the key it gives is described back by the same
+    /// name: the one `describe-key` and the help pages show.
+    #[test]
+    fn the_editing_and_function_keys_have_names_that_read_back() {
+        use crate::input::parse_key_sequence;
+        for name in [
+            "<delete>",
+            "<insert>",
+            "<home>",
+            "<end>",
+            "<prior>",
+            "<next>",
+            "<f1>",
+            "<f12>",
+            "<f35>",
+            "C-<home>",
+            "M-<f5>",
+            "C-x <delete>",
+        ] {
+            let keys = parse_key_sequence(name).unwrap_or_else(|| panic!("{name} must parse"));
+            assert_eq!(describe_keys(&keys), name);
+        }
+        // The names on the keys, and Emacs' other name for Delete.
+        for (alias, name) in [
+            ("<pageup>", "<prior>"),
+            ("<pagedown>", "<next>"),
+            ("<deletechar>", "<delete>"),
+        ] {
+            let keys = parse_key_sequence(alias).expect("an alias parses");
+            assert_eq!(describe_keys(&keys), name);
+        }
+        for wrong in ["<f0>", "<f36>", "<f01>", "<f>", "<f+1>", "<fx>"] {
+            assert_eq!(parse_key_sequence(wrong), None, "{wrong} is no key");
+        }
+    }
+
+    #[test]
+    fn the_editing_keys_do_what_their_emacs_keys_do() {
+        let (ctx, env) = editor_with("one\ntwo\nthree");
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
+        eval_str("(goto-char 5)", &env, &ctx).expect("into the second line");
+
+        press(&ctx, &env, KeyCode::Home, plain());
+        assert_eq!(point_1d(&ctx), 4, "Home goes to the start of the line");
+        press(&ctx, &env, KeyCode::End, plain());
+        assert_eq!(point_1d(&ctx), 7, "End to its end");
+        press(&ctx, &env, KeyCode::Home, ctrl());
+        assert_eq!(point_1d(&ctx), 0, "C-Home to the start of the buffer");
+        press(&ctx, &env, KeyCode::Delete, plain());
+        assert_eq!(text_of(&ctx), "ne\ntwo\nthree", "Delete deletes forward");
+        press(&ctx, &env, KeyCode::End, ctrl());
+        assert_eq!(point_1d(&ctx), 12, "C-End to the end of the buffer");
+
+        for (key, command) in [
+            ("<next>", "scroll-up-command"),
+            ("<prior>", "scroll-down-command"),
+        ] {
+            assert_eq!(
+                eval_str(
+                    &format!(r#"(car (nth 1 (key-binding "{key}")))"#),
+                    &env,
+                    &ctx
+                )
+                .expect("key-binding"),
+                LispExp::symbol(command.into()),
+                "{key} scrolls as C-v and M-v do"
+            );
+        }
+    }
 }

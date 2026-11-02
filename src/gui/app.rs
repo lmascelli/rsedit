@@ -7,7 +7,7 @@ use super::Core;
 use super::keys::{character, character_shortcut, mods, special_key};
 use super::paint::{Grid, colors, paint_view, row};
 use eframe::egui::{self, FontId, Rect, Stroke, Vec2};
-use rsedit_core::{BufferTrait, Face, KeyCode, KeyModifiers, MouseButton, MouseKind};
+use rsedit_core::{BufferTrait, Face, MouseButton, MouseKind};
 use std::{path::PathBuf, time::Duration};
 
 /// The longest the window goes without an update, when nothing asks for one
@@ -73,42 +73,6 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
         })
     }
 
-    /// Presses what KEY, which the editor has no name for, stands for: Home
-    /// and End, Delete, Page Up and Page Down, as Emacs or, in a Vim state
-    /// other than insert, as Vim binds them. Any other key does nothing; its
-    /// text arrives as a text event.
-    fn native_key(&self, key: egui::Key, modifiers: egui::Modifiers) {
-        use egui::Key;
-        let state = self.core.vim_state();
-        let normal = !state.is_empty() && !matches!(state.as_str(), "insert" | "replace");
-        match key {
-            Key::Home | Key::End if modifiers.ctrl => self.core.key(
-                KeyCode::Char(if key == Key::Home { '<' } else { '>' }),
-                KeyModifiers {
-                    alt: true,
-                    ..Default::default()
-                },
-            ),
-            Key::Home if normal => self.core.text("0"),
-            Key::End if normal => self.core.text("$"),
-            Key::Home => self.core.control('a'),
-            Key::End => self.core.control('e'),
-            Key::Delete if normal => self.core.text("x"),
-            Key::Delete => self.core.control('d'),
-            Key::PageUp if normal => self.core.control('b'),
-            Key::PageDown if normal => self.core.control('f'),
-            Key::PageUp => self.core.key(
-                KeyCode::Char('v'),
-                KeyModifiers {
-                    alt: true,
-                    ..Default::default()
-                },
-            ),
-            Key::PageDown => self.core.control('v'),
-            _ => (),
-        }
-    }
-
     /// Hands the editor this update's events from CTX: keys and text, the
     /// clipboard keys egui takes for itself, the input method, the mouse in
     /// AREA, laid out as GRID, and the files dropped on the window.
@@ -155,15 +119,6 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
                         }
                     } else if let Some(code) = special_key(*key) {
                         self.core.key(code, mods(*modifiers));
-                    } else if matches!(
-                        key,
-                        egui::Key::Home
-                            | egui::Key::End
-                            | egui::Key::Delete
-                            | egui::Key::PageUp
-                            | egui::Key::PageDown
-                    ) {
-                        self.native_key(*key, *modifiers);
                     } else if modifiers.ctrl || modifiers.alt {
                         let text = events[at + 1..]
                             .iter()
@@ -178,8 +133,6 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
                             self.core.state.handle_key_event(event, &self.core.env);
                             suppress_text = text.and_then(|text| text.chars().next());
                         }
-                    } else {
-                        self.native_key(*key, *modifiers);
                     }
                 }
                 egui::Event::Text(text) => {

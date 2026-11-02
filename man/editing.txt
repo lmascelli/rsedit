@@ -96,9 +96,10 @@ MOVING
         C-f  C-b        a character
         M-f  M-b        a word
         C-n  C-p        a line, keeping the column
-        C-a  C-e        to the start or the end of the line
+        C-a  C-e        to the start or the end of the line; also Home, End
         M-}  M-{        a paragraph
-        M-<  M->        to the start or the end of the buffer
+        M-<  M->        to the start or the end of the buffer; also C-Home,
+                        C-End
         C-M-f  C-M-b    a balanced expression
         M-g g           to a line, by number
 
@@ -236,11 +237,6 @@ REPEATING
     For anything longer, record what you did and play it back: see the
     `macros' page.
 
-LIMITS
-    The Delete, Home, End, Page Up and Page Down keys and the function keys
-    do nothing, and cannot be bound: the editor does not receive them.
-    C-d, C-a, C-e, C-v and M-v do their work.
-
 EXAMPLES
     Insert text from Lisp, several pieces at once:
 
@@ -284,10 +280,14 @@ KEYS
     M-b                     backward-word
     C-a                     beginning-of-line
     C-e                     end-of-line
+    <home>                  beginning-of-line
+    <end>                   end-of-line
     M-}                     forward-paragraph
     M-{                     backward-paragraph
     M-<                     beginning-of-buffer
     M->                     end-of-buffer
+    C-<home>                beginning-of-buffer
+    C-<end>                 end-of-buffer
     C-M-f                   forward-sexp
     C-M-b                   backward-sexp
     C-M-u                   backward-up-list
@@ -296,6 +296,7 @@ KEYS
     M-g M-g                 goto-line
     <backspace>             electric-pair-delete-backward
     C-d                     electric-pair-delete-forward
+    <delete>                electric-pair-delete-forward
     C-o                     open-line-above
     C-x C-o                 delete-blank-lines
     M-^                     join-line

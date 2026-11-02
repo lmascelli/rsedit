@@ -1183,4 +1183,19 @@ mod tests {
             Some("z-last-visited")
         );
     }
+
+    /// In Normal state the keys made for moving and deleting are the Vim
+    /// keys that do the same: Home is 0, End is $, Delete is x.
+    #[test]
+    fn home_end_and_delete_are_vim_keys_in_normal_state() {
+        let (ctx, env) = editor("abc def");
+        keys(&ctx, &env, "w");
+        assert_eq!(point(&ctx), 4);
+        ctx.handle_key_event(KeyEvent::new(KeyCode::Home), &env);
+        assert_eq!(point(&ctx), 0);
+        ctx.handle_key_event(KeyEvent::new(KeyCode::End), &env);
+        assert_eq!(point(&ctx), 6, "on the last character, as $ is");
+        ctx.handle_key_event(KeyEvent::new(KeyCode::Delete), &env);
+        assert_eq!(text(&ctx), "abc de");
+    }
 }

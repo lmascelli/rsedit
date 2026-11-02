@@ -44,7 +44,8 @@ SPLITTING AND CLOSING
     wide, and the new one takes the rest, however the terminal is resized.
 
 SCROLLING
-    C-v moves the view a screen forward and M-v a screen back. Two lines of
+    C-v, or Page Down, moves the view a screen forward and M-v, or Page Up,
+    a screen back. Two lines of
     the last screen stay in sight, so you can find your place, and the
     cursor moves only when its line would leave the window. C-l puts the
     line the cursor is on in the middle of the window, and leaves the
@@ -105,6 +106,8 @@ KEYS
     C-x o                   other-window
     C-v                     scroll-up-command
     M-v                     scroll-down-command
+    <next>                  scroll-up-command
+    <prior>                 scroll-down-command
     C-l                     recenter
 
 SEE ALSO

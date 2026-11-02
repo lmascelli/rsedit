@@ -118,6 +118,14 @@ fn every_key_the_editor_can_name_translates() {
         (CrossKeyCode::Right, KeyCode::Right),
         (CrossKeyCode::Up, KeyCode::Up),
         (CrossKeyCode::Down, KeyCode::Down),
+        (CrossKeyCode::Delete, KeyCode::Delete),
+        (CrossKeyCode::Insert, KeyCode::Insert),
+        (CrossKeyCode::Home, KeyCode::Home),
+        (CrossKeyCode::End, KeyCode::End),
+        (CrossKeyCode::PageUp, KeyCode::PageUp),
+        (CrossKeyCode::PageDown, KeyCode::PageDown),
+        (CrossKeyCode::F(1), KeyCode::F(1)),
+        (CrossKeyCode::F(12), KeyCode::F(12)),
         (CrossKeyCode::Char('x'), KeyCode::Char('x')),
     ] {
         assert_eq!(
@@ -172,7 +180,13 @@ fn shift_tab_arrives_as_tab_with_shift_held() {
 /// other key.
 #[test]
 fn a_key_the_editor_cannot_name_is_refused() {
-    assert!(translate_key(terminal_key(CrossKeyCode::F(5), CrossModifiers::NONE)).is_none());
+    assert!(
+        translate_key(terminal_key(
+            CrossKeyCode::PrintScreen,
+            CrossModifiers::NONE
+        ))
+        .is_none()
+    );
 }
 
 /// The whole path: a terminal Escape closes an open prompt. The core's own

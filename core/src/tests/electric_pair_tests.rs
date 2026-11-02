@@ -36,6 +36,24 @@ mod tests {
         (ctx, env)
     }
 
+    /// Delete has a name now, so the binding the module makes for it takes:
+    /// before, it failed at every start.
+    #[test]
+    fn delete_is_bound_to_the_pairing_forward_delete() {
+        let (ctx, env) = editor();
+        assert_eq!(
+            run(r#"(car (nth 1 (key-binding "<delete>")))"#, &env, &ctx),
+            LispExp::symbol("electric-pair-delete-forward".into())
+        );
+        assert!(
+            !ctx.get_logs()
+                .iter()
+                .any(|line| line.contains("Invalid key sequence")),
+            "{:?}",
+            ctx.get_logs()
+        );
+    }
+
     fn contents(ctx: &Ctx) -> String {
         ctx.with_current_buffer(|b| b.text.to_string())
     }

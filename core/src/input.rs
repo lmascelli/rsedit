@@ -21,8 +21,22 @@ pub enum KeyCode {
     Right,
     Up,
     Down,
-    // TODO(CMD-2): no Delete, Home, End, PageUp, PageDown or function keys.
+    /// The key that deletes forward, Delete or Del, as `<delete>` names it.
+    Delete,
+    Insert,
+    Home,
+    End,
+    /// Page Up, which Emacs calls `<prior>`.
+    PageUp,
+    /// Page Down, which Emacs calls `<next>`.
+    PageDown,
+    /// A function key, F1 and on.
+    F(u8),
 }
+
+/// The highest function key a binding can name: as far as a keyboard or a
+/// terminal goes.
+const LAST_FUNCTION_KEY: u8 = 35;
 
 /// Which button, for the events that have one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -138,6 +152,13 @@ fn describe_key(key: &KeyEvent) -> String {
         KeyCode::Right => "<right>".to_string(),
         KeyCode::Up => "<up>".to_string(),
         KeyCode::Down => "<down>".to_string(),
+        KeyCode::Delete => "<delete>".to_string(),
+        KeyCode::Insert => "<insert>".to_string(),
+        KeyCode::Home => "<home>".to_string(),
+        KeyCode::End => "<end>".to_string(),
+        KeyCode::PageUp => "<prior>".to_string(),
+        KeyCode::PageDown => "<next>".to_string(),
+        KeyCode::F(n) => format!("<f{n}>"),
         KeyCode::None => "<none>".to_string(),
     });
     out
@@ -203,6 +224,14 @@ pub(crate) fn parse_key(seq: &str) -> Option<KeyEvent> {
         "<down>" => KeyCode::Down,
         "<left>" => KeyCode::Left,
         "<right>" => KeyCode::Right,
+        // Emacs' names first, and the names on the keys too.
+        "<delete>" | "<deletechar>" => KeyCode::Delete,
+        "<insert>" => KeyCode::Insert,
+        "<home>" => KeyCode::Home,
+        "<end>" => KeyCode::End,
+        "<prior>" | "<pageup>" => KeyCode::PageUp,
+        "<next>" | "<pagedown>" => KeyCode::PageDown,
+        s if function_key(s).is_some() => KeyCode::F(function_key(s)?),
         s if s.chars().count() == 1 => KeyCode::Char(
             s.chars()
                 .next()
@@ -215,6 +244,20 @@ pub(crate) fn parse_key(seq: &str) -> Option<KeyEvent> {
         code: key_code,
         modifiers,
     })
+}
+
+/// Returns the number of the function key NAME writes, `<f1>` to `<f35>`.
+fn function_key(name: &str) -> Option<u8> {
+    let digits = name.strip_prefix("<f")?.strip_suffix('>')?;
+    // Digits only, and no leading zero: `<f01>` is not a name anybody writes,
+    // and parsing would quietly take `+1` too.
+    if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits
+        .parse::<u8>()
+        .ok()
+        .filter(|n| (1..=LAST_FUNCTION_KEY).contains(n))
 }
 
 /// Key sequences bound to Lisp expressions, the prefixes that lead to them,

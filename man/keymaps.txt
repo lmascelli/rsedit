@@ -43,11 +43,13 @@ WRITING A KEY
         C-x C-f         two keys, one after the other
 
     The keys with no character are written with their names: <ret>, <tab>,
-    <esc>, <space>, <backspace>, <up>, <down>, <left> and <right>, and
-    <backtab> is another name for S-<tab>. A shifted letter is just the
-    capital, A. The modifiers combine only as written here: C-S-a and M-C-a
-    are not keys. Delete, Home, End, Page Up and Page Down and the function
-    keys have no names, because they do not reach the editor.
+    <esc>, <space>, <backspace>, <up>, <down>, <left>, <right>, <delete>,
+    <insert>, <home>, <end>, <prior> and <next> for Page Up and Page Down,
+    and <f1> to <f35>. <backtab> is another name for S-<tab>, and
+    <pageup>, <pagedown> and <deletechar> are accepted for <prior>, <next>
+    and <delete>. A shifted letter is just the capital, A. The modifiers
+    combine only as written here: C-S-a and M-C-a are not keys. No function
+    key is bound to anything: they are yours.
 
     The editor writes keys back the same way, so what C-h k shows you is
     what you can bind.

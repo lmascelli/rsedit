@@ -107,10 +107,29 @@ pub(super) fn character(key: egui::Key) -> Option<char> {
 }
 
 /// Returns the editor's name for KEY when it has one of its own: the arrows,
-/// Escape, Return, Backspace and Tab.
+/// Escape, Return, Backspace, Tab, Delete, Insert, Home, End, the two page
+/// keys and the function keys.
 pub(super) fn special_key(key: egui::Key) -> Option<KeyCode> {
     use egui::Key;
     Some(match key {
+        Key::Delete => KeyCode::Delete,
+        Key::Insert => KeyCode::Insert,
+        Key::Home => KeyCode::Home,
+        Key::End => KeyCode::End,
+        Key::PageUp => KeyCode::PageUp,
+        Key::PageDown => KeyCode::PageDown,
+        Key::F1 => KeyCode::F(1),
+        Key::F2 => KeyCode::F(2),
+        Key::F3 => KeyCode::F(3),
+        Key::F4 => KeyCode::F(4),
+        Key::F5 => KeyCode::F(5),
+        Key::F6 => KeyCode::F(6),
+        Key::F7 => KeyCode::F(7),
+        Key::F8 => KeyCode::F(8),
+        Key::F9 => KeyCode::F(9),
+        Key::F10 => KeyCode::F(10),
+        Key::F11 => KeyCode::F(11),
+        Key::F12 => KeyCode::F(12),
         Key::ArrowLeft => KeyCode::Left,
         Key::ArrowRight => KeyCode::Right,
         Key::ArrowUp => KeyCode::Up,

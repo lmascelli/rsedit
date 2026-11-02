@@ -5,7 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <gui>`.
 use super::Core;
 use super::app::EditorApp;
-use super::keys::character_shortcut;
+use super::keys::{character_shortcut, special_key};
 use super::paint::Grid;
 use eframe::egui::{self, Pos2, Rect, Vec2};
 use rsedit_core::{
@@ -496,4 +496,23 @@ fn ime_preedit_is_temporary_and_commit_is_inserted_once() {
         ELispExp::string("è".into())
     );
     assert!(app.preedit.is_empty());
+}
+
+/// Delete, Insert, Home, End, the page keys and the function keys reach the
+/// core by their names, as from the terminal, and what they do is the
+/// keymaps': the window translates none of them into other keys.
+#[test]
+fn the_editing_and_function_keys_reach_the_core_by_name() {
+    for (from, to) in [
+        (egui::Key::Delete, KeyCode::Delete),
+        (egui::Key::Insert, KeyCode::Insert),
+        (egui::Key::Home, KeyCode::Home),
+        (egui::Key::End, KeyCode::End),
+        (egui::Key::PageUp, KeyCode::PageUp),
+        (egui::Key::PageDown, KeyCode::PageDown),
+        (egui::Key::F1, KeyCode::F(1)),
+        (egui::Key::F12, KeyCode::F(12)),
+    ] {
+        assert_eq!(special_key(from), Some(to), "{from:?}");
+    }
 }

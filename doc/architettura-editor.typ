@@ -568,10 +568,9 @@ l'attesa scade, e `tick` e il frame seguono come per il tempo. E `tick` viene
 chiamato solo quando l'attesa scade, non a ogni giro.
 
 La cattura del mouse segue `mouse-mode` a ogni giro, prima del frame:
-`mouse-mode-toggle` vale dal clic dopo. Un tasto che `translate_key` non sa
-tradurre --- `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `Insert`, i tasti
-funzione --- viene soltanto registrato nel log: `KeyCode` non ha varianti per
-loro #rapporto("CMD-2"). Shift con un carattere diventa la maiuscola; `BackTab`
+`mouse-mode-toggle` vale dal clic dopo. `translate_key` traduce anche Canc,
+Ins, Inizio, Fine, PagSu, PagGiù e i tasti funzione; un tasto che non sa
+tradurre, come Stamp, viene soltanto registrato nel log. Shift con un carattere diventa la maiuscola; `BackTab`
 diventa `Tab` con Shift. Gli altri eventi del terminale, come il focus, si
 ignorano.
 
@@ -1075,16 +1074,20 @@ budget pieno.
 == Il vocabolario dei tasti <tasti>
 
 Un `KeyEvent` è un `KeyCode` (`Char(c)`, `Backspace`, `Enter`, `Esc`, `Tab`, le
-quattro frecce, e `None`, che nessuno costruisce) più i modificatori `ctrl`,
-`alt`, `shift`. Canc, Inizio, Fine, PagSu, PagGiù e i tasti funzione non hanno
-un `KeyCode` #rapporto("CMD-2"). Un `MouseEvent` dice che cosa ha fatto il
+quattro frecce, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `F(n)`
+per i tasti funzione, e `None`, che nessuno costruisce) più i modificatori
+`ctrl`, `alt`, `shift`. Un `MouseEvent` dice che cosa ha fatto il
 mouse (`MouseKind`: un pulsante premuto, rilasciato o trascinato, la rotella),
 in quale cella del frame e con quali modificatori. Sono i tipi che un
 front-end costruisce e consegna a `handle_key_event` e a `handle_mouse_event`.
 
 Nelle associazioni i tasti si scrivono come in Emacs: `C-x`, `M-x`, `C-M-f`,
 `S-<tab>`, con i nomi `<ret>`, `<esc>`, `tab`, `<backtab>`, `<backspace>`,
-`<space>`, `<left>`, `<right>`, `<up>`, `<down>`. Un tasto ha al più un
+`<space>`, `<left>`, `<right>`, `<up>`, `<down>`, e quelli di Emacs per gli
+altri: `<delete>`, `<insert>`, `<home>`, `<end>`, `<prior>` e `<next>` per le
+pagine (accettati anche `<pageup>`, `<pagedown>` e `<deletechar>`), da `<f1>` a
+`<f35>`. I legami di base li legano come i tasti di Emacs che fanno lo stesso
+(`common-keymaps.lisp`), e vim, nello stato normale, come i suoi. Un tasto ha al più un
 prefisso di modificatori, quindi `M-C-x` e `C-S-a` non si possono scrivere
 #rapporto("CMD-4"). Una sequenza è una stringa di tasti separati da spazi:
 `"C-x C-f"`. `parse_key_sequence` legge queste stringhe e `describe_keys` le
@@ -4498,10 +4501,9 @@ punteggiatura dipende dalla disposizione dei tasti; il testo di AltGr, e quello
 non ASCII di Option, resta testo da scrivere. egui prende per sé Ctrl-C, Ctrl-X
 e Ctrl-V e li consegna come Copy, Cut e Paste: Copy e Cut tornano `C-c` e
 `C-x`, e sono `kill-ring-save` e `kill-region` solo con Shift o su macOS;
-Paste incolla con Shift o su macOS, altrimenti è `C-v`. Inizio,
-Fine, Canc, PagSu e PagGiù la finestra li traduce da sé, e diversamente nello
-stato normale di vim, perché il core non ha un nome per loro
-#rapporto("CMD-2").
+Paste incolla con Shift o su macOS, altrimenti è `C-v`. Canc, Ins, Inizio,
+Fine, PagSu, PagGiù e i tasti da F1 a F12 arrivano al core con il loro nome
+(`special_key`), come dal terminale, e fanno ciò che le mappe dicono.
 
 Il disegno usa una griglia di celle come il terminale, un carattere per cella;
 gli stili delle evidenziazioni si fondono con quelli del testo sotto, dove la

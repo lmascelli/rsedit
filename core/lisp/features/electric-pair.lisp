@@ -239,7 +239,6 @@ Example:
 
 (define-key nil "<backspace>" 'electric-pair-delete-backward)
 (define-key nil "C-d" 'electric-pair-delete-forward)
-;; TODO(CMD-2): the editor has no name for Delete, and this binding fails.
 (define-key nil "<delete>" 'electric-pair-delete-forward)
 
 (log "electric-pair loaded")

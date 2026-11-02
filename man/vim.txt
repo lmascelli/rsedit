@@ -85,7 +85,9 @@ MOVING IN NORMAL STATE
     w b e               Next word, previous word, end of word.
     W B E               The same with WORDS, separated by white space.
     ge                  End of the previous word.
-    0 ^ $               Beginning, first nonblank, last character of line.
+    0 ^ $               Beginning, first nonblank, last character of line;
+                        Home is 0 and End is $, and Delete is x, Page Up
+                        C-b and Page Down C-f.
     _                   First nonblank on this line.
     |                   Column COUNT, counting from one.
     gg G                First line, last line, or line COUNT.
