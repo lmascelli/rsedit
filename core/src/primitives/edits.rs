@@ -322,7 +322,9 @@ primitive!(delete_char, args, _env, ctx, {
     let count = repeat_count(args)?;
     let happened = ctx.with_current_buffer_mut(|buf| {
         let from = buf.text.cursor_pos_1d();
-        delete_range(buf, from, from + count)
+        // Saturating: a count past the end of the buffer means to its end,
+        // and an addition that wrapped would delete backwards.
+        delete_range(buf, from, from.saturating_add(count))
     });
     Ok(edited(ctx, happened))
 });

@@ -63,7 +63,7 @@ primitive!(previous_indentation, _args, _env, ctx, {
 
 pub const INDENT_LINE_TO_DOC: &str = "(indent-line-to COLUMN): Replace the spaces and tabs that \
          begin the line point is on with COLUMN spaces, as one undo step. Return t if the line \
-         changed, nil if it was already so. Point keeps its character, or goes to the end of the \
+         changed, nil if it was already so; a COLUMN past a million is out of range. Point keeps its character, or goes to the end of the \
          new indentation when it was inside the old.\n\n\
          Example:\n\
          (indent-line-to (previous-indentation))";
@@ -75,7 +75,8 @@ primitive!(indent_line_to, args, _env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    let column = column.max(0.0) as usize;
+    // Bounded: COLUMN spaces are about to be made into one string.
+    let column = crate::primitives::args::width(*column)?;
 
     // `None` when the line has that indentation already, `Some(false)` when
     // the buffer refused, `Some(true)` when it changed: the closure answers,
@@ -92,8 +93,6 @@ primitive!(indent_line_to, args, _env, ctx, {
         if !delete_range(buf, start, start + width) {
             return Some(false);
         }
-        // TODO(CMD-3): COLUMN is not bounded, and a huge one is an allocation
-        // that ends the process.
         let padding: String = " ".repeat(column);
         if !insert_text(buf, start, &padding) {
             return Some(false);

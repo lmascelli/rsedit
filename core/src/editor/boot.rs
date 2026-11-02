@@ -21,90 +21,17 @@ use crate::paths::{AppDir, CACHE_DIR, CONFIG_DIR, DATA_DIR, DirOptions, app_dir}
 pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; Add your configuration here.
 ;;
-;; Each `require' loads a module once, after the modules it needs, and asking
-;; again for one already loaded does nothing. See the `configuration' manual
-;; page.
-(require 'commands)
-(require 'debug)
-(require 'common-keymaps)
-(require 'indent)          ; what Tab does; a mode plugs its own rule in
-(require 'minibuffer)
-
-;; Modules. Each is optional -- comment one out and the editor comes up
-;; without it, missing exactly that feature, unless a module still loaded
-;; needs it and loads it anyway.
-(require 'rust-mode)       ; colouring for Rust source
-(require 'risp-mode)       ; colouring and indentation for this editor's own Lisp
-(require 'cc-mode)         ; colouring and indentation for C/C++ source
-(require 'python-mode)     ; colouring and indentation for Python
-(require 'toml-mode)       ; colouring and indentation for TOML
-(require 'bash-mode)       ; colouring and indentation for Bash
-(require 'cmake-mode)      ; colouring and indentation for CMake
-(require 'dired)           ; a directory in a buffer (C-x d)
-;; Makes dired sort directory entries by type (folders, files).
-(setq dired-sort 'type)
-
-
-(require 'completion)      ; Tab shows every candidate at once, in a strip
-(require 'preview)         ; C-x r t shows its replacement before you commit to it
-(require 'clipboard)       ; kills also go to the system clipboard
-(require 'electric-pair)   ; typing "(" gives you "()"
-(require 'buffer-list)     ; C-x b to switch, C-x C-b for the whole list
-(require 'shell)           ; M-! runs a command and shows what it said
-(require 'manpage)         ; C-h m, and K on a word
-(require 'help)            ; C-h f, C-h k, C-h b -- the editor describing itself
-(require 'risp-repl)       ; M-x risp-repl, a buffer where C-j evaluates Lisp
-(require 'occur)           ; M-s o and M-s g, and the lists M-g n walks
-(require 'compile)         ; C-c c, and M-g n to walk what it complained about
-(require 'theme)           ; C-c t to choose how faces are drawn
-(require 'vim)             ; M-x vim-mode enables modal editing in this buffer
-;; (vim-mode t)           ; start the initial buffer in Normal state
-;; (global-vim-mode t)    ; existing and future text/code buffers
-;; Or only selected major modes, even without global-vim-mode:
-;; (setq vim-mode-modes '(rust-mode risp-mode))
-;; (vim-mode-refresh)     ; also apply changed settings to existing buffers
-
-;; Where completions come from, for C-M-i in a buffer. The command is built in
-;; and works without this; what this adds is the five sources it asks. Take one
-;; out with `set-completion-functions', or add one of your own for a single
-;; mode with `add-completion-function'.
-(require 'completion-at-point)
-
-;; A plugin, installed in a directory of its own under `plugins' in the data
-;; directory, is found at start and loaded by name as a module is. See the
-;; `plugins' manual page.
-;; (require 'my-plugin)
-
-;; How much one step of background work may do before it is stopped, and how
-;; the scheduler that runs it takes turns. See the `background' manual page.
-;; (setq worker-fuel 200000)
-;; (set-work-option 'high-steps 4)
-
-;; A copy of unsaved work, for when the editor stops without being asked.
-;; `M-x recover-file' brings it back. See the `files' manual page.
-;; (setq auto-save nil)
-;; (setq auto-save-directory "~/.cache/rsedit")
-
-;; Files changing underneath you: a clean buffer is reloaded, a modified one is
-;; flagged and `C-x C-s' asks. See the `files' manual page.
-;; (setq watch-files nil)
-;; (setq watch-file-interval 10)
-
-;; Line numbers down the left edge. Off, because a gutter costs columns and
-;; not everybody wants one; `M-x toggle-line-numbers' turns it on for a look,
-;; and 'relative numbers each line by its distance from point instead.
-;; (setq display-line-numbers t)
-
-;; The mouse: click to put point, wheel to scroll the window under the pointer.
+;; The line below loads the editor as it comes: every module it ships, and the
+;; settings it starts with. What it loads, and why, is in
+;; default-configuration.lisp; see the `configuration' manual page.
 ;;
-;; On here rather than in the editor's own defaults because it costs something.
-;; While the editor is reading the mouse the terminal is not, so selecting text
-;; with the mouse to paste it into another program stops working -- hold Shift
-;; in most terminals to get it back for one drag. Comment this out if you would
-;; rather keep the terminal's selection.
-(setq mouse-mode t)
+;; To leave modules out, name them first. A module that one still loaded needs
+;; is loaded anyway.
+;; (setq default-configuration-skip '(vim cmake-mode))
+(require 'default-configuration)
 
-
+;; Your settings go below, after the line above, so that its own do not
+;; replace them.
 "#;
 
 /// Returns the editor's WorkManager, which reports to LOG, and whose watchdog

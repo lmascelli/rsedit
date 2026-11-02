@@ -55,6 +55,7 @@ mod minibuffer_lisp_tests;
 mod mode_line_tests;
 mod mouse_tests;
 mod movement_tests;
+mod out_of_range_tests;
 mod overlay_lisp_tests;
 mod overlay_tests;
 mod paste_tests;

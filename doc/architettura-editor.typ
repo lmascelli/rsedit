@@ -4709,8 +4709,10 @@ stringa di tasti un comando con un nome: una funzione Lisp il cui corpo chiama
 `kmacro-call-keys` con la stringa, e la cui docstring dice quali tasti preme.
 Una stringa che non si legge come sequenza di tasti è rifiutata subito. Il
 contatore (`kmacro-insert-counter`, `kmacro-set-counter`, `kmacro-counter`)
-sta nel compartimento accanto ai tasti; la larghezza di `kmacro-insert-counter`
-non ha limite #rapporto("CMD-3").
+sta nel compartimento accanto ai tasti. `kmacro-insert-counter` legge la sua
+larghezza con `args::width` (@lettori-argomenti), prima che il contatore vada
+avanti, e mette gli zeri a mano: `format!` va in panic con una larghezza oltre
+65 535.
 
 == Le decisioni <decisioni-macro>
 
@@ -4848,7 +4850,10 @@ riferisce dopo (@ordine-lock).
 I conteggi si leggono con i lettori di `args.rs`: `movement_count`, con un
 segno, per i movimenti, dove un conteggio negativo va all'indietro;
 `repeat_count` per le cancellazioni, dove un conteggio negativo diventa 0
-#rapporto("CMD-6"). Né l'uno né l'altro ha un limite #rapporto("CMD-3").
+#rapporto("CMD-6"). Nessuno dei due ha un limite, perché non serve: ogni passo
+si ferma al bordo del buffer, e un conteggio enorme vuol dire «fin dove si
+può». Chi lo somma a una posizione lo fa con `saturating_add`, come
+`delete-char`.
 
 Le due porte restituiscono `false` in un buffer in sola lettura, e chi le
 chiama lo deve dire: `edited(ctx, happened)` scrive «Buffer is read-only»
@@ -5203,7 +5208,11 @@ più recente; senza flottanti mette il focus sulla finestra 0
 una stringa; `name`, un simbolo o una stringa, nil compreso, che diventa il nome
 `nil` #rapporto("RIC-9"); `name_or_empty`, `name_or` e
 `optional_name`, con il valore che danno quando l'argomento manca;
-`movement_count` e `repeat_count`, i conteggi (@primitive-modifica); `list`,
+`movement_count` e `repeat_count`, i conteggi (@primitive-modifica); `width`,
+una larghezza o una colonna, che oltre `WIDTH_LIMIT`, un milione di caratteri,
+dà l'errore di Emacs `(args-out-of-range N)`, con `out_of_range`: una stringa
+così lunga si chiede al sistema, e un'allocazione che rifiuta chiude il processo
+invece di fallire. La usano `indent-line-to` e `kmacro-insert-counter`; `list`,
 gli elementi di una lista in tutte e due le forme in cui arriva, una catena di
 cons o la `Form` di una lista che una macro cita dai suoi argomenti; `quoted`,
 che mette un valore in una forma da valutare dopo, come le callback delle

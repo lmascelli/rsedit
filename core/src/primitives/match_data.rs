@@ -5,6 +5,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <dati-corrispondenza>`.
 use super::*;
+use crate::primitives::args::out_of_range;
 use std::cell::RefCell;
 
 /// Where each group of the last match began and ended, in characters.
@@ -34,15 +35,6 @@ fn integer<B: BufferTrait>(arg: Option<&ELispExp<B>>) -> Result<i64, EvalError<E
     match arg {
         Some(ELispExp::Number(n)) if n.fract() == 0.0 => Ok(*n as i64),
         other => Err(wrong_type("Integer", other)),
-    }
-}
-
-/// Returns `(args-out-of-range ARGS...)`, the error Emacs signals for an index
-/// that is not in the string.
-fn out_of_range<B: BufferTrait>(args: &[ELispExp<B>]) -> EvalError<EditorState<B>> {
-    EvalError::Signal {
-        symbol: ELispExp::symbol("args-out-of-range".into()),
-        data: ELispExp::proper_list(args.to_vec()),
     }
 }
 

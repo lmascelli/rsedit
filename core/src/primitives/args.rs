@@ -116,9 +116,12 @@ pub(crate) fn movement_count<B: BufferTrait>(
 
 // TODO(CMD-6): a negative count becomes 0, so the deletions that read it do
 // nothing where Emacs deletes backwards.
-// TODO(CMD-3): nor is a count bounded.
 /// Returns the first of ARGS as a number of repetitions: 1 when it is absent,
 /// rounded down and at least 0, and an error when it is not a number.
+///
+/// Not bounded: a count is a number of steps, and every step stops at the
+/// edge of the buffer, so a huge one means "as far as it goes". A caller that
+/// adds it to a position does so with `saturating_add`.
 pub(crate) fn repeat_count<B: BufferTrait>(
     args: &[ELispExp<B>],
 ) -> Result<usize, EvalError<EditorState<B>>> {
@@ -130,6 +133,35 @@ pub(crate) fn repeat_count<B: BufferTrait>(
             got: other.clone(),
         }),
     }
+}
+
+/// The most characters a width or a column given as a number may ask for: a
+/// million, wider than any line, and four megabytes as a string. Past it the
+/// number is refused rather than used: a string that size is more than the
+/// system may give, and an allocation it refuses ends the process rather than
+/// failing; and `format!` panics on a width past 65 535.
+pub(crate) const WIDTH_LIMIT: usize = 1_000_000;
+
+/// Returns `(args-out-of-range ARGS...)`, the error Emacs signals for an
+/// argument outside what a function takes: an index past the end of a
+/// string, a width past [`WIDTH_LIMIT`].
+pub(crate) fn out_of_range<B: BufferTrait>(args: &[ELispExp<B>]) -> EvalError<EditorState<B>> {
+    EvalError::Signal {
+        symbol: ELispExp::symbol("args-out-of-range".into()),
+        data: ELispExp::proper_list(args.to_vec()),
+    }
+}
+
+/// Returns N as a width or a column: rounded down, 0 when negative or not a
+/// number, and `(args-out-of-range N)` past [`WIDTH_LIMIT`], infinity
+/// included.
+pub(crate) fn width<B: BufferTrait>(n: f64) -> Result<usize, EvalError<EditorState<B>>> {
+    // NaN goes to 0 here, as a negative does: `max` takes the number.
+    let width = n.max(0.0).floor();
+    if width > WIDTH_LIMIT as f64 {
+        return Err(out_of_range(&[ELispExp::number(n)]));
+    }
+    Ok(width as usize)
 }
 
 /// Returns VALUE as `(quote VALUE)`, so that a form built in Rust hands it

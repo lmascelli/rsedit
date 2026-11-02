@@ -202,24 +202,23 @@ primitive!(kmacro_recording_p, _args, _env, ctx, {
 
 pub const KMACRO_INSERT_COUNTER_DOC: &str = "(kmacro-insert-counter &optional WIDTH): Insert the \
          macro counter at point, padded with zeros to WIDTH digits, and add one to it. Return the \
-         text inserted.\n\n\
+         text inserted. A WIDTH past a million is out of range.\n\n\
          Example:\n\
          (kmacro-insert-counter 3)   ; 007";
 
 primitive!(kmacro_insert_counter, args, _env, ctx, {
+    // Read before the counter moves on: a width out of range is refused with
+    // the counter as it was.
     let width = match args.first() {
-        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 => *n as usize,
+        Some(ELispExp::Number(n)) => crate::primitives::args::width(*n)?,
         _ => 0,
     };
     let value = ctx.macros_mut(|macros| macros.take_counter(1));
-    // TODO(CMD-3): WIDTH is not bounded, and past 65 535 `format!` panics.
-    let text = if width == 0 {
-        value.to_string()
-    } else if value < 0 {
-        format!("-{:0>width$}", value.unsigned_abs(), width = width)
-    } else {
-        format!("{value:0>width$}")
-    };
+    // The zeros made by hand: `format!` panics on a width past 65 535.
+    let digits = value.unsigned_abs().to_string();
+    let zeros = "0".repeat(width.saturating_sub(digits.len()));
+    let sign = if value < 0 { "-" } else { "" };
+    let text = format!("{sign}{zeros}{digits}");
     let inserted = ctx.with_current_buffer_mut(|buf| {
         let at = buf.text.cursor_pos_1d();
         crate::primitives::edits::insert_text(buf, at, &text)

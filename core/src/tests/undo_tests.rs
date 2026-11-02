@@ -550,7 +550,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // Through the third door (BUF-1)
+    // Through the third door
     // ----------------------------------------------------------------
 
     /// Where the overlays of `*scratch*` are, as (start, end).
