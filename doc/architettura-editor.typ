@@ -90,7 +90,7 @@ Questo manuale descrive il comportamento #emph[attuale] del codice, anche dove
 quel comportamento è un difetto. I difetti sono descritti, con la riproduzione
 e una correzione proposta, nel #emph[Rapporto sui problemi del codice]
 (`rapporto-problemi.typ`). Dove il manuale descrive un punto che il rapporto
-considera un difetto, un rimando come #rapporto("BUF-1") indica la scheda
+considera un difetto, un rimando come #rapporto("BUF-2") indica la scheda
 corrispondente; quando il difetto viene corretto si aggiorna la descrizione
 qui, si toglie il rimando, e la scheda passa tra le risolte.
 
@@ -1870,7 +1870,16 @@ avviene sotto lo stesso lock di scrittura del buffer). Le porte non scrivono
 messaggi: un rifiuto lo riferisce chi le chiama, con `edited`, dopo la closure
 del buffer (@primitive-modifica).
 
-Tre percorsi oggi scavalcano le porte:
+Undo e redo passano da una terza porta, `edits::replay`: rifiuta un buffer in
+sola lettura (`Replayed::Refused`, che chi chiama riferisce con `edited`), fa
+applicare a `UndoHistory` l'inverso del gruppo e, per ogni modifica che la
+storia sta per fare, sposta overlay e testo virtuale come le due porte, con gli
+stessi `adjust_for_insert` e `adjust_for_delete`; poi disattiva il mark, segna
+il buffer modificato e chiama `changed` da `Applied::from`. Non registra nulla:
+l'inverso lo scrive la storia stessa (@undo). Ne passano `undo`, `redo` e il
+passo indietro di `query-replace` (`replace_back`).
+
+Due percorsi oggi scavalcano le porte:
 
 - `adopt_text` (lettura di un file, `revert-buffer`, ricarica dal watcher)
   sostituisce tutto il testo e fa a mano ciò che le porte farebbero: incrementa
@@ -1879,11 +1888,7 @@ Tre percorsi oggi scavalcano le porte:
   alla stessa riga e colonna;
 - `set_minibuffer_content`, usata dallo scorrimento dei completamenti, scrive
   direttamente nel testo del minibuffer e poi chiama `changed`
-  #rapporto("MIN-3");
-- `undo` e `redo`, che applicano l'inverso di un gruppo direttamente sul testo
-  con `UndoHistory::undo(text)` e poi chiamano `changed`: versione e cache sono
-  a posto, ma `read_only` non viene controllato e overlay e testo virtuale non
-  si spostano #rapporto("BUF-1").
+  #rapporto("MIN-3").
 
 == Undo <undo>
 
@@ -1947,23 +1952,30 @@ fn push(&mut self, change: Change, point: usize) {            // ogni modifica p
 
 Disfare un gruppo vuol dire applicare le sue modifiche al contrario, dall'ultima
 alla prima, e costruire intanto il gruppo che rifarebbe ciò che si è appena
-disfatto:
+disfatto. Ogni modifica è annunciata a `follow`, come `Step::Insert` o
+`Step::Delete`, prima di toccare il testo: è così che la terza porta sposta ciò
+che è ancorato agli offset (@due-porte).
 
 #estratto("buffer/undo.rs")[
 ```rust
-fn apply_inverse<B: BufferTrait>(&mut self, text: &mut B, group: Group) -> Group {
+fn apply_inverse<B: BufferTrait>(
+    &mut self, text: &mut B, group: Group, follow: &mut dyn FnMut(Step),
+) -> Group {
     let mut inverse = Vec::with_capacity(group.changes.len());
     for change in group.changes.iter().rev() {
         match change {
             Change::Inserted { at, len } => {
                 // si toglie, ricordando che cosa
                 let removed = text.slice(*at, at + len);
+                follow(Step::Delete { from: *at, to: at + len });  // prima che il testo si muova
                 apply_delete(text, *at, at + len);
                 inverse.push(Change::Deleted { at: *at, text: removed });
             }
             Change::Deleted { at, text: content } => {
+                let len = content.chars().count();
+                follow(Step::Insert { at: *at, len });
                 apply_insert(text, *at, content);              // si rimette il testo salvato
-                inverse.push(Change::Inserted { at: *at, len: content.chars().count() });
+                inverse.push(Change::Inserted { at: *at, len });
             }
         }
     }
@@ -2108,8 +2120,8 @@ Decisioni:
   cambia quello stato, fa solo dire allo schermo una cosa falsa. I tasti da
   soli non bastano a proteggerlo: ogni tasto stampabile è legato a
   `self-insert`, e `M-x kill-line` o una riga di Lisp passerebbero comunque.
-  Dalle porte invece passa ogni modifica, tranne `undo` e `redo`
-  #rapporto("BUF-1"). Il punto si muove liberamente: leggere è lo scopo di un
+  Dalle porte invece passa ogni modifica, `undo` e `redo` compresi, dalla
+  terza. Il punto si muove liberamente: leggere è lo scopo di un
   buffer in sola lettura.
 + *I dati appesi vivono quanto il buffer.* Ciò che una funzionalità ricorda
   #emph[di un buffer] --- i risultati di una ricerca mostrati lì, una tabella,
@@ -2210,11 +2222,12 @@ Decisioni:
   il resto: senza quel conto si confronterebbero le righe sbagliate. Il lavoro
   a passi limitati tiene comunque l'editor reattivo, e la risincronizzazione
   riguarda quanto lavoro c'è in tutto: si aggiunge se le misure la chiedono.
-+ *Undo scrive sotto le porte.* Rifare la storia non deve registrarsi come
-  storia nuova, quindi `undo` e `redo` applicano le modifiche con
-  `apply_insert` e `apply_delete`, sotto lo strato che registra: non c'è un
-  flag da ricordare. Il chiamante fa poi ciò che le porte farebbero, con
-  `changed` da `Applied::from` #rapporto("BUF-1").
++ *Undo ha una porta sua.* Rifare la storia non deve registrarsi come storia
+  nuova, quindi `undo` e `redo` non passano dalle due porte, che registrano:
+  la storia applica le modifiche con `apply_insert` e `apply_delete`, sotto lo
+  strato che registra, e non c'è un flag da ricordare. Tutto il resto delle
+  porte lo fa la terza, `edits::replay`: la sola lettura, overlay e testo
+  virtuale annunciati passo per passo con `Step`, il mark, `changed`.
 + *Il testo da rifare si cattura disfacendo.* Disfare un inserimento toglie il
   testo e lo ricorda nel gruppo inverso, invece di conservarlo prima per un
   `redo` che può non venire mai.
@@ -3587,7 +3600,7 @@ emette di suoi con `emit-event`.
 #ref-table(
   columns: (3.3cm, 1fr),
   header: ([Argomento], [Chi lo emette]),
-  [`buffer-changed`], [`edits::changed` (le due porte, undo, redo, `replace-back`), `Buffer::adopt_text`, il cambio di modo maggiore, un buffer che entra nella tabella],
+  [`buffer-changed`], [`edits::changed` (le tre porte: le modifiche, undo, redo, `replace-back`), `Buffer::adopt_text`, il cambio di modo maggiore, un buffer che entra nella tabella],
   [`syntax-changed`], [`set_mode`, `edit_grammar`, `edit_syntax_table`],
 )
 
@@ -4802,15 +4815,15 @@ descrive uno.
 == Le primitive di modifica <primitive-modifica>
 
 Le primitive che cambiano il testo o spostano il punto stanno in tredici file,
-uno per concetto. Tutte cambiano il testo soltanto dalle due porte
-(@due-porte), e nessuna prende il lock di un altro compartimento dentro la
+uno per concetto. Tutte cambiano il testo soltanto dalle due porte, e `undo` e
+`redo` dalla terza (@due-porte), e nessuna prende il lock di un altro compartimento dentro la
 closure di un buffer: chiede prima ciò che le serve, lavora nella closure e
 riferisce dopo (@ordine-lock).
 
 #ref-table(
   columns: (3.1cm, 1fr),
   header: ([File], [Contenuto]),
-  [`edits.rs`], [Le due porte (`insert_text`, `delete_range`), `changed`, `edited`; le primitive che inseriscono e cancellano caratteri: `self-insert`, `insert`, `insert-pasted-text`, `insert-newline`, `delete-region`, `delete-char`, `delete-backward-char`.],
+  [`edits.rs`], [Le due porte (`insert_text`, `delete_range`) e la terza di undo e redo (`replay`), `changed`, `edited`; le primitive che inseriscono e cancellano caratteri: `self-insert`, `insert`, `insert-pasted-text`, `insert-newline`, `delete-region`, `delete-char`, `delete-backward-char`.],
   [`undo.rs`], [`undo`, `redo`, `undo-boundary`, `undo-join`, `set-undo-limit` (@undo).],
   [`movement.rs`], [Il movimento per carattere, riga, parola e paragrafo, ai bordi della riga e del buffer, `goto-line`; il punto come numero; le funzioni che dicono dove finiscono una parola, una riga, un paragrafo.],
   [`killing.rs`], [Le kill, da `kill-line` a `kill-region`; `kill-ring-save`, `yank`, `yank-pop`, `kill-new` e il resto dell'anello; `cut_out`.],
@@ -5327,8 +5340,8 @@ dell'utente li descrive.
   porte, quindi una modifica chiude la selezione, come in Emacs. La posizione
   resta per `exchange-point-and-mark`, e un mark attivo non ha mai avuto una
   modifica sotto: non va mai spostato.
-+ *`changed` è una funzione sola.* Le porte, e i chiamanti di undo e redo, che
-  scrivono sotto le porte, passano dalla stessa funzione per versione,
++ *`changed` è una funzione sola.* Le tre porte, e `set_minibuffer_content`,
+  che scrive sotto di loro, passano dalla stessa funzione per versione,
   colorazione, punti di ripresa ed evento `buffer-changed`. Una modifica che
   incrementasse la versione senza invalidare la colorazione, o il contrario, si
   vedrebbe solo sullo schermo, minuti dopo, come un colore che non si assesta.

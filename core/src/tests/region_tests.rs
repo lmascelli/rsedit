@@ -194,12 +194,11 @@ mod tests {
         );
     }
 
-    /// Undo applies its changes below the editing layer -- that is what stops
-    /// it recording itself as new history -- so it is the one thing that can
-    /// shorten the text under a mark that is still active. The region has to
-    /// stay inside the buffer anyway.
+    /// Undo goes through the third door, which ends a selection as every
+    /// edit does: no region is left claiming text the undo took away. (Where
+    /// the mark itself lands is the next test's.)
     #[test]
-    fn a_region_is_clamped_when_undo_shortens_the_text_under_it() {
+    fn undo_ends_the_region_it_shortened_the_text_under() {
         let (ctx, env) = editor_with("");
         eval_str("(self-insert \"a\") (self-insert \"b\")", &env, &ctx).expect("type");
         eval_str(
@@ -216,14 +215,12 @@ mod tests {
         eval_str("(undo)", &env, &ctx).expect("undo the typing");
         assert_eq!(text_of(&ctx), "");
         assert!(
-            mark_is_active(&ctx),
-            "undo does not go through the editing layer, so it leaves the \
-             region active -- which is exactly why the region has to be clamped"
+            !mark_is_active(&ctx),
+            "undo is an edit, and an edit ends the selection"
         );
-        assert_eq!(
-            eval_str("(region-end)", &env, &ctx).expect("end"),
-            LispExp::number(0.0),
-            "the region must not claim to reach past the end of the buffer"
+        assert!(
+            eval_str("(region-end)", &env, &ctx).is_err(),
+            "there is no region left to reach past the end of the buffer"
         );
     }
 

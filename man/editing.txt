@@ -219,7 +219,9 @@ UNDOING
     change was. After an undo a plain u undoes again, and after a redo a
     plain r redoes again. A new edit after an undo forgets what could have
     been redone. Some terminals cannot send C-?: there, use M-x redo, or
-    bind it to a key that arrives.
+    bind it to a key that arrives. Like any edit, an undo ends the region,
+    and what is drawn over the text, highlights and virtual text, moves
+    with it; a read-only buffer refuses it.
 
     The history keeps up to a mebibyte of deleted text in each buffer, and
     lets the oldest changes go past that; M-x set-undo-limit changes it.

@@ -1,5 +1,6 @@
-//! The two doors every change to a buffer's text goes through, and the
-//! primitives that insert and delete characters.
+//! The two doors every change to a buffer's text goes through, the third that
+//! undo and redo replay the history through, and the primitives that insert
+//! and delete characters.
 //!
 //! Design: `doc/architettura-editor.typ, <due-porte>`.
 use super::*;
@@ -80,8 +81,8 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
 /// invalidates the colouring and the scan checkpoints from AT's line down,
 /// and emits the buffer's `buffer-changed`.
 ///
-/// The two doors call it, and so do the callers of undo and redo, which change
-/// the text below the doors and must say so themselves.
+/// The three doors call it, and so does `set_minibuffer_content`, which
+/// writes a prompt's answer below them.
 pub(crate) fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     buf.version = buf.version.wrapping_add(1);
     let line = buf.text.cursor_1d_to_2d(at.min(buf.text.len())).0;
@@ -91,6 +92,65 @@ pub(crate) fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     // about where the edit was would each describe a different text.
     buf.scan.invalidate_from(buf.version, line);
     buf.changed.emit();
+}
+
+/// Which way [`replay`] goes through the history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Replay {
+    Undo,
+    Redo,
+}
+
+/// What [`replay`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Replayed {
+    /// The buffer is read-only, and nothing changed: the caller says so.
+    Refused,
+    /// There was nothing to undo, or to redo.
+    Nothing,
+    /// A group was replayed: where point goes, and where the text changed.
+    Applied(undo::Applied),
+}
+
+/// The third door: undoes or redoes the latest group of BUF's history, doing
+/// for each change what the two doors do for an edit, except recording it --
+/// the history writes its own inverse. Refuses a read-only buffer, moves the
+/// overlays and the virtual text with the text, ends a selection, and tells
+/// the buffer with [`changed`].
+pub(crate) fn replay<B: BufferTrait>(buf: &mut Buffer<B>, way: Replay) -> Replayed {
+    if buf.read_only {
+        return Replayed::Refused;
+    }
+    // Split borrow: the history writes the text, and each change it is about
+    // to make moves what is anchored to it, all fields of the one buffer.
+    let Buffer {
+        text,
+        undo,
+        overlays,
+        virtual_text,
+        ..
+    } = buf;
+    let mut follow = |step: undo::Step| match step {
+        undo::Step::Insert { at, len } => {
+            overlays.adjust_for_insert(at, len);
+            virtual_text.adjust_for_insert(at, len);
+        }
+        undo::Step::Delete { from, to } => {
+            overlays.adjust_for_delete(from, to);
+            virtual_text.adjust_for_delete(from, to);
+        }
+    };
+    let applied = match way {
+        Replay::Undo => undo.undo(text, &mut follow),
+        Replay::Redo => undo.redo(text, &mut follow),
+    };
+    let Some(applied) = applied else {
+        return Replayed::Nothing;
+    };
+    buf.mark = deactivated(buf.mark);
+    buf.is_modified = true;
+    changed(buf, applied.from);
+    Replayed::Applied(applied)
 }
 
 /// Returns MARK, if there is one, no longer active.

@@ -548,4 +548,118 @@ mod tests {
             "the second undo must undo the earlier edit, not re-apply the first undo"
         );
     }
+
+    // ----------------------------------------------------------------
+    // Through the third door (BUF-1)
+    // ----------------------------------------------------------------
+
+    /// Where the overlays of `*scratch*` are, as (start, end).
+    fn overlays(ctx: &Ctx) -> Vec<(usize, usize)> {
+        ctx.with_buffer("*scratch*", |b| {
+            b.overlays
+                .iter()
+                .map(|overlay| (overlay.start, overlay.end))
+                .collect()
+        })
+        .expect("*scratch*")
+    }
+
+    /// Where the virtual text of `*scratch*` is anchored.
+    fn virtual_text(ctx: &Ctx) -> Vec<usize> {
+        ctx.with_buffer("*scratch*", |b| {
+            b.virtual_text
+                .between(0, b.text.len() + 1)
+                .map(|piece| piece.at)
+                .collect()
+        })
+        .expect("*scratch*")
+    }
+
+    #[test]
+    fn undo_in_a_read_only_buffer_is_refused_and_said() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(insert "abc") (undo-boundary) (set-buffer-read-only t)"#,
+            &env,
+            &ctx,
+        )
+        .expect("setup");
+
+        assert_eq!(
+            eval_str("(undo)", &env, &ctx).expect("undo"),
+            LispExp::nil()
+        );
+        assert_eq!(text_of(&ctx), "abc");
+        assert_eq!(ctx.get_echo_message(), "Buffer is read-only");
+    }
+
+    #[test]
+    fn redo_in_a_read_only_buffer_is_refused_and_said() {
+        let (ctx, env) = editor_with("");
+        eval_str(r#"(insert "abc") (undo-boundary) (undo)"#, &env, &ctx).expect("setup");
+        eval_str("(set-buffer-read-only t)", &env, &ctx).expect("read-only");
+        ctx.set_echo_message("");
+
+        assert_eq!(
+            eval_str("(redo)", &env, &ctx).expect("redo"),
+            LispExp::nil()
+        );
+        assert_eq!(text_of(&ctx), "");
+        assert_eq!(ctx.get_echo_message(), "Buffer is read-only");
+    }
+
+    /// The card's case: an overlay on `world` stays on `world` when the
+    /// undo takes away text before it, and when the redo puts it back.
+    #[test]
+    fn an_overlay_moves_with_the_text_an_undo_removes_and_a_redo_restores() {
+        let (ctx, env) = editor_with("hello world");
+        eval_str(
+            r#"(make-overlay 6 11 'region) (insert "XX") (undo-boundary)"#,
+            &env,
+            &ctx,
+        )
+        .expect("setup");
+        assert_eq!(overlays(&ctx), vec![(8, 13)]);
+
+        eval_str("(undo)", &env, &ctx).expect("undo");
+        assert_eq!(text_of(&ctx), "hello world");
+        assert_eq!(overlays(&ctx), vec![(6, 11)], "still on world");
+
+        eval_str("(redo)", &env, &ctx).expect("redo");
+        assert_eq!(text_of(&ctx), "XXhello world");
+        assert_eq!(overlays(&ctx), vec![(8, 13)], "still on world");
+    }
+
+    /// The other way round: text an undo puts back before an overlay pushes
+    /// it along.
+    #[test]
+    fn an_overlay_moves_with_the_text_an_undo_puts_back() {
+        let (ctx, env) = editor_with("XXhello world");
+        eval_str(
+            r#"(make-overlay 8 13 'region) (delete-region 0 2) (undo-boundary)"#,
+            &env,
+            &ctx,
+        )
+        .expect("setup");
+        assert_eq!(overlays(&ctx), vec![(6, 11)]);
+
+        eval_str("(undo)", &env, &ctx).expect("undo");
+        assert_eq!(text_of(&ctx), "XXhello world");
+        assert_eq!(overlays(&ctx), vec![(8, 13)]);
+    }
+
+    #[test]
+    fn virtual_text_moves_with_an_undo() {
+        let (ctx, env) = editor_with("hello world");
+        eval_str(
+            r#"(make-virtual-text 6 "> ") (insert "XX") (undo-boundary)"#,
+            &env,
+            &ctx,
+        )
+        .expect("setup");
+        assert_eq!(virtual_text(&ctx), vec![8]);
+
+        eval_str("(undo)", &env, &ctx).expect("undo");
+        assert_eq!(virtual_text(&ctx), vec![6]);
+    }
 }

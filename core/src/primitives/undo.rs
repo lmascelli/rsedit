@@ -2,8 +2,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <undo>`.
 use super::*;
-use crate::buffer::Buffer;
-use crate::primitives::edits::changed;
+use crate::primitives::edits::{Replay, Replayed, edited, replay};
 use crate::primitives::movement::goto_offset;
 
 pub const UNDO_JOIN_DOC: &str = "(undo-join): Make the edits this command makes next part of the \
@@ -17,46 +16,35 @@ primitive!(undo_join, args, _env, ctx, {
 });
 
 pub const UNDO_DOC: &str = "(undo): Undo the latest group of changes in the current buffer, and \
-         move point to where it was made. Return t, or nil when there is nothing to undo. A group \
-         is one command, or a word or two of typing.";
+         move point to where it was made. Return t, or nil when there is nothing to undo, or the \
+         buffer is read-only, which it says. A group is one command, or a word or two of typing.";
 
-// TODO(BUF-1): `undo` and `redo` apply their changes below the two doors: a
-// read-only buffer is changed, and overlays and virtual text do not move.
-primitive!(undo, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        // Split borrow: the history and the text it describes are two fields
-        // of the same buffer, and undo needs to write both.
-        let Buffer { text, undo, .. } = buf;
-        match undo.undo(text) {
-            Some(applied) => {
-                goto_offset(text, applied.point);
-                buf.is_modified = true;
-                changed(buf, applied.from);
-                Ok(ELispExp::symbol("t".into()))
-            }
-            None => Ok(ELispExp::nil()),
+primitive!(undo, _args, _env, ctx, { Ok(replayed(ctx, Replay::Undo)) });
+
+/// Replays the current buffer's history WAY through the third door, puts
+/// point where the group was made, and returns what `undo` and `redo` answer:
+/// t, or nil, having said so when the buffer is read-only.
+fn replayed<B: BufferTrait>(ctx: &EditorState<B>, way: Replay) -> ELispExp<B> {
+    let outcome = ctx.with_current_buffer_mut(|buf| {
+        let outcome = replay(buf, way);
+        if let Replayed::Applied(applied) = outcome {
+            goto_offset(&mut buf.text, applied.point);
         }
-    })
-});
+        outcome
+    });
+    match outcome {
+        Replayed::Applied(_) => ELispExp::t(),
+        Replayed::Nothing => ELispExp::nil(),
+        // Said once the buffer's lock is let go, as every edit says it.
+        Replayed::Refused => edited(ctx, false),
+    }
+}
 
 pub const REDO_DOC: &str = "(redo): Redo the latest group of changes undone in the current \
-         buffer. Return t, or nil when there is nothing to redo. An edit made after an undo \
-         forgets what that undo took back.";
+         buffer. Return t, or nil when there is nothing to redo, or the buffer is read-only, which \
+         it says. An edit made after an undo forgets what that undo took back.";
 
-primitive!(redo, _args, _env, ctx, {
-    ctx.with_current_buffer_mut(|buf| {
-        let Buffer { text, undo, .. } = buf;
-        match undo.redo(text) {
-            Some(applied) => {
-                goto_offset(text, applied.point);
-                buf.is_modified = true;
-                changed(buf, applied.from);
-                Ok(ELispExp::symbol("t".into()))
-            }
-            None => Ok(ELispExp::nil()),
-        }
-    })
-});
+primitive!(redo, _args, _env, ctx, { Ok(replayed(ctx, Replay::Redo)) });
 
 pub const UNDO_BOUNDARY_DOC: &str = "(undo-boundary): End the current undo group, so that the \
          next change starts a new one and the two undo separately. Does nothing when no group is \

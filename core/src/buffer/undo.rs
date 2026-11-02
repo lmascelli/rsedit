@@ -155,18 +155,30 @@ impl Group {
     }
 }
 
-/// What undoing or redoing a group did, for the caller that has to tell the
+/// What undoing or redoing a group did, for the door that has to tell the
 /// rest of the buffer.
 ///
 /// Undo and redo write below the two doors, or replaying history would record
-/// itself as new history. So the caller moves the version and the caches on,
-/// as the doors would have, and needs to know from where.
+/// itself as new history. So `edits::replay`, the third door, moves the
+/// version and the caches on, as the two would have, and needs to know from
+/// where.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Applied {
     /// Where point should go.
     pub point: usize,
     /// The earliest offset the group touched. Nothing before it changed.
     pub from: usize,
+}
+
+/// One change an undo or a redo is about to make to the text, told before the
+/// text moves, so that what is anchored to offsets -- overlays, virtual text
+/// -- can move with it, as the doors move it for an edit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// LEN characters are about to go in at AT.
+    Insert { at: usize, len: usize },
+    /// The characters from FROM to TO are about to go.
+    Delete { from: usize, to: usize },
 }
 
 /// How many bytes of deleted text a history keeps, unless told otherwise,
@@ -316,13 +328,17 @@ impl UndoHistory {
             .unwrap_or(0)
     }
 
-    // TODO(BUF-1): undo and redo write below the two doors, and their callers
-    // only call `edits::changed` after them: a read-only buffer is changed,
-    // and overlays and virtual text stay where the old text had them.
-
-    /// Undoes the most recent group. Returns where point should go and where
-    /// the text began to change, or `None` when there is nothing left to undo.
-    pub fn undo<B: BufferTrait>(&mut self, text: &mut B) -> Option<Applied> {
+    /// Undoes the most recent group, telling FOLLOW each change before it is
+    /// made. Returns where point should go and where the text began to change,
+    /// or `None` when there is nothing left to undo.
+    ///
+    /// Not called directly: `edits::replay`, the door undo and redo go
+    /// through, refuses a read-only buffer and moves what FOLLOW is told of.
+    pub fn undo<B: BufferTrait>(
+        &mut self,
+        text: &mut B,
+        follow: &mut dyn FnMut(Step),
+    ) -> Option<Applied> {
         self.boundary();
         let group = self.done.pop()?;
         self.bytes = self
@@ -332,27 +348,32 @@ impl UndoHistory {
             point: group.point,
             from: group.earliest(),
         };
-        let inverse = self.apply_inverse(text, group);
+        let inverse = self.apply_inverse(text, group, follow);
         self.undone.push(inverse);
         Some(applied)
     }
 
-    /// Redoes the most recently undone group, and returns what
-    /// [`Self::undo`] returns.
-    pub fn redo<B: BufferTrait>(&mut self, text: &mut B) -> Option<Applied> {
+    /// Redoes the most recently undone group, telling FOLLOW each change as
+    /// [`Self::undo`] does, and returns what it returns.
+    pub fn redo<B: BufferTrait>(
+        &mut self,
+        text: &mut B,
+        follow: &mut dyn FnMut(Step),
+    ) -> Option<Applied> {
         let group = self.undone.pop()?;
         let applied = Applied {
             point: group.point,
             from: group.earliest(),
         };
-        let inverse = self.apply_inverse(text, group);
+        let inverse = self.apply_inverse(text, group, follow);
         self.bytes += inverse.changes.iter().map(Change::weight).sum::<usize>();
         self.done.push(inverse);
         Some(applied)
     }
 
-    /// Applies the inverse of GROUP to the text, and returns the group that
-    /// would in turn undo what was just done.
+    /// Applies the inverse of GROUP to the text, telling FOLLOW each change
+    /// before it is made, and returns the group that would in turn undo what
+    /// was just done.
     ///
     /// Changes are inverted in reverse order: a group's later edits are
     /// described in terms of the text its earlier edits produced, so they have
@@ -362,7 +383,12 @@ impl UndoHistory {
     /// a flag says so: this reaches for [`apply_delete`] and [`apply_insert`]
     /// directly, below the layer that writes the history. There is no switch
     /// to forget to set.
-    fn apply_inverse<B: BufferTrait>(&mut self, text: &mut B, group: Group) -> Group {
+    fn apply_inverse<B: BufferTrait>(
+        &mut self,
+        text: &mut B,
+        group: Group,
+        follow: &mut dyn FnMut(Step),
+    ) -> Group {
         let mut inverse = Vec::with_capacity(group.changes.len());
 
         for change in group.changes.iter().rev() {
@@ -372,6 +398,10 @@ impl UndoHistory {
                     // the corresponding redo possible without having stored a
                     // copy in advance.
                     let removed = text.slice(*at, at + len);
+                    follow(Step::Delete {
+                        from: *at,
+                        to: at + len,
+                    });
                     apply_delete(text, *at, at + len);
                     inverse.push(Change::Deleted {
                         at: *at,
@@ -379,11 +409,10 @@ impl UndoHistory {
                     });
                 }
                 Change::Deleted { at, text: content } => {
+                    let len = content.chars().count();
+                    follow(Step::Insert { at: *at, len });
                     apply_insert(text, *at, content);
-                    inverse.push(Change::Inserted {
-                        at: *at,
-                        len: content.chars().count(),
-                    });
+                    inverse.push(Change::Inserted { at: *at, len });
                 }
             }
         }

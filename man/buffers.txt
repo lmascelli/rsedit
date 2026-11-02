@@ -67,7 +67,8 @@ KILLING A BUFFER
 
 READ ONLY
     A read-only buffer refuses every change to its text, from a key or from
-    Lisp, and saying so is all a key does there; point still moves. A
+    Lisp, undo and redo included, and saying so is all a key does there;
+    point still moves. A
     listing is read-only, so what it shows can only change by being drawn
     again.
 
