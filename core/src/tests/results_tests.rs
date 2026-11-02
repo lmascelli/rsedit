@@ -893,4 +893,86 @@ mod tests {
         assert_eq!(run("(results-state)", &env, &ctx), LispExp::nil());
         assert_eq!(run("(results-select)", &env, &ctx), LispExp::nil());
     }
+
+    // ----------------------------------------------------------------
+    // Where a place's file is read
+    // ----------------------------------------------------------------
+
+    fn visiting(ctx: &Ctx) -> Option<String> {
+        ctx.with_current_buffer(|buf| buf.file_path.clone())
+    }
+
+    /// A relative place is read in the directory of the list it is in, not in
+    /// the working directory, which `cd` moves, nor in the current buffer's.
+    #[test]
+    fn a_relative_place_is_read_in_the_directory_of_its_list() {
+        let built = Sandbox::new("list-dir-built");
+        let moved = Sandbox::new("list-dir-moved");
+        let file = built.file("src/a.txt", "one\ntwo\n");
+        let (ctx, env) = editor("text\n");
+        run(r#"(buffer-create "*listing*")"#, &env, &ctx);
+        ctx.with_buffer_mut("*listing*", |buf| buf.directory = Some(built.path()));
+        run(
+            r#"(results-put "x" "y" '(("file" "src/a.txt" 2)) "*listing*")"#,
+            &env,
+            &ctx,
+        );
+        run(&format!(r#"(cd "{}")"#, moved.path()), &env, &ctx);
+
+        run("(next-error)", &env, &ctx);
+
+        assert_eq!(visiting(&ctx), Some(file));
+    }
+
+    /// A list with no directory of its own reads its places in the working
+    /// directory, as before there was one.
+    #[test]
+    fn a_list_with_no_directory_of_its_own_reads_in_the_working_directory() {
+        let sandbox = Sandbox::new("list-dir-working");
+        let file = sandbox.file("b.txt", "one\n");
+        let (ctx, env) = editor("text\n");
+        run(&format!(r#"(cd "{}")"#, sandbox.path()), &env, &ctx);
+        run(r#"(results-put "x" "y" '(("file" "b.txt" 1)))"#, &env, &ctx);
+
+        run("(next-error)", &env, &ctx);
+
+        assert_eq!(visiting(&ctx), Some(file));
+    }
+
+    /// The line marked in a file is unmarked when the walk goes on to another
+    /// file: the mark is found again by the buffer's name, not by the path the
+    /// entry gives.
+    #[test]
+    fn the_mark_on_a_file_goes_when_the_walk_moves_to_another() {
+        let sandbox = Sandbox::new("mark-moves");
+        let a = sandbox.file("a.txt", "one\ntwo\n");
+        let b = sandbox.file("b.txt", "one\ntwo\n");
+        let (ctx, env) = editor("text\n");
+        run(
+            r##"(define-face 'results-target nil "#333333")"##,
+            &env,
+            &ctx,
+        );
+        run(
+            &format!(r#"(results-put "x" "y" '(("file" "{a}" 1) ("file" "{b}" 2)))"#),
+            &env,
+            &ctx,
+        );
+        let marks = |name: &str| {
+            ctx.with_buffer(name, |buf| {
+                buf.overlays
+                    .iter()
+                    .filter(|overlay| &*overlay.category == "results-target")
+                    .count()
+            })
+            .unwrap_or_else(|| panic!("no buffer called {name}"))
+        };
+
+        run("(next-error)", &env, &ctx);
+        assert_eq!(marks("a.txt"), 1);
+        run("(next-error)", &env, &ctx);
+
+        assert_eq!(marks("a.txt"), 0, "the first file keeps its mark");
+        assert_eq!(marks("b.txt"), 1);
+    }
 }

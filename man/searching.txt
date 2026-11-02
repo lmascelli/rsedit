@@ -125,7 +125,7 @@ REPLACING
 EVERY MATCH AT ONCE
         M-s o           list the lines of this buffer that match
         M-s g           list the matching lines of every file under the
-                        directory the editor was started in
+                        working directory
 
     The list goes in a buffer of its own, one line for each match, shown
     in a strip along the bottom of the frame, and the cursor goes to it:

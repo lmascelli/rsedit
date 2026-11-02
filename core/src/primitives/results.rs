@@ -80,18 +80,24 @@ fn unmark<B: BufferTrait>(ctx: &EditorState<B>, buffer: &str, category: &str) {
 
 // TODO(RIC-5): an entry is a line and a column, which an edit above it
 // leaves behind.
-/// Goes to ENTRY: opens what it is in, puts point on it and marks the line;
-/// false when its file or its buffer is gone.
+/// Goes to ENTRY of the list in LISTING: opens what it is in, puts point on
+/// it and marks the line; false when its file or its buffer is gone.
 fn visit<B: BufferTrait>(
     ctx: &EditorState<B>,
     env: &std::sync::Arc<Env<EditorState<B>>>,
+    listing: &str,
     entry: &Entry,
 ) -> Result<bool, EvalError<EditorState<B>>> {
     if entry.kind == KIND_FILE {
+        // Read in the listing's directory, not the current buffer's: a build
+        // prints names relative to where it ran, which `cd` may have left
+        // since, and `next-error` is asked from any buffer.
+        let path =
+            crate::paths::expand_path_in(&entry.source, Path::new(&ctx.directory_of(listing)));
         // Said rather than opened: a path that is not there was written by a
         // build run somewhere else, and an empty buffer of the same name would
         // look like the file.
-        if !Path::new(&ctx.expand_path(&entry.source)).exists() {
+        if !Path::new(&path).exists() {
             ctx.set_echo_message(&format!("No such file: {}", entry.source));
             return Ok(false);
         }
@@ -99,10 +105,12 @@ fn visit<B: BufferTrait>(
         // reusing the buffer already visiting it, reporting a file that has
         // gone, noticing an auto-save copy. A second implementation of that
         // would be a second set of answers.
+        // Handed over absolute: `find-file` would read a relative name in
+        // the directory of whatever buffer is current by now.
         let opened = eval(
             &ELispExp::form(vec![
                 ELispExp::symbol("find-file".into()),
-                ELispExp::string(entry.source.clone()),
+                ELispExp::string(path),
             ]),
             env.clone(),
             ctx,
@@ -155,10 +163,8 @@ fn visit_index<B: BufferTrait>(
     // Recorded before the jump: a visit that failed still moved the walk on,
     // or `next-error` would offer the same unreachable file for ever.
     let previous = with_results_mut(ctx, buffer, |results| {
-        let previous = results.marked.clone();
         results.current = Some(index);
-        results.marked = Some(entry.source.clone());
-        previous
+        results.marked.take()
     })
     .flatten();
     // The mark left in whatever was visited before, which is not necessarily
@@ -178,7 +184,14 @@ fn visit_index<B: BufferTrait>(
         mark_line(ctx, HERE_CATEGORY);
         ctx.switch_to_buffer(&was);
     }
-    let visited = visit(ctx, env, &entry);
+    let visited = visit(ctx, env, buffer, &entry);
+    // What was marked is the buffer the visit ended in, by its name: for a
+    // place in a file, the entry names the file, and the mark has to be found
+    // again in its buffer to be taken off.
+    if matches!(visited, Ok(true)) {
+        let target = ctx.get_current_buffer_name();
+        with_results_mut(ctx, buffer, |results| results.marked = Some(target));
+    }
 
     if preview {
         ctx.select_window(from);

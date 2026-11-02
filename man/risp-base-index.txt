@@ -253,8 +253,8 @@ DESCRIPTION
     clamps out-of-range indices after interpreting negative ones from the end.
   
 SEE ALSO
-    (function-doc 'NAME), (variable-doc 'NAME), (function-arglist 'NAME),
-    (all-functions), (all-macros), (all-variables)
+    (function-doc), (variable-doc), (function-arglist), (all-functions),
+    (all-macros), (all-variables)
 
 SOURCE
     Primitive inventory and behavior reviewed against Risp f1bac0c.

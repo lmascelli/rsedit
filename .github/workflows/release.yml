@@ -130,17 +130,53 @@ jobs:
               shutil.copy2(document, bundle / document)
 
           def check_data(root):
+              # Ciò che core/build.rs mette accanto all'eseguibile: i moduli
+              # in data/lisp, una sottodirectory per tipo (base, features,
+              # languages), come in core/lisp; i temi e le pagine piatti.
+              kinds = sorted(
+                  kind for kind in Path("core/lisp").iterdir() if kind.is_dir()
+              )
+              if not kinds:
+                  raise RuntimeError("Risorse mancanti: core/lisp/*/")
+              packaged_kinds = sorted(
+                  kind.name
+                  for kind in (root / "data" / "lisp").iterdir()
+                  if kind.is_dir()
+              )
+              if packaged_kinds != [kind.name for kind in kinds]:
+                  raise RuntimeError(
+                      "Tipi di moduli diversi in data/lisp: "
+                      + ", ".join(packaged_kinds)
+                  )
+              stray = sorted((root / "data" / "lisp").glob("*.lisp"))
+              if stray:
+                  raise RuntimeError(
+                      "Moduli fuori dalle sottodirectory: "
+                      + ", ".join(str(path) for path in stray)
+                  )
+
               groups = [
-                  ("core/lisp", "lisp", "*.lisp"),
-                  ("themes", "themes", "*.lisp"),
-                  ("man", "man", "*.txt"),
+                  (kind, Path("lisp") / kind.name, "*.lisp") for kind in kinds
+              ]
+              groups += [
+                  (Path("themes"), Path("themes"), "*.lisp"),
+                  (Path("man"), Path("man"), "*.txt"),
               ]
               for source, destination, pattern in groups:
-                  files = list(Path(source).glob(pattern))
+                  files = sorted(source.glob(pattern))
                   if not files:
-                      raise RuntimeError("Risorse mancanti: " + source)
+                      raise RuntimeError("Risorse mancanti: " + str(source))
+                  packaged_dir = root / "data" / destination
+                  expected = {path.name for path in files}
+                  found = {path.name for path in packaged_dir.glob(pattern)}
+                  if found != expected:
+                      raise RuntimeError(
+                          "Risorse diverse in " + str(packaged_dir)
+                          + ": mancano " + str(sorted(expected - found))
+                          + ", in più " + str(sorted(found - expected))
+                      )
                   for source_file in files:
-                      packaged = root / "data" / destination / source_file.name
+                      packaged = packaged_dir / source_file.name
                       if packaged.read_bytes() != source_file.read_bytes():
                           raise RuntimeError(
                               "Risorsa non corretta: " + str(packaged)

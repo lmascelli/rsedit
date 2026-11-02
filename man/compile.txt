@@ -47,9 +47,9 @@ GOING TO THE PLACES
     the build ends. Return in the output opens its place in the window the
     build was started from, and M-g n goes on from there. The line is
     marked in the file, and the place in the output. A relative path is
-    taken from the directory the editor was started in; when the build ran
-    somewhere else the file is said to be missing, rather than another file
-    of the same name being opened.
+    taken from the directory the build ran in, even after M-x cd and from
+    any buffer; when the file is not there it is said to be missing,
+    rather than another file of the same name being opened.
 
 WHICH LINES NAME A PLACE
     A line names a place when one of `compilation-patterns' matches it.

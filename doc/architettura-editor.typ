@@ -2697,8 +2697,9 @@ da Lisp e la mostra.
 `rendered()` produce la forma `file:riga: testo` di ogni strumento alla grep.
 `Results` aggiunge il modello cercato, su che cosa (`over`), le voci,
 `truncated`, `done` (falso mentre una scansione di sfondo è in corso), il
-buffer dove è stato messo l'ultimo evidenziatore (`marked`, per toglierlo) e
-la voce corrente.
+nome del buffer dove è stato messo l'ultimo evidenziatore (`marked`, per
+toglierlo: per una voce in un file, il buffer in cui la visita è finita, non il
+percorso che la voce dà) e la voce corrente.
 
 #estratto("text/results.rs")[
 ```rust
@@ -2739,6 +2740,13 @@ basso, riusando quella che mostra una lista dello stesso produttore
 visita apre il posto (la lista stessa con `results-visit-same-window`), e
 `quit_results` chiude la striscia o rimette il buffer che la lista aveva
 sostituito.
+
+Il percorso di una voce in un file si legge nella directory della lista,
+`directory_of` del suo buffer (@directory-di-lavoro), e passa a `find-file` già
+assoluto. Una lista che ha una directory sua, come l'uscita di `compile`, legge
+dunque i nomi relativi dove la build è girata, anche dopo un `cd` e anche con
+`M-g n` chiesto da un altro buffer; una lista senza, come quella di `grep`, i
+cui percorsi sono già assoluti, li legge nella directory di lavoro.
 
 == Le decisioni <decisioni-testo>
 
@@ -5051,7 +5059,8 @@ nulla.
 
 Oggi `Buffer::directory` la imposta solo `shell-command-start`, per il buffer
 dell'output (@comandi-shell): ogni comando di shell parte nella directory del
-buffer corrente, e il suo output la tiene.
+buffer corrente, e il suo output la tiene. La visita di una lista di risultati
+legge i suoi percorsi nella directory della lista (@risultati).
 
 === Il disco <disco>
 

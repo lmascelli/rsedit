@@ -606,4 +606,33 @@ mod tests {
             buffer_text(&again, &ctx)
         );
     }
+
+    /// The places a build names are read where it ran: after `cd`, and from
+    /// another buffer, `next-error` still opens the file the compiler meant.
+    #[cfg(unix)]
+    #[test]
+    fn a_place_a_build_names_is_read_where_it_ran() {
+        let built_in = Sandbox::new("places-here");
+        let moved_to = Sandbox::new("places-elsewhere");
+        let file = built_in.file("broken.c", "int a\nint b\n");
+        moved_to.file("broken.c", "a decoy, in the wrong directory\n");
+        let (ctx, env) = editor();
+        run(&format!(r#"(cd "{}")"#, built_in.0.display()), &env, &ctx);
+        run(
+            r#"(compile "printf 'broken.c:2: error: expected a semicolon\n'")"#,
+            &env,
+            &ctx,
+        );
+        settle(&ctx);
+        run(&format!(r#"(cd "{}")"#, moved_to.0.display()), &env, &ctx);
+        run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
+
+        run("(next-error)", &env, &ctx);
+
+        assert_eq!(
+            ctx.with_current_buffer(|buf| buf.file_path.clone()),
+            Some(file)
+        );
+        assert_eq!(line_number(&env, &ctx), 2.0);
+    }
 }
