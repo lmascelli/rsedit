@@ -93,6 +93,7 @@ mod tests {
             "buffer/buffer_trait.rs",
             include_str!("../buffer/buffer_trait.rs"),
         ),
+        ("buffer/coding.rs", include_str!("../buffer/coding.rs")),
         ("buffer/disk.rs", include_str!("../buffer/disk.rs")),
         (
             "buffer/gap_buffer.rs",

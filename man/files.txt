@@ -8,6 +8,8 @@ SYNOPSIS
     (save-some-buffers &optional AFTER)
     (revert-buffer)
     (recover-file)
+    (buffer-file-coding)
+    (set-buffer-file-coding CODING)
     (quit)
     (quit-without-saving)
     (y-or-n PROMPT ON-YES &optional ON-NO)
@@ -130,6 +132,23 @@ QUESTIONS
     wants yes or no typed in full and Return; Escape closes it, which
     counts as no. `y-or-n' and `yes-or-no' ask the same questions for a
     command of your own, and call a function with the answer.
+
+CODINGS
+    A file is read in UTF-8 when it is UTF-8, and in windows-1252 when it
+    is not: the coding of older files written on Windows in a western
+    language, where è or € is a single byte. Any file opens this way, and
+    the echo area says "Not UTF-8: read as windows-1252". The buffer keeps
+    the coding, and saving writes the file in it, so a file opened and
+    saved unchanged comes back exactly as it was. M-s g searches such a
+    file in the same coding.
+
+    A character the coding does not have, such as ā in windows-1252, cannot
+    be saved in it: the save is refused, saying which character, and the
+    file is left alone. M-x set-buffer-file-coding writes the file in
+    another coding from the next save on, utf-8 for any character; M-x
+    buffer-file-coding says which one the buffer has. A UTF-8 file that
+    begins with the signature some Windows programs write is read without
+    it, as utf-8-with-signature, and saved with it again.
 
 FILES FROM LISP
     `read-file-to-string' reads a file without making a buffer for it.

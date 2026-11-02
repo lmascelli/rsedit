@@ -7,6 +7,7 @@ mod buffer_list_tests;
 mod bug_fix_tests;
 mod char_quote_tests;
 mod clipboard_tests;
+mod coding_tests;
 mod command_test;
 mod comment_tests;
 mod compile_tests;

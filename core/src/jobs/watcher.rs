@@ -95,6 +95,7 @@ enum Verdict {
     /// Reload it from what was read.
     Adopt {
         text: String,
+        coding: crate::buffer::Coding,
         stamp: Option<FileStamp>,
     },
     /// Say it has diverged, and leave it alone.
@@ -153,9 +154,10 @@ impl<B: BufferTrait> EditorState<B> {
             // saves reading a file whose contents would be thrown away, and
             // the one there is the one that keeps the buffer safe.
             OnDisk::Changed if modified => Verdict::Flag,
-            OnDisk::Changed => match std::fs::read_to_string(&path) {
-                Ok(text) => Verdict::Adopt {
+            OnDisk::Changed => match crate::buffer::coding::read_text(&path) {
+                Ok((text, coding)) => Verdict::Adopt {
                     text,
+                    coding,
                     // Stamped after the read, so that a file rewritten during
                     // it is caught next turn rather than recorded as seen.
                     stamp: FileStamp::of(&path),
@@ -196,8 +198,13 @@ impl<B: BufferTrait> EditorState<B> {
                     buf.stale = true;
                     false
                 }
-                Verdict::Adopt { text, stamp } => {
+                Verdict::Adopt {
+                    text,
+                    coding,
+                    stamp,
+                } => {
                     buf.adopt_text(&text);
+                    buf.coding = coding;
                     buf.file_stamp = stamp;
                     true
                 }

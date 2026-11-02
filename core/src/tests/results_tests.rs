@@ -312,6 +312,30 @@ mod tests {
         assert!(listing.contains("--- 2 matches ---"), "{listing}");
     }
 
+    /// A file that is not UTF-8 is searched in Windows-1252, as `find-file`
+    /// reads it, and a binary file is still left out.
+    #[test]
+    fn grep_reads_a_file_in_windows_1252_and_skips_a_binary_one() {
+        let sandbox = Sandbox::new("grep-coding");
+        std::fs::write(sandbox.0.join("old.txt"), b"una riga\nperch\xE9 no\n")
+            .expect("writing a file");
+        std::fs::write(sandbox.0.join("blob.bin"), b"perch\xE9\x00\x01").expect("writing a file");
+        let (ctx, env) = editor("");
+        let buffer = match run(
+            &format!(r#"(grep--scan "perché" "{}")"#, sandbox.path()),
+            &env,
+            &ctx,
+        ) {
+            LispExp::String(name) => name.to_string(),
+            other => panic!("grep answered {other:?}"),
+        };
+        settle(&ctx, &env, &buffer);
+        assert_eq!(number(&run("(results-count)", &env, &ctx)), 1.0);
+        let listing = text_of(&ctx, &buffer);
+        assert!(listing.contains("old.txt:2: perché no"), "{listing}");
+        assert!(!listing.contains("blob.bin"), "{listing}");
+    }
+
     /// A listing ready for a search of SANDBOX for PATTERN, whose writer is
     /// the number handed back: what `grep--scan' sets up before its thread
     /// starts.

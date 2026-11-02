@@ -142,6 +142,19 @@ fn collect<B: BufferTrait>(
     added
 }
 
+/// Returns the text of the file at PATH, read in its coding as `find-file`
+/// reads it, so that a place found is where the file opens; `None` for a
+/// file that cannot be read or looks binary. Skipped rather than reported:
+/// every repository has some, and a page of "cannot read" between the
+/// matches would be worse than silence.
+fn file_text(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    if crate::buffer::coding::looks_binary(&bytes) {
+        return None;
+    }
+    Some(crate::buffer::coding::decode(&bytes).0)
+}
+
 /// A search of a tree, which runs on a thread of its own.
 pub(crate) struct TreeSearch {
     pub(crate) pattern: Pattern,
@@ -184,10 +197,7 @@ impl TreeSearch {
             // The buffer first, when one is open and ahead of the file.
             let text = match unsaved_text(state, &path) {
                 Some(text) => Some(text),
-                // A file that is not text is skipped rather than reported:
-                // every repository has some, and a page of "cannot read"
-                // between the matches would be worse than silence.
-                None => std::fs::read_to_string(&path).ok(),
+                None => file_text(&path),
             };
             let Some(text) = text else {
                 continue;

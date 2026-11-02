@@ -449,6 +449,7 @@ fn layout(report: &mut Report) {
                 current_mode: "fundamental".into(),
                 file_path: None,
                 directory: None,
+                coding: Default::default(),
                 is_modified: false,
                 undo: Default::default(),
                 mark: None,

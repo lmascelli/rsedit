@@ -1,10 +1,11 @@
 //! A buffer: its text, behind [`BufferTrait`], and everything kept about it
-//! -- the file, the mode, the undo history, the mark, overlays and virtual
+//! -- the file and its coding, the mode, the undo history, the mark, overlays and virtual
 //! text, the caches. The text is changed through the two doors in
 //! `primitives::edits`, which keep the rest in step with it.
 //!
 //! Design: `doc/architettura-editor.typ, <buffer>`.
 mod buffer_trait;
+pub mod coding;
 pub mod disk;
 pub mod gap_buffer;
 pub mod mark;
@@ -15,6 +16,7 @@ pub mod undo;
 pub mod virtual_text;
 
 pub use buffer_trait::BufferTrait;
+pub use coding::Coding;
 pub use disk::{FileStamp, OnDisk};
 pub use mark::Mark;
 pub use overlay::OverlayTable;
@@ -35,7 +37,10 @@ pub struct Buffer<B: BufferTrait> {
     /// one of its own: a command's output, for the paths it prints. `None`
     /// follows the editor's working directory. See
     /// [`crate::editor::EditorState::directory_of`].
-    pub directory: Option<String>,    
+    pub directory: Option<String>,
+    /// How the file's bytes are its text: what it was read in, and what it is
+    /// written in. UTF-8 for a buffer that has never read a file.
+    pub coding: Coding,
     pub is_modified: bool,
     pub current_mode: String,
     /// This buffer's edit history: recorded changes for undo and redo.
@@ -118,6 +123,7 @@ impl<B: BufferTrait> Buffer<B> {
             text: B::default(),
             file_path: None,
             directory: None,
+            coding: Coding::Utf8,
             is_modified: false,
             current_mode: "fundamental-mode".into(),
             undo: UndoHistory::default(),
@@ -220,6 +226,7 @@ impl<B: BufferTrait> Buffer<B> {
             text: B::from(text),
             file_path: None,
             directory: None,
+            coding: Coding::Utf8,
             is_modified: false,
             current_mode: "fundamental-mode".into(),
             undo: UndoHistory::default(),

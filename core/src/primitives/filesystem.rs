@@ -318,15 +318,15 @@ primitive!(directory_files_recursive, args, _env, ctx, {
 });
 
 pub const READ_FILE_TO_STRING_DOC: &str = "(read-file-to-string PATH): Return the contents of the \
-         file at PATH as a string, without making a buffer for it, or nil when it cannot be read \
-         or is not UTF-8. A leading ~ is expanded.\n\n\
+         file at PATH as a string, without making a buffer for it, or nil when it cannot be read. \
+         A file that is not UTF-8 is read as windows-1252. A leading ~ is expanded.\n\n\
          Example:\n\
          (read-file-to-string \"~/.gitignore\")";
 
 primitive!(read_file_to_string, args, _env, ctx, {
     let path = path_arg(ctx, args.first())?;
-    match std::fs::read_to_string(&path) {
-        Ok(contents) => Ok(ELispExp::string(contents)),
+    match crate::buffer::coding::read_text(&path) {
+        Ok((contents, _)) => Ok(ELispExp::string(contents)),
         Err(why) => {
             ctx.log_diagnostic(&format!("Cannot read {path}: {why}"));
             Ok(ELispExp::nil())

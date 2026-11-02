@@ -19,9 +19,10 @@ impl<B: BufferTrait> EditorState<B> {
         env: &Arc<Env<EditorState<B>>>,
     ) -> Option<String> {
         if let Some(file_path) = path {
-            match std::fs::read_to_string(file_path) {
-                Ok(content) => {
+            match crate::buffer::coding::read_text(file_path) {
+                Ok((content, coding)) => {
                     let mut new_buf = Buffer::from_text(name, &content);
+                    new_buf.coding = coding;
                     // A mode asked for wins; otherwise the file's name decides,
                     // which is how a language's mode is ever chosen.
                     new_buf.current_mode = start_mode
@@ -39,10 +40,11 @@ impl<B: BufferTrait> EditorState<B> {
 
                     Some(name.to_string())
                 }
-                Err(e) => {
-                    // TODO(FIL-3): a file that is not UTF-8 fails here, and
-                    // only the log says so.
-                    self.log_diagnostic(&format!("Error reading file: {}", e));
+                // Only a file that cannot be read at all, since what is in
+                // one always decodes: said where it is seen.
+                Err(why) => {
+                    self.set_echo_message(&format!("Cannot read {file_path}: {why}"));
+                    self.log_diagnostic(&format!("Cannot read {file_path}: {why}"));
                     None
                 }
             }

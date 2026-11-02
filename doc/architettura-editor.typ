@@ -167,7 +167,7 @@ lì e nella mappa di `lib.rs`.
   header: ([Percorso], [Contenuto]),
   [`lib.rs`], [Ordine dei moduli e superficie pubblica (`pub use`). Tutto il resto è `pub(crate)`.],
   [`paths.rs`], [Le directory dell'editor, configurazione, dati e cache, secondo le convenzioni di ogni sistema: `app_dir` (@directory); quella dei dati installati con l'editor, `installed_data_dir`; e i nomi dei file, resi assoluti e smontati senza chiedere al disco (@nomi-file).],
-  [`buffer/`], [`Buffer`, `BufferTrait`, `GapBuffer`, undo, mark, overlay, testo virtuale, cache di colorazione (`syntax.rs`) e di scansione (`scan.rs`), timbro del file su disco (`disk.rs`).],
+  [`buffer/`], [`Buffer`, `BufferTrait`, `GapBuffer`, undo, mark, overlay, testo virtuale, cache di colorazione (`syntax.rs`) e di scansione (`scan.rs`), timbro del file su disco (`disk.rs`), codifica del file (`coding.rs`, @codifiche).],
   [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`).],
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
@@ -2033,29 +2033,72 @@ stessa che si farebbe senza cache.
 
 `find-file` legge il file, imposta `file_path` e il timbro (`FileStamp`:
 istante di modifica e lunghezza, un solo `stat`), e sceglie il modo secondo le
-espressioni regolari di `add-auto-mode`. La lettura usa `read_to_string`, che
-rifiuta un file non UTF-8; il motivo va nel log #rapporto("FIL-3").
+espressioni regolari di `add-auto-mode`. Il file si legge con `read_text`, che
+riconosce la sua codifica (@codifiche) e non fallisce per ciò che contiene; un
+file che non si può leggere affatto lo dice nell'area messaggi e nel log.
 Le primitive sono in `primitives/files.rs`, e `save-some-buffers` e l'uscita,
 che salvano con lo stesso `write_buffer`, in `primitives/quit.rs` (@uscire).
-Salvare scrive l'intero testo con `std::fs::write` (sul posto, senza file
-temporaneo #rapporto("FIL-2")) e aggiorna il timbro, altrimenti ogni
-salvataggio sembrerebbe la scrittura di qualcun altro. Ogni salvataggio, che
-venga da save-buffer, da save-some-buffers o da write-file, scrive l’esito,
-riuscito o fallito, nell’area messaggi e nel log.; `write-file` lo scrive anche
-nell'area messaggi. Una modifica fatta mentre il file si scrive può restare non
+Salvare scrive l'intero testo, nella codifica del buffer, con `std::fs::write`
+(sul posto, senza file temporaneo #rapporto("FIL-2")) e aggiorna il timbro,
+altrimenti ogni salvataggio sembrerebbe la scrittura di qualcun altro. Ogni
+salvataggio, che venga da `save-buffer`, da `save-some-buffers` o da
+`write-file`, scrive l'esito, riuscito o fallito, nell'area messaggi e nel
+log. Una modifica fatta mentre il file si scrive può restare non
 salvata senza che il buffer lo segni #rapporto("FIL-4").
 
 Il #emph[watcher] (`FileWatcher`, ogni `watch-file-interval` secondi, 3 per
 default, al massimo 8 file per turno; spento da `(setq watch-files nil)`)
 confronta i timbri: un buffer pulito il cui file è cambiato viene ricaricato con
-`adopt_text`; uno modificato, o il cui file è sparito, viene marcato `stale`, e
+`adopt_text`, nella codifica che il file ha ora; uno modificato, o il cui file è sparito, viene marcato `stale`, e
 il salvataggio successivo chiede conferma. L'#emph[autosalvataggio]
 (`AutoSaver`, ogni `auto-save-interval`, 30 secondi per default, al massimo 4
 buffer per turno; spento da `(setq auto-save nil)`) scrive i buffer modificati
 la cui versione è cambiata dall'ultima copia in `#nome#`, nella directory del
 file o in `auto-save-directory`; `recover-file` riporta la copia nel buffer.
 La versione salvata viene registrata anche quando la scrittura fallisce
-#rapporto("FIL-5").
+#rapporto("FIL-5"). La copia è sempre in UTF-8, la codifica dell'editor:
+`recover-file` la legge così, e il buffer tiene la codifica del suo file.
+
+=== Le codifiche <codifiche>
+
+`buffer/coding.rs` dice come i byte di un file sono il suo testo. `Coding` ha
+tre valori: `Utf8`; `Utf8WithSignature`, per un file che comincia con i tre
+byte `EF BB BF`, che la lettura toglie, perché il buffer non cominci con un
+carattere invisibile, e la scrittura rimette; e `Windows1252`, la codifica a un
+byte di Windows per le lingue occidentali, in cui si legge ogni file che non è
+UTF-8 valido.
+
+Windows-1252 è Latin-1 con caratteri tipografici al posto di quasi tutti i
+controlli C1, da `0x80` a `0x9F`: `€`, le virgolette, i trattini. La tabella è
+scritta a mano, `HIGH`, perché è solo questo che la distingue da Latin-1. I
+cinque byte che la codifica non definisce tengono il controllo C1 che hanno in
+Latin-1, come nella tabella WHATWG: così ogni byte ha un carattere suo, la
+lettura non fallisce mai, nemmeno su un file binario, e un file letto e
+riscritto senza modifiche torna identico byte per byte.
+
+`decode` sceglie la codifica e `read_text` legge un file con essa; ne passano
+`find-file` (in `new_buffer`), `revert-buffer`, il watcher e
+`read-file-to-string`, e `grep--scan` decodifica allo stesso modo, saltando i
+file binari (@ricerche). Il buffer ricorda la codifica in `Buffer::coding`, e
+`write_buffer` e `write-file` scrivono con `encode`. Un carattere che la
+codifica non ha, come `ā` in Windows-1252, fa rifiutare il salvataggio con un
+messaggio che lo nomina, e il file resta com'era: scritto come altro, non
+tornerebbe. `find-file` dice nell'area messaggi un file letto in
+Windows-1252; `buffer-file-coding` dice la codifica del buffer, e
+`set-buffer-file-coding` la cambia per il prossimo salvataggio, segnando il
+buffer come modificato.
+
+Decisioni:
+
++ *Windows-1252, e non un rilevatore.* Indovinare la codifica tra molte
+  (`chardetng`) può sbagliare, e un errore cambia i byte salvati. Una
+  codifica a un byte in cui ogni byte ha il suo carattere non perde nulla
+  anche quando non è quella giusta: i caratteri si vedono male, ma il file
+  torna com'era. Per chi scrive in una lingua occidentale è quasi sempre
+  quella giusta.
++ *Rifiutare, non convertire.* Un salvataggio che passasse in silenzio a UTF-8
+  cambierebbe la codifica di un file che altri programmi leggono nella sua.
+  Convertire è una scelta, `set-buffer-file-coding`.
 
 == Le decisioni <decisioni-buffer>
 
@@ -5240,8 +5283,12 @@ lettura. Alla fine la lista è segnata come completa e riceve una riga di chiusu
 
 La ricerca nei file non entra nelle directory di `PRUNE`, le stesse che salta
 `find-file-recursive` (`.git`, `target`, `node_modules` e simili), si ferma a
-20 000 file e a 10 000 corrispondenze, e salta un file che non è testo senza
-dirlo. Un file aperto in un buffer con modifiche si cerca nel testo del buffer.
+20 000 file e a 10 000 corrispondenze. Legge ogni file nella sua codifica, come
+`find-file` (@codifiche), così una corrispondenza in un file Windows-1252 si
+trova e si apre dove è; salta senza dirlo un file che non si legge e uno
+binario, quello che `looks_binary` riconosce da un byte nullo tra i primi 8000,
+come fa Git: in Windows-1252 ogni byte si decodifica, e decodificare non dice
+più che cosa è testo. Un file aperto in un buffer con modifiche si cerca nel testo del buffer.
 La fermano `stop-worker` con il nome della lista e la chiusura della lista; ciò
 che è stato trovato resta. Occur e grep sono due produttori, e le loro liste non
 si prendono la striscia l'una dell'altra #rapporto("RIC-7").

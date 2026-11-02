@@ -4,6 +4,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 use super::*;
+use crate::buffer::coding::{self, Coding};
 use crate::jobs::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::args;
 use risp::eval;
@@ -25,14 +26,18 @@ pub(super) fn write_buffer<B: BufferTrait>(
 ) -> bool {
     // Taken under the lock; written with the lock given back, because a slow
     // disk must not stop every other thread reading the buffer.
-    let Some(Some((path, content))) = ctx.with_buffer(name, |buf| {
+    let Some(Some((path, content, coding))) = ctx.with_buffer(name, |buf| {
         buf.file_path
             .as_ref()
-            .map(|path| (path.to_string(), buf.text.to_string()))
+            .map(|path| (path.to_string(), buf.text.to_string(), buf.coding))
     }) else {
         return false;
     };
-    match std::fs::write(&path, content) {
+    let bytes = match encode_for(ctx, &path, &content, coding) {
+        Some(bytes) => bytes,
+        None => return false,
+    };
+    match std::fs::write(&path, bytes) {
         Ok(()) => {
             // Stamped after the write, or the file just made would differ from
             // what is remembered of it and the editor would report a conflict
@@ -58,12 +63,36 @@ pub(super) fn write_buffer<B: BufferTrait>(
     }
 }
 
+/// Returns CONTENT as CODING writes it to PATH, or `None`, saying why, when
+/// CODING has no bytes for one of its characters: the file is left as it was,
+/// since a character written as something else would not come back.
+fn encode_for<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    path: &str,
+    content: &str,
+    coding: Coding,
+) -> Option<Vec<u8>> {
+    match coding::encode(content, coding) {
+        Ok(bytes) => Some(bytes),
+        Err(missing) => {
+            let why = format!(
+                "Cannot save {path} in {}: it has no {missing:?}; M-x set-buffer-file-coding to \
+                 write it in another",
+                coding.name()
+            );
+            ctx.set_echo_message(&why);
+            ctx.log_diagnostic(&why);
+            None
+        }
+    }
+}
+
 pub const FIND_FILE_DOC: &str = "(find-file PATH): Open the file at PATH in a buffer, make it \
          current, and return the buffer's name. A file open already is gone back to; a name \
          another file's buffer has gets a suffix, as in name<2>. A PATH that does not exist gives \
          an empty buffer, which saving creates. A directory is handed to \
-         `*open-directory-callback*', and its answer returned. A file that cannot be read gives \
-         nil.\n\n\
+         `*open-directory-callback*', and its answer returned. A file that is not UTF-8 is read \
+         as windows-1252, and saved in it; one that cannot be read gives nil.\n\n\
          Example:\n\
          (find-file \"~/notes.txt\")";
 
@@ -156,19 +185,31 @@ primitive!(find_file, args, env, ctx, {
 
     match ctx.new_buffer(&buf_name, Some(&path_str), None, &env) {
         Some(buf_name) => {
+            let mut said = Vec::new();
+            // A file that is not UTF-8 opens all the same, and says so: its
+            // characters are this coding's guess, and saving writes it back
+            // in the same coding.
+            let coding = ctx
+                .with_buffer(&buf_name, |buf| buf.coding)
+                .unwrap_or_default();
+            if coding == Coding::Windows1252 {
+                said.push(format!("Not UTF-8: read as {}", coding.name()));
+            }
             // Said on the way in, because nothing else would say it. A
             // recovery copy nobody is told about is a recovery copy nobody
             // uses, and the moment it matters is exactly the moment somebody
             // reopens the file after a crash.
             if auto_save_path(&path_str, auto_save_directory(&env).as_deref()).exists() {
-                ctx.set_echo_message(
-                    "An auto-save file exists for this -- M-x recover-file to see it",
+                said.push(
+                    "An auto-save file exists for this -- M-x recover-file to see it".to_string(),
                 );
+            }
+            if !said.is_empty() {
+                ctx.set_echo_message(&said.join("; "));
             }
             Ok(ELispExp::string(buf_name))
         }
-        // TODO(FIL-3): a file that cannot be read, one not in UTF-8 among
-        // them, gives nil, and only the log says why.
+        // `new_buffer` has said why.
         None => Ok(ELispExp::nil()),
     }
 });
@@ -325,8 +366,8 @@ primitive!(revert_buffer_reread, _args, _env, ctx, {
 fn reread<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> bool {
     // Read with no lock held, for the reason every other file operation here
     // does it: a slow disk must not stop the threads walking the buffer.
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
+    let (text, coding) = match coding::read_text(path) {
+        Ok(read) => read,
         Err(why) => {
             ctx.set_echo_message(&format!("Cannot read {path}: {why}"));
             return false;
@@ -335,9 +376,17 @@ fn reread<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> bool {
     let stamp = crate::buffer::FileStamp::of(path);
     ctx.with_current_buffer_mut(|buf| {
         buf.adopt_text(&text);
+        buf.coding = coding;
         buf.file_stamp = stamp;
     });
-    ctx.set_echo_message(&format!("Reverted to {path}"));
+    if coding == Coding::Windows1252 {
+        ctx.set_echo_message(&format!(
+            "Reverted to {path}; not UTF-8: read as {}",
+            coding.name()
+        ));
+    } else {
+        ctx.set_echo_message(&format!("Reverted to {path}"));
+    }
     true
 }
 
@@ -377,8 +426,11 @@ primitive!(write_file, args, env, ctx, {
 
     // Taken under the lock, written with the lock given back: a slow disk must
     // not stop every other thread reading the buffer.
-    let content = ctx.with_current_buffer(|buf| buf.text.to_string());
-    if let Err(why) = std::fs::write(&path, content) {
+    let (content, coding) = ctx.with_current_buffer(|buf| (buf.text.to_string(), buf.coding));
+    let Some(bytes) = encode_for(ctx, &path, &content, coding) else {
+        return Ok(ELispExp::nil());
+    };
+    if let Err(why) = std::fs::write(&path, bytes) {
         // Nothing has been changed yet, deliberately: a failed write leaves
         // the buffer visiting whatever it was visiting before, so the next
         // `C-x C-s` still goes somewhere that works.
@@ -415,6 +467,46 @@ primitive!(write_file, args, env, ctx, {
     Ok(ELispExp::string(path))
 });
 
+pub const BUFFER_FILE_CODING_DOC: &str = "(buffer-file-coding): Say in the echo area which \
+         coding the current buffer's file is read and written in, and return its name: utf-8, \
+         utf-8-with-signature, or windows-1252, which a file that is not UTF-8 is read in.";
+
+primitive!(buffer_file_coding, _args, _env, ctx, {
+    let coding = ctx.with_current_buffer(|buf| buf.coding);
+    ctx.set_echo_message(&format!("Coding: {}", coding.name()));
+    Ok(ELispExp::string(coding.name().to_string()))
+});
+
+pub const SET_BUFFER_FILE_CODING_DOC: &str = "(set-buffer-file-coding CODING): Write the current \
+         buffer's file in CODING from the next save on, and mark the buffer modified so that \
+         there is a save to make: utf-8, utf-8-with-signature or windows-1252. Return the \
+         coding's name, or nil, and a message, for a name that is none of them.\n\n\
+         Example:\n\
+         (set-buffer-file-coding \"utf-8\")";
+
+primitive!(set_buffer_file_coding, args, _env, ctx, {
+    let name = match args.first() {
+        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => name.to_string(),
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String or Symbol".into(),
+                got: other.cloned().unwrap_or_else(ELispExp::nil),
+            });
+        }
+    };
+    let Some(coding) = Coding::named(name.trim()) else {
+        let known: Vec<&str> = Coding::ALL.iter().map(|coding| coding.name()).collect();
+        ctx.set_echo_message(&format!("No coding called {name}: {}", known.join(", ")));
+        return Ok(ELispExp::nil());
+    };
+    ctx.with_current_buffer_mut(|buf| {
+        buf.coding = coding;
+        buf.is_modified = true;
+    });
+    ctx.set_echo_message(&format!("Will be written in {}", coding.name()));
+    Ok(ELispExp::string(coding.name().to_string()))
+});
+
 /// Registers the primitives that visit a file and write it back.
 ///
 /// Called by [`super::install_primitives`].
@@ -427,6 +519,18 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         SAVE_BUFFER_OVERWRITE_DOC,
     );
     into.command("recover-file", recover_file, &[], RECOVER_FILE_DOC);
+    into.command(
+        "buffer-file-coding",
+        buffer_file_coding,
+        &[],
+        BUFFER_FILE_CODING_DOC,
+    );
+    into.command(
+        "set-buffer-file-coding",
+        set_buffer_file_coding,
+        &["sCoding (utf-8, utf-8-with-signature, windows-1252): "],
+        SET_BUFFER_FILE_CODING_DOC,
+    );
     into.function(
         "recover-file--adopt",
         recover_file_adopt,

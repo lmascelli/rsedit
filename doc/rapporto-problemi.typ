@@ -403,14 +403,9 @@
     id: "FIL-3",
     gravita: "media",
     verificato: true,
-    stato: "aperto",
+    stato: "risolto",
+    commit: "COMMIT-FIL-3",
     titolo: [Un file non UTF-8 non si apre e non viene detto nulla],
-    breve: [Aprire un file non UTF-8 fallisce in silenzio],
-    dove: [`editor/buffers.rs` (`EditorState::new_buffer`: `read_to_string`, errore solo nel registro), `primitives/files.rs` (`find-file`)],
-    verifica: [Riprodotto sulla revisione `3d846f1` con un file Latin-1: area messaggi e buffer corrente invariati, `find-file` restituisce `nil`, e il registro dice «Error reading file: stream did not contain valid UTF-8».],
-    cosa: [`std::fs::read_to_string` rifiuta qualsiasi byte non UTF-8; l'errore finisce nel registro e il comando non fa nulla di visibile. La docstring di `find-file` ora dice che un file che non si legge dà `nil`.],
-    effetto: [File in Latin-1, file binari e file con un solo byte sbagliato sembrano non aprirsi «per nessun motivo».],
-    correzione: [Un messaggio nell'area messaggi; in prospettiva un'apertura con `String::from_utf8_lossy` in un buffer in sola lettura, o una decodifica Latin-1 di ripiego.],
   ),
   (
     id: "FIL-4",
@@ -798,6 +793,14 @@ init.lisp:
     effetto: [Un modulo che passa a `results-put` il suo argomento facoltativo perde la lista in silenzio, e la risposta dice il contrario.],
     correzione: [Prendere nil come assente, come fanno le domande sulle liste, e un test per ciascuna primitiva.],
   ),
+  (
+    id: "RIC-10",
+    gravita: "bassa",
+    verificato: true,
+    stato: "risolto",
+    commit: "287a2eb",
+    titolo: [Il segno di un risultato in un file resta quando la visita passa a un altro file],
+  ),
   // ------------------------------------------------------------------ SHL
   (
     id: "SHL-1",
@@ -1077,7 +1080,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8, SIN-9, AVV-7, AVV-8, GUI-1 e CMD-9.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8, SIN-9, AVV-7, AVV-8, GUI-1 e CMD-9. RIC-10 è stata trovata, con un test, mentre si correggeva la visita dei risultati per la directory di lavoro, e risolta nello stesso commit: è tra le risolte.
 
 == Riepilogo
 

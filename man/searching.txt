@@ -172,7 +172,10 @@ WALKING A LIST
 
 LIMITS
     M-s g does not read .gitignore, and the directories it leaves out are
-    fixed: `find-file-recursive-ignore' does not change them. Searching a
+    fixed: `find-file-recursive-ignore' does not change them. It reads
+    each file in its coding, as C-x C-f does, a file that is not UTF-8 in
+    windows-1252 (see the files page), and leaves out a binary file: one
+    with a zero byte in its first few thousand. Searching a
     buffer only highlights the match the cursor is on, not every match.
 
 LISTS FROM LISP
