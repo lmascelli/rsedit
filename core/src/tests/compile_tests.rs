@@ -551,4 +551,59 @@ mod tests {
         // Reaching here is the test: it must not signal.
         assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
     }
+
+    // ----------------------------------------------------------------
+    // Where a build runs
+    // ----------------------------------------------------------------
+
+    /// Wait until every running command has finished, or give up.
+    fn settle(ctx: &Ctx) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while ctx.shell_commands_running() > 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a build did not finish within ten seconds"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn buffer_text(name: &str, ctx: &Ctx) -> String {
+        ctx.with_buffer(name, |buf| buf.text.to_string())
+            .unwrap_or_else(|| panic!("no buffer called {name}"))
+    }
+
+    fn latest_build(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> String {
+        text_of(&run("compilation--buffer", env, ctx)).expect("a build has run")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recompiling_runs_where_the_build_ran_not_where_the_editor_is_now() {
+        let built_in = Sandbox::new("recompile-here");
+        let moved_to = Sandbox::new("recompile-elsewhere");
+        let physical = built_in
+            .0
+            .canonicalize()
+            .expect("the sandbox exists")
+            .display()
+            .to_string();
+        let (ctx, env) = editor();
+        run(&format!(r#"(cd "{}")"#, built_in.0.display()), &env, &ctx);
+        run(r#"(compile "pwd -P")"#, &env, &ctx);
+        settle(&ctx);
+        run(&format!(r#"(cd "{}")"#, moved_to.0.display()), &env, &ctx);
+
+        let first = latest_build(&env, &ctx);
+        run(&format!(r#"(switch-to-buffer "{first}")"#), &env, &ctx);
+        run("(compilation-recompile)", &env, &ctx);
+        settle(&ctx);
+
+        let again = latest_build(&env, &ctx);
+        assert!(
+            buffer_text(&again, &ctx).contains(&format!("\n{physical}\n")),
+            "the build should have run again in {physical}: {:?}",
+            buffer_text(&again, &ctx)
+        );
+    }
 }

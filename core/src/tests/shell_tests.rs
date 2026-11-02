@@ -773,4 +773,131 @@ mod tests {
         assert!(run("(commandp 'shell-command-start)", &env, &ctx).is_nil());
         assert!(run("(commandp 'shell-command)", &env, &ctx).is_truthy());
     }
+
+    // ----------------------------------------------------------------
+    // Where a command runs
+    // ----------------------------------------------------------------
+
+    /// A directory of this test's own, removed when it goes.
+    struct Sandbox(std::path::PathBuf);
+
+    impl Sandbox {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("rsedit-shell-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("sandbox");
+            Sandbox(root)
+        }
+
+        fn root(&self) -> String {
+            self.0.display().to_string()
+        }
+
+        /// The directory as `pwd -P` prints it, with every link resolved:
+        /// the temporary directory is a link on some systems.
+        fn physical(&self) -> String {
+            self.0
+                .canonicalize()
+                .expect("the sandbox exists")
+                .display()
+                .to_string()
+        }
+    }
+
+    impl Drop for Sandbox {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn cd(directory: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        run(&format!(r#"(cd "{directory}")"#), env, ctx);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_starts_in_the_working_directory() {
+        let sandbox = Sandbox::new("starts");
+        let (ctx, env) = editor();
+        cd(&sandbox.root(), &env, &ctx);
+
+        let name = started(r#"(shell-command-start "pwd -P")"#, &env, &ctx);
+        settle(&ctx);
+        assert!(
+            text_of(&ctx, &name).contains(&format!("\n{}\n", sandbox.physical())),
+            "the command should have run in {}: {:?}",
+            sandbox.physical(),
+            text_of(&ctx, &name)
+        );
+    }
+
+    #[test]
+    fn the_output_keeps_the_directory_the_command_ran_in() {
+        let here = Sandbox::new("keeps-here");
+        let elsewhere = Sandbox::new("keeps-elsewhere");
+        let (ctx, env) = editor();
+        cd(&here.root(), &env, &ctx);
+
+        let name = started(r#"(shell-command-start "echo done")"#, &env, &ctx);
+        settle(&ctx);
+        cd(&elsewhere.root(), &env, &ctx);
+
+        assert_eq!(ctx.directory_of(&name), here.root());
+        assert_eq!(ctx.working_directory(), elsewhere.root());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_running_command_stays_where_it_started() {
+        let here = Sandbox::new("stays-here");
+        let elsewhere = Sandbox::new("stays-elsewhere");
+        let (ctx, env) = editor();
+        cd(&here.root(), &env, &ctx);
+
+        let name = started(r#"(shell-command-start "sleep 0.2; pwd -P")"#, &env, &ctx);
+        cd(&elsewhere.root(), &env, &ctx);
+        settle(&ctx);
+
+        assert!(
+            text_of(&ctx, &name).contains(&format!("\n{}\n", here.physical())),
+            "the command should still have been in {}: {:?}",
+            here.physical(),
+            text_of(&ctx, &name)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_waited_for_runs_in_the_working_directory() {
+        let sandbox = Sandbox::new("to-string");
+        let (ctx, env) = editor();
+        cd(&sandbox.root(), &env, &ctx);
+
+        assert_eq!(
+            run(r#"(shell-command-to-string "pwd -P")"#, &env, &ctx),
+            LispExp::string(format!("{}\n", sandbox.physical()))
+        );
+    }
+
+    #[test]
+    fn a_working_directory_that_has_gone_is_said() {
+        let sandbox = Sandbox::new("gone");
+        let (ctx, env) = editor();
+        cd(&sandbox.root(), &env, &ctx);
+        std::fs::remove_dir_all(&sandbox.0).expect("removing the sandbox");
+
+        assert_eq!(
+            run(r#"(shell-command-start "echo never")"#, &env, &ctx),
+            LispExp::nil()
+        );
+        assert_eq!(
+            ctx.get_echo_message(),
+            format!(
+                "Cannot run the shell in {}: it is not a directory",
+                sandbox.root()
+            )
+        );
+        assert_eq!(ctx.shell_commands_running(), 0);
+    }
 }

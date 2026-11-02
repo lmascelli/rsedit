@@ -394,8 +394,9 @@ Quattro decisioni:
 Il file `init.lisp` predefinito chiede con `require` i moduli di base,
 `commands`, `debug`, `common-keymaps`, `indent` e `minibuffer`, poi i moduli
 facoltativi `rust-mode`, `risp-mode`, `cc-mode`, `python-mode`, `toml-mode`,
-`bash-mode`, `dired`, `completion`, `preview`, `clipboard`, `electric-pair`,
-`buffer-list`, `shell`, `manpage`, `help`, `occur`, `compile`, `theme`,
+`bash-mode`, `cmake-mode`, `dired`, `completion`, `preview`, `clipboard`,
+`electric-pair`, `buffer-list`, `shell`, `manpage`, `help`, `risp-repl`,
+`occur`, `compile`, `theme`,
 `vim`, `completion-at-point`, e imposta `dired-sort` a `'type` e
 `mouse-mode` a `t`. L'ordine delle righe non conta più: ogni modulo chiede
 quelli che gli servono (@moduli-lisp).
@@ -3858,9 +3859,10 @@ rilegge.
 con `spawn_writer`, con il nome del buffer in cui scrivono: `*Shell Output*`, o
 `<2>`, `<3>`… se il nome è preso tra i buffer o tra i lavori
 (`free_name_for_work`). Il comando passa dalla shell della piattaforma
-(`/bin/sh -c`, o `cmd /C`), con l'input vuoto e stdout e stderr in una sola
-pipe, che il thread legge come byte: ciò che arriva va nel buffer subito, anche
-una riga non ancora finita, con ciò che non è UTF-8 sostituito e un carattere
+(`/bin/sh -c`, o `cmd /C`), nella directory di lavoro del buffer corrente
+(@directory-di-lavoro), con l'input vuoto e stdout e stderr in una sola pipe,
+che il thread legge come byte: ciò che arriva va nel buffer subito, anche una
+riga non ancora finita, con ciò che non è UTF-8 sostituito e un carattere
 diviso tra due letture tenuto per la successiva. Alla fine il thread aspetta il
 processo e aggiunge una riga `--- exited N ---`, o `--- killed ---`.
 
@@ -3874,7 +3876,13 @@ manda `KILL` due secondi dopo a ciò che resta. All'uscita dell'editor quel
 #rapporto("SHL-5"). Ciò che ha lasciato il gruppo, come un demone, non viene
 raggiunto, e se tiene l'output che ha ricevuto la lettura resta aperta: la riga
 finale aspetta che lo lasci. `shell-command-to-string`, invece, aspetta il comando sul thread che
-lo chiama e ne restituisce lo stdout. La pagina `shell` del manuale dell'utente
+lo chiama e ne restituisce lo stdout. Il buffer dell'output tiene come
+`Buffer::directory` quella in cui il comando è partito, anche quando è un
+buffer riusato: un nome relativo che il comando stampa, o che si scrive in quel
+buffer, si legge lì, e `g` in un'uscita di `compile` rilancia il comando dove
+era girato. Una directory di lavoro sparita dopo `cd` è detta come tale, non con
+il «No such file or directory» del sistema, che sembrerebbe parlare della
+shell. La pagina `shell` del manuale dell'utente
 dice che cosa vede chi li usa.
 
 === I lavori Lisp <lavori-lisp>
@@ -5041,6 +5049,10 @@ nell'area messaggi. `cd` legge il suo argomento come ogni nome scritto, quindi
 `cd ..` sale di un livello, e rifiuta ciò che non è una directory senza cambiare
 nulla.
 
+Oggi `Buffer::directory` la imposta solo `shell-command-start`, per il buffer
+dell'output (@comandi-shell): ogni comando di shell parte nella directory del
+buffer corrente, e il suo output la tiene.
+
 === Il disco <disco>
 
 Le primitive del disco espandono il percorso che ricevono. `directory-entry-count`,
@@ -5633,7 +5645,7 @@ dall'`init.lisp` predefinito.
   [`base`], [`common-keymaps`], [Le associazioni di Emacs: movimento, kill, file, buffer, finestre, `C-g`.],
   [`base`], [`indent`], [Tab, `indent-region`, `newline-and-indent`, `electric-indent-mode`.],
   [`base`], [`minibuffer`], [`M-:`.],
-  [`languages`], [`rust-mode`, `risp-mode`, `cc-mode`, `python-mode`, `toml-mode`, `bash-mode`], [I modi dei linguaggi.],
+  [`languages`], [`rust-mode`, `risp-mode`, `cc-mode`, `python-mode`, `toml-mode`, `bash-mode`, `cmake-mode`], [I modi dei linguaggi.],
   [`features`], [`dired`], [Una directory in un buffer (`C-x d`).],
   [`features`], [`completion`], [La striscia dei completamenti (`*completion-read-function*`).],
   [`features`], [`preview`], [Anteprima di `string-rectangle`.],
@@ -5643,6 +5655,7 @@ dall'`init.lisp` predefinito.
   [`features`], [`shell`], [`M-!`.],
   [`features`], [`manpage`], [Pagine di manuale.],
   [`features`], [`help`], [`C-h f`, `C-h k`, `C-h b`, `describe-prefix-keys`.],
+  [`features`], [`risp-repl`], [`M-x risp-repl`: `C-j` valuta il blocco prima del punto.],
   [`features`], [`occur`], [`M-s o`, `M-s g`.],
   [`features`], [`compile`], [`C-c c` e `M-g n`.],
   [`features`], [`theme`], [`C-c t`: scelta del tema.],
@@ -6204,8 +6217,8 @@ caratteri.
 
 === I modi dei linguaggi <mod-linguaggi>
 
-`rust-mode`, `risp-mode`, `cc-mode` (C e C++), `python-mode`, `toml-mode` e
-`bash-mode`: ognuno crea il suo modo, ne dichiara i due lessici (@lessici) ---
+`rust-mode`, `risp-mode`, `cc-mode` (C e C++), `python-mode`, `toml-mode`,
+`bash-mode` e `cmake-mode`: ognuno crea il suo modo, ne dichiara i due lessici (@lessici) ---
 la grammatica che colora e la tabella che dice che cos'è il testo ---, le
 parole che si completano, la regola d'indentazione e le estensioni dei file.
 `rust-mode` è il modello che la pagina `writing-modes` indica da copiare.
@@ -6230,6 +6243,21 @@ parole che si completano, la regola d'indentazione e le estensioni dei file.
   ogni nome per ogni file aperto. Si scrivono solo le forme speciali, che non
   hanno un legame da riportare. I confini sono scritti, non `\b`, perché un
   nome può finire con `+` o `<`.
++ *cmake-mode colora un comando solo davanti alla sua parentesi.* CMake legge
+  i nomi dei comandi senza badare alle maiuscole e gli argomenti come parole
+  qualunque: la regola ha `(?i)` e chiede la `(`, così `IF(` è una parola
+  chiave e `set(if 1)` no. Le costanti e gli operatori delle condizioni, che
+  CMake scrive in maiuscolo, si colorano solo così. Gli argomenti e i commenti
+  tra parentesi quadre, `[=[ ... ]=]`, chiudono con lo stesso numero di `=`:
+  senza backreference ogni lunghezza è una regione a sé, e se ne dichiarano
+  tre, da zero a due `=`.
++ *L'indentazione di CMake va per comandi.* Un comando può stendere i suoi
+  argomenti su più righe: la regola risale dalla riga di codice precedente,
+  fuori da stringhe e parentesi, fino alla riga dove quel comando comincia, e
+  legge il suo nome; un blocco si apre dopo `if`, `foreach`, `while`,
+  `function`, `macro`, `block` e i rami `elseif` ed `else`, e i comandi che
+  li chiudono tornano indietro di un livello. Dentro le parentesi vale
+  `prog-indent--under`, come in Python e in TOML.
 
 == Le decisioni <decisioni-moduli>
 

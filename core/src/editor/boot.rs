@@ -39,6 +39,7 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 (require 'python-mode)     ; colouring and indentation for Python
 (require 'toml-mode)       ; colouring and indentation for TOML
 (require 'bash-mode)       ; colouring and indentation for Bash
+(require 'cmake-mode)      ; colouring and indentation for CMake
 (require 'dired)           ; a directory in a buffer (C-x d)
 ;; Makes dired sort directory entries by type (folders, files).
 (setq dired-sort 'type)

@@ -196,6 +196,7 @@ INDENTING
         python-indent-line        the column of this line, in Python
         toml-indent-line          the column of this line, in TOML
         bash-indent-line          the column of this line, in a script
+        cmake-indent-line         the column of this line, in CMake
         cc-indent-line            the column of this line, in C or C++
 
 RECTANGLES

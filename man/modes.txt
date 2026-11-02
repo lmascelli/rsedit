@@ -26,6 +26,10 @@ SYNOPSIS
     toml-constants
     bash-keywords
     bash-builtins
+    cmake-keywords
+    cmake-commands
+    cmake-constants
+    cmake-operators
 
 DESCRIPTION
     Every buffer has one major mode, and the mode says what the buffer is
@@ -49,6 +53,7 @@ WHICH MODE A FILE GETS
         toml-mode           .toml, and Cargo.lock
         bash-mode           .sh .bash .bashrc .bash_profile .bash_login
                             .bash_logout .profile
+        cmake-mode          CMakeLists.txt .cmake
         fundamental-mode    any other name
 
     `add-auto-mode' adds a name to these. PATTERN is a regular expression
@@ -79,6 +84,7 @@ MODES THAT SHIP
         python-mode         Python source and type stubs
         toml-mode           TOML configuration and Cargo.lock
         bash-mode           Bash and Bourne-style shell scripts
+        cmake-mode          CMake build scripts
         risp-mode           this editor's own Lisp
         dired-mode          a directory listing
         buffer-list-mode    the list of buffers
@@ -113,6 +119,8 @@ THE LANGUAGES
         risp-mode     numbers, functions and macros, the names defined
         toml-mode     numbers, dates, keys, table headers
         bash-mode     builtins, variables, functions, heredocs
+        cmake-mode    commands, variables, generator expressions,
+                      bracket arguments and bracket comments
 
     All of them but rust-mode indent as their language does, as the
     `indentation' page says; in rust-mode Tab matches the line above.
@@ -122,7 +130,9 @@ THE LANGUAGES
     `cpp-keywords', `cpp-constants' and `cpp-types'; `python-keywords',
     `python-constants', `python-builtins' and `python-types';
     `toml-constants'; `bash-keywords' and `bash-builtins';
-    `risp-special-forms' and `risp-constants'. C-M-i offers them as
+    `cmake-keywords', `cmake-commands', `cmake-constants' and
+    `cmake-operators'; `risp-special-forms' and `risp-constants'. C-M-i
+    offers them as
     keywords. The colouring and what C-M-i offers are both made from the
     lists when the module loads, so changing a list afterwards changes
     neither.
@@ -141,6 +151,7 @@ LANGUAGE CONFIGURATION
         (require 'python-mode)
         (require 'toml-mode)
         (require 'bash-mode)
+        (require 'cmake-mode)
 
     C/C++ include C11/C23 and modern C++ vocabulary, preprocessor directives,
     attributes, numeric suffixes and character literals. C++ raw strings
@@ -153,6 +164,13 @@ LANGUAGE CONFIGURATION
     Another literal marker can be added with:
 
         (bash-add-heredoc-delimiter "SCRIPT")
+
+    CMake commands are coloured in any case, IF( as if(, and only where a
+    call follows: in set(if 1) the if is an argument. `cmake-keywords' are
+    the commands of blocks, `cmake-commands' the others most written, and
+    any other name before a ( is coloured as a function of your own.
+    `cmake-constants' and `cmake-operators' are coloured in capitals only,
+    as CMake writes them in a condition.
 
     The Bash indenter recognizes literal word heredoc markers independently
     of this colouring registration, including quoted markers and <<-.
@@ -204,6 +222,9 @@ LIMITS
     The Bash structural scanner treats # as a comment opener even inside an
     unquoted word or parameter expansion; the indenter has its own shell
     lexer and does not have that limitation. Shebangs are not mode selectors.
+    CMake bracket arguments and bracket comments are recognized with up to
+    two = between their brackets, [==[ ... ]==]; one with more is read as
+    ordinary arguments, by the colouring and by C-M-f alike.
 
 EXAMPLES
     Open .ino files as C++, at the top of init.lisp:

@@ -1,0 +1,260 @@
+NAME
+    risp-base-index - every base function and special form of Risp
+
+DESCRIPTION
+    Every function installed by setup_base_env, grouped by what it is for,
+    with a few words on each. This page is a map of the base interpreter.
+    Applications may install additional functions of their own.
+
+    A plain function evaluates its arguments before it is called. A special
+    form controls their evaluation itself; those forms have a separate
+    section below and are not entries in all-functions.
+
+    For a function's call signature and complete documentation, use
+    (function-doc 'NAME). function-arglist reports a Lisp closure's declared
+    parameters; native signatures are in their documentation strings.
+    In rsedit, C-h f on a function name opens its help.
+
+    There are 87 base function names, including aliases, and 28 special
+    form names in this version. Native functions supplied by an embedding
+    application are not included.
+
+  NUMBERS AND ARITHMETIC
+        +                         add numbers
+        -                         subtract numbers, or negate one number
+        *                         multiply numbers
+        /                         divide numbers, or take the reciprocal of
+                                  one
+        mod                       the remainder, with the divisor's sign
+        %                         the same operation as mod
+        1+                        add one
+        1-                        subtract one
+        abs                       the absolute value
+        floor                     round down to an integral numeric value
+        max                       the largest argument
+        min                       the smallest argument
+  
+  NUMERIC COMPARISONS
+        =                         whether the numeric arguments are equal
+        <                         whether the numbers are strictly increasing
+        >                         whether the numbers are strictly decreasing
+        <=                        whether the numbers are non-decreasing
+        >=                        whether the numbers are non-increasing
+        zerop                     whether a number is zero
+  
+  EQUALITY AND TYPES
+        eq                        whether two values have the same identity
+        eql                       the same comparison as eq
+        equal                     compare values structurally
+        null                      whether a value is nil
+        not                       the logical negation of a value
+        atom                      whether a value is not a cons cell
+        consp                     whether a value is a cons cell
+        listp                     whether a value is a cons cell or nil
+        numberp                   whether a value is a number
+        stringp                   whether a value is a string
+        symbolp                   whether a value is a symbol
+        vectorp                   whether a value is a vector
+        functionp                 whether a value denotes a callable
+  
+  BUILDING AND READING LISTS
+        cons                      a new cell with the given head and tail
+        list                      a proper list of the arguments
+        car                       the head of a cons cell; nil gives nil
+        cdr                       the tail of a cons cell; nil gives nil
+        nth                       the list element at a zero-based index
+        nthcdr                    the list tail after N cells
+        append                    join lists, sharing the final argument
+        identity                  return the argument unchanged
+  
+  SEQUENCES AND ASSOCIATION LISTS
+        length                    the length of a list, vector or string
+        elt                       an element of a list, vector or string
+        reverse                   a new sequence in the opposite order
+        member                    find an equal element and return a list tail
+        memq                      currently the same search as member
+        assoc                     find an association by a structurally equal
+                                  key
+        assq                      currently the same search as assoc
+        mapcar                    call a function on list elements; collect
+                                  results
+        mapc                      call for effects; return the input list
+        apply                     call with arguments spliced from a final
+                                    list
+  
+  CHANGING A LIST BINDING
+        add-to-list               prepend missing elements to a named list
+        append-to-list            append elements to a named list
+        remove-from-list          remove matching elements from a named list
+  
+  STRINGS AND TEXT
+        make-string               repeat the first character of a string
+        concat                    join strings
+        substring                 part of a string, using character indices
+        split-string              split on whitespace or a literal separator
+        string=                   whether two strings have equal contents
+        string<                   compare strings lexicographically
+        string-diff               one replacement turning BEFORE into AFTER
+        upcase                    a copy with letters converted to uppercase
+        downcase                  a copy with letters converted to lowercase
+        format                    substitute percent directives into a string
+  
+  NUMBERS, SYMBOL NAMES AND PROPERTIES
+        number-to-string          the decimal representation of a number
+        string-to-number          parse a numeric string; return zero on
+                                  failure
+        symbol-name               the string naming a symbol
+        intern                    the interned symbol with a given name
+        put                       store a property on a symbol
+        get                       read a symbol property, or nil
+  
+  CALLING AND EVALUATING
+        funcall                   call a function with evaluated arguments
+        eval                      evaluate an existing Lisp form
+        eval-string               read and evaluate the first expression in
+                                  text
+        eval-string-safe          evaluate text; return a success/error result
+  
+  BINDINGS AND DOCUMENTATION
+        boundp                    whether a symbol has a visible variable
+                                  binding
+        symbol-value              the visible value of a symbol
+        function-doc              the documentation of a named function
+        variable-doc              the documentation property of a variable
+        function-arglist          a Lisp function's parameter names and
+                                  markers
+        all-functions             sorted names in the function namespace
+        all-macros                sorted names in the macro namespace
+        all-variables             sorted visible variable names
+  
+  MUTABLE SHARED VALUES
+        make-atom                 a mutable box initially holding a value
+        deref                     read the value held by an atom
+        reset                     replace an atom's value; return the new
+                                    value
+  
+  FIBERS AND NON-LOCAL EXITS
+        resume                    run a fiber until suspension or completion
+        fiber-done-p              whether a fiber has finished
+        throw                     send a tagged value to a matching catch
+        signal                    raise a Lisp condition with associated data
+  
+  SPECIAL FORMS
+      These names are built into the evaluator. They cannot be treated as
+      ordinary function bindings or passed to funcall/apply by name.
+      The following subsections list them separately from the primitives.
+  
+  QUOTING AND TEMPLATES
+        quote                     return its argument without evaluating it
+        backquote                 construct a template, evaluating unquotes
+  
+  CONDITIONALS AND EVALUATION ORDER
+        if                        choose between a true branch and a false
+                                  branch
+        cond                      evaluate the body of the first true clause
+        when                      evaluate a body when its condition is true
+        unless                    evaluate a body when its condition is false
+        and                       stop at the first false value
+        or                        stop at the first true value
+        progn                     evaluate forms in order; return the last
+                                  value
+        prog1                     evaluate forms in order; return the first
+                                  value
+        prog2                     evaluate forms in order; return the second
+                                    value
+  
+  BINDING AND DEFINING
+        setq                      update a binding; create an absent name at
+                                  root
+        let                       introduce bindings with parallel
+                                  initialization
+        let*                      introduce bindings with sequential
+                                  initialization
+        lambda                    create a lexical closure
+        defun                     define a named Lisp function
+        defmacro                  define an expansion over unevaluated
+                                  arguments
+        defvar                    initialize a variable only when it is
+                                  unbound
+        defconst                  set a variable, optionally with
+                                    documentation
+  
+  LOOPS
+        while                     repeat while a condition remains true
+        dolist                    run a body for each element of a list
+        dotimes                   run a body for successive integer indices
+  
+  PROTECTED CONTROL FLOW
+        catch                     receive a value sent by a matching throw
+        condition-case            handle a condition raised by its body
+        unwind-protect            attempt cleanup after a body finishes or
+                                    fails
+  
+  CREATING AND SUSPENDING WORK
+        fiber                     create a suspended cooperative computation
+        yield                     suspend a fiber at a supported statement
+                                  position
+        spawn                     start a lambda body on another Rust thread
+  
+  ARGUMENTS AND VALUES
+    nil is both false and the empty list. Every other value is true,
+    including zero and an empty string. t and keyword symbols such as
+    :ready evaluate to themselves.
+  
+    Functions, macros and variables occupy separate namespaces. Closures
+    capture lexical environments. Parameter lists accept required names,
+    &optional names and one &rest name; t, nil and keywords are not valid
+    parameter names.
+  
+    Numbers are f64 values. This interpreter does not have a separate
+    arbitrary-precision integer type. String positions and lengths count
+    Unicode scalar values, not bytes or grapheme clusters. Sequence indices
+    start at zero. Vectors and maps have literal syntax; the base library
+    does not register functions named vector or make-hash-table.
+  
+  CURRENT BEHAVIOR
+    This page describes Risp, rather than promising Emacs Lisp compatibility.
+  
+    eq and eql compare numbers and symbol names by value. Allocated compound
+    values compare by identity; native primitives use their function address.
+    equal compares data structurally and closures by identity.
+  
+    memq and assq currently use structural comparison, just as member and
+    assoc do. member and memq build a new list tail rather than returning
+    the original tail by identity.
+  
+    add-to-list accepts additional elements, not an Emacs-style APPEND
+    flag. The named-list update functions currently write their result in
+    the calling environment; account for this when calling them in a
+    nested lexical scope.
+  
+    backquote handles proper syntax lists and vectors. Dotted templates,
+    maps and nested backquote levels are not fully expanded. The reader's
+    comma and comma-at spell unquote and unquote-splicing inside templates;
+    they are not independently registered functions.
+  
+    A fiber yields only where the evaluator can retain a continuation.
+    Unsupported positions signal YieldNotAllowed; condition-case does not
+    intercept this error. resume on a running fiber returns nil without
+    changing its state. A completed or failed fiber is done.
+  
+    spawn currently returns an empty syntax form and exposes no Lisp join
+    operation. defconst initializes a binding but does not make it immutable.
+    unwind-protect attempts its cleanup; a host-imposed execution budget
+    can still prevent cleanup from finishing.
+  
+    format supports %s, %S, %d, %f and %%. Both %s and %S currently use
+    display formatting. It copies backslashes literally; the reader handles
+    escapes in string literals. %d truncates a finite number toward zero.
+  
+    string-to-number currently accepts the forms recognized by Rust's f64
+    parser, including scientific notation and non-finite values. The Lisp
+    reader does not accept all of those same numeric spellings. substring
+    clamps out-of-range indices after interpreting negative ones from the end.
+  
+SEE ALSO
+    (function-doc 'NAME), (variable-doc 'NAME), (function-arglist 'NAME),
+    (all-functions), (all-macros), (all-variables)
+
+SOURCE
+    Primitive inventory and behavior reviewed against Risp f1bac0c.

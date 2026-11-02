@@ -29,8 +29,9 @@ const BATCH: usize = 64 * 1024;
 
 /// Builds the command that runs COMMAND through the platform's shell, so
 /// that what is typed means what it would at a prompt: pipes, redirection,
-/// globs and all.
-fn shell_invocation(command: &str) -> Command {
+/// globs and all. It starts in DIRECTORY, and stays there whatever the editor
+/// does next: the process's own directory is never what it is given.
+fn shell_invocation(command: &str, directory: &str) -> Command {
     #[cfg(windows)]
     let mut child = {
         let mut c = Command::new("cmd");
@@ -43,17 +44,18 @@ fn shell_invocation(command: &str) -> Command {
         c.arg("-c").arg(command);
         c
     };
+    child.current_dir(directory);
     // Nothing types at it. Without this a command that reads standard input
     // inherits the terminal and fights the editor for keystrokes.
     child.stdin(Stdio::null());
     child
 }
 
-/// Starts COMMAND with its standard output and error going into one pipe, and
-/// returns the process and the pipe's reading end.
-fn start(command: &str) -> std::io::Result<(Child, PipeReader)> {
+/// Starts COMMAND in DIRECTORY with its standard output and error going into
+/// one pipe, and returns the process and the pipe's reading end.
+fn start(command: &str, directory: &str) -> std::io::Result<(Child, PipeReader)> {
     let (output, writer) = std::io::pipe()?;
-    let mut invocation = shell_invocation(command);
+    let mut invocation = shell_invocation(command, directory);
     invocation.stdout(writer.try_clone()?).stderr(writer);
     #[cfg(unix)]
     {
@@ -322,7 +324,8 @@ fn abandon(process: &Process) {
 
 pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND &optional MODE PRODUCER): Run \
          COMMAND, a string, with the shell in the background, and return at once the name of the \
-         buffer its output goes into. The buffer is read-only and in major mode MODE, \
+         buffer its output goes into. It runs in `working-directory', which the buffer keeps as \
+         its own. The buffer is read-only and in major mode MODE, \
          `shell-output-mode' unless given; its first line is the command, and its last says how \
          it ended, as --- exited 0 ---. Each call has a buffer of its own; with PRODUCER, a \
          symbol such as compile, the newest buffer that PRODUCER filled in MODE is emptied and \
@@ -343,10 +346,13 @@ primitive!(shell_command_start, args, env, ctx, {
     let mode = args::optional_name(args.get(1), "Symbol naming a mode")?
         .unwrap_or_else(|| "shell-output-mode".to_string());
     let producer = args::optional_name(args.get(2), "Symbol naming a producer")?;
-    let (child, output) = match start(command) {
+    // Asked before the output buffer is made, which may become current: where
+    // the command runs is where it was asked for.
+    let directory = ctx.default_directory();
+    let (child, output) = match start(command, &directory) {
         Ok(started) => started,
         Err(why) => {
-            ctx.set_echo_message(&format!("Cannot run the shell: {why}"));
+            ctx.set_echo_message(&cannot_run(&directory, &why));
             return Ok(ELispExp::nil());
         }
     };
@@ -371,6 +377,8 @@ primitive!(shell_command_start, args, env, ctx, {
 
     ctx.with_buffer_mut(&name, |buf| {
         buf.read_only = true;
+        // Set on a reused buffer too: its last command may have run elsewhere.
+        buf.directory = Some(directory);
     });
 
     let task = ShellCommand {
@@ -412,11 +420,11 @@ primitive!(shell_command_running_p, _args, _env, ctx, {
 });
 
 pub const SHELL_COMMAND_TO_STRING_DOC: &str = "(shell-command-to-string COMMAND): Run COMMAND \
-         with the shell, wait for it to end, and return what it printed on its standard output, \
-         newline and all; nil, saying why, when the shell cannot be started. What it printed on \
-         standard error is left out, and how it ended makes no difference. The editor waits with \
-         it, so it is for a command that answers at once: `shell-command-start' runs one that may \
-         not.\n\n\
+         with the shell in `working-directory', wait for it to end, and return what it printed on \
+         its standard output, newline and all; nil, saying why, when the shell cannot be \
+         started. What it printed on standard error is left out, and how it ended makes no \
+         difference. The editor waits with it, so it is for a command that answers at once: \
+         `shell-command-start' runs one that may not.\n\n\
          Example:\n\
          (shell-command-to-string \"git rev-parse --short HEAD\")";
 
@@ -427,16 +435,29 @@ primitive!(shell_command_to_string, args, _env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    match shell_invocation(command).output() {
+    let directory = ctx.default_directory();
+    match shell_invocation(command, &directory).output() {
         Ok(output) => Ok(ELispExp::string(
             String::from_utf8_lossy(&output.stdout).to_string(),
         )),
         Err(why) => {
-            ctx.set_echo_message(&format!("Cannot run the shell: {why}"));
+            ctx.set_echo_message(&cannot_run(&directory, &why));
             Ok(ELispExp::nil())
         }
     }
 });
+
+/// Returns what to say when the shell could not be started in DIRECTORY,
+/// for WHY. A directory that has gone since `cd` is said as such: the
+/// system's own answer, "No such file or directory", would seem to be about
+/// the shell.
+fn cannot_run(directory: &str, why: &std::io::Error) -> String {
+    if std::path::Path::new(directory).is_dir() {
+        format!("Cannot run the shell: {why}")
+    } else {
+        format!("Cannot run the shell in {directory}: it is not a directory")
+    }
+}
 
 pub const PARSE_OVERSTRIKE_DOC: &str = "(parse-overstrike TEXT): Return TEXT without the \
          overstrike man prints for a terminal, and where it was, as (PLAIN SPANS). A character, a \

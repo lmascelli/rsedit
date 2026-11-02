@@ -150,11 +150,13 @@ FILES FROM LISP
 THE WORKING DIRECTORY
     A relative path, typed at C-x C-f or given to a function, is read in
     the working directory: the directory the editor was started in, until
-    M-x cd moves it. M-x grep searches under it. M-x pwd says which it is,
-    and `working-directory' returns it.
+    M-x cd moves it. Shell commands and builds start in it, and M-x grep
+    searches under it. M-x pwd says which it is, and `working-directory'
+    returns it.
 
     Moving it changes nothing that has started already: a command still
-    running stays where it began.
+    running stays where it began, and the output of a command or a build
+    keeps the directory it ran in, so g runs a build again there.
 
 PATHS
     `expand-file-name' makes a path absolute: ~ becomes the home

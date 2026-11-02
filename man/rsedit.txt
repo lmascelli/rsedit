@@ -28,6 +28,7 @@ MODULES
     python-mode          colouring and indentation for Python
     toml-mode            colouring and indentation for TOML
     bash-mode            colouring and indentation for Bash
+    cmake-mode           colouring and indentation for CMake
     dired                a directory in a buffer, and C-x C-r
     completion           the strip that narrows as you type
     preview              C-x r t shows its replacement before you commit

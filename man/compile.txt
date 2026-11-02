@@ -30,7 +30,7 @@ RUNNING A BUILD
     Each run has an output buffer of its own, *Shell Output*, then *Shell
     Output*<2>, shown in the same strip. In the output:
 
-        g               run the same command again
+        g               run the same command again, where it ran
         C-c C-k         stop it
         q               close the output's window
 

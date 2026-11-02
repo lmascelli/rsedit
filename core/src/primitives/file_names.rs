@@ -199,8 +199,8 @@ primitive!(working_directory, args, _env, ctx, {
 
 pub const CD_DOC: &str = "(cd DIRECTORY): Make DIRECTORY, read in the working directory, the \
          editor's working directory, and return it; nil, and a message, when it is not a \
-         directory. Relative file names are read in it from then on. A command already running \
-         stays where it started.\n\n\
+         directory. Relative file names are read in it from then on, and shell commands start in \
+         it; one already running stays where it started.\n\n\
          Example:\n\
          (cd \"~/src/rsedit\")";
 

@@ -28,6 +28,7 @@ fn editor() -> (Ctx, Arc<Env<Ctx>>) {
         include_str!("../../lisp/languages/python-mode.lisp"),
         include_str!("../../lisp/languages/toml-mode.lisp"),
         include_str!("../../lisp/languages/bash-mode.lisp"),
+        include_str!("../../lisp/languages/cmake-mode.lisp"),
     ] {
         run(source, &env, &ctx);
     }
@@ -93,6 +94,10 @@ fn filenames_select_the_specific_languages_and_do_not_claim_unrelated_files() {
         ("build.bash", "bash-mode"),
         ("/home/user/.bashrc", "bash-mode"),
         (r"C:\Users\user\.bash_profile", "bash-mode"),
+        ("CMakeLists.txt", "cmake-mode"),
+        ("src/CMakeLists.txt", "cmake-mode"),
+        (r"C:\project\CMakeLists.txt", "cmake-mode"),
+        ("cmake/toolchain.cmake", "cmake-mode"),
     ] {
         assert_eq!(ctx.auto_mode_for(path).as_deref(), Some(mode), "{path}");
     }
@@ -101,6 +106,9 @@ fn filenames_select_the_specific_languages_and_do_not_claim_unrelated_files() {
         "notbashrc",
         "src/main.cpp.old",
         "Cargo.lock.bak",
+        "notes.txt",
+        "MyCMakeLists.txt",
+        "CMakeLists.txt.bak",
     ] {
         assert_eq!(ctx.auto_mode_for(path), None, "{path}");
     }
@@ -115,6 +123,10 @@ fn completion_vocabulary_matches_each_language() {
         ("toml-mode", "false"),
         ("bash-mode", "esac"),
         ("bash-mode", "declare"),
+        ("cmake-mode", "endforeach"),
+        ("cmake-mode", "target_link_libraries"),
+        ("cmake-mode", "STREQUAL"),
+        ("cmake-mode", "ON"),
         ("c-mode", "_Generic"),
         ("cpp-mode", "co_await"),
         ("cpp-mode", "static_cast"),
@@ -333,6 +345,11 @@ fn region_indentation_is_repeatable_for_each_language() {
             "bash-mode",
             "if true; then\necho ok\nfi\n",
             "if true; then\n    echo ok\nfi\n",
+        ),
+        (
+            "cmake-mode",
+            "if(A)\nforeach(f ${F})\nmessage(${f})\nendforeach()\nendif()\n",
+            "if(A)\n  foreach(f ${F})\n    message(${f})\n  endforeach()\nendif()\n",
         ),
         (
             "c-mode",
@@ -648,6 +665,7 @@ fn return_uses_the_registered_indenter_in_each_new_mode() {
         ("python-mode", "if ready:", "\n    "),
         ("toml-mode", "values = [", "\n  "),
         ("bash-mode", "if true; then", "\n    "),
+        ("cmake-mode", "if(ready)", "\n  "),
         ("c-mode", "int main() {", "\n    "),
         ("cpp-mode", "class Widget {", "\n    "),
     ] {
@@ -658,4 +676,102 @@ fn return_uses_the_registered_indenter_in_each_new_mode() {
             format!("{source}{suffix}")
         );
     }
+}
+
+#[test]
+fn cmake_indents_blocks_in_any_case_and_dedents_their_ends() {
+    columns(
+        "cmake-mode",
+        &[
+            ("if(A)\nset(x 1)", 2),
+            ("IF(A)\nset(x 1)", 2),
+            ("if(A)\n  set(x 1)\nelse()", 0),
+            ("if(A)\n  set(x 1)\nelseif(B)", 0),
+            ("if(A)\n  set(x 1)\nendif()", 0),
+            ("if(A)\nelse()\nset(x 1)", 2),
+            ("foreach(f ${files})\nmessage(${f})", 2),
+            ("while(A)\n  if(B)\nbreak()", 4),
+            (
+                "function(f)\n  if(A)\n    return()\n  endif()\nendfunction()",
+                0,
+            ),
+            ("macro(m)\nset(x 1)", 2),
+            ("block()\n  set(x 1)\nendblock()", 0),
+            ("set(x 1)\nset(y 2)", 0),
+            ("endif()\nset(x 1)", 0),
+        ],
+    );
+}
+
+#[test]
+fn cmake_continues_arguments_and_reads_past_strings_and_comments() {
+    columns(
+        "cmake-mode",
+        &[
+            ("target_link_libraries(app\nPRIVATE lib)", 22),
+            ("add_executable(\napp main.c)", 2),
+            ("set(x\n  a\n)", 0),
+            ("if(A AND\n   B)\nset(x 1)", 2),
+            ("target_link_libraries(app\n  PRIVATE lib)\nnext()", 0),
+            ("message(\"if(\")\nnext()", 0),
+            ("# if(\nnext()", 0),
+            ("set(x \"multi\n   line", 3),
+            ("#[[ comment\n    text", 4),
+            ("set(x [[\n  bracket", 2),
+        ],
+    );
+}
+
+#[test]
+fn cmake_grammar_tells_commands_from_their_arguments() {
+    let (ctx, _) = editor();
+    let g = grammar(&ctx, "cmake-mode");
+    for (line, at, expected) in [
+        ("if(ready)", 0, Some("keyword")),
+        ("IF(ready)", 0, Some("keyword")),
+        ("endif()", 0, Some("keyword")),
+        ("add_executable(app main.c)", 0, Some("builtin")),
+        ("Add_Executable(app main.c)", 0, Some("builtin")),
+        ("my_helper(x)", 0, Some("function")),
+        ("set(if 1)", 4, None),
+        ("option(USE_X \"x\" ON)", 17, Some("builtin")),
+        ("if(A STREQUAL B)", 5, Some("keyword")),
+        ("message(${NAME})", 8, Some("variable")),
+        ("message($ENV{HOME})", 8, Some("variable")),
+        ("set(f $<CONFIG:Debug>)", 7, Some("preprocessor")),
+        ("cmake_minimum_required(VERSION 3.20)", 31, Some("builtin")),
+        ("set(x 1) # done", 11, Some("comment")),
+        ("set(x \"# no\")", 7, Some("string")),
+        ("#[[ a block", 0, Some("comment")),
+        ("set(x [=[ raw", 6, Some("string")),
+    ] {
+        assert_eq!(
+            face_at(&g, line, at, &vec![]).as_deref(),
+            expected,
+            "{line}"
+        );
+    }
+    // A bracket comment goes on until its closer, and the code after it is
+    // coloured again.
+    let state = highlight_line(&g, "#[[ a block", &vec![]).1;
+    assert_eq!(
+        face_at(&g, "still ]] set(x)", 0, &state).as_deref(),
+        Some("comment")
+    );
+    assert_eq!(
+        face_at(&g, "still ]] set(x)", 9, &state).as_deref(),
+        Some("builtin")
+    );
+}
+
+#[test]
+fn cmake_brackets_inside_bracket_arguments_and_comments_are_text() {
+    let (ctx, env) = editor();
+    text(&ctx, "cmake-mode", "set(x [[ ( ");
+    let state = run("(syntax-ppss)", &env, &ctx);
+    assert_eq!(state.iter().next(), Some(LispExp::number(1.0)), "{state:?}");
+    assert!(run("(nth 2 (syntax-ppss))", &env, &ctx).is_truthy());
+    text(&ctx, "cmake-mode", "#[[ ( ");
+    assert!(run("(nth 3 (syntax-ppss))", &env, &ctx).is_truthy());
+    assert_eq!(run("(car (syntax-ppss))", &env, &ctx), LispExp::number(0.0));
 }

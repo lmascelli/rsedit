@@ -23,6 +23,7 @@ SYNOPSIS
     (python-indent-line)
     (toml-indent-line)
     (bash-indent-line)
+    (cmake-indent-line)
     (cc-indent-line)
     tab-width
     tab-always-indent
@@ -81,8 +82,9 @@ RETURN
 
 HOW WIDE A TAB IS
     `tab-width' is the width of one Tab everywhere, 4 unless it is set. A
-    mode can have its own: (put 'MODE 'tab-width N). risp-mode and toml-mode
-    use 2; python-mode, bash-mode, c-mode and cpp-mode use 4.
+    mode can have its own: (put 'MODE 'tab-width N). risp-mode, toml-mode
+    and cmake-mode use 2; python-mode, bash-mode, c-mode and cpp-mode use
+    4.
     `indent-width' is the width in force in the current buffer.
 
 WRITING A RULE
@@ -127,6 +129,14 @@ LANGUAGE RULES
     markers, multiple pending heredocs and <<-, keep their contents and
     terminators untouched.
 
+    CMake indents one level inside if, foreach, while, function, macro and
+    block, and aligns elseif, else and the end commands with the command
+    that opened the block, in any case. Arguments that go on to more lines
+    align with the first argument on the command's line, or go one level
+    in when the ( ends it; a ) alone returns to the command's column. The
+    lines inside a quoted argument, a bracket argument or a bracket
+    comment keep their indentation.
+
     C/C++ indent within braces, align continued argument lists, recognize
     unbraced control statements, and indent case bodies one level beyond
     their labels. Access labels align with their class's opening line;
@@ -156,7 +166,10 @@ LIMITS
     compilation can need manual indentation. Bash arithmetic commands,
     complex substitutions, escaped or computed heredoc delimiters are not
     fully parsed. TOML inline tables can be indented while editing even
-    when a TOML version requires them to be on one line.
+    when a TOML version requires them to be on one line. CMake reads only
+    the command a line begins with: in if(A) set(x 1), on one line, the
+    next line goes in for the if, and two end commands on one line take
+    back one level.
 
     A tab character in the text counts as one column, wherever the editor
     counts columns. The terminal draws it wider, so a line indented with
