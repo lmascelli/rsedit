@@ -196,18 +196,9 @@
     id: "CMD-3",
     gravita: "media",
     verificato: true,
-    stato: "aperto",
+    stato: "risolto",
+    commit: "d86f0ea",
     titolo: [Argomenti numerici enormi: allocazioni che terminano il processo e panic],
-    breve: [Larghezze e conteggi senza limite nelle primitive Rust: panic e abort],
-    dove: [`primitives/indentation.rs` (`indent-line-to`), `primitives/args.rs` (`repeat_count`), `primitives/macros.rs` (`kmacro-insert-counter`)],
-    verifica: [Riprodotto sulla revisione `3d846f1`: `(kmacro-insert-counter 70000)` va in panic con «Formatting argument out of range»; `(forward-word 300000000)` invece si ferma subito alla fine del buffer. `indent-line-to` non è cambiata dall'analisi, che l'aveva trovata con il fuzzer delle primitive.],
-    cosa: [Alcune primitive scritte in Rust usano un numero dell'utente come quantità da allocare, senza un limite e senza carburante. `indent-line-to` crea una stringa di spazi lunga quanto la colonna richiesta. `kmacro-insert-counter` passa la larghezza a `format!`, che oltre 65 535 va in panic. Da `cf0d8ac` i comandi sulle parole si fermano invece al bordo del buffer, e non ripetono più a vuoto il loro passo.],
-    riproduzione: ```lisp
-(indent-line-to 300000000000)     ; abort: memory allocation failed
-(kmacro-insert-counter 65536)     ; panic: Formatting argument out of range
-```,
-    effetto: [Un panic nel thread dei comandi chiude l'editor e lascia il terminale in raw mode (#link(<TUI-2>)[TUI-2]); un'allocazione rifiutata termina il processo senza nemmeno un panic.],
-    correzione: [Limitare larghezze e conteggi (per esempio a un milione) con un errore `args-out-of-range`, a partire da `repeat_count`; usare `try_reserve` per le allocazioni guidate dall'utente.],
   ),
   (
     id: "CMD-4",
@@ -1070,7 +1061,7 @@ Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano ape
 
 #key[Sono aperti *#aperti.len() problemi*: *#n-alta di gravità alta*, #n-media di gravità media e #n-bassa di gravità bassa; #aperti.filter(p => p.verificato).len() sono stati riprodotti eseguendo il codice. Altri #risolti.len() sono stati risolti dopo l'analisi, e sono nell'appendice.]
 
-Dei tre problemi di gravità alta, due riguardano il terminale: un file può mandargli sequenze di controllo (#link(<TUI-1>)[TUI-1]), e un panic o un errore lo lasciano in raw mode (#link(<TUI-2>)[TUI-2]). Gli altri due fanno perdere lavoro senza dirlo: un salvataggio fallito non viene segnalato (#link(<FIL-1>)[FIL-1]), e due prompt aperti insieme perdono il testo del primo e lasciano una finestra che non si chiude (#link(<MIN-1>)[MIN-1]). Delle tre correzioni trasversali che l'analisi proponeva, una c'è: nel WorkManager un panic ritira solo il lavoro che l'ha causato (#link(<BKG-1>)[BKG-1], risolta). Restano da fare la guardia che ripristini il terminale (#link(<TUI-2>)[TUI-2]) e un limite alle quantità guidate dall'utente, nelle primitive dell'editor (#link(<CMD-3>)[CMD-3]) come nell'interprete (INT-2 e INT-13, nel rapporto di risp).
+Non restano problemi di gravità alta: dei quattro trovati, due riguardavano il terminale, che un file poteva comandare (#link(<TUI-1>)[TUI-1]) e che un panic o un errore lasciavano in raw mode (#link(<TUI-2>)[TUI-2]), e due facevano perdere lavoro senza dirlo, un salvataggio fallito (#link(<FIL-1>)[FIL-1]) e due prompt aperti insieme (#link(<MIN-1>)[MIN-1]). Le tre correzioni trasversali che l'analisi proponeva ci sono, nell'editor: nel WorkManager un panic ritira solo il lavoro che l'ha causato (#link(<BKG-1>)[BKG-1]), una guardia ripristina il terminale (#link(<TUI-2>)[TUI-2]), e le larghezze guidate dall'utente hanno un limite, mentre i conteggi si fermano al bordo del buffer (#link(<CMD-3>)[CMD-3]). Il limite manca ancora nell'interprete (INT-2 e INT-13, nel rapporto di risp).
 
 La tabella seguente elenca i problemi aperti, dal più grave; l'identificativo rimanda alla scheda.
 
