@@ -371,6 +371,58 @@ mod tests {
         }
     }
 
+    /// The cursor's line and column, read off the index, checked against a
+    /// count of the text before it after every operation of a random edit.
+    #[test]
+    fn the_cursor_position_agrees_with_a_count_of_the_text() {
+        let mut buf = numbered(60);
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        for step in 0..3_000 {
+            let len = buf.len();
+            match next() % 4 {
+                0 => buf.insert(if next() % 5 == 0 { '\n' } else { 'é' }),
+                1 => buf.delete(),
+                _ => buf.move_gap((next() as usize) % (len + 1)),
+            }
+            let before: Vec<char> = buf.to_string().chars().take(buf.cursor_pos_1d()).collect();
+            let line = before.iter().filter(|&&c| c == '\n').count();
+            let column = before.iter().rev().take_while(|&&c| c != '\n').count();
+            assert_eq!(
+                buf.cursor_pos(),
+                (line, column),
+                "the cursor's position disagreed with the text at step {step}"
+            );
+            assert_eq!(
+                buf.cursor_pos(),
+                buf.cursor_1d_to_2d(buf.cursor_pos_1d()),
+                "and with the lookup by offset"
+            );
+        }
+    }
+
+    /// At the edges: an empty text, the very end, and right after a newline.
+    #[test]
+    fn the_cursor_position_at_the_edges() {
+        let mut buf = GapBuffer::from("");
+        assert_eq!(buf.cursor_pos(), (0, 0));
+        let mut buf2 = GapBuffer::from("ab\ncd\n");
+        buf2.move_gap(buf2.len());
+        assert_eq!(buf2.cursor_pos(), (2, 0), "after the last newline");
+        buf2.move_gap(3);
+        assert_eq!(buf2.cursor_pos(), (1, 0), "right after a newline");
+        buf2.move_gap(2);
+        assert_eq!(buf2.cursor_pos(), (0, 2), "right before one");
+        buf.insert('\n');
+        assert_eq!(buf.cursor_pos(), (1, 0));
+    }
+
     /// What the functions that read the index return, checked against a plain
     /// scan of the text.
     #[test]

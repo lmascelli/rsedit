@@ -114,21 +114,18 @@ impl BufferTrait for GapBuffer {
     }
 
     fn cursor_pos(&self) -> (usize, usize) {
-        // TODO(BUF-2): counts from the start of the text at every call; the
-        // line index could answer it.
-        let mut line = 0;
-        let mut col = 0;
-
-        for &c in &self.data[..self.gap_start] {
-            if c == '\n' {
-                line += 1;
-                col = 0;
-            } else {
-                col += 1;
-            }
-        }
-
-        (line, col)
+        // The cursor is the gap, and the newlines before it are exactly
+        // `newlines_before`, each at a physical position that is its logical
+        // one too, since nothing before the gap has moved: how many there are
+        // is the line, and the last of them ends the line before. No scan and
+        // no search, however far into the text the cursor is -- and this is
+        // asked for every window at every frame.
+        let line = self.newlines_before.len();
+        let line_start = self
+            .newlines_before
+            .last()
+            .map_or(0, |&newline| newline + 1);
+        (line, self.gap_start - line_start)
     }
 
     fn cursor_pos_1d(&self) -> usize {

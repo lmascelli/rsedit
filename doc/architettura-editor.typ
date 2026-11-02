@@ -90,7 +90,7 @@ Questo manuale descrive il comportamento #emph[attuale] del codice, anche dove
 quel comportamento è un difetto. I difetti sono descritti, con la riproduzione
 e una correzione proposta, nel #emph[Rapporto sui problemi del codice]
 (`rapporto-problemi.typ`). Dove il manuale descrive un punto che il rapporto
-considera un difetto, un rimando come #rapporto("BUF-2") indica la scheda
+considera un difetto, un rimando come #rapporto("BUF-4") indica la scheda
 corrispondente; quando il difetto viene corretto si aggiorna la descrizione
 qui, si toglie il rimando, e la scheda passa tra le risolte.
 
@@ -1791,9 +1791,14 @@ punto, ed è questo che rende O(1) l'aggiornamento dell'indice durante la
 digitazione. La posizione #emph[logica] del k-esimo ritorno a capo è
 `newlines_before[k]` se k cade nella prima metà, altrimenti la posizione fisica
 nella seconda metà meno la larghezza del buco; `line_start(riga)` è la
-posizione del ritorno a capo precedente più uno. La conversione da posizione
-lineare a (riga, colonna) del punto, `cursor_pos`, conta invece i caratteri
-dall'inizio del buffer #rapporto("BUF-2").
+posizione del ritorno a capo precedente più uno. `cursor_1d_to_2d` trova la riga
+di una posizione con una ricerca binaria nell'indice. Per il punto non serve
+nemmeno quella: il punto è il buco, e i ritorni a capo prima del buco sono
+proprio `newlines_before`, quindi `cursor_pos` legge la riga dalla sua
+lunghezza e la colonna dalla distanza dal suo ultimo elemento, in tempo
+costante. Lo chiede ogni fotogramma, per ogni finestra: con un conteggio dei
+caratteri dall'inizio del buffer costava, in un file di 8 MB con il punto in
+fondo, circa 17 ms a chiamata.
 
 #canvas(height: 2.6cm)[
   #node(1.2cm, 0.8cm, 1.6cm, 0.7cm, [`d a t`], fill: paper)
