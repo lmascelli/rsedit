@@ -132,19 +132,9 @@
     id: "BUF-1",
     gravita: "media",
     verificato: true,
-    stato: "aperto",
+    stato: "risolto",
+    commit: "000b0a8",
     titolo: [`undo` e `redo` modificano il testo senza passare dalle due porte delle modifiche],
-    breve: [`undo`/`redo` scavalcano le porte: sola lettura, overlay, testo virtuale],
-    dove: [`primitives/undo.rs` (le primitive `undo` e `redo`), `buffer/undo.rs` (`UndoHistory::undo`, `UndoHistory::redo`, `apply_inverse`), `editor/replace.rs` (`EditorState::replace_back`)],
-    verifica: [Riprodotto sulla revisione `3d846f1`: dopo `(insert "abc")`, `(undo-boundary)` e `(set-buffer-read-only t)`, `(undo)` svuota il buffer senza messaggi; un overlay su `world` in `XXhello world` resta agli offset 8–13 dopo che `undo` ha tolto `XX`. La colorazione e le cache, che l'analisi aveva trovato vecchie dopo `C-/`, ora si aggiornano: lo provano i test `undo_and_redo_recolour_what_they_change` e `an_undo_does_not_leave_a_stale_answer_behind`.],
-    cosa: [Ogni modifica dovrebbe passare da `insert_text` o `delete_range`. Sono loro che controllano la sola lettura, incrementano `version`, invalidano le cache di colorazione e di scansione, disattivano il mark e spostano overlay e testo virtuale. `undo` e `redo` applicano invece le modifiche inverse direttamente sul testo (`apply_inverse`). Da `9956bed` chiamano poi `changed`, che incrementa la versione, invalida le cache dalla prima riga toccata ed emette `buffer-changed`; il resto delle due porte resta saltato.],
-    riproduzione: ```lisp
-(insert "abc") (undo-boundary)
-(set-buffer-read-only t)
-(undo)                     ; il buffer si svuota, senza «Buffer is read-only»
-```,
-    effetto: [(1) `undo` modifica i buffer in sola lettura. (2) Overlay e testo virtuale restano agli offset del testo vecchio, quindi le evidenziazioni cadono sulle parole sbagliate.],
-    correzione: [Far applicare a `UndoHistory` i suoi passi attraverso le due porte (o una terza porta che faccia le stesse cose senza registrare l'annullamento), e rifiutare `undo` in un buffer in sola lettura.],
   ),
   (
     id: "BUF-2",
