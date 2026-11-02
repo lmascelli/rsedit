@@ -404,7 +404,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-FIL-3",
+    commit: "de075c1",
     titolo: [Un file non UTF-8 non si apre e non viene detto nulla],
   ),
   (
