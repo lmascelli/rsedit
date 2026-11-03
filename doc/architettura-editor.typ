@@ -1632,10 +1632,13 @@ buffer `*Minibuffer*`, #emph[al centro] del frame, larga `minibuffer-width` (60)
 e alta `minibuffer-height` (3) e ridotta se il terminale è più piccolo. Il
 centro è scelto perché il fondo dello schermo è occupato da altre strisce (i
 completamenti, la compilazione). Ogni prompt usa lo stesso
-buffer, `*Minibuffer*` (`PROMPT_BUFFER`): per questo ne aperto uno alla volta.
-Un secondo prompt, chiesto mentre il primo aperto, viene rifiutato con errore,
-come in Emacs senza enable-recursive-minibuffers. `C-g` nel prompt resta
-`keyboard-quit`, che non lo chiude; lo chiude Esc #rapporto("MIN-2").
+buffer, `*Minibuffer*` (`PROMPT_BUFFER`): per questo ne è aperto uno alla volta.
+Un secondo prompt, chiesto mentre il primo è aperto, viene rifiutato con errore,
+come in Emacs senza enable-recursive-minibuffers. Nel prompt `C-g`, come Esc,
+è `minibuffer-cancel`: la mappa di `minibuffer-mode` lo lega e vince sul
+`keyboard-quit` globale, che dei prompt non sa nulla. Mentre la striscia dei
+completamenti è aperta, la sua mappa transitoria lo prende per prima: il primo
+`C-g` chiude la striscia, il secondo il prompt.
 Ciò che Tab, la storia e un completamento scelto mettono nel prompt passa da
 `set_minibuffer_content`, che sostituisce solo il testo prima del punto e salta
 le porte delle modifiche #rapporto("MIN-3"), e lo fa nel buffer corrente, qualunque
