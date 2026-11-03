@@ -295,7 +295,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-MIN-2",
+    commit: "041145b",
     titolo: [`C-g` dentro il minibuffer non annulla la domanda],
   ),
   (
