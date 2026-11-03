@@ -554,7 +554,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-SIN-6-8-9",
+    commit: "faa4694",
     titolo: [`forward-sexp` dall'interno di un simbolo salta alla fine dell'espressione successiva],
   ),
   (
@@ -570,7 +570,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-SIN-6-8-9",
+    commit: "faa4694",
     titolo: [`forward-sexp`, `kill-sexp` e `down-list` alla fine di una lista proseguono nelle liste che seguono],
   ),
   (
@@ -578,7 +578,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-SIN-6-8-9",
+    commit: "faa4694",
     titolo: [`forward-sexp` si ferma alla fine di un commento a blocchi ma scavalca un commento di riga],
   ),
   // ------------------------------------------------------------------ RIC
