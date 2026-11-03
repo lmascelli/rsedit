@@ -25,23 +25,26 @@ pub(crate) fn setq<B: BufferTrait>(env: &Env<EditorState<B>>, name: &str, val: E
     }
 }
 
-// TODO(MIN-3): only the text before point goes, and not through the doors.
-// TODO(MIN-5): it writes into the current buffer, whatever buffer it is.
-/// Puts CONTENT in the current buffer in place of the text before point, a
-/// character at a time, and marks the buffer modified and changed. Not a
-/// primitive: what Tab, the history and a chosen completion put in the prompt
-/// goes through it.
-pub(crate) fn set_minibuffer_content<B: BufferTrait>(ctx: &EditorState<B>, content: &str) {
-    ctx.with_current_buffer_mut(|buf| {
-        while buf.text.cursor_pos() != (0, 0) {
-            buf.text.delete();
+/// Puts CONTENT in the prompt in place of the whole answer, point after it,
+/// and answers whether there was a prompt to put it in. Not a primitive: what
+/// Tab, the history and a chosen completion put in the prompt goes through it.
+///
+/// The prompt by its name, whatever buffer is current: a completion strip, or
+/// a call from Lisp, may be elsewhere, and what is meant for the prompt must
+/// never land in a file's buffer. And through the two doors, as any edit: the
+/// replacement is one undo step, and moves what is anchored to the text.
+pub(crate) fn set_minibuffer_content<B: BufferTrait>(ctx: &EditorState<B>, content: &str) -> bool {
+    use crate::primitives::edits::{delete_range, insert_text};
+    ctx.with_buffer_mut(PROMPT_BUFFER, |buf| {
+        let whole = buf.text.len();
+        // A refusal, from a prompt made read-only, leaves it as it was.
+        if delete_range(buf, 0, whole) && insert_text(buf, 0, content) {
+            let end = buf.text.len();
+            let (line, column) = buf.text.cursor_1d_to_2d(end);
+            buf.text.cursor_move(line, column);
         }
-        for c in content.chars() {
-            buf.text.insert(c);
-            buf.is_modified = true;
-        }
-        crate::primitives::edits::changed(buf, 0);
-    });
+    })
+    .is_some()
 }
 
 /// The buffer a prompt is read in: the same one for every prompt, an

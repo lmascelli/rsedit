@@ -81,8 +81,7 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
 /// invalidates the colouring and the scan checkpoints from AT's line down,
 /// and emits the buffer's `buffer-changed`.
 ///
-/// The three doors call it, and so does `set_minibuffer_content`, which
-/// writes a prompt's answer below them.
+/// The three doors call it.
 pub(crate) fn changed<B: BufferTrait>(buf: &mut Buffer<B>, at: usize) {
     buf.version = buf.version.wrapping_add(1);
     let line = buf.text.cursor_1d_to_2d(at.min(buf.text.len())).0;

@@ -1640,9 +1640,12 @@ come in Emacs senza enable-recursive-minibuffers. Nel prompt `C-g`, come Esc,
 completamenti è aperta, la sua mappa transitoria lo prende per prima: il primo
 `C-g` chiude la striscia, il secondo il prompt.
 Ciò che Tab, la storia e un completamento scelto mettono nel prompt passa da
-`set_minibuffer_content`, che sostituisce solo il testo prima del punto e salta
-le porte delle modifiche #rapporto("MIN-3"), e lo fa nel buffer corrente, qualunque
-sia #rapporto("MIN-5").
+`set_minibuffer_content`. Scrive nel buffer `*Minibuffer*` per nome, qualunque
+sia il buffer corrente, e risponde se c'era un prompt in cui scrivere: senza,
+`minibuffer-choose-completion` risponde nil e non tocca nulla. Sostituisce
+tutta la risposta, non solo il testo prima del punto, e lo fa dalle due porte,
+`delete_range` e `insert_text` (@due-porte): la sostituzione è un passo
+d'annullamento come lo scrivere, e il punto va in fondo alla risposta.
 
 Un worker di sfondo non può aprire un prompt: `minibuffer-read` controlla
 `in_worker()` e rifiuta con un errore, perché il tasto che risponderebbe
@@ -1890,16 +1893,12 @@ il buffer modificato e chiama `changed` da `Applied::from`. Non registra nulla:
 l'inverso lo scrive la storia stessa (@undo). Ne passano `undo`, `redo` e il
 passo indietro di `query-replace` (`replace_back`).
 
-Due percorsi oggi scavalcano le porte:
-
-- `adopt_text` (lettura di un file, `revert-buffer`, ricarica dal watcher)
-  sostituisce tutto il testo e fa a mano ciò che le porte farebbero: incrementa
-  la versione, invalida entrambe le cache dalla riga 0, svuota overlay, testo
-  virtuale, mark e storia dell'undo (conservandone il limite), riporta il punto
-  alla stessa riga e colonna;
-- `set_minibuffer_content`, usata dallo scorrimento dei completamenti, scrive
-  direttamente nel testo del minibuffer e poi chiama `changed`
-  #rapporto("MIN-3").
+Un percorso solo oggi scavalca le porte, e di proposito: `adopt_text` (lettura
+di un file, `revert-buffer`, ricarica dal watcher) sostituisce tutto il testo e
+fa a mano ciò che le porte farebbero: incrementa la versione, invalida
+entrambe le cache dalla riga 0, svuota overlay, testo virtuale, mark e storia
+dell'undo (conservandone il limite), riporta il punto alla stessa riga e
+colonna. Un testo che arriva dal disco non è una modifica da annullare.
 
 == Undo <undo>
 
@@ -5359,8 +5358,8 @@ dell'utente li descrive.
   porte, quindi una modifica chiude la selezione, come in Emacs. La posizione
   resta per `exchange-point-and-mark`, e un mark attivo non ha mai avuto una
   modifica sotto: non va mai spostato.
-+ *`changed` è una funzione sola.* Le tre porte, e `set_minibuffer_content`,
-  che scrive sotto di loro, passano dalla stessa funzione per versione,
++ *`changed` è una funzione sola.* Le tre porte passano dalla stessa funzione
+  per versione,
   colorazione, punti di ripresa ed evento `buffer-changed`. Una modifica che
   incrementasse la versione senza invalidare la colorazione, o il contrario, si
   vedrebbe solo sullo schermo, minuti dopo, come un colore che non si assesta.

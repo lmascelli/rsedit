@@ -71,8 +71,9 @@ const MINIBUFFER_COMPLETE_DOC: &str = "(minibuffer-complete): Complete what is t
          prompt.";
 
 const MINIBUFFER_CHOOSE_COMPLETION_DOC: &str = "(minibuffer-choose-completion VALUE): Put VALUE \
-         in the prompt in place of what is typed, and return VALUE. The function \
-         `*completion-read-function*' is given to call with the candidate chosen at a prompt.";
+         in the prompt in place of what is typed, and return VALUE; nil, putting it nowhere, \
+         when no prompt is open. The function `*completion-read-function*' is given to call with \
+         the candidate chosen at a prompt.";
 
 primitive!(minibuffer_choose_completion, args, _env, ctx, {
     let Some(ELispExp::String(value)) = args.first() else {
@@ -81,8 +82,11 @@ primitive!(minibuffer_choose_completion, args, _env, ctx, {
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    minibuffer::set_minibuffer_content(ctx, value);
-    Ok(args[0].clone())
+    Ok(if minibuffer::set_minibuffer_content(ctx, value) {
+        args[0].clone()
+    } else {
+        ELispExp::nil()
+    })
 });
 
 /// The input the candidate list in `*minibuffer-completions*` was computed

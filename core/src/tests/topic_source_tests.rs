@@ -150,16 +150,23 @@ mod tests {
 
     #[test]
     fn rewriting_the_minibuffer_is_an_edit_like_any_other() {
-        // It changed the text below the doors and said nothing: the one change
-        // to a buffer's text that left the version where it was.
-        let (ctx, _env) = editor_with("typed");
+        // It once changed the text below the doors and said nothing: the one
+        // change to a buffer's text that left the version where it was. Now
+        // it goes through them, as a deletion and an insertion, and each says
+        // so.
+        let (ctx, env) = editor_with("");
+        run(
+            r#"(minibuffer-read "P" nil nil nil) (insert "typed")"#,
+            &env,
+            &ctx,
+        );
         let version = ctx.with_current_buffer(|buf| buf.version);
         let topic = ctx.work().topic(BUFFER_CHANGED);
         let before = topic.count();
-        set_minibuffer_content(&ctx, "candidate");
+        assert!(set_minibuffer_content(&ctx, "candidate"));
         assert_eq!(text(&ctx), "candidate");
-        assert_eq!(topic.count() - before, 1);
-        assert_eq!(ctx.with_current_buffer(|buf| buf.version), version + 1);
+        assert_eq!(topic.count() - before, 2);
+        assert_eq!(ctx.with_current_buffer(|buf| buf.version), version + 2);
     }
 
     #[test]

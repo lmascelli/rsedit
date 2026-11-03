@@ -353,4 +353,81 @@ mod tests {
         );
         assert_eq!(run("(commandp 'history-next)", &env, &ctx), LispExp::t());
     }
+
+    // ----------------------------------------------------------------
+    // What a recall and a chosen completion write, and where
+    // ----------------------------------------------------------------
+
+    fn text_of(name: &str, ctx: &Ctx) -> String {
+        ctx.with_buffer(name, |buf| buf.text.to_string())
+            .unwrap_or_else(|| panic!("no buffer called {name}"))
+    }
+
+    /// The whole answer is replaced, not only what is before point: with the
+    /// cursor at the start, a recall used to leave what was typed after it.
+    #[test]
+    fn a_recall_replaces_the_whole_answer_wherever_point_is() {
+        let (ctx, env) = editor();
+        answer("P", "forward-char", &env, &ctx);
+        open("P", &env, &ctx);
+        run(r#"(insert "abc") (beginning-of-line)"#, &env, &ctx);
+
+        run("(history-previous)", &env, &ctx);
+
+        assert_eq!(contents(&ctx), "forward-char");
+        assert_eq!(
+            ctx.with_current_buffer(|buf| buf.text.cursor_pos_1d()),
+            "forward-char".len(),
+            "point after the answer"
+        );
+    }
+
+    /// Through the doors, so the replacement is an edit like typing is: one
+    /// undo brings back what was there.
+    #[test]
+    fn a_recall_is_undone_in_one_step() {
+        let (ctx, env) = editor();
+        answer("P", "earlier", &env, &ctx);
+        open("P", &env, &ctx);
+        run(r#"(insert "abc") (undo-boundary)"#, &env, &ctx);
+        run("(history-previous)", &env, &ctx);
+        assert_eq!(contents(&ctx), "earlier");
+
+        run("(undo)", &env, &ctx);
+
+        assert_eq!(contents(&ctx), "abc");
+    }
+
+    /// With no prompt open, the chosen value goes nowhere: it used to replace
+    /// the text before point in whatever buffer was current, a file's
+    /// included, below the doors.
+    #[test]
+    fn a_completion_chosen_with_no_prompt_open_changes_nothing() {
+        let (ctx, env) = editor();
+        run(r#"(insert "hello world") (goto-char 6)"#, &env, &ctx);
+
+        assert_eq!(
+            run(r#"(minibuffer-choose-completion "x")"#, &env, &ctx),
+            LispExp::nil()
+        );
+        assert_eq!(text_of("*scratch*", &ctx), "hello world");
+    }
+
+    /// With a prompt open, the value goes into the prompt, whichever buffer is
+    /// current: a completion strip, or the Lisp that calls it, may be
+    /// elsewhere.
+    #[test]
+    fn a_completion_chosen_goes_into_the_prompt_whatever_buffer_is_current() {
+        let (ctx, env) = editor();
+        open("P", &env, &ctx);
+        run(r#"(insert "ab")"#, &env, &ctx);
+        ctx.set_current_buffer_name("*scratch*");
+
+        assert_eq!(
+            run(r#"(minibuffer-choose-completion "value")"#, &env, &ctx),
+            LispExp::string("value".into())
+        );
+        assert_eq!(text_of("*Minibuffer*", &ctx), "value");
+        assert_eq!(text_of("*scratch*", &ctx), "");
+    }
 }
