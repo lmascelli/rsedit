@@ -99,12 +99,18 @@ REPLACING
 
     Any other key stops too, and then does what it always does: Return
     stops and breaks the line, C-g stops and does nothing more. Each
-    replacement is undone on its own by C-/.
+    replacement answered with y is undone on its own by C-/; those made by
+    ! are undone together.
 
     Replacing goes from the cursor to the end of the buffer, or through the
-    region when there is one: go to the top first to do a whole buffer.
-    M-x replace-string and M-x replace-regexp replace every match there
-    without asking, and say how many they replaced.
+    region when there is one: go to the top first to do a whole buffer. A
+    match that would run past the end of the region is looked for within
+    it, so a+ in a region holding aa of aaaa finds aa. M-x replace-string
+    and M-x replace-regexp replace every match there without asking, say
+    how many they replaced, and are undone by one C-/.
+
+    A pattern that can match nothing, such as x*, matches between every
+    two characters, once each: replacing x* with - in abc gives -a-b-c-.
 
     The replacement takes the case of what it replaces: replacing colour
     with color turns Colour into Color and COLOUR into COLOR, and leaves

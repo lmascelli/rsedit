@@ -50,8 +50,10 @@ fn begin<B: BufferTrait>(
         return Ok(ELispExp::nil());
     }
     if !interactive {
-        let count = ctx.replace_rest();
-        ctx.end_replace(false);
+        ctx.replace_rest();
+        // The session's count, as every other way out says: it counts each
+        // replacement as it is made.
+        let count = ctx.end_replace(false);
         ctx.set_echo_message(&plural(count));
         return Ok(ELispExp::number(count as f64));
     }
@@ -141,7 +143,7 @@ primitive!(query_replace_regexp, args, env, ctx, {
 pub const REPLACE_STRING_DOC: &str = "(replace-string FROM TO): Replace every FROM with TO \
          without asking, from point to the end of the buffer, or through the region when the mark \
          is active. Return how many were replaced, or nil when there was none. Case is handled as \
-         by `query-replace'.";
+         by `query-replace', and one `undo' takes back every replacement.";
 
 primitive!(replace_string, args, env, ctx, {
     begin(args, env, ctx, false, false)
@@ -167,7 +169,7 @@ primitive!(replace_this, _args, env, ctx, {
         return Ok(ELispExp::nil());
     }
     ctx.clear_transient_keymap();
-    ctx.replace_this();
+    ctx.replace_this(true);
     ask(env, ctx)
 });
 

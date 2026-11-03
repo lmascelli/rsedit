@@ -82,7 +82,10 @@ impl Pattern {
     /// before LIMIT.
     ///
     /// LIMIT is what confines a replace to the region: the caller passes the
-    /// region's end rather than the buffer's.
+    /// region's end rather than the buffer's. A regexp is matched against the
+    /// text up to LIMIT, as Emacs matches against a search's bound, so that
+    /// `a+` finds the `aa` of a region that ends inside `aaaa` rather than
+    /// nothing; there `$` and `\b` see LIMIT as the end of the text.
     pub fn search_forward<B: BufferTrait>(
         &self,
         text: &B,
@@ -103,17 +106,15 @@ impl Pattern {
                     .map(|start| Match::literal(start, start + chars.len()))
             }
             Pattern::Regex(regex) => {
-                // `regex` matches a `&str`: the text is copied, once per call.
-                let haystack = text.to_string();
-                // `captures_at` rather than a slice: it starts at the given
-                // byte while still seeing what came before it, so `^` and a
-                // look-behind mean what they should.
+                // `regex` matches a `&str`: the text is copied, once per call,
+                // and only up to LIMIT.
+                let haystack = text.slice(0, limit);
+                // `captures_at` rather than a slice from FROM: it starts at the
+                // given byte while still seeing what came before it, so `^`
+                // and a look-behind mean what they should.
                 let byte_from = char_to_byte(&haystack, from)?;
                 let captures = regex.captures_at(&haystack, byte_from)?;
-                let found = to_match(&haystack, &captures);
-                // TODO(RIC-4): a match running past LIMIT is dropped, even when
-                // a shorter one would fit.
-                (found.end <= limit).then_some(found)
+                Some(to_match(&haystack, &captures))
             }
         }
     }
@@ -138,22 +139,31 @@ impl Pattern {
                     .find(|&start| matches_at(text, start, chars, *fold))
                     .map(|start| Match::literal(start, start + chars.len()))
             }
-            Pattern::Regex(_) => {
+            Pattern::Regex(regex) => {
                 // The engine only searches forwards, so the last match is
-                // found by walking every one and keeping the final one.
-                // TODO(RIC-2): each step copies the text again, which makes
-                // the walk quadratic in the length of the text.
+                // found by walking every one and keeping the final one: over
+                // one copy of the text up to TO, in one pass, with the offsets
+                // of the one kept turned into characters at the end. A copy
+                // per step made the walk quadratic in the length of the text.
+                let haystack = text.slice(0, to);
+                let mut at = char_to_byte(&haystack, floor)?;
                 let mut best = None;
-                let mut at = floor;
-                while let Some(found) = self.search_forward(text, at, to) {
-                    at = if found.is_empty() {
-                        found.end + 1
-                    } else {
-                        found.end
+                while at <= haystack.len() {
+                    let Some(captures) = regex.captures_at(&haystack, at) else {
+                        break;
                     };
-                    best = Some(found);
+                    let whole = captures.get(0).expect("a capture set has a group zero");
+                    at = if whole.is_empty() {
+                        match haystack[whole.end()..].chars().next() {
+                            Some(c) => whole.end() + c.len_utf8(),
+                            None => haystack.len() + 1,
+                        }
+                    } else {
+                        whole.end()
+                    };
+                    best = Some(captures);
                 }
-                best
+                best.map(|captures| to_match(&haystack, &captures))
             }
         }
     }
@@ -221,6 +231,10 @@ struct Cursor<'a> {
     line: usize,
     /// Byte offset of the first character of the line the cursor is on.
     line_start: usize,
+    /// Characters between the start of the line and the cursor, counted as
+    /// the cursor moves: counted again at every match, one long line with
+    /// many matches cost its length once per match.
+    column: usize,
 }
 
 impl<'a> Cursor<'a> {
@@ -232,6 +246,7 @@ impl<'a> Cursor<'a> {
             chars: 0,
             line: 1,
             line_start: 0,
+            column: 0,
         }
     }
 
@@ -242,6 +257,9 @@ impl<'a> Cursor<'a> {
             if c == '\n' {
                 self.line += 1;
                 self.line_start = self.byte + at + c.len_utf8();
+                self.column = 0;
+            } else {
+                self.column += 1;
             }
         }
         self.byte = byte;
@@ -250,9 +268,7 @@ impl<'a> Cursor<'a> {
     /// Returns how many characters lie between the start of this line and the
     /// cursor.
     fn column(&self) -> usize {
-        // TODO(RIC-4): counted from the line's start at every match, which is
-        // quadratic on one long line with many matches.
-        self.haystack[self.line_start..self.byte].chars().count()
+        self.column
     }
 
     /// Returns the line the cursor is on, without its newline.

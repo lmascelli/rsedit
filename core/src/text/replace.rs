@@ -204,7 +204,10 @@ impl Replace {
     /// by the difference.
     ///
     /// Past the replacement rather than the match, so that a replacement that
-    /// contains what it replaced is not replaced again.
+    /// contains what it replaced is not replaced again; and past one more
+    /// character after an empty match, as in Emacs, so that `x*` replaced by
+    /// `-` in `abc` gives `-a-b-c-` and not the same empty match found again
+    /// just after its replacement.
     pub fn accept(&mut self, new_len: usize) {
         let Some(found) = self.found.take() else {
             return;
@@ -215,10 +218,8 @@ impl Replace {
             limit: self.limit,
         });
         self.limit = (self.limit + new_len).saturating_sub(old_len);
-        // TODO(RIC-1): an empty match replaced by something resumes just after
-        // the replacement, where the same empty match is found again.
-        self.from = if new_len == 0 && old_len == 0 {
-            found.start + 1
+        self.from = if found.is_empty() {
+            found.start + new_len + 1
         } else {
             found.start + new_len
         };
@@ -250,10 +251,10 @@ impl Replace {
         // Past a real match, and one character past an empty one -- which is
         // the only way to leave a pattern like `a*` behind, since it matches
         // at every position including the one just declined.
-        self.from = if found.end > found.start {
-            found.end
-        } else {
+        self.from = if found.is_empty() {
             found.start + 1
+        } else {
+            found.end
         };
     }
 }

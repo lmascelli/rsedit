@@ -100,7 +100,13 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Replaces the match being offered, and finds the next; false when there
     /// was nothing to replace.
-    pub(crate) fn replace_this(&self) -> bool {
+    ///
+    /// With ALONE, the replacement is an undo group of its own, so that
+    /// `replace-back`, an undo, takes back exactly it: what an answer to a
+    /// question wants. Without, as for every replacement `replace_rest`
+    /// makes, it joins the command's group, and one undo takes back all of a
+    /// `replace-string`.
+    pub(crate) fn replace_this(&self, alone: bool) -> bool {
         let Some(found) = self.runtime(|runtime| {
             let session = runtime.replace()?;
             let found = session.found.clone()?;
@@ -113,14 +119,12 @@ impl<B: BufferTrait> EditorState<B> {
         let text = expand_replacement(&replacement, &found, &matched, preserve_case);
         let new_len = text.chars().count();
 
-        // An undo entry of its own: stepping back is an undo and a search
-        // again.
-        // TODO(RIC-3): for `replace-string` and `replace-regexp` too, whose
-        // replacements are then undone one by one.
         self.with_current_buffer_mut(|buf| {
             let _ = edits::delete_range(buf, found.start, found.end);
             let _ = edits::insert_text(buf, found.start, &text);
-            buf.undo.boundary();
+            if alone {
+                buf.undo.boundary();
+            }
         });
 
         self.runtime_mut(|runtime| {
@@ -148,15 +152,17 @@ impl<B: BufferTrait> EditorState<B> {
         moved
     }
 
-    /// Replaces this match and every one after it, asking nothing, and
-    /// returns how many.
+    /// Replaces this match and every one after it, asking nothing, in one
+    /// undo group, and returns how many.
     pub(crate) fn replace_rest(&self) -> usize {
-        // Bounded by the buffer's length: a pattern and a replacement that grow
-        // the text for ever -- `x` becoming `xx` -- would be an editor that
-        // never came back. No honest replace gets near the bound.
+        // Bounded by the buffer's length, and checked before each replacement
+        // rather than after: a pattern and a replacement that grow the text
+        // for ever would be an editor that never came back. None does, since
+        // each replacement moves the scan past at least one character of the
+        // text as it was; `x*` in `abc` is the most, four.
         let ceiling = self.with_current_buffer(|buf| buf.text.len()) + 1;
         let mut count = 0;
-        while self.replace_this() && count < ceiling {
+        while count < ceiling && self.replace_this(false) {
             count += 1;
         }
         count

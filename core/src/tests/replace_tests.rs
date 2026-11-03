@@ -138,6 +138,32 @@ mod tests {
         );
     }
 
+    /// After an empty match the scan resumed just after its replacement,
+    /// where the same empty match was found again: `-----abc`, and a count
+    /// that said four after five.
+    #[test]
+    fn an_empty_match_is_replaced_once_between_every_two_characters() {
+        let (ctx, env) = editor("abc");
+        assert_eq!(
+            run(r#"(replace-regexp "x*" "-")"#, &env, &ctx),
+            LispExp::Number(4.0)
+        );
+        assert_eq!(text(&ctx), "-a-b-c-");
+        assert_eq!(ctx.get_echo_message(), "Replaced 4 occurrences");
+    }
+
+    /// An empty match replaced by nothing moves on as one replaced by
+    /// something does.
+    #[test]
+    fn an_empty_match_replaced_by_nothing_changes_nothing_and_ends() {
+        let (ctx, env) = editor("abc");
+        assert_eq!(
+            run(r#"(replace-regexp "x*" "")"#, &env, &ctx),
+            LispExp::Number(4.0)
+        );
+        assert_eq!(text(&ctx), "abc");
+    }
+
     #[test]
     fn skipping_an_empty_match_moves_on_from_it() {
         // Declining has to force the scan forward for the same reason
@@ -196,6 +222,22 @@ mod tests {
             LispExp::Number(2.0)
         );
         assert_eq!(text(&ctx), "dog dog cat");
+    }
+
+    /// A match running past the region's end was dropped, and the region,
+    /// which holds `aa`, said it held no match.
+    #[test]
+    fn a_region_ending_inside_a_match_still_finds_what_fits() {
+        let (ctx, env) = editor("aaaa");
+        ctx.with_current_buffer_mut(|buf| {
+            buf.mark = Some(crate::buffer::Mark::new(0));
+            buf.text.cursor_move(0, 2);
+        });
+        assert_eq!(
+            run(r#"(replace-regexp "a+" "X")"#, &env, &ctx),
+            LispExp::Number(1.0)
+        );
+        assert_eq!(text(&ctx), "Xaa");
     }
 
     #[test]
@@ -394,6 +436,34 @@ mod tests {
             run(r#"'(0 3 "cat" "dog")"#, &env, &ctx),
             "and the first one is offered again"
         );
+    }
+
+    /// Each replacement was an undo group of its own, so one undo after
+    /// `replace-string` took back only the last.
+    #[test]
+    fn one_undo_takes_back_a_whole_replace_string() {
+        let (ctx, env) = editor("aaa");
+        assert_eq!(
+            run(r#"(replace-string "a" "b")"#, &env, &ctx),
+            LispExp::Number(3.0)
+        );
+        assert_eq!(text(&ctx), "bbb");
+        run("(undo)", &env, &ctx);
+        assert_eq!(text(&ctx), "aaa");
+    }
+
+    /// Answered one at a time, the replacements stay one undo each: that is
+    /// what `replace-back` takes back.
+    #[test]
+    fn replacements_answered_one_at_a_time_undo_one_at_a_time() {
+        let (ctx, env) = editor("aaa");
+        run(r#"(query-replace "a" "b")"#, &env, &ctx);
+        run("(replace-this)", &env, &ctx);
+        run("(replace-this)", &env, &ctx);
+        run("(replace-done)", &env, &ctx);
+        assert_eq!(text(&ctx), "bba");
+        run("(undo)", &env, &ctx);
+        assert_eq!(text(&ctx), "baa");
     }
 
     #[test]

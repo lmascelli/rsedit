@@ -2379,7 +2379,8 @@ Tre decisioni stanno in questa funzione:
   finirebbe. Rifiutandolo qui nessun chiamante deve ricordarsi il controllo.
   Un'espressione che #emph[può] corrispondere al vuoto (`x*`) resta invece
   ammessa, ed è compito di chi cicla scavalcare le corrispondenze vuote
-  (`Match::is_empty`) #rapporto("RIC-1").
+  (`Match::is_empty`): la sostituzione riprende un carattere dopo, come in
+  Emacs, e `x*` sostituito da `-` in `abc` dà `-a-b-c-`.
 - #emph[`multi_line(true)`]: `^` e `$` indicano inizio e fine di #emph[riga],
   come si aspetta chi scrive un'espressione in un editor. Senza, `^;;`
   troverebbe al massimo una corrispondenza in tutto il buffer.
@@ -2398,34 +2399,38 @@ della regione invece di quella del buffer.
 - #emph[Letterale]: prova ogni inizio da `from` a `limit - len` con
   `matches_at`, che legge i caratteri uno per uno con `BufferTrait::at`. Non
   alloca nulla: un passaggio, nessuna copia.
-- #emph[Espressione]: copia il buffer in una `String` (il motore vuole una
-  `&str`), converte `from` in byte e chiama `captures_at`. Si usa
-  `captures_at` e non una fetta del testo perché la ricerca deve vedere ciò
-  che precede il punto di partenza: altrimenti ogni ripresa sembrerebbe
-  l'inizio di una riga per `^` e per i look-behind. La corrispondenza trovata
-  è scartata se finisce oltre il limite, anche quando ne esisterebbe una più
-  corta che ci sta #rapporto("RIC-4").
-
-#estratto("text/search.rs")[
-```rust
-Pattern::Regex(_) => {
-    let mut best = None;
-    let mut at = floor;
-    while let Some(found) = self.search_forward(text, at, to) {
-        at = if found.is_empty() { found.end + 1 } else { found.end };
-        best = Some(found);
-    }
-    best
-}
-```
-]
+- #emph[Espressione]: copia il buffer #emph[fino al limite] in una `String`
+  (il motore vuole una `&str`), converte `from` in byte e chiama
+  `captures_at`. Si usa `captures_at` e non una fetta che comincia in `from`
+  perché la ricerca deve vedere ciò che precede il punto di partenza:
+  altrimenti ogni ripresa sembrerebbe l'inizio di una riga per `^`. La fetta
+  finisce invece al limite, come in Emacs una ricerca con BOUND: `a+` trova
+  l'`aa` di una regione che finisce dentro `aaaa`, e lì `$` e `\b` vedono il
+  limite come la fine del testo.
 
 `search_backward(text, to, floor)` cerca l'ultima corrispondenza che finisce
 entro `to` e comincia da `floor` in poi. Per i letterali prova gli inizi
 all'indietro. Per le espressioni il motore sa cercare solo in avanti, quindi
-cammina tutte le corrispondenze da `floor` e tiene l'ultima: ogni passo è una
-`search_forward`, che ricopia il buffer, e il costo totale cresce con il
-quadrato del testo #rapporto("RIC-2").
+cammina tutte le corrispondenze da `floor` e tiene l'ultima, su una sola copia
+del testo fino a `to` e in un solo passaggio; gli offset di quella tenuta
+diventano caratteri alla fine. Prima ogni passo era una `search_forward`, che
+ricopiava il buffer, e su 120 000 caratteri con 40 000 corrispondenze la
+ricerca chiedeva 123 secondi nella build di debug; ora 0,03.
+
+#estratto("text/search.rs")[
+```rust
+let haystack = text.slice(0, to);
+let mut at = char_to_byte(&haystack, floor)?;
+let mut best = None;
+while at <= haystack.len() {
+    let Some(captures) = regex.captures_at(&haystack, at) else { break };
+    let whole = captures.get(0).expect("a capture set has a group zero");
+    at = if whole.is_empty() { /* un carattere dopo */ } else { whole.end() };
+    best = Some(captures);
+}
+best.map(|captures| to_match(&haystack, &captures))
+```
+]
 
 === `scan`: tutte le corrispondenze in un passaggio
 
@@ -2440,11 +2445,16 @@ caratteri e righe man mano:
 ```rust
 struct Cursor<'a> {
     haystack: &'a str, byte: usize, chars: usize, line: usize, line_start: usize,
+    column: usize,
 }
 fn advance_to(&mut self, byte: usize) {          // byte >= self.byte, sempre
     for (at, c) in self.haystack[self.byte..byte].char_indices() {
         self.chars += 1;
-        if c == '\n' { self.line += 1; self.line_start = self.byte + at + c.len_utf8(); }
+        if c == '\n' {
+            self.line += 1; self.line_start = self.byte + at + c.len_utf8(); self.column = 0;
+        } else {
+            self.column += 1;
+        }
     }
     self.byte = byte;
 }
@@ -2456,9 +2466,11 @@ suo inizio, legge riga e colonna, prende il testo della riga (memorizzato, così
 venti corrispondenze sulla stessa riga non la ricostruiscono venti volte) e
 converte inizio e fine in caratteri. Poi riprende dalla fine della
 corrispondenza, o un carattere dopo se era vuota. Il risultato è una `Scan`:
-il vettore dei `Found` e `truncated`, vero se si è fermata per `limit`. La
-colonna invece è ricalcolata contando dall'inizio della riga a ogni
-corrispondenza #rapporto("RIC-4").
+il vettore dei `Found` e `truncated`, vero se si è fermata per `limit`. Anche
+la colonna è contata man mano che il cursore avanza, e non dall'inizio della
+riga a ogni corrispondenza. Resta però che ogni `Found` porta una copia della
+sua riga (`line_text`): una riga lunghissima con molte corrispondenze costa la
+sua lunghezza per ognuna, in tempo e in memoria.
 
 #ref-table(
   columns: (2.6cm, 1fr),
@@ -2581,7 +2593,7 @@ legge una risposta.
   columns: (3.0cm, 1fr),
   header: ([Verbo], [Effetto sulla sessione]),
   [`seek(text)`], [`found = search_forward(text, from, limit)`; se non trova nulla, `done = true`.],
-  [`accept(new_len)`], [La corrispondenza è stata sostituita da `new_len` caratteri. Registra `Step { from: start, limit }` in `history`; sposta `limit` della differenza di lunghezza; riprende da `start + new_len` (o `start + 1` se corrispondenza e sostituzione erano entrambe vuote) #rapporto("RIC-1"). Incrementa `replaced`.],
+  [`accept(new_len)`], [La corrispondenza è stata sostituita da `new_len` caratteri. Registra `Step { from: start, limit }` in `history`; sposta `limit` della differenza di lunghezza; riprende da `start + new_len`, o da `start + new_len + 1` se la corrispondenza era vuota, come in Emacs. Incrementa `replaced`.],
   [`decline()`], [Salta la corrispondenza: riprende dalla sua fine, o un carattere dopo se era vuota.],
   [`unaccept()`], [Riprende l'ultimo `Step`: `from` e `limit` tornano com'erano, `replaced` cala. Il testo lo rimette a posto il chiamante con l'undo del buffer, perché la sessione non sa nulla dei buffer.],
 )
@@ -2631,11 +2643,15 @@ maiuscole) il risultato viene poi riscritto secondo `Casing::of(matched)`:
 )
 
 Sul lato dell'editor, `replace_this` cancella la corrispondenza e inserisce
-l'espansione con le due porte (`delete_range`, `insert_text`), chiude un gruppo
-di undo #rapporto("RIC-3"), chiama `accept` e poi cerca la successiva.
-`replace_rest` (il `!` di `query-replace`, e tutto `replace-string`) ripete
-`replace_this` con un tetto di `len + 1` giri, che è l'unica cosa che ferma
-il caso delle corrispondenze vuote #rapporto("RIC-1").
+l'espansione con le due porte (`delete_range`, `insert_text`), chiama `accept`
+e poi cerca la successiva. Con `alone`, quando risponde a una domanda
+(`replace-this`), chiude un gruppo di undo: `replace-back`, che è un undo,
+toglie esattamente quella sostituzione. `replace_rest` (il `!` di
+`query-replace`, e tutto `replace-string`) ripete `replace_this` senza
+chiudere gruppi, così un undo toglie l'intera serie, e conta le sostituzioni
+fatte. Il tetto di `len + 1` giri è controllato prima di ogni sostituzione;
+nessuna sostituzione lo raggiunge davvero, perché ognuna fa avanzare la
+scansione di almeno un carattere del testo originale.
 
 == Il kill ring <kill-ring>
 

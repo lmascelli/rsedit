@@ -233,6 +233,86 @@ mod tests {
         assert_eq!(scan.found[19_999].line, 20_000, "the line count kept up");
     }
 
+    /// The column is counted as the scan goes, not from the start of the line
+    /// at every match, which cost one long line with many matches its length
+    /// once per match: right past characters that are not ASCII, and from 0
+    /// again on the next line.
+    #[test]
+    fn columns_on_one_long_line_are_counted_as_the_scan_goes() {
+        let line = "é a ".repeat(2_000);
+        let haystack = format!("first\n{line}\nend a");
+        let pattern = Pattern::new("a", false, false).expect("pattern");
+        let scan = pattern.scan(&haystack, 100_000);
+        assert_eq!(scan.found.len(), 2_001);
+        assert_eq!(scan.found[0].column, 2);
+        assert_eq!(scan.found[1_999].column, 1_999 * 4 + 2);
+        assert_eq!(
+            (scan.found[2_000].line, scan.found[2_000].column),
+            (3, 4),
+            "a new line starts the count again"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Searching backward, and up to a limit
+    // ----------------------------------------------------------------
+
+    /// Every step of the walk copied the text again: `C-M-r` on a file of
+    /// some hundred KB with many matches held the editor for minutes a key.
+    #[test]
+    fn a_regexp_search_backward_is_one_pass() {
+        let buffer = GapBuffer::from("ab ".repeat(40_000).as_str());
+        let pattern = Pattern::new("b", true, false).expect("pattern");
+        let started = std::time::Instant::now();
+        let found = pattern
+            .search_backward(&buffer, buffer.len(), 0)
+            .expect("a match");
+        let took = started.elapsed();
+        assert_eq!((found.start, found.end), (119_998, 119_999));
+        assert!(
+            took < std::time::Duration::from_secs(5),
+            "{} characters took {took:?}",
+            buffer.len()
+        );
+    }
+
+    /// A match running past the limit was dropped, or stopped the backward
+    /// walk, though a shorter one fitted.
+    #[test]
+    fn a_regexp_finds_what_fits_before_the_limit() {
+        let buffer = GapBuffer::from("aaaa");
+        let pattern = Pattern::new("a+", true, false).expect("pattern");
+        let forward = pattern.search_forward(&buffer, 0, 2).expect("a match");
+        assert_eq!((forward.start, forward.end), (0, 2));
+        let backward = pattern.search_backward(&buffer, 2, 0).expect("a match");
+        assert_eq!((backward.start, backward.end), (0, 2));
+        let words = GapBuffer::from("ab ab ab");
+        let ab = Pattern::new("ab", true, false).expect("pattern");
+        let last = ab.search_backward(&words, 7, 0).expect("a match");
+        assert_eq!(
+            (last.start, last.end),
+            (3, 5),
+            "the one cut by the limit does not fit"
+        );
+    }
+
+    /// The groups and offsets of the match kept are those of the text, in
+    /// characters, past text that is not ASCII.
+    #[test]
+    fn a_regexp_search_backward_answers_in_characters() {
+        let buffer = GapBuffer::from("é(1) è(22) x");
+        let pattern = Pattern::new(r"\((\d+)\)", true, false).expect("pattern");
+        let found = pattern
+            .search_backward(&buffer, buffer.len(), 0)
+            .expect("a match");
+        assert_eq!((found.start, found.end), (6, 10));
+        assert_eq!(found.groups[1].as_deref(), Some("22"));
+        assert!(
+            pattern.search_backward(&buffer, 5, 2).is_none(),
+            "(1) starts before the floor"
+        );
+    }
+
     // ----------------------------------------------------------------
     // What Lisp sees
     // ----------------------------------------------------------------
