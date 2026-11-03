@@ -1,3 +1,4 @@
+mod atomic_write_tests;
 mod autosave_tests;
 mod background_tests;
 mod balance_point_tests;

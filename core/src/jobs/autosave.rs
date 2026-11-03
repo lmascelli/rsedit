@@ -213,8 +213,6 @@ impl<B: BufferTrait> EditorState<B> {
         })
     }
 
-    // TODO(FIL-2): the copy is written in place, and an error halfway leaves
-    // it cut short.
     // TODO(FIL-5): a failed write is recorded as tried, and is not tried again
     // until the buffer changes.
     /// Writes PENDING, with no lock held, and records its version against the
@@ -228,7 +226,9 @@ impl<B: BufferTrait> EditorState<B> {
         } = pending;
         // With no lock held: a slow disk must not stop the threads that walk
         // the buffer.
-        if let Err(why) = std::fs::write(&where_to, text) {
+        // Whole or not at all, as a save: a copy cut short would offer
+        // `recover-file` half of the work.
+        if let Err(why) = crate::buffer::disk::write_atomically(&where_to, text.as_bytes()) {
             // Said once: the version recorded below keeps the complaint from
             // coming back until the buffer changes.
             self.log_diagnostic(&format!(

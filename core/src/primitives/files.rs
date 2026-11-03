@@ -9,8 +9,6 @@ use crate::jobs::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::args;
 use risp::eval;
 
-// TODO(FIL-2): the file is written in place, and a write that stops halfway
-// leaves it cut short.
 // TODO(FIL-4): an edit made while the text is being written is marked saved
 // with the rest.
 /// Writes NAME's buffer to the file it is visiting, and answers false when it
@@ -37,7 +35,8 @@ pub(super) fn write_buffer<B: BufferTrait>(
         Some(bytes) => bytes,
         None => return false,
     };
-    match std::fs::write(&path, bytes) {
+    // Whole or not at all: a write that stops halfway leaves the old file.
+    match crate::buffer::disk::write_atomically(&path, &bytes) {
         Ok(()) => {
             // Stamped after the write, or the file just made would differ from
             // what is remembered of it and the editor would report a conflict
@@ -397,7 +396,6 @@ pub const WRITE_FILE_DOC: &str = "(write-file PATH): Write the current buffer to
          Example:\n\
          (write-file \"~/notes-v2.txt\")";
 
-// TODO(FIL-2): the file is written in place, as by `save-buffer`.
 // TODO(FIL-4): an edit made during the write is marked saved, as by
 // `save-buffer`.
 primitive!(write_file, args, env, ctx, {
@@ -430,7 +428,7 @@ primitive!(write_file, args, env, ctx, {
     let Some(bytes) = encode_for(ctx, &path, &content, coding) else {
         return Ok(ELispExp::nil());
     };
-    if let Err(why) = std::fs::write(&path, bytes) {
+    if let Err(why) = crate::buffer::disk::write_atomically(&path, &bytes) {
         // Nothing has been changed yet, deliberately: a failed write leaves
         // the buffer visiting whatever it was visiting before, so the next
         // `C-x C-s` still goes somewhere that works.

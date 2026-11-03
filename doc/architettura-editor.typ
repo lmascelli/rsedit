@@ -2060,9 +2060,20 @@ riconosce la sua codifica (@codifiche) e non fallisce per ciò che contiene; un
 file che non si può leggere affatto lo dice nell'area messaggi e nel log.
 Le primitive sono in `primitives/files.rs`, e `save-some-buffers` e l'uscita,
 che salvano con lo stesso `write_buffer`, in `primitives/quit.rs` (@uscire).
-Salvare scrive l'intero testo, nella codifica del buffer, con `std::fs::write`
-(sul posto, senza file temporaneo #rapporto("FIL-2")) e aggiorna il timbro,
-altrimenti ogni salvataggio sembrerebbe la scrittura di qualcun altro. Ogni
+Salvare scrive l'intero testo, nella codifica del buffer, con
+`disk::write_atomically`, e aggiorna il timbro, altrimenti ogni salvataggio
+sembrerebbe la scrittura di qualcun altro. `write_atomically` scrive il testo
+in un file nuovo accanto al vecchio (`create_new`, con un nome nascosto che
+nessun altro ha), gli dà i permessi del vecchio, lo porta sul disco con
+`sync_all` e lo rinomina sul vecchio, un passo che il sistema fa tutto
+insieme; poi porta sul disco la directory. Una scrittura che si ferma a metà
+lascia dunque il file vecchio, e un errore prima del rename toglie il file
+nuovo. Dove un rename cambierebbe che cosa è il file, scrive sul posto, come
+`std::fs::write`: attraverso un collegamento simbolico scrive il file a cui
+punta, e il collegamento resta; un file con altri nomi (collegamenti fisici),
+uno di un altro proprietario o gruppo, e uno in una directory in cui l'editor
+non può scrivere si scrivono sul posto, perché un file nuovo non avrebbe gli
+altri nomi, sarebbe di chi scrive, o non si potrebbe creare. Ogni
 salvataggio, che venga da `save-buffer`, da `save-some-buffers` o da
 `write-file`, scrive l'esito, riuscito o fallito, nell'area messaggi e nel
 log. Una modifica fatta mentre il file si scrive può restare non
@@ -3922,8 +3933,8 @@ uno con modifiche, o che cambia mentre il file si legge, si segna come superato
 (`stale`), e il salvataggio successivo chiede. Il salvataggio automatico scrive
 una copia del buffer, `#nome#` accanto al file o in `auto-save-directory` con il
 percorso appiattito nel nome #rapporto("FIL-6"), quando la versione è cambiata
-dall'ultima copia; la scrive sul posto #rapporto("FIL-2"), e un tentativo
-fallito conta come fatto #rapporto("FIL-5"). È la copia che `recover-file`
+dall'ultima copia; la scrive con `write_atomically`, come un salvataggio
+(@file-su-disco), e un tentativo fallito conta come fatto #rapporto("FIL-5"). È la copia che `recover-file`
 rilegge.
 
 === I comandi di shell e le ricerche <comandi-shell>

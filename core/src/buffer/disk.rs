@@ -1,9 +1,13 @@
 //! What the file a buffer is visiting looked like when the editor last read
 //! or wrote it: a stamp of its modification time and length, taken with one
-//! `stat` and compared for difference. The file watcher compares them.
+//! `stat` and compared for difference. The file watcher compares them. And
+//! how a file is written: whole, or not at all.
 //!
 //! Design: `doc/architettura-editor.typ, <file-su-disco>`.
-use std::path::Path;
+use std::fs::{File, Metadata, OpenOptions};
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
 /// A file's modification time and length, as of some moment.
@@ -64,4 +68,136 @@ pub fn compare(recorded: Option<FileStamp>, found: Option<FileStamp>) -> OnDisk 
             }
         }
     }
+}
+
+/// Writes CONTENTS to the file at PATH so that what is there afterwards is the
+/// old file or the new one, never one cut short: a write that stops halfway --
+/// a full disk, the editor killed, the power gone -- leaves the old file.
+///
+/// The new text goes into a file of its own beside the old one, which is
+/// given the old one's permissions, flushed to the disk, and then renamed
+/// over it, a step the system does whole. Where a rename would change what
+/// the file is, it is written in place instead, as `std::fs::write` does:
+///
+/// - through a symbolic link, the file it names is written, and the link
+///   stays a link;
+/// - a file with other names (hard links) is written in place, or the other
+///   names would keep the old text;
+/// - so is one owned by another user or group, which a new file would not be;
+/// - and so is one in a directory the editor may not write in, where no new
+///   file can be made beside it.
+pub fn write_atomically(path: impl AsRef<Path>, contents: &[u8]) -> std::io::Result<()> {
+    let path = path.as_ref();
+    let target = match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => match std::fs::canonicalize(path) {
+            Ok(target) => target,
+            // A link to nothing yet: writing through it makes the file.
+            Err(_) => return std::fs::write(path, contents),
+        },
+        _ => path.to_path_buf(),
+    };
+    let existing = std::fs::metadata(&target).ok();
+    if existing.as_ref().is_some_and(has_other_names) {
+        return std::fs::write(&target, contents);
+    }
+    let directory = match target.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let (temporary, file) = match create_beside(&directory, &target) {
+        Ok(created) => created,
+        Err(why) if why.kind() == ErrorKind::PermissionDenied => {
+            return std::fs::write(&target, contents);
+        }
+        Err(why) => return Err(why),
+    };
+    if let Some(existing) = &existing
+        && !same_owner(existing, &file)
+    {
+        drop(file);
+        let _ = std::fs::remove_file(&temporary);
+        return std::fs::write(&target, contents);
+    }
+    let written =
+        fill(file, contents, existing.as_ref()).and_then(|()| std::fs::rename(&temporary, &target));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written?;
+    sync_directory(&directory);
+    Ok(())
+}
+
+/// Tells the files [`create_beside`] makes apart within one process.
+static NEXT_TEMPORARY: AtomicUsize = AtomicUsize::new(0);
+
+/// Makes a new, empty file in DIRECTORY for the next contents of TARGET, named
+/// after it, hidden, and never one that is there already.
+fn create_beside(directory: &Path, target: &Path) -> std::io::Result<(PathBuf, File)> {
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    loop {
+        let number = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
+        let temporary = directory.join(format!(".{name}.{}-{number}.tmp", std::process::id()));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => return Ok((temporary, file)),
+            Err(why) if why.kind() == ErrorKind::AlreadyExists => continue,
+            Err(why) => return Err(why),
+        }
+    }
+}
+
+/// Writes CONTENTS into FILE, gives it the permissions of the file it is to
+/// replace, if there is one, and flushes it to the disk. Closed before it
+/// returns: a file still open cannot be renamed over another on Windows.
+fn fill(mut file: File, contents: &[u8], existing: Option<&Metadata>) -> std::io::Result<()> {
+    file.write_all(contents)?;
+    if let Some(existing) = existing {
+        file.set_permissions(existing.permissions())?;
+    }
+    file.sync_all()
+}
+
+/// Answers whether the file METADATA describes has names besides this one.
+#[cfg(unix)]
+fn has_other_names(metadata: &Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    metadata.nlink() > 1
+}
+
+#[cfg(not(unix))]
+fn has_other_names(_metadata: &Metadata) -> bool {
+    false
+}
+
+/// Answers whether the new FILE has the owner and the group of the file
+/// EXISTING describes, which it must have to take its place.
+#[cfg(unix)]
+fn same_owner(existing: &Metadata, file: &File) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata()
+        .is_ok_and(|new| new.uid() == existing.uid() && new.gid() == existing.gid())
+}
+
+#[cfg(not(unix))]
+fn same_owner(_existing: &Metadata, _file: &File) -> bool {
+    true
+}
+
+/// Flushes DIRECTORY's own entries, so that the rename is on the disk too.
+/// Best effort: where a directory cannot be opened, as on Windows, the rename
+/// is still done.
+fn sync_directory(directory: &Path) {
+    #[cfg(unix)]
+    if let Ok(handle) = File::open(directory) {
+        let _ = handle.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = directory;
 }

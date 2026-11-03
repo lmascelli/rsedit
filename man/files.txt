@@ -74,6 +74,12 @@ SAVING
     name, its mode is chosen again from that name, and the old file is left
     as it was. C-x C-w refuses a path another buffer is already visiting.
 
+    A save is whole or not at all: the new text is written beside the file,
+    with its permissions, and only then takes its place, so a save that
+    stops halfway -- a full disk, the power gone -- leaves the file as it
+    was. A symbolic link stays a link, and a file with other names, or
+    owned by somebody else, is written in place so that it stays so.
+
     M-x save-some-buffers offers each buffer with unsaved changes that is
     visiting a file:
 
