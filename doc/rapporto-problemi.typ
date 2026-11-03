@@ -408,7 +408,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-AVV-2-7",
+    commit: "7433e5d",
     titolo: [Gli errori di sintassi nei file Lisp caricati vengono ignorati in silenzio],
   ),
   (
@@ -451,7 +451,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-AVV-2-7",
+    commit: "7433e5d",
     titolo: [Un errore in `init.lisp`, o in un modulo che richiede, impedisce all'editor di partire],
   ),
   (
