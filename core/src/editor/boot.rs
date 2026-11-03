@@ -401,8 +401,9 @@ pub fn create_global_env<B: BufferTrait>()
     // the configuration that requires them.
     set_search_paths(&editor_state, &env, config_dir.as_deref());
 
-    // TODO(AVV-5): written only when missing, so one written by an older
-    // editor never loads the modules added since.
+    // Written only when missing: from then on the file is the user's. What
+    // the editor ships is in `default-configuration`, which the file requires
+    // and which comes with each version, so a module added later reaches it.
     if !user_config_path.as_os_str().is_empty()
         && !user_config_path.exists()
         && let Err(err) = fs::write(&user_config_path, DEFAULT_INIT_LISP)

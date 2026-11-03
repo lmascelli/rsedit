@@ -22,6 +22,10 @@ mod tests {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
+        // On here, not left to the configuration, which turns it on from a
+        // module a test binary does not have beside it: the clicks below are
+        // about hints, not about how the editor is configured.
+        env.set_variable("mouse-mode".into(), LispExp::t());
         (ctx, env)
     }
 

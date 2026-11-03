@@ -829,18 +829,25 @@ mod tests {
     // ----------------------------------------------------------------
 
     /// What the editor writes for somebody with no configuration loads into an
-    /// editor with nothing else in it.
+    /// editor with nothing else in it, and so does `default-configuration`,
+    /// which it requires, and which turns the mouse on.
     ///
     /// `create_global_env` evaluates that file with `?`, so anything it raises
-    /// takes the editor down; and the modules it loads with `eval-file` are not
-    /// always there -- a test binary has no `data/lisp` beside it. Without
-    /// them `defcommand` is not a macro, and a form written with it is an
-    /// ordinary call, which raises. So nothing is loaded here first.
+    /// takes the editor down; and the modules it loads are not always there --
+    /// a test binary has no `data/lisp` beside it, and each `require` answers
+    /// nil. Without them `defcommand` is not a macro, and a form written with
+    /// it is an ordinary call, which raises. So nothing is loaded here first.
     #[test]
     fn the_default_configuration_loads_into_a_bare_editor() {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         eval_str(DEFAULT_INIT_LISP, &env, &ctx)
-            .expect("the default configuration must load with no modules present");
+            .expect("the default init.lisp must load with no modules present");
+        eval_str(
+            &crate::tests::shipped::module_source("default-configuration"),
+            &env,
+            &ctx,
+        )
+        .expect("default-configuration must load with no modules present");
         assert!(
             env.get_variable("mouse-mode")
                 .is_some_and(|value| !value.is_nil()),

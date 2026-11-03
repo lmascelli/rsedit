@@ -12,10 +12,12 @@ DESCRIPTION
     Lisp.
 
 MODULES
-    Loaded by your init.lisp with `require', each after the modules it
-    needs. Comment one out and the editor comes up without it, missing
-    exactly that feature, unless a module still loaded needs it. Plugins,
-    modules written by others, are loaded the same way: see `plugins'.
+    Loaded, in this order, by default-configuration, the one module your
+    init.lisp requires; each after the modules it needs. Name one in
+    `default-configuration-skip' and the editor comes up without it,
+    missing exactly that feature, unless a module still loaded needs it.
+    Plugins, modules written by others, are loaded with `require' in
+    init.lisp: see `plugins'.
 
     commands             defcommand, and the command registry's Lisp side
     debug                message, and the *Messages* buffer
@@ -44,6 +46,8 @@ MODULES
     theme                C-c t, and how faces are drawn
     vim                  modal editing, off until M-x vim-mode
     completion-at-point  where completions come from
+    default-configuration  every module above, and the settings the editor
+                         starts with
 
 FINDING YOUR WAY
     C-h f names a function, C-h v a variable, C-h k a key -- press it and be

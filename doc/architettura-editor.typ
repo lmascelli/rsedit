@@ -391,19 +391,19 @@ Quattro decisioni:
 
 === Il file `init.lisp` predefinito
 
-Il file `init.lisp` predefinito chiede con `require` i moduli di base,
-`commands`, `debug`, `common-keymaps`, `indent` e `minibuffer`, poi i moduli
-facoltativi `rust-mode`, `risp-mode`, `cc-mode`, `python-mode`, `toml-mode`,
-`bash-mode`, `cmake-mode`, `dired`, `completion`, `preview`, `clipboard`,
-`electric-pair`, `buffer-list`, `shell`, `manpage`, `help`, `risp-repl`,
-`occur`, `compile`, `theme`,
-`vim`, `completion-at-point`, e imposta `dired-sort` a `'type` e
-`mouse-mode` a `t`. L'ordine delle righe non conta più: ogni modulo chiede
-quelli che gli servono (@moduli-lisp).
+Il file `init.lisp` predefinito chiede un modulo solo, `default-configuration`
+(@mod-default-configuration), che chiede con `require` tutti gli altri, i
+moduli di base e poi i facoltativi, e imposta `dired-sort` a `'type` e
+`mouse-mode` a `t`; l'utente scrive le sue impostazioni dopo quella riga.
+L'ordine dei moduli non conta: ognuno chiede quelli che gli servono
+(@moduli-lisp).
 
-Il file viene scritto solo se manca: chi ha già un `init.lisp` deve
-aggiungere a mano le righe dei moduli nuovi #rapporto("AVV-5"). Un file
-scritto prima, con `(eval-file "dired")`, funziona ancora: `lisp-path` nomina
+Il file viene scritto solo se manca, e da allora è dell'utente. Ciò che
+l'editor distribuisce sta in `default-configuration`, che arriva con ogni
+versione: un modulo aggiunto dopo arriva a un `init.lisp` che lo chiede. Uno
+scritto prima di quel modulo, che chiede ogni modulo per nome, va aggiornato a
+mano una volta, o sostituito con la riga sola. Un file ancora più vecchio, con
+`(eval-file "dired")`, funziona ancora: `lisp-path` nomina
 le tre cartelle dei moduli, ed `eval-file` cerca un nome nudo in ognuna.
 
 === `eval_file`
@@ -5719,8 +5719,11 @@ fuori, in `themes/`. `build.rs` copia ogni cartella di `core/lisp` in
 `target/<profilo>/data/lisp/<genere>` a ogni compilazione, e un modulo nuovo
 arriva accanto all'eseguibile da solo. `MODULE_KINDS`, in `editor/loader.rs`,
 è l'elenco dei generi che `lisp-path` nomina; `loading_tests` controlla che
-coincida con le cartelle e che ogni modulo distribuito sia chiesto
-dall'`init.lisp` predefinito.
+coincida con le cartelle e che ogni modulo distribuito sia caricato
+dall'`init.lisp` predefinito, attraverso `default-configuration`.
+`tests::shipped::default_modules` legge quell'elenco dove sta: le righe
+`require` dell'init e, al posto di `default-configuration`, la lista
+`default-configuration-modules` del suo sorgente, seguita dal modulo stesso.
 
 #ref-table(
   columns: (2.1cm, 3.4cm, 1fr),
@@ -6064,6 +6067,25 @@ i candidati nel prompt.
   risposta.
 + *Si chiude prima della risposta.* Chi la riceve può aprire un'altra striscia;
   ogni uscita chiude finestra, stato e keymap insieme.
+
+=== `default-configuration` <mod-default-configuration>
+
+L'editor come arriva: chiede con `require` ogni modulo distribuito,
+nell'ordine di `default-configuration-modules`, tranne quelli nominati in
+`default-configuration-skip`, e imposta `dired-sort` e `mouse-mode`. È la sola
+riga dell'`init.lisp` predefinito (`DEFAULT_INIT_LISP`, in `editor/boot.rs`).
+
++ *Un modulo e non un elenco nell'`init.lisp`.* L'`init.lisp` si scrive una
+  volta sola e poi è dell'utente: un modulo aggiunto da una versione successiva
+  non vi arrivava. L'elenco nel modulo arriva con l'editor, e l'`init.lisp`
+  resta una riga e ciò che l'utente vi aggiunge.
++ *Togliere per nome, prima del `require`.* `default-configuration-skip` è un
+  `defvar`, quindi un valore impostato prima che il modulo si carichi resta. Un
+  modulo tolto che un altro chiede si carica lo stesso.
++ *Niente macro.* In un binario di test, senza `data/lisp` accanto, ogni
+  `require` risponde nil, e una forma scritta con una macro di un modulo
+  sarebbe una chiamata qualunque, che fallisce: il modulo deve caricarsi anche
+  così, come l'`init.lisp` predefinito.
 
 === `dired` <mod-dired>
 
@@ -6542,9 +6564,10 @@ In Rust:
 Scrivi `core/lisp/<genere>/nome.lisp` come dice @scrivere-moduli:
 l'intestazione con la pagina e il rimando a una sottosezione nuova di
 @moduli-distribuiti, i `require` di ciò che usa in cima e `(provide 'nome)` in
-fondo; aggiungi `(require 'nome)` a `DEFAULT_INIT_LISP`
-in `editor/boot.rs` (e, a mano, al tuo `init.lisp`), la riga del modulo nella
-sezione MODULES della pagina `rsedit`, e un test che lo carichi. `build.rs` lo
+fondo; aggiungi il suo nome a `default-configuration-modules`, in
+`core/lisp/features/default-configuration.lisp`, la riga del modulo nella
+sezione MODULES della pagina `rsedit`, nello stesso ordine, e un test che lo
+carichi. `build.rs` lo
 copia da solo.
 
 == Un nuovo front-end

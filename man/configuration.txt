@@ -12,6 +12,8 @@ SYNOPSIS
     (with-eval-after-load FEATURE BODY...)
     (eval-file FILE)
     (toggle-line-numbers)
+    default-configuration-modules
+    default-configuration-skip
     lisp-path
     display-line-numbers
     display-line-numbers-width
@@ -20,10 +22,9 @@ SYNOPSIS
 DESCRIPTION
     The editor reads one file when it starts: init.lisp, in its
     configuration directory. The first time there is none, and one is
-    written for you, with every module listed and a comment on each. From
-    then on the file is yours, and the editor never writes it again. Read
-    it before you change it: it is the shortest description of what the
-    editor is made of.
+    written for you: one line, (require 'default-configuration), which
+    loads the editor as it comes, and room for your own. From then on the
+    file is yours, and the editor never writes it again.
 
     init.lisp is this editor's own Lisp, which is close enough to Emacs
     Lisp to read and is not the same language. M-: evaluates one
@@ -84,19 +85,31 @@ THE FOUR THINGS YOU WILL WRITE
     C-h f does the same for a function.
 
 MODULES
-    Each feature above the mechanics is a module: a file, loaded by a line
-    in init.lisp.
+    Each feature above the mechanics is a module: a file, loaded with
+    `require'.
 
         (require 'completion)      ; Tab shows every candidate at once
         (require 'dired)           ; a directory in a buffer
 
+    The module default-configuration requires every module the editor
+    ships, in the order of `default-configuration-modules', and sets
+    what the editor starts with: directories first in a listing, and the
+    mouse on. It is the shortest description of what the editor is made
+    of; the `rsedit' page lists the modules too. To leave some out, name
+    them before the line that loads it:
+
+        (setq default-configuration-skip '(vim cmake-mode))
+        (require 'default-configuration)
+
+    Your own settings go after that line, so that its own do not replace
+    them.
+
     A module is loaded once, however many times it is asked for: `require'
     loads the file only when the feature is not loaded yet. Each module
     begins by requiring the modules it needs and ends with `provide', which
-    says it is loaded, so the order of the lines does not matter. Comment
-    one out and the editor comes up without that feature, unless a module
-    still loaded needs it and loads it anyway. The `rsedit' page lists them
-    all.
+    says it is loaded, so the order of the lines does not matter. A module
+    left out comes up missing that feature, unless a module still loaded
+    needs it and loads it anyway.
 
     `featurep' says whether a module is loaded, `features' lists the ones
     that are, the latest first, and `feature-file' says which file one came
@@ -104,8 +117,10 @@ MODULES
     modules it loaded on its way; `feature-status' says failed, and the log
     says why.
 
-    Since init.lisp is written once, a module a later version adds does not
-    reach it by itself: add its line by hand.
+    A module a later version adds is in `default-configuration-modules',
+    and reaches an init.lisp that requires default-configuration by itself.
+    One written before, which requires each module by name, has to add the
+    new line by hand, or be replaced by the one line.
 
     The modules are installed beside the editor, in three folders of
     data/lisp: base, what the others are written with; features, one for

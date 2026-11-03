@@ -15,14 +15,51 @@ use std::sync::Arc;
 
 type Ctx = EditorState<GapBuffer>;
 
-/// Returns the modules the default init.lisp loads, in its order.
+/// The module the default init.lisp loads everything else through.
+const DEFAULT_CONFIGURATION: &str = "default-configuration";
+
+/// Returns the modules the default init.lisp loads, in its order: what it
+/// requires, and, in place of `default-configuration`, the modules that one
+/// loads, then itself, for the settings it makes.
 pub(crate) fn default_modules() -> Vec<String> {
-    DEFAULT_INIT_LISP
+    let mut modules = Vec::new();
+    for name in DEFAULT_INIT_LISP
         .lines()
         .filter_map(|line| line.trim_start().strip_prefix("(require '"))
         .filter_map(|rest| rest.split(')').next())
-        .map(str::to_string)
-        .collect()
+    {
+        if name == DEFAULT_CONFIGURATION {
+            modules.extend(configuration_modules());
+        }
+        modules.push(name.to_string());
+    }
+    modules
+}
+
+/// Returns the modules `default-configuration` loads, in its order: the
+/// quoted list of `default-configuration-modules`, read from its source.
+fn configuration_modules() -> Vec<String> {
+    let source = module_source(DEFAULT_CONFIGURATION);
+    let start = source
+        .find("(defconst default-configuration-modules")
+        .expect("default-configuration.lisp defines its list of modules");
+    let list = &source[start..];
+    let list = &list[list.find("'(").expect("the list is quoted") + 2..];
+    let mut names = Vec::new();
+    for line in list.lines() {
+        // What follows `;` is a comment, and a `)` outside one ends the list.
+        let code = line.split(';').next().unwrap_or("");
+        let (code, ended) = match code.find(')') {
+            Some(end) => (&code[..end], true),
+            None => (code, false),
+        };
+        names.extend(code.split_whitespace().map(str::to_string));
+        if ended {
+            break;
+        }
+    }
+    assert!(!names.is_empty(), "default-configuration loads no module");
+    names
 }
 
 /// Returns every module the editor ships, as (kind, name), sorted: the
