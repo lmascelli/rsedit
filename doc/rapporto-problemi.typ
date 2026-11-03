@@ -587,7 +587,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-RIC-1-4",
+    commit: "3f1df42",
     titolo: [Una sostituzione con un'espressione che può essere vuota mette tutte le sostituzioni nello stesso punto],
   ),
   (
@@ -595,7 +595,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-RIC-1-4",
+    commit: "3f1df42",
     titolo: [La ricerca all'indietro con un'espressione regolare costa un tempo quadratico],
   ),
   (
@@ -603,7 +603,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-RIC-1-4",
+    commit: "3f1df42",
     titolo: [Ogni sostituzione è un gruppo di annullamento a sé],
   ),
   (
@@ -611,7 +611,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-RIC-1-4",
+    commit: "3f1df42",
     titolo: [Limiti della ricerca confinata a una regione e delle scansioni su righe lunghe],
   ),
   (
