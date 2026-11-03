@@ -73,14 +73,21 @@ WHEN A MODULE DOES NOT LOAD
     One that is there and fails -- an error, a syntax error, no `provide'
     of its name, or a `require' of a module already being loaded further
     out -- is logged with why, after "[ERROR] require NAME:", and stops
-    init.lisp: the editor prints the error and exits without starting.
-    Loaded later, with M-:, the error is reported as any other, and
-    (feature-status 'NAME) says failed.
+    init.lisp there. The editor starts all the same, with what init.lisp
+    did before it, and says so in the echo area; the log has the line
 
-    Loaded with `eval-file' instead, a module with a syntax error is
-    skipped without a word, for now. Load one you are writing with
-    M-: (eval-file "NAME") and look at what comes back: nil means it was
-    not evaluated.
+        [ERROR] PATH/init.lisp stopped at an error: WHY
+
+    with the calls that led to it. An error in init.lisp itself is said
+    the same way. Loaded later, with M-:, the error is reported as any
+    other, and (feature-status 'NAME) says failed.
+
+    A syntax error, in a module or in a file loaded with `eval-file', says
+    which file and after which line the form that does not read begins:
+
+        PATH does not parse: a ) that closes nothing, in the form after line 9
+
+    The forms before it have been evaluated, the ones after it have not.
 
 WHEN THE EDITOR SEEMS STUCK
     The background work is watched from a thread of its own, and a step

@@ -322,9 +322,12 @@ sfondo e scrive nel file le ultime righe del log.
   `Loader` e dà il primo valore a `lisp-path` e a `theme-path`: la
   configurazione, poi i plugin, poi l'editor (@percorsi-moduli).
 + Se manca, `init.lisp` viene creato con `DEFAULT_INIT_LISP` (vedi sotto).
-+ `eval_file` valuta `init.lisp`, che carica i moduli Lisp con `require`. Un
-  errore di valutazione ferma l'avvio, e `create_global_env` lo restituisce
-  #rapporto("AVV-7").
++ `load_init` valuta `init.lisp` con `eval_file`, e `init.lisp` carica i
+  moduli Lisp con `require`. Un errore, di sintassi o di valutazione, ferma il
+  resto del file ma non l'avvio: `load_init` lo scrive nel log e nell'area dei
+  messaggi, e l'editor parte con ciò che è stato valutato prima
+  (@decisioni-avvio). Solo ciò che fallisce prima, nell'ambiente stesso, è un
+  errore di `create_global_env`, e `main` esce con un codice diverso da 0.
 + Il WorkManager riceve `FileWatcher` e `AutoSaver`, che a ogni passo leggono
   le loro impostazioni (`watch-files`, `watch-file-interval`, `auto-save`,
   `auto-save-interval`).
@@ -411,34 +414,45 @@ le tre cartelle dei moduli, ed `eval-file` cerca un nome nudo in ognuna.
 `eval_file(nome, env)`, in `editor/loader.rs`, cerca prima `nome` come
 percorso. Se non esiste e il nome non contiene `/`, `\` o `.`, cerca
 `nome.lisp` in ogni directory di `lisp-path`, in ordine. Il contenuto viene
-avvolto in `(progn …)`, letto con #emph[una sola] chiamata a `Parser::next` e
 valutato da `eval_source` dentro uno scope di carburante (`begin_command`),
-alla radice della catena di ambienti (`top_level`), con il file annotato in
-`Loader` come quello da cui viene un `provide`. Un file mancante produce una
-riga di log e il valore `nil`. Lo valuta ogni volta: è `require` a caricare
-una volta sola.
+con il file annotato in `Loader` come quello da cui viene un `provide`, e
+`eval_forms` lo legge una forma alla volta, come `load` in Emacs: ogni forma è
+valutata alla radice della catena di ambienti (`top_level`) prima che si legga
+la successiva. Un file mancante produce una riga di log e il valore `nil`. Lo
+valuta ogni volta: è `require` a caricare una volta sola, e legge il file con
+lo stesso `eval_source`.
 
 #estratto("editor/loader.rs")[
 ```rust
-let Ok(ast) = Parser::new(&format!("(progn {content})")).next() else {
-    return Ok(ELispExp::nil());          // errore di sintassi: nessun messaggio
-};
-let _command = self.begin_command();     // uno scope di carburante
-self.loader_mut(|loader| loader.enter_file(path.to_path_buf()));
-let value = eval(ast, top_level(env), self);   // alla radice dell'ambiente
-self.loader_mut(|loader| loader.leave_file());
-Ok(ELispExp::proper_list(vec![value?]))
+loop {
+    match parser.next() {
+        Ok(form) => {
+            // la riga dove finisce la forma letta, dalla mappa del sorgente
+            read_to = map.locate(items).end_line;
+            last = eval(&form, top_level(env), self)?;
+        }
+        Err(VoidExp) => return Ok(last),          // fine del testo
+        Err(why) => return Err(syntax_error(path, read_to, why)),
+    }
+}
 ```
 ]
 
-L'involucro `(progn …)` fa del file un'unica espressione, e questo ha tre
-conseguenze. Una parentesi chiusa di troppo chiude la `progn` in anticipo e il
-resto del file non viene letto; una parentesi mancante, o un commento
-sull'ultima riga senza a capo finale (la parentesi aggiunta finisce dentro il
-commento), lascia la `progn` aperta e il lettore fallisce. In entrambi i casi
-`eval_file` restituisce `nil` senza messaggi #rapporto("AVV-2"); `require`
-invece dà un errore, che dice che il file non si legge. Il primo errore di
-#emph[valutazione] interrompe il file da quel punto e risale come errore.
+Il primo errore, di sintassi o di valutazione, ferma il file da quel punto e
+risale come errore; le forme prima di lui restano valutate. Un errore di
+sintassi nomina il file e la riga dopo la quale comincia la forma che non si
+legge (`… does not parse: a ) that closes nothing, in the form after line
+2`): il lettore lo trova solo finendo quella forma, e la riga dove è finita la
+precedente è quella che la mappa del sorgente conosce. Un commento sull'ultima
+riga, con o senza a capo, non nasconde nulla. Fino alla correzione di AVV-2 il
+file veniva avvolto in `(progn …)` e letto come una forma sola: una parentesi
+di troppo chiudeva la `progn` e il resto del file non veniva letto, una che
+mancava, o un commento finale senza a capo, lo rendevano illeggibile, e
+`eval_file` restituiva `nil` senza dire nulla.
+
+`ParserError` non è esportato da risp, e `eval_forms` riconosce le sue
+varianti dal nome che `Debug` stampa; una che `syntax_error` non traduce in
+parole viene detta con quel nome.
 
 === Le decisioni <decisioni-avvio>
 
@@ -450,12 +464,19 @@ invece dà un errore, che dice che il file non si legge. Il primo errore di
 + *I due osservatori partono dopo `init.lisp`.* Il controllo dei file e il
   salvataggio automatico leggono le loro impostazioni a ogni passo, e sono
   sottomessi dopo la configurazione: ciò che dice conta dalla prima occhiata.
-+ *Il file predefinito carica moduli e imposta variabili, niente di più.* È
-  valutato con `?`, e i moduli che chiede non sono sempre presenti --- un
-  binario di test non li ha accanto, e `require` registra il modulo mancante
-  e risponde nil ---: senza di loro `defcommand`
-  non è una macro, una forma che la usa diventa una chiamata qualunque, e
-  l'avvio si ferma. Un comando sta in un modulo o in Rust. È una stringa
++ *Un errore in `init.lisp` ferma il file, non l'editor.* Come in Emacs con
+  `--debug-init` spento: le forme prima dell'errore restano valutate, quelle
+  dopo no, e l'editor parte. Un editor che non parte lascia senza lo
+  strumento con cui correggere il file. L'errore va nell'area dei messaggi,
+  dove si vede subito, e nel log con il nome del file e la traccia delle
+  chiamate; il log, ancora in memoria, finisce nel file che `main` apre
+  subito dopo. Scartato: valutare ogni forma anche dopo un errore, che
+  porterebbe avanti una configurazione a metà con errori a catena.
++ *Il file predefinito carica moduli e imposta variabili, niente di più.* I
+  moduli che chiede non sono sempre presenti --- un binario di test non li
+  ha accanto, e `require` registra il modulo mancante e risponde nil ---:
+  senza di loro `defcommand` non è una macro, una forma che la usa diventa
+  una chiamata qualunque, e il resto di `init.lisp` non viene valutato. Un comando sta in un modulo o in Rust. È una stringa
   grezza, dove una barra rovesciata è una barra rovesciata; ed è una costante
   con un nome, perché un test la valuti in un ambiente nudo.
 + *Un file si valuta alla radice dell'ambiente.* Un `defun`, un `defvar` o il
@@ -6392,7 +6413,7 @@ parole che si completano, la regola d'indentazione e le estensioni dei file.
   come faceva `eval-file`: l'`init.lisp` predefinito deve caricarsi in un
   editor senza moduli, quello dei test, e un modulo tolto non deve fermare
   l'avvio. Un modulo che c'è e fallisce, invece, è un errore, che ferma
-  `init.lisp` #rapporto("AVV-7").
+  `init.lisp` ma non l'editor (@decisioni-avvio).
 + *Il `provide` in fondo.* Una feature è caricata quando il suo file è finito;
   messo in cima, un `require` dello stesso modulo durante il caricamento lo
   troverebbe già caricato a metà. Il `require` in cima dice al lettore che

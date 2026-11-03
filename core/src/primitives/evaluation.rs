@@ -9,8 +9,10 @@ pub const EVAL_FILE_DOC: &str = "(eval-file FILE): Evaluate the Lisp in FILE, an
          evaluate.\n\n\
          FILE is a path, relative to the working directory. When no such file \
          exists and FILE has no directory, extension or dot in it, FILE.lisp is looked for in \
-         each directory of `lisp-path' in turn. A file that is not found is logged; a file that \
-         does not parse is skipped. The file is evaluated as init.lisp is, outside any function, \
+         each directory of `lisp-path' in turn. A file that is not found is logged. The forms \
+         are read and evaluated one at a time, and the first that raises an error, or does not \
+         parse, stops the file there; a syntax error names the line after which the form \
+         begins. The file is evaluated as init.lisp is, outside any function, \
          so what it defines lasts wherever `eval-file' is called from.\n\n\
          Example:\n\
          (eval-file \"dired\")                          ; dired.lisp, from lisp-path\n\

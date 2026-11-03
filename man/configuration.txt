@@ -193,12 +193,13 @@ WHEN IT WILL NOT LOAD
     A module that is not found says so in the log, and the editor comes up
     without it, which is the point of them being separate. One that is
     found and fails -- an error, a syntax error, no `provide' -- stops
-    init.lisp there, and the editor with it: it prints the error and exits.
-    The log in memory says which module, and is lost with it. A file loaded
-    with `eval-file' that has a syntax error is skipped without a word, for
-    now: when a change seems to do nothing, try it with M-: first. C-h e
-    shows everything the editor has said, and the `diagnostics' page says
-    where else to look.
+    init.lisp there, as an error in init.lisp itself does: what came
+    before it is in effect, what comes after it is not, and the editor
+    starts all the same. The echo area says that init.lisp stopped, and
+    the log says where and why. A syntax error names the file and the line
+    after which the form that does not read begins. C-h e shows everything
+    the editor has said, and the `diagnostics' page says where else to
+    look.
 
 EXAMPLES
     Whether vim is loaded, and from where:

@@ -92,12 +92,11 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // An error in init.lisp lets the editor start, and says so in it: what
+    // fails here leaves no editor, and the exit status says that it failed.
     let (state, env) = match create_global_env::<BufferType>() {
         Ok((state, env)) => (state, env),
-        Err(err) => {
-            eprintln!("{:?}", err);
-            return Ok(());
-        }
+        Err(err) => return Err(format!("rsedit could not start: {err:?}").into()),
     };
     let _shut_down = ShutDownOnExit(&state);
     // The log, in the cache directory, made if it is not there yet.

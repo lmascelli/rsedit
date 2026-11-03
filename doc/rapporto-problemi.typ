@@ -407,20 +407,9 @@
     id: "AVV-2",
     gravita: "media",
     verificato: true,
-    stato: "aperto",
+    stato: "risolto",
+    commit: "COMMIT-AVV-2-7",
     titolo: [Gli errori di sintassi nei file Lisp caricati vengono ignorati in silenzio],
-    breve: [`eval_file`: errori di sintassi silenziosi; un commento finale senza a capo annulla il file],
-    dove: [`editor/loader.rs` (`EditorState::eval_file`: contenuto avvolto in `(progn …)`, errore del lettore → `Ok(nil)`; `EditorState::require`, che avvolge allo stesso modo); la usano `create_global_env`, per `init.lisp`, e le primitive `eval-file` e `require`],
-    verifica: [Riprodotto sulla revisione `3d846f1` con `eval-file`: un file con una parentesi non chiusa e un file la cui ultima riga è un commento senza a capo restituiscono `nil` senza messaggi, e nessuna delle loro forme viene valutata.],
-    cosa: [Il file viene letto come un'unica forma `(progn CONTENUTO)`. Una parentesi in più chiude la `progn` prima del tempo e il resto non viene mai letto. Una parentesi mancante, o un commento sull'ultima riga senza a capo (la parentesi aggiunta finisce *dentro* il commento), lascia la `progn` aperta. In entrambi i casi il lettore fallisce e `eval_file` restituisce `nil` senza dire nulla. `require`, dal passo 19b della documentazione, dà invece un errore quando il lettore fallisce; la parentesi in più, che il lettore non vede, tronca anche lì il file in silenzio, e il `provide` in fondo non arriva: l'errore dice che il file non ha fornito la feature.],
-    riproduzione: ```text
-init.lisp:
-  (setq my-config-loaded 42)
-  ;; fine della configurazione      ← senza a capo finale
-→ dopo l'avvio my-config-loaded non è definita, e nessun messaggio
-```,
-    effetto: [L'utente vede l'editor partire senza la sua configurazione, o con metà della configurazione, e non c'è nulla che indichi perché.],
-    correzione: [Leggere le forme una alla volta e valutarle in sequenza, segnalando nell'area messaggi la riga del primo errore di sintassi. Come minimo, `format!("(progn\n{}\n)")`.],
   ),
   (
     id: "AVV-3",
@@ -461,14 +450,9 @@ init.lisp:
     id: "AVV-7",
     gravita: "media",
     verificato: true,
-    stato: "aperto",
+    stato: "risolto",
+    commit: "COMMIT-AVV-2-7",
     titolo: [Un errore in `init.lisp`, o in un modulo che richiede, impedisce all'editor di partire],
-    breve: [Un errore in `init.lisp` o in un modulo: l'editor stampa l'errore ed esce con 0],
-    dove: [`editor/boot.rs` (`create_global_env`, che valuta `init.lisp` con `?`), `src/main.rs` (`main`, che stampa l'errore ed esce)],
-    verifica: [Riprodotto durante il passo 19b della documentazione con l'editor vero, con `RSEDIT_CONFIG_DIR`, `RSEDIT_CACHE_DIR` e `RSEDIT_DATA_DIR` su tre directory temporanee: un `init.lisp` con `(require 'broken)`, e un `lisp/broken.lisp` che chiama una funzione che non c'è. L'editor stampa `UndefinedFunction("no-such-function")` ed esce con codice 0, senza aprire il terminale; il nome del modulo è solo nel log in memoria, che va perso.],
-    cosa: [`create_global_env` valuta `init.lisp` con `?`, e il primo errore di valutazione, anche in un modulo che `init.lisp` chiede, risale fino a `main`, che lo stampa con `{:?}` e termina con `Ok(())`. Il log su file non è ancora aperto. Le pagine `configuration` e `diagnostics` dicevano che un modulo che fallisce lascia partire l'editor; lo fa solo un modulo che manca.],
-    effetto: [Un errore in un modulo proprio o di un plugin, o in una riga di `init.lisp`, lascia senza editor finché non si corregge il file con un altro, e il messaggio non dice in quale file sta l'errore. Uno script che lancia l'editor lo crede uscito bene.],
-    correzione: [Valutare `init.lisp` forma per forma, o catturare l'errore in `create_global_env`, partire comunque e mostrare l'errore nell'area dei messaggi e nel log, come Emacs con `--debug-init` spento; in ogni caso uscire con un codice diverso da 0 quando l'editor non parte.],
   ),
   (
     id: "AVV-8",

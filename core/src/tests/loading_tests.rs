@@ -493,4 +493,159 @@ mod tests {
             .collect();
         assert!(loose.is_empty(), "a module belongs in a kind: {loose:?}");
     }
+
+    // ---------------- a file read form by form ----------------
+
+    fn eval_file(
+        path: &Path,
+        env: &Arc<Env<Ctx>>,
+        ctx: &Ctx,
+    ) -> Result<LispExp<Ctx>, EvalError<Ctx>> {
+        try_run(&format!(r#"(eval-file "{}")"#, path.display()), env, ctx)
+    }
+
+    fn message_of(error: EvalError<Ctx>) -> String {
+        format!("{error:?}")
+    }
+
+    /// The card's case: wrapped whole in a `progn`, the closing parenthesis
+    /// went into the comment, and the file evaluated nothing, saying nothing.
+    #[test]
+    fn a_last_line_that_is_a_comment_with_no_newline_hides_nothing() {
+        let (ctx, env) = editor();
+        let sandbox = Sandbox::new("comment-last");
+        let dir = sandbox.file(
+            "init.lisp",
+            "(setq my-config-loaded 42)\n;; the end, with no newline",
+        );
+        eval_file(&dir.join("init.lisp"), &env, &ctx).expect("it loads");
+        assert_eq!(number(&run("my-config-loaded", &env, &ctx)), 42.0);
+    }
+
+    /// A stray `)` ended the `progn`, and the rest of the file was never read.
+    #[test]
+    fn a_parenthesis_too_many_is_an_error_after_the_forms_before_it() {
+        let (ctx, env) = editor();
+        let sandbox = Sandbox::new("too-many");
+        let dir = sandbox.file(
+            "file.lisp",
+            "(setq first-form 1)\n(setq second-form 2))\n(setq third-form 3)\n",
+        );
+        let why = message_of(eval_file(&dir.join("file.lisp"), &env, &ctx).unwrap_err());
+        assert!(why.contains("a ) that closes nothing"), "{why}");
+        // The reader meets the stray `)` while it finishes the form on line 2,
+        // so that form is the one named, and it is not run.
+        assert!(why.contains("in the form after line 1"), "{why}");
+        assert_eq!(number(&run("first-form", &env, &ctx)), 1.0);
+        assert!(
+            try_run("second-form", &env, &ctx).is_err(),
+            "the broken form is not run"
+        );
+        assert!(
+            try_run("third-form", &env, &ctx).is_err(),
+            "not past the error"
+        );
+    }
+
+    #[test]
+    fn a_parenthesis_too_few_says_after_which_line() {
+        let (ctx, env) = editor();
+        let sandbox = Sandbox::new("too-few");
+        let dir = sandbox.file(
+            "file.lisp",
+            "(setq first-form 1)\n(setq second-form (+ 1 2)\n",
+        );
+        let why = message_of(eval_file(&dir.join("file.lisp"), &env, &ctx).unwrap_err());
+        assert!(why.contains("a ( that is never closed"), "{why}");
+        assert!(why.contains("in the form after line 1"), "{why}");
+        assert_eq!(number(&run("first-form", &env, &ctx)), 1.0);
+    }
+
+    /// In a module the stray `)` cut the file short before its `provide`, and
+    /// the error blamed the missing feature rather than the parenthesis.
+    #[test]
+    fn a_module_with_a_parenthesis_too_many_names_it() {
+        let (ctx, env) = editor();
+        let sandbox = Sandbox::new("stray");
+        let dir = sandbox.file("stray.lisp", "(defvar stray-a 1))\n(provide 'stray)\n");
+        set_path("lisp-path", &[&dir], &env);
+        let why = message_of(try_run("(require 'stray)", &env, &ctx).unwrap_err());
+        assert!(why.contains("a ) that closes nothing"), "{why}");
+        assert!(!why.contains("did not provide"), "{why}");
+    }
+
+    // ---------------- an init.lisp that fails ----------------
+
+    #[test]
+    fn an_error_in_init_lisp_lets_the_editor_start_and_says_so() {
+        let (ctx, env) = editor();
+        let sandbox = Sandbox::new("init-error");
+        let dir = sandbox.file(
+            "init.lisp",
+            "(setq before-the-error t)\n(no-such-function)\n(setq after-the-error t)\n",
+        );
+        let init = dir.join("init.lisp");
+
+        assert!(!crate::editor::boot::load_init(&ctx, &env, &init));
+
+        assert_eq!(run("before-the-error", &env, &ctx), LispExp::t());
+        assert!(
+            try_run("after-the-error", &env, &ctx).is_err(),
+            "stopped at the error, as Emacs does"
+        );
+        let said = ctx.get_echo_message();
+        assert!(said.starts_with("init.lisp stopped at an error"), "{said}");
+        assert!(said.contains("no-such-function"), "{said}");
+        assert!(
+            ctx.get_logs()
+                .iter()
+                .any(|line| line.contains(&init.display().to_string())),
+            "the log names the file"
+        );
+    }
+
+    /// The card's case: a module init.lisp requires, which raises.
+    #[test]
+    fn a_failing_module_lets_the_editor_start_and_is_named_in_the_log() {
+        let (ctx, env) = editor();
+        let sandbox = Sandbox::new("init-module");
+        let lisp = sandbox.file(
+            "lisp/broken.lisp",
+            "(no-such-function)\n(provide 'broken)\n",
+        );
+        let dir = sandbox.file("init.lisp", "(require 'broken)\n");
+        set_path("lisp-path", &[&lisp], &env);
+
+        assert!(!crate::editor::boot::load_init(
+            &ctx,
+            &env,
+            &dir.join("init.lisp")
+        ));
+
+        assert!(ctx.get_echo_message().contains("no-such-function"));
+        assert!(
+            ctx.get_logs()
+                .iter()
+                .any(|line| line.contains("require broken")),
+            "{:?}",
+            ctx.get_logs()
+        );
+    }
+
+    #[test]
+    fn an_init_lisp_that_loads_says_nothing() {
+        let (ctx, env) = editor();
+        let sandbox = Sandbox::new("init-clean");
+        let dir = sandbox.file("init.lisp", "(setq all-of-it t)\n");
+        ctx.set_echo_message("");
+
+        assert!(crate::editor::boot::load_init(
+            &ctx,
+            &env,
+            &dir.join("init.lisp")
+        ));
+
+        assert_eq!(run("all-of-it", &env, &ctx), LispExp::t());
+        assert_eq!(ctx.get_echo_message(), "");
+    }
 }

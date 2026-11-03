@@ -34,6 +34,35 @@ pub(crate) const DEFAULT_INIT_LISP: &str = r#";; rsedit init.lisp
 ;; replace them.
 "#;
 
+/// Evaluates the user's init.lisp at PATH, and answers whether all of it was.
+///
+/// An error stops what is left of the file, a module it requires included, as
+/// in Emacs, and not the editor: one that does not start leaves nothing to
+/// correct the file with. It is said in the echo area, where it is seen at
+/// once, and in the log, which keeps it for the file `main` opens next.
+pub(crate) fn load_init<B: BufferTrait>(
+    editor_state: &EditorState<B>,
+    env: &Arc<Env<EditorState<B>>>,
+    path: &std::path::Path,
+) -> bool {
+    let Err(why) = editor_state.eval_file(
+        path.to_str()
+            .expect("Failed to retrieve a valid String from user_config_path"),
+        env.clone(),
+    ) else {
+        return true;
+    };
+    let backtrace = editor_state.take_backtrace_suffix();
+    editor_state.log_diagnostic(&format!(
+        "[ERROR] {} stopped at an error: {why:?}{backtrace}",
+        path.display()
+    ));
+    editor_state.set_echo_message(&format!(
+        "init.lisp stopped at an error: {why:?} -- the log has more, M-x switch-to-messages"
+    ));
+    false
+}
+
 /// Returns the editor's WorkManager, which reports to LOG, and whose watchdog
 /// writes LOG's file: in manual mode in this crate's tests, with an executor
 /// thread everywhere else.
@@ -257,7 +286,7 @@ pub fn create_global_env<B: BufferTrait>()
     let editor_state = EditorState::new();
     let env = bootstrap_vm(&editor_state)?;
 
-    // Off here, and on in the default `init.lisp`: see `mouse_mode`.
+    // Off here, and on in `default-configuration`: see `mouse_mode`.
     env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
 
     // The functions called after a resize, each with the new width and height.
@@ -414,14 +443,7 @@ pub fn create_global_env<B: BufferTrait>()
         ));
     }
 
-    // TODO(AVV-7): the first error stops the editor, a module's included, and
-    // `main` exits with nothing but the error's name.
-    editor_state.eval_file(
-        user_config_path
-            .to_str()
-            .expect("Failed to retrieve a valid String from user_config_path"),
-        env.clone(),
-    )?;
+    load_init(&editor_state, &env, &user_config_path);
 
     // The third job, submitted here and not with the other two: it looks
     // outward, at whether the buffers' files are still what they were, and how

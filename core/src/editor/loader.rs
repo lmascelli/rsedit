@@ -7,6 +7,7 @@
 use super::boot::top_level;
 use super::*;
 use crate::managers::Plugin;
+use risp::SourceMap;
 use std::path::Path;
 
 /// The directories the editor's modules are kept in, by kind, in the order
@@ -117,29 +118,76 @@ impl<B: BufferTrait> EditorState<B> {
                 return Ok(ELispExp::nil());
             }
         };
-        // TODO(AVV-2): read as one form, so that a closing parenthesis too
-        // many or too few evaluates nothing, and nothing says so.
-        let Ok(ast) = Parser::new(&format!("(progn {content})")).next() else {
-            return Ok(ELispExp::nil());
-        };
-        self.eval_source(&path, &ast, &env)
+        self.eval_source(&path, &content, &env)
     }
 
-    /// Evaluates AST, the forms of the file PATH, at the root of ENV's chain,
-    /// and returns a list holding the value of the last.
+    /// Evaluates CONTENT, the text of the file PATH, at the root of ENV's
+    /// chain, and returns a list holding the value of its last form.
     ///
     /// PATH is what a `provide` in it is recorded as coming from.
+    ///
+    /// # Errors
+    ///
+    /// The first error a form raises, the forms before it evaluated; or, when
+    /// a form does not parse, an error naming the file and the line after
+    /// which it begins, the forms before it evaluated too.
     fn eval_source(
         &self,
         path: &Path,
-        ast: &ELispExp<B>,
+        content: &str,
         env: &Arc<Env<Self>>,
     ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
         let _command = self.begin_command();
         self.loader_mut(|loader| loader.enter_file(path.to_path_buf()));
-        let value = eval(ast, top_level(env), self);
+        let value = self.eval_forms(path, content, env);
         self.loader_mut(|loader| loader.leave_file());
         Ok(ELispExp::proper_list(vec![value?]))
+    }
+
+    /// Reads the forms of CONTENT one at a time and evaluates each before
+    /// reading the next, as Emacs' `load` does, and returns the value of the
+    /// last, nil when there is none.
+    ///
+    /// One at a time, not wrapped whole in a `progn`: there a closing
+    /// parenthesis too many ended the file early, one too few, or a comment
+    /// with no newline at its end, made it unreadable, and in either case
+    /// nothing said so. Here a form that does not parse is an error that says
+    /// where, and the forms before it have been evaluated.
+    fn eval_forms(
+        &self,
+        path: &Path,
+        content: &str,
+        env: &Arc<Env<Self>>,
+    ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
+        let map = Arc::new(SourceMap::default());
+        let mut parser = Parser::with_source_map(content, map.clone(), &path.to_string_lossy(), 1);
+        let mut last = ELispExp::nil();
+        // The line the last form read ends on: where the next one begins,
+        // near enough to find a missing or a stray parenthesis.
+        let mut read_to = 0;
+        loop {
+            match parser.next() {
+                Ok(form) => {
+                    if let ELispExp::Form(items) = &form
+                        && let Some(at) = map.locate(items)
+                    {
+                        read_to = at.end_line;
+                    }
+                    last = eval(&form, top_level(env), self)?;
+                }
+                Err(why) => {
+                    // `ParserError` is not one risp exports, so the variants
+                    // are told apart by name. `VoidExp` is the end of the text.
+                    let name = format!("{why:?}");
+                    if name == "VoidExp" {
+                        return Ok(last);
+                    }
+                    return Err(EvalError::RuntimeMessage(syntax_error(
+                        path, read_to, &name,
+                    )));
+                }
+            }
+        }
     }
 
     /// Loads the feature NAME unless it is loaded already, and returns NAME as
@@ -184,17 +232,11 @@ impl<B: BufferTrait> EditorState<B> {
             .map_err(|chain| {
                 EvalError::RuntimeMessage(format!("Recursive require: {}", chain.join(" -> ")))
             })?;
-        // Unlike `eval_file`, a file that does not parse is an error: it
-        // provides nothing, and saying only that would hide why.
         let outcome = std::fs::read_to_string(&path)
-            .map_err(|why| format!("Cannot read {}: {why}", path.display()))
-            .and_then(|content| {
-                Parser::new(&format!("(progn {content})"))
-                    .next()
-                    .map_err(|why| format!("{} does not parse: {why:?}", path.display()))
+            .map_err(|why| {
+                EvalError::RuntimeMessage(format!("Cannot read {}: {why}", path.display()))
             })
-            .map_err(EvalError::RuntimeMessage)
-            .and_then(|ast| self.eval_source(&path, &ast, env).map(|_| ()))
+            .and_then(|content| self.eval_source(&path, &content, env).map(|_| ()))
             .and_then(|()| {
                 if self.loader(|loader| loader.is_loaded(name)) {
                     Ok(())
@@ -334,4 +376,25 @@ fn read_descriptor<B: BufferTrait>(text: &str, directory: &Path) -> Result<Plugi
         }
     }
     Ok(plugin)
+}
+
+/// Returns what to say of a form of the file PATH that does not parse: the
+/// reader's complaint, NAME, in words where it is a common one, and where the
+/// form begins -- after line READ_TO, where the last form read ends, or at
+/// the start of the file.
+fn syntax_error(path: &Path, read_to: u32, name: &str) -> String {
+    let what = match name {
+        "UnbalancedRParen" => "a ) that closes nothing",
+        "UnclosedList" => "a ( that is never closed",
+        "UnclosedString" => "a string that is never closed",
+        "UnclosedVector" => "a [ that is never closed",
+        "UnclosedMap" => "a { that is never closed",
+        other => other,
+    };
+    let at = if read_to == 0 {
+        "in its first form".to_string()
+    } else {
+        format!("in the form after line {read_to}")
+    };
+    format!("{} does not parse: {what}, {at}", path.display())
 }
