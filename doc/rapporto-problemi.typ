@@ -507,7 +507,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-SIN-1-2-7",
+    commit: "173d8f5",
     titolo: [Una regione di sintassi che corrisponde alla stringa vuota blocca il thread di background],
   ),
   (
@@ -515,7 +515,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-SIN-1-2-7",
+    commit: "173d8f5",
     titolo: [Colorare una riga molto lunga costa un tempo quadratico nella sua lunghezza],
   ),
   (
@@ -567,7 +567,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-SIN-1-2-7",
+    commit: "173d8f5",
     titolo: [Una regola con GROUP colora tutta la corrispondenza quando il gruppo non vi prende parte],
   ),
   (
