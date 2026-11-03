@@ -44,9 +44,10 @@ where
 
 pub const ADD_SYNTAX_RULE_DOC: &str = "(add-syntax-rule MODE REGEX FACE &optional GROUP NAME): \
          Colour in FACE, in major mode MODE, what the regular expression REGEX matches within a \
-         line; with GROUP, only that capture group of the match. With NAME, a symbol, the rule \
-         takes the place of the mode's rule of that name, where it stands. Return t, or nil when \
-         there is no such mode or REGEX is wrong, which the log says.\n\n\
+         line; with GROUP, only that capture group of the match, and nothing where the group \
+         takes no part in it. With NAME, a symbol, the rule takes the place of the mode's rule of \
+         that name, where it stands. Return t, or nil when there is no such mode, REGEX is wrong \
+         or has no group GROUP, which the log says.\n\n\
          Example:\n\
          (add-syntax-rule 'rust-mode \"\\\\b(fn|let|mut)\\\\b\" 'keyword)";
 
@@ -64,8 +65,6 @@ primitive!(add_syntax_rule, args, _env, ctx, {
         });
     };
     let face = face_arg(&args[2])?;
-    // TODO(SIN-7): a GROUP the pattern does not have is taken, and the whole
-    // match is coloured.
     let group = match args.get(3) {
         None => 0,
         Some(exp) if exp.is_nil() => 0,
@@ -83,6 +82,14 @@ primitive!(add_syntax_rule, args, _env, ctx, {
     let Some(pattern) = compile(ctx, regex_str) else {
         return Ok(ELispExp::nil());
     };
+    // A group the pattern does not have would colour nothing, ever: it is a
+    // mistake in the rule, said as a wrong pattern is.
+    if group >= pattern.captures_len() {
+        ctx.log_diagnostic(&format!(
+            "add-syntax-rule: {regex_str} has no group {group}"
+        ));
+        return Ok(ELispExp::nil());
+    }
     let rule = SyntaxRule {
         pattern,
         face,
@@ -112,7 +119,9 @@ pub const ADD_SYNTAX_REGION_DOC: &str = "(add-syntax-region MODE BEGIN END FACE 
          NESTABLE): Colour in FACE, in major mode MODE, everything from a match of BEGIN to the \
          next match of END, across lines if need be, and nothing else inside. ESCAPE matches text \
          inside that looks like END and is not; NESTABLE non-nil means BEGIN inside opens \
-         another. Return t, or nil when there is no such mode or a regular expression is wrong.\n\n\
+         another. An END that matches nothing closes the region where it matches: \"$\" at the end \
+         of the line. Return t, or nil when there is no such mode, a regular expression is wrong, \
+         or BEGIN or ESCAPE matches the empty string; the log says which.\n\n\
          Example:\n\
          (add-syntax-region 'rust-mode \"/\\\\*\" \"\\\\*/\" 'comment nil t)";
 
@@ -148,11 +157,22 @@ primitive!(add_syntax_region, args, _env, ctx, {
     };
     let nestable = args.get(5).is_some_and(|exp| exp.is_truthy());
 
-    // TODO(SIN-1): a BEGIN or END that matches the empty string is taken, and
-    // stalls the highlighter.
     let (Some(begin), Some(end)) = (compile(ctx, begin_str), compile(ctx, end_str)) else {
         return Ok(ELispExp::nil());
     };
+    // A BEGIN or an ESCAPE that matches the empty string would open a region,
+    // or escape, everywhere. The highlighter steps over its empty matches, so
+    // it does no harm there; but it is not what was meant, and is said.
+    let empty = [Some(&begin), escape.as_ref()]
+        .into_iter()
+        .flatten()
+        .find(|pattern| pattern.is_match(""));
+    if let Some(pattern) = empty {
+        ctx.log_diagnostic(&format!(
+            "add-syntax-region: {pattern} matches the empty string"
+        ));
+        return Ok(ELispExp::nil());
+    }
     Ok(with_grammar(ctx, mode_name.as_str(), |grammar| {
         grammar.regions.push(SyntaxRegion {
             begin,

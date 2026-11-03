@@ -2991,10 +2991,32 @@ commento di riga e non apre un commento a blocchi. Le espressioni regolari
 sono quelle della crate `regex`, senza lookahead, lookbehind né
 backreference: per questo una regola può colorare solo un gruppo
 (`SyntaxRule::group`) e una regione può dichiarare una sequenza di escape. Se
-il gruppo non prende parte alla corrispondenza, o la regex non lo ha, si colora
-la corrispondenza intera #rapporto("SIN-7"). `highlight_line` colora una riga a
-partire dallo stato con cui vi si entra e restituisce quello con cui se ne
-esce; la applica l'evidenziatore (@lavori-editor).
+il gruppo non prende parte alla corrispondenza non si colora nulla, e la
+scansione scavalca comunque la corrispondenza intera; un gruppo che la regex
+non ha è rifiutato da `add-syntax-rule`, come una regex sbagliata.
+`highlight_line` colora una riga a partire dallo stato con cui vi si entra e
+restituisce quello con cui se ne esce; la applica l'evidenziatore
+(@lavori-editor).
+
+Ogni passo del ciclo di `highlight_line` avanza o chiude una regione: un
+inizio di regione e un escape contano solo dove corrispondono a qualcosa
+(`find_nonempty`), una regola avanza almeno di un byte, e una fine vuota
+chiude una delle regioni aperte, che sono in numero finito. Così il ciclo
+finisce qualunque siano i pattern; `add-syntax-region` rifiuta comunque, con
+una riga nel log, un inizio o un escape che corrisponde alla stringa vuota,
+perché non è ciò che si voleva dire. Una fine vuota invece è ammessa: `$`
+chiude la regione alla fine della riga.
+
+`Ahead` ricorda, per ogni pattern della grammatica, la prossima corrispondenza
+trovata e la posizione da cui la si è cercata. La scansione va solo in avanti,
+quindi una corrispondenza che comincia dopo la posizione corrente è ancora la
+prossima, e un pattern che non ha trovato nulla non troverà nulla più avanti:
+un pattern è interrogato di nuovo solo quando la scansione ha superato la sua
+corrispondenza. Allo stesso modo `Columns` converte i byte in colonne
+contando dall'ultima conversione, non dall'inizio della riga. Una riga costa
+così la sua lunghezza per il numero dei pattern, e non per il numero degli
+eventi: una riga di 260 KB, che prima chiedeva 85 secondi nella build di
+debug, ne chiede 0,13.
 
 === La tabella sintattica <tabella-sintattica>
 
@@ -3943,10 +3965,9 @@ un'altra grammatica si ricolora dall'inizio. Un carattere digitato nel
 frattempo rende inutile il turno, che il passo successivo rifà dalla riga
 cambiata. Lo stesso schema regge la prescansione, che però legge le righe sotto
 il lock di lettura perché la scansione è veloce (@riprendere), il controllo dei
-file e il salvataggio automatico. Il costo di una riga cresce più che
-linearmente con la sua lunghezza #rapporto("SIN-2"), e una regione di sintassi
-che corrisponde alla stringa vuota fa un passo che non finisce: il watchdog lo
-segnala, ma l'esecutore resta fermo #rapporto("SIN-1").
+file e il salvataggio automatico. Una riga non si divide tra due turni, ma il
+suo costo cresce linearmente con la sua lunghezza (@grammatica): anche quella
+di un file minificato occupa l'esecutore per un tempo breve.
 
 Il controllo dei file confronta il timbro del file su disco (`FileStamp`,
 l'istante della modifica e la lunghezza) con quello registrato quando l'editor

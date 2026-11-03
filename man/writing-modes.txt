@@ -61,7 +61,9 @@ COLOURING
 
         GROUP       the capture group that takes the face, not the whole
                     match: "\\b([a-z_]+)\\s*\\(" with 1 colours a function's
-                    name where it is called, and not its parenthesis
+                    name where it is called, and not its parenthesis.
+                    Where the group takes no part in the match, nothing
+                    is coloured
         ESCAPE      in a region, text that looks like END and is not:
                     "\\\\." in a string, so that \" does not end it
         NESTABLE    BEGIN inside the region opens another, which END closes
@@ -77,8 +79,11 @@ COLOURING
     one has used makes a new face, drawn as plain text until it is given a
     style. A mode gives its own faces theirs with `define-face', which
     `themes' describes. A regular expression that is wrong adds nothing,
-    and the log says why. The buffers of the mode are coloured again
-    whenever a rule or a region is added.
+    and the log says why; so does a GROUP the expression does not have,
+    and a BEGIN or an ESCAPE that matches the empty string, which would
+    open a region, or escape, everywhere. An END may: "$" closes the
+    region at the end of the line. The buffers of the mode are coloured
+    again whenever a rule or a region is added.
 
 WHAT THE TEXT MEANS
     Every mode starts from a table that pairs (), [] and {}, and knows " for

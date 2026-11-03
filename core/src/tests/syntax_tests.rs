@@ -158,6 +158,128 @@ mod tests {
         assert!(leaving.is_empty());
     }
 
+    /// The rule's group is optional, and absent: nothing takes the face, and
+    /// the scan steps over the match all the same, so `ar` is not offered to
+    /// the rule after it.
+    #[test]
+    fn a_group_that_takes_no_part_colours_nothing() {
+        let grammar = Grammar {
+            rules: vec![
+                group_rule("(foo)?bar", Face::KEYWORD, 1),
+                rule("ar", Face::STRING),
+            ],
+            regions: vec![],
+        };
+        assert_eq!(
+            faces(&grammar, "foobar", &vec![]),
+            vec![(0, 3, "keyword".to_string())]
+        );
+        assert_eq!(faces(&grammar, "bar", &vec![]), vec![]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Patterns that match the empty string, and long lines
+    // -----------------------------------------------------------------------
+
+    /// The card's case: BEGIN `x*` and END `y*` reopened the region at the
+    /// same position forever. A begin counts only where it matches something.
+    #[test]
+    fn a_region_whose_patterns_can_match_nothing_terminates() {
+        let grammar = Grammar {
+            rules: vec![],
+            regions: vec![region("x*", "y*", Face::COMMENT)],
+        };
+        let (spans, leaving) = highlight_line(&grammar, "abc", &vec![]);
+        assert!(spans.is_empty(), "no x, no region: {spans:?}");
+        assert!(leaving.is_empty());
+        // An x opens it, and the empty end closes it at once.
+        assert_eq!(
+            faces(&grammar, "axb", &vec![]),
+            vec![(1, 2, "comment".to_string())]
+        );
+    }
+
+    /// A nestable region with a begin that can match nothing stacked states
+    /// until memory ran out.
+    #[test]
+    fn a_nestable_region_with_an_empty_begin_does_not_stack_forever() {
+        let mut nested = region("#*", "!", Face::COMMENT);
+        nested.nestable = true;
+        let grammar = Grammar {
+            rules: vec![],
+            regions: vec![nested],
+        };
+        assert_eq!(state(&grammar, "a # b # c", &vec![]), vec![0, 0]);
+        assert_eq!(state(&grammar, "plain text", &vec![0]), vec![0]);
+    }
+
+    /// An escape that can match nothing escapes nothing: the end is still
+    /// found.
+    #[test]
+    fn an_escape_that_can_match_nothing_does_not_hide_the_end() {
+        let mut string = region("\"", "\"", Face::STRING);
+        string.escape = Some(Regex::new(r"z*").expect("test pattern"));
+        let grammar = Grammar {
+            rules: vec![],
+            regions: vec![string],
+        };
+        assert_eq!(
+            faces(&grammar, r#""a" b"#, &vec![]),
+            vec![(0, 3, "string".to_string())]
+        );
+        assert_eq!(
+            faces(&grammar, r#""azz" b"#, &vec![]),
+            vec![(0, 5, "string".to_string())]
+        );
+    }
+
+    /// An end that matches nothing is a way to say "to the end of the line".
+    #[test]
+    fn an_end_that_matches_the_end_of_the_line_closes_there() {
+        let grammar = Grammar {
+            rules: vec![],
+            regions: vec![region("#", "$", Face::COMMENT)],
+        };
+        let (spans, leaving) = highlight_line(&grammar, "a # comment", &vec![]);
+        assert_eq!(
+            spans
+                .iter()
+                .map(|span| (span.start, span.end))
+                .collect::<Vec<_>>(),
+            vec![(2, 11)]
+        );
+        assert!(leaving.is_empty(), "closed on its own line");
+    }
+
+    /// Each pattern is asked again only once the scan has passed its match:
+    /// a line of a megabyte, a minified file, cost minutes when every pattern
+    /// was asked again at every event.
+    #[test]
+    fn a_long_line_costs_its_length_not_its_length_squared() {
+        let grammar = Grammar {
+            rules: vec![
+                rule(r"\b(let|fn|mut)\b", Face::KEYWORD),
+                rule(r"\b[0-9]+\b", Face::BUILTIN),
+                rule(r"\bnever_here\b", Face::TYPE),
+            ],
+            regions: vec![
+                region("\"", "\"", Face::STRING),
+                region("/\\*", "\\*/", Face::COMMENT),
+            ],
+        };
+        let line = r#"let a = "x"; "#.repeat(20_000);
+        let started = std::time::Instant::now();
+        let (spans, leaving) = highlight_line(&grammar, &line, &vec![]);
+        let took = started.elapsed();
+        assert_eq!(spans.len(), 40_000, "a keyword and a string each time");
+        assert!(leaving.is_empty());
+        assert!(
+            took < Duration::from_secs(5),
+            "{} bytes took {took:?}",
+            line.len()
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Regions
     // -----------------------------------------------------------------------
@@ -480,6 +602,64 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("Invalid Regex")),
             "and it should be written down"
+        );
+    }
+
+    /// A begin or an escape that matches the empty string would open a
+    /// region, or escape, everywhere: refused as a wrong pattern is.
+    #[test]
+    fn a_region_that_would_open_everywhere_is_refused() {
+        let (ctx, env) = editor_with("");
+        eval_str("(make-mode 'toy)", &env, &ctx).expect("make-mode");
+        for call in [
+            r#"(add-syntax-region 'toy "x*" "y*" 'comment)"#,
+            r#"(add-syntax-region 'toy "\"" "\"" 'string "z*")"#,
+        ] {
+            assert_eq!(
+                eval_str(call, &env, &ctx).expect("must not signal"),
+                LispExp::nil(),
+                "{call}"
+            );
+        }
+        assert!(grammar_of(&ctx, "toy").regions.is_empty());
+        assert!(
+            ctx.get_logs()
+                .iter()
+                .any(|line| line.contains("x* matches the empty string")),
+            "and it should be written down"
+        );
+        // An end that can match nothing is taken: it closes at once.
+        assert_eq!(
+            eval_str(r##"(add-syntax-region 'toy "#" "$" 'comment)"##, &env, &ctx)
+                .expect("must not signal"),
+            LispExp::t()
+        );
+    }
+
+    #[test]
+    fn a_rule_naming_a_group_its_pattern_lacks_is_refused() {
+        let (ctx, env) = editor_with("");
+        eval_str("(make-mode 'toy)", &env, &ctx).expect("make-mode");
+        assert_eq!(
+            eval_str(r#"(add-syntax-rule 'toy "baz" 'string 5)"#, &env, &ctx)
+                .expect("must not signal"),
+            LispExp::nil()
+        );
+        assert!(grammar_of(&ctx, "toy").rules.is_empty());
+        assert!(
+            ctx.get_logs()
+                .iter()
+                .any(|line| line.contains("baz has no group 5")),
+            "and it should be written down"
+        );
+        assert_eq!(
+            eval_str(
+                r#"(add-syntax-rule 'toy "(foo)?bar" 'keyword 1)"#,
+                &env,
+                &ctx
+            )
+            .expect("must not signal"),
+            LispExp::t()
         );
     }
 
