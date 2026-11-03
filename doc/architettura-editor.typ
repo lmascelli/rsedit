@@ -2747,8 +2747,10 @@ ed è utile: è una posizione su ogni riga, che è ciò che serve a
 possono essere dati in qualsiasi ordine.
 
 Le colonne sono caratteri, e un tab è una colonna, come in tutto l'editor.
-Sullo schermo il terminale lo espande, quindi su una riga con un tab il
-blocco disegnato non è quello che il rettangolo prende #rapporto("TUI-3").
+Sullo schermo un tab arriva fino al prossimo multiplo di `tab-width`
+(@righe), quindi su una riga con un tab il blocco disegnato non è quello che
+il rettangolo prende: Emacs conta le colonne dello schermo, e qui la scelta
+resta quella del modello.
 
 `spans(text, rect)` traduce il rettangolo in un `Span` per riga, dall'alto:
 
@@ -3188,7 +3190,8 @@ crea una faccia nuova semplicemente nominandola (`'doc-comment` in
 associa a ogni faccia uno `Style` (colori di primo piano e sfondo, grassetto,
 corsivo, sottolineato, inverso), in un vettore indicizzato dalla faccia: una
 faccia oltre la fine si disegna semplice. I colori sono richieste --- un nome o
-`#rrggbb` (`Color::parse`) #rapporto("TUI-5") --- e il front-end decide come
+`#rrggbb` (`Color::parse`, che accetta solo cifre esadecimali prima di
+tagliare la stringa) --- e il front-end decide come
 approssimarli (@tui); i sedici nomi
 convenzionali stanno in `NAMED_COLORS`, nell'ordine della tavolozza dei
 terminali. Il tema predefinito usa quei colori, il video inverso dove una cosa
@@ -4466,29 +4469,47 @@ Le finestre flottanti ricevono solo regione e testo virtuale #rapporto("TUI-6").
 == Le righe e le loro colonne <righe>
 
 `Layout::compose` (`ui/layout.rs`) compone le righe di una finestra: una `Row`
-per riga dello schermo, con la linea del buffer che mostra, il suo testo, e i
-pezzi di cui è fatto, testo del buffer o testo virtuale. Una riga mostra una
-linea intera: le linee lunghe non vanno a capo, e lo scorrimento orizzontale le
-taglia (`visible_text`). Il testo virtuale si chiede alla sua tabella una volta
-per riga, non per carattere, e una riga senza testo virtuale è un pezzo solo.
+per riga dello schermo, con la linea del buffer che mostra, il testo che si
+disegna, e per ogni colonna della linea la cella in cui comincia e quante ne
+prende. Una riga mostra una linea intera: le linee lunghe non vanno a capo, e
+lo scorrimento orizzontale le taglia (`visible_text`), per celle. Il testo
+virtuale si chiede alla sua tabella una volta per riga, non per carattere.
 
-I pezzi fanno la corrispondenza tra le colonne. `to_screen` dice in quale
-colonna dello schermo si disegna una colonna del buffer, `to_buffer` il
-contrario. Il testo virtuale ancorato a una colonna si disegna prima di lei,
-così il punto non cade mai dentro il testo virtuale; una colonna dello schermo
-dentro il testo virtuale risponde con la colonna dell'ancora, e un clic su un
-suggerimento mette il punto sul carattere davanti a cui sta. Oltre la fine
-della linea le due funzioni vanno una colonna per colonna, senza fermarsi: una
-selezione che continua sulla linea dopo mostra selezionato l'a capo.
+Una colonna del buffer è un carattere; una #emph[cella] è un posto dello
+schermo. `ui/width.rs` dice quante celle prende un carattere, con la crate
+`unicode-width`: due per un ideogramma o un'emoji, nessuna per un accento che
+si combina con la lettera prima, una per il resto, i caratteri di controllo
+compresi, che il renderer disegna come figure. Un tab si espande nella
+composizione, in spazi fino al prossimo multiplo di `tab-width`, contando le
+celle dall'inizio della riga, testo virtuale compreso: la larghezza è la
+proprietà `tab-width` del modo del buffer, o la variabile, o 4, tra 1 e 64.
+`snapshot` le legge dall'ambiente prima di prendere i lock dell'editor, una
+per modo registrato (`TabWidths`); il mouse legge quella del modo del buffer
+cliccato. La stessa misura serve ai due front-end: `width::cut` e `width::fit`
+tagliano e riempiono per celle le righe, la riga di stato, il margine e i
+titoli, e un carattere largo tagliato da un bordo diventa uno spazio per ogni
+sua cella dentro, così ciò che segue resta dove è stato contato.
+
+La mappa fa la corrispondenza tra colonne e celle. `to_screen` dice in quale
+cella comincia una colonna del buffer, `to_buffer` il contrario: ogni cella di
+un tab o di un carattere largo risponde con la sua colonna. Il testo virtuale
+ancorato a una colonna si disegna prima di lei, così il punto non cade mai
+dentro il testo virtuale; una cella dentro il testo virtuale risponde con la
+colonna dell'ancora, e un clic su un suggerimento mette il punto sul carattere
+davanti a cui sta. Oltre la fine della linea le due funzioni vanno una colonna
+per cella, senza fermarsi: una selezione che continua sulla linea dopo mostra
+selezionato l'a capo. Lo scorrimento orizzontale segue il punto in modo che
+tutte le celle del suo carattere si vedano.
 
 `place` è il solo punto in cui un'evidenziazione in colonne del buffer
 (`BufferHighlight`) diventa una in colonne dello schermo (`Highlight`): la
 mappa attraverso la riga, la sposta dello scorrimento orizzontale e la taglia
-alla larghezza. Sintassi, overlay e regione passano tutti di lì. Un carattere
-è una colonna: anche un tab #rapporto("TUI-3") e un carattere largo
-#rapporto("TUI-4"); I caratteri di controllo arrivano così come sono fino al
-renderer, che li disegna come figure larghe una colonna (␛, ␇…) invece di
-mandarli al terminale; la GUI li salta).
+alla larghezza. Sintassi, overlay e regione passano tutti di lì, e coprono le
+celle di ciò che coprono: tutte quelle di un tab o di un carattere largo. I
+caratteri di controllo arrivano così come sono fino al renderer, che li
+disegna come figure larghe una cella (␛, ␇…) invece di mandarli al terminale;
+la GUI li salta. Un tab che arriva al renderer fuori dal testo, in un
+messaggio o nel nome di un buffer, è `␉`.
 
 == Il margine dei numeri <margine>
 
@@ -4530,7 +4551,7 @@ output attraverso `render_to`, che scrive in qualunque `Write` e disegna in
 quest'ordine: nasconde il cursore e pulisce
 lo schermo; disegna i separatori (prima delle finestre, perché una flottante
 deve poterli coprire); per ogni vista disegna bordo e titolo, ogni riga del
-rettangolo riempita fino alla larghezza (così una flottante è opaca), il
+rettangolo riempita fino alla larghezza, contata in celle (così una flottante è opaca), il
 margine cella per cella, le evidenziazioni sopra il testo, la riga di stato
 sotto il rettangolo; poi l'area messaggi nell'ultima riga, l'input in sospeso
 allineato a destra nella stessa riga, il cursore #emph[per ultimo] e infine,
@@ -4658,9 +4679,11 @@ un prompt.
   genere di riga che nessuno crea: una decorazione su una riga sua, o una linea
   spezzata su più righe, saranno un produttore nuovo di righe, non un caso in
   più di questa.
-+ *Una lista di pezzi, non una colonna del buffer per cella.* Il caso comune è
-  una riga senza testo virtuale, un pezzo solo: la mappa costa una somma. Una
-  tabella per cella costerebbe in ogni riga di ogni frame.
++ *Nessuna mappa per le righe semplici.* Il caso comune è una riga senza
+  testo virtuale, senza tab e senza caratteri larghi: la colonna è la cella, e
+  la riga non tiene nulla (`columns: None`); per una riga ASCII lo dice un
+  controllo sui byte. Solo le altre tengono, per ogni colonna, la cella in cui
+  comincia e quante ne prende.
 + *Un tipo per le evidenziazioni in colonne del buffer.* `BufferHighlight` e
   `Highlight` hanno gli stessi campi e un significato diverso: con un tipo solo,
   un'evidenziazione non portata sullo schermo si disegnerebbe sfasata del testo
@@ -4976,7 +4999,8 @@ Il punto come numero --- `point`, `point-min`, `point-max`, `goto-char`,
 `line-number-at-point`, `current-line`, `current-column` --- serve al codice
 che ha calcolato una posizione invece di descrivere un movimento: un risultato
 di ricerca, un posto salvato. Conta in caratteri, come il mark, la regione e la
-storia dell'undo, e una colonna è un carattere, anche un tab.
+storia dell'undo, e una colonna è un carattere, anche un tab, che sullo
+schermo può prendere più celle (@righe).
 
 === Uccidere e incollare <uccidere>
 
