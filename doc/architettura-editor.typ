@@ -431,7 +431,7 @@ loop {
             read_to = map.locate(items).end_line;
             last = eval(&form, top_level(env), self)?;
         }
-        Err(VoidExp) => return Ok(last),          // fine del testo
+        Err(ParserError::VoidExp) => return Ok(last),   // fine del testo
         Err(why) => return Err(syntax_error(path, read_to, why)),
     }
 }
@@ -450,9 +450,10 @@ di troppo chiudeva la `progn` e il resto del file non veniva letto, una che
 mancava, o un commento finale senza a capo, lo rendevano illeggibile, e
 `eval_file` restituiva `nil` senza dire nulla.
 
-`ParserError` non è esportato da risp, e `eval_forms` riconosce le sue
-varianti dal nome che `Debug` stampa; una che `syntax_error` non traduce in
-parole viene detta con quel nome.
+`eval_forms` distingue la fine del testo da un errore con un `match` sulle
+varianti di `ParserError`, che risp esporta insieme a `Parser`. `syntax_error`
+dice in parole le parentesi e le stringhe che non si chiudono, o che non
+chiudono nulla; le altre varianti, più rare, con il loro nome.
 
 === Le decisioni <decisioni-avvio>
 

@@ -561,6 +561,21 @@ mod tests {
         assert_eq!(number(&run("first-form", &env, &ctx)), 1.0);
     }
 
+    #[test]
+    fn a_bracket_that_closes_nothing_is_said_in_words() {
+        let (ctx, env) = editor();
+        let sandbox = Sandbox::new("stray-bracket");
+        let dir = sandbox.file(
+            "file.lisp",
+            "(setq first-form 1)\n(setq second-form 2)\n]\n",
+        );
+        let why = message_of(eval_file(&dir.join("file.lisp"), &env, &ctx).unwrap_err());
+        assert!(why.contains("a ] that closes nothing"), "{why}");
+        // Met while the reader finishes the form before it, as a `)` is.
+        assert!(why.contains("in the form after line 1"), "{why}");
+        assert_eq!(number(&run("first-form", &env, &ctx)), 1.0);
+    }
+
     /// In a module the stray `)` cut the file short before its `provide`, and
     /// the error blamed the missing feature rather than the parenthesis.
     #[test]

@@ -7,7 +7,7 @@
 use super::boot::top_level;
 use super::*;
 use crate::managers::Plugin;
-use risp::SourceMap;
+use risp::{ParserError, SourceMap};
 use std::path::Path;
 
 /// The directories the editor's modules are kept in, by kind, in the order
@@ -175,16 +175,10 @@ impl<B: BufferTrait> EditorState<B> {
                     }
                     last = eval(&form, top_level(env), self)?;
                 }
+                // The end of the text, not an error.
+                Err(ParserError::VoidExp) => return Ok(last),
                 Err(why) => {
-                    // `ParserError` is not one risp exports, so the variants
-                    // are told apart by name. `VoidExp` is the end of the text.
-                    let name = format!("{why:?}");
-                    if name == "VoidExp" {
-                        return Ok(last);
-                    }
-                    return Err(EvalError::RuntimeMessage(syntax_error(
-                        path, read_to, &name,
-                    )));
+                    return Err(EvalError::RuntimeMessage(syntax_error(path, read_to, &why)));
                 }
             }
         }
@@ -379,17 +373,19 @@ fn read_descriptor<B: BufferTrait>(text: &str, directory: &Path) -> Result<Plugi
 }
 
 /// Returns what to say of a form of the file PATH that does not parse: the
-/// reader's complaint, NAME, in words where it is a common one, and where the
+/// reader's complaint, WHY, in words where it is a common one, and where the
 /// form begins -- after line READ_TO, where the last form read ends, or at
 /// the start of the file.
-fn syntax_error(path: &Path, read_to: u32, name: &str) -> String {
-    let what = match name {
-        "UnbalancedRParen" => "a ) that closes nothing",
-        "UnclosedList" => "a ( that is never closed",
-        "UnclosedString" => "a string that is never closed",
-        "UnclosedVector" => "a [ that is never closed",
-        "UnclosedMap" => "a { that is never closed",
-        other => other,
+fn syntax_error(path: &Path, read_to: u32, why: &ParserError) -> String {
+    let what = match why {
+        ParserError::UnbalancedRParen => "a ) that closes nothing".to_string(),
+        ParserError::UnbalancedRSquared => "a ] that closes nothing".to_string(),
+        ParserError::UnbalancedRBracket => "a } that closes nothing".to_string(),
+        ParserError::UnclosedList => "a ( that is never closed".to_string(),
+        ParserError::UnclosedString => "a string that is never closed".to_string(),
+        ParserError::UnclosedVector => "a [ that is never closed".to_string(),
+        ParserError::UnclosedMap => "a { that is never closed".to_string(),
+        other => format!("{other:?}"),
     };
     let at = if read_to == 0 {
         "in its first form".to_string()
