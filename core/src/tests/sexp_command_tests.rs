@@ -88,6 +88,34 @@ mod tests {
     // A kill is an edit like any other
     // -----------------------------------------------------------------------
 
+    /// At the end of a list `kill-sexp` took its closer and the start of the
+    /// list after it, and merged the two: `(foo bar qux)`.
+    #[test]
+    fn a_kill_at_the_end_of_a_list_does_not_merge_it_with_the_next() {
+        let (ctx, env) = editor();
+        with_lisp_mode(&ctx, &env);
+        in_mode(&ctx, "toy-lisp");
+        typing(&ctx, "(foo bar) (baz qux)", 8);
+
+        run("(forward-sexp)", &env, &ctx);
+        assert_eq!(point(&ctx), 8);
+        run("(kill-sexp)", &env, &ctx);
+        assert_eq!(contents(&ctx), "(foo bar) (baz qux)");
+    }
+
+    /// From inside a word the kill takes the rest of it, and not the
+    /// expression after it too.
+    #[test]
+    fn a_kill_from_inside_a_symbol_takes_the_rest_of_it() {
+        let (ctx, env) = editor();
+        with_lisp_mode(&ctx, &env);
+        in_mode(&ctx, "toy-lisp");
+        typing(&ctx, "(foo bar) (baz)", 2);
+
+        run("(kill-sexp)", &env, &ctx);
+        assert_eq!(contents(&ctx), "(f bar) (baz)");
+    }
+
     #[test]
     fn killing_an_expression_can_be_undone_in_one_step() {
         // Through the two doors, so undo takes the kill back in one step.

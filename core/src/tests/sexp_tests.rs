@@ -225,8 +225,9 @@ mod tests {
         ]);
         assert_eq!(
             forward(&table, "--[[ a\n b ]] c", 0),
-            12,
-            "the block comment runs past the newline to `]]`"
+            14,
+            "the block comment runs past the newline to `]]`, and `c' is the \
+             expression: read as a line comment, `b' would be"
         );
         assert_eq!(
             forward(&table, "-- a\nb", 0),
@@ -242,14 +243,13 @@ mod tests {
         let table = rust_table();
         assert_eq!(
             forward(&table, "/* a */ b", 0),
-            7,
-            "the block comment, not the `/` of a line comment"
+            9,
+            "the block comment is skipped and `b' is the expression"
         );
         assert_eq!(
             forward(&table, "// a\nb", 0),
             6,
-            "the line comment is skipped and `b' is the expression -- see \
-             a_line_comment_is_skipped_but_a_block_comment_is_not"
+            "the line comment is skipped and `b' is the expression"
         );
     }
 
@@ -274,27 +274,21 @@ mod tests {
         );
     }
 
+    /// Both kinds of comment are passed over as whitespace is, as Emacs does
+    /// with `parse-sexp-ignore-comments': a block comment used to be an
+    /// expression `forward-sexp' stopped at the end of, and a line comment
+    /// was not.
     #[test]
-    fn a_line_comment_is_skipped_but_a_block_comment_is_not() {
-        // Pinning an inconsistency rather than endorsing it (SIN-9). The
-        // `Line` arm of the scan never calls `complete`, so a line comment is
-        // passed over the way whitespace is; the `Block` arm calls
-        // `complete_comment`, so a block comment is an expression that
-        // `forward-sexp` stops at the end of. Emacs skips both.
-        //
-        // Whichever way it should go, it should go the same way for both. This
-        // test exists so that making them agree is a visible decision and not a
-        // silent change.
+    fn a_comment_of_either_kind_is_passed_over_as_whitespace() {
         let table = rust_table();
+        assert_eq!(forward(&table, "/* a */ b", 0), 9);
+        assert_eq!(forward(&table, "// a\nb", 0), 6);
+        assert_eq!(backward(&table, "b /* a */", 9), 0);
+        assert_eq!(backward(&table, "b // a\n", 7), 0);
         assert_eq!(
-            forward(&table, "/* a */ b", 0),
-            7,
-            "stops at the end of the block comment"
-        );
-        assert_eq!(
-            forward(&table, "// a\nb", 0),
-            6,
-            "steps over the line comment and lands after `b'"
+            forward(&table, "(a /* b */)", 3),
+            3,
+            "a comment alone before the close is nothing to move over"
         );
     }
 
@@ -360,10 +354,54 @@ mod tests {
 
     #[test]
     fn at_the_end_of_a_list_forward_does_not_escape_it() {
-        // Nothing follows the list here: with a list after it, the count goes
-        // on into that one (SIN-8).
         let table = lisp_table();
         assert_eq!(forward(&table, "(a b)", 4), 4);
+        assert_eq!(forward(&table, "(a b) x", 4), 4);
+    }
+
+    /// With a list after FROM's, the count went on into it: from the end of
+    /// `(a b)` to the end of `c`.
+    #[test]
+    fn at_the_end_of_a_list_forward_does_not_enter_the_next_one() {
+        let table = lisp_table();
+        assert_eq!(forward(&table, "(a b) (c d)", 4), 4);
+        assert_eq!(forward(&table, "((a) (b c))", 3), 3);
+        assert_eq!(
+            sexp::forward(&text("(a b) (c d)"), &table, None, 1, 3),
+            1,
+            "the list ends after two: nothing moves, as with too large a count"
+        );
+    }
+
+    /// Past the end of FROM's list, `down` found a list nested in one that
+    /// follows.
+    #[test]
+    fn down_does_not_leave_the_list_it_starts_in() {
+        let table = lisp_table();
+        let down = |source: &str, from: usize| sexp::down(&text(source), &table, None, from);
+        assert_eq!(down("(a) (b (c))", 2), None);
+        assert_eq!(down("(a) (b)", 2), None);
+        assert_eq!(down("(a (b))", 1), Some(4), "a list inside its own still");
+        assert_eq!(down("a (b)", 0), Some(3), "at the top level, any list");
+    }
+
+    /// From inside a symbol the symbol was completed on the way to FROM and
+    /// not counted: one expression too many.
+    #[test]
+    fn from_inside_a_symbol_forward_reaches_its_end() {
+        let table = lisp_table();
+        assert_eq!(forward(&table, "(foo bar) (baz)", 2), 4, "the end of foo");
+        assert_eq!(forward(&table, "(foo bar) (baz)", 13), 14, "the end of baz");
+        assert_eq!(
+            sexp::forward(&text("foo bar baz"), &table, None, 1, 2),
+            7,
+            "foo, then bar"
+        );
+        assert_eq!(
+            forward(&table, "'foo rest", 2),
+            4,
+            "the prefix is no matter"
+        );
     }
 
     #[test]

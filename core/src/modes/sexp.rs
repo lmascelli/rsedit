@@ -262,8 +262,10 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
                         if self.literal_at(self.pos, closer) {
                             self.pos += closer.chars().count();
                             if depth == 0 {
+                                // Passed over, as a line comment is and as
+                                // whitespace is: not an expression.
                                 self.state = State::Code;
-                                return self.complete_comment(start, self.pos);
+                                return Step::Advanced;
                             }
                             self.state = State::Comment {
                                 style,
@@ -438,14 +440,6 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
         }
     }
 
-    // TODO(SIN-9): a line comment is passed over as whitespace is, so the
-    // two kinds of comment move `forward-sexp` differently.
-    /// Records a block comment from START to END as an expression, so that
-    /// `forward-sexp` from in front of it lands at its end.
-    fn complete_comment(&mut self, start: usize, end: usize) -> Step {
-        self.complete(start, end)
-    }
-
     /// Returns the scan's state here, for carrying on from later, with the
     /// frames copied without their children: see [`Resume`].
     pub fn snapshot(&self) -> Resume {
@@ -470,14 +464,22 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
         self.pos
     }
 
-    /// Runs the scan until it reaches LIMIT or the end of the text. A step
-    /// consumes a whole symbol, so the scan may stop past LIMIT.
-    pub(crate) fn run_to(&mut self, limit: usize) {
+    /// Runs the scan until it reaches LIMIT or the end of the text, and
+    /// returns the expression its last step completed across LIMIT, with the
+    /// depth it was completed at, if it did.
+    ///
+    /// A step consumes a whole symbol, so the scan may stop past LIMIT: from
+    /// inside `foo`, the step that reads it completes it, and an expression
+    /// that LIMIT is inside is the first that ends after it.
+    pub(crate) fn run_to(&mut self, limit: usize) -> Option<(usize, Sexp)> {
         while self.pos < limit {
-            if matches!(self.step(), Step::End) {
-                break;
+            match self.step() {
+                Step::End => break,
+                Step::Completed(depth, sexp) if sexp.end > limit => return Some((depth, sexp)),
+                _ => {}
             }
         }
+        None
     }
 
     /// Returns what the scan's position is inside.
@@ -508,13 +510,14 @@ impl<'a, B: BufferTrait> Scan<'a, B> {
     }
 }
 
-// TODO(SIN-6): from inside a symbol, `run_to` completes the symbol, and the
-// count starts at the expression after it.
-// TODO(SIN-8): past the end of FROM's list the count goes on, in the lists
-// that follow at the same depth.
 /// Returns where `forward-sexp` lands from FROM with COUNT: the end of the
-/// COUNTth expression completed after FROM at FROM's depth, or FROM when the
-/// text runs out first.
+/// COUNTth expression that ends after FROM at FROM's depth, or FROM when the
+/// list FROM is in, or the text, ends first.
+///
+/// From inside a symbol the symbol is the first: the step that brings the
+/// scan to FROM completes it, and `run_to` hands it back. The list ending
+/// stops the count, so that the end of one list is not a way into the next:
+/// as in Emacs, where it is an error, nothing moves.
 pub fn forward<B: BufferTrait>(
     text: &B,
     table: &SyntaxTable,
@@ -526,12 +529,24 @@ pub fn forward<B: BufferTrait>(
         return from;
     }
     let mut scan = Scan::begin(text, table, from, resume, 1);
-    scan.run_to(from);
+    let across = scan.run_to(from);
     let start_depth = scan.depth();
 
     let mut remaining = count;
+    if let Some((depth, sexp)) = across
+        && depth == start_depth
+    {
+        remaining -= 1;
+        if remaining == 0 {
+            return sexp.end;
+        }
+    }
     loop {
-        match scan.step() {
+        let step = scan.step();
+        if scan.depth() < start_depth {
+            return from;
+        }
+        match step {
             Step::End => return from,
             Step::Completed(depth, sexp) if depth == start_depth && sexp.end > from => {
                 remaining -= 1;
@@ -564,11 +579,11 @@ pub fn backward<B: BufferTrait>(text: &B, table: &SyntaxTable, from: usize, coun
     frame.children[frame.children.len() - count].start
 }
 
-// TODO(SIN-8): past the end of FROM's list the scan goes on, and enters a
-// list nested in one that follows.
 /// Returns where `down-list` lands: just inside the first list the scan
-/// enters deeper than FROM's depth, or `None` when there is none. An opener
-/// completes nothing, so the scan watches the depth.
+/// enters deeper than FROM's depth, or `None` when there is none before the
+/// list FROM is in ends. An opener completes nothing, so the scan watches the
+/// depth, and stops where it falls below FROM's: past there, a list deeper
+/// than FROM's is one nested in a list that follows.
 pub fn down<B: BufferTrait>(
     text: &B,
     table: &SyntaxTable,
@@ -582,6 +597,7 @@ pub fn down<B: BufferTrait>(
         match scan.step() {
             Step::End => return None,
             _ if scan.depth() > start_depth => return Some(scan.pos),
+            _ if scan.depth() < start_depth => return None,
             _ => {}
         }
     }

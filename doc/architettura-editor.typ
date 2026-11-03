@@ -3074,9 +3074,11 @@ pub struct Scan<'a, B: BufferTrait> {
 testo è finito (`End`). In stato `Code` l'ordine dei controlli conta:
 
 + Un'apertura di commento (la più lunga che corrisponde) entra in `Comment` e
-  scarta un prefisso in attesa. Un commento a blocchi completato conta come
-  espressione, e `forward-sexp` si ferma alla sua fine; uno di riga si passa
-  come uno spazio #rapporto("SIN-9").
+  scarta un prefisso in attesa. Un commento, a blocchi o di riga, non è
+  un'espressione: si passa come uno spazio, come in Emacs con
+  `parse-sexp-ignore-comments`. Fino alla correzione di SIN-9 un commento a
+  blocchi completato contava come espressione, e `forward-sexp` si fermava
+  alla sua fine, mentre uno di riga si passava.
 + Un'apertura di stringa multi-carattere viene prima dei caratteri singoli,
   perché contiene virgolette che altrimenti aprirebbero una stringa normale.
 + Un letterale di carattere (`'a'`, `'"'`) è un'unica espressione. Il `'` non ha
@@ -3100,9 +3102,9 @@ tiene al massimo `keep`. È il limite che rende la scansione economica:
 #ref-table(
   columns: (4.0cm, 1fr),
   header: ([Funzione], [Come usa la scansione]),
-  [`forward(from, n)`], [Scansione fino a `from`, poi passi finché non si completano `n` espressioni #emph[alla profondità di `from`] che finiscono dopo `from`; se il testo finisce prima, il punto non si muove. Da dentro un simbolo il conteggio salta il simbolo #rapporto("SIN-6"), e oltre la fine della lista di `from` prosegue nelle liste che seguono #rapporto("SIN-8").],
+  [`forward(from, n)`], [Scansione fino a `from`, poi passi finché non si completano `n` espressioni #emph[alla profondità di `from`] che finiscono dopo `from`; se il testo, o la lista di `from`, finisce prima, il punto non si muove: la fine di una lista non è un passaggio verso la successiva. Da dentro un simbolo il primo è il simbolo stesso: il passo che porta la scansione a `from` lo completa, e `run_to` lo restituisce.],
   [`backward(from, n)`], [Scansione fino a `from` con `keep = n`; il frame rimasto aperto è la lista in cui si trova il punto, e i suoi `children` sono i fratelli prima del punto. Restituisce l'inizio dell'N-esimo dal fondo, prefisso incluso.],
-  [`down(from)`], [Scansione finché la profondità non supera quella di partenza: il punto è appena entrato in una lista. Oltre la fine della lista di `from` la trova in una lista annidata in una che segue #rapporto("SIN-8").],
+  [`down(from)`], [Scansione finché la profondità non supera quella di partenza: il punto è appena entrato in una lista. Si ferma con `None` quando scende sotto quella di partenza: oltre la fine della lista di `from` una lista più profonda sarebbe annidata in una che segue.],
   [`context_at(pos)`], [Scansione fino a `pos`, poi `context()`: profondità, inizio e delimitatore della lista più interna, inizio della stringa o del commento in corso. È ciò che restituisce `syntax-ppss`.],
   [`balance_point(pos)`], [La prima posizione dopo `pos` in cui tutte le liste aperte in `pos` sono chiuse. Non chiede se il buffer è bilanciato alla fine: una funzione chiusa resta chiusa anche se quella sotto è ancora da finire.],
   [`enclosing(pos)`], [La lista più interna che contiene `pos`, per intero (fino alla fine del testo se non è chiusa); `None` al livello zero.],

@@ -12,8 +12,10 @@ use crate::text::kill_ring::Direction;
 
 pub const FORWARD_SEXP_DOC: &str = "(forward-sexp &optional N): Move point over the next N \
          balanced expressions, 1 by default: a list, a string or an atom, with any prefix in \
-         front of it. A negative N moves back. A delimiter in a string or a comment is text, and \
-         at the end of a list this does nothing.";
+         front of it. A negative N moves back. A delimiter in a string or a comment is text, a \
+         comment is passed over as a space is, and from inside a symbol the first expression is \
+         the rest of it. When the list point is in ends before N expressions, point does not \
+         move.";
 
 primitive!(forward_sexp, args, _env, ctx, {
     // Before the write lock: this reads the buffer to find its mode.
@@ -63,8 +65,8 @@ primitive!(backward_sexp, args, _env, ctx, {
 });
 
 pub const KILL_SEXP_DOC: &str = "(kill-sexp &optional N): Kill forward over N balanced \
-         expressions, 1 by default: the text `forward-sexp' would move over. It goes on the kill \
-         ring.";
+         expressions, 1 by default: the text `forward-sexp' would move over, nothing at the end \
+         of a list. It goes on the kill ring.";
 
 primitive!(kill_sexp, args, env, ctx, {
     let table = ctx.current_syntax_table();
@@ -136,8 +138,8 @@ primitive!(backward_up_list, _args, _env, ctx, {
 });
 
 pub const DOWN_LIST_DOC: &str = "(down-list): Move point just inside the next list that opens \
-         after it. Does nothing when none does; a delimiter in a string or a comment does not \
-         count.";
+         after it, within the list it is in. Does nothing when none does before that list ends; \
+         a delimiter in a string or a comment does not count.";
 
 primitive!(down_list, _args, _env, ctx, {
     let table = ctx.current_syntax_table();

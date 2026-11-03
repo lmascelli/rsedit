@@ -112,11 +112,15 @@ MOVING
     `set-syntax-pairs' and `set-comment-syntax' in the `modes' page. A mode
     that says nothing still gets the three kinds of bracket, double quotes
     and backslash. A bracket inside a string or a comment is text, so C-M-f
-    steps over (message "a )") in one move.
+    steps over (message "a )") in one move. A comment, of either kind, is
+    passed over as a space is: C-M-f goes over it and the expression after
+    it. From inside a name, C-M-f goes to its end.
 
-    C-M-f stops at the end of the list it is in. C-M-u goes up out of the
-    list, to its opening bracket, and C-M-d down into the next one. M-x
-    up-list goes up and out the other way, past the closing bracket.
+    C-M-f stops at the end of the list it is in, and does not move when the
+    list ends before the count does; C-M-k there kills nothing. C-M-u goes
+    up out of the list, to its opening bracket, and C-M-d down into the next
+    list inside it. M-x up-list goes up and out the other way, past the
+    closing bracket.
 
 COUNTS
     A number before a command means "do it that many times": C-u 20 C-f
