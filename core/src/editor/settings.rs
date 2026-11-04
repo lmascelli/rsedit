@@ -38,7 +38,8 @@ pub const SETTINGS: &[Setting] = &[
               \x20 %b  the buffer's name     %f  the file's path, or the buffer's name\n\
               \x20 %m  the major mode        %s  the mode's own state, as vim-mode's NORMAL\n\
               \x20 %l  the line, from 1      %c  the column, from 0\n\
-              \x20 %p  where point is: All, Top, Bot or a percentage\n\
+              \x20 %p  All when the whole buffer is in the window, or where point is:\n\
+              \x20     Top, Bot or a percentage\n\
               \x20 %*  ** when modified, -- when not    %%  a per cent sign\n\n\
               An unknown escape is shown as written; anything but a string shows the \
               default.\n\n\

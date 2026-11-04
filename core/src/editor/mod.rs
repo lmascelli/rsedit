@@ -31,7 +31,8 @@ use crate::{
     ui::{
         ComposeSettings, Division, Face, FloatingWindow, Focus, FrameSnapshot, GutterSpec,
         LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,
-        Window, WindowId, compose_layout, layout, region_highlights,
+        Window, WindowId, compose_layout, layout, overlay_highlights, region_highlights,
+        syntax_highlights,
     },
     work::{Stop, Topic, WorkId, WorkManager},
 };

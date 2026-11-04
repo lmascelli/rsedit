@@ -13,7 +13,8 @@ pub mod width;
 mod windows;
 
 pub use compose::{
-    ComposeSettings, Highlight, RenderableWindowView, Separator, compose_layout, region_highlights,
+    ComposeSettings, Highlight, RenderableWindowView, Separator, compose_layout,
+    overlay_highlights, region_highlights, syntax_highlights,
 };
 pub use faces::{Color, Face, NAMED_COLORS, Style, Theme};
 pub use frame::FrameSnapshot;

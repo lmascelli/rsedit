@@ -57,9 +57,6 @@ LIMITS
     text or give it keys of its own. Text that is not in the buffer at all
     is `virtual-text'.
 
-    A buffer shown in a floating window is drawn without its overlays; only
-    the region and virtual text are drawn there.
-
 EXAMPLES
     Draw the next ten characters as an error, as one of your marks:
 

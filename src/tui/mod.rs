@@ -59,9 +59,10 @@ fn read_terminal(sink: Sender<Wakeup>) -> std::io::Result<()> {
 static TERMINAL_TAKEN: AtomicBool = AtomicBool::new(false);
 
 /// Gives the terminal back as the shell expects it, once: the mouse and
-/// bracketed paste off, the screen cleared, the cursor shown, raw mode left.
-/// Every step is tried whatever the one before did, since there is nobody
-/// left to tell of a failure.
+/// bracketed paste off, the cursor shown, the main screen back with what was
+/// on it before the editor started, raw mode left. Every step is tried
+/// whatever the one before did, since there is nobody left to tell of a
+/// failure.
 fn restore_terminal() {
     if !TERMINAL_TAKEN.swap(false, Ordering::SeqCst) {
         return;
@@ -70,9 +71,8 @@ fn restore_terminal() {
         stdout(),
         DisableMouseCapture,
         DisableBracketedPaste,
-        terminal::Clear(terminal::ClearType::All),
-        cursor::MoveTo(0, 0),
-        cursor::Show
+        cursor::Show,
+        terminal::LeaveAlternateScreen
     );
     let _ = terminal::disable_raw_mode();
 }
@@ -83,15 +83,24 @@ fn restore_terminal() {
 struct TakenTerminal;
 
 impl TakenTerminal {
-    /// Puts the terminal in raw mode, with bracketed paste: a paste arrives as
-    /// one event, not as keystrokes, one step of undo, and the way the system
-    /// clipboard comes in.
+    /// Puts the terminal in raw mode, on its alternate screen, with bracketed
+    /// paste: a paste arrives as one event, not as keystrokes, one step of
+    /// undo, and the way the system clipboard comes in.
+    ///
+    /// The alternate screen, as every full-screen program uses: what the
+    /// terminal showed before -- the output of the last command -- is there
+    /// again when the editor exits, where drawing on the main screen and
+    /// clearing it at the end lost it.
     fn take() -> std::io::Result<Self> {
         terminal::enable_raw_mode()?;
         TERMINAL_TAKEN.store(true, Ordering::SeqCst);
         // From here on the terminal is given back however this is left.
         let taken = TakenTerminal;
-        execute!(stdout(), EnableBracketedPaste)?;
+        execute!(
+            stdout(),
+            terminal::EnterAlternateScreen,
+            EnableBracketedPaste
+        )?;
         Ok(taken)
     }
 }
@@ -118,9 +127,9 @@ fn give_back_terminal_on_panic() {
     }));
 }
 
-// TODO(TUI-8): drawn on the terminal's main screen, not the alternate one.
-/// Runs the editor in the terminal until it quits: raw mode, bracketed paste,
-/// the mouse while `mouse-mode` asks for it, and the loop.
+/// Runs the editor in the terminal until it quits: raw mode, the alternate
+/// screen, bracketed paste, the mouse while `mouse-mode` asks for it, and the
+/// loop.
 pub fn tui_main<B: BufferTrait>(
     state: &EditorState<B>,
     env: Arc<Env<EditorState<B>>>,

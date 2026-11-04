@@ -166,8 +166,6 @@ LIMITS
 
     A mode does not inherit from another: each says everything itself.
 
-    A buffer shown in a floating window is drawn without its colouring.
-
 EXAMPLES
     Colour a list of words, and offer them to C-M-i:
 

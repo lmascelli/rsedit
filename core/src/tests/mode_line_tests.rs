@@ -107,12 +107,22 @@ mod tests {
         eval_str("(setq mode-line-format \"%p\")", &env, &ctx).expect("setq");
         assert_eq!(mode_line(&ctx, &env), "All", "one line is all of it");
 
+        // Five lines fit in the window: all of the buffer is on screen, as
+        // Emacs says, wherever point is. It said Top, with only five.
         let (ctx, env) = editor_with("a\nb\nc\nd\ne");
+        eval_str("(setq mode-line-format \"%p\")", &env, &ctx).expect("setq");
+        assert_eq!(mode_line(&ctx, &env), "All");
+        eval_str("(end-of-buffer)", &env, &ctx).expect("to the end");
+        assert_eq!(mode_line(&ctx, &env), "All");
+
+        // Taller than the window: where point is.
+        let text: String = (0..101).map(|n| format!("{n}\n")).collect();
+        let (ctx, env) = editor_with(text.trim_end());
         eval_str("(setq mode-line-format \"%p\")", &env, &ctx).expect("setq");
         assert_eq!(mode_line(&ctx, &env), "Top");
         eval_str("(end-of-buffer)", &env, &ctx).expect("to the end");
         assert_eq!(mode_line(&ctx, &env), "Bot");
-        eval_str("(beginning-of-buffer) (next-line) (next-line)", &env, &ctx).expect("middle");
+        eval_str("(goto-line 51)", &env, &ctx).expect("middle");
         assert_eq!(mode_line(&ctx, &env), "50%");
     }
 

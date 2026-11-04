@@ -610,13 +610,13 @@ tradurre, come Stamp, viene soltanto registrato nel log. Shift con un carattere 
 diventa `Tab` con Shift. Gli altri eventi del terminale, come il focus, si
 ignorano.
 
-Il terminale è preso da una guardia, TakenTerminal, il cui Drop disattiva la
-cattura del mouse e l’incolla, pulisce lo schermo, mostra il cursore e lascia
-la modalità raw: all’uscita normale come a un errore di I/O o a un panic.
-Un panic sul thread che disegna restituisce il terminale già nel hook, prima
-che il messaggio venga stampato.
-sullo schermo principale del terminale, non su quello alternativo
-#rapporto("TUI-8"). Il thread lettore non si aspetta: finisce al primo errore,
+Il terminale è preso da una guardia, TakenTerminal, che entra nello schermo
+alternativo, come ogni programma a tutto schermo, e il cui Drop disattiva la
+cattura del mouse e l’incolla, mostra il cursore, torna allo schermo
+principale, con ciò che il terminale mostrava prima che l'editor partisse, e
+lascia la modalità raw: all’uscita normale come a un errore di I/O o a un
+panic. Un panic sul thread che disegna restituisce il terminale già nel hook,
+prima che il messaggio venga stampato. Il thread lettore non si aspetta: finisce al primo errore,
 o al primo evento dopo che il ciclo se n'è andato.
 
 === Le decisioni <decisioni-tui>
@@ -4512,7 +4512,9 @@ riempie mai. Gli overlay si chiedono alla loro tabella per le sole righe
 visibili (`overlay_highlights`); la regione (`region_highlights`) è un
 intervallo per riga, o le stesse colonne su ogni riga per un rettangolo. Un
 buffer che non c'è più dà una finestra vuota, non un errore (`compose_layout`).
-Le finestre flottanti ricevono solo regione e testo virtuale #rapporto("TUI-6").
+Le finestre flottanti ricevono le stesse evidenziazioni, nello stesso ordine:
+colorazione, overlay, regione e testo virtuale, così un buffer si vede uguale
+in una finestra affiancata e in una flottante.
 
 == Le righe e le loro colonne <righe>
 
@@ -4587,8 +4589,9 @@ margine, ed è larga quanto la finestra, margine compreso.
 `%m` modo, `%s` lo stato che il modo tiene nel buffer (`mode-line-state`, come
 il `NORMAL` di vim), `%l` riga (da 1), `%c` colonna (da 0), `%p` posizione
 (`All`, `Top`, `Bot` o percentuale), `%*` `**` se modificato e `--`
-altrimenti, `%%`. `%p` dice `All` solo per un buffer di una riga, perché lì l'altezza della
-finestra non si conosce #rapporto("TUI-7"). Una sequenza `%` che non conosce
+altrimenti, `%%`. `%p` dice `All` quando tutto il buffer sta nella finestra,
+le cui righe di testo `expand_mode_line` riceve, come in Emacs; altrimenti
+dice dove è il punto. Una sequenza `%` che non conosce
 resta com'è scritta, e un formato che non è una stringa ricade su quello
 predefinito.
 
@@ -4630,9 +4633,11 @@ A ogni aggiornamento (`EditorApp::update`, in `src/gui/app.rs`) la finestra
 legge gli eventi una volta per frame, chiama `tick`, disegna la barra dei
 comandi, adatta la griglia alla finestra e chiama `resize` se è cambiata,
 compone la fotografia con `snapshot` e la disegna (`src/gui/paint.rs`); poi
-chiede il prossimo aggiornamento entro il minimo tra `next_redraw_in`,
-`drag_scroll_in` e `BACKGROUND_POLL`, 250 ms. Il lavoro di sfondo non la
-sveglia: aggiorna ogni 250 ms anche quando nulla cambia #rapporto("GUI-1").
+chiede il prossimo aggiornamento solo quando `next_redraw_in` o
+`drag_scroll_in` danno una durata. Il lavoro di sfondo la sveglia come
+sveglia il ciclo della TUI: la callback registrata con `on_background_change`
+chiama `request_repaint` sul contesto di egui. Ferma, la finestra non si
+aggiorna: prima lo faceva ogni 250 ms anche quando nulla cambiava.
 Chiudere la finestra chiede all'editor di uscire come `C-x C-c`, con le domande
 sui buffer modificati.
 

@@ -137,14 +137,15 @@ impl<B: BufferTrait> EditorState<B> {
                                 c_line.saturating_sub(float.window.scroll_y),
                             )
                         });
-                    // TODO(TUI-6): the region and the virtual text only, with
-                    // no colours of the syntax and no overlays.
-                    let mut highlights = layout::place(
-                        &layout,
-                        region_highlights(&float.window, &float.rect, buffers),
-                        float.window.scroll_x,
-                        float.rect.width,
-                    );
+                    // What a tiled window draws, in the same order: colouring,
+                    // then overlays, then the region, then the virtual text's
+                    // own faces. A buffer looks the same whichever kind of
+                    // window shows it.
+                    let mut in_buffer = syntax_highlights(&float.window, &float.rect, buffers);
+                    in_buffer.extend(overlay_highlights(&float.window, &float.rect, buffers));
+                    in_buffer.extend(region_highlights(&float.window, &float.rect, buffers));
+                    let mut highlights =
+                        layout::place(&layout, in_buffer, float.window.scroll_x, float.rect.width);
                     highlights
                         .extend(layout.virtual_highlights(float.window.scroll_x, float.rect.width));
 

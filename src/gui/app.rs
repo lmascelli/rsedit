@@ -8,11 +8,7 @@ use super::keys::{character, character_shortcut, mods, special_key};
 use super::paint::{Grid, colors, paint_view, row};
 use eframe::egui::{self, FontId, Rect, Stroke, Vec2};
 use rsedit_core::{BufferTrait, Face, MouseButton, MouseKind};
-use std::{path::PathBuf, time::Duration};
-
-/// The longest the window goes without an update, when nothing asks for one
-/// sooner.
-const BACKGROUND_POLL: Duration = Duration::from_millis(250);
+use std::path::PathBuf;
 
 /// The editor in a window: what the window remembers between two updates.
 pub(super) struct EditorApp<'editor, B: BufferTrait> {
@@ -47,6 +43,12 @@ impl<'editor, B: BufferTrait> EditorApp<'editor, B> {
         font: Option<PathBuf>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        // What a job changes wakes the window, as it wakes the terminal's loop:
+        // the update that follows asks the editor what is due. Without it the
+        // window polled four times a second, still or not.
+        let window = cc.egui_ctx.clone();
+        core.state
+            .on_background_change(move || window.request_repaint());
         if let Some(path) = font {
             let mut fonts = egui::FontDefinitions::default();
             fonts.font_data.insert(
@@ -423,19 +425,20 @@ impl<'editor, B: BufferTrait> eframe::App for EditorApp<'editor, B> {
                     &font,
                     default,
                 );
-                // TODO(GUI-1): the background work's changes are not asked to
-                // wake the window (`on_background_change`), which updates every
-                // `BACKGROUND_POLL` even when nothing changes.
-                let wake = [
-                    Some(BACKGROUND_POLL),
+                // An update when the editor says one is due -- a message
+                // expiring, colour arriving, a drag past a window's edge --
+                // and none otherwise: a key, the mouse or a job's change
+                // wakes the window on its own.
+                if let Some(wake) = [
                     self.core.state.next_redraw_in(&self.core.env, &snapshot),
                     self.core.state.drag_scroll_in(),
                 ]
                 .into_iter()
                 .flatten()
                 .min()
-                .unwrap_or(BACKGROUND_POLL);
-                ctx.request_repaint_after(wake);
+                {
+                    ctx.request_repaint_after(wake);
+                }
             });
     }
 }

@@ -157,4 +157,49 @@ mod tests {
         writer.join().expect("writer thread panicked");
         flipper.join().expect("focus thread panicked");
     }
+
+    /// A float drew the region and the virtual text only: a buffer shown in
+    /// one lost its colouring and its overlays, which the same buffer in a
+    /// tiled window had.
+    #[test]
+    fn a_floating_window_draws_the_colouring_and_the_overlays_a_tiled_one_does() {
+        use crate::ui::Face;
+        let (state, env) = editor();
+        env.set_variable("frame-width".into(), LispExp::number(W as f64));
+        env.set_variable("frame-height".into(), LispExp::number(H as f64));
+        let source = r#"(progn
+            (make-mode 'toy)
+            (add-syntax-rule 'toy "\\bfn\\b" 'keyword)
+            (buffer-create "*Float*")
+            (make-floating-window "*Float*" 4 4 40 6 "Probe")
+            (insert "fn here")
+            (make-overlay 3 7 'replace-match))"#;
+        let ast = Parser::new(source).next().expect("test source must parse");
+        eval(&ast, env.clone(), &state).expect("the float and its faces");
+        state.with_buffer_mut("*Float*", |b| b.current_mode = "toy".into());
+        // The colouring is the highlighter's, a job: run it.
+        state
+            .work()
+            .run_for(&state, std::time::Duration::from_secs(1));
+
+        let frame = state.snapshot(&env, W, H);
+        let float = frame
+            .views
+            .iter()
+            .find(|view| view.buffer_name == "*Float*")
+            .expect("the float is drawn");
+        let faces: Vec<(usize, usize, Face)> = float
+            .highlights
+            .iter()
+            .map(|h| (h.start_col, h.end_col, h.face))
+            .collect();
+        assert!(
+            faces.contains(&(0, 2, Face::KEYWORD)),
+            "the colouring: {faces:?}"
+        );
+        assert!(
+            faces.contains(&(3, 7, Face::REPLACE_MATCH)),
+            "the overlay: {faces:?}"
+        );
+    }
 }

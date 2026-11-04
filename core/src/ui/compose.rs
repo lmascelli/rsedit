@@ -103,11 +103,14 @@ impl LayoutNode {
                 // the rectangle; a window of one row keeps it for text.
                 let mode_line = buffers.handle(&win.buffer_name).and_then(|buffer| {
                     (win.show_mode_line && rect.height >= 2).then(|| {
+                        // The rows of text it leaves, which `%p` asks whether
+                        // the whole buffer fits in.
                         expand_mode_line(
                             settings.mode_line_format,
                             &buffer
                                 .read()
                                 .expect("Failed to acquire read lock on buffer"),
+                            rect.height - 1,
                         )
                     })
                 });
