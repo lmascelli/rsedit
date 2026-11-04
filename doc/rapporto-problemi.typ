@@ -307,7 +307,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-MIN-4-RIC-9",
+    commit: "b14b96d",
     titolo: [Un `minibuffer-read` con MODE nil apre il prompt nel modo `nil`, dove Invio ed Esc non rispondono],
   ),
   (
@@ -655,7 +655,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-MIN-4-RIC-9",
+    commit: "b14b96d",
     titolo: [`results-put` e `results-select` prendono un BUFFER nil come il buffer chiamato `nil`],
   ),
   (
