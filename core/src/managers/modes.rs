@@ -327,6 +327,11 @@ impl<B: BufferTrait> Modes<B> {
         self.transient.is_some()
     }
 
+    /// Returns what the installed map is the question of, if anything.
+    pub fn transient_owner(&self) -> Option<&'static str> {
+        self.transient.as_ref().and_then(|map| map.owner)
+    }
+
     /// Returns what the installed map wants shown, or nothing.
     pub fn transient_message(&self) -> String {
         self.transient

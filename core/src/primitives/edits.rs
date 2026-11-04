@@ -37,6 +37,7 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
     buf.mark = deactivated(buf.mark);
     buf.overlays.adjust_for_delete(start, end);
     buf.virtual_text.adjust_for_delete(start, end);
+    buf.markers.adjust_for_delete(start, end);
     if whole_buffer {
         // One step rather than a deletion per character: see
         // `BufferTrait::clear`.
@@ -71,6 +72,7 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
     // `buffer::virtual_text`).
     buf.overlays.adjust_for_insert(at, inserted);
     buf.virtual_text.adjust_for_insert(at, inserted);
+    buf.markers.adjust_for_insert(at, inserted);
     undo::apply_insert(&mut buf.text, at, content);
     buf.is_modified = true;
     changed(buf, at);
@@ -127,16 +129,19 @@ pub(crate) fn replay<B: BufferTrait>(buf: &mut Buffer<B>, way: Replay) -> Replay
         undo,
         overlays,
         virtual_text,
+        markers,
         ..
     } = buf;
     let mut follow = |step: undo::Step| match step {
         undo::Step::Insert { at, len } => {
             overlays.adjust_for_insert(at, len);
             virtual_text.adjust_for_insert(at, len);
+            markers.adjust_for_insert(at, len);
         }
         undo::Step::Delete { from, to } => {
             overlays.adjust_for_delete(from, to);
             virtual_text.adjust_for_delete(from, to);
+            markers.adjust_for_delete(from, to);
         }
     };
     let applied = match way {

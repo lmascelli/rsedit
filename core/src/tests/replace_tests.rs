@@ -572,4 +572,56 @@ mod tests {
             );
         }
     }
+
+    // ----------------------------------------------------------------
+    // Another key
+    // ----------------------------------------------------------------
+
+    /// Another key took the question down and did its own job, but the
+    /// replace stayed open behind it: its match marked, and its verbs working
+    /// on offsets that no longer were.
+    #[test]
+    fn another_key_ends_the_replace_as_it_takes_the_question_down() {
+        let (ctx, env) = editor("cat cat");
+        run(r#"(query-replace "cat" "dog")"#, &env, &ctx);
+        assert!(!marked(&ctx).is_empty());
+        press('z', &ctx, &env);
+        assert_eq!(text(&ctx), "zcat cat", "the key does what it always does");
+        assert!(marked(&ctx).is_empty(), "nothing marked");
+        assert_eq!(run("(replace-match)", &env, &ctx), LispExp::nil());
+        assert_eq!(
+            run("(replace-this)", &env, &ctx),
+            LispExp::nil(),
+            "no replace running"
+        );
+        assert_eq!(question(&ctx, &env), "");
+    }
+
+    /// An answer is no other key: the replace goes on to the next match.
+    #[test]
+    fn an_answer_keeps_the_replace_going() {
+        let (ctx, env) = editor("cat cat");
+        run(r#"(query-replace "cat" "dog")"#, &env, &ctx);
+        press('y', &ctx, &env);
+        assert_eq!(text(&ctx), "dog cat");
+        assert_eq!(marked(&ctx), vec![(4, 7)], "the next one is offered");
+        press('z', &ctx, &env);
+        assert!(marked(&ctx).is_empty());
+        assert_eq!(text(&ctx), "dog zcat");
+    }
+
+    /// A view of one's own asks its own way: the editor does not end the
+    /// replace behind it.
+    #[test]
+    fn a_view_of_its_own_keeps_its_replace_open() {
+        let (ctx, env) = editor("cat cat");
+        run(
+            r#"(setq *replace-read-function* (lambda () nil))
+               (query-replace "cat" "dog")"#,
+            &env,
+            &ctx,
+        );
+        press('z', &ctx, &env);
+        assert!(run("(replace-match)", &env, &ctx).is_truthy(), "still open");
+    }
 }

@@ -155,6 +155,10 @@ pub struct Replace {
     pub preserve_case: bool,
     /// Set once there is nothing left to find.
     pub done: bool,
+    /// Whether the editor's own question asks about the matches, a transient
+    /// map the replace ends with when another key takes it down. A view
+    /// written in Lisp asks its own way, and ends the replace itself.
+    pub asked_by_question: bool,
 }
 
 impl Replace {
@@ -180,6 +184,7 @@ impl Replace {
             history: Vec::new(),
             preserve_case,
             done: false,
+            asked_by_question: false,
         }
     }
 

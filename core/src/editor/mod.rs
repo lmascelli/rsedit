@@ -75,6 +75,7 @@ pub use boot::{create_global_env, isolate_config_for_tests};
 pub(crate) use frame::TURN_INTERVAL;
 pub use keys::KEY_CAPTURE_FUNCTION;
 pub(crate) use loader::MODULE_KINDS;
+pub(crate) use replace::REPLACE_QUESTION;
 pub use settings::*;
 pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED, WorkerTurn, in_worker};
 

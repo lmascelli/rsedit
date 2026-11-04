@@ -164,8 +164,8 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Shows the listing BUFFER, and returns the window it is in: the focused
     /// window, when `results-display-location` is `same-window`; otherwise
-    /// the strip at the bottom that shows a listing of the same producer, or
-    /// a new one HEIGHT rows high. Focus goes back where it was unless
+    /// the strip at the bottom that shows a listing in the same mode, or a
+    /// new one HEIGHT rows high. Focus goes back where it was unless
     /// SELECT. `None` when there is no such buffer.
     pub(crate) fn display_results(
         &self,
@@ -186,6 +186,13 @@ impl<B: BufferTrait> EditorState<B> {
 
         let same = results_display_same_window(env);
 
+        // The strip a list goes in is the one showing a list of its kind --
+        // the same mode -- and not only one from the same producer: occur and
+        // grep are two producers, whose lists are both in occur-mode, and a
+        // grep after an occur stacked a second strip on the first. A build's
+        // list, in a mode of its own, keeps its own strip.
+        let mode_of = |name: &str| self.with_buffer(name, |buf| buf.current_mode.clone());
+        let kind = mode_of(buffer);
         let existing = if same {
             None
         } else {
@@ -199,7 +206,7 @@ impl<B: BufferTrait> EditorState<B> {
                     let showing = self.windows(|windows| windows.buffer_of(window));
 
                     (previous.bottom
-                        && previous.producer == presentation.producer
+                        && mode_of(&name) == kind
                         && showing.as_deref() == Some(name.as_str()))
                     .then_some((previous.started, window))
                 })

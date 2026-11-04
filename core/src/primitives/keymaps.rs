@@ -232,6 +232,7 @@ primitive!(set_transient_keymap, args, env, ctx, {
         keymap,
         on_unbound,
         message,
+        owner: None,
     });
     Ok(ELispExp::t())
 });

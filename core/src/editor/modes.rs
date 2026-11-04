@@ -219,6 +219,11 @@ impl<B: BufferTrait> EditorState<B> {
         self.modes_mut(|modes| modes.clear_transient());
     }
 
+    /// Returns what the transient keymap up is the question of, if anything.
+    pub(crate) fn transient_owner(&self) -> Option<&'static str> {
+        self.modes(|modes| modes.transient_owner())
+    }
+
     /// Returns what the transient keymap wants shown, or an empty string when
     /// none is up.
     pub(crate) fn transient_message(&self) -> String {

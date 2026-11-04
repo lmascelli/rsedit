@@ -388,6 +388,14 @@ impl<B: BufferTrait> EditorState<B> {
     /// command. A keyboard macro being recorded gets the key wherever it is
     /// used up, even when it runs nothing.
     pub fn handle_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
+        self.dispatch_key_event(event, env);
+        // After the key, whatever it did, and outside its resolution: a
+        // question it took down may leave a session behind.
+        self.end_replace_left_behind();
+    }
+
+    /// Handles EVENT for [`Self::handle_key_event`]: everything a key does.
+    fn dispatch_key_event(&self, event: KeyEvent, env: &Arc<Env<EditorState<B>>>) {
         // Something is waiting to be told the next sequence instead of having
         // it run. See `capture_key_sequence`.
         if let Some(watcher) = env.get_variable(KEY_CAPTURE_FUNCTION)

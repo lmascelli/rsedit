@@ -487,11 +487,9 @@ pub enum OnUnbound {
 ///
 /// An [`OnUnbound::Release`] map has no exit hook: it goes away inside key
 /// resolution, with the sequence still locked, where the interpreter must not
-/// be called. So it must carry no state that needs cleaning up: a map with a
-/// session behind it should be a `Refuse` one, ending through its own
-/// bindings.
-// TODO(RIC-8): query-replace's view is a `Release` map with a session behind
-// it, and nothing ends the session when the map goes.
+/// be called. A map with a session behind it names it in `owner`, and the
+/// session is ended once the key has been handled, when its map is no longer
+/// the one up: `query-replace`'s question is such a map.
 #[derive(Clone, Debug)]
 pub struct TransientKeymap<B: BufferTrait> {
     pub keymap: Keymap<B>,
@@ -499,6 +497,9 @@ pub struct TransientKeymap<B: BufferTrait> {
     /// What to show while the map is live -- `[o]` for a repeat map, a question
     /// for a modal one. Empty to show nothing.
     pub message: String,
+    /// What the map is the question of, when something stays open behind it
+    /// and has to end with it; `None` for a map that leaves nothing behind.
+    pub owner: Option<&'static str>,
 }
 
 impl<B: BufferTrait> TransientKeymap<B> {
@@ -512,6 +513,7 @@ impl<B: BufferTrait> TransientKeymap<B> {
             keymap,
             on_unbound: OnUnbound::Release,
             message: format!("[{}]", describe_keys(&[key])),
+            owner: None,
         }
     }
 }

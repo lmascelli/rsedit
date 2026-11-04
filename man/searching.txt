@@ -176,6 +176,11 @@ WALKING A LIST
     so rather than starting again. M-x results-select, in an older list,
     makes that one the list they walk.
 
+    Once a list has taken you into a buffer, its places in that buffer
+    follow the text: lines added or taken away above a match do not lose
+    it, and M-g n still goes to the match rather than to the line it was
+    on.
+
 LIMITS
     M-s g does not read .gitignore, and the directories it leaves out are
     fixed: `find-file-recursive-ignore' does not change them. It reads

@@ -14,6 +14,10 @@ use crate::text::search::Pattern;
 /// behind.
 pub(crate) const REPLACE_OVERLAY: &str = "replace-match";
 
+/// The owner of the transient map that is `query-replace`'s question: what
+/// tells a key that took it down from one of its own answers.
+pub(crate) const REPLACE_QUESTION: &str = "query-replace";
+
 impl<B: BufferTrait> EditorState<B> {
     /// Begins replacing SOURCE with REPLACEMENT in the current buffer -- in
     /// the region when the mark is active, from point to the end otherwise --
@@ -209,11 +213,39 @@ impl<B: BufferTrait> EditorState<B> {
         self.show_replace_match();
     }
 
+    /// Records that the editor's own question is asking about the replace's
+    /// matches, so that the replace ends when another key takes it down.
+    pub(crate) fn replace_asked_by_question(&self) {
+        self.runtime_mut(|runtime| {
+            if let Some(session) = runtime.replace_mut() {
+                session.asked_by_question = true;
+            }
+        });
+    }
+
+    /// Ends the replace whose question another key has taken down, if one has;
+    /// called after every key, outside key resolution, where the question
+    /// went and the interpreter must not be called.
+    ///
+    /// A key that is no answer goes through to the keymaps below, and does
+    /// what it always does: the replace stops, as the question said, and its
+    /// match is no longer marked. Left open, its offsets would not follow the
+    /// edits that key made, and a `replace-this` from Lisp would replace the
+    /// wrong text.
+    pub(crate) fn end_replace_left_behind(&self) {
+        let asked = self.runtime(|runtime| {
+            runtime
+                .replace()
+                .is_some_and(|session| session.asked_by_question)
+        });
+        if asked && self.transient_owner() != Some(REPLACE_QUESTION) {
+            self.end_replace(false);
+        }
+    }
+
     /// Ends the replace, clears its mark and, with RESTORE_POINT, puts point
     /// back where it began; returns how many matches were replaced.
     pub(crate) fn end_replace(&self, restore_point: bool) -> usize {
-        // TODO(RIC-8): nothing calls this when another key takes down the map
-        // of query-replace, and the replace stays open, its match marked.
         let Some(session) = self.runtime_mut(|runtime| runtime.take_replace()) else {
             return 0;
         };

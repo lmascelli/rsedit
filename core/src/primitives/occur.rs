@@ -238,8 +238,6 @@ fn finish<B: BufferTrait>(ctx: &EditorState<B>, listing: Listing, found: usize) 
     listing.write(ctx, &trailer);
 }
 
-// TODO(RIC-7): occur and grep are two producers, so that a list of the one
-// does not take the strip of the other.
 /// Returns the buffer a new listing goes in, with its header written, RESULTS
 /// attached and the buffer read-only, or `None` when there is none to have.
 fn open_results<B: BufferTrait>(

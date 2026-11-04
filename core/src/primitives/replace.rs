@@ -5,7 +5,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <sostituzione>`.
 use super::*;
-use crate::editor::{CASE_REPLACE, REPLACE_READ_FUNCTION};
+use crate::editor::{CASE_REPLACE, REPLACE_QUESTION, REPLACE_READ_FUNCTION};
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
 use crate::primitives::args;
 use risp::call_callable;
@@ -88,11 +88,11 @@ fn plural(count: usize) -> String {
     }
 }
 
-// TODO(RIC-8): the replace does not end when another key takes the question
-// down, and its match stays marked.
 /// The view used when `*replace-read-function*` names none: a transient
 /// keymap of five keys over the buffer. `OnUnbound::Release`, an offer rather
-/// than a question: another key takes it down, and does what it always does.
+/// than a question: another key takes it down, and does what it always does;
+/// and the replace ends with it, once that key has been handled, its match no
+/// longer marked.
 fn default_view<B: BufferTrait>(ctx: &EditorState<B>) {
     let Some((_, _, text, expansion)) = ctx.replace_match() else {
         return;
@@ -113,7 +113,9 @@ fn default_view<B: BufferTrait>(ctx: &EditorState<B>) {
         keymap,
         on_unbound: OnUnbound::Release,
         message: format!("Replace {text:?} with {expansion:?}? (y, n, ! = all, ^ = back, q)"),
+        owner: Some(REPLACE_QUESTION),
     });
+    ctx.replace_asked_by_question();
 }
 
 pub const QUERY_REPLACE_DOC: &str = "(query-replace FROM TO): Replace FROM with TO, asking at \

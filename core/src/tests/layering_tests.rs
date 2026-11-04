@@ -100,6 +100,7 @@ mod tests {
             include_str!("../buffer/gap_buffer.rs"),
         ),
         ("buffer/mark.rs", include_str!("../buffer/mark.rs")),
+        ("buffer/markers.rs", include_str!("../buffer/markers.rs")),
         ("buffer/overlay.rs", include_str!("../buffer/overlay.rs")),
         ("buffer/scan.rs", include_str!("../buffer/scan.rs")),
         ("buffer/syntax.rs", include_str!("../buffer/syntax.rs")),

@@ -42,6 +42,7 @@ pub(super) fn ask_with_keys<B: BufferTrait>(
         keymap,
         on_unbound: OnUnbound::Refuse,
         message,
+        owner: None,
     });
 }
 

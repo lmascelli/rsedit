@@ -4,13 +4,130 @@
 //! Design: `doc/architettura-editor.typ, <risultati>`.
 use super::*;
 use crate::primitives::args;
-use crate::text::results::{Entry, KIND_FILE, RESULTS_KEY, Results};
+use crate::text::results::{Entry, KIND_FILE, Placed, RESULTS_KEY, Results};
 use risp::eval;
 use std::path::Path;
 
 /// Attaches RESULTS to the buffer called NAME, in place of what was there.
-pub(crate) fn attach<B: BufferTrait>(ctx: &EditorState<B>, name: &str, results: Results) {
+///
+/// The markers of the list replaced go to the entries of the new one that
+/// are the same places, and the others are taken out of their buffers: a
+/// build's list, made again at every step of `next-error`, keeps following
+/// the places it was following.
+pub(crate) fn attach<B: BufferTrait>(ctx: &EditorState<B>, name: &str, mut results: Results) {
+    let old = ctx
+        .with_buffer_mut(name, |buf| {
+            buf.data_mut::<Results>(RESULTS_KEY)
+                .map(|old| (std::mem::take(&mut old.markers), old.entries.clone()))
+        })
+        .flatten();
+    if let Some((markers, entries)) = old {
+        let mut by_place: std::collections::HashMap<_, Placed> = markers
+            .into_iter()
+            .filter_map(|(index, placed)| Some((entries.get(index)?.place(), placed)))
+            .map(|(place, placed)| {
+                (
+                    (place.0.to_string(), place.1.to_string(), place.2, place.3),
+                    placed,
+                )
+            })
+            .collect();
+        for (index, entry) in results.entries.iter().enumerate() {
+            let place = entry.place();
+            let key = (place.0.to_string(), place.1.to_string(), place.2, place.3);
+            if let Some(placed) = by_place.remove(&key) {
+                results.markers.insert(index, placed);
+            }
+        }
+        remove_markers(ctx, by_place.into_values());
+    }
     ctx.with_buffer_mut(name, |buf| buf.put_data(RESULTS_KEY, results));
+}
+
+/// Takes the markers PLACED out of the buffers they are in.
+fn remove_markers<B: BufferTrait>(ctx: &EditorState<B>, placed: impl IntoIterator<Item = Placed>) {
+    for placed in placed {
+        ctx.with_buffer_mut(&placed.buffer, |buf| buf.markers.remove(placed.id));
+    }
+}
+
+/// Takes the markers of the list in LISTING out of the buffers they are in:
+/// for a listing that is going, whose places nothing will visit again.
+pub(crate) fn forget_markers<B: BufferTrait>(ctx: &EditorState<B>, listing: &str) {
+    let placed = with_results_mut(ctx, listing, |results| std::mem::take(&mut results.markers))
+        .unwrap_or_default();
+    remove_markers(ctx, placed.into_values());
+}
+
+/// Returns where entry INDEX of the list in LISTING is in TARGET, the buffer
+/// that shows its place: at its marker, which is made now when it has none
+/// there, from its line and column, with the markers of every entry of the
+/// same source that has none -- as Emacs does when it first visits a file of
+/// a build's errors. From then on the places follow the edits around them.
+fn marked_offset<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    listing: &str,
+    index: usize,
+    target: &str,
+) -> Option<usize> {
+    let entry = with_results(ctx, listing, |results| results.get(index).cloned()).flatten()?;
+    // Every entry of the same source, with the marker it has, if any.
+    let same_source: Vec<(usize, usize, usize, Option<Placed>)> =
+        with_results(ctx, listing, |results| {
+            results
+                .entries
+                .iter()
+                .enumerate()
+                .filter(|(_, other)| other.kind == entry.kind && other.source == entry.source)
+                .map(|(at, other)| {
+                    (
+                        at,
+                        other.line,
+                        other.column,
+                        results.markers.get(&at).cloned(),
+                    )
+                })
+                .collect()
+        })?;
+    let mut stale = Vec::new();
+    let made: Vec<(usize, u64)> = ctx.with_buffer_mut(target, |buf| {
+        let mut made = Vec::new();
+        for (at, line, column, placed) in same_source {
+            match placed {
+                Some(placed) if placed.buffer == target && buf.markers.get(placed.id).is_some() => {
+                }
+                other => {
+                    // One left in another buffer, or in one killed since and
+                    // opened again: what it marked is not this text.
+                    stale.extend(other.filter(|placed| placed.buffer != target));
+                    let line = line
+                        .saturating_sub(1)
+                        .min(buf.text.line_count().saturating_sub(1));
+                    let column =
+                        column.min(crate::primitives::movement::line_length(&buf.text, line));
+                    let offset = buf.text.cursor_2d_to_1d(line, column);
+                    made.push((at, buf.markers.add(offset)));
+                }
+            }
+        }
+        made
+    })?;
+    remove_markers(ctx, stale);
+    with_results_mut(ctx, listing, |results| {
+        for (at, id) in made {
+            results.markers.insert(
+                at,
+                Placed {
+                    buffer: target.to_string(),
+                    id,
+                },
+            );
+        }
+    });
+    let placed =
+        with_results(ctx, listing, |results| results.markers.get(&index).cloned()).flatten()?;
+    ctx.with_buffer(target, |buf| buf.markers.get(placed.id))
+        .flatten()
 }
 
 /// Returns BODY applied to the results attached to NAME, or `None` when
@@ -78,14 +195,14 @@ fn unmark<B: BufferTrait>(ctx: &EditorState<B>, buffer: &str, category: &str) {
     });
 }
 
-// TODO(RIC-5): an entry is a line and a column, which an edit above it
-// leaves behind.
-/// Goes to ENTRY of the list in LISTING: opens what it is in, puts point on
-/// it and marks the line; false when its file or its buffer is gone.
+/// Goes to ENTRY, number INDEX of the list in LISTING: opens what it is in,
+/// puts point on it and marks the line; false when its file or its buffer is
+/// gone.
 fn visit<B: BufferTrait>(
     ctx: &EditorState<B>,
     env: &std::sync::Arc<Env<EditorState<B>>>,
     listing: &str,
+    index: usize,
     entry: &Entry,
 ) -> Result<bool, EvalError<EditorState<B>>> {
     if entry.kind == KIND_FILE {
@@ -125,15 +242,25 @@ fn visit<B: BufferTrait>(
         ctx.set_echo_message(&format!("{} is gone", entry.source));
         return Ok(false);
     }
-    ctx.with_current_buffer_mut(|buf| {
-        // By line and column rather than by the offset: a file edited since
-        // the search still has the line roughly where it was, while an offset
-        // taken from older text lands wherever that many characters now is.
-        let line = entry.line.saturating_sub(1);
-        let column = entry
-            .column
-            .min(crate::primitives::movement::line_length(&buf.text, line));
-        buf.text.cursor_move(line, column);
+    // At the entry's marker, which follows the edits made since the place was
+    // first visited. Made from the line and column, not from the offset: a
+    // file edited before that still has the line roughly where it was, while
+    // an offset taken from older text lands wherever that many characters
+    // now is.
+    let target = ctx.get_current_buffer_name();
+    let offset = marked_offset(ctx, listing, index, &target);
+    ctx.with_current_buffer_mut(|buf| match offset {
+        Some(offset) => {
+            let (line, column) = buf.text.cursor_1d_to_2d(offset.min(buf.text.len()));
+            buf.text.cursor_move(line, column);
+        }
+        None => {
+            let line = entry.line.saturating_sub(1);
+            let column = entry
+                .column
+                .min(crate::primitives::movement::line_length(&buf.text, line));
+            buf.text.cursor_move(line, column);
+        }
     });
     mark_line(ctx, TARGET_CATEGORY);
     Ok(true)
@@ -184,7 +311,7 @@ fn visit_index<B: BufferTrait>(
         mark_line(ctx, HERE_CATEGORY);
         ctx.switch_to_buffer(&was);
     }
-    let visited = visit(ctx, env, buffer, &entry);
+    let visited = visit(ctx, env, buffer, index, &entry);
     // What was marked is the buffer the visit ended in, by its name: for a
     // place in a file, the entry names the file, and the mark has to be found
     // again in its buffer to be taken off.

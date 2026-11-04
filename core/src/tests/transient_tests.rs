@@ -96,6 +96,7 @@ mod tests {
             keymap,
             on_unbound,
             message: "[k]".into(),
+            owner: None,
         }
     }
 

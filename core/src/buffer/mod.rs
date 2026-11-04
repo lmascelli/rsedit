@@ -9,6 +9,7 @@ pub mod coding;
 pub mod disk;
 pub mod gap_buffer;
 pub mod mark;
+pub mod markers;
 pub mod overlay;
 pub mod scan;
 pub mod syntax;
@@ -19,6 +20,7 @@ pub use buffer_trait::BufferTrait;
 pub use coding::Coding;
 pub use disk::{FileStamp, OnDisk};
 pub use mark::Mark;
+pub use markers::Markers;
 pub use overlay::OverlayTable;
 pub use undo::UndoHistory;
 pub use virtual_text::VirtualTextTable;
@@ -53,6 +55,10 @@ pub struct Buffer<B: BufferTrait> {
     /// it: see [`crate::buffer::virtual_text`], and [`crate::ui::layout`] for
     /// how a window draws it and takes clicks on it.
     pub virtual_text: VirtualTextTable,
+
+    /// Places that follow the text: see [`crate::buffer::markers`]. The three
+    /// doors move them, as they move the overlays.
+    pub markers: Markers,
 
     /// Where the mark is, when this buffer has one. The region is the text
     /// between it and point -- see [`crate::buffer::mark::region_bounds`].
@@ -133,6 +139,7 @@ impl<B: BufferTrait> Buffer<B> {
             mark: None,
             overlays: OverlayTable::default(),
             virtual_text: VirtualTextTable::default(),
+            markers: Markers::default(),
             version: 0,
             scan: scan::ScanCache::default(),
             syntax: syntax::SyntaxCache::default(),
@@ -237,6 +244,7 @@ impl<B: BufferTrait> Buffer<B> {
             mark: None,
             overlays: OverlayTable::default(),
             virtual_text: VirtualTextTable::default(),
+            markers: Markers::default(),
             version: 0,
             scan: scan::ScanCache::default(),
             syntax: syntax::SyntaxCache::default(),

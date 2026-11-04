@@ -1030,4 +1030,101 @@ mod tests {
         assert_eq!(marks("a.txt"), 0, "the first file keeps its mark");
         assert_eq!(marks("b.txt"), 1);
     }
+
+    // ----------------------------------------------------------------
+    // Places that follow the text
+    // ----------------------------------------------------------------
+
+    fn line_at_point(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> LispExp<Ctx> {
+        run("(line-number-at-point)", env, ctx)
+    }
+
+    /// An entry was a line number: after a line added above it, `next-error`
+    /// went to the line before the match.
+    #[test]
+    fn a_place_visited_follows_the_lines_added_above_it() {
+        let (ctx, env) = editor("one\nfoo here\ntwo\nfoo there\n");
+        run(r#"(occur--scan "foo")"#, &env, &ctx);
+        run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
+        run("(next-error)", &env, &ctx);
+        assert_eq!(line_at_point(&ctx, &env), LispExp::number(2.0));
+
+        run(r#"(goto-char 0) (insert "added\n")"#, &env, &ctx);
+        run("(next-error)", &env, &ctx);
+        assert_eq!(
+            line_at_point(&ctx, &env),
+            LispExp::number(5.0),
+            "the second foo"
+        );
+        run("(previous-error)", &env, &ctx);
+        assert_eq!(
+            line_at_point(&ctx, &env),
+            LispExp::number(3.0),
+            "and the first"
+        );
+        assert_eq!(
+            run("(buffer-substring (point) (+ (point) 3))", &env, &ctx),
+            LispExp::string("foo".to_string())
+        );
+    }
+
+    /// A list made again, as a build's is at every step, keeps the markers of
+    /// the places it still has.
+    #[test]
+    fn a_list_made_again_keeps_following_its_places() {
+        let (ctx, env) = editor("one\nfoo here\nfoo there\n");
+        let put = r#"(results-put "p" "o" '(("buffer" "*scratch*" 2) ("buffer" "*scratch*" 3))
+                                  "*Places*")"#;
+        run(&format!(r#"(buffer-create "*Places*") {put}"#), &env, &ctx);
+        run(r#"(switch-to-buffer "*scratch*") (next-error)"#, &env, &ctx);
+        assert_eq!(line_at_point(&ctx, &env), LispExp::number(2.0));
+        run(r#"(goto-char 0) (insert "a\nb\n")"#, &env, &ctx);
+        // Made again, as a build's list is before each step; the walk keeps
+        // its place, and the places their markers.
+        run(put, &env, &ctx);
+        run("(next-error)", &env, &ctx);
+        assert_eq!(line_at_point(&ctx, &env), LispExp::number(5.0), "foo there");
+    }
+
+    /// The markers go with the listing: a killed list leaves none in the
+    /// buffers it pointed into, which would be moved at every edit for ever.
+    #[test]
+    fn killing_the_listing_takes_its_markers_away() {
+        let (ctx, env) = editor("foo\nbar foo\n");
+        let listing = match run(r#"(occur--scan "foo")"#, &env, &ctx) {
+            LispExp::String(name) => name.to_string(),
+            other => panic!("occur answered {other:?}"),
+        };
+        run(r#"(switch-to-buffer "*scratch*") (next-error)"#, &env, &ctx);
+        assert_eq!(
+            ctx.with_buffer("*scratch*", |buf| buf.markers.len()),
+            Some(2)
+        );
+        run(&format!(r#"(kill-buffer "{listing}")"#), &env, &ctx);
+        assert_eq!(
+            ctx.with_buffer("*scratch*", |buf| buf.markers.len()),
+            Some(0)
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // One strip for occur and grep
+    // ----------------------------------------------------------------
+
+    /// occur and grep are two producers, and a grep after an occur opened a
+    /// second strip over the first: three windows.
+    #[test]
+    fn a_grep_after_an_occur_takes_the_occur_strip() {
+        let sandbox = Sandbox::new("one-strip");
+        sandbox.file("one.txt", "a needle\n");
+        let (ctx, env) = with_view("one TODO\n");
+        run(r#"(occur "TODO")"#, &env, &ctx);
+        assert_eq!(ctx.window_count(), 2);
+        let grep = format!(
+            r#"(other-window 1) (occur--display (grep--scan "needle" "{}"))"#,
+            sandbox.path()
+        );
+        run(&grep, &env, &ctx);
+        assert_eq!(ctx.window_count(), 2, "{:?}", shown(&ctx, &env));
+    }
 }

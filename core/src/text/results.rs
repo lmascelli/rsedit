@@ -5,6 +5,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <risultati>`.
 use crate::text::search::Found;
+use std::collections::HashMap;
 
 /// The name a result set is attached to its buffer under.
 pub const RESULTS_KEY: &str = "results";
@@ -13,9 +14,6 @@ pub const RESULTS_KEY: &str = "results";
 pub const KIND_BUFFER: &str = "buffer";
 /// The kind of an entry found in a file.
 pub const KIND_FILE: &str = "file";
-
-// TODO(RIC-5): an entry keeps a line and an offset, which an edit above the
-// place moves away from.
 
 /// One place, and what is there: the shape the `scan` primitive hands to Lisp.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +59,13 @@ impl Entry {
         }
     }
 
+    /// Returns what makes two entries the same place, found by two runs of the
+    /// same search: a list made again keeps the markers of the places it
+    /// still has.
+    pub fn place(&self) -> (&str, &str, usize, usize) {
+        (&self.kind, &self.source, self.line, self.column)
+    }
+
     /// Returns the line a plain view shows: `file:line: text`, as every
     /// grep-like tool prints it.
     pub fn rendered(&self) -> String {
@@ -91,6 +96,17 @@ pub struct Results {
     /// Which entry was last visited, if any. Walking is relative to this, so
     /// `next-error` continues from where you are rather than from the top.
     pub current: Option<usize>,
+    /// The marker each entry has in the buffer it was found in, by entry,
+    /// once the place has been visited: what a visit goes back to after
+    /// edits above it, which leave its line behind.
+    pub markers: HashMap<usize, Placed>,
+}
+
+/// Where an entry's marker is: the buffer, and the marker's id in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Placed {
+    pub buffer: String,
+    pub id: u64,
 }
 
 impl Results {

@@ -1214,10 +1214,10 @@ eredita il gruppo di undo e gli hook, invece di aprirne altri dentro i suoi.
   l'undo.
 + *Una mappa `Release` non ha un'uscita.* Se ne va dentro la risoluzione del
   tasto, mentre la sequenza è ancora sotto lock, dove non si può chiamare
-  l'interprete. Quindi non deve portare con sé uno stato da ripulire: una
-  mappa con una sessione dietro deve essere una `Refuse`, che finisce con i
-  suoi tasti, dove un comando può ripulire. La vista predefinita di
-  `query-replace` non segue la regola #rapporto("RIC-8").
+  l'interprete. Una mappa con una sessione dietro lo dice in `owner`, e la
+  sessione si chiude dopo il tasto, fuori dalla risoluzione, quando la sua
+  mappa non è più quella in cima (`end_replace_left_behind`): è il caso della
+  domanda di `query-replace`, un'offerta che un altro tasto può lasciare.
 
 == `handle_key_event`
 
@@ -1382,7 +1382,7 @@ meccanismo di ripetizione e dice che cosa fare di un tasto che non conosce:
   header: ([`OnUnbound`], [Comportamento], [Uso tipico]),
   [`Refuse`], [Il tasto è rifiutato in silenzio; la mappa resta. Il messaggio della mappa occupa la riga dei messaggi.], [Una domanda (`y-or-n`, `save-some-buffers`): si risponde solo con i suoi tasti.],
   [`Pass`], [Il tasto prosegue verso le altre keymap; la mappa resta.], [La striscia dei completamenti: si può continuare a scrivere.],
-  [`Release`], [Il tasto prosegue; la mappa viene tolta.], [La ripetizione (`C-x o o o`): un'offerta che si può ignorare. Anche la vista predefinita di `query-replace` #rapporto("RIC-8").],
+  [`Release`], [Il tasto prosegue; la mappa viene tolta.], [La ripetizione (`C-x o o o`): un'offerta che si può ignorare. Anche la vista predefinita di `query-replace`, la cui sessione si chiude con lei.],
 )
 
 Dopo ogni comando, `install_repeat_keymap` controlla se il comando ha un
@@ -2614,8 +2614,11 @@ Chi la guida chiama un verbo per ogni risposta. La vista predefinita
 cinque tasti: `y` (`replace-this`), `n` (`replace-skip`), `!` (`replace-rest`),
 `^` (`replace-back`, che usa `unaccept` e l'undo del buffer) e `q`
 (`replace-done`). La keymap è di tipo `OnUnbound::Release`: qualunque altro
-tasto toglie la domanda e poi fa ciò che fa di solito, ma la sessione resta
-aperta e la corrispondenza evidenziata #rapporto("RIC-8"). Un'interfaccia
+tasto toglie la domanda e poi fa ciò che fa di solito, e dopo di lui la
+sessione si chiude e la corrispondenza non è più evidenziata: la mappa ha come
+`owner` `REPLACE_QUESTION`, e `handle_key_event`, dopo ogni tasto, chiude una
+sostituzione che l'ha chiesta e non la vede più. Una vista scritta in Lisp non
+usa quella mappa, e chiude la sessione da sé. Un'interfaccia
 grafica userebbe pulsanti; nessuna delle due si esprime come un ciclo che
 legge una risposta.
 
@@ -2871,8 +2874,17 @@ Il passo non fa il giro, di proposito: la fine della lista è un'informazione
 primo errore. Un insieme di risultati vive nel buffer che lo mostra, in
 `Buffer::data` sotto la chiave `"results"` (`RESULTS_KEY`): quando il buffer
 viene chiuso i risultati spariscono con lui, e rinominarlo non rompe nulla.
-Le voci conservano numeri di riga e offset, non marcatori che seguono il testo
-#rapporto("RIC-5").
+Le voci conservano riga, colonna e offset, e alla prima visita di un posto
+ricevono un #emph[marcatore] nel buffer che lo mostra, loro e tutte quelle
+della stessa sorgente, come fa Emacs con gli errori di una compilazione: una
+voce della tabella `Markers` del buffer (`buffer/markers.rs`), un offset che
+le tre porte spostano come gli overlay, e che un inserimento proprio lì spinge
+avanti, così resta sulla corrispondenza. Da lì le visite vanno al marcatore,
+e righe aggiunte o tolte sopra non le spostano. I marcatori stanno in
+`Results::markers`, per voce; una lista rifatta, come quella di una
+compilazione prima di ogni passo, li passa alle voci che sono lo stesso posto
+(`Entry::place`) e toglie gli altri, e una lista chiusa li toglie tutti dai
+buffer in cui erano.
 
 Dove una lista si mostra lo decide `editor/results.rs`. Accanto a ogni lista,
 nei dati del suo buffer, sta una `Presentation`: chi l'ha prodotta, da quale
@@ -2882,8 +2894,9 @@ un'esecuzione nuova: con `results-reuse-buffer`, la lista più recente dello
 stesso produttore e dello stesso modo, fermando il lavoro che vi scriveva;
 altrimenti un buffer nuovo. `display_results` la mostra nella finestra con il
 focus, se `results-display-location` è `same-window`, o in una striscia in
-basso, riusando quella che mostra una lista dello stesso produttore
-#rapporto("RIC-7"). `select_results_target` sceglie la finestra in cui una
+basso, riusando quella che mostra una lista nello stesso modo: occur e grep,
+due produttori le cui liste sono in `occur-mode`, si passano la striscia,
+mentre una compilazione ha la sua. `select_results_target` sceglie la finestra in cui una
 visita apre il posto (la lista stessa con `results-visit-same-window`), e
 `quit_results` chiude la striscia o rimette il buffer che la lista aveva
 sostituito.
@@ -5457,8 +5470,8 @@ binario, quello che `looks_binary` riconosce da un byte nullo tra i primi 8000,
 come fa Git: in Windows-1252 ogni byte si decodifica, e decodificare non dice
 più che cosa è testo. Un file aperto in un buffer con modifiche si cerca nel testo del buffer.
 La fermano `stop-worker` con il nome della lista e la chiusura della lista; ciò
-che è stato trovato resta. Occur e grep sono due produttori, e le loro liste non
-si prendono la striscia l'una dell'altra #rapporto("RIC-7").
+che è stato trovato resta. Occur e grep sono due produttori, ma le loro liste
+sono dello stesso modo, e si mostrano nella stessa striscia.
 
 === Valutare e riferire <valutazione>
 

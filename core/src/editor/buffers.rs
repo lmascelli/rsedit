@@ -260,6 +260,9 @@ impl<B: BufferTrait> EditorState<B> {
         if !unsaved {
             self.discard_auto_save(name, auto_save_directory(env).as_deref());
         }
+        // A listing that goes takes its markers with it, out of the buffers
+        // its places are in: nothing will visit them again.
+        crate::primitives::results::forget_markers(self, name);
 
         // Found and removed in one acquisition: between the two, another
         // thread opening or closing a float would shift the indices. Every
