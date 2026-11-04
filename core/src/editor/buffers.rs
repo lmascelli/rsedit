@@ -221,22 +221,6 @@ impl<B: BufferTrait> EditorState<B> {
         });
     }
 
-    /// Returns STEM, or `STEM<2>`, `STEM<3>`, the first that no buffer has. For
-    /// a buffer that work will write into, see [`Self::free_name_for_work`].
-    pub(crate) fn free_buffer_name(&self, stem: &str) -> String {
-        // TODO(DOC-5): nothing calls it.
-        if !self.has_buffer(stem) {
-            return stem.to_string();
-        }
-        for n in 2.. {
-            let candidate = format!("{stem}<{n}>");
-            if !self.has_buffer(&candidate) {
-                return candidate;
-            }
-        }
-        unreachable!("the loop above returns")
-    }
-
     /// Shows the buffer NAME in the focused window, and makes it current.
     ///
     /// The mirror of [`Self::set_focused_window_id`], which moves focus and

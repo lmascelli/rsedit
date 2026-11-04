@@ -18,6 +18,7 @@ use std::collections::VecDeque;
 /// assert_eq!(text.get_lines(1, 3), ["b", "c"]);
 /// assert_eq!(text.cursor_1d_to_2d(4), (2, 0));
 /// ```
+#[derive(Clone)]
 pub struct GapBuffer {
     data: Vec<char>,
     gap_start: usize,
@@ -48,14 +49,6 @@ impl Default for GapBuffer {
             newlines_before: Vec::new(),
             newlines_after: VecDeque::new(),
         }
-    }
-}
-
-// TODO(BUF-3): `BufferTrait` requires `Clone`, and nothing clones a buffer
-// today: the first caller that does panics here.
-impl Clone for GapBuffer {
-    fn clone(&self) -> Self {
-        todo!("It is required to implement the Clone trait for GapBuffer");
     }
 }
 
@@ -198,20 +191,10 @@ impl BufferTrait for GapBuffer {
     }
 
     fn find_forward(&mut self, c: char) -> Option<usize> {
-        // TODO(BUF-3): `self.len() - 1` underflows on an empty text.
-        let mut current_pos = self.cursor_pos_1d();
-        while current_pos < self.len() - 1 {
-            if let Some(tc) = self.at(current_pos + 1) {
-                if c == tc {
-                    return Some(current_pos + 1);
-                } else {
-                    current_pos += 1;
-                }
-            } else {
-                unreachable!()
-            }
-        }
-        None
+        // From the character after the cursor's: none at the end of the text,
+        // or in an empty one.
+        let from = self.cursor_pos_1d() + 1;
+        (from..self.len()).find(|&at| self.at(at) == Some(c))
     }
 
     fn insert(&mut self, c: char) {

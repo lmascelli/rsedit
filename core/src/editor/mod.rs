@@ -270,16 +270,29 @@ impl<B: BufferTrait> LispContext for EditorState<B> {
     }
 }
 
-// TODO(DOC-2): `LispContext` asks for both, and neither is meant to be used:
-// `{:?}` on an editor panics, and so does comparing two.
+// `LispContext` asks for both. Neither is how the editor is used, and both
+// answer something rather than panic: a `{:?}` in a failed assertion, or of a
+// value that carries a context, is the moment one is least wanted.
+
+/// The names of the buffers, which say which editor this is; without them
+/// when the table is locked, by this thread or another, since printing must
+/// not wait.
 impl<B: BufferTrait> std::fmt::Debug for EditorState<B> {
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        todo!()
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let mut out = f.debug_struct("EditorState");
+        match self.buffers.try_read() {
+            Ok(buffers) => out.field("buffers", &buffers.names()),
+            Err(_) => out.field("buffers", &"<locked>"),
+        };
+        out.finish_non_exhaustive()
     }
 }
+
+/// The same editor, by identity: two handles are equal when they share the
+/// state, as every clone of one does.
 impl<B: BufferTrait> std::cmp::PartialEq for EditorState<B> {
-    fn eq(&self, _: &EditorState<B>) -> bool {
-        unreachable!()
+    fn eq(&self, other: &EditorState<B>) -> bool {
+        Arc::ptr_eq(&self.running, &other.running)
     }
 }
 

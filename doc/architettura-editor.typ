@@ -671,7 +671,10 @@ che li condivide.
 )
 
 `EditorState` implementa `Debug` e `PartialEq` solo perché `LispContext` li
-richiede; nessuno dei due è pensato per essere usato #rapporto("DOC-2").
+richiede, ma tutti e due rispondono invece di andare in panic: `Debug` stampa
+i nomi dei buffer, o `<locked>` se la tabella è sotto un lock di scrittura,
+perché stampare non deve aspettare; `PartialEq` confronta per identità, e due
+handle sono uguali quando condividono lo stato, come ogni clone di uno.
 
 == Le regole dei compartimenti <regole-compartimenti>
 
@@ -1786,8 +1789,8 @@ cancellazione di un carattere #emph[al punto], righe, `clear`. Gli
 spostamenti e le conversioni lavorano in caratteri, non in byte. Ciò che ogni
 implementazione deve fare è scritto una volta sola, per un `B` qualunque, in
 `buffer_conformance_tests`: una seconda implementazione è una riga in fondo a
-quel file, e arriva già provata. Il trait chiede anche `Clone`, ma il `clone`
-di `GapBuffer` è un `todo!()` #rapporto("BUF-3").
+quel file, e arriva già provata. Il trait chiede anche `Clone`, che
+`GapBuffer` deriva: una copia del testo, del buco e dell'indice delle righe.
 
 `GapBuffer` tiene un `Vec<char>` con un buco al punto: inserire e cancellare
 lì costa O(1), spostare il punto costa la distanza percorsa. Accanto al testo
@@ -3291,8 +3294,8 @@ in `ui/faces.rs`; le primitive sono in `primitives/theme.rs`.
   righe e lavora senza lock; lo scanner no, perché lavora in offset assoluti,
   che le fotografie registrano, e non gli si può dare una lista di righe
   staccate. Dargli il testo vuol dire dargli il buffer, che non si copia: una
-  copia a ogni turno costerebbe quanto la cache risparmia, e `GapBuffer::clone`
-  è un `todo!()` #rapporto("BUF-3"). Lo rende accettabile la misura del lavoro:
+  copia a ogni turno costerebbe quanto la cache risparmia. Lo rende
+  accettabile la misura del lavoro:
   un turno di `LINES_PER_TURN` righe di lessico carattere per carattere, senza
   allocazioni né regex, sono microsecondi, e un lock di lettura blocca solo chi
   scrive.

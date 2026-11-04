@@ -265,10 +265,10 @@ impl<B: BufferTrait> EditorState<B> {
             })
         };
 
-        if let Some(presentation) = self.results_presentation(listing) {
-            if usable(presentation.origin_window) {
-                return self.select_window(presentation.origin_window);
-            }
+        if let Some(presentation) = self.results_presentation(listing)
+            && usable(presentation.origin_window)
+        {
+            return self.select_window(presentation.origin_window);
         }
 
         if usable(from) {
@@ -300,14 +300,13 @@ impl<B: BufferTrait> EditorState<B> {
         let here = self.get_focused_window_id();
         let presentation = self.results_presentation(&buffer);
 
-        if let Some(presentation) = &presentation {
-            if presentation.bottom
-                && presentation.window == Some(here)
-                && self.delete_window_by_id(here)
-            {
-                self.select_window(presentation.origin_window);
-                return true;
-            }
+        if let Some(presentation) = &presentation
+            && presentation.bottom
+            && presentation.window == Some(here)
+            && self.delete_window_by_id(here)
+        {
+            self.select_window(presentation.origin_window);
+            return true;
         }
 
         let previous = presentation

@@ -81,7 +81,11 @@ mod tests {
     fn opening_the_repl_again_keeps_what_was_written() {
         let (ctx, env) = editor();
         repl("(+ 1 2)", &env, &ctx);
-        run(r#"(buffer-create "other") (switch-to-buffer "other") (risp-repl)"#, &env, &ctx);
+        run(
+            r#"(buffer-create "other") (switch-to-buffer "other") (risp-repl)"#,
+            &env,
+            &ctx,
+        );
         assert_eq!(contents(&ctx), "(+ 1 2)");
     }
 
@@ -123,15 +127,20 @@ mod tests {
         let (ctx, env) = editor();
         repl("(setq repl-test-n 0)", &env, &ctx);
         press_c_j(&env, &ctx);
-        run(r#"(insert "(setq repl-test-n (+ repl-test-n 1))")"#, &env, &ctx);
+        run(
+            r#"(insert "(setq repl-test-n (+ repl-test-n 1))")"#,
+            &env,
+            &ctx,
+        );
         press_c_j(&env, &ctx);
         // Evaluated once more, the first setq would have reset it to 0 + 1.
-        run(r#"(insert "(setq repl-test-n (+ repl-test-n 1))")"#, &env, &ctx);
-        press_c_j(&env, &ctx);
-        assert_eq!(
-            run("repl-test-n", &env, &ctx),
-            LispExp::number(2.0)
+        run(
+            r#"(insert "(setq repl-test-n (+ repl-test-n 1))")"#,
+            &env,
+            &ctx,
         );
+        press_c_j(&env, &ctx);
+        assert_eq!(run("repl-test-n", &env, &ctx), LispExp::number(2.0));
         assert!(contents(&ctx).ends_with(";; => 2\n"), "{}", contents(&ctx));
     }
 
@@ -140,13 +149,21 @@ mod tests {
         let (ctx, env) = editor();
         repl("(list 1\n\n      2)", &env, &ctx);
         press_c_j(&env, &ctx);
-        assert!(contents(&ctx).ends_with(";; => (1 2)\n"), "{}", contents(&ctx));
+        assert!(
+            contents(&ctx).ends_with(";; => (1 2)\n"),
+            "{}",
+            contents(&ctx)
+        );
     }
 
     #[test]
     fn an_error_is_written_and_stops_the_block() {
         let (ctx, env) = editor();
-        repl("(repl-test-no-such-function)\n(setq repl-test-after t)", &env, &ctx);
+        repl(
+            "(repl-test-no-such-function)\n(setq repl-test-after t)",
+            &env,
+            &ctx,
+        );
         press_c_j(&env, &ctx);
         assert!(run("(boundp 'repl-test-after)", &env, &ctx).is_nil());
         assert!(contents(&ctx).contains("\n;; !! "), "{}", contents(&ctx));
@@ -181,7 +198,11 @@ mod tests {
         let (ctx, env) = editor();
         repl("(list (+ 1 2) (+ 3 4)", &env, &ctx);
         press_c_j(&env, &ctx);
-        assert!(contents(&ctx).ends_with("(+ 3 4)\n;; => 7\n"), "{}", contents(&ctx));
+        assert!(
+            contents(&ctx).ends_with("(+ 3 4)\n;; => 7\n"),
+            "{}",
+            contents(&ctx)
+        );
     }
 
     #[test]

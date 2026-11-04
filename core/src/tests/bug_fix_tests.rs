@@ -190,4 +190,22 @@ mod tests {
             "expected the cleanup's error, got {err:?}"
         );
     }
+
+    /// `{:?}` of the editor was a `todo!()`, and comparing two an
+    /// `unreachable!()`: a failed assertion on anything carrying a context
+    /// panicked a second time instead of saying what failed.
+    #[test]
+    fn the_editor_prints_its_buffers_and_compares_by_identity() {
+        let (ctx, _env) = create_global_env::<GapBuffer>().expect("global env");
+        let printed = format!("{ctx:?}");
+        assert!(printed.contains("*scratch*"), "{printed}");
+        assert!(ctx == ctx.clone(), "a handle and its clone are one editor");
+        let (other, _) = create_global_env::<GapBuffer>().expect("global env");
+        assert!(ctx != other);
+        let locked = ctx.buffers_mut(|_| format!("{ctx:?}"));
+        assert!(
+            locked.contains("<locked>"),
+            "printing does not wait: {locked}"
+        );
+    }
 }

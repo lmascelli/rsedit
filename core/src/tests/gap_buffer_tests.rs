@@ -188,6 +188,39 @@ mod tests {
         assert_eq!(buf.find_backward('z'), None);
     }
 
+    /// `self.len() - 1` underflowed on an empty text, and the end of the
+    /// text was an `unreachable!`.
+    #[test]
+    fn finding_forward_in_an_empty_text_or_from_its_end_finds_nothing() {
+        let mut empty = GapBuffer::default();
+        assert_eq!(empty.find_forward('a'), None);
+        let mut text = GapBuffer::from("ab");
+        text.cursor_move(0, 2);
+        assert_eq!(text.find_forward('b'), None, "from the end");
+        text.cursor_move(0, 0);
+        assert_eq!(text.find_forward('b'), Some(1));
+        assert_eq!(
+            text.find_forward('a'),
+            None,
+            "the cursor's own is not after it"
+        );
+    }
+
+    /// `Clone` was a `todo!()`, though `BufferTrait` asks for it: the first
+    /// clone would have panicked.
+    #[test]
+    fn a_clone_is_a_copy_of_its_own() {
+        let mut text = GapBuffer::from("one\ntwo");
+        text.cursor_move(1, 0);
+        let mut copy = text.clone();
+        assert_eq!(copy.to_string(), "one\ntwo");
+        assert_eq!(copy.cursor_pos(), (1, 0));
+        assert_eq!(copy.get_lines(0, 2), ["one", "two"]);
+        copy.insert('x');
+        assert_eq!(copy.to_string(), "one\nxtwo");
+        assert_eq!(text.to_string(), "one\ntwo", "the original is untouched");
+    }
+
     #[test]
     fn test_unicode_boundary_safety() {
         // Four bytes each in UTF-8, and one character each here.
