@@ -122,8 +122,11 @@ AUTO SAVING
     pass between one round of copies and the next. With
     `auto-save-directory' set, every copy goes there instead, the file's
     path flattened into its name, so that two files called main.rs keep a
-    copy each. A ~ in it is the home directory, and the directory is made
-    when the first copy is written.
+    copy each: /home/me/notes.txt has #!home!me!notes.txt#, and a !, a %
+    or a : in a path is written %21, %25 or %3A, so that no two paths share
+    a name. A ~ in it is the home directory, and the directory is made
+    when the first copy is written. A copy that cannot be written is tried
+    again at the next round; the log says so once.
 
 LEAVING
     C-x C-c asks about each buffer with unsaved changes, as

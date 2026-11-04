@@ -64,18 +64,25 @@ pub fn auto_save_directory<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Op
     }
 }
 
-// TODO(FIL-6): beside a separator, a `!` can give another path's name:
-// `/a!/b` and `/a/!b` both become `!a!!!b`.
-/// Returns PATH as one component of a file name, Emacs' way: each `/`, `\`
-/// and `:` becomes `!`, and each `!` is doubled, so that
-/// `/home/me/p/src/main.rs` becomes `!home!me!p!src!main.rs`, and `/a!b/c`
-/// and `/a/b/c` stay apart.
+/// Returns PATH as one component of a file name: each separator becomes `!`,
+/// as in Emacs, so that `/home/me/p/src/main.rs` becomes
+/// `!home!me!p!src!main.rs`; and `!`, `%` and `:` -- with `\\` where it is no
+/// separator -- are written as `%` and their code, `%21`, `%25`, `%3A`, `%5C`.
+///
+/// So no two paths have the same name. Emacs doubles each `!` instead, and a
+/// `!` beside a separator then reads like another path's: `/a!/b` and `/a/!b`
+/// were both `!a!!!b`. Here every character is written one way and every
+/// written run read one way back, as in a URL.
 fn flatten(path: &str) -> String {
     let mut out = String::with_capacity(path.len() + 8);
     for ch in path.chars() {
         match ch {
-            '!' => out.push_str("!!"),
-            '/' | '\\' | ':' => out.push('!'),
+            '/' => out.push('!'),
+            '\\' if cfg!(windows) => out.push('!'),
+            '!' => out.push_str("%21"),
+            '%' => out.push_str("%25"),
+            ':' => out.push_str("%3A"),
+            '\\' => out.push_str("%5C"),
             other => out.push(other),
         }
     }
@@ -213,10 +220,13 @@ impl<B: BufferTrait> EditorState<B> {
         })
     }
 
-    // TODO(FIL-5): a failed write is recorded as tried, and is not tried again
-    // until the buffer changes.
     /// Writes PENDING, with no lock held, and records its version against the
-    /// buffer, whether or not the write worked.
+    /// buffer once it is on disk.
+    ///
+    /// A write that fails is not recorded, and is tried again at the next turn:
+    /// a full disk or a directory briefly gone is not a reason to stop keeping
+    /// a copy until the buffer changes. The log hears of it once, when the
+    /// writes start failing, and not at every turn after.
     pub(crate) fn write_auto_save(&self, pending: AutoSave) {
         let AutoSave {
             buffer,
@@ -228,17 +238,25 @@ impl<B: BufferTrait> EditorState<B> {
         // the buffer.
         // Whole or not at all, as a save: a copy cut short would offer
         // `recover-file` half of the work.
-        if let Err(why) = crate::buffer::disk::write_atomically(&where_to, text.as_bytes()) {
-            // Said once: the version recorded below keeps the complaint from
-            // coming back until the buffer changes.
-            self.log_diagnostic(&format!(
-                "[WARNING] could not auto-save {buffer} to {}: {why}",
-                where_to.display()
-            ));
+        match crate::buffer::disk::write_atomically(&where_to, text.as_bytes()) {
+            Ok(()) => {
+                self.with_buffer_mut(&buffer, |buf| {
+                    buf.auto_saved_at = Some(version);
+                    buf.auto_save_failing = false;
+                });
+            }
+            Err(why) => {
+                let first = self.with_buffer_mut(&buffer, |buf| {
+                    !std::mem::replace(&mut buf.auto_save_failing, true)
+                });
+                if first == Some(true) {
+                    self.log_diagnostic(&format!(
+                        "[WARNING] could not auto-save {buffer} to {}: {why}",
+                        where_to.display()
+                    ));
+                }
+            }
         }
-        // Recorded whether or not the write worked: it is the version this
-        // job has tried, not the version safely on disk.
-        self.with_buffer_mut(&buffer, |buf| buf.auto_saved_at = Some(version));
     }
 
     /// Removes NAME's auto-save file, once its contents are safely in the file

@@ -38,7 +38,7 @@ pub(crate) mod edits;
 mod environment;
 mod evaluation;
 pub(crate) mod file_names;
-mod files;
+pub(crate) mod files;
 pub(crate) mod filesystem;
 mod fuzzy;
 mod grammar;

@@ -9,25 +9,27 @@ use crate::jobs::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::args;
 use risp::eval;
 
-// TODO(FIL-4): an edit made while the text is being written is marked saved
-// with the rest.
 /// Writes NAME's buffer to the file it is visiting, and answers false when it
 /// has none or the write failed. Either way the echo area says what became of
 /// it: a failed save that only the log heard about is work the user believes
 /// is safe. What `save-buffer` and `save-some-buffers` save with.
-/// Writes NAME's buffer to the file it is visiting, and answers false when it
-/// has none or the write failed. What `save-some-buffers` saves with.
 pub(super) fn write_buffer<B: BufferTrait>(
     ctx: &EditorState<B>,
     name: &str,
     directory: Option<&str>,
 ) -> bool {
-    // Taken under the lock; written with the lock given back, because a slow
-    // disk must not stop every other thread reading the buffer.
-    let Some(Some((path, content, coding))) = ctx.with_buffer(name, |buf| {
-        buf.file_path
-            .as_ref()
-            .map(|path| (path.to_string(), buf.text.to_string(), buf.coding))
+    // Taken under the lock, with the version it is; written with the lock
+    // given back, because a slow disk must not stop every other thread
+    // reading the buffer.
+    let Some(Some((path, content, coding, version))) = ctx.with_buffer(name, |buf| {
+        buf.file_path.as_ref().map(|path| {
+            (
+                path.to_string(),
+                buf.text.to_string(),
+                buf.coding,
+                buf.version,
+            )
+        })
     }) else {
         return false;
     };
@@ -42,16 +44,13 @@ pub(super) fn write_buffer<B: BufferTrait>(
             // what is remembered of it and the editor would report a conflict
             // with itself on the next check.
             let stamp = crate::buffer::FileStamp::of(&path);
-            ctx.with_buffer_mut(name, |buf| {
-                buf.is_modified = false;
-                buf.file_stamp = stamp;
-                buf.stale = false;
-            });
-            // The recovery copy has done its job: what it held is now in the
-            // file it was standing in for.
-            ctx.discard_auto_save(name, directory);
-            ctx.set_echo_message(&format!("Wrote {path}"));
-            ctx.log_diagnostic(&format!("Wrote {path}"));
+            let all_of_it = mark_written(ctx, name, version, stamp);
+            if all_of_it {
+                // The recovery copy has done its job: what it held is now in
+                // the file it was standing in for.
+                ctx.discard_auto_save(name, directory);
+            }
+            say_written(ctx, &path, all_of_it);
             true
         }
         Err(why) => {
@@ -60,6 +59,43 @@ pub(super) fn write_buffer<B: BufferTrait>(
             false
         }
     }
+}
+
+/// Records that NAME's text as it was at VERSION is now in its file, stamped
+/// STAMP, and returns whether that is all of it.
+///
+/// The text is copied, then written with no lock held, and an edit can come
+/// in between, from a job or a callback: the buffer then holds more than the
+/// file, and stays modified. Unmodified only when the version is still the
+/// one written.
+pub(crate) fn mark_written<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    name: &str,
+    version: u64,
+    stamp: Option<crate::buffer::FileStamp>,
+) -> bool {
+    ctx.with_buffer_mut(name, |buf| {
+        buf.file_stamp = stamp;
+        buf.stale = false;
+        let all_of_it = buf.version == version;
+        if all_of_it {
+            buf.is_modified = false;
+        }
+        all_of_it
+    })
+    .unwrap_or(false)
+}
+
+/// Says that PATH was written, and, when ALL_OF_IT is false, that the buffer
+/// changed while it was and is still modified.
+fn say_written<B: BufferTrait>(ctx: &EditorState<B>, path: &str, all_of_it: bool) {
+    let said = if all_of_it {
+        format!("Wrote {path}")
+    } else {
+        format!("Wrote {path}; the buffer changed meanwhile, and is still modified")
+    };
+    ctx.set_echo_message(&said);
+    ctx.log_diagnostic(&said);
 }
 
 /// Returns CONTENT as CODING writes it to PATH, or `None`, saying why, when
@@ -396,8 +432,6 @@ pub const WRITE_FILE_DOC: &str = "(write-file PATH): Write the current buffer to
          Example:\n\
          (write-file \"~/notes-v2.txt\")";
 
-// TODO(FIL-4): an edit made during the write is marked saved, as by
-// `save-buffer`.
 primitive!(write_file, args, env, ctx, {
     let Some(ELispExp::String(path_str)) = args.first() else {
         return Err(EvalError::WrongArgumentType {
@@ -424,7 +458,8 @@ primitive!(write_file, args, env, ctx, {
 
     // Taken under the lock, written with the lock given back: a slow disk must
     // not stop every other thread reading the buffer.
-    let (content, coding) = ctx.with_current_buffer(|buf| (buf.text.to_string(), buf.coding));
+    let (content, coding, version) =
+        ctx.with_current_buffer(|buf| (buf.text.to_string(), buf.coding, buf.version));
     let Some(bytes) = encode_for(ctx, &path, &content, coding) else {
         return Ok(ELispExp::nil());
     };
@@ -442,15 +477,16 @@ primitive!(write_file, args, env, ctx, {
     let visited_file_changed =
         ctx.with_current_buffer(|buf| buf.file_path.as_deref() != Some(path.as_str()));
     let stamp = crate::buffer::FileStamp::of(&path);
+    // Whether the buffer is still what was written: an edit that came in
+    // during the write keeps it modified, and its recovery copy with it.
+    let all_of_it = ctx.with_current_buffer(|buf| buf.version == version);
     // Discarded against the *old* path, before the buffer is repointed: the
     // recovery copy that exists is the one named after where it used to live.
-    ctx.discard_auto_save(&current, auto_save_directory(&env).as_deref());
-    ctx.with_current_buffer_mut(|buf| {
-        buf.file_path = Some(path.clone());
-        buf.is_modified = false;
-        buf.file_stamp = stamp;
-        buf.stale = false;
-    });
+    if all_of_it {
+        ctx.discard_auto_save(&current, auto_save_directory(&env).as_deref());
+    }
+    ctx.with_current_buffer_mut(|buf| buf.file_path = Some(path.clone()));
+    let all_of_it = mark_written(ctx, &current, version, stamp);
     if new_name != current {
         ctx.rename_buffer(&current, &new_name);
     }
@@ -460,8 +496,7 @@ primitive!(write_file, args, env, ctx, {
     if visited_file_changed {
         ctx.run_buffer_hook(&new_name, "after-set-visited-file-name-hook", &env);
     }
-    ctx.set_echo_message(&format!("Wrote {path}"));
-    ctx.log_diagnostic(&format!("Wrote {path}"));
+    say_written(ctx, &path, all_of_it);
     Ok(ELispExp::string(path))
 });
 

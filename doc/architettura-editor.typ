@@ -2109,8 +2109,11 @@ non può scrivere si scrivono sul posto, perché un file nuovo non avrebbe gli
 altri nomi, sarebbe di chi scrive, o non si potrebbe creare. Ogni
 salvataggio, che venga da `save-buffer`, da `save-some-buffers` o da
 `write-file`, scrive l'esito, riuscito o fallito, nell'area messaggi e nel
-log. Una modifica fatta mentre il file si scrive può restare non
-salvata senza che il buffer lo segni #rapporto("FIL-4").
+log. Il testo si copia sotto il lock con la sua `version`, si scrive senza
+lock, e `mark_written` toglie «modificato» solo se la versione è ancora
+quella: una modifica arrivata nel frattempo, da un lavoro o da un callback,
+lascia il buffer modificato e la copia di ripristino al suo posto, e il
+messaggio lo dice.
 
 Il #emph[watcher] (`FileWatcher`, ogni `watch-file-interval` secondi, 3 per
 default, al massimo 8 file per turno; spento da `(setq watch-files nil)`)
@@ -2121,8 +2124,10 @@ il salvataggio successivo chiede conferma. L'#emph[autosalvataggio]
 buffer per turno; spento da `(setq auto-save nil)`) scrive i buffer modificati
 la cui versione è cambiata dall'ultima copia in `#nome#`, nella directory del
 file o in `auto-save-directory`; `recover-file` riporta la copia nel buffer.
-La versione salvata viene registrata anche quando la scrittura fallisce
-#rapporto("FIL-5"). La copia è sempre in UTF-8, la codifica dell'editor:
+La versione si registra solo dopo una scrittura riuscita: una fallita si
+riprova al turno dopo, e il log lo sente una volta, quando le scritture
+cominciano a fallire (`auto_save_failing`). La copia è sempre in UTF-8, la
+codifica dell'editor:
 `recover-file` la legge così, e il buffer tiene la codifica del suo file.
 
 === Le codifiche <codifiche>
@@ -4007,9 +4012,9 @@ lo ha letto o scritto l'ultima volta. Un buffer senza modifiche si ricarica;
 uno con modifiche, o che cambia mentre il file si legge, si segna come superato
 (`stale`), e il salvataggio successivo chiede. Il salvataggio automatico scrive
 una copia del buffer, `#nome#` accanto al file o in `auto-save-directory` con il
-percorso appiattito nel nome #rapporto("FIL-6"), quando la versione è cambiata
-dall'ultima copia; la scrive con `write_atomically`, come un salvataggio
-(@file-su-disco), e un tentativo fallito conta come fatto #rapporto("FIL-5"). È la copia che `recover-file`
+percorso appiattito nel nome, quando la versione è cambiata dall'ultima copia;
+la scrive con `write_atomically`, come un salvataggio (@file-su-disco), e un
+tentativo fallito si riprova al turno dopo. È la copia che `recover-file`
 rilegge.
 
 === I comandi di shell e le ricerche <comandi-shell>
@@ -4334,8 +4339,13 @@ Gli altri strumenti:
   diverse.
 + *`#nome#`, o il percorso intero in una directory.* `#nome#` accanto al file è
   la convenzione nota. Con `auto-save-directory` tutte le copie vanno lì, con il
-  percorso nel nome, i separatori in `!` e il `!` raddoppiato, perché due
-  `main.rs` di directory diverse non si contendano un nome #rapporto("FIL-6").
+  percorso nel nome, perché due `main.rs` di directory diverse non si
+  contendano un nome: i separatori diventano `!`, come in Emacs, e `!`, `%`,
+  `:` (e `\` dove non separa) si scrivono come in un URL, `%21`, `%25`,
+  `%3A`, `%5C`. Emacs raddoppia il `!`, e un `!` accanto a un separatore si
+  legge come quello di un altro percorso: `/a!/b` e `/a/!b` davano tutti e due
+  `!a!!!b`. Così ogni carattere si scrive in un modo solo, e due percorsi non
+  hanno lo stesso nome.
   Il nome non si rovescia, e non serve: il ripristino parte sempre da un
   percorso che si ha, quello del buffer o uno scritto.
 + *La versione, non il segno di modifica.* «Modificato» resta vero dal primo

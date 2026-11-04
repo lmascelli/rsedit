@@ -128,12 +128,34 @@ mod tests {
 
     #[test]
     fn a_bang_inside_a_name_is_not_read_as_a_separator() {
-        // Without doubling the literal `!`, `/a!b/c` and `/a/b/c` both flatten
-        // to `!a!b!c`, and one buffer's recovery file is quietly another's. A
-        // `!` beside a separator can still meet another path's (FIL-6).
+        // Written as itself, `/a!b/c` and `/a/b/c` would both flatten to
+        // `!a!b!c`, and one buffer's recovery file would quietly be another's.
         let bang = auto_save_path("/a!b/c", Some("/tmp"));
         let slash = auto_save_path("/a/b/c", Some("/tmp"));
         assert_ne!(bang, slash);
+    }
+
+    /// Doubling each `!`, as Emacs does, left `/a!/b` and `/a/!b` both
+    /// `!a!!!b`: two files, one copy.
+    #[test]
+    fn no_two_paths_share_a_copy_whatever_their_bangs() {
+        let paths = [
+            "/a!/b", "/a/!b", "/a!!/b", "/a/!!b", "/a!/!b", "/a/b", "/a!b", "/a%21b", "/a%/b",
+            "/a:b", "/a%3Ab",
+        ];
+        let names: Vec<PathBuf> = paths
+            .iter()
+            .map(|path| auto_save_path(path, Some("/d")))
+            .collect();
+        for (i, one) in names.iter().enumerate() {
+            for (j, two) in names.iter().enumerate().skip(i + 1) {
+                assert_ne!(one, two, "{} and {}", paths[i], paths[j]);
+            }
+        }
+        assert_eq!(
+            auto_save_path("/a!/b", Some("/d")),
+            PathBuf::from("/d/#!a%21!b#")
+        );
     }
 
     #[test]
@@ -533,5 +555,93 @@ mod tests {
             Some("one two on disk"),
             "five seconds, not thirty"
         );
+    }
+
+    // ----------------------------------------------------------------
+    // A copy that cannot be written
+    // ----------------------------------------------------------------
+
+    /// A failed write was recorded as done, and not tried again until the
+    /// buffer changed: a passing failure cost the copy for good.
+    #[test]
+    fn a_copy_that_could_not_be_written_is_tried_again() {
+        let sandbox = Sandbox::new("retry");
+        let path = sandbox.file("a.txt", "on disk");
+        // A file where the directory should be: no copy can go in it.
+        let blocked = sandbox.file("saves", "not a directory");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        run(r#"(insert "X")"#, &env, &ctx);
+
+        sweep(&ctx, Some(&blocked));
+        sweep(&ctx, Some(&blocked));
+        assert_eq!(ctx.with_buffer(&name, |buf| buf.auto_saved_at), Some(None));
+        assert!(
+            ctx.auto_save_for(&name, Some(&blocked)).is_some(),
+            "still due"
+        );
+        let warnings = ctx
+            .get_logs()
+            .iter()
+            .filter(|line| line.contains("could not auto-save"))
+            .count();
+        assert_eq!(warnings, 1, "said once, not at every turn");
+
+        std::fs::remove_file(&blocked).expect("unblocking");
+        sweep(&ctx, Some(&blocked));
+        assert!(
+            ctx.auto_save_for(&name, Some(&blocked)).is_none(),
+            "written now"
+        );
+        assert!(!sandbox.entries(&blocked).is_empty());
+        assert_eq!(
+            ctx.with_buffer(&name, |buf| buf.auto_save_failing),
+            Some(false)
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // An edit while the file is written
+    // ----------------------------------------------------------------
+
+    /// The text is copied, written with no lock held, and the buffer marked
+    /// saved: an edit in between, from a job or a callback, was marked saved
+    /// with the rest, though the file does not have it.
+    #[test]
+    fn an_edit_made_while_the_file_was_written_stays_modified() {
+        let sandbox = Sandbox::new("race");
+        let path = sandbox.file("a.txt", "on disk");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        run(r#"(insert "X")"#, &env, &ctx);
+        let copied = ctx
+            .with_buffer(&name, |buf| buf.version)
+            .expect("the buffer");
+
+        // What came in while the copy was on its way to the disk.
+        run(r#"(insert "Y")"#, &env, &ctx);
+        let all_of_it = crate::primitives::files::mark_written(&ctx, &name, copied, None);
+        assert!(!all_of_it);
+        assert_eq!(ctx.with_buffer(&name, |buf| buf.is_modified), Some(true));
+
+        let now = ctx
+            .with_buffer(&name, |buf| buf.version)
+            .expect("the buffer");
+        assert!(crate::primitives::files::mark_written(
+            &ctx, &name, now, None
+        ));
+        assert_eq!(ctx.with_buffer(&name, |buf| buf.is_modified), Some(false));
+    }
+
+    #[test]
+    fn a_save_with_nothing_in_between_is_all_of_it() {
+        let sandbox = Sandbox::new("plain-save");
+        let path = sandbox.file("a.txt", "on disk");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        run(r#"(insert "X") (save-buffer)"#, &env, &ctx);
+        assert_eq!(ctx.with_buffer(&name, |buf| buf.is_modified), Some(false));
+        assert!(!ctx.get_echo_message().contains("meanwhile"));
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "Xon disk");
     }
 }

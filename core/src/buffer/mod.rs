@@ -93,6 +93,9 @@ pub struct Buffer<B: BufferTrait> {
     /// auto-save file, or `None` when there is no such file. A version and
     /// not a flag, so that a buffer not edited since is not written again.
     pub auto_saved_at: Option<u64>,
+    /// Whether the last attempt to write the auto-save file failed: what keeps
+    /// the log from hearing about it again at every turn until one works.
+    pub auto_save_failing: bool,
     /// Whether this buffer refuses to have its text changed. Checked at the
     /// two doors; point still moves.
     pub read_only: bool,
@@ -136,6 +139,7 @@ impl<B: BufferTrait> Buffer<B> {
             file_stamp: None,
             stale: false,
             auto_saved_at: None,
+            auto_save_failing: false,
             read_only: false,
             data: HashMap::new(),
             changed: Topic::detached(),
@@ -239,6 +243,7 @@ impl<B: BufferTrait> Buffer<B> {
             file_stamp: None,
             stale: false,
             auto_saved_at: None,
+            auto_save_failing: false,
             read_only: false,
             data: HashMap::new(),
             changed: Topic::detached(),

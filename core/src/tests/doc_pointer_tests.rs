@@ -137,7 +137,9 @@ mod tests {
                 open.push(id.clone());
             }
         }
-        assert!(open.len() > 20, "the cards are not being read");
+        // Every card read, open or not: as the defects are put right fewer
+        // are open, and a count of those would one day fail for that alone.
+        assert!(starts.len() > 20, "the cards are not being read");
         let manual = document("architettura-editor.typ");
         let pointer = Regex::new(r#"#rapporto\("([A-Z]+-[0-9]+)"\)"#).expect("the pattern");
         let wrong: Vec<String> = pointer
