@@ -5,7 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <due-porte>`.
 use super::*;
 use crate::buffer::{Buffer, Mark, undo};
-use crate::primitives::args::repeat_count;
+use crate::primitives::args::movement_count;
 
 /// Deletes the text between FROM and TO, in either order and clamped to the
 /// text, and records it so that it can be undone.
@@ -201,19 +201,35 @@ pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str
     insert_text(buf, at, content)
 }
 
-pub const SELF_INSERT_DOC: &str = "(self-insert STRING): Insert the first character of STRING at \
-         point. It is what each printable key runs, with its own character.\n\n\
+pub const SELF_INSERT_DOC: &str = "(self-insert STRING &optional N): Insert the first character \
+         of STRING at point, N times, 1 by default. It is what each printable key runs, with its \
+         own character and the prefix argument as N: C-u 3 x inserts xxx. N less than 0 is an \
+         error, as in Emacs.\n\n\
          Example:\n\
-         (self-insert \"a\")";
+         (self-insert \"a\")\n\
+         (self-insert \"-\" 40)";
 
-// TODO(CMD-5): the prefix argument is not read, so `C-u 3 x` inserts one x.
 primitive!(self_insert, args, _env, ctx, {
+    let times = match args.get(1) {
+        None => 1,
+        Some(ELispExp::Number(n)) if *n < 0.0 => {
+            return Err(EvalError::RuntimeMessage(format!(
+                "Negative repetition argument {n}"
+            )));
+        }
+        Some(ELispExp::Number(n)) => args::width(*n)?,
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Number".into(),
+                got: other.clone(),
+            });
+        }
+    };
     if let Some(ELispExp::String(s)) = args.first() {
         if let Some(c) = s.chars().next() {
-            let happened = ctx.with_current_buffer_mut(|buf| {
-                let mut utf8 = [0u8; 4];
-                insert_at_point(buf, c.encode_utf8(&mut utf8))
-            });
+            // One insertion of N characters: one edit, one undo step.
+            let text: String = std::iter::repeat_n(c, times).collect();
+            let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, &text));
             return Ok(edited(ctx, happened));
         }
         Ok(ELispExp::symbol("nil".into()))
@@ -315,15 +331,21 @@ primitive!(delete_backward_char, _args, _env, ctx, {
 });
 
 pub const DELETE_CHAR_DOC: &str = "(delete-char &optional N): Delete the N characters after \
-         point, 1 by default, across line ends, without putting them on the kill ring.";
+         point, 1 by default, across line ends, without putting them on the kill ring; with N \
+         negative, the characters before point.";
 
 primitive!(delete_char, args, _env, ctx, {
-    let count = repeat_count(args)?;
+    let count = movement_count(args)?;
     let happened = ctx.with_current_buffer_mut(|buf| {
-        let from = buf.text.cursor_pos_1d();
-        // Saturating: a count past the end of the buffer means to its end,
-        // and an addition that wrapped would delete backwards.
-        delete_range(buf, from, from.saturating_add(count))
+        let point = buf.text.cursor_pos_1d();
+        // Saturating: a count past either end of the buffer means to that end,
+        // and an arithmetic that wrapped would delete the wrong way.
+        let reach = count.unsigned_abs();
+        if count < 0 {
+            delete_range(buf, point.saturating_sub(reach), point)
+        } else {
+            delete_range(buf, point, point.saturating_add(reach))
+        }
     });
     Ok(edited(ctx, happened))
 });

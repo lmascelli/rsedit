@@ -4,7 +4,7 @@
 //! Design: `doc/architettura-editor.typ, <uccidere>`.
 use super::*;
 use crate::buffer::Buffer;
-use crate::primitives::args::repeat_count;
+use crate::primitives::args::movement_count;
 use crate::primitives::movement::{
     line_bounds, paragraph_backward, paragraph_forward, word_backward, word_forward,
 };
@@ -83,34 +83,45 @@ primitive!(kill_whole_line, _args, env, ctx, {
 });
 
 pub const KILL_WORD_DOC: &str = "(kill-word &optional N): Kill forward to the end of the Nth \
-         word, 1 by default: the text `forward-word' would move over. It goes on the kill ring.";
+         word, 1 by default: the text `forward-word' would move over. With N negative, kill \
+         backward, as `backward-kill-word' does. It goes on the kill ring.";
+
+/// Kills COUNT words from point: forward when COUNT is positive, back when it
+/// is negative, as Emacs' `kill-word` does with a negative argument.
+fn kill_words<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: &std::sync::Arc<Env<EditorState<B>>>,
+    count: isize,
+) -> ELispExp<B> {
+    let reach = count.unsigned_abs();
+    let (killed, direction) = ctx.with_current_buffer_mut(|buf| {
+        let point = buf.text.cursor_pos_1d();
+        if count < 0 {
+            let from = word_backward(&buf.text, point, reach);
+            (cut_out(buf, from, point), Direction::Backward)
+        } else {
+            let to = word_forward(&buf.text, point, reach);
+            (cut_out(buf, point, to), Direction::Forward)
+        }
+    });
+    ctx.kill(killed, direction, env);
+    ELispExp::nil()
+}
 
 primitive!(kill_word, args, env, ctx, {
     // Read before the buffer is locked. It can fail, and a `?` inside the
     // closure would return from the closure rather than from the primitive.
-    let count = repeat_count(args)?;
-    let killed = ctx.with_current_buffer_mut(|buf| {
-        let from = buf.text.cursor_pos_1d();
-        let to = word_forward(&buf.text, from, count);
-        cut_out(buf, from, to)
-    });
-    ctx.kill(killed, Direction::Forward, &env);
-    Ok(ELispExp::nil())
+    let count = movement_count(args)?;
+    Ok(kill_words(ctx, &env, count))
 });
 
 pub const BACKWARD_KILL_WORD_DOC: &str = "(backward-kill-word &optional N): Kill back to the \
          start of the Nth word before point, 1 by default: the text `backward-word' would move \
-         over. It goes on the kill ring.";
+         over. With N negative, kill forward, as `kill-word' does. It goes on the kill ring.";
 
 primitive!(backward_kill_word, args, env, ctx, {
-    let count = repeat_count(args)?;
-    let killed = ctx.with_current_buffer_mut(|buf| {
-        let to = buf.text.cursor_pos_1d();
-        let from = word_backward(&buf.text, to, count);
-        cut_out(buf, from, to)
-    });
-    ctx.kill(killed, Direction::Backward, &env);
-    Ok(ELispExp::nil())
+    let count = movement_count(args)?;
+    Ok(kill_words(ctx, &env, count.saturating_neg()))
 });
 
 pub const KILL_PARAGRAPH_DOC: &str = "(kill-paragraph): Kill forward to the end of the paragraph: \

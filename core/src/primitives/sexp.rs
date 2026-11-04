@@ -5,7 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <espressioni-indentazione>`.
 use super::*;
 use crate::modes::sexp;
-use crate::primitives::args::{movement_count, repeat_count};
+use crate::primitives::args::movement_count;
 use crate::primitives::killing::cut_out;
 use crate::primitives::movement::goto_offset;
 use crate::text::kill_ring::Direction;
@@ -66,40 +66,50 @@ primitive!(backward_sexp, args, _env, ctx, {
 
 pub const KILL_SEXP_DOC: &str = "(kill-sexp &optional N): Kill forward over N balanced \
          expressions, 1 by default: the text `forward-sexp' would move over, nothing at the end \
-         of a list. It goes on the kill ring.";
+         of a list. With N negative, kill backward, as `backward-kill-sexp' does. It goes on the \
+         kill ring.";
+
+/// Kills COUNT expressions from point: forward when COUNT is positive, back
+/// when it is negative, over what `forward-sexp` or `backward-sexp` would.
+fn kill_sexps<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: &std::sync::Arc<Env<EditorState<B>>>,
+    count: isize,
+) -> ELispExp<B> {
+    let table = ctx.current_syntax_table();
+    let reach = count.unsigned_abs();
+    let (killed, direction) = ctx.with_current_buffer_mut(|buf| {
+        let point = buf.text.cursor_pos_1d();
+        if count < 0 {
+            let from = sexp::backward(&buf.text, &table, point, reach);
+            (cut_out(buf, from, point), Direction::Backward)
+        } else {
+            let to = sexp::forward(
+                &buf.text,
+                &table,
+                buf.scan_resume(point, &table),
+                point,
+                reach,
+            );
+            (cut_out(buf, point, to), Direction::Forward)
+        }
+    });
+    ctx.kill(killed, direction, env);
+    ELispExp::nil()
+}
 
 primitive!(kill_sexp, args, env, ctx, {
-    let table = ctx.current_syntax_table();
-    let count = repeat_count(args)?;
-    let killed = ctx.with_current_buffer_mut(|buf| {
-        let from = buf.text.cursor_pos_1d();
-        let to = sexp::forward(
-            &buf.text,
-            &table,
-            buf.scan_resume(from, &table),
-            from,
-            count,
-        );
-        cut_out(buf, from, to)
-    });
-    ctx.kill(killed, Direction::Forward, &env);
-    Ok(ELispExp::nil())
+    let count = movement_count(args)?;
+    Ok(kill_sexps(ctx, &env, count))
 });
 
 pub const BACKWARD_KILL_SEXP_DOC: &str = "(backward-kill-sexp &optional N): Kill back over N \
-         balanced expressions, 1 by default: the text `backward-sexp' would move over. It goes on \
-         the kill ring.";
+         balanced expressions, 1 by default: the text `backward-sexp' would move over. With N \
+         negative, kill forward, as `kill-sexp' does. It goes on the kill ring.";
 
 primitive!(backward_kill_sexp, args, env, ctx, {
-    let table = ctx.current_syntax_table();
-    let count = repeat_count(args)?;
-    let killed = ctx.with_current_buffer_mut(|buf| {
-        let to = buf.text.cursor_pos_1d();
-        let from = sexp::backward(&buf.text, &table, to, count);
-        cut_out(buf, from, to)
-    });
-    ctx.kill(killed, Direction::Backward, &env);
-    Ok(ELispExp::nil())
+    let count = movement_count(args)?;
+    Ok(kill_sexps(ctx, &env, count.saturating_neg()))
 });
 
 pub const UP_LIST_DOC: &str = "(up-list): Move point out of the list it is in, past its closing \

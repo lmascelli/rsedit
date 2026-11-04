@@ -22,8 +22,6 @@ impl<B: BufferTrait> EditorState<B> {
         // names a command that may declare some, and goes through
         // `call-interactively`, which collects them. One that supplies its own,
         // `(self-insert "a")` as every ordinary key does, runs as it is.
-        // TODO(CMD-5): so it never sees the prefix argument: `C-u 3 x` inserts
-        // one x.
         let bound_command = match &ast {
             ELispExp::Symbol(name) => Some(name.to_string()),
             ELispExp::Form(items) if items.len() == 1 => match &items[0] {
@@ -52,6 +50,19 @@ impl<B: BufferTrait> EditorState<B> {
         // Before the command, which asks these about its predecessor; and so a
         // command that fails cannot leave its flag up for the next one.
         self.roll_over_command_flags();
+        // A typed character runs as it is, so the prefix argument is handed to
+        // it here: `C-u 3 x` inserts three, as in Emacs. Only to the form a key
+        // runs, never to a `self-insert` some other command calls, which a
+        // count meant for that command must not multiply.
+        if this_command.as_deref().map(String::as_str) == Some("self-insert")
+            && let ELispExp::Form(items) = &ast
+            && items.len() == 2
+            && let Some(arg) = self.prefix_argument()
+        {
+            let mut items = items.to_vec();
+            items.push(ELispExp::number(arg.count() as f64));
+            ast = ELispExp::form(items);
+        }
         if let Some(name) = bound_command {
             // The name as a string, which evaluates to itself: no `quote`, and
             // no chance of its being read as a variable.

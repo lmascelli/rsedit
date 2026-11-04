@@ -23,13 +23,30 @@ fn command_ast<B: BufferTrait>(
     }
 }
 
+/// Returns t when the binding was made in the keymap of MODE, or the global
+/// one; otherwise the error that MODE does not exist, which a binding nobody
+/// sees take would otherwise be.
+fn bound_or_no_mode<B: BufferTrait>(
+    bound: bool,
+    mode: Option<&str>,
+) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
+    if bound {
+        return Ok(ELispExp::t());
+    }
+    Err(EvalError::RuntimeMessage(format!(
+        "define-key: no mode named {}",
+        mode.unwrap_or_default()
+    )))
+}
+
 pub const DEFINE_KEY_DOC: &str = "(define-key MODE KEY COMMAND): Bind KEY, a key sequence such as \
          \"C-x C-f\" or \"<ret>\", to COMMAND in the global keymap when MODE is nil, or in the \
          keymap of the mode MODE. COMMAND is the name of a function, run with no arguments, an \
-         expression, evaluated as written, or nil, which takes KEY's binding away. Return t, or \
-         nil when KEY or MODE is unknown. The KEY \"<char>\" binds the characters the keymap does \
-         not: COMMAND is then a function, given the character as a string, or nil to take it \
-         away.\n\n\
+         expression, evaluated as written, or nil, which takes KEY's binding away. Return t; a KEY \
+         that is no key, or a MODE that does not exist, is an error. Modifiers come in any order, \
+         each once: \"M-C-x\" is \"C-M-x\", and \"C-S-a\" is \"C-A\". The KEY \"<char>\" binds the \
+         characters the keymap does not: COMMAND is then a function, given the character as a \
+         string, or nil to take it away.\n\n\
          Example:\n\
          (define-key nil \"C-c l\" 'goto-line)\n\
          (define-key 'rust-mode \"C-c d\" '(insert \"dbg!()\"))";
@@ -77,7 +94,7 @@ primitive!(define_key, args, env, ctx, {
                         true
                     }
                 });
-                return Ok(ELispExp::boolean(bound));
+                return bound_or_no_mode(bound, mode_name.as_deref());
             }
 
             let actual_ast = command_ast(ast, &env);
@@ -94,37 +111,22 @@ primitive!(define_key, args, env, ctx, {
                             true
                         }
                     });
-                    if !found {
-                        ctx.log_diagnostic(&format!(
-                            "[ERROR]: define-key no mode named {}",
-                            mode_name.unwrap_or_default()
-                        ));
-                    }
-                    return Ok(ELispExp::boolean(found));
+                    return bound_or_no_mode(found, mode_name.as_deref());
                 }
-                if let Some(mode_name) = mode_name {
-                    // Reported outside the closure: the diagnostic writes the
-                    // echo area, which is a compartment of its own.
-                    let bound = ctx.modes_mut(|modes| {
-                        modes.edit(&mode_name, |mode| mode.keymaps.insert(keys, actual_ast))
-                    });
-                    if bound {
-                        Ok(ELispExp::t())
-                    } else {
-                        ctx.log_diagnostic(&format!(
-                            "[ERROR]: define-key no mode named {mode_name}"
-                        ));
-                        Ok(ELispExp::nil())
+                let bound = ctx.modes_mut(|modes| match &mode_name {
+                    Some(name) => modes.edit(name, |mode| mode.keymaps.insert(keys, actual_ast)),
+                    None => {
+                        modes.global_keymap_mut().insert(keys, actual_ast);
+                        true
                     }
-                } else {
-                    ctx.modes_mut(|modes| modes.global_keymap_mut().insert(keys, actual_ast));
-                    Ok(ELispExp::t())
-                }
+                });
+                bound_or_no_mode(bound, mode_name.as_deref())
             } else {
-                // TODO(CMD-4): a key that does not parse, like a mode that
-                // does not exist, is told to the log only.
-                ctx.log_diagnostic(&format!("Invalid key sequence: {}", key_str));
-                Ok(ELispExp::nil())
+                // An error, not a line in the log: a binding that does not
+                // take is one the user is waiting to see work.
+                Err(EvalError::RuntimeMessage(format!(
+                    "Invalid key sequence: {key_str}"
+                )))
             }
         } else {
             Err(EvalError::WrongArgumentType {

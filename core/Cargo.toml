@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-risp = {  git = "https://github.com/lmascelli/risp.git", branch = "main" }
+risp = { git = "https://github.com/lmascelli/risp.git", branch = "main" }
 regex = "*"
 unicode-width = "0.2"
+
+[build-dependencies]
+risp = { git = "https://github.com/lmascelli/risp.git", branch = "main" }

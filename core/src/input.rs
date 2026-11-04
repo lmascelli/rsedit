@@ -182,32 +182,33 @@ pub(crate) fn parse_key_sequence(seq: &str) -> Option<Vec<KeyEvent>> {
     Some(keys)
 }
 
-/// Returns the key written as SEQ: optional `C-`, `M-`, `C-M-` or `S-`
-/// modifiers, then a key name.
+/// Returns the key written as SEQ: any of the modifiers `C-`, `M-` and `S-`,
+/// in any order, each once, then a key name.
+///
+/// `M-C-x` is `C-M-x`, as in Emacs. With a character, `S-` is its capital,
+/// since that is how a shifted character arrives -- `C-S-a` is `C-A` -- and
+/// with a character that has none it is no key; with a named key, `S-<tab>`,
+/// it is Shift held.
 pub(crate) fn parse_key(seq: &str) -> Option<KeyEvent> {
     let mut modifiers = KeyModifiers::default();
-    let mut chars = seq.chars().peekable();
-
-    // TODO(CMD-4): one prefix only, so `M-C-x` and `C-S-a` cannot be written.
-    // Longest prefix first: every `C-M-x` also starts with `C-`.
-    if let Some(rest) = seq.strip_prefix("C-M-") {
-        modifiers.ctrl = true;
-        modifiers.alt = true;
-        chars = rest.chars().peekable();
-    } else if let Some(rest) = seq.strip_prefix("C-") {
-        modifiers.ctrl = true;
-        chars = rest.chars().peekable();
-    } else if let Some(rest) = seq.strip_prefix("M-") {
-        modifiers.alt = true;
-        chars = rest.chars().peekable();
-    } else if let Some(rest) = seq.strip_prefix("S-") {
-        // For keys that are not characters -- `S-<tab>`. A shifted character
-        // arrives as its own character, so `S-a` parses but never fires.
-        modifiers.shift = true;
-        chars = rest.chars().peekable();
+    let mut rest = seq;
+    // A prefix only where something follows it: `C--` is Control and `-`.
+    while rest.len() > 2 {
+        let held = match &rest[..2] {
+            "C-" => &mut modifiers.ctrl,
+            "M-" => &mut modifiers.alt,
+            "S-" => &mut modifiers.shift,
+            _ => break,
+        };
+        if *held {
+            // `C-C-x` says Control twice, which is a mistake, not a key.
+            return None;
+        }
+        *held = true;
+        rest = &rest[2..];
     }
 
-    let key_code = match chars.collect::<String>().as_str() {
+    let key_code = match rest {
         "<ret>" | "<Return>" => KeyCode::Enter,
         "<esc>" | "<Escape>" => KeyCode::Esc,
         "tab" | "<tab>" | "<Tab>" => KeyCode::Tab,
@@ -232,11 +233,18 @@ pub(crate) fn parse_key(seq: &str) -> Option<KeyEvent> {
         "<prior>" | "<pageup>" => KeyCode::PageUp,
         "<next>" | "<pagedown>" => KeyCode::PageDown,
         s if function_key(s).is_some() => KeyCode::F(function_key(s)?),
-        s if s.chars().count() == 1 => KeyCode::Char(
-            s.chars()
-                .next()
-                .expect(&format!("Failed to interpret the sequence {seq}")),
-        ),
+        s if s.chars().count() == 1 => {
+            let c = s.chars().next()?;
+            if modifiers.shift {
+                // The capital, which is what arrives: no Shift left over.
+                let mut upper = c.to_uppercase();
+                let capital = upper.next().filter(|u| *u != c && upper.next().is_none())?;
+                modifiers.shift = false;
+                KeyCode::Char(capital)
+            } else {
+                KeyCode::Char(c)
+            }
+        }
         _ => return None,
     };
 
@@ -446,8 +454,8 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
     // character handler, as `(define-key nil "<char>" 'self-insert)` would
     // set it, and not a binding for each, since there are too many to bind
     // one by one. A binding of one of them, here or in a mode, still wins.
-    // TODO(CMD-5): the call made, `(self-insert "x")`, carries its own
-    // argument, so the prefix argument never reaches it.
+    // The call made, `(self-insert "x")`, carries its own argument; the
+    // prefix argument is added to it when the command runs.
     keymaps.set_character_handler(ELispExp::symbol("self-insert".into()));
 }
 

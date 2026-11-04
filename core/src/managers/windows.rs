@@ -173,9 +173,24 @@ impl Windows {
         self.focused
     }
 
-    /// Gives window ID focus.
-    pub fn set_focused(&mut self, id: WindowId) {
-        self.focused = id;
+    /// Gives window ID focus, and returns whether there is such a window.
+    ///
+    /// One that is not there is refused, and focus goes instead to the first
+    /// tiled window when the one that had it is gone too: a window remembered
+    /// earlier -- the one a float was opened from -- may have been closed
+    /// since, and focus on a window that is not there could neither be split
+    /// nor left with `other-window`.
+    pub fn set_focused(&mut self, id: WindowId) -> bool {
+        if self.buffer_of(id).is_some() {
+            self.focused = id;
+            return true;
+        }
+        if self.buffer_of(self.focused).is_none()
+            && let Some(first) = self.root.window_ids().first()
+        {
+            self.focused = *first;
+        }
+        false
     }
 
     /// Takes the id the next window gets.

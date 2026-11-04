@@ -241,13 +241,17 @@ mod tests {
     fn a_sequence_that_does_not_wholly_parse_binds_nothing() {
         let (ctx, env) = editor_with("");
         // `C-` is not a key. Binding `C-x` from this would define a prefix
-        // that swallows every sequence starting with it.
-        eval_str(
+        // that swallows every sequence starting with it. It is said, as an
+        // error, and nothing is bound.
+        let refused = eval_str(
             "(define-key nil \"C-x C-\" 'beginning-of-buffer)",
             &env,
             &ctx,
-        )
-        .expect("no panic");
+        );
+        assert!(
+            matches!(&refused, Err(EvalError::RuntimeMessage(why)) if why.contains("C-x C-")),
+            "{refused:?}"
+        );
 
         press(&ctx, &env, KeyCode::Char('x'), ctrl());
         assert!(
@@ -344,10 +348,8 @@ mod tests {
         eval_str(r#"(define-key 'probe-mode "<down>" nil)"#, &env, &ctx).expect("unbinding");
         assert_eq!(source(), LispExp::string("global".into()));
         assert!(
-            eval_str(r#"(define-key 'no-such-mode "<down>" nil)"#, &env, &ctx)
-                .expect("asking")
-                .is_nil(),
-            "a mode that does not exist is refused"
+            eval_str(r#"(define-key 'no-such-mode "<down>" nil)"#, &env, &ctx).is_err(),
+            "a mode that does not exist is refused, as an error"
         );
     }
 
@@ -465,6 +467,69 @@ mod tests {
                 LispExp::symbol(command.into()),
                 "{key} scrolls as C-v and M-v do"
             );
+        }
+    }
+
+    // ---------------- modifiers in any order ----------------
+
+    /// One prefix only was read: `M-C-x` and `C-S-a` were not keys, and
+    /// `define-key` said so to the log alone.
+    #[test]
+    fn modifiers_are_read_in_any_order_each_once() {
+        use crate::input::parse_key;
+        let key = |code, ctrl, alt| KeyEvent {
+            code,
+            modifiers: KeyModifiers {
+                ctrl,
+                alt,
+                shift: false,
+            },
+        };
+        assert_eq!(parse_key("M-C-x"), parse_key("C-M-x"));
+        assert_eq!(
+            parse_key("M-C-x"),
+            Some(key(KeyCode::Char('x'), true, true))
+        );
+        assert_eq!(
+            parse_key("C-S-a"),
+            Some(key(KeyCode::Char('A'), true, false))
+        );
+        assert_eq!(
+            parse_key("S-a"),
+            Some(key(KeyCode::Char('A'), false, false))
+        );
+        assert_eq!(parse_key("C--"), Some(key(KeyCode::Char('-'), true, false)));
+        let shift_tab = parse_key("S-<tab>").expect("a key");
+        assert!(shift_tab.modifiers.shift && shift_tab.code == KeyCode::Tab);
+        assert_eq!(parse_key("C-C-x"), None, "Control twice");
+        assert_eq!(parse_key("S-1"), None, "1 has no capital");
+    }
+
+    #[test]
+    fn a_binding_written_m_c_runs_on_control_meta() {
+        let (ctx, env) = editor_with("");
+        eval_str("(define-key nil \"M-C-y\" '(insert \"done\"))", &env, &ctx).expect("binding");
+        press(
+            &ctx,
+            &env,
+            KeyCode::Char('y'),
+            KeyModifiers {
+                ctrl: true,
+                alt: true,
+                shift: false,
+            },
+        );
+        assert_eq!(text_of(&ctx), "done");
+    }
+
+    #[test]
+    fn a_binding_in_a_mode_that_does_not_exist_is_an_error() {
+        let (ctx, env) = editor_with("");
+        for call in [
+            "(define-key 'no-such-mode \"C-c a\" 'forward-char)",
+            "(define-key 'no-such-mode \"<char>\" 'self-insert)",
+        ] {
+            assert!(eval_str(call, &env, &ctx).is_err(), "{call}");
         }
     }
 }

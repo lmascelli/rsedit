@@ -47,9 +47,9 @@ WRITING A KEY
     <insert>, <home>, <end>, <prior> and <next> for Page Up and Page Down,
     and <f1> to <f35>. <backtab> is another name for S-<tab>, and
     <pageup>, <pagedown> and <deletechar> are accepted for <prior>, <next>
-    and <delete>. A shifted letter is just the capital, A. The modifiers
-    combine only as written here: C-S-a and M-C-a are not keys. No function
-    key is bound to anything: they are yours.
+    and <delete>. A shifted letter is just the capital, A, and S-a says the
+    same; C-S-a is C-A. The modifiers come in any order, each once: M-C-a
+    is C-M-a. No function key is bound to anything: they are yours.
 
     The editor writes keys back the same way, so what C-h k shows you is
     what you can bind.
@@ -67,7 +67,7 @@ BINDING ONE
     nil in place of the command takes the binding away: the key reaches the
     keymaps below again, and a prefix left with nothing under it no longer
     waits for another key. A key that names no key, or a mode that does not
-    exist, is refused, with a line in the log. The key "<char>" binds every
+    exist, is an error, which says which. The key "<char>" binds every
     character the keymap does not bind itself, to a function given the
     character as a string; vim's states use it.
 

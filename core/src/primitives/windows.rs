@@ -309,9 +309,10 @@ primitive!(close_floating_window, _args, _env, ctx, {
             .pop()
             .map(|f| f.previous_focused_window_id)
     });
-    // TODO(CMD-8): with no floating window open, the focus goes to window 0,
-    // which may be gone.
-    ctx.set_focused_window_id(restore_id.unwrap_or(0.into()));
+    // With none open, nothing happens: there is no focus to give back.
+    if let Some(restore_id) = restore_id {
+        ctx.set_focused_window_id(restore_id);
+    }
     Ok(ELispExp::nil())
 });
 

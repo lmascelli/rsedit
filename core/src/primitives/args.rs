@@ -100,7 +100,11 @@ pub(crate) fn list<B: BufferTrait>(exp: &ELispExp<B>) -> Vec<ELispExp<B>> {
 
 /// Returns the first of ARGS as a signed count of steps: 1 when it is absent,
 /// rounded down, and an error when it is not a finite number. A negative
-/// count is the same move the other way.
+/// count is the same move, or the same deletion, the other way.
+///
+/// Not bounded: a count is a number of steps, and every step stops at the
+/// edge of the buffer, so a huge one means "as far as it goes". A caller that
+/// adds it to a position does so saturating.
 pub(crate) fn movement_count<B: BufferTrait>(
     args: &[ELispExp<B>],
 ) -> Result<isize, EvalError<EditorState<B>>> {
@@ -109,27 +113,6 @@ pub(crate) fn movement_count<B: BufferTrait>(
         Some(ELispExp::Number(n)) if n.is_finite() => Ok(n.floor() as isize),
         Some(other) => Err(EvalError::WrongArgumentType {
             expected: "finite Number".into(),
-            got: other.clone(),
-        }),
-    }
-}
-
-// TODO(CMD-6): a negative count becomes 0, so the deletions that read it do
-// nothing where Emacs deletes backwards.
-/// Returns the first of ARGS as a number of repetitions: 1 when it is absent,
-/// rounded down and at least 0, and an error when it is not a number.
-///
-/// Not bounded: a count is a number of steps, and every step stops at the
-/// edge of the buffer, so a huge one means "as far as it goes". A caller that
-/// adds it to a position does so with `saturating_add`.
-pub(crate) fn repeat_count<B: BufferTrait>(
-    args: &[ELispExp<B>],
-) -> Result<usize, EvalError<EditorState<B>>> {
-    match args.first() {
-        None => Ok(1),
-        Some(ELispExp::Number(n)) => Ok(n.floor().max(0.0) as usize),
-        Some(other) => Err(EvalError::WrongArgumentType {
-            expected: "Number".into(),
             got: other.clone(),
         }),
     }

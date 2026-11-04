@@ -1112,9 +1112,14 @@ Nelle associazioni i tasti si scrivono come in Emacs: `C-x`, `M-x`, `C-M-f`,
 altri: `<delete>`, `<insert>`, `<home>`, `<end>`, `<prior>` e `<next>` per le
 pagine (accettati anche `<pageup>`, `<pagedown>` e `<deletechar>`), da `<f1>` a
 `<f35>`. I legami di base li legano come i tasti di Emacs che fanno lo stesso
-(`common-keymaps.lisp`), e vim, nello stato normale, come i suoi. Un tasto ha al più un
-prefisso di modificatori, quindi `M-C-x` e `C-S-a` non si possono scrivere
-#rapporto("CMD-4"). Una sequenza è una stringa di tasti separati da spazi:
+(`common-keymaps.lisp`), e vim, nello stato normale, come i suoi. I
+modificatori `C-`, `M-` e `S-` si leggono in un ciclo, in qualunque ordine e
+ognuno una volta: `M-C-x` è `C-M-x`, e `C-C-x` non è un tasto. Con un
+carattere `S-` è la sua maiuscola, perché così arriva un carattere con Shift
+(`C-S-a` è `C-A`), e con un carattere che non ne ha non è un tasto; con un
+tasto con nome, `S-<tab>`, è Shift premuto. `define-key` dà un errore Lisp per
+un tasto che non si legge e per un modo che non c'è, invece di rispondere nil
+con una riga nel log. Una sequenza è una stringa di tasti separati da spazi:
 `"C-x C-f"`. `parse_key_sequence` legge queste stringhe e `describe_keys` le
 riscrive nello stesso modo; stanno in `input.rs`, con i tipi.
 
@@ -1294,9 +1299,12 @@ sono a metà, `pending_input()` li descrive (`C-u 4 C-x-`) e la TUI li mostra a
 destra nella riga dei messaggi.
 
 I caratteri sono legati a forme che portano già il loro argomento,
-`(self-insert "x")`; una forma così non passa da `call-interactively`, e quindi
-non riceve l'argomento prefisso: `C-u 3 x` inserisce una sola «x»
-#rapporto("CMD-5").
+`(self-insert "x")`; una forma così non passa da `call-interactively`, e
+`run_command_form` le aggiunge l'argomento prefisso come conteggio:
+`(self-insert "x" 3)`, e `C-u 3 x` inserisce tre «x», in una sola modifica. Solo
+alla forma che un tasto esegue: un `self-insert` chiamato da un altro comando
+non è moltiplicato da un conteggio dato a quel comando. Un conteggio negativo
+è un errore, come in Emacs.
 
 == La risoluzione: `resolve_key_sequence`
 
@@ -1538,7 +1546,7 @@ e `M-x` sono in `primitives/commands.rs`.
   columns: (1.6cm, 2.6cm, 1fr),
   header: ([Codice], [`ArgSpec`], [Valore passato al comando]),
   [`s`], [`String`], [Il testo digitato nel prompt.],
-  [`n`], [`Number`], [Il testo convertito in numero; un testo non numerico diventa 0 #rapporto("CMD-6").],
+  [`n`], [`Number`], [Il testo convertito in numero; un testo non numerico viene chiesto di nuovo.],
   [`b`], [`Buffer`], [Un nome di buffer, con completamento sui buffer vivi (escluso `*Minibuffer*`).],
   [`f`], [`File`], [Un percorso, completato un componente alla volta.],
   [`p`], [`Count`], [L'argomento prefisso come numero, 1 se assente. Non chiede nulla.],
@@ -4947,13 +4955,13 @@ riferisce dopo (@ordine-lock).
   [`scan.rs`], [`scan-buffer`.],
 )
 
-I conteggi si leggono con i lettori di `args.rs`: `movement_count`, con un
-segno, per i movimenti, dove un conteggio negativo va all'indietro;
-`repeat_count` per le cancellazioni, dove un conteggio negativo diventa 0
-#rapporto("CMD-6"). Nessuno dei due ha un limite, perché non serve: ogni passo
-si ferma al bordo del buffer, e un conteggio enorme vuol dire «fin dove si
-può». Chi lo somma a una posizione lo fa con `saturating_add`, come
-`delete-char`.
+I conteggi si leggono con `movement_count`, in `args.rs`: un numero con il
+segno, per i movimenti e per le cancellazioni, dove un conteggio negativo fa
+la stessa cosa nell'altra direzione, come in Emacs: `(kill-word -1)` è
+`backward-kill-word`, `(delete-char -1)` cancella il carattere prima del
+punto. Non ha un limite, perché non serve: ogni passo si ferma al bordo del
+buffer, e un conteggio enorme vuol dire «fin dove si può». Chi lo somma a una
+posizione lo fa saturando, come `delete-char`.
 
 Le due porte restituiscono `false` in un buffer in sola lettura, e chi le
 chiama lo deve dire: `edited(ctx, happened)` scrive «Buffer is read-only»
@@ -5300,8 +5308,10 @@ focus (`other-window`, `select-window`), scorre la vista (`scroll-up-command`,
 (`make-floating-window`, `close-floating-window`). Con una misura, una
 divisione fissa le righe o le colonne della finestra divisa (`FirstFixed`), e
 la nuova prende il resto. `close-floating-window` chiude sempre la flottante
-più recente; senza flottanti mette il focus sulla finestra 0
-#rapporto("CMD-8").
+più recente, e senza flottanti non fa nulla. `Windows::set_focused` rifiuta
+una finestra che non c'è, che può essere quella da cui una flottante è stata
+aperta e che è stata chiusa nel frattempo; se non c'è più nemmeno quella che
+aveva il focus, il focus va alla prima finestra affiancata.
 
 === Gli argomenti <lettori-argomenti>
 

@@ -1093,4 +1093,38 @@ mod tests {
         assert_eq!(views.len(), 2);
         assert!(views[1].rect.width >= 1, "the new window must be drawable");
     }
+
+    /// With no floating window open, focus went to window 0, which may be
+    /// gone: it could then neither be split nor left with `other-window`.
+    #[test]
+    fn closing_a_float_when_there_is_none_leaves_the_focus_alone() {
+        let (ctx, env) = editor();
+        eval_str("(split-window-right) (delete-window)", &env, &ctx).expect("one window left");
+        let before = eval_str("(selected-window)", &env, &ctx).expect("asking");
+        eval_str("(close-floating-window)", &env, &ctx).expect("closing nothing");
+        assert_eq!(
+            eval_str("(selected-window)", &env, &ctx).expect("asking"),
+            before
+        );
+        assert!(
+            eval_str("(window-buffer)", &env, &ctx)
+                .expect("asking")
+                .is_truthy(),
+            "the focused window is there"
+        );
+        assert!(
+            eval_str("(split-window-below)", &env, &ctx)
+                .expect("splitting")
+                .is_truthy(),
+            "and can be split"
+        );
+    }
+
+    #[test]
+    fn focus_is_never_given_to_a_window_that_is_not_there() {
+        let (ctx, _env) = editor();
+        let here = ctx.get_focused_window_id();
+        ctx.set_focused_window_id(crate::ui::WindowId(999));
+        assert_eq!(ctx.get_focused_window_id(), here);
+    }
 }

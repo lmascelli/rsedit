@@ -43,6 +43,19 @@ fn main() {
             copy_files(&source, &data_dir.join(kind), extension);
         }
     }
+
+    let man_dir = data_dir.join("man");
+
+    fs::create_dir_all(&man_dir).unwrap_or_else(|err| {
+        panic!("cannot crate {}: {err}", man_dir.display());
+    });
+
+    let manual_path = man_dir.join("risp-base-index.txt");
+
+    fs::write(&manual_path, risp::BASE_FUNCTION_INDEX)
+        .unwrap_or_else(|err| {
+            panic!("cannot write {}: {err}", manual_path.display())
+        });
 }
 
 /// Copies the files of SOURCE named `*.EXTENSION` into DESTINATION, creating

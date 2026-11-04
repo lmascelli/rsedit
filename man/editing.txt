@@ -127,11 +127,13 @@ COUNTS
     goes forward twenty characters, and C-u 3 M-d kills three words. C-u
     on its own means four, and C-u C-u sixteen. A count reaches the
     commands that take one: the motions by character, word, line,
-    paragraph and expression, the kills by word and by expression, C-o,
-    and C-x e. The others, and a character you type, happen once.
+    paragraph and expression, the kills by word and by expression, C-d,
+    C-o, C-x e, and a character you type: C-u 3 x types xxx. The others
+    happen once.
 
-    For the motions a negative count goes the other way: C-u - 2 C-n goes
-    up two lines, as (next-line -2) does. Zero goes nowhere.
+    For the motions and the deletions a negative count goes the other way:
+    C-u - 2 C-n goes up two lines, as (next-line -2) does, and C-u - M-d
+    kills the word before point. Zero goes nowhere.
 
 TYPING
     A character you type inserts itself. A run of typing undoes a word or

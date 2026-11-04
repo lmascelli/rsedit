@@ -224,8 +224,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// Gives window ID focus, makes what it shows the current buffer, and
     /// puts point back where that window left it.
     pub(crate) fn set_focused_window_id(&self, id: WindowId) {
-        self.windows_mut(|windows| windows.set_focused(id));
-        self.follow_focus(id);
+        // The window that has focus now, which is ID unless ID is gone.
+        let focused = self.windows_mut(|windows| {
+            windows.set_focused(id);
+            windows.focused()
+        });
+        self.follow_focus(focused);
     }
 
     /// The buffer's half of a move of focus: makes what window ID shows the

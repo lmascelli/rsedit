@@ -396,4 +396,72 @@ mod tests {
             LispExp::nil()
         );
     }
+
+    // ---------------- a typed character, and the deletions ----------------
+
+    /// The binding of a character carries its own argument, so the count
+    /// never reached it: `C-u 3 x` inserted one x.
+    #[test]
+    fn a_count_repeats_a_typed_character_in_one_undo_step() {
+        let (ctx, env) = editor_with("");
+        keys(&ctx, &env, "^u3x");
+        assert_eq!(text_of(&ctx), "xxx");
+        eval_str("(undo)", &env, &ctx).expect("undo");
+        assert_eq!(text_of(&ctx), "", "the three in one step");
+        keys(&ctx, &env, "^u x");
+        assert_eq!(text_of(&ctx), "xxxx", "C-u alone is four");
+    }
+
+    /// Only the character a key types: a command that inserts with
+    /// `self-insert` is not multiplied by a count meant for it.
+    #[test]
+    fn a_count_does_not_reach_a_self_insert_another_command_makes() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            "(define-key nil \"C-t\" '(progn (self-insert \"a\") (self-insert \"b\")))",
+            &env,
+            &ctx,
+        )
+        .expect("bind");
+        keys(&ctx, &env, "^u3^t");
+        assert_eq!(text_of(&ctx), "ab");
+    }
+
+    #[test]
+    fn a_negative_count_to_a_typed_character_inserts_nothing() {
+        let (ctx, env) = editor_with("");
+        keys(&ctx, &env, "^u-x");
+        assert_eq!(text_of(&ctx), "");
+        assert!(eval_str("(self-insert \"x\" -1)", &env, &ctx).is_err());
+    }
+
+    /// A negative count became 0, so the deletions did nothing where Emacs
+    /// deletes the other way.
+    #[test]
+    fn a_negative_count_deletes_the_other_way() {
+        let run = |text: &str, at: usize, form: &str| {
+            let (ctx, env) = editor_with(text);
+            ctx.with_buffer_mut("*scratch*", |b| {
+                let (line, column) = b.text.cursor_1d_to_2d(at);
+                b.text.cursor_move(line, column);
+            });
+            eval_str(form, &env, &ctx).unwrap_or_else(|why| panic!("{form}: {why:?}"));
+            let kill = eval_str("(current-kill 0)", &env, &ctx).ok();
+            (text_of(&ctx), kill)
+        };
+        assert_eq!(run("foo bar", 7, "(kill-word -1)").0, "foo ");
+        assert_eq!(
+            run("foo bar", 7, "(kill-word -1)").1,
+            Some(LispExp::string("bar".to_string()))
+        );
+        assert_eq!(run("foo bar", 0, "(backward-kill-word -1)").0, " bar");
+        assert_eq!(run("foo bar", 4, "(delete-char -1)").0, "foobar");
+        assert_eq!(
+            run("foo bar", 4, "(delete-char -100)").0,
+            "bar",
+            "to the start"
+        );
+        assert_eq!(run("(a) (b)", 7, "(kill-sexp -1)").0, "(a) ");
+        assert_eq!(run("(a) (b)", 0, "(backward-kill-sexp -1)").0, " (b)");
+    }
 }
