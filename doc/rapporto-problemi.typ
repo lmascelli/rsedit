@@ -570,7 +570,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-RIC-5-7-8",
+    commit: "01f27b2",
     titolo: [I risultati di occur, grep e compile puntano a righe che si spostano],
   ),
   (
@@ -585,7 +585,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-RIC-5-7-8",
+    commit: "01f27b2",
     titolo: [Una lista di `M-s o` e una di `M-s g` aprono due strisce, una sopra l'altra],
   ),
   (
@@ -593,7 +593,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-RIC-5-7-8",
+    commit: "01f27b2",
     titolo: [Un `query-replace` lasciato con un altro tasto resta aperto, con la corrispondenza evidenziata],
   ),
   (
