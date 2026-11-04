@@ -81,10 +81,12 @@ RETURN
     M-x newline-and-indent still indents.
 
 HOW WIDE A TAB IS
-    `tab-width' is the width of one Tab everywhere, 4 unless it is set. A
-    mode can have its own: (put 'MODE 'tab-width N). risp-mode, toml-mode
-    and cmake-mode use 2; python-mode, bash-mode, c-mode and cpp-mode use
-    4.
+    `tab-width' is the width of one Tab everywhere, 4 unless it is set: how
+    far Tab indents, and how far a tab character in the text reaches on
+    the screen, to the next multiple of it. A mode can have its own:
+    (put 'MODE 'tab-width N). risp-mode, toml-mode and cmake-mode use 2;
+    python-mode, bash-mode, c-mode and cpp-mode use 4. Drawn, a tab is
+    between 1 and 64 columns wide.
     `indent-width' is the width in force in the current buffer.
 
 WRITING A RULE
@@ -172,8 +174,10 @@ LIMITS
     back one level.
 
     A tab character in the text counts as one column, wherever the editor
-    counts columns. The terminal draws it wider, so a line indented with
-    tabs is shown further right than the editor reckons it.
+    counts columns: in `current-column', in indentation, in rectangles. It
+    is drawn as wide as `tab-width' says, so a line indented with tabs is
+    shown further right than its columns, and the cursor where the text
+    is.
 
 EXAMPLES
     A Tab that only ever indents:

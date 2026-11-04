@@ -128,7 +128,7 @@ pub use crate::{
     },
     ui::{
         Color, Face, FrameSnapshot, GutterCell, Highlight, NAMED_COLORS, Rect,
-        RenderableWindowView, Separator, Style, Theme,
+        RenderableWindowView, Separator, Style, Theme, width,
     },
 };
 pub use risp::{Env, LispContext, Parser, eval};

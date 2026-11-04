@@ -444,6 +444,35 @@ fn a_highlight_is_drawn_in_reverse_video_over_exactly_its_own_columns() {
     );
 }
 
+/// A wide character is two cells: the row is padded by cells, or every line
+/// with an ideogram ran past the window by one cell for each.
+#[test]
+fn a_row_with_wide_characters_is_padded_to_the_window_by_cells() {
+    let rendered = frame_with(&["日本"], vec![]);
+    let at = rendered.find("日本").expect("the row is drawn") + "日本".len();
+    let spaces = rendered[at..].chars().take_while(|&c| c == ' ').count();
+    assert_eq!(spaces, COLS as usize - 4);
+}
+
+#[test]
+fn a_highlight_over_a_wide_character_redraws_that_character() {
+    let rendered = frame_with(
+        &["日本x"],
+        vec![Highlight {
+            row: 0,
+            start_col: 2,
+            end_col: 4,
+            face: Face::REGION,
+        }],
+    );
+    let run = reversed(&rendered);
+    assert!(run.contains('本'), "the cells of 本 are redrawn: {run:?}");
+    assert!(
+        !run.contains('日') && !run.contains('x'),
+        "and nothing else: {run:?}"
+    );
+}
+
 /// A selection running past the end of a short line still has to look
 /// selected out to where it ends, or a multi-line region appears to have
 /// ragged holes in it.
@@ -983,18 +1012,16 @@ fn control_characters_in_a_buffer_and_a_message_are_shown_not_obeyed() {
     }
 }
 
-/// Every control character but the Tab becomes something visible, and
-/// nothing else changes.
+/// Every control character becomes something visible, the Tab too, which
+/// the layout has drawn as spaces wherever it is the text's; and nothing else
+/// changes.
 #[test]
 fn printable_replaces_exactly_the_control_characters() {
     for code in (0..0x20).chain(0x7f..0xa0) {
         let c = char::from_u32(code).unwrap();
-        if c == '\t' {
-            assert_eq!(printable(c), '\t');
-        } else {
-            assert!(!printable(c).is_control(), "{c:?} must be replaced");
-        }
+        assert!(!printable(c).is_control(), "{c:?} must be replaced");
     }
+    assert_eq!(printable('\t'), '\u{2409}');
     assert_eq!(printable('\u{1b}'), '\u{241b}');
     assert_eq!(printable('\u{7f}'), '\u{2421}');
     for c in ['a', ' ', '\u{a0}', 'è', '─'] {

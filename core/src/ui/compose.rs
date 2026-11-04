@@ -7,7 +7,7 @@ use crate::managers::Buffers;
 use crate::text::rectangle::Rectangle;
 use crate::ui::Face;
 use crate::ui::gutter::{GutterCell, GutterSpec, gutter_cells, gutter_columns};
-use crate::ui::layout::{self, BufferHighlight, Layout};
+use crate::ui::layout::{self, BufferHighlight, Layout, TabWidths};
 use crate::ui::mode_line::expand_mode_line;
 use crate::ui::windows::{Focus, LayoutNode, Rect, Window, split_rects};
 
@@ -38,6 +38,8 @@ pub struct Separator {
 pub struct ComposeSettings<'a> {
     pub mode_line_format: &'a str,
     pub gutter: GutterSpec,
+    /// How far a Tab reaches, mode by mode.
+    pub tabs: &'a TabWidths,
 }
 
 /// One window, as it is drawn: owned data, which outlives the locks it was
@@ -155,7 +157,7 @@ impl LayoutNode {
                 // Composed before the scroll follows point, since what must be
                 // visible is the cursor's screen column, which the row knows;
                 // composed again if the scroll moves.
-                let mut layout = compose_layout(win, &rect, buffers);
+                let mut layout = compose_layout(win, &rect, buffers, settings.tabs);
                 if let Some((c_line, c_col, c_offset, _)) = point_and_size
                     && follows_points
                 {
@@ -175,19 +177,20 @@ impl LayoutNode {
 
                         // Other lines, so other rows: composed again.
                         if win.scroll_y != scrolled_from {
-                            layout = compose_layout(win, &rect, buffers);
+                            layout = compose_layout(win, &rect, buffers, settings.tabs);
                         }
 
-                        // The screen column, which virtual text makes differ
-                        // from the buffer's.
-                        let c_screen = layout
+                        // The cells of point's character, which virtual text,
+                        // a Tab or a wide character make differ from its
+                        // column: all of them are to be seen.
+                        let (c_screen, c_cells) = layout
                             .row_of_line(c_line)
-                            .map(|(_, row)| row.to_screen(c_col))
-                            .unwrap_or(c_col);
+                            .map(|(_, row)| (row.to_screen(c_col), row.cells_at(c_col)))
+                            .unwrap_or((c_col, 1));
                         if c_screen < win.scroll_x {
                             win.scroll_x = c_screen;
-                        } else if c_screen >= win.scroll_x + rect.width {
-                            win.scroll_x = c_screen - rect.width + 1;
+                        } else if c_screen + c_cells > win.scroll_x + rect.width {
+                            win.scroll_x = (c_screen + c_cells).saturating_sub(rect.width);
                         }
                     }
 
@@ -403,14 +406,25 @@ fn line_width<B: BufferTrait>(text: &B, line: usize) -> usize {
 /// Returns the rows WIN shows in RECT, composed from its buffer and the
 /// virtual text in it; none when the buffer has gone, so that the window
 /// draws blank.
-pub fn compose_layout<B: BufferTrait>(win: &Window, rect: &Rect, buffers: &Buffers<B>) -> Layout {
+pub fn compose_layout<B: BufferTrait>(
+    win: &Window,
+    rect: &Rect,
+    buffers: &Buffers<B>,
+    tabs: &TabWidths,
+) -> Layout {
     let Some(buf) = buffers.handle(&win.buffer_name) else {
         return Layout::default();
     };
     let buf = buf
         .read()
         .expect("Failed to acquire read lock on buffer for composing");
-    Layout::compose(&buf.text, &buf.virtual_text, win.scroll_y, rect.height)
+    Layout::compose(
+        &buf.text,
+        &buf.virtual_text,
+        win.scroll_y,
+        rect.height,
+        tabs.of(&buf.current_mode),
+    )
 }
 
 /// Returns the colouring of WIN's buffer on the lines WIN shows in RECT, in

@@ -1,105 +1,133 @@
-//! What a window's rows say, and how a column of the buffer maps to a column
-//! of the screen and back, with virtual text drawn between them.
+//! What a window's rows say, and how a column of the buffer maps to a cell of
+//! the screen and back: a Tab drawn to the next stop, a wide character across
+//! two cells, and virtual text between them.
 //!
 //! Design: `doc/architettura-editor.typ, <righe>`.
 use crate::buffer::{BufferTrait, VirtualTextTable};
+use crate::ui::width::{char_cells, cut};
 use crate::ui::{Face, Highlight};
+use std::collections::HashMap;
 
-/// A run of screen columns, and where they came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Piece {
-    /// `width` columns of the buffer, starting at buffer column `from`.
-    Text { from: usize, width: usize },
-    /// `width` columns that are in no buffer.
-    Virtual { width: usize },
+/// How many cells a Tab reaches to, mode by mode: a mode's own `tab-width`
+/// property, or the variable, read once a frame before any lock is taken.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabWidths {
+    /// What a mode with none of its own has.
+    pub default: usize,
+    /// The modes that have their own.
+    pub by_mode: HashMap<String, usize>,
 }
 
-/// One row of a window, composed: the text it shows and the pieces it is
-/// made of, buffer text or virtual text.
+impl Default for TabWidths {
+    fn default() -> Self {
+        Self {
+            default: DEFAULT_TAB_WIDTH,
+            by_mode: HashMap::new(),
+        }
+    }
+}
+
+impl TabWidths {
+    /// Returns the width of a Tab in MODE.
+    pub fn of(&self, mode: &str) -> usize {
+        self.by_mode.get(mode).copied().unwrap_or(self.default)
+    }
+}
+
+/// How many cells a Tab reaches to when nothing says otherwise: what the
+/// `indent` module gives `tab-width`.
+pub const DEFAULT_TAB_WIDTH: usize = 4;
+
+/// The widest a Tab is drawn, however wide it is set: wider has no use, and
+/// a mistaken million would make one Tab a million spaces a frame.
+pub const MAX_TAB_WIDTH: usize = 64;
+
+/// One row of a window, composed: the text it shows, with Tabs drawn as the
+/// spaces they reach across, and where each column of the line is on it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     /// Which line of the buffer this row shows.
     pub line: usize,
     /// Everything on the row, in screen order, before any sideways scrolling.
     pub text: String,
-    pieces: Vec<Piece>,
-    /// Faces the virtual text asked for, as screen column spans on this row.
-    /// Empty for a row with no virtual text, which is the ordinary case.
+    /// Where each column of the line is drawn: the cell it begins at and how
+    /// many it takes. `None` when every column is the one cell of the same
+    /// number, which is most rows, and costs nothing to keep.
+    columns: Option<Vec<(usize, usize)>>,
+    /// How many columns the line has.
+    length: usize,
+    /// How many cells the row takes, virtual text included.
+    cells: usize,
+    /// Faces the virtual text asked for, as cell spans on this row. Empty for
+    /// a row with no virtual text, which is the ordinary case.
     faces: Vec<(usize, usize, Face)>,
 }
 
 impl Row {
-    // TODO(TUI-3): a Tab is one column here.
-    // TODO(TUI-4): so is a wide character.
-    /// Returns a row that is exactly its line, with nothing added.
+    /// Returns a row that is exactly its line, a column to a cell.
     fn plain(line: usize, text: String) -> Self {
-        let width = text.chars().count();
+        let length = text.chars().count();
         Self {
             line,
             text,
-            pieces: vec![Piece::Text { from: 0, width }],
+            columns: None,
+            length,
+            cells: length,
             faces: Vec::new(),
         }
     }
 
-    /// Returns the screen column buffer column COLUMN is drawn at.
+    /// Returns the cell buffer column COLUMN is drawn at: the first of a Tab's
+    /// or a wide character's.
     ///
     /// Virtual text anchored at a column is drawn before it, so the column
     /// maps past the virtual text, onto its own character: point is never
     /// drawn inside virtual text. A column past the end of the line maps past
-    /// the end of the row, one screen column per buffer column.
+    /// the end of the row, one cell per column.
     pub fn to_screen(&self, column: usize) -> usize {
-        let mut screen = 0;
-        let mut text_width = 0;
-        for piece in &self.pieces {
-            match piece {
-                Piece::Text { from, width } => {
-                    if column < from + width {
-                        return screen + (column - from);
-                    }
-                    screen += width;
-                    text_width = from + width;
-                }
-                Piece::Virtual { width } => screen += width,
-            }
+        let Some(columns) = &self.columns else {
+            return column;
+        };
+        match columns.get(column) {
+            Some((start, _)) => *start,
+            // Past the end of the line, one cell per column, and not clamped:
+            // a selection runs one column past a line's end to show the
+            // newline as selected.
+            None => self.cells + (column - self.length),
         }
-        // Past the end of the line, one screen column per buffer column, and
-        // not clamped: a selection runs one column past a line's end to show
-        // the newline as selected.
-        screen + (column - text_width.min(column))
     }
 
-    /// Returns the buffer column screen column SCREEN is on.
+    /// Returns how many cells buffer column COLUMN takes: one past the end of
+    /// the line, where point can be.
+    pub fn cells_at(&self, column: usize) -> usize {
+        self.columns
+            .as_ref()
+            .and_then(|columns| columns.get(column))
+            .map_or(1, |(_, cells)| (*cells).max(1))
+    }
+
+    /// Returns the buffer column cell SCREEN is on.
     ///
-    /// A column inside virtual text answers the column the text is anchored
-    /// at: a click on virtual text puts point on the character it is in
-    /// front of.
+    /// Every cell of a Tab or a wide character answers its column. A cell
+    /// inside virtual text answers the column the text is anchored at: a click
+    /// on virtual text puts point on the character it is in front of.
     pub fn to_buffer(&self, screen: usize) -> usize {
-        let mut walked = 0;
-        let mut last_buffer = 0;
-        for piece in &self.pieces {
-            match piece {
-                Piece::Text { from, width } => {
-                    if screen < walked + width {
-                        return from + (screen - walked);
-                    }
-                    walked += width;
-                    last_buffer = from + width;
-                }
-                Piece::Virtual { width } => {
-                    if screen < walked + width {
-                        // The anchor: the column the next run of text starts
-                        // at, which is the one this virtual text sits before.
-                        return last_buffer;
-                    }
-                    walked += width;
-                }
-            }
+        let Some(columns) = &self.columns else {
+            return screen;
+        };
+        // The first column that ends past SCREEN: the one SCREEN is on, or,
+        // when SCREEN is in virtual text, the one the text is in front of.
+        let at = columns.partition_point(|(start, cells)| start + cells <= screen);
+        if at < columns.len() {
+            return at;
         }
-        // Past the end of the row, one buffer column per screen column, so
-        // that this stays the inverse of `to_screen` outside the text as well
-        // as inside it.
-        last_buffer + (screen - walked.min(screen))
+        if screen < self.cells {
+            // Virtual text at the end of the line, anchored there.
+            return self.length;
+        }
+        // Past the end of the row, one column per cell, so that this stays
+        // the inverse of `to_screen` outside the text as well as inside it.
+        self.length + (screen - self.cells)
     }
 
     /// Returns the faces the virtual text on this row asked for, as
@@ -124,7 +152,8 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// Composes the rows of the buffer lines from FIRST_LINE, HEIGHT of them.
+    /// Composes the rows of the buffer lines from FIRST_LINE, HEIGHT of them,
+    /// with a Tab reaching to the next multiple of TAB_WIDTH.
     ///
     /// VIRTUAL_TEXT is asked once per row, not once per character.
     pub fn compose<B: BufferTrait>(
@@ -132,26 +161,23 @@ impl Layout {
         virtual_text: &VirtualTextTable,
         first_line: usize,
         height: usize,
+        tab_width: usize,
     ) -> Self {
+        let tab_width = tab_width.clamp(1, MAX_TAB_WIDTH);
         let lines = text.get_lines(first_line, first_line + height);
-        // The ordinary case: with nothing to add, every row is its line.
-        if virtual_text.is_empty() {
-            return Self {
-                rows: lines
-                    .into_iter()
-                    .enumerate()
-                    .map(|(offset, line)| Row::plain(first_line + offset, line))
-                    .collect(),
-                first_line,
-            };
-        }
         let rows = lines
             .into_iter()
             .enumerate()
             .map(|(offset, line)| {
                 let line_number = first_line + offset;
-                let line_start = text.cursor_2d_to_1d(line_number, 0);
-                compose_row(line_number, &line, line_start, virtual_text)
+                // Asked for its offset only when there is virtual text to
+                // place: the ordinary case reads nothing more of the buffer.
+                let line_start = if virtual_text.is_empty() {
+                    0
+                } else {
+                    text.cursor_2d_to_1d(line_number, 0)
+                };
+                compose_row(line_number, &line, line_start, virtual_text, tab_width)
             })
             .collect();
         Self { rows, first_line }
@@ -169,12 +195,12 @@ impl Layout {
         self.rows.get(row)
     }
 
-    /// Returns every row's text, scrolled sideways by SCROLL_X and cut to
-    /// WIDTH: what the renderer draws.
+    /// Returns every row's text, scrolled sideways by SCROLL_X cells and cut
+    /// to WIDTH: what the renderer draws.
     pub fn visible_text(&self, scroll_x: usize, width: usize) -> Vec<String> {
         self.rows
             .iter()
-            .map(|row| row.text.chars().skip(scroll_x).take(width).collect())
+            .map(|row| cut(&row.text, scroll_x, width))
             .collect()
     }
 
@@ -190,56 +216,93 @@ impl Layout {
     }
 }
 
+/// Returns whether every character of TEXT is drawn as one cell where it
+/// stands: no Tab, nothing wide, nothing that combines.
+fn one_cell_each(text: &str) -> bool {
+    text.bytes().all(|b| (0x20..0x7f).contains(&b))
+        || text.chars().all(|c| c != '\t' && char_cells(c) == 1)
+}
+
+/// The text of a row as it is built, and how many cells it has reached.
+struct Composer {
+    text: String,
+    cells: usize,
+    tab_width: usize,
+}
+
+impl Composer {
+    /// Adds C: a Tab as the spaces to the next stop, anything else as itself.
+    fn push(&mut self, c: char) {
+        if c == '\t' {
+            let reach = self.tab_width - self.cells % self.tab_width;
+            self.text.extend(std::iter::repeat_n(' ', reach));
+            self.cells += reach;
+        } else {
+            self.text.push(c);
+            self.cells += char_cells(c);
+        }
+    }
+
+    /// Adds TEXT, virtual, and the face it asked for over the cells it took.
+    fn push_virtual(&mut self, text: &str, face: Face, faces: &mut Vec<(usize, usize, Face)>) {
+        let start = self.cells;
+        text.chars().for_each(|c| self.push(c));
+        if self.cells > start {
+            faces.push((start, self.cells, face));
+        }
+    }
+}
+
 /// Returns the row of LINE, whose TEXT starts at offset LINE_START, with the
-/// virtual text that sits inside it.
-fn compose_row(line: usize, text: &str, line_start: usize, virtual_text: &VirtualTextTable) -> Row {
-    let line_width = text.chars().count();
+/// virtual text that sits inside it, a Tab reaching to the next multiple of
+/// TAB_WIDTH.
+fn compose_row(
+    line: usize,
+    text: &str,
+    line_start: usize,
+    virtual_text: &VirtualTextTable,
+    tab_width: usize,
+) -> Row {
+    let length = text.chars().count();
     // The newline's own offset is in range, so virtual text at the end of a
     // line is placed by anchoring it there.
-    let inside: Vec<_> = virtual_text
-        .between(line_start, line_start + line_width + 1)
-        .collect();
-    if inside.is_empty() {
+    let inside: Vec<_> = if virtual_text.is_empty() {
+        Vec::new()
+    } else {
+        virtual_text
+            .between(line_start, line_start + length + 1)
+            .collect()
+    };
+    if inside.is_empty() && one_cell_each(text) {
         return Row::plain(line, text.to_string());
     }
-    let mut composed = String::new();
-    let mut pieces = Vec::new();
+    let mut row = Composer {
+        text: String::with_capacity(text.len()),
+        cells: 0,
+        tab_width,
+    };
+    let mut columns = Vec::with_capacity(length);
     let mut faces = Vec::new();
-    let mut column = 0;
-    let mut screen = 0;
-    for entry in inside {
-        let at = (entry.at - line_start).min(line_width);
-        if at > column {
-            let run: String = text.chars().skip(column).take(at - column).collect();
-            composed.push_str(&run);
-            pieces.push(Piece::Text {
-                from: column,
-                width: at - column,
-            });
-            screen += at - column;
-            column = at;
+    let mut pending = inside.into_iter().peekable();
+    for (column, c) in text.chars().enumerate() {
+        // What is anchored at this column is drawn before its character.
+        while let Some(entry) = pending.next_if(|entry| entry.at - line_start <= column) {
+            row.push_virtual(&entry.text, entry.face, &mut faces);
         }
-        let width = entry.text.chars().count();
-        if width == 0 {
-            continue;
-        }
-        composed.push_str(&entry.text);
-        pieces.push(Piece::Virtual { width });
-        faces.push((screen, screen + width, entry.face));
-        screen += width;
+        let start = row.cells;
+        row.push(c);
+        columns.push((start, row.cells - start));
     }
-    if column < line_width {
-        let run: String = text.chars().skip(column).collect();
-        composed.push_str(&run);
-        pieces.push(Piece::Text {
-            from: column,
-            width: line_width - column,
-        });
+    // What is anchored at the end of the line, or past it.
+    for entry in pending {
+        row.push_virtual(&entry.text, entry.face, &mut faces);
     }
     Row {
         line,
-        text: composed,
-        pieces,
+        text: row.text,
+        columns: Some(columns),
+        length,
+        cells: row.cells,
         faces,
     }
 }

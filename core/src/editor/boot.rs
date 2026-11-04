@@ -357,6 +357,12 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::string(DEFAULT_MODE_LINE_FORMAT.to_string()),
     );
 
+    // How many columns a Tab is worth, indenting and drawn.
+    env.set_variable(
+        TAB_WIDTH.into(),
+        ELispExp::number(crate::ui::layout::DEFAULT_TAB_WIDTH as f64),
+    );
+
     // The character the separators between windows are drawn with.
     env.set_variable(
         WINDOW_SEPARATOR.into(),

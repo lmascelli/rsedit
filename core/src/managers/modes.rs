@@ -104,6 +104,11 @@ impl<B: BufferTrait> Modes<B> {
     // The registry
     // ------------------------------------------------------------------
 
+    /// Returns the names of the modes there are.
+    pub fn names(&self) -> impl Iterator<Item = &String> {
+        self.registry.keys()
+    }
+
     /// Returns the mode called NAME.
     pub fn get(&self, name: &str) -> Option<&MajorMode<B>> {
         self.registry.get(name)

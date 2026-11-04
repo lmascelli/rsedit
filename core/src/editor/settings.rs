@@ -230,6 +230,16 @@ pub const SETTINGS: &[Setting] = &[
         doc: "Where output is displayed: same-window or bottom. \
               An invalid value uses bottom.",
     },
+    Setting {
+        name: TAB_WIDTH,
+        doc: "How many columns a Tab is worth: how far Tab indents, and how far a Tab in the \
+              text reaches when it is drawn, to the next multiple of it. A mode can have its \
+              own, as a tab-width property, which wins over this in its buffers. Drawn, a Tab \
+              is between 1 and 64 columns wide, and anything but a number counts as 4.\n\n\
+              Example:\n\
+              \x20 (setq tab-width 8)\n\
+              \x20 (put 'makefile-mode 'tab-width 8)",
+    },
 ];
 
 /// Gives every setting in [`SETTINGS`] its documentation, where `defvar` puts
@@ -330,6 +340,10 @@ pub const REPLACE_READ_FUNCTION: &str = "*replace-read-function*";
 /// windows are drawn with.
 pub const WINDOW_SEPARATOR: &str = "window-separator";
 
+/// The name of the Lisp variable, and of the property of a mode, that says
+/// how many columns a Tab is worth.
+pub const TAB_WIDTH: &str = "tab-width";
+
 /// The name of the Lisp variable that turns the line-number gutter on.
 ///
 /// `nil` or unbound is off, `'relative` counts from point, and anything else
@@ -354,6 +368,36 @@ pub const DEFAULT_LINE_NUMBER_DIGITS: usize = 3;
 /// What the separators are drawn with when nothing sets [`WINDOW_SEPARATOR`]:
 /// a line, `│`.
 pub const DEFAULT_WINDOW_SEPARATOR: char = '\u{2502}';
+
+/// Returns VALUE as a Tab's width, or `None` when it is not a number of
+/// columns: what a mode's property and the variable are both read with.
+fn tab_width_value<B: BufferTrait>(value: Option<ELispExp<B>>) -> Option<usize> {
+    match value {
+        Some(ELispExp::Number(n)) if n.is_finite() && n >= 1.0 => {
+            Some((n as usize).min(crate::ui::layout::MAX_TAB_WIDTH))
+        }
+        _ => None,
+    }
+}
+
+/// Returns how many columns a Tab reaches across in each of MODES, as Lisp
+/// defines it now: the mode's own `tab-width` property, or the variable, or
+/// [`DEFAULT_TAB_WIDTH`](crate::ui::layout::DEFAULT_TAB_WIDTH).
+pub(crate) fn tab_widths<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+    modes: impl IntoIterator<Item = String>,
+) -> crate::ui::layout::TabWidths {
+    let default = tab_width_value(env.get_variable(TAB_WIDTH))
+        .unwrap_or(crate::ui::layout::DEFAULT_TAB_WIDTH);
+    let by_mode = modes
+        .into_iter()
+        .filter_map(|mode| {
+            let width = tab_width_value(env.get_property(&mode, TAB_WIDTH))?;
+            Some((mode, width))
+        })
+        .collect();
+    crate::ui::layout::TabWidths { default, by_mode }
+}
 
 /// Returns the format of the status line, as Lisp defines it now.
 ///

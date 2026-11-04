@@ -72,8 +72,8 @@ WHERE POINT ENDS UP
 
 LIMITS
     Columns count characters: a tab is one column, and so is a character
-    the terminal draws two cells wide. The terminal draws a tab wider than
-    that, so on a line with tabs the block cut is not the block shown.
+    drawn two cells wide. Both are drawn wider than that, so on a line with
+    tabs or wide characters the block cut is not the block shown.
 
 EXAMPLES
     Prefix the lines from the mark to point with "> ", the two in the same

@@ -5,6 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <gui>`.
 use super::keys::mods;
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Stroke, Vec2};
+use rsedit_core::width::{cells, char_cells, cut};
 use rsedit_core::{Face, FrameSnapshot, MouseEvent, MouseKind, RenderableWindowView, Style};
 
 /// The cells the window is drawn in: where the first is, how big one is, and
@@ -126,8 +127,9 @@ fn label(
     }
 }
 
-/// Draws TEXT in row Y of GRID, from column X, WIDTH cells, a character to a
-/// cell, each in its style in STYLES or in DEFAULT.
+/// Draws TEXT in row Y of GRID, from column X, WIDTH cells, each in its style
+/// in STYLES or in DEFAULT: a character in as many cells as the editor counts
+/// it, two for a wide one, and a combining one over the character before it.
 pub(super) fn row(
     painter: &egui::Painter,
     grid: Grid,
@@ -139,19 +141,32 @@ pub(super) fn row(
     font: &FontId,
     default: Style,
 ) {
-    // A character to a cell, as the editor counts columns, so that a click,
-    // a highlight and the cursor fall on the same cells.
+    // Cells as the editor counts them, so that a click, a highlight and the
+    // cursor fall on the same ones: the backgrounds first, cell by cell, then
+    // each character at the first of its cells.
     let (_, base_background) = colors(default, default);
     painter.rect_filled(grid.rect(x, y, width, 1), 0., base_background);
-    let mut chars = text.chars();
     for column in 0..width {
-        let c = chars.next().unwrap_or(' ');
         let style = styles.get(column).copied().unwrap_or(default);
         let (_, background) = colors(style, default);
-        let cell = grid.rect(x + column as isize, y, 1, 1);
         if background != base_background {
-            painter.rect_filled(cell, 0., background);
+            painter.rect_filled(grid.rect(x + column as isize, y, 1, 1), 0., background);
         }
+    }
+    let mut next = 0;
+    let mut last = 0;
+    for c in text.chars() {
+        let cells = char_cells(c);
+        let column = if cells == 0 { last } else { next };
+        if column >= width {
+            break;
+        }
+        if cells > 0 {
+            last = next;
+            next += cells;
+        }
+        let style = styles.get(column).copied().unwrap_or(default);
+        let cell = grid.rect(x + column as isize, y, 1, 1);
         if c != ' ' && !c.is_control() {
             let mut encoded = [0; 4];
             label(
@@ -193,7 +208,7 @@ pub(super) fn paint_view(
             egui::StrokeKind::Inside,
         );
         let title = view.title.as_deref().unwrap_or(&view.buffer_name);
-        let title: String = title.chars().take(rect.width).collect();
+        let title = cut(title, 0, rect.width);
         label(
             painter,
             grid.at(rect.x, rect.y - 1),
@@ -286,10 +301,7 @@ pub(super) fn paint_view(
             if !preedit.is_empty() {
                 let composition = Rect::from_min_size(
                     caret.min,
-                    Vec2::new(
-                        (preedit.chars().count() + 1) as f32 * grid.cell.x,
-                        grid.cell.y,
-                    ),
+                    Vec2::new((cells(preedit) + 1) as f32 * grid.cell.x, grid.cell.y),
                 );
                 clipped.rect_filled(composition, 0., background);
                 let style = Style {

@@ -196,6 +196,26 @@ mod tests {
         }
     }
 
+    /// A length in bytes let a character outside ASCII through, and slicing
+    /// it in two panicked: the editor went down, and the terminal stayed in
+    /// raw mode. A sign is not a digit either, though `from_str_radix` takes
+    /// one.
+    #[test]
+    fn a_colour_with_anything_but_hexadecimal_digits_does_not_parse() {
+        for bad in ["#aéb12", "#é12", "#ffé", "#+f+f+f", "#-1-1-1", "#ff 00 0"] {
+            assert_eq!(Color::parse(bad), None, "{bad:?} should not parse");
+        }
+    }
+
+    #[test]
+    fn set_face_with_a_colour_outside_ascii_is_an_error_not_a_panic() {
+        let (ctx, env) = editor();
+        assert!(
+            eval_str(r##"(set-face 'region "#aéb12")"##, &env, &ctx).is_err(),
+            "refused as \"puce\" is"
+        );
+    }
+
     /// A palette index is one terminal's encoding of a colour, not a colour.
     /// Letting it into a face would put the renderer's representation in the
     /// editor, which is the thing [`Color`] exists to keep out.

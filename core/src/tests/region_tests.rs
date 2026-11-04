@@ -392,7 +392,12 @@ mod tests {
         // puts them on the rows. Doing only the first here would test a
         // coordinate system nothing draws in.
         ctx.buffers(|buffers| {
-            let layout = crate::ui::compose_layout(&window, &rect, buffers);
+            let layout = crate::ui::compose_layout(
+                &window,
+                &rect,
+                buffers,
+                &crate::ui::layout::TabWidths::default(),
+            );
             crate::ui::layout::place(
                 &layout,
                 crate::ui::region_highlights(&window, &rect, buffers),

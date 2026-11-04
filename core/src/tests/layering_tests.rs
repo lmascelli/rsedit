@@ -154,6 +154,7 @@ mod tests {
         ("ui/gutter.rs", include_str!("../ui/gutter.rs")),
         ("ui/layout.rs", include_str!("../ui/layout.rs")),
         ("ui/mode_line.rs", include_str!("../ui/mode_line.rs")),
+        ("ui/width.rs", include_str!("../ui/width.rs")),
         ("ui/windows.rs", include_str!("../ui/windows.rs")),
     ];
 

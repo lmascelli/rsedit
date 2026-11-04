@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 risp = {  git = "https://github.com/lmascelli/risp.git", branch = "main" }
 regex = "*"
+unicode-width = "0.2"

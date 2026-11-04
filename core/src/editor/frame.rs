@@ -47,6 +47,13 @@ impl<B: BufferTrait> EditorState<B> {
         let mode_line_format = mode_line_format(env);
         let separator_char = window_separator(env);
         let gutter = line_numbers(env);
+        // The names out of the registry and its lock given back, then each
+        // mode's property read from the environment: no lock of the editor is
+        // held while the environment's is taken.
+        let tabs = tab_widths(
+            env,
+            self.modes(|modes| modes.names().cloned().collect::<Vec<_>>()),
+        );
         // With the reads before the windows: it takes the buffers and the
         // registry of the modes, which has no place in the order below.
         let colouring_pending = self.colouring_pending();
@@ -90,6 +97,7 @@ impl<B: BufferTrait> EditorState<B> {
                     ComposeSettings {
                         mode_line_format: &mode_line_format,
                         gutter,
+                        tabs: &tabs,
                     },
                     &mut views,
                     &mut separator_rects,
@@ -110,7 +118,7 @@ impl<B: BufferTrait> EditorState<B> {
                     // are what whoever opened it set. Its rows are composed as
                     // a tiled window's are, since a prompt can carry virtual
                     // text as a file can.
-                    let layout = compose_layout(&float.window, &float.rect, buffers);
+                    let layout = compose_layout(&float.window, &float.rect, buffers, &tabs);
                     let cursor_rel_pos = is_focused
                         .then(|| buffers.handle(&float.window.buffer_name))
                         .flatten()

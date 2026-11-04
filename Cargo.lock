@@ -1938,6 +1938,7 @@ version = "0.1.0"
 dependencies = [
  "regex",
  "risp",
+ "unicode-width",
 ]
 
 [[package]]

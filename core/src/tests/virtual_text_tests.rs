@@ -55,7 +55,7 @@ mod tests {
 
     /// Returns the layout the renderer composes, to ask about directly.
     fn layout(ctx: &Ctx) -> Layout {
-        ctx.with_current_buffer(|buf| Layout::compose(&buf.text, &buf.virtual_text, 0, H))
+        ctx.with_current_buffer(|buf| Layout::compose(&buf.text, &buf.virtual_text, 0, H, 4))
     }
 
     // ----------------------------------------------------------------

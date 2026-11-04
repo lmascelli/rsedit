@@ -493,6 +493,7 @@ fn layout(report: &mut Report) {
                     ComposeSettings {
                         mode_line_format: " %b ",
                         gutter: GutterSpec::default(),
+                        tabs: &crate::ui::layout::TabWidths::default(),
                     },
                     &mut views,
                     &mut separators,

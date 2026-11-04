@@ -7,10 +7,6 @@
 
 (require 'commands)
 
-(defvar tab-width 4
-  "How many columns a Tab indents by, in a mode that does not say: see
-`indent-width'.")
-
 (defvar tab-always-indent nil
   "What Tab does on a line that is already indented: nil inserts
 `indent-width' spaces, t does nothing, and the symbol complete calls

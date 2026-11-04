@@ -9,6 +9,7 @@ mod frame;
 mod gutter;
 pub mod layout;
 mod mode_line;
+pub mod width;
 mod windows;
 
 pub use compose::{

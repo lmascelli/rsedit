@@ -160,12 +160,16 @@ impl Color {
     pub const BRIGHT_CYAN: Color = Color::rgb(85, 255, 255);
     pub const BRIGHT_WHITE: Color = Color::rgb(255, 255, 255);
 
-    // TODO(TUI-5): a hexadecimal colour with a character outside ASCII
-    // panics, sliced off a character boundary.
     /// Returns the colour TEXT writes, as Lisp does: `"#rgb"`, `"#rrggbb"`,
     /// or one of the names in [`NAMED_COLORS`]; `None` for anything else.
     pub fn parse(text: &str) -> Option<Color> {
         if let Some(hex) = text.strip_prefix('#') {
+            // Hexadecimal digits only, before anything is sliced: a length in
+            // bytes cut a character outside ASCII in two, which panicked, and
+            // `from_str_radix` takes a sign, which `#+f+f+f` would have had.
+            if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
             return match hex.len() {
                 // `#rgb` expands each digit, so `#f00` and `#ff0000` agree.
                 3 => {

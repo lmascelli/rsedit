@@ -9,6 +9,7 @@ use crossterm::{
     style::{Attribute, Print, SetAttribute, SetBackgroundColor, SetForegroundColor},
     terminal,
 };
+use rsedit_core::width::{cells, cut, fit};
 use rsedit_core::{Face, FrameSnapshot, Highlight, Rect, RenderableWindowView, Style, Theme};
 use std::io::{Write, stdout};
 
@@ -79,10 +80,8 @@ pub fn render_to<W: Write>(
         for offset_y in 0..view.rect.height {
             let target_y = view.rect.y + offset_y as isize;
             let text = view.lines.get(offset_y).map(String::as_str).unwrap_or("");
-            // Cut to the window, so that a long line stays in it.
-            let mut row: String = text.chars().take(view.rect.width).collect();
-            let padding = view.rect.width.saturating_sub(row.chars().count());
-            row.push_str(&" ".repeat(padding));
+            // Cut to the window by cells, so that a long line stays in it.
+            let row = fit(text, view.rect.width);
             draw_clipped_row(out, view.rect.x, target_y, &row, frame_w, frame_h)?;
         }
 
@@ -91,8 +90,7 @@ pub fn render_to<W: Write>(
         for (offset_y, cell) in view.gutter.iter().enumerate() {
             let style = frame.theme.style(cell.face);
             apply_style(out, &style, depth)?;
-            let mut text: String = cell.text.chars().take(view.gutter_width).collect();
-            text.push_str(&" ".repeat(view.gutter_width.saturating_sub(text.chars().count())));
+            let text = fit(&cell.text, view.gutter_width);
             draw_clipped_row(
                 out,
                 view.rect.x - view.gutter_width as isize,
@@ -119,8 +117,7 @@ pub fn render_to<W: Write>(
             };
             // Padded across the window and its gutter, as a bar.
             let width = view.rect.width + view.gutter_width;
-            let mut text: String = mode_line.chars().take(width).collect();
-            text.push_str(&" ".repeat(width.saturating_sub(text.chars().count())));
+            let text = fit(mode_line, width);
 
             let style = frame.theme.style(face);
             apply_style(out, &style, depth)?;
@@ -160,7 +157,7 @@ pub fn render_to<W: Write>(
     // What the editor is waiting for, at the right end of the same row, over
     // the message where they meet.
     if !frame.pending_input.is_empty() {
-        let start = frame_w - frame.pending_input.chars().count() as isize;
+        let start = frame_w - cells(&frame.pending_input) as isize;
         draw_clipped_row(
             out,
             start.max(0),
@@ -234,14 +231,12 @@ fn draw_highlight<W: Write>(
         return Ok(());
     }
 
-    let chars: Vec<char> = line.chars().collect();
-    let start = highlight.start_col.min(chars.len());
-    let end = highlight.end_col.min(chars.len());
-
-    // Spaces past the end of the line, for a region that runs past it.
-    let padding = highlight.end_col.saturating_sub(end);
-    let mut text: String = chars[start..end].iter().collect();
-    text.push_str(&" ".repeat(padding));
+    // The cells of the line under it, by cells and not by characters, and
+    // spaces past the end of the line, for a region that runs past it.
+    let span = highlight.end_col.saturating_sub(highlight.start_col);
+    let mut text = cut(line, highlight.start_col, span);
+    let drawn = cells(&text);
+    text.push_str(&" ".repeat(span.saturating_sub(drawn)));
     if text.is_empty() {
         return Ok(());
     }
@@ -282,11 +277,12 @@ fn apply_style<W: Write>(out: &mut W, style: &Style, depth: ColorDepth) -> std::
     Ok(())
 }
 
-/// Prints CONTENT from column START_X of row Y, cut to the frame, FRAME_W by
+/// Prints CONTENT from cell START_X of row Y, cut to the frame, FRAME_W by
 /// FRAME_H: START_X and Y may be off it, and nothing is drawn of what is.
-/// Every control character in it is printed as [`printable`] has it: this is
-/// the one way text reaches the terminal, so nothing a file, a command's
-/// output or a message holds can be obeyed by it.
+/// Cut by cells, as the editor counted them, so that a wide character takes
+/// its two. Every control character in it is printed as [`printable`] has it:
+/// this is the one way text reaches the terminal, so nothing a file, a
+/// command's output or a message holds can be obeyed by it.
 fn draw_clipped_row<W: Write>(
     stdout: &mut W,
     start_x: isize,
@@ -298,26 +294,17 @@ fn draw_clipped_row<W: Write>(
     if y < 0 || y >= frame_h {
         return Ok(());
     }
-
-    let chars: Vec<char> = content.chars().collect();
-    let len = chars.len() as isize;
-
-    let clip_left = if start_x < 0 { -start_x } else { 0 };
-    if clip_left >= len {
-        return Ok(());
-    }
-
+    let clip_left = (-start_x).max(0) as usize;
     let visible_start_x = start_x.max(0);
-    let max_visible_len = (frame_w - visible_start_x).max(0);
-    let clip_len = (len - clip_left).min(max_visible_len);
-    if clip_len <= 0 {
+    let room = (frame_w - visible_start_x).max(0) as usize;
+    if room == 0 {
         return Ok(());
     }
-
-    let visible: String = chars[clip_left as usize..(clip_left + clip_len) as usize]
-        .iter()
-        .map(|&c| printable(c))
-        .collect();
+    let shown: String = content.chars().map(printable).collect();
+    let visible = cut(&shown, clip_left, room);
+    if visible.is_empty() {
+        return Ok(());
+    }
     stdout.queue(cursor::MoveTo(visible_start_x as u16, y as u16))?;
     stdout.queue(Print(visible))?;
     Ok(())
@@ -328,11 +315,12 @@ fn draw_clipped_row<W: Write>(
 /// set the clipboard or the title, CR and BS moving the cursor -- becomes a
 /// picture of itself one column wide, so that every column stays where the
 /// editor counted it: `␛` for ESC, `␡` for DEL, and the replacement
-/// character for the C1 controls, which have no picture. The Tab is left as
-/// it is (TUI-3).
+/// character for the C1 controls, which have no picture. A Tab of the text
+/// has been drawn as spaces by then; one anywhere else, in a message or a
+/// buffer's name, is `␉`, one column, as the terminal would have moved it to
+/// a stop of its own.
 pub(crate) fn printable(c: char) -> char {
     match c {
-        '\t' => c,
         '\u{0}'..='\u{1f}' => char::from_u32(0x2400 + c as u32).unwrap_or('\u{fffd}'),
         '\u{7f}' => '\u{2421}',
         '\u{80}'..='\u{9f}' => '\u{fffd}',
@@ -354,13 +342,9 @@ fn draw_window_border<W: Write>(
     let frame_h = rows as isize;
 
     let top_content = if let Some(title) = title {
-        let title_chars: Vec<char> = title.chars().take(rect.width.saturating_sub(1)).collect();
-        let fill = rect.width.saturating_sub(title_chars.len() + 1);
-        format!(
-            "─{}{}",
-            title_chars.into_iter().collect::<String>(),
-            "─".repeat(fill)
-        )
+        let title = cut(title, 0, rect.width.saturating_sub(1));
+        let fill = rect.width.saturating_sub(cells(&title) + 1);
+        format!("─{}{}", title, "─".repeat(fill))
     } else {
         "─".repeat(rect.width)
     };

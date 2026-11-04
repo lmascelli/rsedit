@@ -20,25 +20,43 @@ impl<B: BufferTrait> EditorState<B> {
     /// Returns where in WINDOW's buffer the cell (X, Y) is, clamped to what
     /// the window shows: a drag that leaves the window selects to its edge.
     /// Scrolling after the pointer is [`Self::drag_scroll_tick`]'s.
-    fn position_in(&self, window: WindowId, x: isize, y: isize) -> Option<(usize, usize)> {
+    fn position_in(
+        &self,
+        window: WindowId,
+        x: isize,
+        y: isize,
+        env: &Arc<Env<EditorState<B>>>,
+    ) -> Option<(usize, usize)> {
         let (line, screen_column) = self.windows(|windows| windows.position_in(window, x, y))?;
-        Some((line, self.buffer_column(window, line, screen_column)))
+        Some((line, self.buffer_column(window, line, screen_column, env)))
     }
 
     /// Returns the buffer column that SCREEN_COLUMN is on, for LINE in WINDOW.
     ///
     /// The two differ wherever the row shows what the buffer does not hold --
-    /// an inlay hint, a preview. The compartment that knows the geometry
-    /// cannot reach the buffer, and the buffer does not know the geometry, so
-    /// the translation is here, which reaches both. One row is composed, since
-    /// a click is on one row; the windows are let go before the buffer is
-    /// taken.
-    fn buffer_column(&self, window: WindowId, line: usize, screen_column: usize) -> usize {
+    /// an inlay hint, a preview -- and wherever a column takes more than one
+    /// cell, a Tab or a wide character. The compartment that knows the
+    /// geometry cannot reach the buffer, and the buffer does not know the
+    /// geometry, so the translation is here, which reaches both. One row is
+    /// composed, since a click is on one row, with the Tab as wide as the
+    /// frame drew it; the windows are let go before the buffer is taken, and
+    /// the buffer before the environment is read.
+    fn buffer_column(
+        &self,
+        window: WindowId,
+        line: usize,
+        screen_column: usize,
+        env: &Arc<Env<EditorState<B>>>,
+    ) -> usize {
         let Some(name) = self.windows(|windows| windows.buffer_of(window)) else {
             return screen_column;
         };
+        let Some(mode) = self.with_buffer(&name, |buf| buf.current_mode.clone()) else {
+            return screen_column;
+        };
+        let tab_width = tab_widths(env, [mode.clone()]).of(&mode);
         self.with_buffer(&name, |buf| {
-            let layout = Layout::compose(&buf.text, &buf.virtual_text, line, 1);
+            let layout = Layout::compose(&buf.text, &buf.virtual_text, line, 1, tab_width);
             layout
                 .row(0)
                 .map(|row| row.to_buffer(screen_column))
@@ -64,7 +82,7 @@ impl<B: BufferTrait> EditorState<B> {
             // As far as the buffer goes, and the selection is there already.
             return false;
         }
-        let Some((line, column)) = self.position_in(window, x, y) else {
+        let Some((line, column)) = self.position_in(window, x, y, env) else {
             return false;
         };
         self.run_command_form(
@@ -85,7 +103,7 @@ impl<B: BufferTrait> EditorState<B> {
                 self.set_mouse_drag(Some(MouseDrag::Text { window, at: (x, y) }));
                 // Against the window the drag began in, not the one under the
                 // pointer: a selection does not change buffers half-way.
-                self.position_in(window, x, y).map(|(line, column)| {
+                self.position_in(window, x, y, env).map(|(line, column)| {
                     mouse_form(
                         "mouse-drag-to",
                         &[window.0 as f64, line as f64, column as f64],
@@ -174,7 +192,7 @@ impl<B: BufferTrait> EditorState<B> {
                     &[
                         window.0 as f64,
                         line as f64,
-                        self.buffer_column(window, line, column) as f64,
+                        self.buffer_column(window, line, column, env) as f64,
                     ],
                 ))
             }
