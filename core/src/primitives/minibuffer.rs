@@ -284,17 +284,18 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
             got: args.len(),
         });
     }
-    // TODO(MIN-4): a MODE of nil is taken as the mode named nil, which has
-    // none of these keys.
     // The mode the prompt's buffer opens in. Defaults to `minibuffer-mode`,
     // which is what gives it Return, Escape and Tab; a caller that wants the
     // prompt to behave differently -- incremental search, whose keys mean
     // something else entirely -- names its own mode instead of reimplementing
-    // the prompt.
-    let mode = match args.get(4) {
-        Some(ELispExp::String(name)) | Some(ELispExp::Symbol(name)) => name.to_string(),
-        _ => "minibuffer-mode".to_string(),
-    };
+    // the prompt. Nil is no mode, as for every optional name: the way to give
+    // KEY and not MODE, and not the mode `nil`, which has none of those keys.
+    let mode = args::optional_name(args.get(4), "Symbol or String naming a mode, or nil")?
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "minibuffer-mode".to_string());
+    // Read before anything is set, so that a wrong one changes nothing.
+    let key = args::optional_name(args.get(5), "Symbol or String naming a history, or nil")?
+        .filter(|key| !key.is_empty());
 
     // One prompt at a time, as in Emacs without recursive minibuffers: a
     // second would share the first's buffer and its callbacks, and take the
@@ -329,12 +330,7 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
     minibuffer::setq(
         &env,
         minibuffer::MINIBUFFER_HISTORY_KEY,
-        match args.get(5) {
-            Some(ELispExp::String(key)) | Some(ELispExp::Symbol(key)) if !key.is_empty() => {
-                ELispExp::string(key.to_string())
-            }
-            _ => ELispExp::string(title.clone().unwrap_or_default()),
-        },
+        ELispExp::string(key.unwrap_or_else(|| title.clone().unwrap_or_default())),
     );
     // A prompt opening is not a continuation of the last one's walk.
     ctx.history_mut(|history| history.end_walk());
@@ -422,8 +418,8 @@ const MINIBUFFER_READ_DOC: &str = "(minibuffer-read PROMPT ON-CONFIRM ON-CHANGE 
          called with the text typed when Return is pressed, and ON-CANCEL, when not nil, with no \
          arguments when Escape is. ON-CHANGE, when not nil, is called with the text when Tab is \
          pressed and returns the candidates, a list of strings. MODE is the prompt's major mode, \
-         `minibuffer-mode' by default, and KEY names its history, PROMPT by default. Refused in a \
-         background job.\n\n\
+         `minibuffer-mode' by default, and KEY names its history, PROMPT by default; nil for \
+         either is the default. Refused in a background job.\n\n\
          Example:\n\
          (minibuffer-read \"Name:\" (lambda (name) (message \"Hello %s\" name)) nil nil)";
 

@@ -1649,8 +1649,8 @@ prompt aperto e la storia; le primitive sono in `primitives/minibuffer.rs`.
   [`HISTORY-KEY`], [La chiave della storia (`M-p`, `M-n`); per default il testo del prompt, così ogni prompt ha una storia senza chiederla. Fino a `history-length` voci, 100 per default.],
 )
 
-`default-minibuffer-prompt` prende come nome del modo qualunque simbolo, nil
-compreso #rapporto("MIN-4"), salva le callback in variabili globali
+`default-minibuffer-prompt` legge MODE e KEY con `optional_name`, per cui nil
+è assente come un argomento lasciato fuori, salva le callback in variabili globali
 (`*minibuffer-on-confirm*`, `*minibuffer-on-change*`, `*minibuffer-on-cancel*`,
 `*minibuffer-previous-buffer*`, …) e apre una finestra flottante con bordo sul
 buffer `*Minibuffer*`, #emph[al centro] del frame, larga `minibuffer-width` (60)
@@ -5307,8 +5307,11 @@ più recente; senza flottanti mette il focus sulla finestra 0
 
 `args.rs` ha i lettori con cui le primitive leggono i loro argomenti: `text`,
 una stringa; `name`, un simbolo o una stringa, nil compreso, che diventa il nome
-`nil` #rapporto("RIC-9"); `name_or_empty`, `name_or` e
-`optional_name`, con il valore che danno quando l'argomento manca;
+`nil`, per un nome che non può mancare; `name_or_empty`, `name_or` e
+`optional_name`, con il valore che danno quando l'argomento manca, e per cui
+nil è un argomento che manca: è così che un modulo passa avanti un argomento
+facoltativo che non ha ricevuto. Le primitive delle liste di risultati leggono
+BUFFER allo stesso modo, con `named_buffer`;
 `movement_count` e `repeat_count`, i conteggi (@primitive-modifica); `width`,
 una larghezza o una colonna, che oltre `WIDTH_LIMIT`, un milione di caratteri,
 dà l'errore di Emacs `(args-out-of-range N)`, con `out_of_range`: una stringa

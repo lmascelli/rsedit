@@ -226,11 +226,24 @@ fn asked_about<B: BufferTrait>(
     index: usize,
     ctx: &EditorState<B>,
 ) -> Option<String> {
-    match args.get(index) {
-        Some(ELispExp::String(name)) if !name.is_empty() => Some(name.to_string()),
-        Some(ELispExp::Symbol(name)) if &**name != "nil" => Some(name.to_string()),
-        _ => current_buffer_of_results(ctx)
+    match named_buffer(args.get(index)) {
+        Some(name) => Some(name),
+        None => current_buffer_of_results(ctx)
             .or_else(|| Some(ctx.get_current_buffer_name()).filter(|name| has_results(ctx, name))),
+    }
+}
+
+/// Returns the buffer ARG names, or `None` when it names none: left off,
+/// nil, the empty string or anything but a name. Nil is not the buffer
+/// called `nil`, which is how a module passes on an optional argument it was
+/// not given; every primitive of the lists reads BUFFER with this.
+fn named_buffer<B: BufferTrait>(arg: Option<&ELispExp<B>>) -> Option<String> {
+    match arg {
+        Some(exp) if exp.is_nil() => None,
+        Some(ELispExp::String(name) | ELispExp::Symbol(name)) if !name.is_empty() => {
+            Some(name.to_string())
+        }
+        _ => None,
     }
 }
 
@@ -414,16 +427,11 @@ primitive!(results_buffer, _args, _env, ctx, {
 });
 
 pub const RESULTS_SELECT_DOC: &str = "(results-select &optional BUFFER): Make the list in BUFFER, \
-         or in the current buffer, the one `next-error' walks. Return its name, or nil when \
-         BUFFER holds no list.";
+         or in the current buffer when BUFFER is nil or left off, the one `next-error' walks. \
+         Return its name, or nil when BUFFER holds no list.";
 
 primitive!(results_select, args, _env, ctx, {
-    // TODO(RIC-9): a BUFFER of nil is taken as the buffer named nil.
-    let name = match args.first() {
-        Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),
-        Some(ELispExp::Symbol(name)) => name.to_string(),
-        _ => ctx.get_current_buffer_name(),
-    };
+    let name = named_buffer(args.first()).unwrap_or_else(|| ctx.get_current_buffer_name());
     if !has_results(ctx, &name) {
         return Ok(ELispExp::nil());
     }
@@ -432,9 +440,9 @@ primitive!(results_select, args, _env, ctx, {
 });
 
 pub const RESULTS_PUT_DOC: &str = "(results-put PATTERN OVER ENTRIES &optional BUFFER): Attach \
-         ENTRIES to BUFFER, or to the current buffer, as a list of places, make it the list \
-         `next-error' walks, and return how many there are. PATTERN and OVER say what was looked \
-         for, and where. An entry is (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END), \
+         ENTRIES to BUFFER, or to the current buffer when BUFFER is nil or left off, as a list of \
+         places, make it the list `next-error' walks, and return how many there are. PATTERN and \
+         OVER say what was looked for, and where. An entry is (KIND SOURCE LINE COLUMN OFFSET TEXT MATCH-START MATCH-END), \
          and all but KIND and SOURCE may be left off; a ninth element is the line of BUFFER it \
          is shown on, which is otherwise taken to follow one header line.\n\n\
          Example:\n\
@@ -455,12 +463,7 @@ primitive!(results_put, args, _env, ctx, {
         ELispExp::String(text) => text.to_string(),
         other => risp::lisp_display(other),
     };
-    // TODO(RIC-9): a BUFFER of nil is taken as the buffer named nil.
-    let buffer = match args.get(3) {
-        Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),
-        Some(ELispExp::Symbol(name)) => name.to_string(),
-        _ => ctx.get_current_buffer_name(),
-    };
+    let buffer = named_buffer(args.get(3)).unwrap_or_else(|| ctx.get_current_buffer_name());
     let mut results = Results::new(&pattern, &over);
     for item in args[2].iter() {
         let parts: Vec<ELispExp<B>> = item.iter().collect();

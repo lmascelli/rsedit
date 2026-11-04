@@ -622,6 +622,37 @@ mod tests {
         );
     }
 
+    /// A BUFFER of nil was the buffer called `nil`: the list went nowhere,
+    /// though the answer counted its entries, and `next-error` had nothing to
+    /// walk.
+    #[test]
+    fn a_buffer_of_nil_is_the_current_buffer() {
+        let (ctx, env) = editor("one\ntwo\nthree\n");
+        assert_eq!(
+            run(
+                r#"(results-put "p" "o" '(("buffer" "*scratch*" 2)) nil)"#,
+                &env,
+                &ctx
+            ),
+            LispExp::number(1.0)
+        );
+        assert_eq!(
+            run("(results-buffer)", &env, &ctx),
+            LispExp::string("*scratch*".to_string())
+        );
+        assert_eq!(
+            run(r#"(results-count "*scratch*")"#, &env, &ctx),
+            LispExp::number(1.0)
+        );
+        run("(results-select \"\")", &env, &ctx);
+        assert_eq!(
+            run("(results-select nil)", &env, &ctx),
+            LispExp::string("*scratch*".to_string()),
+            "and selecting with nil picks the current buffer's"
+        );
+        assert_eq!(fields(&run("(next-error)", &env, &ctx))[2], "2");
+    }
+
     #[test]
     fn a_list_that_is_still_growing_is_asked_before_each_step() {
         // What a compilation needs: its output arrives line by line, so the

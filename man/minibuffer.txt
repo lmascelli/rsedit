@@ -92,7 +92,9 @@ ASKING FROM LISP
     the text and returns a list of strings. MODE is the major mode the
     prompt is edited in, and so what its keys do -- an incremental search
     gives its own -- and KEY names the history it keeps, PROMPT itself when
-    it is not given.
+    it is not given. Either may be nil, which is the same as leaving it
+    out: (minibuffer-read PROMPT ON-CONFIRM nil nil nil KEY) names a
+    history and keeps minibuffer-mode.
 
     A command that declares its arguments needs none of this: the editor
     asks for them, with these prompts, before it runs the command. See

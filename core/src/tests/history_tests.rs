@@ -7,6 +7,7 @@
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
+    use crate::input::{KeyCode, KeyEvent, KeyModifiers};
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
@@ -135,6 +136,64 @@ mod tests {
             run(r#"(minibuffer-history "Open file:")"#, &env, &ctx).is_nil(),
             "nothing was filed under the wording"
         );
+    }
+
+    /// Pressed as keys, not called: a MODE of nil opened the prompt in the
+    /// mode `nil`, where Return wrote a newline, Escape did nothing and the
+    /// answer never came.
+    #[test]
+    fn a_mode_of_nil_is_minibuffer_mode_and_its_keys_answer() {
+        let (ctx, env) = editor();
+        run(
+            r#"(setq got nil)
+               (minibuffer-read "P:" (lambda (s) (setq got s)) nil nil nil "key")"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(major-mode)", &env, &ctx),
+            LispExp::symbol("minibuffer-mode".into())
+        );
+        for code in [KeyCode::Char('h'), KeyCode::Char('i'), KeyCode::Enter] {
+            ctx.handle_key_event(
+                KeyEvent {
+                    code,
+                    modifiers: KeyModifiers::default(),
+                },
+                &env,
+            );
+        }
+        assert_eq!(run("got", &env, &ctx), LispExp::string("hi".to_string()));
+        assert_eq!(
+            strings(&run(r#"(minibuffer-history "key")"#, &env, &ctx)),
+            vec!["hi"]
+        );
+    }
+
+    /// A KEY of nil filed the answer under a history called `nil`.
+    #[test]
+    fn a_key_of_nil_is_the_prompt_s_own_history() {
+        let (ctx, env) = editor();
+        run(
+            r#"(minibuffer-read "Ask:" nil nil nil nil nil)"#,
+            &env,
+            &ctx,
+        );
+        type_in("x", &ctx);
+        run("(minibuffer-confirm)", &env, &ctx);
+        assert_eq!(
+            strings(&run(r#"(minibuffer-history "Ask:")"#, &env, &ctx)),
+            vec!["x"]
+        );
+        assert!(run(r#"(minibuffer-history "nil")"#, &env, &ctx).is_nil());
+    }
+
+    #[test]
+    fn a_mode_that_is_no_name_is_an_error_and_opens_nothing() {
+        let (ctx, env) = editor();
+        assert!(try_run(r#"(minibuffer-read "P:" nil nil nil 42)"#, &env, &ctx).is_err());
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        assert!(!ctx.minibuffer_is_open());
     }
 
     #[test]

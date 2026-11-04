@@ -199,8 +199,10 @@ LISTS FROM LISP
     it, the entries are taken to follow one header line, one to a line, as a
     search's do. `results-count', `results-entry' and `results-state' read a
     list, `results-visit' goes to one of its places, and `results-buffer'
-    names the list M-g n walks. `occur-header-lines' is how many lines of a
-    list come before its first match.
+    names the list M-g n walks. Where BUFFER may be left out, nil means
+    the same: the current buffer, or for the questions the list M-g n
+    walks. `occur-header-lines' is how many lines of a list come before its
+    first match.
 
     A list that grows while it is walked, as a compilation's does, keeps a
     function under the buffer property results-refresh, with `buffer-put':
