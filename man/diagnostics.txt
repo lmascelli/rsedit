@@ -50,8 +50,14 @@ THE LOG FILE
     within a quarter of a second. The last lines are written as the editor
     exits, after a crash too, when they are the ones that say why.
 
+    The file is one editor's. A second editor started while the first is
+    running logs to rsedit-PID.log beside it, PID being its process's
+    number, and its log says so; the first keeps rsedit.log.
+
     When the cache directory cannot be made, or the file cannot be
-    written, there is no log file, and the editor starts all the same.
+    written, there is no log file, and the editor starts all the same,
+    saying so in the echo area and in its log, with why: C-h e shows the
+    log it keeps in memory.
 
 WHEN A COMMAND FAILS
     The command stops, and the editor calls `report-error' with what went

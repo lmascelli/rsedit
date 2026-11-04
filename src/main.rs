@@ -99,15 +99,15 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(err) => return Err(format!("rsedit could not start: {err:?}").into()),
     };
     let _shut_down = ShutDownOnExit(&state);
-    // The log, in the cache directory, made if it is not there yet.
-    // TODO(AVV-8): without a cache directory, or a log file that can be
-    // written in it, the editor runs with no log file, and nothing says so.
-    if let Ok(cache) = app_dir(DirOptions {
-        dir: AppDir::Cache,
-        create: true,
-    }) {
-        let _ = state.enable_log_file(cache.join(LOG_FILE));
-    }
+    // The log, in the cache directory, made if it is not there yet; or, when
+    // there can be none, the reason said in the log and the echo area.
+    state.start_log_file(
+        app_dir(DirOptions {
+            dir: AppDir::Cache,
+            create: true,
+        }),
+        LOG_FILE,
+    );
 
     for file in options.files {
         let ast = ELispExp::form(vec![

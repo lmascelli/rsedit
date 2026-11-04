@@ -214,7 +214,7 @@ front-end usa sono pochi:
   [`on_background_change(sveglia)`], [Una funzione che il lavoro di sfondo chiama quando ha cambiato lo schermo: sveglia il ciclo del front-end (@utenti-sfondo).],
   [`is_running()`], [Falso dopo `quit`.],
   [`shutdown(entro)`], [All'uscita, anche per un panic: ferma il lavoro di sfondo e scrive nel file le ultime righe del log.],
-  [`enable_log_file`, `log_diagnostic`, `set_echo_message`, `take_backtrace_suffix`], [Diagnostica.],
+  [`start_log_file`, `enable_log_file`, `log_diagnostic`, `set_echo_message`, `take_backtrace_suffix`], [Diagnostica.],
 )
 
 == I thread
@@ -268,15 +268,29 @@ fermato #rapporto("SHL-5").
 
 `src/main.rs` legge la riga di comando --- i file da aprire, `--gui`,
 `--font FILE` e `--help` --- e chiama `create_global_env::<GapBuffer>()`; poi
-attiva il file di log `rsedit.log` nella directory della cache (@directory),
-senza dirlo se non ci riesce #rapporto("AVV-8") e senza separarlo da quello di
-un altro editor aperto insieme #rapporto("AVV-6"), apre ogni file della riga di comando valutando `(find-file PERCORSO)` ed entra
+attiva il file di log `rsedit.log` nella directory della cache (@directory)
+con `start_log_file`, apre ogni file della riga di comando valutando
+`(find-file PERCORSO)` ed entra
 nel ciclo di un front-end: `tui_main`, il terminale, se lo standard input è un
 terminale e `--gui` non è chiesto, altrimenti `gui_main`, una finestra
 grafica. Un errore di avvio dell'interprete viene stampato e il programma
 esce; un errore di `find-file` finisce nell'area dei messaggi. All'uscita,
 anche per un panic, `ShutDownOnExit` chiama `shutdown`, che ferma il lavoro di
 sfondo e scrive nel file le ultime righe del log.
+
+Il file di log è di un editor solo. `enable_log_file` lo apre senza
+troncarlo, ne prende il blocco del sistema operativo (`File::try_lock`) e
+solo allora lo svuota, e lo scrive in coda: un secondo editor aperto insieme,
+trovandolo bloccato, scrive in `rsedit-PID.log` accanto, e lo dice nel log.
+Prima il secondo troncava il file del primo, che continuava a scrivere dalla
+posizione a cui era arrivato, sopra le righe dell'altro. Il blocco se ne va
+con il processo, anche dopo un crash, e l'editor che parte dopo riprende
+`rsedit.log`; dove il filesystem non ha blocchi, il file si usa come prima.
+Quando non c'è una directory della cache, o il file non si può creare,
+`start_log_file` lo dice nel log e nell'area messaggi, se lì non c'è già
+altro da dire, come l'errore di `init.lisp`: l'editor parte con il log in
+memoria soltanto, e chi cercasse il file dopo un crash saprebbe perché non
+c'è.
 
 #canvas(height: 8.4cm)[
   #lane(1.5cm, 0cm, 8.3cm, [`main.rs`], fill: accent.lighten(85%))

@@ -83,8 +83,8 @@ impl Log {
                 .collect()
         };
         if !text.is_empty() {
-            // TODO(AVV-6): written where this file had got to, over the lines
-            // a second editor sharing it has written there.
+            // At the end of the file, which this editor alone writes: it is
+            // opened to append, and locked while the editor runs.
             let _ = file.write_all(text.as_bytes());
         }
     }

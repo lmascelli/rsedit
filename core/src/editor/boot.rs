@@ -6,6 +6,10 @@
 use super::*;
 use crate::paths::{AppDir, CACHE_DIR, CONFIG_DIR, DATA_DIR, DirOptions, app_dir};
 
+/// What the echo area says when the editor starts, until something has more
+/// to say.
+pub(crate) const WELCOME: &str = "Welcome to rsedit";
+
 /// The `init.lisp` the editor writes for somebody who has none.
 ///
 /// `require` lines and settings, and nothing that needs a macro: the modules
@@ -111,7 +115,7 @@ impl<B: BufferTrait> EditorState<B> {
             work,
             background_change,
             buffers: Arc::new(RwLock::new(buffers)),
-            echo_message: Arc::new(RwLock::new(EchoMessage::new("Welcome to rsedit"))),
+            echo_message: Arc::new(RwLock::new(EchoMessage::new(WELCOME))),
             modes: Arc::new(RwLock::new(Modes::new(keymaps))),
             grammar_epoch: Arc::new(AtomicU64::new(0)),
             syntax_changed,

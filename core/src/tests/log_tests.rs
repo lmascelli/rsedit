@@ -185,4 +185,135 @@ mod tests {
         assert!(text().ends_with("\nthe last word\n"), "{}", text());
         let _ = std::fs::remove_file(&path);
     }
+
+    // ---------------- one editor to a file ----------------
+
+    /// A directory of its own for one test's log files, gone when it is.
+    struct LogDir(PathBuf);
+
+    impl LogDir {
+        fn new(name: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("rsedit-log-dir-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("a scratch directory");
+            LogDir(dir)
+        }
+
+        fn read(&self, name: &str) -> String {
+            std::fs::read_to_string(self.0.join(name)).unwrap_or_default()
+        }
+    }
+
+    impl Drop for LogDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The second editor emptied the first one's file and wrote over its
+    /// lines: one file, two writers, each from where it had got to.
+    #[test]
+    fn a_second_editor_logs_to_a_file_of_its_own() {
+        use crate::LispContext;
+        let dir = LogDir::new("two");
+        let path = dir.0.join("rsedit.log");
+        let (first, _) = create_global_env::<GapBuffer>().expect("global env");
+        assert_eq!(first.enable_log_file(&path).expect("a log file"), path);
+        first.log_diagnostic("the first editor's line");
+        first.work().watch_once();
+
+        let (second, _) = create_global_env::<GapBuffer>().expect("global env");
+        let own = second.enable_log_file(&path).expect("a log file");
+        let own_name = format!("rsedit-{}.log", std::process::id());
+        assert_eq!(own, dir.0.join(&own_name));
+        second.log_diagnostic("the second editor's line");
+        second.work().watch_once();
+        first.log_diagnostic("the first editor again");
+        first.work().watch_once();
+
+        let mine = dir.read("rsedit.log");
+        assert!(mine.contains("\nthe first editor's line\n"), "{mine}");
+        assert!(mine.ends_with("\nthe first editor again\n"), "{mine}");
+        assert!(!mine.contains("second editor"), "{mine}");
+        let theirs = dir.read(&own_name);
+        assert!(theirs.contains("the second editor's line"), "{theirs}");
+        assert!(
+            second
+                .get_logs()
+                .iter()
+                .any(|line| line.contains("is in use by another rsedit")),
+            "and the second says where it logs"
+        );
+    }
+
+    /// The file still begins again at each start, as the diagnostics page says.
+    #[test]
+    fn a_log_file_left_from_before_is_emptied_when_taken() {
+        let dir = LogDir::new("left");
+        let path = dir.0.join("rsedit.log");
+        std::fs::write(&path, "an old session\n").expect("an old log");
+        let (editor, _) = create_global_env::<GapBuffer>().expect("global env");
+        editor.enable_log_file(&path).expect("a log file");
+        editor.work().watch_once();
+        assert!(!dir.read("rsedit.log").contains("an old session"));
+    }
+
+    // ---------------- no file at all ----------------
+
+    /// Without a cache directory, or with a log file that cannot be made in
+    /// it, the editor ran with its log in memory alone, and said nothing.
+    #[test]
+    fn with_no_cache_directory_the_editor_says_it_has_no_log_file() {
+        let (editor, _) = create_global_env::<GapBuffer>().expect("global env");
+        let started = editor.start_log_file(
+            Err(crate::DirError::Undetermined(crate::AppDir::Cache)),
+            "rsedit.log",
+        );
+        assert_eq!(started, None);
+        assert!(
+            editor
+                .get_logs()
+                .iter()
+                .any(|line| line.starts_with("[WARNING] No log file")),
+            "{:?}",
+            editor.get_logs()
+        );
+        assert!(editor.get_echo_message().starts_with("No log file"));
+    }
+
+    #[test]
+    fn a_log_file_that_cannot_be_made_is_named_and_does_not_hide_another_message() {
+        let dir = LogDir::new("blocked");
+        // A file where the cache directory should be.
+        let blocked = dir.0.join("cache");
+        std::fs::write(&blocked, "not a directory").expect("a file");
+        let (editor, _) = create_global_env::<GapBuffer>().expect("global env");
+        editor.set_echo_message("init.lisp stopped at an error");
+        assert_eq!(
+            editor.start_log_file(Ok(blocked.clone()), "rsedit.log"),
+            None
+        );
+        let said = editor.get_logs().join("\n");
+        assert!(
+            said.contains(&blocked.join("rsedit.log").display().to_string()),
+            "{said}"
+        );
+        assert_eq!(editor.get_echo_message(), "init.lisp stopped at an error");
+    }
+
+    #[test]
+    fn a_cache_directory_that_works_gets_the_log() {
+        let dir = LogDir::new("works");
+        let (editor, _) = create_global_env::<GapBuffer>().expect("global env");
+        assert_eq!(
+            editor.start_log_file(Ok(dir.0.clone()), "rsedit.log"),
+            Some(dir.0.join("rsedit.log"))
+        );
+        assert_eq!(
+            editor.get_echo_message(),
+            "Welcome to rsedit",
+            "nothing to say"
+        );
+    }
 }
