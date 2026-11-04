@@ -761,7 +761,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-TUI-3-4-5",
+    commit: "efc7540",
     titolo: [Le tabulazioni non vengono espanse],
   ),
   (
@@ -769,7 +769,7 @@
     gravita: "media",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-TUI-3-4-5",
+    commit: "efc7540",
     titolo: [I caratteri larghi contano come una colonna],
   ),
   (
@@ -777,7 +777,7 @@
     gravita: "media",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-TUI-3-4-5",
+    commit: "efc7540",
     titolo: [Un colore esadecimale con caratteri non ASCII manda l'editor in panic],
   ),
   (
