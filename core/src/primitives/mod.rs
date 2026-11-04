@@ -64,7 +64,7 @@ mod replace;
 pub(crate) mod results;
 mod scan;
 mod sexp;
-mod shell;
+pub(crate) mod shell;
 mod syntax_table;
 mod theme;
 mod undo;

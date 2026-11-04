@@ -77,6 +77,7 @@ pub(crate) use frame::TURN_INTERVAL;
 pub use keys::KEY_CAPTURE_FUNCTION;
 pub(crate) use loader::MODULE_KINDS;
 pub(crate) use replace::REPLACE_QUESTION;
+pub(crate) use runtime::ShellProcess;
 pub use settings::*;
 pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED, WorkerTurn, in_worker};
 
@@ -181,6 +182,13 @@ pub struct EditorState<B: BufferTrait> {
     /// answers. A count, since several can run at once, each into a buffer of
     /// its own.
     shell_commands: Arc<AtomicUsize>,
+
+    /// The processes of this editor's shell commands, for as long as anything
+    /// holds them: what [`EditorState::shutdown`] kills once its wait is over,
+    /// so that a command that ignores `TERM` does not outlive the editor.
+    /// Weak, so that a command that has ended is not kept here.
+    shell_processes:
+        Arc<std::sync::Mutex<Vec<std::sync::Weak<std::sync::Mutex<Option<std::process::Child>>>>>>,
 
     /// The buffer whose results `next-error` walks, if any.
     ///

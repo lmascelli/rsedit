@@ -30,7 +30,8 @@ const SHUTDOWN_WAIT: Duration = Duration::from_millis(500);
 
 /// Shuts the editor's background work down when it is dropped, as `main`
 /// returns or a panic unwinds through it: every job is told, every dedicated
-/// thread is asked to stop, and the log's last lines reach its file.
+/// thread is asked to stop, the log's last lines reach its file, and the shell
+/// commands still running are killed, so that none outlives the editor.
 struct ShutDownOnExit<'a>(&'a EditorState<BufferType>);
 
 impl Drop for ShutDownOnExit<'_> {

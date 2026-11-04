@@ -122,6 +122,7 @@ impl<B: BufferTrait> EditorState<B> {
             windows: Arc::new(RwLock::new(Windows::default())),
             commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
+            shell_processes: Arc::new(std::sync::Mutex::new(Vec::new())),
             current_results: Arc::new(RwLock::new(None)),
             macros: Arc::new(RwLock::new(Macros::default())),
             command_errors: Arc::new(AtomicUsize::new(0)),

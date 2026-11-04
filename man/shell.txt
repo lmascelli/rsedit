@@ -8,6 +8,7 @@ SYNOPSIS
     (shell-command-start COMMAND &optional MODE PRODUCER)
     (shell-command-to-string COMMAND)
     (shell-command-running-p)
+    (shell-quote-argument ARGUMENT)
     (parse-overstrike TEXT)
     shell-output-window-height
 
@@ -55,7 +56,9 @@ STOPPING ONE
     buffer. The command, and everything it started, is asked to stop, and
     is stopped outright two seconds later if it has not; the buffer ends
     with --- killed ---. Where the command has ended already, C-c C-k
-    says so and does nothing.
+    says so and does nothing. Leaving the editor stops every command that
+    is running the same way, and what has not gone half a second later is
+    stopped outright, so that no command outlives the editor.
 
     A command that is running is in (work-list), as a thread named after
     its buffer, and (stop-worker NAME) with that name stops it from
@@ -75,6 +78,11 @@ FROM LISP
 
     `shell-command-running-p' says how many commands are running, or nil
     when none is.
+
+    `shell-quote-argument' returns its argument quoted so that the shell
+    reads it as one word, as written: a name put into a command line with
+    it cannot be read as more of the command, whatever spaces, ; or * it
+    has.
 
     `parse-overstrike' reads the text man prints for a terminal, where a
     letter in bold is printed, then a backspace, then printed again, and

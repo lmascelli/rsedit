@@ -76,7 +76,7 @@ fn start(command: &str, directory: &str) -> std::io::Result<(Child, PipeReader)>
 /// Waited for under the same lock that a signal is sent under. Once a process
 /// has been waited for, its number is free to be given to another, and a
 /// signal sent to that number then would reach a stranger.
-type Process = Arc<Mutex<Option<Child>>>;
+type Process = crate::editor::ShellProcess;
 
 fn lock(process: &Process) -> std::sync::MutexGuard<'_, Option<Child>> {
     // A poisoned lock still guards a process that has to be stopped.
@@ -105,9 +105,6 @@ fn signal_group(group: u32, signals: &[&str]) {
         .status();
 }
 
-// TODO(SHL-5): the `KILL` comes from a thread outside the WorkManager, and an
-// editor that exits before it is sent leaves a command that ignores `TERM`
-// running.
 /// Asks PROCESS to stop: `TERM` to its whole group at once, and `KILL` after
 /// [`GRACE`] to whatever of it is still there. `CONT` after the `TERM`, for
 /// whatever of it the system had stopped: until it is continued, a stopped
@@ -115,7 +112,9 @@ fn signal_group(group: u32, signals: &[&str]) {
 ///
 /// What [`Stop::on_cancel`] runs, on the thread that asked: so it waits for
 /// nothing. The `KILL` comes from a thread of its own, which finds nothing to
-/// do when the command went on the `TERM`.
+/// do when the command went on the `TERM`. An editor that exits sooner than
+/// that takes the thread with it, and kills what is left itself: see
+/// [`kill_left_over`].
 fn stop_process(process: &Process) {
     #[cfg(unix)]
     {
@@ -140,6 +139,17 @@ fn stop_process(process: &Process) {
     }
     #[cfg(not(unix))]
     kill(process);
+}
+
+/// Kills, with their groups, the shell commands of CTX that have not ended:
+/// at the end of [`EditorState::shutdown`], once the wait for them to go on
+/// their `TERM` is over. Without it, a command that ignored `TERM` outlived
+/// the editor, in a group no terminal was watching, since the `KILL` after
+/// [`GRACE`] comes later than an exit.
+pub(crate) fn kill_left_over<B: BufferTrait>(ctx: &EditorState<B>) {
+    for process in ctx.shell_processes() {
+        kill(&process);
+    }
 }
 
 /// Kills PROCESS, and its group with it, if it has not been waited for.
@@ -358,6 +368,7 @@ primitive!(shell_command_start, args, env, ctx, {
     };
 
     let process: Process = Arc::new(Mutex::new(Some(child)));
+    ctx.remember_shell_process(&process);
 
     let name = if let Some(producer) = producer {
         ctx.prepare_results_buffer(&producer, OUTPUT_BUFFER, &mode, None, &env)
@@ -417,6 +428,35 @@ primitive!(shell_command_running_p, _args, _env, ctx, {
     } else {
         ELispExp::number(running as f64)
     })
+});
+
+/// Returns ARGUMENT written so that the shell reads it as one word, as it is:
+/// between single quotes for `/bin/sh`, each single quote inside it written
+/// `'\''`; between double quotes for `cmd`, each double quote inside doubled.
+pub(crate) fn shell_quote(argument: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{}\"", argument.replace('"', "\"\""))
+    } else {
+        format!("'{}'", argument.replace('\'', "'\\''"))
+    }
+}
+
+pub const SHELL_QUOTE_ARGUMENT_DOC: &str = "(shell-quote-argument ARGUMENT): Return ARGUMENT, a \
+         string, quoted so that the shell reads it as one word, exactly as written: spaces, `;', \
+         `*', `$' and quotes and all. For a name put into a command line, which the shell would \
+         otherwise read as more of the command.\n\n\
+         Example:\n\
+         (shell-command-to-string (concat \"ls -l \" (shell-quote-argument file)))";
+
+primitive!(shell_quote_argument, args, _env, _ctx, {
+    exact_arity(args, 1)?;
+    let Some(ELispExp::String(argument)) = args.first() else {
+        return Err(EvalError::WrongArgumentType {
+            expected: "String".into(),
+            got: args.first().cloned().unwrap_or_else(ELispExp::nil),
+        });
+    };
+    Ok(ELispExp::string(shell_quote(argument)))
 });
 
 pub const SHELL_COMMAND_TO_STRING_DOC: &str = "(shell-command-to-string COMMAND): Run COMMAND \
@@ -592,6 +632,11 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         SHELL_COMMAND_TO_STRING_DOC,
     );
     into.function("parse-overstrike", parse_overstrike, PARSE_OVERSTRIKE_DOC);
+    into.function(
+        "shell-quote-argument",
+        shell_quote_argument,
+        SHELL_QUOTE_ARGUMENT_DOC,
+    );
     into.function(
         "shell-command-running-p",
         shell_command_running_p,

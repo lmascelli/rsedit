@@ -385,4 +385,58 @@ mod tests {
             "no backspace should survive into the buffer"
         );
     }
+
+    // ----------------------------------------------------------------
+    // A name is not a command
+    // ----------------------------------------------------------------
+
+    /// The name went to the shell as it was: `printf;touch FILE` made FILE,
+    /// and `printf(3)` was a syntax error that read like a missing page.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_reaches_man_and_not_the_shell() {
+        let (ctx, env) = editor();
+        let made = std::env::temp_dir().join(format!("rsedit-man-{}", std::process::id()));
+        let _ = std::fs::remove_file(&made);
+        run(
+            &format!(
+                r#"(manpage--system-page "printf;touch {}")"#,
+                made.display()
+            ),
+            &env,
+            &ctx,
+        );
+        assert!(!made.exists(), "the shell ran what followed the ;");
+        assert_eq!(
+            text_of(&run(r#"(manpage--man-arguments "printf(3)")"#, &env, &ctx)),
+            "'3' 'printf'",
+            "a section in brackets, as Emacs reads it"
+        );
+        assert_eq!(
+            text_of(&run(r#"(manpage--man-arguments "a b*")"#, &env, &ctx)),
+            "'a b*'"
+        );
+    }
+
+    /// The editor's own page was a path made by joining the name: `../`
+    /// left the directory of the pages.
+    #[test]
+    fn an_editor_page_name_cannot_leave_its_directory() {
+        let (ctx, env) = editor();
+        for (name, allowed) in [
+            ("shell", true),
+            ("risp-base-index", true),
+            ("../secret", false),
+            ("a/b", false),
+            ("..", false),
+            ("x..y", false),
+        ] {
+            let answer = run(
+                &format!(r#"(manpage--rsedit-page-name-p {name:?})"#),
+                &env,
+                &ctx,
+            );
+            assert_eq!(answer.is_truthy(), allowed, "{name}");
+        }
+    }
 }

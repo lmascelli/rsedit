@@ -258,7 +258,8 @@ quando l'effetto deve toccare l'interfaccia: lasciano una #emph[callback
 dovuta], che il thread principale esegue tra un comando e l'altro
 (@utenti-sfondo). Fuori dal WorkManager restano i thread di `(spawn ...)`, che
 l'interprete avvia da sé, e il breve `stop shell` di un comando di shell
-fermato #rapporto("SHL-5").
+fermato, che un'uscita non aspetta: a quel punto è `shutdown` a uccidere ciò
+che resta dei comandi (@comandi-shell).
 
 // ===========================================================================
 = Il ciclo di vita del programma <ciclo-vita>
@@ -4073,9 +4074,13 @@ comando gira in un gruppo di processi suo, e la richiesta raggiunge tutto ciò
 che ha avviato: su Unix l'azione di sblocco manda `TERM` e `CONT` al gruppo,
 con il `kill` della shell, perché la libreria standard segnala un processo e
 non un gruppo, e un thread breve, `stop shell`, avviato fuori dal WorkManager,
-manda `KILL` due secondi dopo a ciò che resta. All'uscita dell'editor quel
-`KILL` non arriva, e un comando che ignora `TERM` resta vivo
-#rapporto("SHL-5"). Ciò che ha lasciato il gruppo, come un demone, non viene
+manda `KILL` due secondi dopo a ciò che resta. All'uscita quel thread se ne va
+con l'editor prima del `KILL`, e per questo l'editor tiene, per riferimento
+debole, i processi dei suoi comandi (`remember_shell_process`): `shutdown`,
+finita la sua attesa di mezzo secondo, manda `KILL` ai gruppi di quelli ancora
+vivi (`kill_left_over`), e un comando che ignora `TERM` non sopravvive
+all'editor. La lista è dell'editor e non del processo, così che un editor non
+uccida i comandi di un altro, come in un processo di test. Ciò che ha lasciato il gruppo, come un demone, non viene
 raggiunto, e se tiene l'output che ha ricevuto la lettura resta aperta: la riga
 finale aspetta che lo lasci. `shell-command-to-string`, invece, aspetta il comando sul thread che
 lo chiama e ne restituisce lo stdout. Il buffer dell'output tiene come
@@ -6342,7 +6347,11 @@ in `*Help*`, con una pila per tornare indietro.
 `C-h m` chiede una pagina, completando su tutte quelle installate, e `K` apre
 quella nominata dalla parola sotto il cursore; le pagine dell'editor vengono
 prima. `man` formatta quelle del sistema, con `manpage-path` come `MANPATH`.
-#rapporto("SHL-4")
+Il nome arriva alla shell tra apici, con `shell-quote-argument`, e
+`printf(3)` diventa la sezione e il nome, `3 printf`, come in Emacs: un nome
+con spazi, `;` o `*` arriva a `man` e non alla shell. Una pagina dell'editor
+si cerca solo per un nome di lettere, cifre, `.`, `_`, `+` e `-`, senza `..`,
+che non può uscire dalla directory delle pagine.
 
 + *La variabile decide ciò che si trova.* `manpage-path` è il `MANPATH` di
   `man`, non solo l'elenco del completamento.

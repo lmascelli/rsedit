@@ -900,4 +900,45 @@ mod tests {
         );
         assert_eq!(ctx.shell_commands_running(), 0);
     }
+
+    /// At the editor's exit a command was asked to stop, and the `KILL` after
+    /// the grace came from a thread that went with the editor: one that
+    /// ignored `TERM` lived on, in a group no terminal was watching.
+    #[cfg(unix)]
+    #[test]
+    fn a_command_that_ignores_term_does_not_outlive_the_editor() {
+        let (ctx, env) = editor();
+        let name = started(
+            r#"(shell-command-start "trap '' TERM; echo started; sleep 34.25")"#,
+            &env,
+            &ctx,
+        );
+        shows(&ctx, &name, "\nstarted\n");
+        let exiting = Instant::now();
+        // As the binary does, with its half a second.
+        ctx.shutdown(Duration::from_millis(500));
+        gone("sleep 34.25");
+        assert!(
+            exiting.elapsed() < Duration::from_millis(1_900),
+            "killed at the end of the wait, not after the grace: {:?}",
+            exiting.elapsed()
+        );
+    }
+
+    /// What `shell-quote-argument` returns is one word to the shell, read
+    /// back exactly as it was written.
+    #[cfg(unix)]
+    #[test]
+    fn a_quoted_argument_reaches_the_command_whole() {
+        let (ctx, env) = editor();
+        let word = "a b; it's $HOME * `x`";
+        let printed = run(
+            &format!(
+                r#"(shell-command-to-string (concat "printf '%s|' " (shell-quote-argument {word:?})))"#
+            ),
+            &env,
+            &ctx,
+        );
+        assert_eq!(printed, LispExp::string(format!("{word}|")));
+    }
 }

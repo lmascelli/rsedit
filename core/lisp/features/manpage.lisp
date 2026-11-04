@@ -42,29 +42,43 @@ places when there is none.")
   "Where this editor's own pages were installed, or nil."
   (data-directory "man"))
 
+(defun manpage--rsedit-page-name-p (name)
+  "Whether NAME can be one of this editor's pages: letters, digits, `.', `_',
+`+' and `-', and no `..' -- nothing that leaves the directory of the pages."
+  (and (string-match "^[A-Za-z0-9._+-]+$" name)
+       (not (string-match "[.][.]" name))))
+
 (defun manpage--rsedit-page (name)
   "The text of this editor's page NAME, or nil."
   (let ((directory (manpage--rsedit-directory)))
-    (if (null directory)
+    (if (or (null directory) (not (manpage--rsedit-page-name-p name)))
         nil
         (read-file-to-string
          (concat (file-name-as-directory directory) name ".txt")))))
 
-;; TODO(SHL-4): NAME reaches the shell unquoted, and `manpage--rsedit-page'
-;; joins it to a path.
+(defun manpage--man-arguments (name)
+  "What man is given for NAME, quoted for the shell: `printf(3)' as the
+section and the name, `3 printf', as Emacs reads it; anything else as one
+word, so that a space, a `;' or a `*' in it reaches man and not the shell."
+  (if (string-match "^([^()]+)\\(([0-9A-Za-z]+)\\)$" name)
+      (concat (shell-quote-argument (match-string 2 name)) " "
+              (shell-quote-argument (match-string 1 name)))
+      (shell-quote-argument name)))
+
 (defun manpage--system-page (name)
   "The text of the system's page NAME, formatted by man, or nil."
   (setenv "MANPATH" (manpage--join manpage-path (path-separator)))
   ;; `man -w' first: `man' alone prints "No manual entry" on stdout on some
   ;; systems, which reads like a page.
-  (let ((located (shell-command-to-string
-                  (format "man -w %s 2>/dev/null" name))))
+  (let* ((arguments (manpage--man-arguments name))
+         (located (shell-command-to-string
+                   (format "man -w %s 2>/dev/null" arguments))))
     (if (not (manpage--located-p located))
         nil
         ;; `-P cat': no pager waiting for a key. The overstrike is stripped
         ;; when the page is shown.
         (let ((text (shell-command-to-string
-                     (format "man -P cat %s 2>/dev/null" name))))
+                     (format "man -P cat %s 2>/dev/null" arguments))))
           (if (or (null text) (string= text "")) nil text)))))
 
 (defun manpage--located-p (located)

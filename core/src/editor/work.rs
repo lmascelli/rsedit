@@ -147,8 +147,9 @@ impl<B: BufferTrait> EditorState<B> {
     ///
     /// Every job leaves with `Exit::Shutdown`, and every dedicated thread is
     /// asked to stop; what has not finished by then is left behind, named in
-    /// the log. Last, whatever the log holds that is not in its file yet is
+    /// the log. Then whatever the log holds that is not in its file yet is
     /// written there: the watchdog that writes it every turn has stopped.
+    /// Last, the shell commands still running are killed, with their groups.
     ///
     /// For the host to call once, as the editor exits -- also when it exits
     /// by a panic, or the log loses its last lines, which are the ones that
@@ -157,6 +158,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// that cycle.
     pub fn shutdown(&self, within: Duration) {
         self.work.shutdown(self, within);
+        // What of the shell commands did not go on its `TERM` within the wait
+        // goes now: their `KILL` would come after the editor has gone.
+        crate::primitives::shell::kill_left_over(self);
     }
 
     /// Returns the WorkManager: for the primitives that start, stop and list

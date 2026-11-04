@@ -18,6 +18,11 @@ fn finish_one(counter: &AtomicUsize) {
     });
 }
 
+/// A shell command's process, for as long as it has not been waited for:
+/// shared between the thread reading it, whoever asks it to stop, and the
+/// editor, which kills what is left of it at the end.
+pub(crate) type ShellProcess = Arc<std::sync::Mutex<Option<std::process::Child>>>;
+
 impl<B: BufferTrait> EditorState<B> {
     // ------------------------------------------------------------------
     // Running
@@ -84,6 +89,27 @@ impl<B: BufferTrait> EditorState<B> {
     /// thread, once the last of its output is in its buffer.
     pub(crate) fn finish_shell_command(&self) {
         finish_one(&self.shell_commands);
+    }
+
+    /// Remembers PROCESS, a shell command's, until it ends: see
+    /// [`Self::shell_processes`].
+    pub(crate) fn remember_shell_process(&self, process: &ShellProcess) {
+        let mut processes = self
+            .shell_processes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        processes.retain(|process| process.strong_count() > 0);
+        processes.push(Arc::downgrade(process));
+    }
+
+    /// Returns the processes of the shell commands that have not ended.
+    pub(crate) fn shell_processes(&self) -> Vec<ShellProcess> {
+        self.shell_processes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect()
     }
 
     /// Returns how many shell commands are running.
