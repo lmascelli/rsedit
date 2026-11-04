@@ -337,7 +337,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-FIL-4-5-6",
+    commit: "848d312",
     titolo: [Una modifica fatta durante il salvataggio può restare non salvata ma non segnata],
   ),
   (
@@ -345,7 +345,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-FIL-4-5-6",
+    commit: "848d312",
     titolo: [Il salvataggio automatico segna come salvato anche un tentativo fallito],
   ),
   (
@@ -353,7 +353,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-FIL-4-5-6",
+    commit: "848d312",
     titolo: [Con `auto-save-directory`, due percorsi diversi possono avere la stessa copia],
   ),
   // ------------------------------------------------------------------ AVV
