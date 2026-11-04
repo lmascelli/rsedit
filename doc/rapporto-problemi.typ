@@ -481,7 +481,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-SIN-4-5",
+    commit: "5aead86",
     titolo: [`make-mode` su un modo esistente lo sostituisce con uno vuoto],
   ),
   (
@@ -489,7 +489,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-SIN-4-5",
+    commit: "5aead86",
     titolo: [Il registro delle facce cresce per sempre e l'indice è a 16 bit],
   ),
   (
