@@ -12,20 +12,60 @@
 ///
 /// [`Highlight`]: crate::ui::Highlight
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Face(u16);
+pub struct Face(u32);
 
-// TODO(SIN-5): the registry only grows, and the id is 16 bits.
-/// The names of every face interned so far, indexed by id: one registry for
-/// the process, since a face's name means the same thing everywhere.
-static FACE_NAMES: std::sync::LazyLock<std::sync::RwLock<Vec<std::sync::Arc<str>>>> =
-    std::sync::LazyLock::new(|| {
-        std::sync::RwLock::new(
-            Face::BUILT_IN
-                .iter()
-                .map(|(_, name)| (*name).into())
-                .collect(),
-        )
-    });
+/// The names of every face interned so far, indexed by id, and the id of each
+/// name: one registry for the process, since a face's name means the same
+/// thing everywhere.
+///
+/// It only grows, by design: a face is kept by its id in themes and in
+/// highlights, and a name forgotten could not be told from one never named.
+/// What makes it grow is a name nobody has used before, from Lisp while the
+/// editor runs -- `set-face`, an overlay's face -- and the id is 32 bits, so
+/// that a name new after the first 65 536 is not given an old one's id, as a
+/// 16-bit id cut short was.
+pub(crate) struct Registry {
+    names: Vec<std::sync::Arc<str>>,
+    ids: std::collections::HashMap<std::sync::Arc<str>, u32>,
+}
+
+impl Registry {
+    /// Returns a registry of the built-in faces, at their own ids.
+    pub(crate) fn new() -> Self {
+        let mut registry = Registry {
+            names: Vec::new(),
+            ids: std::collections::HashMap::new(),
+        };
+        for (_, name) in Face::BUILT_IN {
+            registry.intern(name);
+        }
+        registry
+    }
+
+    /// Returns the face called NAME here, giving it the next id if nothing
+    /// has named it yet; past the last id a 32-bit face can have, which no
+    /// session reaches, the default face rather than another face's id.
+    pub(crate) fn intern(&mut self, name: &str) -> Face {
+        if let Some(id) = self.ids.get(name) {
+            return Face(*id);
+        }
+        let Ok(id) = u32::try_from(self.names.len()) else {
+            return Face::DEFAULT;
+        };
+        let name: std::sync::Arc<str> = name.into();
+        self.names.push(name.clone());
+        self.ids.insert(name, id);
+        Face(id)
+    }
+
+    /// Returns the name of FACE here, if it has one.
+    pub(crate) fn name(&self, face: Face) -> Option<std::sync::Arc<str>> {
+        self.names.get(face.index()).cloned()
+    }
+}
+
+static FACE_NAMES: std::sync::LazyLock<std::sync::RwLock<Registry>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(Registry::new()));
 
 impl Face {
     /// Text with nothing said about it.
@@ -73,30 +113,26 @@ impl Face {
     ];
 
     /// Returns the face called NAME, defining it if nothing has named it yet.
-    /// A name nobody styles is drawn plain, and `list-faces` shows it.
+    /// A name nobody styles is drawn plain, and `list-faces` shows it. See
+    /// [`Registry::intern`].
     pub fn intern(name: &str) -> Face {
         // The write lock even for a name already known: a check under the
         // read lock first would need a second one under this lock anyway, and
         // interning happens while configuring, never while drawing.
-        let mut names = FACE_NAMES
+        FACE_NAMES
             .write()
-            .expect("Failed to acquire write lock on the face registry");
-        if let Some(id) = names.iter().position(|known| &**known == name) {
-            return Face(id as u16);
-        }
-        names.push(name.into());
-        Face((names.len() - 1) as u16)
+            .expect("Failed to acquire write lock on the face registry")
+            .intern(name)
     }
 
-    /// Returns the face called NAME, or `None` if nothing has named it. A
-    /// linear scan: a few dozen short names, and never while drawing.
+    /// Returns the face called NAME, or `None` if nothing has named it.
     pub fn named(name: &str) -> Option<Face> {
         FACE_NAMES
             .read()
             .expect("Failed to acquire read lock on the face registry")
-            .iter()
-            .position(|known| &**known == name)
-            .map(|id| Face(id as u16))
+            .ids
+            .get(name)
+            .map(|id| Face(*id))
     }
 
     /// Returns the name this face has in Lisp, for `set-face` and
@@ -105,8 +141,7 @@ impl Face {
         FACE_NAMES
             .read()
             .expect("Failed to acquire read lock on the face registry")
-            .get(self.index())
-            .cloned()
+            .name(self)
             // Only for a `Face` built out of a raw id, which only this module
             // can do.
             .unwrap_or_else(|| "default".into())
@@ -118,8 +153,9 @@ impl Face {
         let count = FACE_NAMES
             .read()
             .expect("Failed to acquire read lock on the face registry")
+            .names
             .len();
-        (0..count as u16).map(Face).collect()
+        (0..count as u32).map(Face).collect()
     }
 
     /// Returns where this face sits in a [`Theme`].

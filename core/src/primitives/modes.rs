@@ -28,7 +28,9 @@ fn hook_and_function<B: BufferTrait>(
 
 pub const MAKE_MODE_DOC: &str = "(make-mode NAME): Make a major mode called NAME, a symbol, with \
          no keys, hooks, colouring or syntax of its own, and return t. A mode that exists already \
-         is made again, empty.\n\n\
+         keeps its keys, hooks and completion, whoever gave them, and starts its colouring and \
+         syntax table again: its file can be loaded again, after a change, without each rule \
+         coming twice.\n\n\
          Example:\n\
          (make-mode 'conf-mode)";
 
@@ -40,12 +42,7 @@ primitive!(make_mode, args, _env, ctx, {
         })
     } else {
         if let Some(ELispExp::Symbol(mode_name)) = args.get(0) {
-            // TODO(SIN-4): a mode that exists already is replaced by an empty
-            // one, without the keys and hooks other modules gave it.
-            // Through `set_mode` rather than straight into the registry: a mode
-            // made again has a new, empty grammar, and whatever was coloured
-            // under the old one has to hear about it.
-            ctx.set_mode(mode_name, MajorMode::new(mode_name));
+            ctx.make_mode(mode_name);
             Ok(ELispExp::symbol("t".into()))
         } else {
             Err(EvalError::WrongArgumentType {

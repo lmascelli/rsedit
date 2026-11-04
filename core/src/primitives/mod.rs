@@ -5,7 +5,7 @@
 use crate::{
     BufferTrait, ELispExp, EditorState,
     input::{KeyEvent, Keymap, OnUnbound, TransientKeymap, parse_key, parse_key_sequence},
-    modes::{CommentStyle, MajorMode, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxTable},
+    modes::{CommentStyle, SyntaxClass, SyntaxRegion, SyntaxRule, SyntaxTable},
     ui::Face,
 };
 

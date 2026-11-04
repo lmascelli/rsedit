@@ -103,6 +103,30 @@ impl<B: BufferTrait> EditorState<B> {
         });
     }
 
+    /// Makes the mode NAME, empty; or, when there is one, keeps it with its
+    /// keys, hooks and completion sources and starts its grammar and syntax
+    /// table again. Returns whether it was there.
+    ///
+    /// Kept, because what other modules gave it -- electric-pair's hook, a
+    /// key bound in `init.lisp` -- would otherwise go each time the mode's
+    /// file is loaded again. The grammar and the table start again because
+    /// the file builds them by adding to them, and loaded twice would add
+    /// each rule twice; and, as for [`Self::set_mode`], what was coloured
+    /// under the old grammar hears about it.
+    pub(crate) fn make_mode(&self, name: &str) -> bool {
+        self.modes_mut(|modes| {
+            let existed = modes.edit(name, |mode| {
+                mode.grammar = crate::modes::Grammar::default();
+                mode.syntax_table = None;
+            });
+            if !existed {
+                modes.insert(name, MajorMode::new(name));
+            }
+            self.grammar_changed();
+            existed
+        })
+    }
+
     /// Changes MODE's grammar with EDIT. False when there is no such mode.
     ///
     /// Every change of a grammar goes through here or [`Self::set_mode`],

@@ -1177,6 +1177,45 @@ mod tests {
         );
     }
 
+    /// Made again, a mode was replaced by an empty one: the keys, the hooks
+    /// and the completion other modules had given it went too, each time its
+    /// file was loaded again.
+    #[test]
+    fn a_remade_mode_keeps_what_others_gave_it_and_starts_its_grammar_again() {
+        let (ctx, env) = editor_with("");
+        eval_str(
+            r#"(progn (make-mode 'toy)
+                      (add-syntax-rule 'toy "\\bfn\\b" 'keyword)
+                      (set-syntax-pairs 'toy "()")
+                      (define-key 'toy "C-c a" 'forward-char)
+                      (defun toy-setup () nil)
+                      (add-hook 'toy "find-file-hook" 'toy-setup)
+                      (make-mode 'toy)
+                      (add-syntax-rule 'toy "\\bfn\\b" 'keyword))"#,
+            &env,
+            &ctx,
+        )
+        .expect("the mode, made twice");
+        let (rules, table, hooks) = ctx.modes(|modes| {
+            let mode = modes.get("toy").expect("the mode");
+            (
+                mode.grammar.rules.len(),
+                mode.syntax_table.is_some(),
+                mode.hooks.get("find-file-hook").map_or(0, Vec::len),
+            )
+        });
+        assert_eq!(rules, 1, "the rule once, not twice");
+        assert!(!table, "the table starts again");
+        assert_eq!(hooks, 1, "the hook is kept");
+        ctx.with_buffer_mut("*scratch*", |b| b.current_mode = "toy".into());
+        assert!(
+            eval_str(r#"(key-binding "C-c a")"#, &env, &ctx)
+                .expect("asking")
+                .is_truthy(),
+            "and the key"
+        );
+    }
+
     #[test]
     fn a_buffer_whose_mode_has_no_grammar_is_left_alone() {
         let (ctx, _env) = editor_with("fn one\nfn two\n");

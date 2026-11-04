@@ -27,15 +27,17 @@ DESCRIPTION
         (set-comment-syntax 'conf-mode '(("#")))
         (add-auto-mode "\\.conf$" 'conf-mode)
 
-    `make-mode' makes the mode, and `add-auto-mode' gives it the files
-    whose names end in .conf. The lines between answer two questions, and
-    answer them apart: how the text looks, and what it means. How it looks
-    is the colouring: patterns run over each line, in the background. What
-    it means is the syntax table: which characters are brackets, and which
-    open a string or a comment. The editor reads the table the moment it
-    needs it -- for C-M-f, M-;, Tab, and the pairing of brackets -- so it
-    holds where no colour has arrived yet. A string or a comment is usually
-    declared in both.
+    `make-mode' makes the mode, and `add-auto-mode' gives it the files whose
+    names end in .conf. On a mode that exists, `make-mode' starts its
+    colouring and its table again and keeps its keys and hooks, so a mode's
+    file can be loaded again after a change. The lines between answer two
+    questions, and answer them apart: how the text looks, and what it means.
+    How it looks is the colouring: patterns run over each line, in the
+    background. What it means is the syntax table: which characters are
+    brackets, and which open a string or a comment. The editor reads the
+    table the moment it needs it -- for C-M-f, M-;, Tab, and the pairing of
+    brackets -- so it holds where no colour has arrived yet. A string or a
+    comment is usually declared in both.
 
     A mode's keys are `define-key' with its name, as the `keymaps' page
     says, and its hooks `add-hook', as `modes' says. rust-mode.lisp is a
@@ -160,10 +162,6 @@ WHAT ELSE A MODE CAN SAY
         (put 'conf-mode 'electric-pair-inhibit-quotes t) ; editing
 
 LIMITS
-    `make-mode' on a mode that exists makes it again, empty: its keys,
-    hooks, colouring and table go, whoever had added them. So a mode's file
-    is loaded once, before anything adds to the mode.
-
     A mode does not inherit from another: each says everything itself.
 
 EXAMPLES

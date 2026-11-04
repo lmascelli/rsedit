@@ -178,6 +178,32 @@ mod tests {
         }
     }
 
+    /// The id was 16 bits: the name after the first 65 536 was given the id
+    /// of an old one, and drawn in its style. A registry of the test's own,
+    /// so that the editor's is not filled with seventy thousand names.
+    #[test]
+    fn a_face_past_the_sixty_five_thousandth_has_an_id_of_its_own() {
+        use crate::ui::FaceRegistry;
+        let mut registry = FaceRegistry::new();
+        let faces: Vec<Face> = (0..70_000)
+            .map(|n| registry.intern(&format!("probe-{n}")))
+            .collect();
+        let distinct: std::collections::HashSet<Face> = faces.iter().copied().collect();
+        assert_eq!(distinct.len(), faces.len(), "every name its own id");
+        assert!(!faces.contains(&Face::DEFAULT));
+        assert_eq!(
+            registry.intern("probe-69999"),
+            faces[69_999],
+            "the same name, the same id"
+        );
+        assert_eq!(registry.name(faces[69_999]).as_deref(), Some("probe-69999"));
+        assert_eq!(
+            registry.intern("keyword"),
+            Face::KEYWORD,
+            "the built-ins where they were"
+        );
+    }
+
     // ---------------- colours ----------------
 
     #[test]

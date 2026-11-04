@@ -114,10 +114,10 @@ impl<B: BufferTrait> Modes<B> {
         self.registry.get(name)
     }
 
-    /// Adds MODE as NAME, in place of any mode of that name.
+    /// Adds MODE as NAME, in place of any mode of that name, whole. What
+    /// `make-mode` does to a mode that exists is not this: see
+    /// `EditorState::make_mode`, which keeps what others gave it.
     pub fn insert(&mut self, name: &str, mode: MajorMode<B>) {
-        // TODO(SIN-4): the old mode goes whole, with the keys and hooks other
-        // modules had added to it.
         self.registry.insert(name.to_string(), mode);
     }
 

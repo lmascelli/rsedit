@@ -17,6 +17,9 @@ pub use compose::{
     overlay_highlights, region_highlights, syntax_highlights,
 };
 pub use faces::{Color, Face, NAMED_COLORS, Style, Theme};
+// For the tests, which try a registry of their own.
+#[cfg(test)]
+pub(crate) use faces::Registry as FaceRegistry;
 pub use frame::FrameSnapshot;
 pub use gutter::{GutterCell, GutterSpec, LineNumbers};
 pub use windows::{

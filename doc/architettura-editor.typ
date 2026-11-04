@@ -3001,9 +3001,14 @@ Un buffer ha un solo modo maggiore, nominato in `current_mode`. Il modo è un
 `add-auto-mode`), la keymap transitoria, i tasti di ripetizione e gli hook
 globali, che valgono per ogni modo e si concatenano a quelli del modo.
 
-`make-mode` registra un `MajorMode` nuovo sotto il nome dato, anche se il nome
-esiste già: keymap, grammatica e hook definiti prima per quel nome vengono
-sostituiti #rapporto("SIN-4").
+`make-mode` registra un `MajorMode` nuovo sotto il nome dato. Se il nome
+esiste già (`EditorState::make_mode`), il modo resta con i suoi tasti, i suoi
+hook e i suoi completamenti, chiunque li abbia dati, e ricominciano da capo
+soltanto la grammatica e la tabella sintattica: il file di un modo le
+costruisce aggiungendo, e ricaricato dopo una modifica le avrebbe doppie, mentre
+`define-key` sostituisce un legame e `add-hook` non ripete una funzione. Come
+`set_mode`, sposta l'edizione delle grammatiche, così ciò che era colorato con
+la vecchia si colora di nuovo.
 
 Le proprietà dei simboli completano il modo senza toccare la struttura Rust;
 queste sono lette da `indent.lisp`:
@@ -3224,7 +3229,7 @@ con `electric-pair`, e `scan_cache_tests` prova le fotografie.
 
 == Facce e temi <facce>
 
-Una faccia è un `Face(u16)`: un indice in un registro globale. Le prime 14 sono
+Una faccia è un `Face(u32)`: un indice in un registro globale. Le prime 14 sono
 predefinite (`default`, `region`, `mode-line`, `mode-line-inactive`,
 `window-separator`, `keyword`, `type`, `string`, `comment`, `function`,
 `builtin`, `line-number`, `line-number-current`, `replace-match`); un modulo
@@ -3357,9 +3362,14 @@ in `ui/faces.rs`; le primitive sono in `primitives/theme.rs`.
 + *Il registro delle facce è globale.* Un nome significa la stessa cosa in
   ogni buffer e in ogni tema, e un registro per contesto andrebbe portato da
   `Highlight`, da `SyntaxRule` e da `Theme` senza dire nulla di più. Cresce con
-  i soli nomi che il Lisp usa #rapporto("SIN-5"). `intern` prende il lock in
-  scrittura anche per un nome già noto: si chiama mentre si configura, mai
-  mentre si disegna.
+  i soli nomi che il Lisp usa, e non dimentica: un tema e un'evidenziazione
+  tengono una faccia per il suo id, e un nome dimenticato non si
+  distinguerebbe da uno mai detto. L'id è a 32 bit: a 16, il nome nuovo dopo i
+  primi 65 536 prendeva l'id di uno vecchio, e oltre l'ultimo id `intern`
+  risponde con la faccia predefinita invece di riusarne uno. I nomi hanno una
+  mappa accanto al vettore, così trovarne uno non scorre il registro.
+  `intern` prende il lock in scrittura anche per un nome già noto: si chiama
+  mentre si configura, mai mentre si disegna.
 + *Un colore è una richiesta, non un indice ANSI.* Il core non sa quanti
   colori ha il terminale, e una finestra grafica non ne ha una tavolozza: dice
   `"blue"` o `"#3a5fcd"`, e ogni front-end risponde con ciò che può mostrare.
