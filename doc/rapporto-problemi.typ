@@ -631,7 +631,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-SHL-4-5",
+    commit: "a8e71ca",
     titolo: [Il nome di una pagina di manuale viene passato alla shell senza virgolette],
   ),
   (
@@ -639,7 +639,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-SHL-4-5",
+    commit: "a8e71ca",
     titolo: [Un comando di shell che ignora `TERM` sopravvive all'editor],
   ),
   // ------------------------------------------------------------------ TUI
