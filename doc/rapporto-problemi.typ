@@ -201,7 +201,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-CMD-4-5-6-8",
+    commit: "02f67d9",
     titolo: [Le combinazioni di modificatori in `define-key` sono limitate e un errore va solo nel registro],
   ),
   (
@@ -209,7 +209,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-CMD-4-5-6-8",
+    commit: "02f67d9",
     titolo: [`self-insert` ignora l'argomento prefisso],
   ),
   (
@@ -217,7 +217,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-CMD-4-5-6-8",
+    commit: "02f67d9",
     titolo: [Un conteggio negativo non inverte i comandi che cancellano],
   ),
   (
@@ -238,7 +238,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-CMD-4-5-6-8",
+    commit: "02f67d9",
     titolo: [`close-floating-window` senza finestre flottanti sposta il focus sulla finestra 0, anche quando non esiste],
   ),
   (
