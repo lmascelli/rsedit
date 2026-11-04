@@ -149,7 +149,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-BUF-3-DOC-2-5",
+    commit: "2ae6b6d",
     titolo: [`GapBuffer::clone` è `todo!()` e `find_forward` va in underflow su un buffer vuoto],
   ),
   (
@@ -851,7 +851,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-BUF-3-DOC-2-5",
+    commit: "2ae6b6d",
     titolo: [Trappole latenti: `Debug` e `PartialEq` di `EditorState`],
   ),
   (
@@ -873,7 +873,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-BUF-3-DOC-2-5",
+    commit: "2ae6b6d",
     titolo: [Il codice delle liste di risultati lascia un metodo morto, due `if` da unire e righe da formattare],
   ),
 )
