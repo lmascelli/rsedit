@@ -717,7 +717,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-TUI-6-7-8-GUI-1",
+    commit: "b5046e0",
     titolo: [Le finestre flottanti non mostrano colori di sintassi né overlay],
   ),
   (
@@ -725,7 +725,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-TUI-6-7-8-GUI-1",
+    commit: "b5046e0",
     titolo: [`%p` nella riga di stato dice `All` solo per un buffer di una riga],
   ),
   (
@@ -733,7 +733,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-TUI-6-7-8-GUI-1",
+    commit: "b5046e0",
     titolo: [La TUI non usa lo schermo alternativo],
   ),
   // ------------------------------------------------------------------ GUI
@@ -742,7 +742,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-TUI-6-7-8-GUI-1",
+    commit: "b5046e0",
     titolo: [La finestra grafica si aggiorna ogni 250 ms anche quando nulla cambia],
   ),
   // ------------------------------------------------------------------ DOC
