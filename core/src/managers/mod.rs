@@ -14,6 +14,7 @@ mod log;
 mod macros;
 mod modes;
 mod runtime;
+mod visits;
 mod windows;
 
 pub use buffers::{BufferRemoved, BufferRenamed, Buffers};
@@ -26,4 +27,7 @@ pub use log::Log;
 pub use macros::Macros;
 pub use modes::{Binding, BindingSource, Modes};
 pub use runtime::Runtime;
+#[cfg(test)]
+pub(crate) use visits::PLACES_LIMIT;
+pub use visits::{DEFAULT_RECENT_FILES_LENGTH, Visits};
 pub use windows::{ClickCount, Hit, MouseDrag, Scrolled, WindowRemoved, Windows};

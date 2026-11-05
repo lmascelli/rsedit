@@ -6,6 +6,8 @@
 //! Design: `doc/architettura-editor.typ, <avvio>`.
 
 use super::*;
+use crate::editor::session::SAVE_HISTORY;
+use crate::editor::visits::{RECENT_FILES_LENGTH, SAVE_PLACE};
 use crate::feature::isearch::CASE_FOLD;
 use crate::feature::minibuffer::HISTORY_LENGTH;
 use crate::jobs::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
@@ -154,6 +156,24 @@ pub const SETTINGS: &[Setting] = &[
         name: HISTORY_LENGTH,
         doc: "How many answers each prompt remembers, the oldest going first; 0 remembers \
               none.",
+    },
+    Setting {
+        name: SAVE_HISTORY,
+        doc: "Whether the answers given at the prompts are written to the session file when \
+              the editor quits, and read back when it starts: nil keeps them for one run \
+              only.",
+    },
+    Setting {
+        name: RECENT_FILES_LENGTH,
+        doc: "How many files `recent-files' lists, the oldest going first; 0 lists none.\n\n\
+              Example:\n\
+              \x20 (setq recent-files-length 200)",
+    },
+    Setting {
+        name: SAVE_PLACE,
+        doc: "Whether point is remembered in each file when its buffer is closed or the editor \
+              quits, and put back there when the file is opened again: nil opens every file \
+              at its start.",
     },
     Setting {
         name: MINIBUFFER_WIDTH,

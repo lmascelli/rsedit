@@ -60,6 +60,10 @@ OPENING
     second called name<2>, and opening a file that is open already goes back
     to its buffer.
 
+    A file opened before opens where point was when it was left, and M-g r
+    opens one of the files opened before, chosen from a list: the `session'
+    page says how both are remembered from one run to the next.
+
     A path that does not exist gives an empty buffer that remembers where it
     belongs, and the echo area says "(New file)". Nothing is written until
     you save, so killing the buffer instead leaves no trace.
@@ -241,4 +245,4 @@ KEYS
     C-x C-c                 quit
 
 SEE ALSO
-    buffers, dired, windows, completion, configuration
+    buffers, dired, windows, completion, configuration, session

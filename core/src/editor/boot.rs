@@ -4,7 +4,7 @@
 //! Design: `doc/architettura-editor.typ, <avvio>`.
 
 use super::*;
-use crate::paths::{AppDir, CACHE_DIR, CONFIG_DIR, DATA_DIR, DirOptions, app_dir};
+use crate::paths::{AppDir, CACHE_DIR, CONFIG_DIR, DATA_DIR, DirOptions, STATE_DIR, app_dir};
 
 /// What the echo area says when the editor starts, until something has more
 /// to say.
@@ -136,6 +136,7 @@ impl<B: BufferTrait> EditorState<B> {
             ))))),
             log,
             history: Arc::new(RwLock::new(History::default())),
+            visits: Arc::new(RwLock::new(Visits::default())),
             loader: Arc::new(RwLock::new(Loader::default())),
             working_directory: Arc::new(RwLock::new(
                 crate::paths::starting_directory()
@@ -185,14 +186,15 @@ pub(crate) fn top_level<B: BufferTrait>(
     env
 }
 
-/// Points this process's configuration, data and cache at directories of its
-/// own, in the system's temporary directory, once: building an editor in a
-/// test then neither writes into the configuration of whoever runs the tests,
-/// nor loads their plugins, nor depends on where `HOME` points at that
+/// Points this process's configuration, data, cache and state at directories
+/// of its own, in the system's temporary directory, once: building an editor
+/// in a test then neither writes into the configuration of whoever runs the
+/// tests, nor loads their plugins, nor depends on where `HOME` points at that
 /// instant, which several tests move.
 ///
-/// Through [`CONFIG_DIR`], [`DATA_DIR`] and [`CACHE_DIR`], the doors a person
-/// would use, so that the tests go through what `crate::paths` decides.
+/// Through [`CONFIG_DIR`], [`DATA_DIR`], [`CACHE_DIR`] and [`STATE_DIR`], the
+/// doors a person would use, so that the tests go through what `crate::paths`
+/// decides.
 /// Public for the binary crate's tests, which `cfg(test)` does not reach in a
 /// library built as a dependency; hidden from the documentation, since it is
 /// scaffolding.
@@ -215,6 +217,7 @@ pub fn isolate_config_for_tests() {
             std::env::set_var(CONFIG_DIR, dir("config"));
             std::env::set_var(CACHE_DIR, dir("cache"));
             std::env::set_var(DATA_DIR, dir("data"));
+            std::env::set_var(STATE_DIR, dir("state"));
         }
     });
 }
@@ -344,6 +347,15 @@ pub fn create_global_env<B: BufferTrait>()
         crate::feature::minibuffer::HISTORY_LENGTH.into(),
         ELispExp::number(crate::managers::DEFAULT_HISTORY_LENGTH as f64),
     );
+
+    // What is kept from one run to the next: the answers, the recent files
+    // and the places, all of them unless the configuration says otherwise.
+    env.set_variable(super::session::SAVE_HISTORY.into(), ELispExp::t());
+    env.set_variable(
+        super::visits::RECENT_FILES_LENGTH.into(),
+        ELispExp::number(crate::managers::DEFAULT_RECENT_FILES_LENGTH as f64),
+    );
+    env.set_variable(super::visits::SAVE_PLACE.into(), ELispExp::t());
 
     // How candidates are shown and matched, and where the next keys go: the
     // editor's own way until a module sets one of these.

@@ -81,6 +81,7 @@ mod risp_repl_tests;
 mod scan_cache_tests;
 mod scan_tests;
 mod scroll_tests;
+mod session_tests;
 mod sexp_command_tests;
 mod sexp_tests;
 mod shell_tests;

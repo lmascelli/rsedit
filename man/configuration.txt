@@ -55,10 +55,19 @@ WHERE THE FILES ARE
         ~/.local/share/rsedit
         %LOCALAPPDATA%\rsedit\data
 
-    A variable that is set but empty counts as not set. The configuration
-    and the cache are made when they are missing, and deleting the cache
-    loses nothing that matters. The `plugins' page says what goes in the
-    data directory.
+    What the editor remembers from one run to the next, such as the
+    answers given at its prompts, goes in the state directory:
+
+        $RSEDIT_STATE_DIR
+        $XDG_STATE_HOME/rsedit
+        ~/.local/state/rsedit
+        %LOCALAPPDATA%\rsedit\state
+
+    A variable that is set but empty counts as not set. The configuration,
+    the cache and the state are made when they are missing; deleting the
+    cache loses nothing that matters, and deleting the state loses only
+    what the `session' page says is kept there. The `plugins' page says
+    what goes in the data directory.
 
 THE FOUR THINGS YOU WILL WRITE
     A setting:
@@ -224,4 +233,4 @@ EXAMPLES
 
 SEE ALSO
     rsedit, plugins, keymaps, modes, themes, writing-commands, diagnostics,
-    guide
+    guide, session

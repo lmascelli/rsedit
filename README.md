@@ -27,6 +27,8 @@ change.
   `C-h b`), and manual pages read inside it.
 - Auto-save with recovery, reloading of files changed on disk, themes, mouse
   support, line numbers.
+- Prompt history, recent files and the place in each file, kept from one run
+  to the next.
 - Vim emulation, turned on with `M-x vim-mode`.
 - A core library, `rsedit_core`, that knows nothing of terminals: it describes
   the screen and a front end draws it. This repository has two: one for the

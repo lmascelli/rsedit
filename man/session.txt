@@ -1,0 +1,109 @@
+NAME
+    session - what the editor keeps from one run to the next
+
+SYNOPSIS
+    (recent-files)
+    (clear-recent-files)
+    (find-recent-file)
+    save-history
+    recent-files-length
+    save-place
+
+DESCRIPTION
+    When the editor quits it writes down three things, and when it starts
+    it reads them back:
+
+        the answers given at each prompt, which C-p walks back through
+        the files opened, newest first, which M-g r opens again
+        where point was in each file, which is where the file opens
+
+    So M-x then C-p offers the command you ran last time, C-x C-f then C-p
+    the file you opened last, and a file you were reading opens on the line
+    you left it at. Each of the three can be turned off on its own.
+
+    They are kept in one file, `session', in the state directory: the
+    `configuration' page says where that is. The file is the editor's, and
+    is written again at every exit: deleting it loses this memory and
+    nothing else.
+
+THE ANSWERS AT THE PROMPTS
+    Each prompt keeps its own answers, as the `minibuffer' page says, up to
+    `history-length' of them. With `save-history' on, the default, every
+    prompt's answers are written at exit and read back at the next start.
+    With it nil they last one run.
+
+    Everything typed at a prompt is written, a shell command at M-! and an
+    expression at M-: included. The file is made readable by its owner
+    only; `clear-minibuffer-history' forgets one prompt's answers before
+    they are written, and (setq save-history nil) keeps them all off the
+    disk.
+
+THE RECENT FILES
+    Every file opened with C-x C-f, or by any command that opens one, goes
+    to the front of the list, and so does one saved under a new name with
+    C-x C-w. A file opened again moves to the front; it is never listed
+    twice. `recent-files' returns the list, newest first, as absolute
+    paths, and keeps `recent-files-length' of them, 50 unless you change
+    it; 0 keeps none.
+
+    M-g r asks for one of them. Tab shows them all, the newest first, and
+    typing narrows the list by any part of the path, as C-x b does with
+    buffers; Return opens the one chosen. A file deleted since it was
+    opened is still listed, and opening it gives an empty buffer, as
+    C-x C-f does with a path that does not exist.
+
+    `clear-recent-files' empties the list; the places stay.
+
+WHERE POINT WAS
+    With `save-place' on, the default, closing a buffer visiting a file
+    remembers where point was in it, and so does quitting, for every such
+    buffer still open. The next time the file is opened, in this run or a
+    later one, point goes back there, before `find-file-hook' runs, and
+    the window shows that line. A file that has become shorter opens at
+    its end. Point at the very start is not remembered, since that is
+    where a file opens anyway. The last 400 files are remembered, whether
+    or not they are still among the recent files.
+
+    With `save-place' nil every file opens at its start, and nothing is
+    written.
+
+EXAMPLES
+    Keep a longer list of recent files:
+
+        (setq recent-files-length 200)
+
+    Keep nothing typed at a prompt from one run to the next:
+
+        (setq save-history nil)
+
+    Open every file at its start:
+
+        (setq save-place nil)
+
+    The file opened last, from Lisp:
+
+        (find-file (car (recent-files)))
+
+    M-g r on a key of your own:
+
+        (define-key nil "C-c f" 'find-recent-file)
+
+LIMITS
+    The file is written when the editor quits, by any way out: C-x C-c,
+    M-x quit-without-saving, closing the window. An editor that is killed,
+    or that stops on an error inside the editor itself, writes nothing, and
+    the next start reads what the run before wrote.
+
+    Two editors open at once each write their own memory when they quit,
+    and the one that quits last is the one the next start reads: what the
+    other learned is lost.
+
+    A place is a count of characters from the start of the file. A file
+    changed by another program since it was left opens at the same count,
+    which may no longer be the same line.
+
+KEYS
+    M-g r                   find-recent-file
+
+SEE ALSO
+    files, minibuffer, configuration

@@ -166,13 +166,13 @@ lì e nella mappa di `lib.rs`.
   columns: (3.4cm, 1fr),
   header: ([Percorso], [Contenuto]),
   [`lib.rs`], [Ordine dei moduli e superficie pubblica (`pub use`). Tutto il resto è `pub(crate)`.],
-  [`paths.rs`], [Le directory dell'editor, configurazione, dati e cache, secondo le convenzioni di ogni sistema: `app_dir` (@directory); quella dei dati installati con l'editor, `installed_data_dir`; e i nomi dei file, resi assoluti e smontati senza chiedere al disco (@nomi-file).],
+  [`paths.rs`], [Le directory dell'editor, configurazione, dati, cache e stato, secondo le convenzioni di ogni sistema: `app_dir` (@directory); quella dei dati installati con l'editor, `installed_data_dir`; e i nomi dei file, resi assoluti e smontati senza chiedere al disco (@nomi-file).],
   [`buffer/`], [`Buffer`, `BufferTrait`, `GapBuffer`, undo, mark, overlay, testo virtuale, cache di colorazione (`syntax.rs`) e di scansione (`scan.rs`), timbro del file su disco (`disk.rs`), codifica del file (`coding.rs`, @codifiche).],
   [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`).],
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
-  [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Log`, `Runtime`, `Loader`.],
-  [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`, `loader.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `work.rs`). Vedi @coppie.],
+  [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Visits`, `Log`, `Runtime`, `Loader`.],
+  [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`, `loader.rs`, `visits.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `session.rs`, `work.rs`). Vedi @coppie.],
   [`primitives/`], [Le 327 primitive dell'editor, in 43 moduli, e `install_primitives`.],
   [`modes/`], [`MajorMode` (`mod.rs`), la grammatica di colorazione (`grammar.rs`), la tabella sintattica (`syntax_table.rs`) e lo scanner delle espressioni, che la legge (`sexp.rs`) (@modi).],
   [`jobs/`], [I lavori di sfondo dell'editor: `Highlighter`, `Prescanner`, `FileWatcher` e `AutoSaver` (@lavori-editor).],
@@ -270,14 +270,16 @@ che resta dei comandi (@comandi-shell).
 `src/main.rs` legge la riga di comando --- i file da aprire, `--gui`,
 `--font FILE` e `--help` --- e chiama `create_global_env::<GapBuffer>()`; poi
 attiva il file di log `rsedit.log` nella directory della cache (@directory)
-con `start_log_file`, apre ogni file della riga di comando valutando
+con `start_log_file`, legge la sessione lasciata dall'avvio precedente con
+`load_session` (@memoria), apre ogni file della riga di comando valutando
 `(find-file PERCORSO)` ed entra
 nel ciclo di un front-end: `tui_main`, il terminale, se lo standard input è un
 terminale e `--gui` non è chiesto, altrimenti `gui_main`, una finestra
 grafica. Un errore di avvio dell'interprete viene stampato e il programma
-esce; un errore di `find-file` finisce nell'area dei messaggi. All'uscita,
-anche per un panic, `ShutDownOnExit` chiama `shutdown`, che ferma il lavoro di
-sfondo e scrive nel file le ultime righe del log.
+esce; un errore di `find-file` finisce nell'area dei messaggi. All'uscita
+`ShutDownOnExit` scrive la sessione con `save_session`, se non si sta
+srotolando un panic, e chiama `shutdown`, anche per un panic, che ferma il
+lavoro di sfondo e scrive nel file le ultime righe del log.
 
 Il file di log è di un editor solo. `enable_log_file` lo apre senza
 troncarlo, ne prende il blocco del sistema operativo (`File::try_lock`) e
@@ -293,12 +295,12 @@ altro da dire, come l'errore di `init.lisp`: l'editor parte con il log in
 memoria soltanto, e chi cercasse il file dopo un crash saprebbe perché non
 c'è.
 
-#canvas(height: 8.4cm)[
-  #lane(1.5cm, 0cm, 8.3cm, [`main.rs`], fill: accent.lighten(85%))
-  #lane(5.2cm, 0cm, 8.3cm, [`create_global_env`], w: 3.2cm)
-  #lane(8.9cm, 0cm, 8.3cm, [`EditorState`])
-  #lane(11.7cm, 0cm, 8.3cm, [WorkManager], fill: accent.lighten(85%))
-  #lane(14.6cm, 0cm, 8.3cm, [Lisp])
+#canvas(height: 9.2cm)[
+  #lane(1.5cm, 0cm, 9.1cm, [`main.rs`], fill: accent.lighten(85%))
+  #lane(5.2cm, 0cm, 9.1cm, [`create_global_env`], w: 3.2cm)
+  #lane(8.9cm, 0cm, 9.1cm, [`EditorState`])
+  #lane(11.7cm, 0cm, 9.1cm, [WorkManager], fill: accent.lighten(85%))
+  #lane(14.6cm, 0cm, 9.1cm, [Lisp])
 
   #msg(1.5cm, 5.2cm, 1.2cm, [chiamata])
   #msg(5.2cm, 8.9cm, 1.65cm, [`EditorState::new()`])
@@ -310,8 +312,10 @@ c'è.
   #msg(5.2cm, 14.6cm, 4.75cm, [`eval_file(init.lisp)` → i moduli])
   #msg(5.2cm, 11.7cm, 5.25cm, [`FileWatcher`, `AutoSaver`], colour: accent)
   #msg(5.2cm, 1.5cm, 5.75cm, [`(state, env)`], dash: "dashed")
-  #msg(1.5cm, 14.6cm, 6.3cm, [`(find-file F)` per ogni file])
-  #self-msg(1.5cm, 6.85cm, [`tui_main` o `gui_main`])
+  #msg(1.5cm, 8.9cm, 6.3cm, [`load_session`])
+  #msg(1.5cm, 14.6cm, 6.85cm, [`(find-file F)` per ogni file])
+  #self-msg(1.5cm, 7.4cm, [`tui_main` o `gui_main`])
+  #msg(1.5cm, 8.9cm, 8.6cm, [`save_session`, `shutdown`])
 ]
 
 === I passi di `create_global_env` <avvio>
@@ -349,22 +353,25 @@ c'è.
 
 === Le directory dell'editor <directory>
 
-L'editor tiene tre directory sue: quella della configurazione, con
+L'editor tiene quattro directory sue: quella della configurazione, con
 `init.lisp`; quella dei dati, con ciò che si installa per l'editor invece di
-scriverlo, oggi i plugin; e quella della cache, con ciò che può rifare, come
-il file di log: cancellarla non perde nulla che conti. Le trova `app_dir`, in
+scriverlo, oggi i plugin; quella della cache, con ciò che può rifare, come
+il file di log: cancellarla non perde nulla che conti; e quella dello stato,
+con ciò che ricorda da un avvio all'altro, oggi la sessione (@memoria):
+cancellarla perde quel ricordo e nient'altro. Le trova `app_dir`, in
 `paths.rs`: le si chiede una directory per ciò a cui serve (`AppDir::Config`,
-`AppDir::Data`, `AppDir::Cache`), e risponde con il suo posto su questo
-sistema, creandola se manca e se `DirOptions::create` lo chiede. La usano
-`create_global_env`, per `init.lisp` e i plugin, e `main.rs`, per il log. Le
-tre directory si trovano con la stessa regola:
+`AppDir::Data`, `AppDir::Cache`, `AppDir::State`), e risponde con il suo
+posto su questo sistema, creandola se manca e se `DirOptions::create` lo
+chiede. La usano `create_global_env`, per `init.lisp` e i plugin, e
+`main.rs`, per il log e la sessione. Le quattro directory si trovano con la
+stessa regola:
 
 #ref-table(
   columns: (1.15fr, 1.4fr),
   header: ([Fonte, in ordine di precedenza], [Directory]),
-  [`RSEDIT_CONFIG_DIR`, `RSEDIT_DATA_DIR`, `RSEDIT_CACHE_DIR`], [usata così com'è, su ogni sistema],
-  [`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` (solo Unix, e solo se assoluta)], [la variabile, con `rsedit` aggiunto in fondo],
-  [il sistema], [su Windows `%APPDATA%\rsedit`, `%LOCALAPPDATA%\rsedit\data` e `%LOCALAPPDATA%\rsedit\cache`; altrove, macOS compreso, `$HOME/.config/rsedit`, `$HOME/.local/share/rsedit` e `$HOME/.cache/rsedit`],
+  [`RSEDIT_CONFIG_DIR`, `RSEDIT_DATA_DIR`, `RSEDIT_CACHE_DIR`, `RSEDIT_STATE_DIR`], [usata così com'è, su ogni sistema],
+  [`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` (solo Unix, e solo se assoluta)], [la variabile, con `rsedit` aggiunto in fondo],
+  [il sistema], [su Windows `%APPDATA%\rsedit`, `%LOCALAPPDATA%\rsedit\data`, `%LOCALAPPDATA%\rsedit\cache` e `%LOCALAPPDATA%\rsedit\state`; altrove, macOS compreso, `$HOME/.config/rsedit`, `$HOME/.local/share/rsedit`, `$HOME/.cache/rsedit` e `$HOME/.local/state/rsedit`],
 )
 
 Una variabile impostata ma vuota conta come non impostata. Quando nessuna
@@ -375,23 +382,32 @@ la directory si possa scrivere non viene controllato. La scelta tra le fonti,
 `choose_dir`, riceve i valori invece di leggerli dall'ambiente: così i test
 ne provano la precedenza senza scrivere nell'ambiente del processo, che tutti
 i test vedono. `isolate_config_for_tests` dà invece a ogni processo di test
-tre directory sue, attraverso le tre variabili `RSEDIT_*`.
+quattro directory sue, attraverso le quattro variabili `RSEDIT_*`.
 
 I dati installati #emph[con] l'editor --- moduli, temi, pagine --- non sono
 una di queste: stanno in `data` accanto all'eseguibile, e `installed_data_dir`
 li cerca lì o un livello sopra, dove `build.rs` li mette per i binari di test
 in `target/<profilo>/deps/`. La usano `data-directory` e `theme-path`.
 
-Quattro decisioni:
+Cinque decisioni:
 
 + *Su macOS, `~/.config` e `~/.cache`.* È lì che guarda chi usa un editor da
   terminale su un Mac: gli editor da cui arriva, Emacs con XDG, Neovim e
-  Helix, tengono lì configurazione e cache. Scartato: `~/Library`, la
+  Helix, tengono lì configurazione e cache, e `~/.local/state` lo stato. Scartato: `~/Library`, la
   convenzione delle applicazioni impacchettate.
 + *Su Windows la cache è locale.* `%APPDATA%` segue la persona da una
   macchina all'altra e viene copiato a ogni accesso. Una cache è proprio ciò
   che si può rifare, e quindi ciò che non va copiato: sta sotto
   `%LOCALAPPDATA%`.
++ *Lo stato ha una directory sua.* La storia dei prompt e i file recenti
+  non sono configurazione, che la persona scrive e porta con sé, né cache:
+  un programma che pulisce la cache non deve portarsi via ciò che l'editor
+  ricorda. La specifica freedesktop ha `XDG_STATE_HOME` proprio per questo
+  --- storia delle azioni, file usati di recente, stato da riprendere al
+  riavvio --- e lì la tiene anche Neovim. Su Windows sta sotto
+  `%LOCALAPPDATA%`, come la cache: è di questa macchina. Scartato: un file
+  nella cache, dove «cancellarla non perde nulla che conti» non sarebbe più
+  vero.
 + *Su Windows le variabili `XDG_*` non contano.* Le imposta solo chi si porta
   dietro un'abitudine di Unix; preferirle alla risposta del sistema metterebbe
   la configurazione dove nessun programma Windows la cerca.
@@ -399,13 +415,121 @@ Quattro decisioni:
   directory della configurazione e valuta ciò che contiene: sotto la `HOME` di
   chi lancia i test scriverebbe lì la sua configurazione, e alcuni test
   spostano `HOME`, che vale per tutto il processo mentre i test girano in
-  parallelo. `isolate_config_for_tests` punta configurazione, dati e cache a
-  tre directory temporanee del processo, una volta sola e prima del primo
-  editor, attraverso le tre variabili `RSEDIT_*`: senza quella dei dati, i
+  parallelo. `isolate_config_for_tests` punta configurazione, dati, cache e
+  stato a quattro directory temporanee del processo, una volta sola e prima
+  del primo editor, attraverso le quattro variabili `RSEDIT_*`: senza quella dei dati, i
   plugin di chi lancia i test entrerebbero in `lisp-path`. È la porta di una
   persona, così i test
   passano da `app_dir` invece di aggirarla. È pubblica per i test del crate
   binario, che il `cfg(test)` di una libreria non raggiunge.
+
+=== La memoria tra un avvio e l'altro <memoria>
+
+L'editor ricorda tre cose da un avvio al successivo: le risposte date a ogni
+prompt, i file visitati, dal più recente, e dove era il punto in ognuno.
+Stanno in due compartimenti --- le risposte in `History`, i file e le
+posizioni in `Visits` --- e su disco in un file solo, `session`, nella
+directory dello stato (@directory). `load_session` lo legge in `main.rs` dopo
+`create_global_env` e prima dei file della riga di comando; `save_session` lo
+scrive all'uscita, da `ShutDownOnExit`. Tutti e due stanno in
+`editor/session.rs`; ciò che registra una visita e una posizione, in
+`editor/visits.rs`.
+
+#ref-table(
+  columns: (2.6cm, 1.9cm, 1fr, 3.3cm),
+  header: ([Che cosa], [Dove], [Quando si registra], [Impostazione]),
+  [Le risposte ai prompt], [`History`], [`minibuffer-confirm`, con `History::remember`, come in ogni avvio (@minibuffer).], [`save-history`],
+  [I file recenti], [`Visits`], [`find-file`, anche per un file già aperto o che non esiste, e `write-file` verso un percorso nuovo: `record_visit` mette il percorso in testa e taglia la lista a `recent-files-length`.], [`recent-files-length`],
+  [Le posizioni], [`Visits`], [`close_buffer`, per il buffer che si chiude, e `save_session`, per ogni buffer aperto con un file: `record_place`. Un punto all'inizio toglie la voce invece di scriverla.], [`save-place`],
+)
+
+Una posizione torna in `new_buffer`: `place_for` dà il punto ricordato per il
+file, e `goto_offset` ve lo porta, troncato alla fine del testo, prima che il
+buffer entri nella tabella e che girino i suoi hook. La finestra lo segue al
+primo disegno, come segue ogni punto (@finestre).
+
+Il file è di testo, una voce per riga, dopo un'intestazione con la versione:
+
+#block(breakable: false)[
+```text
+rsedit-session 1
+history	M-x	find-file
+history	M-x	grep
+recent	/home/me/notes.txt
+place	/home/me/notes.txt	1842
+```
+]
+
+I campi sono separati da un tab; la barra rovesciata, il tab, l'a capo e il
+ritorno carrello dentro un campo si scrivono `\\`, `\t`, `\n` e `\r`, e una
+barra davanti a qualunque altra cosa vale per sé. Le voci di ogni lista
+vanno dalla più recente, e le chiavi della storia in ordine alfabetico
+(`History::rings`), così che due scritture dello stesso stato diano lo stesso
+file. `Session::parse` non legge un file la cui prima riga non sia
+l'intestazione, e lo dice nel log; salta, contandole, le righe che non
+capisce, un tipo che non conosce compreso. Un file che manca, o una
+directory che manca, è il primo avvio, e non dice nulla.
+
+`load_session` restituisce ciò che legge come dicono le impostazioni in quel
+momento, cioè dopo `init.lisp`: con `save-history` a `nil` la storia letta si
+scarta, con `save-place` a `nil` le posizioni. `History::restore` e
+`Visits::restore` mettono ciò che arriva dal file #emph[dietro] a ciò che
+l'avvio conosce già, e un percorso già noto tiene la voce più nuova; i limiti
+sono `history-length`, `recent-files-length` e `PLACES_LIMIT`, 400
+posizioni. `save_session` registra le posizioni dei buffer aperti, copia le
+tre liste uscendo da ogni lock, e solo allora scrive, con `write_atomically`
+(@file-su-disco). Un errore va nel log: l'editor sta uscendo, e non c'è
+un'area dei messaggi da leggere.
+
+Le decisioni:
+
++ *In Rust, non in un modulo Lisp.* La storia sta già in un compartimento, e
+  risp non ha un modo di scrivere dati che si rileggano senza valutarli:
+  `format` con `%S` non mette le virgolette a una stringa, e l'unico lettore
+  è `eval-string`. Un percorso con una virgoletta romperebbe il file, e
+  rileggerlo vorrebbe dire eseguire all'avvio ciò che un altro processo ha
+  scritto. In Lisp resta ciò che è politica: `recent-files`, il modulo del
+  comando che riapre un file (@mod-recent-files).
++ *Un formato a righe.* Si scrive e si rilegge senza interprete, una riga
+  rovinata si perde da sola, e una riga di un tipo che una versione futura
+  aggiunga si salta invece di fermare la lettura. Scartato: JSON o un formato
+  binario, che chiederebbero una dipendenza per tre liste di stringhe.
++ *Si scrive all'uscita, una volta.* Scrivere a ogni comando metterebbe il
+  disco sul percorso dei tasti, e un lavoro di sfondo a intervalli
+  scriverebbe di continuo pochi byte che cambiano di rado. Il prezzo è che un
+  editor ucciso, o fermato da un panic, non scrive nulla, e l'avvio dopo
+  legge la sessione di quello prima: è ciò che il manpage `session` dice
+  nei limiti.
++ *Non durante un panic.* Un panic può lasciare un buffer a metà di una
+  modifica, e un secondo panic dentro un `Drop`, durante lo srotolamento,
+  interrompe il processo prima che `shutdown` scriva nel file le ultime
+  righe del log. Il log di un crash vale più della sessione:
+  `ShutDownOnExit` salta `save_session` quando `std::thread::panicking`
+  risponde sì.
++ *La legge `main.rs`, non `create_global_env`.* Dopo `init.lisp`, così che
+  le impostazioni dicano già la loro, e prima dei file della riga di comando,
+  che si aprono dove erano stati lasciati. Fuori da `create_global_env`
+  perché i test costruiscono editor in parallelo nella stessa directory di
+  stato isolata: uno che leggesse la sessione scritta da un altro vedrebbe
+  risposte e file che non sono suoi. I test della sessione chiamano
+  `load_session` e `save_session` con una directory propria.
++ *Vince chi esce per ultimo.* Due editor aperti insieme non fondono le loro
+  sessioni: il file è sempre intero, perché si scrive con `write_atomically`,
+  ma l'editor che esce dopo sostituisce ciò che ha scritto l'altro. Scartato:
+  rileggere e fondere all'uscita, che per un caso raro chiederebbe regole di
+  fusione diverse per tre liste ordinate.
++ *La posizione prima degli hook.* Un `find-file-hook` vede il punto dove il
+  file era stato lasciato e, se lo sposta, ha l'ultima parola. La posizione è
+  in caratteri, come ogni posizione dell'editor; un file accorciato si apre
+  alla fine.
++ *Leggibile solo da chi lo possiede.* La storia contiene ciò che si è
+  scritto a ogni prompt, i comandi di `M-!` compresi. Un file `session` nuovo
+  nasce vuoto con i permessi `0600`, su Unix, prima della scrittura
+  atomica, che dà al file nuovo i permessi di quello che sostituisce; uno che
+  c'è già tiene i suoi.
++ *Le posizioni hanno un tetto loro.* Una posizione serve anche per un file
+  uscito dalla lista dei recenti, e `recent-files-length` a 0 non deve
+  cancellarle: `PLACES_LIMIT` è fisso, come `save-place-limit` in Emacs.
 
 === Il file `init.lisp` predefinito
 
@@ -670,6 +794,7 @@ che li condivide.
   [`kill_yank`], [`RwLock<KillYank>`], [Kill ring, ultimo yank, flag «il comando precedente ha ucciso/incollato», ultimo rettangolo ucciso, testo dovuto agli appunti di sistema.],
   [`macros`], [`RwLock<Macros>`], [Macro in registrazione, ultima macro, profondità delle riproduzioni, contatore.],
   [`history`], [`RwLock<History>`], [Storia dei prompt per chiave (100 voci per chiave predefinite).],
+  [`visits`], [`RwLock<Visits>`], [File visitati, dal più recente, e dove era il punto in ognuno (@memoria).],
   [`log`], [`RwLock<Log>`], [Righe diagnostiche e file a cui sono copiate.],
   [`runtime`], [`RwLock<Runtime>`], [Colonna obiettivo, isearch e sostituzione in corso, `FuelMeter`, pila delle chiamate per i backtrace, tema in uso e tema di fabbrica, i lavori avviati da Lisp per nome.],
   [`echo_message`], [`RwLock<EchoMessage>`], [Testo dell'area messaggi con l'istante in cui è stato scritto.],
@@ -737,6 +862,7 @@ e tiene un'invariante che i suoi campi presi uno per uno non terrebbero.
   [`KillYank`], [I flag «il comando precedente ha ucciso, ha incollato» valgono rispetto all'anello e si spostano insieme, una volta per comando.],
   [`Macros`], [I tasti di una registrazione diventano l'ultima macro in un passo solo, e nessun tasto riprodotto viene registrato, a qualunque profondità.],
   [`History`], [Un cammino nella storia vale solo nell'anello e nel prompt in cui è cominciato.],
+  [`Visits`], [Un percorso compare al più una volta in ogni lista, i file recenti e le posizioni, e ogni lista va dal più recente e resta entro il suo limite.],
   [`Log`], [Ogni riga arriva al file una volta e nell'ordine in cui è stata registrata, salvo le scritture che falliscono e le righe uscite dalla lista prima di essere scritte.],
   [`Runtime`], [Nessuna: raggruppa ciò che appartiene alla sessione e non a un documento (@decisioni-stato).],
   [`Loader`], [Una feature fallita non è mai in vigore, e ciò che è stato fornito durante un `require` fallito se ne va con lui; le funzioni in attesa di una feature si consegnano una volta sola, quando arriva (@moduli-lisp).],
@@ -776,7 +902,7 @@ perché il WorkManager registra senza tenere un editor, che lo contiene.
 
 Gli altri file di `editor/` portano il nome di ciò che coordinano --- `keys.rs`,
 `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`,
-`background.rs` --- e tengono solo ciò che mette insieme più cose: un
+`background.rs`, `session.rs` --- e tengono solo ciò che mette insieme più cose: un
 compartimento e il testo di un buffer, l'interprete o un altro compartimento.
 `work.rs` è la facciata del WorkManager, che non è un compartimento: lo si
 raggiunge intero (`work()`), perché non ha un lock che si possa prendere fuori
@@ -5366,7 +5492,8 @@ transitoria con quattro tasti, `y`, `n`, `!` e `q`, che chiamano
 `save-some-buffers--answer` con il resto della lista; prima di ogni domanda il
 buffer viene guardato di nuovo, perché una risposta esegue del Lisp che può
 averlo salvato o chiuso. Salva `write_buffer`, in `files.rs`. `close-buffer`
-chiede con la stessa funzione.
+chiede con la stessa funzione. Uscire ferma soltanto il ciclo del front-end:
+la sessione la scrive `main.rs`, dopo (@memoria).
 
 === Le domande <domande>
 
@@ -6446,6 +6573,23 @@ va quando il prompt si chiude. Oggi il comando è uno, `string-rectangle`.
 + *Un aspetto riconoscibile.* Attenuato e uguale in ogni modo: chi guarda non
   deve mai chiedersi se ciò che vede è nel file.
 
+=== `recent-files` <mod-recent-files>
+
+`M-g r` apre uno dei file che `recent-files` elenca: un prompt con il
+completamento su `fuzzy-filter`, come `C-x b`, e `find-file` sul percorso
+scelto. La lista e la sua memoria tra un avvio e l'altro sono dell'editor
+(@memoria); il modulo è solo il comando e il suo tasto.
+
++ *Un tasto sotto `M-g`.* `C-x C-r`, dove molti mettono questo comando in
+  Emacs, è già di `dired-find-recursive`, e `C-c` seguito da una lettera è
+  lasciato a chi usa l'editor. `M-g` è il prefisso degli spostamenti verso
+  un posto, `M-g g` verso una riga e `M-g n` verso un errore: `M-g r` va
+  verso un file recente.
++ *Un file che non c'è più resta nella lista.* Controllarli tutti a ogni
+  apertura del prompt vorrebbe dire una `stat` per file, anche su un disco di
+  rete lento; aprirne uno sparito dà un buffer vuoto, come `C-x C-f` su un
+  percorso che non esiste.
+
 === `risp-repl` <mod-risp-repl>
 
 `M-x risp-repl` apre `*risp*`, un buffer in `risp-mode` dove `C-j` valuta il
@@ -6640,6 +6784,7 @@ Le variabili che l'editor legge da Lisp:
   [`watch-files`, `watch-file-interval`], [`t`, 3], [Il watcher dei file.],
   [`auto-save`, `auto-save-interval`, `auto-save-directory`], [`t`, 30, ---], [L'autosalvataggio.],
   [`history-length`], [100], [Voci per storia di prompt.],
+  [`save-history`, `recent-files-length`, `save-place`], [`t`, 50, `t`], [Che cosa la sessione tiene da un avvio all'altro (@memoria).],
   [`*minibuffer-read-function*`], [`default-minibuffer-prompt`], [Chi apre i prompt.],
   [`*key-capture-function*`], [`nil`], [Chi riceve la prossima sequenza invece di eseguirla.],
 )

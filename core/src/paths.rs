@@ -1,5 +1,5 @@
-//! Where the editor keeps what it keeps on disk: its configuration, its data
-//! and its cache, and where its own data was installed. [`app_dir`] is asked
+//! Where the editor keeps what it keeps on disk: its configuration, its data,
+//! its cache and its state, and where its own data was installed. [`app_dir`] is asked
 //! for a directory by what it is for, and answers with where that is on this
 //! system, making it when asked to.
 //!
@@ -25,6 +25,9 @@ pub const CACHE_DIR: &str = "RSEDIT_CACHE_DIR";
 /// The variable that names the data directory outright.
 pub const DATA_DIR: &str = "RSEDIT_DATA_DIR";
 
+/// The variable that names the state directory outright.
+pub const STATE_DIR: &str = "RSEDIT_STATE_DIR";
+
 /// The freedesktop parent of every application's configuration, honoured on
 /// Unix only: on Windows, `%APPDATA%` is where Windows programs look.
 pub const XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
@@ -34,6 +37,9 @@ pub const XDG_CACHE_HOME: &str = "XDG_CACHE_HOME";
 
 /// The freedesktop parent of every application's data, honoured on Unix.
 pub const XDG_DATA_HOME: &str = "XDG_DATA_HOME";
+
+/// The freedesktop parent of every application's state, honoured on Unix.
+pub const XDG_STATE_HOME: &str = "XDG_STATE_HOME";
 
 /// Which of the editor's directories.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +53,10 @@ pub enum AppDir {
     /// What is installed for the editor rather than written for it, such as
     /// its plugins.
     Data,
+    /// What the editor remembers from one run to the next, such as the
+    /// answers given at its prompts. Deleting it loses that memory and
+    /// nothing else.
+    State,
 }
 
 impl AppDir {
@@ -56,6 +66,7 @@ impl AppDir {
             AppDir::Config => "the configuration directory",
             AppDir::Cache => "the cache directory",
             AppDir::Data => "the data directory",
+            AppDir::State => "the state directory",
         }
     }
 
@@ -65,6 +76,7 @@ impl AppDir {
             AppDir::Config => (CONFIG_DIR, XDG_CONFIG_HOME),
             AppDir::Cache => (CACHE_DIR, XDG_CACHE_HOME),
             AppDir::Data => (DATA_DIR, XDG_DATA_HOME),
+            AppDir::State => (STATE_DIR, XDG_STATE_HOME),
         }
     }
 }
@@ -82,7 +94,7 @@ pub struct DirOptions {
 pub enum DirError {
     /// Nothing in the environment says where it is: no variable naming it,
     /// and no home to put it under -- `HOME` unset, or on Windows `APPDATA`,
-    /// `LOCALAPPDATA` for the cache and the data.
+    /// `LOCALAPPDATA` for the cache, the data and the state.
     Undetermined(AppDir),
     /// It is not there, and making it was not asked for.
     NotFound(PathBuf),
@@ -188,6 +200,7 @@ pub(crate) fn platform_dir(dir: AppDir) -> Option<PathBuf> {
         AppDir::Config => env_path("APPDATA").map(|appdata| appdata.join("rsedit")),
         AppDir::Cache => env_path("LOCALAPPDATA").map(|local| local.join("rsedit").join("cache")),
         AppDir::Data => env_path("LOCALAPPDATA").map(|local| local.join("rsedit").join("data")),
+        AppDir::State => env_path("LOCALAPPDATA").map(|local| local.join("rsedit").join("state")),
     }
 }
 
@@ -199,6 +212,7 @@ pub(crate) fn platform_dir(dir: AppDir) -> Option<PathBuf> {
         AppDir::Config => home.join(".config").join("rsedit"),
         AppDir::Cache => home.join(".cache").join("rsedit"),
         AppDir::Data => home.join(".local").join("share").join("rsedit"),
+        AppDir::State => home.join(".local").join("state").join("rsedit"),
     })
 }
 

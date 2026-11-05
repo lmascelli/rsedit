@@ -42,6 +42,7 @@ THE REFERENCE
         writing-modes     colouring a language, and its brackets
         completion        how candidates are found and shown
         minibuffer        the prompt, its history, and M-:
+        session           what is kept from one run to the next
         repl              a buffer to try Lisp in, a block at a time
         indentation       what Tab and Return do
         macros            record what you pressed, press it again

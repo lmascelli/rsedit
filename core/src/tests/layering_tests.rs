@@ -80,6 +80,7 @@ mod tests {
             "managers/runtime.rs",
             include_str!("../managers/runtime.rs"),
         ),
+        ("managers/visits.rs", include_str!("../managers/visits.rs")),
         (
             "managers/windows.rs",
             include_str!("../managers/windows.rs"),

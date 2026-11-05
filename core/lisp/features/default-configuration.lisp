@@ -33,6 +33,7 @@ loaded anyway.")
     clipboard           ; kills also go to the system clipboard
     electric-pair       ; typing an opening bracket gives you the pair
     buffer-list         ; C-x b to switch, C-x C-b for the whole list
+    recent-files        ; M-g r to open a file opened before
     shell               ; M-! runs a command and shows what it said
     manpage             ; C-h m, and K on a word
     help                ; C-h f, C-h k, C-h b: the editor describing itself

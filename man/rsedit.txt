@@ -37,6 +37,7 @@ MODULES
     clipboard            kills also reach the system clipboard
     electric-pair        closing delimiters that type themselves
     buffer-list          C-x b, and C-x C-b
+    recent-files         M-g r, a file opened before
     shell                M-! and its output buffer
     manpage              this
     help                 C-h f, C-h k, C-h b -- the editor describing itself

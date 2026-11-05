@@ -1,14 +1,15 @@
-//! The editor's entry point: the command line, the editor built and its log
-//! opened, the files asked for opened, and then a front end, the terminal or
-//! a window.
+//! The editor's entry point: the command line, the editor built, its log
+//! opened and its session read, the files asked for opened, and then a front
+//! end, the terminal or a window.
 //!
 //! Design: `doc/architettura-editor.typ, <ciclo-vita>`.
 mod gui;
 mod tui;
 use rsedit_core::{
-    AppDir, DirOptions, ELispExp, EditorState, GapBuffer, app_dir, create_global_env, eval,
+    AppDir, DirOptions, ELispExp, EditorState, Env, GapBuffer, app_dir, create_global_env, eval,
 };
 use std::io::{self, IsTerminal};
+use std::sync::Arc;
 use std::time::Duration;
 use std::{ffi::OsString, path::PathBuf};
 
@@ -29,13 +30,29 @@ const LOG_FILE: &str = "rsedit.log";
 const SHUTDOWN_WAIT: Duration = Duration::from_millis(500);
 
 /// Shuts the editor's background work down when it is dropped, as `main`
-/// returns or a panic unwinds through it: every job is told, every dedicated
-/// thread is asked to stop, the log's last lines reach its file, and the shell
-/// commands still running are killed, so that none outlives the editor.
-struct ShutDownOnExit<'a>(&'a EditorState<BufferType>);
+/// returns or a panic unwinds through it: the session is written, unless a
+/// panic is unwinding, every job is told, every dedicated thread is asked to
+/// stop, the log's last lines reach its file, and the shell commands still
+/// running are killed, so that none outlives the editor.
+struct ShutDownOnExit<'a>(
+    &'a EditorState<BufferType>,
+    Arc<Env<EditorState<BufferType>>>,
+);
 
 impl Drop for ShutDownOnExit<'_> {
     fn drop(&mut self) {
+        // A panic may have left a buffer half changed, and a second panic
+        // here would abort before the log is written: the session of the
+        // run before stays instead.
+        if !std::thread::panicking() {
+            self.0.save_session(
+                &self.1,
+                app_dir(DirOptions {
+                    dir: AppDir::State,
+                    create: true,
+                }),
+            );
+        }
         self.0.shutdown(SHUTDOWN_WAIT);
     }
 }
@@ -99,7 +116,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok((state, env)) => (state, env),
         Err(err) => return Err(format!("rsedit could not start: {err:?}").into()),
     };
-    let _shut_down = ShutDownOnExit(&state);
+    let _shut_down = ShutDownOnExit(&state, env.clone());
     // The log, in the cache directory, made if it is not there yet; or, when
     // there can be none, the reason said in the log and the echo area.
     state.start_log_file(
@@ -108,6 +125,14 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             create: true,
         }),
         LOG_FILE,
+    );
+    // Before the files are opened, so that each opens where it was left.
+    state.load_session(
+        &env,
+        app_dir(DirOptions {
+            dir: AppDir::State,
+            create: false,
+        }),
     );
 
     for file in options.files {

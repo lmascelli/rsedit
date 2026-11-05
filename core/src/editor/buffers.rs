@@ -8,9 +8,10 @@ use super::*;
 
 impl<B: BufferTrait> EditorState<B> {
     /// Makes a buffer NAME in START_MODE: empty, or holding the text of the
-    /// file at PATH, and then shown in the focused window, in the mode its name
-    /// picks unless START_MODE says. Returns NAME, or `None` when the file
-    /// could not be read.
+    /// file at PATH, with point where it was last left in that file, and then
+    /// shown in the focused window, in the mode its name picks unless
+    /// START_MODE says. Returns NAME, or `None` when the file could not be
+    /// read.
     pub(crate) fn new_buffer(
         &self,
         name: &str,
@@ -29,6 +30,11 @@ impl<B: BufferTrait> EditorState<B> {
                         .or_else(|| self.auto_mode_for(file_path))
                         .unwrap_or_else(|| "fundamental-mode".into());
                     new_buf.file_path = Some(file_path.to_string());
+                    // Before the hooks, which see point where the file was
+                    // left, and may move it.
+                    if let Some(place) = self.place_for(file_path, env) {
+                        goto_offset(&mut new_buf.text, place);
+                    }
                     // Taken after the read, so that a file rewritten while it
                     // was read is noticed at the next look, not stamped as
                     // seen.
@@ -249,13 +255,15 @@ impl<B: BufferTrait> EditorState<B> {
     /// current, or `*scratch*`, and the buffer leaves the table, a fresh
     /// `*scratch*` taking the place of the last one. The work writing into it
     /// stops, and its mode's `after-close-hook` runs. Its auto-save file is
-    /// deleted, unless it has unsaved changes.
+    /// deleted, unless it has unsaved changes, and where point was in its
+    /// file is remembered.
     pub fn close_buffer(&self, name: &str, env: &Arc<Env<EditorState<B>>>) -> bool {
         let Some((closing_mode, writer)) =
             self.with_buffer(name, |buf| (buf.current_mode.clone(), buf.writer))
         else {
             return false;
         };
+        self.record_place(name, env);
 
         // A buffer with unsaved changes keeps its copy. This asks nothing, and
         // neither do `close-buffer` and `kill-buffer-without-saving`, which

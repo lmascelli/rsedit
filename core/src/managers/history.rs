@@ -125,6 +125,36 @@ impl History {
         self.rings.get(key).cloned().unwrap_or_default()
     }
 
+    /// Returns every ring that holds something, as its key and its entries
+    /// newest first, the keys in order: what a written history holds, and in
+    /// the same order each time it is written.
+    pub fn rings(&self) -> Vec<(String, Vec<String>)> {
+        let mut rings: Vec<(String, Vec<String>)> = self
+            .rings
+            .iter()
+            .filter(|(_, ring)| !ring.is_empty())
+            .map(|(key, ring)| (key.clone(), ring.clone()))
+            .collect();
+        rings.sort_by(|a, b| a.0.cmp(&b.0));
+        rings
+    }
+
+    /// Puts ENTRIES, newest first, behind what KEY already holds, keeping
+    /// LIMIT entries in all: what was typed in this run stays newer than what
+    /// was read back from an earlier one. Empty entries are left out, as
+    /// [`Self::remember`] leaves them out.
+    pub fn restore(&mut self, key: &str, entries: Vec<String>, limit: usize) {
+        if limit == 0 {
+            return;
+        }
+        let ring = self.rings.entry(key.to_string()).or_default();
+        ring.extend(entries.into_iter().filter(|entry| !entry.is_empty()));
+        ring.truncate(limit);
+        if ring.is_empty() {
+            self.rings.remove(key);
+        }
+    }
+
     /// Throws away what KEY remembers, and returns whether there was
     /// anything.
     pub fn forget(&mut self, key: &str) -> bool {

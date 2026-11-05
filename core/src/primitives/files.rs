@@ -1,6 +1,6 @@
 //! Visiting a file and writing it back: `find-file`, `save-buffer`,
 //! `write-file`, `revert-buffer` and `recover-file`, with the halves their
-//! questions call once answered.
+//! questions call once answered, and the files visited before.
 //!
 //! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 use super::*;
@@ -127,7 +127,8 @@ pub const FIND_FILE_DOC: &str = "(find-file PATH): Open the file at PATH in a bu
          another file's buffer has gets a suffix, as in name<2>. A PATH that does not exist gives \
          an empty buffer, which saving creates. A directory is handed to \
          `*open-directory-callback*', and its answer returned. A file that is not UTF-8 is read \
-         as windows-1252, and saved in it; one that cannot be read gives nil.\n\n\
+         as windows-1252, and saved in it; one that cannot be read gives nil. Point goes where \
+         the file was last left, unless `save-place' is nil.\n\n\
          Example:\n\
          (find-file \"~/notes.txt\")";
 
@@ -204,6 +205,7 @@ primitive!(find_file, args, env, ctx, {
         // file again would throw away whatever had been typed into it.
         Err(existing) => {
             ctx.switch_to_buffer(&existing);
+            ctx.record_visit(&path_str, &env);
             return Ok(ELispExp::string(existing));
         }
         Ok(name) => name,
@@ -211,6 +213,7 @@ primitive!(find_file, args, env, ctx, {
 
     if !path.exists() {
         let name = ctx.new_file_buffer(&buf_name, &path_str, None, &env);
+        ctx.record_visit(&path_str, &env);
         // Said out loud, because an empty buffer for a file that does not
         // exist looks exactly like an empty buffer for one that does -- and
         // the difference matters when the reason is a typo in the path.
@@ -220,6 +223,7 @@ primitive!(find_file, args, env, ctx, {
 
     match ctx.new_buffer(&buf_name, Some(&path_str), None, &env) {
         Some(buf_name) => {
+            ctx.record_visit(&path_str, &env);
             let mut said = Vec::new();
             // A file that is not UTF-8 opens all the same, and says so: its
             // characters are this coding's guess, and saving writes it back
@@ -494,6 +498,7 @@ primitive!(write_file, args, env, ctx, {
         ctx.change_major_mode(&new_name, &mode, &env);
     }
     if visited_file_changed {
+        ctx.record_visit(&path, &env);
         ctx.run_buffer_hook(&new_name, "after-set-visited-file-name-hook", &env);
     }
     say_written(ctx, &path, all_of_it);
@@ -540,6 +545,31 @@ primitive!(set_buffer_file_coding, args, _env, ctx, {
     Ok(ELispExp::string(coding.name().to_string()))
 });
 
+pub const RECENT_FILES_DOC: &str = "(recent-files): Return the files opened with `find-file' \
+         or written with `write-file', newest first, as a list of absolute paths: at most \
+         `recent-files-length' of them, kept from one run to the next.\n\n\
+         Example:\n\
+         (car (recent-files))";
+
+primitive!(recent_files, _args, _env, ctx, {
+    let paths = ctx.visits(|visits| visits.recent());
+    Ok(ELispExp::proper_list(
+        paths.into_iter().map(ELispExp::string).collect(),
+    ))
+});
+
+pub const CLEAR_RECENT_FILES_DOC: &str = "(clear-recent-files): Forget every file `recent-files' \
+         lists, and return t when there was one. Where point was in each file is kept.";
+
+primitive!(clear_recent_files, _args, _env, ctx, {
+    if ctx.visits_mut(|visits| visits.forget_recent()) {
+        ctx.set_echo_message("Recent files forgotten");
+        Ok(ELispExp::t())
+    } else {
+        Ok(ELispExp::nil())
+    }
+});
+
 /// Registers the primitives that visit a file and write it back.
 ///
 /// Called by [`super::install_primitives`].
@@ -576,4 +606,11 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         REVERT_BUFFER_REREAD_DOC,
     );
     into.command("write-file", write_file, &["fWrite file: "], WRITE_FILE_DOC);
+    into.function("recent-files", recent_files, RECENT_FILES_DOC);
+    into.command(
+        "clear-recent-files",
+        clear_recent_files,
+        &[],
+        CLEAR_RECENT_FILES_DOC,
+    );
 }

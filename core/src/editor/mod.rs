@@ -21,7 +21,7 @@ use crate::{
     jobs::watcher::FileWatcher,
     managers::{
         Binding, BindingSource, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands,
-        History, Hit, KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime, Scrolled,
+        History, Hit, KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime, Scrolled, Visits,
         WindowRemoved, Windows,
     },
     modes::{Grammar, MajorMode, SyntaxTable},
@@ -68,7 +68,9 @@ mod mouse;
 mod replace;
 mod results;
 mod runtime;
+pub(crate) mod session;
 mod settings;
+mod visits;
 mod windows;
 mod work;
 
@@ -241,6 +243,9 @@ pub struct EditorState<B: BufferTrait> {
     /// What has been typed at each prompt, and where a walk back through one
     /// has got to. See [`History`].
     history: Arc<RwLock<History>>,
+
+    /// The files visited, and where point was left in each. See [`Visits`].
+    visits: Arc<RwLock<Visits>>,
 
     /// The execution budget, the call stack, the theme, the goal column, and
     /// the search or replace in progress. See [`Runtime`].
@@ -457,6 +462,24 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn history_mut<R>(&self, f: impl FnOnce(&mut History) -> R) -> R {
         f(&mut self
             .history
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Runs F on the files visited and the places left in them, under their
+    /// read lock.
+    pub(crate) fn visits<R>(&self, f: impl FnOnce(&Visits) -> R) -> R {
+        f(&self
+            .visits
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Runs F on the files visited and the places left in them, under their
+    /// write lock.
+    pub(crate) fn visits_mut<R>(&self, f: impl FnOnce(&mut Visits) -> R) -> R {
+        f(&mut self
+            .visits
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
