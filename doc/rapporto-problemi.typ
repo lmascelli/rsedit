@@ -220,7 +220,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-CMD-7-9",
+    commit: "38c8fb0",
     titolo: [Su Windows un incolla tiene i ritorni a capo CR, e lì quattro test dell'incolla fallirebbero],
   ),
   (
@@ -236,7 +236,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-CMD-7-9",
+    commit: "38c8fb0",
     titolo: [In vim ogni sessione di Insert copia e confronta il buffer intero],
   ),
   (
@@ -244,7 +244,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-CMD-7-9",
+    commit: "38c8fb0",
     titolo: [In vim `.` ripete più avanti un inserimento scritto davanti allo stesso carattere, e dopo `cw` ed Esc porta il cursore alla fine del buffer],
   ),
   // ------------------------------------------------------------------ MIN
