@@ -200,6 +200,16 @@ INDENTING
         cmake-indent-line         the column of this line, in CMake
         cc-indent-line            the column of this line, in C or C++
 
+FILLING
+    On the `filling' page:
+
+        fill-paragraph            lay the paragraph, or the comment,
+                                  out again to the fill column
+        fill-region               the same, for every paragraph between
+                                  FROM and TO
+        do-auto-fill              break this line if it goes past the
+                                  fill column
+
 RECTANGLES
     A rectangle is the block of columns between point and the mark.
     On the `rectangles' page:

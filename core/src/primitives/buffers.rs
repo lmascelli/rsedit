@@ -64,7 +64,7 @@ primitive!(set_buffer_read_only, args, _env, ctx, {
 /// putting `"results"` and a Rust feature attaching its own `"results"` are
 /// two different things, and the one that looked second would find a value of
 /// a type it did not expect.
-fn lisp_key(key: &str) -> String {
+pub(super) fn lisp_key(key: &str) -> String {
     format!("lisp:{key}")
 }
 

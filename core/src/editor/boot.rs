@@ -299,6 +299,12 @@ pub fn create_global_env<B: BufferTrait>()
     // Off here, and on in `default-configuration`: see `mouse_mode`.
     env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
 
+    // The column paragraphs are filled to.
+    env.set_variable(
+        crate::primitives::fill::FILL_COLUMN.into(),
+        ELispExp::number(crate::primitives::fill::DEFAULT_FILL_COLUMN as f64),
+    );
+
     // The delimiter at point paired, and every match of a search drawn.
     env.set_variable(super::frame::SHOW_PAREN_MODE.into(), ELispExp::t());
     env.set_variable(super::frame::HIGHLIGHT_ALL_MATCHES.into(), ELispExp::t());

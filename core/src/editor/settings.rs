@@ -13,6 +13,7 @@ use crate::feature::isearch::{CASE_FOLD, ISEARCH_LAZY_COUNT};
 use crate::feature::minibuffer::HISTORY_LENGTH;
 use crate::jobs::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
 use crate::jobs::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
+use crate::primitives::fill::FILL_COLUMN;
 use risp::VARIABLE_DOCUMENTATION;
 
 /// A Lisp variable the editor reads, and what `C-h v` says about it.
@@ -269,6 +270,15 @@ pub const SETTINGS: &[Setting] = &[
         name: RESULTS_DISPLAY_LOCATION,
         doc: "Where output is displayed: same-window or bottom. \
               An invalid value uses bottom.",
+    },
+    Setting {
+        name: FILL_COLUMN,
+        doc: "The column `fill-paragraph' and `auto-fill-mode' keep lines to, 70 unless you \
+              change it. A mode's own fill-column property wins over this in its buffers, and \
+              a buffer's own, set by `set-fill-column', over both.\n\n\
+              Example:\n\
+              \x20 (setq fill-column 78)\n\
+              \x20 (put 'rust-mode 'fill-column 100)",
     },
     Setting {
         name: TAB_WIDTH,

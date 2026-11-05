@@ -21,6 +21,7 @@ mod tests {
     /// Every file under `text/`.
     const TEXT: &[(&str, &str)] = &[
         ("text/mod.rs", include_str!("../text/mod.rs")),
+        ("text/fill.rs", include_str!("../text/fill.rs")),
         ("text/isearch.rs", include_str!("../text/isearch.rs")),
         ("text/kill_ring.rs", include_str!("../text/kill_ring.rs")),
         ("text/rectangle.rs", include_str!("../text/rectangle.rs")),

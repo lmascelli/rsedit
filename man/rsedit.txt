@@ -36,6 +36,7 @@ MODULES
     preview              C-x r t shows its replacement before you commit
     clipboard            kills also reach the system clipboard
     electric-pair        closing delimiters that type themselves
+    fill                 M-q, and lines broken as you type
     buffer-list          C-x b, and C-x C-b
     recent-files         M-g r, a file opened before
     shell                M-! and its output buffer

@@ -168,7 +168,7 @@ lì e nella mappa di `lib.rs`.
   [`lib.rs`], [Ordine dei moduli e superficie pubblica (`pub use`). Tutto il resto è `pub(crate)`.],
   [`paths.rs`], [Le directory dell'editor, configurazione, dati, cache e stato, secondo le convenzioni di ogni sistema: `app_dir` (@directory); quella dei dati installati con l'editor, `installed_data_dir`; e i nomi dei file, resi assoluti e smontati senza chiedere al disco (@nomi-file).],
   [`buffer/`], [`Buffer`, `BufferTrait`, `GapBuffer`, undo, mark, overlay, testo virtuale, cache di colorazione (`syntax.rs`) e di scansione (`scan.rs`), timbro del file su disco (`disk.rs`), codifica del file (`coding.rs`, @codifiche).],
-  [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`).],
+  [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`), il riempimento (`fill.rs`).],
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
   [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Visits`, `Log`, `Runtime`, `Loader`.],
@@ -2476,7 +2476,7 @@ Decisioni:
   editor lasciato aperto di notte non costa nulla.
 
 // ===========================================================================
-= Il testo: ricerca, sostituzione, kill ring, rettangoli e liste di risultati <testo>
+= Il testo: ricerca, sostituzione, kill ring, rettangoli, liste di risultati e riempimento <testo>
 // ===========================================================================
 
 La directory `core/src/text/` raccoglie ciò che si può calcolare su un testo
@@ -2496,6 +2496,7 @@ mark, undo, lock o finestre.
   [`kill_ring.rs`], [`KillRing`: un anello di stringhe con la regola di rotazione e di accodamento.], [`managers/kill_yank.rs` (`KillYank`)],
   [`rectangle.rs`], [`Rectangle` e `Span`: l'aritmetica di due angoli e delle righe tra loro.], [`primitives/rectangle.rs`, `ui/compose.rs`],
   [`results.rs`], [`Entry` e `Results`: una lista di posti e un cursore che la percorre.], [`primitives/occur.rs`, `primitives/results.rs`, `primitives/scan.rs`, `editor/results.rs`],
+  [`fill.rs`], [Il riempimento: `Measure`, `lay_out`, `comment_prefix`, `break_at` (@riempimento).], [`primitives/fill.rs`],
 )
 
 Le sessioni (`Isearch`, `Replace`) tengono lo #emph[stato] di una ricerca o di
@@ -3108,6 +3109,70 @@ assoluto. Una lista che ha una directory sua, come l'uscita di `compile`, legge
 dunque i nomi relativi dove la build è girata, anche dopo un `cd` e anche con
 `M-g n` chiesto da un altro buffer; una lista senza, come quella di `grep`, i
 cui percorsi sono già assoluti, li legge nella directory di lavoro.
+
+== Il riempimento <riempimento>
+
+Riempire vuol dire disporre di nuovo le parole di un paragrafo, quante ne
+stanno su ogni riga prima di una colonna, dietro un prefisso. Le parti sono
+due, come per la ricerca: `text/fill.rs` sa di prefissi e di colonne e nulla
+di buffer e di modi; `primitives/fill.rs` trova nel buffer il paragrafo, o il
+commento, e i suoi prefissi, e fa la modifica.
+
+#ref-table(
+  columns: (3.6cm, 1fr),
+  header: ([In `text/fill.rs`], [Che cosa fa]),
+  [`Measure`], [La colonna da non superare, la larghezza di un Tab e quante celle prende un carattere: una funzione ricevuta, `ui::width::char_cells` dall'editor, perché `text/` non usa `ui/`. `column_after` dice dove finisce un testo che comincia a una colonna.],
+  [`lay_out`], [Le parole in righe, la prima dietro un prefisso e le altre dietro un secondo, finché `colonna + 1 + parola` non supera la larghezza; una parola troppo lunga ha una riga sua.],
+  [`comment_prefix`], [Il prefisso di commento di una riga: rientro, l'apertura più lunga tra quelle del modo, altri caratteri uguali all'ultimo dell'apertura o un `!` (`///`, `//!`, `;;;`), e gli spazi dopo.],
+  [`break_at`], [Dove spezzare una riga che si sta scrivendo: l'ultima serie di spazi la cui parola precedente finisce entro la colonna, o la prima dopo una prima parola troppo lunga; nulla se il testo, senza gli spazi finali, sta nella colonna.],
+)
+
+In `primitives/fill.rs` ogni riga ha un `Kind`: vuota (anche un commento
+senza testo dopo l'apertura), codice, testo dietro il suo rientro, commento
+dietro il suo prefisso. In un modo con commenti di riga ogni riga che non è
+un commento è codice; in uno senza, è testo. `paragraph_at` allarga la riga
+del punto in su e in giù finché le righe sono dello stesso gruppo
+(`Kind::joins`): testo con lo stesso rientro, o commenti con lo stesso
+prefisso a meno degli spazi dopo l'apertura. `filled` prende le parole dopo il
+prefisso di ogni riga e le dispone dietro il prefisso della prima riga e
+quello della seconda. `refill` sostituisce il testo solo se cambia, con
+`delete_range` e `insert_text` nello stesso gruppo di undo, e rimette il
+punto dopo lo stesso numero di caratteri di parola, prefissi esclusi
+(`words_before`, `after_words`). `fill-region` raccoglie i paragrafi che
+toccano le righe della regione e li riempie dall'ultimo, così le righe di
+ognuno sono ancora dove sono state trovate, spostando il punto della
+differenza di lunghezza di quelli prima di lui.
+
+La colonna la legge `setup`, un lock alla volta: il modo e il valore del
+buffer (la chiave `fill-column` dei dati del buffer, quella che `buffer-get`
+legge e `set-fill-column` scrive), poi la proprietà `fill-column` del modo e
+la variabile, poi le aperture dei commenti di riga dalla tabella sintattica.
+`do-auto-fill` usa `break_at` sulla parte della riga prima del punto, e mette
+al posto degli spazi un a capo e lo stesso prefisso; `auto-fill-mode`, nel
+modulo `fill` (@mod-fill), lo chiama dopo uno spazio scritto.
+
+Le decisioni:
+
++ *Un paragrafo ha un solo rientro.* In Emacs un paragrafo finisce solo a una
+  riga vuota, e `M-q` sotto un titolo attaccato al testo, come nelle pagine
+  di questo manuale dell'utente, unisce il titolo al paragrafo. Qui una riga
+  con un altro rientro comincia un altro paragrafo. Il prezzo è che un rientro
+  sospeso nel testo (una prima riga meno rientrata delle altre) non si
+  riempie come un paragrafo solo; nei commenti sì, perché il gruppo ignora gli
+  spazi dopo l'apertura.
++ *Nel codice solo i commenti.* Riempire righe di codice le romperebbe, e il
+  modo non ha regole per spezzare un'espressione: `M-q` su codice lo dice e
+  non fa nulla, e `do-auto-fill` non spezza. Così `auto-fill-mode` si può
+  accendere anche in un modo di programmazione.
++ *Solo i commenti di riga.* Le righe interne di un `/* */` non hanno un
+  prefisso dichiarato dal modo (` * ` è una convenzione, non una sintassi): si
+  trattano come codice, e il manpage `filling` lo dice nei limiti.
++ *La colonna del buffer nei suoi dati.* `set-fill-column` vale per un buffer,
+  come in Emacs, dove `fill-column` è locale al buffer; qui non ci sono
+  variabili locali, e i dati del buffer, sotto una chiave che anche Lisp legge,
+  ne fanno le veci.
++ *Uno spazio solo tra le parole.* Due spazi dopo un punto diventano uno:
+  riconoscere la fine di una frase chiederebbe regole per lingua.
 
 == Le decisioni <decisioni-testo>
 
@@ -6645,6 +6710,22 @@ nomina; la cancellazione è un comando sui tasti di `delete-backward-char` e
 + *Rust non accoppia le virgolette.* Le lifetime lo renderebbero sbagliato più
   spesso che giusto.
 
+=== `fill` <mod-fill>
+
+`M-q` e `C-x f`, e `auto-fill-mode`: un'opzione per buffer, la chiave
+`auto-fill` dei dati del buffer, e una funzione di `post-self-insert-hook`
+che, dopo uno spazio scritto in un buffer dove l'opzione è accesa, chiama
+`do-auto-fill` (@riempimento). `auto-fill-enable` la accende con
+`major-mode-hook` in ogni buffer nuovo di un modo, come `electric-pair-enable`
+accende le coppie.
+
++ *Un'opzione nei dati del buffer.* L'editor non ha modi secondari: una
+  funzione accesa in un buffer e spenta in un altro si ricorda dove la si
+  usa, e i dati del buffer se ne vanno con lui.
++ *Lo spazio, e non Invio.* Il gancio è `post-self-insert-hook`, che Invio non
+  fa scattare: `newline` è di `indent`, e spezzare lì vorrebbe dire legare i
+  due moduli. Una riga andata oltre la colonna si spezza al prossimo spazio.
+
 === `help` <mod-help>
 
 `C-h f`, `C-h v`, `C-h k`, `C-h b`, `C-h a` e `C-h ?`: le pagine dell'aiuto,
@@ -6940,6 +7021,7 @@ Le variabili che l'editor legge da Lisp:
   [`save-history`, `recent-files-length`, `save-place`], [`t`, 50, `t`], [Che cosa la sessione tiene da un avvio all'altro (@memoria).],
   [`show-paren-mode`, `highlight-all-matches`], [`t`, `t`], [La parentesi accanto al punto e le corrispondenze di una ricerca (@evidenziazioni).],
   [`isearch-lazy-count`], [`t`], [Il conteggio `3/17` nel prompt di una ricerca (@conteggio).],
+  [`fill-column`], [70], [La colonna di `M-q` e di `auto-fill-mode`; anche come proprietà di un modo e nei dati di un buffer (@riempimento).],
   [`*minibuffer-read-function*`], [`default-minibuffer-prompt`], [Chi apre i prompt.],
   [`*key-capture-function*`], [`nil`], [Chi riceve la prossima sequenza invece di eseguirla.],
 )

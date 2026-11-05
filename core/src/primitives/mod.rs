@@ -40,6 +40,7 @@ mod evaluation;
 pub(crate) mod file_names;
 pub(crate) mod files;
 pub(crate) mod filesystem;
+pub(crate) mod fill;
 mod fuzzy;
 mod grammar;
 mod help;
@@ -140,6 +141,7 @@ pub fn install_primitives<B: BufferTrait>(
     file_names::install(&into);
     files::install(&into);
     filesystem::install(&into);
+    fill::install(&into);
     fuzzy::install(&into);
     grammar::install(&into);
     help::install(&into);

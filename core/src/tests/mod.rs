@@ -28,6 +28,7 @@ mod echo_tests;
 mod edit_protection_tests;
 mod electric_pair_tests;
 mod file_name_tests;
+mod fill_tests;
 mod find_file_recursive_tests;
 mod find_file_tests;
 mod frame_snapshot_tests;
