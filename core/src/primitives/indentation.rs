@@ -1,11 +1,229 @@
-//! Reading a line's indentation and rewriting it. Which column a line should
-//! start at is a question about a language, which `indent.lisp` asks; what is
-//! here is the reading and the rewriting, through the two doors.
+//! Indentation's language-independent machinery: asking a mode for a column,
+//! cycling its alternatives on consecutive Tabs, and editing through the two
+//! doors. Language rules remain Lisp functions which only read the buffer.
 //!
 //! Design: `doc/architettura-editor.typ, <espressioni-indentazione>`.
 use super::*;
 use crate::primitives::edits::{delete_range, edited, insert_text};
-use crate::primitives::movement::is_blank_line;
+use crate::primitives::movement::{goto_offset, is_blank_line};
+use risp::call_callable;
+
+type IndentResult<B> = Result<ELispExp<B>, EvalError<EditorState<B>>>;
+
+/// A rule may move point while reading, including on its error path. Never
+/// keep the buffer's lock across Lisp: the rule needs to read it itself.
+fn call_rule<B: BufferTrait>(
+    rule: &ELispExp<B>,
+    env: std::sync::Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> IndentResult<B> {
+    let point = ctx.with_current_buffer(|buf| buf.text.cursor_pos_1d());
+    let result = call_callable(rule, &[], env, ctx);
+    ctx.with_current_buffer_mut(|buf| goto_offset(&mut buf.text, point));
+    result
+}
+
+fn column<B: BufferTrait>(value: &ELispExp<B>) -> Result<usize, EvalError<EditorState<B>>> {
+    match value {
+        ELispExp::Number(n) => args::width(*n),
+        other => Err(EvalError::WrongArgumentType {
+            expected: "Number".into(),
+            got: other.clone(),
+        }),
+    }
+}
+
+fn preferred_column<B: BufferTrait>(
+    env: &std::sync::Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> Result<usize, EvalError<EditorState<B>>> {
+    let mode = ctx.with_current_buffer(|buf| buf.current_mode.clone());
+    let value = match env.get_property(&mode, "indent-function") {
+        Some(rule) if rule.is_truthy() => call_rule(&rule, env.clone(), ctx)?,
+        _ => previous_indentation(&[], env.clone(), ctx)?,
+    };
+    column(&value)
+}
+
+/// Alternatives are opt-in: braces and string contents must not acquire
+/// arbitrary outer indentation levels just because a language uses spaces.
+/// An empty list disables cycling for this particular context.
+fn alternative_columns<B: BufferTrait>(
+    preferred: usize,
+    env: &std::sync::Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> Result<Option<Vec<usize>>, EvalError<EditorState<B>>> {
+    let mode = ctx.with_current_buffer(|buf| buf.current_mode.clone());
+    let Some(rule) = env
+        .get_property(&mode, "indent-levels-function")
+        .filter(|rule| rule.is_truthy())
+    else {
+        return Ok(None);
+    };
+    let value = call_rule(&rule, env.clone(), ctx)?;
+    let items = match &value {
+        ELispExp::Form(items) => items.to_vec(),
+        _ => {
+            let (items, tail) = value.split_list();
+            if !tail.is_nil() {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "proper list of indentation columns".into(),
+                    got: value,
+                });
+            }
+            items
+        }
+    };
+    if items.is_empty() {
+        return Ok(None);
+    }
+    let mut columns = Vec::with_capacity(items.len() + 1);
+    for item in items {
+        match item {
+            ELispExp::Number(n) if n.is_finite() && n >= 0.0 && n.fract() == 0.0 => {
+                columns.push(args::width(n)?);
+            }
+            other => {
+                return Err(EvalError::WrongArgumentType {
+                    expected: "non-negative integer indentation column".into(),
+                    got: other,
+                });
+            }
+        }
+    }
+    columns.push(preferred);
+    columns.sort_unstable_by(|a, b| b.cmp(a));
+    columns.dedup();
+    Ok(Some(columns))
+}
+
+pub const INDENT_WIDTH_DOC: &str = "(indent-width): Return the mode's tab-width property, or \
+         the variable tab-width when the mode has none.";
+
+primitive!(indent_width, args, env, ctx, {
+    exact_arity(args, 0)?;
+    let mode = ctx.with_current_buffer(|buf| buf.current_mode.clone());
+    Ok(env
+        .get_property(&mode, "tab-width")
+        .filter(|value| value.is_truthy())
+        .or_else(|| env.get_variable("tab-width"))
+        .unwrap_or_else(|| ELispExp::number(4.0)))
+});
+
+pub const INDENT_LINE_DOC: &str = "(indent-line): Indent the current line at the column its \
+         mode's indent-function returns, or like the previous nonblank line. Return t if the \
+         line changed, nil otherwise. Never cycle indentation levels.";
+
+primitive!(indent_line, args, env, ctx, {
+    exact_arity(args, 0)?;
+    let target = preferred_column(&env, ctx)?;
+    indent_line_to(&[ELispExp::number(target as f64)], env, ctx)
+});
+
+fn insert_padding<B: BufferTrait>(
+    env: std::sync::Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> IndentResult<B> {
+    let width = column(&indent_width(&[], env, ctx)?)?;
+    let padding = " ".repeat(width);
+    let happened = ctx.with_current_buffer_mut(|buf| {
+        let at = buf.text.cursor_pos_1d();
+        if !insert_text(buf, at, &padding) {
+            return false;
+        }
+        goto_offset(&mut buf.text, at + width);
+        true
+    });
+    Ok(edited(ctx, happened))
+}
+
+pub const INDENT_FOR_TAB_COMMAND_DOC: &str = "(indent-for-tab-command): Indent the region or \
+         current line. Consecutive Tabs cycle the mode's indent-levels-function columns from \
+         right to left, wrapping to the maximum. Other commands end the cycle. With \
+         tab-always-indent nil, insert spaces after text; without alternatives, repeated Tabs \
+         also insert spaces. With t, only indent. With complete, try completion when indentation \
+         and point did not change. A cycling Tab in leading whitespace never inserts spaces.";
+
+primitive!(indent_for_tab_command, args, env, ctx, {
+    exact_arity(args, 0)?;
+    if super::region::use_region_p(&[], env.clone(), ctx)?.is_truthy() {
+        return call_callable(&ELispExp::symbol("indent-region".into()), &[], env, ctx);
+    }
+    let (inside, existing, point) = ctx.with_current_buffer(|buf| {
+        let (line, col) = buf.text.cursor_pos();
+        let indent = indentation_of(&buf.text, line);
+        (col <= indent, indent, buf.text.cursor_pos_1d())
+    });
+    let policy = env
+        .get_variable("tab-always-indent")
+        .unwrap_or_else(ELispExp::nil);
+    if policy.is_nil() && !inside {
+        return insert_padding(env, ctx);
+    }
+
+    let preferred = preferred_column(&env, ctx)?;
+    let alternatives = alternative_columns(preferred, &env, ctx)?;
+    let repeated = ctx.last_command_is("indent-for-tab-command");
+    if policy.is_nil() && repeated && alternatives.is_none() {
+        return insert_padding(env, ctx);
+    }
+    let target = match &alternatives {
+        Some(levels) if repeated => levels
+            .iter()
+            .copied()
+            .find(|level| *level < existing)
+            .unwrap_or(levels[0]),
+        _ => preferred,
+    };
+    let changed = indent_line_to(&[ELispExp::number(target as f64)], env.clone(), ctx)?;
+    if changed.is_truthy() || (inside && alternatives.is_some()) {
+        return Ok(changed);
+    }
+    let same_point = ctx.with_current_buffer(|buf| buf.text.cursor_pos_1d() == point);
+    if same_point && matches!(&policy, ELispExp::Symbol(name) if name.as_str() == "complete") {
+        return call_callable(
+            &ELispExp::symbol("completion-at-point".into()),
+            &[],
+            env,
+            ctx,
+        );
+    }
+    Ok(changed)
+});
+
+pub const NEWLINE_AND_INDENT_DOC: &str = "(newline-and-indent): Delete horizontal whitespace \
+         just before point, insert a newline, and indent the new line using the mode's rule. \
+         From a blank line, keep its chosen indentation. Never cycle indentation levels.";
+
+primitive!(newline_and_indent, args, env, ctx, {
+    exact_arity(args, 0)?;
+    let (happened, keep) = ctx.with_current_buffer_mut(|buf| {
+        let (line, _) = buf.text.cursor_pos();
+        let keep = is_blank_line(&buf.text, line).then(|| indentation_of(&buf.text, line));
+        let point = buf.text.cursor_pos_1d();
+        let start = buf.text.cursor_2d_to_1d(line, 0);
+        let spaces = buf
+            .text
+            .slice(start, point)
+            .chars()
+            .rev()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .count();
+        let at = point - spaces;
+        if !delete_range(buf, at, point) || !insert_text(buf, at, "\n") {
+            return (false, keep);
+        }
+        goto_offset(&mut buf.text, at + 1);
+        (true, keep)
+    });
+    if !happened {
+        return Ok(edited(ctx, false));
+    }
+    match keep {
+        Some(column) => indent_line_to(&[ELispExp::number(column as f64)], env, ctx),
+        None => indent_line(&[], env, ctx),
+    }
+});
 
 /// Returns the column of the first character on LINE that is not a space or
 /// a tab.
@@ -86,6 +304,9 @@ primitive!(indent_line_to, args, _env, ctx, {
         let start = buf.text.cursor_2d_to_1d(line, 0);
         let width = indentation_of(&buf.text, line);
         if width == column {
+            if buf.text.cursor_pos_1d() < start + width {
+                goto_offset(&mut buf.text, start + width);
+            }
             return None;
         }
 
@@ -124,6 +345,20 @@ primitive!(indent_line_to, args, _env, ctx, {
 ///
 /// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.function("indent-width", indent_width, INDENT_WIDTH_DOC);
+    into.command("indent-line", indent_line, &[], INDENT_LINE_DOC);
+    into.command(
+        "indent-for-tab-command",
+        indent_for_tab_command,
+        &[],
+        INDENT_FOR_TAB_COMMAND_DOC,
+    );
+    into.command(
+        "newline-and-indent",
+        newline_and_indent,
+        &[],
+        NEWLINE_AND_INDENT_DOC,
+    );
     into.function(
         "current-indentation",
         current_indentation,

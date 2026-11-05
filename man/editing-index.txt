@@ -194,6 +194,7 @@ INDENTING
         lisp-head-after           the name that opens the list at OPEN
         lisp-argument-column      the column of the first argument
         python-indent-line        the column of this line, in Python
+        python-indent-levels      Python columns offered for Tab cycling
         toml-indent-line          the column of this line, in TOML
         bash-indent-line          the column of this line, in a script
         cmake-indent-line         the column of this line, in CMake

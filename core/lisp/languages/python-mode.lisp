@@ -57,6 +57,7 @@
 (set-string-syntax 'python-mode '(("\"\"\"" "\"\"\"" t) ("'''" "'''" t)))
 (put 'python-mode 'tab-width 4)
 (put 'python-mode 'indent-function 'python-indent-line)
+(put 'python-mode 'indent-levels-function 'python-indent-levels)
 
 (defun python--clause-column (code limit)
   "Find a matching compound statement for CODE before point, no deeper than LIMIT."
@@ -74,8 +75,9 @@
       (unless answer (setq line (prog-indent--previous))))
     answer))
 
-(defun python-indent-line ()
-  "Return the column the line point is on should start at, in Python."
+(defun python--indent-column (preserve-dedent)
+  "Return the suggested Python column, keeping a written dedent when
+PRESERVE-DEDENT is non-nil."
   (beginning-of-line)
   (let* ((start (point)) (existing (current-indentation)) (state (syntax-ppss))
          (code (prog-indent--trim (prog-indent--code)))
@@ -105,10 +107,37 @@
          ((string-match-p "\\\\[ \t]*$" before) (+ statement (indent-width)))
          ;; Indentation is Python syntax: keep a written dedent instead of
          ;; moving a following top-level statement back into the last body.
-         ((and (not (string= code "")) (< existing base)) existing)
+         ((and preserve-dedent (not (string= code "")) (< existing base)) existing)
          ((and (string= code "") (string-match-p "^(return|raise|break|continue|pass)\\b" before))
           (max 0 (- base (indent-width))))
          (t statement)))))))
+
+(defun python-indent-line ()
+  "Return the suggested Python column, preserving a written dedent."
+  (python--indent-column t))
+
+(defun python-indent-levels ()
+  "Return the columns consecutive Tabs may choose in this Python context.
+
+Compute the maximum independently of this line's written dedent, so cycling
+back to the outermost level does not lose the way back into the body. Strings
+and bracket continuations do not cycle; headers and clauses keep their
+suggested column. Rust orders the alternatives and handles repeated Tabs."
+  (beginning-of-line)
+  (let* ((start (point)) (state (syntax-ppss))
+         (code (prog-indent--trim (prog-indent--code))))
+    (unless (or (nth 2 state) (nth 4 state))
+      (goto-char start)
+      (let* ((previous (prog-indent--previous))
+             (before (if previous (nth 2 previous) ""))
+             (column (progn (goto-char start) (python--indent-column nil)))
+             (levels (list column)) (level 0))
+        (unless (or (string-match-p "^(elif|else|except|finally|case)\\b" code)
+                    (string-match-p ":[ \t]*$|\\\\[ \t]*$" before))
+          (while (< level column)
+            (setq levels (cons level levels)
+                  level (+ level (max 1 (indent-width))))))
+        levels))))
 
 (add-auto-mode "\\.(py|pyw|pyi)$" 'python-mode)
 (log "python-mode loaded")

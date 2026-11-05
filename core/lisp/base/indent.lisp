@@ -1,33 +1,17 @@
 ;;; indent --- what Tab and Return do.
 ;;;
-;;; Tab indents the region or the line at the column the mode's rule returns,
-;;; or like the line above; Return indents the line it opens. User manual:
-;;; the `indentation' page.
+;;; Rust supplies the line, Tab and Return commands. This module supplies
+;;; region operations and language-rule helpers. User manual: `indentation'.
 ;;; Design: `doc/architettura-editor.typ, <mod-indent>`.
 
 (require 'commands)
 
 (defvar tab-always-indent nil
-  "What Tab does on a line that is already indented: nil inserts
-`indent-width' spaces, t does nothing, and the symbol complete calls
-`completion-at-point'.")
-
-(defun indent-width ()
-  "Return how many columns a Tab indents by here: the mode's own, set with a
-tab-width property on the mode, or `tab-width'."
-  (or (get (major-mode) 'tab-width) tab-width))
-
-(defun indent-line ()
-  "Indent the line point is on at the column its mode's `indent-function'
-returns, or like the line above. Return t if the line moved, nil if it was
-already there."
-  ;; Point is put back before the line is touched: a rule reads the buffer by
-  ;; moving point, and leaves it wherever it finished.
-  (let* ((here (point))
-         (indenter (get (major-mode) 'indent-function))
-         (column (if indenter (funcall indenter) (previous-indentation))))
-    (goto-char here)
-    (indent-line-to column)))
+  "How Tab handles indentation and text: nil indents in leading whitespace
+and inserts spaces after text; t always indents; complete also tries
+`completion-at-point' when indentation and point did not change. Consecutive
+Tabs cycle a mode's indent-levels-function alternatives. Without alternatives,
+consecutive Tabs with nil insert spaces.")
 
 ;; ---------------------------------------------------------------------------
 ;; Regions
@@ -137,18 +121,6 @@ shape."
 shape. A line already at the margin stays there."
   (indent--shift -1))
 
-(defcommand indent-for-tab-command () nil
-  "Indent the region, or the line; on a line that is already indented, do
-what `tab-always-indent' says."
-  (if (use-region-p)
-      (indent-region)
-      (if (indent-line)
-          t
-          (cond
-           ((eq tab-always-indent 'complete) (completion-at-point))
-           (tab-always-indent nil)
-           (t (insert (make-string (indent-width) " ")))))))
-
 ;; ---------------------------------------------------------------------------
 ;; Indenting a Lisp
 ;; ---------------------------------------------------------------------------
@@ -243,22 +215,6 @@ indented."
 
 (defvar electric-indent-mode t
   "Whether Return indents the line it opens, as `newline-and-indent' does.")
-
-(defun indent--delete-trailing-space ()
-  "Delete the spaces and tabs just before point, on this line only."
-  (let* ((end (point))
-         (start (progn (beginning-of-line) (point)))
-         (gap (string-match-p "[ \t]+$" (buffer-substring start end))))
-    (goto-char end)
-    (when gap
-      (delete-region (+ start gap) end))))
-
-(defcommand newline-and-indent () nil
-  "Delete the spaces just before point, insert a newline, and indent the new
-line as Tab would."
-  (indent--delete-trailing-space)
-  (insert-newline)
-  (indent-line))
 
 (defcommand newline () nil
   "Insert a newline, and indent the new line when `electric-indent-mode' is

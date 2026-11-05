@@ -3027,11 +3027,12 @@ costruisce aggiungendo, e ricaricato dopo una modifica le avrebbe doppie, mentre
 la vecchia si colora di nuovo.
 
 Le proprietà dei simboli completano il modo senza toccare la struttura Rust;
-queste sono lette da `indent.lisp`:
+le primitive Rust dell'indentazione e `indent.lisp` leggono queste:
 
 ```lisp
 (put 'rust-mode 'tab-width 4)
 (put 'risp-mode 'indent-function 'lisp-indent-line)
+(put 'python-mode 'indent-levels-function 'python-indent-levels)
 (put 'rust-mode 'indent-region-style 'shift)
 ```
 
@@ -4982,6 +4983,7 @@ verifica le forme condivise dalle primitive, come il controllo dell'arità.
   [`file_names`], [7], [Percorsi resi assoluti e smontati, `list-dir`, `match-list`, il completamento dei nomi dei file.],
   [`filesystem`], [7], [Esistenza, cancellazione e rinomina di file, `directory-files-recursive`, `read-file-to-string`.],
   [`help`], [7], [Ciò che serve all'aiuto: `key-binding`, `where-is`, `keymap-bindings`, `read-key-sequence`. I comandi `describe-*` sono in `help.lisp`.],
+  [`indentation`], [7], [Lettura e scrittura del rientro, `indent-width`, `indent-line`, Tab con cycling e `newline-and-indent`.],
   [`sexp`], [7], [Movimenti e kill per espressioni bilanciate, `up-list`, `down-list`.],
   [`comments`], [6], [Commentare e decommentare.],
   [`keymaps`], [6], [`define-key`, `set-local-keymap`, le keymap transitorie, `define-repeat-key`, `repeat`.],
@@ -4996,7 +4998,6 @@ verifica le forme condivise dalle primitive, come il controllo dell'arità.
   [`modes`], [4], [`make-mode`, `add-hook`, `remove-hook`, `add-auto-mode`.],
   [`shell`], [4], [Comandi di shell, in background o fino alla fine; `parse-overstrike`.],
   [`virtual_text`], [4], [Testo virtuale: metterlo, cercarlo, toglierlo.],
-  [`indentation`], [3], [`current-indentation`, `previous-indentation`, `indent-line-to`.],
   [`evaluation`], [2], [`eval-file`, `eval-string-top-level`.],
   [`grammar`], [2], [`add-syntax-rule`, `add-syntax-region`.],
   [`occur`], [2], [`occur--scan`, `grep--scan`: le ricerche che fanno una lista.],
@@ -5024,7 +5025,7 @@ riferisce dopo (@ordine-lock).
   [`movement.rs`], [Il movimento per carattere, riga, parola e paragrafo, ai bordi della riga e del buffer, `goto-line`; il punto come numero; le funzioni che dicono dove finiscono una parola, una riga, un paragrafo.],
   [`killing.rs`], [Le kill, da `kill-line` a `kill-region`; `kill-ring-save`, `yank`, `yank-pop`, `kill-new` e il resto dell'anello; `cut_out`.],
   [`sexp.rs`], [Il movimento per espressioni bilanciate, dentro e fuori dalle liste, e le due kill di espressioni.],
-  [`indentation.rs`], [`current-indentation`, `previous-indentation`, `indent-line-to`.],
+  [`indentation.rs`], [Lettura e scrittura del rientro; consultazione delle regole, Tab con cycling e `newline-and-indent`.],
   [`verbs.rs`], [Maiuscole, spazi, righe, trasposizioni, `zap-to-char`.],
   [`region.rs`], [Il mark e la regione, `keyboard-quit`.],
   [`rectangle.rs`], [I comandi sui rettangoli, la cui geometria è in `text/rectangle.rs` (@rettangoli).],
@@ -5141,15 +5142,17 @@ buffer. Una parola si riconosce guardando i caratteri, un'espressione
 lessicando il testo con la tabella: una `)` in una stringa o in un commento è
 testo, e lo stesso testo si muove in modo diverso in due modi.
 
-Le primitive dell'indentazione non decidono nulla. La colonna giusta per una
-riga è una domanda sulla lingua, e la fa `indent.lisp`: `indent-line` cerca un
-`indent-function` sul simbolo del modo e, se non c'è, allinea alla riga sopra
-con `previous-indentation`. In Rust c'è ciò che Lisp non potrebbe fare in modo
-sicuro o veloce: leggere l'indentazione di una riga (`current-indentation`,
-spazi e tab) e riscriverla attraverso le porte, in un passo di undo
-(`indent-line-to`, che scrive solo spazi). `indent-line-to` risponde nil se la
-riga era già così, ed è ciò che `indent-for-tab-command` legge per scegliere
-il suo terzo caso.
+La colonna giusta per una riga resta una domanda sulla lingua: la primitiva
+`indent-line` consulta `indent-function` sul simbolo del modo e, se non c'è,
+usa `previous-indentation`. `indent-for-tab-command`, anch'essa Rust, consulta
+anche l'eventuale `indent-levels-function`: una lista di colonne alternative,
+ordinata e deduplicata dal nucleo. Il primo Tab applica il suggerimento; Tab
+consecutivi scelgono il livello inferiore e, al minimo, tornano al massimo.
+La cronologia dei comandi distingue un Tab consecutivo da una nuova richiesta.
+Le regole leggono soltanto il buffer, senza lock mantenuti durante Lisp, e il
+punto si ripristina anche se segnalano un errore. `indent-line-to` scrive solo
+spazi attraverso le porte, in un passo di undo. Return e le regioni applicano
+solo il suggerimento; il cycling è esclusivamente un'operazione interattiva.
 
 === I verbi <verbi>
 
@@ -6138,9 +6141,11 @@ esegue.
 
 === `indent` <mod-indent>
 
-Tab indenta la regione o la riga alla colonna che la regola del modo
-(`indent-function`) restituisce, o come la riga sopra; Return indenta la
-riga che apre (`electric-indent-mode`). Il modulo ha anche la regola dei Lisp
+Il modulo lascia a Rust `indent-width`, `indent-line`, `indent-for-tab-command`
+e `newline-and-indent`; conserva le operazioni sulle regioni, la configurazione
+e le regole dei linguaggi. Tab consulta `indent-function` e l'eventuale
+`indent-levels-function`; Return indenta la riga che apre (`electric-indent-mode`)
+e, da una riga vuota, conserva il livello scelto dall'utente. Il modulo ha la regola dei Lisp
 (`lisp-indent-line`) e i lettori comuni delle regole dei linguaggi
 (`prog-indent--code`, che maschera stringhe e commenti mantenendo le colonne).
 
@@ -6149,7 +6154,13 @@ riga che apre (`electric-indent-mode`). Il modulo ha anche la regola dei Lisp
   cento occasioni di rovinare una riga; dove va il punto dopo è scritto una
   volta, in `indent-line-to`, non una per linguaggio.
 + *Il punto si rimette prima di toccare la riga.* Una regola legge il buffer
-  muovendo il punto, e lo lascia dove ha finito.
+  muovendo il punto, e lo lascia dove ha finito. Rust lo ripristina anche
+  quando la regola segnala un errore.
++ *Un rientro corretto è già una risposta.* Tab nel margine con alternative
+  non inserisce spazi per il solo fatto che la riga non è cambiata. Senza
+  alternative, `tab-always-indent` nil inserisce dopo il testo o ripetendo Tab;
+  t indenta soltanto, complete prova anche il completamento. Return e le
+  regioni non richiedono mai le alternative.
 + *Le regioni per numero di riga, e riselezionate.* Indentare una riga sposta
   gli offset di tutte quelle sotto; ogni modifica disattiva il mark, e la
   regione si riseleziona alla fine perché un secondo Tab agisca sullo stesso

@@ -145,11 +145,20 @@ mod tests {
 
     #[test]
     fn indenting_to_where_it_already_is_reports_nothing_done() {
-        // What `indent-for-tab-command` reads to choose its third case.
         let (ctx, env) = editor();
         typing(&ctx, "    foo", 6);
         assert_eq!(run("(indent-line-to 4)", &env, &ctx), LispExp::nil());
         assert_eq!(contents(&ctx), "    foo");
+    }
+
+    #[test]
+    fn a_tab_on_correct_indentation_moves_point_to_the_text_without_inserting_spaces() {
+        let (ctx, env) = editor();
+        cycling_mode(&ctx, &env);
+        typing(&ctx, "header\n        body", 9);
+        key(&ctx, &env, KeyCode::Tab, false);
+        assert_eq!(contents(&ctx), "header\n        body");
+        assert_eq!(point(&ctx), 15);
     }
 
     #[test]
@@ -171,8 +180,275 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Tab's three cases
+    // Tab, including modes which offer alternative indentation levels
     // -----------------------------------------------------------------------
+
+    fn cycling_mode(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            env,
+            ctx,
+        )
+        .expect("common-keymaps.lisp");
+        run(
+            "(make-mode 'cycle-test)
+             (defun cycle-preferred () (goto-char 0) 8)
+             (defun cycle-levels () (goto-char 0) '(4 0 8 4))
+             (put 'cycle-test 'indent-function 'cycle-preferred)
+             (put 'cycle-test 'indent-levels-function 'cycle-levels)",
+            env,
+            ctx,
+        );
+        in_mode(ctx, "cycle-test");
+    }
+
+    fn indentation(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> usize {
+        number(&run("(current-indentation)", env, ctx)) as usize
+    }
+
+    #[test]
+    fn line_tab_and_newline_machinery_is_native() {
+        let (ctx, env) = editor();
+        for name in [
+            "indent-width",
+            "indent-line",
+            "indent-for-tab-command",
+            "newline-and-indent",
+        ] {
+            assert!(
+                matches!(env.get_function(name), Some(LispExp::Primitive { .. })),
+                "{name}"
+            );
+        }
+        assert!(run("(commandp 'indent-for-tab-command)", &env, &ctx).is_truthy());
+    }
+
+    #[test]
+    fn consecutive_tabs_cycle_any_modes_columns_and_keep_the_current_line() {
+        for policy in ["nil", "t", "'complete"] {
+            let (ctx, env) = editor();
+            cycling_mode(&ctx, &env);
+            run(&format!("(setq tab-always-indent {policy})"), &env, &ctx);
+            typing(&ctx, "header\n", 7);
+            for expected in [8, 4, 0, 8, 4] {
+                key(&ctx, &env, KeyCode::Tab, false);
+                assert_eq!(indentation(&ctx, &env), expected, "{policy}");
+                assert_eq!(contents(&ctx), format!("header\n{}", " ".repeat(expected)));
+                assert_eq!(point(&ctx), 7 + expected);
+            }
+        }
+    }
+
+    #[test]
+    fn an_intervening_command_restarts_tab_at_the_preferred_column() {
+        let (ctx, env) = editor();
+        cycling_mode(&ctx, &env);
+        typing(&ctx, "header\n", 7);
+        key(&ctx, &env, KeyCode::Tab, false);
+        key(&ctx, &env, KeyCode::Tab, false);
+        assert_eq!(indentation(&ctx, &env), 4);
+        key(&ctx, &env, KeyCode::Left, false);
+        key(&ctx, &env, KeyCode::Tab, false);
+        assert_eq!(indentation(&ctx, &env), 8);
+    }
+
+    #[test]
+    fn cycling_each_level_is_one_undo_step_and_respects_read_only() {
+        let (ctx, env) = editor();
+        cycling_mode(&ctx, &env);
+        typing(&ctx, "header\n", 7);
+        for _ in 0..3 {
+            key(&ctx, &env, KeyCode::Tab, false);
+        }
+        for expected in [4, 8, 0] {
+            run("(undo)", &env, &ctx);
+            assert_eq!(indentation(&ctx, &env), expected);
+        }
+        ctx.with_current_buffer_mut(|b| b.read_only = true);
+        key(&ctx, &env, KeyCode::Tab, false);
+        assert_eq!(contents(&ctx), "header\n");
+    }
+
+    #[test]
+    fn reindenting_a_line_or_region_and_pressing_enter_never_requests_alternatives() {
+        let (ctx, env) = editor();
+        cycling_mode(&ctx, &env);
+        run(
+            "(defun cycle-levels () (error \"not an interactive Tab\"))",
+            &env,
+            &ctx,
+        );
+        typing(&ctx, "header\nbody", 7);
+        run("(indent-line) (indent-line)", &env, &ctx);
+        assert_eq!(contents(&ctx), "header\n        body");
+        run("(end-of-line) (newline-and-indent)", &env, &ctx);
+        assert_eq!(contents(&ctx), "header\n        body\n        ");
+        select(&ctx, &env, 7, 19);
+        key(&ctx, &env, KeyCode::Tab, false);
+        key(&ctx, &env, KeyCode::Tab, false);
+        assert_eq!(contents(&ctx), "header\n        body\n        ");
+    }
+
+    #[test]
+    fn malformed_alternatives_do_not_edit_the_line_or_lose_point() {
+        for value in [
+            "'(8 wrong)",
+            "'(8 . 4)",
+            "'(8 -4)",
+            "'(8 1.5)",
+            "'(8 1000001)",
+        ] {
+            let (ctx, env) = editor();
+            cycling_mode(&ctx, &env);
+            run(
+                &format!("(defun cycle-levels () (goto-char 0) {value})"),
+                &env,
+                &ctx,
+            );
+            typing(&ctx, "header\n", 7);
+            assert!(
+                eval_str("(indent-for-tab-command)", &env, &ctx).is_err(),
+                "{value}"
+            );
+            assert_eq!(contents(&ctx), "header\n");
+            assert_eq!(point(&ctx), 7);
+        }
+    }
+
+    #[test]
+    fn nil_inserts_after_text_without_reindenting_the_line() {
+        let (ctx, env) = editor();
+        cycling_mode(&ctx, &env);
+        typing(&ctx, "header\nword", 11);
+        key(&ctx, &env, KeyCode::Tab, false);
+        assert_eq!(contents(&ctx), "header\nword    ");
+    }
+
+    #[test]
+    fn complete_still_completes_after_text_when_indentation_is_unchanged() {
+        let (ctx, env) = editor();
+        cycling_mode(&ctx, &env);
+        run(
+            "(setq tab-always-indent 'complete completed nil)
+             (defun completion-at-point () (setq completed t))",
+            &env,
+            &ctx,
+        );
+        typing(&ctx, "header\n        word", 19);
+        key(&ctx, &env, KeyCode::Tab, false);
+        assert!(run("completed", &env, &ctx).is_truthy());
+        assert_eq!(contents(&ctx), "header\n        word");
+    }
+
+    fn python(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            env,
+            ctx,
+        )
+        .expect("common-keymaps.lisp");
+        eval_str(
+            include_str!("../../lisp/languages/python-mode.lisp"),
+            env,
+            ctx,
+        )
+        .expect("python-mode.lisp");
+        in_mode(ctx, "python-mode");
+    }
+
+    #[test]
+    fn python_tabs_can_leave_arbitrarily_ending_functions_loops_and_conditionals() {
+        for source in [
+            "def a():\n    work()\n",
+            "for item in items:\n    process(item)\n",
+            "if ready:\n    process()\n",
+        ] {
+            let (ctx, env) = editor();
+            python(&ctx, &env);
+            typing(&ctx, source, source.len());
+            for expected in [4, 0, 4, 0] {
+                key(&ctx, &env, KeyCode::Tab, false);
+                assert_eq!(indentation(&ctx, &env), expected, "{source:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn python_cycles_nested_blocks_and_enter_keeps_the_chosen_dedent() {
+        let (ctx, env) = editor();
+        python(&ctx, &env);
+        let source = "def a():\n    if ready:\n        while pending:\n            work()\n";
+        typing(&ctx, source, source.len());
+        for expected in [12, 8, 4, 0, 12, 8, 4, 0] {
+            key(&ctx, &env, KeyCode::Tab, false);
+            assert_eq!(indentation(&ctx, &env), expected);
+        }
+        key(&ctx, &env, KeyCode::Enter, false);
+        assert_eq!(contents(&ctx), format!("{source}\n"));
+        assert_eq!(indentation(&ctx, &env), 0);
+    }
+
+    #[test]
+    fn python_cycles_back_inside_after_dedenting_a_line_with_text() {
+        let (ctx, env) = editor();
+        python(&ctx, &env);
+        run("(setq tab-always-indent t)", &env, &ctx);
+        let source = "def a():\n    if ready:\n        work()\nnext_statement()";
+        typing(&ctx, source, source.len());
+        for expected in [0, 8, 4, 0, 8] {
+            key(&ctx, &env, KeyCode::Tab, false);
+            assert_eq!(indentation(&ctx, &env), expected);
+            assert!(contents(&ctx).ends_with("next_statement()"));
+        }
+    }
+
+    #[test]
+    fn python_stop_statements_and_required_continuations_do_not_gain_extra_levels() {
+        for (source, expected) in [
+            ("def a():\n    pass\n", 0),
+            ("def a():\n    return value\n", 0),
+            ("def a():\n", 4),
+            ("values = [\n", 4),
+            ("if ready:\n    work()\nelse:", 0),
+        ] {
+            let (ctx, env) = editor();
+            python(&ctx, &env);
+            run("(setq tab-always-indent t)", &env, &ctx);
+            typing(&ctx, source, source.len());
+            for _ in 0..3 {
+                key(&ctx, &env, KeyCode::Tab, false);
+                assert_eq!(indentation(&ctx, &env), expected, "{source:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_correct_python_dedent_consumes_tab_without_falling_back_to_spaces() {
+        let (ctx, env) = editor();
+        python(&ctx, &env);
+        let source = "def a():\n    pass\n";
+        typing(&ctx, source, source.len());
+        for _ in 0..3 {
+            key(&ctx, &env, KeyCode::Tab, false);
+            assert_eq!(contents(&ctx), source);
+        }
+    }
+
+    #[test]
+    fn tabs_without_alternatives_do_not_undo_the_spaces_the_previous_tab_inserted() {
+        let (ctx, env) = editor();
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp");
+        typing(&ctx, "    header\n", 11);
+        for expected in [4, 8, 12] {
+            key(&ctx, &env, KeyCode::Tab, false);
+            assert_eq!(indentation(&ctx, &env), expected);
+        }
+    }
 
     #[test]
     fn tab_indents_a_line_to_match_the_one_above() {

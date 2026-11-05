@@ -21,6 +21,7 @@ SYNOPSIS
     (lisp-head-after OPEN)
     (lisp-argument-column OPEN HEAD)
     (python-indent-line)
+    (python-indent-levels)
     (toml-indent-line)
     (bash-indent-line)
     (cmake-indent-line)
@@ -41,12 +42,24 @@ DESCRIPTION
 TAB ON A LINE
     Tab indents the line point is on. Point stays on the character it was
     on, or goes to the start of the text when it was in the indentation.
-    On a line that is already where it belongs, Tab does what
-    `tab-always-indent' says:
+    `tab-always-indent' decides when to indent and when to insert spaces:
 
-        nil             insert spaces, as many as a Tab is wide
-        t               nothing: Tab only ever indents
-        complete        complete the word before point, as C-M-i does
+        nil             indent in leading whitespace; insert spaces after text
+        t               always indent
+        complete        indent, then try completion if nothing changed
+
+    A mode can offer alternative indentation levels. The first Tab uses its
+    suggested column; consecutive Tabs choose the next smaller alternative,
+    wrapping from the minimum to the maximum. For example, Python can cycle
+    8, 4, 0, 8 after an ordinary statement inside nested blocks. Another
+    command ends the cycle. A Tab in leading whitespace with alternatives
+    never adds spaces just because the line was already correctly indented.
+
+    Without alternatives, consecutive Tabs with nil insert spaces instead
+    of repeatedly undoing the preceding Tab's indentation. With complete,
+    completion is still available after text when indentation and point did
+    not change. M-x indent-line only applies the suggested column; it does
+    not cycle or insert extra spaces.
 
     M-m goes to the first character on the line that is not a space.
 
@@ -76,6 +89,8 @@ RETURN
     Return ends the line and indents the new one as Tab would. The spaces
     just before point go first, so the line it ends does not end in
     spaces, and Return on an indented blank line leaves that line empty.
+    From a blank line, Return keeps that line's chosen indentation, including
+    a level selected by Tab or Shift-Tab. It never cycles alternatives.
 
     With `electric-indent-mode' set to nil, Return only inserts a newline;
     M-x newline-and-indent still indents.
@@ -98,6 +113,23 @@ WRITING A RULE
 
         (put 'MODE 'indent-function 'FUNCTION)
 
+    A mode can additionally supply a function of no arguments returning a
+    proper list of alternative non-negative integer columns:
+
+        (put 'MODE 'indent-levels-function 'LEVELS-FUNCTION)
+
+    The order does not matter. Rust sorts and deduplicates the columns and
+    includes the suggested column. Return nil to disable cycling in a
+    context, such as a string or a bracket continuation. The function must
+    compute the alternatives independently of a dedent written on the current
+    line, so choosing column zero does not lose the way back inside a block.
+    It may move point while reading, but must not edit the buffer. Point is
+    restored even when either rule signals an error. The alternative rule is
+    used only by interactive Tab, never by Return or indent-region.
+
+    These commands and cycling are native Rust machinery; language-specific
+    rules remain Lisp, and existing modes need not supply alternatives.
+
     The functions a rule is written with are `current-indentation' and
     `previous-indentation', which read the indentation of a line, and
     `current-column'; `syntax-ppss' says how deep in brackets a position
@@ -115,6 +147,10 @@ LANGUAGE RULES
 
     A written Python dedent is meaningful syntax and is preserved. A blank
     line after return, raise, break, continue or pass dedents one level.
+    After an ordinary statement, consecutive Tabs can choose outer levels
+    without requiring a special statement at the end of a block. Headers and
+    clauses keep their suggested column; strings and bracket continuations
+    do not cycle.
     Reindentation cannot recover missing block boundaries in Python; use
     rigid shifting when changing the nesting of an existing block.
 
