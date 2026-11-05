@@ -219,14 +219,9 @@
     id: "CMD-7",
     gravita: "bassa",
     verificato: false,
-    stato: "aperto",
+    stato: "risolto",
+    commit: "COMMIT-CMD-7-9",
     titolo: [Su Windows un incolla tiene i ritorni a capo CR, e lì quattro test dell'incolla fallirebbero],
-    breve: [Windows: `insert-pasted-text` non converte CR e CRLF],
-    dove: [`primitives/edits.rs` (la variante per Windows di `normalize_line_endings`, che usa `insert-pasted-text`), `tests/paste_tests.rs`],
-    verifica: [Dalla lettura del codice: i test non girano su Windows, e la verifica dei passi compila soltanto per quel sistema.],
-    cosa: [`insert-pasted-text` converte in LF ogni CRLF e ogni CR isolato prima di inserire, perché l'indice delle righe conta solo `\n`. Su Windows invece `normalize_line_endings` restituisce il testo com'è, e nessun commento dice perché. La GUI passa a `handle_paste` gli appunti del sistema, che su Windows hanno di solito i fine riga CRLF. `paste_tests` non esclude Windows, e lì `a_paste_with_crlf_endings_becomes_lines`, `a_paste_with_bare_carriage_returns_becomes_lines`, `a_mix_of_endings_all_become_lines` e `a_trailing_carriage_return_opens_a_line` fallirebbero.],
-    effetto: [Su Windows un testo di più righe incollato lascia un CR alla fine di ogni riga, e un testo con CR isolati diventa una riga sola.],
-    correzione: [Decidere che cosa vuole Windows: convertire come sugli altri sistemi, togliendo la variante, oppure scriverne il motivo e limitare i quattro test agli altri sistemi.],
   ),
   (
     id: "CMD-8",
@@ -240,14 +235,17 @@
     id: "CMD-9",
     gravita: "bassa",
     verificato: true,
-    stato: "aperto",
+    stato: "risolto",
+    commit: "COMMIT-CMD-7-9",
     titolo: [In vim ogni sessione di Insert copia e confronta il buffer intero],
-    breve: [vim: entrare e uscire da Insert costa quanto il file],
-    dove: [`core/lisp/features/vim.lisp` (`vim--begin-insert`, che ricorda `(buffer-string)`, e `vim--finish-insert`, che lo confronta con `string-diff`)],
-    verifica: [Misurato con un test temporaneo durante il passo 21 della documentazione, compilato in release: su un buffer di 100 KB `i`, `x` ed Esc costano 1,3 ms, su uno di 2 MB 47 ms, mentre un movimento costa 0,2 ms in tutti e due.],
-    cosa: [Per sapere che cosa la sessione ha cambiato, e farlo ripetere a `.`, `vim--begin-insert` copia il testo del buffer intero in una proprietà del buffer, e `vim--finish-insert` ne fa un'altra copia e confronta le due con `string-diff`. Il costo è proporzionale al file, non a ciò che si è scritto, e lo pagano ogni `i`, `a`, `o`, `c` e Replace, anche quando la sessione non cambia nulla; la copia resta in memoria per tutta la sessione.],
-    effetto: [In un file di qualche megabyte entrare e uscire da Insert ha un ritardo visibile, che cresce con il file: decine di millisecondi a 2 MB, circa duecento a 8 MB. Sui file piccoli non si nota.],
-    correzione: [Ricordare l'intervallo toccato, dal punto d'ingresso e dalle modifiche che le porte registrano (l'undo le conosce già), invece del testo intero; oppure confrontare solo le righe tra la prima e l'ultima modificata.],
+  ),
+  (
+    id: "CMD-10",
+    gravita: "bassa",
+    verificato: true,
+    stato: "risolto",
+    commit: "COMMIT-CMD-7-9",
+    titolo: [In vim `.` ripete più avanti un inserimento scritto davanti allo stesso carattere, e dopo `cw` ed Esc porta il cursore alla fine del buffer],
   ),
   // ------------------------------------------------------------------ MIN
   (
@@ -807,7 +805,7 @@ I fuzzer del lettore e delle forme speciali, che hanno trovato le schede dell'in
 
 Ogni scheda è stata poi verificata sulla revisione `3d846f1`. Il codice che descrive è stato riletto, e la storia di git ha detto quale commit lo ha cambiato. Dove la scheda dice «verificato», la riproduzione è stata eseguita di nuovo, con lo stesso esecutore di scenari o con due editor veri in un terminale virtuale. Le misure di tempo e di memoria non sono state ripetute dove il codice misurato non è cambiato, e la scheda lo dice. Il campo *Dove* nomina ora file e funzioni, non righe.
 
-Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8, SIN-9, AVV-7, AVV-8, GUI-1 e CMD-9. RIC-10 è stata trovata, con un test, mentre si correggeva la visita dei risultati per la directory di lavoro, e risolta nello stesso commit: è tra le risolte.
+Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano aperte con il testo aggiornato a ciò che manca: BUF-1, CMD-1, CMD-3, CMD-6, MIN-3, FIL-5 e DOC-1. La verifica ne ha trovate quattro nuove: AVV-6, BKG-2, RIC-7 e DOC-5. Le schede trovate dopo, nei passi della documentazione che riscrivono il codice, dicono nella verifica dove sono state riprodotte, o che vengono dalla lettura del codice: RIC-8, BUF-4, CMD-7, CMD-8, BKG-3, SHL-5, MIN-4, RIC-9, MIN-5, FIL-6, SIN-7, SIN-8, SIN-9, AVV-7, AVV-8, GUI-1 e CMD-9. RIC-10 è stata trovata, con un test, mentre si correggeva la visita dei risultati per la directory di lavoro, e risolta nello stesso commit: è tra le risolte. Così CMD-10, trovata con un test mentre si correggeva CMD-9: il confronto sul testo intero metteva una `a` scritta davanti a un'altra `a` dopo di essa, e `.` la ripeteva tanti caratteri più avanti; una sessione che non aveva scritto nulla, come `cw` ed Esc, risultava cambiata alla fine del buffer, e `.` portava il cursore lì.
 
 == Riepilogo
 
@@ -815,13 +813,17 @@ Delle 51 schede di rsedit, 11 sono risolte. Sette lo sono in parte e restano ape
 #let n-media = conta("media")
 #let n-bassa = conta("bassa")
 
-#key[Sono aperti *#aperti.len() problemi*: *#n-alta di gravità alta*, #n-media di gravità media e #n-bassa di gravità bassa; #aperti.filter(p => p.verificato).len() sono stati riprodotti eseguendo il codice. Altri #risolti.len() sono stati risolti dopo l'analisi, e sono nell'appendice.]
+#if aperti.len() == 0 [
+  #key[Non è aperto *nessun problema*: tutti i #risolti.len() trovati sono stati risolti dopo l'analisi, e sono nell'appendice.]
+] else [
+  #key[Sono aperti *#aperti.len() problemi*: *#n-alta di gravità alta*, #n-media di gravità media e #n-bassa di gravità bassa; #aperti.filter(p => p.verificato).len() sono stati riprodotti eseguendo il codice. Altri #risolti.len() sono stati risolti dopo l'analisi, e sono nell'appendice.]
+]
 
 Non restano problemi di gravità alta: dei quattro trovati, due riguardavano il terminale, che un file poteva comandare (#link(<TUI-1>)[TUI-1]) e che un panic o un errore lasciavano in raw mode (#link(<TUI-2>)[TUI-2]), e due facevano perdere lavoro senza dirlo, un salvataggio fallito (#link(<FIL-1>)[FIL-1]) e due prompt aperti insieme (#link(<MIN-1>)[MIN-1]). Le tre correzioni trasversali che l'analisi proponeva ci sono, nell'editor: nel WorkManager un panic ritira solo il lavoro che l'ha causato (#link(<BKG-1>)[BKG-1]), una guardia ripristina il terminale (#link(<TUI-2>)[TUI-2]), e le larghezze guidate dall'utente hanno un limite, mentre i conteggi si fermano al bordo del buffer (#link(<CMD-3>)[CMD-3]). Il limite manca ancora nell'interprete (INT-2 e INT-13, nel rapporto di risp).
 
-La tabella seguente elenca i problemi aperti, dal più grave; l'identificativo rimanda alla scheda.
+#if aperti.len() > 0 [La tabella seguente elenca i problemi aperti, dal più grave; l'identificativo rimanda alla scheda.]
 
-#{
+#if aperti.len() > 0 {
   set text(size: 8.5pt)
   show: codice-relativo
   ref-table(

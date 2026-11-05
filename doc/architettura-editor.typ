@@ -1941,12 +1941,27 @@ il buffer modificato e chiama `changed` da `Applied::from`. Non registra nulla:
 l'inverso lo scrive la storia stessa (@undo). Ne passano `undo`, `redo` e il
 passo indietro di `query-replace` (`replace_back`).
 
+Le tre porte dicono ogni modifica, prima che il testo si muova, anche a chi la
+guarda: `Buffer::touched`, che `track-changes-begin` accende e
+`track-changes-end` spegne restituendo ciò che è cambiato
+(`buffer/touched.rs`). Tiene due numeri, quanti caratteri all'inizio e quanti
+alla fine nessuna modifica ha raggiunto, e il testo che il tratto fra i due
+aveva quando la guardia è cominciata: una modifica fuori dal tratto lo allarga,
+e il testo che aggiunge è letto lì, dalla porta, prima della modifica; fuori dal
+tratto il testo è ancora quello di allora. La fine confronta il tratto di prima
+con quello di adesso come `string-diff` confronterebbe i due testi interi, ma
+costa quanto il tratto, non quanto il file. La terza porta non può leggere il
+testo che la storia sta scrivendo: un undo dentro il tratto non costa nulla, uno
+che ne esce fa del tratto intero il cambiamento. È ciò che Vim usa per sapere
+che cosa ha scritto una sessione di Insert (@mod-vim).
+
 Un percorso solo oggi scavalca le porte, e di proposito: `adopt_text` (lettura
 di un file, `revert-buffer`, ricarica dal watcher) sostituisce tutto il testo e
 fa a mano ciò che le porte farebbero: incrementa la versione, invalida
 entrambe le cache dalla riga 0, svuota overlay, testo virtuale, mark e storia
 dell'undo (conservandone il limite), riporta il punto alla stessa riga e
-colonna. Un testo che arriva dal disco non è una modifica da annullare.
+colonna. Un testo che arriva dal disco non è una modifica da annullare; per chi
+guarda le modifiche, invece, è cambiato tutto.
 
 == Undo <undo>
 
@@ -5557,8 +5572,9 @@ dell'utente li descrive.
   come CR, ciò che manda Invio; l'indice delle righe conta solo `\n`, e dieci
   righe incollate sarebbero una riga lunga con nove caratteri invisibili. La
   conversione sta alla porta da cui passa ogni incolla, anche uno yank dagli
-  appunti di sistema; un CR scritto da Lisp di proposito resta un CR. Su
-  Windows la conversione non c'è #rapporto("CMD-7").
+  appunti di sistema; un CR scritto da Lisp di proposito resta un CR. La
+  conversione è la stessa su ogni sistema: gli appunti di Windows danno CRLF, e
+  l'indice delle righe conta solo `\n` anche lì.
 + *Una kill restituisce il testo, e l'anello lo riceve dopo.* L'anello è un
   compartimento che non si prende mai con il lock di un buffer: prenderlo nella
   closure aggiungerebbe all'ordine dei lock un arco che nient'altro rispetta.
@@ -6493,9 +6509,13 @@ in attesa, che stanno in proprietà del buffer. Un movimento restituisce
 `(POSIZIONE INCLUSIVA PER-RIGHE)`, e un operatore lo applica come intervallo; un
 registro tiene la forma del testo: caratteri, righe o blocco.
 
-Una sessione di Insert ricorda il testo del buffer all'ingresso e lo confronta
-con `string-diff` all'uscita: ciò che è cambiato, con l'azione che ha aperto la
-sessione, è ciò che `.` ripete #rapporto("CMD-9"); i comandi della sessione si
+Una sessione di Insert fa guardare alle porte le proprie modifiche
+(`track-changes-begin` all'ingresso, `track-changes-end` all'uscita, @due-porte):
+ciò che è cambiato, con l'azione che ha aperto la sessione, è ciò che `.` ripete.
+Non copia il buffer: entrare e uscire costa quanto ciò che si è scritto, in un
+file di due megabyte come in uno di una riga. Il cambiamento è cercato nel solo
+tratto toccato, così una `a` scritta davanti a un'altra `a` è dove la si è
+scritta, e `.` la scrive lì; i comandi della sessione si
 uniscono in un passo di undo (`undo-join` su `pre-command-hook`). Replace fa lo
 stesso. I comandi `:` leggono la riga con `minibuffer-read` e passano dai comandi dell'editor; la
 ricerca usa lo scanner di espressioni regolari dell'editor, in offset di

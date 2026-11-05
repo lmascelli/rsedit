@@ -1198,4 +1198,51 @@ mod tests {
         ctx.handle_key_event(KeyEvent::new(KeyCode::Delete), &env);
         assert_eq!(text(&ctx), "abc de");
     }
+    #[test]
+    fn an_insert_session_costs_the_same_in_a_large_buffer() {
+        // CMD-9: entering Insert copied the buffer, and leaving compared the
+        // copy with the text, in fuel as in time. The edits are watched now,
+        // and the stretch they reach is what is read.
+        let spent = |text: &str| {
+            let (ctx, env) = editor(text);
+            // Once outside the measurement, for what is set up on first use.
+            keys(&ctx, &env, "ix");
+            esc(&ctx, &env);
+            let (_, spent) = risp::measure(&ctx.fuel_meter(), || {
+                keys(&ctx, &env, "iy");
+                esc(&ctx, &env);
+            });
+            assert!(text_of(&ctx).starts_with("yx"), "the session typed");
+            spent
+        };
+        let small = spent("abc\n");
+        let large = spent(&"abcdefghij\n".repeat(20_000));
+        assert_eq!(small, large, "an Insert session costs what the file does");
+    }
+    fn text_of(ctx: &Ctx) -> String {
+        ctx.with_current_buffer(|b| b.text.slice(0, 10))
+    }
+    #[test]
+    fn dot_repeats_an_insertion_where_it_was_typed() {
+        // Compared with the whole text, an a typed before another a was put
+        // after it, and . typed it as many characters further on.
+        let (ctx, env) = editor("aaa bbb");
+        keys(&ctx, &env, "ia");
+        esc(&ctx, &env);
+        assert_eq!(text(&ctx), "aaaa bbb");
+        keys(&ctx, &env, "w.");
+        assert_eq!(text(&ctx), "aaaa abbb");
+    }
+    #[test]
+    fn dot_repeats_a_change_that_typed_nothing_where_it_is() {
+        // Two equal texts compared whole differ at their end: . moved point
+        // there, to the end of the buffer.
+        let (ctx, env) = editor("aa bb cc\ndd\n");
+        keys(&ctx, &env, "cw");
+        esc(&ctx, &env);
+        keys(&ctx, &env, "w.");
+        assert_eq!(text(&ctx), "  cc\ndd\n");
+        // On the space before, where Escape leaves it, as in Vim.
+        assert_eq!(point(&ctx), 0);
+    }
 }

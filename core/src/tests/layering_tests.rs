@@ -104,6 +104,7 @@ mod tests {
         ("buffer/overlay.rs", include_str!("../buffer/overlay.rs")),
         ("buffer/scan.rs", include_str!("../buffer/scan.rs")),
         ("buffer/syntax.rs", include_str!("../buffer/syntax.rs")),
+        ("buffer/touched.rs", include_str!("../buffer/touched.rs")),
         ("buffer/undo.rs", include_str!("../buffer/undo.rs")),
         (
             "buffer/virtual_text.rs",

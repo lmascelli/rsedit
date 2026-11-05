@@ -4,7 +4,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <due-porte>`.
 use super::*;
-use crate::buffer::{Buffer, Mark, undo};
+use crate::buffer::{Buffer, Mark, Touched, undo};
 use crate::primitives::args::movement_count;
 use std::cell::Cell;
 
@@ -60,6 +60,9 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
         buf.text.slice(start, end)
     };
     buf.undo.record_delete(start, removed, point);
+    if let Some(touched) = buf.touched.as_mut() {
+        touched.note(&buf.text, start, end);
+    }
     buf.mark = deactivated(buf.mark);
     buf.overlays.adjust_for_delete(start, end);
     buf.virtual_text.adjust_for_delete(start, end);
@@ -93,6 +96,9 @@ pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, conten
     let point = buf.text.cursor_pos_1d();
     let inserted = content.chars().count();
     buf.undo.record_insert(at, inserted, point);
+    if let Some(touched) = buf.touched.as_mut() {
+        touched.note(&buf.text, at, at);
+    }
     buf.mark = deactivated(buf.mark);
     // Before the text moves, each by its table's own rule (`buffer::overlay`,
     // `buffer::virtual_text`).
@@ -142,8 +148,9 @@ pub(crate) enum Replayed {
 /// The third door: undoes or redoes the latest group of BUF's history, doing
 /// for each change what the two doors do for an edit, except recording it --
 /// the history writes its own inverse. Refuses a read-only buffer, moves the
-/// overlays and the virtual text with the text, ends a selection, and tells
-/// the buffer with [`changed`].
+/// overlays, the virtual text and the markers with the text, tells what is
+/// watching the edits, ends a selection, and tells the buffer with
+/// [`changed`].
 pub(crate) fn replay<B: BufferTrait>(buf: &mut Buffer<B>, way: Replay) -> Replayed {
     if buf.read_only {
         refuse();
@@ -157,18 +164,30 @@ pub(crate) fn replay<B: BufferTrait>(buf: &mut Buffer<B>, way: Replay) -> Replay
         overlays,
         virtual_text,
         markers,
+        touched,
         ..
     } = buf;
+    // The length of the text as each step finds it, which the history does
+    // not say: what is watching the edits measures from the end too.
+    let mut length = text.len();
     let mut follow = |step: undo::Step| match step {
         undo::Step::Insert { at, len } => {
             overlays.adjust_for_insert(at, len);
             virtual_text.adjust_for_insert(at, len);
             markers.adjust_for_insert(at, len);
+            if let Some(touched) = touched.as_mut() {
+                touched.note_unread(at, at, length);
+            }
+            length += len;
         }
         undo::Step::Delete { from, to } => {
             overlays.adjust_for_delete(from, to);
             virtual_text.adjust_for_delete(from, to);
             markers.adjust_for_delete(from, to);
+            if let Some(touched) = touched.as_mut() {
+                touched.note_unread(from, to, length);
+            }
+            length -= to.saturating_sub(from).min(length);
         }
     };
     let applied = match way {
@@ -209,21 +228,15 @@ pub(crate) fn edited<B: BufferTrait>(ctx: &EditorState<B>, happened: bool) -> EL
 
 /// Returns TEXT with every CRLF and every lone CR made a LF, the only line
 /// break the buffer counts; borrowed when TEXT has no CR in it.
-#[cfg(not(target_os = "windows"))]
+///
+/// On every system: the clipboard of Windows hands over CRLF, and a buffer
+/// counts its lines on `\n` there too.
 fn normalize_line_endings(text: &str) -> std::borrow::Cow<'_, str> {
     if text.contains('\r') {
         std::borrow::Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n"))
     } else {
         std::borrow::Cow::Borrowed(text)
     }
-}
-
-// TODO(CMD-7): on Windows a paste keeps its CRs, with no reason written, and
-// the tests in `paste_tests` that expect lines fail there.
-/// Returns TEXT as it is.
-#[cfg(target_os = "windows")]
-fn normalize_line_endings(text: &str) -> std::borrow::Cow<'_, str> {
-    std::borrow::Cow::Borrowed(text)
 }
 
 /// Inserts CONTENT at point, through [`insert_text`].
@@ -382,6 +395,43 @@ primitive!(delete_char, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
+pub const TRACK_CHANGES_BEGIN_DOC: &str = "(track-changes-begin): Start watching what the edits \
+         to the current buffer reach, from now, forgetting what was watched before. Watching keeps \
+         the text of the stretch edited, not a copy of the buffer: see `track-changes-end'.\n\n\
+         Example:\n\
+         (track-changes-begin)";
+
+primitive!(track_changes_begin, args, _env, ctx, {
+    exact_arity(args, 0)?;
+    ctx.with_current_buffer_mut(|buf| buf.touched = Some(Touched::new(buf.text.len())));
+    Ok(ELispExp::nil())
+});
+
+pub const TRACK_CHANGES_END_DOC: &str = "(track-changes-end): Stop watching the current buffer, \
+         and return what the edits since `track-changes-begin' changed, as (START REMOVED \
+         INSERTED): from START, REMOVED characters became the string INSERTED. Return nil when \
+         nothing was edited, or nothing was watched. It is what `string-diff' says of the text \
+         before and after, within the stretch the edits reached: a word typed and deleted again \
+         is (START 0 \"\"). Undo and redo count as edits; one that reached past the stretch makes \
+         the whole stretch the change.\n\n\
+         Example:\n\
+         (track-changes-begin)\n\
+         (insert \"abc\")\n\
+         (track-changes-end)   ; (0 0 \"abc\") in an empty buffer";
+
+primitive!(track_changes_end, args, _env, ctx, {
+    exact_arity(args, 0)?;
+    let change = ctx.with_current_buffer_mut(|buf| buf.touched.take()?.change(&buf.text));
+    Ok(match change {
+        None => ELispExp::nil(),
+        Some(change) => ELispExp::proper_list(vec![
+            ELispExp::Number(change.start as f64),
+            ELispExp::Number(change.removed as f64),
+            ELispExp::string(change.inserted),
+        ]),
+    })
+});
+
 /// Registers the primitives that insert and delete characters.
 ///
 /// Called by [`super::install_primitives`].
@@ -406,4 +456,14 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         DELETE_BACKWARD_CHAR_DOC,
     );
     into.command("delete-char", delete_char, &["p"], DELETE_CHAR_DOC);
+    into.function(
+        "track-changes-begin",
+        track_changes_begin,
+        TRACK_CHANGES_BEGIN_DOC,
+    );
+    into.function(
+        "track-changes-end",
+        track_changes_end,
+        TRACK_CHANGES_END_DOC,
+    );
 }

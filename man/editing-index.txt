@@ -242,6 +242,8 @@ UNDOING AND REPEATING
         undo-join                 make the next edits part of this step
         set-undo-limit            how much deleted text undo keeps
         keyboard-quit             give up what is half done
+        track-changes-begin       start watching what edits change
+        track-changes-end         stop, and say what they changed
 
     On the `keymaps' page:
 

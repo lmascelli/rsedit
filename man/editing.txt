@@ -72,6 +72,9 @@ SYNOPSIS
     (set-undo-limit N)
     (keyboard-quit)
 
+    (track-changes-begin)
+    (track-changes-end)
+
 DESCRIPTION
     The editor's commands are built out of two halves: a unit of text and
     something to do to it. Learn the units and the rest follows, because
@@ -238,6 +241,17 @@ UNDOING
     C-g abandons a key sequence typed halfway, a count, and the region. It
     does not stop a command that is already running.
 
+WATCHING EDITS
+    `track-changes-begin' starts watching the edits to the buffer, and
+    `track-changes-end' stops and says what they changed, as
+    (START REMOVED INSERTED): from START, REMOVED characters became the
+    string INSERTED, or nil when nothing was edited. It keeps the text the
+    edits reached, not a copy of the buffer, so it costs what was typed,
+    not what the file is. A word typed and deleted again is no change but
+    where it was. An undo counts as an edit; one that reaches outside what
+    was edited makes all of it the change. vim watches an Insert session
+    this way, for what . repeats.
+
 REPEATING
     C-x z repeats the last command, and pressing z again repeats it again.
     For anything longer, record what you did and play it back: see the
@@ -272,6 +286,12 @@ EXAMPLES
 
         (define-key nil "C-c d" 'duplicate-line)
         (define-key nil "C-c ;" 'comment-indent)
+
+    What some edits changed, without copying the buffer:
+
+        (track-changes-begin)
+        (insert "abc")
+        (track-changes-end)       ; (START 0 "abc")
 
     Comment out a whole buffer from Lisp:
 

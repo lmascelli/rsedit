@@ -158,7 +158,7 @@ had."
     (when (member (buffer-get 'local-keymap) '(vim-normal-map vim-insert-map vim-replace-map))
       (set-local-keymap (buffer-get 'vim-saved-keymap)))
     (buffer-put 'mode-line-state (buffer-get 'vim-saved-mode-line-state))
-    (dolist (key '(vim-state vim-anchor vim-insert-before vim-insert-action vim-insert-start))
+    (dolist (key '(vim-state vim-anchor vim-insert-watching vim-insert-action vim-insert-start))
       (buffer-put key nil))
     (remove-overlays 'vim-selection)
     (vim--reset) (deactivate-mark) (set-echo-message "Vim mode disabled")))
@@ -551,11 +551,12 @@ nil; AROUND for a, not i."
 ;; Insert state, operators and putting text
 ;; ---------------------------------------------------------------------------
 
-;; TODO(CMD-9): the whole text is kept here and compared on leaving.
 (defun vim--begin-insert (action)
-  "Enter Insert state for ACTION, remembering the text, so that leaving can
+  "Enter Insert state for ACTION, watching the edits, so that leaving can
 tell what was typed."
-  (buffer-put 'vim-insert-before (buffer-string))
+  ;; The doors keep the stretch the session edits, not a copy of the buffer.
+  (track-changes-begin)
+  (buffer-put 'vim-insert-watching t)
   (buffer-put 'vim-insert-start (point))
   (buffer-put 'vim-insert-action action)
   (buffer-put 'vim-insert-join nil)
@@ -573,10 +574,12 @@ Visual selection again."
 (defun vim--finish-insert ()
   "Leave an Insert or Replace session: type a counted insertion again, and
 record what changed for ."
-  (let ((before (buffer-get 'vim-insert-before)) (action (buffer-get 'vim-insert-action)))
-    (when before
-      (let* ((change (string-diff before (buffer-string)))
-             (offset (- (car change) (buffer-get 'vim-insert-start)))
+  (let ((watching (buffer-get 'vim-insert-watching)) (action (buffer-get 'vim-insert-action))
+        (touched (track-changes-end)))
+    (when watching
+      (let* ((start (buffer-get 'vim-insert-start))
+             (change (or touched (list start 0 "")))
+             (offset (- (car change) start))
              (removed (nth 1 change)) (inserted (nth 2 change))
              (count (if (member (car action) '(insert open)) (nth 2 action) 1)))
         (when (and (> count 1) (> (length inserted) 0) (= removed 0))
@@ -589,7 +592,7 @@ record what changed for ."
         (when (and (not vim--replaying)
                    (or (> removed 0) (> (length inserted) 0) (member (car action) '(operator object open shortcut block))))
           (setq vim-last-change (list action (list offset removed inserted))))))
-    (buffer-put 'vim-insert-before nil)
+    (buffer-put 'vim-insert-watching nil)
     (buffer-put 'vim-insert-join nil)
     (when (> (point) (vim--bol (point))) (goto-char (- (point) 1)))))
 (defun vim--insert-command (key count)
@@ -926,7 +929,7 @@ one."
               (insert (nth 2 diff)))))
         (when (buffer-get 'vim-block-insert) (vim--replicate-block-insert (nth 2 diff)))
         ;; This replay already applied the counted insertion.
-        (buffer-put 'vim-insert-before nil)
+        (buffer-put 'vim-insert-watching nil)
         (vim-normal-state))
       (vim--reset) (vim--clamp))
         (setq vim--replaying was-replaying vim-last-change saved)))))

@@ -456,6 +456,7 @@ fn layout(report: &mut Report) {
                 overlays: Default::default(),
                 virtual_text: Default::default(),
                 markers: Default::default(),
+                touched: None,
                 version: 0,
                 scan: Default::default(),
                 syntax: Default::default(),
