@@ -111,6 +111,44 @@ mod tests {
         assert_eq!(seen, "visible");
     }
 
+    /// `setenv` changed the process's environment, which code on another
+    /// thread can read without the standard library's lock: the editor keeps
+    /// its own table instead, and the process is left as it was.
+    #[test]
+    fn setenv_leaves_the_editors_process_alone() {
+        let (ctx, env) = editor();
+        run(r#"(setenv "RSEDIT_TEST_FOUR" "mine")"#, &env, &ctx);
+        assert_eq!(
+            run(r#"(getenv "RSEDIT_TEST_FOUR")"#, &env, &ctx),
+            LispExp::string("mine".to_string())
+        );
+        assert!(
+            std::env::var("RSEDIT_TEST_FOUR").is_err(),
+            "the process never saw it"
+        );
+        let (other, other_env) = editor();
+        assert!(
+            run(r#"(getenv "RSEDIT_TEST_FOUR")"#, &other_env, &other).is_nil(),
+            "nor another editor"
+        );
+    }
+
+    /// A variable taken away is taken away from the programs started, though
+    /// the process still has it.
+    #[cfg(unix)]
+    #[test]
+    fn a_variable_taken_away_is_not_given_to_a_program() {
+        let (ctx, env) = editor();
+        run(r#"(setenv "HOME")"#, &env, &ctx);
+        assert!(run(r#"(getenv "HOME")"#, &env, &ctx).is_nil());
+        let seen = text_of(&run(
+            r#"(shell-command-to-string "printf %s \"${HOME-gone}\"")"#,
+            &env,
+            &ctx,
+        ));
+        assert_eq!(seen, "gone");
+    }
+
     // ----------------------------------------------------------------
     // Overstrike
     // ----------------------------------------------------------------

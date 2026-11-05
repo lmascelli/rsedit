@@ -14,7 +14,7 @@ use crate::{
         SyntaxTable,
         sexp::{Resume, Scan},
     },
-    work::{Class, Job, JobError, Spec, Step, StepContext},
+    work::{Class, Exit, Job, JobError, Spec, Step, StepContext},
 };
 
 /// Walks whichever buffer's scan has fallen behind, a chunk at a time, for as
@@ -43,6 +43,14 @@ impl<B: BufferTrait> Job<EditorState<B>> for Prescanner {
                 Ok(Step::Continue)
             }
             None => Ok(Step::Wait),
+        }
+    }
+
+    fn exit(&mut self, state: &EditorState<B>, why: Exit) {
+        if why == Exit::Panicked {
+            state.restart_after_panic("scan of expressions", || {
+                (Prescanner::spec(), Box::new(Prescanner))
+            });
         }
     }
 }

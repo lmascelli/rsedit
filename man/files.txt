@@ -199,7 +199,9 @@ PATHS
 
     `path-separator' is what goes between the paths of a variable such as
     PATH: ":" on Unix, ";" on Windows. `getenv' and `setenv' read and set
-    the environment the editor and every program it starts see.
+    the environment every program the editor starts sees; the editor's own
+    process keeps the one it started with, so a ~ in a path is still the
+    home it had.
     `data-directory' is where the editor's own modules, pages and themes
     are installed.
 

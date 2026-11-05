@@ -10,7 +10,7 @@ use crate::{
     buffer::syntax::LINES_PER_TURN,
     editor::{BUFFER_CHANGED, SYNTAX_CHANGED},
     modes::{Grammar, SyntaxSpan, SyntaxState, highlight_line},
-    work::{Class, Job, JobError, Spec, Step, StepContext},
+    work::{Class, Exit, Job, JobError, Spec, Step, StepContext},
 };
 
 /// Colours whichever buffer most needs it, a chunk at a time, for as long as
@@ -40,6 +40,12 @@ impl<B: BufferTrait> Job<EditorState<B>> for Highlighter {
             }
             // Nothing behind: asleep until the next change.
             None => Ok(Step::Wait),
+        }
+    }
+
+    fn exit(&mut self, state: &EditorState<B>, why: Exit) {
+        if why == Exit::Panicked {
+            state.restart_after_panic("colouring", || (Highlighter::spec(), Box::new(Highlighter)));
         }
     }
 }

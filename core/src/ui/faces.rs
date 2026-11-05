@@ -121,7 +121,7 @@ impl Face {
         // interning happens while configuring, never while drawing.
         FACE_NAMES
             .write()
-            .expect("Failed to acquire write lock on the face registry")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .intern(name)
     }
 
@@ -129,7 +129,7 @@ impl Face {
     pub fn named(name: &str) -> Option<Face> {
         FACE_NAMES
             .read()
-            .expect("Failed to acquire read lock on the face registry")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .ids
             .get(name)
             .map(|id| Face(*id))
@@ -140,7 +140,7 @@ impl Face {
     pub fn name(self) -> std::sync::Arc<str> {
         FACE_NAMES
             .read()
-            .expect("Failed to acquire read lock on the face registry")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .name(self)
             // Only for a `Face` built out of a raw id, which only this module
             // can do.
@@ -152,7 +152,7 @@ impl Face {
     pub fn all() -> Vec<Face> {
         let count = FACE_NAMES
             .read()
-            .expect("Failed to acquire read lock on the face registry")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .names
             .len();
         (0..count as u32).map(Face).collect()

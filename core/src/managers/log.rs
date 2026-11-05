@@ -50,7 +50,9 @@ impl Log {
     /// compartment rather than the editor, as the WorkManager does -- it must
     /// not hold an editor, which holds it.
     pub fn append(log: &RwLock<Log>, msg: &str) {
-        log.write().expect("write lock on log").record(msg);
+        log.write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record(msg);
     }
 
     /// Writes to the file, oldest first, the lines LOG holds that are not in

@@ -123,6 +123,8 @@ impl<B: BufferTrait> EditorState<B> {
             commands: Arc::new(RwLock::new(Commands::default())),
             shell_commands: Arc::new(AtomicUsize::new(0)),
             shell_processes: Arc::new(std::sync::Mutex::new(Vec::new())),
+            restarts: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            environment: Arc::new(RwLock::new(std::collections::HashMap::new())),
             current_results: Arc::new(RwLock::new(None)),
             macros: Arc::new(RwLock::new(Macros::default())),
             command_errors: Arc::new(AtomicUsize::new(0)),
@@ -149,8 +151,8 @@ impl<B: BufferTrait> EditorState<B> {
         // buffer or a grammar changes: started with the editor, since a job
         // that waits costs nothing, and one never started costs a file with no
         // colour and nothing saying why.
-        // TODO(BKG-2): submitted once, so a job that panics is gone for the
-        // session, and only the log says so.
+        // Submitted once, here; one that panics starts itself again, a few
+        // times, from its `exit` (`restart_after_panic`).
         editor_state
             .work
             .submit(Highlighter::spec(), Box::new(Highlighter));

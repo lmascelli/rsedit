@@ -6,7 +6,7 @@
 //! Design: `doc/architettura-editor.typ, <lavori-editor>`.
 use crate::{
     BufferTrait, EditorState,
-    work::{Job, JobError, Spec, Start, Step, StepContext},
+    work::{Exit, Job, JobError, Spec, Start, Step, StepContext},
 };
 use risp::{Env, LispContext};
 use std::path::{Path, PathBuf};
@@ -141,6 +141,16 @@ impl<B: BufferTrait> Job<EditorState<B>> for AutoSaver<B> {
         }
         // Re-read at every step: see `AUTO_SAVE_INTERVAL`.
         Ok(Step::Sleep(auto_save_interval(&self.env)))
+    }
+
+    fn exit(&mut self, state: &EditorState<B>, why: Exit) {
+        if why == Exit::Panicked {
+            let env = self.env.clone();
+            state.restart_after_panic("auto-saver", move || {
+                let saver = AutoSaver::new(env);
+                (saver.spec(), Box::new(saver))
+            });
+        }
     }
 }
 

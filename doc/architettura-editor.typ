@@ -475,8 +475,8 @@ chiudono nulla; le altre varianti, più rare, con il loro nome.
 + *I due lessici partono con l'editor.* L'evidenziatore e la prescansione
   sono sottomessi in `EditorState::new`, prima che esista un modo: un lavoro
   che aspetta un cambiamento non costa nulla, e uno mai avviato costerebbe un
-  file senza colori e senza una ragione detta. Sono sottomessi una volta sola
-  #rapporto("BKG-2").
+  file senza colori e senza una ragione detta. Sono sottomessi una volta sola,
+  e uno che va in panic si risottomette da sé (@lavori-editor).
 + *I due osservatori partono dopo `init.lisp`.* Il controllo dei file e il
   salvataggio automatico leggono le loro impostazioni a ogni passo, e sono
   sottomessi dopo la configurazione: ciò che dice conta dalla prima occhiata.
@@ -4010,9 +4010,16 @@ Evidenziatore e prescansione sono sottomessi in `EditorState::new`: un lavoro
 che aspetta un cambiamento non costa nulla. Controllo dei file e salvataggio
 automatico sono sottomessi in `create_global_env`, dopo `init.lisp`, perché
 l'interruttore che li spegne e il loro intervallo sono impostazioni del Lisp,
-che rileggono a ogni passo. Ognuno è sottomesso una volta sola: un lavoro
-dell'editor che va in panic non torna fino alla fine della sessione
-#rapporto("BKG-2").
+che rileggono a ogni passo. Ognuno è sottomesso una volta sola. Uno che va in
+panic, nel suo `exit` con `Exit::Panicked`, chiede all'editor di sottometterne
+uno nuovo (`restart_after_panic`): al più `RESTARTS` volte, 3, perché un
+panic che si ripete a ogni passo non diventi un ciclo, e ogni volta l'area
+messaggi dice quale lavoro si è fermato ed è ripartito, o che è spento fino al
+prossimo avvio. Uno nuovo e non lo stesso: il lavoro che ha fatto il panic può
+essere rimasto a metà. Un panic avvenuto con un lock dell'editor preso lo
+lascia avvelenato; le porte dei compartimenti lo riprendono com'è
+(`PoisonError::into_inner`) invece di far cadere anche il thread dei comandi,
+che così può ancora salvare i buffer: il panic resta nel log.
 
 Il passo dell'evidenziatore è il modello per scriverne altri:
 
@@ -5313,12 +5320,17 @@ percorso che restituisce, e la ricerca nei file, sul suo thread.
 
 === L'ambiente <ambiente>
 
-`getenv` e `setenv` leggono e cambiano le variabili d'ambiente del processo,
-che i programmi avviati dopo ereditano. `setenv` rifiuta un nome vuoto, o con
-`=` o un byte nullo, che farebbero andare in panic `set_var`. Un lock di `std`
-mette in fila le letture di `std::env` e l'avvio dei processi con le scritture,
-su qualunque thread; non copre il codice C che legge l'ambiente da sé
-#rapporto("BKG-3"). `data-directory` cerca la directory dei dati accanto
+`setenv` non cambia l'ambiente del processo: scrive in una tabella
+dell'editor (`EditorState::environment`) un valore, o che la variabile è
+tolta. `getenv` legge prima la tabella e poi il processo, e ogni programma
+avviato riceve la tabella sopra l'ambiente del processo (`apply_environment`,
+con `Command::env` ed `env_remove`). Cambiare l'ambiente del processo era
+`unsafe`: il lock di `std` mette in fila le sue letture e l'avvio dei processi,
+non il codice C che legge l'ambiente da sé, come le librerie di sistema della
+finestra grafica su un thread loro. `setenv` rifiuta un nome vuoto, o con `=`
+o un byte nullo, con cui nessun programma partirebbe più. La tabella è di un
+editor: `~` si espande con la `HOME` del processo, che `setenv` non tocca.
+`data-directory` cerca la directory dei dati accanto
 all'eseguibile, e un livello sopra, dove la trovano i binari dei test.
 
 === Uscire <uscire>

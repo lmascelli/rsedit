@@ -23,6 +23,11 @@ fn finish_one(counter: &AtomicUsize) {
 /// editor, which kills what is left of it at the end.
 pub(crate) type ShellProcess = Arc<std::sync::Mutex<Option<std::process::Child>>>;
 
+/// The processes an editor remembers, by weak reference: see
+/// `EditorState::remember_shell_process`.
+pub(crate) type ShellProcesses =
+    std::sync::Mutex<Vec<std::sync::Weak<std::sync::Mutex<Option<std::process::Child>>>>>;
+
 impl<B: BufferTrait> EditorState<B> {
     // ------------------------------------------------------------------
     // Running
@@ -91,6 +96,46 @@ impl<B: BufferTrait> EditorState<B> {
         finish_one(&self.shell_commands);
     }
 
+    /// Returns the value of the environment variable NAME as the programs the
+    /// editor starts see it: what `setenv` said, or else the process's own.
+    pub(crate) fn getenv(&self, name: &str) -> Option<String> {
+        let set = self
+            .environment
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(name)
+            .cloned();
+        match set {
+            Some(value) => value,
+            None => std::env::var(name).ok(),
+        }
+    }
+
+    /// Sets the environment variable NAME to VALUE for the programs the editor
+    /// starts from now on, or takes it away when VALUE is `None`.
+    pub(crate) fn setenv(&self, name: &str, value: Option<String>) {
+        self.environment
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name.to_string(), value);
+    }
+
+    /// Gives COMMAND the variables `setenv` has set or taken away, over the
+    /// process's own environment: the program sees them, and the editor's
+    /// process is not touched.
+    pub(crate) fn apply_environment(&self, command: &mut std::process::Command) {
+        let environment = self
+            .environment
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (name, value) in environment.iter() {
+            match value {
+                Some(value) => command.env(name, value),
+                None => command.env_remove(name),
+            };
+        }
+    }
+
     /// Remembers PROCESS, a shell command's, until it ends: see
     /// [`Self::shell_processes`].
     pub(crate) fn remember_shell_process(&self, process: &ShellProcess) {
@@ -121,7 +166,7 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn current_results(&self) -> Option<String> {
         self.current_results
             .read()
-            .expect("Failed to acquire read lock on current_results")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
@@ -131,7 +176,7 @@ impl<B: BufferTrait> EditorState<B> {
         *self
             .current_results
             .write()
-            .expect("Failed to acquire write lock on current_results") = name;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = name;
     }
 
     // ------------------------------------------------------------------

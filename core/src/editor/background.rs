@@ -31,7 +31,7 @@ impl<B: BufferTrait> EditorState<B> {
     ) {
         self.owed
             .write()
-            .expect("write lock on owed callbacks")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(OwedCallback {
                 name: name.to_string(),
                 id,
@@ -49,7 +49,7 @@ impl<B: BufferTrait> EditorState<B> {
         !self
             .owed
             .read()
-            .expect("read lock on owed callbacks")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_empty()
     }
 
@@ -63,8 +63,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// next pass, so that a job owing faster than this pays cannot keep the
     /// thread the user types on.
     pub fn run_owed_callbacks(&self, env: &Arc<Env<EditorState<B>>>) -> bool {
-        let owed: Vec<OwedCallback<B>> =
-            std::mem::take(&mut *self.owed.write().expect("write lock on owed callbacks"));
+        let owed: Vec<OwedCallback<B>> = std::mem::take(
+            &mut *self
+                .owed
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
         if owed.is_empty() {
             return false;
         }

@@ -30,8 +30,13 @@ const BATCH: usize = 64 * 1024;
 /// Builds the command that runs COMMAND through the platform's shell, so
 /// that what is typed means what it would at a prompt: pipes, redirection,
 /// globs and all. It starts in DIRECTORY, and stays there whatever the editor
-/// does next: the process's own directory is never what it is given.
-fn shell_invocation(command: &str, directory: &str) -> Command {
+/// does next: the process's own directory is never what it is given. It has
+/// the environment of CTX, with what `setenv` changed.
+fn shell_invocation<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    command: &str,
+    directory: &str,
+) -> Command {
     #[cfg(windows)]
     let mut child = {
         let mut c = Command::new("cmd");
@@ -45,6 +50,7 @@ fn shell_invocation(command: &str, directory: &str) -> Command {
         c
     };
     child.current_dir(directory);
+    ctx.apply_environment(&mut child);
     // Nothing types at it. Without this a command that reads standard input
     // inherits the terminal and fights the editor for keystrokes.
     child.stdin(Stdio::null());
@@ -53,9 +59,13 @@ fn shell_invocation(command: &str, directory: &str) -> Command {
 
 /// Starts COMMAND in DIRECTORY with its standard output and error going into
 /// one pipe, and returns the process and the pipe's reading end.
-fn start(command: &str, directory: &str) -> std::io::Result<(Child, PipeReader)> {
+fn start<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    command: &str,
+    directory: &str,
+) -> std::io::Result<(Child, PipeReader)> {
     let (output, writer) = std::io::pipe()?;
-    let mut invocation = shell_invocation(command, directory);
+    let mut invocation = shell_invocation(ctx, command, directory);
     invocation.stdout(writer.try_clone()?).stderr(writer);
     #[cfg(unix)]
     {
@@ -359,7 +369,7 @@ primitive!(shell_command_start, args, env, ctx, {
     // Asked before the output buffer is made, which may become current: where
     // the command runs is where it was asked for.
     let directory = ctx.default_directory();
-    let (child, output) = match start(command, &directory) {
+    let (child, output) = match start(ctx, command, &directory) {
         Ok(started) => started,
         Err(why) => {
             ctx.set_echo_message(&cannot_run(&directory, &why));
@@ -476,7 +486,7 @@ primitive!(shell_command_to_string, args, _env, ctx, {
         });
     };
     let directory = ctx.default_directory();
-    match shell_invocation(command, &directory).output() {
+    match shell_invocation(ctx, command, &directory).output() {
         Ok(output) => Ok(ELispExp::string(
             String::from_utf8_lossy(&output.stdout).to_string(),
         )),

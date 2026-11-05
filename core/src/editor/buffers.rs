@@ -153,7 +153,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// cannot keep it.
     pub(crate) fn with_buffer<R>(&self, name: &str, f: impl FnOnce(&Buffer<B>) -> R) -> Option<R> {
         let handle = self.buffers(|buffers| buffers.handle(name))?;
-        let guard = handle.read().expect("read lock on buffer");
+        let guard = handle
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Some(f(&guard))
     }
 
@@ -165,7 +167,9 @@ impl<B: BufferTrait> EditorState<B> {
         f: impl FnOnce(&mut Buffer<B>) -> R,
     ) -> Option<R> {
         let handle = self.buffers(|buffers| buffers.handle(name))?;
-        let mut guard = handle.write().expect("write lock on buffer");
+        let mut guard = handle
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Some(f(&mut guard))
     }
 
@@ -173,14 +177,18 @@ impl<B: BufferTrait> EditorState<B> {
     /// [`Buffers`] makes sure of it.
     pub(crate) fn with_current_buffer<R>(&self, f: impl FnOnce(&Buffer<B>) -> R) -> R {
         let handle = self.buffers(|buffers| buffers.current_handle());
-        let guard = handle.read().expect("read lock on buffer");
+        let guard = handle
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&guard)
     }
 
     /// Runs F on the current buffer, under its write lock.
     pub(crate) fn with_current_buffer_mut<R>(&self, f: impl FnOnce(&mut Buffer<B>) -> R) -> R {
         let handle = self.buffers(|buffers| buffers.current_handle());
-        let mut guard = handle.write().expect("write lock on buffer");
+        let mut guard = handle
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&mut guard)
     }
 

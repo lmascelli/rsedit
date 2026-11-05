@@ -64,7 +64,7 @@ impl<B: BufferTrait> EditorState<B> {
             let echo = self
                 .echo_message
                 .read()
-                .expect("Failed to acquire read lock on echo_message");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             match echo.visible_for(echo_timeout) {
                 Some(_) => echo.text.clone(),
                 None => String::new(),
@@ -125,7 +125,7 @@ impl<B: BufferTrait> EditorState<B> {
                         .map(|buf| {
                             let (c_line, c_col) = buf
                                 .read()
-                                .expect("Failed to acquire read lock on buffer")
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
                                 .text
                                 .cursor_pos();
                             let c_screen = layout
@@ -238,7 +238,7 @@ impl<B: BufferTrait> EditorState<B> {
     pub fn get_echo_message(&self) -> String {
         self.echo_message
             .read()
-            .expect("Failed to acquire read lock on echo_message")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .text
             .clone()
     }
@@ -254,7 +254,7 @@ impl<B: BufferTrait> EditorState<B> {
         let elapsed = self
             .echo_message
             .read()
-            .expect("Failed to acquire read lock on echo_message")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .visible_for(Some(timeout))?;
         timeout.checked_sub(elapsed).filter(|left| !left.is_zero())
     }
@@ -295,6 +295,6 @@ impl<B: BufferTrait> EditorState<B> {
         *self
             .echo_message
             .write()
-            .expect("Failed to acquire write lock on echo_message") = EchoMessage::new(msg);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = EchoMessage::new(msg);
     }
 }

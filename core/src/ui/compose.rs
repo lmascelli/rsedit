@@ -109,7 +109,7 @@ impl LayoutNode {
                             settings.mode_line_format,
                             &buffer
                                 .read()
-                                .expect("Failed to acquire read lock on buffer"),
+                                .unwrap_or_else(std::sync::PoisonError::into_inner),
                             rect.height - 1,
                         )
                     })
@@ -137,7 +137,9 @@ impl LayoutNode {
                 // Point and the line count, read under one acquisition of the
                 // buffer's lock: the gutter and the scroll both need them.
                 let point_and_size = buffers.handle(&win.buffer_name).map(|buf| {
-                    let buf = buf.read().expect("Failed to acquire read lock on buffer");
+                    let buf = buf
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let (line, col) = buf.text.cursor_pos();
                     (line, col, buf.text.cursor_pos_1d(), buf.text.line_count())
                 });
@@ -293,7 +295,7 @@ pub fn overlay_highlights<B: BufferTrait>(
     };
     let buf = buf
         .read()
-        .expect("Failed to acquire read lock on buffer for highlighting");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if buf.overlays.is_empty() {
         // What almost every buffer has.
         return Vec::new();
@@ -345,7 +347,7 @@ pub fn region_highlights<B: BufferTrait>(
     };
     let buf = buf
         .read()
-        .expect("Failed to acquire read lock on buffer for highlighting");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some((start, end)) = region_bounds(buf.mark, buf.text.cursor_pos_1d(), buf.text.len())
     else {
         return Vec::new();
@@ -420,7 +422,7 @@ pub fn compose_layout<B: BufferTrait>(
     };
     let buf = buf
         .read()
-        .expect("Failed to acquire read lock on buffer for composing");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     Layout::compose(
         &buf.text,
         &buf.virtual_text,
@@ -443,7 +445,7 @@ pub fn syntax_highlights<B: BufferTrait>(
     };
     let buf = buf
         .read()
-        .expect("Failed to acquire read lock on buffer for highlighting");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let mut highlights = Vec::new();
     for row in 0..rect.height {

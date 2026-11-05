@@ -155,7 +155,7 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn abandon_pending_input(&self) {
         self.pending_keys
             .write()
-            .expect("Failed to acquire write lock on pending_keys")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
         self.clear_prefix_argument();
     }
@@ -173,7 +173,7 @@ impl<B: BufferTrait> EditorState<B> {
         let keys = self
             .pending_keys
             .read()
-            .expect("Failed to acquire read lock on pending_keys");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !keys.is_empty() {
             parts.push(describe_keys(&keys));
         }
@@ -196,7 +196,7 @@ impl<B: BufferTrait> EditorState<B> {
         let mut pending = self
             .pending_keys
             .write()
-            .expect("Failed to acquire write lock on pending_keys");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         pending.push(event);
 
         // Read before the modes are taken: buffers come before modes.
@@ -319,7 +319,7 @@ impl<B: BufferTrait> EditorState<B> {
         let mut pending = self
             .pending_keys
             .write()
-            .expect("Failed to acquire write lock on pending_keys");
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         pending.push(event);
         let keys = pending.clone();
         let described = describe_keys(&keys);
@@ -508,7 +508,7 @@ impl<B: BufferTrait> EditorState<B> {
     fn pending_key_events(&self) -> Vec<KeyEvent> {
         self.pending_keys
             .read()
-            .expect("read lock on pending_keys")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 }

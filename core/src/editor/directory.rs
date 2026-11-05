@@ -14,7 +14,7 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn working_directory(&self) -> String {
         self.working_directory
             .read()
-            .expect("Failed to acquire read lock on working_directory")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
@@ -29,7 +29,7 @@ impl<B: BufferTrait> EditorState<B> {
         *self
             .working_directory
             .write()
-            .expect("Failed to acquire write lock on working_directory") = directory.clone();
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = directory.clone();
         Ok(directory)
     }
 

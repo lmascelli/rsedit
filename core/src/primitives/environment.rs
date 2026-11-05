@@ -6,33 +6,32 @@
 use super::*;
 
 pub const GETENV_DOC: &str = "(getenv NAME): Return the value of the environment variable NAME, \
-         or nil when it is not set or is not valid Unicode.\n\n\
+         as `setenv' left it, or nil when it is not set or is not valid Unicode.\n\n\
          Example:\n\
          (getenv \"HOME\")";
 
-primitive!(getenv, args, _env, _ctx, {
+primitive!(getenv, args, _env, ctx, {
     let Some(ELispExp::String(name)) = args.first() else {
         return Err(EvalError::WrongArgumentType {
             expected: "String".into(),
             got: args.first().cloned().unwrap_or_else(ELispExp::nil),
         });
     };
-    Ok(match std::env::var(name.as_str()) {
-        Ok(value) => ELispExp::string(value),
-        Err(_) => ELispExp::nil(),
+    Ok(match ctx.getenv(name) {
+        Some(value) => ELispExp::string(value),
+        None => ELispExp::nil(),
     })
 });
 
 pub const SETENV_DOC: &str = "(setenv NAME &optional VALUE): Set the environment variable NAME to \
          VALUE, or remove it when VALUE is nil or missing, and return VALUE. The change reaches \
-         the programs the editor starts from then on, not the shell that started the editor.\n\n\
+         `getenv' and the programs the editor starts from then on, not the shell that started \
+         the editor, and not the editor's own process.\n\n\
          Example:\n\
          (setenv \"PAGER\" \"cat\")\n\
          (setenv \"PAGER\")   ; remove it";
 
-// TODO(BKG-3): code that reads the environment without going through `std`
-// is not kept out while it changes.
-primitive!(setenv, args, _env, _ctx, {
+primitive!(setenv, args, _env, ctx, {
     if args.is_empty() || args.len() > 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -45,22 +44,24 @@ primitive!(setenv, args, _env, _ctx, {
             got: args[0].clone(),
         });
     };
-    // An empty or otherwise impossible name would panic inside `set_var`, and
-    // a typo in a configuration file should not take the editor down.
+    // An empty or otherwise impossible name would make every program started
+    // afterwards fail to start, and a typo in a configuration file should be
+    // said where it is.
     if name.is_empty() || name.contains('=') || name.contains('\0') {
         return Err(EvalError::RuntimeMessage(format!(
             "{name:?} is not a usable environment variable name"
         )));
     }
+    // Into the editor's table, not the process's environment: see
+    // `EditorState::environment`. No `unsafe`, then: nothing another thread
+    // reads changes under it.
     match args.get(1) {
         None => {
-            // SAFETY: as for `set_var` below.
-            unsafe { std::env::remove_var(name.as_str()) };
+            ctx.setenv(name, None);
             Ok(ELispExp::nil())
         }
         Some(exp) if exp.is_nil() => {
-            // SAFETY: as for `set_var` below.
-            unsafe { std::env::remove_var(name.as_str()) };
+            ctx.setenv(name, None);
             Ok(ELispExp::nil())
         }
         Some(ELispExp::String(value)) => {
@@ -69,16 +70,7 @@ primitive!(setenv, args, _env, _ctx, {
                     "an environment variable's value cannot contain a null byte".into(),
                 ));
             }
-            // SAFETY: other threads read the environment while this runs --
-            // a Lisp job on the executor calling `getenv` or starting a
-            // process, the auto-saver expanding a `~`, `stop shell` starting
-            // `/bin/sh` -- and all of them go through `std::env` and
-            // `std::process`, which take the lock `set_var` takes: none of
-            // them sees a change half made. The lock does not cover code that
-            // reads the environment by itself, through the C library, which
-            // is why `set_var` is unsafe: the TUI runs none on another thread,
-            // and the graphical front-end's system libraries may.
-            unsafe { std::env::set_var(name.as_str(), value.as_str()) };
+            ctx.setenv(name, Some(value.to_string()));
             Ok(ELispExp::string(value.to_string()))
         }
         Some(other) => Err(EvalError::WrongArgumentType {

@@ -80,6 +80,9 @@ pub(crate) use replace::REPLACE_QUESTION;
 pub(crate) use runtime::ShellProcess;
 pub use settings::*;
 pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED, WorkerTurn, in_worker};
+// For the tests, which count the restarts.
+#[cfg(test)]
+pub(crate) use work::RESTARTS;
 
 /// What the echo area shows, and since when.
 ///
@@ -183,12 +186,23 @@ pub struct EditorState<B: BufferTrait> {
     /// its own.
     shell_commands: Arc<AtomicUsize>,
 
+    /// The environment variables `setenv` has set, `Some`, or taken away,
+    /// `None`: what `getenv` reads first, and what every program the editor
+    /// starts is given over the process's own. The process's environment is
+    /// never changed, since code that reads it without the standard library's
+    /// lock -- a system library of the graphical front end, on a thread of its
+    /// own -- could read it while it changed.
+    environment: Arc<RwLock<std::collections::HashMap<String, Option<String>>>>,
+
+    /// How many times each of the editor's own jobs has been started again
+    /// after a panic, by what it is: see [`EditorState::restart_after_panic`].
+    restarts: Arc<std::sync::Mutex<std::collections::HashMap<String, u32>>>,
+
     /// The processes of this editor's shell commands, for as long as anything
     /// holds them: what [`EditorState::shutdown`] kills once its wait is over,
     /// so that a command that ignores `TERM` does not outlive the editor.
     /// Weak, so that a command that has ended is not kept here.
-    shell_processes:
-        Arc<std::sync::Mutex<Vec<std::sync::Weak<std::sync::Mutex<Option<std::process::Child>>>>>>,
+    shell_processes: Arc<runtime::ShellProcesses>,
 
     /// The buffer whose results `next-error` walks, if any.
     ///
@@ -313,22 +327,34 @@ impl<B: BufferTrait> std::cmp::PartialEq for EditorState<B> {
 impl<B: BufferTrait> EditorState<B> {
     /// Runs F on the buffer table, under its read lock.
     pub(crate) fn buffers<R>(&self, f: impl FnOnce(&Buffers<B>) -> R) -> R {
-        f(&self.buffers.read().expect("read lock on buffers"))
+        f(&self
+            .buffers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the buffer table, under its write lock.
     pub(crate) fn buffers_mut<R>(&self, f: impl FnOnce(&mut Buffers<B>) -> R) -> R {
-        f(&mut self.buffers.write().expect("write lock on buffers"))
+        f(&mut self
+            .buffers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the windows, under their read lock.
     pub(crate) fn windows<R>(&self, f: impl FnOnce(&Windows) -> R) -> R {
-        f(&self.windows.read().expect("read lock on windows"))
+        f(&self
+            .windows
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the windows, under their write lock.
     pub(crate) fn windows_mut<R>(&self, f: impl FnOnce(&mut Windows) -> R) -> R {
-        f(&mut self.windows.write().expect("write lock on windows"))
+        f(&mut self
+            .windows
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the windows, under their write lock, and on the buffer table,
@@ -341,8 +367,14 @@ impl<B: BufferTrait> EditorState<B> {
         &self,
         f: impl FnOnce(&mut Windows, &Buffers<B>) -> R,
     ) -> R {
-        let mut windows = self.windows.write().expect("write lock on windows");
-        let buffers = self.buffers.read().expect("read lock on buffers");
+        let mut windows = self
+            .windows
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let buffers = self
+            .buffers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&mut windows, &buffers)
     }
 
@@ -351,52 +383,82 @@ impl<B: BufferTrait> EditorState<B> {
     /// The hooks and completion sources they hold are Lisp: F copies them out,
     /// and they are called once it has returned.
     pub(crate) fn modes<R>(&self, f: impl FnOnce(&Modes<B>) -> R) -> R {
-        f(&self.modes.read().expect("read lock on modes"))
+        f(&self
+            .modes
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the modes, under their write lock.
     pub(crate) fn modes_mut<R>(&self, f: impl FnOnce(&mut Modes<B>) -> R) -> R {
-        f(&mut self.modes.write().expect("write lock on modes"))
+        f(&mut self
+            .modes
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the commands, under their read lock.
     pub(crate) fn commands<R>(&self, f: impl FnOnce(&Commands<B>) -> R) -> R {
-        f(&self.commands.read().expect("read lock on commands"))
+        f(&self
+            .commands
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the commands, under their write lock.
     pub(crate) fn commands_mut<R>(&self, f: impl FnOnce(&mut Commands<B>) -> R) -> R {
-        f(&mut self.commands.write().expect("write lock on commands"))
+        f(&mut self
+            .commands
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the kill ring, under its read lock.
     pub(crate) fn kill_yank<R>(&self, f: impl FnOnce(&KillYank) -> R) -> R {
-        f(&self.kill_yank.read().expect("read lock on kill_yank"))
+        f(&self
+            .kill_yank
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the kill ring, under its write lock.
     pub(crate) fn kill_yank_mut<R>(&self, f: impl FnOnce(&mut KillYank) -> R) -> R {
-        f(&mut self.kill_yank.write().expect("write lock on kill_yank"))
+        f(&mut self
+            .kill_yank
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the keyboard macros, under their read lock.
     pub(crate) fn macros<R>(&self, f: impl FnOnce(&Macros) -> R) -> R {
-        f(&self.macros.read().expect("read lock on macros"))
+        f(&self
+            .macros
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the keyboard macros, under their write lock.
     pub(crate) fn macros_mut<R>(&self, f: impl FnOnce(&mut Macros) -> R) -> R {
-        f(&mut self.macros.write().expect("write lock on macros"))
+        f(&mut self
+            .macros
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on what has been typed at the prompts, under its read lock.
     pub(crate) fn history<R>(&self, f: impl FnOnce(&History) -> R) -> R {
-        f(&self.history.read().expect("read lock on history"))
+        f(&self
+            .history
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on what has been typed at the prompts, under its write lock.
     pub(crate) fn history_mut<R>(&self, f: impl FnOnce(&mut History) -> R) -> R {
-        f(&mut self.history.write().expect("write lock on history"))
+        f(&mut self
+            .history
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the log, under its read lock.
@@ -404,31 +466,49 @@ impl<B: BufferTrait> EditorState<B> {
     /// Logging does not come through here: [`Log::append`] takes the lock
     /// itself, for the WorkManager, which logs without an editor.
     pub(crate) fn log<R>(&self, f: impl FnOnce(&Log) -> R) -> R {
-        f(&self.log.read().expect("read lock on log"))
+        f(&self
+            .log
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the log, under its write lock.
     pub(crate) fn log_mut<R>(&self, f: impl FnOnce(&mut Log) -> R) -> R {
-        f(&mut self.log.write().expect("write lock on log"))
+        f(&mut self
+            .log
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the runtime, under its read lock.
     pub(crate) fn runtime<R>(&self, f: impl FnOnce(&Runtime) -> R) -> R {
-        f(&self.runtime.read().expect("read lock on runtime"))
+        f(&self
+            .runtime
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on the runtime, under its write lock.
     pub(crate) fn runtime_mut<R>(&self, f: impl FnOnce(&mut Runtime) -> R) -> R {
-        f(&mut self.runtime.write().expect("write lock on runtime"))
+        f(&mut self
+            .runtime
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on what has been loaded, under its read lock.
     pub(crate) fn loader<R>(&self, f: impl FnOnce(&Loader<ELispExp<B>>) -> R) -> R {
-        f(&self.loader.read().expect("read lock on loader"))
+        f(&self
+            .loader
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     /// Runs F on what has been loaded, under its write lock.
     pub(crate) fn loader_mut<R>(&self, f: impl FnOnce(&mut Loader<ELispExp<B>>) -> R) -> R {
-        f(&mut self.loader.write().expect("write lock on loader"))
+        f(&mut self
+            .loader
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 }

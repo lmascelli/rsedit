@@ -7,7 +7,7 @@
 use crate::{
     BufferTrait, EditorState,
     buffer::{FileStamp, OnDisk, disk::compare},
-    work::{Job, JobError, Spec, Start, Step, StepContext},
+    work::{Exit, Job, JobError, Spec, Start, Step, StepContext},
 };
 use risp::{Env, LispContext};
 use std::sync::Arc;
@@ -87,6 +87,16 @@ impl<B: BufferTrait> Job<EditorState<B>> for FileWatcher<B> {
         // The interval too: `(setq watch-file-interval 10)` counts from the
         // next look.
         Ok(Step::Sleep(watch_interval(&self.env)))
+    }
+
+    fn exit(&mut self, state: &EditorState<B>, why: Exit) {
+        if why == Exit::Panicked {
+            let env = self.env.clone();
+            state.restart_after_panic("file watcher", move || {
+                let watcher = FileWatcher::new(env);
+                (watcher.spec(), Box::new(watcher))
+            });
+        }
     }
 }
 

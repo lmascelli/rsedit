@@ -874,4 +874,95 @@ mod tests {
         let (ctx, env) = editor();
         run("(completion-invalidate)", &env, &ctx);
     }
+
+    // ----------------------------------------------------------------
+    // A job of the editor's that panics
+    // ----------------------------------------------------------------
+
+    /// A job that panics at every step, and asks to be started again as the
+    /// editor's own jobs do.
+    struct Panicky;
+
+    impl crate::work::Job<Ctx> for Panicky {
+        fn step(
+            &mut self,
+            _cx: &mut crate::work::StepContext<'_, Ctx>,
+        ) -> Result<Step, crate::work::JobError> {
+            panic!("the probe panics");
+        }
+
+        fn exit(&mut self, state: &Ctx, why: Exit) {
+            if why == Exit::Panicked {
+                state.restart_after_panic("probe", || (Spec::new("panicky"), Box::new(Panicky)));
+            }
+        }
+    }
+
+    /// One of the editor's jobs submitted once, at the start, was gone for the
+    /// session after a panic, and only the log said so. Started again, a few
+    /// times, and the echo area says so; then it is off, and it says that.
+    #[test]
+    fn a_job_that_panics_is_started_again_a_few_times_and_then_said_off() {
+        let (ctx, _env) = editor();
+        ctx.work().submit(Spec::new("panicky"), Box::new(Panicky));
+        steps_due(&ctx);
+        assert!(!ctx.work().is_named("panicky"), "off after its restarts");
+        let restarted = ctx
+            .get_logs()
+            .iter()
+            .filter(|line| line.contains("The probe stopped at an error and was started again"))
+            .count();
+        assert_eq!(restarted, crate::editor::RESTARTS as usize);
+        assert!(
+            ctx.get_echo_message()
+                .contains("is off until the editor starts again"),
+            "{}",
+            ctx.get_echo_message()
+        );
+    }
+
+    /// Each of the editor's own jobs asks for it from its `exit`, and only
+    /// after a panic.
+    #[test]
+    fn each_of_the_editors_jobs_starts_again_after_a_panic() {
+        use crate::jobs::{
+            autosave::AutoSaver, highlighter::Highlighter, prescan::Prescanner,
+            watcher::FileWatcher,
+        };
+        use crate::work::Job;
+        let (ctx, env) = editor();
+        let mut jobs: Vec<(&str, Box<dyn Job<Ctx>>)> = vec![
+            ("highlighter", Box::new(Highlighter)),
+            ("prescanner", Box::new(Prescanner)),
+            ("file-watcher", Box::new(FileWatcher::new(env.clone()))),
+            ("auto-saver", Box::new(AutoSaver::new(env.clone()))),
+        ];
+        for (name, job) in &mut jobs {
+            ctx.work().cancel_named(name);
+            steps_due(&ctx);
+            job.exit(&ctx, Exit::Cancelled);
+            assert!(!ctx.work().is_named(name), "{name}: not after a cancel");
+            job.exit(&ctx, Exit::Panicked);
+            assert!(ctx.work().is_named(name), "{name}: again after a panic");
+        }
+    }
+
+    /// A panic with one of the editor's locks held left it poisoned, and the
+    /// next command to take it panicked too: the lock is taken as it is.
+    #[test]
+    fn a_lock_poisoned_by_a_panic_does_not_take_the_editor_down() {
+        let (ctx, env) = editor();
+        let poisoner = ctx.clone();
+        let panicked = std::thread::spawn(move || {
+            poisoner.buffers_mut(|_| panic!("a panic under the lock of the buffers"))
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        run(r#"(insert "still here")"#, &env, &ctx);
+        assert!(
+            ctx.with_current_buffer(|buf| buf.text.to_string())
+                .contains("still here")
+        );
+    }
 }

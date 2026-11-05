@@ -17,6 +17,49 @@ pub(crate) const BUFFER_CHANGED: &str = "buffer-changed";
 /// the old one may be out of date.
 pub(crate) const SYNTAX_CHANGED: &str = "syntax-changed";
 
+/// How many times one of the editor's own jobs is started again after a
+/// panic: enough for one that met a passing state, and few enough that one
+/// panicking at every step does not run for ever.
+pub(crate) const RESTARTS: u32 = 3;
+
+impl<B: BufferTrait> EditorState<B> {
+    /// Starts again, as MAKE makes it, one of the editor's own jobs that has
+    /// left with a panic -- WHAT, in words, its colouring or its auto-saver --
+    /// and says so in the echo area; after [`RESTARTS`] times, says that it is
+    /// off for the session instead. From the job's `exit`.
+    ///
+    /// Submitted once at the start, a job that panicked was gone for the
+    /// session, and only the log said so: the colouring stopped, or the
+    /// copies, and nothing on screen said why.
+    pub(crate) fn restart_after_panic(
+        &self,
+        what: &str,
+        make: impl FnOnce() -> (crate::work::Spec, Box<dyn crate::work::Job<Self>>),
+    ) {
+        let times = {
+            let mut restarts = self
+                .restarts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let times = restarts.entry(what.to_string()).or_insert(0);
+            *times += 1;
+            *times
+        };
+        let said = if times <= RESTARTS {
+            let (spec, job) = make();
+            self.work.submit(spec, job);
+            format!("The {what} stopped at an error and was started again; C-h e says why")
+        } else {
+            format!(
+                "The {what} stopped at an error {RESTARTS} times and is off until the editor \
+                 starts again; C-h e says why"
+            )
+        };
+        self.log_diagnostic(&format!("[BKG] {said}"));
+        self.set_echo_message(&said);
+    }
+}
+
 thread_local! {
     /// Whether this thread is in a step of a Lisp job, or is a thread the
     /// editor started for work in the background.
@@ -81,7 +124,11 @@ impl BackgroundChange {
     pub(crate) fn raise(&self) {
         if !self.pending.swap(true, Ordering::AcqRel) {
             // Cloned out, so the host's code runs with no lock of ours held.
-            let wake = self.wake.read().expect("background waker").clone();
+            let wake = self
+                .wake
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
             if let Some(wake) = wake {
                 wake();
             }
@@ -140,7 +187,7 @@ impl<B: BufferTrait> EditorState<B> {
             .background_change
             .wake
             .write()
-            .expect("background waker") = Some(Arc::new(wake));
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(wake));
     }
 
     /// Stops the editor's asynchronous work, giving it WITHIN to finish.
