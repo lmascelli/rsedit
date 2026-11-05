@@ -30,9 +30,8 @@ use crate::{
     text::kill_ring::Direction,
     ui::{
         ComposeSettings, Division, Face, FloatingWindow, Focus, FrameSnapshot, GutterSpec,
-        LineNumbers, Orientation, Rect, RenderableWindowView, Separator, Side, Style, Theme,
-        Window, WindowId, compose_layout, layout, overlay_highlights, region_highlights,
-        syntax_highlights,
+        LineNumbers, Orientation, Rect, RenderableWindowView, SearchMarks, Separator, Side,
+        SpotMarks, Style, Theme, Window, WindowId, compose_layout, layout, window_highlights,
     },
     work::{Stop, Topic, WorkId, WorkManager},
 };

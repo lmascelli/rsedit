@@ -299,6 +299,10 @@ pub fn create_global_env<B: BufferTrait>()
     // Off here, and on in `default-configuration`: see `mouse_mode`.
     env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
 
+    // The delimiter at point paired, and every match of a search drawn.
+    env.set_variable(super::frame::SHOW_PAREN_MODE.into(), ELispExp::t());
+    env.set_variable(super::frame::HIGHLIGHT_ALL_MATCHES.into(), ELispExp::t());
+
     // The functions called after a resize, each with the new width and height.
     env.set_variable(AFTER_RESIZE_HOOK.into(), ELispExp::nil());
 

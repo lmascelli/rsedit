@@ -2679,6 +2679,7 @@ pub struct Isearch {
     pub regexp: bool,
     pub from: usize,             // da dove parte la prossima scansione
     pub found: Option<Match>,    // la corrispondenza mostrata
+    pub pattern: Option<Pattern>, // il modello compilato: le altre corrispondenze
     pub failing: bool,           // l'ultima scansione non ha trovato nulla
     pub wrapped: bool,           // la ricerca ha fatto il giro
 }
@@ -3317,6 +3318,7 @@ tiene al massimo `keep`. È il limite che rende la scansione economica:
   [`context_at(pos)`], [Scansione fino a `pos`, poi `context()`: profondità, inizio e delimitatore della lista più interna, inizio della stringa o del commento in corso. È ciò che restituisce `syntax-ppss`.],
   [`balance_point(pos)`], [La prima posizione dopo `pos` in cui tutte le liste aperte in `pos` sono chiuse. Non chiede se il buffer è bilanciato alla fine: una funzione chiusa resta chiusa anche se quella sotto è ancora da finire.],
   [`enclosing(pos)`], [La lista più interna che contiene `pos`, per intero (fino alla fine del testo se non è chiusa); `None` al livello zero.],
+  [`pairing(point, reach)`], [Il delimitatore accanto al punto, se è codice, con quello che gli corrisponde e se sono dello stesso tipo: per un'apertura, passi finché la pila non torna alla sua profondità; per una chiusura, il frame in cima. Non legge più di `reach` caratteri per parte (@evidenziazioni).],
 )
 
 === Riprendere da metà: `Resume` e il `Prescanner` <riprendere>
@@ -3372,10 +3374,11 @@ con `electric-pair`, e `scan_cache_tests` prova le fotografie.
 
 == Facce e temi <facce>
 
-Una faccia è un `Face(u32)`: un indice in un registro globale. Le prime 14 sono
+Una faccia è un `Face(u32)`: un indice in un registro globale. Le prime 17 sono
 predefinite (`default`, `region`, `mode-line`, `mode-line-inactive`,
 `window-separator`, `keyword`, `type`, `string`, `comment`, `function`,
-`builtin`, `line-number`, `line-number-current`, `replace-match`); un modulo
+`builtin`, `line-number`, `line-number-current`, `replace-match`,
+`lazy-highlight`, `show-paren-match`, `show-paren-mismatch`); un modulo
 crea una faccia nuova semplicemente nominandola (`'doc-comment` in
 `rust-mode.lisp`) e le dà un aspetto con `set-face`. Il `Theme` in `Runtime`
 associa a ogni faccia uno `Style` (colori di primo piano e sfondo, grassetto,
@@ -3387,7 +3390,9 @@ approssimarli (@tui); i sedici nomi
 convenzionali stanno in `NAMED_COLORS`, nell'ordine della tavolozza dei
 terminali. Il tema predefinito usa quei colori, il video inverso dove una cosa
 deve vedersi su ogni sfondo (la regione, la riga di stato, `replace-match`),
-numeri di riga attenuati e una riga di stato inattiva grigia. Tutto questo sta
+numeri di riga attenuati e una riga di stato inattiva grigia; le
+corrispondenze di una ricerca su fondo ciano, le parentesi su fondo blu, o
+magenta quando non corrispondono (@evidenziazioni). Tutto questo sta
 in `ui/faces.rs`; le primitive sono in `primitives/theme.rs`.
 
 == Le decisioni <decisioni-modi>
@@ -4615,12 +4620,16 @@ lock in un ordine fisso e non fa I/O; il disegno avviene dopo, senza lock.
   #emph[prima] di toccare finestre e buffer: `echo-message-timeout`, il tema,
   l'input in sospeso (`pending_input`), il messaggio della keymap transitoria,
   `mode-line-format`, `window-separator`, la configurazione del margine
-  (`display-line-numbers`), se la colorazione è in corso.
+  (`display-line-numbers`), se la colorazione è in corso; e, se
+  `show-paren-mode` e `highlight-all-matches` lo chiedono, la tabella
+  sintattica della finestra con il focus e il modello della ricerca o della
+  sostituzione in corso (@evidenziazioni).
 + Legge l'area messaggi, vuota se il messaggio è scaduto.
 + Con `windows` in scrittura (lo scorrimento può dover seguire il punto) e
-  `buffers` in lettura, attraverso `windows_mut_with_buffers`, compone ogni
-  foglia dell'albero nel rettangolo del frame meno l'ultima riga, raccogliendo
-  i separatori; poi compone le flottanti.
+  `buffers` in lettura, attraverso `windows_mut_with_buffers`, cerca la
+  coppia di parentesi della finestra con il focus, compone ogni foglia
+  dell'albero nel rettangolo del frame meno l'ultima riga, raccogliendo i
+  separatori; poi compone le flottanti.
 + Consuma il testo destinato agli appunti (`take_pending_clipboard`).
 
 Ogni foglia si compone come dice @composizione. Le finestre flottanti si
@@ -4645,7 +4654,8 @@ compongono dopo, ognuna nel suo rettangolo, senza margine né riga di stato.
 divisione taglia il suo rettangolo con `split_rects` e registra la linea tra i
 due figli, una foglia si compone in un `RenderableWindowView`. Le impostazioni
 lette dal Lisp prima dei lock --- il formato della riga di stato e il margine
---- viaggiano insieme, in un `ComposeSettings`. Per ogni foglia, in
+--- viaggiano insieme, in un `ComposeSettings`, con le evidenziazioni del
+momento (@evidenziazioni). Per ogni foglia, in
 quest'ordine:
 
 + registra sulla finestra il rettangolo intero, riga di stato compresa: è ciò
@@ -4662,8 +4672,9 @@ quest'ordine:
   è cambiato; le righe servono prima dello scorrimento perché ciò che deve
   restare visibile è la colonna del cursore sullo schermo, che il testo
   virtuale può spostare;
-+ raccoglie le evidenziazioni in colonne del buffer, nell'ordine #emph[sintassi
-  → overlay → regione], e le porta sullo schermo con `place`; aggiunge per
++ raccoglie le evidenziazioni in colonne del buffer con `window_highlights`,
+  nell'ordine #emph[sintassi → corrispondenze → overlay → regione →
+  parentesi], e le porta sullo schermo con `place`; aggiunge per
   ultime le facce del testo virtuale, perché le ultime vincono;
 + dopo lo scorrimento, che decide quali righe si numerano, calcola le celle del
   margine.
@@ -4676,9 +4687,89 @@ riempie mai. Gli overlay si chiedono alla loro tabella per le sole righe
 visibili (`overlay_highlights`); la regione (`region_highlights`) è un
 intervallo per riga, o le stesse colonne su ogni riga per un rettangolo. Un
 buffer che non c'è più dà una finestra vuota, non un errore (`compose_layout`).
-Le finestre flottanti ricevono le stesse evidenziazioni, nello stesso ordine:
-colorazione, overlay, regione e testo virtuale, così un buffer si vede uguale
+Le finestre flottanti ricevono le stesse evidenziazioni, nello stesso ordine,
+con `window_highlights`, e poi il testo virtuale, così un buffer si vede uguale
 in una finestra affiancata e in una flottante.
+
+== Le evidenziazioni del momento <evidenziazioni>
+
+Due cose si disegnano per un fotogramma solo, ricalcolate a ogni
+`snapshot` e mai conservate nel buffer: la parentesi accanto al punto con
+quella che le corrisponde, e ogni corrispondenza di una ricerca o di una
+sostituzione in corso. Le spegnono `show-paren-mode` e
+`highlight-all-matches`, tutte e due a `t` in partenza.
+
+#ref-table(
+  columns: (3.0cm, 1fr, 1fr),
+  header: ([], [Le parentesi], [Le corrispondenze]),
+  [Dove], [La sola finestra con il focus, affiancata o flottante.], [Ogni finestra che mostra il buffer cercato.],
+  [Che cosa si legge prima dei lock], [Il buffer della finestra con il focus, il suo modo e la tabella sintattica del modo (`paren_table`).], [Il `Pattern` della ricerca in corso, o quello della sostituzione con il suo intervallo, da `Runtime` (`search_marks`).],
+  [Dove si calcola], [In `paren_spots`, dentro `windows_mut_with_buffers`, con il buffer letto lì: `sexp::pairing` dà un `Pair`, e due `SpotMarks` in posizioni del buffer.], [In `match_highlights`, durante la composizione di ogni foglia, dopo lo scorrimento: `Pattern::scan` sulle sole righe visibili.],
+  [Faccia], [`show-paren-match`; `show-paren-mismatch` per due delimitatori di tipo diverso o per uno senza compagno.], [`lazy-highlight`, sotto gli overlay e la regione.],
+  [Costo massimo], [`SHOW_PAREN_REACH` caratteri (102 400) per parte del punto.], [Le righe visibili, e al più `MATCHES_PER_WINDOW` (2000) corrispondenze per finestra.],
+)
+
+`ComposeSettings` porta le due cose alla composizione, accanto al formato
+della riga di stato e al margine: `matches`, una `SearchMarks` con il buffer,
+il modello e i caratteri entro cui una corrispondenza conta (tutto il buffer
+per una ricerca, `from..limit` per una sostituzione, cioè ciò che resta da
+offrire), e `spots`, una `SpotMarks` con l'id della finestra e le posizioni.
+`window_highlights` mette tutto insieme nell'ordine di disegno, per le foglie
+e per le flottanti allo stesso modo.
+
+`pairing` (@scanner) guarda prima il carattere dopo il punto, se è
+un'apertura, poi quello prima, se è una chiusura, come `show-paren-mode` in
+Emacs. Ferma una scansione sul delimitatore e controlla che lo stia leggendo
+come codice: la scansione deve fermarsi esattamente lì, nello stato `Code`, e
+il passo seguente deve aprire una lista o chiuderla. Così una parentesi in
+una stringa, in un commento o in un letterale di carattere non è un
+delimitatore, e una che apre un commento (`(*`) nemmeno. Per un'apertura si
+fanno passi finché la pila non torna alla profondità di prima: la chiusura è
+l'ultimo carattere letto. Per una chiusura il compagno è il `delimiter` del
+frame in cima alla pila, che è quello che la chiusura toglierà, come fa lo
+scanner con ogni chiusura. Il tipo si confronta con i caratteri che
+`SyntaxClass::Open` e `Close` portano.
+
+La sessione di ricerca tiene il modello compilato (`Isearch::pattern`), che
+`isearch-update` scrive a ogni tasto: `None` quando non c'è nulla di scritto,
+o quando una regexp non è ancora valida, e allora non si disegna nulla. La
+sostituzione ha già il suo `pattern`; una sostituzione finita (`done`) non
+disegna più nulla.
+
+Le decisioni:
+
++ *Sullo schermo, non nel buffer.* Un overlay per ogni corrispondenza
+  andrebbe ricalcolato su tutto il buffer a ogni tasto, e tolto a ogni uscita
+  dalla ricerca, anche quando la si lascia con un tasto qualunque; e un
+  overlay per la parentesi a ogni movimento del punto. Calcolate durante la
+  fotografia, non c'è nulla da togliere, e ciò che si vede è sempre lo stato
+  di quel momento. Scartato: gli overlay di Emacs (`isearch-lazy-highlight`
+  con un timer), che servono a un ridisegno incrementale che qui non c'è.
++ *Le corrispondenze solo nelle righe visibili.* Il costo dipende dalla
+  finestra, non dal file, e non c'è un contatore da tenere aggiornato. Il
+  prezzo è che una corrispondenza che comincia sopra la prima riga, o finisce
+  sotto l'ultima, non si disegna; il manpage `searching` lo dice nei limiti.
+  Le righe visibili si cercano intere e in un pezzo solo, così `^`, `$` e
+  `\b` vedono gli stessi bordi di riga che vede la ricerca.
++ *La parentesi sotto i lock del fotogramma.* La coppia si cerca con il
+  buffer letto dentro `windows_mut_with_buffers`, lo stesso che si compone,
+  così la fotografia resta uno stato in cui l'editor è stato. La tabella
+  sintattica non si può leggere lì, perché `modes` non ha posto nell'ordine
+  dei lock (@ordine-lock): si legge prima, con il modo, e se nel frattempo il
+  buffer ha cambiato modo la coppia non si disegna per quel fotogramma.
++ *Un tetto alla scansione.* Il calcolo si ripete a ogni fotogramma: senza un
+  limite, una parentesi aperta in cima a un file grande costerebbe il file
+  intero a ogni tasto. Il limite vale anche all'indietro, dalla fotografia
+  dello scanner più vicina (`scan_resume`): appena dopo una modifica, prima
+  che il `Prescanner` la raggiunga, una parentesi lontana dall'ultima
+  fotografia valida non si disegna. È la stessa distanza di
+  `blink-matching-paren-distance` in Emacs.
++ *Solo la finestra con il focus, per le parentesi.* Le altre finestre non
+  disegnano il cursore, e una coppia accesa in ognuna, senza il cursore che
+  dice perché, distrarrebbe da quella in cui si scrive. Le corrispondenze si disegnano
+  invece in tutte: si cerca guardando, anche nell'altra metà dello schermo.
++ *Una regexp vuota non si disegna.* Una corrispondenza vuota, come quella di
+  `x*` tra due caratteri, non ha un carattere su cui stare.
 
 == Le righe e le loro colonne <righe>
 
@@ -6785,6 +6876,7 @@ Le variabili che l'editor legge da Lisp:
   [`auto-save`, `auto-save-interval`, `auto-save-directory`], [`t`, 30, ---], [L'autosalvataggio.],
   [`history-length`], [100], [Voci per storia di prompt.],
   [`save-history`, `recent-files-length`, `save-place`], [`t`, 50, `t`], [Che cosa la sessione tiene da un avvio all'altro (@memoria).],
+  [`show-paren-mode`, `highlight-all-matches`], [`t`, `t`], [La parentesi accanto al punto e le corrispondenze di una ricerca (@evidenziazioni).],
   [`*minibuffer-read-function*`], [`default-minibuffer-prompt`], [Chi apre i prompt.],
   [`*key-capture-function*`], [`nil`], [Chi riceve la prossima sequenza invece di eseguirla.],
 )

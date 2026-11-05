@@ -1,9 +1,88 @@
 //! What the host is told: the snapshot of a frame, the echo area, the size of
-//! the screen, and how long the host may wait before it draws again.
+//! the screen, and how long the host may wait before it draws again; and what
+//! a frame draws for the moment, the delimiters paired at point and the
+//! matches of a search.
 //!
-//! Design: `doc/architettura-editor.typ, <snapshot>`.
+//! Design: `doc/architettura-editor.typ, <snapshot>`, and
+//! `doc/architettura-editor.typ, <evidenziazioni>` for what a frame draws for
+//! the moment.
 
 use super::*;
+use crate::modes::sexp;
+
+/// The name of the Lisp variable that turns pairing the delimiter at point
+/// off.
+pub(crate) const SHOW_PAREN_MODE: &str = "show-paren-mode";
+
+/// The name of the Lisp variable that turns drawing every match of a search
+/// or a replace off.
+pub(crate) const HIGHLIGHT_ALL_MATCHES: &str = "highlight-all-matches";
+
+/// How many characters the delimiter at point is looked for over, on either
+/// side of point: the reach of Emacs' `blink-matching-paren-distance`, so
+/// that a frame never scans a whole large file.
+pub(crate) const SHOW_PAREN_REACH: usize = 102_400;
+
+/// Returns whether the delimiter at point is paired, as Lisp has it now;
+/// unset counts as on.
+fn showing_parens<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
+    env.flag(SHOW_PAREN_MODE, true)
+}
+
+/// Returns whether every match of a search or a replace is drawn, as Lisp has
+/// it now; unset counts as on.
+fn highlighting_matches<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
+    env.flag(HIGHLIGHT_ALL_MATCHES, true)
+}
+
+/// What the focused window's delimiter is paired with: its buffer, the mode
+/// read when the table was, and the table. Read before the frame's locks, and
+/// used under them only while the buffer is still in that mode.
+struct ParenTable {
+    buffer: String,
+    mode: String,
+    table: SyntaxTable,
+}
+
+/// Returns the delimiters to draw in the focused window, FOCUSED, from
+/// PARENS: the one next to point and the one it pairs with, in
+/// [`Face::SHOW_PAREN_MATCH`], or in [`Face::SHOW_PAREN_MISMATCH`] when the
+/// two are of different kinds or there is no partner. Under the frame's
+/// locks, from BUFFERS.
+fn paren_spots<B: BufferTrait>(
+    parens: Option<&ParenTable>,
+    focused: WindowId,
+    focused_buffer: Option<&str>,
+    buffers: &Buffers<B>,
+) -> Option<SpotMarks> {
+    let parens = parens.filter(|parens| focused_buffer == Some(parens.buffer.as_str()))?;
+    let buf = buffers.handle(&parens.buffer)?;
+    let buf = buf
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if buf.current_mode != parens.mode {
+        return None;
+    }
+    let point = buf.text.cursor_pos_1d();
+    let pair = sexp::pairing(
+        &buf.text,
+        &parens.table,
+        buf.scan_resume(point, &parens.table),
+        point,
+        SHOW_PAREN_REACH,
+    )?;
+    let face = if pair.matched {
+        Face::SHOW_PAREN_MATCH
+    } else {
+        Face::SHOW_PAREN_MISMATCH
+    };
+    let mut spots = vec![(pair.at, face)];
+    spots.extend(pair.partner.map(|partner| (partner, face)));
+    Some(SpotMarks {
+        window: focused,
+        spots,
+    })
+}
 
 /// How often the host draws again while something changes the screen behind
 /// its back -- colour arriving, a shell command's output, a background job --
@@ -57,6 +136,11 @@ impl<B: BufferTrait> EditorState<B> {
         // With the reads before the windows: it takes the buffers and the
         // registry of the modes, which has no place in the order below.
         let colouring_pending = self.colouring_pending();
+        // The same: the focused buffer's mode, and then the registry.
+        let parens = showing_parens(env).then(|| self.paren_table()).flatten();
+        let matches = highlighting_matches(env)
+            .then(|| self.search_marks())
+            .flatten();
 
         // A message that has expired is not reported. The state keeps it, and
         // the view forgets it: nothing runs on a timer to tidy up.
@@ -82,6 +166,19 @@ impl<B: BufferTrait> EditorState<B> {
                     id: focused_window_id,
                     tiled: windows.root().contains_window(focused_window_id),
                 };
+                let spots = paren_spots(
+                    parens.as_ref(),
+                    focused_window_id,
+                    windows.focused_buffer().as_deref(),
+                    buffers,
+                );
+                let settings = ComposeSettings {
+                    mode_line_format: &mode_line_format,
+                    gutter,
+                    tabs: &tabs,
+                    matches: matches.as_ref(),
+                    spots: spots.as_ref(),
+                };
                 windows.root_mut().compute_tiled_views(
                     Rect {
                         x: 0,
@@ -94,11 +191,7 @@ impl<B: BufferTrait> EditorState<B> {
                     },
                     focus,
                     buffers,
-                    ComposeSettings {
-                        mode_line_format: &mode_line_format,
-                        gutter,
-                        tabs: &tabs,
-                    },
+                    settings,
                     &mut views,
                     &mut separator_rects,
                 );
@@ -137,13 +230,10 @@ impl<B: BufferTrait> EditorState<B> {
                                 c_line.saturating_sub(float.window.scroll_y),
                             )
                         });
-                    // What a tiled window draws, in the same order: colouring,
-                    // then overlays, then the region, then the virtual text's
-                    // own faces. A buffer looks the same whichever kind of
-                    // window shows it.
-                    let mut in_buffer = syntax_highlights(&float.window, &float.rect, buffers);
-                    in_buffer.extend(overlay_highlights(&float.window, &float.rect, buffers));
-                    in_buffer.extend(region_highlights(&float.window, &float.rect, buffers));
+                    // What a tiled window draws, in the same order, and then
+                    // the virtual text's own faces.
+                    let in_buffer =
+                        window_highlights(&float.window, &float.rect, buffers, settings);
                     let mut highlights =
                         layout::place(&layout, in_buffer, float.window.scroll_x, float.rect.width);
                     highlights
@@ -288,6 +378,42 @@ impl<B: BufferTrait> EditorState<B> {
             .into_iter()
             .flatten()
             .min()
+    }
+
+    /// Returns what the focused window's delimiter is paired with: its
+    /// buffer, its mode and the mode's table, read one lock at a time.
+    fn paren_table(&self) -> Option<ParenTable> {
+        let buffer = self.focused_window_buffer()?;
+        let mode = self.with_buffer(&buffer, |buf| buf.current_mode.clone())?;
+        let table = self.syntax_table(&mode);
+        Some(ParenTable {
+            buffer,
+            mode,
+            table,
+        })
+    }
+
+    /// Returns the matches to draw: those of the search in progress, in the
+    /// whole of its buffer, or else those of the replace in progress, in what
+    /// is left of its region; `None` when neither has a pattern.
+    fn search_marks(&self) -> Option<SearchMarks> {
+        self.runtime(|runtime| {
+            if let Some(search) = runtime.isearch() {
+                return search.pattern.clone().map(|pattern| SearchMarks {
+                    buffer: search.buffer.clone(),
+                    pattern,
+                    from: 0,
+                    to: usize::MAX,
+                });
+            }
+            let replace = runtime.replace().filter(|replace| !replace.done)?;
+            Some(SearchMarks {
+                buffer: replace.buffer.clone(),
+                pattern: replace.pattern.clone(),
+                from: replace.from,
+                to: replace.limit,
+            })
+        })
     }
 
     /// Shows MSG in the echo area, and starts its timeout.

@@ -13,6 +13,7 @@ SYNOPSIS
     (isearch-abort)
     (isearch-active-p)
     case-fold-search
+    highlight-all-matches
 
     (query-replace FROM TO)
     (query-replace-regexp FROM TO)
@@ -85,6 +86,13 @@ SEARCHING AS YOU TYPE
     Case is ignored unless `case-fold-search' is nil: a search for the
     finds The and THE, and so does a search for The.
 
+    While the search is open, every other match on screen is drawn in the
+    face lazy-highlight, in every window showing the buffer, and follows
+    what you type; the one the search is at is drawn as the region, over
+    it. Only the lines on screen are searched for them, so the drawing
+    costs the same in a short file as in a long one. Setting
+    `highlight-all-matches' to nil draws the current match alone.
+
 REPLACING
         M-%             replace text, asking at each match
         C-M-%           the same, for a regular expression
@@ -96,6 +104,10 @@ REPLACING
         !               replace this one and all the rest
         ^               take back the last one replaced
         q               stop here
+
+    The match being asked about is drawn in replace-match, and the matches
+    still ahead of it, in the part of the buffer being replaced, in
+    lazy-highlight, as a search draws them.
 
     Any other key stops too, and then does what it always does: Return
     stops and breaks the line, C-g stops and does nothing more. Each
@@ -186,8 +198,11 @@ LIMITS
     fixed: `find-file-recursive-ignore' does not change them. It reads
     each file in its coding, as C-x C-f does, a file that is not UTF-8 in
     windows-1252 (see the files page), and leaves out a binary file: one
-    with a zero byte in its first few thousand. Searching a
-    buffer only highlights the match the cursor is on, not every match.
+    with a zero byte in its first few thousand.
+
+    The matches drawn are looked for in the lines on screen only: a match
+    that begins above the top line, or ends below the bottom one, is not
+    drawn.
 
 LISTS FROM LISP
     A list of places is a set of entries attached to a buffer, and any code
@@ -221,6 +236,10 @@ EXAMPLES
     Put replacements in exactly as typed:
 
         (setq case-replace nil)
+
+    Draw only the match a search or a replace is at:
+
+        (setq highlight-all-matches nil)
 
     Replace every tab in the buffer with four spaces:
 

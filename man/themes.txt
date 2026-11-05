@@ -54,6 +54,9 @@ THE FACES
         line-number          the line numbers, when they are on
         line-number-current  the number of the line point is on
         replace-match        the match M-% is asking about
+        lazy-highlight       the other matches of a search, or of M-%
+        show-paren-match     the bracket at the cursor, and its partner
+        show-paren-mismatch  the same, when the two are not of a kind
         keyword  type  function  builtin  string  comment
                              the parts of a language its mode colours
         doc-comment  attribute  preprocessor

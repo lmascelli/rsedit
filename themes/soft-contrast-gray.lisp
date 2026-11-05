@@ -27,4 +27,7 @@
        (manpage-underline "#cccccc" nil       ("underline"))
        (results-here     "#ffffff" "#3a3a3a" nil)
        (results-target   "#ffffff" "#3a3a3a" nil)
+       (lazy-highlight   "#ffffff" "#555555" nil)
+       (show-paren-match "#000000" "#cccccc" ("bold"))
+       (show-paren-mismatch "#ffffff" "#4a2828" ("bold" "underline"))
        (preview          "#888888" nil       ("italic"))))

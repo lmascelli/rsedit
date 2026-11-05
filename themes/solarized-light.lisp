@@ -37,6 +37,9 @@
 
        ;; Marks: search and replace, result listings, inline previews
        (replace-match       "#586e75" "#b58900" ("bold"))
+       (lazy-highlight      "#fdf6e3" "#2aa198" nil)
+       (show-paren-match    "#fdf6e3" "#859900" ("bold"))
+       (show-paren-mismatch "#fdf6e3" "#dc322f" ("bold"))
        (results-here        nil       "#eee8d5" nil)
        (results-target      nil       "#eee8d5" nil)
        (preview             "#93a1a1" nil       ("italic"))

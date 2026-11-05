@@ -90,12 +90,19 @@ impl Face {
     pub const LINE_NUMBER_CURRENT: Face = Face(12);
     /// The match a replace is currently offering.
     pub const REPLACE_MATCH: Face = Face(13);
+    /// Every other match of a search or a replace in progress, on screen.
+    pub const LAZY_HIGHLIGHT: Face = Face(14);
+    /// A delimiter next to point, and the one it pairs with.
+    pub const SHOW_PAREN_MATCH: Face = Face(15);
+    /// A delimiter next to point that pairs with one of another kind, or with
+    /// none.
+    pub const SHOW_PAREN_MISMATCH: Face = Face(16);
 
     /// The faces the editor names itself, with their ids: the first entries
     /// of the registry, so that Rust names them as constants. The order and
     /// the constants above agree, as
     /// `built_in_faces_are_interned_at_their_own_ids` checks.
-    pub const BUILT_IN: [(Face, &'static str); 14] = [
+    pub const BUILT_IN: [(Face, &'static str); 17] = [
         (Face::DEFAULT, "default"),
         (Face::REGION, "region"),
         (Face::MODE_LINE, "mode-line"),
@@ -110,6 +117,9 @@ impl Face {
         (Face::LINE_NUMBER, "line-number"),
         (Face::LINE_NUMBER_CURRENT, "line-number-current"),
         (Face::REPLACE_MATCH, "replace-match"),
+        (Face::LAZY_HIGHLIGHT, "lazy-highlight"),
+        (Face::SHOW_PAREN_MATCH, "show-paren-match"),
+        (Face::SHOW_PAREN_MISMATCH, "show-paren-mismatch"),
     ];
 
     /// Returns the face called NAME, defining it if nothing has named it yet.
@@ -416,6 +426,29 @@ impl Default for Theme {
             Style {
                 bold: true,
                 ..Style::plain()
+            },
+        );
+        theme.set(
+            Face::LAZY_HIGHLIGHT,
+            Style {
+                bg: Some(Color::CYAN),
+                ..Style::fg(Color::BLACK)
+            },
+        );
+        theme.set(
+            Face::SHOW_PAREN_MATCH,
+            Style {
+                bg: Some(Color::BLUE),
+                bold: true,
+                ..Style::fg(Color::BRIGHT_WHITE)
+            },
+        );
+        theme.set(
+            Face::SHOW_PAREN_MISMATCH,
+            Style {
+                bg: Some(Color::MAGENTA),
+                bold: true,
+                ..Style::fg(Color::BRIGHT_WHITE)
             },
         );
         theme

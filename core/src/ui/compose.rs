@@ -5,11 +5,16 @@
 use crate::buffer::{BufferTrait, mark::region_bounds};
 use crate::managers::Buffers;
 use crate::text::rectangle::Rectangle;
+use crate::text::search::Pattern;
 use crate::ui::Face;
 use crate::ui::gutter::{GutterCell, GutterSpec, gutter_cells, gutter_columns};
 use crate::ui::layout::{self, BufferHighlight, Layout, TabWidths};
 use crate::ui::mode_line::expand_mode_line;
-use crate::ui::windows::{Focus, LayoutNode, Rect, Window, split_rects};
+use crate::ui::windows::{Focus, LayoutNode, Rect, Window, WindowId, split_rects};
+
+/// How many matches one window draws at most: a screenful of a pattern that
+/// matches every character is still a screenful, but the scan stops.
+pub const MATCHES_PER_WINDOW: usize = 2000;
 
 /// A run of a drawn row to draw in a face of its own, in screen coordinates
 /// within the window, scrolled and clipped already.
@@ -40,6 +45,33 @@ pub struct ComposeSettings<'a> {
     pub gutter: GutterSpec,
     /// How far a Tab reaches, mode by mode.
     pub tabs: &'a TabWidths,
+    /// The matches of the search or the replace in progress, if they are
+    /// drawn.
+    pub matches: Option<&'a SearchMarks>,
+    /// The delimiters drawn in the focused window, if any.
+    pub spots: Option<&'a SpotMarks>,
+}
+
+/// The matches of a search or a replace in progress: drawn, in
+/// [`Face::LAZY_HIGHLIGHT`], on the lines each window showing BUFFER shows,
+/// and looked for nowhere else.
+#[derive(Clone, Debug)]
+pub struct SearchMarks {
+    /// The buffer searched.
+    pub buffer: String,
+    pub pattern: Pattern,
+    /// The characters a match must lie within: a replace's region, or the
+    /// whole buffer.
+    pub from: usize,
+    pub to: usize,
+}
+
+/// Characters drawn in a face of their own in one window, each at its offset:
+/// the delimiters `show-paren-mode` pairs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpotMarks {
+    pub window: WindowId,
+    pub spots: Vec<(usize, Face)>,
 }
 
 /// One window, as it is drawn: owned data, which outlives the locks it was
@@ -212,11 +244,9 @@ impl LayoutNode {
                 }
 
                 let lines = layout.visible_text(win.scroll_x, rect.width);
-                // Colouring, then overlays, then the region: later entries are
-                // drawn over earlier ones.
-                let mut in_buffer = syntax_highlights(win, &rect, buffers);
-                in_buffer.extend(overlay_highlights(win, &rect, buffers));
-                in_buffer.extend(region_highlights(win, &rect, buffers));
+                // Later entries are drawn over earlier ones: see
+                // `window_highlights`.
+                let in_buffer = window_highlights(win, &rect, buffers, settings);
                 // In buffer columns until here; `place` maps, scrolls and cuts
                 // them.
                 let mut highlights = layout::place(&layout, in_buffer, win.scroll_x, rect.width);
@@ -282,6 +312,138 @@ impl LayoutNode {
     }
 }
 
+/// Returns what is drawn over WIN's text in RECT, in buffer columns, in the
+/// order it is drawn, each over the one before: the colouring, the matches of
+/// a search, the overlays, the region, and the delimiters paired. A buffer
+/// looks the same whichever kind of window shows it, tiled or floating.
+pub fn window_highlights<B: BufferTrait>(
+    win: &Window,
+    rect: &Rect,
+    buffers: &Buffers<B>,
+    settings: ComposeSettings<'_>,
+) -> Vec<BufferHighlight> {
+    let mut in_buffer = syntax_highlights(win, rect, buffers);
+    in_buffer.extend(match_highlights(win, rect, buffers, settings.matches));
+    in_buffer.extend(overlay_highlights(win, rect, buffers));
+    in_buffer.extend(region_highlights(win, rect, buffers));
+    in_buffer.extend(spot_highlights(win, rect, buffers, settings.spots));
+    in_buffer
+}
+
+/// Returns the spans from START to END of TEXT on the lines FIRST_LINE to
+/// LAST_LINE, the last excluded: one per line, a line the span crosses taken
+/// up to its newline, included.
+fn span_highlights<B: BufferTrait>(
+    text: &B,
+    (start, end): (usize, usize),
+    (first_line, last_line): (usize, usize),
+    face: Face,
+) -> Vec<BufferHighlight> {
+    let (start_line, start_col) = text.cursor_1d_to_2d(start);
+    let (end_line, end_col) = text.cursor_1d_to_2d(end);
+    let mut highlights = Vec::new();
+    for line in start_line.max(first_line)..=end_line.min(last_line.saturating_sub(1)) {
+        // Only the first and the last line are partial.
+        let from = if line == start_line { start_col } else { 0 };
+        let to = if line == end_line {
+            end_col
+        } else {
+            line_width(text, line) + 1
+        };
+        highlights.push(BufferHighlight {
+            line,
+            start: from,
+            end: to,
+            face,
+        });
+    }
+    highlights
+}
+
+/// Returns the matches of MARKS on the lines WIN shows in RECT, in buffer
+/// columns; nothing when MARKS searches another buffer.
+///
+/// Only the lines on screen are searched, whole, so that `^` and `$` mean
+/// what they mean to the search, and a match is drawn when it lies within the
+/// characters MARKS allows. An empty match is not drawn: it has no character
+/// to draw.
+pub fn match_highlights<B: BufferTrait>(
+    win: &Window,
+    rect: &Rect,
+    buffers: &Buffers<B>,
+    marks: Option<&SearchMarks>,
+) -> Vec<BufferHighlight> {
+    let Some(marks) = marks.filter(|marks| marks.buffer == win.buffer_name) else {
+        return Vec::new();
+    };
+    let Some(buf) = buffers.handle(&win.buffer_name) else {
+        return Vec::new();
+    };
+    let buf = buf
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let text = &buf.text;
+    let first_line = win.scroll_y;
+    let last_line = (win.scroll_y + rect.height).min(text.line_count());
+    if first_line >= last_line {
+        return Vec::new();
+    }
+    let visible_from = text.cursor_2d_to_1d(first_line, 0);
+    let visible_to = if last_line < text.line_count() {
+        text.cursor_2d_to_1d(last_line, 0)
+    } else {
+        text.len()
+    };
+    let haystack = text.slice(visible_from, visible_to);
+    let mut highlights = Vec::new();
+    for found in marks.pattern.scan(&haystack, MATCHES_PER_WINDOW).found {
+        let (start, end) = (visible_from + found.start, visible_from + found.end);
+        if start == end || start < marks.from || end > marks.to {
+            continue;
+        }
+        highlights.extend(span_highlights(
+            text,
+            (start, end),
+            (first_line, last_line),
+            Face::LAZY_HIGHLIGHT,
+        ));
+    }
+    highlights
+}
+
+/// Returns the characters MARKS names for WIN, on the lines WIN shows in RECT,
+/// in buffer columns; nothing for any other window.
+pub fn spot_highlights<B: BufferTrait>(
+    win: &Window,
+    rect: &Rect,
+    buffers: &Buffers<B>,
+    marks: Option<&SpotMarks>,
+) -> Vec<BufferHighlight> {
+    let Some(marks) = marks.filter(|marks| marks.window == win.id) else {
+        return Vec::new();
+    };
+    let Some(buf) = buffers.handle(&win.buffer_name) else {
+        return Vec::new();
+    };
+    let buf = buf
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let visible = win.scroll_y..win.scroll_y + rect.height;
+    marks
+        .spots
+        .iter()
+        .filter(|(at, _)| *at < buf.text.len())
+        .map(|&(at, face)| (buf.text.cursor_1d_to_2d(at), face))
+        .filter(|((line, _), _)| visible.contains(line))
+        .map(|((line, column), face)| BufferHighlight {
+            line,
+            start: column,
+            end: column + 1,
+            face,
+        })
+        .collect()
+}
+
 /// Returns the overlays of WIN's buffer on the lines WIN shows in RECT, in
 /// buffer columns, a span for each line: the table is asked once for what
 /// overlaps the lines on screen.
@@ -312,24 +474,12 @@ pub fn overlay_highlights<B: BufferTrait>(
 
     let mut highlights = Vec::new();
     for overlay in buf.overlays.overlapping(visible_from, visible_to) {
-        let (start_line, start_col) = buf.text.cursor_1d_to_2d(overlay.start);
-        let (end_line, end_col) = buf.text.cursor_1d_to_2d(overlay.end);
-        for line in start_line.max(first_line)..=end_line.min(last_line.saturating_sub(1)) {
-            // Only the first and the last line are partial.
-            let from = if line == start_line { start_col } else { 0 };
-            let to = if line == end_line {
-                end_col
-            } else {
-                // Up to the newline, included.
-                line_width(&buf.text, line) + 1
-            };
-            highlights.push(BufferHighlight {
-                line,
-                start: from,
-                end: to,
-                face: overlay.face,
-            });
-        }
+        highlights.extend(span_highlights(
+            &buf.text,
+            (overlay.start, overlay.end),
+            (first_line, last_line),
+            overlay.face,
+        ));
     }
     highlights
 }

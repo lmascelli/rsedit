@@ -36,4 +36,7 @@
        (manpage-underline  nil nil ("underline"))
        (results-here       nil nil ("reverse"))
        (results-target     nil nil ("reverse"))
+       (lazy-highlight     nil nil ("underline"))
+       (show-paren-match   nil nil ("bold" "reverse"))
+       (show-paren-mismatch nil nil ("bold" "underline" "reverse"))
        (preview            nil nil ("italic"))))

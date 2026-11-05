@@ -3,7 +3,7 @@
 //! post-command hook drives it, a turn for every command run in the prompt.
 //!
 //! Design: `doc/architettura-editor.typ, <isearch>`.
-use crate::text::search::Match;
+use crate::text::search::{Match, Pattern};
 
 /// Which way an incremental search is travelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +35,10 @@ pub struct Isearch {
     pub from: usize,
     /// The match currently being shown, if the pattern matched anything.
     pub found: Option<Match>,
+    /// What was last searched for, compiled: what the other matches on
+    /// screen are drawn from. `None` while nothing is typed, and while what
+    /// is typed is not yet a valid regexp.
+    pub pattern: Option<Pattern>,
     /// Whether the last scan failed. A repeat while failing is what wraps --
     /// see `Isearch::wrap`.
     pub failing: bool,
@@ -52,6 +56,7 @@ impl Isearch {
             regexp,
             from: origin,
             found: None,
+            pattern: None,
             failing: false,
             wrapped: false,
         }

@@ -106,6 +106,7 @@ primitive!(isearch_update, _args, env, ctx, {
         let origin = session.origin;
         ctx.with_buffer_mut(&session.buffer, |buf| isearch::place(buf, origin, None));
         session.found = None;
+        session.pattern = None;
         session.failing = false;
         let report = session.report("");
         ctx.begin_isearch(session);
@@ -117,19 +118,23 @@ primitive!(isearch_update, _args, env, ctx, {
     // on the way to `[a-z]` -- so a failure to compile is reported the same
     // way a failure to match is, and typing the next character fixes it.
     match Pattern::new(&text, session.regexp, isearch::case_fold(&env)) {
-        Ok(pattern) => match isearch::scan(ctx, &session, &pattern) {
-            Some(found) => {
-                isearch::show(ctx, &session, &found);
-                session.found = Some(found);
-                session.failing = false;
+        Ok(pattern) => {
+            match isearch::scan(ctx, &session, &pattern) {
+                Some(found) => {
+                    isearch::show(ctx, &session, &found);
+                    session.found = Some(found);
+                    session.failing = false;
+                }
+                None => {
+                    session.found = None;
+                    session.failing = true;
+                }
             }
-            None => {
-                session.found = None;
-                session.failing = true;
-            }
-        },
+            session.pattern = Some(pattern);
+        }
         Err(_) => {
             session.found = None;
+            session.pattern = None;
             session.failing = true;
         }
     }

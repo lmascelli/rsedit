@@ -38,6 +38,7 @@ mod gap_buffer_tests;
 mod guide_tests;
 mod help_lisp_tests;
 mod help_tests;
+mod highlight_tests;
 mod history_tests;
 mod home_guard;
 mod hooks_tests;

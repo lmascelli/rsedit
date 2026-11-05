@@ -122,6 +122,11 @@ impl Runtime {
         self.isearch.take()
     }
 
+    /// Returns the search in progress, to be read.
+    pub fn isearch(&self) -> Option<&Isearch> {
+        self.isearch.as_ref()
+    }
+
     /// Returns whether a search is in progress.
     pub fn isearch_active(&self) -> bool {
         self.isearch.is_some()

@@ -6,6 +6,7 @@
 //! Design: `doc/architettura-editor.typ, <avvio>`.
 
 use super::*;
+use crate::editor::frame::{HIGHLIGHT_ALL_MATCHES, SHOW_PAREN_MODE};
 use crate::editor::session::SAVE_HISTORY;
 use crate::editor::visits::{RECENT_FILES_LENGTH, SAVE_PLACE};
 use crate::feature::isearch::CASE_FOLD;
@@ -132,6 +133,18 @@ pub const SETTINGS: &[Setting] = &[
         name: AFTER_RESIZE_HOOK,
         doc: "The functions called, with the new width and height in columns and rows, each \
               time the terminal is resized.",
+    },
+    Setting {
+        name: SHOW_PAREN_MODE,
+        doc: "Whether the delimiter next to point is drawn with the one it pairs with, in the \
+              focused window: the opener after point, or else the closer before it, in \
+              show-paren-match, or in show-paren-mismatch when the two differ or nothing pairs \
+              with it. nil turns it off.",
+    },
+    Setting {
+        name: HIGHLIGHT_ALL_MATCHES,
+        doc: "Whether a search, and a replace, draw every match on screen in lazy-highlight \
+              besides the one they are at. nil draws that one only.",
     },
     Setting {
         name: CASE_FOLD,

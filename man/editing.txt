@@ -15,6 +15,7 @@ SYNOPSIS
     (up-list)
     (backward-up-list)
     (down-list)
+    show-paren-mode
     (beginning-of-line)
     (end-of-line)
     (beginning-of-buffer)
@@ -124,6 +125,24 @@ MOVING
     up out of the list, to its opening bracket, and C-M-d down into the next
     list inside it. M-x up-list goes up and out the other way, past the
     closing bracket.
+
+SEEING WHICH BRACKETS PAIR
+    In the window you are in, the bracket next to the cursor is drawn with
+    the one that pairs with it: an opening bracket just after the cursor,
+    or else a closing one just before it, so that typing ) shows at once
+    which ( it closes. Both are drawn in the face show-paren-match. A pair
+    of two kinds, such as ( closed by ], and a bracket that nothing pairs
+    with, are drawn in show-paren-mismatch; the `themes' page says how to
+    change either face.
+
+    Brackets are read as C-M-f reads them: one in a string or a comment
+    is text, and is paired with nothing. Setting `show-paren-mode' to nil
+    turns the drawing off.
+
+    The pair is looked for up to 100 kilobytes of text away from the
+    cursor; a bracket whose partner is further than that is not drawn at
+    all. A closing bracket under a block cursor, as in Vim's normal state,
+    is after point, not before it, and is paired once point is past it.
 
 COUNTS
     A number before a command means "do it that many times": C-u 20 C-f
@@ -281,6 +300,10 @@ EXAMPLES
     Keep every closing bracket you type, even next to one already there:
 
         (setq electric-pair-skip-self nil)
+
+    Stop drawing the bracket paired with the one at the cursor:
+
+        (setq show-paren-mode nil)
 
     Give the commands that have no key one of yours:
 

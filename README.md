@@ -15,7 +15,8 @@ change.
 ## Features
 
 - Emacs editing: the kill ring, keyboard macros, rectangles, incremental
-  search and query-replace, undo with redo.
+  search and query-replace with every match on screen drawn, undo with redo,
+  and the bracket at the cursor drawn with the one it pairs with.
 - Syntax colouring for Rust, C, C++, Python, TOML, Bash, CMake and the
   editor's own Lisp, computed in the background as the text changes;
   indentation rules for C/C++, Python, TOML, Bash, CMake and Lisp.

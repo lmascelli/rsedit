@@ -669,3 +669,125 @@ pub fn enclosing<B: BufferTrait>(
         }
     }
 }
+
+/// A delimiter, and the one it pairs with: what `show-paren-mode` draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pair {
+    /// The delimiter next to point.
+    pub at: usize,
+    /// The delimiter that closes or opens it, or `None` when the text has
+    /// none: an opener never closed, a closer with nothing open.
+    pub partner: Option<usize>,
+    /// Whether the two are of one kind, `(` with `)`; false when there is no
+    /// partner.
+    pub matched: bool,
+}
+
+/// Returns the delimiter next to POINT, with its partner: the opener just
+/// after POINT, or else the closer just before it, read as code rather than
+/// as text in a string or a comment. `None` when there is neither, and when
+/// the scan would read more than REACH characters on one side of POINT: a
+/// question asked at every frame must not cost a whole file.
+pub fn pairing<B: BufferTrait>(
+    text: &B,
+    table: &SyntaxTable,
+    resume: Option<&Resume>,
+    point: usize,
+    reach: usize,
+) -> Option<Pair> {
+    opener_pairing(text, table, resume, point, reach).or_else(|| {
+        let at = point.checked_sub(1)?;
+        closer_pairing(text, table, resume, at, reach)
+    })
+}
+
+/// Returns a scan of TEXT stopped at AT, when AT is where a step of code
+/// begins, carried on from RESUME and within REACH characters of it; `None`
+/// when AT is inside a string, a comment or a token that began before it.
+fn scan_to_code<'a, B: BufferTrait>(
+    text: &'a B,
+    table: &'a SyntaxTable,
+    resume: Option<&Resume>,
+    at: usize,
+    reach: usize,
+) -> Option<Scan<'a, B>> {
+    let start = resume
+        .filter(|from| from.pos <= at)
+        .map_or(0, |from| from.pos);
+    if at - start > reach {
+        return None;
+    }
+    let mut scan = Scan::begin(text, table, at, resume, 1);
+    scan.run_to(at);
+    (scan.pos == at && scan.state == State::Code).then_some(scan)
+}
+
+/// Returns the opener at AT and its closer, if AT is an opener in code.
+fn opener_pairing<B: BufferTrait>(
+    text: &B,
+    table: &SyntaxTable,
+    resume: Option<&Resume>,
+    at: usize,
+    reach: usize,
+) -> Option<Pair> {
+    let SyntaxClass::Open(closer) = table.class_of(text.at(at)?) else {
+        return None;
+    };
+    let mut scan = scan_to_code(text, table, resume, at, reach)?;
+    let outside = scan.stack.len();
+    // The step decides, not the class alone: `(*` may open a comment.
+    scan.step();
+    if scan.stack.len() != outside + 1 {
+        return None;
+    }
+    loop {
+        if scan.pos - at > reach {
+            return None;
+        }
+        if matches!(scan.step(), Step::End) {
+            return Some(Pair {
+                at,
+                partner: None,
+                matched: false,
+            });
+        }
+        if scan.stack.len() == outside {
+            // A closer pops a frame a step after reading it, one character.
+            let partner = scan.pos - 1;
+            return Some(Pair {
+                at,
+                partner: Some(partner),
+                matched: text.at(partner) == Some(closer),
+            });
+        }
+    }
+}
+
+/// Returns the closer at AT and its opener, if AT is a closer in code.
+fn closer_pairing<B: BufferTrait>(
+    text: &B,
+    table: &SyntaxTable,
+    resume: Option<&Resume>,
+    at: usize,
+    reach: usize,
+) -> Option<Pair> {
+    let SyntaxClass::Close(opener) = table.class_of(text.at(at)?) else {
+        return None;
+    };
+    let mut scan = scan_to_code(text, table, resume, at, reach)?;
+    let inside = scan.stack.len();
+    let partner = (inside > 1)
+        .then(|| scan.stack.last().map(|frame| frame.delimiter))
+        .flatten();
+    // A closer in code always steps as one, unless a comment or a string
+    // begins with it.
+    scan.step();
+    if scan.pos != at + 1 || scan.state != State::Code {
+        return None;
+    }
+    Some(Pair {
+        at,
+        partner,
+        matched: partner.and_then(|partner| text.at(partner)) == Some(opener),
+    })
+}
