@@ -431,7 +431,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-BKG-2-3",
+    commit: "c65efad",
     titolo: [Un lavoro dell'editor che va in panic sparisce per tutta la sessione, e lo dice solo il registro],
   ),
   (
@@ -439,7 +439,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-BKG-2-3",
+    commit: "c65efad",
     titolo: [`setenv` cambia l'ambiente del processo mentre il codice C di un altro thread può leggerlo],
   ),
   // ------------------------------------------------------------------ SIN
