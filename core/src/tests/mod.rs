@@ -20,6 +20,7 @@ mod completion_ui_tests;
 mod dangling_window_tests;
 mod deadlock_tests;
 mod debug_lisp_tests;
+mod delete_trailing_tests;
 mod deletion_tests;
 mod dired_tests;
 mod doc_faithfulness_tests;

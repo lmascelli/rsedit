@@ -29,7 +29,8 @@ change.
 - Help that describes the running editor (`C-h f`, `C-h v`, `C-h k`,
   `C-h b`), and manual pages read inside it.
 - Auto-save with recovery, reloading of files changed on disk, themes, mouse
-  support, line numbers, the spaces left at the ends of lines shown.
+  support, line numbers, the spaces left at the ends of lines shown and, on
+  request, taken away at every save.
 - Prompt history, recent files and the place in each file, kept from one run
   to the next.
 - Vim emulation, turned on with `M-x vim-mode`.

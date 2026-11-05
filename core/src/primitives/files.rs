@@ -8,16 +8,23 @@ use crate::buffer::coding::{self, Coding};
 use crate::jobs::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::args;
 use risp::eval;
+use std::sync::Arc;
 
 /// Writes NAME's buffer to the file it is visiting, and answers false when it
 /// has none or the write failed. Either way the echo area says what became of
 /// it: a failed save that only the log heard about is work the user believes
 /// is safe. What `save-buffer` and `save-some-buffers` save with.
+///
+/// First, where `delete-trailing-whitespace-on-save` says for the buffer's
+/// mode, the blanks at the ends of its lines go, as the command takes them.
 pub(super) fn write_buffer<B: BufferTrait>(
     ctx: &EditorState<B>,
+    env: &Arc<Env<EditorState<B>>>,
     name: &str,
-    directory: Option<&str>,
 ) -> bool {
+    clean_before_save(ctx, env, name);
+    let directory = auto_save_directory(env);
+    let directory = directory.as_deref();
     // Taken under the lock, with the version it is; written with the lock
     // given back, because a slow disk must not stop every other thread
     // reading the buffer.
@@ -59,6 +66,28 @@ pub(super) fn write_buffer<B: BufferTrait>(
             false
         }
     }
+}
+
+/// Deletes the blanks at the ends of the lines of the buffer NAME, and the
+/// blank lines at its end as `delete-trailing-lines` says, when
+/// `delete-trailing-whitespace-on-save` says so for its mode. The settings
+/// are read before the buffer's lock is taken.
+pub(crate) fn clean_before_save<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: &Arc<Env<EditorState<B>>>,
+    name: &str,
+) {
+    let Some(mode) = ctx.with_buffer(name, |buf| buf.current_mode.clone()) else {
+        return;
+    };
+    if !super::verbs::cleaning_on_save(env, &mode) {
+        return;
+    }
+    let trailing_lines = env.flag(super::verbs::DELETE_TRAILING_LINES, true);
+    ctx.with_buffer_mut(name, |buf| {
+        let last = buf.text.line_count();
+        super::verbs::delete_trailing(buf, 0, last, trailing_lines)
+    });
 }
 
 /// Records that NAME's text as it was at VERSION is now in its file, stamped
@@ -287,7 +316,7 @@ primitive!(save_buffer, _args, env, ctx, {
     }
 
     let name = ctx.get_current_buffer_name();
-    write_buffer(ctx, &name, auto_save_directory(&env).as_deref());
+    write_buffer(ctx, &env, &name);
     Ok(ELispExp::nil())
 });
 
@@ -297,7 +326,7 @@ pub const SAVE_BUFFER_OVERWRITE_DOC: &str = "(save-buffer--overwrite): Write the
 
 primitive!(save_buffer_overwrite, _args, env, ctx, {
     let name = ctx.get_current_buffer_name();
-    write_buffer(ctx, &name, auto_save_directory(&env).as_deref());
+    write_buffer(ctx, &env, &name);
     Ok(ELispExp::nil())
 });
 
@@ -460,6 +489,7 @@ primitive!(write_file, args, env, ctx, {
         Ok(name) => name,
     };
 
+    clean_before_save(ctx, &env, &current);
     // Taken under the lock, written with the lock given back: a slow disk must
     // not stop every other thread reading the buffer.
     let (content, coding, version) =

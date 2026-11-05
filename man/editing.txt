@@ -58,7 +58,10 @@ SYNOPSIS
     (just-one-space)
     (delete-horizontal-space)
     (toggle-trailing-whitespace)
+    (delete-trailing-whitespace &optional START END)
     show-trailing-whitespace
+    delete-trailing-lines
+    delete-trailing-whitespace-on-save
     (zap-to-char)
 
     (comment-dwim)
@@ -224,6 +227,22 @@ SPACES AT THE ENDS OF LINES
     again. A mode can say otherwise for its own buffers, with a
     show-trailing-whitespace property.
 
+    M-x delete-trailing-whitespace takes them away: on the lines of the
+    region when it is active, and otherwise in the whole buffer, where it
+    also takes away the blank lines at the end, all but the newline after
+    the last line of text, unless `delete-trailing-lines' is nil. The
+    cursor stays where it was, or goes to the end of its line when it was
+    among the blanks; the echo area says how many lines were cleaned, and
+    one C-/ puts them all back. From Lisp, START and END name the lines to
+    clean instead of the region.
+
+    With `delete-trailing-whitespace-on-save' set to t, every save cleans
+    the whole buffer that way just before it is written: C-x C-s, C-x C-w,
+    and the saves C-x C-c and save-some-buffers offer. A mode can say
+    otherwise with a delete-trailing-whitespace-on-save property: Markdown
+    ends a line with two spaces to break it. The copies auto-save makes
+    are never cleaned.
+
 TRANSPOSING
         C-t             swap the characters either side of point
         M-t             swap the words either side of point
@@ -326,6 +345,12 @@ EXAMPLES
     mean something:
 
         (put 'markdown-mode 'show-trailing-whitespace nil)
+
+    Clean every file of them as it is saved, but leave the blank lines at
+    the end alone:
+
+        (setq delete-trailing-whitespace-on-save t)
+        (setq delete-trailing-lines nil)
 
     Give the commands that have no key one of yours:
 

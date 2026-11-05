@@ -5539,7 +5539,27 @@ tabella sintattica se un carattere apre o chiude, per non mettere uno spazio
 dopo un'apertura o prima di una chiusura.
 
 Quasi tutti passano da `replace_span`, che sostituisce un tratto e mette il
-punto dove il verbo vuole. `zap-to-char` legge il suo carattere con una cattura
+punto dove il verbo vuole. `delete-trailing-whitespace` no: `delete_trailing`
+toglie molti tratti, dall'ultima riga alla prima perché ognuna resti dove è
+stata misurata, sposta il punto della lunghezza di ogni tratto che lo precede
+o lo porta all'inizio di quello in cui si trovava, e, per tutto il buffer con
+`delete-trailing-lines`, toglie prima le righe vuote in fondo, fino al primo
+a capo dopo l'ultimo carattere che non è uno spazio. Le stesse righe le pulisce
+`write_buffer`, in `files.rs`, prima di copiare il testo da scrivere, quando
+`delete-trailing-whitespace-on-save` lo dice per il modo del buffer
+(`clean_before_save`, che legge le impostazioni prima del lock del buffer);
+`write-file` fa lo stesso. Due decisioni:
+
++ *Una variabile, non un hook.* Emacs lo fa con `before-save-hook`, che qui
+  non c'è: aggiungerlo vorrebbe dire far eseguire Lisp a ogni percorso che
+  salva, anche dentro le domande di `C-x C-c`. Una variabile, con la sua
+  proprietà per modo come `show-trailing-whitespace`, dice tutto ciò che
+  serve, e la pulizia resta Rust che non chiama l'interprete.
++ *Prima di copiare, non sul testo copiato.* Pulire il testo da scrivere
+  lascerebbe il buffer diverso dal file, e quindi modificato subito dopo il
+  salvataggio. Pulito il buffer, ciò che si scrive è ciò che si vede, e un
+  `C-/` lo riporta com'era. L'autosalvataggio non passa da `write_buffer`, e
+  una copia di riserva resta la copia del buffer. `zap-to-char` legge il suo carattere con una cattura
 di tasti (@cattura), armata con il nome di `zap-to-char--do`: la cattura cita
 ciò che riceve prima di chiamarlo, e un simbolo si cerca tra le funzioni.
 
@@ -7051,6 +7071,7 @@ Le variabili che l'editor legge da Lisp:
   [`show-paren-mode`, `highlight-all-matches`], [`t`, `t`], [La parentesi accanto al punto e le corrispondenze di una ricerca (@evidenziazioni).],
   [`isearch-lazy-count`], [`t`], [Il conteggio `3/17` nel prompt di una ricerca (@conteggio).],
   [`show-trailing-whitespace`], [`nil` (`t` in `init.lisp`)], [Gli spazi a fine riga, nei buffer con un file (@evidenziazioni).],
+  [`delete-trailing-whitespace-on-save`, `delete-trailing-lines`], [`nil`, `t`], [La pulizia degli spazi a fine riga prima di ogni salvataggio, e delle righe vuote in fondo (@verbi).],
   [`fill-column`], [70], [La colonna di `M-q` e di `auto-fill-mode`; anche come proprietà di un modo e nei dati di un buffer (@riempimento).],
   [`*minibuffer-read-function*`], [`default-minibuffer-prompt`], [Chi apre i prompt.],
   [`*key-capture-function*`], [`nil`], [Chi riceve la prossima sequenza invece di eseguirla.],

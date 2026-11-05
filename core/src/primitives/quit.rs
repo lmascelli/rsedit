@@ -3,7 +3,6 @@
 //!
 //! Design: `doc/architettura-editor.typ, <uscire>`.
 use super::*;
-use crate::jobs::autosave::auto_save_directory;
 use crate::primitives::files::write_buffer;
 use crate::primitives::{args, ask};
 use risp::{call_callable, eval};
@@ -122,17 +121,15 @@ primitive!(save_some_buffers_answer, args, env, ctx, {
     let rest: Vec<String> = strings_from(args.get(2));
     let after = args.get(3).cloned().unwrap_or_else(ELispExp::nil);
 
-    let directory = auto_save_directory(&env);
-    let directory = directory.as_deref();
     match action.as_str() {
         "save" => {
-            write_buffer(ctx, &name, directory);
+            write_buffer(ctx, &env, &name);
         }
         "all" => {
             // This one and every one left, with no further questions.
-            write_buffer(ctx, &name, directory);
+            write_buffer(ctx, &env, &name);
             for other in &rest {
-                write_buffer(ctx, other, directory);
+                write_buffer(ctx, &env, other);
             }
             return ask_about(ctx, env, &[], &after);
         }

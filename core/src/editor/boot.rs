@@ -302,6 +302,17 @@ pub fn create_global_env<B: BufferTrait>()
     // The blanks at the ends of lines undrawn, until a configuration asks.
     env.set_variable(SHOW_TRAILING_WHITESPACE.into(), ELispExp::nil());
 
+    // The blanks at the ends of lines left where they are on a save, and the
+    // blank lines at the end of a buffer cleaned with them by the command.
+    env.set_variable(
+        crate::primitives::verbs::DELETE_ON_SAVE.into(),
+        ELispExp::nil(),
+    );
+    env.set_variable(
+        crate::primitives::verbs::DELETE_TRAILING_LINES.into(),
+        ELispExp::t(),
+    );
+
     // The column paragraphs are filled to.
     env.set_variable(
         crate::primitives::fill::FILL_COLUMN.into(),

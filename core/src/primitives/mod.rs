@@ -69,7 +69,7 @@ pub(crate) mod shell;
 mod syntax_table;
 mod theme;
 mod undo;
-mod verbs;
+pub(crate) mod verbs;
 mod virtual_text;
 mod windows;
 mod workers;

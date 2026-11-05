@@ -109,6 +109,9 @@ DELETING
         delete-blank-lines        the blank lines around here, but one
         just-one-space            the spaces around point, but one
         delete-horizontal-space   the spaces and tabs around point
+        delete-trailing-whitespace
+                                  the blanks at the ends of lines, in the
+                                  region or the buffer
 
 SEEING THE BLANKS
     On the `editing' page:

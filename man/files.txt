@@ -84,6 +84,9 @@ SAVING
     was. A symbolic link stays a link, and a file with other names, or
     owned by somebody else, is written in place so that it stays so.
 
+    With `delete-trailing-whitespace-on-save' on, a save first takes away
+    the spaces at the ends of lines: see the `editing' page.
+
     M-x save-some-buffers offers each buffer with unsaved changes that is
     visiting a file:
 

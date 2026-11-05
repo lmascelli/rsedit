@@ -1,6 +1,7 @@
 //! The small verbs: case, whitespace, lines, transposition, and zapping.
 //! Each says where it leaves point, and finds words with the functions the
-//! motion commands move by.
+//! motion commands move by. And the blanks at the ends of lines, deleted by
+//! command and, where Lisp asks, before every save.
 //!
 //! Design: `doc/architettura-editor.typ, <verbi>`.
 use super::*;
@@ -11,6 +12,7 @@ use crate::primitives::movement::{
     goto_offset, is_blank_line, is_word_char, line_bounds, word_backward, word_forward,
 };
 use crate::text::kill_ring::Direction;
+use std::sync::Arc;
 
 /// Replaces the text from FROM to TO with TEXT, puts point at POINT, and
 /// returns whether the buffer changed. A read-only buffer's refusal is false
@@ -178,6 +180,133 @@ primitive!(just_one_space, _args, _env, ctx, {
         replace_span(buf, from, to, " ", from + 1)
     });
     Ok(ELispExp::boolean(changed))
+});
+
+/// The name of the Lisp variable that also deletes the blank lines at the
+/// end of a buffer, when the whole of it is cleaned.
+pub(crate) const DELETE_TRAILING_LINES: &str = "delete-trailing-lines";
+
+/// The name of the Lisp variable, and of the modes' property, that cleans a
+/// buffer of the blanks at the ends of its lines before it is saved.
+pub(crate) const DELETE_ON_SAVE: &str = "delete-trailing-whitespace-on-save";
+
+/// Returns whether a buffer in MODE is cleaned before it is saved, as Lisp
+/// says now: the mode's own property, when it has the symbol, or else the
+/// variable.
+pub(crate) fn cleaning_on_save<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>, mode: &str) -> bool {
+    env.get_property(mode, DELETE_ON_SAVE)
+        .or_else(|| env.get_variable(DELETE_ON_SAVE))
+        .is_some_and(|value| value.is_truthy())
+}
+
+/// Deletes the spaces and Tabs that end the lines FIRST to LAST of BUF and,
+/// with TRAILING_LINES, the blank lines at the end of the buffer but its last
+/// newline. Point stays where it was, or goes to the end of its line when it
+/// was among what went. Returns how many lines were cleaned, or `None` when
+/// the buffer refused.
+pub(crate) fn delete_trailing<B: BufferTrait>(
+    buf: &mut Buffer<B>,
+    first: usize,
+    last: usize,
+    trailing_lines: bool,
+) -> Option<usize> {
+    let mut point = buf.text.cursor_pos_1d();
+    // Each deletion as it would move point; the last line first, so that
+    // each line's offsets are still those it was measured at.
+    let gone = |point: &mut usize, from: usize, to: usize| {
+        if to <= *point {
+            *point -= to - from;
+        } else if from < *point {
+            *point = from;
+        }
+    };
+    let mut cleaned = 0;
+    if trailing_lines {
+        // Up to the first newline after the last character that is not
+        // blank; the lines after it are blank, and go.
+        let text = buf.text.to_string();
+        let length = text.chars().count();
+        let kept = text.trim_end_matches(['\n', ' ', '\t']).chars().count();
+        let newline = text.chars().skip(kept).position(|c| c == '\n');
+        if let Some(keep) = newline.map(|at| kept + at + 1)
+            && keep < length
+        {
+            if !delete_range(buf, keep, length) {
+                return None;
+            }
+            gone(&mut point, keep, length);
+            cleaned += 1;
+        }
+    }
+    let last = last.min(buf.text.line_count().saturating_sub(1));
+    for line in (first..=last).rev() {
+        let (start, end) = line_bounds(&buf.text, line);
+        let text = buf.text.slice(start, end);
+        let kept = start + text.trim_end_matches([' ', '\t']).chars().count();
+        if kept < end {
+            if !delete_range(buf, kept, end) {
+                return None;
+            }
+            gone(&mut point, kept, end);
+            cleaned += 1;
+        }
+    }
+    goto_offset(&mut buf.text, point);
+    Some(cleaned)
+}
+
+pub const DELETE_TRAILING_WHITESPACE_DOC: &str = "(delete-trailing-whitespace &optional START \
+         END): Delete the spaces and Tabs at the ends of the lines between START and END, or of \
+         the region's lines when it is active, or of the whole buffer; for the whole buffer, \
+         also the blank lines at its end but one, unless `delete-trailing-lines' is nil. Return \
+         how many lines were cleaned.\n\n\
+         Example:\n\
+         (delete-trailing-whitespace (point-min) (point-max))";
+
+primitive!(delete_trailing_whitespace, args, env, ctx, {
+    let given = match (args.first(), args.get(1)) {
+        (Some(ELispExp::Number(from)), Some(ELispExp::Number(to))) => {
+            Some((from.max(0.0) as usize, to.max(0.0) as usize))
+        }
+        (None, None) => None,
+        (Some(other), _) | (_, Some(other)) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "two Numbers, or nothing".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let trailing_lines = env.flag(DELETE_TRAILING_LINES, true);
+    let cleaned = ctx.with_current_buffer_mut(|buf| {
+        let len = buf.text.len();
+        let span = given.or_else(|| region_bounds(buf.mark, buf.text.cursor_pos_1d(), len));
+        let whole = span.is_none_or(|(from, to)| from.min(to) == 0 && from.max(to) >= len);
+        let (first, last) = match span {
+            Some((from, to)) => {
+                let (low, high) = (from.min(to).min(len), from.max(to).min(len));
+                // A span ending at the start of a line has not reached it.
+                let high = if high > low { high - 1 } else { high };
+                (
+                    buf.text.cursor_1d_to_2d(low).0,
+                    buf.text.cursor_1d_to_2d(high).0,
+                )
+            }
+            None => (0, buf.text.line_count()),
+        };
+        delete_trailing(buf, first, last, whole && trailing_lines)
+    });
+    Ok(match cleaned {
+        Some(0) => {
+            ctx.set_echo_message("No trailing whitespace");
+            ELispExp::number(0.0)
+        }
+        Some(lines) => {
+            let plural = if lines == 1 { "line" } else { "lines" };
+            ctx.set_echo_message(&format!("Trailing whitespace deleted on {lines} {plural}"));
+            ELispExp::number(lines as f64)
+        }
+        None => ELispExp::nil(),
+    })
 });
 
 pub const DELETE_BLANK_LINES_DOC: &str = "(delete-blank-lines): On a blank line among others, \
@@ -513,6 +642,12 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         DELETE_HORIZONTAL_SPACE_DOC,
     );
     into.command("just-one-space", just_one_space, &[], JUST_ONE_SPACE_DOC);
+    into.command(
+        "delete-trailing-whitespace",
+        delete_trailing_whitespace,
+        &[],
+        DELETE_TRAILING_WHITESPACE_DOC,
+    );
     into.command(
         "delete-blank-lines",
         delete_blank_lines,

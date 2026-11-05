@@ -14,6 +14,7 @@ use crate::feature::minibuffer::HISTORY_LENGTH;
 use crate::jobs::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
 use crate::jobs::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
 use crate::primitives::fill::FILL_COLUMN;
+use crate::primitives::verbs::{DELETE_ON_SAVE, DELETE_TRAILING_LINES};
 use risp::VARIABLE_DOCUMENTATION;
 
 /// A Lisp variable the editor reads, and what `C-h v` says about it.
@@ -288,6 +289,20 @@ pub const SETTINGS: &[Setting] = &[
               `toggle-trailing-whitespace' turns it on and off.\n\n\
               Example:\n\
               \x20 (put 'markdown-mode 'show-trailing-whitespace nil)",
+    },
+    Setting {
+        name: DELETE_ON_SAVE,
+        doc: "Whether a buffer is cleaned of the spaces and Tabs at the ends of its lines, and \
+              of the blank lines at its end, just before it is saved, as \
+              `delete-trailing-whitespace' cleans a whole buffer. A mode can say otherwise for \
+              its own buffers, as a delete-trailing-whitespace-on-save property.\n\n\
+              Example:\n\
+              \x20 (setq delete-trailing-whitespace-on-save t)",
+    },
+    Setting {
+        name: DELETE_TRAILING_LINES,
+        doc: "Whether `delete-trailing-whitespace', on a whole buffer, also deletes the blank \
+              lines at its end, all but the newline that ends the last line of text.",
     },
     Setting {
         name: TAB_WIDTH,
