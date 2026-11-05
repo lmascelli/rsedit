@@ -419,8 +419,7 @@ primitive!(shell_command_start, args, env, ctx, {
         // and nothing will.
         ctx.finish_shell_command();
         abandon(&process);
-        // TODO(DOC-1): the message speaks of a shutdown in both cases.
-        ctx.set_echo_message("The editor's background work has shut down");
+        ctx.set_echo_message(&cannot_start_thread(ctx, "the command"));
         return Ok(ELispExp::nil());
     }
     Ok(ELispExp::string(name))
@@ -624,6 +623,17 @@ primitive!(parse_overstrike, args, _env, _ctx, {
         ELispExp::proper_list(spans),
     ]))
 });
+
+/// Returns what to say when the thread that would read WHAT could not be
+/// started: the editor's work has shut down, or the system gave no thread.
+/// Two causes, said apart: the message once said a shutdown for both.
+pub(crate) fn cannot_start_thread<B: BufferTrait>(ctx: &EditorState<B>, what: &str) -> String {
+    if ctx.work().is_shut_down() {
+        "The editor's background work has shut down".to_string()
+    } else {
+        format!("Cannot start {what}: the system gave no thread for it")
+    }
+}
 
 /// Registers the primitives that run a shell command.
 ///

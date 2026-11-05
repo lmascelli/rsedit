@@ -6,6 +6,32 @@
 use super::*;
 use crate::buffer::{Buffer, Mark, undo};
 use crate::primitives::args::movement_count;
+use std::cell::Cell;
+
+thread_local! {
+    /// Whether a door has refused an edit on this thread since the last
+    /// [`take_refusal`]: what the end of a command reads, to say the refusal
+    /// whichever command it was, rather than each command remembering to.
+    static REFUSED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Records that a door refused an edit, and returns false, what the door
+/// answers.
+fn refuse() -> bool {
+    REFUSED.with(|refused| refused.set(true));
+    false
+}
+
+/// Returns whether a door has refused an edit on this thread since the last
+/// call, and forgets it.
+///
+/// `run_command_form` asks before a command, to start clean, and after it, to
+/// say "Buffer is read-only" for a command that tried to change a read-only
+/// buffer and said nothing: a kill, a verb, a comment. One that said it
+/// itself, with [`edited`], says it twice with the same words.
+pub(crate) fn take_refusal() -> bool {
+    REFUSED.with(|refused| refused.replace(false))
+}
 
 /// Deletes the text between FROM and TO, in either order and clamped to the
 /// text, and records it so that it can be undone.
@@ -15,7 +41,7 @@ use crate::primitives::args::movement_count;
 #[must_use]
 pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) -> bool {
     if buf.read_only {
-        return false;
+        return refuse();
     }
     let start = from.min(to);
     let end = from.max(to).min(buf.text.len());
@@ -58,7 +84,7 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
 #[must_use]
 pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, content: &str) -> bool {
     if buf.read_only {
-        return false;
+        return refuse();
     }
     if content.is_empty() {
         return true;
@@ -120,6 +146,7 @@ pub(crate) enum Replayed {
 /// the buffer with [`changed`].
 pub(crate) fn replay<B: BufferTrait>(buf: &mut Buffer<B>, way: Replay) -> Replayed {
     if buf.read_only {
+        refuse();
         return Replayed::Refused;
     }
     // Split borrow: the history writes the text, and each change it is about

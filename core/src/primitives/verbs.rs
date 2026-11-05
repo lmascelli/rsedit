@@ -12,10 +12,9 @@ use crate::primitives::movement::{
 };
 use crate::text::kill_ring::Direction;
 
-// TODO(BUF-4): a read-only buffer's refusal comes back as false, and nothing
-// says so.
 /// Replaces the text from FROM to TO with TEXT, puts point at POINT, and
-/// returns whether the buffer changed.
+/// returns whether the buffer changed. A read-only buffer's refusal is false
+/// here, and is said at the end of the command, as every door's is.
 ///
 /// When the text is TEXT already, only point moves: an edit that changed no
 /// character would still mark the buffer modified, add an undo step and wake

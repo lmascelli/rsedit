@@ -345,4 +345,146 @@ mod tests {
             LispExp::string("c".into())
         );
     }
+
+    // ---------------- a refusal is said ----------------
+
+    /// Presses C-c and then KEY: what a binding of the test's own runs as a
+    /// command, the way a key would.
+    fn press_c_c(ctx: &Ctx, env: &Arc<Env<Ctx>>, key: char) {
+        use crate::input::{KeyCode, KeyEvent, KeyModifiers};
+        let ctrl = KeyModifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: ctrl,
+            },
+            env,
+        );
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Char(key),
+                modifiers: KeyModifiers::default(),
+            },
+            env,
+        );
+    }
+
+    /// A kill, a verb, a join in a read-only buffer changed nothing and said
+    /// nothing: a key that seemed broken, not a buffer that was protected.
+    #[test]
+    fn a_command_refused_by_a_read_only_buffer_says_so() {
+        let (ctx, env) = setup();
+        run(
+            r#"(insert "one two\nthree") (goto-char 1)
+               (define-key nil "C-c k" 'kill-line)
+               (define-key nil "C-c w" 'kill-word)
+               (define-key nil "C-c u" 'upcase-word)
+               (define-key nil "C-c t" 'transpose-chars)
+               (define-key nil "C-c j" 'join-line)
+               (set-buffer-read-only t)"#,
+            &env,
+            &ctx,
+        );
+        // Each where it has something to change: `join-line` joins the line
+        // point is on to the one above it.
+        for (key, at) in [('k', 1), ('w', 1), ('u', 1), ('t', 1), ('j', 10)] {
+            run(&format!("(goto-char {at})"), &env, &ctx);
+            ctx.set_echo_message("");
+            press_c_c(&ctx, &env, key);
+            assert_eq!(ctx.get_echo_message(), "Buffer is read-only", "C-c {key}");
+            assert_eq!(text(&env, &ctx), "one two\nthree", "C-c {key}");
+        }
+    }
+
+    /// A command in a buffer that takes its edits says nothing of a refusal
+    /// there was not: the flag a refusal raises does not outlive its command.
+    #[test]
+    fn a_refusal_is_said_after_its_own_command_only() {
+        let (ctx, env) = setup();
+        run(
+            r#"(insert "one two") (goto-char 0)
+               (define-key nil "C-c k" 'kill-line)
+               (define-key nil "C-c f" 'forward-char)
+               (set-buffer-read-only t)"#,
+            &env,
+            &ctx,
+        );
+        press_c_c(&ctx, &env, 'k');
+        ctx.set_echo_message("");
+        press_c_c(&ctx, &env, 'f');
+        assert_eq!(ctx.get_echo_message(), "");
+    }
+
+    /// The block was read before the deletion that was refused, and kept: a
+    /// yank elsewhere then put in a block that had never been taken out.
+    #[test]
+    fn a_rectangle_in_a_read_only_buffer_is_neither_cut_nor_kept() {
+        let (ctx, env) = setup();
+        run(
+            r#"(insert "abcd\nefgh\nijkl")
+               (goto-char 1) (set-mark) (goto-char 13)
+               (rectangle-mark-mode)
+               (set-buffer-read-only t)"#,
+            &env,
+            &ctx,
+        );
+        let point = run("(point)", &env, &ctx);
+        assert_eq!(run("(kill-rectangle)", &env, &ctx), LispExp::nil());
+        assert_eq!(
+            run("(killed-rectangle)", &env, &ctx),
+            LispExp::nil(),
+            "nothing kept"
+        );
+        assert_eq!(run("(point)", &env, &ctx), point, "point where it was");
+        assert_eq!(ctx.get_echo_message(), "Buffer is read-only");
+        for command in [
+            "(delete-rectangle)",
+            "(open-rectangle)",
+            "(clear-rectangle)",
+            r#"(string-rectangle "x")"#,
+        ] {
+            assert_eq!(run(command, &env, &ctx), LispExp::nil(), "{command}");
+        }
+        assert_eq!(text(&env, &ctx), "abcd\nefgh\nijkl");
+    }
+
+    /// The counter moved on before the insertion was refused, and the refusal
+    /// was an error worded unlike every other.
+    #[test]
+    fn the_macro_counter_does_not_move_on_for_a_number_it_could_not_insert() {
+        let (ctx, env) = setup();
+        run(
+            "(kmacro-set-counter 5) (set-buffer-read-only t)",
+            &env,
+            &ctx,
+        );
+        assert_eq!(run("(kmacro-insert-counter)", &env, &ctx), LispExp::nil());
+        assert_eq!(ctx.get_echo_message(), "Buffer is read-only");
+        run("(set-buffer-read-only nil)", &env, &ctx);
+        assert_eq!(
+            run("(kmacro-insert-counter)", &env, &ctx),
+            LispExp::string("5".to_string())
+        );
+    }
+
+    // ---------------- why work did not start ----------------
+
+    /// A command that could not get its thread said the editor's work had
+    /// shut down, also when it had not.
+    #[test]
+    fn a_thread_refused_says_why() {
+        let (ctx, _env) = setup();
+        assert_eq!(
+            crate::primitives::shell::cannot_start_thread(&ctx, "the command"),
+            "Cannot start the command: the system gave no thread for it"
+        );
+        ctx.shutdown(std::time::Duration::from_millis(100));
+        assert_eq!(
+            crate::primitives::shell::cannot_start_thread(&ctx, "the command"),
+            "The editor's background work has shut down"
+        );
+    }
 }

@@ -90,7 +90,7 @@ Questo manuale descrive il comportamento #emph[attuale] del codice, anche dove
 quel comportamento è un difetto. I difetti sono descritti, con la riproduzione
 e una correzione proposta, nel #emph[Rapporto sui problemi del codice]
 (`rapporto-problemi.typ`). Dove il manuale descrive un punto che il rapporto
-considera un difetto, un rimando come #rapporto("BUF-4") indica la scheda
+considera un difetto, un rimando scritto `#rapporto("ID")` indica la scheda
 corrispondente; quando il difetto viene corretto si aggiorna la descrizione
 qui, si toglie il rimando, e la scheda passa tra le risolte.
 
@@ -5031,10 +5031,13 @@ Le due porte restituiscono `false` in un buffer in sola lettura, e chi le
 chiama lo deve dire: `edited(ctx, happened)` scrive «Buffer is read-only»
 nell'area messaggi e risponde nil, chiamata dopo la closure, perché l'area
 messaggi è un compartimento a sé. La usano le primitive di `edits.rs`,
-`kill-region`, `yank`, `yank-pop` e `indent-line-to`. Le altre kill, i verbi, i
-commenti e i rettangoli tacciono; `kill-rectangle` conserva un blocco che non
-ha tolto, e `kmacro-insert-counter` segnala un errore con altre parole
-#rapporto("BUF-4").
+`kill-region`, `yank`, `yank-pop` e `indent-line-to`. Per tutti gli altri un
+rifiuto delle porte alza un segno del thread (`take_refusal`), che
+`run_command_form` legge alla fine del comando e dice con lo stesso messaggio:
+le kill, i verbi e i commenti, e ogni comando scritto in Lisp, lo dicono senza
+doverselo ricordare. I rettangoli e `kmacro-insert-counter` chiedono prima se
+il buffer è in sola lettura, e in quel caso non fanno nulla: niente blocco
+conservato, punto fermo, contatore che non avanza.
 
 === Muovere il punto <movimento>
 
@@ -5197,7 +5200,9 @@ alla colonna (`insert_at_edge`); `clear-rectangle` non allunga nulla;
 su una riga dove il blocco ha una stringa vuota non scrive spazi. Ogni comando
 che cambia il buffer lascia il punto all'angolo in alto a sinistra;
 `copy-rectangle-as-kill` lo lascia dov'è. In un buffer in sola lettura i
-rettangoli ignorano il rifiuto #rapporto("BUF-4").
+comandi che cambiano il testo lo chiedono prima di tutto
+(`refused_if_read_only`): un rifiuto a metà lascerebbe conservato per
+`yank-rectangle` un blocco mai tolto, che lo yank duplicherebbe.
 
 === I dati della corrispondenza <dati-corrispondenza>
 
@@ -5534,7 +5539,8 @@ dell'utente li descrive.
   primitiva: il motivo è sempre quello, e il nome del comando non direbbe
   nulla che l'utente non sappia, perché ha premuto il tasto. Il silenzio è ciò
   da evitare: un tasto che non fa nulla e non dice nulla sembra un editor
-  rotto, non un buffer protetto #rapporto("BUF-4").
+  rotto, non un buffer protetto. Per questo il rifiuto si dice anche alla fine
+  del comando, per quelli che non lo dicono da sé.
 + *Una modifica disattiva il mark, non lo cancella.* Ogni modifica passa dalle
   porte, quindi una modifica chiude la selezione, come in Emacs. La posizione
   resta per `exchange-point-and-mark`, e un mark attivo non ha mai avuto una

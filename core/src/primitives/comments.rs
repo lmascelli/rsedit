@@ -25,14 +25,13 @@ impl Edit {
     }
 }
 
-// TODO(BUF-4): the refusal is not said: the commands answer nil, and the
-// echo area stays empty.
 /// Applies EDITS, which must be in ascending order and must not overlap, last
 /// first, so that each edit's offsets are still those it was worked out
 /// against; then puts point back where the user was, in the text as it is.
 ///
 /// Returns false when there was nothing to do, or when the buffer refused:
-/// then nothing was done, since a read-only buffer refuses the first edit.
+/// then nothing was done, since a read-only buffer refuses the first edit,
+/// and the refusal is said at the end of the command.
 fn apply<B: BufferTrait>(buf: &mut Buffer<B>, edits: &[Edit]) -> bool {
     if edits.is_empty() {
         return false;

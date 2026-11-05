@@ -356,9 +356,11 @@ primitive!(grep_scan, args, env, ctx, {
         .is_none()
     {
         // Refused once the editor has shut down, or when the system gives no
-        // thread.
-        // TODO(DOC-1): the message speaks of a shutdown in both cases.
-        ctx.set_echo_message("The editor's background work has shut down");
+        // thread: said apart.
+        ctx.set_echo_message(&crate::primitives::shell::cannot_start_thread(
+            ctx,
+            "the search",
+        ));
         return Ok(ELispExp::nil());
     }
     ctx.set_current_results(Some(buffer.clone()));

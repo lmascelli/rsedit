@@ -337,6 +337,14 @@ impl<C: Send + 'static> WorkManager<C> {
         self.shared.after_watch.set(Box::new(hook)).is_ok()
     }
 
+    /// Returns whether [`Self::shutdown`] has been called: what tells a
+    /// refused `submit` or `spawn` after it from one refused for another
+    /// reason, an executor never started or a thread the system would not
+    /// give.
+    pub fn is_shut_down(&self) -> bool {
+        self.shared.registry.lock().expect("work registry").closed
+    }
+
     /// Returns whether work -- a job or a thread -- is running under NAME.
     ///
     /// For whoever names work after something else that must be unique too:

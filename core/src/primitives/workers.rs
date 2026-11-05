@@ -58,12 +58,15 @@ fn start<B: BufferTrait>(
             ctx.runtime_mut(|runtime| runtime.adopt_lisp_job(name, id));
             ELispExp::symbol(name.into())
         }
-        // Refused after a shutdown, or when the executor never started.
+        // Refused after a shutdown, or when the executor never started: said
+        // apart.
         None => {
-            // TODO(DOC-1): the line speaks of a shutdown in both cases.
-            ctx.log_diagnostic(&format!(
-                "[ERROR] {door}: {name} was not started: the editor's work has shut down"
-            ));
+            let why = if ctx.work().is_shut_down() {
+                "the editor's work has shut down"
+            } else {
+                "the editor's work has not started"
+            };
+            ctx.log_diagnostic(&format!("[ERROR] {door}: {name} was not started: {why}"));
             ELispExp::nil()
         }
     }

@@ -213,6 +213,11 @@ primitive!(kmacro_insert_counter, args, _env, ctx, {
         Some(ELispExp::Number(n)) => crate::primitives::args::width(*n)?,
         _ => 0,
     };
+    // Asked before the counter moves on too: a counter that stepped for a
+    // number never inserted would skip one. Said as every refused edit is.
+    if ctx.with_current_buffer(|buf| buf.read_only) {
+        return Ok(crate::primitives::edits::edited(ctx, false));
+    }
     let value = ctx.macros_mut(|macros| macros.take_counter(1));
     // The zeros made by hand: `format!` panics on a width past 65 535.
     let digits = value.unsigned_abs().to_string();
@@ -223,10 +228,8 @@ primitive!(kmacro_insert_counter, args, _env, ctx, {
         let at = buf.text.cursor_pos_1d();
         crate::primitives::edits::insert_text(buf, at, &text)
     });
-    // TODO(BUF-4): a refusal is an error here, worded unlike `edited`'s
-    // message, and the counter has moved on already.
     if !inserted {
-        return Err(EvalError::RuntimeMessage("This buffer is read-only".into()));
+        return Ok(crate::primitives::edits::edited(ctx, false));
     }
     Ok(ELispExp::string(text))
 });

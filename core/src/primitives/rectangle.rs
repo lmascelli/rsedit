@@ -55,8 +55,6 @@ where
     }
 }
 
-// TODO(BUF-4): a refused insertion is ignored, and the commands that insert
-// answer as though they had.
 /// Inserts CONTENT on SPAN's line at the rectangle's left edge, padding the
 /// line out to that column first when it stops short of it: a column that
 /// does not exist yet is what `open-rectangle`, `yank-rectangle` and
@@ -132,9 +130,16 @@ primitive!(rectangle_bounds, _args, _env, ctx, {
 // Taking one out
 // ---------------------------------------------------------------------------
 
-// TODO(BUF-4): a refused deletion is ignored: in a read-only buffer
-// `kill-rectangle` keeps the block although it stayed, and the commands
-// answer with the number of lines as though they had cut it.
+/// Returns nil, saying "Buffer is read-only", when the current buffer is: what
+/// every command that changes a rectangle asks first, before it reads, keeps
+/// or moves anything. Asked first because a refusal halfway would leave a
+/// block kept that was never taken -- and duplicated by the next yank -- or
+/// point moved for nothing.
+fn refused_if_read_only<B: BufferTrait>(ctx: &EditorState<B>) -> Option<ELispExp<B>> {
+    ctx.with_current_buffer(|buf| buf.read_only)
+        .then(|| crate::primitives::edits::edited(ctx, false))
+}
+
 /// Deletes RECT's text and returns what was there, a string per line, with
 /// point left at the corner.
 fn cut<B: BufferTrait>(ctx: &EditorState<B>, rect: &Rectangle) -> Vec<String> {
@@ -156,6 +161,9 @@ pub const KILL_RECTANGLE_DOC: &str = "(kill-rectangle): Delete the block between
 
 primitive!(kill_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
+    if let Some(refused) = refused_if_read_only(ctx) {
+        return Ok(refused);
+    }
     let taken = cut(ctx, &rect);
     let height = taken.len();
     ctx.kill_yank_mut(|kill_yank| kill_yank.set_rectangle(taken));
@@ -168,6 +176,9 @@ pub const DELETE_RECTANGLE_DOC: &str = "(delete-rectangle): Delete the block bet
 
 primitive!(delete_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
+    if let Some(refused) = refused_if_read_only(ctx) {
+        return Ok(refused);
+    }
     Ok(ELispExp::number(cut(ctx, &rect).len() as f64))
 });
 
@@ -252,6 +263,9 @@ primitive!(yank_rectangle, _args, _env, ctx, {
     let Some(lines) = ctx.kill_yank(|kill_yank| kill_yank.rectangle()) else {
         return Ok(ELispExp::nil());
     };
+    if let Some(refused) = refused_if_read_only(ctx) {
+        return Ok(refused);
+    }
     Ok(ELispExp::number(insert_block(ctx, &lines) as f64))
 });
 
@@ -261,6 +275,9 @@ pub const OPEN_RECTANGLE_DOC: &str = "(open-rectangle): Fill the block between p
 
 primitive!(open_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
+    if let Some(refused) = refused_if_read_only(ctx) {
+        return Ok(refused);
+    }
     let filling = " ".repeat(rect.width());
     let height = ctx.with_current_buffer_mut(|buf| {
         let lines = spans(&buf.text, &rect).len();
@@ -279,6 +296,9 @@ pub const CLEAR_RECTANGLE_DOC: &str = "(clear-rectangle): Replace the text of th
 
 primitive!(clear_rectangle, _args, _env, ctx, {
     let rect = ctx.with_current_buffer(require_rectangle)?;
+    if let Some(refused) = refused_if_read_only(ctx) {
+        return Ok(refused);
+    }
     let height = ctx.with_current_buffer_mut(|buf| {
         let lines = spans(&buf.text, &rect).len();
         each_line(buf, &rect, |buf, span| {
@@ -312,6 +332,9 @@ primitive!(string_rectangle, args, _env, ctx, {
     };
     let content = text.to_string();
     let rect = ctx.with_current_buffer(require_rectangle)?;
+    if let Some(refused) = refused_if_read_only(ctx) {
+        return Ok(refused);
+    }
     let height = ctx.with_current_buffer_mut(|buf| {
         let lines = spans(&buf.text, &rect).len();
         each_line(buf, &rect, |buf, span| {

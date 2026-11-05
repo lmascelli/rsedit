@@ -24,9 +24,8 @@ pub(crate) fn cut_out<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usiz
     }
     let text = buf.text.slice(start, end);
     // Nothing comes back from a refusal: text on the ring that is still in
-    // the buffer would be doubled by the next yank.
-    // TODO(BUF-4): nor is the refusal said: a kill in a read-only buffer is
-    // silent.
+    // the buffer would be doubled by the next yank. The refusal is said at the
+    // end of the command, as every door's is.
     if !edits::delete_range(buf, start, end) {
         return String::new();
     }

@@ -72,6 +72,9 @@ impl<B: BufferTrait> EditorState<B> {
             ]);
         }
 
+        // Forgotten before the command, so that what a refusal before it left
+        // is not said after it.
+        crate::primitives::edits::take_refusal();
         let outcome = {
             let _command = self.begin_command();
             let mode = self.with_current_buffer(|buf| buf.current_mode.clone());
@@ -81,9 +84,17 @@ impl<B: BufferTrait> EditorState<B> {
         // Before the error is looked at: a command that fails still uses its
         // argument up.
         self.clear_prefix_argument();
+        // Asked whatever the outcome, so that it is forgotten either way.
+        let refused = crate::primitives::edits::take_refusal();
         if let Err(e) = outcome {
             self.report_error(&format!("{:?} {:?}", ast, e), env);
             return;
+        }
+        // A command that tried to change a read-only buffer and said nothing
+        // about it -- a kill, a verb, a comment -- looked broken rather than
+        // refused.
+        if refused {
+            self.set_echo_message("Buffer is read-only");
         }
 
         let current_mode_name = self.with_current_buffer(|buf| buf.current_mode.clone());
