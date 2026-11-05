@@ -43,6 +43,7 @@ mod history_tests;
 mod home_guard;
 mod hooks_tests;
 mod indent_tests;
+mod isearch_count_tests;
 mod isearch_tests;
 mod kill_ring_tests;
 mod language_mode_tests;

@@ -2682,6 +2682,7 @@ pub struct Isearch {
     pub pattern: Option<Pattern>, // il modello compilato: le altre corrispondenze
     pub failing: bool,           // l'ultima scansione non ha trovato nulla
     pub wrapped: bool,           // la ricerca ha fatto il giro
+    pub counting: Option<Counting>, // il conteggio delle corrispondenze
 }
 ```
 ]
@@ -2716,9 +2717,10 @@ Le regole dei metodi, tutte prese dal comportamento di Emacs:
 - Cambiare direzione non avanza: `from` diventa l'inizio (o la fine) della
   corrispondenza corrente, perché `C-s C-r` deve ripercorrere le stesse
   corrispondenze senza saltarne una.
-- `report(pattern)` compone il testo per l'area dei messaggi:
-  `[Failing ][Wrapped ]` seguito da `I-search`, `I-search backward`,
-  `Regexp I-search` o `Regexp I-search backward`, poi `: ` e il modello.
+- `report(pattern)` compone il testo per l'area dei messaggi: il conteggio
+  (`count_label`, sotto), `[Failing ][Wrapped ]` seguito da `I-search`,
+  `I-search backward`, `Regexp I-search` o `Regexp I-search backward`, poi
+  `: ` e il modello.
 
 `isearch-update` gestisce anche i casi limite. Con il prompt vuoto riporta il
 punto a `origin` e toglie il mark. Un'espressione che non si compila (`[a-` è
@@ -2729,6 +2731,62 @@ corrispondenza è la regione e la disegna lo stesso codice che disegna una
 selezione. `isearch-exit` (Invio) lascia il punto sulla corrispondenza e mette
 il mark, disattivato, dove la ricerca è cominciata, come Emacs, così `C-x C-x`
 ci torna; `isearch-abort` (`C-g`, `ESC`) riporta il punto a `origin`.
+
+=== Il conteggio delle corrispondenze <conteggio>
+
+Il prompt dice a quale corrispondenza è la ricerca e quante sono nel buffer,
+come `3/17 I-search: foo`. Un `Counting` dice di quale modello, così come è
+stato scritto, e di quale versione del buffer è il conteggio, e lo contiene,
+quando è fatto, in un `Arc<OnceLock<MatchCount>>`: l'inizio di ogni
+corrispondenza, in ordine, fino a `COUNT_LIMIT` (100 000), e se ce n'erano
+altre. `count_label` ne ricava l'etichetta: l'indice è quante corrispondenze
+cominciano prima di quella mostrata o con lei (`partition_point`), `?` quando
+non ne è mostrata nessuna o quando sta oltre l'ultima contata di un
+conteggio troncato, `+` dopo il totale di un conteggio troncato, `0/0`
+quando non ce n'è nessuna; nulla finché il conteggio non è fatto.
+
+`isearch-update` chiede un conteggio nuovo (`count`, in
+`primitives/isearch.rs`) quando il modello o la versione del buffer non sono
+più quelli del `Counting`; una ripetizione con `C-s` non conta di nuovo, e
+cambia solo l'indice. Le corrispondenze le trova `Pattern::starts`, che
+scorre il testo una volta come `Pattern::scan` e tiene solo gli inizi, in
+caratteri. Il buffer si copia sotto il suo lock e si conta a lock reso.
+
+- In un buffer di `COUNT_AT_ONCE` caratteri o meno, un milione, si conta
+  subito, nel comando, e il conteggio è nel messaggio che il tasto scrive.
+- In uno più grande si conta su un thread dedicato, `isearch-count`
+  (`spawn_work`, @thread-dedicati). Il thread copia il testo, rinuncia se la
+  versione non è più quella chiesta, conta controllando a ogni
+  corrispondenza lo `Stop`, riempie l'`OnceLock` e chiede una callback dovuta
+  (@callback-dovute): `isearch--count-arrived`, che sul thread dei comandi
+  riscrive il messaggio della ricerca con il conteggio. Un conteggio nuovo
+  avviato con lo stesso nome ferma il precedente, e la callback di quello si
+  scarta perché il suo lavoro non parla più per il nome (`is_latest`); la
+  chiusura della ricerca lo ferma con `cancel_named`.
+
+Le decisioni:
+
++ *Il risultato nella sessione, il messaggio su chiamata.* `isearch-update`
+  prende la sessione da `Runtime` e la rimette alla fine: un thread che
+  scrivesse lì il suo risultato in quel momento non la troverebbe. Con
+  l'`OnceLock` condiviso il risultato non si perde, chiunque tenga la
+  sessione, e il messaggio lo riscrive una callback, che gira tra un comando
+  e l'altro e trova la sessione al suo posto. Scartato: scrivere il messaggio
+  dal thread, che lo farebbe con una sessione che può non esserci, e con un
+  modello che nel frattempo può essere cambiato.
++ *Subito nei buffer piccoli.* Un thread per ogni tasto in un file di poche
+  righe costerebbe più del conteggio, e il prompt mostrerebbe a ogni tasto un
+  messaggio senza conteggio seguito, un attimo dopo, da quello con: il testo
+  del prompt salterebbe avanti e indietro. Un milione di caratteri si conta
+  in pochi millisecondi.
++ *Le corrispondenze contate non si sovrappongono.* Il conteggio è quello di
+  `scan`, come `occur`; la ricerca invece si ferma anche sulle
+  sovrapposizioni (`advance`). Nei rari casi in cui le due cose divergono,
+  l'indice è quello dell'ultima corrispondenza contata che comincia prima;
+  lo dice il manpage `searching`.
++ *Un tetto al conteggio.* Un modello che corrisponde a ogni carattere di un
+  file grande terrebbe in memoria un inizio per carattere; 100 000 è più di
+  quanto un numero nel prompt possa dire a chi lo legge.
 
 == La sessione di sostituzione: `Replace` <sostituzione>
 
@@ -4245,6 +4303,10 @@ era girato. Una directory di lavoro sparita dopo `cd` è detta come tale, non co
 il «No such file or directory» del sistema, che sembrerebbe parlare della
 shell. La pagina `shell` del manuale dell'utente
 dice che cosa vede chi li usa.
+
+Il conteggio delle corrispondenze di una ricerca in un buffer grande gira su
+un thread dedicato avviato con `spawn_work`, `isearch-count`, che non scrive
+in un buffer e consegna il risultato con una callback dovuta (@conteggio).
 
 === I lavori Lisp <lavori-lisp>
 
@@ -6877,6 +6939,7 @@ Le variabili che l'editor legge da Lisp:
   [`history-length`], [100], [Voci per storia di prompt.],
   [`save-history`, `recent-files-length`, `save-place`], [`t`, 50, `t`], [Che cosa la sessione tiene da un avvio all'altro (@memoria).],
   [`show-paren-mode`, `highlight-all-matches`], [`t`, `t`], [La parentesi accanto al punto e le corrispondenze di una ricerca (@evidenziazioni).],
+  [`isearch-lazy-count`], [`t`], [Il conteggio `3/17` nel prompt di una ricerca (@conteggio).],
   [`*minibuffer-read-function*`], [`default-minibuffer-prompt`], [Chi apre i prompt.],
   [`*key-capture-function*`], [`nil`], [Chi riceve la prossima sequenza invece di eseguirla.],
 )

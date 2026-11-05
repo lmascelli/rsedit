@@ -395,7 +395,7 @@ mod tests {
 
         press_ctrl(&ctx, &env, 's');
         assert_eq!(point(&ctx), 7, "there is nothing after it");
-        assert_eq!(echo(&ctx, &env), "Failing I-search: two");
+        assert_eq!(echo(&ctx, &env), "?/1 Failing I-search: two");
     }
 
     /// Emacs' rule, and worth keeping: the "Failing" report is what turns the
@@ -409,12 +409,12 @@ mod tests {
         assert_eq!(point(&ctx), 11, "the one after point");
 
         press_ctrl(&ctx, &env, 's');
-        assert_eq!(echo(&ctx, &env), "Failing I-search: two");
+        assert_eq!(echo(&ctx, &env), "?/2 Failing I-search: two");
         assert_eq!(point(&ctx), 11, "the first press does not move");
 
         press_ctrl(&ctx, &env, 's');
         assert_eq!(point(&ctx), 3, "the second wraps to the one at the top");
-        assert_eq!(echo(&ctx, &env), "Wrapped I-search: two");
+        assert_eq!(echo(&ctx, &env), "1/2 Wrapped I-search: two");
     }
 
     #[test]
@@ -425,7 +425,7 @@ mod tests {
         type_pattern(&ctx, &env, "zzz");
 
         assert_eq!(point(&ctx), 2);
-        assert_eq!(echo(&ctx, &env), "Failing I-search: zzz");
+        assert_eq!(echo(&ctx, &env), "0/0 Failing I-search: zzz");
     }
 
     // -----------------------------------------------------------------------
@@ -631,7 +631,7 @@ mod tests {
         type_pattern(&ctx, &env, "[0-9]+");
 
         assert_eq!(point(&ctx), 6);
-        assert_eq!(echo(&ctx, &env), "Regexp I-search: [0-9]+");
+        assert_eq!(echo(&ctx, &env), "1/2 Regexp I-search: [0-9]+");
     }
 
     /// Half a regexp is what every complete one looks like while it is being
@@ -657,7 +657,7 @@ mod tests {
         type_pattern(&ctx, &env, "one");
 
         assert_eq!(point(&ctx), 8, "point at the start, going backwards");
-        assert_eq!(echo(&ctx, &env), "I-search backward: one");
+        assert_eq!(echo(&ctx, &env), "2/2 I-search backward: one");
     }
 
     /// Offsets stay counted in characters across multi-byte text. Searching

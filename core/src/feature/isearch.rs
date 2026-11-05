@@ -21,6 +21,25 @@ use std::sync::Arc;
 /// name, and Emacs' own default, on.
 pub(crate) const CASE_FOLD: &str = "case-fold-search";
 
+/// The Lisp variable that turns counting the matches of a search off: Emacs'
+/// own name, on here unless it is set to nil.
+pub(crate) const ISEARCH_LAZY_COUNT: &str = "isearch-lazy-count";
+
+/// The name the thread counting a search's matches is known by: one at a
+/// time, since starting one under the name stops the one before.
+pub(crate) const COUNT_WORK: &str = "isearch-count";
+
+/// How many characters a buffer may have for its matches to be counted at
+/// once, in the command that typed the pattern: a megabyte of text takes a
+/// few milliseconds, and the count is in the report the key draws.
+pub(crate) const COUNT_AT_ONCE: usize = 1_000_000;
+
+/// Returns whether a search counts its matches, as Lisp has it now; unbound
+/// counts as on.
+pub(crate) fn lazy_count<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
+    env.flag(ISEARCH_LAZY_COUNT, true)
+}
+
 /// Returns whether searches ignore case, as Lisp has it now; unbound counts as
 /// on. The one reading of `case-fold-search` for incremental search, replace,
 /// occur, grep and `scan-buffer`.
@@ -79,7 +98,8 @@ pub(crate) fn searched_len<B: BufferTrait>(ctx: &EditorState<B>, session: &Isear
 // ---------------------------------------------------------------------------
 
 /// Installs `isearch-mode`, the keymap and hooks a search prompt runs under,
-/// and makes `case-fold-search` t when it has no value. The primitives its
+/// and makes `case-fold-search` and `isearch-lazy-count` t when they have no
+/// value. The primitives its
 /// keys name are in `primitives/isearch.rs`.
 pub fn install_isearch<B: BufferTrait>(
     editor_state: &EditorState<B>,
@@ -138,7 +158,9 @@ pub fn install_isearch<B: BufferTrait>(
     editor_state.set_mode("isearch-mode", isearch_mode);
     // Set here rather than in a `.lisp` file, so that the default holds with
     // no configuration loaded and `C-h v` finds the variable bound.
-    if env.get_variable(CASE_FOLD).is_none() {
-        env.set_variable(CASE_FOLD.into(), ELispExp::t());
+    for flag in [CASE_FOLD, ISEARCH_LAZY_COUNT] {
+        if env.get_variable(flag).is_none() {
+            env.set_variable(flag.into(), ELispExp::t());
+        }
     }
 }

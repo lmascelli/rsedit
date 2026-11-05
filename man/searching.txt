@@ -14,6 +14,7 @@ SYNOPSIS
     (isearch-active-p)
     case-fold-search
     highlight-all-matches
+    isearch-lazy-count
 
     (query-replace FROM TO)
     (query-replace-regexp FROM TO)
@@ -85,6 +86,15 @@ SEARCHING AS YOU TYPE
 
     Case is ignored unless `case-fold-search' is nil: a search for the
     finds The and THE, and so does a search for The.
+
+    The prompt says where the search is among the matches of the whole
+    buffer, and how many there are: 3/17 I-search: foo is the third of
+    seventeen, counted from the top. ?/17 is a search that has no match on
+    offer, run out going one way with matches the other way, and 0/0 a
+    pattern that matches nothing. In a buffer of more than a million
+    characters the count is made while you go on typing, and appears a
+    moment after the key; until then the prompt says nothing of it.
+    Setting `isearch-lazy-count' to nil turns the count off.
 
     While the search is open, every other match on screen is drawn in the
     face lazy-highlight, in every window showing the buffer, and follows
@@ -204,6 +214,12 @@ LIMITS
     that begins above the top line, or ends below the bottom one, is not
     drawn.
 
+    The count does not count matches that overlap: aa in aaa is one match,
+    though C-s stops at both. It stops at 100000, and says 100000+, with ?
+    for a match beyond the last counted. It counts the buffer as it was when
+    the pattern was typed; a buffer changed under the search, such as a
+    command's output still arriving, is counted again at the next key.
+
 LISTS FROM LISP
     A list of places is a set of entries attached to a buffer, and any code
     can make one: `results-put' attaches entries to a buffer and makes it
@@ -240,6 +256,10 @@ EXAMPLES
     Draw only the match a search or a replace is at:
 
         (setq highlight-all-matches nil)
+
+    Search without counting the matches:
+
+        (setq isearch-lazy-count nil)
 
     Replace every tab in the buffer with four spaces:
 

@@ -1,9 +1,50 @@
 //! An incremental search between keystrokes: the buffer it searches, where it
-//! began, where the next scan starts and what it found. `isearch-mode`'s
-//! post-command hook drives it, a turn for every command run in the prompt.
+//! began, where the next scan starts, what it found and how many matches
+//! there are. `isearch-mode`'s post-command hook drives it, a turn for every
+//! command run in the prompt.
 //!
-//! Design: `doc/architettura-editor.typ, <isearch>`.
+//! Design: `doc/architettura-editor.typ, <isearch>`, and
+//! `doc/architettura-editor.typ, <conteggio>` for the count.
 use crate::text::search::{Match, Pattern};
+use std::sync::{Arc, OnceLock};
+
+/// Every match of a pattern in the searched text, where each starts, in
+/// order: at most [`COUNT_LIMIT`], `truncated` when there were more.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MatchCount {
+    pub starts: Vec<usize>,
+    pub truncated: bool,
+}
+
+/// How many matches a count keeps: enough for any number worth reading, and a
+/// bound on the memory a pattern that matches everywhere can take.
+pub const COUNT_LIMIT: usize = 100_000;
+
+/// A count asked for: of which pattern, as typed, in which version of the
+/// text, and the count itself once it is made. The count is shared with the
+/// thread that makes it, which fills it once.
+#[derive(Clone, Debug)]
+pub struct Counting {
+    pub typed: String,
+    pub version: u64,
+    pub result: Arc<OnceLock<MatchCount>>,
+}
+
+impl Counting {
+    /// Returns a count of TYPED in the text at VERSION, not made yet.
+    pub fn new(typed: &str, version: u64) -> Self {
+        Self {
+            typed: typed.to_string(),
+            version,
+            result: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Returns whether this is the count of TYPED at VERSION.
+    pub fn is_for(&self, typed: &str, version: u64) -> bool {
+        self.typed == typed && self.version == version
+    }
+}
 
 /// Which way an incremental search is travelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +85,9 @@ pub struct Isearch {
     pub failing: bool,
     /// Whether the scan has been round the end of the buffer, for the report.
     pub wrapped: bool,
+    /// The count of the matches, asked for or made; `None` while nothing is
+    /// typed, and when counting is off.
+    pub counting: Option<Counting>,
 }
 
 impl Isearch {
@@ -59,6 +103,7 @@ impl Isearch {
             pattern: None,
             failing: false,
             wrapped: false,
+            counting: None,
         }
     }
 
@@ -90,9 +135,33 @@ impl Isearch {
         self.failing = false;
     }
 
-    /// Returns how the search reads in the echo area.
+    /// Returns where the search is among the matches, as `3/17 `: the match
+    /// shown, counted from the top of the buffer, and how many there are; `?`
+    /// for the first when no match is shown, or when it lies past the matches
+    /// a truncated count kept, and a `+` after the second when the count was
+    /// truncated. Empty while the count is not made.
+    pub fn count_label(&self) -> String {
+        let Some(count) = self.counting.as_ref().and_then(|c| c.result.get()) else {
+            return String::new();
+        };
+        let total = count.starts.len();
+        let more = if count.truncated { "+" } else { "" };
+        let at = self.found.as_ref().and_then(|found| {
+            let last = *count.starts.last()?;
+            (!count.truncated || found.start <= last)
+                .then(|| count.starts.partition_point(|&start| start <= found.start))
+        });
+        match at {
+            _ if total == 0 => "0/0 ".to_string(),
+            Some(at) => format!("{at}/{total}{more} "),
+            None => format!("?/{total}{more} "),
+        }
+    }
+
+    /// Returns how the search reads in the echo area: where it is among the
+    /// matches, when they are counted, what it is, and the pattern.
     pub fn report(&self, pattern: &str) -> String {
-        let mut label = String::new();
+        let mut label = self.count_label();
         if self.failing {
             label.push_str("Failing ");
         }

@@ -339,6 +339,48 @@ impl Pattern {
         scan
     }
 
+    /// Returns where each match in HAYSTACK starts, in characters and in
+    /// order, as [`Pattern::scan`] finds them, at most LIMIT of them, with
+    /// whether there were more; `None` when KEEP_GOING, asked before each
+    /// match, answers false.
+    ///
+    /// What counting needs, and no more: no line, no column, no text copied
+    /// for each match.
+    pub fn starts(
+        &self,
+        haystack: &str,
+        limit: usize,
+        keep_going: impl Fn() -> bool,
+    ) -> Option<(Vec<usize>, bool)> {
+        let mut starts = Vec::new();
+        // The characters before `counted_to`, a byte: each is counted once.
+        let (mut counted_to, mut chars) = (0usize, 0usize);
+        let mut at = 0usize;
+        while at <= haystack.len() {
+            if !keep_going() {
+                return None;
+            }
+            let Some((start, end, _)) = self.next_match(haystack, at) else {
+                break;
+            };
+            if starts.len() >= limit {
+                return Some((starts, true));
+            }
+            chars += haystack[counted_to..start].chars().count();
+            counted_to = start;
+            starts.push(chars);
+            at = if end > start {
+                end
+            } else {
+                match haystack[end..].chars().next() {
+                    Some(c) => end + c.len_utf8(),
+                    None => break,
+                }
+            };
+        }
+        Some((starts, false))
+    }
+
     /// Returns the next match at or after byte FROM, as (start, end, groups)
     /// in bytes.
     fn next_match(

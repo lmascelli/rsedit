@@ -9,7 +9,7 @@ use super::*;
 use crate::editor::frame::{HIGHLIGHT_ALL_MATCHES, SHOW_PAREN_MODE};
 use crate::editor::session::SAVE_HISTORY;
 use crate::editor::visits::{RECENT_FILES_LENGTH, SAVE_PLACE};
-use crate::feature::isearch::CASE_FOLD;
+use crate::feature::isearch::{CASE_FOLD, ISEARCH_LAZY_COUNT};
 use crate::feature::minibuffer::HISTORY_LENGTH;
 use crate::jobs::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
 use crate::jobs::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
@@ -145,6 +145,12 @@ pub const SETTINGS: &[Setting] = &[
         name: HIGHLIGHT_ALL_MATCHES,
         doc: "Whether a search, and a replace, draw every match on screen in lazy-highlight \
               besides the one they are at. nil draws that one only.",
+    },
+    Setting {
+        name: ISEARCH_LAZY_COUNT,
+        doc: "Whether a search counts its matches, and shows before its prompt which of them \
+              it is at and how many there are, as 3/17. In a large buffer the count arrives a \
+              moment after the key. nil counts nothing.",
     },
     Setting {
         name: CASE_FOLD,

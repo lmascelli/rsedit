@@ -1,15 +1,99 @@
-//! Incremental search from Lisp: the four commands that start one, and the
-//! primitives an open search runs on, from its prompt's keys and its hook.
-//! Where point lands and what the prompt reports are
-//! [`crate::feature::isearch`], with `isearch-mode`.
+//! Incremental search from Lisp: the four commands that start one, the
+//! primitives an open search runs on, from its prompt's keys and its hook,
+//! and the count of its matches, made at once in a small buffer and on a
+//! thread of its own in a large one. Where point lands and what the prompt
+//! reports are [`crate::feature::isearch`], with `isearch-mode`.
 //!
-//! Design: `doc/architettura-editor.typ, <ricerca-incrementale>`.
+//! Design: `doc/architettura-editor.typ, <ricerca-incrementale>`, and
+//! `doc/architettura-editor.typ, <conteggio>` for the count.
 use super::*;
 use crate::buffer::Mark;
-use crate::feature::isearch;
-use crate::text::isearch::{Direction, Isearch};
+use crate::feature::isearch::{self, COUNT_AT_ONCE, COUNT_WORK};
+use crate::text::isearch::{COUNT_LIMIT, Counting, Direction, Isearch, MatchCount};
 use crate::text::search::Pattern;
 use std::sync::Arc;
+
+/// Makes SESSION's count of PATTERN, typed as TYPED, or asks for it, unless
+/// it already has it for this version of the buffer: at once in a buffer of
+/// [`COUNT_AT_ONCE`] characters or fewer, on the thread [`COUNT_WORK`]
+/// otherwise, which owes `isearch--count-arrived` when it is done.
+fn count<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: &Arc<Env<EditorState<B>>>,
+    session: &mut Isearch,
+    typed: &str,
+    pattern: &Pattern,
+) {
+    if !isearch::lazy_count(env) {
+        session.counting = None;
+        return;
+    }
+    let Some((len, version)) =
+        ctx.with_buffer(&session.buffer, |buf| (buf.text.len(), buf.version))
+    else {
+        return;
+    };
+    if session
+        .counting
+        .as_ref()
+        .is_some_and(|counting| counting.is_for(typed, version))
+    {
+        return;
+    }
+    let counting = Counting::new(typed, version);
+    session.counting = Some(counting.clone());
+    if len <= COUNT_AT_ONCE {
+        // A count still being made for an earlier pattern is of no use now.
+        ctx.work().cancel_named(COUNT_WORK);
+        let text = ctx
+            .with_buffer(&session.buffer, |buf| buf.text.to_string())
+            .unwrap_or_default();
+        if let Some((starts, truncated)) = pattern.starts(&text, COUNT_LIMIT, || true) {
+            let _ = counting.result.set(MatchCount { starts, truncated });
+        }
+        return;
+    }
+    let buffer = session.buffer.clone();
+    let pattern = pattern.clone();
+    let result = counting.result;
+    ctx.spawn_work(COUNT_WORK, move |state, stop, id| {
+        // Copied under the buffer's lock, and counted with it given back.
+        let Some((text, now)) =
+            state.with_buffer(&buffer, |buf| (buf.text.to_string(), buf.version))
+        else {
+            return;
+        };
+        // Changed since it was asked for: the next update asks again.
+        if now != version {
+            return;
+        }
+        let Some((starts, truncated)) = pattern.starts(&text, COUNT_LIMIT, || !stop.is_cancelled())
+        else {
+            return;
+        };
+        if result.set(MatchCount { starts, truncated }).is_ok() {
+            state.owe_callback(
+                COUNT_WORK,
+                id,
+                ELispExp::primitive(isearch_count_arrived, None),
+                Vec::new(),
+            );
+        }
+    });
+}
+
+pub const ISEARCH_COUNT_ARRIVED_DOC: &str = "(isearch--count-arrived): Show the search's report \
+         again, with the count of its matches just made. Not called directly -- the thread that \
+         counts owes it.";
+
+primitive!(isearch_count_arrived, _args, _env, ctx, {
+    // The prompt's text before the session: one lock at a time.
+    let typed = isearch::pattern_text(ctx);
+    if let Some(report) = ctx.runtime(|runtime| runtime.isearch().map(|s| s.report(&typed))) {
+        ctx.set_echo_message(&report);
+    }
+    Ok(ELispExp::nil())
+});
 
 /// Opens the prompt and records where the search began.
 fn begin<B: BufferTrait>(
@@ -107,7 +191,9 @@ primitive!(isearch_update, _args, env, ctx, {
         ctx.with_buffer_mut(&session.buffer, |buf| isearch::place(buf, origin, None));
         session.found = None;
         session.pattern = None;
+        session.counting = None;
         session.failing = false;
+        ctx.work().cancel_named(COUNT_WORK);
         let report = session.report("");
         ctx.begin_isearch(session);
         ctx.set_echo_message(&report);
@@ -130,11 +216,13 @@ primitive!(isearch_update, _args, env, ctx, {
                     session.failing = true;
                 }
             }
+            count(ctx, &env, &mut session, &text, &pattern);
             session.pattern = Some(pattern);
         }
         Err(_) => {
             session.found = None;
             session.pattern = None;
+            session.counting = None;
             session.failing = true;
         }
     }
@@ -211,6 +299,7 @@ primitive!(isearch_exit, _args, _env, ctx, {
     let Some(session) = ctx.take_isearch() else {
         return Ok(ELispExp::nil());
     };
+    ctx.work().cancel_named(COUNT_WORK);
     // Point is already at the match -- every update put it there. While the
     // search ran, the mark was the match's other end, so that the match drew
     // as a selection; now it goes where the search started, as in Emacs, so
@@ -246,6 +335,7 @@ primitive!(isearch_abort, _args, _env, ctx, {
     let Some(session) = ctx.take_isearch() else {
         return Ok(ELispExp::nil());
     };
+    ctx.work().cancel_named(COUNT_WORK);
     let origin = session.origin;
     ctx.with_buffer_mut(&session.buffer, |buf| isearch::place(buf, origin, None));
     ctx.set_echo_message("Quit");
@@ -303,4 +393,9 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         ISEARCH_REPEAT_BACKWARD_DOC,
     );
     into.function("isearch-active-p", isearch_active_p, ISEARCH_ACTIVE_P_DOC);
+    into.function(
+        "isearch--count-arrived",
+        isearch_count_arrived,
+        ISEARCH_COUNT_ARRIVED_DOC,
+    );
 }
