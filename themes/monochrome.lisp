@@ -39,4 +39,5 @@
        (lazy-highlight     nil nil ("underline"))
        (show-paren-match   nil nil ("bold" "reverse"))
        (show-paren-mismatch nil nil ("bold" "underline" "reverse"))
+       (trailing-whitespace nil nil ("reverse"))
        (preview            nil nil ("italic"))))

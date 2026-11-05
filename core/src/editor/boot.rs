@@ -299,6 +299,9 @@ pub fn create_global_env<B: BufferTrait>()
     // Off here, and on in `default-configuration`: see `mouse_mode`.
     env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
 
+    // The blanks at the ends of lines undrawn, until a configuration asks.
+    env.set_variable(SHOW_TRAILING_WHITESPACE.into(), ELispExp::nil());
+
     // The column paragraphs are filled to.
     env.set_variable(
         crate::primitives::fill::FILL_COLUMN.into(),

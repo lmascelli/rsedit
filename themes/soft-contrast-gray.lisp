@@ -30,4 +30,5 @@
        (lazy-highlight   "#ffffff" "#555555" nil)
        (show-paren-match "#000000" "#cccccc" ("bold"))
        (show-paren-mismatch "#ffffff" "#4a2828" ("bold" "underline"))
+       (trailing-whitespace nil "#4a2828" nil)
        (preview          "#888888" nil       ("italic"))))

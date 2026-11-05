@@ -110,6 +110,13 @@ DELETING
         just-one-space            the spaces around point, but one
         delete-horizontal-space   the spaces and tabs around point
 
+SEEING THE BLANKS
+    On the `editing' page:
+
+        toggle-trailing-whitespace
+                                  draw the spaces at the ends of lines, or
+                                  stop
+
     On the `buffers' page:
 
         clear-buffer              the whole text of the buffer

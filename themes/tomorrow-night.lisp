@@ -40,6 +40,7 @@
        (lazy-highlight      "#1d1f21" "#81a2be" nil)
        (show-paren-match    "#1d1f21" "#b5bd68" ("bold"))
        (show-paren-mismatch "#c5c8c6" "#cc6666" ("bold"))
+       (trailing-whitespace nil       "#cc6666" nil)
        (results-here        nil       "#373b41" nil)
        (results-target      nil       "#282a2e" nil)
        (preview             "#969896" nil       ("italic"))

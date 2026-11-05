@@ -102,10 +102,11 @@ MODULES
 
     The module default-configuration requires every module the editor
     ships, in the order of `default-configuration-modules', and sets
-    what the editor starts with: directories first in a listing, and the
-    mouse on. It is the shortest description of what the editor is made
-    of; the `rsedit' page lists the modules too. To leave some out, name
-    them before the line that loads it:
+    what the editor starts with: directories first in a listing, the
+    mouse on, and the spaces at the ends of lines drawn. It is the
+    shortest description of what the editor is made of; the `rsedit' page
+    lists the modules too. To leave some out, name them before the line
+    that loads it:
 
         (setq default-configuration-skip '(vim cmake-mode))
         (require 'default-configuration)

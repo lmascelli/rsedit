@@ -499,6 +499,7 @@ fn layout(report: &mut Report) {
                         tabs: &crate::ui::layout::TabWidths::default(),
                         matches: None,
                         spots: None,
+                        trailing: &crate::ui::TrailingSpaces::default(),
                     },
                     &mut views,
                     &mut separators,

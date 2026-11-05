@@ -16,7 +16,7 @@ written in rsedit's own theme format.
 | `tomorrow-night` | `#1d1f21` | the scheme Base16 grew out of; the most muted of the three near-blacks |
 | `tango-dark` | `#2e3436` | the 2005 GNOME icon palette, which is why your terminal already looks like it |
 
-Each styles all 26 faces the editor and its shipped modules name, so switching
+Each styles all 27 faces the editor and its shipped modules name, so switching
 between any two of them leaves nothing behind from the last. The build copies
 this directory to `data/themes`, beside the executable, where `C-c t` finds
 them.

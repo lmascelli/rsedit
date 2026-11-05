@@ -57,6 +57,7 @@ THE FACES
         lazy-highlight       the other matches of a search, or of M-%
         show-paren-match     the bracket at the cursor, and its partner
         show-paren-mismatch  the same, when the two are not of a kind
+        trailing-whitespace  the spaces and Tabs at the end of a line
         keyword  type  function  builtin  string  comment
                              the parts of a language its mode colours
         doc-comment  attribute  preprocessor

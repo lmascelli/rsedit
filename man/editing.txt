@@ -57,6 +57,8 @@ SYNOPSIS
     (capitalize-word)
     (just-one-space)
     (delete-horizontal-space)
+    (toggle-trailing-whitespace)
+    show-trailing-whitespace
     (zap-to-char)
 
     (comment-dwim)
@@ -207,6 +209,21 @@ CASE AND SPACE
     With a region, M-u, M-l and M-c change the whole region instead. Both
     space commands stay on one line, so they never join two.
 
+SPACES AT THE ENDS OF LINES
+    Spaces and Tabs left at the end of a line are drawn in the face
+    trailing-whitespace, on a red background unless a theme says
+    otherwise, so that they can be seen and taken away; a line of nothing
+    but blanks is drawn whole. Only buffers visiting a file draw them:
+    listings, help and the output of commands do not. On the line you are
+    typing on, the blanks the cursor is among, or at the end of, are not
+    drawn: a space just typed before the next word is not a mistake. In
+    another window showing the same buffer they are.
+
+    `show-trailing-whitespace' turns it on, and the default configuration
+    sets it to t; M-x toggle-trailing-whitespace turns it off and on
+    again. A mode can say otherwise for its own buffers, with a
+    show-trailing-whitespace property.
+
 TRANSPOSING
         C-t             swap the characters either side of point
         M-t             swap the words either side of point
@@ -304,6 +321,11 @@ EXAMPLES
     Stop drawing the bracket paired with the one at the cursor:
 
         (setq show-paren-mode nil)
+
+    Leave the spaces at the ends of lines undrawn in one mode, where they
+    mean something:
+
+        (put 'markdown-mode 'show-trailing-whitespace nil)
 
     Give the commands that have no key one of yours:
 

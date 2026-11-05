@@ -95,6 +95,7 @@ mod theme_system_tests;
 mod theme_tests;
 mod top_level_tests;
 mod topic_source_tests;
+mod trailing_whitespace_tests;
 mod transient_tests;
 mod undo_tests;
 mod verb_tests;

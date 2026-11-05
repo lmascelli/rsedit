@@ -535,8 +535,9 @@ Le decisioni:
 
 Il file `init.lisp` predefinito chiede un modulo solo, `default-configuration`
 (@mod-default-configuration), che chiede con `require` tutti gli altri, i
-moduli di base e poi i facoltativi, e imposta `dired-sort` a `'type` e
-`mouse-mode` a `t`; l'utente scrive le sue impostazioni dopo quella riga.
+moduli di base e poi i facoltativi, e imposta `dired-sort` a `'type`,
+`mouse-mode` e `show-trailing-whitespace` a `t`; l'utente scrive le sue
+impostazioni dopo quella riga.
 L'ordine dei moduli non conta: ognuno chiede quelli che gli servono
 (@moduli-lisp).
 
@@ -3497,11 +3498,12 @@ con `electric-pair`, e `scan_cache_tests` prova le fotografie.
 
 == Facce e temi <facce>
 
-Una faccia è un `Face(u32)`: un indice in un registro globale. Le prime 17 sono
+Una faccia è un `Face(u32)`: un indice in un registro globale. Le prime 18 sono
 predefinite (`default`, `region`, `mode-line`, `mode-line-inactive`,
 `window-separator`, `keyword`, `type`, `string`, `comment`, `function`,
 `builtin`, `line-number`, `line-number-current`, `replace-match`,
-`lazy-highlight`, `show-paren-match`, `show-paren-mismatch`); un modulo
+`lazy-highlight`, `show-paren-match`, `show-paren-mismatch`,
+`trailing-whitespace`); un modulo
 crea una faccia nuova semplicemente nominandola (`'doc-comment` in
 `rust-mode.lisp`) e le dà un aspetto con `set-face`. Il `Theme` in `Runtime`
 associa a ogni faccia uno `Style` (colori di primo piano e sfondo, grassetto,
@@ -3515,7 +3517,8 @@ terminali. Il tema predefinito usa quei colori, il video inverso dove una cosa
 deve vedersi su ogni sfondo (la regione, la riga di stato, `replace-match`),
 numeri di riga attenuati e una riga di stato inattiva grigia; le
 corrispondenze di una ricerca su fondo ciano, le parentesi su fondo blu, o
-magenta quando non corrispondono (@evidenziazioni). Tutto questo sta
+magenta quando non corrispondono, gli spazi a fine riga su fondo rosso
+(@evidenziazioni). Tutto questo sta
 in `ui/faces.rs`; le primitive sono in `primitives/theme.rs`.
 
 == Le decisioni <decisioni-modi>
@@ -4820,11 +4823,13 @@ in una finestra affiancata e in una flottante.
 
 == Le evidenziazioni del momento <evidenziazioni>
 
-Due cose si disegnano per un fotogramma solo, ricalcolate a ogni
+Tre cose si disegnano per un fotogramma solo, ricalcolate a ogni
 `snapshot` e mai conservate nel buffer: la parentesi accanto al punto con
-quella che le corrisponde, e ogni corrispondenza di una ricerca o di una
-sostituzione in corso. Le spegnono `show-paren-mode` e
-`highlight-all-matches`, tutte e due a `t` in partenza.
+quella che le corrisponde, ogni corrispondenza di una ricerca o di una
+sostituzione in corso, e gli spazi a fine riga. Le prime due le spengono
+`show-paren-mode` e `highlight-all-matches`, tutte e due a `t` in partenza;
+la terza la accende `show-trailing-whitespace`, `nil` nel nucleo e `t` in
+`default-configuration`.
 
 #ref-table(
   columns: (3.0cm, 1fr, 1fr),
@@ -4836,13 +4841,25 @@ sostituzione in corso. Le spegnono `show-paren-mode` e
   [Costo massimo], [`SHOW_PAREN_REACH` caratteri (102 400) per parte del punto.], [Le righe visibili, e al più `MATCHES_PER_WINDOW` (2000) corrispondenze per finestra.],
 )
 
-`ComposeSettings` porta le due cose alla composizione, accanto al formato
+Gli spazi a fine riga li trova `trailing_highlights`, durante la
+composizione di ogni foglia e di ogni flottante, sulle righe visibili: una
+serie di spazi e Tab che chiude la riga, o la riga intera se è fatta solo di
+quelli, nella faccia `trailing-whitespace`. Si disegnano solo nei buffer che
+visitano un file, e dove `TrailingSpaces` lo dice per il modo del buffer:
+la proprietà `show-trailing-whitespace` del modo, se c'è, o la variabile,
+lette prima dei lock insieme alle larghezze dei Tab (`trailing_spaces`, in
+`editor/settings.rs`). Nella finestra con il focus la riga del punto non li
+disegna se il punto è tra loro o alla loro fine.
+
+`ComposeSettings` porta le tre cose alla composizione, accanto al formato
 della riga di stato e al margine: `matches`, una `SearchMarks` con il buffer,
 il modello e i caratteri entro cui una corrispondenza conta (tutto il buffer
 per una ricerca, `from..limit` per una sostituzione, cioè ciò che resta da
 offrire), e `spots`, una `SpotMarks` con l'id della finestra e le posizioni.
-`window_highlights` mette tutto insieme nell'ordine di disegno, per le foglie
-e per le flottanti allo stesso modo.
+e `trailing`, la `TrailingSpaces`. `window_highlights` mette tutto insieme
+nell'ordine di disegno --- colorazione, spazi a fine riga, corrispondenze,
+overlay, regione, parentesi --- per le foglie e per le flottanti allo stesso
+modo, e riceve se la finestra ha il focus.
 
 `pairing` (@scanner) guarda prima il carattere dopo il punto, se è
 un'apertura, poi quello prima, se è una chiusura, come `show-paren-mode` in
@@ -4895,6 +4912,17 @@ Le decisioni:
   disegnano il cursore, e una coppia accesa in ognuna, senza il cursore che
   dice perché, distrarrebbe da quella in cui si scrive. Le corrispondenze si disegnano
   invece in tutte: si cerca guardando, anche nell'altra metà dello schermo.
++ *Gli spazi a fine riga solo nei file.* Un elenco, l'aiuto, l'uscita di un
+  comando o il `*scratch*` non si salvano, e spazi in fondo a una riga lì non
+  sono un errore di nessuno: disegnarli sarebbe rumore. Scartato: un elenco
+  di modi esclusi, che ogni modulo nuovo dovrebbe allungare.
++ *Non dove si sta scrivendo.* Uno spazio appena scritto prima della parola
+  successiva è uno spazio a fine riga per un istante: colorarlo farebbe
+  lampeggiare il rosso a ogni parola, come Emacs evita allo stesso modo. Lo
+  si salta solo nella finestra con il focus, la sola che disegna il cursore.
++ *Spento nel nucleo, acceso dalla configurazione.* Come `mouse-mode`: un
+  editor senza moduli resta neutro, e quello che arriva con
+  `default-configuration` mostra ciò che un file non dovrebbe avere.
 + *Una regexp vuota non si disegna.* Una corrispondenza vuota, come quella di
   `x*` tra due caratteri, non ha un carattere su cui stare.
 
@@ -6633,7 +6661,8 @@ i candidati nel prompt.
 
 L'editor come arriva: chiede con `require` ogni modulo distribuito,
 nell'ordine di `default-configuration-modules`, tranne quelli nominati in
-`default-configuration-skip`, e imposta `dired-sort` e `mouse-mode`. È la sola
+`default-configuration-skip`, e imposta `dired-sort`, `mouse-mode` e
+`show-trailing-whitespace`. È la sola
 riga dell'`init.lisp` predefinito (`DEFAULT_INIT_LISP`, in `editor/boot.rs`).
 
 + *Un modulo e non un elenco nell'`init.lisp`.* L'`init.lisp` si scrive una
@@ -7021,6 +7050,7 @@ Le variabili che l'editor legge da Lisp:
   [`save-history`, `recent-files-length`, `save-place`], [`t`, 50, `t`], [Che cosa la sessione tiene da un avvio all'altro (@memoria).],
   [`show-paren-mode`, `highlight-all-matches`], [`t`, `t`], [La parentesi accanto al punto e le corrispondenze di una ricerca (@evidenziazioni).],
   [`isearch-lazy-count`], [`t`], [Il conteggio `3/17` nel prompt di una ricerca (@conteggio).],
+  [`show-trailing-whitespace`], [`nil` (`t` in `init.lisp`)], [Gli spazi a fine riga, nei buffer con un file (@evidenziazioni).],
   [`fill-column`], [70], [La colonna di `M-q` e di `auto-fill-mode`; anche come proprietà di un modo e nei dati di un buffer (@riempimento).],
   [`*minibuffer-read-function*`], [`default-minibuffer-prompt`], [Chi apre i prompt.],
   [`*key-capture-function*`], [`nil`], [Chi riceve la prossima sequenza invece di eseguirla.],

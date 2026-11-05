@@ -281,6 +281,15 @@ pub const SETTINGS: &[Setting] = &[
               \x20 (put 'rust-mode 'fill-column 100)",
     },
     Setting {
+        name: SHOW_TRAILING_WHITESPACE,
+        doc: "Whether the spaces and Tabs at the end of a line are drawn, in the face \
+              trailing-whitespace, in buffers visiting a file. A mode can say otherwise for its \
+              own buffers, as a show-trailing-whitespace property. \
+              `toggle-trailing-whitespace' turns it on and off.\n\n\
+              Example:\n\
+              \x20 (put 'markdown-mode 'show-trailing-whitespace nil)",
+    },
+    Setting {
         name: TAB_WIDTH,
         doc: "How many columns a Tab is worth: how far Tab indents, and how far a Tab in the \
               text reaches when it is drawn, to the next multiple of it. A mode can have its \
@@ -428,6 +437,30 @@ fn tab_width_value<B: BufferTrait>(value: Option<ELispExp<B>>) -> Option<usize> 
         }
         _ => None,
     }
+}
+
+/// The name of the Lisp variable, and of the modes' property, that says
+/// whether the blanks at the ends of lines are drawn.
+pub const SHOW_TRAILING_WHITESPACE: &str = "show-trailing-whitespace";
+
+/// Returns whether the blanks at the ends of lines are drawn in each of
+/// MODES, as Lisp says now: the mode's own `show-trailing-whitespace`
+/// property, when it has the symbol, or else the variable.
+pub(crate) fn trailing_spaces<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+    modes: impl IntoIterator<Item = String>,
+) -> crate::ui::TrailingSpaces {
+    let default = env
+        .get_variable(SHOW_TRAILING_WHITESPACE)
+        .is_some_and(|value| value.is_truthy());
+    let by_mode = modes
+        .into_iter()
+        .filter_map(|mode| {
+            let value = env.get_property(&mode, SHOW_TRAILING_WHITESPACE)?;
+            Some((mode, value.is_truthy()))
+        })
+        .collect();
+    crate::ui::TrailingSpaces { default, by_mode }
 }
 
 /// Returns how many columns a Tab reaches across in each of MODES, as Lisp

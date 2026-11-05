@@ -61,5 +61,8 @@ loaded anyway.")
 ;; in most terminals to get it back for one drag.
 (setq mouse-mode t)
 
+;; The spaces left at the ends of lines, drawn in the files you edit.
+(setq show-trailing-whitespace t)
+
 (log "default-configuration loaded")
 (provide 'default-configuration)

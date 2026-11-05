@@ -129,10 +129,9 @@ impl<B: BufferTrait> EditorState<B> {
         // The names out of the registry and its lock given back, then each
         // mode's property read from the environment: no lock of the editor is
         // held while the environment's is taken.
-        let tabs = tab_widths(
-            env,
-            self.modes(|modes| modes.names().cloned().collect::<Vec<_>>()),
-        );
+        let mode_names = self.modes(|modes| modes.names().cloned().collect::<Vec<_>>());
+        let tabs = tab_widths(env, mode_names.clone());
+        let trailing = trailing_spaces(env, mode_names);
         // With the reads before the windows: it takes the buffers and the
         // registry of the modes, which has no place in the order below.
         let colouring_pending = self.colouring_pending();
@@ -176,6 +175,7 @@ impl<B: BufferTrait> EditorState<B> {
                     mode_line_format: &mode_line_format,
                     gutter,
                     tabs: &tabs,
+                    trailing: &trailing,
                     matches: matches.as_ref(),
                     spots: spots.as_ref(),
                 };
@@ -232,8 +232,13 @@ impl<B: BufferTrait> EditorState<B> {
                         });
                     // What a tiled window draws, in the same order, and then
                     // the virtual text's own faces.
-                    let in_buffer =
-                        window_highlights(&float.window, &float.rect, buffers, settings);
+                    let in_buffer = window_highlights(
+                        &float.window,
+                        &float.rect,
+                        buffers,
+                        settings,
+                        is_focused,
+                    );
                     let mut highlights =
                         layout::place(&layout, in_buffer, float.window.scroll_x, float.rect.width);
                     highlights

@@ -16,7 +16,7 @@ mod windows;
 pub(crate) use compose::region_highlights;
 pub use compose::{
     ComposeSettings, Highlight, RenderableWindowView, SearchMarks, Separator, SpotMarks,
-    compose_layout, window_highlights,
+    TrailingSpaces, compose_layout, window_highlights,
 };
 pub use faces::{Color, Face, NAMED_COLORS, Style, Theme};
 // For the tests, which try a registry of their own.
