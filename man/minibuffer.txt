@@ -27,14 +27,15 @@ DESCRIPTION
     A command that needs something from you -- a file name, a string to
     search for, a command's name -- asks for it in a prompt: a small window
     in the middle of the frame, with the question as its title. Type the
-    answer and press Return; Escape closes the prompt without answering.
+    answer and press Return; Escape or C-g closes the prompt without
+    answering.
     Tab completes what you have typed, as the `completion' page describes,
     and the arrow keys bring back what you answered at the same prompt
     before.
 
 ANSWERING
         <ret>           answer with what is typed
-        <esc>           close the prompt, answering nothing
+        <esc>  C-g      close the prompt, answering nothing
         <tab>           complete what is typed
         <backspace>     delete the character before the cursor
         C-p  M-p  <up>  the answer given before this one
@@ -42,8 +43,9 @@ ANSWERING
                         the one after it
 
     The keys that move and edit in a buffer work in a prompt as well: C-a,
-    C-e, C-f, C-b, C-k and C-y among them. C-g does not close a prompt: it
-    says Quit and leaves it open, so Escape is the way out of one.
+    C-e, C-f, C-b, C-k and C-y among them. While the strip of completions
+    is showing, the first C-g puts it away and the second closes the
+    prompt.
 
 HISTORY
     Each prompt remembers the answers given to it, under its own question:
@@ -109,7 +111,7 @@ REPLACING THE PROMPT
     editor's own is `default-minibuffer-prompt', the window described here,
     `minibuffer-width' columns wide and `minibuffer-height' rows tall, its
     border included, or as much as the frame can hold. In it Return runs
-    `minibuffer-confirm', Escape `minibuffer-cancel' and Tab
+    `minibuffer-confirm', Escape and C-g `minibuffer-cancel' and Tab
     `minibuffer-complete', and closing it runs `minibuffer-cleanup', which
     makes the buffer you were in current again.
 
@@ -144,6 +146,7 @@ KEYS
 KEYS IN MINIBUFFER MODE
     <ret>                   minibuffer-confirm
     <esc>                   minibuffer-cancel
+    C-g                     minibuffer-cancel
     <tab>                   minibuffer-complete
     <backspace>             delete-backward-char
     C-p                     history-previous

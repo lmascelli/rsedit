@@ -366,6 +366,45 @@ mod tests {
         );
     }
 
+    /// And for `C-g`, Emacs' way out of a question: in a prompt it cancels,
+    /// although the global map binds it to `keyboard-quit`, which knows
+    /// nothing of prompts.
+    #[test]
+    fn pressing_c_g_in_the_minibuffer_cancels_it() {
+        let (ctx, env) = setup();
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("common-keymaps.lisp must load");
+        eval_str(
+            r#"(progn (setq cancelled nil)
+                      (minibuffer-read "P" nil nil (lambda () (setq cancelled t))))"#,
+            &env,
+            &ctx,
+        )
+        .expect("opening the prompt");
+
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Char('g'),
+                modifiers: KeyModifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            },
+            &env,
+        );
+        assert_eq!(
+            env.get_variable("cancelled")
+                .expect("cancelled must be bound"),
+            LispExp::t(),
+            "C-g in the minibuffer must run minibuffer-cancel"
+        );
+        assert!(!ctx.has_buffer("*Minibuffer*"), "and the prompt is closed");
+    }
+
     // ---------------------------------------------------------------
     // Prompt titles
     // ---------------------------------------------------------------

@@ -812,6 +812,30 @@ mod tests {
         assert!(ctx.has_buffer("*Minibuffer*"));
     }
 
+    /// As in Emacs: the first `C-g` takes the strip down, the second the
+    /// question.
+    #[test]
+    fn a_second_c_g_closes_the_prompt_the_first_left_open() {
+        let (ctx, env) = with_module();
+        prompt_offering(&["alpha", "beta"], &env, &ctx);
+        press(&ctx, &env, KeyCode::Tab);
+        let c_g = KeyEvent {
+            code: KeyCode::Char('g'),
+            modifiers: KeyModifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        };
+
+        ctx.handle_key_event(c_g.clone(), &env);
+        assert!(
+            ctx.has_buffer("*Minibuffer*"),
+            "the first leaves the prompt"
+        );
+        ctx.handle_key_event(c_g, &env);
+        assert!(!ctx.has_buffer("*Minibuffer*"), "the second closes it");
+    }
+
     // ---------------- the cases that are not a choice ----------------
 
     /// One candidate is not a question. Opening a window to ask it reads as the

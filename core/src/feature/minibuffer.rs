@@ -112,8 +112,6 @@ pub(crate) fn reset_prompt_state<B: BufferTrait>(
     ctx.history_mut(|history| history.end_walk());
 }
 
-// TODO(MIN-2): `C-g` is not bound here, and stays `keyboard-quit`, which does
-// not close the prompt.
 /// Installs `minibuffer-mode`, the keymap and hooks a prompt runs under, and
 /// names `default-minibuffer-prompt` as the function that reads a line. The
 /// primitives its keys name are in `primitives/minibuffer.rs`.
@@ -172,6 +170,11 @@ pub fn install_minibuffer<B: BufferTrait>(
         (alt('n'), "history-next"),
         (ctrl('p'), "history-previous"),
         (ctrl('n'), "history-next"),
+        // Emacs' way out of a question, beside Escape: the global `C-g`,
+        // `keyboard-quit`, knows nothing of prompts. A completion strip's
+        // keymap takes it first while it is showing, so the first `C-g`
+        // closes the strip and the second the prompt.
+        (ctrl('g'), "minibuffer-cancel"),
     ] {
         minibuffer_mode
             .keymaps
