@@ -157,7 +157,7 @@
     gravita: "bassa",
     verificato: true,
     stato: "risolto",
-    commit: "COMMIT-BUF-4-DOC-1",
+    commit: "38f2223",
     titolo: [In un buffer in sola lettura molti comandi non dicono nulla, e `kill-rectangle` conserva un blocco che non ha tolto],
   ),
   // ------------------------------------------------------------------ CMD
@@ -719,7 +719,7 @@
     gravita: "bassa",
     verificato: false,
     stato: "risolto",
-    commit: "COMMIT-BUF-4-DOC-1",
+    commit: "38f2223",
     titolo: [Commenti e docstring che descrivono un comportamento che non c'è più],
   ),
   (
