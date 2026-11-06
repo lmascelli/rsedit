@@ -360,7 +360,7 @@ primitive!(major_mode, args, _env, ctx, {
 });
 
 pub const SET_MAJOR_MODE_DOC: &str = "(set-major-mode MODE): Put the current buffer in MODE, \
-         which must be a mode the editor knows, and return MODE. A different mode runs the hooks \
+         which must be a major mode the editor knows, and return MODE. A different mode runs the hooks \
          the `modes' page describes; the same one changes nothing.\n\n\
          Example:\n\
          (set-major-mode 'rust-mode)";
@@ -368,7 +368,7 @@ pub const SET_MAJOR_MODE_DOC: &str = "(set-major-mode MODE): Put the current buf
 primitive!(set_major_mode, args, env, ctx, {
     exact_arity(args, 1)?;
     let mode = crate::primitives::args::name(args.first())?;
-    if !ctx.modes(|modes| modes.get(&mode).is_some()) {
+    if !ctx.modes(|modes| modes.get(&mode).is_some_and(|found| !found.is_minor())) {
         return Err(EvalError::RuntimeMessage(format!(
             "No such major mode: {mode}"
         )));

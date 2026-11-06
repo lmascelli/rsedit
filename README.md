@@ -22,6 +22,8 @@ change.
   editor's own Lisp, computed in the background as the text changes;
   indentation rules for C/C++, Python, TOML, Bash, CMake and Lisp.
 - Paragraphs and comments filled to a column, with M-q or as you type.
+- Minor modes, turned on and off in one buffer, with keys and hooks of their
+  own.
 - Completion in every prompt (`M-x`, files, buffers) and at point.
 - A directory editor, a buffer list, occur and project-wide grep, a
   compilation buffer that jumps to errors, and shell commands with their

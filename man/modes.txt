@@ -1,10 +1,18 @@
 NAME
-    modes - what a buffer is being edited as
+    modes - what a buffer is being edited as, and what is on in it
 
 SYNOPSIS
     (add-auto-mode PATTERN MODE)
     (add-hook MODE HOOK FUNCTION)
     (remove-hook MODE HOOK FUNCTION)
+    (define-minor-mode NAME LIGHTER DOC &rest BODY)
+    (make-minor-mode NAME &optional LIGHTER)
+    (minor-mode-on MODE &optional BUFFER)
+    (minor-mode-off MODE &optional BUFFER)
+    (minor-mode-p MODE &optional BUFFER)
+    (minor-modes &optional BUFFER)
+    (minor-mode-enable MODE &optional MAJOR)
+    (minor-mode-wanted-p MODE ARG)
     (risp-refresh-vocabulary)
     risp-special-forms
     risp-constants
@@ -42,6 +50,49 @@ DESCRIPTION
     a directory listing, a manual page, a list of matches -- from whatever
     made it. `set-major-mode' gives the current buffer another, as the
     `buffers' page says. Making a mode of your own is `writing-modes'.
+
+    On top of its major mode a buffer can have minor modes on: features
+    turned on and off in that buffer alone, such as auto-fill-mode, which
+    breaks lines as you type. The status line shows each after the major
+    mode's name, as fundamental-mode Fill.
+
+MINOR MODES
+    M-x and a minor mode's name turn it on in the buffer you are in, or
+    off when it is on already; with C-u 1 before it, on, and with C-u -1,
+    off. A minor mode can bind keys and run hooks of its own, which hold
+    only in the buffers where it is on. Its keys come before those of the
+    buffer's major mode and after a local keymap, such as vim's: the
+    `keymaps' page has the whole order. Of two minor modes that bind the
+    same key, the one turned on last wins. C-h M lists the minor modes on
+    in a buffer, and C-h b the keys each of them binds.
+
+    `define-minor-mode' makes one, with a command of the same name:
+
+        (define-minor-mode shout-mode "Shout"
+          "Upcase the words typed in this buffer.")
+
+    LIGHTER, here Shout, is what the status line shows while it is on, and
+    DOC documents the command; BODY, when there is one, runs after each
+    time the command turns the mode on or off. The keys and the hooks are
+    given as a major mode's, with the minor mode's name:
+
+        (define-key 'shout-mode "C-c u" 'upcase-word)
+        (add-hook 'shout-mode "post-self-insert-hook" 'my-shout)
+
+    `minor-mode-on' and `minor-mode-off' turn one on and off from Lisp, in
+    BUFFER or in the current buffer, `minor-mode-p' says whether it is on,
+    and `minor-modes' lists those on, in the order they came on.
+    `make-minor-mode' makes one with no command; `minor-mode-wanted-p' is
+    how the command reads its argument.
+
+    A buffer that gets a new major mode loses its minor modes, as in
+    Emacs, and gets those `minor-mode-enable' asks for in the new one:
+
+        (minor-mode-enable 'auto-fill-mode 'fundamental-mode)
+
+    turns auto-fill-mode on in every buffer that gets fundamental-mode
+    from then on, and with no major mode in every buffer. Buffers in that
+    mode already are left as they are.
 
 WHICH MODE A FILE GETS
         rust-mode           .rs
@@ -195,14 +246,19 @@ HOOKS
                                 C-x C-w has written the buffer to a file
                                 it was not visiting
         after-close-hook        a buffer has been closed
+        minor-mode-hook         a minor mode has just been turned on, or
+                                off, in a buffer
 
     (add-hook 'rust-mode "find-file-hook" 'my-rust-setup) calls the function
     my-rust-setup, with no arguments, when a Rust file is opened; nil in
     place of the mode calls it whatever the mode. FUNCTION is the name of a
     function: a lambda is refused. The functions run in the order they were
-    added, the mode's own before those for every mode, with the buffer
-    concerned current; after-close-hook runs those of the closed buffer's
-    mode, once it has gone. A function added twice runs once.
+    added: the major mode's own, then those of each minor mode on in the
+    buffer, then those for every mode, with the buffer concerned current;
+    after-close-hook runs those of the closed buffer's modes, once it has
+    gone. A minor mode's minor-mode-hook runs for that mode alone, and
+    (minor-mode-p) inside it says which way it went. A function added
+    twice runs once.
 
     `remove-hook' takes the same arguments: with a mode it takes the
     function off that mode's hook, and with nil off the one for every mode.
@@ -213,6 +269,14 @@ HOOKS
 LIMITS
     Loading a mode's file again makes the mode again, empty: the keys and
     hooks other files gave it go, electric-pair's among them.
+
+    A minor mode is on in one buffer at a time: there are no global minor
+    modes. Those that hold everywhere -- show-paren-mode, the spaces at
+    the ends of lines -- are variables, on the pages that tell them. A
+    minor mode's command called from Lisp with no argument turns the mode
+    the other way, where Emacs would turn it on: write (auto-fill-mode 1).
+    A buffer losing its minor modes to a new major mode runs none of their
+    hooks.
 
     Colouring uses regular expressions, not a compiler or a full parser.
     Python f-strings and shell strings are coloured uniformly, including
@@ -239,6 +303,14 @@ EXAMPLES
     And stop saying it:
 
         (remove-hook nil "find-file-hook" 'my-opened)
+
+    Break lines as you type in every C and C++ comment:
+
+        (minor-mode-enable 'auto-fill-mode 'cpp-mode)
+
+    A key only while auto-fill-mode is on:
+
+        (define-key 'auto-fill-mode "C-c q" 'fill-paragraph)
 
     Colour the Lisp functions defined since risp-mode loaded:
 

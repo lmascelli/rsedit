@@ -40,8 +40,8 @@ fn key_argument<B: BufferTrait>(args: &[ELispExp<B>]) -> Option<Vec<KeyEvent>> {
 
 pub const KEY_BINDING_DOC: &str = "(key-binding KEYS): Return what pressing KEYS would run in the \
          current buffer, as (KEYS TARGET SOURCE), or nil for keys bound to nothing or the start \
-         of a longer sequence. SOURCE names the keymap: \"transient\", \"local\", \"mode\" or \
-         \"global\". The answer comes from the lookup a key press makes.\n\n\
+         of a longer sequence. SOURCE names the keymap: \"transient\", \"local\", \"minor\", \
+         \"mode\" or \"global\". The answer comes from the lookup a key press makes.\n\n\
          Example:\n\
          (key-binding \"C-x C-f\")   ; (\"C-x C-f\" (find-file) \"global\")";
 

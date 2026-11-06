@@ -468,6 +468,7 @@ fn layout(report: &mut Report) {
                 data: Default::default(),
                 changed: Default::default(),
                 writer: None,
+                minor_modes: Vec::new(),
             },
         );
     }

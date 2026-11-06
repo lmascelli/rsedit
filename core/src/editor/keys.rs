@@ -62,19 +62,21 @@ enum Dispatch<B: BufferTrait> {
 impl<B: BufferTrait> EditorState<B> {
     /// Returns the keymaps of the buffer the keys are typed into, the ones
     /// after the transient keymap: the buffer's local keymap, when
-    /// `set-local-keymap` gave it one, then its major mode's.
+    /// `set-local-keymap` gave it one, then its minor modes', the one turned
+    /// on last first, then its major mode's.
     ///
     /// The buffer is read, and let go, before the modes are taken: buffers
     /// come before modes.
     fn keymap_modes(&self) -> Vec<String> {
         self.with_current_buffer(|buf| {
-            let mut names = Vec::with_capacity(2);
+            let mut names = Vec::with_capacity(2 + buf.minor_modes.len());
             if let Some(ELispExp::Symbol(name) | ELispExp::String(name)) =
                 buf.data::<ELispExp<B>>("lisp:local-keymap")
                 && name.as_str() != "nil"
             {
                 names.push(name.to_string());
             }
+            names.extend(buf.minor_modes.iter().rev().map(|on| on.name.clone()));
             names.push(buf.current_mode.clone());
             names
         })

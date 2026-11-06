@@ -457,6 +457,47 @@ mod tests {
     }
 
     #[test]
+    fn the_bindings_page_puts_the_minor_modes_keys_under_their_heading() {
+        let (ctx, env) = editor();
+        run(
+            r#"(define-minor-mode probe-minor-mode "Probe" "Probe the help.")
+               (define-key 'probe-minor-mode "C-c 9" 'minor-answer)
+               (buffer-create "*probe*")
+               (switch-to-buffer "*probe*")
+               (probe-minor-mode 1)
+               (describe-bindings)"#,
+            &env,
+            &ctx,
+        );
+        let page = page(&ctx);
+        let heading = page
+            .find("Minor modes -- probe-minor-mode")
+            .expect("the minor modes' heading");
+        let binding = page.find("C-c 9").expect("the minor mode's binding");
+        assert!(heading < binding, "{page}");
+    }
+
+    #[test]
+    fn the_mode_page_lists_the_minor_modes_on() {
+        let (ctx, env) = editor();
+        run(
+            r#"(define-minor-mode probe-minor-mode "Probe" "Probe the help.")
+               (make-minor-mode 'bare-minor-mode)
+               (buffer-create "*probe*")
+               (switch-to-buffer "*probe*")
+               (probe-minor-mode 1)
+               (minor-mode-on 'bare-minor-mode)
+               (describe-mode)"#,
+            &env,
+            &ctx,
+        );
+        let page = page(&ctx);
+        assert_says(&page, "Minor modes on:");
+        assert_says(&page, "Probe the help.");
+        assert_says(&page, "bare-minor-mode");
+    }
+
+    #[test]
     fn the_bindings_page_puts_a_local_keymap_under_a_heading_of_its_own() {
         // vim's states are local keymaps, and their keys were listed among
         // the global ones, as though they held in every buffer.

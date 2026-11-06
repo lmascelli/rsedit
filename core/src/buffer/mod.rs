@@ -129,6 +129,16 @@ pub struct Buffer<B: BufferTrait> {
     /// track of it; once the work has finished, stopping the number does
     /// nothing, since a [`WorkId`] is never used twice.
     pub writer: Option<WorkId>,
+    /// The minor modes on in this buffer, in the order they were turned on.
+    pub minor_modes: Vec<ActiveMinor>,
+}
+
+/// A minor mode on in a buffer: its name, and what the status line shows for
+/// it, copied when it was turned on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveMinor {
+    pub name: String,
+    pub lighter: String,
 }
 
 impl<B: BufferTrait> Buffer<B> {
@@ -159,6 +169,7 @@ impl<B: BufferTrait> Buffer<B> {
             data: HashMap::new(),
             changed: Topic::detached(),
             writer: None,
+            minor_modes: Vec::new(),
         }
     }
 
@@ -270,6 +281,7 @@ impl<B: BufferTrait> Buffer<B> {
             data: HashMap::new(),
             changed: Topic::detached(),
             writer: None,
+            minor_modes: Vec::new(),
         }
     }
 }

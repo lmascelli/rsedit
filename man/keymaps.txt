@@ -26,13 +26,15 @@ DESCRIPTION
 
         transient   put up for a moment, by a question or an offer
         local       given to this buffer, as vim gives one to each state
+        minor       those of the minor modes on in the buffer, the one
+                    turned on last first
         mode        the one of the buffer's major mode
         global      the one that holds in every buffer
 
     That is why n moves down a line in a directory listing and types an n
-    everywhere else. C-h k says what a key runs and which of the four it
+    everywhere else. C-h k says what a key runs and which of the five it
     came from, so a key that does something surprising tells you what took
-    it.
+    it. The minor modes are on the `modes' page.
 
 WRITING A KEY
         a               the key a, and so for every character

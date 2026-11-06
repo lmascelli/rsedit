@@ -3,25 +3,61 @@
 
 * Work in progress.
 
+Lacune che si notano subito
+
+- Righe lunghe che vanno a capo sullo schermo (truncate-lines per buffer, una modalità tipo visual-line-mode).
+  Oggi c’è solo lo scorrimento orizzontale: è la mancanza più grande rimasta per prosa, Markdown e log.
+- Guida verticale alla colonna fill-column: ora che il riempimento esiste è il complemento naturale,
+  e si costruisce come le altre evidenziazioni disegnate al momento. Inoltre una funzionalità che
+  formatta il testo come M-q di emacs
+- Tab su una regione inserisce invece di indentare;
+- i numeri di riga valgono per tutto l’editor e non per buffer;
+- C-_ arriva come C-S-7.
+
+Comandi di testo
+
+- sort-lines, spostare una riga su o giù, align-regexp.
+- Registri e segnalibri: C-x r è libero per questo.
+- Narrowing (C-x n n).
+
+Struttura
+
+- Modi minori veri, accesi e spenti per buffer. Oggi auto-fill-mode, show-trailing-whitespace
+  e le parentesi usano ognuno un meccanismo suo (dati del buffer, proprietà del modo, variabile),
+  che un sistema unico semplificherebbe.
+- Popup dei tasti dopo un prefisso (come which-key), sopra il C-x C-h che c’è già.
+- Un before-save-hook, se servono altre azioni al salvataggio oltre alla pulizia degli spazi.
+
+Lavorare su progetti
+
+- Il concetto di progetto: la radice trovata da .git o Cargo.toml, con ricerca di file, grep e
+  compile che partono da lì.
+- Git: indicatori nel margine per le righe cambiate, il ramo nella riga di stato, il diff del buffer.
+- LSP: diagnostica, completamento, vai alla definizione.
+- Altri linguaggi: Markdown, JSON, YAML, JS/TS, Go, HTML/CSS.
+
+Funzioni avanzate
+
+- gestione dei file molto grandi.
+
+Rifiniture alle funzioni appena fatte
+
+- Sessione: scriverla anche a intervalli, non solo all’uscita, e fondere le sessioni di più
+  editor aperti insieme.
+- Riempimento:
+  riempire i commenti /* */;
+  andare a capo con Invio quando auto-fill-mode è acceso;
+  riconoscere le voci di elenco come paragrafi separati.
+- Parentesi in vim mode: nel normal state accoppiare la ) sotto il cursore a blocco.
 
 * Fixes todo
-- [ ] Better handling from tui input (C-_ is seen has C-S-7)
 - [ ] primitive for making enter also indent the next line (optinally bound to Enter)
 - [ ] pressing tab with a region selected insert the same indent in the whole region
       but should instead indent it.
 - [ ] line numbers should be a per buffer property
-- [ ] I've seen that the modules commands, debug, common-keymaps, indent and minibuffer
-      are not indipendent. Modules that provide indipendent features should be able to
-      be loaded indipendently. Maybe some of the common feature between those are to be
-      embedded in the base editor.
-
 
 * Macro todo
 - [ ] Enhance mode system: major mode switch and minor modes
-- [ ] Module dependency system (with functions like provide and requires) with a cached module
-      table so that the same dependency is not loaded twice. Following that a module that
-      aggregate the main useful modules and the common keymaps must be added to provide a
-      simpler way to initialize a tipical configuration.
 - [ ] multiple cursors
 - [ ] LSP integration: for the moment, just warning and compilation errors, completions
       and code actions must be supported. The server for a given language can be configued
@@ -38,5 +74,3 @@
       should be evalued, if this makes the module too complex maybe consider adding some special
       syntax that consent distinguish between a lisp expression and a shell command.
 - [ ] Integrated terminal emulation
-- [ ] Lisp bytecode interpreter
-- [ ] A manual of the editor

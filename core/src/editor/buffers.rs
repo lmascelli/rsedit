@@ -102,6 +102,7 @@ impl<B: BufferTrait> EditorState<B> {
     ) {
         self.run_buffer_hook(name, "buffer-created-hook", env);
         self.run_buffer_hook(name, "major-mode-hook", env);
+        self.apply_minor_rules(name, env);
         self.run_buffer_hook(name, "after-change-major-mode-hook", env);
         if visiting_file {
             self.run_buffer_hook(name, "find-file-hook", env);
@@ -263,6 +264,7 @@ impl<B: BufferTrait> EditorState<B> {
         else {
             return false;
         };
+        let closing_minors = self.minor_modes_of(name);
         self.record_place(name, env);
 
         // A buffer with unsaved changes keeps its copy. This asks nothing, and
@@ -345,7 +347,7 @@ impl<B: BufferTrait> EditorState<B> {
             self.work.cancel(writer);
         }
 
-        self.run_hook(&closing_mode, "after-close-hook", env);
+        self.run_hook_of(&closing_mode, &closing_minors, "after-close-hook", env);
         true
     }
 

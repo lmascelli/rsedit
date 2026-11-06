@@ -12,8 +12,10 @@ pub mod syntax_table;
 pub use grammar::{Grammar, SyntaxRegion, SyntaxRule, SyntaxSpan, SyntaxState, highlight_line};
 pub use syntax_table::{CommentStyle, StringStyle, SyntaxClass, SyntaxTable};
 
-/// A major mode: the keymap, grammar, hooks, completion sources and syntax
-/// table of the buffers in it, under the mode's name.
+/// A mode: the keymap, grammar, hooks, completion sources and syntax table
+/// of the buffers in it, under the mode's name. A major mode is what a buffer
+/// is in, one at a time; a minor mode, one with a lighter, is turned on and
+/// off in a buffer on top of it, and lends it its keymap and its hooks.
 #[derive(Clone, Debug)]
 pub struct MajorMode<B: BufferTrait> {
     /// The name the mode is registered and asked for under.
@@ -30,6 +32,9 @@ pub struct MajorMode<B: BufferTrait> {
     /// What the scanner reads to find this mode's expressions, or `None` for
     /// the default table.
     pub syntax_table: Option<SyntaxTable>,
+    /// For a minor mode, what the status line shows while it is on, which may
+    /// be empty; `None` for a major mode.
+    pub lighter: Option<String>,
 }
 
 impl<B: BufferTrait> MajorMode<B> {
@@ -43,6 +48,12 @@ impl<B: BufferTrait> MajorMode<B> {
             hooks: HashMap::new(),
             completion_functions: Vec::new(),
             syntax_table: None,
+            lighter: None,
         }
+    }
+
+    /// Returns whether this is a minor mode.
+    pub fn is_minor(&self) -> bool {
+        self.lighter.is_some()
     }
 }

@@ -42,6 +42,7 @@ pub const SETTINGS: &[Setting] = &[
               escape replaced.\n\n\
               \x20 %b  the buffer's name     %f  the file's path, or the buffer's name\n\
               \x20 %m  the major mode        %s  the mode's own state, as vim-mode's NORMAL\n\
+              \x20 %n  the minor modes on, each after a space, as \" Fill\"\n\
               \x20 %l  the line, from 1      %c  the column, from 0\n\
               \x20 %p  All when the whole buffer is in the window, or where point is:\n\
               \x20     Top, Bot or a percentage\n\
@@ -390,7 +391,7 @@ pub const COMMAND_ARG_COMPLETION_FUNCTION: &str = "*command-arg-completion-funct
 pub const MODE_LINE_FORMAT: &str = "mode-line-format";
 
 /// What a window's status line says when nothing sets [`MODE_LINE_FORMAT`].
-pub const DEFAULT_MODE_LINE_FORMAT: &str = " %* %b   %m %s  L%l C%c   %p ";
+pub const DEFAULT_MODE_LINE_FORMAT: &str = " %* %b   %m%n %s  L%l C%c   %p ";
 
 /// The name of the Lisp variable that turns the mouse on.
 pub const MOUSE_MODE: &str = "mouse-mode";

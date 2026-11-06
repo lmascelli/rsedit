@@ -1,7 +1,9 @@
-//! Major modes from Lisp: making one, the hooks it runs, and the file names
-//! that choose it.
+//! Modes from Lisp: making a major mode, the hooks it runs, and the file
+//! names that choose it; making a minor mode, turning it on and off in a
+//! buffer, and the major modes that turn it on.
 //!
-//! Design: `doc/architettura-editor.typ, <modi>`.
+//! Design: `doc/architettura-editor.typ, <modi>`, and
+//! `doc/architettura-editor.typ, <modi-minori>` for the minor modes.
 use super::*;
 use crate::primitives::args;
 use crate::primitives::grammar::compile;
@@ -131,6 +133,135 @@ primitive!(add_auto_mode, args, _env, ctx, {
     Ok(ELispExp::t())
 });
 
+pub const MAKE_MINOR_MODE_DOC: &str = "(make-minor-mode NAME &optional LIGHTER): Make a minor \
+         mode called NAME, a symbol, which the status line shows as LIGHTER, a string, while it \
+         is on, nothing when LIGHTER is nil, and return t. Its keys are given with `define-key' \
+         and its hooks with `add-hook', as a major mode's; a mode that exists already keeps \
+         them. `define-minor-mode' makes one with its command.\n\n\
+         Example:\n\
+         (make-minor-mode 'my-mode \"My\")";
+
+primitive!(make_minor_mode, args, _env, ctx, {
+    if args.is_empty() || args.len() > 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let name = args::name(args.first())?;
+    let lighter = match args.get(1) {
+        None => String::new(),
+        Some(value) if value.is_nil() => String::new(),
+        Some(ELispExp::String(text)) => text.to_string(),
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String, or nil".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    ctx.make_minor_mode(&name, &lighter);
+    Ok(ELispExp::t())
+});
+
+/// Returns the minor mode the first argument names and the buffer the second
+/// names, the current one when it is nil or left out; refused when the first
+/// is no minor mode.
+fn minor_and_buffer<B: BufferTrait>(
+    args: &[ELispExp<B>],
+    ctx: &EditorState<B>,
+) -> Result<(String, String), EvalError<EditorState<B>>> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let minor = args::name(args.first())?;
+    if !ctx.modes(|modes| modes.is_minor(&minor)) {
+        return Err(EvalError::RuntimeMessage(format!(
+            "No such minor mode: {minor}"
+        )));
+    }
+    let buffer = match args.get(1) {
+        Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),
+        _ => ctx.get_current_buffer_name(),
+    };
+    Ok((minor, buffer))
+}
+
+pub const MINOR_MODE_ON_DOC: &str = "(minor-mode-on MODE &optional BUFFER): Turn the minor mode \
+         MODE on in BUFFER, the current one by default, and run its \"minor-mode-hook\" there. \
+         Return t, or nil when it was on already.";
+
+primitive!(minor_mode_on, args, env, ctx, {
+    let (minor, buffer) = minor_and_buffer(args, ctx)?;
+    Ok(ELispExp::boolean(ctx.minor_mode_on(&buffer, &minor, &env)))
+});
+
+pub const MINOR_MODE_OFF_DOC: &str = "(minor-mode-off MODE &optional BUFFER): Turn the minor \
+         mode MODE off in BUFFER, the current one by default, and run its \"minor-mode-hook\" \
+         there. Return t, or nil when it was not on.";
+
+primitive!(minor_mode_off, args, env, ctx, {
+    let (minor, buffer) = minor_and_buffer(args, ctx)?;
+    Ok(ELispExp::boolean(ctx.minor_mode_off(&buffer, &minor, &env)))
+});
+
+pub const MINOR_MODE_P_DOC: &str = "(minor-mode-p MODE &optional BUFFER): Return t when the minor \
+         mode MODE is on in BUFFER, the current one by default.\n\n\
+         Example:\n\
+         (minor-mode-p 'auto-fill-mode)";
+
+primitive!(minor_mode_p, args, _env, ctx, {
+    let (minor, buffer) = minor_and_buffer(args, ctx)?;
+    Ok(ELispExp::boolean(
+        ctx.minor_modes_of(&buffer).contains(&minor),
+    ))
+});
+
+pub const MINOR_MODES_DOC: &str = "(minor-modes &optional BUFFER): Return the minor modes on in \
+         BUFFER, the current one by default, as a list of symbols in the order they were turned \
+         on.";
+
+primitive!(minor_modes, args, _env, ctx, {
+    let buffer = match args.first() {
+        Some(ELispExp::String(name)) if !name.is_empty() => name.to_string(),
+        _ => ctx.get_current_buffer_name(),
+    };
+    Ok(ELispExp::proper_list(
+        ctx.minor_modes_of(&buffer)
+            .into_iter()
+            .map(ELispExp::symbol)
+            .collect(),
+    ))
+});
+
+pub const MINOR_MODE_ENABLE_DOC: &str = "(minor-mode-enable MODE &optional MAJOR): Turn the minor \
+         mode MODE on in every buffer that gets the major mode MAJOR from now on, or every major \
+         mode when MAJOR is nil, after its \"major-mode-hook\". Buffers already in it are left \
+         as they are. Return t.\n\n\
+         Example:\n\
+         (minor-mode-enable 'auto-fill-mode 'fundamental-mode)";
+
+primitive!(minor_mode_enable, args, _env, ctx, {
+    if args.is_empty() || args.len() > 2 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let minor = args::name(args.first())?;
+    if !ctx.modes(|modes| modes.is_minor(&minor)) {
+        return Err(EvalError::RuntimeMessage(format!(
+            "No such minor mode: {minor}"
+        )));
+    }
+    let major = args::optional_name(args.get(1), "Symbol naming a major mode, or nil")?;
+    ctx.modes_mut(|modes| modes.add_minor_rule(major.as_deref(), &minor));
+    Ok(ELispExp::t())
+});
+
 /// Registers the primitives of major modes and their hooks.
 ///
 /// Called by [`super::install_primitives`].
@@ -139,4 +270,14 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("add-hook", add_hook, ADD_HOOK_DOC);
     into.function("remove-hook", remove_hook, REMOVE_HOOK_DOC);
     into.function("add-auto-mode", add_auto_mode, ADD_AUTO_MODE_DOC);
+    into.function("make-minor-mode", make_minor_mode, MAKE_MINOR_MODE_DOC);
+    into.function("minor-mode-on", minor_mode_on, MINOR_MODE_ON_DOC);
+    into.function("minor-mode-off", minor_mode_off, MINOR_MODE_OFF_DOC);
+    into.function("minor-mode-p", minor_mode_p, MINOR_MODE_P_DOC);
+    into.function("minor-modes", minor_modes, MINOR_MODES_DOC);
+    into.function(
+        "minor-mode-enable",
+        minor_mode_enable,
+        MINOR_MODE_ENABLE_DOC,
+    );
 }

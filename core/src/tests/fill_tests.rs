@@ -352,11 +352,15 @@ mod tests {
     }
 
     #[test]
-    fn auto_fill_enable_turns_it_on_in_new_buffers_of_the_mode() {
+    fn minor_mode_enable_turns_auto_fill_on_in_new_buffers_of_the_mode() {
         let (ctx, env) = editor_with("", 0, 10);
         with_fill_module(&env, &ctx);
-        run("(auto-fill-enable 'fundamental-mode)", &env, &ctx);
+        run(
+            "(minor-mode-enable 'auto-fill-mode 'fundamental-mode)",
+            &env,
+            &ctx,
+        );
         run(r#"(switch-to-buffer (buffer-create "notes"))"#, &env, &ctx);
-        assert!(run("(auto-fill-mode-p)", &env, &ctx).is_truthy());
+        assert!(run("(minor-mode-p 'auto-fill-mode)", &env, &ctx).is_truthy());
     }
 }

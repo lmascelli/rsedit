@@ -18,8 +18,10 @@ use std::collections::HashMap;
 pub enum BindingSource {
     /// A map installed for one question and taken down after it.
     Transient,
-    /// A buffer-local map layered above its major mode.
+    /// A buffer-local map layered above its minor modes.
     Local,
+    /// A minor mode on in the buffer.
+    Minor,
     /// The current buffer's mode.
     Mode,
     /// In force everywhere.
@@ -32,6 +34,7 @@ impl BindingSource {
         match self {
             BindingSource::Transient => "transient",
             BindingSource::Local => "local",
+            BindingSource::Minor => "minor",
             BindingSource::Mode => "mode",
             BindingSource::Global => "global",
         }
@@ -84,6 +87,10 @@ pub struct Modes<B: BufferTrait> {
     /// Hooks that run in every major mode, by hook name: the global half of
     /// `MajorMode::hooks`.
     global_hooks: HashMap<String, Vec<ELispExp<B>>>,
+    /// Which minor modes a buffer gets with its major mode: the major mode,
+    /// or `None` for every one, and the minor mode, in the order they were
+    /// asked for.
+    minor_rules: Vec<(Option<String>, String)>,
 }
 
 impl<B: BufferTrait> Modes<B> {
@@ -97,6 +104,7 @@ impl<B: BufferTrait> Modes<B> {
             transient: None,
             repeat_keys: HashMap::new(),
             global_hooks: HashMap::new(),
+            minor_rules: Vec::new(),
         }
     }
 
@@ -159,6 +167,54 @@ impl<B: BufferTrait> Modes<B> {
         &mut self.global_keymap
     }
 
+    /// Returns which kind of map MODE's is, at INDEX among MODES, the maps of
+    /// a buffer: a minor mode's, the major mode's, which comes last, or the
+    /// local one.
+    fn source_of(&self, mode: &str, index: usize, modes: &[&str]) -> BindingSource {
+        if self.registry.get(mode).is_some_and(MajorMode::is_minor) {
+            BindingSource::Minor
+        } else if index + 1 < modes.len() {
+            BindingSource::Local
+        } else {
+            BindingSource::Mode
+        }
+    }
+
+    /// Returns whether NAME is a minor mode.
+    pub fn is_minor(&self, name: &str) -> bool {
+        self.registry.get(name).is_some_and(MajorMode::is_minor)
+    }
+
+    /// Returns what the status line shows for the minor mode NAME, or `None`
+    /// when NAME is no minor mode.
+    pub fn lighter_of(&self, name: &str) -> Option<String> {
+        self.registry
+            .get(name)
+            .and_then(|mode| mode.lighter.clone())
+    }
+
+    /// Records that buffers in MAJOR, or in every major mode when it is
+    /// `None`, get MINOR on; asking twice records once.
+    pub fn add_minor_rule(&mut self, major: Option<&str>, minor: &str) {
+        let rule = (major.map(str::to_string), minor.to_string());
+        if !self.minor_rules.contains(&rule) {
+            self.minor_rules.push(rule);
+        }
+    }
+
+    /// Returns the minor modes a buffer in MAJOR gets, in the order they were
+    /// asked for, each once.
+    pub fn minors_for(&self, major: &str) -> Vec<String> {
+        let mut minors: Vec<String> = Vec::new();
+        for (rule_major, minor) in &self.minor_rules {
+            let applies = rule_major.as_deref().is_none_or(|rule| rule == major);
+            if applies && !minors.contains(minor) {
+                minors.push(minor.clone());
+            }
+        }
+        minors
+    }
+
     /// Returns MODE's own keymap, when it has one.
     fn mode_keymap(&self, mode: &str) -> Option<&Keymap<B>> {
         self.registry.get(mode).map(|mode| &mode.keymaps)
@@ -199,12 +255,11 @@ impl<B: BufferTrait> Modes<B> {
             if let Some(keymap) = self.mode_keymap(mode)
                 && let Some(target) = keymap.binding(keys)
             {
-                let source = if index + 1 < modes.len() {
-                    BindingSource::Local
-                } else {
-                    BindingSource::Mode
-                };
-                return Some(Binding::new(keys, target, source));
+                return Some(Binding::new(
+                    keys,
+                    target,
+                    self.source_of(mode, index, modes),
+                ));
             }
         }
         self.global_keymap
@@ -225,12 +280,7 @@ impl<B: BufferTrait> Modes<B> {
         }
         for (index, mode) in modes.iter().enumerate() {
             if let Some(handler) = self.mode_keymap(mode).and_then(Keymap::character_handler) {
-                let source = if index + 1 < modes.len() {
-                    BindingSource::Local
-                } else {
-                    BindingSource::Mode
-                };
-                return Some((handler.clone(), source));
+                return Some((handler.clone(), self.source_of(mode, index, modes)));
             }
         }
         self.global_keymap
@@ -455,18 +505,23 @@ impl<B: BufferTrait> Modes<B> {
         true
     }
 
-    /// Returns what is registered under HOOK_NAME for MODE: the mode's own
-    /// first, as the more specific, then the global ones.
+    /// Returns what is registered under HOOK_NAME for MODE and the minor
+    /// modes MINORS: the major mode's own first, then each minor mode's in
+    /// the order they were turned on, then the global ones.
     ///
     /// Copied out, and the caller gives this lock back before running them: a
     /// hook may call `add-hook` or `define-key`, which take it to write.
-    pub fn hooks_for(&self, mode: &str, hook_name: &str) -> Vec<ELispExp<B>> {
-        let mut hooks: Vec<ELispExp<B>> = self
-            .registry
-            .get(mode)
-            .and_then(|mode| mode.hooks.get(hook_name))
-            .cloned()
-            .unwrap_or_default();
+    pub fn hooks_for(&self, mode: &str, minors: &[String], hook_name: &str) -> Vec<ELispExp<B>> {
+        let mut hooks: Vec<ELispExp<B>> = Vec::new();
+        for name in std::iter::once(mode).chain(minors.iter().map(String::as_str)) {
+            hooks.extend(
+                self.registry
+                    .get(name)
+                    .and_then(|mode| mode.hooks.get(hook_name))
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
         hooks.extend(
             self.global_hooks
                 .get(hook_name)

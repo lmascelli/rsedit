@@ -6,16 +6,22 @@
 
 use super::*;
 
+/// The hook a minor mode runs, with the buffer current, each time it is
+/// turned on or off there.
+pub(crate) const MINOR_MODE_HOOK: &str = "minor-mode-hook";
+
 impl<B: BufferTrait> EditorState<B> {
     /// Makes MODE the major mode of the buffer NAME, keeping what the buffer
     /// holds, and runs the mode's hooks when that is a change -- once the
-    /// buffer's lock has been given back.
+    /// buffer's lock has been given back. The minor modes on go, with no hook
+    /// run, and those `minor-mode-enable` asks for in MODE come on.
     pub(crate) fn change_major_mode(&self, name: &str, mode: &str, env: &Arc<Env<EditorState<B>>>) {
         let changed = self.with_buffer_mut(name, |buf| {
             if buf.current_mode == mode {
                 return false;
             }
             buf.current_mode = mode.to_string();
+            buf.minor_modes.clear();
             buf.syntax.invalidate_from(buf.version, 0);
             buf.scan.invalidate_from(buf.version, 0);
             // The text is the same, but what it means is not: everything
@@ -25,8 +31,94 @@ impl<B: BufferTrait> EditorState<B> {
         });
         if changed == Some(true) {
             self.run_buffer_hook(name, "major-mode-hook", env);
+            self.apply_minor_rules(name, env);
             self.run_buffer_hook(name, "after-change-major-mode-hook", env);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Minor modes
+    // ------------------------------------------------------------------
+
+    /// Turns the minor mode MINOR on in the buffer NAME, last of those on, and
+    /// runs its `minor-mode-hook` with NAME current. Returns false, doing
+    /// nothing, when MINOR is on there already, or NAME or MINOR is not
+    /// there.
+    pub(crate) fn minor_mode_on(
+        &self,
+        name: &str,
+        minor: &str,
+        env: &Arc<Env<EditorState<B>>>,
+    ) -> bool {
+        let Some(lighter) = self.modes(|modes| modes.lighter_of(minor)) else {
+            return false;
+        };
+        let turned = self.with_buffer_mut(name, |buf| {
+            if buf.minor_modes.iter().any(|on| on.name == minor) {
+                return false;
+            }
+            buf.minor_modes.push(crate::buffer::ActiveMinor {
+                name: minor.to_string(),
+                lighter,
+            });
+            true
+        });
+        if turned == Some(true) {
+            self.run_minor_mode_hook(name, minor, env);
+            return true;
+        }
+        false
+    }
+
+    /// Turns the minor mode MINOR off in the buffer NAME, and runs its
+    /// `minor-mode-hook` with NAME current. Returns false, doing nothing,
+    /// when it was not on there.
+    pub(crate) fn minor_mode_off(
+        &self,
+        name: &str,
+        minor: &str,
+        env: &Arc<Env<EditorState<B>>>,
+    ) -> bool {
+        let turned = self.with_buffer_mut(name, |buf| {
+            let before = buf.minor_modes.len();
+            buf.minor_modes.retain(|on| on.name != minor);
+            buf.minor_modes.len() != before
+        });
+        if turned == Some(true) {
+            self.run_minor_mode_hook(name, minor, env);
+            return true;
+        }
+        false
+    }
+
+    /// Returns the minor modes on in the buffer NAME, in the order they were
+    /// turned on; none for a buffer that is not there.
+    pub(crate) fn minor_modes_of(&self, name: &str) -> Vec<String> {
+        self.with_buffer(name, |buf| {
+            buf.minor_modes.iter().map(|on| on.name.clone()).collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// Turns on in the buffer NAME every minor mode `minor-mode-enable` asks
+    /// for in its major mode.
+    pub(crate) fn apply_minor_rules(&self, name: &str, env: &Arc<Env<EditorState<B>>>) {
+        let Some(major) = self.with_buffer(name, |buf| buf.current_mode.clone()) else {
+            return;
+        };
+        for minor in self.modes(|modes| modes.minors_for(&major)) {
+            self.minor_mode_on(name, &minor, env);
+        }
+    }
+
+    /// Runs MINOR's own `minor-mode-hook`, and the one of every mode, with the
+    /// buffer NAME current.
+    fn run_minor_mode_hook(&self, name: &str, minor: &str, env: &Arc<Env<EditorState<B>>>) {
+        let Some(previous) = self.set_current_buffer(name) else {
+            return;
+        };
+        self.run_hook_of(minor, &[], MINOR_MODE_HOOK, env);
+        self.set_current_buffer(&previous);
     }
 
     // ------------------------------------------------------------------
@@ -127,6 +219,20 @@ impl<B: BufferTrait> EditorState<B> {
         })
     }
 
+    /// Makes NAME a minor mode, shown as LIGHTER, and returns whether it was
+    /// there already; one that was keeps its keys and hooks.
+    pub(crate) fn make_minor_mode(&self, name: &str, lighter: &str) -> bool {
+        self.modes_mut(|modes| {
+            let existed = modes.edit(name, |mode| mode.lighter = Some(lighter.to_string()));
+            if !existed {
+                let mut mode = MajorMode::new(name);
+                mode.lighter = Some(lighter.to_string());
+                modes.insert(name, mode);
+            }
+            existed
+        })
+    }
+
     /// Changes MODE's grammar with EDIT. False when there is no such mode.
     ///
     /// Every change of a grammar goes through here or [`Self::set_mode`],
@@ -200,20 +306,39 @@ impl<B: BufferTrait> EditorState<B> {
         self.modes_mut(|modes| modes.add_global_hook(hook_name, function));
     }
 
-    /// Runs the functions of the hook HOOK_NAME, the mode MODE_NAME's and then
-    /// those of every mode, in the order they were added, each with no
-    /// arguments, in a scope of [`Self::begin_command`]. One that fails is
-    /// logged, and the others still run.
+    /// Runs the functions of the hook HOOK_NAME, the mode MODE_NAME's, then
+    /// those of the minor modes on in the current buffer, then those of every
+    /// mode, in the order they were added, each with no arguments, in a scope
+    /// of [`Self::begin_command`]. One that fails is logged, and the others
+    /// still run.
     pub(crate) fn run_hook(
         &self,
         mode_name: &str,
         hook_name: &str,
         env: &Arc<Env<EditorState<B>>>,
     ) {
-        // Copied out, both halves in one acquisition, and the registry let go
+        let minors = self.with_current_buffer(|buf| {
+            buf.minor_modes
+                .iter()
+                .map(|on| on.name.clone())
+                .collect::<Vec<_>>()
+        });
+        self.run_hook_of(mode_name, &minors, hook_name, env);
+    }
+
+    /// Runs the hook HOOK_NAME as [`Self::run_hook`] does, with MINORS for the
+    /// minor modes: for a buffer no longer current, or no longer there.
+    pub(crate) fn run_hook_of(
+        &self,
+        mode_name: &str,
+        minors: &[String],
+        hook_name: &str,
+        env: &Arc<Env<EditorState<B>>>,
+    ) {
+        // Copied out, all of them in one acquisition, and the registry let go
         // before any of them runs: a hook may add a hook or define a key, which
         // needs the write lock this thread would otherwise be holding.
-        let hooks = self.modes(|modes| modes.hooks_for(mode_name, hook_name));
+        let hooks = self.modes(|modes| modes.hooks_for(mode_name, minors, hook_name));
 
         for hook in hooks {
             let hook_call = ELispExp::form(vec![hook.clone()]);

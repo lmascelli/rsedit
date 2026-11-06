@@ -234,6 +234,7 @@ it again: (KIND ARGUMENTS...).")
   ;; Named, not assumed: going back to the page, the help buffer is current.
   (let ((transient nil)
         (local nil)
+        (minor nil)
         (mode nil)
         (global nil))
     (mapc (lambda (binding)
@@ -242,6 +243,7 @@ it again: (KIND ARGUMENTS...).")
                   (source (nth 2 binding)))
               (cond ((string= source "transient") (setq transient (append transient (list line))))
                     ((string= source "local") (setq local (append local (list line))))
+                    ((string= source "minor") (setq minor (append minor (list line))))
                     ((string= source "mode") (setq mode (append mode (list line))))
                     (t (setq global (append global (list line)))))))
           (with-current-buffer buffer 'keymap-bindings))
@@ -255,6 +257,11 @@ it again: (KIND ARGUMENTS...).")
            nil)
        (if local
            (append (list (concat "Local -- " local-name ", this buffer only")) local (list ""))
+           nil)
+       (if minor
+           (append (list (concat "Minor modes --"
+                                 (help--minor-names buffer)))
+                   minor (list ""))
            nil)
        (if mode (append (list (concat "Mode -- " mode-name)) mode (list "")) nil)
        (if global (append (list "Global -- everywhere") global) nil)))))
@@ -271,13 +278,33 @@ it again: (KIND ARGUMENTS...).")
                            (help--name (nth 1 binding))))
                  onwards)))))
 
+(defun help--minor-names (buffer)
+  "The names of the minor modes on in BUFFER, each after a space."
+  (let ((names ""))
+    (mapc (lambda (minor) (setq names (concat names " " (help--name minor))))
+          (minor-modes buffer))
+    names))
+
 (defun help--mode-lines (buffer)
-  "The page for the major mode BUFFER is in."
+  "The page for the major mode BUFFER is in, and the minor modes on in it."
   (let* ((name (with-current-buffer buffer (lambda () (help--name (major-mode)))))
-         (doc (variable-doc (help--symbol name))))
+         (doc (variable-doc (help--symbol name)))
+         (minors (minor-modes buffer)))
     (append
      (list (concat "Mode: " name) "")
      (if doc (append (help--lines doc) (list "")) nil)
+     (if minors
+         (append (list "Minor modes on:")
+                 (mapcar (lambda (minor)
+                           (concat "  " (help--pad (help--name minor) 24)
+                                   ;; A mode made with `make-minor-mode' alone
+                                   ;; has no command to document it.
+                                   (help--first-line
+                                    (condition-case error (function-doc minor)
+                                      (error nil)))))
+                         minors)
+                 (list ""))
+         nil)
      (help--bindings-lines buffer))))
 
 (defun help--apropos-lines (pattern)

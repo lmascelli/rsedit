@@ -14,6 +14,7 @@ use crate::buffer::{Buffer, BufferTrait};
 /// | `%f`   | file path, or the buffer name when unvisited |
 /// | `%s`   | buffer-local mode-line-state string          |
 /// | `%m`   | major mode                                   |
+/// | `%n`   | the minor modes' lighters, each after a space |
 /// | `%l`   | line number, counting from one               |
 /// | `%c`   | column, counting from zero as Emacs does     |
 /// | `%p`   | all of it, or how far down the buffer point is |
@@ -36,6 +37,14 @@ pub fn expand_mode_line<B: BufferTrait>(format: &str, buffer: &Buffer<B>, height
             Some('b') => out.push_str(&buffer.name),
             Some('f') => out.push_str(buffer.file_path.as_deref().unwrap_or(&buffer.name)),
             Some('m') => out.push_str(&buffer.current_mode),
+            Some('n') => {
+                for minor in &buffer.minor_modes {
+                    if !minor.lighter.is_empty() {
+                        out.push(' ');
+                        out.push_str(&minor.lighter);
+                    }
+                }
+            }
             Some('s') => {
                 if let Some(ELispExp::String(state)) =
                     buffer.data::<ELispExp<B>>("lisp:mode-line-state")

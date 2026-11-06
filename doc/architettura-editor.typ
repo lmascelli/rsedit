@@ -790,7 +790,7 @@ che li condivide.
   header: ([Campo], [Tipo], [Contenuto]),
   [`buffers`], [`RwLock<Buffers<B>>`], [Tabella nome → `Arc<RwLock<Buffer>>`, buffer corrente, ordine di recente uso.],
   [`windows`], [`RwLock<Windows>`], [Albero delle finestre affiancate, finestre flottanti, focus, prossimo id, trascinamento, ultimo clic.],
-  [`modes`], [`RwLock<Modes<B>>`], [Registro dei modi maggiori, keymap globale, completamenti globali, modi per estensione, keymap transitoria, tasti di ripetizione, hook globali.],
+  [`modes`], [`RwLock<Modes<B>>`], [Registro dei modi, maggiori e minori, regole dei modi minori, keymap globale, completamenti globali, modi per estensione, keymap transitoria, tasti di ripetizione, hook globali.],
   [`commands`], [`RwLock<Commands<B>>`], [Registro dei comandi, pila dei comandi in attesa di argomenti, argomento prefisso, ultimo comando e sua forma.],
   [`kill_yank`], [`RwLock<KillYank>`], [Kill ring, ultimo yank, flag «il comando precedente ha ucciso/incollato», ultimo rettangolo ucciso, testo dovuto agli appunti di sistema.],
   [`macros`], [`RwLock<Macros>`], [Macro in registrazione, ultima macro, profondità delle riproduzioni, contatore.],
@@ -1451,11 +1451,13 @@ non è moltiplicato da un conteggio dato a quel comando. Un conteggio negativo
 == La risoluzione: `resolve_key_sequence`
 
 Il tasto si aggiunge a `pending_keys`; poi, con un solo lock di lettura su
-`modes`, la sequenza viene cercata in quattro keymap, in ordine:
+`modes`, la sequenza viene cercata nelle keymap, in ordine:
 
 + la #emph[keymap transitoria], se installata;
 + la keymap locale del buffer corrente, se `set-local-keymap` gliene ha data
   una;
++ le keymap dei modi minori accesi nel buffer, dall'ultimo acceso
+  (@modi-minori);
 + la keymap del modo maggiore del buffer corrente;
 + la keymap globale.
 
@@ -1463,7 +1465,7 @@ Il tasto si aggiunge a `pending_keys`; poi, con un solo lock di lettura su
 ```rust
 let mut pending = self.pending_keys.write().unwrap();
 pending.push(event);
-let names = self.keymap_modes();     // la keymap locale, se c'è, e il modo
+let names = self.keymap_modes();     // la locale, se c'è, i minori, il modo
 let current_modes: Vec<&str> = names.iter().map(String::as_ref).collect();
 let bound = self.modes(|modes| {
     if let Some(map) = modes.transient() {
@@ -1479,7 +1481,7 @@ let bound = self.modes(|modes| {
             (None, false, OnUnbound::Release) => release_transient = true,
         }
     }
-    // la keymap locale, poi il modo, poi la keymap globale
+    // la locale, poi i modi minori, poi il modo, poi la globale
     let hit = modes.binding_below_transient(&current_modes, &pending);
     let prefix = modes.is_prefix_below_transient(&current_modes, &pending);
     match (hit, prefix) {
@@ -1928,6 +1930,7 @@ come si prepara una ricerca sono in `feature/isearch.rs`, con `isearch-mode` e
   [`auto_saved_at`], [Versione scritta nell'ultimo salvataggio automatico.],
   [`data`], [`HashMap<String, Box<dyn Any>>`: dati che altre parti appendono al buffer e che muoiono con lui.],
   [`writer`], [Il lavoro che scrive nel buffer da un thread suo (un comando di shell, una ricerca); chiudere il buffer lo ferma.],
+  [`minor_modes`], [I modi minori accesi, nell'ordine di accensione, ognuno con la sua etichetta (@modi-minori).],
 )
 
 == `BufferTrait` e `GapBuffer` <gap-buffer>
@@ -3261,12 +3264,14 @@ Un buffer ha un solo modo maggiore, nominato in `current_mode`. Il modo è un
   [`hooks`], [Hook per nome (`post-command-hook`, `post-self-insert-hook`, `after-close-hook`, …), aggiunti con `(add-hook MODO NOME FUNZIONE)`.],
   [`completion_functions`], [Le fonti di `completion-at-point` per questo modo.],
   [`syntax_table`], [Delimitatori, stringhe, commenti, quote dei caratteri: ciò che legge lo scanner delle espressioni; `None` per la tabella predefinita.],
+  [`lighter`], [Per un modo minore, ciò che la riga di stato mostra mentre è acceso; `None` per un modo maggiore (@modi-minori).],
 )
 
 `Modes` contiene inoltre la keymap globale, i completamenti globali, la lista
 `auto_modes` (espressione regolare sul nome del file → modo, da
-`add-auto-mode`), la keymap transitoria, i tasti di ripetizione e gli hook
-globali, che valgono per ogni modo e si concatenano a quelli del modo.
+`add-auto-mode`), la keymap transitoria, i tasti di ripetizione, gli hook
+globali, che valgono per ogni modo e si concatenano a quelli del modo, e le
+regole dei modi minori.
 
 `make-mode` registra un `MajorMode` nuovo sotto il nome dato. Se il nome
 esiste già (`EditorState::make_mode`), il modo resta con i suoi tasti, i suoi
@@ -3286,6 +3291,60 @@ le primitive Rust dell'indentazione e `indent.lisp` leggono queste:
 (put 'python-mode 'indent-levels-function 'python-indent-levels)
 (put 'rust-mode 'indent-region-style 'shift)
 ```
+
+== I modi minori <modi-minori>
+
+Un modo minore è un `MajorMode` con un'etichetta (`lighter: Some(...)`, anche
+vuota): sta nello stesso registro dei modi maggiori, così `define-key` e
+`add-hook` gli danno tasti e hook con le primitive di sempre, ma un buffer non
+lo può avere come modo maggiore (`set-major-mode` lo rifiuta). Lo si accende e
+spegne in un buffer alla volta: `Buffer::minor_modes` è la lista di quelli
+accesi, nell'ordine in cui lo sono stati, ognuno con il nome e l'etichetta
+copiata all'accensione (`ActiveMinor`).
+
+#ref-table(
+  columns: (3.8cm, 1fr),
+  header: ([Dove conta], [Come]),
+  [I tasti], [`keymap_modes` mette dopo la keymap locale quelle dei modi minori accesi, dall'ultimo acceso, e poi quella del modo maggiore; `source_of` dà a un legame trovato in un modo minore la sorgente `Minor`, che `key-binding` e `C-h b` chiamano `"minor"`.],
+  [Gli hook], [`run_hook` prende i modi minori del buffer corrente e chiama `run_hook_of`: prima gli hook del modo maggiore, poi quelli di ogni modo minore acceso, nell'ordine di accensione, poi i globali (`Modes::hooks_for`). `after-close-hook` riceve i modi minori del buffer chiuso, presi prima che se ne vada.],
+  [L'accensione], [`minor_mode_on` e `minor_mode_off` cambiano la lista sotto il lock del buffer e poi, rilasciato, fanno girare `minor-mode-hook` del modo, e quelli globali con quel nome, con il buffer corrente (`run_minor_mode_hook`).],
+  [Le regole], [`minor-mode-enable` registra in `Modes::minor_rules` una coppia (modo maggiore, o nessuno per tutti; modo minore). `apply_minor_rules` accende quelli che valgono per il modo del buffer, dopo `major-mode-hook` e prima di `after-change-major-mode-hook`, in `initialize_buffer` e in `change_major_mode`.],
+  [Il cambio di modo maggiore], [`change_major_mode` svuota la lista sotto lo stesso lock con cui cambia il modo, senza far girare hook, e poi applica le regole del modo nuovo.],
+  [La riga di stato], [`%n` scrive le etichette non vuote, ognuna dopo uno spazio, dalla lista del buffer: `expand_mode_line` non deve chiedere il registro.],
+)
+
+In Lisp, `define-minor-mode` (modulo `commands`, @mod-commands) fa un modo
+minore e un comando con lo stesso nome e la specifica `"P"`, che legge il
+prefisso con `minor-mode-wanted-p` come in Emacs: niente per invertire, un
+numero positivo o `C-u` per accendere, zero, un negativo o `-` per spegnere.
+
+Le decisioni:
+
++ *Nello stesso registro.* Un modo minore ha keymap e hook come un modo
+  maggiore, e le primitive che li danno chiedono un nome di modo: con un
+  registro solo funzionano senza cambiare. Lo distingue l'etichetta, che solo
+  un modo minore ha. Scartato: un registro a parte, che avrebbe raddoppiato
+  `define-key`, `add-hook` e il loro aiuto.
++ *Dopo la keymap locale.* La keymap locale è quella di vim, che prende tutto
+  il buffer per uno stato: come le mappe di emulazione di Emacs, sta sopra i
+  modi minori. Tra due modi minori vince l'ultimo acceso, che è quello che chi
+  scrive ha voluto più di recente.
++ *Spenti, senza hook, quando cambia il modo maggiore.* Come Emacs, che li
+  perde con le variabili locali del buffer: un `auto-fill-mode` acceso per un
+  file di testo non resta acceso se il buffer diventa Rust. Le regole del
+  modo nuovo li riaccendono, con i loro hook. Far girare gli hook di
+  spegnimento vorrebbe dire eseguire Lisp mentre il buffer sta cambiando
+  modo, prima dei suoi `major-mode-hook`.
++ *L'etichetta copiata nel buffer.* La riga di stato si compone con il buffer
+  e i lock del fotogramma: leggere il registro lì vorrebbe dire prendere
+  `modes` sotto `windows` e `buffers`, che l'ordine dei lock non consente
+  (@ordine-lock). Un'etichetta cambiata con `make-minor-mode` vale per i
+  buffer dove il modo si accende da allora.
++ *Solo per buffer.* I modi che valgono ovunque --- le parentesi, gli spazi a
+  fine riga, `electric-pair` --- restano variabili per ora: hanno già una
+  proprietà per modo, e un modo minore globale chiederebbe di dire che cosa
+  succede in un buffer che lo spegne da solo. Lo dice il manpage `modes` nei
+  limiti.
 
 == Due lessici sullo stesso testo <lessici>
 
@@ -4995,8 +5054,9 @@ margine, ed è larga quanto la finestra, margine compreso.
 
 `expand_mode_line` (`ui/mode_line.rs`) la scrive seguendo `mode-line-format`
 (predefinito
-`" %* %b   %m %s  L%l C%c   %p "`): `%b` nome del buffer, `%f` file (o nome),
-`%m` modo, `%s` lo stato che il modo tiene nel buffer (`mode-line-state`, come
+`" %* %b   %m%n %s  L%l C%c   %p "`): `%b` nome del buffer, `%f` file (o
+nome), `%m` modo, `%n` le etichette dei modi minori accesi, ognuna dopo uno
+spazio (@modi-minori), `%s` lo stato che il modo tiene nel buffer (`mode-line-state`, come
 il `NORMAL` di vim), `%l` riga (da 1), `%c` colonna (da 0), `%p` posizione
 (`All`, `Top`, `Bot` o percentuale), `%*` `**` se modificato e `--`
 altrimenti, `%%`. `%p` dice `All` quando tutto il buffer sta nella finestra,
@@ -6490,8 +6550,9 @@ altro capitolo descrive già il meccanismo, la sottosezione vi rimanda.
 === `commands` <mod-commands>
 
 Il registro dei comandi, la raccolta degli argomenti e `M-x` sono in Rust
-(@comandi); il modulo aggiunge `defcommand`, `string-prefix-p`,
-`string-suffix-p`, `save-match-data` e `with-eval-after-load`.
+(@comandi); il modulo aggiunge `defcommand`, `define-minor-mode` con
+`minor-mode-wanted-p` (@modi-minori), `string-prefix-p`, `string-suffix-p`,
+`save-match-data` e `with-eval-after-load`.
 
 + *Il necessario in Rust, lo zucchero qui.* Un comando che non sa raccogliere
   i suoi argomenti non è un comando, e un file di configurazione che non si
@@ -6761,16 +6822,15 @@ nomina; la cancellazione è un comando sui tasti di `delete-backward-char` e
 
 === `fill` <mod-fill>
 
-`M-q` e `C-x f`, e `auto-fill-mode`: un'opzione per buffer, la chiave
-`auto-fill` dei dati del buffer, e una funzione di `post-self-insert-hook`
-che, dopo uno spazio scritto in un buffer dove l'opzione è accesa, chiama
-`do-auto-fill` (@riempimento). `auto-fill-enable` la accende con
-`major-mode-hook` in ogni buffer nuovo di un modo, come `electric-pair-enable`
-accende le coppie.
+`M-q` e `C-x f`, e `auto-fill-mode`: un modo minore (@modi-minori), con una
+funzione del suo `post-self-insert-hook` che, dopo uno spazio scritto, chiama
+`do-auto-fill` (@riempimento). Lo hook è del modo minore, e quindi gira solo
+dove il modo è acceso; `minor-mode-enable` lo accende nei buffer nuovi di un
+modo maggiore.
 
-+ *Un'opzione nei dati del buffer.* L'editor non ha modi secondari: una
-  funzione accesa in un buffer e spenta in un altro si ricorda dove la si
-  usa, e i dati del buffer se ne vanno con lui.
++ *Il primo modo minore.* È quello che i modi minori servivano a fare: acceso
+  in un buffer e spento in un altro, con un'etichetta nella riga di stato e
+  un hook che non deve controllare da sé se è acceso.
 + *Lo spazio, e non Invio.* Il gancio è `post-self-insert-hook`, che Invio non
   fa scattare: `newline` è di `indent`, e spezzare lì vorrebbe dire legare i
   due moduli. Una riga andata oltre la colonna si spezza al prossimo spazio.
@@ -6778,7 +6838,10 @@ accende le coppie.
 === `help` <mod-help>
 
 `C-h f`, `C-h v`, `C-h k`, `C-h b`, `C-h a` e `C-h ?`: le pagine dell'aiuto,
-in `*Help*`, con una pila per tornare indietro.
+in `*Help*`, con una pila per tornare indietro. La pagina dei tasti raggruppa i
+legami per la keymap da cui vengono, i modi minori compresi, e quella del modo
+(`C-h M`) elenca i modi minori accesi con la prima riga del loro comando
+(@modi-minori).
 
 + *Le risposte sono primitive.* `key-binding`, `where-is`, `function-doc` e le
   altre sono in Rust (@aiuto): nessun modulo può sbagliarle. Il modulo è le

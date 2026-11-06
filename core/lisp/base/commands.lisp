@@ -1,7 +1,8 @@
 ;;; commands --- a shorter way to define a command, and a few macros.
 ;;;
-;;; `defcommand', `string-prefix-p', `string-suffix-p', `save-match-data' and
-;;; `with-eval-after-load'. User manual: the `writing-commands' page.
+;;; `defcommand', `define-minor-mode', `string-prefix-p', `string-suffix-p',
+;;; `save-match-data' and `with-eval-after-load'. User manual: the
+;;; `writing-commands' page, and the `modes' page for the minor modes.
 ;;; Design: `doc/architettura-editor.typ, <mod-commands>`.
 
 (defmacro defcommand (name params specs &rest body)
@@ -23,6 +24,39 @@ Example:
   `(progn
      (defun ,name ,params ,@body)
      (register-command ,(symbol-name name) (list ,@specs))))
+
+(defun minor-mode-wanted-p (mode arg)
+  "t if ARG, a raw prefix argument, asks for the minor mode MODE on: nil for
+the other way from how it is in this buffer, a positive number or a C-u for
+on, zero, a negative number or a lone - for off."
+  (cond ((null arg) (not (minor-mode-p mode)))
+        ((numberp arg) (> arg 0))
+        ((eq arg '-) nil)
+        (t t)))
+
+(defmacro define-minor-mode (name lighter doc &rest body)
+  "Define NAME as a minor mode the status line shows as LIGHTER while it is
+on, and as a command of the same name, documented by DOC, that turns it on or
+off in the current buffer and then runs BODY: with no argument the other way
+from how it is, with a positive one on, with zero or a negative one off.
+
+Example:
+  (define-minor-mode shout-mode \"Shout\"
+    \"Upcase the words typed in this buffer.\")
+  (add-hook 'shout-mode \"post-self-insert-hook\" 'my-upcase-last-word)"
+  ;; The symbol through `list': an unquote inside a quote is data before the
+  ;; backquote is expanded, as in `defcommand'.
+  `(progn
+     (make-minor-mode ,(list 'quote name) ,lighter)
+     (defun ,name (&optional arg)
+       ,doc
+       (if (minor-mode-wanted-p ,(list 'quote name) arg)
+           (minor-mode-on ,(list 'quote name))
+           (minor-mode-off ,(list 'quote name)))
+       (message "%s %s" ,(symbol-name name)
+                (if (minor-mode-p ,(list 'quote name)) "on" "off"))
+       ,@body)
+     (register-command ,(symbol-name name) (list "P"))))
 
 (defun string-prefix-p (prefix s)
   "t if S begins with PREFIX, nil if it does not.
