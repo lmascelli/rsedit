@@ -5,11 +5,13 @@
 
 Lacune che si notano subito
 
-- Righe lunghe che vanno a capo sullo schermo (truncate-lines per buffer, una modalità tipo visual-line-mode).
-  Oggi c’è solo lo scorrimento orizzontale: è la mancanza più grande rimasta per prosa, Markdown e log.
-- Guida verticale alla colonna fill-column: ora che il riempimento esiste è il complemento naturale,
-  e si costruisce come le altre evidenziazioni disegnate al momento. Inoltre una funzionalità che
-  formatta il testo come M-q di emacs
+- Righe lunghe che vanno a capo sullo schermo (truncate-lines per
+  buffer, una modalità tipo visual-line-mode).
+  Oggi c’è solo lo scorrimento orizzontale: è la mancanza più grande
+  rimasta per prosa, Markdown e log.
+- Guida verticale alla colonna fill-column: ora che il riempimento
+  esiste è il complemento naturale, e si costruisce come le altre
+  evidenziazioni disegnate al momento.
 - Tab su una regione inserisce invece di indentare;
 - i numeri di riga valgono per tutto l’editor e non per buffer;
 - C-_ arriva come C-S-7.
@@ -51,7 +53,6 @@ Rifiniture alle funzioni appena fatte
 - Parentesi in vim mode: nel normal state accoppiare la ) sotto il cursore a blocco.
 
 * Fixes todo
-- [ ] primitive for making enter also indent the next line (optinally bound to Enter)
 - [ ] pressing tab with a region selected insert the same indent in the whole region
       but should instead indent it.
 - [ ] line numbers should be a per buffer property
