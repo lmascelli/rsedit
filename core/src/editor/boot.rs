@@ -356,6 +356,12 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::number(DEFAULT_ECHO_MESSAGE_TIMEOUT),
     );
 
+    env.set_variable(
+        MINIBUFFER_LINES.into(),
+        ELispExp::number(DEFAULT_MINIBUFFER_LINES),
+    );
+
+    // TODO(MIN-10)
     // How large a prompt is. Set here so that `(setq minibuffer-width 40)` in a
     // configuration is an adjustment to a value that already exists, rather
     // than the thing that brings the setting into being.
@@ -363,6 +369,7 @@ pub fn create_global_env<B: BufferTrait>()
         MINIBUFFER_WIDTH.into(),
         ELispExp::number(DEFAULT_MINIBUFFER_WIDTH),
     );
+    // TODO(MIN-10)
     env.set_variable(
         MINIBUFFER_HEIGHT.into(),
         ELispExp::number(DEFAULT_MINIBUFFER_HEIGHT),

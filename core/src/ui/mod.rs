@@ -25,7 +25,7 @@ pub(crate) use faces::Registry as FaceRegistry;
 pub use frame::FrameSnapshot;
 pub use gutter::{GutterCell, GutterSpec, LineNumbers};
 pub use windows::{
-    Division, FloatingWindow, Focus, LayoutNode, Orientation, Rect, Side, SplitPath, Window,
+    Division, FloatingWindow, Focus, LayoutNode, Orientation, Prompt, Rect, Side, SplitPath, Window,
     WindowId,
 };
 // For the tests, which check the layout against it.

@@ -6,7 +6,7 @@
 //!
 //! Design: `doc/architettura-editor.typ, <compartimenti>`.
 use crate::ui::{
-    Division, FloatingWindow, LayoutNode, Orientation, Rect, Side, SplitPath, Window, WindowId,
+    Division, FloatingWindow, LayoutNode, Orientation, Prompt, Rect, Side, SplitPath, Window, WindowId,
 };
 use std::time::{Duration, Instant};
 
@@ -254,9 +254,25 @@ impl Windows {
     // Asking
     // ------------------------------------------------------------------
 
-    /// Returns how many tiled windows the frame holds.
+    /// Returns how many tiled windows the frame holds, the minibuffer's not
+    /// counted, as Emacs' `count-windows` does not count it.
     pub fn count(&self) -> usize {
-        self.root.window_ids().len()
+        self.ordinary_ids().len()
+    }
+
+    /// Returns the ids of the tiled windows that are not the prompts, in
+    /// layout order.
+    fn ordinary_ids(&self) -> Vec<WindowId> {
+        self.root
+            .window_ids()
+            .into_iter()
+            .filter(|id| self.root.window(*id).is_some_and(|w| !w.is_prompt()))
+            .collect()
+    }
+
+    /// Returns whether window ID is a prompt.
+    pub fn is_prompt(&self, id: WindowId) -> bool {
+        self.root.window(id).is_some_and(Window::is_prompt)
     }
 
     /// Returns the buffer the focused tiled window shows, which is not always
@@ -265,6 +281,7 @@ impl Windows {
     pub fn focused_buffer(&self) -> Option<String> {
         self.root
             .window(self.focused)
+            .filter(|window| !window.is_prompt())
             .map(|window| window.buffer_name.clone())
     }
 
@@ -401,6 +418,13 @@ impl Windows {
         division: Division,
     ) -> Option<WindowId> {
         let focused = self.focused;
+
+        // The minibuffer is not split, as in Emacs: a second prompt window
+        // would answer nothing.
+        if self.is_prompt(focused) {
+            return None;
+        }
+
         // The new window shows the same buffer, scrolled the same way: one
         // view becomes two.
         let existing = self.root.window(focused)?.clone();
@@ -435,16 +459,46 @@ impl Windows {
         id
     }
 
-    /// Closes every tiled window but the focused one; false, changing
-    /// nothing, when focus is not on a tiled window.
+    /// Closes every tiled window but the focused one and the minibuffer's,
+    /// which stays at the bottom; false, changing nothing, when focus is not
+    /// on a tiled window, or is in the minibuffer, which cannot fill the
+    /// frame.
     pub fn delete_others(&mut self) -> bool {
-        self.root.keep_only(self.focused)
+        if self.is_prompt(self.focused) {
+            return false;
+        }
+        let prompts: Vec<Window> = self
+            .root
+            .window_ids()
+            .into_iter()
+            .filter_map(|id| self.root.window(id).filter(|w| w.is_prompt()).cloned())
+            .collect();
+        if !self.root.keep_only(self.focused) {
+            return false;
+        }
+        for prompt in prompts {
+            let lines = prompt.prompt.as_ref().map_or(1, |p| p.lines);
+            let existing = std::mem::replace(&mut self.root, LayoutNode::Leaf(prompt.clone()));
+            self.root = LayoutNode::Split {
+                orientation: Orientation::Horizontal,
+                division: Division::SecondFixed(lines),
+                left: Box::new(existing),
+                right: Box::new(LayoutNode::Leaf(prompt)),
+            };
+        }
+        true
     }
 
     /// Removes window ID, and says what focus must now do. Focus moves only
     /// when ID had it: closing a strip must not change the current buffer
     /// under whatever opened the strip.
+    /// The minibuffer's window is refused, as is the last window that is not
+    /// it: Emacs' "Attempt to delete minibuffer or sole ordinary window". A
+    /// prompt goes with its buffer, by [`Self::remove_prompts_showing`].
     pub fn remove(&mut self, id: WindowId) -> WindowRemoved {
+        if self.is_prompt(id) || self.ordinary_ids() == [id] {
+            return WindowRemoved::No;
+        }
         if !self.root.remove_window(id) {
             return WindowRemoved::No;
         }
@@ -612,5 +666,66 @@ impl Windows {
     pub fn resize_split(&mut self, path: &[Side], delta: isize) -> bool {
         let rect = self.bounds();
         self.root.resize_split(path, rect, delta)
+    }
+
+    /// Opens the minibuffer's window: LINES rows across the bottom of the
+    /// frame, showing BUFFER, with PROMPT drawn in front of the answer, and
+    /// returns its id. Focus does not move here; the caller gives it the
+    /// focus once its buffer exists. RETURN_TO has the focus back when it
+    /// closes.
+    pub fn open_prompt(
+        &mut self,
+        buffer: &str,
+        lines: usize,
+        prompt: &str,
+        return_to: WindowId,
+    ) -> WindowId {
+        let lines = lines.max(1);
+        let id = self.open_bottom(buffer, lines);
+        if let Some(window) = self.root.window_mut(id) {
+            window.prompt = Some(Prompt {
+                text: prompt.to_string(),
+                return_to,
+                lines,
+            });
+        }
+        id
+    }
+
+    /// Removes every minibuffer window showing BUFFER, and returns the window
+    /// the first of them was opened from, for the caller to give the focus
+    /// back to. Not through [`Self::remove`], which refuses a prompt: this is
+    /// the prompt closing with its buffer.
+    pub fn remove_prompts_showing(&mut self, buffer: &str) -> Option<WindowId> {
+        let mut return_to = None;
+        let ids: Vec<WindowId> = self
+            .root
+            .window_ids()
+            .into_iter()
+            .filter(|id| {
+                self.root
+                    .window(*id)
+                    .is_some_and(|w| w.is_prompt() && w.buffer_name == buffer)
+            })
+            .collect();
+        for id in ids {
+            if let Some(prompt) = self.root.window(id).and_then(|w| w.prompt.clone()) {
+                return_to.get_or_insert(prompt.return_to);
+            }
+            self.root.remove_window(id);
+        }
+        // Focus never names a window that is gone, even for the moment
+        // before the caller moves it.
+        if self.buffer_of(self.focused).is_none() {
+            match return_to.filter(|id| self.buffer_of(*id).is_some()) {
+                Some(id) => self.focused = id,
+                None => {
+                    if let Some(first) = self.root.window_ids().first() {
+                        self.focused = *first;
+                    }
+                }
+            }
+        }
+        return_to
     }
 }

@@ -174,6 +174,31 @@ impl<B: BufferTrait> EditorState<B> {
         new_id
     }
 
+    /// Makes a buffer BUF_NAME, in MODE or `fundamental-mode`, shows it in the
+    /// minibuffer's window, LINES rows across the bottom of the frame with
+    /// PROMPT in front of the answer, gives that window focus, and returns its
+    /// id. Closing the buffer closes the window and gives focus back to the
+    /// one that had it: see [`EditorState::close_buffer`].
+    ///
+    /// `default-minibuffer-prompt` opens its window here.
+    pub(crate) fn open_prompt_window(
+        &self,
+        buf_name: &str,
+        lines: usize,
+        prompt: &str,
+        mode: Option<String>,
+        env: &Arc<Env<EditorState<B>>>,
+    ) -> WindowId {
+        let return_to = self.get_focused_window_id();
+        self.new_buffer(buf_name, None, mode, env);
+        let new_id =
+            self.windows_mut(|windows| windows.open_prompt(buf_name, lines, prompt, return_to));
+        // As for a float: the window is in the tree before focus moves, so
+        // following the focus makes its buffer current.
+        self.set_focused_window_id(new_id);
+        new_id
+    }
+
     /// Scrolls WINDOW by LINES, toward the end of the buffer when LINES is
     /// positive, without moving focus or point; false when there is no such
     /// window, or the view was already as far as it goes.

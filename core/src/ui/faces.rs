@@ -99,12 +99,14 @@ impl Face {
     pub const SHOW_PAREN_MISMATCH: Face = Face(16);
     /// The blanks at the end of a line, where `show-trailing-whitespace` says.
     pub const TRAILING_WHITESPACE: Face = Face(17);
+    /// The question in front of the answer, in the minibuffer's window.
+    pub const MINIBUFFER_PROMPT: Face = Face(18);
 
     /// The faces the editor names itself, with their ids: the first entries
     /// of the registry, so that Rust names them as constants. The order and
     /// the constants above agree, as
     /// `built_in_faces_are_interned_at_their_own_ids` checks.
-    pub const BUILT_IN: [(Face, &'static str); 18] = [
+    pub const BUILT_IN: [(Face, &'static str); 19] = [
         (Face::DEFAULT, "default"),
         (Face::REGION, "region"),
         (Face::MODE_LINE, "mode-line"),
@@ -123,6 +125,7 @@ impl Face {
         (Face::SHOW_PAREN_MATCH, "show-paren-match"),
         (Face::SHOW_PAREN_MISMATCH, "show-paren-mismatch"),
         (Face::TRAILING_WHITESPACE, "trailing-whitespace"),
+        (Face::MINIBUFFER_PROMPT, "minibuffer-prompt"),
     ];
 
     /// Returns the face called NAME, defining it if nothing has named it yet.
@@ -451,6 +454,13 @@ impl Default for Theme {
             Style {
                 bg: Some(Color::RED),
                 ..Style::plain()
+            },
+        );
+        theme.set(
+            Face::MINIBUFFER_PROMPT,
+            Style {
+                bold: true,
+                ..Style::fg(Color::CYAN)
             },
         );
         theme.set(

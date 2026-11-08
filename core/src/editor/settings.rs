@@ -198,10 +198,17 @@ pub const SETTINGS: &[Setting] = &[
               at its start.",
     },
     Setting {
+        name: MINIBUFFER_LINES,
+        doc: "How many rows the minibuffer's window takes at the bottom of the frame, above \
+              the echo area: 1 unless you change it.",
+    },
+    // TODO(MIN-10)
+    Setting {
         name: MINIBUFFER_WIDTH,
         doc: "How many columns wide a prompt is, its border included. A frame too narrow for \
               it gets one as wide as it can hold.",
     },
+    // TODO(MIN-10)
     Setting {
         name: MINIBUFFER_HEIGHT,
         doc: "How many rows tall a prompt is, its border included: 3 is one line of text \
@@ -343,12 +350,23 @@ pub const ECHO_MESSAGE_TIMEOUT: &str = "echo-message-timeout";
 /// [`ECHO_MESSAGE_TIMEOUT`] to something else.
 pub const DEFAULT_ECHO_MESSAGE_TIMEOUT: f64 = 5.0;
 
+/// The name of the Lisp variable holding how many rows the minibuffer's
+/// window takes.
+pub const MINIBUFFER_LINES: &str = "minibuffer-lines";
+
+/// How many rows the minibuffer's window takes when nothing says otherwise:
+/// one, as in Emacs.
+pub const DEFAULT_MINIBUFFER_LINES: f64 = 1.0;
+
+// TODO(MIN-10)
 /// The name of the Lisp variable holding how wide a prompt is.
 pub const MINIBUFFER_WIDTH: &str = "minibuffer-width";
 
+// TODO(MIN-10)
 /// The name of the Lisp variable holding how high a prompt is.
 pub const MINIBUFFER_HEIGHT: &str = "minibuffer-height";
 
+// TODO(MIN-10)
 /// How wide a prompt is when nothing says otherwise: wide enough for a path,
 /// and narrow enough to read as a dialogue rather than as part of the frame.
 ///
@@ -357,6 +375,7 @@ pub const MINIBUFFER_HEIGHT: &str = "minibuffer-height";
 /// running off its edge.
 pub const DEFAULT_MINIBUFFER_WIDTH: f64 = 60.0;
 
+// TODO(MIN-10)
 /// How high a prompt is when nothing says otherwise: three rows, the line being
 /// typed between two borders.
 pub const DEFAULT_MINIBUFFER_HEIGHT: f64 = 3.0;

@@ -6,8 +6,8 @@
 //! Design: `doc/architettura-editor.typ, <minibuffer>`.
 use super::*;
 use crate::editor::{
-    COMPLETION_INVALIDATED_FUNCTION, COMPLETION_READ_FUNCTION, DEFAULT_MINIBUFFER_HEIGHT,
-    DEFAULT_MINIBUFFER_WIDTH, MINIBUFFER_HEIGHT, MINIBUFFER_READ_FUNCTION, MINIBUFFER_WIDTH,
+    COMPLETION_INVALIDATED_FUNCTION, COMPLETION_READ_FUNCTION, DEFAULT_MINIBUFFER_LINES,
+    MINIBUFFER_LINES, MINIBUFFER_READ_FUNCTION,
 };
 use crate::feature::minibuffer;
 use crate::managers::Recalled;
@@ -273,9 +273,10 @@ primitive!(clear_minibuffer_history, args, _env, ctx, {
 
 const DEFAULT_MINIBUFFER_PROMPT_DOC: &str = "(default-minibuffer-prompt PROMPT ON-CONFIRM \
          ON-CHANGE ON-CANCEL &optional MODE KEY): The prompt `minibuffer-read' opens unless \
-         `*minibuffer-read-function*' names another: a window in the middle of the frame titled \
-         PROMPT, `minibuffer-width' columns by `minibuffer-height' rows, or what the frame can \
-         hold. The arguments are those of `minibuffer-read'; not called directly.";
+         `*minibuffer-read-function*' names another: as in Emacs, a window across the bottom \
+         of the frame, above the echo area, `minibuffer-lines' rows high, with PROMPT in front \
+         of the answer; the windows above give it the rows, and have them back when it closes. \
+         The arguments are those of `minibuffer-read'; not called directly.";
 
 primitive!(default_minibuffer_prompt, args, env, ctx, {
     if !(4..=6).contains(&args.len()) {
@@ -335,29 +336,14 @@ primitive!(default_minibuffer_prompt, args, env, ctx, {
     // A prompt opening is not a continuation of the last one's walk.
     ctx.history_mut(|history| history.end_walk());
 
-    let frame_height = match env.get_variable("frame-height") {
-        Some(ELispExp::Number(n)) => n,
-        _ => return Err(EvalError::UnboundVariable("frame-height".into())),
-    };
-    let frame_width = match env.get_variable("frame-width") {
-        Some(ELispExp::Number(n)) => n,
-        _ => return Err(EvalError::UnboundVariable("frame-width".into())),
-    };
-
-    let (x, y, width, height) = centred(
-        frame_width as usize,
-        frame_height as usize,
-        sized(&env, MINIBUFFER_WIDTH, DEFAULT_MINIBUFFER_WIDTH),
-        sized(&env, MINIBUFFER_HEIGHT, DEFAULT_MINIBUFFER_HEIGHT),
-    );
-
-    ctx.open_floating_window(
+    // A split, not a float: the text being searched or edited stays in
+    // sight above it, as in Emacs, rather than under a window in the middle
+    // of the frame. The floating prompt is `floating-minibuffer-prompt`, in
+    // minibuffer.lisp.
+    ctx.open_prompt_window(
         minibuffer::PROMPT_BUFFER,
-        x,
-        y,
-        width,
-        height,
-        title,
+        sized(&env, MINIBUFFER_LINES, DEFAULT_MINIBUFFER_LINES),
+        title.as_deref().unwrap_or_default(),
         Some(mode),
         &env,
     );
@@ -372,26 +358,6 @@ fn sized<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>, name: &str, default: f6
         Some(ELispExp::Number(n)) if n.is_finite() && n >= 1.0 => n as usize,
         _ => default as usize,
     }
-}
-
-/// Returns a rectangle of WIDTH by HEIGHT in the middle of a frame of
-/// FRAME_WIDTH by FRAME_HEIGHT, made smaller where it would not fit, with a
-/// column of margin on each side.
-fn centred(
-    frame_width: usize,
-    frame_height: usize,
-    width: usize,
-    height: usize,
-) -> (isize, isize, usize, usize) {
-    // The echo area owns the bottom row, so the space a prompt may be centred
-    // in is one row shorter than the frame. Centring in the whole of it would
-    // put a tall prompt's last row underneath a message.
-    let available_height = frame_height.saturating_sub(1);
-    let width = width.min(frame_width.saturating_sub(2)).max(1);
-    let height = height.min(available_height).max(1);
-    let x = (frame_width.saturating_sub(width) / 2) as isize;
-    let y = (available_height.saturating_sub(height) / 2) as isize;
-    (x, y, width, height)
 }
 
 const COMPLETION_INVALIDATE_DOC: &str = "(completion-invalidate): Say that the completion \

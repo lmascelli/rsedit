@@ -4,7 +4,9 @@
 * Work in progress.
 
 Lacune che si notano subito
-
+- Default risposte yes/no veloci come singola pressione y/n
+- Possibilità di selezionare più elementi per chiudere i buffer in buffer-lisp
+  e per cancellare file in dired
 - Righe lunghe che vanno a capo sullo schermo (truncate-lines per
   buffer, una modalità tipo visual-line-mode).
   Oggi c’è solo lo scorrimento orizzontale: è la mancanza più grande
@@ -56,6 +58,7 @@ Rifiniture alle funzioni appena fatte
 - [ ] pressing tab with a region selected insert the same indent in the whole region
       but should instead indent it.
 - [ ] line numbers should be a per buffer property
+- MIN-10: remove this settings that now belongs to minibuffer.lisp
 
 * Macro todo
 - [ ] Enhance mode system: major mode switch and minor modes

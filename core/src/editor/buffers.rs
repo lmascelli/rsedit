@@ -297,6 +297,11 @@ impl<B: BufferTrait> EditorState<B> {
                     false
                 }
             });
+            // And the minibuffer's split, which a tiled window showing
+            // another buffer would leave behind at the bottom of the frame.
+            if let Some(return_to) = windows.remove_prompts_showing(name) {
+                restore.get_or_insert(return_to);
+            }
             restore
         });
 

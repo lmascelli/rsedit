@@ -68,6 +68,20 @@ pub struct Focus {
     pub tiled: bool,
 }
 
+/// What makes a tiled window the minibuffer's: the question it asks, drawn
+/// in front of the answer as Emacs draws it, and the window to give the
+/// focus back to when it closes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Prompt {
+    /// The question, drawn on the first row left of the text.
+    pub text: String,
+    /// The window focused when the prompt opened.
+    pub return_to: WindowId,
+    /// How many rows it takes, kept when `delete-other-windows` rebuilds the
+    /// layout around it.
+    pub lines: usize,
+    }
+
 /// A window: the buffer it shows, how far it is scrolled, and what the last
 /// frame composed for it, which the commands and the mouse read between
 /// frames.
@@ -104,6 +118,10 @@ pub struct Window {
     /// How many columns it gave to its gutter when the last frame was
     /// composed, zero for none: what a click's column is counted from.
     pub gutter_width: usize,
+
+    /// Set on the window a prompt is read in, the minibuffer split at the
+    /// bottom of the frame; `None` on every other.
+    pub prompt: Option<Prompt>,
 }
 
 impl Window {
@@ -129,7 +147,12 @@ impl Window {
             show_mode_line: true,
             point: None,
             gutter_width: 0,
+            prompt: None,
         }
+    }
+
+    pub fn is_prompt(&self) -> bool {
+        self.prompt.is_some()
     }
 }
 

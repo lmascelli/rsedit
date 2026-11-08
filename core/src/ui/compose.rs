@@ -10,6 +10,7 @@ use crate::ui::Face;
 use crate::ui::gutter::{GutterCell, GutterSpec, gutter_cells, gutter_columns};
 use crate::ui::layout::{self, BufferHighlight, Layout, TabWidths};
 use crate::ui::mode_line::expand_mode_line;
+use crate::ui::width::{cells, cut};
 use crate::ui::windows::{Focus, LayoutNode, Rect, Window, WindowId, split_rects};
 
 /// How many matches one window draws at most: a screenful of a pattern that
@@ -203,7 +204,14 @@ impl LayoutNode {
                 // The gutter comes out of the rectangle, as the status line
                 // did: the scroll, the cursor and the highlights know only
                 // the text's columns.
-                let gutter_width = gutter_columns(settings.gutter, line_count, rect.width);
+                // The minibuffer's gutter is its question, in place of the
+                // line numbers: the answer starts after it, and a click is
+                // counted from there as from the numbers.
+                let gutter_width = match &win.prompt {
+                    Some(prompt) => prompt_columns(&prompt.text, rect.width),
+                    None => gutter_columns(settings.gutter, line_count, rect.width),
+                };
+
                 win.gutter_width = gutter_width;
                 let rect = Rect {
                     x: rect.x + gutter_width as isize,
@@ -275,19 +283,24 @@ impl LayoutNode {
                 highlights.extend(layout.virtual_highlights(win.scroll_x, rect.width));
 
                 // After the scroll, which decides the lines numbered.
-                let gutter_cells = gutter_cells(
-                    settings.gutter,
-                    gutter_width,
-                    win.scroll_y,
-                    rect.height,
-                    line_count,
-                    point_line,
-                );
+                let gutter_cells = match &win.prompt {
+                    Some(prompt) => {
+                        prompt_cells(&prompt.text, gutter_width, win.scroll_y, rect.height)
+                    }
+                    None => gutter_cells(
+                        settings.gutter,
+                        gutter_width,
+                        win.scroll_y,
+                        rect.height,
+                        line_count,
+                        point_line,
+                    ),
+                };
 
                 out_views.push(RenderableWindowView {
                     rect,
                     buffer_name: win.buffer_name.clone(),
-                    title: None,
+                    title: win.prompt.as_ref().map(|prompt| prompt.text.clone()),
                     is_focused,
                     cursor_rel_pos,
                     lines,
@@ -330,6 +343,39 @@ impl LayoutNode {
             }
         }
     }
+}
+
+/// Returns how many columns the question PROMPT takes in front of the answer
+/// in a minibuffer window WIDTH columns wide: all of it, and one column more
+/// when it does not end in a blank, but never so many that no column is left
+/// for the answer.
+fn prompt_columns(prompt: &str, width: usize) -> usize {
+    let wanted = cells(prompt) + usize::from(!prompt.ends_with(char::is_whitespace));
+    wanted.min(width.saturating_sub(1))
+}
+
+/// Returns the gutter of a minibuffer window: PROMPT on the row of the first
+/// line, when the view starts there, and blanks on the others, WIDTH columns
+/// each, for ROWS rows from FIRST_LINE.
+fn prompt_cells(prompt: &str, width: usize, first_line: usize, rows: usize) -> Vec<GutterCell> {
+    if width == 0 {
+        return Vec::new();
+    }
+    (0..rows)
+        .map(|row| {
+            let text = if first_line + row == 0 {
+                let shown = cut(prompt, 0, width);
+                let pad = width.saturating_sub(cells(&shown));
+                format!("{shown}{}", " ".repeat(pad))
+            } else {
+                " ".repeat(width)
+            };
+            GutterCell {
+                text,
+                face: Face::MINIBUFFER_PROMPT,
+            }
+        })
+        .collect()
 }
 
 /// Returns what is drawn over WIN's text in RECT, in buffer columns, in the

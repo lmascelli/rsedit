@@ -163,7 +163,13 @@ impl<B: BufferTrait> EditorState<B> {
                 let mut separator_rects = Vec::new();
                 let focus = Focus {
                     id: focused_window_id,
-                    tiled: windows.root().contains_window(focused_window_id),
+                    // The minibuffer's split counts as a float here: while
+                    // it is typed in, every other window follows its point,
+                    // as during an incremental search.
+                    tiled: windows
+                        .root()
+                        .window(focused_window_id)
+                        .is_some_and(|window| !window.is_prompt()),
                 };
                 let spots = paren_spots(
                     parens.as_ref(),
