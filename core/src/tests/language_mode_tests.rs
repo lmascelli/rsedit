@@ -335,6 +335,36 @@ fn c_and_cpp_indent_braces_parameters_cases_and_labels() {
     );
 }
 
+/// In a list of values a comma ends an item, and the next lines up with it;
+/// in a block it leaves a declaration unfinished, and the next line goes one
+/// level further.
+#[test]
+fn c_and_cpp_list_items_after_a_comma_line_up() {
+    for mode in ["c-mode", "cpp-mode"] {
+        columns(
+            mode,
+            &[
+                ("enum color {\n    RED,\nGREEN,", 4),
+                ("enum color {\n    RED = 1,\n    GREEN,\n};", 0),
+                ("enum color\n{\n    RED,\nGREEN,", 4),
+                ("typedef enum {\n    A,\nB", 4),
+                ("int a[] = {\n    1,\n2,", 4),
+                ("int a[][2] = {\n    {1, 2},\n{3, 4},", 4),
+                ("int a[][2] = {\n    {\n        1,\n2,", 8),
+                ("struct point p = {\n    .x = 1,\n.y = 2,", 4),
+                // An operator still leaves the item unfinished.
+                ("enum flags {\n    A = 1 |\n2,", 8),
+                // In a block a comma still continues a declaration.
+                ("int main() {\n    int a,\nb;", 8),
+            ],
+        );
+    }
+    columns(
+        "cpp-mode",
+        &[("std::vector<int> f() {\n    return {\n        1,\n2,", 8)],
+    );
+}
+
 #[test]
 fn region_indentation_is_repeatable_for_each_language() {
     let (ctx, env) = editor();

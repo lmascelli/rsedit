@@ -211,7 +211,11 @@ LANGUAGE RULES
     unbraced control statements, and indent case bodies one level beyond
     their labels. Access labels align with their class's opening line;
     preprocessor directives begin at column zero. Character literals,
-    registered raw strings and comments do not count as brackets.
+    registered raw strings and comments do not count as brackets. A line
+    the one above left unfinished, ending in an operator or a comma, goes
+    one level further; but in a list of values -- an enum, an initializer
+    after =, an element of one, a C++ return { -- a comma ends an item, and
+    the next lines up with it.
 
     Rust indents one level inside braces, from the statement that opened
     the block however many lines it took, so struct fields and match arms

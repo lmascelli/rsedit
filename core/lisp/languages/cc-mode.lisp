@@ -155,6 +155,26 @@ at most 16 characters, none a space, a parenthesis or a backslash."
       (unless column (setq line (prog-indent--previous))))
     column))
 
+(defun cc--brace-list-p (open)
+  "Return t if the brace at OPEN opens a list of values -- an enum's
+enumerators, an initializer's elements -- where a comma ends an item rather
+than going on with a statement."
+  (goto-char open)
+  (beginning-of-line)
+  (let* ((line-start (point))
+         (code (prog-indent--code))
+         (before (prog-indent--trim (substring code 0 (- open line-start)))))
+    ;; A brace alone on its line: what it follows is the line above.
+    (when (string= before "")
+      (let ((previous (prog-indent--previous)))
+        (setq before (if previous (nth 2 previous) ""))))
+    (if (or (string-match-p "\\benum\\b" before)
+            ;; = { an initializer, , { and { { an element of one, ( { and
+            ;; [ { a compound literal, return { a value in C++.
+            (string-match-p "(=|,|\\{|\\(|\\[|\\breturn)$" before))
+        t
+        nil)))
+
 (defun cc-indent-line ()
   "Return the column the line point is on should start at, in C or C++."
   (beginning-of-line)
@@ -196,7 +216,13 @@ at most 16 characters, none a space, a parenthesis or a backslash."
          ((and previous (not (string-match-p "[;{}][ \t]*$" before))
                (string-match-p "^(if|for|while|else|do)\\b" header))
           (+ header-column (if (string-prefix-p "{" code) 0 width)))
-         ((and previous (string-match-p "[=,+*/&|?\\\\-][ \t]*$" before))
+         ;; A line the one above did not finish goes one level further; but
+         ;; in a list of values a comma finishes an item, and the next one
+         ;; lines up with it.
+         ((and previous (string-match-p "[=,+*/&|?\\\\-][ \t]*$" before)
+               (not (and open
+                         (string-match-p ",[ \t]*$" before)
+                         (cc--brace-list-p open))))
           (+ body width))
          (t (+ body (if case-body width 0)))))))))
 
