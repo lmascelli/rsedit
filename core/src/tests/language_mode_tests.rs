@@ -389,6 +389,18 @@ fn cpp_brace_initializers_after_a_name_are_lists_but_block_heads_are_not() {
             ("void f() const {\n    int a,\nb;", 8),
             ("auto f() -> int {\n    int a,\nb;", 8),
             ("int main() {\n    if (x) {\n    } else {\n        int a,\nb;", 12),
+            // Lambdas, with and without their parameters.
+            ("auto f = [](int x) -> int {\n    int a,\nb;", 8),
+            ("auto f = []<typename T>(T x) -> std::vector<T> {\n    int a,\nb;", 8),
+            ("auto f = [] -> int {\n    int a,\nb;", 8),
+            ("auto f = [x] mutable -> std::pair<int, int> {\n    int a,\nb;", 8),
+            ("auto f = [x] mutable {\n    int a,\nb;", 8),
+            // Requires clauses and expressions.
+            ("void f(T x) requires std::integral<T> {\n    int a,\nb;", 8),
+            ("void f(T x)\n    requires std::integral<T>\n{\n    int a,\nb;", 8),
+            ("concept C = requires {\n    int a,\nb;", 8),
+            // An arrow to a member, then an initializer: still a list.
+            ("auto x = a->b + Foo{\n    1,\n2,", 4),
         ],
     );
     // C has no such initializer: a name before a brace is left as it was.

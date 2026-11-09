@@ -217,7 +217,9 @@ LANGUAGE RULES
     after =, an element of one, a C++ return {, or C++'s initializer after
     a name or a type, as in Foo f{ or std::vector<int>{ -- a comma ends an
     item, and the next lines up with it. The heads of classes, namespaces
-    and functions, which end in a name too, still open blocks.
+    and functions, which end in a name too, still open blocks, and so do a
+    lambda's, with or without parameters ([] -> int {), and a requires
+    clause or expression.
 
     Rust indents one level inside braces, from the statement that opened
     the block however many lines it took, so struct fields and match arms
