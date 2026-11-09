@@ -155,10 +155,30 @@ at most 16 characters, none a space, a parenthesis or a backslash."
       (unless column (setq line (prog-indent--previous))))
     column))
 
+(defun cc--cpp-brace-init-p (before)
+  "Return t if BEFORE, the code a brace follows in C++, names what the brace
+initializes -- Foo f{, std::vector<int> v{, std::pair<int, int>{ -- rather
+than heading a block, as class Widget {, namespace ns {, void f() const {,
+auto f() -> int { and else { do, though they also end in a name."
+  (and (eq (major-mode) 'cpp-mode)
+       (string-match-p "([A-Za-z0-9_]|>)$" before)
+       ;; A class's head: the keyword, its name, final, its bases.
+       (not (string-match-p
+             "\\b(struct|class|union)([ \t]+[A-Za-z_][A-Za-z0-9_:<>]*)?([ \t]+final)?[ \t]*(:.*)?$"
+             before))
+       ;; namespace a::b {, extern "C" {, whose string reads as a name here.
+       (not (string-match-p "\\b(namespace|extern)\\b" before))
+       ;; else {, do {, try {, and a function's qualifiers before its body.
+       (not (string-match-p
+             "\\b(else|do|try|const|noexcept|override|final|mutable|volatile)$"
+             before))
+       ;; A trailing return type: auto f() -> int {.
+       (not (string-match-p "\\)[^()]*->" before))))
+
 (defun cc--brace-list-p (open)
   "Return t if the brace at OPEN opens a list of values -- an enum's
-enumerators, an initializer's elements -- where a comma ends an item rather
-than going on with a statement."
+enumerators, an initializer's elements, C++'s Foo f{ -- where a comma ends an
+item rather than going on with a statement."
   (goto-char open)
   (beginning-of-line)
   (let* ((line-start (point))
@@ -171,7 +191,8 @@ than going on with a statement."
     (if (or (string-match-p "\\benum\\b" before)
             ;; = { an initializer, , { and { { an element of one, ( { and
             ;; [ { a compound literal, return { a value in C++.
-            (string-match-p "(=|,|\\{|\\(|\\[|\\breturn)$" before))
+            (string-match-p "(=|,|\\{|\\(|\\[|\\breturn)$" before)
+            (cc--cpp-brace-init-p before))
         t
         nil)))
 

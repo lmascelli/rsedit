@@ -214,8 +214,10 @@ LANGUAGE RULES
     registered raw strings and comments do not count as brackets. A line
     the one above left unfinished, ending in an operator or a comma, goes
     one level further; but in a list of values -- an enum, an initializer
-    after =, an element of one, a C++ return { -- a comma ends an item, and
-    the next lines up with it.
+    after =, an element of one, a C++ return {, or C++'s initializer after
+    a name or a type, as in Foo f{ or std::vector<int>{ -- a comma ends an
+    item, and the next lines up with it. The heads of classes, namespaces
+    and functions, which end in a name too, still open blocks.
 
     Rust indents one level inside braces, from the statement that opened
     the block however many lines it took, so struct fields and match arms

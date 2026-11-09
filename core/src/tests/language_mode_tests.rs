@@ -365,6 +365,36 @@ fn c_and_cpp_list_items_after_a_comma_line_up() {
     );
 }
 
+/// C++ initializes with braces straight after a name, or a type: a list of
+/// values as much as after =. The heads of classes, namespaces and functions
+/// that also end in a name still open blocks, where a comma continues.
+#[test]
+fn cpp_brace_initializers_after_a_name_are_lists_but_block_heads_are_not() {
+    columns(
+        "cpp-mode",
+        &[
+            ("Foo f{\n    1,\n2,", 4),
+            ("std::vector<int> v{\n    1,\n2,", 4),
+            ("auto p = std::pair<int, int>{\n    1,\n2", 4),
+            ("struct point p{\n    1,\n2,", 4),
+            ("int main() {\n    Foo f{\n        1,\n2,", 8),
+            ("Foo f\n{\n    1,\n2,", 4),
+            // Blocks: a comma there leaves a declaration unfinished.
+            ("class Widget {\n    int a,\nb;", 8),
+            ("struct Base : public Other {\n    int a,\nb;", 8),
+            ("struct Leaf final {\n    int a,\nb;", 8),
+            ("struct {\n    int a,\nb;", 8),
+            ("namespace ns {\nint a,\nb;", 8),
+            ("extern \"C\" {\nint a,\nb;", 8),
+            ("void f() const {\n    int a,\nb;", 8),
+            ("auto f() -> int {\n    int a,\nb;", 8),
+            ("int main() {\n    if (x) {\n    } else {\n        int a,\nb;", 12),
+        ],
+    );
+    // C has no such initializer: a name before a brace is left as it was.
+    columns("c-mode", &[("int main() {\n    Foo f{\n        1,\n2,", 12)]);
+}
+
 #[test]
 fn region_indentation_is_repeatable_for_each_language() {
     let (ctx, env) = editor();
