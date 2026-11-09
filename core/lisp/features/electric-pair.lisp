@@ -18,6 +18,10 @@ names.")
   "Whether `electric-pair-mode' is on in the current buffer."
   (minor-mode-p 'electric-pair-mode))
 
+(defvar electric-pair-open-newline-between-pairs t
+  "Whether Return between the halves of an empty pair, as in {|}, opens a line
+between them for point, with the closer on the line after, as in Emacs.")
+
 (defvar electric-pair-skip-self t
   "Whether typing a closing delimiter where one already is steps over it,
 rather than inserting a second.")
@@ -66,7 +70,15 @@ rather than inserting a second.")
 Run from `post-self-insert-hook' where `electric-pair-mode' is on."
   ;; Quotes before the in-string test, which would refuse every closing
   ;; quote: just before one, the state is inside its string.
-  (if (electric-pair--on-p)
+  (cond
+   ((not (electric-pair--on-p)) nil)
+   ;; Return, which may have run after electric-indent had its turn: the
+   ;; pair is found by where point is, not by the character before it.
+   ((eq this-command 'newline)
+    (if (and electric-pair-open-newline-between-pairs
+             (electric-pair--split-pair-p))
+        (electric-pair--open-newline)))
+   (t
       (let ((typed (electric-pair--char-before)))
         (if typed
             ;; The state before the typed character, which may have opened a
@@ -109,8 +121,45 @@ Run from `post-self-insert-hook' where `electric-pair-mode' is on."
                 (electric-pair--closing typed next))
 
                ;; A closer with skipping turned off, or nothing to skip to.
-               (t nil))))))
+               (t nil)))))))
   nil)
+
+;; ---------------------------------------------------------------------------
+;; Return inside an empty pair
+;; ---------------------------------------------------------------------------
+
+(defun electric-pair--split-pair-p ()
+  "Whether Return has just split an empty pair: the list point is in opens on
+the line above, with only blanks between its opener and point, and its closer
+is the first thing after point, past blanks."
+  (let* ((state (syntax-ppss (point)))
+         (open (nth 4 state)))
+    (if (and open
+             (not (nth 2 state))
+             (not (nth 3 state))
+             ;; One newline between, and blanks around it: what Return made of
+             ;; {|}, whether or not the new line is indented yet.
+             (string-match-p "^[ \t]*\n[ \t]*$"
+                             (buffer-substring (+ open 1) (point))))
+        (let ((closer-at (electric-pair--skip-blanks-forward (point))))
+          (and (< closer-at (point-max))
+               (string= (buffer-substring closer-at (+ closer-at 1))
+                        (matching-delimiter (buffer-substring open (+ open 1))))))
+        nil)))
+
+(defun electric-pair--open-newline ()
+  "Put the closer after point on a line of its own, leaving point on the line
+between the halves of the pair; with `electric-indent-mode' on, indent both."
+  (let ((here (point)))
+    (insert "\n")
+    (goto-char here)
+    (if (minor-mode-p 'electric-indent-mode)
+        ;; By line number: indenting the closer's line moves this line's end.
+        (let ((middle (line-number-at-point)))
+          (goto-line (+ middle 1))
+          (indent-line)
+          (goto-line middle)
+          (indent-line)))))
 
 (defun electric-pair--quotes-inhibited ()
   "Whether this mode has an electric-pair-inhibit-quotes property."

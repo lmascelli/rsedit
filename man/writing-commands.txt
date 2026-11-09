@@ -5,6 +5,7 @@ SYNOPSIS
     (defcommand NAME PARAMS SPECS &rest BODY)
     (string-prefix-p PREFIX S)
     (string-suffix-p SUFFIX S)
+    this-command
 
 DESCRIPTION
     A command is a function the editor knows how to ask the arguments of.
@@ -114,8 +115,11 @@ WHEN SOMETHING HAPPENS
         (add-hook 'rust-mode "post-self-insert-hook" 'my-function)
 
     The first calls my-function after every command, in any mode; the
-    second after every key that types itself, in Rust buffers. The `modes'
-    page lists the hooks.
+    second after every key that types itself, and after Return, in Rust
+    buffers. The `modes' page lists the hooks. While a command runs, and
+    while the hooks after it do, `this-command' holds its name, as a
+    symbol: a hook on post-self-insert-hook tells Return from a typed
+    character with (eq this-command 'newline).
 
 TRYING IT OUT
     M-: evaluates an expression and says what it returned, so a command

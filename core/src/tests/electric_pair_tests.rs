@@ -6,6 +6,7 @@
 mod tests {
     use crate::buffer::{BufferTrait, gap_buffer::GapBuffer};
     use crate::editor::{EditorState, create_global_env};
+    use crate::input::{KeyCode, KeyEvent, KeyModifiers};
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::sync::Arc;
 
@@ -390,5 +391,95 @@ mod tests {
         run(r#"(clear-buffer) (insert "()") (goto-char 0)"#, &env, &ctx);
         run("(electric-pair-delete-forward)", &env, &ctx);
         assert_eq!(contents(&ctx), ")", "and so is forward delete");
+    }
+
+    // ---------------- Return inside an empty pair ----------------
+
+    /// Return as its key runs it: `newline`, and the hooks after it.
+    fn press_return(env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::default(),
+            },
+            env,
+        );
+    }
+
+    #[test]
+    fn return_between_an_empty_pair_opens_a_line_for_point() {
+        let (ctx, env) = editor();
+        braces_buffer("{}", 1, &env, &ctx);
+        press_return(&env, &ctx);
+        assert_eq!(contents(&ctx), "{\n\n}");
+        assert_eq!(point(&ctx), 2, "on the line between");
+    }
+
+    #[test]
+    fn every_kind_of_pair_opens_and_blanks_inside_do_not_matter() {
+        for (text, at, expected) in [
+            ("()", 1, "(\n\n)"),
+            ("[  ]", 2, "[ \n\n ]"),
+            ("{ }", 1, "{\n\n }"),
+        ] {
+            let (ctx, env) = editor();
+            braces_buffer(text, at, &env, &ctx);
+            press_return(&env, &ctx);
+            assert_eq!(contents(&ctx), expected, "{text:?} at {at}");
+        }
+    }
+
+    #[test]
+    fn return_elsewhere_is_a_plain_newline() {
+        for (text, at, expected) in [("{x}", 2, "{x\n}"), ("{}", 2, "{}\n"), ("{}", 0, "\n{}")] {
+            let (ctx, env) = editor();
+            braces_buffer(text, at, &env, &ctx);
+            press_return(&env, &ctx);
+            assert_eq!(contents(&ctx), expected, "{text:?} at {at}");
+        }
+    }
+
+    #[test]
+    fn a_pair_inside_a_string_is_not_opened() {
+        let (ctx, env) = editor();
+        run(
+            r#"(set-syntax-entry 'braces-mode "\"" 'string)"#,
+            &env,
+            &ctx,
+        );
+        braces_buffer("\"{}\"", 2, &env, &ctx);
+        press_return(&env, &ctx);
+        assert_eq!(contents(&ctx), "\"{\n}\"");
+    }
+
+    #[test]
+    fn the_opening_can_be_turned_off_on_its_own() {
+        let (ctx, env) = editor();
+        run(
+            "(setq electric-pair-open-newline-between-pairs nil)",
+            &env,
+            &ctx,
+        );
+        braces_buffer("{}", 1, &env, &ctx);
+        press_return(&env, &ctx);
+        assert_eq!(contents(&ctx), "{\n}");
+    }
+
+    #[test]
+    fn this_command_names_the_command_its_hooks_run_after() {
+        let (ctx, env) = editor();
+        assert!(
+            run("this-command", &env, &ctx).is_nil(),
+            "nil before the first"
+        );
+        run(
+            r#"(setq seen nil)
+               (defun remember-command () (setq seen this-command))
+               (add-hook nil "post-command-hook" 'remember-command)"#,
+            &env,
+            &ctx,
+        );
+        press_return(&env, &ctx);
+        assert_eq!(run("seen", &env, &ctx), LispExp::symbol("newline".into()));
     }
 }

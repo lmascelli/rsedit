@@ -72,6 +72,18 @@ impl<B: BufferTrait> EditorState<B> {
             ]);
         }
 
+        // What `this-command` says while the command and the hooks after it
+        // run, as in Emacs: a hook on `post-self-insert-hook` can then tell
+        // Return's newline from a typed character.
+        crate::feature::minibuffer::setq(
+            env,
+            THIS_COMMAND,
+            match &this_command {
+                Some(name) => ELispExp::Symbol(name.clone()),
+                None => ELispExp::nil(),
+            },
+        );
+
         // Forgotten before the command, so that what a refusal before it left
         // is not said after it.
         crate::primitives::edits::take_refusal();

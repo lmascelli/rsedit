@@ -62,6 +62,15 @@ pub const SETTINGS: &[Setting] = &[
               \x20 (setq display-line-numbers 'relative)",
     },
     Setting {
+        name: THIS_COMMAND,
+        doc: "The command being run, as a symbol, while it runs and while the hooks after it \
+              do, `post-self-insert-hook' and `post-command-hook' among them; nil before the \
+              first. A hook that must tell Return's `newline' from a typed character reads it. \
+              Set by the editor: setting it changes nothing.\n\n\
+              Example:\n\
+              \x20 (eq this-command 'newline)",
+    },
+    Setting {
         name: SCROLL_CONSERVATIVELY,
         doc: "How many lines a window scrolls to bring point back into view when it has \
               moved off the top or the bottom, as C-n on the last row does. When point went \
@@ -455,6 +464,10 @@ pub const TAB_WIDTH: &str = "tab-width";
 /// gives to the same name, so somebody who already knows one does not have to
 /// learn the other.
 pub const DISPLAY_LINE_NUMBERS: &str = "display-line-numbers";
+
+/// The name of the Lisp variable holding the command being run, which the
+/// hooks after it read.
+pub const THIS_COMMAND: &str = "this-command";
 
 /// The name of the Lisp variable holding how far point may leave a window
 /// and have it scroll just enough, rather than centre point's line.

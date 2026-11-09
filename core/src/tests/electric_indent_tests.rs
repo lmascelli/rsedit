@@ -307,4 +307,65 @@ mod tests {
         type_str("}", &env, &ctx);
         assert_eq!(contents(&ctx), "fn main() {\n    let x = 1;\n}");
     }
+
+    // ---------------- with electric-pair ----------------
+
+    /// As [`editor`], with electric-pair loaded after indentation, as
+    /// init.lisp loads it.
+    fn editor_with_pairs() -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = editor();
+        eval_str(
+            include_str!("../../lisp/features/electric-pair.lisp"),
+            &env,
+            &ctx,
+        )
+        .expect("loading electric-pair.lisp");
+        (ctx, env)
+    }
+
+    #[test]
+    fn return_inside_a_typed_pair_opens_an_indented_line_for_the_body() {
+        let (ctx, env) = editor_with_pairs();
+        buffer("a.rs", "rust-mode", "", 0, &env, &ctx);
+        type_str("fn main() {", &env, &ctx);
+        assert_eq!(contents(&ctx), "fn main() {}", "the partner typed itself");
+        enter(&env, &ctx);
+        assert_eq!(contents(&ctx), "fn main() {\n    \n}");
+        type_str("let x = 1;", &env, &ctx);
+        assert_eq!(contents(&ctx), "fn main() {\n    let x = 1;\n}");
+    }
+
+    /// The two minor modes' hooks run in the order the modes came on: the
+    /// same lines come out whichever runs first.
+    #[test]
+    fn the_order_the_two_modes_came_on_in_does_not_matter() {
+        let (ctx, env) = editor_with_pairs();
+        buffer("a.c", "c-mode", "", 0, &env, &ctx);
+        run("(electric-pair-mode 1)", &env, &ctx);
+        // Off and on again: electric-indent now comes after electric-pair.
+        run(
+            "(electric-indent-mode -1) (electric-indent-mode 1)",
+            &env,
+            &ctx,
+        );
+        type_str("int main() {", &env, &ctx);
+        enter(&env, &ctx);
+        assert_eq!(contents(&ctx), "int main() {\n    \n}");
+        assert_eq!(point(&ctx), 17);
+    }
+
+    #[test]
+    fn nested_pairs_open_one_level_at_a_time() {
+        let (ctx, env) = editor_with_pairs();
+        buffer("a.rs", "rust-mode", "", 0, &env, &ctx);
+        type_str("fn main() {", &env, &ctx);
+        enter(&env, &ctx);
+        type_str("if a {", &env, &ctx);
+        enter(&env, &ctx);
+        type_str("go();", &env, &ctx);
+        assert_eq!(
+            contents(&ctx),
+            "fn main() {\n    if a {\n        go();\n    }\n}"
+        );
+    }
 }

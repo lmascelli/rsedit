@@ -425,6 +425,9 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::number(crate::primitives::lisp_job::DEFAULT_WORKER_FUEL as f64),
     );
 
+    // No command has run yet.
+    env.set_variable(THIS_COMMAND.into(), ELispExp::nil());
+
     // How far point may leave a window before its line is centred.
     env.set_variable(
         SCROLL_CONSERVATIVELY.into(),

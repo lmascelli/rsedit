@@ -42,6 +42,7 @@ SYNOPSIS
     (electric-pair-delete-backward)
     (electric-pair-delete-forward)
     electric-pair-skip-self
+    electric-pair-open-newline-between-pairs
     electric-pair-blanks
 
     (open-line-above COUNT)
@@ -191,6 +192,18 @@ PAIRS
     paired, since 'a is a lifetime there. M-x electric-pair-mode turns all
     of it off in the buffer you are in, and on again, and setting
     `electric-pair-skip-self' to nil stops only the stepping over.
+
+    Return between the halves of an empty pair, as in {|}, opens a line
+    between them for point and puts the closer on the line after, as in
+    Emacs; with `electric-indent-mode' on, both lines are indented, so
+    typing a block's body starts where it belongs:
+
+        fn main() {
+            |
+        }
+
+    Setting `electric-pair-open-newline-between-pairs' to nil leaves
+    Return a plain newline there.
 
 LINES
         C-o             open a blank line above this one
