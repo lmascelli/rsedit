@@ -401,6 +401,16 @@ fn cpp_brace_initializers_after_a_name_are_lists_but_block_heads_are_not() {
             ("concept C = requires {\n    int a,\nb;", 8),
             // An arrow to a member, then an initializer: still a list.
             ("auto x = a->b + Foo{\n    1,\n2,", 4),
+            // Return types with decltype in them, nested parentheses too.
+            ("auto f(T t) -> decltype(t + 1) {\n    int a,\nb;", 8),
+            ("auto f() -> decltype(auto) {\n    int a,\nb;", 8),
+            ("auto f(T t) -> std::remove_reference_t<decltype(t)> {\n    int a,\nb;", 8),
+            ("auto f(T t) -> typename decltype(t)::type {\n    int a,\nb;", 8),
+            ("auto f(T t) -> decltype(g(h(t)))::value_type {\n    int a,\nb;", 8),
+            ("auto l = [](auto t) -> std::vector<decltype(t)> {\n    int a,\nb;", 8),
+            // decltype in an initializer's type, with no arrow: still a list.
+            ("decltype(x) y{\n    1,\n2,", 4),
+            ("auto v = std::vector<decltype(x)>{\n    1,\n2,", 4),
         ],
     );
     // C has no such initializer: a name before a brace is left as it was.

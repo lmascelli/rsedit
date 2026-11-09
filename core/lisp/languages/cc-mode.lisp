@@ -155,12 +155,32 @@ at most 16 characters, none a space, a parenthesis or a backslash."
       (unless column (setq line (prog-indent--previous))))
     column))
 
+(defun cc--without-decltype (text)
+  "Return TEXT with what is inside each decltype(...) in it taken out, nested
+parentheses included, leaving the word: a type that holds one is a type all
+the same."
+  (let ((out "") (rest text))
+    (while (string-match "\\bdecltype[ \\t]*\\(" rest)
+      (let ((start (match-beginning 0))
+            (at (match-end 0))
+            (depth 1)
+            (size (length rest)))
+        ;; To the parenthesis that closes the one decltype opened.
+        (while (and (> depth 0) (< at size))
+          (let ((c (substring rest at (+ at 1))))
+            (cond ((string= c "(") (setq depth (+ depth 1)))
+                  ((string= c ")") (setq depth (- depth 1)))))
+          (setq at (+ at 1)))
+        (setq out (concat out (substring rest 0 start) "decltype"))
+        (setq rest (substring rest at))))
+    (concat out rest)))
+
 (defun cc--cpp-brace-init-p (before)
   "Return t if BEFORE, the code a brace follows in C++, names what the brace
 initializes -- Foo f{, std::vector<int> v{, std::pair<int, int>{ -- rather
 than heading a block, as class Widget {, namespace ns {, void f() const {,
-auto f() -> int {, a lambda's [] -> int {, a requires clause and else { do,
-though they also end in a name."
+auto f() -> int {, -> std::decay_t<decltype(t)> {, a lambda's [] -> int {, a
+requires clause and else { do, though they also end in a name."
   (and (eq (major-mode) 'cpp-mode)
        (string-match-p "([A-Za-z0-9_]|>)$" before)
        ;; A class's head: the keyword, its name, final, its bases.
@@ -177,9 +197,11 @@ though they also end in a name."
              before))
        ;; A trailing return type, a function's or a lambda's, with or without
        ;; its parameters: auto f() -> int {, [] -> int {,
-       ;; [x] mutable -> std::vector<T> {. Nothing but a type after the
-       ;; arrow; a member, as in a->b + Foo{, is followed by more.
-       (not (string-match-p "->[ \\t]*[A-Za-z0-9_:<>,*& \\t]*$" before))))
+       ;; [x] mutable -> std::vector<T> {, -> std::decay_t<decltype(t)> {.
+       ;; Nothing but a type after the arrow; a member, as in a->b + Foo{, is
+       ;; followed by more.
+       (not (string-match-p "->[ \\t]*[A-Za-z0-9_:<>,*& \\t]*$"
+                            (cc--without-decltype before)))))
 
 (defun cc--brace-list-p (open)
   "Return t if the brace at OPEN opens a list of values -- an enum's
