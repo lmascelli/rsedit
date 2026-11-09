@@ -17,6 +17,7 @@ SYNOPSIS
     (display-buffer-at-bottom BUFFER HEIGHT)
     (make-floating-window BUFFER-NAME X Y WIDTH HEIGHT &optional TITLE MODE)
     (close-floating-window)
+    scroll-conservatively
     window-separator
     after-resize-hook
 
@@ -50,6 +51,15 @@ SCROLLING
     cursor moves only when its line would leave the window. C-l puts the
     line the cursor is on in the middle of the window, and leaves the
     cursor where it is.
+
+    When the cursor leaves the window, the window follows it. A step past
+    the top or the bottom, as C-n on the last row, scrolls one line, so
+    you go on reading line by line. A jump further -- a search, goto-line,
+    a jump to an error -- puts the cursor's line in the middle of the
+    window, as C-l would, with what comes before and after it in sight.
+    `scroll-conservatively' says how far is a step: 1 unless you change
+    it. 0 centres at every step, as Emacs does by default, and anything
+    above 100 never centres, scrolling only as far as the cursor needs.
 
 FLOATING WINDOWS
     `make-floating-window' opens a buffer in a bordered window at a place
@@ -87,6 +97,10 @@ EXAMPLES
         (make-mode 'note-mode)
         (define-key 'note-mode "q" 'close-floating-window)
         (make-floating-window "*note*" 2 1 40 6 "Note" 'note-mode)
+
+    Scroll line by line however far the cursor goes, never centring:
+
+        (setq scroll-conservatively 101)
 
     A plain line between windows:
 

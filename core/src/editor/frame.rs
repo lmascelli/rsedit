@@ -126,6 +126,7 @@ impl<B: BufferTrait> EditorState<B> {
         let mode_line_format = mode_line_format(env);
         let separator_char = window_separator(env);
         let gutter = line_numbers(env);
+        let scroll_conservatively = scroll_conservatively(env);
         // The names out of the registry and its lock given back, then each
         // mode's property read from the environment: no lock of the editor is
         // held while the environment's is taken.
@@ -184,6 +185,7 @@ impl<B: BufferTrait> EditorState<B> {
                     trailing: &trailing,
                     matches: matches.as_ref(),
                     spots: spots.as_ref(),
+                    scroll_conservatively,
                 };
                 windows.root_mut().compute_tiled_views(
                     Rect {

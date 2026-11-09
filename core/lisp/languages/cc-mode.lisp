@@ -84,7 +84,9 @@
   (set-comment-syntax mode '(("//") ("/*" "*/" nil)))
   (put mode 'indent-char-literals t)
   (put mode 'tab-width 4)
-  (put mode 'indent-function 'cc-indent-line))
+  (put mode 'indent-function 'cc-indent-line)
+  ;; A brace typed first on its line puts it in its place at once.
+  (put mode 'electric-indent-chars '("{" "}")))
 
 (add-syntax-rule 'cpp-mode "\\[\\[[^]]*\\]\\]" 'attribute)
 

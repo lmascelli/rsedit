@@ -98,10 +98,13 @@ impl<B: BufferTrait> EditorState<B> {
         }
 
         let current_mode_name = self.with_current_buffer(|buf| buf.current_mode.clone());
-        // Only after a typed character, and before `post-command-hook`:
-        // electric-pair hangs here, and pairs before a mode looks at the line.
-        // A paste arrives as `insert-pasted-text`, and is not paired again.
-        if this_command.as_deref().map(String::as_str) == Some("self-insert") {
+        // Only after a typed character, Return's newline among them, as in
+        // Emacs, and before `post-command-hook`: electric-pair hangs here, and
+        // pairs before a mode looks at the line, and electric-indent indents
+        // the line Return opened. A paste arrives as `insert-pasted-text`, and
+        // is not paired again. Not after a refusal: nothing was inserted for
+        // the hook to act on.
+        if !refused && runs_post_self_insert_hook(this_command.as_deref().map(String::as_str)) {
             self.run_hook(&current_mode_name, "post-self-insert-hook", env);
         }
         self.run_hook(&current_mode_name, "post-command-hook", env);
@@ -258,4 +261,12 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn command_names(&self) -> Vec<String> {
         self.commands(|commands| commands.names())
     }
+}
+
+/// Returns whether the command THIS_COMMAND inserted what a key typed, and so
+/// is followed by `post-self-insert-hook`: a character, or Return's newline.
+/// Not for the undo history, which runs typed characters together but keeps
+/// each Return a step of its own.
+fn runs_post_self_insert_hook(this_command: Option<&str>) -> bool {
+    matches!(this_command, Some("self-insert") | Some("newline"))
 }

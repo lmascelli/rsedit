@@ -1,17 +1,20 @@
 ;;; indent --- what Tab and Return do.
 ;;;
-;;; Rust supplies the line, Tab and Return commands. This module supplies
-;;; region operations and language-rule helpers. User manual: `indentation'.
+;;; Rust supplies the line and Tab commands, and Return's `newline', which only
+;;; inserts. This module supplies region operations, language-rule helpers and
+;;; `electric-indent-mode', the minor mode that indents as you type.
+;;; User manual: `indentation'.
 ;;; Design: `doc/architettura-editor.typ, <mod-indent>`.
 
 (require 'commands)
 
-(defvar tab-always-indent nil
-  "How Tab handles indentation and text: nil indents in leading whitespace
-and inserts spaces after text; t always indents; complete also tries
-`completion-at-point' when indentation and point did not change. Consecutive
-Tabs cycle a mode's indent-levels-function alternatives. Without alternatives,
-consecutive Tabs with nil insert spaces.")
+(defvar tab-always-indent t
+  "How Tab handles indentation and text: t, as in Emacs, always indents the
+line, wherever point is on it; complete also tries `completion-at-point' when
+indentation and point did not change; nil indents in leading whitespace and
+inserts spaces up to the next tab stop after text. Consecutive Tabs cycle a
+mode's indent-levels-function alternatives. Without alternatives, consecutive
+Tabs with nil insert spaces.")
 
 ;; ---------------------------------------------------------------------------
 ;; Regions
@@ -210,22 +213,91 @@ indented."
     (indent-line)))
 
 ;; ---------------------------------------------------------------------------
-;; Enter
+;; Indenting as you type
 ;; ---------------------------------------------------------------------------
+;;
+;; Return runs `newline', which only inserts, and the editor runs
+;; `post-self-insert-hook' after it as after a typed character. The minor mode
+;; hangs there, as Emacs' does: whatever is on Return, a newline that reaches
+;; the buffer is indented, and turning the mode off leaves it plain.
 
-(defvar electric-indent-mode t
-  "Whether Return indents the line it opens, as `newline-and-indent' does.")
+(define-minor-mode electric-indent-mode nil
+  "Indent as you type in the current buffer: Return leaves the line it ends
+without trailing blanks and indented again, and indents the line it opens; a
+character listed in the mode's electric-indent-chars property indents its line
+when it is the first on it. On in every buffer unless turned off.")
 
-(defcommand newline () nil
-  "Insert a newline, and indent the new line when `electric-indent-mode' is
-on."
-  (if electric-indent-mode
-      (newline-and-indent)
-      (insert-newline)))
+(defun electric-indent--blank-p (text)
+  "Whether TEXT holds nothing but spaces and tabs."
+  (if (string-match-p "^[ \t]*$" text) t nil))
 
-;; Bound here, not beside Tab: without this file Return stays the built-in
-;; `insert-newline' rather than naming a command that is not there.
-(define-key nil "<ret>" 'newline)
+(defun electric-indent--leave-line ()
+  "Tidy the line point is on, which Return has just ended, and return the
+column it chose when it was blank, nil otherwise."
+  (beginning-of-line)
+  (let ((text (current-line)))
+    (if (electric-indent--blank-p text)
+        ;; Blank: the indentation chosen there, by Tab or a level picked, is
+        ;; kept for the next line, column 0 included, and the blank line
+        ;; itself left empty.
+        (let ((column (length text)))
+          (indent-line-to 0)
+          column)
+        (progn
+          ;; The blanks before where Return was pressed.
+          (if (string-match "[ \t]+$" text)
+              (let ((from (+ (point) (match-beginning 0))))
+                (delete-region from (+ (point) (length text)))))
+          ;; Indented again, as Emacs does, where the mode has a rule and does
+          ;; not ask to be left alone: a word typed may have changed where the
+          ;; line belongs, as `else' or `}' do.
+          (if (and (get (major-mode) 'indent-function)
+                   (not (get (major-mode) 'electric-indent-inhibit)))
+              (indent-line))
+          nil))))
+
+(defun electric-indent--after-newline ()
+  "Indent the line Return has just opened, after tidying the one it ended."
+  ;; By line number: tidying the line above moves every offset below it.
+  (let* ((opened (line-number-at-point))
+         (kept (progn (goto-char (- (point) 1)) (electric-indent--leave-line))))
+    (goto-line opened)
+    (beginning-of-line)
+    (if kept (indent-line-to kept) (indent-line))))
+
+(defun electric-indent--after-char (typed)
+  "Indent the line TYPED, just before point, is on, when the mode lists it in
+its electric-indent-chars property, it is the first on its line, and it is
+code."
+  (let ((chars (get (major-mode) 'electric-indent-chars))
+        (at (- (point) 1)))
+    (if (and (member typed chars)
+             (get (major-mode) 'indent-function)
+             ;; What is before TYPED on its line, TYPED being the one
+             ;; character before point.
+             (electric-indent--blank-p
+              (substring (current-line) 0 (max 0 (- (current-column) 1)))))
+        (let ((state (syntax-ppss at)))
+          (unless (or (nth 2 state) (nth 3 state))
+            (indent-line))))))
+
+(defun electric-indent-post-self-insert ()
+  "Indent after Return, or after an electric character. Run from
+`post-self-insert-hook' where `electric-indent-mode' is on."
+  (if (> (point) (point-min))
+      (let ((typed (buffer-substring (- (point) 1) (point))))
+        (if (string= typed "\n")
+            (electric-indent--after-newline)
+            (electric-indent--after-char typed)))))
+
+(add-hook 'electric-indent-mode "post-self-insert-hook"
+          'electric-indent-post-self-insert)
+
+;; In every buffer from now on, whatever its major mode, and in those already
+;; open, which `minor-mode-enable' leaves as they are.
+(minor-mode-enable 'electric-indent-mode)
+(dolist (name (all-buffer-names))
+  (minor-mode-on 'electric-indent-mode name))
 
 ;; ---------------------------------------------------------------------------
 ;; Readers for the language modes' rules

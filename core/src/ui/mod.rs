@@ -15,8 +15,8 @@ mod windows;
 #[cfg(test)]
 pub(crate) use compose::region_highlights;
 pub use compose::{
-    ComposeSettings, Highlight, RenderableWindowView, SearchMarks, Separator, SpotMarks,
-    TrailingSpaces, compose_layout, window_highlights,
+    ComposeSettings, Highlight, NEVER_RECENTER, RenderableWindowView, SearchMarks, Separator,
+    SpotMarks, TrailingSpaces, compose_layout, window_highlights,
 };
 pub use faces::{Color, Face, NAMED_COLORS, Style, Theme};
 // For the tests, which try a registry of their own.
@@ -31,3 +31,6 @@ pub use windows::{
 // For the tests, which check the layout against it.
 #[cfg(test)]
 pub use windows::MIN_DRAGGED_WIDTH;
+// For the tests, which check the scrolling rule on its own.
+#[cfg(test)]
+pub use compose::follow_point;

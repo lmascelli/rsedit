@@ -36,11 +36,11 @@ SYNOPSIS
     (delete-backward-char)
     (delete-region FROM TO)
 
+    (electric-pair-mode &optional ARG)
     (electric-pair-enable MODE)
     (electric-pair-post-self-insert)
     (electric-pair-delete-backward)
     (electric-pair-delete-forward)
-    electric-pair-mode
     electric-pair-skip-self
     electric-pair-blanks
 
@@ -184,11 +184,13 @@ PAIRS
     is closed further on goes to that bracket rather than adding one.
     Pasted text is never paired.
 
-    The pairs are the mode's, the same ones C-M-f follows. Pairing is on in
-    fundamental-mode and rust-mode, and `electric-pair-enable' turns it on
-    in another mode. In rust-mode quotes are not paired, since 'a is a
-    lifetime there. Setting `electric-pair-mode' to nil turns all of it
-    off, and `electric-pair-skip-self' only the stepping over.
+    The pairs are the mode's, the same ones C-M-f follows. Pairing is the
+    minor mode `electric-pair-mode', on in the buffers of fundamental-mode
+    and rust-mode; `electric-pair-enable' turns it on in the buffers of
+    another mode, those open and those to come. In rust-mode quotes are not
+    paired, since 'a is a lifetime there. M-x electric-pair-mode turns all
+    of it off in the buffer you are in, and on again, and setting
+    `electric-pair-skip-self' to nil stops only the stepping over.
 
 LINES
         C-o             open a blank line above this one

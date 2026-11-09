@@ -447,7 +447,7 @@ pub fn fill_default_keymaps<B: BufferTrait>(keymaps: &mut Keymap<B>) {
             code: KeyCode::Enter,
             modifiers: KeyModifiers::default(),
         },
-        ELispExp::form(vec![ELispExp::symbol("insert-newline".into())]),
+        ELispExp::form(vec![ELispExp::symbol("newline".into())]),
     );
 
     // Every character typed alone -- `a`, `è`, `€` -- is inserted: the

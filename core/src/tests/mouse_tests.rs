@@ -287,16 +287,17 @@ mod tests {
         // A float is drawn over a tiled window. Falling through would move
         // point in a buffer the pointer is not over and the user cannot see.
         let (ctx, env) = editor(100);
-        run(r#"(minibuffer-read "P:" nil nil nil)"#, &env, &ctx);
+        run(
+            r#"(make-floating-window "*note*" 2 1 40 6 "Note")"#,
+            &env,
+            &ctx,
+        );
+        // Focus back on the file, so that a click falling through would move
+        // its point.
+        run("(other-window 1)", &env, &ctx);
         compose(&ctx, &env);
         let before = point(&ctx);
-        let float = ctx.windows(|windows| {
-            windows
-                .floating()
-                .first()
-                .expect("the prompt is a float")
-                .rect
-        });
+        let float = ctx.windows(|windows| windows.floating().first().expect("a float").rect);
         assert!(matches!(
             ctx.hit_test(float.x, float.y),
             Some(Hit::Floating { .. })

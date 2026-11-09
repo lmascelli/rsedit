@@ -354,8 +354,39 @@ primitive!(insert_pasted_text, args, _env, ctx, {
     Ok(edited(ctx, happened))
 });
 
+pub const NEWLINE_DOC: &str = "(newline &optional N): Insert N newlines at point, 1 by \
+         default, and nothing else: what Return runs. Run from a key, it is followed by \
+         `post-self-insert-hook', as a typed character is, so that a minor mode such as \
+         `electric-indent-mode' can indent the line it opens; called from Lisp, it runs no hook. \
+         N less than 0 is an error.\n\n\
+         Example:\n\
+         (newline 2)";
+
+primitive!(newline, args, _env, ctx, {
+    let times = match args.first() {
+        None => 1,
+        Some(exp) if exp.is_nil() => 1,
+        Some(ELispExp::Number(n)) if *n < 0.0 => {
+            return Err(EvalError::RuntimeMessage(format!(
+                "Negative repetition argument {n}"
+            )));
+        }
+        Some(ELispExp::Number(n)) => args::width(*n)?,
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "Number".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let text = "\n".repeat(times);
+    let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, &text));
+    Ok(edited(ctx, happened))
+});
+
 pub const INSERT_NEWLINE_DOC: &str = "(insert-newline): Insert a newline at point, without \
-         indenting the new line.\n\n\
+         indenting the new line: unlike `newline', it is never followed by \
+         `post-self-insert-hook', whatever minor modes are on.\n\n\
          Example:\n\
          (define-key nil \"<ret>\" 'insert-newline)";
 
@@ -448,6 +479,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         &[],
         INSERT_PASTED_TEXT_DOC,
     );
+    into.command("newline", newline, &["p"], NEWLINE_DOC);
     into.command("insert-newline", insert_newline, &[], INSERT_NEWLINE_DOC);
     into.command(
         "delete-backward-char",

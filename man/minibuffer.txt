@@ -4,6 +4,8 @@ NAME
 SYNOPSIS
     (minibuffer-read PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL &optional MODE KEY)
     (default-minibuffer-prompt PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL ...)
+    (floating-minibuffer-prompt PROMPT ON-CONFIRM ON-CHANGE ON-CANCEL ...)
+    (toggle-floating-minibuffer)
     (minibuffer-confirm)
     (minibuffer-cancel)
     (minibuffer-cleanup)
@@ -16,6 +18,7 @@ SYNOPSIS
     (eval-expression-confirm INPUT)
     (eval-string-top-level STRING)
     history-length
+    minibuffer-lines
     minibuffer-width
     minibuffer-height
     *minibuffer-read-function*
@@ -25,10 +28,12 @@ SYNOPSIS
 
 DESCRIPTION
     A command that needs something from you -- a file name, a string to
-    search for, a command's name -- asks for it in a prompt: a small window
-    in the middle of the frame, with the question as its title. Type the
-    answer and press Return; Escape or C-g closes the prompt without
-    answering.
+    search for, a command's name -- asks for it in a prompt: as in Emacs, a
+    row across the bottom of the frame, just above the echo area, with the
+    question in front of where you type. The windows above give it the row
+    and have it back when the prompt closes, so the text you are searching
+    or editing stays in sight. Type the answer and press Return; Escape or
+    C-g closes the prompt without answering.
     Tab completes what you have typed, as the `completion' page describes,
     and the arrow keys bring back what you answered at the same prompt
     before.
@@ -105,21 +110,41 @@ ASKING FROM LISP
     asking for, which is how a preview knows what to show. A background job
     cannot open a prompt: `minibuffer-read' refuses there.
 
+THE MINIBUFFER WINDOW
+    The prompt's window is `minibuffer-lines' rows high, one unless you
+    change it, and the question is drawn in the `minibuffer-prompt' face.
+    While it is open the other windows follow their point, as an incremental
+    search needs. C-x o goes in and out of it; it cannot be split or closed
+    with C-x 2, C-x 3 or C-x 0, C-x 1 in another window leaves it where it
+    is, and `count-windows' does not count it.
+
 REPLACING THE PROMPT
     `minibuffer-read' hands its arguments to the function
     `*minibuffer-read-function*' names, and every prompt in the editor goes
     through it, so a function of yours there replaces them all. The
-    editor's own is `default-minibuffer-prompt', the window described here,
+    editor's own is `default-minibuffer-prompt', the window at the bottom
+    described here. In it Return runs `minibuffer-confirm', Escape and C-g
+    `minibuffer-cancel' and Tab `minibuffer-complete', and closing it runs
+    `minibuffer-cleanup', which makes the buffer you were in current again.
+
+    minibuffer.lisp has another, written in Lisp:
+    `floating-minibuffer-prompt', a bordered window in the middle of the
+    frame, titled with the question,
     `minibuffer-width' columns wide and `minibuffer-height' rows tall, its
-    border included, or as much as the frame can hold. In it Return runs
-    `minibuffer-confirm', Escape and C-g `minibuffer-cancel' and Tab
-    `minibuffer-complete', and closing it runs `minibuffer-cleanup', which
-    makes the buffer you were in current again.
+    border included, or as much as the frame can hold. Name it in
+    `*minibuffer-read-function*' to have every prompt open that way, or run
+    `toggle-floating-minibuffer' to go from one to the other.
 
 EXAMPLES
-    A narrower prompt:
+    Every prompt in a floating window, as a narrower one:
 
+        (setq *minibuffer-read-function* 'floating-minibuffer-prompt)
         (setq minibuffer-width 40)
+
+    A minibuffer two rows high, its question in yellow:
+
+        (setq minibuffer-lines 2)
+        (set-face 'minibuffer-prompt "yellow" nil '("bold"))
 
     A longer history at every prompt:
 

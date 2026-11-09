@@ -425,6 +425,12 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::number(crate::primitives::lisp_job::DEFAULT_WORKER_FUEL as f64),
     );
 
+    // How far point may leave a window before its line is centred.
+    env.set_variable(
+        SCROLL_CONSERVATIVELY.into(),
+        ELispExp::number(DEFAULT_SCROLL_CONSERVATIVELY),
+    );
+
     // The line-number gutter, off, at the width it has when nothing is said.
     env.set_variable(DISPLAY_LINE_NUMBERS.into(), ELispExp::nil());
     env.set_variable(

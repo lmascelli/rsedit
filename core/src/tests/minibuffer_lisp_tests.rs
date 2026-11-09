@@ -40,6 +40,107 @@ mod tests {
         (ctx, env)
     }
 
+    /// How many minibuffer windows the frame has.
+    fn prompt_windows(ctx: &EditorState<GapBuffer>) -> usize {
+        ctx.windows(|windows| {
+            windows
+                .root()
+                .window_ids()
+                .into_iter()
+                .filter(|id| windows.is_prompt(*id))
+                .count()
+        })
+    }
+
+    #[test]
+    fn the_prompt_is_a_split_at_the_bottom_and_goes_when_answered() {
+        let (ctx, env) = setup();
+        let before = ctx.get_focused_window_id();
+        eval_str(r#"(minibuffer-read "Test:" nil nil nil)"#, &env, &ctx).unwrap();
+        assert_eq!(prompt_windows(&ctx), 1);
+        assert_eq!(ctx.windows(|windows| windows.floating().len()), 0);
+        // Not counted, as Emacs does not count the minibuffer.
+        assert_eq!(
+            eval_str("(count-windows)", &env, &ctx).unwrap(),
+            LispExp::number(1.0)
+        );
+
+        eval_str("(minibuffer-confirm)", &env, &ctx).unwrap();
+        assert_eq!(prompt_windows(&ctx), 0, "the split closes with the prompt");
+        assert_eq!(ctx.get_focused_window_id(), before, "and focus is back");
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+    }
+
+    #[test]
+    fn the_minibuffer_window_cannot_be_deleted_split_or_left_alone() {
+        let (ctx, env) = setup();
+        eval_str(r#"(minibuffer-read "Test:" nil nil nil)"#, &env, &ctx).unwrap();
+        // Focus is in the prompt.
+        assert!(eval_str("(delete-window)", &env, &ctx).is_err());
+        assert_eq!(
+            eval_str("(split-window-below)", &env, &ctx).unwrap(),
+            LispExp::nil()
+        );
+        assert_eq!(
+            eval_str("(delete-other-windows)", &env, &ctx).unwrap(),
+            LispExp::nil()
+        );
+        assert_eq!(prompt_windows(&ctx), 1);
+        // From the window above: the last ordinary window stays, and C-x 1
+        // keeps the minibuffer.
+        eval_str("(other-window 1)", &env, &ctx).unwrap();
+        assert!(eval_str("(delete-window)", &env, &ctx).is_err());
+        eval_str("(split-window-below)", &env, &ctx).unwrap();
+        eval_str("(delete-other-windows)", &env, &ctx).unwrap();
+        assert_eq!(prompt_windows(&ctx), 1);
+        assert_eq!(
+            eval_str("(count-windows)", &env, &ctx).unwrap(),
+            LispExp::number(1.0)
+        );
+        eval_str("(minibuffer-cancel)", &env, &ctx).unwrap();
+        assert_eq!(prompt_windows(&ctx), 0);
+    }
+
+    #[test]
+    fn the_floating_prompt_of_minibuffer_lisp_answers_as_the_split_does() {
+        let (ctx, env) = setup();
+        eval_str(
+            r#"
+            (toggle-floating-minibuffer)
+            (setq *test-result* nil)
+            (minibuffer-read "Float:" (lambda (input) (setq *test-result* input)) nil nil)
+            "#,
+            &env,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(prompt_windows(&ctx), 0);
+        assert_eq!(ctx.windows(|windows| windows.floating().len()), 1);
+        assert_eq!(ctx.get_current_buffer_name(), "*Minibuffer*");
+        // A second is refused, as the editor's own refuses one.
+        assert!(eval_str(r#"(minibuffer-read "Two" nil nil nil)"#, &env, &ctx).is_err());
+
+        eval_str(r#"(self-insert "o") (self-insert "k")"#, &env, &ctx).unwrap();
+        eval_str("(minibuffer-confirm)", &env, &ctx).unwrap();
+        assert_eq!(
+            eval_str("*test-result*", &env, &ctx).unwrap(),
+            LispExp::string("ok".into())
+        );
+        assert_eq!(ctx.windows(|windows| windows.floating().len()), 0);
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+        // Remembered in the history under its question, as the split's are.
+        assert_eq!(
+            eval_str(r#"(car (minibuffer-history "Float:"))"#, &env, &ctx).unwrap(),
+            LispExp::string("ok".into())
+        );
+
+        eval_str("(toggle-floating-minibuffer)", &env, &ctx).unwrap();
+        assert_eq!(
+            eval_str("*minibuffer-read-function*", &env, &ctx).unwrap(),
+            LispExp::symbol("default-minibuffer-prompt".into())
+        );
+    }
+
     #[test]
     fn confirm_flow_captures_input_and_restores_the_previous_buffer() {
         let (ctx, env) = setup();
@@ -93,7 +194,7 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(ctx.windows(|windows| windows.floating().len()), 1);
+        assert_eq!(prompt_windows(&ctx), 1);
         eval_str("(minibuffer-confirm)", &env, &ctx).unwrap();
 
         assert_eq!(

@@ -33,6 +33,24 @@ fn column<B: BufferTrait>(value: &ELispExp<B>) -> Result<usize, EvalError<Editor
     }
 }
 
+/// Returns whether the current buffer's mode has an indentation rule of its
+/// own, an `indent-function`: without one, Tab works as Emacs'
+/// `indent-relative` rather than reindenting.
+fn has_rule<B: BufferTrait>(
+    env: &std::sync::Arc<Env<EditorState<B>>>,
+    ctx: &EditorState<B>,
+) -> bool {
+    let mode = ctx.with_current_buffer(|buf| buf.current_mode.clone());
+    env.get_property(&mode, "indent-function")
+        .is_some_and(|rule| rule.is_truthy())
+}
+
+/// Returns the first tab stop past COLUMN: the next multiple of WIDTH.
+fn next_tab_stop(column: usize, width: usize) -> usize {
+    let width = width.max(1);
+    column + width - column % width
+}
+
 fn preferred_column<B: BufferTrait>(
     env: &std::sync::Arc<Env<EditorState<B>>>,
     ctx: &EditorState<B>,
@@ -125,24 +143,32 @@ fn insert_padding<B: BufferTrait>(
     ctx: &EditorState<B>,
 ) -> IndentResult<B> {
     let width = column(&indent_width(&[], env, ctx)?)?;
-    let padding = " ".repeat(width);
     let happened = ctx.with_current_buffer_mut(|buf| {
         let at = buf.text.cursor_pos_1d();
+        // Up to the next tab stop, as Emacs' `insert-tab': text after a Tab
+        // lines up with text after another, wherever each began.
+        let col = buf.text.cursor_pos().1;
+        let count = next_tab_stop(col, width) - col;
+        let padding = " ".repeat(count);
         if !insert_text(buf, at, &padding) {
             return false;
         }
-        goto_offset(&mut buf.text, at + width);
+        goto_offset(&mut buf.text, at + count);
         true
     });
     Ok(edited(ctx, happened))
 }
 
 pub const INDENT_FOR_TAB_COMMAND_DOC: &str = "(indent-for-tab-command): Indent the region or \
-         current line. Consecutive Tabs cycle the mode's indent-levels-function columns from \
-         right to left, wrapping to the maximum. Other commands end the cycle. With \
-         tab-always-indent nil, insert spaces after text; without alternatives, repeated Tabs \
-         also insert spaces. With t, only indent. With complete, try completion when indentation \
-         and point did not change. A cycling Tab in leading whitespace never inserts spaces.";
+         current line where the mode's indent-function says, wherever point is on it, as Emacs \
+         does with tab-always-indent t, the default. Consecutive Tabs cycle the mode's \
+         indent-levels-function columns from right to left, wrapping to the maximum; other \
+         commands end the cycle. With complete, try completion when indentation and point did \
+         not change. With nil, insert spaces up to the next tab stop after text, and on a \
+         repeated Tab without alternatives. A mode with no indent-function indents as Emacs' \
+         indent-relative: in the leading whitespace, up to the previous line's indentation or \
+         else the next tab stop, never less than the line has; after text, spaces up to the \
+         next tab stop.";
 
 primitive!(indent_for_tab_command, args, env, ctx, {
     exact_arity(args, 0)?;
@@ -154,9 +180,38 @@ primitive!(indent_for_tab_command, args, env, ctx, {
         let indent = indentation_of(&buf.text, line);
         (col <= indent, indent, buf.text.cursor_pos_1d())
     });
+    // t when indent.lisp has not said otherwise, as in Emacs.
     let policy = env
         .get_variable("tab-always-indent")
-        .unwrap_or_else(ELispExp::nil);
+        .unwrap_or_else(ELispExp::t);
+    let complete = matches!(&policy, ELispExp::Symbol(name) if name.as_str() == "complete");
+
+    // No rule to ask: the previous line is all there is to go by, and a line
+    // indented past it is not to be pulled back to it, as it was when this
+    // copied the previous line's indentation whatever the line had.
+    if !has_rule(&env, ctx) {
+        if !inside {
+            return if complete {
+                call_callable(
+                    &ELispExp::symbol("completion-at-point".into()),
+                    &[],
+                    env,
+                    ctx,
+                )
+            } else {
+                insert_padding(env, ctx)
+            };
+        }
+        let previous = column(&previous_indentation(&[], env.clone(), ctx)?)?;
+        let width = column(&indent_width(&[], env.clone(), ctx)?)?;
+        let target = if existing < previous {
+            previous
+        } else {
+            next_tab_stop(existing, width)
+        };
+        return indent_line_to(&[ELispExp::number(target as f64)], env, ctx);
+    }
+
     if policy.is_nil() && !inside {
         return insert_padding(env, ctx);
     }
@@ -180,7 +235,7 @@ primitive!(indent_for_tab_command, args, env, ctx, {
         return Ok(changed);
     }
     let same_point = ctx.with_current_buffer(|buf| buf.text.cursor_pos_1d() == point);
-    if same_point && matches!(&policy, ELispExp::Symbol(name) if name.as_str() == "complete") {
+    if same_point && complete {
         return call_callable(
             &ELispExp::symbol("completion-at-point".into()),
             &[],

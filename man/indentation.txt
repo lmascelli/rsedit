@@ -8,8 +8,10 @@ SYNOPSIS
     (indent-rigidly-right)
     (indent-rigidly-left)
     (indent-rigidly-lines FROM TO AMOUNT)
-    (newline)
+    (newline &optional N)
     (newline-and-indent)
+    (electric-indent-mode &optional ARG)
+    (electric-indent-post-self-insert)
     (back-to-indentation)
     (indent-line-to COLUMN)
     (current-indentation &optional LINE)
@@ -26,27 +28,33 @@ SYNOPSIS
     (bash-indent-line)
     (cmake-indent-line)
     (cc-indent-line)
+    (rust-indent-line)
     tab-width
     tab-always-indent
     indent-region-style
-    electric-indent-mode
 
 DESCRIPTION
     Tab puts the line where its mode says it belongs, and Return starts the
     next line there too. The editor has no opinion of its own about how a
     language is indented: a mode gives its rule, and a buffer whose mode
-    has none matches the line above.
+    has none goes by the line above.
 
     Indentation is written with spaces, never with tab characters.
 
 TAB ON A LINE
-    Tab indents the line point is on. Point stays on the character it was
-    on, or goes to the start of the text when it was in the indentation.
+    Tab indents the line point is on, wherever point is on it, as in
+    Emacs. Point stays on the character it was on, or goes to the start of
+    the text when it was in the indentation. A line already where it
+    belongs is left as it is, however many times Tab is pressed.
     `tab-always-indent' decides when to indent and when to insert spaces:
 
-        nil             indent in leading whitespace; insert spaces after text
-        t               always indent
+        t               always indent; the default
         complete        indent, then try completion if nothing changed
+        nil             indent in leading whitespace; after text, insert
+                        spaces up to the next tab stop
+
+    A tab stop is every multiple of `indent-width', so text after a Tab
+    lines up with text after another, wherever each began.
 
     A mode can offer alternative indentation levels. The first Tab uses its
     suggested column; consecutive Tabs choose the next smaller alternative,
@@ -62,6 +70,14 @@ TAB ON A LINE
     not cycle or insert extra spaces.
 
     M-m goes to the first character on the line that is not a space.
+
+    In a mode with no rule of its own, such as fundamental-mode, there is
+    nothing to put the line where it belongs, and Tab works as Emacs'
+    indent-relative. In the indentation it brings the line up to the
+    indentation of the line above, or, when it is there or further already,
+    on to the next tab stop: it never takes indentation away. After the
+    text it inserts spaces up to the next tab stop, or with complete tries
+    completion.
 
 TAB ON A REGION
     With a region, Tab works on every line the region touches. A region
@@ -86,14 +102,30 @@ SHIFTING
     go on moving. Blank lines in a region are left alone.
 
 RETURN
-    Return ends the line and indents the new one as Tab would. The spaces
-    just before point go first, so the line it ends does not end in
-    spaces, and Return on an indented blank line leaves that line empty.
-    From a blank line, Return keeps that line's chosen indentation, including
-    a level selected by Tab or Shift-Tab. It never cycles alternatives.
+    Return runs `newline', which only inserts a newline. The indenting is
+    done by the minor mode `electric-indent-mode', on in every buffer, as
+    in Emacs: after the newline it indents the line Return opened as Tab
+    would. The line Return ends is tidied first: the spaces at its end go,
+    and it is indented again where the mode has a rule, since a word typed
+    on it may have changed where it belongs. Return on an indented blank
+    line leaves that line empty, and the new line keeps the indentation
+    chosen there, including a level selected by Tab or Shift-Tab. It never
+    cycles alternatives.
 
-    With `electric-indent-mode' set to nil, Return only inserts a newline;
-    M-x newline-and-indent still indents.
+    A mode can ask for the line Return ends to be left where it is, as
+    python-mode does, since there a dedent is a choice:
+
+        (put 'MODE 'electric-indent-inhibit t)
+
+    A mode can also name characters that indent their line when typed
+    first on it, such as the brace that closes a block in C and Rust:
+
+        (put 'MODE 'electric-indent-chars '("{" "}"))
+
+    M-x electric-indent-mode turns it off in the buffer you are in, and on
+    again; Return is then a plain newline, and M-x newline-and-indent still
+    indents. `newline' called from Lisp never indents, and neither does
+    `insert-newline', bound to a key or not.
 
 HOW WIDE A TAB IS
     `tab-width' is the width of one Tab everywhere, 4 unless it is set: how
@@ -181,6 +213,15 @@ LANGUAGE RULES
     preprocessor directives begin at column zero. Character literals,
     registered raw strings and comments do not count as brackets.
 
+    Rust indents one level inside braces, from the statement that opened
+    the block however many lines it took, so struct fields and match arms
+    are one level in and a closing brace goes back to the statement. A
+    line that goes on with the statement above -- a method chain, a line
+    starting with && or ||, or one after a line ending in an operator, = or
+    => -- is one level further. Inside parentheses and brackets arguments
+    line up as in C. A comma ends no line in a block: the next field or
+    arm stays where the first is.
+
 THE LISP RULE
     `lisp-indent-line' is the rule for this editor's own Lisp, and
     risp-mode uses it. It reads only the brackets, so it works for any mode
@@ -216,9 +257,9 @@ LIMITS
     is.
 
 EXAMPLES
-    A Tab that only ever indents:
+    A Tab that inserts spaces after text, as it once did:
 
-        (setq tab-always-indent t)
+        (setq tab-always-indent nil)
 
     A Tab that completes once the line is indented:
 
@@ -229,9 +270,13 @@ EXAMPLES
         (put 'c-mode 'tab-width 8)
         (put 'c-mode 'indent-region-style 'shift)
 
-    Return as a plain newline:
+    Return as a plain newline, in every buffer:
 
-        (setq electric-indent-mode nil)
+        (define-key nil "<ret>" 'insert-newline)
+
+    or in the buffer you are in only:
+
+        (electric-indent-mode -1)
 
     Indent a macro of your own like defun:
 

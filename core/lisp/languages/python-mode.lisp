@@ -58,6 +58,9 @@
 (put 'python-mode 'tab-width 4)
 (put 'python-mode 'indent-function 'python-indent-line)
 (put 'python-mode 'indent-levels-function 'python-indent-levels)
+;; The line Return ends is left where it is, as in Emacs: in Python where it
+;; belongs is a choice, made with Tab, that indenting it again would undo.
+(put 'python-mode 'electric-indent-inhibit t)
 
 (defun python--clause-column (code limit)
   "Find a matching compound statement for CODE before point, no deeper than LIMIT."

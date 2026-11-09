@@ -1,9 +1,12 @@
-;;; rust-mode --- colouring for Rust source.
+;;; rust-mode --- colouring and indentation for Rust source.
 ;;;
-;;; Colours Rust, and tells the editor its brackets, strings, character
-;;; literals and comments, in the files whose names end in .rs. User manual:
-;;; the `modes' page; how a mode like this one is written, `writing-modes'.
+;;; Colours Rust, indents it, and tells the editor its brackets, strings,
+;;; character literals and comments, in the files whose names end in .rs.
+;;; User manual: the `modes' page, and `indentation' for how it indents; how a
+;;; mode like this one is written, `writing-modes'.
 ;;; Design: `doc/architettura-editor.typ, <mod-linguaggi>`.
+
+(require 'indent)
 
 (make-mode 'rust-mode)
 
@@ -81,6 +84,83 @@ is coloured as a type too.")
 ;; reads as `r' and an ordinary string.
 (set-string-syntax 'rust-mode '(("r#\"" "\"#") ("br#\"" "\"#") ("r\"" "\"") ("br\"" "\"")))
 (set-comment-syntax 'rust-mode '(("//") ("/*" "*/" t)))
+
+;; ---------------------------------------------------------------------------
+;; Indentation
+;; ---------------------------------------------------------------------------
+;;
+;; One `indent-width' per block, and one more for a line that goes on with the
+;; statement above it: a method chain, an operator at the end of a line or at
+;; the start of the next. Inside parentheses and brackets, under the first
+;; argument, as in C. A comma ends nothing in Rust's blocks -- a struct's
+;; fields, a match's arms -- so it does not make the next line a continuation,
+;; as it does in cc-mode's rule.
+
+(defun rust--continues-p (code previous)
+  "Whether the line whose code is CODE goes on with the statement the line
+whose code is PREVIOUS is part of."
+  (or (string-match-p "^(\\.[A-Za-z_]|&&|\\|\\||\\?)" code)
+      (string-match-p "(=>|=|\\+|-|\\*|/|%|&&|\\|\\||\\^|<<|>>)$" previous)))
+
+(defun rust--statement-indentation ()
+  "Return the indentation of the line the statement on point's line begins
+on, going back over the lines it continues. Point ends at that line's start."
+  (beginning-of-line)
+  (let ((column (current-indentation))
+        (done nil))
+    (while (not done)
+      (let* ((here (point))
+             (code (prog-indent--trim (prog-indent--code)))
+             (previous (prog-indent--previous)))
+        (if (and previous (rust--continues-p code (nth 2 previous)))
+            (progn
+              (goto-char (nth 0 previous))
+              (setq column (nth 1 previous)))
+            (progn
+              (goto-char here)
+              (setq done t)))))
+    column))
+
+(defun rust-indent-line ()
+  "Return the column the line point is on should start at, in Rust."
+  (beginning-of-line)
+  (let* ((start (point))
+         (existing (current-indentation))
+         (state (syntax-ppss))
+         (code (prog-indent--trim (prog-indent--code)))
+         (open (nth 4 state))
+         (width (indent-width)))
+    (cond
+     ;; In a string the leading whitespace is content.
+     ((nth 2 state) existing)
+     ;; In a block comment, a `*' under the one that opened it.
+     ((nth 3 state)
+      (goto-char start)
+      (setq code (prog-indent--trim (current-line)))
+      (goto-char (nth 3 state))
+      (if (string-match-p "^\\*" code) (+ (current-column) 1) existing))
+     ((and open (member (prog-indent--char open) '("(" "[")))
+      (prog-indent--under open (string-match-p "^[)\\]]" code)))
+     (t
+      ;; A block's body is one width in from the statement that opens it,
+      ;; however many lines that statement took.
+      (let* ((base (if open (progn (goto-char open) (rust--statement-indentation)) 0))
+             (previous (progn (goto-char start) (prog-indent--previous))))
+        (cond
+         ((string-prefix-p "}" code) base)
+         ;; The line above is in this block and the statement goes on.
+         ((and previous
+               (> (nth 0 previous) (or open -1))
+               (rust--continues-p code (nth 2 previous)))
+          (goto-char (nth 0 previous))
+          (+ (rust--statement-indentation) width))
+         (open (+ base width))
+         (t 0)))))))
+
+(put 'rust-mode 'tab-width 4)
+(put 'rust-mode 'indent-function 'rust-indent-line)
+;; A brace typed first on its line puts it in its place at once.
+(put 'rust-mode 'electric-indent-chars '("{" "}"))
 
 (add-auto-mode "\\.rs$" 'rust-mode)
 

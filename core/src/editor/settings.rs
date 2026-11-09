@@ -62,6 +62,16 @@ pub const SETTINGS: &[Setting] = &[
               \x20 (setq display-line-numbers 'relative)",
     },
     Setting {
+        name: SCROLL_CONSERVATIVELY,
+        doc: "How many lines a window scrolls to bring point back into view when it has \
+              moved off the top or the bottom, as C-n on the last row does. When point went \
+              further -- a search, `goto-line', a jump to an error -- its line is put in the \
+              middle of the window instead, as C-l puts it. 0 always centres, as Emacs does \
+              by default; above 100 never centres.\n\n\
+              Example:\n\
+              \x20 (setq scroll-conservatively 101)",
+    },
+    Setting {
         name: DISPLAY_LINE_NUMBERS_WIDTH,
         doc: "The fewest digits the line numbers take room for, so that the text does not \
               shift sideways as the file grows. More are used when a number needs them.",
@@ -445,6 +455,29 @@ pub const TAB_WIDTH: &str = "tab-width";
 /// gives to the same name, so somebody who already knows one does not have to
 /// learn the other.
 pub const DISPLAY_LINE_NUMBERS: &str = "display-line-numbers";
+
+/// The name of the Lisp variable holding how far point may leave a window
+/// and have it scroll just enough, rather than centre point's line.
+pub const SCROLL_CONSERVATIVELY: &str = "scroll-conservatively";
+
+/// How far point may leave a window before its line is centred, when nothing
+/// says otherwise: one line, so that `C-n` and `C-p` at an edge scroll line by
+/// line, and anything that jumps further centres.
+pub const DEFAULT_SCROLL_CONSERVATIVELY: f64 = 1.0;
+
+/// Returns how far point may leave a window before its line is centred, as
+/// Lisp has it now: `scroll-conservatively` when it is a number of at least
+/// zero, the default otherwise. Read before composition takes any lock, as
+/// the gutter's settings are.
+pub(super) fn scroll_conservatively<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> usize {
+    match env.get_variable(SCROLL_CONSERVATIVELY) {
+        // Capped: anything past the threshold means the same, never centre.
+        Some(ELispExp::Number(n)) if n.is_finite() && n >= 0.0 => {
+            (n as usize).min(crate::ui::NEVER_RECENTER + 1)
+        }
+        _ => DEFAULT_SCROLL_CONSERVATIVELY as usize,
+    }
+}
 
 /// The name of the Lisp variable holding the gutter's minimum width, in
 /// digits.

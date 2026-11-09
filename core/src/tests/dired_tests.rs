@@ -114,14 +114,16 @@ mod tests {
         string_of(&run("(buffer-string)", env, ctx))
     }
 
-    /// What the open prompt is asking, read off the floating window it opened.
+    /// What the open prompt is asking, read off the minibuffer's window.
     fn prompt_title(ctx: &Ctx) -> String {
         ctx.windows(|windows| {
             windows
-                .floating()
-                .iter()
-                .find(|float| float.window.buffer_name == "*Minibuffer*")
-                .and_then(|float| float.title.clone())
+                .root()
+                .window_ids()
+                .into_iter()
+                .filter_map(|id| windows.root().window(id))
+                .find(|window| window.buffer_name == "*Minibuffer*")
+                .and_then(|window| window.prompt.as_ref().map(|p| p.text.clone()))
         })
         .expect("a prompt should be open")
     }

@@ -55,6 +55,19 @@ mod tests {
         (ctx, env)
     }
 
+    /// As [`with_module`], with every prompt opened by the floating one of
+    /// minibuffer.lisp instead of the split at the bottom.
+    fn with_floating_prompt() -> (Ctx, Arc<Env<Ctx>>) {
+        let (ctx, env) = with_module();
+        eval_str(
+            "(setq *minibuffer-read-function* 'floating-minibuffer-prompt)",
+            &env,
+            &ctx,
+        )
+        .expect("choosing the floating prompt");
+        (ctx, env)
+    }
+
     fn text_of(exp: &LispExp<Ctx>) -> String {
         match exp {
             LispExp::String(s) => (**s).clone(),
@@ -612,8 +625,39 @@ mod tests {
 
         press(&ctx, &env, KeyCode::Tab);
 
+        // The strip's five rows, and the minibuffer's own.
         let after = ctx.snapshot(&env, W, H).views[0].rect.height;
-        assert_eq!(after, before - 5);
+        assert_eq!(
+            after,
+            before - 5 - crate::editor::DEFAULT_MINIBUFFER_LINES as usize
+        );
+    }
+
+    /// The prompt is a row across the bottom of the frame, just above the
+    /// echo area, with its question in front of the answer: the text above
+    /// stays in sight.
+    #[test]
+    fn the_prompt_is_a_row_above_the_echo_area() {
+        let (ctx, env) = with_module();
+        prompt_offering(&["alpha"], &env, &ctx);
+
+        let frame = ctx.snapshot(&env, W, H);
+        let prompt = frame
+            .views
+            .iter()
+            .find(|view| view.buffer_name == "*Minibuffer*")
+            .expect("the prompt is on screen");
+        assert_eq!(prompt.rect.height, 1);
+        assert_eq!(
+            prompt.rect.y + 1,
+            (H - 1) as isize,
+            "the row above the echo area"
+        );
+        assert_eq!(prompt.rect.x as usize + prompt.rect.width, W);
+        assert!(!prompt.has_border);
+        let question = &prompt.gutter.first().expect("the question is drawn").text;
+        assert!(question.starts_with("Pick:"), "{question:?}");
+        assert_eq!(prompt.gutter_width, prompt.rect.x as usize);
     }
 
     #[test]
@@ -1060,7 +1104,7 @@ mod tests {
     /// is drawn on top.
     #[test]
     fn on_a_frame_too_small_for_both_the_prompt_is_drawn_over_the_strip() {
-        let (ctx, env) = with_module();
+        let (ctx, env) = with_floating_prompt();
         prompt_offering(&["alpha", "beta", "gamma"], &env, &ctx);
         press(&ctx, &env, KeyCode::Tab);
 
@@ -1104,7 +1148,7 @@ mod tests {
 
     #[test]
     fn the_prompt_sits_in_the_middle_of_the_frame() {
-        let (ctx, env) = with_module();
+        let (ctx, env) = with_floating_prompt();
         prompt_offering(&["alpha"], &env, &ctx);
 
         let frame = ctx.snapshot(&env, W, H);
@@ -1132,7 +1176,7 @@ mod tests {
 
     #[test]
     fn the_prompt_is_the_size_the_variables_ask_for() {
-        let (ctx, env) = with_module();
+        let (ctx, env) = with_floating_prompt();
         run(
             "(setq minibuffer-width 30)(setq minibuffer-height 5)",
             &env,
@@ -1156,7 +1200,7 @@ mod tests {
     /// cannot hold is clamped rather than refused.
     #[test]
     fn a_prompt_larger_than_the_frame_is_cut_down_to_fit() {
-        let (ctx, env) = with_module();
+        let (ctx, env) = with_floating_prompt();
         run(
             "(setq minibuffer-width 9999)(setq minibuffer-height 9999)",
             &env,
@@ -1202,7 +1246,7 @@ mod tests {
                 None,
             ),
         ] {
-            let (ctx, env) = with_module();
+            let (ctx, env) = with_floating_prompt();
             // Wide enough that the default is not clamped, so what is measured
             // is the fallback and not the frame.
             run("(setq frame-width 100)", &env, &ctx);
@@ -1230,7 +1274,7 @@ mod tests {
     /// A prompt is centred above the echo area, not in the whole frame.
     #[test]
     fn a_prompt_as_tall_as_the_frame_still_leaves_the_echo_row_clear() {
-        let (ctx, env) = with_module();
+        let (ctx, env) = with_floating_prompt();
         run(&format!("(setq minibuffer-height {H})"), &env, &ctx);
         prompt_offering(&["alpha"], &env, &ctx);
 

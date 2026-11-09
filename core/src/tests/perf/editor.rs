@@ -501,6 +501,7 @@ fn layout(report: &mut Report) {
                         matches: None,
                         spots: None,
                         trailing: &crate::ui::TrailingSpaces::default(),
+                        scroll_conservatively: 1,
                     },
                     &mut views,
                     &mut separators,

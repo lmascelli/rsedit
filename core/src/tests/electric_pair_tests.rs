@@ -98,8 +98,7 @@ mod tests {
         run(
             r#"(make-mode 'shouty-mode)
                (set-syntax-pairs 'shouty-mode "<>")
-               (add-hook 'shouty-mode "post-self-insert-hook"
-                         'electric-pair-post-self-insert)
+               (electric-pair-enable 'shouty-mode)
                (buffer-create "shout" 'shouty-mode)
                (switch-to-buffer "shout")"#,
             &env,
@@ -180,8 +179,7 @@ mod tests {
         run(
             r#"(make-mode 'lifetimes-mode)
                (put 'lifetimes-mode 'electric-pair-inhibit-quotes t)
-               (add-hook 'lifetimes-mode "post-self-insert-hook"
-                         'electric-pair-post-self-insert)
+               (electric-pair-enable 'lifetimes-mode)
                (buffer-create "lt" 'lifetimes-mode)
                (switch-to-buffer "lt")"#,
             &env,
@@ -295,8 +293,7 @@ mod tests {
         run(
             r#"(make-mode 'braces-mode)
                (set-syntax-pairs 'braces-mode "(){}[]")
-               (add-hook 'braces-mode "post-self-insert-hook"
-                         'electric-pair-post-self-insert)
+               (electric-pair-enable 'braces-mode)
                (buffer-create "code" 'braces-mode)
                (switch-to-buffer "code")"#,
             env,
@@ -384,7 +381,7 @@ mod tests {
     #[test]
     fn turning_the_mode_off_stops_all_of_it() {
         let (ctx, env) = editor();
-        run("(setq electric-pair-mode nil)", &env, &ctx);
+        run("(minor-mode-off 'electric-pair-mode)", &env, &ctx);
         type_char("(", &env, &ctx);
         assert_eq!(contents(&ctx), "(");
         run(r#"(clear-buffer) (insert "()") (goto-char 1)"#, &env, &ctx);

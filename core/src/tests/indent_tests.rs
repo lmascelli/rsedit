@@ -319,6 +319,7 @@ mod tests {
     fn nil_inserts_after_text_without_reindenting_the_line() {
         let (ctx, env) = editor();
         cycling_mode(&ctx, &env);
+        run("(setq tab-always-indent nil)", &env, &ctx);
         typing(&ctx, "header\nword", 11);
         key(&ctx, &env, KeyCode::Tab, false);
         assert_eq!(contents(&ctx), "header\nword    ");
@@ -458,25 +459,72 @@ mod tests {
         assert_eq!(contents(&ctx), "    foo\n    bar");
     }
 
+    /// Without a rule, Tab after the text is Emacs' indent-relative: spaces
+    /// up to the next tab stop, so that what follows lines up.
     #[test]
-    fn tab_on_an_already_indented_line_inserts_spaces() {
+    fn tab_after_text_without_a_rule_pads_to_the_next_tab_stop() {
         let (ctx, env) = editor();
         typing(&ctx, "    foo\n    bar", 15);
         run("(indent-for-tab-command)", &env, &ctx);
-        assert_eq!(contents(&ctx), "    foo\n    bar    ");
+        assert_eq!(contents(&ctx), "    foo\n    bar ", "column 7 to 8");
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    foo\n    bar     ", "and 8 to 12");
     }
 
+    /// The default, t, as in Emacs: wherever point is on the line, Tab puts
+    /// the line where the rule says, and adds nothing after the text.
     #[test]
-    fn tab_always_indent_decides_the_third_case() {
+    fn by_default_tab_reindents_the_line_wherever_point_is() {
         let (ctx, env) = editor();
-        typing(&ctx, "    foo\n    bar", 15);
-        run("(setq tab-always-indent t)", &env, &ctx);
+        run(
+            "(make-mode 'always-two) (defun two () 2)
+             (put 'always-two 'indent-function 'two)",
+            &env,
+            &ctx,
+        );
+        in_mode(&ctx, "always-two");
+        typing(&ctx, "foo\n    bar baz", 12);
         run("(indent-for-tab-command)", &env, &ctx);
         assert_eq!(
             contents(&ctx),
-            "    foo\n    bar",
-            "t means Tab only ever indents"
+            "foo\n  bar baz",
+            "the line moved, nothing inserted"
         );
+        assert_eq!(point(&ctx), 10, "point keeps its character, the b of baz");
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(
+            contents(&ctx),
+            "foo\n  bar baz",
+            "a second Tab changes nothing"
+        );
+    }
+
+    #[test]
+    fn nil_pads_to_the_next_tab_stop_not_by_a_fixed_width() {
+        let (ctx, env) = editor();
+        cycling_mode(&ctx, &env);
+        run("(setq tab-always-indent nil)", &env, &ctx);
+        typing(&ctx, "header\nabcdef", 13);
+        key(&ctx, &env, KeyCode::Tab, false);
+        assert_eq!(contents(&ctx), "header\nabcdef  ", "column 6 to 8");
+    }
+
+    /// Without a rule the previous line is all there is to go by, and a line
+    /// indented further than it is left where it is: Tab moves it on to the
+    /// next tab stop rather than back to the previous line's indentation.
+    #[test]
+    fn tab_without_a_rule_never_takes_indentation_away() {
+        let (ctx, env) = editor();
+        typing(&ctx, "foo\n        bar", 4);
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(
+            contents(&ctx),
+            "foo\n            bar",
+            "8 to 12, not back to 0"
+        );
+        typing(&ctx, "    foo\nbar", 8);
+        run("(indent-for-tab-command)", &env, &ctx);
+        assert_eq!(contents(&ctx), "    foo\n    bar", "0 up to the line above");
     }
 
     #[test]
@@ -484,9 +532,9 @@ mod tests {
         let (ctx, env) = editor();
         run("(make-mode 'wide) (put 'wide 'tab-width 8)", &env, &ctx);
         in_mode(&ctx, "wide");
-        typing(&ctx, "    foo\n    bar", 15);
+        typing(&ctx, "foo\nbar", 7);
         run("(indent-for-tab-command)", &env, &ctx);
-        assert_eq!(contents(&ctx), "    foo\n    bar        ");
+        assert_eq!(contents(&ctx), "foo\nbar     ", "column 3 to the stop at 8");
     }
 
     // -----------------------------------------------------------------------
@@ -731,7 +779,7 @@ mod tests {
             "on by default, as in Emacs"
         );
 
-        run("(setq electric-indent-mode nil)", &env, &ctx);
+        run("(electric-indent-mode -1)", &env, &ctx);
         key(&ctx, &env, KeyCode::Enter, false);
         assert_eq!(
             contents(&ctx),

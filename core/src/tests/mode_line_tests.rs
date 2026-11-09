@@ -178,10 +178,10 @@ mod tests {
         assert_eq!(view.rect.height, 1, "the row goes to the text");
     }
 
-    /// A floating window says what it is on its border, so a status line would
-    /// be a second answer to the same question.
+    /// The minibuffer says what it is in front of the answer, so a status line
+    /// would be a second answer to the same question.
     #[test]
-    fn a_floating_window_has_no_status_line() {
+    fn the_minibuffer_has_no_status_line() {
         let (ctx, env) = editor_with("alpha");
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
@@ -196,7 +196,7 @@ mod tests {
         assert_eq!(float.mode_line, None);
         assert!(
             float.title.is_some(),
-            "it is labelled on its border instead"
+            "it is labelled with its question instead"
         );
     }
 

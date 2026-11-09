@@ -470,9 +470,13 @@ mod tests {
             &ctx,
         );
         let page = page(&ctx);
+        // The heading names every minor mode on, electric-indent-mode among
+        // them in every buffer: the probe's is somewhere on its line.
         let heading = page
-            .find("Minor modes -- probe-minor-mode")
+            .find("Minor modes --")
             .expect("the minor modes' heading");
+        let line = page[heading..].lines().next().unwrap_or("");
+        assert!(line.contains("probe-minor-mode"), "{line}");
         let binding = page.find("C-c 9").expect("the minor mode's binding");
         assert!(heading < binding, "{page}");
     }

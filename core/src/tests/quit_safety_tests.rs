@@ -106,7 +106,6 @@ mod tests {
         ctx.snapshot(env, 80, 24)
             .views
             .iter()
-            .filter(|view| view.has_border)
             .find_map(|view| view.title.clone())
             .unwrap_or_default()
     }

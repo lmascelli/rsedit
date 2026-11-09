@@ -53,6 +53,10 @@ pub struct ComposeSettings<'a> {
     pub spots: Option<&'a SpotMarks>,
     /// Where the blanks at the ends of lines are drawn.
     pub trailing: &'a TrailingSpaces,
+    /// How many lines a window scrolls to bring back a point that has left
+    /// it, before it puts point's line in the middle instead: see
+    /// [`follow_point`].
+    pub scroll_conservatively: usize,
 }
 
 /// Whether the blanks at the ends of lines are drawn, in
@@ -234,11 +238,16 @@ impl LayoutNode {
 
                     if point_moved || resized {
                         let scrolled_from = win.scroll_y;
-                        if c_line < win.scroll_y {
-                            win.scroll_y = c_line;
-                        } else if c_line >= win.scroll_y + rect.height {
-                            win.scroll_y = c_line - rect.height + 1;
-                        }
+                        // A window that only changed shape scrolls just
+                        // enough: centring would move the text under a
+                        // cursor that has not moved.
+                        let conservatively = if point_moved {
+                            settings.scroll_conservatively
+                        } else {
+                            usize::MAX
+                        };
+                        win.scroll_y =
+                            follow_point(win.scroll_y, c_line, rect.height, conservatively);
 
                         // Other lines, so other rows: composed again.
                         if win.scroll_y != scrolled_from {
@@ -376,6 +385,48 @@ fn prompt_cells(prompt: &str, width: usize, first_line: usize, rows: usize) -> V
             }
         })
         .collect()
+}
+
+/// Above this, `scroll-conservatively` never centres, as in Emacs: the
+/// window always scrolls just enough, however far point went.
+pub const NEVER_RECENTER: usize = 100;
+
+/// Returns the first line a window HEIGHT rows high, showing lines from
+/// SCROLL_Y, shows once it has followed point to POINT_LINE.
+///
+/// Point still in view, nothing moves. Point out of it by no more than
+/// CONSERVATIVELY lines -- `C-n` on the last row, `C-p` on the first -- the
+/// window scrolls just enough to show it again, on the row at that edge.
+/// Further -- a search, `goto-line`, a jump to an error -- point's line goes
+/// in the middle, where `C-l` would put it, so that a jump does not leave the
+/// cursor on the last row with nothing of what follows in sight. Emacs'
+/// `scroll-conservatively`, which never centres above [`NEVER_RECENTER`].
+pub fn follow_point(
+    scroll_y: usize,
+    point_line: usize,
+    height: usize,
+    conservatively: usize,
+) -> usize {
+    let height = height.max(1);
+    let distance = if point_line < scroll_y {
+        scroll_y - point_line
+    } else if point_line >= scroll_y + height {
+        point_line + 1 - (scroll_y + height)
+    } else {
+        return scroll_y;
+    };
+    if distance <= conservatively || conservatively > NEVER_RECENTER {
+        if point_line < scroll_y {
+            point_line
+        } else {
+            point_line + 1 - height
+        }
+    } else {
+        // As `recenter` puts it: the rows above point are half of those
+        // that are not point's.
+        let above = ((height - 1) as f64 * 0.5).round() as usize;
+        point_line.saturating_sub(above)
+    }
 }
 
 /// Returns what is drawn over WIN's text in RECT, in buffer columns, in the

@@ -1,15 +1,22 @@
 ;;; electric-pair --- closing delimiters that type themselves.
 ;;;
 ;;; Typing an opening delimiter inserts its partner, typing the closing one
-;;; steps over it, and deleting half of an empty pair deletes both.
+;;; steps over it, and deleting half of an empty pair deletes both, in the
+;;; buffers where the minor mode `electric-pair-mode' is on.
 ;;; User manual: the `editing' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-electric-pair>`.
 
 (require 'commands)
 
-(defvar electric-pair-mode t
-  "Whether typing an opening delimiter inserts its partner, and deleting half
-of an empty pair deletes both.")
+(define-minor-mode electric-pair-mode nil
+  "Pair delimiters in the current buffer: typing an opening one inserts its
+partner, typing the closing one steps over it, and deleting half of an empty
+pair deletes both. On in the buffers of the modes `electric-pair-enable'
+names.")
+
+(defun electric-pair--on-p ()
+  "Whether `electric-pair-mode' is on in the current buffer."
+  (minor-mode-p 'electric-pair-mode))
 
 (defvar electric-pair-skip-self t
   "Whether typing a closing delimiter where one already is steps over it,
@@ -56,10 +63,10 @@ rather than inserting a second.")
 (defun electric-pair-post-self-insert ()
   "Pair, or step over, the delimiter just typed, which is before point.
 
-Run from `post-self-insert-hook' in the modes `electric-pair-enable' names."
+Run from `post-self-insert-hook' where `electric-pair-mode' is on."
   ;; Quotes before the in-string test, which would refuse every closing
   ;; quote: just before one, the state is inside its string.
-  (if electric-pair-mode
+  (if (electric-pair--on-p)
       (let ((typed (electric-pair--char-before)))
         (if typed
             ;; The state before the typed character, which may have opened a
@@ -201,7 +208,7 @@ spaces and tabs, never a newline.")
 (defcommand electric-pair-delete-backward () nil
   "Delete the character before point, or the whole of the empty pair it is
 half of."
-  (let ((span (and electric-pair-mode
+  (let ((span (and (electric-pair--on-p)
                    (or (electric-pair--span-around-point)
                        (and (> (point) (point-min))
                             (electric-pair--pair-span (- (point) 1)))))))
@@ -212,7 +219,7 @@ half of."
 (defcommand electric-pair-delete-forward () nil
   "Delete the character after point, or the whole of the empty pair it is
 half of."
-  (let ((span (and electric-pair-mode
+  (let ((span (and (electric-pair--on-p)
                    (or (electric-pair--span-around-point)
                        (and (< (point) (point-max))
                             (electric-pair--pair-span (point)))))))
@@ -224,12 +231,19 @@ half of."
 ;; Turning it on
 ;; ---------------------------------------------------------------------------
 
+(add-hook 'electric-pair-mode "post-self-insert-hook" 'electric-pair-post-self-insert)
+
 (defun electric-pair-enable (mode)
-  "Pair delimiters in the buffers of MODE.
+  "Turn `electric-pair-mode' on in the buffers of MODE: those open now, and
+every one that gets MODE from now on.
 
 Example:
   (electric-pair-enable 'cpp-mode)"
-  (add-hook mode "post-self-insert-hook" 'electric-pair-post-self-insert))
+  (minor-mode-enable 'electric-pair-mode mode)
+  ;; `minor-mode-enable' leaves the buffers already in MODE as they are.
+  (dolist (name (all-buffer-names))
+    (if (eq (major-mode name) mode)
+        (minor-mode-on 'electric-pair-mode name))))
 
 (electric-pair-enable 'fundamental-mode)
 (electric-pair-enable 'rust-mode)
@@ -237,6 +251,9 @@ Example:
 ;; Rust's lifetimes make quote pairing wrong more often than right.
 (put 'rust-mode 'electric-pair-inhibit-quotes t)
 
+;; In the global map, not the minor mode's, which comes before a major mode's
+;; and would take Backspace from a prompt or a search: the commands are the
+;; plain deletes wherever the mode is off.
 (define-key nil "<backspace>" 'electric-pair-delete-backward)
 (define-key nil "C-d" 'electric-pair-delete-forward)
 (define-key nil "<delete>" 'electric-pair-delete-forward)
