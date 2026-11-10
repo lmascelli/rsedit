@@ -401,6 +401,20 @@ pub const BUFFER_MODIFIED_P_DOC: &str = "(buffer-modified-p &optional BUFFER): R
          BUFFER, the current one by default, has changes that have not been saved, nil when it \
          has none or does not exist.";
 
+pub const SET_BUFFER_MODIFIED_P_DOC: &str = "(set-buffer-modified-p FLAG): Say whether the \
+         current buffer has unsaved changes, as nil does not and anything else does, and return \
+         FLAG. For a listing, which writes its own text and has nothing to save, as dired and the \
+         buffer list do after drawing; the text is left as it is.\n\n\
+         Example:\n\
+         (set-buffer-modified-p nil)";
+
+primitive!(set_buffer_modified_p, args, _env, ctx, {
+    exact_arity(args, 1)?;
+    let flag = args[0].is_truthy();
+    ctx.with_current_buffer_mut(|buf| buf.is_modified = flag);
+    Ok(args[0].clone())
+});
+
 primitive!(buffer_modified_p, args, _env, ctx, {
     let name = buffer_argument(args, ctx)?;
     let modified = ctx.with_buffer(&name, |buf| buf.is_modified) == Some(true);
@@ -475,6 +489,11 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         "buffer-modified-p",
         buffer_modified_p,
         BUFFER_MODIFIED_P_DOC,
+    );
+    into.function(
+        "set-buffer-modified-p",
+        set_buffer_modified_p,
+        SET_BUFFER_MODIFIED_P_DOC,
     );
     into.function("buffer-file-name", buffer_file_name, BUFFER_FILE_NAME_DOC);
     into.function("major-mode", major_mode, MAJOR_MODE_DOC);

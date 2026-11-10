@@ -2008,4 +2008,30 @@ mod tests {
         );
         assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("real.txt"));
     }
+
+    // ---------------- not modified ----------------
+
+    /// A listing writes its own text: nothing to save, so never modified,
+    /// whatever it was drawn or marked with.
+    #[test]
+    fn the_listing_is_never_modified_by_drawing_or_marking() {
+        let sandbox = three_files("not-modified");
+        let (ctx, env) = setup();
+        let modified = || run(r#"(buffer-modified-p "*dired*")"#, &env, &ctx).is_truthy();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        assert!(!modified(), "drawn");
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, 'd');
+        assert!(!modified(), "marked");
+        press(&ctx, &env, 't');
+        assert!(!modified(), "toggled, which draws again");
+        press(&ctx, &env, 'U');
+        run("(dired-refresh)", &env, &ctx);
+        assert!(!modified(), "refreshed");
+        let status = ctx.snapshot(&env, 80, 24).views[0]
+            .mode_line
+            .clone()
+            .unwrap_or_default();
+        assert!(!status.contains("**"), "{status}");
+    }
 }

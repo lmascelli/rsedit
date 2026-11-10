@@ -108,6 +108,7 @@ first column of its line and in `dired--marks'. Point stays on the line."
     (delete-char 1)
     (insert (if mark mark " "))
     (beginning-of-line)
+    (set-buffer-modified-p nil)
     (set-buffer-read-only t)))
 
 (defun dired--marked (mark)
@@ -202,6 +203,9 @@ for deletion stay flagged."
           (let ((mark (dired--mark-of (concat directory entry))))
             (insert (if mark mark " ") " " entry "\n")))
         (list-dir directory dired-sort))
+  ;; Written by the listing, not by you: nothing to save, and no ** in the
+  ;; status line or * in the buffer list.
+  (set-buffer-modified-p nil)
   (set-buffer-read-only t))
 
 (defun dired--show (directory)

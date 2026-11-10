@@ -85,9 +85,13 @@ along rather than being cut.")
   (set-buffer-read-only nil)
   (beginning-of-line)
   (let ((start (point)))
-    (delete-region start (+ start (length (current-line))))
-    (insert (buffer-list--line name))
+    ;; The line worked out before the edit, which would make the listing
+    ;; look modified to itself.
+    (let ((line (buffer-list--line name)))
+      (delete-region start (+ start (length (current-line))))
+      (insert line))
     (goto-char start))
+  (set-buffer-modified-p nil)
   (set-buffer-read-only t))
 
 (defun buffer-list--draw ()
@@ -98,10 +102,14 @@ along rather than being cut.")
           buffer-list--marks)
     (mapc (lambda (name) (unless (member name live) (buffer-list--forget name)))
           buffer-list--saves))
-  (set-buffer-read-only nil)
-  (clear-buffer)
-  (mapc (lambda (name) (insert (buffer-list--line name) "\n"))
-        (all-buffer-names))
+  ;; The lines worked out before the listing is written: written, it would
+  ;; look modified to itself.
+  (let ((lines (mapcar 'buffer-list--line (all-buffer-names))))
+    (set-buffer-read-only nil)
+    (clear-buffer)
+    (mapc (lambda (line) (insert line "\n")) lines))
+  ;; Written by the listing, not by you: nothing to save.
+  (set-buffer-modified-p nil)
   (set-buffer-read-only t))
 
 (defun buffer-list--name-here ()

@@ -580,4 +580,39 @@ mod tests {
             LispExp::string(long.into())
         );
     }
+
+    #[test]
+    fn the_listing_is_not_modified_by_drawing_or_marking_itself() {
+        let (ctx, env) = editor();
+        spares(&env, &ctx);
+        let modified = || run(r#"(buffer-modified-p "*Buffer List*")"#, &env, &ctx).is_truthy();
+        assert!(!modified(), "drawn");
+        press_on("one", 'm', &env, &ctx);
+        press_on("two", 'd', &env, &ctx);
+        assert!(!modified(), "marked");
+        run("(buffer-list-refresh)", &env, &ctx);
+        assert!(!modified(), "drawn again");
+        assert!(
+            listing(&env, &ctx)
+                .lines()
+                .any(|line| line.starts_with("    *Buffer List*")),
+            "and its own line has no *:\n{}",
+            listing(&env, &ctx)
+        );
+    }
+
+    #[test]
+    fn set_buffer_modified_p_says_and_changes_nothing_else() {
+        let (ctx, env) = editor();
+        run(r#"(insert "text")"#, &env, &ctx);
+        assert!(run("(buffer-modified-p)", &env, &ctx).is_truthy());
+        assert!(run("(set-buffer-modified-p nil)", &env, &ctx).is_nil());
+        assert!(run("(buffer-modified-p)", &env, &ctx).is_nil());
+        assert_eq!(
+            run("(buffer-string)", &env, &ctx),
+            LispExp::string("text".into())
+        );
+        run("(set-buffer-modified-p t)", &env, &ctx);
+        assert!(run("(buffer-modified-p)", &env, &ctx).is_truthy());
+    }
 }

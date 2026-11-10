@@ -17,6 +17,7 @@ SYNOPSIS
     (set-buffer-read-only FLAG)
     (buffer-read-only-p)
     (buffer-modified-p &optional BUFFER)
+    (set-buffer-modified-p FLAG)
     (buffer-file-name &optional BUFFER)
     (major-mode &optional BUFFER)
     (set-major-mode MODE)
@@ -112,6 +113,11 @@ BUFFERS FROM LISP
     a function where Emacs takes a body:
 
         (with-current-buffer "notes.txt" (lambda () (buffer-string)))
+
+    A listing, such as dired's or the buffer list, writes its own text and
+    has nothing to save: `set-buffer-modified-p' with nil, after drawing,
+    keeps it from looking modified, with no ** in its status line and no *
+    in the buffer list.
 
     `buffer-put' and `buffer-get' keep values with a buffer, which go when
     the buffer goes. `set-major-mode' changes the mode, and the hooks that
