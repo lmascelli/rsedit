@@ -25,7 +25,15 @@ SYNOPSIS
 
     (buffer-list)
     (buffer-list-select)
+    (buffer-list-mark)
+    (buffer-list-flag-kill)
+    (buffer-list-flag-save)
+    (buffer-list-unmark)
+    (buffer-list-unmark-backward)
+    (buffer-list-unmark-all)
+    (buffer-list-execute)
     (buffer-list-kill)
+    (buffer-list-save)
     (buffer-list-refresh)
     (switch-to-buffer-candidates INPUT)
     buffer-list-buffer-name
@@ -46,13 +54,38 @@ SWITCHING
     C-x b asks for a buffer by name, and completes it: type any part of the
     name. C-x C-b lists every buffer, one per line:
 
-        * notes.txt          fundamental-mode  /home/me/notes.txt
-          *scratch*          fundamental-mode
+          * notes.txt        fundamental-mode  /home/me/notes.txt
+            *scratch*        fundamental-mode
 
-    A * in front for unsaved changes, then the name, the mode and the file.
-    In the listing, Return switches to the buffer on the line, d kills it
-    -- asking first when it has unsaved changes -- g lists again, and q
-    puts the listing away.
+    Three columns of marks, then the name, the mode and the file: the
+    third is * for unsaved changes, and the first two are the marks below.
+    In the listing, Return switches to the buffer on the line, g lists
+    again, and q puts the listing away.
+
+MARKING BUFFERS
+        m               mark the buffer with >, for D and S
+        d  k            flag it with D, to be killed by x
+        s               flag it with S, to be saved by x
+        u               take its marks off
+        <backspace>     take the marks off the line above
+        U               take every mark off
+        x               save the S buffers, then kill the D ones
+        D               kill the > buffers, or this one
+        S               save the > buffers, or this one
+
+    As in Emacs' Buffer Menu: m, d, s and u go on to the next line, the
+    marks stay when the listing is drawn again, and
+
+        D * notes.txt        fundamental-mode  /home/me/notes.txt
+        >   *scratch*        fundamental-mode
+         S  todo.org         fundamental-mode  /home/me/todo.org
+
+    has notes.txt flagged to be killed, *scratch* marked, and todo.org
+    flagged to be saved. s refuses a buffer that visits no file.
+
+    Killing asks once, when some of the buffers have unsaved changes, with
+    `yes-or-no': yes kills them all, and no keeps those and kills the
+    others. The listing never kills itself.
 
 KILLING A BUFFER
     C-x k asks which buffer to kill; Return with nothing typed kills the
@@ -116,7 +149,16 @@ KEYS
 
 KEYS IN BUFFER LIST MODE
     <ret>                   buffer-list-select
-    d                       buffer-list-kill
+    m                       buffer-list-mark
+    d                       buffer-list-flag-kill
+    k                       buffer-list-flag-kill
+    s                       buffer-list-flag-save
+    u                       buffer-list-unmark
+    <backspace>             buffer-list-unmark-backward
+    U                       buffer-list-unmark-all
+    x                       buffer-list-execute
+    D                       buffer-list-kill
+    S                       buffer-list-save
     g                       buffer-list-refresh
     n                       next-line
     p                       previous-line

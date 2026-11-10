@@ -62,6 +62,15 @@ pub const SETTINGS: &[Setting] = &[
               \x20 (setq display-line-numbers 'relative)",
     },
     Setting {
+        name: crate::primitives::ask::USE_SHORT_ANSWERS,
+        doc: "Whether a question asked with `yes-or-no' -- quitting with unsaved changes, \
+              overwriting a file changed on disk, deleting in dired -- is answered with one \
+              key, y or n, as `y-or-n' is, rather than by typing yes or no and Return. nil \
+              unless you set it, as in Emacs.\n\n\
+              Example:\n\
+              \x20 (setq use-short-answers t)",
+    },
+    Setting {
         name: THIS_COMMAND,
         doc: "The command being run, as a symbol, while it runs and while the hooks after it \
               do, `post-self-insert-hook' and `post-command-hook' among them; nil before the \

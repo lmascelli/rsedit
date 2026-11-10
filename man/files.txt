@@ -14,6 +14,7 @@ SYNOPSIS
     (quit-without-saving)
     (y-or-n PROMPT ON-YES &optional ON-NO)
     (yes-or-no PROMPT ON-YES &optional ON-NO)
+    use-short-answers
     auto-save
     auto-save-interval
     auto-save-directory
@@ -30,9 +31,11 @@ SYNOPSIS
     (match-list LIST PATTERN)
     (delete-file PATH &optional RECURSIVE)
     (rename-file FROM TO)
+    (copy-file FROM TO &optional RECURSIVE)
 
     (working-directory)
     (cd DIRECTORY)
+    (set-buffer-directory DIRECTORY)
     (pwd)
     (expand-file-name PATH &optional DIRECTORY)
     (file-name-directory PATH)
@@ -149,6 +152,10 @@ QUESTIONS
     counts as no. `y-or-n' and `yes-or-no' ask the same questions for a
     command of your own, and call a function with the answer.
 
+    With `use-short-answers' set, as in Emacs, the questions that want yes
+    or no typed are answered with one key as well: y or n, and C-g or
+    Escape for no. It is nil unless you set it.
+
 CODINGS
     A file is read in UTF-8 when it is UTF-8, and in windows-1252 when it
     is not: the coding of older files written on Windows in a western
@@ -177,7 +184,10 @@ FILES FROM LISP
     `delete-file' refuses a directory that is not empty unless it is told
     otherwise, and deletes a symbolic link rather than what it points to.
     `rename-file' refuses to replace a file that is there already, and
-    does not cross from one filesystem to another.
+    does not cross from one filesystem to another. `copy-file' refuses to
+    replace one too, copies a directory, with everything under it, only
+    when told it may, never into itself, and copies a symbolic link inside
+    one as a link where the platform has them.
 
     A leading ~ is the home directory to all of these except
     directory-files-recursive, which takes its directory as it is given.
@@ -188,6 +198,12 @@ THE WORKING DIRECTORY
     M-x cd moves it. Shell commands and builds start in it, and M-x grep
     searches under it. M-x pwd says which it is, and `working-directory'
     returns it.
+
+    A buffer can have a directory of its own, which relative paths and
+    shell commands use there instead: a dired listing has the directory it
+    lists, and the output of a command the directory it ran in.
+    `set-buffer-directory' gives the current buffer one, and nil takes it
+    away.
 
     Moving it changes nothing that has started already: a command still
     running stays where it began, and the output of a command or a build
@@ -213,6 +229,10 @@ PATHS
     are installed.
 
 EXAMPLES
+    Answer every yes-or-no question with y or n:
+
+        (setq use-short-answers t)
+
     Keep the auto-save copies out of your project directories:
 
         (setq auto-save-directory "~/.cache/rsedit")

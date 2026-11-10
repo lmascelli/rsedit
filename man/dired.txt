@@ -7,19 +7,33 @@ SYNOPSIS
     (dired-find-file-other-window)
     (dired-up-directory)
     (dired-refresh)
+    (dired-mark)
+    (dired-flag-file-deletion)
+    (dired-unmark)
+    (dired-unmark-backward)
+    (dired-unmark-all-marks)
+    (dired-toggle-marks)
+    (dired-do-delete)
+    (dired-do-flagged-delete)
+    (dired-do-rename)
+    (dired-do-copy)
+    (dired-do-shell-command)
     (dired-delete-file)
     (dired-rename-file)
     (dired-find-recursive)
     dired-sort
     dired-window-width
     dired-buffer-name
+    dired-marker-char
+    dired-del-marker
     find-file-recursive-ignore
     find-file-recursive-limit
 
 DESCRIPTION
     C-x d asks for a directory and lists it in a buffer, one entry per
-    line, where keys open, delete and rename what the cursor is on. C-x C-f
-    on a directory does the same. C-x C-r finds a file by name anywhere
+    line, where keys open, delete, rename, copy and run commands on files:
+    the ones you have marked, or the one the cursor is on. C-x C-f on a
+    directory does the same. C-x C-r finds a file by name anywhere
     under the directory the editor was started in.
 
 THE LISTING
@@ -32,7 +46,9 @@ THE LISTING
     after each directory. `dired-sort' orders the entries: name for one
     alphabetical run, type for the directories first. The listing is
     read-only, and every listing is shown in the same buffer, *dired*:
-    going into a directory replaces the one you were in.
+    going into a directory replaces the one you were in. The listing has
+    the directory it lists as its own: a relative name typed there, and a
+    shell command run from it, are read in that directory.
 
 MOVING AND OPENING
         <ret>           open what the cursor is on
@@ -49,17 +65,59 @@ MOVING AND OPENING
     windows, not ten. Other keys keep their meaning: C-n, C-x o and M-x
     work as anywhere else.
 
+MARKING
+        m               mark the file, for the commands below
+        d               flag it for deletion by x
+        u               take its mark off
+        <backspace>     take the mark off the line above
+        U               take every mark off
+        t               mark the unmarked files, unmark the marked
+
+    A mark is the first column of an entry: * for marked, D for flagged
+    for deletion, as in Emacs:
+
+        /home/me/project/:
+          ..
+        * Cargo.toml
+        D old.log
+          src/
+
+    m, d and u go on to the next line, so a row of files is marked by
+    pressing the key down it. t leaves the flagged files flagged. The marks
+    stay when the listing is read again, and go when another directory is
+    listed. .. cannot be marked.
+
 CHANGING FILES
-    D deletes what the cursor is on, after asking: type yes, or y, and
-    Return. A directory with something in it says how many entries go with
-    it, and everything under it is deleted.
+        D               delete the marked files, or this one
+        x               delete the files flagged with d
+        R               rename this file, or move the marked ones
+        C               copy this file, or the marked ones
+        !               run a shell command on them
 
-    R renames it, asking for the new name. A plain name renames it in the
+    Every one of them acts on the files marked with *, or, when there are
+    none, on the one the cursor is on; x acts on the files flagged with D.
+
+    D and x ask once, before anything goes, with `yes-or-no': type yes and
+    Return, or with `use-short-answers' set press y. The question says how
+    many files, and which directories go with everything in them.
+
+    R asks for a new name for one file. A plain name renames it in the
     same directory; a name with a directory in it moves it there, taken
-    from the directory being listed unless it is absolute. A rename never
-    replaces a file that is there already.
+    from the directory being listed unless it is absolute, and an existing
+    directory moves it into it, with its name. With files marked, R asks
+    for a directory and moves them all into it. C does the same with a
+    copy, and copies a directory with everything under it. Neither ever
+    replaces a file that is there already: that one is left, and the
+    message says how many could not be moved or copied.
 
-    Both read the directory again afterwards, and neither touches .. .
+    ! asks for a shell command and runs it in the directory being listed,
+    with the files' names, quoted for the shell: where a * stands alone in
+    the command, or after it otherwise. What it prints is shown as by M-!.
+
+        ! wc -l                 wc -l 'a.txt' 'b.txt'
+        ! tar cf out.tar *      tar cf out.tar 'a.txt' 'b.txt'
+
+    All of them read the directory again afterwards, and none touches .. .
 
 FINDING A FILE ANYWHERE
     C-x C-r collects every file under the directory the editor was started
@@ -97,6 +155,10 @@ EXAMPLES
 
         (dired "~/projects")
 
+    Delete in dired with y or n rather than a typed yes:
+
+        (setq use-short-answers t)
+
 KEYS
     C-x d                   dired
     C-x C-r                 dired-find-recursive
@@ -106,8 +168,17 @@ KEYS IN DIRED MODE
     o                       dired-find-file-other-window
     ^                       dired-up-directory
     g                       dired-refresh
-    D                       dired-delete-file
-    R                       dired-rename-file
+    m                       dired-mark
+    d                       dired-flag-file-deletion
+    u                       dired-unmark
+    <backspace>             dired-unmark-backward
+    U                       dired-unmark-all-marks
+    t                       dired-toggle-marks
+    D                       dired-do-delete
+    x                       dired-do-flagged-delete
+    R                       dired-do-rename
+    C                       dired-do-copy
+    !                       dired-do-shell-command
     n                       next-line
     p                       previous-line
 

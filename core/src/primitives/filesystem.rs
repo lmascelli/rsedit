@@ -204,6 +204,91 @@ primitive!(rename_file, args, _env, ctx, {
     }
 });
 
+pub const COPY_FILE_DOC: &str = "(copy-file FROM TO &optional RECURSIVE): Copy the file FROM \
+         to TO, and return t, or nil when it failed. A directory is copied, with everything \
+         under it, only when RECURSIVE is non-nil; a symbolic link inside one is copied as a \
+         link where the platform has them, never followed. An existing TO is not replaced: the \
+         copy is refused. A leading ~ is expanded in both.\n\n\
+         Example:\n\
+         (copy-file \"~/notes.txt\" \"~/notes.bak\")";
+
+primitive!(copy_file, args, _env, ctx, {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let from = path_arg(ctx, args.first())?;
+    let to = path_arg(ctx, args.get(1))?;
+    let recursive = args.get(2).is_some_and(|flag| flag.is_truthy());
+    let from_path = std::path::Path::new(&from);
+    let to_path = std::path::Path::new(&to);
+    // Refused before anything is written, as a rename is: a copy that
+    // replaced what was there could not be taken back.
+    if std::fs::symlink_metadata(to_path).is_ok() {
+        ctx.log_diagnostic(&format!("Cannot copy {from} to {to}: it already exists"));
+        return Ok(ELispExp::nil());
+    }
+    let is_dir = std::fs::symlink_metadata(from_path)
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false);
+    if is_dir && !recursive {
+        ctx.log_diagnostic(&format!(
+            "Cannot copy {from}: it is a directory, and the copy was not recursive"
+        ));
+        return Ok(ELispExp::nil());
+    }
+    // A directory into itself would never end.
+    if is_dir
+        && let (Ok(source), Some(parent)) = (
+            std::fs::canonicalize(from_path),
+            to_path.parent().and_then(|p| std::fs::canonicalize(p).ok()),
+        )
+        && parent.starts_with(&source)
+    {
+        ctx.log_diagnostic(&format!("Cannot copy {from} into itself"));
+        return Ok(ELispExp::nil());
+    }
+    match copy_tree(from_path, to_path) {
+        Ok(()) => Ok(ELispExp::t()),
+        Err(why) => {
+            ctx.log_diagnostic(&format!("Cannot copy {from} to {to}: {why}"));
+            Ok(ELispExp::nil())
+        }
+    }
+});
+
+/// Copies FROM to TO: a file's contents, a directory with everything under
+/// it, a symbolic link as a link where the platform has them.
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    let meta = std::fs::symlink_metadata(from)?;
+    if meta.file_type().is_symlink() {
+        // The link, not what it points to: following one inside a tree could
+        // copy the disk, or loop.
+        #[cfg(unix)]
+        {
+            let target = std::fs::read_link(from)?;
+            return std::os::unix::fs::symlink(target, to);
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::copy(from, to)?;
+            return Ok(());
+        }
+    }
+    if meta.is_dir() {
+        std::fs::create_dir(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(from, to).map(|_| ())
+    }
+}
+
 /// Reads a path argument: a string, expanded, so that every one of these
 /// takes `~`.
 fn path_arg<B: BufferTrait>(
@@ -349,6 +434,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     );
     into.function("delete-file", delete_file, DELETE_FILE_DOC);
     into.function("rename-file", rename_file, RENAME_FILE_DOC);
+    into.function("copy-file", copy_file, COPY_FILE_DOC);
     into.function(
         "directory-files-recursive",
         directory_files_recursive,

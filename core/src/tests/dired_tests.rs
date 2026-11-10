@@ -1472,4 +1472,540 @@ mod tests {
         );
         assert!(outcome.is_err(), "got {outcome:?}");
     }
+
+    // ---------------- marks ----------------
+
+    /// The line of the entry NAME, marked or not, counting from 1.
+    fn line_of(name: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> usize {
+        listing(env, ctx)
+            .lines()
+            .skip(1)
+            .position(|line| line.get(2..) == Some(name))
+            .map(|n| n + 2)
+            .unwrap_or_else(|| panic!("{name} is not listed:\n{}", listing(env, ctx)))
+    }
+
+    /// Goes to NAME and presses KEY there.
+    fn press_on(name: &str, key: char, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        run(
+            &format!("(goto-line {})", line_of(name, env, ctx)),
+            env,
+            ctx,
+        );
+        press(ctx, env, key);
+    }
+
+    /// The mark in the first column of NAME's line, a blank for none.
+    fn mark_on(name: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> char {
+        listing(env, ctx)
+            .lines()
+            .nth(line_of(name, env, ctx) - 1)
+            .and_then(|line| line.chars().next())
+            .unwrap_or(' ')
+    }
+
+    fn three_files(name: &str) -> Sandbox {
+        let sandbox = Sandbox::new(name);
+        sandbox.file("a.txt", "a");
+        sandbox.file("b.txt", "b");
+        sandbox.file("c.txt", "c");
+        sandbox
+    }
+
+    #[test]
+    fn m_marks_and_moves_on_and_u_unmarks() {
+        let sandbox = three_files("mark");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, 'm');
+        assert_eq!(mark_on("a.txt", &env, &ctx), '*');
+        assert_eq!(mark_on("b.txt", &env, &ctx), '*');
+        assert_eq!(mark_on("c.txt", &env, &ctx), ' ');
+        assert_eq!(
+            run("(dired--name-here)", &env, &ctx),
+            LispExp::string("c.txt".into()),
+            "each m goes to the next line"
+        );
+        press_on("a.txt", 'u', &env, &ctx);
+        assert_eq!(mark_on("a.txt", &env, &ctx), ' ');
+        assert!(listing(&env, &ctx).contains("* b.txt"), "b keeps its mark");
+    }
+
+    #[test]
+    fn the_name_on_a_marked_line_is_still_read_whole() {
+        let sandbox = three_files("marked-name");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "b.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        run(
+            &format!("(goto-line {})", line_of("b.txt", &env, &ctx)),
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(dired--name-here)", &env, &ctx),
+            LispExp::string("b.txt".into())
+        );
+    }
+
+    #[test]
+    fn marks_survive_a_refresh_and_go_with_the_directory() {
+        let sandbox = three_files("mark-refresh");
+        sandbox.dir("sub");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        run("(dired-refresh)", &env, &ctx);
+        assert_eq!(mark_on("a.txt", &env, &ctx), '*');
+        run(
+            &format!("(goto-line {})", line_of("sub/", &env, &ctx)),
+            &env,
+            &ctx,
+        );
+        press_return(&ctx, &env);
+        run("(dired-up-directory)", &env, &ctx);
+        assert_eq!(
+            mark_on("a.txt", &env, &ctx),
+            ' ',
+            "another directory was listed"
+        );
+    }
+
+    #[test]
+    fn the_parent_entry_and_the_header_cannot_be_marked() {
+        let sandbox = three_files("mark-parent");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "..", &env, &ctx);
+        press(&ctx, &env, 'm');
+        assert!(listing(&env, &ctx).lines().nth(1) == Some("  .."));
+        run("(goto-line 1)", &env, &ctx);
+        press(&ctx, &env, 'm');
+        assert!(!listing(&env, &ctx).lines().next().unwrap().starts_with('*'));
+    }
+
+    #[test]
+    fn t_toggles_the_marks_and_leaves_the_flags() {
+        let sandbox = three_files("toggle");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, 'd');
+        press(&ctx, &env, 't');
+        assert_eq!(mark_on("a.txt", &env, &ctx), ' ');
+        assert_eq!(mark_on("b.txt", &env, &ctx), 'D');
+        assert_eq!(mark_on("c.txt", &env, &ctx), '*');
+        press(&ctx, &env, 'U');
+        assert_eq!(mark_on("b.txt", &env, &ctx), ' ');
+        assert_eq!(mark_on("c.txt", &env, &ctx), ' ');
+    }
+
+    #[test]
+    fn backspace_unmarks_the_line_above() {
+        let sandbox = three_files("unmark-back");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Backspace,
+                modifiers: KeyModifiers::default(),
+            },
+            &env,
+        );
+        assert_eq!(mark_on("a.txt", &env, &ctx), ' ');
+    }
+
+    // ---------------- acting on marked files ----------------
+
+    #[test]
+    fn x_deletes_the_flagged_files_after_one_question() {
+        let sandbox = three_files("flagged");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'd');
+        press(&ctx, &env, 'd');
+        press(&ctx, &env, 'x');
+        assert!(
+            prompt_title(&ctx).contains("Delete 2 files?"),
+            "{}",
+            prompt_title(&ctx)
+        );
+        assert!(
+            sandbox.path().join("a.txt").exists(),
+            "nothing before the answer"
+        );
+        answer("yes", &env, &ctx);
+        assert!(!sandbox.path().join("a.txt").exists());
+        assert!(!sandbox.path().join("b.txt").exists());
+        assert!(sandbox.path().join("c.txt").exists());
+        assert!(listing(&env, &ctx).contains("  c.txt"));
+    }
+
+    #[test]
+    fn x_with_nothing_flagged_says_so() {
+        let sandbox = three_files("flagged-none");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, 'x');
+        assert!(ctx.get_echo_message().contains("No files flagged"));
+    }
+
+    #[test]
+    fn shift_d_deletes_the_marked_files_and_not_the_one_under_the_cursor() {
+        let sandbox = three_files("delete-marked");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        press_on("c.txt", 'm', &env, &ctx);
+        run(
+            &format!("(goto-line {})", line_of("b.txt", &env, &ctx)),
+            &env,
+            &ctx,
+        );
+        press(&ctx, &env, 'D');
+        assert!(prompt_title(&ctx).contains("Delete 2 files?"));
+        answer("no", &env, &ctx);
+        assert!(sandbox.path().join("a.txt").exists(), "no deletes nothing");
+        press(&ctx, &env, 'D');
+        answer("yes", &env, &ctx);
+        assert!(!sandbox.path().join("a.txt").exists());
+        assert!(sandbox.path().join("b.txt").exists());
+        assert!(!sandbox.path().join("c.txt").exists());
+    }
+
+    #[test]
+    fn deleting_marked_directories_says_which_go_with_their_contents() {
+        let sandbox = three_files("delete-dirs");
+        sandbox.file("full/inside.txt", "x");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "full/", &env, &ctx);
+        press(&ctx, &env, 'm');
+        press_on("a.txt", 'm', &env, &ctx);
+        press(&ctx, &env, 'D');
+        let asked = prompt_title(&ctx);
+        assert!(asked.contains("Delete 2 files, 1 of them"), "{asked}");
+        answer("yes", &env, &ctx);
+        assert!(!sandbox.path().join("full").exists());
+    }
+
+    #[test]
+    fn r_moves_the_marked_files_into_a_directory() {
+        let sandbox = three_files("move");
+        sandbox.dir("dest");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, 'R');
+        assert!(prompt_title(&ctx).contains("Rename 2 files into directory"));
+        answer("dest", &env, &ctx);
+        assert!(sandbox.path().join("dest/a.txt").exists());
+        assert!(sandbox.path().join("dest/b.txt").exists());
+        assert!(!sandbox.path().join("a.txt").exists());
+        assert!(ctx.get_echo_message().contains("Renamed 2 files"));
+    }
+
+    #[test]
+    fn r_with_marked_files_refuses_a_destination_that_is_not_a_directory() {
+        let sandbox = three_files("move-not-dir");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, 'R');
+        answer("nowhere", &env, &ctx);
+        assert!(ctx.get_echo_message().contains("is not a directory"));
+        assert!(sandbox.path().join("a.txt").exists());
+    }
+
+    #[test]
+    fn r_on_one_file_into_a_directory_keeps_its_name() {
+        let sandbox = three_files("move-one");
+        sandbox.dir("dest");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'R');
+        answer("dest", &env, &ctx);
+        assert!(sandbox.path().join("dest/a.txt").exists());
+    }
+
+    #[test]
+    fn c_copies_one_file_to_a_new_name() {
+        let sandbox = three_files("copy-one");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'C');
+        assert!(prompt_title(&ctx).contains("Copy a.txt to:"));
+        answer("a-copy.txt", &env, &ctx);
+        assert_eq!(
+            std::fs::read_to_string(sandbox.path().join("a-copy.txt")).unwrap(),
+            "a"
+        );
+        assert!(sandbox.path().join("a.txt").exists(), "the original stays");
+        assert!(listing(&env, &ctx).contains("  a-copy.txt"));
+    }
+
+    #[test]
+    fn c_copies_the_marked_files_and_directories_into_a_directory() {
+        let sandbox = three_files("copy-many");
+        sandbox.file("tree/deep/leaf.txt", "leaf");
+        sandbox.dir("dest");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        press_on("tree/", 'm', &env, &ctx);
+        press(&ctx, &env, 'C');
+        answer("dest", &env, &ctx);
+        assert!(sandbox.path().join("dest/a.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(sandbox.path().join("dest/tree/deep/leaf.txt")).unwrap(),
+            "leaf"
+        );
+        assert!(sandbox.path().join("tree/deep/leaf.txt").exists());
+        assert!(ctx.get_echo_message().contains("Copied 2 files"));
+    }
+
+    #[test]
+    fn c_never_replaces_an_existing_file() {
+        let sandbox = three_files("copy-clobber");
+        let (ctx, env) = setup();
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'C');
+        answer("b.txt", &env, &ctx);
+        assert_eq!(
+            std::fs::read_to_string(sandbox.path().join("b.txt")).unwrap(),
+            "b"
+        );
+        assert!(ctx.get_echo_message().contains("Could not copy"));
+    }
+
+    #[test]
+    fn a_shell_command_gets_the_files_where_its_star_is_or_at_its_end() {
+        let (ctx, env) = setup();
+        let line = |command: &str| {
+            string_of(&run(
+                &format!(r#"(dired--shell-line "{command}" '("/x/a b" "/x/c"))"#),
+                &env,
+                &ctx,
+            ))
+        };
+        let quoted = string_of(&run(
+            r#"(concat (shell-quote-argument "/x/a b") " " (shell-quote-argument "/x/c"))"#,
+            &env,
+            &ctx,
+        ));
+        assert_eq!(line("wc -l"), format!("wc -l {quoted}"));
+        assert_eq!(
+            line("tar cf out.tar * --verbose"),
+            format!("tar cf out.tar {quoted} --verbose")
+        );
+        assert_eq!(
+            line("ls *.txt"),
+            format!("ls *.txt {quoted}"),
+            "a star in a word is the shell's"
+        );
+    }
+
+    #[test]
+    fn bang_runs_the_command_on_the_marked_files_in_the_listed_directory() {
+        let sandbox = three_files("bang");
+        let (ctx, env) = setup();
+        eval_str(include_str!("../../lisp/features/shell.lisp"), &env, &ctx).expect("shell.lisp");
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, 'm');
+        press(&ctx, &env, '!');
+        assert!(
+            prompt_title(&ctx).contains("! on 2 files"),
+            "{}",
+            prompt_title(&ctx)
+        );
+        answer("cat * > joined.out", &env, &ctx);
+        // The command runs in the background: wait for its file.
+        let joined = sandbox.path().join("joined.out");
+        for _ in 0..200 {
+            if std::fs::read_to_string(&joined).is_ok_and(|text| text == "ab") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            ctx.tick(&env);
+        }
+        assert_eq!(
+            std::fs::read_to_string(&joined).unwrap_or_default(),
+            "ab",
+            "echo {:?}, logs {:?}, cwd has joined: {}",
+            ctx.get_echo_message(),
+            ctx.get_logs(),
+            std::path::Path::new("joined.out").exists()
+        );
+    }
+
+    // ---------------- one-key answers ----------------
+
+    #[test]
+    fn with_short_answers_a_deletion_is_answered_with_y() {
+        let sandbox = three_files("short-answer");
+        let (ctx, env) = setup();
+        run("(setq use-short-answers t)", &env, &ctx);
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'D');
+        let asked = ctx.snapshot(&env, 80, 24).prompt;
+        assert!(
+            asked.contains("Delete") && asked.contains("(y or n)"),
+            "{asked}"
+        );
+        assert!(sandbox.path().join("a.txt").exists());
+        press(&ctx, &env, 'y');
+        assert!(!sandbox.path().join("a.txt").exists());
+    }
+
+    #[test]
+    fn with_short_answers_n_and_c_g_delete_nothing() {
+        let sandbox = three_files("short-no");
+        let (ctx, env) = setup();
+        run("(setq use-short-answers t)", &env, &ctx);
+        open_on(&sandbox, "a.txt", &env, &ctx);
+        press(&ctx, &env, 'D');
+        press(&ctx, &env, 'n');
+        assert!(sandbox.path().join("a.txt").exists());
+        assert!(ctx.get_echo_message().contains("Not deleted"));
+        press(&ctx, &env, 'D');
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Char('g'),
+                modifiers: KeyModifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            },
+            &env,
+        );
+        assert!(sandbox.path().join("a.txt").exists());
+        assert!(ctx.get_echo_message().contains("Not deleted"));
+    }
+
+    // ---------------- copy-file ----------------
+
+    fn lisp_path(path: &Path) -> String {
+        path.display().to_string()
+    }
+
+    #[test]
+    fn copy_file_copies_a_file_and_keeps_the_original() {
+        let sandbox = Sandbox::new("copy-prim");
+        let from = sandbox.file("a.txt", "contents");
+        let (ctx, env) = setup();
+        let to = sandbox.path().join("b.txt");
+        assert!(
+            run(
+                &format!(r#"(copy-file "{}" "{}")"#, lisp_path(&from), lisp_path(&to)),
+                &env,
+                &ctx
+            )
+            .is_truthy()
+        );
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "contents");
+        assert!(from.exists());
+    }
+
+    #[test]
+    fn copy_file_refuses_an_existing_destination_and_a_directory_unless_recursive() {
+        let sandbox = Sandbox::new("copy-refuse");
+        let from = sandbox.file("a.txt", "a");
+        let taken = sandbox.file("b.txt", "b");
+        let dir = sandbox.dir("tree");
+        let (ctx, env) = setup();
+        assert!(
+            run(
+                &format!(
+                    r#"(copy-file "{}" "{}")"#,
+                    lisp_path(&from),
+                    lisp_path(&taken)
+                ),
+                &env,
+                &ctx
+            )
+            .is_nil()
+        );
+        assert_eq!(std::fs::read_to_string(&taken).unwrap(), "b");
+        let to = sandbox.path().join("tree-copy");
+        assert!(
+            run(
+                &format!(r#"(copy-file "{}" "{}")"#, lisp_path(&dir), lisp_path(&to)),
+                &env,
+                &ctx
+            )
+            .is_nil()
+        );
+        assert!(!to.exists());
+    }
+
+    #[test]
+    fn copy_file_with_recursive_copies_a_tree_but_not_into_itself() {
+        let sandbox = Sandbox::new("copy-tree");
+        sandbox.file("tree/one.txt", "1");
+        sandbox.file("tree/deep/two.txt", "2");
+        let (ctx, env) = setup();
+        let dir = sandbox.path().join("tree");
+        let to = sandbox.path().join("copy");
+        assert!(
+            run(
+                &format!(
+                    r#"(copy-file "{}" "{}" t)"#,
+                    lisp_path(&dir),
+                    lisp_path(&to)
+                ),
+                &env,
+                &ctx
+            )
+            .is_truthy()
+        );
+        assert_eq!(
+            std::fs::read_to_string(to.join("deep/two.txt")).unwrap(),
+            "2"
+        );
+        let inside = dir.join("deep/again");
+        assert!(
+            run(
+                &format!(
+                    r#"(copy-file "{}" "{}" t)"#,
+                    lisp_path(&dir),
+                    lisp_path(&inside)
+                ),
+                &env,
+                &ctx
+            )
+            .is_nil()
+        );
+        assert!(!inside.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_file_copies_a_link_inside_a_tree_as_a_link() {
+        let sandbox = Sandbox::new("copy-link");
+        sandbox.file("tree/real.txt", "real");
+        std::os::unix::fs::symlink("real.txt", sandbox.path().join("tree/link.txt")).unwrap();
+        let (ctx, env) = setup();
+        let to = sandbox.path().join("copy");
+        run(
+            &format!(
+                r#"(copy-file "{}" "{}" t)"#,
+                lisp_path(&sandbox.path().join("tree")),
+                lisp_path(&to)
+            ),
+            &env,
+            &ctx,
+        );
+        let link = to.join("link.txt");
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("real.txt"));
+    }
 }

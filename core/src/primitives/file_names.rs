@@ -197,6 +197,41 @@ primitive!(working_directory, args, _env, ctx, {
     Ok(ELispExp::string(ctx.default_directory()))
 });
 
+pub const SET_BUFFER_DIRECTORY_DOC: &str = "(set-buffer-directory DIRECTORY): Give the current \
+         buffer DIRECTORY as a directory of its own, read in the working directory, and return \
+         it: relative file names are read in it there, and shell commands started from it run \
+         in it, as in a dired listing. nil takes it away, and the buffer goes by the editor's \
+         working directory again. A DIRECTORY that is not one is refused.\n\n\
+         Example:\n\
+         (set-buffer-directory \"~/src\")";
+
+primitive!(set_buffer_directory, args, _env, ctx, {
+    let directory = match args.first() {
+        Some(exp) if exp.is_nil() => None,
+        Some(ELispExp::String(path)) => {
+            let directory = ctx.expand_path(path);
+            if !std::path::Path::new(&directory).is_dir() {
+                return Err(EvalError::RuntimeMessage(format!(
+                    "{directory} is not a directory"
+                )));
+            }
+            Some(directory)
+        }
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "String naming a directory, or nil".into(),
+                got: other.cloned().unwrap_or_else(ELispExp::nil),
+            });
+        }
+    };
+    let answer = directory
+        .clone()
+        .map(ELispExp::string)
+        .unwrap_or_else(ELispExp::nil);
+    ctx.with_current_buffer_mut(|buf| buf.directory = directory);
+    Ok(answer)
+});
+
 pub const CD_DOC: &str = "(cd DIRECTORY): Make DIRECTORY, read in the working directory, the \
          editor's working directory, and return it; nil, and a message, when it is not a \
          directory. Relative file names are read in it from then on, and shell commands start in \
@@ -239,6 +274,11 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         WORKING_DIRECTORY_DOC,
     );
     into.command("cd", cd, &["fChange directory: "], CD_DOC);
+    into.function(
+        "set-buffer-directory",
+        set_buffer_directory,
+        SET_BUFFER_DIRECTORY_DOC,
+    );
     into.command("pwd", pwd, &[], PWD_DOC);
     into.function("list-dir", list_dir, LIST_DIR_DOC);
     into.function("match-list", match_list, MATCH_LIST_DOC);

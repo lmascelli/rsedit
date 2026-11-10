@@ -28,7 +28,7 @@ macro_rules! primitive {
 }
 
 pub(crate) mod args;
-mod ask;
+pub(crate) mod ask;
 mod buffers;
 mod commands;
 mod comments;

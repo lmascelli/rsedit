@@ -280,6 +280,30 @@ mod tests {
     }
 
     #[test]
+    fn with_short_answers_the_confirmation_is_one_key() {
+        // The user's choice, as Emacs' use-short-answers: the same question,
+        // answered with y.
+        let sandbox = Sandbox::new("short");
+        let path = sandbox.file("a.txt", "original");
+        let (ctx, env) = editor();
+        run("(setq use-short-answers t)", &env, &ctx);
+        open_and_dirty(&path, "NEW ", &env, &ctx);
+
+        run("(quit)", &env, &ctx);
+        press('n', &ctx, &env);
+        assert!(ctx.is_running());
+        assert!(
+            ctx.snapshot(&env, 80, 24)
+                .prompt
+                .contains("Quit anyway? (y or n)"),
+            "{:?}",
+            ctx.snapshot(&env, 80, 24).prompt
+        );
+        press('y', &ctx, &env);
+        assert!(!ctx.is_running());
+    }
+
+    #[test]
     fn answering_no_to_the_confirmation_keeps_the_editor_running() {
         let sandbox = Sandbox::new("stay");
         let path = sandbox.file("a.txt", "original");

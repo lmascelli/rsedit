@@ -425,6 +425,12 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::number(crate::primitives::lisp_job::DEFAULT_WORKER_FUEL as f64),
     );
 
+    // Questions that matter are answered in full unless this says otherwise.
+    env.set_variable(
+        crate::primitives::ask::USE_SHORT_ANSWERS.into(),
+        ELispExp::nil(),
+    );
+
     // No command has run yet.
     env.set_variable(THIS_COMMAND.into(), ELispExp::nil());
 

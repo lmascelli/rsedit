@@ -67,14 +67,39 @@ primitive!(y_or_n, args, _env, ctx, {
 pub const YES_OR_NO_DOC: &str = "(yes-or-no PROMPT ON-YES &optional ON-NO): Ask PROMPT, to be \
          answered by typing yes or no and Return, and return at once; ON-YES or ON-NO is called, \
          with no arguments, when the answer comes. Anything else asks again, and closing the \
-         question counts as no.\n\n\
+         question counts as no. With `use-short-answers' set, y or n answers it instead, as \
+         `y-or-n' is answered, and C-g or Escape is a no.\n\n\
          Example:\n\
          (yes-or-no \"Discard your changes?\" 'revert-buffer)";
+
+/// The name of the Lisp variable that makes every `yes-or-no` a one-key
+/// question.
+pub(crate) const USE_SHORT_ANSWERS: &str = "use-short-answers";
 
 primitive!(yes_or_no, args, env, ctx, {
     let prompt = args::text(args.first())?;
     let on_yes = nil_or(args.get(1));
     let on_no = nil_or(args.get(2));
+
+    // Emacs' `use-short-answers': the same question, a key to answer it. The
+    // ways out of a typed question are a no here too, as cancelling one is.
+    if env
+        .get_variable(USE_SHORT_ANSWERS)
+        .is_some_and(|value| value.is_truthy())
+    {
+        let no = answer_form(&on_no);
+        ask_with_keys(
+            ctx,
+            format!("{prompt} (y or n)"),
+            vec![
+                ("y", answer_form(&on_yes)),
+                ("n", no.clone()),
+                ("C-g", no.clone()),
+                ("<esc>", no),
+            ],
+        );
+        return Ok(ELispExp::t());
+    }
 
     // A one-argument lambda rather than a form, because the minibuffer calls
     // its confirm callback *with* what was typed -- so this has to be
