@@ -33,6 +33,7 @@ loaded anyway.")
     clipboard           ; kills also go to the system clipboard
     electric-pair       ; typing an opening bracket gives you the pair
     fill                ; M-q fills a paragraph, M-x auto-fill-mode as you type
+    visual-line         ; M-x visual-line-mode wraps words on screen only
     buffer-list         ; C-x b to switch, C-x C-b for the whole list
     recent-files        ; M-g r to open a file opened before
     shell               ; M-! runs a command and shows what it said

@@ -142,6 +142,11 @@ pub struct ActiveMinor {
 }
 
 impl<B: BufferTrait> Buffer<B> {
+    /// Returns whether a minor mode is enabled in this buffer.
+    pub fn minor_mode_enabled(&self, name: &str) -> bool {
+        self.minor_modes.iter().any(|mode| mode.name == name)
+    }
+
     /// Creates an empty buffer called NAME, in `fundamental-mode`.
     pub fn new(name: &str) -> Self {
         Self {

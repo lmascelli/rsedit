@@ -4990,8 +4990,8 @@ Le decisioni:
 `Layout::compose` (`ui/layout.rs`) compone le righe di una finestra: una `Row`
 per riga dello schermo, con la linea del buffer che mostra, il testo che si
 disegna, e per ogni colonna della linea la cella in cui comincia e quante ne
-prende. Una riga mostra una linea intera: le linee lunghe non vanno a capo, e
-lo scorrimento orizzontale le taglia (`visible_text`), per celle. Il testo
+prende. Senza `visual-line-mode` una riga mostra una linea intera, e lo
+scorrimento orizzontale la taglia (`visible_text`), per celle. Il testo
 virtuale si chiede alla sua tabella una volta per riga, non per carattere.
 
 Una colonna del buffer è un carattere; una #emph[cella] è un posto dello
@@ -5029,6 +5029,57 @@ caratteri di controllo arrivano così come sono fino al renderer, che li
 disegna come figure larghe una cella (␛, ␇…) invece di mandarli al terminale;
 la GUI li salta. Un tab che arriva al renderer fuori dal testo, in un
 messaggio o nel nome di un buffer, è `␉`.
+
+=== Le righe visive <righe-visive>
+
+`features/visual-line.lisp` definisce `visual-line-mode` con il sistema dei
+modi minori (@modi-minori): stato nel buffer, etichetta `Wrap`, comando che
+alterna lo stato o legge un argomento esplicito, keymap consultata solo
+quando il modo è acceso. Il modulo predefinito lo carica senza accenderlo.
+Non ci sono una variabile globale e un secondo flag da tenere d'accordo.
+
+`Row::wrap` divide la linea già composta in intervalli di celle: preferisce
+gli spazi e spezza una parola più larga della finestra al confine di un
+carattere. Le tabulazioni sono già espanse e i caratteri larghi già misurati;
+gli accenti che non prendono celle restano con il carattere precedente. Il
+testo del buffer resta identico, come la cronologia di undo e il flag delle
+modifiche. Le righe di continuazione condividono la mappa delle colonne
+attraverso un `Arc`, senza copiarla una volta per continuazione. Una fine
+linea che cade esattamente sul bordo ha una riga visiva vuota per il punto.
+
+Ogni `Row` conserva il numero della linea del buffer, l'indice della sua
+continuazione e gli estremi del proprio intervallo di celle nella linea
+composta. `row_of_position` sceglie la continuazione che contiene una
+posizione; `to_screen` e `to_buffer` la traducono dentro quella riga. `place`
+distribuisce ogni evidenziazione su tutte le continuazioni della sua linea,
+tagliandola ai loro estremi. Anche le facce del testo virtuale si dividono
+agli stessi confini.
+
+`ui/visual_lines.rs` dà a una riga l'indirizzo `VisualPoint { line, row }` e
+permette di avanzare, arretrare e comporre una finestra da quell'indirizzo.
+Compone le linee visibili o attraversate da un movimento, senza scandire
+l'intero buffer a ogni frame. Una cache locale conserva al massimo l'ultima
+linea composta durante l'operazione.
+
+`Window::scroll_y` resta una linea del file. `Window::wrap` aggiunge la
+continuazione in cima e il layout appena disegnato, con larghezza,
+tabulazione e versione del testo. Due finestre sullo stesso buffer hanno
+quindi larghezze e posizioni indipendenti. La composizione toglie prima il
+margine, azzera lo scorrimento orizzontale e segue il punto in righe visive;
+il margine numera soltanto la prima continuazione. Il mouse legge le righe
+registrate sulla finestra per risalire alla linea e alla colonna originali.
+
+`primitives/visual_lines.rs` registra i quattro comandi della keymap del
+modo. I movimenti verticali conservano la colonna dello schermo tra comandi
+consecutivi e attraversano le continuazioni composte soltanto da testo
+virtuale o da una parte di tabulazione, che non contengono posizioni proprie
+del buffer. I comandi di movimento logico restano disponibili al Lisp.
+`editor/visual_lines.rs` coordina lo scroll di pagina, la rotella e
+`recenter`, componendo e registrando il nuovo layout anche tra due frame.
+
+`tests/visual_line_tests.rs` verifica stato per buffer, testo e undo,
+coordinate in entrambe le direzioni, tasti, scroll, ridimensionamento,
+finestre divise, margine, selezioni, overlay, Unicode e testo virtuale.
 
 == Il margine dei numeri <margine>
 

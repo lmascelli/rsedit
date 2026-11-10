@@ -6,7 +6,8 @@
 //!
 //! Design: `doc/architettura-editor.typ, <compartimenti>`.
 use crate::ui::{
-    Division, FloatingWindow, LayoutNode, Orientation, Prompt, Rect, Side, SplitPath, Window, WindowId,
+    Division, FloatingWindow, LayoutNode, Orientation, Prompt, Rect, Side, SplitPath, Window,
+    WindowId,
 };
 use std::time::{Duration, Instant};
 
@@ -139,6 +140,18 @@ impl Default for Windows {
 /// Returns which column of WIN's text the screen column X is over: zero in
 /// the gutter, where a click means the start of the line, and to the left of
 /// the window. One function for the click and the drag, which must agree.
+fn text_position(win: &Window, index: usize, column: usize) -> (usize, usize) {
+    if let Some(wrap) = &win.wrap {
+        if let Some(row) = wrap.layout.row(index) {
+            return (row.line, row.line_screen(column));
+        }
+        if let Some(row) = wrap.layout.rows().last() {
+            return (row.line, row.line_screen(row.to_screen(row.last_column())));
+        }
+    }
+    (win.scroll_y + index, win.scroll_x + column)
+}
+
 fn text_column(win: &Window, x: isize) -> usize {
     (x - win.rect.x - win.gutter_width as isize).max(0) as usize
 }
@@ -357,10 +370,11 @@ impl Windows {
         if row >= win.text_height {
             return Some(Hit::ModeLine { window: win.id });
         }
+        let (line, column) = text_position(win, row, text_column(win, x));
         Some(Hit::Text {
             window: win.id,
-            line: win.scroll_y + row,
-            column: win.scroll_x + text_column(win, x),
+            line,
+            column,
         })
     }
 
@@ -372,7 +386,7 @@ impl Windows {
         let win = self.root.window(window)?;
         let rows = win.text_height.max(1);
         let row = (y - win.rect.y).clamp(0, rows as isize - 1) as usize;
-        Some((win.scroll_y + row, win.scroll_x + text_column(win, x)))
+        Some(text_position(win, row, text_column(win, x)))
     }
 
     /// Returns which way a drag that has left WINDOW wants the view to move,

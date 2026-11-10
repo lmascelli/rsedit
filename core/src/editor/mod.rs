@@ -70,6 +70,7 @@ mod runtime;
 pub(crate) mod session;
 mod settings;
 mod visits;
+mod visual_lines;
 mod windows;
 mod work;
 

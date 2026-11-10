@@ -1,0 +1,59 @@
+NAME
+    wrapping - reading and moving through long lines without changing them
+
+SYNOPSIS
+    (visual-line-mode &optional ARG)
+    (next-visual-line &optional N)
+    (previous-visual-line &optional N)
+    (beginning-of-visual-line)
+    (end-of-visual-line)
+
+VISUAL LINE MODE
+    M-x visual-line-mode turns word wrapping on in the current buffer; run it
+    again to turn it off. It starts off in every buffer. The status line says
+    Wrap while it is on. From Lisp:
+
+        (visual-line-mode 1)         on
+        (visual-line-mode 0)         off
+        (visual-line-mode)           toggle
+        (minor-mode-p 'visual-line-mode)
+
+    The module is visual-line, loaded by default-configuration. A custom
+    configuration can load it with (require 'visual-line).
+
+    Each window wraps to its own text width, after its line-number gutter.
+    Resizing reflows the rows. Breaks prefer whitespace; a word wider than
+    the window is split at a character boundary. Spaces are kept. Tabs and
+    wide Unicode characters use their displayed widths; combining accents
+    stay with the preceding character. Line numbers appear on the first
+    visual row of a logical line; continuations have a blank gutter.
+
+    The text, undo history and modified flag do not change. Saving writes
+    exactly the same logical lines. Horizontal scrolling is disabled while
+    wrapping is on. Point at an exact-width line ending gets an empty visual
+    row, so that it remains visible.
+
+MOVING
+    These keys belong to the minor mode and disappear when it is turned off:
+
+        Down, C-n       next-visual-line
+        Up, C-p         previous-visual-line
+        Home, C-a       beginning-of-visual-line
+        End, C-e        end-of-visual-line
+
+    next-visual-line and previous-visual-line accept a count, negative for
+    the other direction, and preserve a screen column across consecutive
+    moves, even when a short row lies between longer ones. The beginning
+    and end commands choose the first and last buffer positions displayed
+    on the row; on a final row, End reaches the actual line ending.
+
+    C-v, M-v, the page keys, the mouse wheel and recenter count visual rows
+    too. A click or a drag selects positions in the original text. Syntax,
+    overlays, selections, search matches and virtual text follow the wrap.
+
+    The Lisp commands next-line, previous-line, beginning-of-line and
+    end-of-line still move through logical lines. Code manipulating a file
+    can continue to use them independently of its display.
+
+SEE ALSO
+    modes, windows, filling, virtual-text

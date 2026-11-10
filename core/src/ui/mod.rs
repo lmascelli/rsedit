@@ -9,6 +9,7 @@ mod frame;
 mod gutter;
 pub mod layout;
 mod mode_line;
+pub(crate) mod visual_lines;
 pub mod width;
 mod windows;
 
@@ -25,8 +26,8 @@ pub(crate) use faces::Registry as FaceRegistry;
 pub use frame::FrameSnapshot;
 pub use gutter::{GutterCell, GutterSpec, LineNumbers};
 pub use windows::{
-    Division, FloatingWindow, Focus, LayoutNode, Orientation, Prompt, Rect, Side, SplitPath, Window,
-    WindowId,
+    Division, FloatingWindow, Focus, LayoutNode, Orientation, Prompt, Rect, Side, SplitPath,
+    Window, WindowId, WrappedWindow,
 };
 // For the tests, which check the layout against it.
 #[cfg(test)]

@@ -35,6 +35,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// The buffer is read first, and the compartment is told the two numbers
     /// it needs: the two locks are never held together.
     pub(crate) fn recenter_focused_window(&self, where_to: f64) -> bool {
+        if let Some(result) = self.recenter_wrapped_window(self.get_focused_window_id(), where_to) {
+            return result;
+        }
         let Some(name) = self.focused_window_buffer() else {
             return false;
         };
@@ -53,6 +56,10 @@ impl<B: BufferTrait> EditorState<B> {
     /// False when the view could not move -- at the end going forward, at the
     /// start going back -- so that the caller can say so.
     pub(crate) fn scroll_focused_window(&self, amount: isize) -> bool {
+        if let Some(result) = self.scroll_wrapped_window(self.get_focused_window_id(), amount, true)
+        {
+            return result;
+        }
         let Some(name) = self.focused_window_buffer() else {
             return false;
         };
@@ -206,6 +213,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// The two locks are taken one after the other, never together: the line
     /// count from the buffer, then the scroll into the window.
     pub(crate) fn scroll_window_by(&self, window: WindowId, lines: isize) -> bool {
+        if let Some(result) = self.scroll_wrapped_window(window, lines, false) {
+            return result;
+        }
         let Some(name) = self.windows(|windows| windows.buffer_of(window)) else {
             return false;
         };

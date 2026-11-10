@@ -46,6 +46,7 @@ THE REFERENCE
         repl              a buffer to try Lisp in, a block at a time
         indentation       what Tab and Return do
         filling           paragraphs and comments that fit a column
+        wrapping          long lines wrapped on screen without changing them
         macros            record what you pressed, press it again
         rectangles        blocks of text, cut by column
         overlays          a face on one particular span

@@ -10,7 +10,9 @@ use crate::ui::Face;
 use crate::ui::gutter::{GutterCell, GutterSpec, gutter_cells, gutter_columns};
 use crate::ui::layout::{self, BufferHighlight, Layout, TabWidths};
 use crate::ui::mode_line::expand_mode_line;
+use crate::ui::visual_lines::{self, VisualLines, VisualPoint};
 use crate::ui::width::{cells, cut};
+use crate::ui::windows::WrappedWindow;
 use crate::ui::windows::{Focus, LayoutNode, Rect, Window, WindowId, split_rects};
 
 /// How many matches one window draws at most: a screenful of a pattern that
@@ -226,13 +228,29 @@ impl LayoutNode {
                 // Composed before the scroll follows point, since what must be
                 // visible is the cursor's screen column, which the row knows;
                 // composed again if the scroll moves.
-                let mut layout = compose_layout(win, &rect, buffers, settings.tabs);
-                if let Some((c_line, c_col, c_offset, _)) = point_and_size
+                let wrapping = buffers.handle(&win.buffer_name).is_some_and(|buf| {
+                    buf.read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .minor_mode_enabled(visual_lines::MODE)
+                });
+                let unwrapped = !wrapping && win.wrap.take().is_some();
+                let mut layout = if wrapping {
+                    reconcile_wrapped(win, &rect, buffers, settings, follows_points, resized)
+                } else {
+                    compose_layout(win, &rect, buffers, settings.tabs)
+                };
+                if wrapping {
+                    if is_focused && let Some((line, column, _, _)) = point_and_size {
+                        cursor_rel_pos = layout
+                            .row_of_position(line, column)
+                            .map(|(index, row)| (row.to_screen(column), index));
+                    }
+                } else if let Some((c_line, c_col, c_offset, _)) = point_and_size
                     && follows_points
                 {
                     // The view follows point only when point has moved, so
                     // that the wheel can scroll away from it, as in Emacs.
-                    let point_moved = win.point != Some(c_offset);
+                    let point_moved = win.point != Some(c_offset) || unwrapped;
                     // What the window gives back when it is focused again.
                     win.point = Some(c_offset);
 
@@ -296,6 +314,28 @@ impl LayoutNode {
                     Some(prompt) => {
                         prompt_cells(&prompt.text, gutter_width, win.scroll_y, rect.height)
                     }
+                    None if wrapping && gutter_width > 0 => (0..rect.height)
+                        .map(|index| {
+                            if let Some(row) = layout.row(index)
+                                && row.continuation == 0
+                            {
+                                gutter_cells(
+                                    settings.gutter,
+                                    gutter_width,
+                                    row.line,
+                                    1,
+                                    line_count,
+                                    point_line,
+                                )
+                                .remove(0)
+                            } else {
+                                GutterCell {
+                                    text: " ".repeat(gutter_width),
+                                    face: Face::LINE_NUMBER,
+                                }
+                            }
+                        })
+                        .collect(),
                     None => gutter_cells(
                         settings.gutter,
                         gutter_width,
@@ -352,6 +392,78 @@ impl LayoutNode {
             }
         }
     }
+}
+
+/// Reconciles a wrapped viewport in visual rows. `scroll_y` remains a logical
+/// line; the continuation at its top belongs to this particular window.
+fn reconcile_wrapped<B: BufferTrait>(
+    win: &mut Window,
+    rect: &Rect,
+    buffers: &Buffers<B>,
+    settings: ComposeSettings<'_>,
+    follows: bool,
+    resized: bool,
+) -> Layout {
+    let Some(buf) = buffers.handle(&win.buffer_name) else {
+        return Layout::default();
+    };
+    let buf = buf
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let tab_width = settings.tabs.of(&buf.current_mode);
+    let visual = VisualLines::new(&buf.text, &buf.virtual_text, rect.width, tab_width);
+    let (line, column) = buf.text.cursor_pos();
+    let offset = buf.text.cursor_pos_1d();
+    let (point, _) = visual.position(line, column);
+    let mut top = visual.normalize(VisualPoint {
+        line: win.scroll_y,
+        row: win.wrap.as_ref().map_or(0, |wrap| wrap.row),
+    });
+    let moved = win.point != Some(offset);
+    let reflowed = win.wrap.as_ref().is_none_or(|old| {
+        old.width != rect.width || old.tab_width != tab_width || old.version != buf.version
+    });
+    let mut layout = visual.compose(top, rect.height);
+    let lost_point = win.wrap.as_ref().is_some_and(|old| {
+        old.layout.row_of_position(line, column).is_some()
+            && layout.row_of_position(line, column).is_none()
+    });
+    if follows {
+        win.point = Some(offset);
+        if rect.height > 0
+            && (moved || resized || reflowed || lost_point)
+            && layout.row_of_position(line, column).is_none()
+        {
+            let height = rect.height.saturating_sub(1).min(isize::MAX as usize) as isize;
+            let bottom = visual.advance(top, height);
+            let conservative = settings.scroll_conservatively.min(isize::MAX as usize) as isize;
+            let close = if point < top {
+                visual.advance(point, conservative) >= top
+            } else {
+                point <= visual.advance(bottom, conservative)
+            };
+            top = if !moved || settings.scroll_conservatively >= NEVER_RECENTER || close {
+                if point < top {
+                    point
+                } else {
+                    visual.advance(point, -height)
+                }
+            } else {
+                visual.advance(point, -((height as f64 * 0.5).round() as isize))
+            };
+            layout = visual.compose(top, rect.height);
+        }
+    }
+    win.scroll_y = top.line;
+    win.scroll_x = 0;
+    win.wrap = Some(WrappedWindow {
+        row: top.row,
+        layout: layout.clone(),
+        width: rect.width,
+        tab_width,
+        version: buf.version,
+    });
+    layout
 }
 
 /// Returns how many columns the question PROMPT takes in front of the answer
@@ -744,6 +856,21 @@ pub fn compose_layout<B: BufferTrait>(
     let buf = buf
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if buf.minor_mode_enabled(visual_lines::MODE) {
+        return VisualLines::new(
+            &buf.text,
+            &buf.virtual_text,
+            rect.width,
+            tabs.of(&buf.current_mode),
+        )
+        .compose(
+            VisualPoint {
+                line: win.scroll_y,
+                row: win.wrap.as_ref().map_or(0, |wrap| wrap.row),
+            },
+            rect.height,
+        );
+    }
     Layout::compose(
         &buf.text,
         &buf.virtual_text,

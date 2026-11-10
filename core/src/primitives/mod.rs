@@ -71,6 +71,7 @@ mod theme;
 mod undo;
 pub(crate) mod verbs;
 mod virtual_text;
+mod visual_lines;
 mod windows;
 mod workers;
 
@@ -171,6 +172,7 @@ pub fn install_primitives<B: BufferTrait>(
     undo::install(&into);
     verbs::install(&into);
     virtual_text::install(&into);
+    visual_lines::install(&into);
     windows::install(&into);
     workers::install(&into);
 }

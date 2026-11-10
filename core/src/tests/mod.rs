@@ -106,6 +106,7 @@ mod undo_tests;
 mod verb_tests;
 mod vim_tests;
 mod virtual_text_tests;
+mod visual_line_tests;
 mod watcher_tests;
 mod window_point_tests;
 mod window_tests;

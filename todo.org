@@ -4,9 +4,6 @@
 * Work in progress.
 
 Lacune che si notano subito
-- Default risposte yes/no veloci come singola pressione y/n
-- Possibilità di selezionare più elementi per chiudere i buffer in buffer-lisp
-  e per cancellare file in dired
 - Righe lunghe che vanno a capo sullo schermo (truncate-lines per
   buffer, una modalità tipo visual-line-mode).
   Oggi c’è solo lo scorrimento orizzontale: è la mancanza più grande

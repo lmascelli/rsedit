@@ -220,23 +220,23 @@ impl<B: BufferTrait> EditorState<B> {
                     // a tiled window's are, since a prompt can carry virtual
                     // text as a file can.
                     let layout = compose_layout(&float.window, &float.rect, buffers, &tabs);
+                    let scroll_x = if layout.is_wrapped() {
+                        0
+                    } else {
+                        float.window.scroll_x
+                    };
                     let cursor_rel_pos = is_focused
                         .then(|| buffers.handle(&float.window.buffer_name))
                         .flatten()
-                        .map(|buf| {
+                        .and_then(|buf| {
                             let (c_line, c_col) = buf
                                 .read()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                                 .text
                                 .cursor_pos();
-                            let c_screen = layout
-                                .row_of_line(c_line)
-                                .map(|(_, row)| row.to_screen(c_col))
-                                .unwrap_or(c_col);
-                            (
-                                c_screen.saturating_sub(float.window.scroll_x),
-                                c_line.saturating_sub(float.window.scroll_y),
-                            )
+                            layout.row_of_position(c_line, c_col).map(|(index, row)| {
+                                (row.to_screen(c_col).saturating_sub(scroll_x), index)
+                            })
                         });
                     // What a tiled window draws, in the same order, and then
                     // the virtual text's own faces.
@@ -248,9 +248,8 @@ impl<B: BufferTrait> EditorState<B> {
                         is_focused,
                     );
                     let mut highlights =
-                        layout::place(&layout, in_buffer, float.window.scroll_x, float.rect.width);
-                    highlights
-                        .extend(layout.virtual_highlights(float.window.scroll_x, float.rect.width));
+                        layout::place(&layout, in_buffer, scroll_x, float.rect.width);
+                    highlights.extend(layout.virtual_highlights(scroll_x, float.rect.width));
 
                     views.push(RenderableWindowView {
                         rect: float.rect,
@@ -258,7 +257,7 @@ impl<B: BufferTrait> EditorState<B> {
                         title: float.title.clone(),
                         is_focused,
                         cursor_rel_pos,
-                        lines: layout.visible_text(float.window.scroll_x, float.rect.width),
+                        lines: layout.visible_text(scroll_x, float.rect.width),
                         highlights,
                         // A float says what it is on its border, and a status
                         // line would say it again.

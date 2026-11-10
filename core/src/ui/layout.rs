@@ -7,6 +7,7 @@ use crate::buffer::{BufferTrait, VirtualTextTable};
 use crate::ui::width::{char_cells, cut};
 use crate::ui::{Face, Highlight};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// How many cells a Tab reaches to, mode by mode: a mode's own `tab-width`
 /// property, or the variable, read once a frame before any lock is taken.
@@ -53,7 +54,7 @@ pub struct Row {
     /// Where each column of the line is drawn: the cell it begins at and how
     /// many it takes. `None` when every column is the one cell of the same
     /// number, which is most rows, and costs nothing to keep.
-    columns: Option<Vec<(usize, usize)>>,
+    columns: Option<Arc<Vec<(usize, usize)>>>,
     /// How many columns the line has.
     length: usize,
     /// How many cells the row takes, virtual text included.
@@ -61,6 +62,13 @@ pub struct Row {
     /// Faces the virtual text asked for, as cell spans on this row. Empty for
     /// a row with no virtual text, which is the ordinary case.
     faces: Vec<(usize, usize, Face)>,
+    /// The cells of the composed logical line this visual row shows.
+    from: usize,
+    to: usize,
+    /// Its index within the logical line, and whether it is the final row.
+    pub continuation: usize,
+    last: bool,
+    wrapped: bool,
 }
 
 impl Row {
@@ -74,6 +82,11 @@ impl Row {
             length,
             cells: length,
             faces: Vec::new(),
+            from: 0,
+            to: length,
+            continuation: 0,
+            last: true,
+            wrapped: false,
         }
     }
 
@@ -85,6 +98,10 @@ impl Row {
     /// drawn inside virtual text. A column past the end of the line maps past
     /// the end of the row, one cell per column.
     pub fn to_screen(&self, column: usize) -> usize {
+        self.line_cell(column).saturating_sub(self.from)
+    }
+
+    fn line_cell(&self, column: usize) -> usize {
         let Some(columns) = &self.columns else {
             return column;
         };
@@ -112,6 +129,17 @@ impl Row {
     /// inside virtual text answers the column the text is anchored at: a click
     /// on virtual text puts point on the character it is in front of.
     pub fn to_buffer(&self, screen: usize) -> usize {
+        let column = self.buffer_at(self.from.saturating_add(screen));
+        if !self.wrapped {
+            column
+        } else if self.last {
+            column.min(self.length)
+        } else {
+            column.min(self.last_column())
+        }
+    }
+
+    fn buffer_at(&self, screen: usize) -> usize {
         let Some(columns) = &self.columns else {
             return screen;
         };
@@ -130,6 +158,97 @@ impl Row {
         self.length + (screen - self.cells)
     }
 
+    /// Returns the first and last positions point can occupy on this row.
+    pub fn first_column(&self) -> usize {
+        self.buffer_at(self.from).min(self.length)
+    }
+
+    pub fn last_column(&self) -> usize {
+        if self.last {
+            self.length
+        } else {
+            self.buffer_at(self.to.saturating_sub(1)).min(self.length)
+        }
+    }
+
+    /// Returns whether COLUMN is displayed on this row, rather than on one
+    /// of the other rows of the same logical line.
+    pub fn contains(&self, column: usize) -> bool {
+        let cell = self.line_cell(column);
+        cell >= self.from && (self.last || cell < self.to)
+    }
+
+    /// Maps a cell on this row back to the unwrapped composed line. Mouse
+    /// handling uses this before doing its existing cell-to-buffer mapping.
+    pub fn line_screen(&self, screen: usize) -> usize {
+        self.line_cell(self.to_buffer(screen))
+    }
+
+    /// Splits a composed line at whitespace when possible. The column map is
+    /// shared by its continuations, so a long line does not copy it per row.
+    pub(crate) fn wrap(self, width: usize) -> Vec<Self> {
+        let width = width.max(1);
+        let chars: Vec<_> = self.text.char_indices().collect();
+        let mut ranges = Vec::new();
+        let (mut at, mut cell) = (0, 0);
+        while at < chars.len() {
+            let (start, from) = (at, cell);
+            let mut word_break = None;
+            while at < chars.len() {
+                let c = chars[at].1;
+                let size = char_cells(c);
+                if cell + size > from + width && cell > from {
+                    break;
+                }
+                cell += size;
+                at += 1;
+                if c.is_whitespace() {
+                    word_break = Some((at, cell));
+                }
+            }
+            if at < chars.len()
+                && !chars[at].1.is_whitespace()
+                && let Some((next, end)) = word_break
+            {
+                at = next;
+                cell = end;
+            }
+            let byte_start = chars[start].0;
+            let byte_end = chars.get(at).map_or(self.text.len(), |(byte, _)| *byte);
+            ranges.push((byte_start, byte_end, from, cell));
+        }
+        // Point at an exact-width end of line needs a cell of its own.
+        if ranges.is_empty() || ranges.last().is_some_and(|r| r.3 - r.2 >= width) {
+            ranges.push((self.text.len(), self.text.len(), self.cells, self.cells));
+        }
+        let last = ranges.len() - 1;
+        ranges
+            .into_iter()
+            .enumerate()
+            .map(|(index, (a, b, from, to))| Self {
+                text: self.text[a..b].to_string(),
+                columns: self.columns.clone(),
+                faces: self
+                    .faces
+                    .iter()
+                    .filter_map(|(start, end, face)| {
+                        let a = (*start).max(from);
+                        let b = (*end).min(to);
+                        (a < b).then(|| (a - from, b - from, *face))
+                    })
+                    .collect(),
+                from,
+                to,
+                continuation: index,
+                last: index == last,
+                wrapped: true,
+                line: self.line,
+                length: self.length,
+                cells: self.cells,
+            })
+            .collect()
+    }
+
     /// Returns the faces the virtual text on this row asked for, as
     /// highlights at ROW.
     fn virtual_highlights(&self, row: usize) -> impl Iterator<Item = Highlight> + '_ {
@@ -143,12 +262,9 @@ impl Row {
 }
 
 /// The rows a window is showing, composed from its buffer's lines.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Layout {
     rows: Vec<Row>,
-    /// The first buffer line the rows cover, so a line can be found without
-    /// searching.
-    first_line: usize,
 }
 
 impl Layout {
@@ -180,14 +296,37 @@ impl Layout {
                 compose_row(line_number, &line, line_start, virtual_text, tab_width)
             })
             .collect();
-        Self { rows, first_line }
+        Self { rows }
     }
 
     /// Returns the row showing buffer line LINE, with its index, if it is on
     /// screen.
     pub fn row_of_line(&self, line: usize) -> Option<(usize, &Row)> {
-        let index = line.checked_sub(self.first_line)?;
-        self.rows.get(index).map(|row| (index, row))
+        let index = self.rows.partition_point(|row| row.line < line);
+        self.rows
+            .get(index)
+            .filter(|row| row.line == line)
+            .map(|row| (index, row))
+    }
+
+    /// Returns the visual row that displays a particular buffer position.
+    pub fn row_of_position(&self, line: usize, column: usize) -> Option<(usize, &Row)> {
+        self.rows
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row.line == line && row.contains(column))
+    }
+
+    pub(crate) fn from_rows(rows: Vec<Row>) -> Self {
+        Self { rows }
+    }
+
+    pub fn rows(&self) -> &[Row] {
+        &self.rows
+    }
+
+    pub fn is_wrapped(&self) -> bool {
+        self.rows.first().is_some_and(|row| row.wrapped)
     }
 
     /// Returns the row at index ROW of the window.
@@ -300,10 +439,15 @@ fn compose_row(
     Row {
         line,
         text: row.text,
-        columns: Some(columns),
+        columns: Some(Arc::new(columns)),
         length,
         cells: row.cells,
         faces,
+        from: 0,
+        to: row.cells,
+        continuation: 0,
+        last: true,
+        wrapped: false,
     }
 }
 
@@ -330,18 +474,28 @@ pub fn place(
 ) -> Vec<Highlight> {
     highlights
         .into_iter()
-        .filter_map(|highlight| {
-            let (row, line) = layout.row_of_line(highlight.line)?;
-            clip(
-                Highlight {
-                    row,
-                    start_col: line.to_screen(highlight.start),
-                    end_col: line.to_screen(highlight.end),
-                    face: highlight.face,
-                },
-                scroll_x,
-                width,
-            )
+        .flat_map(|highlight| {
+            layout
+                .rows
+                .iter()
+                .enumerate()
+                .filter(move |(_, row)| row.line == highlight.line)
+                .filter_map(move |(row, line)| {
+                    clip(
+                        Highlight {
+                            row,
+                            start_col: line.to_screen(highlight.start),
+                            end_col: line.to_screen(highlight.end),
+                            face: highlight.face,
+                        },
+                        scroll_x,
+                        if line.last {
+                            width
+                        } else {
+                            width.min(line.to - line.from)
+                        },
+                    )
+                })
         })
         .collect()
 }

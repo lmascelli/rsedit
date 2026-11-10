@@ -3,8 +3,20 @@
 //! divides its rectangle.
 //!
 //! Design: `doc/architettura-editor.typ, <finestre>`.
+use super::layout::Layout;
 use crate::ELispExp;
 use crate::buffer::BufferTrait;
+
+/// A wrapped window's continuation at the top and the rows it last drew.
+/// Cached rows let the mouse use precisely the mapping that was displayed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WrappedWindow {
+    pub row: usize,
+    pub layout: Layout,
+    pub width: usize,
+    pub tab_width: usize,
+    pub version: u64,
+}
 
 /// Which way a split divides its rectangle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,7 +92,7 @@ pub struct Prompt {
     /// How many rows it takes, kept when `delete-other-windows` rebuilds the
     /// layout around it.
     pub lines: usize,
-    }
+}
 
 /// A window: the buffer it shows, how far it is scrolled, and what the last
 /// frame composed for it, which the commands and the mouse read between
@@ -95,6 +107,7 @@ pub struct Window {
     /// The first column and the first line it shows.
     pub scroll_x: usize,
     pub scroll_y: usize,
+    pub wrap: Option<WrappedWindow>,
 
     /// How many rows of text it had when the last frame was composed, or 0
     /// if it has never been on screen: what a screenful is to a scrolling
@@ -131,6 +144,7 @@ impl Window {
         buffer_name.clone_into(&mut self.buffer_name);
         self.scroll_x = 0;
         self.scroll_y = 0;
+        self.wrap = None;
         self.point = None;
     }
 
@@ -142,6 +156,7 @@ impl Window {
             buffer_name: buffer_name.to_string(),
             scroll_x: 0,
             scroll_y: 0,
+            wrap: None,
             text_height: 0,
             rect: Rect::default(),
             show_mode_line: true,
