@@ -20,7 +20,9 @@ Example:
   (buffer-create "*Messages*")
   (switch-to-buffer "*Messages*")
   (clear-buffer)
-  (mapc (lambda (line) (insert line "\n")) (all-logs)))
+  (mapc (lambda (line) (insert line "\n")) (all-logs))
+  ;; A snapshot of the log, not your text: nothing to save.
+  (set-buffer-modified-p nil))
 
 ;; A `defun' and a `register-command' rather than `defcommand', so that this
 ;; file loads without commands.lisp before it.
@@ -67,7 +69,9 @@ before it opened."
   (insert message "\n")
   (if frames
       (mapc (lambda (f) (insert "  at " f "\n")) frames)
-      (insert "  (no frames: the call that failed was the last one in its function)")))
+      (insert "  (no frames: the call that failed was the last one in its function)"))
+  ;; Written by the editor, not by you: nothing to save.
+  (set-buffer-modified-p nil))
 
 (defun report-error (message frames)
   "Report a failed command: show MESSAGE in the echo area and, when

@@ -393,6 +393,8 @@ it again: (KIND ARGUMENTS...).")
     (set-buffer-read-only nil)
     (clear-buffer)
     (insert (help--join lines))
+    ;; Written by the editor, not by you: nothing to save.
+    (set-buffer-modified-p nil)
     (set-buffer-read-only t)
     (goto-char 0)
     (setq help--current page)))

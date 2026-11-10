@@ -124,6 +124,8 @@ word, so that a space, a `;' or a `*' in it reaches man and not the shell."
     (set-buffer-read-only nil)
     (clear-buffer)
     (insert plain)
+    ;; Written by the editor, not by you: nothing to save.
+    (set-buffer-modified-p nil)
     (set-buffer-read-only t)
     ;; The old overlays first, which would mark the new page's words.
     (remove-overlays 'manpage)

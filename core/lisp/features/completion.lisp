@@ -117,6 +117,8 @@ space."
                         (make-string width " ")))
             (setq index (+ index 1)))
           (insert "\n")))
+      ;; Written by the strip, not by you: nothing to save.
+      (set-buffer-modified-p nil)
       (set-buffer-read-only t)))
   (completion--highlight))
 

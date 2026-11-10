@@ -153,7 +153,9 @@ keys of the REPL, where C-j evaluates the expressions written last."
         (switch-to-buffer risp-repl-buffer)
         (set-local-keymap 'risp-repl-map)
         (insert ";; Lisp, evaluated in the running editor. Write an expression,\n"
-                ";; or a few, and press C-j after them: the value comes below.\n\n"))))
+                ";; or a few, and press C-j after them: the value comes below.\n\n")
+        ;; The greeting is the editor's: what you write after it is yours.
+        (set-buffer-modified-p nil))))
 
 (define-key 'risp-repl-map "C-j" 'risp-repl-eval-print-block)
 

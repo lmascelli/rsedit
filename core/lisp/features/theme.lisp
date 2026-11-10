@@ -135,6 +135,8 @@ and a space.")
                 (insert (if (and current-theme (string= name current-theme)) "* " "  ")
                         name "\n"))
               themes)))
+  ;; Written by the listing, not by you: nothing to save.
+  (set-buffer-modified-p nil)
   (set-buffer-read-only t))
 
 ;; Read off the screen, as in dired and the buffer list.

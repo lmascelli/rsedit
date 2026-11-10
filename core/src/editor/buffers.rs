@@ -412,8 +412,13 @@ impl<B: BufferTrait> EditorState<B> {
 /// Appends TEXT to BUF, read-only or not, and returns whether it was written.
 /// The flag goes down and back up under the caller's lock: see
 /// [`EditorState::append_to_buffer`].
+///
+/// What is appended is the editor's output -- a command's, a search's -- and
+/// not unsaved changes: the buffer is as modified afterwards as it was
+/// before, so that an output buffer is never shown as one that needs saving.
 fn append<B: BufferTrait>(buf: &mut Buffer<B>, text: &str) -> bool {
     let was_read_only = buf.read_only;
+    let was_modified = buf.is_modified;
     buf.read_only = false;
     let at = buf.text.len();
     // `insert_text` refuses only a read-only buffer, and the flag is down under
@@ -421,5 +426,6 @@ fn append<B: BufferTrait>(buf: &mut Buffer<B>, text: &str) -> bool {
     // rather than the text going missing.
     let written = crate::primitives::edits::insert_text(buf, at, text);
     buf.read_only = was_read_only;
+    buf.is_modified = was_modified;
     written
 }
