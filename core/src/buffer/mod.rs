@@ -110,9 +110,6 @@ pub struct Buffer<B: BufferTrait> {
     /// Whether the last attempt to write the auto-save file failed: what keeps
     /// the log from hearing about it again at every turn until one works.
     pub auto_save_failing: bool,
-    /// Whether this buffer refuses to have its text changed. Checked at the
-    /// two doors; point still moves.
-    pub read_only: bool,
     /// Things other parts of the editor have hung on this buffer, by name: a
     /// list of search results shown in it, a parsed table, the state of a
     /// view. A value lives exactly as long as the buffer, whose killing runs
@@ -134,6 +131,14 @@ pub struct Buffer<B: BufferTrait> {
     pub minor_modes: Vec<ActiveMinor>,
 }
 
+/// The name of the minor mode a buffer that refuses to have its text changed
+/// has on. The one minor mode the core makes itself, since it is the core
+/// that protects a transcript or a list of results, with no module loaded.
+pub const READ_ONLY_MODE: &str = "read-only-mode";
+
+/// What the status line shows for [`READ_ONLY_MODE`].
+pub const READ_ONLY_LIGHTER: &str = "RO";
+
 /// A minor mode on in a buffer: its name, and what the status line shows for
 /// it, copied when it was turned on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +151,43 @@ impl<B: BufferTrait> Buffer<B> {
     /// Returns whether a minor mode is enabled in this buffer.
     pub fn minor_mode_enabled(&self, name: &str) -> bool {
         self.minor_modes.iter().any(|mode| mode.name == name)
+    }
+
+    /// Returns whether this buffer refuses to have its text changed: whether
+    /// it has [`READ_ONLY_MODE`] on. Checked at the two doors; point still
+    /// moves.
+    pub fn read_only(&self) -> bool {
+        self.minor_mode_enabled(READ_ONLY_MODE)
+    }
+
+    /// Turns [`READ_ONLY_MODE`] on in this buffer, last of its minor modes,
+    /// or off, running no hook: the caller holds the buffer's lock.
+    pub fn set_read_only(&mut self, read_only: bool) {
+        if !read_only {
+            self.minor_modes.retain(|mode| mode.name != READ_ONLY_MODE);
+        } else if !self.read_only() {
+            self.minor_modes.push(ActiveMinor {
+                name: READ_ONLY_MODE.to_string(),
+                lighter: READ_ONLY_LIGHTER.to_string(),
+            });
+        }
+    }
+
+    /// Returns what EDIT returns, called with this buffer accepting changes,
+    /// read-only or not, and left afterwards as read-only as it was, with
+    /// [`READ_ONLY_MODE`] where it was among the minor modes.
+    pub(crate) fn writable<R>(&mut self, edit: impl FnOnce(&mut Self) -> R) -> R {
+        let at = self
+            .minor_modes
+            .iter()
+            .position(|mode| mode.name == READ_ONLY_MODE);
+        let held = at.map(|at| self.minor_modes.remove(at));
+        let result = edit(self);
+        if let (Some(at), Some(held)) = (at, held) {
+            self.minor_modes
+                .insert(at.min(self.minor_modes.len()), held);
+        }
+        result
     }
 
     /// Creates an empty buffer called NAME, in `fundamental-mode`.
@@ -171,7 +213,6 @@ impl<B: BufferTrait> Buffer<B> {
             stale: false,
             auto_saved_at: None,
             auto_save_failing: false,
-            read_only: false,
             data: HashMap::new(),
             changed: Topic::detached(),
             writer: None,
@@ -283,7 +324,6 @@ impl<B: BufferTrait> Buffer<B> {
             stale: false,
             auto_saved_at: None,
             auto_save_failing: false,
-            read_only: false,
             data: HashMap::new(),
             changed: Topic::detached(),
             writer: None,

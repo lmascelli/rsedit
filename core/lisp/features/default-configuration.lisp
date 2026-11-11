@@ -34,6 +34,8 @@ loaded anyway.")
     electric-pair       ; typing an opening bracket gives you the pair
     show-paren          ; the bracket next to the cursor drawn with its partner
     whitespace          ; the blanks at the ends of lines, drawn and cleaned
+    overwrite           ; Insert, and what you type replaces what is there
+    display-line-numbers ; M-x display-line-numbers-mode numbers the lines
     fill                ; M-q fills a paragraph, M-x auto-fill-mode as you type
     visual-line         ; M-x visual-line-mode wraps words on screen only
     buffer-list         ; C-x b to switch, C-x C-b for the whole list

@@ -11,11 +11,11 @@ SYNOPSIS
     (eval-after-load FEATURE FUNCTION)
     (with-eval-after-load FEATURE BODY...)
     (eval-file FILE)
-    (toggle-line-numbers)
+    (display-line-numbers-mode &optional ARG)
     default-configuration-modules
     default-configuration-skip
     lisp-path
-    display-line-numbers
+    display-line-numbers-type
     display-line-numbers-width
     mode-line-format
 
@@ -180,14 +180,22 @@ SETTINGS
     M-: to try it. These are the general ones; the others are described
     with the feature they belong to.
 
-        display-line-numbers        nil, t, or 'relative
+        display-line-numbers-type   t, or 'relative
         display-line-numbers-width  the fewest digits the numbers take
         mode-line-format            what each window's status line shows
 
-    M-x toggle-line-numbers turns the numbers on and off. They are drawn in
-    the faces `line-number' and `line-number-current', and the status line
-    in `mode-line' and `mode-line-inactive'; `themes' says how to change a
-    face.
+    M-x display-line-numbers-mode numbers the lines of the buffer you are
+    in, in every window showing it, and takes the numbers away again. It
+    is a minor mode, off until you turn it on, since the numbers cost
+    columns; the `modes' page says how to turn one on in the buffers of a
+    major mode, or of every one. `display-line-numbers-type' says which
+    numbers: each line's own, or with 'relative how far each line is from
+    the one point is on, which shows its own. A window too narrow to
+    spare the columns shows none.
+
+    The numbers are drawn in the faces `line-number' and
+    `line-number-current', and the status line in `mode-line' and
+    `mode-line-inactive'; `themes' says how to change a face.
 
 COLOURS
     C-c t lists the themes, and Return on one applies it. To keep a choice,
@@ -216,10 +224,15 @@ EXAMPLES
 
         (list (featurep 'vim) (feature-file 'vim))
 
-    Number each line by its distance from point, which is what a count
-    before a command wants:
+    Number the lines of every buffer opened from now on, each by its
+    distance from point, which is what a count before a command wants:
 
-        (setq display-line-numbers 'relative)
+        (setq display-line-numbers-type 'relative)
+        (minor-mode-enable 'display-line-numbers-mode)
+
+    Number the lines of the Rust files only:
+
+        (minor-mode-enable 'display-line-numbers-mode 'rust-mode)
 
     A shorter status line: the buffer, then the line and the column.
 

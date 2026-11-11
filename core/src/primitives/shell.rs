@@ -397,7 +397,7 @@ primitive!(shell_command_start, args, env, ctx, {
     ctx.append_to_buffer(&name, &format!("$ {command}\n"));
 
     ctx.with_buffer_mut(&name, |buf| {
-        buf.read_only = true;
+        buf.set_read_only(true);
         // Set on a reused buffer too: its last command may have run elsewhere.
         buf.directory = Some(directory);
     });

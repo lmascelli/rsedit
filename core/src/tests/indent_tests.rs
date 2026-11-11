@@ -264,7 +264,7 @@ mod tests {
             run("(undo)", &env, &ctx);
             assert_eq!(indentation(&ctx, &env), expected);
         }
-        ctx.with_current_buffer_mut(|b| b.read_only = true);
+        ctx.with_current_buffer_mut(|b| b.set_read_only(true));
         key(&ctx, &env, KeyCode::Tab, false);
         assert_eq!(contents(&ctx), "header\n");
     }

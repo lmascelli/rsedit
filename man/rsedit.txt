@@ -38,6 +38,8 @@ MODULES
     electric-pair        closing delimiters that type themselves
     show-paren           the bracket next to the cursor, drawn with its pair
     whitespace           the blanks at the ends of lines, drawn and cleaned
+    overwrite            Insert, and what you type replaces what is there
+    display-line-numbers  M-x display-line-numbers-mode, the lines numbered
     fill                 M-q, and lines broken as you type
     visual-line          M-x visual-line-mode, words wrapped on screen
     buffer-list          C-x b, and C-x C-b

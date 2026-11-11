@@ -14,6 +14,7 @@ SYNOPSIS
     (buffer-string)
     (buffer-substring START END)
     (clear-buffer)
+    (read-only-mode &optional ARG)
     (set-buffer-read-only FLAG)
     (buffer-read-only-p)
     (buffer-modified-p &optional BUFFER)
@@ -105,6 +106,14 @@ READ ONLY
     point still moves. A listing is read-only, so what it shows can only
     change by being drawn again.
 
+    C-x C-q makes the buffer you are in read-only, or writable again: a
+    file you mean only to read, or a listing you want to change after
+    all. Being read-only is the minor mode `read-only-mode', which the
+    status line shows as RO; unlike the other minor modes, a buffer keeps
+    it when its major mode changes. `set-buffer-read-only' turns it on
+    and off from Lisp without running its minor-mode-hook, which is what
+    a module does around drawing its listing again.
+
 BUFFERS FROM LISP
     `buffer-create' makes a buffer without showing it, in a mode of its
     own if it is given one; a buffer that exists already is left as it is.
@@ -152,6 +161,7 @@ KEYS
     C-x b                   switch-to-buffer-prompt
     C-x C-b                 buffer-list
     C-x k                   kill-buffer
+    C-x C-q                 read-only-mode
 
 KEYS IN BUFFER LIST MODE
     <ret>                   buffer-list-select

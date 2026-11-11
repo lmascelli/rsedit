@@ -16,7 +16,12 @@ pub struct GutterCell {
     pub face: Face,
 }
 
-/// What a window's gutter shows, as `display-line-numbers` says.
+/// The name of the minor mode that gives the windows showing a buffer their
+/// gutter of line numbers.
+pub(crate) const MODE: &str = "display-line-numbers-mode";
+
+/// What a window's gutter shows: nothing, or the numbers
+/// `display-line-numbers-type` asks for where [`MODE`] is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum LineNumbers {
     /// No gutter at all: the text starts at the window's left edge.
@@ -30,7 +35,8 @@ pub enum LineNumbers {
 }
 
 /// How the gutters are configured, read from Lisp before composition takes
-/// any lock.
+/// any lock: what a window numbers its lines with when its buffer has
+/// [`MODE`] on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct GutterSpec {
     pub numbers: LineNumbers,

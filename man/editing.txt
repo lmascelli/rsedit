@@ -30,6 +30,7 @@ SYNOPSIS
     (current-line)
 
     (self-insert STRING)
+    (overwrite-mode &optional ARG)
     (insert &rest STRINGS)
     (insert-newline)
     (delete-char &optional N)
@@ -172,6 +173,13 @@ TYPING
 
     Backspace deletes the character behind point and C-d the one in
     front. Deleting does not save what it deletes; killing does.
+
+    Insert turns overwriting on, and off again. While it is on the status
+    line shows Ovwrt, and a character you type takes the place of the one
+    after point instead of pushing it along; at the end of a line it is
+    added, so that a line never eats the one below. Return, a paste and
+    what Lisp inserts go in as ever. Overwriting is the minor mode
+    `overwrite-mode', on in the one buffer where you turned it on.
 
 PAIRS
     Typing an opening bracket inserts the closing one too, with point
@@ -419,6 +427,7 @@ KEYS
     C-M-d                   down-list
     M-g g                   goto-line
     M-g M-g                 goto-line
+    <insert>                overwrite-mode
     <backspace>             electric-pair-delete-backward
     C-d                     electric-pair-delete-forward
     <delete>                electric-pair-delete-forward

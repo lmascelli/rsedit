@@ -254,7 +254,8 @@ mod tests {
     #[test]
     fn the_gutter_numbers_logical_lines_and_spends_width_before_wrapping() {
         let (ctx, env) = wrapped("one two three four five six\nsecond", 20);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run(&module_source("display-line-numbers"), &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let drawn = view(&ctx, &env, 20, 20);
         assert!(drawn.gutter_width > 0);
         assert_eq!(drawn.gutter[0].text.trim(), "1");

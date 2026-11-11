@@ -136,7 +136,7 @@ primitive!(rectangle_bounds, _args, _env, ctx, {
 /// block kept that was never taken -- and duplicated by the next yank -- or
 /// point moved for nothing.
 fn refused_if_read_only<B: BufferTrait>(ctx: &EditorState<B>) -> Option<ELispExp<B>> {
-    ctx.with_current_buffer(|buf| buf.read_only)
+    ctx.with_current_buffer(|buf| buf.read_only())
         .then(|| crate::primitives::edits::edited(ctx, false))
 }
 

@@ -1,5 +1,6 @@
-//! `insert`, and the read-only flag the two doors enforce: a property of any
-//! buffer, tested without opening a view such as dired.
+//! `insert`, and the read-only buffer the two doors refuse to change: a minor
+//! mode of any buffer, `read-only-mode`, tested without opening a view such as
+//! dired.
 //!
 //! Design: `doc/architettura-editor.typ, <due-porte>`.
 #[cfg(test)]
@@ -255,6 +256,122 @@ mod tests {
         assert_eq!(run("(buffer-read-only-p)", &env, &ctx), LispExp::nil());
         run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
         assert_eq!(run("(buffer-read-only-p)", &env, &ctx), LispExp::t());
+    }
+
+    // ---------------- read-only-mode ----------------
+
+    #[test]
+    fn a_read_only_buffer_has_read_only_mode_on() {
+        let (ctx, env) = setup();
+        assert!(run("(minor-mode-p 'read-only-mode)", &env, &ctx).is_nil());
+        run("(set-buffer-read-only t)", &env, &ctx);
+        assert!(run("(minor-mode-p 'read-only-mode)", &env, &ctx).is_truthy());
+        run("(set-buffer-read-only nil)", &env, &ctx);
+        assert!(run("(minor-modes)", &env, &ctx).is_nil());
+    }
+
+    #[test]
+    fn read_only_mode_turned_on_as_a_minor_mode_refuses_an_insert() {
+        let (ctx, env) = setup();
+        run("(minor-mode-on 'read-only-mode)", &env, &ctx);
+        assert!(run("(buffer-read-only-p)", &env, &ctx).is_truthy());
+        run(r#"(insert "x")"#, &env, &ctx);
+        assert_eq!(text(&env, &ctx), "");
+        run("(minor-mode-off 'read-only-mode)", &env, &ctx);
+        run(r#"(insert "x")"#, &env, &ctx);
+        assert_eq!(text(&env, &ctx), "x");
+    }
+
+    #[test]
+    fn the_command_goes_the_other_way_and_reads_its_argument() {
+        let (ctx, env) = setup();
+        assert!(run("(read-only-mode)", &env, &ctx).is_truthy());
+        assert!(run("(buffer-read-only-p)", &env, &ctx).is_truthy());
+        assert_eq!(ctx.get_echo_message(), "read-only-mode on");
+        assert!(run("(read-only-mode)", &env, &ctx).is_nil());
+        assert!(run("(buffer-read-only-p)", &env, &ctx).is_nil());
+        assert_eq!(ctx.get_echo_message(), "read-only-mode off");
+        for (arg, on) in [
+            ("1", true),
+            ("1", true),
+            ("0", false),
+            ("-1", false),
+            ("'-", false),
+        ] {
+            run(&format!("(read-only-mode {arg})"), &env, &ctx);
+            assert_eq!(
+                run("(buffer-read-only-p)", &env, &ctx).is_truthy(),
+                on,
+                "after {arg}"
+            );
+        }
+        assert!(run("(commandp 'read-only-mode)", &env, &ctx).is_truthy());
+    }
+
+    #[test]
+    fn a_read_only_buffer_stays_so_when_its_major_mode_changes() {
+        let (ctx, env) = setup();
+        run(
+            r#"(make-mode 'prose-mode)
+               (make-minor-mode 'one-mode "One")
+               (minor-mode-on 'one-mode)
+               (set-buffer-read-only t)
+               (set-major-mode 'prose-mode)"#,
+            &env,
+            &ctx,
+        );
+        assert!(run("(buffer-read-only-p)", &env, &ctx).is_truthy());
+        assert!(run("(minor-mode-p 'one-mode)", &env, &ctx).is_nil());
+    }
+
+    #[test]
+    fn the_command_runs_the_modes_hook_and_set_buffer_read_only_does_not() {
+        let (ctx, env) = setup();
+        run(
+            r#"(setq seen 0)
+               (defun count-it () (setq seen (+ seen 1)))
+               (add-hook 'read-only-mode "minor-mode-hook" 'count-it)
+               (set-buffer-read-only t)
+               (set-buffer-read-only nil)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(run("seen", &env, &ctx), LispExp::number(0.0));
+        run("(read-only-mode) (read-only-mode)", &env, &ctx);
+        assert_eq!(run("seen", &env, &ctx), LispExp::number(2.0));
+    }
+
+    #[test]
+    fn the_status_line_shows_a_read_only_buffer() {
+        let (ctx, env) = setup();
+        run(r#"(setq mode-line-format "%m%n")"#, &env, &ctx);
+        let line = |ctx: &Ctx| {
+            ctx.snapshot(&env, 80, 24).views[0]
+                .mode_line
+                .clone()
+                .expect("a status line")
+        };
+        assert_eq!(line(&ctx).trim(), "fundamental-mode");
+        run("(read-only-mode 1)", &env, &ctx);
+        assert_eq!(line(&ctx).trim(), "fundamental-mode RO");
+    }
+
+    #[test]
+    fn appending_to_a_read_only_buffer_leaves_its_minor_modes_as_they_were() {
+        let (ctx, env) = setup();
+        run(
+            r#"(make-minor-mode 'one-mode "One")
+               (set-buffer-read-only t)
+               (minor-mode-on 'one-mode)"#,
+            &env,
+            &ctx,
+        );
+        assert!(ctx.append_to_buffer("*scratch*", "output"));
+        assert_eq!(text(&env, &ctx), "output");
+        assert_eq!(
+            ctx.minor_modes_of("*scratch*"),
+            vec!["read-only-mode", "one-mode"]
+        );
     }
 
     // ---------------- buffer-create's mode ----------------

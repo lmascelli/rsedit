@@ -27,6 +27,10 @@ mod tests {
                 "common-keymaps",
                 include_str!("../../lisp/base/common-keymaps.lisp"),
             ),
+            (
+                "display-line-numbers",
+                include_str!("../../lisp/features/display-line-numbers.lisp"),
+            ),
             ("vim", include_str!("../../lisp/features/vim.lisp")),
         ] {
             let form = Parser::new(&format!("(progn {source})"))
@@ -573,9 +577,18 @@ mod tests {
         assert_eq!(point(&ctx), 4);
         ex(&ctx, &env, "set relativenumber");
         assert_eq!(
-            env.get_variable("display-line-numbers").unwrap(),
+            env.get_variable("display-line-numbers-type").unwrap(),
             LispExp::symbol("relative".into())
         );
+        assert!(run("(minor-mode-p 'display-line-numbers-mode)", &env, &ctx).is_truthy());
+        ex(&ctx, &env, "set nonumber");
+        assert!(run("(minor-mode-p 'display-line-numbers-mode)", &env, &ctx).is_nil());
+        ex(&ctx, &env, "set number");
+        assert_eq!(
+            env.get_variable("display-line-numbers-type").unwrap(),
+            LispExp::t()
+        );
+        assert!(run("(minor-mode-p 'display-line-numbers-mode)", &env, &ctx).is_truthy());
     }
     #[test]
     fn word_search_uses_boundaries() {

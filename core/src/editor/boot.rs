@@ -440,8 +440,9 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::number(DEFAULT_SCROLL_CONSERVATIVELY),
     );
 
-    // The line-number gutter, off, at the width it has when nothing is said.
-    env.set_variable(DISPLAY_LINE_NUMBERS.into(), ELispExp::nil());
+    // The line numbers, each line's own, at the width they have when nothing
+    // is said.
+    env.set_variable(DISPLAY_LINE_NUMBERS_TYPE.into(), ELispExp::t());
     env.set_variable(
         DISPLAY_LINE_NUMBERS_WIDTH.into(),
         ELispExp::number(DEFAULT_LINE_NUMBER_DIGITS as f64),
@@ -463,6 +464,13 @@ pub fn create_global_env<B: BufferTrait>()
     editor_state.set_mode(
         "fundamental-mode",
         MajorMode::new("fundamental-mode".into()),
+    );
+
+    // The minor mode of a buffer that refuses changes: the core's own, since
+    // the core turns it on in the buffers it protects.
+    editor_state.make_minor_mode(
+        crate::buffer::READ_ONLY_MODE,
+        crate::buffer::READ_ONLY_LIGHTER,
     );
 
     // The primitives and the commands, and the two features written in Rust.

@@ -215,7 +215,7 @@ primitive!(kmacro_insert_counter, args, _env, ctx, {
     };
     // Asked before the counter moves on too: a counter that stepped for a
     // number never inserted would skip one. Said as every refused edit is.
-    if ctx.with_current_buffer(|buf| buf.read_only) {
+    if ctx.with_current_buffer(|buf| buf.read_only()) {
         return Ok(crate::primitives::edits::edited(ctx, false));
     }
     let value = ctx.macros_mut(|macros| macros.take_counter(1));

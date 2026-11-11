@@ -14,14 +14,17 @@ impl<B: BufferTrait> EditorState<B> {
     /// Makes MODE the major mode of the buffer NAME, keeping what the buffer
     /// holds, and runs the mode's hooks when that is a change -- once the
     /// buffer's lock has been given back. The minor modes on go, with no hook
-    /// run, and those `minor-mode-enable` asks for in MODE come on.
+    /// run, all but `read-only-mode`, and those `minor-mode-enable` asks for in
+    /// MODE come on.
     pub(crate) fn change_major_mode(&self, name: &str, mode: &str, env: &Arc<Env<EditorState<B>>>) {
         let changed = self.with_buffer_mut(name, |buf| {
             if buf.current_mode == mode {
                 return false;
             }
             buf.current_mode = mode.to_string();
-            buf.minor_modes.clear();
+            // A buffer that refuses changes goes on refusing them.
+            buf.minor_modes
+                .retain(|on| on.name == crate::buffer::READ_ONLY_MODE);
             buf.syntax.invalidate_from(buf.version, 0);
             buf.scan.invalidate_from(buf.version, 0);
             // The text is the same, but what it means is not: everything

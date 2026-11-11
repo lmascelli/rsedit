@@ -86,6 +86,7 @@ TYPING AND INSERTING
         self-insert               one character, as a key types it
         insert                    strings, one after another
         insert-newline            a newline, not indented
+        overwrite-mode            type over the text, in this buffer
         open-line-above           blank lines above this one, indented
         open-line-below           blank lines below this one, indented
         duplicate-line            a copy of this line, below it
@@ -290,7 +291,9 @@ EVALUATING
 PROTECTING A BUFFER
     On the `buffers' page:
 
-        set-buffer-read-only      refuse every change, or accept them
+        read-only-mode            refuse every change, or accept them:
+                                  the command, and the minor mode
+        set-buffer-read-only      the same from Lisp, with no hook run
         buffer-read-only-p        whether the buffer refuses changes
         buffer-modified-p         whether it has unsaved changes
 

@@ -54,13 +54,13 @@ pub const SETTINGS: &[Setting] = &[
               \x20 (setq mode-line-format \" %b  L%l C%c \")",
     },
     Setting {
-        name: DISPLAY_LINE_NUMBERS,
-        doc: "Whether windows show line numbers down their left edge: nil for none, 'relative \
-              for each line's distance from point, anything else for each line's own number. \
-              A window too narrow to spare the columns shows none. `toggle-line-numbers' turns \
-              them on and off.\n\n\
+        name: DISPLAY_LINE_NUMBERS_TYPE,
+        doc: "Which numbers `display-line-numbers-mode' draws left of a window's text: \
+              'relative for how far each line is from point's, which shows its own number, and \
+              anything else for each line's own. A window too narrow to spare the columns \
+              shows none.\n\n\
               Example:\n\
-              \x20 (setq display-line-numbers 'relative)",
+              \x20 (setq display-line-numbers-type 'relative)",
     },
     Setting {
         name: crate::primitives::ask::USE_SHORT_ANSWERS,
@@ -453,13 +453,13 @@ pub const WINDOW_SEPARATOR: &str = "window-separator";
 /// how many columns a Tab is worth.
 pub const TAB_WIDTH: &str = "tab-width";
 
-/// The name of the Lisp variable that turns the line-number gutter on.
+/// The name of the Lisp variable that says which numbers the gutter shows
+/// where `display-line-numbers-mode` is on.
 ///
-/// `nil` or unbound is off, `'relative` counts from point, and anything else
-/// truthy is ordinary absolute numbering -- the same three answers Emacs
-/// gives to the same name, so somebody who already knows one does not have to
-/// learn the other.
-pub const DISPLAY_LINE_NUMBERS: &str = "display-line-numbers";
+/// `'relative` counts from point, and anything else is ordinary absolute
+/// numbering -- the answers Emacs gives to the same name, so somebody who
+/// already knows one does not have to learn the other.
+pub const DISPLAY_LINE_NUMBERS_TYPE: &str = "display-line-numbers-type";
 
 /// The name of the Lisp variable holding the command being run, which the
 /// hooks after it read.
@@ -560,25 +560,24 @@ pub fn mouse_mode<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
         .is_some_and(|value| !value.is_nil())
 }
 
-/// Returns how the gutter is set, as Lisp defines it now.
+/// Returns how the gutter is set, as Lisp defines it now: the numbers of a
+/// window whose buffer has `display-line-numbers-mode` on.
 ///
 /// Read here rather than inside composition for the reason the mode-line
 /// format is: the environment has locks of its own, and composition runs with
 /// the window and buffer locks already held.
 pub(super) fn line_numbers<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> GutterSpec {
-    let numbers = match env.get_variable(DISPLAY_LINE_NUMBERS) {
-        None => LineNumbers::Off,
-        Some(value) if value.is_nil() => LineNumbers::Off,
+    let numbers = match env.get_variable(DISPLAY_LINE_NUMBERS_TYPE) {
         // A symbol, because that is how it is written -- but a string too,
-        // since `(setq display-line-numbers "relative")` is the mistake
+        // since `(setq display-line-numbers-type "relative")` is the mistake
         // everybody makes once and there is nothing else it could have meant.
         Some(ELispExp::Symbol(name)) if &**name == "relative" => LineNumbers::Relative,
         Some(ELispExp::String(name)) if &**name == "relative" => LineNumbers::Relative,
-        // Any other truthy value asks for numbers, and gets the ordinary
-        // kind. Guessing at a misspelt `'reltaive` would be worse than showing
-        // numbers that are merely not the ones asked for: the mistake is
-        // visible either way, and this way the feature still works.
-        Some(_) => LineNumbers::Absolute,
+        // Any other value gets the ordinary kind. Guessing at a misspelt
+        // `'reltaive` would be worse than showing numbers that are merely not
+        // the ones asked for: the mistake is visible either way, and this way
+        // the feature still works.
+        _ => LineNumbers::Absolute,
     };
     let min_digits = match env.get_variable(DISPLAY_LINE_NUMBERS_WIDTH) {
         Some(ELispExp::Number(digits)) if digits.is_finite() && digits >= 1.0 => {

@@ -29,11 +29,18 @@ mod tests {
     }
 
     /// Returns an editor showing LINES numbered lines of *scratch*, point at
-    /// the top.
+    /// the top, with the module that makes `display-line-numbers-mode`.
     fn editor(lines: usize) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
+        for source in [
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/features/display-line-numbers.lisp"),
+        ] {
+            eval_str(source, &env, &ctx).expect("loading the shipped lisp");
+        }
         let text: String = (0..lines).map(|n| format!("line {n}\n")).collect();
         ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text.as_str());
@@ -89,9 +96,60 @@ mod tests {
     }
 
     #[test]
-    fn setting_the_variable_to_nil_is_the_same_as_not_setting_it() {
+    fn turning_the_mode_off_takes_the_gutter_away() {
         let (ctx, env) = editor(10);
-        run("(setq display-line-numbers nil)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
+        assert!(view(&ctx, &env).gutter_width > 0);
+        run("(display-line-numbers-mode -1)", &env, &ctx);
+        assert_eq!(view(&ctx, &env).gutter_width, 0);
+    }
+
+    #[test]
+    fn only_the_windows_of_a_buffer_with_the_mode_on_are_numbered() {
+        let (ctx, env) = editor(10);
+        run(
+            r#"(display-line-numbers-mode 1)
+               (split-window-below)
+               (buffer-create "other")
+               (switch-to-buffer "other")"#,
+            &env,
+            &ctx,
+        );
+        let frame = ctx.snapshot(&env, W, H);
+        for view in &frame.views {
+            assert_eq!(
+                view.gutter_width > 0,
+                view.buffer_name == "*scratch*",
+                "{}",
+                view.buffer_name
+            );
+        }
+    }
+
+    #[test]
+    fn a_rule_numbers_the_buffers_made_from_then_on() {
+        let (ctx, env) = editor(10);
+        run(
+            r#"(minor-mode-enable 'display-line-numbers-mode)
+               (buffer-create "later")
+               (switch-to-buffer "later")"#,
+            &env,
+            &ctx,
+        );
+        let frame = ctx.snapshot(&env, W, H);
+        let later = frame
+            .views
+            .iter()
+            .find(|view| view.buffer_name == "later")
+            .expect("later is on screen");
+        assert!(later.gutter_width > 0);
+    }
+
+    #[test]
+    fn an_editor_without_the_module_numbers_nothing() {
+        let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
+        env.set_variable("frame-width".into(), LispExp::number(W as f64));
+        env.set_variable("frame-height".into(), LispExp::number(H as f64));
         assert_eq!(view(&ctx, &env).gutter_width, 0);
     }
 
@@ -105,7 +163,7 @@ mod tests {
         // everywhere a person reads them, and this is the boundary between
         // the two.
         let (ctx, env) = editor(3);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let view = view(&ctx, &env);
         assert_eq!(&numbers(&view)[..3], &["  1 ", "  2 ", "  3 "]);
     }
@@ -123,7 +181,7 @@ mod tests {
             b.text = GapBuffer::from("one\ntwo\nthree");
             b.text.cursor_move(0, 0);
         });
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let view = view(&ctx, &env);
         assert_eq!(
             view.gutter.len(),
@@ -141,7 +199,7 @@ mod tests {
         // The renderer prints these without measuring them, so a short one
         // would leave the cell beneath it showing through.
         let (ctx, env) = editor(150);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let view = view(&ctx, &env);
         for cell in &view.gutter {
             assert_eq!(cell.text.chars().count(), view.gutter_width);
@@ -159,14 +217,14 @@ mod tests {
         // slide the whole text one column left the moment a file shrank below
         // ten lines.
         let (ctx, env) = editor(3);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         assert_eq!(view(&ctx, &env).gutter_width, 4);
     }
 
     #[test]
     fn the_gutter_widens_for_a_file_that_needs_the_room() {
         let (ctx, env) = editor(1500);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let view = view(&ctx, &env);
         assert_eq!(view.gutter_width, 5, "four digits and a space");
         assert_eq!(numbers(&view)[0], "   1 ");
@@ -176,7 +234,7 @@ mod tests {
     fn the_minimum_is_configurable() {
         let (ctx, env) = editor(3);
         run(
-            "(setq display-line-numbers t) (setq display-line-numbers-width 6)",
+            "(display-line-numbers-mode 1) (setq display-line-numbers-width 6)",
             &env,
             &ctx,
         );
@@ -191,7 +249,7 @@ mod tests {
         // frame is not what anybody meant by one.
         let (ctx, env) = editor(3);
         run(
-            "(setq display-line-numbers t) (setq display-line-numbers-width \"wide\")",
+            "(display-line-numbers-mode 1) (setq display-line-numbers-width \"wide\")",
             &env,
             &ctx,
         );
@@ -203,7 +261,7 @@ mod tests {
         // The failure mode this avoids is a split narrow enough that the
         // numbers are most of what is in it.
         let (ctx, env) = editor(10);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let narrow = ctx.snapshot(&env, 10, H);
         let view = narrow
             .views
@@ -224,7 +282,7 @@ mod tests {
         // taken *out of* the window rather than added beside it, so the sum
         // is unchanged and nothing overlaps its neighbour.
         let (ctx, env) = editor(10);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let view = view(&ctx, &env);
         assert_eq!(view.gutter_width, 4);
         assert_eq!(view.rect.x, 4);
@@ -237,7 +295,7 @@ mod tests {
         // pasted onto the front of a line is a number the region, the
         // highlighter and the cursor all have to subtract again.
         let (ctx, env) = editor(3);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let view = view(&ctx, &env);
         assert_eq!(view.lines[0], "line 0");
     }
@@ -248,7 +306,7 @@ mod tests {
         // moved, so a cursor in column zero of the text is column zero here
         // -- not column four.
         let (ctx, env) = editor(10);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         ctx.with_buffer_mut("*scratch*", |b| b.text.cursor_move(1, 3));
         let view = view(&ctx, &env);
         assert_eq!(view.cursor_rel_pos, Some((3, 1)));
@@ -260,7 +318,7 @@ mod tests {
         // short of where the whole window would have. Measuring against the
         // full width would leave the cursor drawn under the right-hand edge.
         let (ctx, env) = editor(1);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let long: String = std::iter::repeat_n('x', 200).collect();
         ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(long.as_str());
@@ -287,7 +345,7 @@ mod tests {
     #[test]
     fn the_line_point_is_on_is_faced_differently_from_the_rest() {
         let (ctx, env) = editor(10);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         ctx.with_buffer_mut("*scratch*", |b| b.text.cursor_move(2, 0));
         let view = view(&ctx, &env);
         assert_eq!(view.gutter[2].face, Face::LINE_NUMBER_CURRENT);
@@ -298,7 +356,11 @@ mod tests {
     #[test]
     fn relative_numbering_counts_the_distance_from_point() {
         let (ctx, env) = editor(10);
-        run("(setq display-line-numbers 'relative)", &env, &ctx);
+        run(
+            "(setq display-line-numbers-type 'relative) (display-line-numbers-mode 1)",
+            &env,
+            &ctx,
+        );
         ctx.with_buffer_mut("*scratch*", |b| b.text.cursor_move(3, 0));
         let view = view(&ctx, &env);
         assert_eq!(
@@ -313,17 +375,25 @@ mod tests {
         // A distance of zero is the one number nobody needs, and the line you
         // are on is the one you want to be able to read off the screen.
         let (ctx, env) = editor(10);
-        run("(setq display-line-numbers 'relative)", &env, &ctx);
+        run(
+            "(setq display-line-numbers-type 'relative) (display-line-numbers-mode 1)",
+            &env,
+            &ctx,
+        );
         ctx.with_buffer_mut("*scratch*", |b| b.text.cursor_move(5, 0));
         assert_eq!(numbers(&view(&ctx, &env))[5], "  6 ");
     }
 
     #[test]
-    fn a_value_that_is_neither_nil_nor_relative_asks_for_ordinary_numbers() {
+    fn a_type_that_is_not_relative_asks_for_ordinary_numbers() {
         // A misspelt symbol shows numbers that are merely not the ones asked
         // for, rather than silently showing none.
         let (ctx, env) = editor(3);
-        run("(setq display-line-numbers 'reltaive)", &env, &ctx);
+        run(
+            "(setq display-line-numbers-type 'reltaive) (display-line-numbers-mode 1)",
+            &env,
+            &ctx,
+        );
         assert_eq!(&numbers(&view(&ctx, &env))[..2], &["  1 ", "  2 "]);
     }
 
@@ -337,7 +407,7 @@ mod tests {
         // not off to the right by the width of its numbers.
         let (ctx, env) = editor(10);
         run(
-            "(setq mouse-mode t) (setq display-line-numbers t)",
+            "(setq mouse-mode t) (display-line-numbers-mode 1)",
             &env,
             &ctx,
         );
@@ -354,7 +424,7 @@ mod tests {
         // nearest one is the first.
         let (ctx, env) = editor(10);
         run(
-            "(setq mouse-mode t) (setq display-line-numbers t)",
+            "(setq mouse-mode t) (display-line-numbers-mode 1)",
             &env,
             &ctx,
         );
@@ -370,12 +440,12 @@ mod tests {
         // in a window that used to have numbers.
         let (ctx, env) = editor(10);
         run(
-            "(setq mouse-mode t) (setq display-line-numbers t)",
+            "(setq mouse-mode t) (display-line-numbers-mode 1)",
             &env,
             &ctx,
         );
         let _ = ctx.snapshot(&env, W, H);
-        run("(setq display-line-numbers nil)", &env, &ctx);
+        run("(display-line-numbers-mode -1)", &env, &ctx);
         let _ = ctx.snapshot(&env, W, H);
         click(&ctx, &env, 3, 1);
         assert_eq!(point(&ctx), (1, 3));
@@ -390,7 +460,7 @@ mod tests {
         // A float is a prompt or a strip of choices, and numbering rows that
         // are not lines of a file says nothing.
         let (ctx, env) = editor(10);
-        run("(setq display-line-numbers t)", &env, &ctx);
+        run("(display-line-numbers-mode 1)", &env, &ctx);
         let frame = ctx.snapshot(&env, W, H);
         for view in frame.views.iter().filter(|v| v.has_border) {
             assert_eq!(view.gutter_width, 0, "{} is a float", view.buffer_name);

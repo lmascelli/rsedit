@@ -44,15 +44,48 @@ primitive!(buffer_create, args, env, ctx, {
 
 pub const SET_BUFFER_READ_ONLY_DOC: &str = "(set-buffer-read-only FLAG): Make the current buffer \
          refuse every change to its text when FLAG is non-nil, or accept changes again when it is \
-         nil, and return FLAG. Point still moves.\n\n\
+         nil, and return FLAG: turn `read-only-mode' on or off there, running no hook. Point \
+         still moves.\n\n\
          Example:\n\
          (set-buffer-read-only t)";
 
 primitive!(set_buffer_read_only, args, _env, ctx, {
     exact_arity(args, 1)?;
     let flag = args[0].is_truthy();
-    ctx.with_current_buffer_mut(|buf| buf.read_only = flag);
+    ctx.with_current_buffer_mut(|buf| buf.set_read_only(flag));
     Ok(args[0].clone())
+});
+
+pub const READ_ONLY_MODE_DOC: &str = "(read-only-mode &optional ARG): Make the current buffer \
+         refuse every change to its text, or accept changes again: the minor mode a read-only \
+         buffer has on. With no ARG the other way from how it is, with a positive one on, with \
+         zero, a negative one or a lone - off. Return t when it is left on.\n\n\
+         Example:\n\
+         (read-only-mode 1)";
+
+primitive!(read_only_mode, args, env, ctx, {
+    if args.len() > 1 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let buffer = ctx.get_current_buffer_name();
+    let wanted = match args.first() {
+        None => !ctx.with_current_buffer(|buf| buf.read_only()),
+        Some(arg) if arg.is_nil() => !ctx.with_current_buffer(|buf| buf.read_only()),
+        Some(ELispExp::Number(n)) => *n > 0.0,
+        Some(ELispExp::Symbol(name)) if &**name == "-" => false,
+        Some(_) => true,
+    };
+    let mode = crate::buffer::READ_ONLY_MODE;
+    if wanted {
+        ctx.minor_mode_on(&buffer, mode, &env);
+    } else {
+        ctx.minor_mode_off(&buffer, mode, &env);
+    }
+    ctx.set_echo_message(&format!("{mode} {}", if wanted { "on" } else { "off" }));
+    Ok(ELispExp::boolean(wanted))
 });
 
 // The values a module keeps with one buffer: ordinary Lisp values, in the
@@ -139,7 +172,7 @@ pub const BUFFER_READ_ONLY_P_DOC: &str = "(buffer-read-only-p): Return t when th
          refuses changes to its text, nil otherwise.";
 
 primitive!(buffer_read_only_p, _args, _env, ctx, {
-    let read_only = ctx.with_current_buffer(|buf| buf.read_only);
+    let read_only = ctx.with_current_buffer(|buf| buf.read_only());
     Ok(if read_only {
         ELispExp::t()
     } else {
@@ -480,6 +513,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         set_buffer_read_only,
         SET_BUFFER_READ_ONLY_DOC,
     );
+    into.command("read-only-mode", read_only_mode, &["P"], READ_ONLY_MODE_DOC);
     into.function(
         "buffer-read-only-p",
         buffer_read_only_p,

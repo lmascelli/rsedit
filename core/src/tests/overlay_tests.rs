@@ -354,7 +354,7 @@ mod tests {
         // The refusal happens before anything is adjusted, so a buffer that
         // did not change has overlays that did not either.
         let mut buf = buffer_with("hello world");
-        buf.read_only = true;
+        buf.set_read_only(true);
         buf.overlays
             .add(6, 11, Face::DEFAULT, 0, Arc::from("test"))
             .unwrap();

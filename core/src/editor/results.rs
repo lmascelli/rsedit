@@ -143,7 +143,7 @@ impl<B: BufferTrait> EditorState<B> {
             buf.text.cursor_move(0, 0);
             buf.forget_data(RESULTS_KEY);
             buf.forget_data("lisp:results-refresh");
-            buf.read_only = true;
+            buf.set_read_only(true);
             buf.put_data(CONTEXT, presentation);
 
             (writer, marked)

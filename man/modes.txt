@@ -91,7 +91,8 @@ MINOR MODES
     how the command reads its argument.
 
     A buffer that gets a new major mode loses its minor modes, as in
-    Emacs, and gets those `minor-mode-enable' asks for in the new one:
+    Emacs, all but read-only-mode, and gets those `minor-mode-enable'
+    asks for in the new one:
 
         (minor-mode-enable 'auto-fill-mode 'fundamental-mode)
 

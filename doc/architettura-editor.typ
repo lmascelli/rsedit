@@ -332,8 +332,9 @@ c'è.
   valore che esiste già: per esempio `mouse-mode` (`nil`),
   `echo-message-timeout` (5), `minibuffer-width` (60), `minibuffer-height` (3),
   `window-separator` (`│`), `auto-save` e `watch-files` (`t`).
-  `document_settings` dà a ognuna la documentazione che `C-h v` mostra. Viene
-  creato il modo `fundamental-mode`.
+  `document_settings` dà a ognuna la documentazione che `C-h v` mostra.
+  Vengono creati il modo `fundamental-mode` e il modo minore `read-only-mode`
+  (@decisioni-buffer).
 + `install_primitives`, `install_minibuffer` e `install_isearch` registrano le
   primitive, i comandi, il modo `minibuffer-mode` e il modo `isearch-mode`.
 + `rsedit-path` riceve il percorso dell'eseguibile.
@@ -1218,9 +1219,10 @@ budget pieno.
   disegnerebbe il cursore in una finestra e scriverebbe in un'altra.
 + *In un buffer in sola lettura si scrive sotto il suo lock.* Una trascrizione
   --- l'uscita di un comando di shell, i risultati di una ricerca --- è in sola
-  lettura perché nessuno ci scriva. `append_to_buffer` abbassa e rialza il
-  flag dentro un solo lock in scrittura: non c'è un momento in cui il buffer è
-  visibile e scrivibile. `dired` fa lo stesso dal Lisp, dove non può tenere un
+  lettura perché nessuno ci scriva. `append_to_buffer` scrive con
+  `Buffer::writable`, che toglie `read-only-mode` e lo rimette dentro un solo
+  lock in scrittura: non c'è un momento in cui il buffer è visibile e
+  scrivibile. `dired` fa lo stesso dal Lisp, dove non può tenere un
   lock e deve fidarsi che nulla giri in mezzo.
 + *Un file che non c'è si apre vuoto e non modificato.* `new_buffer` con un
   percorso legge il file e fallisce se non può; un file che non esiste non è
@@ -1916,7 +1918,7 @@ come si prepara una ricerca sono in `feature/isearch.rs`, con `isearch-mode` e
   header: ([Campo], [Contenuto]),
   [`name`, `file_path`], [Nome e file visitato.],
   [`text: B`], [Il testo, tramite `BufferTrait` (oggi `GapBuffer`). Contiene anche il punto (il cursore).],
-  [`is_modified`, `read_only`], [Modificato rispetto al disco; rifiuta le modifiche (controllato alle due porte).],
+  [`is_modified`], [Modificato rispetto al disco.],
   [`current_mode`], [Il nome del modo maggiore; decide keymap, hook, grammatica e tabella sintattica.],
   [`undo`], [`UndoHistory`: gruppi fatti e disfatti (@undo).],
   [`mark: Option<Mark>`], [Posizione e flag `active`; la regione è tra mark attivo e punto.],
@@ -1929,7 +1931,7 @@ come si prepara una ricerca sono in `feature/isearch.rs`, con `isearch-mode` e
   [`auto_saved_at`], [Versione scritta nell'ultimo salvataggio automatico.],
   [`data`], [`HashMap<String, Box<dyn Any>>`: dati che altre parti appendono al buffer e che muoiono con lui.],
   [`writer`], [Il lavoro che scrive nel buffer da un thread suo (un comando di shell, una ricerca); chiudere il buffer lo ferma.],
-  [`minor_modes`], [I modi minori accesi, nell'ordine di accensione, ognuno con la sua etichetta (@modi-minori).],
+  [`minor_modes`], [I modi minori accesi, nell'ordine di accensione, ognuno con la sua etichetta (@modi-minori). Con `read-only-mode` tra loro il buffer rifiuta le modifiche: `Buffer::read_only`, controllato alle due porte.],
 )
 
 == `BufferTrait` e `GapBuffer` <gap-buffer>
@@ -2006,7 +2008,7 @@ fatto di non poter evitare le porte.
 #canvas(height: 6.4cm)[
   #node(3.3cm, 0.45cm, 6.2cm, 0.7cm, [`insert_text(buf, at, s)` / `delete_range(buf, a, b)`])
   #carrow((3.3cm, 0.8cm), (3.3cm, 1.2cm))
-  #node(3.3cm, 1.6cm, 6.2cm, 0.7cm, [`read_only`? → rifiuta (`false`)], fill: warm.lighten(85%))
+  #node(3.3cm, 1.6cm, 6.2cm, 0.7cm, [`read_only()`? → rifiuta (`false`)], fill: warm.lighten(85%))
   #carrow((3.3cm, 1.95cm), (3.3cm, 2.35cm))
   #node(3.3cm, 2.75cm, 6.2cm, 0.7cm, [`undo.record_insert` / `record_delete` (con il testo tolto)])
   #carrow((3.3cm, 3.1cm), (3.3cm, 3.5cm))
@@ -2024,7 +2026,7 @@ fatto di non poter evitare le porte.
 pub(crate) fn insert_text<B: BufferTrait>(
     buf: &mut Buffer<B>, at: usize, content: &str,
 ) -> bool {
-    if buf.read_only { return false; }
+    if buf.read_only() { return false; }
     if content.is_empty() { return true; }
     let at = at.min(buf.text.len());
     let point = buf.text.cursor_pos_1d();
@@ -2384,6 +2386,20 @@ Decisioni:
   Dalle porte invece passa ogni modifica, `undo` e `redo` compresi, dalla
   terza. Il punto si muove liberamente: leggere è lo scopo di un
   buffer in sola lettura.
++ *La sola lettura è un modo minore, e del nucleo.* `Buffer::read_only` chiede
+  se `read-only-mode` è tra i modi minori accesi (@modi-minori), e
+  `Buffer::set_read_only` lo accende e lo spegne sotto il lock del buffer.
+  Lo stato è uno solo: `C-x C-q`, `minor-mode-p`, `C-h M` e l'etichetta `RO`
+  della riga di stato dicono la stessa cosa di un file bloccato a mano e di un
+  elenco. Il modo lo crea `create_global_env` e non un modulo, perché il
+  nucleo protegge trascrizioni e liste di risultati anche senza moduli. In due
+  cose non è un modo minore come gli altri. Resta acceso quando cambia il
+  modo maggiore (`change_major_mode` lo conserva): un buffer protetto resta
+  protetto. E `minor-mode-hook` gira per il comando `read-only-mode` e per
+  `minor-mode-on` e `minor-mode-off`, non per `set-buffer-read-only` né per
+  il Rust, che lo tolgono e lo rimettono attorno a ogni riscrittura di un
+  elenco, spesso con un lock in mano. Scartato: un flag nel buffer accanto al
+  modo, due stati da tenere allineati.
 + *I dati appesi vivono quanto il buffer.* Ciò che una funzionalità ricorda
   #emph[di un buffer] --- i risultati di una ricerca mostrati lì, una tabella,
   lo stato di una vista --- sta in `data`, sotto un nome, come
@@ -3351,8 +3367,8 @@ copiata all'accensione (`ActiveMinor`).
   [Gli hook], [`run_hook` prende i modi minori del buffer corrente e chiama `run_hook_of`: prima gli hook del modo maggiore, poi quelli di ogni modo minore acceso, nell'ordine di accensione, poi i globali (`Modes::hooks_for`). `after-close-hook` riceve i modi minori del buffer chiuso, presi prima che se ne vada.],
   [L'accensione], [`minor_mode_on` e `minor_mode_off` cambiano la lista sotto il lock del buffer e poi, rilasciato, fanno girare `minor-mode-hook` del modo, e quelli globali con quel nome, con il buffer corrente (`run_minor_mode_hook`).],
   [Le regole], [`minor-mode-enable` registra in `Modes::minor_rules` una coppia (modo maggiore, o nessuno per tutti; modo minore). `apply_minor_rules` accende quelli che valgono per il modo del buffer, dopo `major-mode-hook` e prima di `after-change-major-mode-hook`, in `initialize_buffer` e in `change_major_mode`. `minor-mode-disable` toglie la coppia registrata con gli stessi due argomenti (`Modes::remove_minor_rule`), e lascia i buffer come sono.],
-  [Il Rust], [Dove l'effetto di un modo è in Rust, il codice chiede a `Buffer::minor_mode_enabled` un nome che conosce, sotto il lock del buffer che ha già: `visual_lines::MODE` (@righe-visive), `SHOW_PAREN_MODE` e `WHITESPACE_MODE` (@evidenziazioni), `WHITESPACE_CLEANUP_MODE` (@verbi). Il modo lo fa un modulo Lisp.],
-  [Il cambio di modo maggiore], [`change_major_mode` svuota la lista sotto lo stesso lock con cui cambia il modo, senza far girare hook, e poi applica le regole del modo nuovo.],
+  [Il Rust], [Dove l'effetto di un modo è in Rust, il codice chiede a `Buffer::minor_mode_enabled` un nome che conosce, sotto il lock del buffer che ha già: `visual_lines::MODE` (@righe-visive), `SHOW_PAREN_MODE` e `WHITESPACE_MODE` (@evidenziazioni), `WHITESPACE_CLEANUP_MODE` (@verbi), `gutter::MODE` (@margine), `OVERWRITE_MODE` (@primitive-modifica). Il modo lo fa un modulo Lisp; il solo che fa il nucleo è `READ_ONLY_MODE` (@decisioni-buffer).],
+  [Il cambio di modo maggiore], [`change_major_mode` svuota la lista sotto lo stesso lock con cui cambia il modo, senza far girare hook, lasciandovi solo `read-only-mode`, e poi applica le regole del modo nuovo.],
   [La riga di stato], [`%n` scrive le etichette non vuote, ognuna dopo uno spazio, dalla lista del buffer: `expand_mode_line` non deve chiedere il registro.],
 )
 
@@ -3377,7 +3393,8 @@ Le decisioni:
   file di testo non resta acceso se il buffer diventa Rust. Le regole del
   modo nuovo li riaccendono, con i loro hook. Far girare gli hook di
   spegnimento vorrebbe dire eseguire Lisp mentre il buffer sta cambiando
-  modo, prima dei suoi `major-mode-hook`.
+  modo, prima dei suoi `major-mode-hook`. Fa eccezione `read-only-mode`, che
+  resta (@decisioni-buffer).
 + *L'etichetta copiata nel buffer.* La riga di stato si compone con il buffer
   e i lock del fotogramma: leggere il registro lì vorrebbe dire prendere
   `modes` sotto `windows` e `buffers`, che l'ordine dei lock non consente
@@ -4862,7 +4879,8 @@ lock in un ordine fisso e non fa I/O; il disegno avviene dopo, senza lock.
   #emph[prima] di toccare finestre e buffer: `echo-message-timeout`, il tema,
   l'input in sospeso (`pending_input`), il messaggio della keymap transitoria,
   `mode-line-format`, `window-separator`, la configurazione del margine
-  (`display-line-numbers`), se la colorazione è in corso; e la tabella
+  (`display-line-numbers-type`, `display-line-numbers-width`), se la
+  colorazione è in corso; e la tabella
   sintattica della finestra con il focus, se il suo buffer ha
   `show-paren-mode` acceso, e il modello della ricerca o della sostituzione
   in corso, se `highlight-all-matches` lo chiede (@evidenziazioni).
@@ -5139,18 +5157,21 @@ finestre divise, margine, selezioni, overlay, Unicode e testo virtuale.
 
 == Il margine dei numeri <margine>
 
-`display-line-numbers` accende il margine a sinistra del testo (`LineNumbers`):
-i numeri delle righe, contati da uno, o con `relative` la distanza dalla riga
-del punto, che mostra il proprio numero. `gutter_columns` (`ui/gutter.rs`) dice
+`display-line-numbers-mode`, un modo minore (@modi-minori), accende il margine
+a sinistra del testo nelle finestre affiancate che mostrano il buffer: la
+composizione lo chiede al buffer (`gutter::MODE`) con lo stesso lock con cui
+ne legge il punto e il numero di righe. `display-line-numbers-type` dice quali
+numeri (`LineNumbers`): quelli delle righe, contati da uno, o con `relative`
+la distanza dalla riga del punto, che mostra il proprio numero. `gutter_columns` (`ui/gutter.rs`) dice
 quante colonne prende: le cifre del numero più grande, almeno
 `display-line-numbers-width` (3 per default, al massimo 20), più lo spazio
 prima del testo; zero se al testo resterebbero meno di
 `MIN_TEXT_WIDTH_FOR_GUTTER` (8) colonne. `gutter_cells` ne dà una cella per
 riga dello schermo, larga esattamente quanto il margine, vuota oltre la fine
 del buffer, con la faccia `line-number`, o `line-number-current` sulla riga del
-punto. Un numero troppo largo per il margine perde le cifre di sinistra. Le
-impostazioni si leggono in un `GutterSpec` prima che la composizione prenda un
-lock.
+punto. Un numero troppo largo per il margine perde le cifre di sinistra. Il
+tipo e la larghezza si leggono in un `GutterSpec` prima che la composizione
+prenda un lock; se il margine c'è lo decide ogni finestra, dal suo buffer.
 
 == La riga di stato <riga-di-stato>
 
@@ -5581,6 +5602,13 @@ la stessa cosa nell'altra direzione, come in Emacs: `(kill-word -1)` è
 punto. Non ha un limite, perché non serve: ogni passo si ferma al bordo del
 buffer, e un conteggio enorme vuol dire «fin dove si può». Chi lo somma a una
 posizione lo fa saturando, come `delete-char`.
+
+Dove il buffer ha `overwrite-mode` acceso (`OVERWRITE_MODE`, @mod-overwrite),
+`self-insert` non inserisce: `overwrite_at_point` toglie dopo il punto tanti
+caratteri quanti ne scrive, senza passare la fine della riga, e poi inserisce
+il testo, con le due porte e nello stesso comando, quindi in un solo passo di
+undo. Un a capo si inserisce sempre; `insert`, l'incolla e `insert-newline`
+non guardano il modo.
 
 Le due porte restituiscono `false` in un buffer in sola lettura, e chi le
 chiama lo deve dire: `edited(ctx, happened)` scrive «Buffer is read-only»
@@ -6697,8 +6725,9 @@ esegue.
 + *Due tasti dove i terminali ne mandano uno.* `C-/` e `C-_`, `C-M-i` e
   `M-<tab>` arrivano come lo stesso tasto su molti terminali: si legano
   entrambi.
-+ *I numeri di riga senza tasto.* Costano colonne; `M-x toggle-line-numbers`
-  li accende.
++ *I numeri di riga senza tasto.* Costano colonne;
+  `M-x display-line-numbers-mode` li accende, in un buffer
+  (@mod-display-line-numbers).
 
 === `indent` <mod-indent>
 
@@ -6897,6 +6926,20 @@ una lettura approssimata di `.gitignore`.
 + *`.gitignore` approssimato di proposito.* Ciò che non capisce lo salta: può
   offrire un file che git nasconderebbe, mai nascondere uno che mostrerebbe.
 
+=== `display-line-numbers` <mod-display-line-numbers>
+
+`display-line-numbers-mode`: un modo minore (@modi-minori) senza etichetta,
+spento finché qualcuno non lo accende. Il modulo lo fa con
+`define-minor-mode`; il margine lo disegna la composizione di ogni finestra
+affiancata che mostra un buffer con il modo acceso (@margine).
+
++ *Per buffer, non per finestra.* I modi minori sono dei buffer: due finestre
+  sullo stesso buffer hanno tutte e due i numeri, o nessuna. Vim li dà alla
+  finestra; `:set number` qui li accende nel buffer.
++ *Il tipo resta una variabile.* `display-line-numbers-type` è una preferenza
+  di chi legge, la stessa in ogni buffer; il modo dice solo dove.
++ *Senza etichetta.* Il margine si vede.
+
 === `electric-pair` <mod-electric-pair>
 
 Scrivere un delimitatore di apertura inserisce il suo compagno, scrivere quello
@@ -7009,6 +7052,21 @@ quelle dei file sotto una directory.
   modi, e la voce sa già dov'è.
 + *Nominare le facce dei segni li accende.* Il percorso le cerca per nome, e
   con facce che nessuno ha nominato non segna nulla.
+
+=== `overwrite` <mod-overwrite>
+
+`overwrite-mode`: un modo minore (@modi-minori) con l'etichetta `Ovwrt`, sul
+tasto Ins della keymap globale. Il modulo fa il modo e lega il tasto; che cosa
+succede a un carattere scritto lo decide `self-insert`, che legge il modo nel
+buffer (@primitive-modifica).
+
++ *In `self-insert`, non su `post-self-insert-hook`.* Uno hook vedrebbe il
+  carattere già inserito e dovrebbe togliere quello dopo: due modifiche da
+  ricucire in un passo di undo, un conteggio (`C-u 3 x`) da ricostruire, e un
+  ordine da decidere con `electric-pair`, che sta sullo stesso hook. Nella
+  primitiva è una sostituzione sola, fatta prima che gli hook girino.
++ *Fino alla fine della riga.* Un carattere scritto in fondo a una riga si
+  aggiunge: sostituire l'a capo unirebbe due righe scrivendo una lettera.
 
 === `preview` <mod-preview>
 
@@ -7254,7 +7312,7 @@ Le variabili che l'editor legge da Lisp:
   [`minibuffer-width`, `minibuffer-height`], [60, 3], [Dimensioni del prompt.],
   [`mode-line-format`], [vedi sopra], [Riga di stato.],
   [`window-separator`], [`"│"`], [Carattere tra finestre; `nil` per uno spazio.],
-  [`display-line-numbers`], [`nil`], [`t` assoluti, `'relative` relativi.],
+  [`display-line-numbers-type`], [`t`], [I numeri di `display-line-numbers-mode`: `'relative` per la distanza dal punto, ogni altro valore per il numero della riga (@margine).],
   [`display-line-numbers-width`], [3], [Cifre minime del margine.],
   [`mouse-mode`], [`nil` (`t` in `init.lisp`)], [Il mouse all'editor invece che al terminale.],
   [`after-resize-hook`], [`nil`], [Funzioni chiamate con larghezza e altezza.],

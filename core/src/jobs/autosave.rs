@@ -201,7 +201,7 @@ impl<B: BufferTrait> EditorState<B> {
             Err(why) => {
                 for name in &names {
                     let first = self.with_buffer_mut(name, |buf| {
-                        if !buf.is_modified || buf.file_path.is_none() || buf.read_only {
+                        if !buf.is_modified || buf.file_path.is_none() || buf.read_only() {
                             return false;
                         }
                         let first = !buf.auto_save_failing;
@@ -441,7 +441,7 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn auto_save_for(&self, name: &str, directory: Option<&str>) -> Option<AutoSave> {
         self.with_buffer(name, |buf| {
             let path = buf.file_path.as_ref()?;
-            if buf.read_only || !buf.is_modified || buf.auto_saved_at == Some(buf.version) {
+            if buf.read_only() || !buf.is_modified || buf.auto_saved_at == Some(buf.version) {
                 return None;
             }
             Some(AutoSave {

@@ -256,7 +256,7 @@ fn open_results<B: BufferTrait>(
     attach(ctx, &name, results);
 
     ctx.with_buffer_mut(&name, |buf| {
-        buf.read_only = true;
+        buf.set_read_only(true);
     });
 
     Some(name)

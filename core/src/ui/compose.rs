@@ -7,7 +7,7 @@ use crate::managers::Buffers;
 use crate::text::rectangle::Rectangle;
 use crate::text::search::Pattern;
 use crate::ui::Face;
-use crate::ui::gutter::{GutterCell, GutterSpec, gutter_cells, gutter_columns};
+use crate::ui::gutter::{self, GutterCell, GutterSpec, LineNumbers, gutter_cells, gutter_columns};
 use crate::ui::layout::{self, BufferHighlight, Layout, TabWidths};
 use crate::ui::mode_line::expand_mode_line;
 use crate::ui::visual_lines::{self, VisualLines, VisualPoint};
@@ -45,6 +45,7 @@ pub struct Separator {
 #[derive(Clone, Copy, Debug)]
 pub struct ComposeSettings<'a> {
     pub mode_line_format: &'a str,
+    /// The line numbers of a window whose buffer has them on.
     pub gutter: GutterSpec,
     /// How far a Tab reaches, mode by mode.
     pub tabs: &'a TabWidths,
@@ -178,19 +179,35 @@ impl LayoutNode {
 
                 let follows_points = is_focused || !focus.tiled;
 
-                // Point and the line count, read under one acquisition of the
-                // buffer's lock: the gutter and the scroll both need them.
-                let point_and_size = buffers.handle(&win.buffer_name).map(|buf| {
-                    let buf = buf
-                        .read()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let (line, col) = buf.text.cursor_pos();
-                    (line, col, buf.text.cursor_pos_1d(), buf.text.line_count())
-                });
+                // Point, the line count and whether the lines are numbered,
+                // read under one acquisition of the buffer's lock: the gutter
+                // and the scroll both need them.
+                let (point_and_size, numbered) = buffers
+                    .handle(&win.buffer_name)
+                    .map(|buf| {
+                        let buf = buf
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let (line, col) = buf.text.cursor_pos();
+                        (
+                            Some((line, col, buf.text.cursor_pos_1d(), buf.text.line_count())),
+                            buf.minor_mode_enabled(gutter::MODE),
+                        )
+                    })
+                    .unwrap_or((None, false));
                 // No buffer is numbered as an empty one.
                 let (point_line, line_count) = point_and_size
                     .map(|(line, _, _, count)| (line, count))
                     .unwrap_or((0, 0));
+                // The numbers Lisp asks for, where the buffer has its mode on.
+                let gutter_spec = if numbered {
+                    settings.gutter
+                } else {
+                    GutterSpec {
+                        numbers: LineNumbers::Off,
+                        ..settings.gutter
+                    }
+                };
 
                 // The gutter comes out of the rectangle, as the status line
                 // did: the scroll, the cursor and the highlights know only
@@ -200,7 +217,7 @@ impl LayoutNode {
                 // counted from there as from the numbers.
                 let gutter_width = match &win.prompt {
                     Some(prompt) => prompt_columns(&prompt.text, rect.width),
-                    None => gutter_columns(settings.gutter, line_count, rect.width),
+                    None => gutter_columns(gutter_spec, line_count, rect.width),
                 };
 
                 win.gutter_width = gutter_width;
@@ -305,7 +322,7 @@ impl LayoutNode {
                                 && row.continuation == 0
                             {
                                 gutter_cells(
-                                    settings.gutter,
+                                    gutter_spec,
                                     gutter_width,
                                     row.line,
                                     1,
@@ -322,7 +339,7 @@ impl LayoutNode {
                         })
                         .collect(),
                     None => gutter_cells(
-                        settings.gutter,
+                        gutter_spec,
                         gutter_width,
                         win.scroll_y,
                         rect.height,

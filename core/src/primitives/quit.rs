@@ -14,7 +14,7 @@ use risp::{call_callable, eval};
 /// buffers matter.
 pub(super) fn has_unsaved_work<B: BufferTrait>(ctx: &EditorState<B>, name: &str) -> bool {
     ctx.with_buffer(name, |buf| {
-        buf.is_modified && !buf.read_only && buf.file_path.is_some()
+        buf.is_modified && !buf.read_only() && buf.file_path.is_some()
     })
     .unwrap_or(false)
 }

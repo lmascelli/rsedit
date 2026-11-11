@@ -40,7 +40,7 @@ pub(crate) fn take_refusal() -> bool {
 /// so, with [`edited`]. An empty range is not a refusal.
 #[must_use]
 pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to: usize) -> bool {
-    if buf.read_only {
+    if buf.read_only() {
         return refuse();
     }
     let start = from.min(to);
@@ -86,7 +86,7 @@ pub(crate) fn delete_range<B: BufferTrait>(buf: &mut Buffer<B>, from: usize, to:
 /// Returns false, and changes nothing, in a read-only buffer.
 #[must_use]
 pub(crate) fn insert_text<B: BufferTrait>(buf: &mut Buffer<B>, at: usize, content: &str) -> bool {
-    if buf.read_only {
+    if buf.read_only() {
         return refuse();
     }
     if content.is_empty() {
@@ -152,7 +152,7 @@ pub(crate) enum Replayed {
 /// watching the edits, ends a selection, and tells the buffer with
 /// [`changed`].
 pub(crate) fn replay<B: BufferTrait>(buf: &mut Buffer<B>, way: Replay) -> Replayed {
-    if buf.read_only {
+    if buf.read_only() {
         refuse();
         return Replayed::Refused;
     }
@@ -246,10 +246,28 @@ pub(crate) fn insert_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str
     insert_text(buf, at, content)
 }
 
+/// The name of the minor mode in which a character typed takes the place of
+/// the one after point.
+pub(crate) const OVERWRITE_MODE: &str = "overwrite-mode";
+
+/// Puts CONTENT, which holds no newline, at point in place of as many
+/// characters after it, up to the end of point's line, and returns whether
+/// the buffer accepted it: what a key types where [`OVERWRITE_MODE`] is on.
+/// What does not fit before the end of the line is inserted.
+#[must_use]
+fn overwrite_at_point<B: BufferTrait>(buf: &mut Buffer<B>, content: &str) -> bool {
+    let at = buf.text.cursor_pos_1d();
+    let (line, _) = buf.text.cursor_pos();
+    let (_, line_end) = crate::primitives::movement::line_bounds(&buf.text, line);
+    let over = content.chars().count().min(line_end.saturating_sub(at));
+    delete_range(buf, at, at + over) && insert_text(buf, at, content)
+}
+
 pub const SELF_INSERT_DOC: &str = "(self-insert STRING &optional N): Insert the first character \
          of STRING at point, N times, 1 by default. It is what each printable key runs, with its \
-         own character and the prefix argument as N: C-u 3 x inserts xxx. N less than 0 is an \
-         error, as in Emacs.\n\n\
+         own character and the prefix argument as N: C-u 3 x inserts xxx. Where \
+         `overwrite-mode' is on, each takes the place of a character after point, up to the end \
+         of the line. N less than 0 is an error, as in Emacs.\n\n\
          Example:\n\
          (self-insert \"a\")\n\
          (self-insert \"-\" 40)";
@@ -274,7 +292,13 @@ primitive!(self_insert, args, _env, ctx, {
         if let Some(c) = s.chars().next() {
             // One insertion of N characters: one edit, one undo step.
             let text: String = std::iter::repeat_n(c, times).collect();
-            let happened = ctx.with_current_buffer_mut(|buf| insert_at_point(buf, &text));
+            let happened = ctx.with_current_buffer_mut(|buf| {
+                if c != '\n' && buf.minor_mode_enabled(OVERWRITE_MODE) {
+                    overwrite_at_point(buf, &text)
+                } else {
+                    insert_at_point(buf, &text)
+                }
+            });
             return Ok(edited(ctx, happened));
         }
         Ok(ELispExp::symbol("nil".into()))

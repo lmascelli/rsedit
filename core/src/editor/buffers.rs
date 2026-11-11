@@ -215,9 +215,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// Appends TEXT to the buffer NAME, read-only or not; false when there is
     /// no such buffer, or the write was refused.
     ///
-    /// A transcript is read-only so that nobody types into it. Its flag goes
-    /// down and back up inside one write lock, so that it is never writable
-    /// while anybody else can see it.
+    /// A transcript is read-only so that nobody types into it. It is made
+    /// writable and read-only again inside one write lock, so that it is
+    /// never writable while anybody else can see it.
     pub(crate) fn append_to_buffer(&self, name: &str, text: &str) -> bool {
         self.with_buffer_mut(name, |buf| append(buf, text)) == Some(true)
     }
@@ -443,22 +443,21 @@ impl<B: BufferTrait> EditorState<B> {
 }
 
 /// Appends TEXT to BUF, read-only or not, and returns whether it was written.
-/// The flag goes down and back up under the caller's lock: see
+/// The buffer is writable, and read-only again, under the caller's lock: see
 /// [`EditorState::append_to_buffer`].
 ///
 /// What is appended is the editor's output -- a command's, a search's -- and
 /// not unsaved changes: the buffer is as modified afterwards as it was
 /// before, so that an output buffer is never shown as one that needs saving.
 fn append<B: BufferTrait>(buf: &mut Buffer<B>, text: &str) -> bool {
-    let was_read_only = buf.read_only;
     let was_modified = buf.is_modified;
-    buf.read_only = false;
-    let at = buf.text.len();
-    // `insert_text` refuses only a read-only buffer, and the flag is down under
-    // this same lock. Checked all the same: a new reason to refuse is reported
-    // rather than the text going missing.
-    let written = crate::primitives::edits::insert_text(buf, at, text);
-    buf.read_only = was_read_only;
+    // `insert_text` refuses only a read-only buffer, and this one is writable
+    // under this same lock. Checked all the same: a new reason to refuse is
+    // reported rather than the text going missing.
+    let written = buf.writable(|buf| {
+        let at = buf.text.len();
+        crate::primitives::edits::insert_text(buf, at, text)
+    });
     buf.is_modified = was_modified;
     written
 }

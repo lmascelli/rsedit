@@ -84,6 +84,7 @@
 (define-key nil "C-x C-w" 'write-file)
 (define-key nil "C-x C-c" 'quit)
 (define-key nil "C-x k" 'kill-buffer)
+(define-key nil "C-x C-q" 'read-only-mode)
 
 ;; Windows: the `windows' manual page. After C-x o, a bare o goes on.
 (define-key nil "C-x 2" 'split-window-below)
@@ -173,18 +174,8 @@
 ;; C-g: the `editing' manual page.
 (define-key nil "C-g" 'keyboard-quit)
 
-;; The mode line and the line numbers: `mode-line-format' and
-;; `display-line-numbers', documented where `C-h v' finds them, and the
-;; `configuration' manual page. Line numbers are off and bound to no key,
-;; because they cost columns; `M-x toggle-line-numbers' turns them on.
-
-;; A `defun' and a `register-command' rather than `defcommand': tests evaluate
-;; this file on its own, where `require' finds no modules.
-(defun toggle-line-numbers ()
-  "Turn the line-number gutter on, or off if it is already on."
-  (setq display-line-numbers (if display-line-numbers nil t))
-  (message (if display-line-numbers "line numbers on" "line numbers off")))
-(register-command "toggle-line-numbers" nil)
+;; The mode line: `mode-line-format', documented where `C-h v' finds it, and
+;; the `configuration' manual page.
 
 ;; Watching files and auto-saving: `watch-files' and `auto-save', documented
 ;; where `C-h v' finds them, and the `files' manual page.

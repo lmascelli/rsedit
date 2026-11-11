@@ -211,9 +211,9 @@ EX COMMANDS
     :split, :vsplit     Split the window, below or right.
     :only, :close       Keep only this window; close it.
     :NUMBER             Go to that line.
-    :set number         Line numbers.
-    :set relativenumber Line numbers counted from point.
-    :set nonumber       No line numbers.
+    :set number         Line numbers, in this buffer.
+    :set relativenumber The same, counted from point.
+    :set nonumber       No line numbers in this buffer.
     :set ignorecase     Searches ignore case.
     :set noignorecase   Searches mind case.
     :set wrapscan       Searches go round the end.

@@ -464,7 +464,6 @@ fn layout(report: &mut Report) {
                 stale: false,
                 auto_saved_at: None,
                 auto_save_failing: false,
-                read_only: false,
                 data: Default::default(),
                 changed: Default::default(),
                 writer: None,

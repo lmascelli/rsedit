@@ -3,6 +3,13 @@
 
 * Work in progress.
 
+Da testare
+- Riempimento:
+  riempire i commenti /* */;
+  andare a capo con Invio quando auto-fill-mode è acceso;
+  riconoscere le voci di elenco come paragrafi separati.
+- Parentesi in vim mode: nel normal state accoppiare la ) sotto il cursore a blocco.
+
 Lacune che si notano subito
 - Guida verticale alla colonna fill-column: ora che il riempimento
   esiste è il complemento naturale, e si costruisce come le altre
@@ -14,29 +21,21 @@ Comandi di testo
 - Registri e segnalibri: C-x r è libero per questo.
 - Narrowing (C-x n n).
 
-Struttura
+Hooks
 
-- Modi minori veri, accesi e spenti per buffer. Oggi auto-fill-mode, show-trailing-whitespace
-  e le parentesi usano ognuno un meccanismo suo (dati del buffer, proprietà del modo, variabile),
-  che un sistema unico semplificherebbe.
-- Un before-save-hook, se servono altre azioni al salvataggio oltre alla pulizia degli spazi.
+- Un before-save-hook (verificare come pulisce li spazi la minor mode)
+- Un after-revert-hook
 
 Lavorare su progetti
 
 - Il concetto di progetto: la radice trovata da .git o Cargo.toml, con ricerca di file, grep e
   compile che partono da lì.
 - Git: indicatori nel margine per le righe cambiate, il ramo nella riga di stato, il diff del buffer.
-- Altri linguaggi: Markdown, JSON, YAML, JS/TS, Go, HTML/CSS.
 
 Rifiniture alle funzioni appena fatte
 
 - Sessione: scriverla anche a intervalli, non solo all’uscita, e fondere le sessioni di più
   editor aperti insieme.
-- Riempimento:
-  riempire i commenti /* */;
-  andare a capo con Invio quando auto-fill-mode è acceso;
-  riconoscere le voci di elenco come paragrafi separati.
-- Parentesi in vim mode: nel normal state accoppiare la ) sotto il cursore a blocco.
 
 * Fixes todo
 - MIN-10: remove this settings that now belongs to minibuffer.lisp
@@ -61,3 +60,4 @@ Rifiniture alle funzioni appena fatte
 - [ ] Integrated terminal emulation
 - [ ] gestione dei file molto grandi.
 - [ ] Popup dei tasti dopo un prefisso (come which-key), sopra il C-x C-h che c’è già.
+- [ ] Altri linguaggi: Markdown, JSON, YAML, Zig, MATLAB.
