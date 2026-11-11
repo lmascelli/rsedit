@@ -12,6 +12,7 @@ SYNOPSIS
     (minor-mode-p MODE &optional BUFFER)
     (minor-modes &optional BUFFER)
     (minor-mode-enable MODE &optional MAJOR)
+    (minor-mode-disable MODE &optional MAJOR)
     (minor-mode-wanted-p MODE ARG)
     (risp-refresh-vocabulary)
     risp-special-forms
@@ -97,6 +98,19 @@ MINOR MODES
     turns auto-fill-mode on in every buffer that gets fundamental-mode
     from then on, and with no major mode in every buffer. Buffers in that
     mode already are left as they are.
+
+    A module turns a minor mode on everywhere that way: show-paren-mode
+    and whitespace-mode are. `minor-mode-disable' takes back what
+    `minor-mode-enable' asked for with the same arguments, and leaves the
+    buffers where the mode is on as they are:
+
+        (minor-mode-disable 'whitespace-mode)
+
+    in init.lisp, after the modules, keeps whitespace-mode off in every
+    buffer but the first *scratch*, which is made before init.lisp is
+    read. To keep a mode off in the buffers of one major mode only, turn
+    it off from that mode's after-change-major-mode-hook, which runs once
+    the minor modes asked for are on: the EXAMPLES have one.
 
 WHICH MODE A FILE GETS
         rust-mode           .rs
@@ -243,7 +257,8 @@ HOOKS
         major-mode-hook         a buffer has its mode: it has just been
                                 made, or its mode has just changed
         after-change-major-mode-hook
-                                straight after major-mode-hook
+                                after major-mode-hook, once the minor
+                                modes `minor-mode-enable' asks for are on
         find-file-hook          a file has been opened in a new buffer,
                                 after those three
         after-set-visited-file-name-hook
@@ -275,12 +290,12 @@ LIMITS
     hooks other files gave it go, electric-pair's among them.
 
     A minor mode is on in one buffer at a time: there are no global minor
-    modes. Those that hold everywhere -- show-paren-mode, the spaces at
-    the ends of lines -- are variables, on the pages that tell them. A
-    minor mode's command called from Lisp with no argument turns the mode
-    the other way, where Emacs would turn it on: write (auto-fill-mode 1).
-    A buffer losing its minor modes to a new major mode runs none of their
-    hooks.
+    modes. One that holds everywhere is asked for in every major mode with
+    `minor-mode-enable', and a buffer that turns it off gets it back with
+    its next major mode. A minor mode's command called from Lisp with no
+    argument turns the mode the other way, where Emacs would turn it on:
+    write (auto-fill-mode 1). A buffer losing its minor modes to a new
+    major mode runs none of their hooks.
 
     Colouring uses regular expressions, not a compiler or a full parser.
     Python f-strings and shell strings are coloured uniformly, including
@@ -311,6 +326,12 @@ EXAMPLES
     Break lines as you type in every C and C++ comment:
 
         (minor-mode-enable 'auto-fill-mode 'cpp-mode)
+
+    Draw no paired brackets in the buffers of one mode, where
+    show-paren-mode is otherwise on:
+
+        (defun my-no-parens () (minor-mode-off 'show-paren-mode))
+        (add-hook 'help-mode "after-change-major-mode-hook" 'my-no-parens)
 
     A key only while auto-fill-mode is on:
 

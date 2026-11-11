@@ -29,6 +29,12 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             rustflags: ""
+          # Eseguibile statico, senza dipendenza da glibc: per le macchine
+          # Linux vecchie. Non può caricare le librerie grafiche, quindi
+          # funziona solo nel terminale.
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            rustflags: ""
           - runner: windows-2022
             target: x86_64-pc-windows-msvc
             rustflags: "-C target-feature=+crt-static"
@@ -248,7 +254,7 @@ jobs:
           cd dist
 
           checksums=(*.sha256)
-          if [ "${#checksums[@]}" -ne 4 ]; then
+          if [ "${#checksums[@]}" -ne 5 ]; then
             echo "Mancano archivi di una o più piattaforme." >&2
             exit 1
           fi

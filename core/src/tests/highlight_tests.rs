@@ -30,10 +30,19 @@ mod tests {
         eval_str(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"))
     }
 
+    /// An editor showing TEXT in *scratch*, with point at POINT, and
+    /// `show-paren-mode` on there, as its module turns it on.
     fn editor_with(text: &str, point: usize) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
+        for source in [
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/features/show-paren.lisp"),
+        ] {
+            eval_str(source, &env, &ctx).expect("loading the shipped lisp");
+        }
         ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             let (line, col) = b.text.cursor_1d_to_2d(point);
@@ -216,9 +225,46 @@ mod tests {
     }
 
     #[test]
-    fn with_show_paren_mode_off_nothing_is_paired() {
+    fn a_buffer_with_show_paren_mode_off_pairs_nothing() {
         let (ctx, env) = editor_with("(foo bar)", 0);
-        run("(setq show-paren-mode nil)", &env, &ctx);
+        run("(show-paren-mode -1)", &env, &ctx);
+        assert!(drawn(&ctx, &env, Face::SHOW_PAREN_MATCH)[0].is_empty());
+        run("(show-paren-mode 1)", &env, &ctx);
+        assert_eq!(drawn(&ctx, &env, Face::SHOW_PAREN_MATCH)[0].len(), 2);
+    }
+
+    #[test]
+    fn show_paren_mode_is_on_in_every_buffer_made_after_its_module_is_loaded() {
+        let (ctx, env) = editor_with("", 0);
+        run("(show-paren-mode -1)", &env, &ctx);
+        run(
+            r#"(make-mode 'prose-mode) (buffer-create "a" 'prose-mode) (buffer-create "b")"#,
+            &env,
+            &ctx,
+        );
+        for buffer in ["a", "b"] {
+            assert!(
+                run(
+                    &format!("(minor-mode-p 'show-paren-mode {buffer:?})"),
+                    &env,
+                    &ctx
+                )
+                .is_truthy(),
+                "{buffer}"
+            );
+        }
+        assert!(
+            run("(minor-mode-p 'show-paren-mode)", &env, &ctx).is_nil(),
+            "the one that turned it off keeps it off"
+        );
+    }
+
+    #[test]
+    fn an_editor_without_the_module_pairs_nothing() {
+        let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
+        env.set_variable("frame-width".into(), LispExp::number(W as f64));
+        env.set_variable("frame-height".into(), LispExp::number(H as f64));
+        ctx.with_buffer_mut("*scratch*", |b| b.text = GapBuffer::from("(foo bar)"));
         assert!(drawn(&ctx, &env, Face::SHOW_PAREN_MATCH)[0].is_empty());
     }
 

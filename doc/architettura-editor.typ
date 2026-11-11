@@ -535,9 +535,8 @@ Le decisioni:
 
 Il file `init.lisp` predefinito chiede un modulo solo, `default-configuration`
 (@mod-default-configuration), che chiede con `require` tutti gli altri, i
-moduli di base e poi i facoltativi, e imposta `dired-sort` a `'type`,
-`mouse-mode` e `show-trailing-whitespace` a `t`; l'utente scrive le sue
-impostazioni dopo quella riga.
+moduli di base e poi i facoltativi, e imposta `dired-sort` a `'type` e
+`mouse-mode` a `t`; l'utente scrive le sue impostazioni dopo quella riga.
 L'ordine dei moduli non conta: ognuno chiede quelli che gli servono
 (@moduli-lisp).
 
@@ -3351,7 +3350,8 @@ copiata all'accensione (`ActiveMinor`).
   [I tasti], [`keymap_modes` mette dopo la keymap locale quelle dei modi minori accesi, dall'ultimo acceso, e poi quella del modo maggiore; `source_of` dà a un legame trovato in un modo minore la sorgente `Minor`, che `key-binding` e `C-h b` chiamano `"minor"`.],
   [Gli hook], [`run_hook` prende i modi minori del buffer corrente e chiama `run_hook_of`: prima gli hook del modo maggiore, poi quelli di ogni modo minore acceso, nell'ordine di accensione, poi i globali (`Modes::hooks_for`). `after-close-hook` riceve i modi minori del buffer chiuso, presi prima che se ne vada.],
   [L'accensione], [`minor_mode_on` e `minor_mode_off` cambiano la lista sotto il lock del buffer e poi, rilasciato, fanno girare `minor-mode-hook` del modo, e quelli globali con quel nome, con il buffer corrente (`run_minor_mode_hook`).],
-  [Le regole], [`minor-mode-enable` registra in `Modes::minor_rules` una coppia (modo maggiore, o nessuno per tutti; modo minore). `apply_minor_rules` accende quelli che valgono per il modo del buffer, dopo `major-mode-hook` e prima di `after-change-major-mode-hook`, in `initialize_buffer` e in `change_major_mode`.],
+  [Le regole], [`minor-mode-enable` registra in `Modes::minor_rules` una coppia (modo maggiore, o nessuno per tutti; modo minore). `apply_minor_rules` accende quelli che valgono per il modo del buffer, dopo `major-mode-hook` e prima di `after-change-major-mode-hook`, in `initialize_buffer` e in `change_major_mode`. `minor-mode-disable` toglie la coppia registrata con gli stessi due argomenti (`Modes::remove_minor_rule`), e lascia i buffer come sono.],
+  [Il Rust], [Dove l'effetto di un modo è in Rust, il codice chiede a `Buffer::minor_mode_enabled` un nome che conosce, sotto il lock del buffer che ha già: `visual_lines::MODE` (@righe-visive), `SHOW_PAREN_MODE` e `WHITESPACE_MODE` (@evidenziazioni), `WHITESPACE_CLEANUP_MODE` (@verbi). Il modo lo fa un modulo Lisp.],
   [Il cambio di modo maggiore], [`change_major_mode` svuota la lista sotto lo stesso lock con cui cambia il modo, senza far girare hook, e poi applica le regole del modo nuovo.],
   [La riga di stato], [`%n` scrive le etichette non vuote, ognuna dopo uno spazio, dalla lista del buffer: `expand_mode_line` non deve chiedere il registro.],
 )
@@ -3383,11 +3383,21 @@ Le decisioni:
   `modes` sotto `windows` e `buffers`, che l'ordine dei lock non consente
   (@ordine-lock). Un'etichetta cambiata con `make-minor-mode` vale per i
   buffer dove il modo si accende da allora.
-+ *Solo per buffer.* I modi che valgono ovunque --- le parentesi, gli spazi a
-  fine riga, `electric-pair` --- restano variabili per ora: hanno già una
-  proprietà per modo, e un modo minore globale chiederebbe di dire che cosa
-  succede in un buffer che lo spegne da solo. Lo dice il manpage `modes` nei
-  limiti.
++ *Solo per buffer, e ovunque con una regola.* Non c'è un modo minore
+  globale. Un modo che vale ovunque --- `show-paren-mode`, `whitespace-mode`,
+  `electric-indent-mode` --- è un modo minore che il suo modulo chiede per
+  ogni modo maggiore con `minor-mode-enable`, e accende nei buffer già aperti.
+  Un buffer che lo spegne da solo lo ritrova acceso quando cambia modo
+  maggiore, come ogni modo chiesto da una regola; `minor-mode-disable` toglie
+  la regola, per i buffer che verranno. Scartato: una variabile globale con
+  una proprietà per modo maggiore, un secondo meccanismo per la stessa
+  domanda, che non sa rispondere per un buffer solo. Lo dice il manpage
+  `modes` nei limiti.
++ *Il Rust legge il nome nel buffer, non l'ambiente.* La fotografia e il
+  salvataggio hanno già il buffer sotto lock: chiedergli se un modo è acceso
+  non prende altri lock e non chiama l'interprete. Senza il modulo che lo
+  fa, il modo non c'è e non è acceso in nessun buffer: il nucleo da solo non
+  disegna coppie né spazi, e non pulisce.
 
 == Due lessici sullo stesso testo <lessici>
 
@@ -4852,10 +4862,10 @@ lock in un ordine fisso e non fa I/O; il disegno avviene dopo, senza lock.
   #emph[prima] di toccare finestre e buffer: `echo-message-timeout`, il tema,
   l'input in sospeso (`pending_input`), il messaggio della keymap transitoria,
   `mode-line-format`, `window-separator`, la configurazione del margine
-  (`display-line-numbers`), se la colorazione è in corso; e, se
-  `show-paren-mode` e `highlight-all-matches` lo chiedono, la tabella
-  sintattica della finestra con il focus e il modello della ricerca o della
-  sostituzione in corso (@evidenziazioni).
+  (`display-line-numbers`), se la colorazione è in corso; e la tabella
+  sintattica della finestra con il focus, se il suo buffer ha
+  `show-paren-mode` acceso, e il modello della ricerca o della sostituzione
+  in corso, se `highlight-all-matches` lo chiede (@evidenziazioni).
 + Legge l'area messaggi, vuota se il messaggio è scaduto.
 + Con `windows` in scrittura (lo scorrimento può dover seguire il punto) e
   `buffers` in lettura, attraverso `windows_mut_with_buffers`, cerca la
@@ -4928,17 +4938,17 @@ in una finestra affiancata e in una flottante.
 Tre cose si disegnano per un fotogramma solo, ricalcolate a ogni
 `snapshot` e mai conservate nel buffer: la parentesi accanto al punto con
 quella che le corrisponde, ogni corrispondenza di una ricerca o di una
-sostituzione in corso, e gli spazi a fine riga. Le prime due le spengono
-`show-paren-mode` e `highlight-all-matches`, tutte e due a `t` in partenza;
-la terza la accende `show-trailing-whitespace`, `nil` nel nucleo e `t` in
-`default-configuration`.
+sostituzione in corso, e gli spazi a fine riga. La prima e la terza sono di
+due modi minori (@modi-minori), `show-paren-mode` e `whitespace-mode`, e si
+disegnano nei buffer dove il modo è acceso; la seconda la spegne la variabile
+`highlight-all-matches`, `t` in partenza.
 
 #ref-table(
   columns: (3.0cm, 1fr, 1fr),
   header: ([], [Le parentesi], [Le corrispondenze]),
   [Dove], [La sola finestra con il focus, affiancata o flottante.], [Ogni finestra che mostra il buffer cercato.],
-  [Che cosa si legge prima dei lock], [Il buffer della finestra con il focus, il suo modo e la tabella sintattica del modo (`paren_table`).], [Il `Pattern` della ricerca in corso, o quello della sostituzione con il suo intervallo, da `Runtime` (`search_marks`).],
-  [Dove si calcola], [In `paren_spots`, dentro `windows_mut_with_buffers`, con il buffer letto lì: `sexp::pairing` dà un `Pair`, e due `SpotMarks` in posizioni del buffer.], [In `match_highlights`, durante la composizione di ogni foglia, dopo lo scorrimento: `Pattern::scan` sulle sole righe visibili.],
+  [Che cosa si legge prima dei lock], [Il buffer della finestra con il focus, il suo modo e la tabella sintattica del modo (`paren_table`), se il buffer ha `show-paren-mode` acceso.], [Il `Pattern` della ricerca in corso, o quello della sostituzione con il suo intervallo, da `Runtime` (`search_marks`).],
+  [Dove si calcola], [In `paren_spots`, dentro `windows_mut_with_buffers`, con il buffer letto lì, se è ancora in quel modo e ha ancora `show-paren-mode` acceso: `sexp::pairing` dà un `Pair`, e due `SpotMarks` in posizioni del buffer.], [In `match_highlights`, durante la composizione di ogni foglia, dopo lo scorrimento: `Pattern::scan` sulle sole righe visibili.],
   [Faccia], [`show-paren-match`; `show-paren-mismatch` per due delimitatori di tipo diverso o per uno senza compagno.], [`lazy-highlight`, sotto gli overlay e la regione.],
   [Costo massimo], [`SHOW_PAREN_REACH` caratteri (102 400) per parte del punto.], [Le righe visibili, e al più `MATCHES_PER_WINDOW` (2000) corrispondenze per finestra.],
 )
@@ -4947,18 +4957,17 @@ Gli spazi a fine riga li trova `trailing_highlights`, durante la
 composizione di ogni foglia e di ogni flottante, sulle righe visibili: una
 serie di spazi e Tab che chiude la riga, o la riga intera se è fatta solo di
 quelli, nella faccia `trailing-whitespace`. Si disegnano solo nei buffer che
-visitano un file, e dove `TrailingSpaces` lo dice per il modo del buffer:
-la proprietà `show-trailing-whitespace` del modo, se c'è, o la variabile,
-lette prima dei lock insieme alle larghezze dei Tab (`trailing_spaces`, in
-`editor/settings.rs`). Nella finestra con il focus la riga del punto non li
-disegna se il punto è tra loro o alla loro fine.
+visitano un file e hanno `whitespace-mode` acceso (`WHITESPACE_MODE`, in
+`ui/compose.rs`): lo dice il buffer che si sta componendo, sotto i lock del
+fotogramma, e prima non si legge nulla. Nella finestra con il focus la riga
+del punto non li disegna se il punto è tra loro o alla loro fine.
 
-`ComposeSettings` porta le tre cose alla composizione, accanto al formato
-della riga di stato e al margine: `matches`, una `SearchMarks` con il buffer,
-il modello e i caratteri entro cui una corrispondenza conta (tutto il buffer
-per una ricerca, `from..limit` per una sostituzione, cioè ciò che resta da
-offrire), e `spots`, una `SpotMarks` con l'id della finestra e le posizioni.
-e `trailing`, la `TrailingSpaces`. `window_highlights` mette tutto insieme
+`ComposeSettings` porta le prime due cose alla composizione, accanto al
+formato della riga di stato e al margine: `matches`, una `SearchMarks` con il
+buffer, il modello e i caratteri entro cui una corrispondenza conta (tutto il
+buffer per una ricerca, `from..limit` per una sostituzione, cioè ciò che resta
+da offrire), e `spots`, una `SpotMarks` con l'id della finestra e le
+posizioni. `window_highlights` mette tutto insieme
 nell'ordine di disegno --- colorazione, spazi a fine riga, corrispondenze,
 overlay, regione, parentesi --- per le foglie e per le flottanti allo stesso
 modo, e riceve se la finestra ha il focus.
@@ -5002,7 +5011,8 @@ Le decisioni:
   così la fotografia resta uno stato in cui l'editor è stato. La tabella
   sintattica non si può leggere lì, perché `modes` non ha posto nell'ordine
   dei lock (@ordine-lock): si legge prima, con il modo, e se nel frattempo il
-  buffer ha cambiato modo la coppia non si disegna per quel fotogramma.
+  buffer ha cambiato modo, o ha spento `show-paren-mode`, la coppia non si
+  disegna per quel fotogramma.
 + *Un tetto alla scansione.* Il calcolo si ripete a ogni fotogramma: senza un
   limite, una parentesi aperta in cima a un file grande costerebbe il file
   intero a ogni tasto. Il limite vale anche all'indietro, dalla fotografia
@@ -5016,15 +5026,18 @@ Le decisioni:
   invece in tutte: si cerca guardando, anche nell'altra metà dello schermo.
 + *Gli spazi a fine riga solo nei file.* Un elenco, l'aiuto, l'uscita di un
   comando o il `*scratch*` non si salvano, e spazi in fondo a una riga lì non
-  sono un errore di nessuno: disegnarli sarebbe rumore. Scartato: un elenco
-  di modi esclusi, che ogni modulo nuovo dovrebbe allungare.
+  sono un errore di nessuno: disegnarli sarebbe rumore. `whitespace-mode`
+  può essere acceso anche lì, e non disegna nulla. Scartato: un elenco di
+  modi esclusi, che ogni modulo nuovo dovrebbe allungare.
 + *Non dove si sta scrivendo.* Uno spazio appena scritto prima della parola
   successiva è uno spazio a fine riga per un istante: colorarlo farebbe
   lampeggiare il rosso a ogni parola, come Emacs evita allo stesso modo. Lo
   si salta solo nella finestra con il focus, la sola che disegna il cursore.
-+ *Spento nel nucleo, acceso dalla configurazione.* Come `mouse-mode`: un
-  editor senza moduli resta neutro, e quello che arriva con
-  `default-configuration` mostra ciò che un file non dovrebbe avere.
++ *Nulla senza i moduli.* I due modi minori li fanno `show-paren` e
+  `whitespace` (@mod-show-paren, @mod-whitespace), che li accendono in ogni
+  buffer: un editor senza moduli resta neutro, e quello che arriva con
+  `default-configuration` mostra le coppie e ciò che un file non dovrebbe
+  avere.
 + *Una regexp vuota non si disegna.* Una corrispondenza vuota, come quella di
   `x*` tra due caratteri, non ha un carattere su cui stare.
 
@@ -5700,15 +5713,15 @@ o lo porta all'inizio di quello in cui si trovava, e, per tutto il buffer con
 `delete-trailing-lines`, toglie prima le righe vuote in fondo, fino al primo
 a capo dopo l'ultimo carattere che non è uno spazio. Le stesse righe le pulisce
 `write_buffer`, in `files.rs`, prima di copiare il testo da scrivere, quando
-`delete-trailing-whitespace-on-save` lo dice per il modo del buffer
-(`clean_before_save`, che legge le impostazioni prima del lock del buffer);
-`write-file` fa lo stesso. Due decisioni:
+il buffer ha `whitespace-cleanup-mode` acceso (`clean_before_save`, che lo
+chiede al buffer e legge `delete-trailing-lines` prima di prenderne il lock
+in scrittura); `write-file` fa lo stesso. Due decisioni:
 
-+ *Una variabile, non un hook.* Emacs lo fa con `before-save-hook`, che qui
++ *Un modo minore, non un hook.* Emacs lo fa con `before-save-hook`, che qui
   non c'è: aggiungerlo vorrebbe dire far eseguire Lisp a ogni percorso che
-  salva, anche dentro le domande di `C-x C-c`. Una variabile, con la sua
-  proprietà per modo come `show-trailing-whitespace`, dice tutto ciò che
-  serve, e la pulizia resta Rust che non chiama l'interprete.
+  salva, anche dentro le domande di `C-x C-c`. Un modo minore (@modi-minori)
+  che il Rust legge nel buffer dice tutto ciò che serve, buffer per buffer, e
+  la pulizia resta Rust che non chiama l'interprete.
 + *Prima di copiare, non sul testo copiato.* Pulire il testo da scrivere
   lascerebbe il buffer diverso dal file, e quindi modificato subito dopo il
   salvataggio. Pulito il buffer, ciò che si scrive è ciò che si vede, e un
@@ -5991,7 +6004,7 @@ rimanda; le sezioni che seguono dicono ciò che non è scritto altrove.
   [`replace.rs`], [La sostituzione, i suoi verbi e la vista predefinita (@sostituzione).],
   [`occur.rs`], [Le ricerche di occur e di grep, che producono una lista (@ricerche).],
   [`results.rs`], [Le liste di posti: leggerle, percorrerle con `next-error`, attaccarne una da Lisp, mostrarle (@risultati).],
-  [`modes.rs`], [`make-mode`, gli hook e `add-auto-mode` (@modi).],
+  [`modes.rs`], [`make-mode`, gli hook, `add-auto-mode`, i modi minori e le loro regole (@modi, @modi-minori).],
   [`grammar.rs`], [Le regole e le regioni della grammatica (@lessici).],
   [`syntax_table.rs`], [La tabella sintattica e le domande allo scanner: `syntax-ppss`, `balance-point`, `bounds-of-enclosing-list` (@lessici).],
   [`theme.rs`], [Le facce e i loro stili (@facce).],
@@ -6836,8 +6849,7 @@ i candidati nel prompt.
 
 L'editor come arriva: chiede con `require` ogni modulo distribuito,
 nell'ordine di `default-configuration-modules`, tranne quelli nominati in
-`default-configuration-skip`, e imposta `dired-sort`, `mouse-mode` e
-`show-trailing-whitespace`. È la sola
+`default-configuration-skip`, e imposta `dired-sort` e `mouse-mode`. È la sola
 riga dell'`init.lisp` predefinito (`DEFAULT_INIT_LISP`, in `editor/boot.rs`).
 
 + *Un modulo e non un elenco nell'`init.lisp`.* L'`init.lisp` si scrive una
@@ -7075,6 +7087,20 @@ modulo è il modo del buffer d'uscita, i suoi tasti e colori, e i comandi.
 + *La riga d'uscita ha una forma fissa.* Così si colora secondo il numero, e un
   fallimento si vede senza leggere.
 
+=== `show-paren` <mod-show-paren>
+
+`show-paren-mode`: un modo minore (@modi-minori) senza etichetta, senza tasti
+e senza hook. Il modulo lo fa con `define-minor-mode`, lo chiede per ogni modo
+maggiore con `minor-mode-enable` e lo accende nei buffer già aperti. La coppia
+la cerca e la disegna `snapshot`, nella finestra con il focus, se il buffer ha
+il modo acceso (@evidenziazioni).
+
++ *Il modulo è solo l'interruttore.* La coppia si calcola nella fotografia,
+  sotto i suoi lock, dove Lisp non si può chiamare: il modo minore dice
+  soltanto in quali buffer farlo.
++ *Senza etichetta.* Acceso ovunque, nella riga di stato sarebbe una parola
+  in più in ogni finestra. `C-h M` lo elenca lo stesso.
+
 === `theme` <mod-theme>
 
 `C-c t` elenca i temi installati in `*Themes*`, e Return ne applica uno;
@@ -7129,6 +7155,22 @@ caratteri.
   `quit`, con le loro domande.
 + *Un file solo.* Una funzionalità, una pagina, una feature: divisa in più
   moduli darebbe feature che nessuno chiede da sole.
+
+=== `whitespace` <mod-whitespace>
+
+Due modi minori (@modi-minori) per gli spazi a fine riga, tutti e due letti
+dal Rust. `whitespace-mode`, senza etichetta e acceso in ogni buffer come
+`show-paren-mode` (@mod-show-paren), li fa disegnare a `trailing_highlights`
+(@evidenziazioni). `whitespace-cleanup-mode`, con l'etichetta `Clean` e
+spento finché qualcuno non lo accende, li fa togliere a `clean_before_save`
+prima di ogni salvataggio (@verbi).
+
++ *Due modi, non uno.* Vedere gli spazi e farli togliere da un salvataggio
+  sono due scelte: in un file d'altri si vogliono vedere senza che salvare
+  tocchi righe che non si sono modificate.
++ *La pulizia spenta in partenza, e con un'etichetta.* Cambia il testo senza
+  che chi salva lo chieda in quel momento: va scelta, per un buffer o con una
+  regola per un modo maggiore, e dove è accesa la riga di stato lo dice.
 
 === I modi dei linguaggi <mod-linguaggi>
 
@@ -7225,10 +7267,9 @@ Le variabili che l'editor legge da Lisp:
   [`auto-save`, `auto-save-interval`, `auto-save-directory`], [`t`, 30, cache/autosave], [L'autosalvataggio.],
   [`history-length`], [100], [Voci per storia di prompt.],
   [`save-history`, `recent-files-length`, `save-place`], [`t`, 50, `t`], [Che cosa la sessione tiene da un avvio all'altro (@memoria).],
-  [`show-paren-mode`, `highlight-all-matches`], [`t`, `t`], [La parentesi accanto al punto e le corrispondenze di una ricerca (@evidenziazioni).],
+  [`highlight-all-matches`], [`t`], [Le corrispondenze di una ricerca, disegnate tutte (@evidenziazioni).],
   [`isearch-lazy-count`], [`t`], [Il conteggio `3/17` nel prompt di una ricerca (@conteggio).],
-  [`show-trailing-whitespace`], [`nil` (`t` in `init.lisp`)], [Gli spazi a fine riga, nei buffer con un file (@evidenziazioni).],
-  [`delete-trailing-whitespace-on-save`, `delete-trailing-lines`], [`nil`, `t`], [La pulizia degli spazi a fine riga prima di ogni salvataggio, e delle righe vuote in fondo (@verbi).],
+  [`delete-trailing-lines`], [`t`], [Le righe vuote in fondo al buffer, tolte con gli spazi a fine riga (@verbi).],
   [`fill-column`], [70], [La colonna di `M-q` e di `auto-fill-mode`; anche come proprietà di un modo e nei dati di un buffer (@riempimento).],
   [`*minibuffer-read-function*`], [`default-minibuffer-prompt`], [Chi apre i prompt.],
   [`*key-capture-function*`], [`nil`], [Chi riceve la prossima sequenza invece di eseguirla.],

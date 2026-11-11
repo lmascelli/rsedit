@@ -202,6 +202,17 @@ impl<B: BufferTrait> Modes<B> {
         }
     }
 
+    /// Forgets that buffers in MAJOR, or in every major mode when it is
+    /// `None`, get MINOR on: the rule [`Self::add_minor_rule`] recorded for
+    /// the same two. Returns whether there was one.
+    pub fn remove_minor_rule(&mut self, major: Option<&str>, minor: &str) -> bool {
+        let before = self.minor_rules.len();
+        self.minor_rules.retain(|(rule_major, rule_minor)| {
+            rule_major.as_deref() != major || rule_minor != minor
+        });
+        self.minor_rules.len() != before
+    }
+
     /// Returns the minor modes a buffer in MAJOR gets, in the order they were
     /// asked for, each once.
     pub fn minors_for(&self, major: &str) -> Vec<String> {

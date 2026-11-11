@@ -10,8 +10,8 @@
 use super::*;
 use crate::modes::sexp;
 
-/// The name of the Lisp variable that turns pairing the delimiter at point
-/// off.
+/// The name of the minor mode that pairs the delimiter at point, in the
+/// buffers where it is on.
 pub(crate) const SHOW_PAREN_MODE: &str = "show-paren-mode";
 
 /// The name of the Lisp variable that turns drawing every match of a search
@@ -22,12 +22,6 @@ pub(crate) const HIGHLIGHT_ALL_MATCHES: &str = "highlight-all-matches";
 /// side of point: the reach of Emacs' `blink-matching-paren-distance`, so
 /// that a frame never scans a whole large file.
 pub(crate) const SHOW_PAREN_REACH: usize = 102_400;
-
-/// Returns whether the delimiter at point is paired, as Lisp has it now;
-/// unset counts as on.
-fn showing_parens<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
-    env.flag(SHOW_PAREN_MODE, true)
-}
 
 /// Returns whether every match of a search or a replace is drawn, as Lisp has
 /// it now; unset counts as on.
@@ -47,8 +41,9 @@ struct ParenTable {
 /// Returns the delimiters to draw in the focused window, FOCUSED, from
 /// PARENS: the one next to point and the one it pairs with, in
 /// [`Face::SHOW_PAREN_MATCH`], or in [`Face::SHOW_PAREN_MISMATCH`] when the
-/// two are of different kinds or there is no partner. Under the frame's
-/// locks, from BUFFERS.
+/// two are of different kinds or there is no partner; none when the buffer
+/// has changed its major mode since PARENS was read, or has
+/// [`SHOW_PAREN_MODE`] off. Under the frame's locks, from BUFFERS.
 fn paren_spots<B: BufferTrait>(
     parens: Option<&ParenTable>,
     focused: WindowId,
@@ -60,7 +55,7 @@ fn paren_spots<B: BufferTrait>(
     let buf = buf
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if buf.current_mode != parens.mode {
+    if buf.current_mode != parens.mode || !buf.minor_mode_enabled(SHOW_PAREN_MODE) {
         return None;
     }
     let point = buf.text.cursor_pos_1d();
@@ -131,13 +126,12 @@ impl<B: BufferTrait> EditorState<B> {
         // mode's property read from the environment: no lock of the editor is
         // held while the environment's is taken.
         let mode_names = self.modes(|modes| modes.names().cloned().collect::<Vec<_>>());
-        let tabs = tab_widths(env, mode_names.clone());
-        let trailing = trailing_spaces(env, mode_names);
+        let tabs = tab_widths(env, mode_names);
         // With the reads before the windows: it takes the buffers and the
         // registry of the modes, which has no place in the order below.
         let colouring_pending = self.colouring_pending();
         // The same: the focused buffer's mode, and then the registry.
-        let parens = showing_parens(env).then(|| self.paren_table()).flatten();
+        let parens = self.paren_table();
         let matches = highlighting_matches(env)
             .then(|| self.search_marks())
             .flatten();
@@ -182,7 +176,6 @@ impl<B: BufferTrait> EditorState<B> {
                     mode_line_format: &mode_line_format,
                     gutter,
                     tabs: &tabs,
-                    trailing: &trailing,
                     matches: matches.as_ref(),
                     spots: spots.as_ref(),
                     scroll_conservatively,
@@ -400,9 +393,13 @@ impl<B: BufferTrait> EditorState<B> {
 
     /// Returns what the focused window's delimiter is paired with: its
     /// buffer, its mode and the mode's table, read one lock at a time.
+    /// `None` when the buffer has [`SHOW_PAREN_MODE`] off.
     fn paren_table(&self) -> Option<ParenTable> {
         let buffer = self.focused_window_buffer()?;
-        let mode = self.with_buffer(&buffer, |buf| buf.current_mode.clone())?;
+        let mode = self.with_buffer(&buffer, |buf| {
+            buf.minor_mode_enabled(SHOW_PAREN_MODE)
+                .then(|| buf.current_mode.clone())
+        })??;
         let table = self.syntax_table(&mode);
         Some(ParenTable {
             buffer,

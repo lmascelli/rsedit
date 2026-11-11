@@ -119,9 +119,9 @@ DELETING
 SEEING THE BLANKS
     On the `editing' page:
 
-        toggle-trailing-whitespace
-                                  draw the spaces at the ends of lines, or
-                                  stop
+        whitespace-mode           draw the blanks at the ends of lines, in
+                                  this buffer
+        whitespace-cleanup-mode   delete them at each save, in this buffer
 
     On the `buffers' page:
 
@@ -258,6 +258,8 @@ PAIRS
                                   delete forward, or the whole empty pair
         electric-pair-post-self-insert
                                   the hook that types the partner
+        show-paren-mode           draw the bracket next to point with its
+                                  partner, in this buffer
 
 UNDOING AND REPEATING
     On the `editing' page:

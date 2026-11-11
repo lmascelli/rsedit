@@ -36,6 +36,8 @@ MODULES
     preview              C-x r t shows its replacement before you commit
     clipboard            kills also reach the system clipboard
     electric-pair        closing delimiters that type themselves
+    show-paren           the bracket next to the cursor, drawn with its pair
+    whitespace           the blanks at the ends of lines, drawn and cleaned
     fill                 M-q, and lines broken as you type
     visual-line          M-x visual-line-mode, words wrapped on screen
     buffer-list          C-x b, and C-x C-b

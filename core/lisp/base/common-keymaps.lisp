@@ -186,16 +186,6 @@
   (message (if display-line-numbers "line numbers on" "line numbers off")))
 (register-command "toggle-line-numbers" nil)
 
-;; The spaces at the ends of lines: `show-trailing-whitespace', documented
-;; where `C-h v' finds it, and the `editing' manual page.
-(defun toggle-trailing-whitespace ()
-  "Draw the spaces and Tabs at the ends of lines, or stop if they are drawn."
-  (setq show-trailing-whitespace (if show-trailing-whitespace nil t))
-  (message (if show-trailing-whitespace
-               "trailing whitespace shown"
-               "trailing whitespace hidden")))
-(register-command "toggle-trailing-whitespace" nil)
-
 ;; Watching files and auto-saving: `watch-files' and `auto-save', documented
 ;; where `C-h v' finds them, and the `files' manual page.
 

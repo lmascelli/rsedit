@@ -12,7 +12,6 @@ use crate::primitives::movement::{
     goto_offset, is_blank_line, is_word_char, line_bounds, word_backward, word_forward,
 };
 use crate::text::kill_ring::Direction;
-use std::sync::Arc;
 
 /// Replaces the text from FROM to TO with TEXT, puts point at POINT, and
 /// returns whether the buffer changed. A read-only buffer's refusal is false
@@ -186,18 +185,9 @@ primitive!(just_one_space, _args, _env, ctx, {
 /// end of a buffer, when the whole of it is cleaned.
 pub(crate) const DELETE_TRAILING_LINES: &str = "delete-trailing-lines";
 
-/// The name of the Lisp variable, and of the modes' property, that cleans a
-/// buffer of the blanks at the ends of its lines before it is saved.
-pub(crate) const DELETE_ON_SAVE: &str = "delete-trailing-whitespace-on-save";
-
-/// Returns whether a buffer in MODE is cleaned before it is saved, as Lisp
-/// says now: the mode's own property, when it has the symbol, or else the
-/// variable.
-pub(crate) fn cleaning_on_save<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>, mode: &str) -> bool {
-    env.get_property(mode, DELETE_ON_SAVE)
-        .or_else(|| env.get_variable(DELETE_ON_SAVE))
-        .is_some_and(|value| value.is_truthy())
-}
+/// The name of the minor mode that cleans a buffer of the blanks at the ends
+/// of its lines before it is saved, where it is on.
+pub(crate) const WHITESPACE_CLEANUP_MODE: &str = "whitespace-cleanup-mode";
 
 /// Deletes the spaces and Tabs that end the lines FIRST to LAST of BUF and,
 /// with TRAILING_LINES, the blank lines at the end of the buffer but its last

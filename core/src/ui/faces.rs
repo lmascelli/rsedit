@@ -97,7 +97,7 @@ impl Face {
     /// A delimiter next to point that pairs with one of another kind, or with
     /// none.
     pub const SHOW_PAREN_MISMATCH: Face = Face(16);
-    /// The blanks at the end of a line, where `show-trailing-whitespace` says.
+    /// The blanks at the end of a line, where `whitespace-mode` is on.
     pub const TRAILING_WHITESPACE: Face = Face(17);
     /// The question in front of the answer, in the minibuffer's window.
     pub const MINIBUFFER_PROMPT: Face = Face(18);

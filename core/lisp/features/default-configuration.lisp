@@ -32,6 +32,8 @@ loaded anyway.")
     preview             ; C-x r t shows its replacement before you commit to it
     clipboard           ; kills also go to the system clipboard
     electric-pair       ; typing an opening bracket gives you the pair
+    show-paren          ; the bracket next to the cursor drawn with its partner
+    whitespace          ; the blanks at the ends of lines, drawn and cleaned
     fill                ; M-q fills a paragraph, M-x auto-fill-mode as you type
     visual-line         ; M-x visual-line-mode wraps words on screen only
     buffer-list         ; C-x b to switch, C-x C-b for the whole list
@@ -61,9 +63,6 @@ loaded anyway.")
 ;; with the mouse to paste it into another program stops working -- hold Shift
 ;; in most terminals to get it back for one drag.
 (setq mouse-mode t)
-
-;; The spaces left at the ends of lines, drawn in the files you edit.
-(setq show-trailing-whitespace t)
 
 (log "default-configuration loaded")
 (provide 'default-configuration)

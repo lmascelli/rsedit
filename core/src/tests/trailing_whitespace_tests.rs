@@ -1,6 +1,6 @@
 //! The blanks at the ends of lines, drawn: in a buffer visiting a file, where
-//! the variable or the mode says, and not on point's line while point is
-//! among them.
+//! `whitespace-mode` is on, and not on point's line while point is among
+//! them.
 //!
 //! Design: `doc/architettura-editor.typ, <evidenziazioni>`.
 #[cfg(test)]
@@ -28,12 +28,19 @@ mod tests {
     }
 
     /// An editor showing TEXT in *scratch*, with point at POINT, as a buffer
-    /// visiting a file, and the drawing on.
+    /// visiting a file, and `whitespace-mode` on there, as its module turns
+    /// it on.
     fn editor_with(text: &str, point: usize) -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(W as f64));
         env.set_variable("frame-height".into(), LispExp::number(H as f64));
-        env.set_variable("show-trailing-whitespace".into(), LispExp::t());
+        for source in [
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/features/whitespace.lisp"),
+        ] {
+            eval_str(source, &env, &ctx).expect("loading the shipped lisp");
+        }
         ctx.with_buffer_mut("*scratch*", |b| {
             b.text = GapBuffer::from(text);
             let (line, col) = b.text.cursor_1d_to_2d(point);
@@ -77,9 +84,21 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_drawn_unless_asked_for() {
+    fn a_buffer_with_whitespace_mode_off_draws_nothing() {
         let (ctx, env) = editor_with("abc  \n", 0);
-        run("(setq show-trailing-whitespace nil)", &env, &ctx);
+        run("(minor-mode-off 'whitespace-mode)", &env, &ctx);
+        assert!(drawn(&ctx, &env)[0].is_empty());
+    }
+
+    #[test]
+    fn an_editor_without_the_module_draws_nothing() {
+        let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
+        env.set_variable("frame-width".into(), LispExp::number(W as f64));
+        env.set_variable("frame-height".into(), LispExp::number(H as f64));
+        ctx.with_buffer_mut("*scratch*", |b| {
+            b.text = GapBuffer::from("abc  \n");
+            b.file_path = Some("/tmp/rsedit-trailing-test.txt".into());
+        });
         assert!(drawn(&ctx, &env)[0].is_empty());
     }
 
@@ -91,14 +110,56 @@ mod tests {
     }
 
     #[test]
-    fn a_modes_own_property_wins_over_the_variable() {
-        let (ctx, env) = editor_with("abc  \n", 0);
+    fn whitespace_mode_is_on_in_every_buffer_made_after_its_module_is_loaded() {
+        let (ctx, env) = editor_with("", 0);
         run(
-            "(put 'fundamental-mode 'show-trailing-whitespace nil)",
+            r#"(make-mode 'prose-mode) (buffer-create "a" 'prose-mode) (buffer-create "b")"#,
             &env,
             &ctx,
         );
-        assert!(drawn(&ctx, &env)[0].is_empty());
+        for buffer in ["a", "b"] {
+            assert!(
+                run(
+                    &format!("(minor-mode-p 'whitespace-mode {buffer:?})"),
+                    &env,
+                    &ctx
+                )
+                .is_truthy(),
+                "{buffer}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hook_turns_it_off_in_the_buffers_of_one_major_mode() {
+        let (ctx, env) = editor_with("", 0);
+        run(
+            r#"(make-mode 'prose-mode)
+               (defun prose-setup () (minor-mode-off 'whitespace-mode))
+               (add-hook 'prose-mode "after-change-major-mode-hook" 'prose-setup)
+               (buffer-create "a" 'prose-mode)
+               (buffer-create "b")"#,
+            &env,
+            &ctx,
+        );
+        assert!(run(r#"(minor-mode-p 'whitespace-mode "a")"#, &env, &ctx).is_nil());
+        assert!(run(r#"(minor-mode-p 'whitespace-mode "b")"#, &env, &ctx).is_truthy());
+    }
+
+    #[test]
+    fn once_disabled_it_is_off_in_the_buffers_made_from_then_on() {
+        let (ctx, env) = editor_with("abc  \n", 0);
+        run(
+            r#"(minor-mode-disable 'whitespace-mode) (buffer-create "a")"#,
+            &env,
+            &ctx,
+        );
+        assert!(run(r#"(minor-mode-p 'whitespace-mode "a")"#, &env, &ctx).is_nil());
+        assert_eq!(
+            drawn(&ctx, &env)[0],
+            vec![(0, 3, 5)],
+            "a buffer where it was on is left as it is"
+        );
     }
 
     #[test]
@@ -121,17 +182,13 @@ mod tests {
     }
 
     #[test]
-    fn toggle_trailing_whitespace_turns_it_off_and_on() {
+    fn the_command_turns_it_off_and_on_in_its_buffer_alone() {
         let (ctx, env) = editor_with("abc  \n", 0);
-        for source in [
-            include_str!("../../lisp/base/debug.lisp"),
-            include_str!("../../lisp/base/common-keymaps.lisp"),
-        ] {
-            eval_str(source, &env, &ctx).expect("loading the shipped lisp");
-        }
-        run("(toggle-trailing-whitespace)", &env, &ctx);
+        run(r#"(buffer-create "other")"#, &env, &ctx);
+        run("(whitespace-mode)", &env, &ctx);
         assert!(drawn(&ctx, &env)[0].is_empty());
-        run("(toggle-trailing-whitespace)", &env, &ctx);
+        assert!(run(r#"(minor-mode-p 'whitespace-mode "other")"#, &env, &ctx).is_truthy());
+        run("(whitespace-mode)", &env, &ctx);
         assert_eq!(drawn(&ctx, &env)[0], vec![(0, 3, 5)]);
     }
 }

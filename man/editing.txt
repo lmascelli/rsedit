@@ -15,7 +15,7 @@ SYNOPSIS
     (up-list)
     (backward-up-list)
     (down-list)
-    show-paren-mode
+    (show-paren-mode &optional ARG)
     (beginning-of-line)
     (end-of-line)
     (beginning-of-buffer)
@@ -58,11 +58,10 @@ SYNOPSIS
     (capitalize-word)
     (just-one-space)
     (delete-horizontal-space)
-    (toggle-trailing-whitespace)
+    (whitespace-mode &optional ARG)
     (delete-trailing-whitespace &optional START END)
-    show-trailing-whitespace
     delete-trailing-lines
-    delete-trailing-whitespace-on-save
+    (whitespace-cleanup-mode &optional ARG)
     (zap-to-char)
 
     (comment-dwim)
@@ -142,8 +141,12 @@ SEEING WHICH BRACKETS PAIR
     change either face.
 
     Brackets are read as C-M-f reads them: one in a string or a comment
-    is text, and is paired with nothing. Setting `show-paren-mode' to nil
-    turns the drawing off.
+    is text, and is paired with nothing.
+
+    The drawing is the minor mode `show-paren-mode', on in every buffer:
+    M-x show-paren-mode turns it off in the buffer you are in, and on
+    again. The `modes' page says how to keep a minor mode off in the
+    buffers of one major mode, or of every one.
 
     The pair is looked for up to 100 kilobytes of text away from the
     cursor; a bracket whose partner is further than that is not drawn at
@@ -237,10 +240,11 @@ SPACES AT THE ENDS OF LINES
     drawn: a space just typed before the next word is not a mistake. In
     another window showing the same buffer they are.
 
-    `show-trailing-whitespace' turns it on, and the default configuration
-    sets it to t; M-x toggle-trailing-whitespace turns it off and on
-    again. A mode can say otherwise for its own buffers, with a
-    show-trailing-whitespace property.
+    The drawing is the minor mode `whitespace-mode', on in every buffer:
+    M-x whitespace-mode turns it off in the buffer you are in, and on
+    again. In a buffer visiting no file the mode can be on, and draws
+    nothing. The `modes' page says how to keep a minor mode off in the
+    buffers of one major mode, or of every one.
 
     M-x delete-trailing-whitespace takes them away: on the lines of the
     region when it is active, and otherwise in the whole buffer, where it
@@ -251,12 +255,15 @@ SPACES AT THE ENDS OF LINES
     one C-/ puts them all back. From Lisp, START and END name the lines to
     clean instead of the region.
 
-    With `delete-trailing-whitespace-on-save' set to t, every save cleans
-    the whole buffer that way just before it is written: C-x C-s, C-x C-w,
-    and the saves C-x C-c and save-some-buffers offer. A mode can say
-    otherwise with a delete-trailing-whitespace-on-save property: Markdown
-    ends a line with two spaces to break it. The copies auto-save makes
-    are never cleaned.
+    In a buffer with the minor mode `whitespace-cleanup-mode' on, every
+    save cleans the whole buffer that way just before it is written:
+    C-x C-s, C-x C-w, and the saves C-x C-c and save-some-buffers offer.
+    The mode is off until you turn it on: M-x whitespace-cleanup-mode
+    does, in the buffer you are in, and the status line then shows Clean;
+    `minor-mode-enable' does in the buffers of a major mode, or of every
+    one. Leave it off where the blanks mean something: Markdown ends a
+    line with two spaces to break it. The copies auto-save makes are
+    never cleaned.
 
 TRANSPOSING
         C-t             swap the characters either side of point
@@ -352,20 +359,27 @@ EXAMPLES
 
         (setq electric-pair-skip-self nil)
 
-    Stop drawing the bracket paired with the one at the cursor:
+    Stop drawing the bracket paired with the one at the cursor, in the
+    buffers opened from now on:
 
-        (setq show-paren-mode nil)
+        (minor-mode-disable 'show-paren-mode)
 
     Leave the spaces at the ends of lines undrawn in one mode, where they
     mean something:
 
-        (put 'markdown-mode 'show-trailing-whitespace nil)
+        (defun my-markdown-setup () (minor-mode-off 'whitespace-mode))
+        (add-hook 'markdown-mode "after-change-major-mode-hook"
+                  'my-markdown-setup)
 
     Clean every file of them as it is saved, but leave the blank lines at
     the end alone:
 
-        (setq delete-trailing-whitespace-on-save t)
+        (minor-mode-enable 'whitespace-cleanup-mode)
         (setq delete-trailing-lines nil)
+
+    Clean only the Rust files:
+
+        (minor-mode-enable 'whitespace-cleanup-mode 'rust-mode)
 
     Give the commands that have no key one of yours:
 

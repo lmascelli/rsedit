@@ -261,6 +261,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_rule_taken_back_no_longer_reaches_a_new_buffer() {
+        let (ctx, env) = editor();
+        run(
+            r#"(make-mode 'prose-mode)
+               (minor-mode-enable 'one-mode)
+               (minor-mode-enable 'one-mode 'prose-mode)
+               (minor-mode-enable 'two-mode 'prose-mode)
+               (buffer-create "before")"#,
+            &env,
+            &ctx,
+        );
+        assert!(run("(minor-mode-disable 'one-mode)", &env, &ctx).is_truthy());
+        assert!(
+            run("(minor-mode-disable 'one-mode)", &env, &ctx).is_nil(),
+            "nothing asks for it any more"
+        );
+        run(
+            r#"(buffer-create "plain") (buffer-create "prose" 'prose-mode)"#,
+            &env,
+            &ctx,
+        );
+        assert!(run(r#"(minor-mode-p 'one-mode "plain")"#, &env, &ctx).is_nil());
+        assert!(
+            run(r#"(minor-mode-p 'one-mode "prose")"#, &env, &ctx).is_truthy(),
+            "the rule for one major mode is another rule"
+        );
+        assert!(run(r#"(minor-mode-p 'two-mode "prose")"#, &env, &ctx).is_truthy());
+        assert!(
+            run(r#"(minor-mode-p 'one-mode "before")"#, &env, &ctx).is_truthy(),
+            "a buffer where it is on is left as it is"
+        );
+    }
+
+    #[test]
+    fn minor_mode_disable_refuses_what_is_no_minor_mode() {
+        let (ctx, env) = editor();
+        assert!(eval_str("(minor-mode-disable 'fundamental-mode)", &env, &ctx).is_err());
+    }
+
     // ----------------------------------------------------------------
     // The status line
     // ----------------------------------------------------------------

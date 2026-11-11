@@ -53,31 +53,16 @@ pub struct ComposeSettings<'a> {
     pub matches: Option<&'a SearchMarks>,
     /// The delimiters drawn in the focused window, if any.
     pub spots: Option<&'a SpotMarks>,
-    /// Where the blanks at the ends of lines are drawn.
-    pub trailing: &'a TrailingSpaces,
     /// How many lines a window scrolls to bring back a point that has left
     /// it, before it puts point's line in the middle instead: see
     /// [`follow_point`].
     pub scroll_conservatively: usize,
 }
 
-/// Whether the blanks at the ends of lines are drawn, in
-/// [`Face::TRAILING_WHITESPACE`], mode by mode: what Lisp says, read before
-/// any lock. Only a buffer visiting a file draws them.
-#[derive(Clone, Debug, Default)]
-pub struct TrailingSpaces {
-    /// What a mode that says nothing of its own has.
-    pub default: bool,
-    /// The modes that say something of their own.
-    pub by_mode: std::collections::HashMap<String, bool>,
-}
-
-impl TrailingSpaces {
-    /// Returns whether the buffers of MODE draw them.
-    pub fn of(&self, mode: &str) -> bool {
-        self.by_mode.get(mode).copied().unwrap_or(self.default)
-    }
-}
+/// The name of the minor mode that draws the blanks at the ends of lines, in
+/// [`Face::TRAILING_WHITESPACE`], in the buffers where it is on. Only a
+/// buffer visiting a file draws them.
+pub(crate) const WHITESPACE_MODE: &str = "whitespace-mode";
 
 /// The matches of a search or a replace in progress: drawn, in
 /// [`Face::LAZY_HIGHLIGHT`], on the lines each window showing BUFFER shows,
@@ -554,13 +539,7 @@ pub fn window_highlights<B: BufferTrait>(
     focused: bool,
 ) -> Vec<BufferHighlight> {
     let mut in_buffer = syntax_highlights(win, rect, buffers);
-    in_buffer.extend(trailing_highlights(
-        win,
-        rect,
-        buffers,
-        settings.trailing,
-        focused,
-    ));
+    in_buffer.extend(trailing_highlights(win, rect, buffers, focused));
     in_buffer.extend(match_highlights(win, rect, buffers, settings.matches));
     in_buffer.extend(overlay_highlights(win, rect, buffers));
     in_buffer.extend(region_highlights(win, rect, buffers));
@@ -569,15 +548,14 @@ pub fn window_highlights<B: BufferTrait>(
 }
 
 /// Returns the blanks, spaces and Tabs, that end the lines WIN shows in RECT,
-/// in buffer columns, when its buffer visits a file and TRAILING draws them
-/// in its mode. In the window with the keyboard, the line point is on does
-/// not draw them while point is among them, or at their end: what is being
-/// typed there is not yet a mistake.
+/// in buffer columns, when its buffer visits a file and has
+/// [`WHITESPACE_MODE`] on. In the window with the keyboard, the line point is
+/// on does not draw them while point is among them, or at their end: what is
+/// being typed there is not yet a mistake.
 pub fn trailing_highlights<B: BufferTrait>(
     win: &Window,
     rect: &Rect,
     buffers: &Buffers<B>,
-    trailing: &TrailingSpaces,
     focused: bool,
 ) -> Vec<BufferHighlight> {
     let Some(buf) = buffers.handle(&win.buffer_name) else {
@@ -586,7 +564,7 @@ pub fn trailing_highlights<B: BufferTrait>(
     let buf = buf
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if buf.file_path.is_none() || !trailing.of(&buf.current_mode) {
+    if buf.file_path.is_none() || !buf.minor_mode_enabled(WHITESPACE_MODE) {
         return Vec::new();
     }
     let first = win.scroll_y;

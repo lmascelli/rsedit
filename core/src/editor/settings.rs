@@ -6,7 +6,7 @@
 //! Design: `doc/architettura-editor.typ, <avvio>`.
 
 use super::*;
-use crate::editor::frame::{HIGHLIGHT_ALL_MATCHES, SHOW_PAREN_MODE};
+use crate::editor::frame::HIGHLIGHT_ALL_MATCHES;
 use crate::editor::session::SAVE_HISTORY;
 use crate::editor::visits::{RECENT_FILES_LENGTH, SAVE_PLACE};
 use crate::feature::isearch::{CASE_FOLD, ISEARCH_LAZY_COUNT};
@@ -14,7 +14,7 @@ use crate::feature::minibuffer::HISTORY_LENGTH;
 use crate::jobs::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
 use crate::jobs::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
 use crate::primitives::fill::FILL_COLUMN;
-use crate::primitives::verbs::{DELETE_ON_SAVE, DELETE_TRAILING_LINES};
+use crate::primitives::verbs::DELETE_TRAILING_LINES;
 use risp::VARIABLE_DOCUMENTATION;
 
 /// A Lisp variable the editor reads, and what `C-h v` says about it.
@@ -177,13 +177,6 @@ pub const SETTINGS: &[Setting] = &[
               time the terminal is resized.",
     },
     Setting {
-        name: SHOW_PAREN_MODE,
-        doc: "Whether the delimiter next to point is drawn with the one it pairs with, in the \
-              focused window: the opener after point, or else the closer before it, in \
-              show-paren-match, or in show-paren-mismatch when the two differ or nothing pairs \
-              with it. nil turns it off.",
-    },
-    Setting {
         name: HIGHLIGHT_ALL_MATCHES,
         doc: "Whether a search, and a replace, draw every match on screen in lazy-highlight \
               besides the one they are at. nil draws that one only.",
@@ -329,27 +322,10 @@ pub const SETTINGS: &[Setting] = &[
               \x20 (put 'rust-mode 'fill-column 100)",
     },
     Setting {
-        name: SHOW_TRAILING_WHITESPACE,
-        doc: "Whether the spaces and Tabs at the end of a line are drawn, in the face \
-              trailing-whitespace, in buffers visiting a file. A mode can say otherwise for its \
-              own buffers, as a show-trailing-whitespace property. \
-              `toggle-trailing-whitespace' turns it on and off.\n\n\
-              Example:\n\
-              \x20 (put 'markdown-mode 'show-trailing-whitespace nil)",
-    },
-    Setting {
-        name: DELETE_ON_SAVE,
-        doc: "Whether a buffer is cleaned of the spaces and Tabs at the ends of its lines, and \
-              of the blank lines at its end, just before it is saved, as \
-              `delete-trailing-whitespace' cleans a whole buffer. A mode can say otherwise for \
-              its own buffers, as a delete-trailing-whitespace-on-save property.\n\n\
-              Example:\n\
-              \x20 (setq delete-trailing-whitespace-on-save t)",
-    },
-    Setting {
         name: DELETE_TRAILING_LINES,
-        doc: "Whether `delete-trailing-whitespace', on a whole buffer, also deletes the blank \
-              lines at its end, all but the newline that ends the last line of text.",
+        doc: "Whether `delete-trailing-whitespace', on a whole buffer, and \
+              `whitespace-cleanup-mode', on a save, also delete the blank lines at the buffer's \
+              end, all but the newline that ends the last line of text.",
     },
     Setting {
         name: TAB_WIDTH,
@@ -538,30 +514,6 @@ fn tab_width_value<B: BufferTrait>(value: Option<ELispExp<B>>) -> Option<usize> 
         }
         _ => None,
     }
-}
-
-/// The name of the Lisp variable, and of the modes' property, that says
-/// whether the blanks at the ends of lines are drawn.
-pub const SHOW_TRAILING_WHITESPACE: &str = "show-trailing-whitespace";
-
-/// Returns whether the blanks at the ends of lines are drawn in each of
-/// MODES, as Lisp says now: the mode's own `show-trailing-whitespace`
-/// property, when it has the symbol, or else the variable.
-pub(crate) fn trailing_spaces<B: BufferTrait>(
-    env: &Arc<Env<EditorState<B>>>,
-    modes: impl IntoIterator<Item = String>,
-) -> crate::ui::TrailingSpaces {
-    let default = env
-        .get_variable(SHOW_TRAILING_WHITESPACE)
-        .is_some_and(|value| value.is_truthy());
-    let by_mode = modes
-        .into_iter()
-        .filter_map(|mode| {
-            let value = env.get_property(&mode, SHOW_TRAILING_WHITESPACE)?;
-            Some((mode, value.is_truthy()))
-        })
-        .collect();
-    crate::ui::TrailingSpaces { default, by_mode }
 }
 
 /// Returns how many columns a Tab reaches across in each of MODES, as Lisp

@@ -1,6 +1,6 @@
 //! Deleting the blanks at the ends of lines: in the whole buffer with the
 //! blank lines at its end, in the region, between two positions, with point
-//! kept; and before a save, where Lisp asks.
+//! kept; and before a save, where `whitespace-cleanup-mode` is on.
 //!
 //! Design: `doc/architettura-editor.typ, <verbi>`.
 #[cfg(test)]
@@ -35,6 +35,17 @@ mod tests {
             b.is_modified = false;
         });
         (ctx, env)
+    }
+
+    /// Loads the module that makes `whitespace-cleanup-mode`.
+    fn with_whitespace_module(env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        for source in [
+            include_str!("../../lisp/base/commands.lisp"),
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/features/whitespace.lisp"),
+        ] {
+            eval_str(source, env, ctx).expect("loading the shipped lisp");
+        }
     }
 
     fn text(ctx: &Ctx) -> String {
@@ -175,12 +186,13 @@ mod tests {
     }
 
     #[test]
-    fn a_save_cleans_the_buffer_first_when_asked() {
+    fn a_save_cleans_the_buffer_first_where_the_mode_is_on() {
         let sandbox = Sandbox::new("on");
         let path = sandbox.file("a  \nb\t\n\n\n");
         let (ctx, env) = editor_with("", 0);
-        run("(setq delete-trailing-whitespace-on-save t)", &env, &ctx);
+        with_whitespace_module(&env, &ctx);
         run(&format!("(find-file {path:?})"), &env, &ctx);
+        run("(whitespace-cleanup-mode 1)", &env, &ctx);
         run("(insert \"x\") (save-buffer)", &env, &ctx);
         assert_eq!(std::fs::read_to_string(&path).expect("read"), "xa\nb\n");
         assert_eq!(text(&ctx), "xa\nb\n");
@@ -191,17 +203,30 @@ mod tests {
     }
 
     #[test]
-    fn a_modes_own_property_wins_over_the_variable() {
-        let sandbox = Sandbox::new("mode");
+    fn a_rule_for_a_major_mode_cleans_the_files_opened_in_it() {
+        let sandbox = Sandbox::new("rule");
         let path = sandbox.file("a  \n");
         let (ctx, env) = editor_with("", 0);
+        with_whitespace_module(&env, &ctx);
         run(
-            "(setq delete-trailing-whitespace-on-save t)
-             (put 'fundamental-mode 'delete-trailing-whitespace-on-save nil)",
+            "(minor-mode-enable 'whitespace-cleanup-mode 'fundamental-mode)",
             &env,
             &ctx,
         );
         run(&format!("(find-file {path:?})"), &env, &ctx);
+        run("(insert \"x\") (save-buffer)", &env, &ctx);
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "xa\n");
+    }
+
+    #[test]
+    fn a_buffer_that_turned_the_mode_off_is_saved_as_it_is() {
+        let sandbox = Sandbox::new("off");
+        let path = sandbox.file("a  \n");
+        let (ctx, env) = editor_with("", 0);
+        with_whitespace_module(&env, &ctx);
+        run("(minor-mode-enable 'whitespace-cleanup-mode)", &env, &ctx);
+        run(&format!("(find-file {path:?})"), &env, &ctx);
+        run("(whitespace-cleanup-mode -1)", &env, &ctx);
         run("(insert \"x\") (save-buffer)", &env, &ctx);
         assert_eq!(std::fs::read_to_string(&path).expect("read"), "xa  \n");
     }
@@ -211,7 +236,8 @@ mod tests {
         let sandbox = Sandbox::new("write");
         let copy = sandbox.0.join("copy.txt").display().to_string();
         let (ctx, env) = editor_with("a  \n", 0);
-        run("(setq delete-trailing-whitespace-on-save t)", &env, &ctx);
+        with_whitespace_module(&env, &ctx);
+        run("(whitespace-cleanup-mode 1)", &env, &ctx);
         run(&format!("(write-file {copy:?})"), &env, &ctx);
         assert_eq!(std::fs::read_to_string(&copy).expect("read"), "a\n");
     }

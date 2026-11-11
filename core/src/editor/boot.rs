@@ -300,15 +300,8 @@ pub fn create_global_env<B: BufferTrait>()
     // Off here, and on in `default-configuration`: see `mouse_mode`.
     env.set_variable(MOUSE_MODE.into(), ELispExp::nil());
 
-    // The blanks at the ends of lines undrawn, until a configuration asks.
-    env.set_variable(SHOW_TRAILING_WHITESPACE.into(), ELispExp::nil());
-
-    // The blanks at the ends of lines left where they are on a save, and the
-    // blank lines at the end of a buffer cleaned with them by the command.
-    env.set_variable(
-        crate::primitives::verbs::DELETE_ON_SAVE.into(),
-        ELispExp::nil(),
-    );
+    // The blank lines at the end of a buffer cleaned with the blanks at the
+    // ends of its lines.
     env.set_variable(
         crate::primitives::verbs::DELETE_TRAILING_LINES.into(),
         ELispExp::t(),
@@ -320,8 +313,7 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::number(crate::primitives::fill::DEFAULT_FILL_COLUMN as f64),
     );
 
-    // The delimiter at point paired, and every match of a search drawn.
-    env.set_variable(super::frame::SHOW_PAREN_MODE.into(), ELispExp::t());
+    // Every match of a search drawn.
     env.set_variable(super::frame::HIGHLIGHT_ALL_MATCHES.into(), ELispExp::t());
 
     // The functions called after a resize, each with the new width and height.

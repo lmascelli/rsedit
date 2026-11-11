@@ -16,8 +16,8 @@ use std::sync::Arc;
 /// it: a failed save that only the log heard about is work the user believes
 /// is safe. What `save-buffer` and `save-some-buffers` save with.
 ///
-/// First, where `delete-trailing-whitespace-on-save` says for the buffer's
-/// mode, the blanks at the ends of its lines go, as the command takes them.
+/// First, where `whitespace-cleanup-mode` is on in the buffer, the blanks at
+/// the ends of its lines go, as the command takes them.
 pub(super) fn write_buffer<B: BufferTrait>(
     ctx: &EditorState<B>,
     env: &Arc<Env<EditorState<B>>>,
@@ -123,18 +123,18 @@ fn report_write_failure<B: BufferTrait>(
 }
 
 /// Deletes the blanks at the ends of the lines of the buffer NAME, and the
-/// blank lines at its end as `delete-trailing-lines` says, when
-/// `delete-trailing-whitespace-on-save` says so for its mode. The settings
-/// are read before the buffer's lock is taken.
+/// blank lines at its end as `delete-trailing-lines` says, when the buffer
+/// has `whitespace-cleanup-mode` on. The setting is read before the buffer's
+/// lock is taken for writing.
 pub(crate) fn clean_before_save<B: BufferTrait>(
     ctx: &EditorState<B>,
     env: &Arc<Env<EditorState<B>>>,
     name: &str,
 ) {
-    let Some(mode) = ctx.with_buffer(name, |buf| buf.current_mode.clone()) else {
-        return;
-    };
-    if !super::verbs::cleaning_on_save(env, &mode) {
+    let cleaning = ctx.with_buffer(name, |buf| {
+        buf.minor_mode_enabled(super::verbs::WHITESPACE_CLEANUP_MODE)
+    });
+    if cleaning != Some(true) {
         return;
     }
     let trailing_lines = env.flag(super::verbs::DELETE_TRAILING_LINES, true);

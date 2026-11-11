@@ -244,7 +244,13 @@ pub const MINOR_MODE_ENABLE_DOC: &str = "(minor-mode-enable MODE &optional MAJOR
          Example:\n\
          (minor-mode-enable 'auto-fill-mode 'fundamental-mode)";
 
-primitive!(minor_mode_enable, args, _env, ctx, {
+/// Returns the minor mode the first argument names and the major mode the
+/// second names, `None` when it is nil or left out; refused when the first is
+/// no minor mode.
+fn minor_and_major<B: BufferTrait>(
+    args: &[ELispExp<B>],
+    ctx: &EditorState<B>,
+) -> Result<(String, Option<String>), EvalError<EditorState<B>>> {
     if args.is_empty() || args.len() > 2 {
         return Err(EvalError::WrongNumberOfArguments {
             expected: 1,
@@ -258,8 +264,28 @@ primitive!(minor_mode_enable, args, _env, ctx, {
         )));
     }
     let major = args::optional_name(args.get(1), "Symbol naming a major mode, or nil")?;
+    Ok((minor, major))
+}
+
+primitive!(minor_mode_enable, args, _env, ctx, {
+    let (minor, major) = minor_and_major(args, ctx)?;
     ctx.modes_mut(|modes| modes.add_minor_rule(major.as_deref(), &minor));
     Ok(ELispExp::t())
+});
+
+pub const MINOR_MODE_DISABLE_DOC: &str = "(minor-mode-disable MODE &optional MAJOR): Stop \
+         turning the minor mode MODE on in the buffers that get the major mode MAJOR, or every \
+         major mode when MAJOR is nil: take back what `minor-mode-enable' asked for with the \
+         same arguments. Buffers where MODE is on are left as they are. Return t, or nil when \
+         nothing had asked for it.\n\n\
+         Example:\n\
+         (minor-mode-disable 'show-paren-mode)";
+
+primitive!(minor_mode_disable, args, _env, ctx, {
+    let (minor, major) = minor_and_major(args, ctx)?;
+    Ok(ELispExp::boolean(ctx.modes_mut(|modes| {
+        modes.remove_minor_rule(major.as_deref(), &minor)
+    })))
 });
 
 /// Registers the primitives of major modes and their hooks.
@@ -279,5 +305,10 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         "minor-mode-enable",
         minor_mode_enable,
         MINOR_MODE_ENABLE_DOC,
+    );
+    into.function(
+        "minor-mode-disable",
+        minor_mode_disable,
+        MINOR_MODE_DISABLE_DOC,
     );
 }
