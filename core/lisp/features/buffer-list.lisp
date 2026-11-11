@@ -232,17 +232,20 @@ cursor's line, as a list of names; nil when there is neither."
 ;; Saving and killing
 ;; ---------------------------------------------------------------------------
 
-(defun buffer-list--save (names)
-  "Save each of NAMES that visits a file, and return how many were saved."
-  (let ((saved 0))
-    (mapc (lambda (name)
-            (if (buffer-file-name name)
-                (progn
-                  (with-current-buffer name (lambda () (save-buffer)))
-                  (setq saved (+ saved 1)))
-                (message "%s visits no file" name)))
-          names)
-    saved))
+(defun buffer-list--save (names &optional after)
+  "Save NAMES asynchronously in order, calling AFTER on completion; stop on failure."
+  (if (null names)
+      (when after (funcall after))
+      (let ((name (car names)) (rest (cdr names)))
+        (if (buffer-file-name name)
+            (with-current-buffer name (lambda ()
+              (save-buffer-async (lambda (ok)
+                (when (member buffer-list-buffer-name (all-buffer-names))
+                  (with-current-buffer buffer-list-buffer-name
+                    (lambda () (buffer-list-refresh))))
+                (when ok (buffer-list--save rest after))))))
+            (progn (message "%s visits no file" name)
+                   (buffer-list--save rest after))))))
 
 (defun buffer-list--kill (names)
   "Kill NAMES, asking once first when some of them have unsaved changes: a
@@ -299,9 +302,7 @@ once first when some have unsaved changes."
   "Save the buffers marked with >, or the one on the cursor's line."
   (let ((names (buffer-list--targets)))
     (if names
-        (let ((saved (buffer-list--save names)))
-          (buffer-list-refresh)
-          (if (> saved 0) (message "Saved %s buffer%s" saved (if (= saved 1) "" "s"))))
+        (buffer-list--save names)
         (message "No buffer on this line"))))
 
 (defcommand buffer-list-execute () nil
@@ -311,12 +312,10 @@ once first when some of those have unsaved changes."
         (kills (buffer-list--marked "D")))
     (cond
      ((and (null saves) (null kills)) (message "No buffers flagged with S or D"))
-     (t (progn
-          (if saves (buffer-list--save saves))
-          (setq buffer-list--saves nil)
-          (if kills
-              (buffer-list--kill kills)
-              (buffer-list-refresh)))))))
+     (t (let ((done (lambda ()
+                      (setq buffer-list--saves nil)
+                      (if kills (buffer-list--kill kills) (buffer-list-refresh)))))
+          (if saves (buffer-list--save saves done) (funcall done)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; C-x b

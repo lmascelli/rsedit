@@ -437,6 +437,7 @@ mod tests {
             },
             env,
         );
+        crate::tests::file_io_tests::settle(ctx, env);
     }
 
     fn minibuffer_text(ctx: &Ctx) -> String {

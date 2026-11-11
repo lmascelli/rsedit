@@ -155,8 +155,14 @@ impl std::error::Error for DirError {
 /// # Ok::<(), rsedit_core::DirError>(())
 /// ```
 pub fn app_dir(options: DirOptions) -> Result<PathBuf, DirError> {
-    let path = locate(options.dir).ok_or(DirError::Undetermined(options.dir))?;
+    let path = app_dir_path(options.dir)?;
     ensure_dir(path, options.create)
+}
+
+/// Resolves a configured directory without filesystem I/O. Recovery uses
+/// this at boot and creates the directory on its own worker when first needed.
+pub(crate) fn app_dir_path(dir: AppDir) -> Result<PathBuf, DirError> {
+    locate(dir).ok_or(DirError::Undetermined(dir))
 }
 
 /// Returns the directory the editor's own data was installed in -- its

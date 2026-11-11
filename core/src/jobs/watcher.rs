@@ -4,6 +4,7 @@
 //! marked stale, and the next save asks.
 //!
 //! Design: `doc/architettura-editor.typ, <lavori-editor>`.
+use crate::editor::file_io::{ERROR, Lane};
 use crate::{
     BufferTrait, EditorState,
     buffer::{FileStamp, OnDisk, disk::compare},
@@ -80,7 +81,9 @@ impl<B: BufferTrait> Job<EditorState<B>> for FileWatcher<B> {
         // Asked at every step, so that the setting means something after the
         // editor has booted. Switched off, the job is parked, not ended.
         if watching(&self.env) {
-            let (next, looked_at) = cx.state.watch_files_turn(self.next);
+            let (next, looked_at) = cx
+                .state
+                .watch_files_async_turn(self.next, crate::editor::file_io::timeout(&self.env));
             self.next = next;
             cx.worked(looked_at as u64, "open buffers");
         }
@@ -102,6 +105,8 @@ impl<B: BufferTrait> Job<EditorState<B>> for FileWatcher<B> {
 
 /// What one buffer's check found, and what has to be done about it.
 enum Verdict {
+    Available,
+    Unavailable(String),
     /// Reload it from what was read.
     Adopt {
         text: String,
@@ -121,12 +126,65 @@ pub(crate) struct FileCheck {
     /// The buffer's version when the check began, compared again when the
     /// verdict is applied: see [`EditorState::store_file_check`].
     version: u64,
+    recorded: Option<FileStamp>,
     verdict: Verdict,
 }
 
 impl<B: BufferTrait> EditorState<B> {
+    pub(crate) fn watch_files_async_turn(
+        &self,
+        from: usize,
+        timeout: Option<Duration>,
+    ) -> (usize, usize) {
+        let names = self.buffer_names();
+        if names.is_empty() {
+            return (0, 0);
+        }
+        let start = from % names.len();
+        let count = FILES_PER_TURN.min(2).min(names.len());
+        let mut submitted = 0;
+        for step in 0..count {
+            let name = names[(start + step) % names.len()].clone();
+            let Some(handle) = self.file_handle(&name) else {
+                continue;
+            };
+            let Some(path) = handle
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .file_path
+                .clone()
+            else {
+                continue;
+            };
+            let worker = self.clone();
+            let origin = handle.clone();
+            if self
+                .start_file_io(
+                    Lane::Watch,
+                    format!("file:{path}"),
+                    "Checking file",
+                    Some(origin),
+                    timeout,
+                    move || worker.file_check_for(&name),
+                    move |state, _, check| {
+                        if state.file_handle_name(&handle).is_some()
+                            && let Some(check) = check
+                        {
+                            state.store_file_check(check);
+                        }
+                    },
+                )
+                .is_some()
+            {
+                submitted += 1;
+            }
+        }
+        ((start + count) % names.len(), submitted)
+    }
+
     /// Looks at up to [`FILES_PER_TURN`] buffers, starting at FROM, and
     /// returns where the next turn starts and how many it looked at.
+    #[cfg(test)]
     pub(crate) fn watch_files_turn(&self, from: usize) -> (usize, usize) {
         let names = self.buffer_names();
         if names.is_empty() {
@@ -149,31 +207,44 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn file_check_for(&self, name: &str) -> Option<FileCheck> {
         // Only what the question needs, under the lock: the lock is not held
         // across a `stat`, let alone a read.
-        let (path, recorded, modified, version) = self.with_buffer(name, |buf| {
-            buf.file_path
-                .as_ref()
-                .map(|path| (path.clone(), buf.file_stamp, buf.is_modified, buf.version))
-        })??;
+        let (path, recorded, modified, version, unavailable) =
+            self.with_buffer(name, |buf| {
+                buf.file_path.as_ref().map(|path| {
+                    (
+                        path.clone(),
+                        buf.file_stamp,
+                        buf.is_modified,
+                        buf.version,
+                        buf.data::<String>(ERROR).is_some(),
+                    )
+                })
+            })??;
 
-        let verdict = match compare(recorded, FileStamp::of(&path)) {
-            OnDisk::Unchanged | OnDisk::Unknown => return None,
-            // Gone is not a reason to empty the buffer: the text in it is now
-            // the only copy there is.
-            OnDisk::Gone => Verdict::Flag,
-            // Decided here as well as when the verdict is applied: this one
-            // saves reading a file whose contents would be thrown away, and
-            // the one there is the one that keeps the buffer safe.
-            OnDisk::Changed if modified => Verdict::Flag,
-            OnDisk::Changed => match crate::buffer::coding::read_text(&path) {
-                Ok((text, coding)) => Verdict::Adopt {
-                    text,
-                    coding,
-                    // Stamped after the read, so that a file rewritten during
-                    // it is caught next turn rather than recorded as seen.
-                    stamp: FileStamp::of(&path),
+        let found = FileStamp::try_of(&path);
+        let verdict = match found {
+            Err(why) => Verdict::Unavailable(why.to_string()),
+            Ok(found) => match compare(recorded, found) {
+                OnDisk::Unchanged | OnDisk::Unknown if unavailable => Verdict::Available,
+                OnDisk::Unchanged | OnDisk::Unknown => return None,
+                // Gone is not a reason to empty the buffer: the text in it is now
+                // the only copy there is.
+                OnDisk::Gone => Verdict::Flag,
+                // Decided here as well as when the verdict is applied: this one
+                // saves reading a file whose contents would be thrown away, and
+                // the one there is the one that keeps the buffer safe.
+                OnDisk::Changed if modified => Verdict::Flag,
+                OnDisk::Changed => match crate::buffer::coding::read_stable(&path) {
+                    Ok((_, _, stamp)) if Some(stamp) != found => Verdict::Flag,
+                    Ok((text, coding, stamp)) => Verdict::Adopt {
+                        text,
+                        coding,
+                        // Stamped after the read, so that a file rewritten during
+                        // it is caught next turn rather than recorded as seen.
+                        stamp: Some(stamp),
+                    },
+                    // Unreadable is not unchanged, nor something to reload from.
+                    Err(why) => Verdict::Unavailable(why.to_string()),
                 },
-                // Unreadable is not unchanged, nor something to reload from.
-                Err(_) => Verdict::Flag,
             },
         };
 
@@ -181,6 +252,7 @@ impl<B: BufferTrait> EditorState<B> {
             buffer: name.to_string(),
             path,
             version,
+            recorded,
             verdict,
         })
     }
@@ -194,9 +266,31 @@ impl<B: BufferTrait> EditorState<B> {
             buffer,
             path,
             version,
+            recorded,
             verdict,
         } = check;
+        let mut warning = None;
         let reverted = self.with_buffer_mut(&buffer, |buf| {
+            if buf.file_path.as_deref() != Some(path.as_str()) || buf.file_stamp != recorded {
+                return false;
+            }
+            match &verdict {
+                Verdict::Unavailable(why) => {
+                    let first = buf.data::<String>(ERROR) != Some(why);
+                    buf.put_data(ERROR, why.clone());
+                    if first {
+                        warning = Some(format!("[WARNING] File unavailable: {path}: {why}"));
+                    }
+                    return false;
+                }
+                Verdict::Available => {
+                    buf.forget_data(ERROR);
+                    return false;
+                }
+                _ => {
+                    buf.forget_data(ERROR);
+                }
+            }
             if buf.version != version || buf.is_modified {
                 // It changed while the file was being read: marked, as if it
                 // had been modified all along, and not touched.
@@ -204,6 +298,7 @@ impl<B: BufferTrait> EditorState<B> {
                 return false;
             }
             match verdict {
+                Verdict::Available | Verdict::Unavailable(_) => false,
                 Verdict::Flag => {
                     buf.stale = true;
                     false
@@ -221,6 +316,9 @@ impl<B: BufferTrait> EditorState<B> {
             }
         });
 
+        if let Some(warning) = warning {
+            self.log_diagnostic(&warning);
+        }
         if reverted == Some(true) {
             self.log_diagnostic(&format!("[INFO] {buffer} reloaded: {path} changed on disk"));
         }

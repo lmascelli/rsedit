@@ -24,7 +24,10 @@ mod tests {
     /// Evaluate and unwrap, naming the source in the panic so a failure says
     /// which line of Lisp it was.
     fn run(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> LispExp<Ctx> {
-        eval_str(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"))
+        let result =
+            eval_str(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"));
+        crate::tests::file_io_tests::settle(ctx, env);
+        result
     }
 
     fn string_of(exp: &LispExp<Ctx>) -> String {
@@ -136,6 +139,7 @@ mod tests {
             },
             env,
         );
+        crate::tests::file_io_tests::settle(ctx, env);
     }
 
     fn press_return(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
@@ -146,6 +150,7 @@ mod tests {
             },
             env,
         );
+        crate::tests::file_io_tests::settle(ctx, env);
     }
 
     fn answer(text: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {

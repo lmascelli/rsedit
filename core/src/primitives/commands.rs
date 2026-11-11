@@ -19,6 +19,19 @@ fn spec_to_lisp<B: BufferTrait>(spec: &ArgSpec) -> ELispExp<B> {
     ])
 }
 
+fn interactive_callable<B: BufferTrait>(
+    name: &str,
+    env: &std::sync::Arc<Env<EditorState<B>>>,
+) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
+    let target = match env.get_property(name, "interactive-function") {
+        Some(ELispExp::Symbol(target)) => target.to_string(),
+        Some(ELispExp::String(target)) => target.to_string(),
+        _ => name.to_string(),
+    };
+    env.get_function(&target)
+        .ok_or(EvalError::UndefinedFunction(target))
+}
+
 pub const REGISTER_COMMAND_DOC: &str = "(register-command NAME SPECS): Make the function NAME a \
          command, which M-x reaches and a key collects the arguments of, and return t. SPECS has \
          one code for each argument -- \"sPROMPT\" a string, \"nPROMPT\" a number, \"bPROMPT\" a \
@@ -138,9 +151,7 @@ primitive!(call_interactively, args, env, ctx, {
     let specs = ctx.command_specs(&name).unwrap_or_default();
 
     if specs.is_empty() {
-        let callable = env
-            .get_function(&name)
-            .ok_or_else(|| EvalError::UndefinedFunction(name.clone()))?;
+        let callable = interactive_callable(&name, &env)?;
         return call_callable(&callable, &[], env.clone(), ctx);
     }
 
@@ -173,9 +184,7 @@ fn advance_pending<B: BufferTrait>(
     let Some((name, collected)) = ctx.take_pending_command() else {
         return Ok(ELispExp::nil());
     };
-    let callable = env
-        .get_function(&name)
-        .ok_or_else(|| EvalError::UndefinedFunction(name.clone()))?;
+    let callable = interactive_callable(&name, &env)?;
     call_callable(&callable, &collected, env.clone(), ctx)
 }
 

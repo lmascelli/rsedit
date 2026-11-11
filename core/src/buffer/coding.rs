@@ -105,6 +105,20 @@ pub fn read_text(path: impl AsRef<Path>) -> std::io::Result<(String, Coding)> {
     Ok(decode(&std::fs::read(path)?))
 }
 
+/// A snapshot is adopted only when its stamp stayed stable across the read.
+pub(crate) fn read_stable(path: &str) -> std::io::Result<(String, Coding, super::FileStamp)> {
+    let before = super::FileStamp::try_of(path)?;
+    let (text, coding) = read_text(path)?;
+    let after = super::FileStamp::try_of(path)?;
+    match (before, after) {
+        (Some(before), Some(after)) if before == after => Ok((text, coding, after)),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "file changed while being read; try again",
+        )),
+    }
+}
+
 /// Returns the character Windows-1252 gives BYTE.
 fn from_windows_1252(byte: u8) -> char {
     match byte {

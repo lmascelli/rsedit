@@ -48,6 +48,16 @@ fn ask_about<B: BufferTrait>(
     names: &[String],
     after: &ELispExp<B>,
 ) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
+    ask_about_impl(ctx, env, names, after, false)
+}
+
+fn ask_about_impl<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: std::sync::Arc<Env<EditorState<B>>>,
+    names: &[String],
+    after: &ELispExp<B>,
+    asynchronous: bool,
+) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
     let Some((name, rest)) = names.split_first() else {
         if after.is_truthy() {
             call_callable(after, &[], env, ctx)?;
@@ -61,7 +71,7 @@ fn ask_about<B: BufferTrait>(
         .with_buffer(name, |buf| buf.is_modified && buf.file_path.is_some())
         .unwrap_or(false);
     if !still_unsaved {
-        return ask_about(ctx, env, rest, after);
+        return ask_about_impl(ctx, env, rest, after, asynchronous);
     }
 
     let path = ctx
@@ -72,10 +82,10 @@ fn ask_about<B: BufferTrait>(
         ctx,
         format!("Save {path}? (y, n, ! = all, q = stop)"),
         vec![
-            ("y", answer_form("save", name, rest, after)),
-            ("n", answer_form("skip", name, rest, after)),
-            ("!", answer_form("all", name, rest, after)),
-            ("q", answer_form("stop", name, rest, after)),
+            ("y", answer_form("save", name, rest, after, asynchronous)),
+            ("n", answer_form("skip", name, rest, after, asynchronous)),
+            ("!", answer_form("all", name, rest, after, asynchronous)),
+            ("q", answer_form("stop", name, rest, after, asynchronous)),
         ],
     );
     Ok(ELispExp::t())
@@ -87,9 +97,17 @@ fn answer_form<B: BufferTrait>(
     name: &str,
     rest: &[String],
     after: &ELispExp<B>,
+    asynchronous: bool,
 ) -> ELispExp<B> {
     ELispExp::form(vec![
-        ELispExp::symbol("save-some-buffers--answer".into()),
+        ELispExp::symbol(
+            if asynchronous {
+                "save-some-buffers--async-answer"
+            } else {
+                "save-some-buffers--answer"
+            }
+            .into(),
+        ),
         ELispExp::string(action.to_string()),
         ELispExp::string(name.to_string()),
         args::quoted(names_list(rest)),
@@ -167,6 +185,12 @@ pub const QUIT_CONFIRM_DOC: &str = "(quit--confirm): Quit, or ask first if anyth
          unsaved. Not called directly -- `quit' runs it once the offers to save are done.";
 
 primitive!(quit_confirm, _args, env, ctx, {
+    if ctx.file_writes_pending() {
+        ctx.set_echo_message(
+            "File writes are still pending; wait for their outcome before quitting",
+        );
+        return Ok(ELispExp::nil());
+    }
     let left = unsaved_file_buffers(ctx);
     if left.is_empty() {
         ctx.quit();
@@ -198,10 +222,161 @@ primitive!(quit_without_saving, _args, _env, ctx, {
     Ok(ELispExp::nil())
 });
 
+pub const SAVE_SOME_ASYNC_DOC: &str = "(save-some-buffers-async &optional AFTER): Offer to save \
+    modified file buffers, as save-some-buffers does, waiting asynchronously for each accepted \
+    save before continuing. An I/O failure stops the sequence. AFTER takes no arguments.";
+primitive!(save_some_buffers_async, args, env, ctx, {
+    let after = args.first().cloned().unwrap_or_else(ELispExp::nil);
+    ask_about_impl(ctx, env, &unsaved_file_buffers(ctx), &after, true)
+});
+
+pub const QUIT_ASYNC_DOC: &str = "(quit-async): Offer to save modified file buffers asynchronously \
+    before quitting. A pending file write prevents normal exit; quit-without-saving forces exit.";
+primitive!(quit_async, _args, env, ctx, {
+    if ctx.file_writes_pending() {
+        ctx.set_echo_message("File writes are still pending; wait before quitting");
+        return Ok(ELispExp::nil());
+    }
+    ask_about_impl(
+        ctx,
+        env,
+        &unsaved_file_buffers(ctx),
+        &ELispExp::symbol("quit--confirm".into()),
+        true,
+    )
+});
+
+fn continue_async<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: std::sync::Arc<Env<EditorState<B>>>,
+    names: &[String],
+    after: &ELispExp<B>,
+    all: bool,
+) -> Result<ELispExp<B>, EvalError<EditorState<B>>> {
+    if !all || names.is_empty() {
+        return ask_about_impl(ctx, env, names, after, true);
+    }
+    let (name, rest) = names.split_first().expect("nonempty");
+    if !has_unsaved_work(ctx, name) {
+        return continue_async(ctx, env, rest, after, all);
+    }
+    let callback = ELispExp::lambda(risp::Lambda {
+        params: vec!["ok".into()],
+        optionals: Vec::new(),
+        rest: None,
+        env: env.clone(),
+        doc: None,
+        body: vec![ELispExp::form(vec![
+            ELispExp::symbol("if".into()),
+            ELispExp::symbol("ok".into()),
+            ELispExp::form(vec![
+                ELispExp::symbol("save-some-buffers--async-next".into()),
+                args::quoted(names_list(rest)),
+                args::quoted(after.clone()),
+                ELispExp::t(),
+            ]),
+            ELispExp::form(vec![
+                ELispExp::symbol("message".into()),
+                ELispExp::string("Save sequence stopped; unsaved buffers preserved".into()),
+            ]),
+        ])],
+    });
+    super::file_io::save_named(ctx, &env, name, None, callback)
+}
+
+pub const ASYNC_NEXT_DOC: &str = "(save-some-buffers--async-next NAMES AFTER ALL): Private continuation \
+    for asynchronous save offers.";
+primitive!(save_some_async_next, args, env, ctx, {
+    let names = strings_from(args.first());
+    let after = args.get(1).cloned().unwrap_or_else(ELispExp::nil);
+    continue_async(
+        ctx,
+        env,
+        &names,
+        &after,
+        args.get(2).is_some_and(ELispExp::is_truthy),
+    )
+});
+
+pub const ASYNC_ANSWER_DOC: &str = "(save-some-buffers--async-answer ACTION NAME REST AFTER): Private \
+    answer callback for asynchronous save offers.";
+primitive!(save_some_async_answer, args, env, ctx, {
+    ctx.clear_transient_keymap();
+    let Some(ELispExp::String(action)) = args.first() else {
+        return Ok(ELispExp::nil());
+    };
+    let Some(ELispExp::String(name)) = args.get(1) else {
+        return Ok(ELispExp::nil());
+    };
+    let rest = strings_from(args.get(2));
+    let after = args.get(3).cloned().unwrap_or_else(ELispExp::nil);
+    match action.as_str() {
+        "stop" => ask_about_impl(ctx, env, &[], &after, true),
+        "skip" => ask_about_impl(ctx, env, &rest, &after, true),
+        "all" => {
+            let mut names = vec![name.to_string()];
+            names.extend(rest);
+            continue_async(ctx, env, &names, &after, true)
+        }
+        "save" => {
+            let callback = ELispExp::lambda(risp::Lambda {
+                params: vec!["ok".into()],
+                optionals: Vec::new(),
+                rest: None,
+                env: env.clone(),
+                doc: None,
+                body: vec![ELispExp::form(vec![
+                    ELispExp::symbol("if".into()),
+                    ELispExp::symbol("ok".into()),
+                    ELispExp::form(vec![
+                        ELispExp::symbol("save-some-buffers--async-next".into()),
+                        args::quoted(names_list(&rest)),
+                        args::quoted(after),
+                        ELispExp::nil(),
+                    ]),
+                    ELispExp::form(vec![
+                        ELispExp::symbol("message".into()),
+                        ELispExp::string("Save sequence stopped; unsaved buffers preserved".into()),
+                    ]),
+                ])],
+            });
+            super::file_io::save_named(ctx, &env, name, None, callback)
+        }
+        _ => Ok(ELispExp::nil()),
+    }
+});
+
 /// Registers the primitives that leave the editor, and offer to save first.
 ///
 /// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.command(
+        "save-some-buffers-async",
+        save_some_buffers_async,
+        &[],
+        SAVE_SOME_ASYNC_DOC,
+    );
+    into.command("quit-async", quit_async, &[], QUIT_ASYNC_DOC);
+    into.function(
+        "save-some-buffers--async-answer",
+        save_some_async_answer,
+        ASYNC_ANSWER_DOC,
+    );
+    into.function(
+        "save-some-buffers--async-next",
+        save_some_async_next,
+        ASYNC_NEXT_DOC,
+    );
+    into.env.put_property(
+        "quit",
+        "interactive-function",
+        ELispExp::symbol("quit-async".into()),
+    );
+    into.env.put_property(
+        "save-some-buffers",
+        "interactive-function",
+        ELispExp::symbol("save-some-buffers-async".into()),
+    );
     into.command("quit", quit, &[], QUIT_DOC);
     into.command(
         "quit-without-saving",

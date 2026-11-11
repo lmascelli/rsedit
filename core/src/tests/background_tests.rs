@@ -556,6 +556,7 @@ mod tests {
         // The editor's own jobs take their first steps, and the snapshot
         // takes in whatever they did.
         steps_due(&ctx);
+        crate::tests::file_io_tests::settle(&ctx, &env);
         let frame = ctx.snapshot(&env, 80, 24);
         let before = told.load(Ordering::SeqCst);
         assert!(
@@ -649,6 +650,7 @@ mod tests {
         std::fs::write(&path, "first\n").expect("write");
         run(&format!(r#"(find-file "{}")"#, path.display()), &env, &ctx);
         wait(&ctx, Duration::from_secs(4));
+        crate::tests::file_io_tests::settle(&ctx, &env);
         let frame = ctx.snapshot(&env, 80, 24);
         let before = told.load(Ordering::SeqCst);
 
@@ -656,6 +658,7 @@ mod tests {
         // file system's clock is.
         std::fs::write(&path, "second, from somewhere else\n").expect("rewrite");
         wait(&ctx, Duration::from_secs(4));
+        crate::tests::file_io_tests::settle(&ctx, &env);
         let text = ctx.with_current_buffer(|buf| buf.text.to_string());
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(

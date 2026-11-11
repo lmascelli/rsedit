@@ -247,12 +247,12 @@ for deletion stay flagged."
 
 (defun dired--visit (path)
   "Open PATH: a directory as the listing, a file in this window."
-  ;; `file-directory-p' decides, not the separator, which belongs to the
-  ;; platform; `..' goes up, so the header does not grow a `..'.
+  ;; Directory entries already carry a trailing slash in the listing;
+  ;; opening a regular file needs no synchronous stat on its mount.
   (cond
    ((dired--parent-entry-p) (dired-up-directory))
-   ((file-directory-p path) (dired--show path))
-   (t (find-file path))))
+   ((not (string= path (directory-file-name path))) (dired--show path))
+   (t (find-file-async path))))
 
 (defcommand dired-find-file () nil
   "Open what the cursor is on, in this window."
@@ -276,19 +276,19 @@ for deletion stay flagged."
     (cond
      ((null path) (message "No file on this line"))
      ;; A directory opens here: there is one listing buffer.
-     ((file-directory-p path) (dired--visit path))
+     ((not (string= path (directory-file-name path))) (dired--visit path))
      (t (dired--visit-other-window path)))))
 
 (defun dired--visit-other-window (path)
   "Open PATH beside the listing, in the window `o' last used if it is there."
   ;; `select-window' answers nil for a window closed since.
   (if (and dired--file-window (select-window dired--file-window))
-      (find-file path)
+      (find-file-async path)
       (progn
         (split-window-right dired-window-width)
         (other-window 1)
         (setq dired--file-window (selected-window))
-        (find-file path))))
+        (find-file-async path))))
 
 ;; ---------------------------------------------------------------------------
 ;; Changing the filesystem
@@ -666,7 +666,7 @@ part of its path."
                              (setq dired--recursive-candidates nil)
                              (if (string= path "")
                                  nil
-                                 (find-file path)))
+                                 (find-file-async path)))
                            'dired-find-recursive--candidates
                            nil))))))
 

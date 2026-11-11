@@ -623,8 +623,9 @@ mod tests {
 
     /// Runs SPAN of the editor's work, moving the clock for it rather than
     /// waiting.
-    fn wait(ctx: &Ctx, span: Duration) {
+    fn wait(ctx: &Ctx, env: &Arc<Env<Ctx>>, span: Duration) {
         ctx.work().run_for(ctx, span);
+        crate::tests::file_io_tests::settle(ctx, env);
     }
 
     fn looks(ctx: &Ctx) -> u64 {
@@ -644,13 +645,13 @@ mod tests {
         let name = open(&path, &env, &ctx);
         sandbox.rewrite("a.txt", "after");
 
-        wait(&ctx, Duration::from_millis(2900));
+        wait(&ctx, &env, Duration::from_millis(2900));
         assert_eq!(
             text(&ctx, &name),
             "before",
             "its first look is three seconds in"
         );
-        wait(&ctx, Duration::from_millis(200));
+        wait(&ctx, &env, Duration::from_millis(200));
         assert_eq!(text(&ctx, &name), "after");
     }
 
@@ -660,11 +661,11 @@ mod tests {
         // counts from the next look.
         let (ctx, env) = editor();
         run("(setq watch-file-interval 10)", &env, &ctx);
-        wait(&ctx, Duration::from_millis(3100));
+        wait(&ctx, &env, Duration::from_millis(3100));
         assert_eq!(looks(&ctx), 1, "the first, at the interval it started with");
-        wait(&ctx, Duration::from_millis(9800));
+        wait(&ctx, &env, Duration::from_millis(9800));
         assert_eq!(looks(&ctx), 1, "then ten seconds, not three");
-        wait(&ctx, Duration::from_millis(200));
+        wait(&ctx, &env, Duration::from_millis(200));
         assert_eq!(looks(&ctx), 2);
     }
 
@@ -677,14 +678,14 @@ mod tests {
         run("(setq watch-files nil)", &env, &ctx);
         sandbox.rewrite("a.txt", "after");
 
-        wait(&ctx, Duration::from_secs(7));
+        wait(&ctx, &env, Duration::from_secs(7));
         assert_eq!(
             text(&ctx, &name),
             "before",
             "switched off, it looks at nothing"
         );
         run("(setq watch-files t)", &env, &ctx);
-        wait(&ctx, Duration::from_secs(4));
+        wait(&ctx, &env, Duration::from_secs(4));
         assert_eq!(
             text(&ctx, &name),
             "after",
@@ -706,7 +707,7 @@ mod tests {
             matches!(run("watch-file-interval", &env, &ctx), LispExp::Number(n) if n > 1e25),
             "the setting really is a number that large"
         );
-        wait(&ctx, Duration::from_millis(3100));
+        wait(&ctx, &env, Duration::from_millis(3100));
         assert_eq!(
             looks(&ctx),
             1,

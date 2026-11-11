@@ -20,8 +20,8 @@ impl<B: BufferTrait> EditorState<B> {
         env: &Arc<Env<EditorState<B>>>,
     ) -> Option<String> {
         if let Some(file_path) = path {
-            match crate::buffer::coding::read_text(file_path) {
-                Ok((content, coding)) => {
+            match crate::buffer::coding::read_stable(file_path) {
+                Ok((content, coding, stamp)) => {
                     let mut new_buf = Buffer::from_text(name, &content);
                     new_buf.coding = coding;
                     // A mode asked for wins; otherwise the file's name decides,
@@ -35,10 +35,9 @@ impl<B: BufferTrait> EditorState<B> {
                     if let Some(place) = self.place_for(file_path, env) {
                         goto_offset(&mut new_buf.text, place);
                     }
-                    // Taken after the read, so that a file rewritten while it
-                    // was read is noticed at the next look, not stamped as
-                    // seen.
-                    new_buf.file_stamp = FileStamp::of(file_path);
+                    // read_stable checks the stamp before and after reading;
+                    // a changed snapshot is rejected instead of adopted.
+                    new_buf.file_stamp = Some(stamp);
 
                     self.buffers_mut(|buffers| buffers.insert(name, new_buf));
                     self.show_in_focused_window(name);
@@ -259,6 +258,14 @@ impl<B: BufferTrait> EditorState<B> {
     /// deleted, unless it has unsaved changes, and where point was in its
     /// file is remembered.
     pub fn close_buffer(&self, name: &str, env: &Arc<Env<EditorState<B>>>) -> bool {
+        if let Some(handle) = self.file_handle(name)
+            && self.buffer_write_pending(&handle)
+        {
+            self.set_echo_message(
+                "A file write is still pending; keep this buffer open until its outcome is known",
+            );
+            return false;
+        }
         let Some((closing_mode, writer)) =
             self.with_buffer(name, |buf| (buf.current_mode.clone(), buf.writer))
         else {
@@ -276,7 +283,24 @@ impl<B: BufferTrait> EditorState<B> {
             .with_buffer(name, |buf| buf.is_modified && buf.file_path.is_some())
             .unwrap_or(false);
         if !unsaved {
-            self.discard_auto_save(name, auto_save_directory(env).as_deref());
+            if let Ok(directory) = auto_save_directory(env) {
+                if let Some(handle) = self.file_handle(name) {
+                    let (path, version) = {
+                        let buf = handle
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        (buf.file_path.clone(), buf.version)
+                    };
+                    if let Some(path) = path {
+                        self.queue_recovery_cleanup(
+                            handle,
+                            crate::jobs::autosave::auto_save_path(&path, directory.as_deref()),
+                            version,
+                            super::file_io::timeout(env),
+                        );
+                    }
+                }
+            }
         }
         // A listing that goes takes its markers with it, out of the buffers
         // its places are in: nothing will visit them again.

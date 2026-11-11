@@ -20,7 +20,7 @@ its path, and open it."
                        (lambda (path)
                          (if (string= path "")
                              (message "No file chosen")
-                             (find-file path)))
+                             (find-file-async path)))
                        'find-recent-file--candidates
                        nil)))
 

@@ -7,7 +7,7 @@
 
 use crate::{
     ELispExp,
-    buffer::{Buffer, BufferTrait, FileStamp},
+    buffer::{Buffer, BufferTrait},
     commands::{ArgSpec, Invocation, PrefixArg},
     feature::isearch::install_isearch,
     feature::minibuffer::install_minibuffer,
@@ -56,6 +56,7 @@ pub(crate) mod boot;
 mod buffers;
 mod commands;
 mod directory;
+pub(crate) mod file_io;
 mod frame;
 mod keys;
 mod kill_yank;
@@ -132,6 +133,7 @@ impl EchoMessage {
 /// fields are private; each compartment is reached through its doors, below.
 #[derive(Clone)]
 pub struct EditorState<B: BufferTrait> {
+    file_io: Arc<file_io::FileIo<B>>,
     /// False once `quit` has been asked for.
     running: Arc<AtomicBool>,
 

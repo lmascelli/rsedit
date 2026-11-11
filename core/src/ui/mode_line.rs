@@ -11,6 +11,7 @@ use crate::buffer::{Buffer, BufferTrait};
 /// | escape | shows                                        |
 /// |--------|----------------------------------------------|
 /// | `%b`   | buffer name                                  |
+/// | `%i`   | file I/O progress, conflicts and recovery errors     |
 /// | `%f`   | file path, or the buffer name when unvisited |
 /// | `%s`   | buffer-local mode-line-state string          |
 /// | `%m`   | major mode                                   |
@@ -35,6 +36,7 @@ pub fn expand_mode_line<B: BufferTrait>(format: &str, buffer: &Buffer<B>, height
         }
         match chars.next() {
             Some('b') => out.push_str(&buffer.name),
+            Some('i') => out.push_str(&buffer.file_io_status()),
             Some('f') => out.push_str(buffer.file_path.as_deref().unwrap_or(&buffer.name)),
             Some('m') => out.push_str(&buffer.current_mode),
             Some('n') => {

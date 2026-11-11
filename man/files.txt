@@ -2,6 +2,14 @@ NAME
     files - opening, saving, and leaving
 
 SYNOPSIS
+    (find-file-async PATH &optional AFTER)
+    (save-buffer-async &optional AFTER)
+    (write-file-async PATH &optional AFTER)
+    (revert-buffer-async)
+    (save-some-buffers-async &optional AFTER)
+    (quit-async)
+    file-io-timeout
+
     (find-file PATH)
     (save-buffer)
     (write-file PATH)
@@ -113,14 +121,16 @@ WHEN THE FILE CHANGES UNDER YOU
     with the old text.
 
     `watch-files' turns the watching off, and `watch-file-interval' is how
-    many seconds pass between looks, 3 to begin with; each look takes eight
-    of the buffers, in turn. Looking at a file on a network filesystem that
-    has stopped answering holds up colouring too, so turn watching off when
-    a mount misbehaves.
+    many seconds pass between looks, 3 to begin with. Checks run on separate
+    workers, at most two at once, rotating through the buffers. An access
+    error is shown as File unavailable; the buffer is preserved. Checks
+    resume when the mount answers, and saving always checks the current
+    disk stamp even with watching disabled.
 
 AUTO SAVING
     Every half minute, each file buffer with changes not yet copied is
-    copied to #name# beside its file, four at most each time and the rest
+        copied into the cache autosave directory, four at most each time and
+    the rest
     at the next. The copy is for the editor stopping without being asked
     -- a crash, a lost terminal -- and saving the buffer deletes it.
     Opening a file that has a copy says so.
@@ -129,14 +139,71 @@ AUTO SAVING
     unsaved: C-x C-s keeps it, and M-x revert-buffer goes back to the file.
 
     `auto-save' turns it off, and `auto-save-interval' is how many seconds
-    pass between one round of copies and the next. With
-    `auto-save-directory' set, every copy goes there instead, the file's
+    pass between one round of copies and the next.
+    `auto-save-directory' defaults to the cache returned by the platform
+    directory utility, with autosave appended; RSEDIT_CACHE_DIR and the
+    platform cache conventions apply. Choose a local path if your home or
+        cache was redirected to a network mount. Every copy goes there, the
+    file's
     path flattened into its name, so that two files called main.rs keep a
     copy each: /home/me/notes.txt has #!home!me!notes.txt#, and a !, a %
     or a : in a path is written %21, %25 or %3A, so that no two paths share
     a name. A ~ in it is the home directory, and the directory is made
     when the first copy is written. A copy that cannot be written is tried
-    again at the next round; the log says so once.
+    again at the next round; the echo area, log and mode line report errors.
+    An unavailable cache never silently redirects recovery writes to the
+    remote directory. Setting auto-save-directory to nil explicitly opts
+    into the previous beside-file policy.
+
+SLOW OR DISCONNECTED MOUNTS
+    Interactive open, save, write-file, revert, save offers and quit use
+    asynchronous counterparts. Ordinary Lisp calls remain synchronous:
+    (find-file PATH) still returns only after reading, so existing scripts
+    can immediately operate on that buffer. A command's interactive-function
+    property selects its asynchronous counterpart for call-interactively.
+
+    find-file-async accepts AFTER, called with the buffer name, or nil on
+    failure or for a directory. save-buffer-async and write-file-async call
+        AFTER with t when the snapshot was written, nil on I/O failure. A
+    refused
+    request or cancelled conflict does not call AFTER. They return t for an
+        accepted request and nil if busy. Edits made during a save remain
+    modified;
+    edits made during a revert prevent its result from replacing the buffer.
+
+    file-io-timeout defaults to 10 seconds; set it to another number (at
+    least 0.1), or nil to disable warnings. A warning is not cancellation:
+    the operating system may still finish a write later. A pending write
+    retains its file reservation. There are at most four saves, two opens
+    or reverts, two watcher checks and one recovery job in progress. Busy
+    requests are refused; no growing queue of blocked threads is created.
+    Save As to a different local destination remains available while a
+    remote write is pending, subject to the save limit. A late result for
+    the old path cannot repoint the buffer back to it.
+    The default mode line includes %i for I/O and recovery status.
+
+    A recovery copy precedes each manual write. Recovery work is isolated
+    from remote I/O, and a copy is removed after a verified successful save
+    only when no newer unsaved edits depend on it. Cache errors are visible;
+    the requested manual save is still attempted. Closing a buffer or normal
+    quitting waits for pending writes; quit-without-saving forces exit and
+    cannot promise that a write already in the kernel will be cancelled.
+
+    A save compares modification time and size before preparing the write
+    and immediately before replacement, and asks on a conflict. Confirmation
+    applies to the buffer version and disk stamp shown then; a later change
+    needs another confirmation. This reduces conflicts; it is not a server
+    lock, an atomic compare-and-swap, or a content-hash comparison. Network
+    filesystem caching and another writer can still race these checks.
+    In-place fallbacks for hard links or ownership cannot guarantee atomic
+    replacement. A return from write does not guarantee server durability.
+
+    Directory browsing, filename completion, filesystem Lisp primitives,
+    user hooks and synchronous script calls can still block on their own
+    filesystem accesses. The timeout reports asynchronous operations only.
+    For an unresponsive mount, keep working in memory or save to a different
+    local file; do not force quit while a remote write is pending unless
+    you accept its uncertain outcome.
 
 LEAVING
     C-x C-c asks about each buffer with unsaved changes, as

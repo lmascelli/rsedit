@@ -21,8 +21,20 @@ pub struct FileStamp {
 }
 
 impl FileStamp {
-    /// Returns PATH's stamp, or `None` when it cannot be read at all -- which
-    /// for this purpose means the file is not there.
+    /// Only NotFound means absent. Network and permission errors stay errors.
+    pub fn try_of(path: impl AsRef<Path>) -> std::io::Result<Option<Self>> {
+        match std::fs::metadata(path) {
+            Ok(metadata) => Ok(Some(Self {
+                modified: metadata.modified().ok(),
+                len: metadata.len(),
+            })),
+            Err(why) if why.kind() == ErrorKind::NotFound => Ok(None),
+            Err(why) => Err(why),
+        }
+    }
+
+    /// Lossy compatibility helper. Use try_of when absence must be
+    /// distinguished from an access or network error.
     pub fn of(path: impl AsRef<Path>) -> Option<Self> {
         let metadata = std::fs::metadata(path).ok()?;
         Some(Self {
@@ -87,17 +99,91 @@ pub fn compare(recorded: Option<FileStamp>, found: Option<FileStamp>) -> OnDisk 
 /// - and so is one in a directory the editor may not write in, where no new
 ///   file can be made beside it.
 pub fn write_atomically(path: impl AsRef<Path>, contents: &[u8]) -> std::io::Result<()> {
-    let path = path.as_ref();
+    write_with_check(path.as_ref(), contents, &mut || Ok(()))
+}
+
+/// A changed file needs confirmation; an uncertain write must retain both
+/// the modified flag and its recovery copy.
+#[derive(Debug)]
+pub(crate) enum WriteFailure {
+    Conflict(Option<FileStamp>),
+    Io(std::io::Error),
+    Uncertain(String),
+}
+
+#[derive(Debug)]
+struct Changed(Option<FileStamp>);
+impl std::fmt::Display for Changed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "file changed since it was read")
+    }
+}
+impl std::error::Error for Changed {}
+
+pub(crate) fn write_checked(
+    path: &str,
+    contents: &[u8],
+    expected: Option<FileStamp>,
+) -> Result<FileStamp, WriteFailure> {
+    let check = &mut || {
+        let found = FileStamp::try_of(path)?;
+        if found != expected {
+            Err(std::io::Error::new(
+                ErrorKind::AlreadyExists,
+                Changed(found),
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    if let Err(why) = check().and_then(|()| write_with_check(Path::new(path), contents, check)) {
+        return Err(
+            match why
+                .get_ref()
+                .and_then(|inner| inner.downcast_ref::<Changed>())
+            {
+                Some(Changed(found)) => WriteFailure::Conflict(*found),
+                None => WriteFailure::Io(why),
+            },
+        );
+    }
+    match FileStamp::try_of(path) {
+        Ok(Some(stamp)) if stamp.len == contents.len() as u64 => Ok(stamp),
+        Ok(_) => Err(WriteFailure::Uncertain(
+            "write returned, but the file cannot be verified".into(),
+        )),
+        Err(why) => Err(WriteFailure::Uncertain(format!(
+            "write returned, but verification failed: {why}"
+        ))),
+    }
+}
+
+fn write_with_check(
+    path: &Path,
+    contents: &[u8],
+    check: &mut impl FnMut() -> std::io::Result<()>,
+) -> std::io::Result<()> {
     let target = match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => match std::fs::canonicalize(path) {
             Ok(target) => target,
             // A link to nothing yet: writing through it makes the file.
-            Err(_) => return std::fs::write(path, contents),
+            Err(why) if why.kind() == ErrorKind::NotFound => {
+                check()?;
+                return std::fs::write(path, contents);
+            }
+            Err(why) => return Err(why),
         },
-        _ => path.to_path_buf(),
+        Ok(_) => path.to_path_buf(),
+        Err(why) if why.kind() == ErrorKind::NotFound => path.to_path_buf(),
+        Err(why) => return Err(why),
     };
-    let existing = std::fs::metadata(&target).ok();
+    let existing = match std::fs::metadata(&target) {
+        Ok(metadata) => Some(metadata),
+        Err(why) if why.kind() == ErrorKind::NotFound => None,
+        Err(why) => return Err(why),
+    };
     if existing.as_ref().is_some_and(has_other_names) {
+        check()?;
         return std::fs::write(&target, contents);
     }
     let directory = match target.parent() {
@@ -107,6 +193,7 @@ pub fn write_atomically(path: impl AsRef<Path>, contents: &[u8]) -> std::io::Res
     let (temporary, file) = match create_beside(&directory, &target) {
         Ok(created) => created,
         Err(why) if why.kind() == ErrorKind::PermissionDenied => {
+            check()?;
             return std::fs::write(&target, contents);
         }
         Err(why) => return Err(why),
@@ -116,10 +203,13 @@ pub fn write_atomically(path: impl AsRef<Path>, contents: &[u8]) -> std::io::Res
     {
         drop(file);
         let _ = std::fs::remove_file(&temporary);
+        check()?;
         return std::fs::write(&target, contents);
     }
-    let written =
-        fill(file, contents, existing.as_ref()).and_then(|()| std::fs::rename(&temporary, &target));
+    let written = fill(file, contents, existing.as_ref()).and_then(|()| {
+        check()?;
+        std::fs::rename(&temporary, &target)
+    });
     if written.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
@@ -200,4 +290,39 @@ fn sync_directory(directory: &Path) {
     }
     #[cfg(not(unix))]
     let _ = directory;
+}
+
+// Typed buffer attachments, shared with rendering without depending on EditorState.
+pub(crate) const IO_ERROR: &str = "file-io:error";
+pub(crate) const IO_MARK: &str = "file-io:pending";
+#[derive(Clone)]
+pub(crate) struct IoMark {
+    pub id: u64,
+    pub label: String,
+    pub slow: bool,
+}
+impl<B: super::BufferTrait> super::Buffer<B> {
+    pub(crate) fn file_io_status(&self) -> String {
+        let buf = self;
+        let mut status = String::new();
+        if let Some(marks) = buf.data::<Vec<IoMark>>(IO_MARK)
+            && !marks.is_empty()
+        {
+            for mark in marks {
+                status.push_str(&format!(
+                    " [{}{}]",
+                    mark.label,
+                    if mark.slow { "?" } else { "" }
+                ));
+            }
+        } else if buf.data::<String>(IO_ERROR).is_some() {
+            status.push_str(" [File unavailable]");
+        } else if buf.stale {
+            status.push_str(" [File conflict]");
+        }
+        if buf.auto_save_failing {
+            status.push_str(" [Auto-save failed]");
+        }
+        status
+    }
 }

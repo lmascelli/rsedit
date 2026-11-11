@@ -505,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_save_says_so_in_the_echo_area_and_stays_modified() {
+    fn a_disappeared_file_requires_confirmation_and_stays_modified() {
         // The directory goes from under the file: the write cannot land, and
         // the user must not come away believing it did.
         let sandbox = Sandbox::new("save-failed");
@@ -515,10 +515,9 @@ mod tests {
         std::fs::remove_dir_all(&sandbox.0).expect("removing the sandbox");
 
         run("(save-buffer)", &env, &ctx);
-        let echo = ctx.get_echo_message();
         assert!(
-            echo.starts_with(&format!("Cannot save {path}: ")),
-            "the echo area should say the save failed: {echo:?}"
+            ctx.minibuffer_is_open(),
+            "recreating a disappeared file requires confirmation"
         );
         assert!(ctx.with_buffer(&name, |buf| buf.is_modified).unwrap());
     }

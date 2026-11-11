@@ -65,6 +65,7 @@ mod tests {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
+        env.set_variable("auto-save-directory".into(), LispExp::nil());
         (ctx, env)
     }
 
@@ -76,7 +77,10 @@ mod tests {
     }
 
     fn run(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> LispExp<Ctx> {
-        try_run(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"))
+        let result =
+            try_run(src, env, ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"));
+        crate::tests::file_io_tests::settle(ctx, env);
+        result
     }
 
     fn open(path: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> String {
@@ -291,7 +295,9 @@ mod tests {
     fn a_tilde_in_the_directory_is_the_home_directory() {
         let (ctx, env) = editor();
         run(r#"(setq auto-save-directory "~/saves")"#, &env, &ctx);
-        let directory = crate::jobs::autosave::auto_save_directory(&env).expect("a directory");
+        let directory = crate::jobs::autosave::auto_save_directory(&env)
+            .expect("valid setting")
+            .expect("a directory");
         assert!(!directory.starts_with('~'), "{directory}");
         assert!(directory.ends_with("saves"), "{directory}");
         let _ = ctx;
@@ -505,8 +511,9 @@ mod tests {
 
     /// Runs SPAN of the editor's work, moving the clock for it rather than
     /// waiting.
-    fn wait(ctx: &Ctx, span: Duration) {
+    fn wait(ctx: &Ctx, env: &Arc<Env<Ctx>>, span: Duration) {
         ctx.work().run_for(ctx, span);
+        crate::tests::file_io_tests::settle(ctx, env);
     }
 
     #[test]
@@ -517,13 +524,13 @@ mod tests {
         open(&path, &env, &ctx);
         run(r#"(insert "UNSAVED ")"#, &env, &ctx);
 
-        wait(&ctx, Duration::from_secs(29));
+        wait(&ctx, &env, Duration::from_secs(29));
         assert_eq!(
             sandbox.copy_beside("a.txt"),
             None,
             "its first write is half a minute in"
         );
-        wait(&ctx, Duration::from_secs(2));
+        wait(&ctx, &env, Duration::from_secs(2));
         assert_eq!(
             sandbox.copy_beside("a.txt").as_deref(),
             Some("UNSAVED on disk")
@@ -539,17 +546,17 @@ mod tests {
         let (ctx, env) = editor();
         open(&path, &env, &ctx);
         run(r#"(setq auto-save-interval 5) (insert "one ")"#, &env, &ctx);
-        wait(&ctx, Duration::from_secs(31));
+        wait(&ctx, &env, Duration::from_secs(31));
         assert_eq!(sandbox.copy_beside("a.txt").as_deref(), Some("one on disk"));
 
         run(r#"(insert "two ")"#, &env, &ctx);
-        wait(&ctx, Duration::from_secs(3));
+        wait(&ctx, &env, Duration::from_secs(3));
         assert_eq!(
             sandbox.copy_beside("a.txt").as_deref(),
             Some("one on disk"),
             "not yet: five seconds from the last write"
         );
-        wait(&ctx, Duration::from_secs(2));
+        wait(&ctx, &env, Duration::from_secs(2));
         assert_eq!(
             sandbox.copy_beside("a.txt").as_deref(),
             Some("one two on disk"),

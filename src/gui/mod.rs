@@ -52,7 +52,7 @@ impl<'editor, B: BufferTrait> Core<'editor, B> {
         }
         let path = path.to_str().ok_or("rsedit requires a UTF-8 file path")?;
         if self
-            .value("find-file", vec![ELispExp::string(path.into())])?
+            .value("find-file-async", vec![ELispExp::string(path.into())])?
             .is_nil()
         {
             return Err(format!("Could not open {path}"));

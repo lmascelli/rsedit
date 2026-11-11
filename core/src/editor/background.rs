@@ -46,11 +46,12 @@ impl<B: BufferTrait> EditorState<B> {
     /// finished, and nothing else would tell the host that something is still
     /// to be done for it.
     pub fn callbacks_owed(&self) -> bool {
-        !self
-            .owed
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_empty()
+        self.file_io_ready()
+            || !self
+                .owed
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty()
     }
 
     /// Makes every call owed, and returns whether any was made.
@@ -108,6 +109,7 @@ impl<B: BufferTrait> EditorState<B> {
         // work, which is when a job is likeliest to have left some too.
         let scrolled = self.drag_scroll_tick(env);
         let ran = self.run_owed_callbacks(env);
-        scrolled || ran
+        let files = self.run_file_io(env);
+        scrolled || ran || files
     }
 }

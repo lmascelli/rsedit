@@ -2254,7 +2254,7 @@ file che non si può leggere affatto lo dice nell'area messaggi e nel log.
 Le primitive sono in `primitives/files.rs`, e `save-some-buffers` e l'uscita,
 che salvano con lo stesso `write_buffer`, in `primitives/quit.rs` (@uscire).
 Salvare scrive l'intero testo, nella codifica del buffer, con
-`disk::write_atomically`, e aggiorna il timbro, altrimenti ogni salvataggio
+`disk::write_checked`, e aggiorna il timbro, altrimenti ogni salvataggio
 sembrerebbe la scrittura di qualcun altro. `write_atomically` scrive il testo
 in un file nuovo accanto al vecchio (`create_new`, con un nome nascosto che
 nessun altro ha), gli dà i permessi del vecchio, lo porta sul disco con
@@ -2276,19 +2276,51 @@ lascia il buffer modificato e la copia di ripristino al suo posto, e il
 messaggio lo dice.
 
 Il #emph[watcher] (`FileWatcher`, ogni `watch-file-interval` secondi, 3 per
-default, al massimo 8 file per turno; spento da `(setq watch-files nil)`)
+default, al massimo 2 controlli contemporanei; spento da `(setq watch-files nil)`)
 confronta i timbri: un buffer pulito il cui file è cambiato viene ricaricato con
 `adopt_text`, nella codifica che il file ha ora; uno modificato, o il cui file è sparito, viene marcato `stale`, e
 il salvataggio successivo chiede conferma. L'#emph[autosalvataggio]
 (`AutoSaver`, ogni `auto-save-interval`, 30 secondi per default, al massimo 4
 buffer per turno; spento da `(setq auto-save nil)`) scrive i buffer modificati
 la cui versione è cambiata dall'ultima copia in `#nome#`, nella directory del
-file o in `auto-save-directory`; `recover-file` riporta la copia nel buffer.
+cache (`auto-save-directory`); `recover-file` riporta la copia nel buffer.
 La versione si registra solo dopo una scrittura riuscita: una fallita si
 riprova al turno dopo, e il log lo sente una volta, quando le scritture
 cominciano a fallire (`auto_save_failing`). La copia è sempre in UTF-8, la
 codifica dell'editor:
 `recover-file` la legge così, e il buffer tiene la codifica del suo file.
+
+I comandi interattivi usano le varianti asincrone in `primitives/file_io.rs`;
+la proprietà Lisp `interactive-function` cambia solo `call-interactively`,
+lasciando sincrone le funzioni pubbliche esistenti. `editor/file_io.rs`
+riserva una chiave per percorso, prima
+di avviare un lavoro dedicato: due letture, quattro scritture, due controlli
+del watcher e un lavoro di recupero. Nessuna coda illimitata. Il timeout
+`file-io-timeout` (10 secondi) segnala, senza cancellare la syscall o liberare
+la riserva. `tick` applica gli esiti sul thread dei comandi; confronta identità
+del buffer, percorso e versione. La risposta tardiva non pulisce nuove
+modifiche, non sostituisce testo digitato durante una lettura e non seleziona
+una finestra che l'utente ha lasciato. Chiudere un buffer in scrittura, o
+uscire normalmente, aspetta l'esito.
+
+`FileStamp::try_of` distingue solo `NotFound` dagli altri errori. La scrittura
+ricontrolla il timbro prima di preparare il temporaneo e subito prima del
+rename; la conferma vale per quel timbro e quella versione, non per modifiche
+successive. Il controllo usa mtime e lunghezza e non è un lock distribuito:
+un altro processo e la cache del filesystem possono ancora correre fra stat
+e rename. Gli esiti non verificabili conservano «modificato» e il recupero.
+
+Per default `auto-save-directory` è `app_dir(Cache)/autosave`, attraverso
+`paths.rs`. Non si ripiega sulla rete quando la cache non funziona; `nil`
+resta una scelta esplicita per le copie accanto al file. Le copie sono in
+UTF-8 e precedono anche una scrittura manuale. Un lock fra soli lavoratori
+serializza scritture e cancellazioni delle copie; un indice per versione
+impedisce che una copia vecchia sovrascriva o cancelli una più recente.
+Il watcher e l'autosalvataggio fanno solo snapshot nel turno dell'esecutore:
+le operazioni sul disco sono nei loro lavoratori separati. Il rendering legge
+le informazioni di I/O da attachment tipizzati del buffer (`buffer/disk.rs`),
+senza dipendere dallo stato dell'editor. Restano sincroni esplorazione directory,
+completamento nomi file, primitive filesystem e hook Lisp che li chiamano.
 
 === Le codifiche <codifiche>
 
@@ -7179,7 +7211,7 @@ Le variabili che l'editor legge da Lisp:
   [`help-key`], [`"C-h"`], [Il tasto che, dopo un prefisso, chiede che cosa lo segue.],
   [`worker-fuel`], [200.000], [Passi per turno di un worker.],
   [`watch-files`, `watch-file-interval`], [`t`, 3], [Il watcher dei file.],
-  [`auto-save`, `auto-save-interval`, `auto-save-directory`], [`t`, 30, ---], [L'autosalvataggio.],
+  [`auto-save`, `auto-save-interval`, `auto-save-directory`], [`t`, 30, cache/autosave], [L'autosalvataggio.],
   [`history-length`], [100], [Voci per storia di prompt.],
   [`save-history`, `recent-files-length`, `save-place`], [`t`, 50, `t`], [Che cosa la sessione tiene da un avvio all'altro (@memoria).],
   [`show-paren-mode`, `highlight-all-matches`], [`t`, `t`], [La parentesi accanto al punto e le corrispondenze di una ricerca (@evidenziazioni).],

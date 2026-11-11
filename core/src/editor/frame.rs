@@ -386,10 +386,16 @@ impl<B: BufferTrait> EditorState<B> {
         // A callback owed is work to do now, not something to wait for: zero,
         // and the host calls `tick`.
         let owed = self.callbacks_owed().then_some(Duration::ZERO);
-        [self.echo_expiry_in(env), colouring, stepped, owed]
-            .into_iter()
-            .flatten()
-            .min()
+        [
+            self.echo_expiry_in(env),
+            colouring,
+            stepped,
+            owed,
+            self.file_io_due_in(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// Returns what the focused window's delimiter is paired with: its

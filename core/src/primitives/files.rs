@@ -22,50 +22,105 @@ pub(super) fn write_buffer<B: BufferTrait>(
     env: &Arc<Env<EditorState<B>>>,
     name: &str,
 ) -> bool {
+    write_buffer_expected(ctx, env, name, None)
+}
+
+fn write_buffer_expected<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: &Arc<Env<EditorState<B>>>,
+    name: &str,
+    confirmed: Option<Option<crate::buffer::FileStamp>>,
+) -> bool {
+    use crate::buffer::disk::{self, WriteFailure};
+    let Some(handle) = ctx.file_handle(name) else {
+        return false;
+    };
+    let Some(path) = ctx.with_buffer(name, |buf| buf.file_path.clone()).flatten() else {
+        return false;
+    };
+    let Some(_reservation) = ctx.reserve_file_write(handle.clone(), &path) else {
+        ctx.set_echo_message("File operation already pending; no overlapping save was started");
+        return false;
+    };
     clean_before_save(ctx, env, name);
-    let directory = auto_save_directory(env);
-    let directory = directory.as_deref();
-    // Taken under the lock, with the version it is; written with the lock
-    // given back, because a slow disk must not stop every other thread
-    // reading the buffer.
-    let Some(Some((path, content, coding, version))) = ctx.with_buffer(name, |buf| {
-        buf.file_path.as_ref().map(|path| {
+    let (content, coding, version, stamp, stale) = ctx
+        .with_buffer(name, |buf| {
             (
-                path.to_string(),
                 buf.text.to_string(),
                 buf.coding,
                 buf.version,
+                buf.file_stamp,
+                buf.stale,
             )
         })
-    }) else {
+        .expect("reserved buffer");
+    let Some(bytes) = encode_for(ctx, &path, &content, coding) else {
         return false;
     };
-    let bytes = match encode_for(ctx, &path, &content, coding) {
-        Some(bytes) => bytes,
-        None => return false,
+    // Even synchronous scripts get a recovery copy before a potentially slow write.
+    let recovery = auto_save_directory(env).and_then(|directory| {
+        let copy = auto_save_path(&path, directory.as_deref());
+        ctx.write_recovery(&handle, &copy, version, &content)
+            .map_err(|why| why.to_string())?;
+        Ok(copy)
+    });
+    ctx.with_buffer_mut(name, |buf| buf.auto_save_failing = recovery.is_err());
+    if let Err(why) = &recovery {
+        ctx.log_diagnostic(&format!("[ERROR] Recovery copy unavailable: {why}"));
+    }
+    let written = if stale && confirmed.is_none() {
+        Err(WriteFailure::Conflict(stamp))
+    } else {
+        disk::write_checked(&path, &bytes, confirmed.unwrap_or(stamp))
     };
-    // Whole or not at all: a write that stops halfway leaves the old file.
-    match crate::buffer::disk::write_atomically(&path, &bytes) {
-        Ok(()) => {
-            // Stamped after the write, or the file just made would differ from
-            // what is remembered of it and the editor would report a conflict
-            // with itself on the next check.
-            let stamp = crate::buffer::FileStamp::of(&path);
-            let all_of_it = mark_written(ctx, name, version, stamp);
-            if all_of_it {
-                // The recovery copy has done its job: what it held is now in
-                // the file it was standing in for.
-                ctx.discard_auto_save(name, directory);
+    match written {
+        Ok(stamp) => {
+            let all = mark_written(ctx, name, version, Some(stamp));
+            if all && let Ok(copy) = recovery {
+                ctx.queue_recovery_cleanup(
+                    handle,
+                    copy,
+                    version,
+                    crate::editor::file_io::timeout(env),
+                );
             }
-            say_written(ctx, &path, all_of_it);
+            say_written(ctx, &path, all);
             true
         }
         Err(why) => {
-            ctx.set_echo_message(&format!("Cannot save {path}: {why}"));
-            ctx.log_diagnostic(&format!("Cannot save {path}: {why}"));
+            report_write_failure(ctx, name, &path, why);
             false
         }
     }
+}
+
+fn report_write_failure<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    name: &str,
+    path: &str,
+    why: crate::buffer::disk::WriteFailure,
+) {
+    use crate::buffer::disk::WriteFailure;
+    let conflict = matches!(&why, WriteFailure::Conflict(_));
+    let reason = match why {
+        WriteFailure::Conflict(_) => {
+            ctx.with_buffer_mut(name, |buf| buf.stale = true);
+            "file changed or disappeared; save again to confirm".to_string()
+        }
+        WriteFailure::Io(why) => why.to_string(),
+        WriteFailure::Uncertain(why) => format!("outcome uncertain: {why}"),
+    };
+    ctx.with_buffer_mut(name, |buf| {
+        buf.is_modified = true;
+        if conflict {
+            buf.forget_data(crate::editor::file_io::ERROR);
+        } else {
+            buf.put_data(crate::editor::file_io::ERROR, reason.clone());
+        }
+    });
+    let message = format!("Cannot save {path}: {reason}");
+    ctx.set_echo_message(&message);
+    ctx.log_diagnostic(&message);
 }
 
 /// Deletes the blanks at the ends of the lines of the buffer NAME, and the
@@ -106,6 +161,7 @@ pub(crate) fn mark_written<B: BufferTrait>(
     ctx.with_buffer_mut(name, |buf| {
         buf.file_stamp = stamp;
         buf.stale = false;
+        buf.forget_data(crate::editor::file_io::ERROR);
         let all_of_it = buf.version == version;
         if all_of_it {
             buf.is_modified = false;
@@ -167,7 +223,10 @@ pub const FIND_FILE_DOC: &str = "(find-file PATH): Open the file at PATH in a bu
 /// by another buffer, so that two `mod.rs` from different directories can
 /// both be open. A buffer already visiting this exact file comes back as
 /// `Err`: there is nothing to open, only a buffer to go to.
-fn buffer_name_for<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> Result<String, String> {
+pub(super) fn buffer_name_for<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    path: &str,
+) -> Result<String, String> {
     let file_name = std::path::Path::new(path)
         .file_name()
         .unwrap_or_default()
@@ -210,11 +269,30 @@ primitive!(find_file, args, env, ctx, {
     // completion candidate offers is a path that can actually be opened.
     let path_str = ctx.expand_path(path_str);
     let path = std::path::Path::new(&path_str);
+    let buf_name = match buffer_name_for(ctx, &path_str) {
+        // Already open. Going back to it is what was meant, and reading the
+        // file again would throw away whatever had been typed into it.
+        Err(existing) => {
+            ctx.switch_to_buffer(&existing);
+            ctx.record_visit(&path_str, &env);
+            return Ok(ELispExp::string(existing));
+        }
+        Ok(name) => name,
+    };
 
     // A directory is somebody else's job. The editor knows only that there is
     // a variable to ask; what answers it -- `dired', or something else
     // entirely -- it never learns.
-    if path.is_dir() {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => Some(metadata),
+        Err(why) if why.kind() == std::io::ErrorKind::NotFound => None,
+        Err(why) => {
+            ctx.set_echo_message(&format!("Cannot read {path_str}: {why}"));
+            ctx.log_diagnostic(&format!("Cannot read {path_str}: {why}"));
+            return Ok(ELispExp::nil());
+        }
+    };
+    if metadata.as_ref().is_some_and(|metadata| metadata.is_dir()) {
         return match env.get_variable(crate::editor::OPEN_DIRECTORY_CALLBACK) {
             Some(callback) if callback.is_truthy() => risp::call_callable(
                 &callback,
@@ -229,18 +307,7 @@ primitive!(find_file, args, env, ctx, {
         };
     }
 
-    let buf_name = match buffer_name_for(ctx, &path_str) {
-        // Already open. Going back to it is what was meant, and reading the
-        // file again would throw away whatever had been typed into it.
-        Err(existing) => {
-            ctx.switch_to_buffer(&existing);
-            ctx.record_visit(&path_str, &env);
-            return Ok(ELispExp::string(existing));
-        }
-        Ok(name) => name,
-    };
-
-    if !path.exists() {
+    if metadata.is_none() {
         let name = ctx.new_file_buffer(&buf_name, &path_str, None, &env);
         ctx.record_visit(&path_str, &env);
         // Said out loud, because an empty buffer for a file that does not
@@ -267,7 +334,10 @@ primitive!(find_file, args, env, ctx, {
             // recovery copy nobody is told about is a recovery copy nobody
             // uses, and the moment it matters is exactly the moment somebody
             // reopens the file after a crash.
-            if auto_save_path(&path_str, auto_save_directory(&env).as_deref()).exists() {
+            if auto_save_directory(&env)
+                .ok()
+                .is_some_and(|directory| auto_save_path(&path_str, directory.as_deref()).exists())
+            {
                 said.push(
                     "An auto-save file exists for this -- M-x recover-file to see it".to_string(),
                 );
@@ -287,35 +357,54 @@ pub const SAVE_BUFFER_DOC: &str = "(save-buffer): Write the current buffer to it
          was written; a buffer with no file writes nothing, and says so.";
 
 primitive!(save_buffer, _args, env, ctx, {
-    let Some((path, stale)) = ctx.with_current_buffer(|buf| {
-        buf.file_path
-            .as_ref()
-            .map(|path| (path.to_string(), buf.stale))
-    }) else {
-        ctx.set_echo_message("No file associated with this buffer");
-        ctx.log_diagnostic("No file associated with this buffer");
+    let name = ctx.get_current_buffer_name();
+    let Some(handle) = ctx.file_handle(&name) else {
         return Ok(ELispExp::nil());
     };
-
-    // The moment the watcher's flag is for. Somebody else wrote this file
-    // since it was read, so writing now replaces their work with a version
-    // that never saw it -- and the save is where that can still be stopped,
-    // which is why noticing the change did not prompt at the time.
-    if stale {
-        return eval(
-            &ELispExp::form(vec![
-                ELispExp::symbol("yes-or-no".into()),
-                ELispExp::string(format!(
-                    "{path} changed on disk since you read it. Overwrite it?"
-                )),
-                args::quoted(ELispExp::symbol("save-buffer--overwrite".into())),
-            ]),
-            env,
+    let Some((path, stamp, stale, version)) = ctx
+        .with_buffer(&name, |buf| {
+            buf.file_path
+                .clone()
+                .map(|path| (path, buf.file_stamp, buf.stale, buf.version))
+        })
+        .flatten()
+    else {
+        ctx.set_echo_message("No file associated with this buffer");
+        return Ok(ELispExp::nil());
+    };
+    if ctx.file_io_busy(&format!("file:{path}")) {
+        ctx.set_echo_message("File operation already pending; no overlapping save was started");
+        return Ok(ELispExp::nil());
+    }
+    let found = match crate::buffer::FileStamp::try_of(&path) {
+        Ok(found) => found,
+        Err(why) => {
+            ctx.set_echo_message(&format!("Cannot check {path}: {why}"));
+            return Ok(ELispExp::nil());
+        }
+    };
+    if stale || found != stamp {
+        let prompt = format!("{path} changed or disappeared. Overwrite/recreate it?");
+        return super::file_io::ask_confirmation(
             ctx,
+            &env,
+            path.clone(),
+            prompt,
+            Box::new(move |state, env| {
+                if state.file_handle_name(&handle).is_some()
+                    && state.with_buffer(&name, |buf| {
+                        buf.version == version && buf.file_path.as_deref() == Some(path.as_str())
+                    }) == Some(true)
+                {
+                    write_buffer_expected(state, env, &name, Some(found));
+                } else {
+                    state.set_echo_message(
+                        "Buffer changed while confirmation was pending; save again",
+                    );
+                }
+            }),
         );
     }
-
-    let name = ctx.get_current_buffer_name();
     write_buffer(ctx, &env, &name);
     Ok(ELispExp::nil())
 });
@@ -326,7 +415,17 @@ pub const SAVE_BUFFER_OVERWRITE_DOC: &str = "(save-buffer--overwrite): Write the
 
 primitive!(save_buffer_overwrite, _args, env, ctx, {
     let name = ctx.get_current_buffer_name();
-    write_buffer(ctx, &env, &name);
+    if let Some(path) = ctx
+        .with_buffer(&name, |buf| buf.file_path.clone())
+        .flatten()
+    {
+        match crate::buffer::FileStamp::try_of(&path) {
+            Ok(found) => {
+                write_buffer_expected(ctx, &env, &name, Some(found));
+            }
+            Err(why) => ctx.set_echo_message(&format!("Cannot check {path}: {why}")),
+        }
+    }
     Ok(ELispExp::nil())
 });
 
@@ -339,7 +438,8 @@ primitive!(recover_file, _args, env, ctx, {
         ctx.set_echo_message("No file associated with this buffer");
         return Ok(ELispExp::nil());
     };
-    let copy = auto_save_path(&path, auto_save_directory(&env).as_deref());
+    let directory = auto_save_directory(&env).map_err(EvalError::RuntimeMessage)?;
+    let copy = auto_save_path(&path, directory.as_deref());
     if !copy.exists() {
         ctx.set_echo_message(&format!("No auto-save file for {path}"));
         return Ok(ELispExp::nil());
@@ -366,7 +466,8 @@ primitive!(recover_file_adopt, _args, env, ctx, {
     let Some(path) = ctx.with_current_buffer(|buf| buf.file_path.clone()) else {
         return Ok(ELispExp::nil());
     };
-    let copy = auto_save_path(&path, auto_save_directory(&env).as_deref());
+    let directory = auto_save_directory(&env).map_err(EvalError::RuntimeMessage)?;
+    let copy = auto_save_path(&path, directory.as_deref());
     let text = match std::fs::read_to_string(&copy) {
         Ok(text) => text,
         Err(why) => {
@@ -434,18 +535,18 @@ primitive!(revert_buffer_reread, _args, _env, ctx, {
 fn reread<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> bool {
     // Read with no lock held, for the reason every other file operation here
     // does it: a slow disk must not stop the threads walking the buffer.
-    let (text, coding) = match coding::read_text(path) {
+    let (text, coding, stamp) = match coding::read_stable(path) {
         Ok(read) => read,
         Err(why) => {
             ctx.set_echo_message(&format!("Cannot read {path}: {why}"));
             return false;
         }
     };
-    let stamp = crate::buffer::FileStamp::of(path);
     ctx.with_current_buffer_mut(|buf| {
         buf.adopt_text(&text);
         buf.coding = coding;
-        buf.file_stamp = stamp;
+        buf.file_stamp = Some(stamp);
+        buf.forget_data(crate::editor::file_io::ERROR);
     });
     if coding == Coding::Windows1252 {
         ctx.set_echo_message(&format!(
@@ -489,6 +590,23 @@ primitive!(write_file, args, env, ctx, {
         Ok(name) => name,
     };
 
+    let handle = ctx.file_handle(&current).expect("current buffer");
+    let Some(_reservation) = ctx.reserve_file_write(handle.clone(), &path) else {
+        ctx.set_echo_message("File operation already pending; no overlapping save was started");
+        return Ok(ELispExp::nil());
+    };
+    let expected = if ctx.with_current_buffer(|buf| buf.file_path.as_deref() == Some(path.as_str()))
+    {
+        ctx.with_current_buffer(|buf| buf.file_stamp)
+    } else {
+        match crate::buffer::FileStamp::try_of(&path) {
+            Ok(stamp) => stamp,
+            Err(why) => {
+                ctx.set_echo_message(&format!("Cannot check {path}: {why}"));
+                return Ok(ELispExp::nil());
+            }
+        }
+    };
     clean_before_save(ctx, &env, &current);
     // Taken under the lock, written with the lock given back: a slow disk must
     // not stop every other thread reading the buffer.
@@ -497,30 +615,38 @@ primitive!(write_file, args, env, ctx, {
     let Some(bytes) = encode_for(ctx, &path, &content, coding) else {
         return Ok(ELispExp::nil());
     };
-    if let Err(why) = crate::buffer::disk::write_atomically(&path, &bytes) {
-        // Nothing has been changed yet, deliberately: a failed write leaves
-        // the buffer visiting whatever it was visiting before, so the next
-        // `C-x C-s` still goes somewhere that works.
-        ctx.set_echo_message(&format!("Failed to write {path}: {why}"));
-        ctx.log_diagnostic(&format!("write-file: {path}: {why}"));
-        return Ok(ELispExp::nil());
+    let recovery = auto_save_directory(&env).and_then(|directory| {
+        let source = ctx
+            .with_current_buffer(|buf| buf.file_path.clone())
+            .unwrap_or_else(|| path.clone());
+        let copy = auto_save_path(&source, directory.as_deref());
+        ctx.write_recovery(&handle, &copy, version, &content)
+            .map_err(|why| why.to_string())?;
+        Ok(copy)
+    });
+    ctx.with_current_buffer_mut(|buf| buf.auto_save_failing = recovery.is_err());
+    if let Err(why) = &recovery {
+        ctx.log_diagnostic(&format!("[ERROR] Recovery copy unavailable: {why}"));
     }
+    let stamp = match crate::buffer::disk::write_checked(&path, &bytes, expected) {
+        Ok(stamp) => Some(stamp),
+        Err(why) => {
+            report_write_failure(ctx, &current, &path, why);
+            return Ok(ELispExp::nil());
+        }
+    };
 
     // Only now, with the bytes safely down.
     let mode = ctx.auto_mode_for(&path);
     let visited_file_changed =
         ctx.with_current_buffer(|buf| buf.file_path.as_deref() != Some(path.as_str()));
-    let stamp = crate::buffer::FileStamp::of(&path);
     // Whether the buffer is still what was written: an edit that came in
     // during the write keeps it modified, and its recovery copy with it.
-    let all_of_it = ctx.with_current_buffer(|buf| buf.version == version);
-    // Discarded against the *old* path, before the buffer is repointed: the
-    // recovery copy that exists is the one named after where it used to live.
-    if all_of_it {
-        ctx.discard_auto_save(&current, auto_save_directory(&env).as_deref());
-    }
     ctx.with_current_buffer_mut(|buf| buf.file_path = Some(path.clone()));
     let all_of_it = mark_written(ctx, &current, version, stamp);
+    if all_of_it && let Ok(copy) = recovery {
+        ctx.queue_recovery_cleanup(handle, copy, version, crate::editor::file_io::timeout(&env));
+    }
     if new_name != current {
         ctx.rename_buffer(&current, &new_name);
     }

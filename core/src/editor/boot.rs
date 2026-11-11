@@ -111,6 +111,7 @@ impl<B: BufferTrait> EditorState<B> {
         });
 
         let editor_state = Self {
+            file_io: Arc::new(file_io::FileIo::default()),
             running: Arc::new(AtomicBool::new(true)),
             work,
             background_change,
@@ -335,8 +336,15 @@ pub fn create_global_env<B: BufferTrait>()
     );
     env.set_variable(
         crate::jobs::autosave::AUTO_SAVE_DIRECTORY.into(),
-        ELispExp::nil(),
+        match crate::paths::app_dir_path(AppDir::Cache) {
+            Ok(cache) => ELispExp::string(cache.join("autosave").to_string_lossy().to_string()),
+            Err(why) => {
+                editor_state.log_diagnostic(&format!("[ERROR] Auto-save cache unavailable: {why}"));
+                ELispExp::symbol("unavailable".into())
+            }
+        },
     );
+    env.set_variable(file_io::TIMEOUT.into(), ELispExp::number(10.0));
     env.set_variable(crate::jobs::watcher::WATCH_FILES.into(), ELispExp::t());
     env.set_variable(
         crate::jobs::watcher::WATCH_FILE_INTERVAL.into(),

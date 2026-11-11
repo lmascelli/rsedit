@@ -46,6 +46,18 @@ fn expression(core: &Core<'static, GapBuffer>, source: &str) -> ELispExp<GapBuff
     eval(&ast, core.env.clone(), core.state).expect("eval")
 }
 
+fn wait_for(core: &Core<'static, GapBuffer>, ready: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !ready() {
+        core.state.tick(&core.env);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "file I/O did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// Returns the editor's frame, at the size `editor` gives it.
 fn frame(core: &Core<'static, GapBuffer>) -> FrameSnapshot {
     core.state.snapshot(&core.env, 100, 32)
@@ -258,12 +270,19 @@ fn file_open_is_data_not_an_interpolated_lisp_program() {
     let path = std::env::temp_dir().join(name);
     std::fs::write(&path, "file text").unwrap();
     core.open(&path).unwrap();
+    wait_for(&core, || {
+        core.value("buffer-file-name", vec![]).unwrap()
+            == ELispExp::string(path.display().to_string())
+    });
     assert_eq!(
         expression(&core, "(buffer-string)"),
         ELispExp::string("file text".into())
     );
     core.text("x");
     core.command("save-buffer");
+    wait_for(&core, || {
+        core.value("buffer-modified-p", vec![]).unwrap().is_nil()
+    });
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "xfile text");
     std::fs::remove_file(path).unwrap();
 }
@@ -273,6 +292,10 @@ fn window_close_uses_core_save_confirmation() {
     let core = editor();
     let path = std::env::temp_dir().join(format!("rsedit-gui-{}-unsaved.txt", std::process::id()));
     core.open(&path).unwrap();
+    wait_for(&core, || {
+        core.value("buffer-file-name", vec![]).unwrap()
+            == ELispExp::string(path.display().to_string())
+    });
     core.text("unsaved");
     core.request_quit();
     assert!(core.state.is_running());

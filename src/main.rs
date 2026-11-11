@@ -135,18 +135,23 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     );
 
-    for file in options.files {
-        let ast = ELispExp::form(vec![
-            ELispExp::symbol("find-file".into()),
-            ELispExp::string(format!("{}", file.display())),
+    let mut next_file = ELispExp::nil();
+    for file in options.files.into_iter().rev() {
+        next_file = ELispExp::form(vec![
+            ELispExp::symbol("find-file-async".into()),
+            ELispExp::string(file.display().to_string()),
+            ELispExp::form(vec![
+                ELispExp::symbol("lambda".into()),
+                ELispExp::proper_list(vec![ELispExp::symbol("opened".into())]),
+                next_file,
+            ]),
         ]);
-        if let Err(e) = eval(&ast, env.clone(), &state) {
-            state.set_echo_message(&format!(
-                "Boot Error: {:?}{}",
-                e,
-                state.take_backtrace_suffix()
-            ));
-        }
+    }
+    if let Err(e) = eval(&next_file, env.clone(), &state) {
+        state.set_echo_message(&format!(
+            "Boot Error: {e:?}{}",
+            state.take_backtrace_suffix()
+        ));
     }
 
     let is_gui = !io::stdin().is_terminal() || options.gui;

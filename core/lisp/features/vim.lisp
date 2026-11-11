@@ -982,6 +982,12 @@ nonblank of its line; nil when it is not set."
 ;; Through the editor's own commands, with their questions before a save or
 ;; a quit.
 
+(defun vim--save-and-quit ()
+  "Save in the background, then quit only after success and with no newer edits."
+  (let ((name (current-buffer)))
+    (save-buffer-async (lambda (ok)
+      (when (and ok (not (buffer-modified-p name))) (quit-async))))))
+
 (defun vim--ex-confirm (input)
   "Run the Ex command INPUT: what : does with its answer."
   (let ((command input))
@@ -989,14 +995,14 @@ nonblank of its line; nil when it is not set."
       ((or (string-match-p "^s[^[:alnum:] ]" command) (string-prefix-p "%s" command)
            (string-prefix-p "'<,'>s" command) (string-match-p "^[0-9]+(,[0-9]+)?s" command))
        (condition-case error (vim--substitute command) (error (message "Vim: %s" error))))
-      ((member command '("w" "write")) (save-buffer))
-      ((member command '("q" "quit")) (quit))
-      ((member command '("wq" "x")) (save-buffer) (when (not (buffer-modified-p)) (quit)))
+      ((member command '("w" "write")) (save-buffer-async))
+      ((member command '("q" "quit")) (quit-async))
+      ((member command '("wq" "x")) (vim--save-and-quit))
       ((string= command "q!") (quit-without-saving))
-      ((string= command "w!") (save-buffer))
+      ((string= command "w!") (save-buffer-async))
       ((string= command "e") (call-interactively 'find-file))
-      ((string-prefix-p "e " command) (find-file (substring command 2)))
-      ((string-prefix-p "w " command) (write-file (substring command 2)))
+      ((string-prefix-p "e " command) (find-file-async (substring command 2)))
+      ((string-prefix-p "w " command) (write-file-async (substring command 2)))
       ((string-prefix-p "b " command) (switch-to-buffer (substring command 2)))
       ((member command '("bd" "bdelete")) (call-interactively 'kill-buffer))
       ((string= command "split") (split-window-below))
@@ -1080,7 +1086,7 @@ nonblank of its line; nil when it is not set."
          (t (vim--reset))))
       ((string= pending "z") (recenter) (vim--reset))
       ((string= pending "Z")
-       (cond ((string= key "Z") (save-buffer) (when (not (buffer-modified-p)) (quit)))
+       (cond ((string= key "Z") (vim--save-and-quit))
              ((string= key "Q") (quit-without-saving))) (vim--reset))
       ((string= pending "C-w")
        (cond ((member key '("s" "C-s")) (split-window-below))

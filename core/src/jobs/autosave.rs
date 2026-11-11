@@ -4,6 +4,7 @@
 //! `recover-file` reads after the editor stopped without being asked.
 //!
 //! Design: `doc/architettura-editor.typ, <lavori-editor>`.
+use crate::editor::file_io::{Handle, Lane};
 use crate::{
     BufferTrait, EditorState,
     work::{Exit, Job, JobError, Spec, Start, Step, StepContext},
@@ -12,6 +13,14 @@ use risp::{Env, LispContext};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+
+const CLEANUP: &str = "file-io:recovery-cleanup";
+
+#[derive(Clone, PartialEq, Eq)]
+struct Cleanup {
+    path: PathBuf,
+    version: u64,
+}
 
 /// How often the auto-saver writes when nothing says otherwise: thirty
 /// seconds, Emacs' own `auto-save-timeout`.
@@ -55,12 +64,16 @@ pub fn auto_save_interval<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Dur
 /// Returns the directory every auto-save file goes in, expanded as a typed
 /// path is, so that `~` is the home directory, or `None` for beside its own
 /// file.
-pub fn auto_save_directory<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Option<String> {
+pub fn auto_save_directory<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+) -> Result<Option<String>, String> {
     match env.get_variable(AUTO_SAVE_DIRECTORY) {
         Some(crate::ELispExp::String(dir)) if !dir.is_empty() => {
-            Some(crate::paths::expand_path_from_start(&dir))
+            Ok(Some(crate::paths::expand_path_from_start(&dir)))
         }
-        _ => None,
+        Some(value) if value.is_nil() => Ok(None),
+        None => Err("Auto-save directory is not configured".into()),
+        _ => Err("Auto-save directory unavailable: set auto-save-directory to a writable local directory".into()),
     }
 }
 
@@ -134,8 +147,11 @@ impl<B: BufferTrait> Job<EditorState<B>> for AutoSaver<B> {
     fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
         // Switched off, it is parked rather than ended, as the watcher is.
         if auto_saving(&self.env) {
-            let directory = auto_save_directory(&self.env);
-            let (next, written) = cx.state.auto_save_turn(self.next, directory.as_deref());
+            let (next, written) = cx.state.auto_save_async_turn(
+                self.next,
+                auto_save_directory(&self.env),
+                crate::editor::file_io::timeout(&self.env),
+            );
             self.next = next;
             cx.worked(written as u64, "auto-save files");
         }
@@ -157,6 +173,7 @@ impl<B: BufferTrait> Job<EditorState<B>> for AutoSaver<B> {
 /// One buffer's copy, decided but not yet written.
 pub(crate) struct AutoSave {
     buffer: String,
+    source: String,
     where_to: PathBuf,
     text: String,
     /// The version this copy is of, recorded against the buffer once it is
@@ -166,8 +183,208 @@ pub(crate) struct AutoSave {
 }
 
 impl<B: BufferTrait> EditorState<B> {
+    /// The scheduler only snapshots memory. One bounded recovery worker does
+    /// the disk writes, independently of reads, saves and the file watcher.
+    pub(crate) fn auto_save_async_turn(
+        &self,
+        from: usize,
+        directory: Result<Option<String>, String>,
+        timeout: Option<Duration>,
+    ) -> (usize, usize) {
+        let names = self.buffer_names();
+        if names.is_empty() {
+            return (0, 0);
+        }
+        let directory = match directory {
+            Ok(directory) => directory,
+            Err(why) => {
+                for name in &names {
+                    let first = self.with_buffer_mut(name, |buf| {
+                        if !buf.is_modified || buf.file_path.is_none() {
+                            return false;
+                        }
+                        !std::mem::replace(&mut buf.auto_save_failing, true)
+                    });
+                    if first == Some(true) {
+                        self.log_diagnostic(&format!("[ERROR] {why}"));
+                        self.set_echo_message(&why);
+                    }
+                }
+                return (from, 0);
+            }
+        };
+        let start = from % names.len();
+        let mut batch = Vec::new();
+        let mut next = start;
+        for step in 0..names.len() {
+            let index = (start + step) % names.len();
+            if let Some(handle) = self.file_handle(&names[index]) {
+                self.try_recovery_cleanup(handle.clone(), timeout);
+                if let Some(pending) = self.auto_save_for(&names[index], directory.as_deref()) {
+                    batch.push((handle, pending));
+                }
+            }
+            next = (index + 1) % names.len();
+            if batch.len() >= BUFFERS_PER_TURN {
+                break;
+            }
+        }
+        if batch.is_empty() {
+            return (next, 0);
+        }
+        let count = batch.len();
+        let work_directory = directory.clone();
+        let recovery_worker = self.clone();
+        let submitted = self.start_file_io(
+            Lane::Recovery,
+            "recovery-batch".into(),
+            "Auto-saving",
+            None,
+            timeout,
+            move || {
+                batch
+                    .into_iter()
+                    .map(|(handle, pending)| {
+                        let result = (|| {
+                            if let Some(directory) = &work_directory {
+                                std::fs::create_dir_all(directory)?;
+                            }
+                            recovery_worker.write_recovery(
+                                &handle,
+                                &pending.where_to,
+                                pending.version,
+                                &pending.text,
+                            )
+                        })();
+                        (handle, pending, result)
+                    })
+                    .collect::<Vec<_>>()
+            },
+            move |state, _, results| {
+                for (handle, pending, result) in results {
+                    if let Some(name) = state.file_handle_name(&handle) {
+                        state.with_buffer_mut(&name, |buf| match &result {
+                            Ok(version)
+                                if buf.file_path.as_deref() == Some(pending.source.as_str()) =>
+                            {
+                                buf.auto_saved_at = Some(*version);
+                                buf.auto_save_failing = false;
+                            }
+                            Ok(_) => {}
+                            Err(_) => buf.auto_save_failing = true,
+                        });
+                    }
+                    if let Err(why) = result {
+                        let message = format!("Auto-save failed for {}: {why}", pending.buffer);
+                        state.set_echo_message(&message);
+                        state.log_diagnostic(&message);
+                    }
+                    state.try_recovery_cleanup(handle, timeout);
+                }
+            },
+        );
+        if submitted.is_some() {
+            (next, count)
+        } else {
+            (from, 0)
+        }
+    }
+
+    /// Cleanup shares the recovery lane with writes. A save completing while
+    /// a copy is being written cannot delete it just before it is renamed.
+    pub(crate) fn queue_recovery_cleanup(
+        &self,
+        handle: Handle<B>,
+        path: PathBuf,
+        version: u64,
+        timeout: Option<Duration>,
+    ) {
+        {
+            let mut buf = handle
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if buf.data::<Vec<Cleanup>>(CLEANUP).is_none() {
+                buf.put_data(CLEANUP, Vec::<Cleanup>::new());
+            }
+            let queue = buf
+                .data_mut::<Vec<Cleanup>>(CLEANUP)
+                .expect("cleanup queue");
+            queue.retain(|item| item.path != path);
+            queue.push(Cleanup { path, version });
+        }
+        self.try_recovery_cleanup(handle, timeout);
+    }
+
+    fn try_recovery_cleanup(&self, handle: Handle<B>, timeout: Option<Duration>) {
+        let pending = {
+            let buf = handle
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Preserve a copy if new work has appeared since the save.
+            if buf.is_modified {
+                return;
+            }
+            buf.data::<Vec<Cleanup>>(CLEANUP)
+                .cloned()
+                .unwrap_or_default()
+        };
+        if pending.is_empty() {
+            return;
+        }
+        let done_handle = handle.clone();
+        let cleanup_worker = self.clone();
+        self.start_file_io(
+            Lane::Recovery,
+            "recovery-batch".into(),
+            "Recovery cleanup",
+            None,
+            timeout,
+            move || {
+                pending
+                    .into_iter()
+                    .map(|cleanup| {
+                        let result =
+                            cleanup_worker.remove_recovery(&handle, &cleanup.path, cleanup.version);
+                        (cleanup, result)
+                    })
+                    .collect::<Vec<_>>()
+            },
+            move |state, _, results| {
+                let mut warnings = Vec::new();
+                let mut buf = done_handle
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                for (cleanup, result) in results {
+                    match result {
+                        Ok(true) => {
+                            if let Some(queue) = buf.data_mut::<Vec<Cleanup>>(CLEANUP) {
+                                queue.retain(|item| item != &cleanup);
+                            }
+                            if buf
+                                .auto_saved_at
+                                .is_some_and(|version| version <= cleanup.version)
+                            {
+                                buf.auto_saved_at = None;
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(why) => warnings.push(format!(
+                            "[WARNING] Could not remove recovery copy {}: {why}",
+                            cleanup.path.display()
+                        )),
+                    }
+                }
+                drop(buf);
+                for warning in warnings {
+                    state.log_diagnostic(&warning);
+                }
+            },
+        );
+    }
+
     /// Writes the copies of up to [`BUFFERS_PER_TURN`] buffers, starting at
     /// FROM, and returns where the next turn starts and how many it wrote.
+    #[cfg(test)]
     pub(crate) fn auto_save_turn(&self, from: usize, directory: Option<&str>) -> (usize, usize) {
         let names = self.buffer_names();
         if names.is_empty() {
@@ -202,32 +419,19 @@ impl<B: BufferTrait> EditorState<B> {
     /// Returns what NAME needs written, or `None` when it needs nothing: no
     /// file, read-only, unmodified, or a copy of this version already tried.
     pub(crate) fn auto_save_for(&self, name: &str, directory: Option<&str>) -> Option<AutoSave> {
-        let (path, version, saved_at, modified, read_only) = self.with_buffer(name, |buf| {
-            (
-                buf.file_path.clone(),
-                buf.version,
-                buf.auto_saved_at,
-                buf.is_modified,
-                buf.read_only,
-            )
-        })?;
-
-        // Only buffers with a file to be recovered to: a listing, a backtrace
-        // and a manual page are modified in a way that means nothing.
-        let path = path?;
-        if read_only || !modified || saved_at == Some(version) {
-            return None;
-        }
-        // The text only now, with its own version: a turn looks at every
-        // buffer, and copying each one's text to decide would copy them all.
-        let (text, version) = self.with_buffer(name, |buf| (buf.text.to_string(), buf.version))?;
-
-        Some(AutoSave {
-            buffer: name.to_string(),
-            where_to: auto_save_path(&path, directory),
-            text,
-            version,
-        })
+        self.with_buffer(name, |buf| {
+            let path = buf.file_path.as_ref()?;
+            if buf.read_only || !buf.is_modified || buf.auto_saved_at == Some(buf.version) {
+                return None;
+            }
+            Some(AutoSave {
+                buffer: name.to_string(),
+                source: path.clone(),
+                where_to: auto_save_path(path, directory),
+                text: buf.text.to_string(),
+                version: buf.version,
+            })
+        })?
     }
 
     /// Writes PENDING, with no lock held, and records its version against the
@@ -237,12 +441,14 @@ impl<B: BufferTrait> EditorState<B> {
     /// a full disk or a directory briefly gone is not a reason to stop keeping
     /// a copy until the buffer changes. The log hears of it once, when the
     /// writes start failing, and not at every turn after.
+    #[cfg(test)]
     pub(crate) fn write_auto_save(&self, pending: AutoSave) {
         let AutoSave {
             buffer,
             where_to,
             text,
             version,
+            ..
         } = pending;
         // With no lock held: a slow disk must not stop the threads that walk
         // the buffer.
@@ -260,6 +466,7 @@ impl<B: BufferTrait> EditorState<B> {
                     !std::mem::replace(&mut buf.auto_save_failing, true)
                 });
                 if first == Some(true) {
+                    self.set_echo_message(&format!("Auto-save failed for {buffer}: {why}"));
                     self.log_diagnostic(&format!(
                         "[WARNING] could not auto-save {buffer} to {}: {why}",
                         where_to.display()
@@ -267,15 +474,5 @@ impl<B: BufferTrait> EditorState<B> {
                 }
             }
         }
-    }
-
-    /// Removes NAME's auto-save file, once its contents are safely in the file
-    /// itself.
-    pub(crate) fn discard_auto_save(&self, name: &str, directory: Option<&str>) {
-        let Some(Some(path)) = self.with_buffer(name, |buf| buf.file_path.clone()) else {
-            return;
-        };
-        let _ = std::fs::remove_file(auto_save_path(&path, directory));
-        self.with_buffer_mut(name, |buf| buf.auto_saved_at = None);
     }
 }

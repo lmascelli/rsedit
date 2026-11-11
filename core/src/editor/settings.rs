@@ -46,6 +46,7 @@ pub const SETTINGS: &[Setting] = &[
               \x20 %l  the line, from 1      %c  the column, from 0\n\
               \x20 %p  All when the whole buffer is in the window, or where point is:\n\
               \x20     Top, Bot or a percentage\n\
+              \x20 %i  pending file I/O, conflict and auto-save error indicators\n\
               \x20 %*  ** when modified, -- when not    %%  a per cent sign\n\n\
               An unknown escape is shown as written; anything but a string shows the \
               default.\n\n\
@@ -116,7 +117,7 @@ pub const SETTINGS: &[Setting] = &[
         name: AUTO_SAVE,
         doc: "Whether the editor keeps a copy of each file buffer with unsaved changes, for \
               `recover-file' to bring back after a crash: nil turns it off. The copy is #name# \
-              beside the file, or in `auto-save-directory'.",
+              in `auto-save-directory', the local cache by default.",
     },
     Setting {
         name: AUTO_SAVE_INTERVAL,
@@ -126,10 +127,20 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         name: AUTO_SAVE_DIRECTORY,
         doc: "The directory every `auto-save' copy goes in, with the file's whole path in its \
-              name; nil keeps each copy beside its file. A leading ~ is the home directory, and \
+              name. The default is the platform cache, in its autosave subdirectory; \
+              nil explicitly keeps copies beside their files. Cache errors are reported, with \
+              no fallback to the file directory. A leading ~ is the home directory, and \
               the directory is made when the first copy is written.\n\n\
               Example:\n\
               \x20 (setq auto-save-directory \"~/.cache/rsedit\")",
+    },
+    Setting {
+        name: crate::editor::file_io::TIMEOUT,
+        doc: "Seconds before a pending file operation is reported as slow: 10 by default, a \
+              tenth at least, or nil for no warning. This does not cancel a system call. A \
+              pending save keeps its reservation until it finishes, preventing overlapping \
+              writes; four saves, two reads, two watcher checks and one recovery job may run \
+              at once. Synchronous Lisp calls remain synchronous.",
     },
     Setting {
         name: WATCH_FILES,
@@ -438,7 +449,7 @@ pub const COMMAND_ARG_COMPLETION_FUNCTION: &str = "*command-arg-completion-funct
 pub const MODE_LINE_FORMAT: &str = "mode-line-format";
 
 /// What a window's status line says when nothing sets [`MODE_LINE_FORMAT`].
-pub const DEFAULT_MODE_LINE_FORMAT: &str = " %* %b   %m%n %s  L%l C%c   %p ";
+pub const DEFAULT_MODE_LINE_FORMAT: &str = " %*%i %b   %m%n %s  L%l C%c   %p ";
 
 /// The name of the Lisp variable that turns the mouse on.
 pub const MOUSE_MODE: &str = "mouse-mode";

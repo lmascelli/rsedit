@@ -37,6 +37,7 @@ mod diagnostics;
 pub(crate) mod edits;
 mod environment;
 mod evaluation;
+mod file_io;
 pub(crate) mod file_names;
 pub(crate) mod files;
 pub(crate) mod filesystem;
@@ -79,7 +80,7 @@ mod workers;
 /// handed one, and registers its own primitives with it.
 pub(crate) struct Registry<'a, B: BufferTrait> {
     state: &'a EditorState<B>,
-    env: &'a std::sync::Arc<Env<EditorState<B>>>,
+    pub(super) env: &'a std::sync::Arc<Env<EditorState<B>>>,
 }
 
 impl<B: BufferTrait> Registry<'_, B> {
@@ -140,6 +141,7 @@ pub fn install_primitives<B: BufferTrait>(
     environment::install(&into);
     evaluation::install(&into);
     file_names::install(&into);
+    file_io::install(&into);
     files::install(&into);
     filesystem::install(&into);
     fill::install(&into);

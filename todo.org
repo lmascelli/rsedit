@@ -4,19 +4,18 @@
 * Work in progress.
 
 Lacune che si notano subito
-- Righe lunghe che vanno a capo sullo schermo (truncate-lines per
-  buffer, una modalità tipo visual-line-mode).
-  Oggi c’è solo lo scorrimento orizzontale: è la mancanza più grande
-  rimasta per prosa, Markdown e log.
 - Guida verticale alla colonna fill-column: ora che il riempimento
   esiste è il complemento naturale, e si costruisce come le altre
   evidenziazioni disegnate al momento.
-- Tab su una regione inserisce invece di indentare;
 - i numeri di riga valgono per tutto l’editor e non per buffer;
-- C-_ arriva come C-S-7.
+
+Gestione scritture remote:
+- Distinguere file assente, accesso negato e connessione indisponibile, conservando gli errori di I/O.
+- Separare l’I/O potenzialmente bloccante da interfaccia, colorazione e auto-save locale.
+- Aggiungere un nuovo controllo dei conflitti al salvataggio e alla riconnessione.
+- Conservare copie locali precedenti e mostrare chiaramente stato del collegamento ed esito dell’ultimo auto-save.
 
 Comandi di testo
-
 - sort-lines, spostare una riga su o giù, align-regexp.
 - Registri e segnalibri: C-x r è libero per questo.
 - Narrowing (C-x n n).
@@ -52,13 +51,10 @@ Rifiniture alle funzioni appena fatte
 - Parentesi in vim mode: nel normal state accoppiare la ) sotto il cursore a blocco.
 
 * Fixes todo
-- [ ] pressing tab with a region selected insert the same indent in the whole region
-      but should instead indent it.
 - [ ] line numbers should be a per buffer property
 - MIN-10: remove this settings that now belongs to minibuffer.lisp
 
 * Macro todo
-- [ ] Enhance mode system: major mode switch and minor modes
 - [ ] multiple cursors
 - [ ] LSP integration: for the moment, just warning and compilation errors, completions
       and code actions must be supported. The server for a given language can be configued
