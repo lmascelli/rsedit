@@ -2322,6 +2322,17 @@ le informazioni di I/O da attachment tipizzati del buffer (`buffer/disk.rs`),
 senza dipendere dallo stato dell'editor. Restano sincroni esplorazione directory,
 completamento nomi file, primitive filesystem e hook Lisp che li chiamano.
 
+`buffer/io_status.rs` conserva cause tipizzate (`FileIssue`: categoria,
+`ErrorKind`, codice OS e messaggio) e il resoconto `AutoSaveReport` negli
+attachment. Il writer locale registra data UTC, versione, destinazione ed
+esito appena termina, conservando l'ultimo successo anche dopo un errore.
+Saltare una vecchia versione non aggiorna la data; eliminare la copia dopo
+un salvataggio riuscito conserva lo storico e ne annota la rimozione.
+I callback tardivi non riscrivono lo stato di recuperi più recenti.
+`file-io-status` e `auto-save-status` leggono solo questi dati; `%i` mostra
+causa di indisponibilità ed esito/ora dell'ultimo recupero. Uno stallo resta
+pendente: non diventa una diagnosi di rete sulla sola base del timeout.
+
 === Le codifiche <codifiche>
 
 `buffer/coding.rs` dice come i byte di un file sono il suo testo. `Coding` ha

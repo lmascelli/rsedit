@@ -8,6 +8,8 @@ SYNOPSIS
     (revert-buffer-async)
     (save-some-buffers-async &optional AFTER)
     (quit-async)
+    (file-io-status)
+    (auto-save-status)
     file-io-timeout
 
     (find-file PATH)
@@ -204,6 +206,33 @@ SLOW OR DISCONNECTED MOUNTS
     For an unresponsive mount, keep working in memory or save to a different
     local file; do not force quit while a remote write is pending unless
     you accept its uncertain outcome.
+
+I O AND RECOVERY STATUS
+    %i in mode-line-format now distinguishes File missing, Access denied,
+    Network unavailable, I/O timed out, Read-only filesystem, No space left,
+    I/O busy, Invalid path, configuration errors and Outcome uncertain.
+    Unknown errors remain I/O error. These are filesystem observations,
+    not a separate network connectivity test. A slow operation stays pending;
+    a warning alone does not declare the connection lost or cancel the call.
+    Native error kinds, OS codes and messages are retained. Known stale NFS
+    handles and Windows unavailable-share errors count as network failures.
+
+    M-x file-io-status shows the full recorded error and recovery report;
+    M-x auto-save-status shows the last completed recovery attempt, its UTC
+    date and time, destination, buffer version and last successful attempt.
+    Both commands return that text and perform no filesystem operations.
+    %i shows a compact summary, for example [AS ok 10:32:07Z] or
+    [AS denied 10:33:12Z]. Z means UTC. [AS never] means no completed attempt
+    has been recorded in this buffer. History lasts for the buffer's life,
+    and includes the recovery copies made before manual saves.
+
+    Completion time is recorded when the local write returns, independently
+    of a delayed UI callback or a pending remote save. A failed attempt keeps
+    the last-success date. A skipped older snapshot does not invent another
+    write or replace its timestamp. Removing a copy after a successful save
+    preserves this history, with the removal stated in the detailed report.
+    The report describes past attempts; it does not promise that newer edits
+    are already copied, or that a recovery file still exists on disk.
 
 LEAVING
     C-x C-c asks about each buffer with unsaved changes, as

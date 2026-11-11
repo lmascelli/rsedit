@@ -4,6 +4,7 @@
 //! marked stale, and the next save asks.
 //!
 //! Design: `doc/architettura-editor.typ, <lavori-editor>`.
+use crate::buffer::io_status::{FileIssue, IoCause};
 use crate::editor::file_io::{ERROR, Lane};
 use crate::{
     BufferTrait, EditorState,
@@ -106,7 +107,8 @@ impl<B: BufferTrait> Job<EditorState<B>> for FileWatcher<B> {
 /// What one buffer's check found, and what has to be done about it.
 enum Verdict {
     Available,
-    Unavailable(String),
+    Unavailable(FileIssue),
+    Missing,
     /// Reload it from what was read.
     Adopt {
         text: String,
@@ -215,20 +217,21 @@ impl<B: BufferTrait> EditorState<B> {
                         buf.file_stamp,
                         buf.is_modified,
                         buf.version,
-                        buf.data::<String>(ERROR).is_some(),
+                        buf.data::<FileIssue>(ERROR).is_some(),
                     )
                 })
             })??;
 
         let found = FileStamp::try_of(&path);
         let verdict = match found {
-            Err(why) => Verdict::Unavailable(why.to_string()),
+            Err(why) => Verdict::Unavailable(FileIssue::from_io(&why)),
             Ok(found) => match compare(recorded, found) {
+                OnDisk::Unknown if found.is_none() => Verdict::Missing,
                 OnDisk::Unchanged | OnDisk::Unknown if unavailable => Verdict::Available,
                 OnDisk::Unchanged | OnDisk::Unknown => return None,
                 // Gone is not a reason to empty the buffer: the text in it is now
                 // the only copy there is.
-                OnDisk::Gone => Verdict::Flag,
+                OnDisk::Gone => Verdict::Missing,
                 // Decided here as well as when the verdict is applied: this one
                 // saves reading a file whose contents would be thrown away, and
                 // the one there is the one that keeps the buffer safe.
@@ -243,7 +246,7 @@ impl<B: BufferTrait> EditorState<B> {
                         stamp: Some(stamp),
                     },
                     // Unreadable is not unchanged, nor something to reload from.
-                    Err(why) => Verdict::Unavailable(why.to_string()),
+                    Err(why) => Verdict::Unavailable(FileIssue::from_io(&why)),
                 },
             },
         };
@@ -276,19 +279,39 @@ impl<B: BufferTrait> EditorState<B> {
             }
             match &verdict {
                 Verdict::Unavailable(why) => {
-                    let first = buf.data::<String>(ERROR) != Some(why);
+                    let first = buf.data::<FileIssue>(ERROR) != Some(why);
                     buf.put_data(ERROR, why.clone());
                     if first {
                         warning = Some(format!("[WARNING] File unavailable: {path}: {why}"));
                     }
                     return false;
                 }
+                Verdict::Missing => {
+                    buf.put_data(
+                        ERROR,
+                        FileIssue::from_io(&std::io::Error::from(std::io::ErrorKind::NotFound)),
+                    );
+                    if recorded.is_some() {
+                        buf.stale = true;
+                    }
+                    return false;
+                }
                 Verdict::Available => {
-                    buf.forget_data(ERROR);
+                    if buf
+                        .data::<FileIssue>(ERROR)
+                        .is_none_or(|issue| issue.cause != IoCause::Uncertain)
+                    {
+                        buf.forget_data(ERROR);
+                    }
                     return false;
                 }
                 _ => {
-                    buf.forget_data(ERROR);
+                    if buf
+                        .data::<FileIssue>(ERROR)
+                        .is_none_or(|issue| issue.cause != IoCause::Uncertain)
+                    {
+                        buf.forget_data(ERROR);
+                    }
                 }
             }
             if buf.version != version || buf.is_modified {
@@ -298,7 +321,7 @@ impl<B: BufferTrait> EditorState<B> {
                 return false;
             }
             match verdict {
-                Verdict::Available | Verdict::Unavailable(_) => false,
+                Verdict::Available | Verdict::Unavailable(_) | Verdict::Missing => false,
                 Verdict::Flag => {
                     buf.stale = true;
                     false

@@ -7,13 +7,7 @@ Lacune che si notano subito
 - Guida verticale alla colonna fill-column: ora che il riempimento
   esiste è il complemento naturale, e si costruisce come le altre
   evidenziazioni disegnate al momento.
-- i numeri di riga valgono per tutto l’editor e non per buffer;
-
-Gestione scritture remote:
-- Distinguere file assente, accesso negato e connessione indisponibile, conservando gli errori di I/O.
-- Separare l’I/O potenzialmente bloccante da interfaccia, colorazione e auto-save locale.
-- Aggiungere un nuovo controllo dei conflitti al salvataggio e alla riconnessione.
-- Conservare copie locali precedenti e mostrare chiaramente stato del collegamento ed esito dell’ultimo auto-save.
+- [ ] line numbers should be a per buffer property
 
 Comandi di testo
 - sort-lines, spostare una riga su o giù, align-regexp.
@@ -25,7 +19,6 @@ Struttura
 - Modi minori veri, accesi e spenti per buffer. Oggi auto-fill-mode, show-trailing-whitespace
   e le parentesi usano ognuno un meccanismo suo (dati del buffer, proprietà del modo, variabile),
   che un sistema unico semplificherebbe.
-- Popup dei tasti dopo un prefisso (come which-key), sopra il C-x C-h che c’è già.
 - Un before-save-hook, se servono altre azioni al salvataggio oltre alla pulizia degli spazi.
 
 Lavorare su progetti
@@ -33,12 +26,7 @@ Lavorare su progetti
 - Il concetto di progetto: la radice trovata da .git o Cargo.toml, con ricerca di file, grep e
   compile che partono da lì.
 - Git: indicatori nel margine per le righe cambiate, il ramo nella riga di stato, il diff del buffer.
-- LSP: diagnostica, completamento, vai alla definizione.
 - Altri linguaggi: Markdown, JSON, YAML, JS/TS, Go, HTML/CSS.
-
-Funzioni avanzate
-
-- gestione dei file molto grandi.
 
 Rifiniture alle funzioni appena fatte
 
@@ -51,16 +39,16 @@ Rifiniture alle funzioni appena fatte
 - Parentesi in vim mode: nel normal state accoppiare la ) sotto il cursore a blocco.
 
 * Fixes todo
-- [ ] line numbers should be a per buffer property
 - MIN-10: remove this settings that now belongs to minibuffer.lisp
 
 * Macro todo
 - [ ] multiple cursors
-- [ ] LSP integration: for the moment, just warning and compilation errors, completions
-      and code actions must be supported. The server for a given language can be configued
-      and the configuration stored in the major mode variables with a convenction that this
-      module can follow. As usual the module is lisp but every sharable functionality and
-      features that have performace need must be implemented in Rust.
+- [ ] LSP integration: for the moment, just warning and compilation errors, completions,
+      go to definition and code actions must be supported. The server for a given
+      language can be configued and the configuration stored in the major mode variables
+      with a convenction that this module can follow. As usual the module is lisp but
+      every sharable functionality and features that have performace need must be
+      implemented in Rust.
 - [ ] An eshell like mode, where it is possible to both read from stdin/stderr associated
       to a shell process. A mark to the end of the buffer is kept so that commands can be
       obtained when pressing enter and be send to stdin. It must have a configurable
@@ -71,3 +59,5 @@ Rifiniture alle funzioni appena fatte
       should be evalued, if this makes the module too complex maybe consider adding some special
       syntax that consent distinguish between a lisp expression and a shell command.
 - [ ] Integrated terminal emulation
+- [ ] gestione dei file molto grandi.
+- [ ] Popup dei tasti dopo un prefisso (come which-key), sopra il C-x C-h che c’è già.

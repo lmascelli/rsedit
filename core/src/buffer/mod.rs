@@ -8,6 +8,7 @@ mod buffer_trait;
 pub mod coding;
 pub mod disk;
 pub mod gap_buffer;
+pub(crate) mod io_status;
 pub mod mark;
 pub mod markers;
 pub mod overlay;

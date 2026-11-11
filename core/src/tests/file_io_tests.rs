@@ -494,7 +494,7 @@ fn an_access_error_and_reconnect_preserve_modified_text_and_detect_conflicts() {
     std::fs::rename(&mount, &held).unwrap();
     std::fs::write(&mount, "unavailable directory").unwrap();
     ctx.store_file_check(ctx.file_check_for(&name).expect("unavailable"));
-    assert!(ctx.with_current_buffer(|buf| buf.file_io_status().contains("File unavailable")));
+    assert!(ctx.with_current_buffer(|buf| buf.file_io_status().contains("Invalid path")));
     assert_eq!(
         ctx.with_current_buffer(|buf| buf.text.to_string()),
         "mineremote"
@@ -526,4 +526,273 @@ fn async_open_runs_find_file_hooks_after_showing_the_new_buffer() {
         run(&ctx, &env, "hook-window"),
         ELispExp::string("file.txt".into())
     );
+}
+
+use crate::buffer::io_status::{
+    AUTO_SAVE_REPORT, AutoSaveReport, FileIssue, IoCause, is_missing, utc,
+};
+use std::{
+    io::{Error, ErrorKind},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+fn status_text(value: ELispExp<GapBuffer>) -> String {
+    match value {
+        ELispExp::String(text) => text.to_string(),
+        other => panic!("expected status text, got {other:?}"),
+    }
+}
+
+#[test]
+fn typed_causes_keep_native_errors_and_do_not_guess_from_messages() {
+    for (kind, cause) in [
+        (ErrorKind::NotFound, IoCause::Missing),
+        (ErrorKind::PermissionDenied, IoCause::Denied),
+        (ErrorKind::ConnectionReset, IoCause::Network),
+        (ErrorKind::NetworkUnreachable, IoCause::Network),
+        (ErrorKind::TimedOut, IoCause::Timeout),
+        (ErrorKind::StorageFull, IoCause::Full),
+        (ErrorKind::ReadOnlyFilesystem, IoCause::ReadOnly),
+        (ErrorKind::WouldBlock, IoCause::Busy),
+        (ErrorKind::NotADirectory, IoCause::InvalidPath),
+        (ErrorKind::Other, IoCause::Other),
+    ] {
+        let error = Error::new(kind, "original OS explanation");
+        let issue = FileIssue::from_io(&error);
+        assert_eq!(issue.cause, cause);
+        assert_eq!(issue.kind, Some(kind));
+        assert_eq!(issue.message, "original OS explanation");
+    }
+    assert_eq!(
+        FileIssue::from_io(&Error::other("Network unreachable")).cause,
+        IoCause::Other
+    );
+    let native = Error::from_raw_os_error(if cfg!(windows) { 5 } else { 13 });
+    assert_eq!(FileIssue::from_io(&native).os_code, native.raw_os_error());
+    assert_eq!(FileIssue::from_io(&native).message, native.to_string());
+    assert!(is_missing(&Error::from(ErrorKind::NotFound)));
+    assert!(!is_missing(&Error::from(ErrorKind::PermissionDenied)));
+}
+
+#[cfg(any(target_os = "linux", windows))]
+#[test]
+fn native_network_errors_are_not_mistaken_for_a_missing_file() {
+    let error = Error::from_raw_os_error(if cfg!(windows) { 53 } else { 116 });
+    assert_eq!(FileIssue::from_io(&error).cause, IoCause::Network);
+    assert!(!is_missing(&error));
+}
+
+#[test]
+fn utc_dates_handle_epoch_boundaries_and_gregorian_leap_days() {
+    for (seconds, text) in [
+        (0, "1970-01-01 00:00:00 UTC"),
+        (951782400, "2000-02-29 00:00:00 UTC"),
+        (1709164800, "2024-02-29 00:00:00 UTC"),
+        (4107542400, "2100-03-01 00:00:00 UTC"),
+    ] {
+        assert_eq!(utc(UNIX_EPOCH + Duration::from_secs(seconds)), text);
+    }
+    assert_eq!(
+        utc(UNIX_EPOCH - Duration::from_millis(1)),
+        "1969-12-31 23:59:59 UTC"
+    );
+}
+
+#[test]
+fn recovery_history_records_failure_and_repair_without_losing_last_success() {
+    let files = Files::new();
+    let path = files.file();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    run(&ctx, &env, "(insert \"A\")");
+    ctx.auto_save_async_turn(0, auto_save_directory(&env), None);
+    settle(&ctx, &env);
+    let first = ctx.with_current_buffer(|buf| {
+        buf.data::<AutoSaveReport>(AUTO_SAVE_REPORT)
+            .unwrap()
+            .clone()
+    });
+    assert!(first.outcome.is_ok());
+    assert_eq!(first.copy.as_ref(), Some(&files.copy(&path)));
+    assert_eq!(first.last_success, Some(first.at));
+    assert!(first.at <= SystemTime::now());
+    std::fs::remove_dir_all(files.path("cache")).unwrap();
+    std::fs::write(files.path("cache"), "obstruction").unwrap();
+    run(&ctx, &env, "(insert \"B\")");
+    ctx.auto_save_async_turn(0, auto_save_directory(&env), None);
+    settle(&ctx, &env);
+    let failed = ctx.with_current_buffer(|buf| {
+        buf.data::<AutoSaveReport>(AUTO_SAVE_REPORT)
+            .unwrap()
+            .clone()
+    });
+    let expected =
+        FileIssue::from_io(&std::fs::create_dir_all(files.path("cache")).unwrap_err()).cause;
+    assert_eq!(failed.outcome.unwrap_err().cause, expected);
+    assert_eq!(failed.last_success, first.last_success);
+    assert!(ctx.with_current_buffer(|buf| {
+        buf.file_io_status()
+            .contains(&format!("AS {}", expected.short()))
+    }));
+    assert!(status_text(call(&ctx, &env, "auto-save-status", vec![])).contains(&utc(first.at)));
+    std::fs::remove_file(files.path("cache")).unwrap();
+    ctx.auto_save_async_turn(0, auto_save_directory(&env), None);
+    settle(&ctx, &env);
+    assert!(!ctx.with_current_buffer(|buf| buf.auto_save_failing));
+    assert!(ctx.with_current_buffer(|buf| {
+        buf.data::<AutoSaveReport>(AUTO_SAVE_REPORT)
+            .unwrap()
+            .outcome
+            .is_ok()
+    }));
+}
+
+#[test]
+fn history_survives_successful_save_and_recovery_copy_removal() {
+    let files = Files::new();
+    let path = files.file();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    run(&ctx, &env, "(insert \"A\")");
+    call(&ctx, &env, "save-buffer-async", vec![]);
+    settle(&ctx, &env);
+    assert!(!files.copy(&path).exists());
+    assert!(ctx.with_current_buffer(|buf| {
+        let report = buf.data::<AutoSaveReport>(AUTO_SAVE_REPORT).unwrap();
+        report.removed && report.outcome.is_ok()
+    }));
+    assert!(
+        status_text(call(&ctx, &env, "auto-save-status", vec![]))
+            .contains("removed after successful save")
+    );
+    assert!(ctx.with_current_buffer(|buf| buf.file_io_status().contains("AS ok")));
+}
+
+#[test]
+fn an_older_failure_callback_cannot_replace_a_new_recovery_success() {
+    let files = Files::new();
+    let path = files.file();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    run(&ctx, &env, "(insert \"A\")");
+    std::fs::write(files.path("cache"), "obstruction").unwrap();
+    ctx.auto_save_async_turn(0, auto_save_directory(&env), None);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !ctx.file_io_ready() {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    std::fs::remove_file(files.path("cache")).unwrap();
+    let handle = ctx.file_handle(&ctx.get_current_buffer_name()).unwrap();
+    let version = handle.read().unwrap().version;
+    ctx.write_recovery(&handle, &files.copy(&path), version, "Aold")
+        .unwrap();
+    settle(&ctx, &env);
+    assert!(!ctx.with_current_buffer(|buf| buf.auto_save_failing));
+    assert!(ctx.with_current_buffer(|buf| {
+        buf.data::<AutoSaveReport>(AUTO_SAVE_REPORT)
+            .unwrap()
+            .outcome
+            .is_ok()
+    }));
+    assert!(!ctx.get_echo_message().contains("Auto-save failed"));
+}
+
+#[test]
+fn skipped_older_snapshot_does_not_forge_another_auto_save_time() {
+    let files = Files::new();
+    let path = files.file();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    let handle = ctx.file_handle(&ctx.get_current_buffer_name()).unwrap();
+    ctx.write_recovery(&handle, &files.copy(&path), 20, "newest")
+        .unwrap();
+    let first = handle
+        .read()
+        .unwrap()
+        .data::<AutoSaveReport>(AUTO_SAVE_REPORT)
+        .unwrap()
+        .at;
+    ctx.write_recovery(&handle, &files.copy(&path), 19, "older")
+        .unwrap();
+    assert_eq!(
+        handle
+            .read()
+            .unwrap()
+            .data::<AutoSaveReport>(AUTO_SAVE_REPORT)
+            .unwrap()
+            .at,
+        first
+    );
+    assert_eq!(
+        std::fs::read_to_string(files.copy(&path)).unwrap(),
+        "newest"
+    );
+}
+
+#[test]
+fn missing_files_have_a_distinct_state_and_reconnection_clears_it() {
+    let files = Files::new();
+    let path = files.file();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    let name = ctx.get_current_buffer_name();
+    std::fs::remove_file(&path).unwrap();
+    ctx.store_file_check(ctx.file_check_for(&name).unwrap());
+    assert_eq!(
+        ctx.with_current_buffer(|buf| buf.data::<FileIssue>(file_io::ERROR).unwrap().cause),
+        IoCause::Missing
+    );
+    std::fs::write(&path, "longer reconnected text").unwrap();
+    ctx.store_file_check(ctx.file_check_for(&name).unwrap());
+    assert!(ctx.with_current_buffer(|buf| buf.data::<FileIssue>(file_io::ERROR).is_none()));
+    assert_eq!(
+        ctx.with_current_buffer(|buf| buf.text.to_string()),
+        "longer reconnected text"
+    );
+}
+
+#[test]
+fn configuration_failure_records_a_completed_attempt_with_no_network_fallback() {
+    let files = Files::new();
+    let path = files.file();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    run(
+        &ctx,
+        &env,
+        "(insert \"A\") (setq auto-save-directory 'unavailable)",
+    );
+    ctx.auto_save_async_turn(0, auto_save_directory(&env), None);
+    assert!(ctx.with_current_buffer(|buf| {
+        let report = buf.data::<AutoSaveReport>(AUTO_SAVE_REPORT).unwrap();
+        report.copy.is_none()
+            && report.outcome.as_ref().unwrap_err().cause == IoCause::Configuration
+            && report.last_success.is_none()
+    }));
+    assert!(!auto_save_path(&path, None).exists());
+}
+
+#[test]
+fn status_commands_work_while_io_is_pending_without_starting_another_operation() {
+    let files = Files::new();
+    let path = files.file();
+    let (ctx, env) = files.editor();
+    open(&ctx, &env, &path);
+    let (tx, rx) = mpsc::channel();
+    let handle = ctx.file_handle(&ctx.get_current_buffer_name()).unwrap();
+    ctx.start_file_io(
+        Lane::Write,
+        format!("file:{path}"),
+        "Saving",
+        Some(handle),
+        None,
+        move || rx.recv().unwrap(),
+        |_, _, ()| {},
+    );
+    assert!(status_text(call(&ctx, &env, "file-io-status", vec![])).contains("Saving"));
+    assert!(status_text(call(&ctx, &env, "auto-save-status", vec![])).contains("never attempted"));
+    assert!(ctx.file_writes_pending());
+    tx.send(()).unwrap();
+    settle(&ctx, &env);
 }

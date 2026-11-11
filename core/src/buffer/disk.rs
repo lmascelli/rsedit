@@ -28,7 +28,7 @@ impl FileStamp {
                 modified: metadata.modified().ok(),
                 len: metadata.len(),
             })),
-            Err(why) if why.kind() == ErrorKind::NotFound => Ok(None),
+            Err(why) if super::io_status::is_missing(&why) => Ok(None),
             Err(why) => Err(why),
         }
     }
@@ -167,19 +167,19 @@ fn write_with_check(
         Ok(metadata) if metadata.file_type().is_symlink() => match std::fs::canonicalize(path) {
             Ok(target) => target,
             // A link to nothing yet: writing through it makes the file.
-            Err(why) if why.kind() == ErrorKind::NotFound => {
+            Err(why) if super::io_status::is_missing(&why) => {
                 check()?;
                 return std::fs::write(path, contents);
             }
             Err(why) => return Err(why),
         },
         Ok(_) => path.to_path_buf(),
-        Err(why) if why.kind() == ErrorKind::NotFound => path.to_path_buf(),
+        Err(why) if super::io_status::is_missing(&why) => path.to_path_buf(),
         Err(why) => return Err(why),
     };
     let existing = match std::fs::metadata(&target) {
         Ok(metadata) => Some(metadata),
-        Err(why) if why.kind() == ErrorKind::NotFound => None,
+        Err(why) if super::io_status::is_missing(&why) => None,
         Err(why) => return Err(why),
     };
     if existing.as_ref().is_some_and(has_other_names) {
@@ -300,29 +300,4 @@ pub(crate) struct IoMark {
     pub id: u64,
     pub label: String,
     pub slow: bool,
-}
-impl<B: super::BufferTrait> super::Buffer<B> {
-    pub(crate) fn file_io_status(&self) -> String {
-        let buf = self;
-        let mut status = String::new();
-        if let Some(marks) = buf.data::<Vec<IoMark>>(IO_MARK)
-            && !marks.is_empty()
-        {
-            for mark in marks {
-                status.push_str(&format!(
-                    " [{}{}]",
-                    mark.label,
-                    if mark.slow { "?" } else { "" }
-                ));
-            }
-        } else if buf.data::<String>(IO_ERROR).is_some() {
-            status.push_str(" [File unavailable]");
-        } else if buf.stale {
-            status.push_str(" [File conflict]");
-        }
-        if buf.auto_save_failing {
-            status.push_str(" [Auto-save failed]");
-        }
-        status
-    }
 }

@@ -8,6 +8,7 @@ use std::sync::{Mutex, Weak};
 
 use crate::buffer::disk::IoMark as Mark;
 pub(crate) use crate::buffer::disk::{IO_ERROR as ERROR, IO_MARK as MARK};
+use crate::buffer::io_status::{FileIssue, IoCause};
 pub(crate) const TIMEOUT: &str = "file-io-timeout";
 pub(crate) type Handle<B> = Arc<RwLock<Buffer<B>>>;
 pub(crate) type Completion<B> = Box<dyn FnOnce(&EditorState<B>, &Arc<Env<EditorState<B>>>) + Send>;
@@ -108,15 +109,53 @@ impl<B: BufferTrait> EditorState<B> {
         {
             return Ok(*previous);
         }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        crate::buffer::disk::write_atomically(path, text.as_bytes())?;
-        handle
+        let written = (|| {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            crate::buffer::disk::write_atomically(path, text.as_bytes())
+        })();
+        let at = std::time::SystemTime::now();
+        let mut buf = handle
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .put_data(&key, version);
-        Ok(version)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        buf.note_auto_save(
+            at,
+            version,
+            Some(path),
+            written.as_ref().map(|_| ()).map_err(FileIssue::from_io),
+        );
+        if written.is_ok() {
+            buf.put_data(&key, version);
+        }
+        written.map(|()| version)
+    }
+
+    pub(crate) fn prepare_recovery(
+        &self,
+        handle: &Handle<B>,
+        file: &str,
+        directory: Result<Option<String>, String>,
+        version: u64,
+        text: &str,
+    ) -> Result<std::path::PathBuf, FileIssue> {
+        let directory = directory.map_err(|why| {
+            let issue = FileIssue::new(IoCause::Configuration, why);
+            handle
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .note_auto_save(
+                    std::time::SystemTime::now(),
+                    version,
+                    None,
+                    Err(issue.clone()),
+                );
+            issue
+        })?;
+        let path = crate::jobs::autosave::auto_save_path(file, directory.as_deref());
+        self.write_recovery(handle, &path, version, text)
+            .map_err(|why| FileIssue::from_io(&why))?;
+        Ok(path)
     }
 
     pub(crate) fn remove_recovery(
@@ -142,7 +181,7 @@ impl<B: BufferTrait> EditorState<B> {
             }
         }
         match std::fs::remove_file(path) {
-            Err(why) if why.kind() == std::io::ErrorKind::NotFound => {}
+            Err(why) if crate::buffer::io_status::is_missing(&why) => {}
             result => result?,
         }
         handle
@@ -305,7 +344,10 @@ impl<B: BufferTrait> EditorState<B> {
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             buf.put_data(
                                 ERROR,
-                                "file operation panicked; outcome unknown".to_string(),
+                                FileIssue::new(
+                                    IoCause::Uncertain,
+                                    "file operation panicked; outcome unknown",
+                                ),
                             );
                             if lane == Lane::Write {
                                 buf.is_modified = true;

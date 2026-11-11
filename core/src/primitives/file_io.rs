@@ -2,6 +2,7 @@
 //! available; interactive-function selects these counterparts for commands.
 //! Design: doc/architettura-editor.typ, <file-su-disco>.
 use super::*;
+use crate::buffer::io_status::{FileIssue, IoCause};
 use crate::buffer::{
     Buffer, FileStamp, coding,
     disk::{self, WriteFailure},
@@ -19,7 +20,7 @@ enum Read {
 fn read(path: &str) -> std::io::Result<Read> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
-        Err(why) if why.kind() == std::io::ErrorKind::NotFound => return Ok(Read::Missing),
+        Err(why) if crate::buffer::io_status::is_missing(&why) => return Ok(Read::Missing),
         Err(why) => return Err(why),
     };
     if metadata.is_dir() {
@@ -101,6 +102,14 @@ primitive!(find_file_async, args, env, ctx, {
                         let message = format!("Cannot open {path}: {why}");
                         state.set_echo_message(&message);
                         state.log_diagnostic(&message);
+                        if state.file_handle_name(&origin).is_some() {
+                            let mut issue = FileIssue::from_io(&why);
+                            issue.message = format!("opening {path}: {why}");
+                            origin
+                                .write()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .put_data(ERROR, issue);
+                        }
                         after(state, env, &callback, &[ELispExp::nil()]);
                         return;
                     }
@@ -134,7 +143,16 @@ primitive!(find_file_async, args, env, ctx, {
                                 buf.file_stamp = Some(stamp);
                                 buf
                             }
-                            _ => Buffer::new(&name),
+                            _ => {
+                                let mut buf = Buffer::new(&name);
+                                buf.put_data(
+                                    ERROR,
+                                    FileIssue::from_io(&std::io::Error::from(
+                                        std::io::ErrorKind::NotFound,
+                                    )),
+                                );
+                                buf
+                            }
                         };
                         buf.file_path = Some(path.clone());
                         buf.current_mode = state
@@ -209,13 +227,8 @@ fn start_save<B: BufferTrait>(
         move || {
             // A local recovery copy precedes the remote write. A cache error
             // is reported, never redirected to the remote file's directory.
-            let recovery = work.recovery.as_ref().map_err(Clone::clone).and_then(|directory| {
-                let path = auto_save_path(work.source.as_deref().unwrap_or(&work.path), directory.as_deref());
-                if let Some(directory) = directory { std::fs::create_dir_all(directory).map_err(|why| why.to_string())?; }
-                recovery_worker.write_recovery(&recovery_handle, &path, work.version, &work.recovery_text)
-                    .map_err(|why| why.to_string())?;
-                Ok(path)
-            });
+            let recovery = recovery_worker.prepare_recovery(&recovery_handle,
+                work.source.as_deref().unwrap_or(&work.path), work.recovery.clone(), work.version, &work.recovery_text);
             let result = if work.stale && !work.confirmed {
                 FileStamp::try_of(&work.path).map_err(WriteFailure::Io).and_then(|found| Err(WriteFailure::Conflict(found)))
             } else {
@@ -233,9 +246,7 @@ fn start_save<B: BufferTrait>(
                 state.set_echo_message(&format!("File operation finished for {}; buffer now visits another file", save.path));
                 return;
             }
-            if recovery.is_ok() { handle.write().unwrap_or_else(std::sync::PoisonError::into_inner).auto_save_failing = false; }
             if let Err(why) = &recovery {
-                handle.write().unwrap_or_else(std::sync::PoisonError::into_inner).auto_save_failing = true;
                 state.log_diagnostic(&format!("[ERROR] Recovery copy unavailable: {why}"));
             }
             match result {
@@ -292,8 +303,8 @@ fn start_save<B: BufferTrait>(
                 }
                 Err(why) => {
                     let reason = match why {
-                        WriteFailure::Io(why) => why.to_string(),
-                        WriteFailure::Uncertain(why) => format!("outcome uncertain: {why}"),
+                        WriteFailure::Io(why) => FileIssue::from_io(&why),
+                        WriteFailure::Uncertain(why) => FileIssue::new(IoCause::Uncertain, why),
                         _ => unreachable!(),
                     };
                     {
@@ -450,8 +461,13 @@ fn start_revert<B: BufferTrait>(
                 }
                 other => {
                     let why = match other {
-                        Err(why) => why.to_string(),
-                        _ => "file missing or no longer a regular file".into(),
+                        Err(why) => FileIssue::from_io(&why),
+                        Ok(Read::Missing) => {
+                            FileIssue::from_io(&std::io::Error::from(std::io::ErrorKind::NotFound))
+                        }
+                        _ => FileIssue::from_io(&std::io::Error::from(
+                            std::io::ErrorKind::IsADirectory,
+                        )),
                     };
                     handle
                         .write()
@@ -567,7 +583,28 @@ pub(super) fn ask_confirmation<B: BufferTrait>(
     )
 }
 
+pub const FILE_STATUS_DOC: &str = "(file-io-status): Show and return this buffer's recorded file \
+    error, its OS details and the last recovery attempt. This performs no filesystem I/O.";
+primitive!(file_io_status, _args, _env, ctx, {
+    let text = ctx.with_current_buffer(|buf| buf.file_io_detail());
+    ctx.set_echo_message(&text);
+    ctx.log_diagnostic(&text);
+    Ok(ELispExp::string(text))
+});
+
+pub const AUTO_STATUS_DOC: &str = "(auto-save-status): Show and return the last recovery attempt \
+    for this buffer: UTC date, outcome, destination, version and last success, or never attempted. \
+    Manual saves' recovery copies count too. This performs no filesystem I/O.";
+primitive!(auto_save_status, _args, _env, ctx, {
+    let text = ctx.with_current_buffer(|buf| buf.auto_save_status());
+    ctx.set_echo_message(&text);
+    ctx.log_diagnostic(&text);
+    Ok(ELispExp::string(text))
+});
+
 pub fn install<B: BufferTrait>(into: &Registry<B>) {
+    into.command("file-io-status", file_io_status, &[], FILE_STATUS_DOC);
+    into.command("auto-save-status", auto_save_status, &[], AUTO_STATUS_DOC);
     into.command(
         "revert-buffer-async",
         revert_buffer_async,

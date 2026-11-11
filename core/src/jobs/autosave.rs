@@ -4,6 +4,7 @@
 //! `recover-file` reads after the editor stopped without being asked.
 //!
 //! Design: `doc/architettura-editor.typ, <lavori-editor>`.
+use crate::buffer::io_status::{AUTO_SAVE_REPORT, AutoSaveReport, FileIssue, IoCause};
 use crate::editor::file_io::{Handle, Lane};
 use crate::{
     BufferTrait, EditorState,
@@ -200,10 +201,17 @@ impl<B: BufferTrait> EditorState<B> {
             Err(why) => {
                 for name in &names {
                     let first = self.with_buffer_mut(name, |buf| {
-                        if !buf.is_modified || buf.file_path.is_none() {
+                        if !buf.is_modified || buf.file_path.is_none() || buf.read_only {
                             return false;
                         }
-                        !std::mem::replace(&mut buf.auto_save_failing, true)
+                        let first = !buf.auto_save_failing;
+                        buf.note_auto_save(
+                            std::time::SystemTime::now(),
+                            buf.version,
+                            None,
+                            Err(FileIssue::new(IoCause::Configuration, why.clone())),
+                        );
+                        first
                     });
                     if first == Some(true) {
                         self.log_diagnostic(&format!("[ERROR] {why}"));
@@ -233,7 +241,6 @@ impl<B: BufferTrait> EditorState<B> {
             return (next, 0);
         }
         let count = batch.len();
-        let work_directory = directory.clone();
         let recovery_worker = self.clone();
         let submitted = self.start_file_io(
             Lane::Recovery,
@@ -245,39 +252,46 @@ impl<B: BufferTrait> EditorState<B> {
                 batch
                     .into_iter()
                     .map(|(handle, pending)| {
-                        let result = (|| {
-                            if let Some(directory) = &work_directory {
-                                std::fs::create_dir_all(directory)?;
-                            }
-                            recovery_worker.write_recovery(
-                                &handle,
-                                &pending.where_to,
-                                pending.version,
-                                &pending.text,
-                            )
-                        })();
+                        let result = recovery_worker.write_recovery(
+                            &handle,
+                            &pending.where_to,
+                            pending.version,
+                            &pending.text,
+                        );
                         (handle, pending, result)
                     })
                     .collect::<Vec<_>>()
             },
             move |state, _, results| {
                 for (handle, pending, result) in results {
-                    if let Some(name) = state.file_handle_name(&handle) {
-                        state.with_buffer_mut(&name, |buf| match &result {
-                            Ok(version)
-                                if buf.file_path.as_deref() == Some(pending.source.as_str()) =>
-                            {
-                                buf.auto_saved_at = Some(*version);
-                                buf.auto_save_failing = false;
-                            }
-                            Ok(_) => {}
-                            Err(_) => buf.auto_save_failing = true,
-                        });
+                    if let Ok(version) = &result {
+                        let mut buf = handle
+                            .write()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if buf.file_path.as_deref() == Some(pending.source.as_str()) {
+                            buf.auto_saved_at =
+                                Some(buf.auto_saved_at.map_or(*version, |old| old.max(*version)));
+                        }
                     }
-                    if let Err(why) = result {
-                        let message = format!("Auto-save failed for {}: {why}", pending.buffer);
-                        state.set_echo_message(&message);
-                        state.log_diagnostic(&message);
+                    if result.is_err() {
+                        // A later recovery can finish before this UI callback runs.
+                        let failure = {
+                            let buf = handle
+                                .read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            buf.data::<AutoSaveReport>(AUTO_SAVE_REPORT)
+                                .filter(|report| {
+                                    report.version == pending.version
+                                        && report.copy.as_ref() == Some(&pending.where_to)
+                                })
+                                .and_then(|report| report.outcome.as_ref().err())
+                                .cloned()
+                        };
+                        if let Some(why) = failure {
+                            let message = format!("Auto-save failed for {}: {why}", pending.buffer);
+                            state.set_echo_message(&message);
+                            state.log_diagnostic(&message);
+                        }
                     }
                     state.try_recovery_cleanup(handle, timeout);
                 }
@@ -359,6 +373,12 @@ impl<B: BufferTrait> EditorState<B> {
                         Ok(true) => {
                             if let Some(queue) = buf.data_mut::<Vec<Cleanup>>(CLEANUP) {
                                 queue.retain(|item| item != &cleanup);
+                            }
+                            if let Some(report) = buf.data_mut::<AutoSaveReport>(AUTO_SAVE_REPORT)
+                                && report.copy.as_ref() == Some(&cleanup.path)
+                                && report.version <= cleanup.version
+                            {
+                                report.removed = true;
                             }
                             if buf
                                 .auto_saved_at
@@ -454,25 +474,28 @@ impl<B: BufferTrait> EditorState<B> {
         // the buffer.
         // Whole or not at all, as a save: a copy cut short would offer
         // `recover-file` half of the work.
-        match crate::buffer::disk::write_atomically(&where_to, text.as_bytes()) {
-            Ok(()) => {
-                self.with_buffer_mut(&buffer, |buf| {
-                    buf.auto_saved_at = Some(version);
-                    buf.auto_save_failing = false;
-                });
-            }
-            Err(why) => {
-                let first = self.with_buffer_mut(&buffer, |buf| {
-                    !std::mem::replace(&mut buf.auto_save_failing, true)
-                });
-                if first == Some(true) {
-                    self.set_echo_message(&format!("Auto-save failed for {buffer}: {why}"));
-                    self.log_diagnostic(&format!(
-                        "[WARNING] could not auto-save {buffer} to {}: {why}",
-                        where_to.display()
-                    ));
-                }
-            }
+        let Some(handle) = self.file_handle(&buffer) else {
+            return;
+        };
+        let was_failing = handle
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .auto_save_failing;
+        let result = self.write_recovery(&handle, &where_to, version, &text);
+        if let Ok(version) = result {
+            handle
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .auto_saved_at = Some(version);
+        }
+        if let Err(why) = result
+            && !was_failing
+        {
+            self.set_echo_message(&format!("Auto-save failed for {buffer}: {why}"));
+            self.log_diagnostic(&format!(
+                "[WARNING] could not auto-save {buffer} to {}: {why}",
+                where_to.display()
+            ));
         }
     }
 }

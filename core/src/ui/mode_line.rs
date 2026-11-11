@@ -11,7 +11,7 @@ use crate::buffer::{Buffer, BufferTrait};
 /// | escape | shows                                        |
 /// |--------|----------------------------------------------|
 /// | `%b`   | buffer name                                  |
-/// | `%i`   | file I/O progress, conflicts and recovery errors     |
+/// | `%i`   | I/O causes and last recovery outcome/time (UTC)     |
 /// | `%f`   | file path, or the buffer name when unvisited |
 /// | `%s`   | buffer-local mode-line-state string          |
 /// | `%m`   | major mode                                   |

@@ -46,7 +46,7 @@ pub const SETTINGS: &[Setting] = &[
               \x20 %l  the line, from 1      %c  the column, from 0\n\
               \x20 %p  All when the whole buffer is in the window, or where point is:\n\
               \x20     Top, Bot or a percentage\n\
-              \x20 %i  pending file I/O, conflict and auto-save error indicators\n\
+              \x20 %i  pending I/O, error cause and last auto-save outcome/time (UTC)\n\
               \x20 %*  ** when modified, -- when not    %%  a per cent sign\n\n\
               An unknown escape is shown as written; anything but a string shows the \
               default.\n\n\

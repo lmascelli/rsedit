@@ -48,6 +48,9 @@ impl<B: BufferTrait> EditorState<B> {
                 // Only a file that cannot be read at all, since what is in
                 // one always decodes: said where it is seen.
                 Err(why) => {
+                    let mut issue = crate::buffer::io_status::FileIssue::from_io(&why);
+                    issue.message = format!("reading {file_path}: {why}");
+                    self.with_current_buffer_mut(|buf| buf.put_data(super::file_io::ERROR, issue));
                     self.set_echo_message(&format!("Cannot read {file_path}: {why}"));
                     self.log_diagnostic(&format!("Cannot read {file_path}: {why}"));
                     None
@@ -82,6 +85,12 @@ impl<B: BufferTrait> EditorState<B> {
             .or_else(|| self.auto_mode_for(path))
             .unwrap_or_else(|| "fundamental-mode".into());
         new_buf.file_path = Some(path.to_string());
+        new_buf.put_data(
+            super::file_io::ERROR,
+            crate::buffer::io_status::FileIssue::from_io(&std::io::Error::from(
+                std::io::ErrorKind::NotFound,
+            )),
+        );
         self.buffers_mut(|buffers| buffers.insert(name, new_buf));
         self.show_in_focused_window(name);
         self.initialize_buffer(name, true, env);

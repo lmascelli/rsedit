@@ -5,6 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 use super::*;
 use crate::buffer::coding::{self, Coding};
+use crate::buffer::io_status::{FileIssue, IoCause};
 use crate::jobs::autosave::{auto_save_directory, auto_save_path};
 use crate::primitives::args;
 use risp::eval;
@@ -58,13 +59,8 @@ fn write_buffer_expected<B: BufferTrait>(
         return false;
     };
     // Even synchronous scripts get a recovery copy before a potentially slow write.
-    let recovery = auto_save_directory(env).and_then(|directory| {
-        let copy = auto_save_path(&path, directory.as_deref());
-        ctx.write_recovery(&handle, &copy, version, &content)
-            .map_err(|why| why.to_string())?;
-        Ok(copy)
-    });
-    ctx.with_buffer_mut(name, |buf| buf.auto_save_failing = recovery.is_err());
+    let recovery =
+        ctx.prepare_recovery(&handle, &path, auto_save_directory(env), version, &content);
     if let Err(why) = &recovery {
         ctx.log_diagnostic(&format!("[ERROR] Recovery copy unavailable: {why}"));
     }
@@ -105,10 +101,13 @@ fn report_write_failure<B: BufferTrait>(
     let reason = match why {
         WriteFailure::Conflict(_) => {
             ctx.with_buffer_mut(name, |buf| buf.stale = true);
-            "file changed or disappeared; save again to confirm".to_string()
+            FileIssue::new(
+                IoCause::Other,
+                "file changed or disappeared; save again to confirm",
+            )
         }
-        WriteFailure::Io(why) => why.to_string(),
-        WriteFailure::Uncertain(why) => format!("outcome uncertain: {why}"),
+        WriteFailure::Io(why) => FileIssue::from_io(&why),
+        WriteFailure::Uncertain(why) => FileIssue::new(IoCause::Uncertain, why),
     };
     ctx.with_buffer_mut(name, |buf| {
         buf.is_modified = true;
@@ -285,8 +284,11 @@ primitive!(find_file, args, env, ctx, {
     // entirely -- it never learns.
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => Some(metadata),
-        Err(why) if why.kind() == std::io::ErrorKind::NotFound => None,
+        Err(why) if crate::buffer::io_status::is_missing(&why) => None,
         Err(why) => {
+            ctx.with_current_buffer_mut(|buf| {
+                buf.put_data(crate::editor::file_io::ERROR, FileIssue::from_io(&why))
+            });
             ctx.set_echo_message(&format!("Cannot read {path_str}: {why}"));
             ctx.log_diagnostic(&format!("Cannot read {path_str}: {why}"));
             return Ok(ELispExp::nil());
@@ -379,6 +381,9 @@ primitive!(save_buffer, _args, env, ctx, {
     let found = match crate::buffer::FileStamp::try_of(&path) {
         Ok(found) => found,
         Err(why) => {
+            ctx.with_buffer_mut(&name, |buf| {
+                buf.put_data(crate::editor::file_io::ERROR, FileIssue::from_io(&why))
+            });
             ctx.set_echo_message(&format!("Cannot check {path}: {why}"));
             return Ok(ELispExp::nil());
         }
@@ -538,6 +543,9 @@ fn reread<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> bool {
     let (text, coding, stamp) = match coding::read_stable(path) {
         Ok(read) => read,
         Err(why) => {
+            ctx.with_current_buffer_mut(|buf| {
+                buf.put_data(crate::editor::file_io::ERROR, FileIssue::from_io(&why))
+            });
             ctx.set_echo_message(&format!("Cannot read {path}: {why}"));
             return false;
         }
@@ -615,16 +623,16 @@ primitive!(write_file, args, env, ctx, {
     let Some(bytes) = encode_for(ctx, &path, &content, coding) else {
         return Ok(ELispExp::nil());
     };
-    let recovery = auto_save_directory(&env).and_then(|directory| {
-        let source = ctx
-            .with_current_buffer(|buf| buf.file_path.clone())
-            .unwrap_or_else(|| path.clone());
-        let copy = auto_save_path(&source, directory.as_deref());
-        ctx.write_recovery(&handle, &copy, version, &content)
-            .map_err(|why| why.to_string())?;
-        Ok(copy)
-    });
-    ctx.with_current_buffer_mut(|buf| buf.auto_save_failing = recovery.is_err());
+    let source = ctx
+        .with_current_buffer(|buf| buf.file_path.clone())
+        .unwrap_or_else(|| path.clone());
+    let recovery = ctx.prepare_recovery(
+        &handle,
+        &source,
+        auto_save_directory(&env),
+        version,
+        &content,
+    );
     if let Err(why) = &recovery {
         ctx.log_diagnostic(&format!("[ERROR] Recovery copy unavailable: {why}"));
     }
