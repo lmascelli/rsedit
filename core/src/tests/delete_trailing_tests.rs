@@ -9,6 +9,7 @@ mod tests {
     use crate::editor::{EditorState, create_global_env};
     use risp::{Env, EvalError, LispExp, Parser, eval};
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     type Ctx = EditorState<GapBuffer>;
@@ -61,13 +62,21 @@ mod tests {
 
     impl Sandbox {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "rsedit-delete-trailing-{name}-{}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).expect("creating the sandbox");
-            Sandbox(dir)
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+            loop {
+                let dir = std::env::temp_dir().join(format!(
+                    "rsedit-delete-trailing-{name}-{}-{}",
+                    std::process::id(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
+
+                match std::fs::create_dir(&dir) {
+                    Ok(()) => return Sandbox(dir),
+                    Err(why) if why.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(why) => panic!("creating the sandbox: {why}"),
+                }
+            }
         }
 
         fn file(&self, contents: &str) -> String {
