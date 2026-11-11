@@ -25,6 +25,7 @@ MOVING POINT
         previous-line             a line up, keeping the column
         forward-word              past the end of the next word
         backward-word             to the start of the word before
+        subword-mode              move and kill by parts of identifiers
         forward-paragraph         to the blank line after the paragraph
         backward-paragraph        to the blank line before it
         forward-sexp              over the next balanced expression
@@ -51,6 +52,7 @@ WHERE POINT IS
         point-max                 the position after the last character
         line-number-at-point      the number of point's line, from 1
         current-line              the text of point's line
+        hl-line-mode              highlight point's whole logical line
 
     On the `indentation' page:
 

@@ -8,6 +8,8 @@ SYNOPSIS
     (previous-line &optional N)
     (forward-word &optional N)
     (backward-word &optional N)
+    (subword-mode &optional ARG)
+    subword-separators
     (forward-paragraph &optional N)
     (backward-paragraph &optional N)
     (forward-sexp &optional N)
@@ -16,6 +18,7 @@ SYNOPSIS
     (backward-up-list)
     (down-list)
     (show-paren-mode &optional ARG)
+    (hl-line-mode &optional ARG)
     (beginning-of-line)
     (end-of-line)
     (beginning-of-buffer)
@@ -131,6 +134,52 @@ MOVING
     up out of the list, to its opening bracket, and C-M-d down into the next
     list inside it. M-x up-list goes up and out the other way, past the
     closing bracket.
+
+IDENTIFIER PARTS
+    M-x subword-mode makes M-f and M-b move by parts of an identifier, and
+    M-d and M-Backspace kill the same parts. It is a minor mode, off until
+    you turn it on in a buffer; the status line then shows Subword.
+    Counts, including zero and negative counts, work as for whole words.
+
+    Parts meet where lower case becomes upper case, before the last
+    capital of an acronym followed by lower case, and between letters and
+    digits: camel|Case, HTTP|Server, item|42. Positions count Unicode
+    characters. Casing and transposing commands still use whole words.
+
+    `subword-separators' is a string of literal characters, initially "_":
+    snake_case has two parts. A hyphen stays inside an identifier unless
+    you include it. Other punctuation and whitespace separate words as
+    usual. For both snake_case and dash-case:
+
+        (require 'subword)
+        (setq subword-separators "_-")
+        (subword-mode 1)
+
+    For a different choice in just the current buffer:
+
+        (buffer-put 'subword-separators "_-:")
+
+    A string in that buffer property overrides the global value; nil
+    removes the override. An empty string keeps underscores and hyphens
+    inside identifiers. Runs of separators are crossed on the way to the
+    next part, as spaces are with ordinary word movement and killing.
+
+SEEING THE CURRENT LINE
+    M-x hl-line-mode highlights the whole logical line containing point,
+    across the width of the text area, including padding after the text.
+    With visual-line-mode on, all its visible wrapped rows are highlighted.
+    Only the selected window draws it; the minibuffer, line-number gutter
+    and status line do not. The mode is off initially and per buffer; the
+    status line shows HL when it is on.
+
+    The face hl-line supplies a bright-black background by default.
+    Syntax colours remain visible; the region, search matches and other
+    explicit backgrounds can cover it. The `themes' page explains faces.
+    For example, to choose a different background:
+
+        (require 'hl-line)
+        (set-face 'hl-line nil "#303030")
+        (hl-line-mode 1)
 
 SEEING WHICH BRACKETS PAIR
     In the window you are in, the bracket next to the cursor is drawn with
@@ -264,7 +313,8 @@ SPACES AT THE ENDS OF LINES
     clean instead of the region.
 
     In a buffer with the minor mode `whitespace-cleanup-mode' on, every
-    save cleans the whole buffer that way just before it is written:
+    save cleans the whole buffer through its `before-save-hook', even
+    with an active region, just before the text to write is copied:
     C-x C-s, C-x C-w, and the saves C-x C-c and save-some-buffers offer.
     The mode is off until you turn it on: M-x whitespace-cleanup-mode
     does, in the buffer you are in, and the status line then shows Clean;

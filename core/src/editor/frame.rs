@@ -240,8 +240,19 @@ impl<B: BufferTrait> EditorState<B> {
                         settings,
                         is_focused,
                     );
-                    let mut highlights =
-                        layout::place(&layout, in_buffer, scroll_x, float.rect.width);
+                    let mut highlights = crate::ui::hl_line_highlights(
+                        &float.window,
+                        &layout,
+                        buffers,
+                        is_focused,
+                        float.rect.width,
+                    );
+                    highlights.extend(layout::place(
+                        &layout,
+                        in_buffer,
+                        scroll_x,
+                        float.rect.width,
+                    ));
                     highlights.extend(layout.virtual_highlights(scroll_x, float.rect.width));
 
                     views.push(RenderableWindowView {

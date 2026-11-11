@@ -33,6 +33,8 @@ loaded anyway.")
     clipboard           ; kills also go to the system clipboard
     electric-pair       ; typing an opening bracket gives you the pair
     show-paren          ; the bracket next to the cursor drawn with its partner
+    hl-line             ; highlight the current logical line when enabled
+    subword             ; identifier parts for word motion and killing
     whitespace          ; the blanks at the ends of lines, drawn and cleaned
     overwrite           ; Insert, and what you type replaces what is there
     display-line-numbers ; M-x display-line-numbers-mode numbers the lines

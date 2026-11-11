@@ -2276,6 +2276,42 @@ quella: una modifica arrivata nel frattempo, da un lavoro o da un callback,
 lascia il buffer modificato e la copia di ripristino al suo posto, e il
 messaggio lo dice.
 
+Prima di copiare il testo, tutti i percorsi di salvataggio manuale chiamano
+`files::before_save`: `write_buffer_expected` (anche per le domande di uscita),
+`write-file` e `file_io::save_named`. Si prendono dal buffer modo maggiore,
+modi minori e percorso; `Modes::hooks_for` copia i callback di
+`before-save-hook` in quell'ordine, poi i globali. Ogni funzione gira sul
+thread dei comandi con il buffer destinazione corrente, senza lock di buffer,
+finestre o registro. Una funzione che cambia il buffer corrente non cambia il
+contesto del callback seguente. Il chiamante torna corrente alla fine, se
+esiste ancora.
+
+Un attachment `file-io:before-save`, tolto dal distruttore di `SaveHookGuard`,
+rifiuta la ricorsione sullo stesso buffer anche prima della prenotazione
+asincrona. Dopo ogni callback si ricontrollano identità, nome e percorso:
+eliminare, rinominare o cambiare file interrompe il salvataggio. Il primo
+errore Lisp interrompe anche gli hook rimasti e viene mostrato e registrato;
+le modifiche già fatte restano nel buffer. I normali hook possono continuare
+dopo un errore, ma un controllo prima della scrittura deve poterla impedire.
+Gli hook si eseguono prima dello snapshot, così anche la pulizia degli spazi
+è una modifica visibile e annullabile. Le copie periodiche di recupero non
+eseguono Lisp e conservano il testo effettivo.
+
+#figure(
+  canvas(height: 2.7cm)[
+    #node(1.5cm, 0.75cm, 2.8cm, 1.1cm, [Comando di salvataggio])
+    #node(5.5cm, 0.75cm, 3.3cm, 1.1cm, [`before_save` \ callback senza lock], fill: accent.lighten(92%))
+    #node(9.7cm, 0.75cm, 2.8cm, 1.1cm, [Snapshot \ testo e versione])
+    #node(14.1cm, 0.75cm, 3.4cm, 1.1cm, [Recupero locale \ scrittura controllata])
+    #arrow((2.9cm, 0.75cm), (3.85cm, 0.75cm))
+    #arrow((7.15cm, 0.75cm), (8.3cm, 0.75cm))
+    #arrow((11.1cm, 0.75cm), (12.4cm, 0.75cm))
+    #node(5.5cm, 2.05cm, 3.3cm, 0.6cm, [Errore: nessuna scrittura], fill: warm.lighten(90%))
+    #arrow((5.5cm, 1.3cm), (5.5cm, 1.75cm), colour: warm)
+  ],
+  caption: [Preparare un salvataggio. L'ultimo passo gira in un lavoratore per i comandi interattivi; una conferma asincrona di conflitto riprende lo snapshot esistente, senza rieseguire gli hook.],
+)
+
 Il #emph[watcher] (`FileWatcher`, ogni `watch-file-interval` secondi, 3 per
 default, al massimo 2 controlli contemporanei; spento da `(setq watch-files nil)`)
 confronta i timbri: un buffer pulito il cui file è cambiato viene ricaricato con
@@ -3364,10 +3400,10 @@ copiata all'accensione (`ActiveMinor`).
   columns: (3.8cm, 1fr),
   header: ([Dove conta], [Come]),
   [I tasti], [`keymap_modes` mette dopo la keymap locale quelle dei modi minori accesi, dall'ultimo acceso, e poi quella del modo maggiore; `source_of` dà a un legame trovato in un modo minore la sorgente `Minor`, che `key-binding` e `C-h b` chiamano `"minor"`.],
-  [Gli hook], [`run_hook` prende i modi minori del buffer corrente e chiama `run_hook_of`: prima gli hook del modo maggiore, poi quelli di ogni modo minore acceso, nell'ordine di accensione, poi i globali (`Modes::hooks_for`). `after-close-hook` riceve i modi minori del buffer chiuso, presi prima che se ne vada.],
+  [Gli hook], [`before-save-hook` usa il percorso che interrompe il salvataggio al primo errore (@file-su-disco); gli altri passano da `run_hook`, che prende i modi minori del buffer corrente e chiama `run_hook_of`: prima gli hook del modo maggiore, poi quelli di ogni modo minore acceso, nell'ordine di accensione, poi i globali (`Modes::hooks_for`). `after-close-hook` riceve i modi minori del buffer chiuso, presi prima che se ne vada.],
   [L'accensione], [`minor_mode_on` e `minor_mode_off` cambiano la lista sotto il lock del buffer e poi, rilasciato, fanno girare `minor-mode-hook` del modo, e quelli globali con quel nome, con il buffer corrente (`run_minor_mode_hook`).],
   [Le regole], [`minor-mode-enable` registra in `Modes::minor_rules` una coppia (modo maggiore, o nessuno per tutti; modo minore). `apply_minor_rules` accende quelli che valgono per il modo del buffer, dopo `major-mode-hook` e prima di `after-change-major-mode-hook`, in `initialize_buffer` e in `change_major_mode`. `minor-mode-disable` toglie la coppia registrata con gli stessi due argomenti (`Modes::remove_minor_rule`), e lascia i buffer come sono.],
-  [Il Rust], [Dove l'effetto di un modo è in Rust, il codice chiede a `Buffer::minor_mode_enabled` un nome che conosce, sotto il lock del buffer che ha già: `visual_lines::MODE` (@righe-visive), `SHOW_PAREN_MODE` e `WHITESPACE_MODE` (@evidenziazioni), `WHITESPACE_CLEANUP_MODE` (@verbi), `gutter::MODE` (@margine), `OVERWRITE_MODE` (@primitive-modifica). Il modo lo fa un modulo Lisp; il solo che fa il nucleo è `READ_ONLY_MODE` (@decisioni-buffer).],
+  [Il Rust], [Dove l'effetto di un modo è in Rust, il codice chiede a `Buffer::minor_mode_enabled` un nome che conosce, sotto il lock del buffer che ha già: `visual_lines::MODE` (@righe-visive), `SHOW_PAREN_MODE`, `WHITESPACE_MODE` e `hl-line-mode` (@evidenziazioni), `subword-mode` (@movimento), `gutter::MODE` (@margine), `OVERWRITE_MODE` (@primitive-modifica). Il modo lo fa un modulo Lisp; il solo che fa il nucleo è `READ_ONLY_MODE` (@decisioni-buffer).],
   [Il cambio di modo maggiore], [`change_major_mode` svuota la lista sotto lo stesso lock con cui cambia il modo, senza far girare hook, lasciandovi solo `read-only-mode`, e poi applica le regole del modo nuovo.],
   [La riga di stato], [`%n` scrive le etichette non vuote, ognuna dopo uno spazio, dalla lista del buffer: `expand_mode_line` non deve chiedere il registro.],
 )
@@ -3411,8 +3447,9 @@ Le decisioni:
   domanda, che non sa rispondere per un buffer solo. Lo dice il manpage
   `modes` nei limiti.
 + *Il Rust legge il nome nel buffer, non l'ambiente.* La fotografia e il
-  salvataggio hanno già il buffer sotto lock: chiedergli se un modo è acceso
-  non prende altri lock e non chiama l'interprete. Senza il modulo che lo
+  movimento hanno già il buffer sotto lock: chiedergli se un modo è acceso
+  non prende altri lock e non chiama l'interprete. La pulizia al salvataggio
+  usa invece l'hook del modo minore, eseguito senza lock (@file-su-disco). Senza il modulo che lo
   fa, il modo non c'è e non è acceso in nessun buffer: il nucleo da solo non
   disegna coppie né spazi, e non pulisce.
 
@@ -4953,12 +4990,12 @@ in una finestra affiancata e in una flottante.
 
 == Le evidenziazioni del momento <evidenziazioni>
 
-Tre cose si disegnano per un fotogramma solo, ricalcolate a ogni
+Quattro cose si disegnano per un fotogramma solo, ricalcolate a ogni
 `snapshot` e mai conservate nel buffer: la parentesi accanto al punto con
-quella che le corrisponde, ogni corrispondenza di una ricerca o di una
-sostituzione in corso, e gli spazi a fine riga. La prima e la terza sono di
-due modi minori (@modi-minori), `show-paren-mode` e `whitespace-mode`, e si
-disegnano nei buffer dove il modo è acceso; la seconda la spegne la variabile
+quella che le corrisponde, ogni corrispondenza di una ricerca o sostituzione,
+gli spazi a fine riga e la riga del punto. Parentesi, spazi e riga sono di
+`show-paren-mode`, `whitespace-mode` e `hl-line-mode` (@modi-minori), e si
+disegnano dove il rispettivo modo è acceso. Le corrispondenze le spegne
 `highlight-all-matches`, `t` in partenza.
 
 #ref-table(
@@ -4979,6 +5016,24 @@ visitano un file e hanno `whitespace-mode` acceso (`WHITESPACE_MODE`, in
 `ui/compose.rs`): lo dice il buffer che si sta componendo, sotto i lock del
 fotogramma, e prima non si legge nulla. Nella finestra con il focus la riga
 del punto non li disegna se il punto è tra loro o alla loro fine.
+
+`hl_line_highlights` legge il modo e la riga logica del punto sotto il lock
+del buffer, durante la composizione della finestra selezionata. Ignora i
+prompt e lavora sul `Layout` già pronto: ogni `Row` con quel numero di riga
+produce un `Highlight` nella faccia `hl-line`, da zero alla larghezza del
+rettangolo del testo. Con il wrap ne produce uno per ogni continuazione
+visibile; comprende lo spazio dopo il testo, ma non margine, bordo o riga di
+stato. Foglie e flottanti lo aggiungono prima delle altre facce, senza creare
+overlay né modificare testo o versione. La GUI fonde gli stili cella per
+cella; la TUI ridisegna i tratti e conserva il fondo `hl-line` per una faccia
+successiva senza fondo proprio e senza inversione. Un fondo esplicito o la
+regione in video inverso prevalgono.
+
+La riga si espande in coordinate di schermo perché il suo spazio vuoto non
+ha colonne nel buffer: così non serve un valore sentinella per la fine riga,
+e lo stesso percorso copre testo virtuale, scorrimento e wrap. Il costo è
+limitato alle righe del `Layout` visibile, senza dipendere dalla lunghezza del
+file.
 
 `ComposeSettings` porta le prime due cose alla composizione, accanto al
 formato della riga di stato e al margine: `matches`, una `SearchMarks` con il
@@ -5051,9 +5106,9 @@ Le decisioni:
   successiva è uno spazio a fine riga per un istante: colorarlo farebbe
   lampeggiare il rosso a ogni parola, come Emacs evita allo stesso modo. Lo
   si salta solo nella finestra con il focus, la sola che disegna il cursore.
-+ *Nulla senza i moduli.* I due modi minori li fanno `show-paren` e
-  `whitespace` (@mod-show-paren, @mod-whitespace), che li accendono in ogni
-  buffer: un editor senza moduli resta neutro, e quello che arriva con
++ *Nulla senza i moduli.* `show-paren` e `whitespace`
+  (@mod-show-paren, @mod-whitespace) accendono i loro modi in ogni buffer;
+  `hl-line` (@mod-hl-line) lo lascia spento finché non è scelto: un editor senza moduli resta neutro, e quello che arriva con
   `default-configuration` mostra le coppie e ciò che un file non dovrebbe
   avere.
 + *Una regexp vuota non si disegna.* Una corrispondenza vuota, come quella di
@@ -5628,10 +5683,26 @@ conservato, punto fermo, contatore che non avanza.
 `BufferTrait`: `goto_offset`, `line_length`, `line_bounds`, `is_blank_line`,
 `is_word_char`, `word_forward`, `word_backward`, `paragraph_forward` e
 `paragraph_backward`. Le usano le primitive del file, e con loro le kill, i
-verbi, i commenti, i rettangoli, il mouse e le liste di risultati: c'è un posto
-solo che dice dove finisce una parola. Una parola è una sequenza di lettere,
-cifre e trattini bassi, senza una tabella sintattica da interrogare; un
-paragrafo finisce alla riga vuota che lo segue.
+verbi, i commenti, i rettangoli, il mouse e le liste di risultati. Una parola
+è una sequenza di lettere, cifre e trattini bassi, senza una tabella sintattica
+da interrogare; un paragrafo finisce alla riga vuota che lo segue.
+
+`primitives/subword.rs` condivide tra movimento e cancellazione i confini
+alternativi degli identificatori. `forward` e `backward` ricevono il buffer:
+con `subword-mode` spento delegano a `word_forward` e `word_backward`;
+acceso, separano minuscola/maiuscola, lettere/cifre e acronimi (`HTTP|Server`).
+Leggono caratteri e restituiscono offset in caratteri, anche per Unicode.
+I separatori sono una stringa letterale, senza espressioni regolari: `_` per
+default, `-` soltanto se scelto; le altre punteggiature separano le parole.
+Il valore globale `subword-separators` si legge prima del lock; un attachment
+Lisp `lisp:subword-separators` di tipo stringa lo sostituisce nel buffer.
+Le scansioni saltano le serie di separatori e si fermano a inizio/fine testo
+anche con conteggi enormi. Le primitive gestiscono segno e zero con lo stesso
+`movement_count` di prima; le kill passano da `cut_out`, mantenendo undo e
+kill ring. I verbi di maiuscole e trasposizione usano ancora le parole intere:
+condividere i confini dei quattro comandi di movimento/cancellazione evita
+che una kill prenda più di quanto attraversa il movimento corrispondente,
+senza cambiare il significato degli altri verbi.
 
 `forward-char` e `backward-char` si muovono per offset, quindi attraversano un
 fine riga come `C-f`. `next-line` e `previous-line` tengono una #emph[colonna
@@ -5739,24 +5810,17 @@ toglie molti tratti, dall'ultima riga alla prima perché ognuna resti dove è
 stata misurata, sposta il punto della lunghezza di ogni tratto che lo precede
 o lo porta all'inizio di quello in cui si trovava, e, per tutto il buffer con
 `delete-trailing-lines`, toglie prima le righe vuote in fondo, fino al primo
-a capo dopo l'ultimo carattere che non è uno spazio. Le stesse righe le pulisce
-`write_buffer`, in `files.rs`, prima di copiare il testo da scrivere, quando
-il buffer ha `whitespace-cleanup-mode` acceso (`clean_before_save`, che lo
-chiede al buffer e legge `delete-trailing-lines` prima di prenderne il lock
-in scrittura); `write-file` fa lo stesso. Due decisioni:
+a capo dopo l'ultimo carattere che non è uno spazio. Il modulo `whitespace`
+(@mod-whitespace) chiama questa stessa primitiva dal `before-save-hook` del
+suo modo minore, con gli estremi espliciti del buffer anche se c'è una regione
+attiva. Il Rust che salva conosce solo il protocollo degli hook
+(@file-su-disco), non il nome del modo di pulizia.
 
-+ *Un modo minore, non un hook.* Emacs lo fa con `before-save-hook`, che qui
-  non c'è: aggiungerlo vorrebbe dire far eseguire Lisp a ogni percorso che
-  salva, anche dentro le domande di `C-x C-c`. Un modo minore (@modi-minori)
-  che il Rust legge nel buffer dice tutto ciò che serve, buffer per buffer, e
-  la pulizia resta Rust che non chiama l'interprete.
-+ *Prima di copiare, non sul testo copiato.* Pulire il testo da scrivere
-  lascerebbe il buffer diverso dal file, e quindi modificato subito dopo il
-  salvataggio. Pulito il buffer, ciò che si scrive è ciò che si vede, e un
-  `C-/` lo riporta com'era. L'autosalvataggio non passa da `write_buffer`, e
-  una copia di riserva resta la copia del buffer. `zap-to-char` legge il suo carattere con una cattura
-di tasti (@cattura), armata con il nome di `zap-to-char--do`: la cattura cita
-ciò che riceve prima di chiamarlo, e un simbolo si cerca tra le funzioni.
+La pulizia precede lo snapshot: ciò che si scrive è ciò che si vede e undo
+può riportare il testo com'era. Le copie periodiche restano copie del buffer.
+`zap-to-char` legge il suo carattere con una cattura di tasti (@cattura),
+armata con il nome di `zap-to-char--do`: la cattura cita ciò che riceve prima
+di chiamarlo, e un simbolo si cerca tra le funzioni.
 
 === Mark e regione <regione>
 
@@ -6984,6 +7048,15 @@ modo maggiore.
   fa scattare: `newline` è di `indent`, e spezzare lì vorrebbe dire legare i
   due moduli. Una riga andata oltre la colonna si spezza al prossimo spazio.
 
+=== `hl-line` <mod-hl-line>
+
+Fa `hl-line-mode` con `define-minor-mode`, etichetta `HL`, spento in partenza.
+Il modulo contiene il comando e la sua docstring; l'effetto è in
+`ui/compose.rs`, condiviso da finestre affiancate e flottanti
+(@evidenziazioni). Usa la faccia incorporata `hl-line`, con il solo fondo:
+non ha keymap né hook da aggiornare al movimento. Il punto e il layout del
+fotogramma bastano per l'intera riga logica, comprese le continuazioni.
+
 === `help` <mod-help>
 
 `C-h f`, `C-h v`, `C-h k`, `C-h b`, `C-h a` e `C-h ?`: le pagine dell'aiuto,
@@ -7159,6 +7232,18 @@ il modo acceso (@evidenziazioni).
 + *Senza etichetta.* Acceso ovunque, nella riga di stato sarebbe una parola
   in più in ogni finestra. `C-h M` lo elenca lo stesso.
 
+=== `subword` <mod-subword>
+
+Fa `subword-mode` con l'etichetta `Subword`, spento in partenza, e definisce
+`subword-separators` con `defvar`, così un valore scelto prima del caricamento
+resta. La stringa è globale, con un override tramite `buffer-put` nel singolo
+buffer. Non sostituisce i tasti: le primitive di movimento e kill interrogano
+il modo sotto il lock del buffer e condividono i calcoli di
+`primitives/subword.rs` (@movimento). Così anche i prefissi e le chiamate Lisp
+usano gli stessi confini. Il modulo non impone una regola di accensione:
+movimento per sottoparole e separatori sono scelte per il buffer o per un
+modo maggiore tramite le regole comuni dei modi minori.
+
 === `theme` <mod-theme>
 
 `C-c t` elenca i temi installati in `*Themes*`, e Return ne applica uno;
@@ -7216,12 +7301,15 @@ caratteri.
 
 === `whitespace` <mod-whitespace>
 
-Due modi minori (@modi-minori) per gli spazi a fine riga, tutti e due letti
-dal Rust. `whitespace-mode`, senza etichetta e acceso in ogni buffer come
+Due modi minori (@modi-minori) per gli spazi a fine riga. `whitespace-mode`, senza etichetta e acceso in ogni buffer come
 `show-paren-mode` (@mod-show-paren), li fa disegnare a `trailing_highlights`
 (@evidenziazioni). `whitespace-cleanup-mode`, con l'etichetta `Clean` e
-spento finché qualcuno non lo accende, li fa togliere a `clean_before_save`
-prima di ogni salvataggio (@verbi).
+spento finché qualcuno non lo accende, registra `whitespace--cleanup` nel
+suo `before-save-hook`. Quel callback chiama `delete-trailing-whitespace`
+con `point-min` e `point-max`: una regione attiva non restringe la pulizia.
+Il registro seleziona il callback solo quando il modo è acceso, e il
+protocollo comune lo esegue prima di ogni snapshot manuale (@file-su-disco).
+Togliere l'hook basta a togliere la pulizia; nessun ramo nativo la ripete.
 
 + *Due modi, non uno.* Vedere gli spazi e farli togliere da un salvataggio
   sono due scelte: in un file d'altri si vogliono vedere senza che salvare

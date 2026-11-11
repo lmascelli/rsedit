@@ -37,6 +37,8 @@ MODULES
     clipboard            kills also reach the system clipboard
     electric-pair        closing delimiters that type themselves
     show-paren           the bracket next to the cursor, drawn with its pair
+    hl-line              M-x hl-line-mode, the current line highlighted
+    subword              word movement and killing by identifier parts
     whitespace           the blanks at the ends of lines, drawn and cleaned
     overwrite            Insert, and what you type replaces what is there
     display-line-numbers  M-x display-line-numbers-mode, the lines numbered

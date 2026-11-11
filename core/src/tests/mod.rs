@@ -120,3 +120,5 @@ mod work_watchdog_tests;
 mod worker_tests;
 mod working_directory_tests;
 mod write_file_tests;
+
+mod extra_minor_modes_tests;

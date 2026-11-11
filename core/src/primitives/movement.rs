@@ -32,8 +32,8 @@ pub(crate) fn is_blank_line<B: BufferTrait>(text: &B, line: usize) -> bool {
 /// Returns the offset COUNT words forward of FROM, each word reached past the
 /// characters that are not part of one and left at its end.
 ///
-/// `forward-word`, `kill-word` and the verbs all ask here, so that a deletion
-/// takes exactly what the motion crosses.
+/// The ordinary word commands and verbs ask here; subword motion delegates
+/// here when its mode is off.
 pub(crate) fn word_forward<B: BufferTrait>(text: &B, from: usize, count: usize) -> usize {
     let len = text.len();
     let mut pos = from;
@@ -225,16 +225,17 @@ primitive!(end_of_line, _args, _env, ctx, {
 
 pub const FORWARD_WORD_DOC: &str = "(forward-word &optional N): Move point past the end of the \
          Nth word after it, 1 by default; a negative N moves back. A word is a run of letters, \
-         digits and underscores.";
+         digits and underscores; with `subword-mode' on, identifier parts are separate.";
 
-primitive!(forward_word, args, _env, ctx, {
+primitive!(forward_word, args, env, ctx, {
+    let separators = super::subword::separators(&env);
     ctx.with_current_buffer_mut(|buf| {
         let count = movement_count(args)?;
         let from = buf.text.cursor_pos_1d();
         let target = if count < 0 {
-            word_backward(&buf.text, from, count.unsigned_abs())
+            super::subword::backward(buf, from, count.unsigned_abs(), &separators)
         } else {
-            word_forward(&buf.text, from, count as usize)
+            super::subword::forward(buf, from, count as usize, &separators)
         };
         goto_offset(&mut buf.text, target);
         Ok(ELispExp::nil())
@@ -242,16 +243,18 @@ primitive!(forward_word, args, _env, ctx, {
 });
 
 pub const BACKWARD_WORD_DOC: &str = "(backward-word &optional N): Move point back to the start of \
-         the Nth word before it, 1 by default; a negative N moves forward.";
+         the Nth word before it, 1 by default; a negative N moves forward. With `subword-mode' \
+         on, move by identifier parts.";
 
-primitive!(backward_word, args, _env, ctx, {
+primitive!(backward_word, args, env, ctx, {
+    let separators = super::subword::separators(&env);
     ctx.with_current_buffer_mut(|buf| {
         let count = movement_count(args)?;
         let from = buf.text.cursor_pos_1d();
         let target = if count < 0 {
-            word_forward(&buf.text, from, count.unsigned_abs())
+            super::subword::forward(buf, from, count.unsigned_abs(), &separators)
         } else {
-            word_backward(&buf.text, from, count as usize)
+            super::subword::backward(buf, from, count as usize, &separators)
         };
         goto_offset(&mut buf.text, target);
         Ok(ELispExp::nil())

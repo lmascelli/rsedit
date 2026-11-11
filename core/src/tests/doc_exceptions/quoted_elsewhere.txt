@@ -12,6 +12,7 @@ setq
 yield
 
 # Hooks, which add-hook takes by name
+before-save-hook
 find-file-hook
 post-command-hook
 post-self-insert-hook

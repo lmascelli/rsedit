@@ -1,6 +1,6 @@
 //! Interactive file operations. The synchronous Lisp functions remain
 //! available; interactive-function selects these counterparts for commands.
-//! Design: doc/architettura-editor.typ, <file-su-disco>.
+//! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 use super::*;
 use crate::buffer::io_status::{FileIssue, IoCause};
 use crate::buffer::{
@@ -355,7 +355,9 @@ pub(super) fn save_named<B: BufferTrait>(
         ctx.set_echo_message("File operation already pending; no overlapping save was started");
         return Ok(ELispExp::nil());
     }
-    super::files::clean_before_save(ctx, env, &name);
+    if !super::files::before_save(ctx, env, name) {
+        return Ok(ELispExp::nil());
+    }
     let request = {
         let buf = handle
             .read()

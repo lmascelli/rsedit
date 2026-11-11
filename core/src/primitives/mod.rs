@@ -67,6 +67,7 @@ pub(crate) mod results;
 mod scan;
 mod sexp;
 pub(crate) mod shell;
+mod subword;
 mod syntax_table;
 mod theme;
 mod undo;

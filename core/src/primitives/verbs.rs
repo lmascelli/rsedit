@@ -185,10 +185,6 @@ primitive!(just_one_space, _args, _env, ctx, {
 /// end of a buffer, when the whole of it is cleaned.
 pub(crate) const DELETE_TRAILING_LINES: &str = "delete-trailing-lines";
 
-/// The name of the minor mode that cleans a buffer of the blanks at the ends
-/// of its lines before it is saved, where it is on.
-pub(crate) const WHITESPACE_CLEANUP_MODE: &str = "whitespace-cleanup-mode";
-
 /// Deletes the spaces and Tabs that end the lines FIRST to LAST of BUF and,
 /// with TRAILING_LINES, the blank lines at the end of the buffer but its last
 /// newline. Point stays where it was, or goes to the end of its line when it

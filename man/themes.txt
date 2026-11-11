@@ -58,6 +58,7 @@ THE FACES
         show-paren-match     the bracket at the cursor, and its partner
         show-paren-mismatch  the same, when the two are not of a kind
         trailing-whitespace  the spaces and Tabs at the end of a line
+        hl-line              the current logical line, with hl-line-mode
         keyword  type  function  builtin  string  comment
                              the parts of a language its mode colours
         doc-comment  attribute  preprocessor
@@ -77,6 +78,7 @@ THE FACES
 SETTING A FACE
         (set-face 'region "#f8f8f2" "#3a5fcd")
         (set-face 'comment "bright-black" nil '("italic"))
+        (set-face 'hl-line nil "#303030")
 
     FOREGROUND and BACKGROUND are colours, and nil or "" leaves that side
     to the terminal. ATTRIBUTES is a list of the attributes to turn on:

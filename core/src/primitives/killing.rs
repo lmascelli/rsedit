@@ -5,9 +5,7 @@
 use super::*;
 use crate::buffer::Buffer;
 use crate::primitives::args::movement_count;
-use crate::primitives::movement::{
-    line_bounds, paragraph_backward, paragraph_forward, word_backward, word_forward,
-};
+use crate::primitives::movement::{line_bounds, paragraph_backward, paragraph_forward};
 use crate::primitives::region::require_region;
 use crate::text::kill_ring::Direction;
 
@@ -93,13 +91,14 @@ fn kill_words<B: BufferTrait>(
     count: isize,
 ) -> ELispExp<B> {
     let reach = count.unsigned_abs();
+    let separators = super::subword::separators(env);
     let (killed, direction) = ctx.with_current_buffer_mut(|buf| {
         let point = buf.text.cursor_pos_1d();
         if count < 0 {
-            let from = word_backward(&buf.text, point, reach);
+            let from = super::subword::backward(buf, point, reach, &separators);
             (cut_out(buf, from, point), Direction::Backward)
         } else {
-            let to = word_forward(&buf.text, point, reach);
+            let to = super::subword::forward(buf, point, reach, &separators);
             (cut_out(buf, point, to), Direction::Forward)
         }
     });

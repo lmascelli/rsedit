@@ -3,6 +3,14 @@
 
 * Work in progress.
 
+Minor mode
+- auto-save-mode
+- auto-revert-mode
+- vim-mode
+- truncate-lines-mode (insieme a visual-line-mode)
+- display-fill-column-indicator-mode (accanto a auto-fill-mode)
+
+
 Da testare
 - Riempimento:
   riempire i commenti /* */;
@@ -14,7 +22,6 @@ Lacune che si notano subito
 - Guida verticale alla colonna fill-column: ora che il riempimento
   esiste è il complemento naturale, e si costruisce come le altre
   evidenziazioni disegnate al momento.
-- [ ] line numbers should be a per buffer property
 
 Comandi di testo
 - sort-lines, spostare una riga su o giù, align-regexp.

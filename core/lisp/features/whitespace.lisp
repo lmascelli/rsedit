@@ -25,6 +25,12 @@ off, or the other way with no argument.
 Example:
   (minor-mode-enable 'whitespace-cleanup-mode 'rust-mode)")
 
+(defun whitespace--cleanup ()
+  "Clean the whole buffer before saving, including when a region is active."
+  (delete-trailing-whitespace (point-min) (point-max)))
+
+(add-hook 'whitespace-cleanup-mode "before-save-hook" 'whitespace--cleanup)
+
 ;; In every buffer from now on, whatever its major mode, and in those already
 ;; open, which `minor-mode-enable' leaves as they are.
 (minor-mode-enable 'whitespace-mode)

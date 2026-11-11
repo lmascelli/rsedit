@@ -102,11 +102,14 @@ impl Face {
     /// The question in front of the answer, in the minibuffer's window.
     pub const MINIBUFFER_PROMPT: Face = Face(18);
 
+    /// Point's logical line in the selected window.
+    pub const HL_LINE: Face = Face(19);
+
     /// The faces the editor names itself, with their ids: the first entries
     /// of the registry, so that Rust names them as constants. The order and
     /// the constants above agree, as
     /// `built_in_faces_are_interned_at_their_own_ids` checks.
-    pub const BUILT_IN: [(Face, &'static str); 19] = [
+    pub const BUILT_IN: [(Face, &'static str); 20] = [
         (Face::DEFAULT, "default"),
         (Face::REGION, "region"),
         (Face::MODE_LINE, "mode-line"),
@@ -126,11 +129,12 @@ impl Face {
         (Face::SHOW_PAREN_MISMATCH, "show-paren-mismatch"),
         (Face::TRAILING_WHITESPACE, "trailing-whitespace"),
         (Face::MINIBUFFER_PROMPT, "minibuffer-prompt"),
+        (Face::HL_LINE, "hl-line"),
     ];
 
     /// Returns the face called NAME, defining it if nothing has named it yet.
     /// A name nobody styles is drawn plain, and `list-faces` shows it. See
-    /// [`Registry::intern`].
+    /// `Registry::intern`.
     pub fn intern(name: &str) -> Face {
         // The write lock even for a name already known: a check under the
         // read lock first would need a second one under this lock anyway, and
@@ -453,6 +457,13 @@ impl Default for Theme {
             Face::TRAILING_WHITESPACE,
             Style {
                 bg: Some(Color::RED),
+                ..Style::plain()
+            },
+        );
+        theme.set(
+            Face::HL_LINE,
+            Style {
+                bg: Some(Color::BRIGHT_BLACK),
                 ..Style::plain()
             },
         );

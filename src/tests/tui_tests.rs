@@ -444,6 +444,63 @@ fn a_highlight_is_drawn_in_reverse_video_over_exactly_its_own_columns() {
     );
 }
 
+#[test]
+fn syntax_keeps_the_current_line_background_and_explicit_backgrounds_override_it() {
+    let mut theme = Theme::default();
+    theme.set(
+        Face::HL_LINE,
+        Style {
+            bg: Some(Color::rgb(40, 41, 42)),
+            ..Style::plain()
+        },
+    );
+    theme.set(
+        Face::KEYWORD,
+        Style {
+            fg: Some(Color::rgb(80, 160, 240)),
+            ..Style::plain()
+        },
+    );
+    theme.set(
+        Face::REGION,
+        Style {
+            fg: Some(Color::WHITE),
+            bg: Some(Color::BLUE),
+            ..Style::plain()
+        },
+    );
+    let rendered = frame_themed(
+        &["let value"],
+        vec![
+            Highlight {
+                row: 0,
+                start_col: 0,
+                end_col: COLS as usize,
+                face: Face::HL_LINE,
+            },
+            Highlight {
+                row: 0,
+                start_col: 0,
+                end_col: 3,
+                face: Face::KEYWORD,
+            },
+            Highlight {
+                row: 0,
+                start_col: 4,
+                end_col: 9,
+                face: Face::REGION,
+            },
+        ],
+        theme,
+    );
+    let keyword = styled_run(&rendered, "\u{1b}[38;2;80;160;240m");
+    assert!(keyword.contains("\u{1b}[48;2;40;41;42m"));
+    assert!(keyword.contains("let"));
+    let region = styled_run(&rendered, "\u{1b}[48;2;0;0;170m");
+    assert!(region.contains("value"));
+    assert!(!region.contains("\u{1b}[48;2;40;41;42m"));
+}
+
 /// A wide character is two cells: the row is padded by cells, or every line
 /// with an ideogram ran past the window by one cell for each.
 #[test]

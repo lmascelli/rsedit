@@ -43,6 +43,12 @@ DESCRIPTION
     says, and its hooks `add-hook', as `modes' says. rust-mode.lisp is a
     mode of under a hundred lines, and the one to copy.
 
+    A mode can check or change text before it is saved by adding a named
+    function to "before-save-hook". The `files' page explains when it runs
+    and how an error prevents the write; the `modes' page explains hook
+    ordering and registration. `whitespace-cleanup-mode' uses a minor
+    mode's hook this way.
+
 COLOURING
     A rule colours what its regular expression matches, within a line. A
     region runs from BEGIN to END, across lines if need be, and nothing else

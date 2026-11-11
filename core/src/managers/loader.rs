@@ -98,7 +98,7 @@ impl<F> Loader<F> {
     }
 
     /// Returns the names of the features in force, the newest first, as
-    /// Emacs's `features' lists them.
+    /// Emacs's `features` lists them.
     pub fn loaded(&self) -> Vec<String> {
         self.known
             .iter()

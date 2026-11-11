@@ -1,7 +1,7 @@
 //! Bounded file operations, separate from the executor and from each other.
 //! Results are applied by tick, on the command thread. A slow operation
 //! keeps its reservation: a timeout is a warning, never a cancellation.
-//! Design: doc/architettura-editor.typ, <file-su-disco>.
+//! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 use super::*;
 use std::collections::HashMap;
 use std::sync::{Mutex, Weak};

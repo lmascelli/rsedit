@@ -13,6 +13,7 @@ pub(crate) mod visual_lines;
 pub mod width;
 mod windows;
 
+pub(crate) use compose::hl_line_highlights;
 #[cfg(test)]
 pub(crate) use compose::region_highlights;
 pub use compose::{

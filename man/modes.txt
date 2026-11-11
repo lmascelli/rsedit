@@ -262,6 +262,8 @@ HOOKS
                                 modes `minor-mode-enable' asks for are on
         find-file-hook          a file has been opened in a new buffer,
                                 after those three
+        before-save-hook        before a manual save copies the text;
+                                a failure aborts it, as `files' describes
         after-set-visited-file-name-hook
                                 C-x C-w has written the buffer to a file
                                 it was not visiting
@@ -282,7 +284,8 @@ HOOKS
 
     `remove-hook' takes the same arguments: with a mode it takes the
     function off that mode's hook, and with nil off the one for every mode.
-    A function that fails is reported in the log, and the others still run.
+    A function that fails is reported in the log, and the others still run,
+    except in before-save-hook, where the first error aborts the save.
     The first *scratch* is made before init.lisp is read, so the hooks of
     a new buffer that init.lisp adds do not run for it.
 

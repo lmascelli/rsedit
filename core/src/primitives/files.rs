@@ -16,8 +16,7 @@ use std::sync::Arc;
 /// it: a failed save that only the log heard about is work the user believes
 /// is safe. What `save-buffer` and `save-some-buffers` save with.
 ///
-/// First, where `whitespace-cleanup-mode` is on in the buffer, the blanks at
-/// the ends of its lines go, as the command takes them.
+/// Runs before-save-hook before taking the text snapshot.
 pub(super) fn write_buffer<B: BufferTrait>(
     ctx: &EditorState<B>,
     env: &Arc<Env<EditorState<B>>>,
@@ -43,7 +42,9 @@ fn write_buffer_expected<B: BufferTrait>(
         ctx.set_echo_message("File operation already pending; no overlapping save was started");
         return false;
     };
-    clean_before_save(ctx, env, name);
+    if !before_save(ctx, env, name) {
+        return false;
+    }
     let (content, coding, version, stamp, stale) = ctx
         .with_buffer(name, |buf| {
             (
@@ -122,26 +123,84 @@ fn report_write_failure<B: BufferTrait>(
     ctx.log_diagnostic(&message);
 }
 
-/// Deletes the blanks at the ends of the lines of the buffer NAME, and the
-/// blank lines at its end as `delete-trailing-lines` says, when the buffer
-/// has `whitespace-cleanup-mode` on. The setting is read before the buffer's
-/// lock is taken for writing.
-pub(crate) fn clean_before_save<B: BufferTrait>(
+const PREPARING_SAVE: &str = "file-io:before-save";
+
+struct SaveHookGuard<B: BufferTrait>(crate::editor::file_io::Handle<B>);
+impl<B: BufferTrait> Drop for SaveHookGuard<B> {
+    fn drop(&mut self) {
+        self.0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .forget_data(PREPARING_SAVE);
+    }
+}
+
+/// Runs the target buffer's save hooks without locks, before its snapshot.
+/// Errors abort the save; a hook cannot recursively prepare the same buffer.
+pub(crate) fn before_save<B: BufferTrait>(
     ctx: &EditorState<B>,
     env: &Arc<Env<EditorState<B>>>,
     name: &str,
-) {
-    let cleaning = ctx.with_buffer(name, |buf| {
-        buf.minor_mode_enabled(super::verbs::WHITESPACE_CLEANUP_MODE)
-    });
-    if cleaning != Some(true) {
-        return;
+) -> bool {
+    let Some(handle) = ctx.file_handle(name) else {
+        return false;
+    };
+    let state = {
+        let mut buf = handle
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if buf.data::<bool>(PREPARING_SAVE).copied().unwrap_or(false) {
+            None
+        } else {
+            buf.put_data(PREPARING_SAVE, true);
+            Some((
+                buf.current_mode.clone(),
+                buf.minor_modes
+                    .iter()
+                    .map(|on| on.name.clone())
+                    .collect::<Vec<_>>(),
+                buf.file_path.clone(),
+            ))
+        }
+    };
+    let Some((mode, minors, path)) = state else {
+        ctx.set_echo_message("Save already being prepared in this buffer");
+        return false;
+    };
+    let _preparing = SaveHookGuard(handle.clone());
+    let Some(previous) = ctx.set_current_buffer(name) else {
+        return false;
+    };
+    let hooks = ctx.modes(|modes| modes.hooks_for(&mode, &minors, "before-save-hook"));
+    let target_intact = || {
+        ctx.file_handle(name)
+            .is_some_and(|current| Arc::ptr_eq(&current, &handle))
+            && handle
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .file_path
+                == path
+    };
+    let result = (|| {
+        for hook in hooks {
+            ctx.set_current_buffer(name);
+            let _command = ctx.begin_command();
+            eval(&ELispExp::form(vec![hook]), env.clone(), ctx)
+                .map_err(|why| format!("{why:?}"))?;
+            if !target_intact() {
+                return Err("the hook removed, renamed or repointed the buffer".to_string());
+            }
+        }
+        Ok(())
+    })();
+    ctx.set_current_buffer(&previous);
+    if let Err(why) = result {
+        let message = format!("Before-save hook failed: {why}; save aborted");
+        ctx.set_echo_message(&message);
+        ctx.log_diagnostic(&message);
+        return false;
     }
-    let trailing_lines = env.flag(super::verbs::DELETE_TRAILING_LINES, true);
-    ctx.with_buffer_mut(name, |buf| {
-        let last = buf.text.line_count();
-        super::verbs::delete_trailing(buf, 0, last, trailing_lines)
-    });
+    true
 }
 
 /// Records that NAME's text as it was at VERSION is now in its file, stamped
@@ -615,7 +674,9 @@ primitive!(write_file, args, env, ctx, {
             }
         }
     };
-    clean_before_save(ctx, &env, &current);
+    if !before_save(ctx, &env, &current) {
+        return Ok(ELispExp::nil());
+    }
     // Taken under the lock, written with the lock given back: a slow disk must
     // not stop every other thread reading the buffer.
     let (content, coding, version) =

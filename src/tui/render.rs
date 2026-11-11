@@ -226,7 +226,18 @@ fn draw_highlight<W: Write>(
         return Ok(());
     };
     // A face bound to nothing looks as the row already does.
-    let style = theme.style(highlight.face);
+    let mut style = theme.style(highlight.face);
+    if style.bg.is_none()
+        && !style.reverse
+        && view.highlights.iter().any(|base| {
+            base.face == Face::HL_LINE
+                && base.row == highlight.row
+                && base.start_col <= highlight.start_col
+                && base.end_col >= highlight.end_col
+        })
+    {
+        style.bg = theme.style(Face::HL_LINE).bg;
+    }
     if style.is_plain() {
         return Ok(());
     }

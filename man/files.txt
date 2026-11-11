@@ -100,6 +100,38 @@ SAVING
     In a buffer with `whitespace-cleanup-mode' on, a save first takes away
     the spaces at the ends of lines: see the `editing' page.
 
+BEFORE SAVING
+    Every manual save runs `before-save-hook' before copying the text to
+    write: C-x C-s, C-x C-w, the saves offered when leaving, and their
+    synchronous Lisp functions and asynchronous counterparts. Hooks run
+    on the command thread, with the target buffer current, and changes
+    they make are included in the save. Local auto-save copies do not run
+    this hook or clean the text.
+
+    Register named functions as for other hooks: a major mode's first,
+    then the active minor modes in activation order, then global hooks.
+    The `modes' page describes add-hook and remove-hook. For example:
+
+        (defun check-note-before-save ()
+          (if (= (point-min) (point-max))
+              (error "The note is empty")))
+        (add-hook 'fundamental-mode "before-save-hook"
+                  'check-note-before-save)
+
+    The first hook error stops the remaining hooks and aborts the save,
+    with an echo-area message and a log entry. Edits already made by the
+    hooks remain in the buffer and can be undone. Removing, renaming or
+    changing the visited file of the target buffer also aborts the save.
+    A recursive save of the same buffer is refused. Each callback starts
+    in the target buffer; afterwards the caller's current buffer is
+    restored if it still exists. User hooks that do slow work can delay
+    the command thread, including for an asynchronous save.
+
+    `whitespace-cleanup-mode' registers its cleanup on this hook, scoped
+    to the buffers where the minor mode is on.
+
+SAVING MORE THAN ONE BUFFER
+
     M-x save-some-buffers offers each buffer with unsaved changes that is
     visiting a file:
 
@@ -168,8 +200,9 @@ SLOW OR DISCONNECTED MOUNTS
     failure or for a directory. save-buffer-async and write-file-async call
         AFTER with t when the snapshot was written, nil on I/O failure. A
     refused
-    request or cancelled conflict does not call AFTER. They return t for an
-        accepted request and nil if busy. Edits made during a save remain
+    request, failing before-save hook or cancelled conflict does not call
+    AFTER. They return t for an accepted request and nil if refused. Edits
+    made during a save remain
     modified;
     edits made during a revert prevent its result from replacing the buffer.
 

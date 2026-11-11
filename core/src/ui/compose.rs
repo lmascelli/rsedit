@@ -306,7 +306,9 @@ impl LayoutNode {
                 let in_buffer = window_highlights(win, &rect, buffers, settings, is_focused);
                 // In buffer columns until here; `place` maps, scrolls and cuts
                 // them.
-                let mut highlights = layout::place(&layout, in_buffer, win.scroll_x, rect.width);
+                let mut highlights =
+                    hl_line_highlights(win, &layout, buffers, is_focused, rect.width);
+                highlights.extend(layout::place(&layout, in_buffer, win.scroll_x, rect.width));
                 // The virtual text's own faces last, over the colouring around
                 // it.
                 highlights.extend(layout.virtual_highlights(win.scroll_x, rect.width));
@@ -562,6 +564,41 @@ pub fn window_highlights<B: BufferTrait>(
     in_buffer.extend(region_highlights(win, rect, buffers));
     in_buffer.extend(spot_highlights(win, rect, buffers, settings.spots));
     in_buffer
+}
+
+/// Returns the full visible rows of point's logical line in the focused window.
+pub(crate) fn hl_line_highlights<B: BufferTrait>(
+    win: &Window,
+    layout: &Layout,
+    buffers: &Buffers<B>,
+    focused: bool,
+    width: usize,
+) -> Vec<Highlight> {
+    if !focused || win.is_prompt() {
+        return Vec::new();
+    }
+    let Some(handle) = buffers.handle(&win.buffer_name) else {
+        return Vec::new();
+    };
+    let buf = handle
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !buf.minor_mode_enabled("hl-line-mode") {
+        return Vec::new();
+    }
+    let line = buf.text.cursor_pos().0;
+    layout
+        .rows()
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.line == line)
+        .map(|(row, _)| Highlight {
+            row,
+            start_col: 0,
+            end_col: width,
+            face: Face::HL_LINE,
+        })
+        .collect()
 }
 
 /// Returns the blanks, spaces and Tabs, that end the lines WIN shows in RECT,

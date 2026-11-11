@@ -1,6 +1,6 @@
 //! File access causes and recovery history, stored as buffer attachments.
 //! Rendering and status commands use these snapshots without filesystem I/O.
-//! Design: doc/architettura-editor.typ, <file-su-disco>.
+//! Design: `doc/architettura-editor.typ, <file-su-disco>`.
 use super::{
     Buffer, BufferTrait,
     disk::{IO_ERROR, IO_MARK, IoMark},
