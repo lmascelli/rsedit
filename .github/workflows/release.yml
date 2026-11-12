@@ -169,8 +169,22 @@ jobs:
                   (Path("man"), Path("man"), "*.txt"),
               ]
               for source, destination, pattern in groups:
-                  files = sorted(source.glob(pattern))
-                  if not files:
+                  files_by_name = {
+                      path.name: path for path in source.glob(pattern)
+                  }
+                  if destination == Path("man"):
+                      generated = (
+                          build / "data" / destination / "risp-base-index.txt"
+                      )
+                      if not generated.is_file() or not generated.stat().st_size:
+                          raise RuntimeError(
+                              "Risorsa generata mancante o vuota: "
+                              + str(generated)
+                          )
+                      files_by_name[generated.name] = generated
+                  files = sorted(
+                      files_by_name.values(), key=lambda path: path.name
+                  )                  if not files:
                       raise RuntimeError("Risorse mancanti: " + str(source))
                   packaged_dir = root / "data" / destination
                   expected = {path.name for path in files}
