@@ -1,7 +1,9 @@
 //! What the editor carries from one run to the next -- the answers given at
 //! the prompts, the files visited and where point was left in each -- in one
 //! file of the state directory, read by [`EditorState::load_session`] at start
-//! and written by [`EditorState::save_session`] at exit.
+//! and written by [`EditorState::save_session`] at exit and, in between, by
+//! the [`SessionSaver`](crate::jobs::session_saver::SessionSaver). Each write
+//! first takes in what another editor has added to the file.
 //!
 //! Design: `doc/architettura-editor.typ, <memoria>`.
 
@@ -18,6 +20,13 @@ pub(crate) const SESSION_FILE: &str = "session";
 /// one run to the next off.
 pub(crate) const SAVE_HISTORY: &str = "save-history";
 
+/// The name of the Lisp variable holding how often the session is written
+/// while the editor runs, in seconds.
+pub(crate) const SESSION_SAVE_INTERVAL: &str = "session-save-interval";
+
+/// How often the session is written when nothing says otherwise.
+pub const DEFAULT_SESSION_SAVE_INTERVAL: f64 = 60.0;
+
 /// The session file's first line: what it is, and the version of what follows.
 const HEADER: &str = "rsedit-session 1";
 
@@ -28,7 +37,7 @@ pub(crate) fn saving_history<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> 
 }
 
 /// What a session file holds, each list newest first.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Session {
     /// Each prompt's key, with its answers.
     pub history: Vec<(String, Vec<String>)>,
@@ -39,6 +48,50 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    /// Returns what THEIRS, the file as it is now, holds that neither BASE,
+    /// the file as this editor last read or wrote it, nor OURS has: what
+    /// another editor added meanwhile, in the file's order. What is in BASE
+    /// and not in OURS was forgotten here, and is not news.
+    pub(crate) fn news(theirs: &Session, base: &Session, ours: &Session) -> Session {
+        fn ring<'a>(session: &'a Session, key: &str) -> &'a [String] {
+            session
+                .history
+                .iter()
+                .find(|(known, _)| known == key)
+                .map_or(&[], |(_, entries)| entries.as_slice())
+        }
+        let mut news = Session::default();
+        for (key, entries) in &theirs.history {
+            let (base, ours) = (ring(base, key), ring(ours, key));
+            let mut added: Vec<String> = Vec::new();
+            for entry in entries {
+                if !base.contains(entry) && !ours.contains(entry) && !added.contains(entry) {
+                    added.push(entry.clone());
+                }
+            }
+            if !added.is_empty() {
+                news.history.push((key.clone(), added));
+            }
+        }
+        for path in &theirs.recent {
+            if !base.recent.contains(path) && !ours.recent.contains(path) {
+                news.recent.push(path.clone());
+            }
+        }
+        for place in &theirs.places {
+            if !base.places.contains(place) && !ours.places.iter().any(|(path, _)| *path == place.0)
+            {
+                news.places.push(place.clone());
+            }
+        }
+        news
+    }
+
+    /// Returns whether it holds nothing.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.history.is_empty() && self.recent.is_empty() && self.places.is_empty()
+    }
+
     /// Returns the file's text: the header, then a line for each answer, file
     /// and place, its fields apart by tabs and each field escaped.
     pub(crate) fn render(&self) -> String {
@@ -195,6 +248,12 @@ impl<B: BufferTrait> EditorState<B> {
                 path.display()
             ));
         }
+        // What the file held when it was read, whatever the settings keep of
+        // it: what a later write compares the file with.
+        *self
+            .session_base
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = session.clone();
         self.restore_session(env, session);
         true
     }
@@ -222,33 +281,78 @@ impl<B: BufferTrait> EditorState<B> {
     /// settings say to keep: the answers given at the prompts when
     /// `save-history` is on, the recent files, and, when `save-place` is on,
     /// where point is in each buffer visiting a file and was in those
-    /// closed. Returns whether it was written; when it was not, the log
+    /// closed. What another editor added to the file since this one last
+    /// read or wrote it is taken in first, behind what this one knows.
+    /// Returns whether the file holds the session; when it does not, the log
     /// says why.
     pub fn save_session(
         &self,
         env: &Arc<Env<EditorState<B>>>,
         state: Result<PathBuf, DirError>,
     ) -> bool {
-        let session = self.session_to_save(env);
-        let path = match state {
-            Ok(state) => state.join(SESSION_FILE),
+        match self.write_session(env, state) {
+            Ok(_) => true,
             Err(why) => {
-                self.log_diagnostic(&format!("[WARNING] No session written: {why}"));
-                return false;
-            }
-        };
-        // Every lock given back: the write is a disk's, whose time nobody
-        // controls.
-        match write_session_file(&path, &session.render()) {
-            Ok(()) => true,
-            Err(why) => {
-                self.log_diagnostic(&format!(
-                    "[WARNING] No session written to {}: {why}",
-                    path.display()
-                ));
+                self.log_diagnostic(&format!("[WARNING] {why}"));
                 false
             }
         }
+    }
+
+    /// Does what [`Self::save_session`] does, saying nothing: returns whether
+    /// the file was written, false when it already held the session, or why
+    /// it could not be.
+    ///
+    /// One write at a time, the exit's or the job's: the file as this editor
+    /// last knew it is held for the whole of it. No lock of the editor's is
+    /// held across the read or the write, which are a disk's, whose time
+    /// nobody controls.
+    pub(crate) fn write_session(
+        &self,
+        env: &Arc<Env<EditorState<B>>>,
+        state: Result<PathBuf, DirError>,
+    ) -> Result<bool, String> {
+        let path = state
+            .map_err(|why| format!("No session written: {why}"))?
+            .join(SESSION_FILE);
+        let mut base = self
+            .session_base
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A file that is not there, or not a session, has nothing to take in.
+        let on_disk = std::fs::read_to_string(&path).ok();
+        let theirs = on_disk
+            .as_deref()
+            .and_then(Session::parse)
+            .map(|(session, _)| session)
+            .unwrap_or_default();
+        let mut session = self.session_to_save(env);
+        let news = Session::news(&theirs, &base, &session);
+        if !news.is_empty() {
+            self.restore_session(env, news);
+            session = self.session_to_save(env);
+        }
+        let text = session.render();
+        let written = on_disk.as_deref() != Some(text.as_str());
+        if written {
+            write_session_file(&path, &text)
+                .map_err(|why| format!("No session written to {}: {why}", path.display()))?;
+        }
+        *base = session;
+        Ok(written)
+    }
+
+    /// Starts the job that writes the session file in STATE every
+    /// `session-save-interval` seconds, so that an editor that stops without
+    /// being asked loses a few minutes of its memory and not the whole run.
+    /// For the host, after [`Self::load_session`].
+    pub fn start_session_saver(
+        &self,
+        env: &Arc<Env<EditorState<B>>>,
+        state: Result<PathBuf, DirError>,
+    ) {
+        let saver = crate::jobs::session_saver::SessionSaver::new(env.clone(), state.ok());
+        self.work.submit(saver.spec(), Box::new(saver));
     }
 
     /// Returns what [`Self::save_session`] writes, the open buffers' places

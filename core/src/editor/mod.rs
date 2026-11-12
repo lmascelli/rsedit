@@ -249,6 +249,12 @@ pub struct EditorState<B: BufferTrait> {
     /// The files visited, and where point was left in each. See [`Visits`].
     visits: Arc<RwLock<Visits>>,
 
+    /// The session file as this editor last read or wrote it: what a write
+    /// compares the file with, to tell what another editor added from what
+    /// this one forgot. Held for the whole of a write, so that there is one
+    /// at a time.
+    session_base: Arc<std::sync::Mutex<session::Session>>,
+
     /// The execution budget, the call stack, the theme, the goal column, and
     /// the search or replace in progress. See [`Runtime`].
     runtime: Arc<RwLock<Runtime>>,

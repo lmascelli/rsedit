@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::editor::frame::HIGHLIGHT_ALL_MATCHES;
-use crate::editor::session::SAVE_HISTORY;
+use crate::editor::session::{SAVE_HISTORY, SESSION_SAVE_INTERVAL};
 use crate::editor::visits::{RECENT_FILES_LENGTH, SAVE_PLACE};
 use crate::feature::isearch::{CASE_FOLD, ISEARCH_LAZY_COUNT};
 use crate::feature::minibuffer::HISTORY_LENGTH;
@@ -224,6 +224,14 @@ pub const SETTINGS: &[Setting] = &[
         doc: "Whether point is remembered in each file when its buffer is closed or the editor \
               quits, and put back there when the file is opened again: nil opens every file \
               at its start.",
+    },
+    Setting {
+        name: SESSION_SAVE_INTERVAL,
+        doc: "How many seconds pass between one writing of the session file and the next \
+              while the editor runs, when there is something new to write; nil, or a number \
+              under 1, writes it only when the editor quits.\n\n\
+              Example:\n\
+              \x20 (setq session-save-interval 300)",
     },
     Setting {
         name: MINIBUFFER_LINES,

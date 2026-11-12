@@ -8,10 +8,11 @@ SYNOPSIS
     save-history
     recent-files-length
     save-place
+    session-save-interval
 
 DESCRIPTION
-    When the editor quits it writes down three things, and when it starts
-    it reads them back:
+    The editor writes down three things, when it quits and every minute
+    while it runs, and when it starts it reads them back:
 
         the answers given at each prompt, which C-p walks back through
         the files opened, newest first, which M-g r opens again
@@ -22,9 +23,23 @@ DESCRIPTION
     you left it at. Each of the three can be turned off on its own.
 
     They are kept in one file, `session', in the state directory: the
-    `configuration' page says where that is. The file is the editor's, and
-    is written again at every exit: deleting it loses this memory and
-    nothing else.
+    `configuration' page says where that is. The file is the editor's:
+    deleting it loses this memory and nothing else.
+
+WHEN IT IS WRITTEN
+    The file is written when the editor quits, and, while it runs, every
+    `session-save-interval' seconds, 60 unless you change it, when there
+    is something new to write. So an editor that is killed, or that stops
+    on an error of its own, loses at most the last minute of its memory.
+    nil, or a number under 1, writes the file only at exit.
+
+    Several editors open at once share the file. Each, before it writes,
+    reads what the others have added since it last looked, and takes it
+    in behind what it knows itself: the answers another editor was given
+    turn up at this one's prompts, after its own, and the files another
+    opened among its recent files. What an editor forgets on purpose --
+    with `clear-recent-files', or by leaving a file at its start -- it
+    does not take back from the file it wrote itself.
 
 THE ANSWERS AT THE PROMPTS
     Each prompt keeps its own answers, as the `minibuffer' page says, up to
@@ -76,6 +91,11 @@ EXAMPLES
 
         (setq save-history nil)
 
+    Write the session every five minutes, or only when the editor quits:
+
+        (setq session-save-interval 300)
+        (setq session-save-interval nil)
+
     Open every file at its start:
 
         (setq save-place nil)
@@ -89,14 +109,18 @@ EXAMPLES
         (define-key nil "C-c f" 'find-recent-file)
 
 LIMITS
-    The file is written when the editor quits, by any way out: C-x C-c,
-    M-x quit-without-saving, closing the window. An editor that is killed,
-    or that stops on an error inside the editor itself, writes nothing, and
-    the next start reads what the run before wrote.
+    An editor that is killed, or that stops on an error inside the editor
+    itself, does not write at that moment: the next start reads what was
+    written last, a minute old at most unless `session-save-interval' says
+    otherwise.
 
-    Two editors open at once each write their own memory when they quit,
-    and the one that quits last is the one the next start reads: what the
-    other learned is lost.
+    With several editors open, what one forgets another still remembers,
+    and writes back: `clear-recent-files' in one of two editors clears the
+    list for good only when the other has quit, or done the same. What
+    another editor added comes behind what this one knows, whichever was
+    the more recent. And two editors writing in the same instant can each
+    miss what the other is writing; the one still open puts it back at its
+    next write.
 
     A place is a count of characters from the start of the file. A file
     changed by another program since it was left opens at the same count,

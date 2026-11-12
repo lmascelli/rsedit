@@ -17,12 +17,10 @@ Comandi di testo
 Hooks
 
 * Fixes todo
-- MIN-10: remove this settings that now belongs to minibuffer.lisp
 - Sessione: scriverla anche a intervalli, non solo all’uscita, e fondere le sessioni di più
   editor aperti insieme.
 - Macros are not listed in describe-function and not documented.
-- ~/.local/share/rsedit/plugins must be created when the plugin system is started
-  if it doesn't exists.
+
 
 * Macro todo
 - [ ] An eshell like mode, where it is possible to both read from stdin/stderr associated

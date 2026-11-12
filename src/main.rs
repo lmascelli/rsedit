@@ -134,6 +134,14 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             create: false,
         }),
     );
+    // And written again while the editor runs, from then on.
+    state.start_session_saver(
+        &env,
+        app_dir(DirOptions {
+            dir: AppDir::State,
+            create: true,
+        }),
+    );
 
     let mut next_file = ELispExp::nil();
     for file in options.files.into_iter().rev() {

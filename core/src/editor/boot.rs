@@ -138,6 +138,7 @@ impl<B: BufferTrait> EditorState<B> {
             log,
             history: Arc::new(RwLock::new(History::default())),
             visits: Arc::new(RwLock::new(Visits::default())),
+            session_base: Arc::default(),
             loader: Arc::new(RwLock::new(Loader::default())),
             working_directory: Arc::new(RwLock::new(
                 crate::paths::starting_directory()
@@ -397,6 +398,10 @@ pub fn create_global_env<B: BufferTrait>()
     // What is kept from one run to the next: the answers, the recent files
     // and the places, all of them unless the configuration says otherwise.
     env.set_variable(super::session::SAVE_HISTORY.into(), ELispExp::t());
+    env.set_variable(
+        super::session::SESSION_SAVE_INTERVAL.into(),
+        ELispExp::number(super::session::DEFAULT_SESSION_SAVE_INTERVAL),
+    );
     env.set_variable(
         super::visits::RECENT_FILES_LENGTH.into(),
         ELispExp::number(crate::managers::DEFAULT_RECENT_FILES_LENGTH as f64),

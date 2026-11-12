@@ -351,7 +351,8 @@ c'è.
   errore di `create_global_env`, e `main` esce con un codice diverso da 0.
 + Il WorkManager riceve `FileWatcher` e `AutoSaver`, che a ogni passo leggono
   le loro impostazioni (`watch-file-interval`, `auto-save`,
-  `auto-save-interval`).
+  `auto-save-interval`). Il quinto lavoro, `SessionSaver`, lo avvia `main.rs`
+  con `start_session_saver`, dopo aver letto la sessione (@memoria).
 
 === Le directory dell'editor <directory>
 
@@ -433,8 +434,9 @@ Stanno in due compartimenti --- le risposte in `History`, i file e le
 posizioni in `Visits` --- e su disco in un file solo, `session`, nella
 directory dello stato (@directory). `load_session` lo legge in `main.rs` dopo
 `create_global_env` e prima dei file della riga di comando; `save_session` lo
-scrive all'uscita, da `ShutDownOnExit`. Tutti e due stanno in
-`editor/session.rs`; ciò che registra una visita e una posizione, in
+scrive all'uscita, da `ShutDownOnExit`, e mentre l'editor gira lo scrive
+`SessionSaver` (`jobs/session_saver.rs`), ogni `session-save-interval`
+secondi. Lettura e scrittura stanno in `editor/session.rs`; ciò che registra una visita e una posizione, in
 `editor/visits.rs`.
 
 #ref-table(
@@ -478,10 +480,32 @@ scarta, con `save-place` a `nil` le posizioni. `History::restore` e
 `Visits::restore` mettono ciò che arriva dal file #emph[dietro] a ciò che
 l'avvio conosce già, e un percorso già noto tiene la voce più nuova; i limiti
 sono `history-length`, `recent-files-length` e `PLACES_LIMIT`, 400
-posizioni. `save_session` registra le posizioni dei buffer aperti, copia le
-tre liste uscendo da ogni lock, e solo allora scrive, con `write_atomically`
-(@file-su-disco). Un errore va nel log: l'editor sta uscendo, e non c'è
-un'area dei messaggi da leggere.
+posizioni.
+
+Ogni scrittura passa da `write_session`, che fonde prima di scrivere. Tre
+sessioni entrano nel conto: la #emph[nostra], ciò che l'editor sa ora
+(`session_to_save`, che registra le posizioni dei buffer aperti e copia le
+tre liste uscendo da ogni lock); la #emph[loro], il file com'è adesso sul
+disco; e la #emph[base], il file com'era l'ultima volta che questo editor lo
+ha letto o scritto, tenuta in `EditorState::session_base`. `Session::news` dà
+ciò che la loro ha e che né la base né la nostra hanno: è ciò che un altro
+editor ha aggiunto nel frattempo. Ciò che sta nella base e non nella nostra è
+stato dimenticato qui, e non torna. Le novità entrano nei compartimenti con
+`restore_session`, dietro a ciò che l'editor sa, come alla lettura; poi la
+sessione, rifatta, si scrive con `write_atomically` (@file-su-disco) e
+diventa la base. Se il testo da scrivere è quello che il file ha già, non si
+scrive nulla. Il `Mutex` della base resta preso per tutta la scrittura: ce
+n'è una alla volta, quella dell'uscita o quella del lavoro.
+
+`SessionSaver` è un lavoro del WorkManager (@lavori-editor) che l'host avvia
+con `start_session_saver`, passandogli la directory dello stato. A ogni passo
+consegna `write_session` a un thread delle operazioni sui file
+(`start_file_io`, corsia `Recovery`), perché il disco non stia
+sull'esecutore, e dorme `session-save-interval` secondi; con `nil`, o un
+numero sotto 1, resta parcheggiato e rilegge l'impostazione ogni minuto. Un
+errore va nel log una volta, finché una scrittura non riesce. `save_session`,
+all'uscita, lo scrive sempre: l'editor sta uscendo, e non c'è un'area dei
+messaggi da leggere.
 
 Le decisioni:
 
@@ -496,12 +520,13 @@ Le decisioni:
   rovinata si perde da sola, e una riga di un tipo che una versione futura
   aggiunga si salta invece di fermare la lettura. Scartato: JSON o un formato
   binario, che chiederebbero una dipendenza per tre liste di stringhe.
-+ *Si scrive all'uscita, una volta.* Scrivere a ogni comando metterebbe il
-  disco sul percorso dei tasti, e un lavoro di sfondo a intervalli
-  scriverebbe di continuo pochi byte che cambiano di rado. Il prezzo è che un
-  editor ucciso, o fermato da un panic, non scrive nulla, e l'avvio dopo
-  legge la sessione di quello prima: è ciò che il manpage `session` dice
-  nei limiti.
++ *All'uscita, e a intervalli se è cambiata.* Scrivere a ogni comando
+  metterebbe il disco sul percorso dei tasti. Un lavoro di sfondo ogni minuto
+  costa una lettura del file e un confronto, e scrive solo quando il testo
+  sarebbe diverso: così un editor ucciso, o fermato da un panic, perde al più
+  l'ultimo intervallo e non l'intera sessione. Il lavoro lo avvia l'host e non
+  `create_global_env`, per la stessa ragione per cui l'host legge la sessione:
+  i test costruiscono editor in parallelo nella stessa directory di stato.
 + *Non durante un panic.* Un panic può lasciare un buffer a metà di una
   modifica, e un secondo panic dentro un `Drop`, durante lo srotolamento,
   interrompe il processo prima che `shutdown` scriva nel file le ultime
@@ -515,11 +540,32 @@ Le decisioni:
   stato isolata: uno che leggesse la sessione scritta da un altro vedrebbe
   risposte e file che non sono suoi. I test della sessione chiamano
   `load_session` e `save_session` con una directory propria.
-+ *Vince chi esce per ultimo.* Due editor aperti insieme non fondono le loro
-  sessioni: il file è sempre intero, perché si scrive con `write_atomically`,
-  ma l'editor che esce dopo sostituisce ciò che ha scritto l'altro. Scartato:
-  rileggere e fondere all'uscita, che per un caso raro chiederebbe regole di
-  fusione diverse per tre liste ordinate.
++ *Fusione a tre, con la base.* Due editor aperti insieme scrivono lo stesso
+  file, e ognuno deve tenere ciò che l'altro ha imparato senza far tornare
+  ciò che lui stesso ha dimenticato. Con due sole sessioni, la nostra e il
+  file, le due cose non si distinguono: un file che `clear-recent-files` ha
+  tolto è, nel file, uguale a uno che un altro editor ha appena aperto. La
+  base lo dice: nuovo è ciò che il file ha e la base no. Scartato: unire
+  sempre il file alla nostra, che rende impossibile dimenticare.
++ *Le novità entrano nell'editor, non solo nel file.* Se restassero solo nel
+  file, alla scrittura dopo sarebbero nella base e non nella nostra, cioè
+  «dimenticate», e sparirebbero. Entrando nei compartimenti diventano nostre,
+  e come effetto la storia dei prompt e i file recenti si condividono tra gli
+  editor aperti, con al più un intervallo di ritardo.
++ *Dietro a ciò che si sa.* Ciò che arriva da un altro editor si mette dopo
+  ciò che questo conosce, come alla lettura, anche quando è più recente: il
+  file non porta l'ora di ogni voce, e aggiungerla cambierebbe il formato per
+  un ordine che conta poco. Il prezzo è nel manpage `session`, nei limiti.
++ *Senza un lock sul file.* Leggere, fondere e scrivere non è atomico tra due
+  processi: due editor che scrivono nello stesso istante possono perdere
+  ciascuno la scrittura dell'altro. Ma ognuno tiene in memoria ciò che ha
+  scritto, e alla scrittura dopo lo rimette: si perde solo ciò che aveva un
+  editor uscito in quell'istante. Un file di lock andrebbe tolto anche dopo
+  un crash, e porterebbe un caso da gestire più raro di quello che evita.
++ *Ciò che uno dimentica, un altro lo ricorda.* Una voce tolta in un editor
+  è ancora nell'altro, che la riscrive, e il primo la riprende come novità.
+  Per dimenticare davvero bisogna che lo facciano tutti gli editor aperti:
+  propagare le cancellazioni chiederebbe di scriverle nel file.
 + *La posizione prima degli hook.* Un `find-file-hook` vede il punto dove il
   file era stato lasciato e, se lo sposta, ha l'ultima parola. La posizione è
   in caratteri, come ogni posizione dell'editor; un file accorciato si apre
@@ -1806,11 +1852,18 @@ prompt aperto e la storia; le primitive sono in `primitives/minibuffer.rs`.
 `default-minibuffer-prompt` legge MODE e KEY con `optional_name`, per cui nil
 è assente come un argomento lasciato fuori, salva le callback in variabili globali
 (`*minibuffer-on-confirm*`, `*minibuffer-on-change*`, `*minibuffer-on-cancel*`,
-`*minibuffer-previous-buffer*`, …) e apre una finestra flottante con bordo sul
-buffer `*Minibuffer*`, #emph[al centro] del frame, larga `minibuffer-width` (60)
-e alta `minibuffer-height` (3) e ridotta se il terminale è più piccolo. Il
-centro è scelto perché il fondo dello schermo è occupato da altre strisce (i
-completamenti, la compilazione). Ogni prompt usa lo stesso
+`*minibuffer-previous-buffer*`, …) e apre la finestra del prompt con
+`open_prompt_window`: non una flottante ma una divisione, larga quanto il
+frame e alta `minibuffer-lines` righe (1), in fondo, sopra l'area dei
+messaggi, come in Emacs. Il testo che si sta cercando o modificando resta
+così in vista sopra il prompt. La domanda non è un titolo: sta nel margine
+della finestra, al posto dei numeri di riga (`prompt_columns`,
+`prompt_cells`, @composizione), e la risposta comincia dopo. Un valore senza
+senso in `minibuffer-lines` vale 1 (`sized`): un prompt si apre sempre.
+Chiudere il buffer chiude la finestra e ridà il focus a quella che lo aveva.
+Il prompt flottante al centro del frame è un'altra funzione, in Lisp,
+`floating-minibuffer-prompt` (@mod-minibuffer), che usa le stesse variabili
+e le stesse primitive. Ogni prompt usa lo stesso
 buffer, `*Minibuffer*` (`PROMPT_BUFFER`): per questo ne è aperto uno alla volta.
 Un secondo prompt, chiesto mentre il primo è aperto, viene rifiutato con errore,
 come in Emacs senza enable-recursive-minibuffers. Nel prompt `C-g`, come Esc,
@@ -4505,6 +4558,7 @@ altre a chi scrive in Lisp.
   [`prescanner`], [alta, righe], [come l'evidenziatore], [porta avanti di fino a 500 righe la `ScanCache` di un buffer, con una fotografia ogni 64 (@modi)],
   [`file-watcher`], [normale, buffer], [`watch-file-interval` (3 s) dopo l'avvio e dopo ogni passo], [confronta con il disco al più 8 buffer; ricarica o segna],
   [`auto-saver`], [normale, file], [`auto-save-interval` (30 s) dopo l'avvio e dopo ogni passo], [scrive la copia di al più 4 buffer modificati],
+  [`session-saver`], [normale, scritture], [`session-save-interval` (60 s) dopo l'avvio e dopo ogni passo; lo avvia l'host], [scrive il file della sessione, se è cambiata (@memoria)],
 )
 
 Il codice è in `jobs/`: `highlighter.rs`, `prescan.rs`, `watcher.rs` e
@@ -7533,6 +7587,7 @@ Le variabili che l'editor legge da Lisp:
   [`auto-save`, `auto-save-interval`, `auto-save-directory`], [`t`, 30, cache/autosave], [L'autosalvataggio.],
   [`history-length`], [100], [Voci per storia di prompt.],
   [`save-history`, `recent-files-length`, `save-place`], [`t`, 50, `t`], [Che cosa la sessione tiene da un avvio all'altro (@memoria).],
+  [`session-save-interval`], [60], [Ogni quanti secondi la sessione si scrive mentre l'editor gira; `nil` solo all'uscita (@memoria).],
   [`highlight-all-matches`], [`t`], [Le corrispondenze di una ricerca, disegnate tutte (@evidenziazioni).],
   [`isearch-lazy-count`], [`t`], [Il conteggio `3/17` nel prompt di una ricerca (@conteggio).],
   [`delete-trailing-lines`], [`t`], [Le righe vuote in fondo al buffer, tolte con gli spazi a fine riga (@verbi).],

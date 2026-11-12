@@ -470,6 +470,154 @@ mod tests {
         );
     }
 
+    // ----------------------------------------------------------------
+    // Two editors, and one file
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn two_editors_open_together_each_keep_what_the_other_learned() {
+        let sandbox = Sandbox::new("two");
+        let a = sandbox.file("a.txt", "one\ntwo\nthree\n");
+        let b = sandbox.file("b.txt", "bee and more\n");
+        let (first, first_env) = editor();
+        let (second, second_env) = editor();
+        first.load_session(&first_env, sandbox.state());
+        second.load_session(&second_env, sandbox.state());
+
+        answer("Colour:", "blue", &first_env, &first);
+        open(&a, &first_env, &first);
+        run("(goto-char 8)", &first_env, &first);
+        answer("Colour:", "green", &second_env, &second);
+        open(&b, &second_env, &second);
+        run("(goto-char 3)", &second_env, &second);
+        assert!(first.save_session(&first_env, sandbox.state()));
+        assert!(second.save_session(&second_env, sandbox.state()));
+
+        let (ctx, env) = editor();
+        assert!(ctx.load_session(&env, sandbox.state()));
+        assert_eq!(
+            strings(&run(r#"(minibuffer-history "Colour:")"#, &env, &ctx)),
+            vec!["green", "blue"],
+            "the one that wrote last has its own first"
+        );
+        assert_eq!(
+            strings(&run("(recent-files)", &env, &ctx)),
+            vec![b.clone(), a.clone()]
+        );
+        open(&a, &env, &ctx);
+        assert_eq!(point(&ctx), 8);
+        open(&b, &env, &ctx);
+        assert_eq!(point(&ctx), 3);
+    }
+
+    #[test]
+    fn what_another_editor_wrote_is_known_here_once_this_one_has_written() {
+        let sandbox = Sandbox::new("known-here");
+        let (first, first_env) = editor();
+        let (second, second_env) = editor();
+        answer("Colour:", "blue", &first_env, &first);
+        answer("Colour:", "green", &second_env, &second);
+        first.save_session(&first_env, sandbox.state());
+        second.save_session(&second_env, sandbox.state());
+        assert_eq!(
+            strings(&run(
+                r#"(minibuffer-history "Colour:")"#,
+                &second_env,
+                &second
+            )),
+            vec!["green", "blue"]
+        );
+    }
+
+    #[test]
+    fn writing_again_and_again_lists_nothing_twice() {
+        let sandbox = Sandbox::new("again");
+        let a = sandbox.file("a.txt", "one\n");
+        let (first, first_env) = editor();
+        let (second, second_env) = editor();
+        answer("Colour:", "blue", &first_env, &first);
+        open(&a, &first_env, &first);
+        answer("Colour:", "green", &second_env, &second);
+        for _ in 0..3 {
+            first.save_session(&first_env, sandbox.state());
+            second.save_session(&second_env, sandbox.state());
+        }
+        let (ctx, env) = editor();
+        ctx.load_session(&env, sandbox.state());
+        assert_eq!(
+            strings(&run(r#"(minibuffer-history "Colour:")"#, &env, &ctx)),
+            vec!["green", "blue"]
+        );
+        assert_eq!(strings(&run("(recent-files)", &env, &ctx)), vec![a]);
+    }
+
+    #[test]
+    fn what_this_editor_forgot_is_not_brought_back_by_its_own_file() {
+        let sandbox = Sandbox::new("forgot");
+        let a = sandbox.file("a.txt", "one\ntwo\nthree\n");
+        let (ctx, env) = editor();
+        open(&a, &env, &ctx);
+        run("(goto-char 8)", &env, &ctx);
+        ctx.save_session(&env, sandbox.state());
+
+        run("(clear-recent-files) (goto-char 0)", &env, &ctx);
+        ctx.save_session(&env, sandbox.state());
+
+        let (next, next_env) = editor();
+        next.load_session(&next_env, sandbox.state());
+        assert!(run("(recent-files)", &next_env, &next).is_nil());
+        open(&a, &next_env, &next);
+        assert_eq!(point(&next), 0, "a place given up stays given up");
+    }
+
+    #[test]
+    fn a_session_that_has_not_changed_is_not_written_again() {
+        let sandbox = Sandbox::new("unchanged");
+        let (ctx, env) = editor();
+        answer("Colour:", "blue", &env, &ctx);
+        assert_eq!(ctx.write_session(&env, sandbox.state()), Ok(true));
+        assert_eq!(ctx.write_session(&env, sandbox.state()), Ok(false));
+        answer("Colour:", "green", &env, &ctx);
+        assert_eq!(ctx.write_session(&env, sandbox.state()), Ok(true));
+    }
+
+    // ----------------------------------------------------------------
+    // Written while the editor runs
+    // ----------------------------------------------------------------
+
+    /// Lets the jobs run for SPAN, and the writes they started finish.
+    fn wait(ctx: &Ctx, env: &Arc<Env<Ctx>>, span: std::time::Duration) {
+        ctx.work().run_for(ctx, span);
+        crate::tests::file_io_tests::settle(ctx, env);
+    }
+
+    #[test]
+    fn the_session_is_written_every_interval_while_the_editor_runs() {
+        let sandbox = Sandbox::new("interval");
+        let (ctx, env) = editor();
+        run("(setq session-save-interval 1)", &env, &ctx);
+        ctx.start_session_saver(&env, sandbox.state());
+        answer("Colour:", "blue", &env, &ctx);
+
+        wait(&ctx, &env, std::time::Duration::from_secs(3));
+        let written = std::fs::read_to_string(sandbox.session_file()).unwrap_or_default();
+        assert!(written.contains("history\tColour:\tblue"), "{written:?}");
+    }
+
+    #[test]
+    fn with_no_interval_the_session_is_written_only_at_exit() {
+        let sandbox = Sandbox::new("no-interval");
+        let (ctx, env) = editor();
+        run("(setq session-save-interval nil)", &env, &ctx);
+        ctx.start_session_saver(&env, sandbox.state());
+        answer("Colour:", "blue", &env, &ctx);
+
+        wait(&ctx, &env, std::time::Duration::from_secs(2));
+        assert!(!sandbox.session_file().exists());
+        assert!(ctx.save_session(&env, sandbox.state()));
+        assert!(sandbox.session_file().exists());
+    }
+
     #[test]
     fn no_state_directory_means_no_session_written_and_the_log_says_why() {
         let (ctx, env) = editor();
