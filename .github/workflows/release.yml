@@ -184,7 +184,8 @@ jobs:
                       files_by_name[generated.name] = generated
                   files = sorted(
                       files_by_name.values(), key=lambda path: path.name
-                  )                  if not files:
+                  )
+                  if not files:
                       raise RuntimeError("Risorse mancanti: " + str(source))
                   packaged_dir = root / "data" / destination
                   expected = {path.name for path in files}
