@@ -312,6 +312,20 @@ pub fn create_global_env<B: BufferTrait>()
         crate::primitives::fill::FILL_COLUMN.into(),
         ELispExp::number(crate::primitives::fill::DEFAULT_FILL_COLUMN as f64),
     );
+    env.set_variable(
+        crate::primitives::fill::FILL_SEPARATE_LIST_ITEMS.into(),
+        ELispExp::t(),
+    );
+    env.set_variable(
+        crate::primitives::fill::FILL_SEPARATE_COMMENTS.into(),
+        ELispExp::nil(),
+    );
+    env.set_variable(crate::primitives::fill::FILL_COMMENTS.into(), ELispExp::t());
+    env.set_variable(crate::ui::fill_column::SHOW_GUIDE.into(), ELispExp::t());
+    env.set_variable(
+        crate::ui::fill_column::GUIDE_CHARACTER.into(),
+        ELispExp::string(crate::ui::fill_column::DEFAULT_CHARACTER.to_string()),
+    );
 
     // Every match of a search drawn.
     env.set_variable(super::frame::HIGHLIGHT_ALL_MATCHES.into(), ELispExp::t());

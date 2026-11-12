@@ -66,6 +66,24 @@ pub fn indentation(line: &str) -> &str {
     &line[..end]
 }
 
+/// Returns a bullet or numbered item's marker, including its following
+/// horizontal whitespace. TEXT starts after indentation or a comment opener.
+pub fn list_marker(text: &str) -> Option<&str> {
+    let mut chars = text.char_indices();
+    let (_, first) = chars.next()?;
+    let end = if matches!(first, '-' | '+' | '*' | '•' | '‣' | '◦') {
+        first.len_utf8()
+    } else {
+        let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 || !matches!(text.as_bytes().get(digits), Some(b'.' | b')')) {
+            return None;
+        }
+        digits + 1
+    };
+    let blanks = indentation(&text[end..]);
+    (!blanks.is_empty()).then(|| &text[..end + blanks.len()])
+}
+
 /// Returns the comment prefix LINE begins with: its indentation, one of
 /// OPENERS, any more of the opener's last character or a `!` (`///`, `//!`,
 /// `;;;`), and the blanks after; `None` when LINE does not begin with a

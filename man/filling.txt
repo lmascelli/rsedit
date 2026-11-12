@@ -5,10 +5,16 @@ SYNOPSIS
     (fill-paragraph)
     (fill-region FROM TO)
     (set-fill-column &optional N)
-    (do-auto-fill)
+    (do-auto-fill &optional PREVIOUS-LINE)
     (auto-fill-mode &optional ARG)
+    (auto-fill-column &optional ARG)
     (auto-fill-post-self-insert)
     fill-column
+    fill-separate-list-items
+    fill-separate-comments
+    fill-comments
+    auto-fill-column-show-guide
+    auto-fill-column-character
 
 DESCRIPTION
     Filling lays the words of a paragraph out again, as many on each line
@@ -33,6 +39,20 @@ FILLING A PARAGRAPH
 
     M-x fill-region fills every paragraph the region touches, whole.
 
+LIST ITEMS
+    With `fill-separate-list-items' non-nil (the default), each bullet or
+    numbered item begins a new paragraph. Recognised markers are -, +, *,
+    the Unicode bullets •, ‣ and ◦, and digits followed by . or ), with a
+    space or Tab after the marker. Continuation lines are indented under
+    the item's first word; nested items remain separate. M-q from a
+    continuation also finds its item's first line:
+
+        - one two three four       - one two
+                                     three four
+
+    This also works behind a comment opener. Set the option to nil to
+    treat markers as ordinary words and use the original paragraph rules.
+
 IN CODE
     In a buffer whose mode has comments, only comments are filled: M-q in
     a comment fills it and leaves the code around it as it is, and M-q on
@@ -46,6 +66,16 @@ IN CODE
         // - one two three
         //   four
 
+    `fill-separate-comments' is independent of the list option. Its default
+    is nil, so consecutive lines with the same opener are filled together.
+    With t, each source comment line is filled separately: a long line may
+    still wrap, but adjacent source lines are not joined. Empty comments
+    and different openers always end a paragraph.
+
+    `fill-comments' is t by default. Set it to nil to leave comments alone
+    in fill-paragraph, fill-region and automatic filling. These options do
+    not make code eligible for filling.
+
 THE COLUMN
     `fill-column' is the column a line may reach and not go past. A mode
     can have its own, as a fill-column property, and a buffer its own:
@@ -57,11 +87,40 @@ BREAKING LINES AS YOU TYPE
     M-x auto-fill-mode turns it on in the buffer you are in, and off
     again: it is a minor mode, so the status line says Fill while it is
     on, and C-u 1 before it turns it on whichever way it was. While it is
-    on, typing a space after a word that went past the column breaks the
-    line before that word, and the new line begins with the same
-    indentation, or in a comment with the same opener. In code, only
+    on, typing a space or Tab after a word that went past the column breaks
+    the line before that word, and the new line begins with the same
+    indentation, or in a comment with the same opener. A list marker is
+    kept only on its first line, with hanging indentation after it.
+    Return also fills the line it just ended, repeating breaks until its
+    remaining words fit. The inserted newline and the breaks are one undo
+    step, and the cursor stays after that newline. In code, only
     comments are broken. `minor-mode-enable' turns it on in every buffer
     of a mode made from then on; the `modes' page says how.
+
+    A literal insert-newline and pasted text do not run automatic filling.
+    (do-auto-fill t) fills the previous line, as the Return hook does.
+
+VERTICAL GUIDE
+    Buffers with auto-fill-mode enabled show a guide at the effective
+    fill column. M-x auto-fill-column is an alternative minor mode with
+    the same filling and guide behaviour. Either can be used on its own;
+    with both enabled filling still runs just once per insertion. The
+    guide uses the same global, mode and buffer column precedence as M-q
+    and C-x f.
+
+    `auto-fill-column-show-guide' is t by default; nil hides all guides
+    while leaving automatic filling enabled. `auto-fill-column-character'
+    is a one-character string, "│" by default. A control, whitespace,
+    combining or wide character, an empty or longer string, or any other
+    value falls back to "│". The face is fill-column-indicator:
+
+        (setq auto-fill-column-character "|")
+        (set-face 'fill-column-indicator "bright-black")
+
+    The guide is drawn in empty display cells, including below the end of
+    the buffer, and leaves text at that column readable. It respects line
+    number gutters, horizontal scrolling and window edges in both the
+    terminal and graphical hosts. It changes no buffer text or positions.
 
 EXAMPLES
     Fill to column 78 everywhere, and to 100 in Rust:
@@ -73,16 +132,26 @@ EXAMPLES
 
         (minor-mode-enable 'auto-fill-mode 'fundamental-mode)
 
+    Keep list items separate and fill each source comment line on its own:
+
+        (setq fill-separate-list-items t)
+        (setq fill-separate-comments t)
+
+    Enable automatic filling, with no visible guide:
+
+        (auto-fill-mode 1)
+        (setq auto-fill-column-show-guide nil)
+
     Fill a whole buffer from Lisp:
 
         (fill-region (point-min) (point-max))
 
 LIMITS
-    Only line comments are filled: the inside of a /* */ comment is code
-    to M-q. Two spaces after a full stop become one. A list whose items
-    are lines of the same indentation, with no blank line between them,
-    is one paragraph, and M-q joins the items. Return does not break a
-    line that has gone past the column; the next space does.
+    Only whole-line comments are filled: the inside of a /* */ comment and
+    a trailing comment after code are left alone. Two spaces after a full
+    stop become one. A word wider than the fill column is never split.
+    A list continuation must have its hanging indentation to belong to
+    the item; unindented text belongs to a separate paragraph.
 
 KEYS
     M-q                     fill-paragraph

@@ -9,7 +9,7 @@ use crate::buffer::Buffer;
 use crate::modes::CommentStyle;
 use crate::primitives::edits::{delete_range, insert_text};
 use crate::primitives::movement::{goto_offset, line_bounds};
-use crate::text::fill::{Measure, break_at, comment_prefix, indentation, lay_out};
+use crate::text::fill::{Measure, break_at, comment_prefix, indentation, lay_out, list_marker};
 use std::sync::Arc;
 
 /// The name of the Lisp variable, and of the mode's property and the buffer's
@@ -19,9 +19,13 @@ pub(crate) const FILL_COLUMN: &str = "fill-column";
 /// The column lines are filled to when nothing says otherwise: Emacs' own.
 pub(crate) const DEFAULT_FILL_COLUMN: usize = 70;
 
+pub(crate) const FILL_SEPARATE_LIST_ITEMS: &str = "fill-separate-list-items";
+pub(crate) const FILL_SEPARATE_COMMENTS: &str = "fill-separate-comments";
+pub(crate) const FILL_COMMENTS: &str = "fill-comments";
+
 /// The key a buffer's own fill column is kept under, the one
 /// `(buffer-get 'fill-column)` reads.
-fn buffer_key() -> String {
+pub(crate) fn buffer_key() -> String {
     super::buffers::lisp_key(FILL_COLUMN)
 }
 
@@ -33,11 +37,28 @@ fn column_value<B: BufferTrait>(value: Option<ELispExp<B>>) -> Option<usize> {
     }
 }
 
+/// The same precedence for filling and for the displayed column guide. Read
+/// OWN out of the buffer before calling: no environment lock under a buffer's.
+pub(crate) fn column_for<B: BufferTrait>(
+    env: &Arc<Env<EditorState<B>>>,
+    mode: &str,
+    own: Option<ELispExp<B>>,
+) -> usize {
+    column_value(own)
+        .or_else(|| column_value(env.get_property(mode, FILL_COLUMN)))
+        .or_else(|| column_value(env.get_variable(FILL_COLUMN)))
+        .unwrap_or(DEFAULT_FILL_COLUMN)
+}
+
 /// How the current buffer is filled: the measure, and the openers of its
 /// mode's line comments, none for a mode that has no comments.
 struct Setup {
     measure: Measure<fn(char) -> usize>,
     openers: Vec<String>,
+    code: bool,
+    lists: bool,
+    separate_comments: bool,
+    comments: bool,
 }
 
 /// Returns how the current buffer is filled: to its own `fill-column`, set by
@@ -52,13 +73,10 @@ fn setup<B: BufferTrait>(ctx: &EditorState<B>, env: &Arc<Env<EditorState<B>>>) -
             buf.data::<ELispExp<B>>(&key).cloned(),
         )
     });
-    let width = column_value(own)
-        .or_else(|| column_value(env.get_property(&mode, FILL_COLUMN)))
-        .or_else(|| column_value(env.get_variable(FILL_COLUMN)))
-        .unwrap_or(DEFAULT_FILL_COLUMN);
+    let width = column_for(env, &mode, own);
     let tab = crate::editor::tab_widths(env, [mode.clone()]).of(&mode);
-    let openers = ctx
-        .syntax_table(&mode)
+    let table = ctx.syntax_table(&mode);
+    let openers = table
         .comments()
         .iter()
         .filter_map(|style| match style {
@@ -73,6 +91,10 @@ fn setup<B: BufferTrait>(ctx: &EditorState<B>, env: &Arc<Env<EditorState<B>>>) -
             cells: crate::ui::width::char_cells,
         },
         openers,
+        code: !table.comments().is_empty(),
+        lists: env.flag(FILL_SEPARATE_LIST_ITEMS, true),
+        separate_comments: env.flag(FILL_SEPARATE_COMMENTS, false),
+        comments: env.flag(FILL_COMMENTS, true),
     }
 }
 
@@ -88,42 +110,82 @@ enum Kind {
     Text(String),
     /// A comment's text behind its prefix.
     Comment(String),
+    /// An item's first prefix, its hanging prefix, and whether it is a comment.
+    List(String, String, bool),
 }
 
 impl Kind {
-    /// Returns what LINE is, in a buffer whose mode comments with OPENERS.
-    fn of(line: &str, openers: &[String]) -> Kind {
+    /// Returns what LINE is, with the mode and options in SETUP.
+    fn of(line: &str, setup: &Setup) -> Kind {
         if line.trim().is_empty() {
             return Kind::Blank;
         }
-        if let Some(prefix) = comment_prefix(line, openers) {
+        let (prefix, comment) = if let Some(prefix) = comment_prefix(line, &setup.openers) {
+            if !setup.comments {
+                return Kind::Code;
+            }
             if line[prefix.len()..].trim().is_empty() {
                 return Kind::Blank;
             }
-            return Kind::Comment(prefix.to_string());
-        }
-        if !openers.is_empty() {
+            (prefix, true)
+        } else if setup.code {
             return Kind::Code;
+        } else {
+            (indentation(line), false)
+        };
+        if setup.lists
+            && let Some(marker) = list_marker(&line[prefix.len()..])
+        {
+            let first = format!("{prefix}{marker}");
+            let padding =
+                setup.measure.column_after(&first, 0) - setup.measure.column_after(prefix, 0);
+            let rest = format!("{prefix}{}", " ".repeat(padding));
+            return Kind::List(first, rest, comment);
         }
-        Kind::Text(indentation(line).to_string())
+        if comment {
+            Kind::Comment(prefix.to_string())
+        } else {
+            Kind::Text(prefix.to_string())
+        }
     }
 
     /// Returns the prefix the line's words are behind.
     fn prefix(&self) -> &str {
         match self {
-            Kind::Text(prefix) | Kind::Comment(prefix) => prefix,
+            Kind::Text(prefix) | Kind::Comment(prefix) | Kind::List(prefix, _, _) => prefix,
             Kind::Blank | Kind::Code => "",
         }
+    }
+
+    fn continuation(&self) -> &str {
+        match self {
+            Kind::List(_, rest, _) => rest,
+            _ => self.prefix(),
+        }
+    }
+
+    fn is_list(&self) -> bool {
+        matches!(self, Kind::List(..))
     }
 
     /// Returns whether a line of this kind and one of OTHER belong to one
     /// paragraph: text with the same indentation, or comments with the same
     /// prefix, the blanks after the opener aside, so that a continuation
     /// indented under a list item is the same comment.
-    fn joins(&self, other: &Kind) -> bool {
+    fn joins(&self, other: &Kind, setup: &Setup) -> bool {
+        if setup.separate_comments && matches!(self, Kind::Comment(_) | Kind::List(_, _, true)) {
+            return false;
+        }
         match (self, other) {
             (Kind::Text(a), Kind::Text(b)) => a == b,
             (Kind::Comment(a), Kind::Comment(b)) => a.trim_end() == b.trim_end(),
+            (Kind::List(_, rest, false), Kind::Text(b)) => {
+                setup.measure.column_after(rest, 0) == setup.measure.column_after(b, 0)
+            }
+            (Kind::List(_, rest, true), Kind::Comment(b)) => {
+                rest.trim_end() == b.trim_end()
+                    && setup.measure.column_after(rest, 0) == setup.measure.column_after(b, 0)
+            }
             _ => false,
         }
     }
@@ -136,25 +198,38 @@ struct Paragraph {
     kinds: Vec<Kind>,
 }
 
+impl Paragraph {
+    fn rest(&self) -> &str {
+        let first = &self.kinds[0];
+        if first.is_list() {
+            first.continuation()
+        } else {
+            self.kinds.get(1).map_or(first.prefix(), Kind::prefix)
+        }
+    }
+}
+
 /// Returns the paragraph LINE of TEXT is in, or `None` when LINE is blank or
 /// code.
-fn paragraph_at<B: BufferTrait>(text: &B, line: usize, openers: &[String]) -> Option<Paragraph> {
+fn paragraph_at<B: BufferTrait>(text: &B, line: usize, setup: &Setup) -> Option<Paragraph> {
     let line_text = |line: usize| {
         let (start, end) = line_bounds(text, line);
         text.slice(start, end)
     };
-    let kind = Kind::of(&line_text(line), openers);
+    let kind = Kind::of(&line_text(line), setup);
     if matches!(kind, Kind::Blank | Kind::Code) {
         return None;
     }
     let mut first = line;
     let mut before = Vec::new();
-    while first > 0 {
-        let above = Kind::of(&line_text(first - 1), openers);
-        if !kind.joins(&above) {
+    let mut head = kind.clone();
+    while first > 0 && !head.is_list() {
+        let above = Kind::of(&line_text(first - 1), setup);
+        if !above.joins(&head, setup) {
             break;
         }
-        before.push(above);
+        before.push(above.clone());
+        head = above;
         first -= 1;
     }
     before.reverse();
@@ -162,8 +237,8 @@ fn paragraph_at<B: BufferTrait>(text: &B, line: usize, openers: &[String]) -> Op
     kinds.push(kind.clone());
     let mut last = line;
     while last + 1 < text.line_count() {
-        let below = Kind::of(&line_text(last + 1), openers);
-        if !kind.joins(&below) {
+        let below = Kind::of(&line_text(last + 1), setup);
+        if !kinds[0].joins(&below, setup) {
             break;
         }
         kinds.push(below);
@@ -174,14 +249,14 @@ fn paragraph_at<B: BufferTrait>(text: &B, line: usize, openers: &[String]) -> Op
 
 /// Returns OLD, the paragraph's text, filled: the words after each line's
 /// prefix laid out behind the first line's prefix, and the second's after it.
-fn filled<F: Fn(char) -> usize>(old: &str, kinds: &[Kind], measure: &Measure<F>) -> String {
+fn filled<F: Fn(char) -> usize>(old: &str, paragraph: &Paragraph, measure: &Measure<F>) -> String {
     let words: Vec<&str> = old
         .split('\n')
-        .zip(kinds)
+        .zip(&paragraph.kinds)
         .flat_map(|(line, kind)| line[kind.prefix().len()..].split_whitespace())
         .collect();
-    let first = kinds[0].prefix();
-    let rest = kinds.get(1).map_or(first, Kind::prefix);
+    let first = paragraph.kinds[0].prefix();
+    let rest = paragraph.rest();
     lay_out(&words, first, rest, measure)
 }
 
@@ -262,13 +337,13 @@ fn refill<B: BufferTrait, F: Fn(char) -> usize>(
     let start = line_bounds(&buf.text, paragraph.first).0;
     let end = line_bounds(&buf.text, paragraph.last).1;
     let old = buf.text.slice(start, end);
-    let new = filled(&old, &paragraph.kinds, measure);
+    let new = filled(&old, paragraph, measure);
     if new == old {
         return Refilled::Same;
     }
     let old_prefixes: Vec<&str> = paragraph.kinds.iter().map(Kind::prefix).collect();
     let first = paragraph.kinds[0].prefix();
-    let rest = paragraph.kinds.get(1).map_or(first, Kind::prefix);
+    let rest = paragraph.rest();
     let new_prefixes = prefixes(&new, first, rest);
     let inside = (start..=end).contains(&point);
     let moved = inside.then(|| {
@@ -303,7 +378,7 @@ fn fill_lines<B: BufferTrait>(
         let mut paragraphs = Vec::new();
         let mut line = first;
         while line <= last && line < buf.text.line_count() {
-            match paragraph_at(&buf.text, line, &setup.openers) {
+            match paragraph_at(&buf.text, line, &setup) {
                 Some(paragraph) => {
                     line = paragraph.last + 1;
                     paragraphs.push(paragraph);
@@ -342,15 +417,16 @@ fn fill_lines<B: BufferTrait>(
 pub const FILL_PARAGRAPH_DOC: &str = "(fill-paragraph): Lay the words of the paragraph point is \
          in out again in lines that end at `fill-column' or before, keeping point on its word. \
          In a mode with comments, only the comment point is in is filled, behind its opener. \
-         M-q.";
+         `fill-separate-list-items' keeps each item separate with hanging indentation. \
+         `fill-separate-comments' keeps each comment line separate; `fill-comments' enables \
+         comment filling. M-q.";
 
 primitive!(fill_paragraph, _args, env, ctx, {
     let setup = setup(ctx, &env);
     let line = ctx.with_current_buffer(|buf| buf.text.cursor_pos().0);
-    let found =
-        ctx.with_current_buffer(|buf| paragraph_at(&buf.text, line, &setup.openers).is_some());
+    let found = ctx.with_current_buffer(|buf| paragraph_at(&buf.text, line, &setup).is_some());
     if !found {
-        let why = if setup.openers.is_empty() {
+        let why = if !setup.code {
             "No paragraph here"
         } else {
             "Not in a comment: only comments are filled in this mode"
@@ -420,41 +496,61 @@ primitive!(set_fill_column, args, env, ctx, {
     Ok(ELispExp::number(column as f64))
 });
 
-pub const DO_AUTO_FILL_DOC: &str = "(do-auto-fill): Break the line point is on, if what is \
+pub const DO_AUTO_FILL_DOC: &str = "(do-auto-fill &optional PREVIOUS-LINE): Break the line point is on, if what is \
          before point goes past `fill-column', at the last blank whose word ends at the column, \
          carrying its indentation or its comment's opener to the new line. Return t when it \
-         broke it. Code is never broken: only text, and comments. What `auto-fill-mode' runs \
-         after a space is typed.";
+         broke it. With PREVIOUS-LINE non-nil, fill the line before point's instead, after \
+         Return inserted a newline. Repeat until the remaining words fit. Code is never \
+         broken. Comments obey `fill-comments'; list items keep their hanging indentation.";
 
-primitive!(do_auto_fill, _args, env, ctx, {
+primitive!(do_auto_fill, args, env, ctx, {
     let setup = setup(ctx, &env);
+    let previous = args.first().is_some_and(ELispExp::is_truthy);
     let broke = ctx.with_current_buffer_mut(|buf| {
-        let point = buf.text.cursor_pos_1d();
-        let (start, end) = line_bounds(&buf.text, buf.text.cursor_pos().0);
+        let mut point = buf.text.cursor_pos_1d();
+        let cursor_line = buf.text.cursor_pos().0;
+        if previous && cursor_line == 0 {
+            return false;
+        }
+        let line_number = cursor_line - usize::from(previous);
+        let (mut start, end) = line_bounds(&buf.text, line_number);
+        let mut limit = if previous { end } else { point };
         let line = buf.text.slice(start, end);
-        let kind = Kind::of(&line, &setup.openers);
-        let prefix = match &kind {
-            Kind::Text(prefix) | Kind::Comment(prefix) => prefix.clone(),
-            Kind::Blank | Kind::Code => return false,
-        };
-        let before = buf.text.slice(start, point);
-        if !before.starts_with(&prefix) {
-            return false;
+        let mut kind = Kind::of(&line, &setup);
+        let mut changed = false;
+        loop {
+            if matches!(kind, Kind::Blank | Kind::Code) {
+                break;
+            }
+            let before = buf.text.slice(start, limit);
+            if !before.starts_with(kind.prefix()) {
+                break;
+            }
+            let Some((from, to)) = break_at(&before, kind.prefix(), &setup.measure) else {
+                break;
+            };
+            let from = start + before[..from].chars().count();
+            let to = start + before[..to].chars().count();
+            let new_line = format!("\n{}", kind.continuation());
+            if !delete_range(buf, from, to) || !insert_text(buf, from, &new_line) {
+                break;
+            }
+            let added = new_line.chars().count();
+            point = point - (to - from) + added;
+            limit = limit - (to - from) + added;
+            start = from + 1;
+            // The marker appears only on the first line of an item.
+            kind = if matches!(kind, Kind::Comment(_) | Kind::List(_, _, true)) {
+                Kind::Comment(kind.continuation().to_string())
+            } else {
+                Kind::Text(kind.continuation().to_string())
+            };
+            changed = true;
         }
-        let Some((from, to)) = break_at(&before, &prefix, &setup.measure) else {
-            return false;
-        };
-        let from = start + before[..from].chars().count();
-        let to = start + before[..to].chars().count();
-        let new_line = format!("\n{prefix}");
-        if !delete_range(buf, from, to) || !insert_text(buf, from, &new_line) {
-            return false;
+        if changed {
+            goto_offset(&mut buf.text, point);
         }
-        goto_offset(
-            &mut buf.text,
-            point - (to - from) + new_line.chars().count(),
-        );
-        true
+        changed
     });
     Ok(if broke {
         ELispExp::t()

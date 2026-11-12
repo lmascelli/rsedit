@@ -26,8 +26,6 @@ Comandi di testo
 - Narrowing (C-x n n).
 
 Hooks
-
-- Un before-save-hook (verificare come pulisce li spazi la minor mode)
 - Un after-revert-hook
 
 Lavorare su progetti
@@ -36,13 +34,14 @@ Lavorare su progetti
   compile che partono da lì.
 - Git: indicatori nel margine per le righe cambiate, il ramo nella riga di stato, il diff del buffer.
 
-Rifiniture alle funzioni appena fatte
-
-- Sessione: scriverla anche a intervalli, non solo all’uscita, e fondere le sessioni di più
-  editor aperti insieme.
 
 * Fixes todo
 - MIN-10: remove this settings that now belongs to minibuffer.lisp
+- Sessione: scriverla anche a intervalli, non solo all’uscita, e fondere le sessioni di più
+  editor aperti insieme.
+- Macros are not listed in describe-function and not documented.
+- ~/.local/share/rsedit/plugins must be created when the plugin system is started
+  if it doesn't exists.
 
 * Macro todo
 - [ ] multiple cursors

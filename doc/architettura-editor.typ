@@ -3246,8 +3246,26 @@ buffer (la chiave `fill-column` dei dati del buffer, quella che `buffer-get`
 legge e `set-fill-column` scrive), poi la proprietà `fill-column` del modo e
 la variabile, poi le aperture dei commenti di riga dalla tabella sintattica.
 `do-auto-fill` usa `break_at` sulla parte della riga prima del punto, e mette
-al posto degli spazi un a capo e lo stesso prefisso; `auto-fill-mode`, nel
-modulo `fill` (@mod-fill), lo chiama dopo uno spazio scritto.
+al posto degli spazi un a capo e il prefisso di continuazione. Ripete finché
+la coda sta nella colonna. `auto-fill-mode`, nel modulo `fill` (@mod-fill), lo
+chiama dopo uno spazio o un Tab scritto; dopo `newline` lo chiama con `t`,
+per riempire la riga appena terminata mantenendo il punto dopo l'a capo.
+
+`fill-separate-list-items` riconosce punti elenco e numeri seguiti da `.` o
+`)`: `Kind::List` porta il prefisso iniziale e quello sospeso. Un elemento
+comincia sempre un paragrafo; le continuazioni con il suo rientro ne fanno
+parte anche quando il punto è su una di esse. `fill-separate-comments`
+sceglie invece se ogni riga di commento è un paragrafo a sé; `fill-comments`
+può escludere i commenti da ogni riempimento. Le tre opzioni sono distinte.
+
+La guida verticale è composta in `ui/fill_column.rs` nelle righe già pronte
+per entrambi gli host. `snapshot` legge prima dei lock della composizione
+le colonne dei buffer che hanno `auto-fill-mode` o `auto-fill-column`
+acceso, con la stessa `column_for` del riempimento. Le impostazioni
+`auto-fill-column-show-guide` e `auto-fill-column-character` controllano
+visibilità e carattere; il carattere deve occupare una cella. La guida
+sostituisce solo celle vuote, con la faccia `fill-column-indicator`, non
+tocca il buffer o la mappa delle posizioni e segue lo scroll orizzontale.
 
 Le decisioni:
 
@@ -3256,8 +3274,8 @@ Le decisioni:
   di questo manuale dell'utente, unisce il titolo al paragrafo. Qui una riga
   con un altro rientro comincia un altro paragrafo. Il prezzo è che un rientro
   sospeso nel testo (una prima riga meno rientrata delle altre) non si
-  riempie come un paragrafo solo; nei commenti sì, perché il gruppo ignora gli
-  spazi dopo l'apertura.
+  riempie come un paragrafo solo, salvo gli elenchi riconosciuti; nei commenti
+  sì, perché il gruppo ignora gli spazi dopo l'apertura.
 + *Nel codice solo i commenti.* Riempire righe di codice le romperebbe, e il
   modo non ha regole per spezzare un'espressione: `M-q` su codice lo dice e
   non fa nulla, e `do-auto-fill` non spezza. Così `auto-fill-mode` si può

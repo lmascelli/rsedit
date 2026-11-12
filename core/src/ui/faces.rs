@@ -105,11 +105,14 @@ impl Face {
     /// Point's logical line in the selected window.
     pub const HL_LINE: Face = Face(19);
 
+    /// The vertical guide at the buffer's effective fill column.
+    pub const FILL_COLUMN_INDICATOR: Face = Face(20);
+
     /// The faces the editor names itself, with their ids: the first entries
     /// of the registry, so that Rust names them as constants. The order and
     /// the constants above agree, as
     /// `built_in_faces_are_interned_at_their_own_ids` checks.
-    pub const BUILT_IN: [(Face, &'static str); 20] = [
+    pub const BUILT_IN: [(Face, &'static str); 21] = [
         (Face::DEFAULT, "default"),
         (Face::REGION, "region"),
         (Face::MODE_LINE, "mode-line"),
@@ -130,6 +133,7 @@ impl Face {
         (Face::TRAILING_WHITESPACE, "trailing-whitespace"),
         (Face::MINIBUFFER_PROMPT, "minibuffer-prompt"),
         (Face::HL_LINE, "hl-line"),
+        (Face::FILL_COLUMN_INDICATOR, "fill-column-indicator"),
     ];
 
     /// Returns the face called NAME, defining it if nothing has named it yet.
@@ -424,6 +428,7 @@ impl Default for Theme {
         theme.set(Face::FUNCTION, Style::fg(Color::CYAN));
         theme.set(Face::BUILTIN, Style::fg(Color::BLUE));
         theme.set(Face::LINE_NUMBER, Style::fg(Color::BRIGHT_BLACK));
+        theme.set(Face::FILL_COLUMN_INDICATOR, Style::fg(Color::BRIGHT_BLACK));
         theme.set(
             Face::REPLACE_MATCH,
             Style {

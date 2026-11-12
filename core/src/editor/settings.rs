@@ -13,7 +13,9 @@ use crate::feature::isearch::{CASE_FOLD, ISEARCH_LAZY_COUNT};
 use crate::feature::minibuffer::HISTORY_LENGTH;
 use crate::jobs::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
 use crate::jobs::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
-use crate::primitives::fill::FILL_COLUMN;
+use crate::primitives::fill::{
+    FILL_COLUMN, FILL_COMMENTS, FILL_SEPARATE_COMMENTS, FILL_SEPARATE_LIST_ITEMS,
+};
 use crate::primitives::verbs::DELETE_TRAILING_LINES;
 use risp::VARIABLE_DOCUMENTATION;
 
@@ -320,6 +322,46 @@ pub const SETTINGS: &[Setting] = &[
               Example:\n\
               \x20 (setq fill-column 78)\n\
               \x20 (put 'rust-mode 'fill-column 100)",
+    },
+    Setting {
+        name: FILL_SEPARATE_LIST_ITEMS,
+        doc: "Whether filling treats each bullet or numbered item as a separate paragraph. \
+              Non-nil by default: continuation lines hang under the item's text, including \
+              inside comments. nil treats markers as ordinary words.\n\n\
+              Example:\n\
+              \x20 (setq fill-separate-list-items t)",
+    },
+    Setting {
+        name: FILL_SEPARATE_COMMENTS,
+        doc: "Whether each line comment is filled separately, instead of joining consecutive \
+              lines with the same opener. nil by default. Independent of \
+              `fill-separate-list-items'; `fill-comments' must be non-nil.\n\n\
+              Example:\n\
+              \x20 (setq fill-separate-comments t)",
+    },
+    Setting {
+        name: FILL_COMMENTS,
+        doc: "Whether filling and automatic filling may change line comments in modes \
+              that declare comment syntax. Non-nil by default; nil leaves them alone. \
+              Code is always left alone.\n\n\
+              Example:\n\
+              \x20 (setq fill-comments nil)",
+    },
+    Setting {
+        name: crate::ui::fill_column::SHOW_GUIDE,
+        doc: "Whether buffers with `auto-fill-mode' or `auto-fill-column' enabled show a \
+              vertical guide at their effective `fill-column'. Non-nil by default. \
+              Only empty display cells are replaced; the buffer text is unchanged.\n\n\
+              Example:\n\
+              \x20 (setq auto-fill-column-show-guide nil)",
+    },
+    Setting {
+        name: crate::ui::fill_column::GUIDE_CHARACTER,
+        doc: "The vertical fill guide's character, as a one-character string. The default \
+              is \"│\". Control characters, whitespace, combining characters, wide characters \
+              and other values fall back to the default. Its face is `fill-column-indicator'.\n\n\
+              Example:\n\
+              \x20 (setq auto-fill-column-character \"|\")",
     },
     Setting {
         name: DELETE_TRAILING_LINES,

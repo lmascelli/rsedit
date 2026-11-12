@@ -5,6 +5,7 @@
 //! Design: `doc/architettura-editor.typ, <frame>`.
 mod compose;
 mod faces;
+pub(crate) mod fill_column;
 mod frame;
 mod gutter;
 pub mod layout;
@@ -21,6 +22,7 @@ pub use compose::{
     SpotMarks, compose_layout, window_highlights,
 };
 pub use faces::{Color, Face, NAMED_COLORS, Style, Theme};
+pub use fill_column::FillColumnGuide;
 // For the tests, which try a registry of their own.
 #[cfg(test)]
 pub(crate) use faces::Registry as FaceRegistry;

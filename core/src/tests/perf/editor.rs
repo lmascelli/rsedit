@@ -497,6 +497,7 @@ fn layout(report: &mut Report) {
                         mode_line_format: " %b ",
                         gutter: GutterSpec::default(),
                         tabs: &crate::ui::layout::TabWidths::default(),
+                        fill_guide: None,
                         matches: None,
                         spots: None,
                         scroll_conservatively: 1,

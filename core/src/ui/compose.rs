@@ -49,6 +49,8 @@ pub struct ComposeSettings<'a> {
     pub gutter: GutterSpec,
     /// How far a Tab reaches, mode by mode.
     pub tabs: &'a TabWidths,
+    /// Effective fill columns where a vertical guide is enabled.
+    pub fill_guide: Option<&'a super::FillColumnGuide>,
     /// The matches of the search or the replace in progress, if they are
     /// drawn.
     pub matches: Option<&'a SearchMarks>,
@@ -300,7 +302,7 @@ impl LayoutNode {
                     }
                 }
 
-                let lines = layout.visible_text(win.scroll_x, rect.width);
+                let mut lines = layout.visible_text(win.scroll_x, rect.width);
                 // Later entries are drawn over earlier ones: see
                 // `window_highlights`.
                 let in_buffer = window_highlights(win, &rect, buffers, settings, is_focused);
@@ -312,6 +314,17 @@ impl LayoutNode {
                 // The virtual text's own faces last, over the colouring around
                 // it.
                 highlights.extend(layout.virtual_highlights(win.scroll_x, rect.width));
+                if !win.is_prompt()
+                    && let Some(guide) = settings.fill_guide
+                {
+                    guide.draw(
+                        &win.buffer_name,
+                        &rect,
+                        win.scroll_x,
+                        &mut lines,
+                        &mut highlights,
+                    );
+                }
 
                 // After the scroll, which decides the lines numbered.
                 let gutter_cells = match &win.prompt {

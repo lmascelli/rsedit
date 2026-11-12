@@ -127,6 +127,7 @@ impl<B: BufferTrait> EditorState<B> {
         // held while the environment's is taken.
         let mode_names = self.modes(|modes| modes.names().cloned().collect::<Vec<_>>());
         let tabs = tab_widths(env, mode_names);
+        let fill_guide = self.fill_column_guide(env);
         // With the reads before the windows: it takes the buffers and the
         // registry of the modes, which has no place in the order below.
         let colouring_pending = self.colouring_pending();
@@ -176,6 +177,7 @@ impl<B: BufferTrait> EditorState<B> {
                     mode_line_format: &mode_line_format,
                     gutter,
                     tabs: &tabs,
+                    fill_guide: fill_guide.as_ref(),
                     matches: matches.as_ref(),
                     spots: spots.as_ref(),
                     scroll_conservatively,
@@ -417,6 +419,49 @@ impl<B: BufferTrait> EditorState<B> {
             mode,
             table,
         })
+    }
+
+    /// Read buffer data, then Lisp, one lock at a time. Composition only sees
+    /// resolved columns and a validated single-cell character.
+    fn fill_column_guide(&self, env: &Arc<Env<Self>>) -> Option<crate::ui::FillColumnGuide> {
+        use crate::primitives::fill;
+        use crate::ui::fill_column::{DEFAULT_CHARACTER, GUIDE_CHARACTER, SHOW_GUIDE};
+        if !env.flag(SHOW_GUIDE, true) {
+            return None;
+        }
+        let character = match env.get_variable(GUIDE_CHARACTER) {
+            Some(ELispExp::String(text)) => {
+                let mut chars = text.chars();
+                chars.next().filter(|c| {
+                    chars.next().is_none()
+                        && !c.is_control()
+                        && !c.is_whitespace()
+                        && crate::ui::width::char_cells(*c) == 1
+                })
+            }
+            _ => None,
+        }
+        .unwrap_or(DEFAULT_CHARACTER);
+        let key = fill::buffer_key();
+        let columns = self
+            .buffer_names()
+            .into_iter()
+            .filter_map(|name| {
+                let (mode, own) = self.with_buffer(&name, |buf| {
+                    (buf.minor_mode_enabled("auto-fill-mode")
+                        || buf.minor_mode_enabled("auto-fill-column"))
+                    .then(|| {
+                        (
+                            buf.current_mode.clone(),
+                            buf.data::<ELispExp<B>>(&key).cloned(),
+                        )
+                    })
+                })??;
+                let column = fill::column_for(env, &mode, own);
+                Some((name, column))
+            })
+            .collect();
+        Some(crate::ui::FillColumnGuide { columns, character })
     }
 
     /// Returns the matches to draw: those of the search in progress, in the

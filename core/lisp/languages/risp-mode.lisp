@@ -13,7 +13,7 @@
 
 ;; Kept in step with the evaluator by hand: these have no binding to report.
 (defconst risp-special-forms
-  '("and" "backquote" "catch" "cond" "condition-case" "defconst" "defmacro"
+  '("and" "backquote" "catch" "cond" "condition-case" "defconst" "defmacro" "defvar"
     "defun" "dolist" "dotimes" "fiber" "if" "lambda" "let" "let*" "or" "prog1"
     "prog2" "progn" "quote" "setq" "spawn" "unless" "unwind-protect" "when"
     "while")
