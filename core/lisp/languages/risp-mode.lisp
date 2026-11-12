@@ -96,6 +96,8 @@ interpreter for them again."
 ;; What `C-M-f', the indenter and electric-pair read.
 
 (set-syntax-pairs 'risp-mode "()[]")
+;; The quote, the backquote and the comma belong to the expression after them.
+(set-syntax-entry 'risp-mode "'`," 'prefix)
 (set-comment-syntax 'risp-mode '((";")))
 
 ;; The rule of indent.lisp.

@@ -710,6 +710,83 @@ fn a_restyled_face_is_drawn_with_its_new_colours() {
     );
 }
 
+/// A theme whose face `default` has the colours of dracula's page.
+fn paged_theme() -> Theme {
+    let mut theme = Theme::default();
+    theme.set(
+        Face::DEFAULT,
+        Style {
+            fg: Some(Color::rgb(0xf8, 0xf8, 0xf2)),
+            bg: Some(Color::rgb(0x28, 0x2a, 0x36)),
+            ..Style::plain()
+        },
+    );
+    theme
+}
+
+const PAGE_FG: &str = "\u{1b}[38;2;248;248;242m";
+const PAGE_BG: &str = "\u{1b}[48;2;40;42;54m";
+
+#[test]
+fn the_default_faces_colours_are_in_force_before_the_screen_is_cleared() {
+    let rendered = frame_themed(&["alpha beta"], Vec::new(), paged_theme());
+    let clear = rendered.find("\u{1b}[2J").expect("the frame is cleared");
+    let background = rendered.find(PAGE_BG).expect("the page's background");
+    let foreground = rendered.find(PAGE_FG).expect("the page's foreground");
+    assert!(
+        background < clear && foreground < clear,
+        "a terminal erases in the colours in force: {rendered:?}"
+    );
+}
+
+#[test]
+fn the_pages_colours_come_back_after_a_run_in_another_face() {
+    let mut theme = paged_theme();
+    theme.set(
+        Face::REGION,
+        Style {
+            bg: Some(Color::BLUE),
+            ..Style::plain()
+        },
+    );
+    let rendered = frame_themed(
+        &["alpha beta"],
+        vec![Highlight {
+            row: 0,
+            start_col: 0,
+            end_col: 5,
+            face: Face::REGION,
+        }],
+        theme,
+    );
+    let region = rendered.find("\u{1b}[48;2;0;0;170m").expect("the region");
+    let after = &rendered[region..];
+    let reset = after.find("\u{1b}[0m").expect("the run ends");
+    assert!(
+        after[reset..].starts_with(&format!("{}{PAGE_FG}{PAGE_BG}", "\u{1b}[0m")),
+        "the reset that ends a face puts the page back: {:?}",
+        &after[reset..]
+    );
+}
+
+#[test]
+fn the_echo_area_is_painted_whole_where_the_page_has_a_colour() {
+    let rendered = frame_themed(&["alpha"], Vec::new(), paged_theme());
+    let last_row: String = printed(&rendered)
+        .into_iter()
+        .filter(|(_, y, _)| *y == ROWS - 1)
+        .map(|(_, _, text)| text)
+        .collect();
+    assert_eq!(last_row.chars().count(), COLS as usize);
+}
+
+#[test]
+fn a_theme_with_no_default_colours_draws_as_the_terminal_does() {
+    let rendered = frame_with(&["alpha beta"], Vec::new());
+    assert!(!rendered.contains("\u{1b}[38;"), "{rendered:?}");
+    assert!(!rendered.contains("\u{1b}[48;"), "{rendered:?}");
+}
+
 /// A face bound to nothing is drawn exactly as it already looks, so the
 /// renderer emits nothing at all -- no stray attribute reset either.
 #[test]

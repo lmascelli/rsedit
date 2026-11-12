@@ -5316,14 +5316,23 @@ predefinito.
 
 `render_frame` (`src/tui/render.rs`) disegna una fotografia sullo standard
 output attraverso `render_to`, che scrive in qualunque `Write` e disegna in
-quest'ordine: nasconde il cursore e pulisce
-lo schermo; disegna i separatori (prima delle finestre, perché una flottante
+quest'ordine: nasconde il cursore, mette in vigore i colori della pagina e
+pulisce lo schermo; disegna i separatori (prima delle finestre, perché una flottante
 deve poterli coprire); per ogni vista disegna bordo e titolo, ogni riga del
 rettangolo riempita fino alla larghezza, contata in celle (così una flottante è opaca), il
 margine cella per cella, le evidenziazioni sopra il testo, la riga di stato
 sotto il rettangolo; poi l'area messaggi nell'ultima riga, l'input in sospeso
 allineato a destra nella stessa riga, il cursore #emph[per ultimo] e infine,
 se c'è, la sequenza OSC 52 per gli appunti.
+
+La pagina è la faccia `default`: i suoi colori, senza gli attributi (`page`).
+`reset` chiude ogni tratto disegnato in una faccia con SGR 0 e rimette quei
+due colori, così ciò che segue --- le righe di testo, i bordi, l'area
+messaggi --- li ha senza chiederli, e `apply_style` scrive solo ciò che una
+faccia cambia. Lo schermo si pulisce con i colori già in vigore, perché un
+terminale cancella nel colore di sfondo corrente; dove la pagina ha uno
+sfondo, l'ultima riga si scrive intera, la sola che nessuna finestra copre.
+Con una faccia `default` senza colori non si emette nulla in più.
 
 I colori sono risolti dal front-end secondo la profondità del terminale:
 24 bit con `COLORTERM` che contiene `truecolor` o `24bit`; il cubo a 256 colori
@@ -6120,6 +6129,13 @@ più recente, e senza flottanti non fa nulla. `Windows::set_focused` rifiuta
 una finestra che non c'è, che può essere quella da cui una flottante è stata
 aperta e che è stata chiusa nel frattempo; se non c'è più nemmeno quella che
 aveva il focus, il focus va alla prima finestra affiancata.
+
+`recenter` senza un posto fa il giro: il centro, e poi, se il comando
+precedente era ancora `recenter` (`last_command_is`), l'alto, il basso e di
+nuovo il centro. A che punto è lo tiene `Runtime::next_recenter`, che un
+comando diverso fa ripartire dal centro. Con un posto dato non c'è giro, e
+due `(recenter)` nello stesso comando Lisp centrano due volte: il giro è dei
+tasti, non della funzione.
 
 === Gli argomenti <lettori-argomenti>
 
@@ -7431,6 +7447,11 @@ parole che si completano, la regola d'indentazione e le estensioni dei file.
   è ciò che `capf-mode-keywords` offre, e `regexp-opt` ne fa il modello che
   colora: due copie divergerebbero in silenzio, con una parola che si colora e
   non si completa.
++ *L'apice è un prefisso, in `risp-mode`.* `'`, #raw("`") e `,` hanno la
+  classe `prefix` (@tabella-sintattica), così `backward-sexp` si ferma prima di
+  loro e non dopo: il REPL trova i confini di un'espressione con quel
+  movimento (@mod-risp-repl), e senza il prefisso valuterebbe `(1 2)` dove è
+  scritto `'(1 2)`.
 + *risp-mode chiede il vocabolario.* Funzioni e macro vengono da
   `all-functions` e `all-macros`, al caricamento e con
   `risp-refresh-vocabulary`, non a ogni visita, che compilerebbe un modello su

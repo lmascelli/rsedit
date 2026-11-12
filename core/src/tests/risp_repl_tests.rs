@@ -98,6 +98,27 @@ mod tests {
     }
 
     #[test]
+    fn a_quote_before_an_expression_is_evaluated_with_it() {
+        let (ctx, env) = editor();
+        repl("'(1 2)", &env, &ctx);
+        press_c_j(&env, &ctx);
+        assert_eq!(contents(&ctx), "'(1 2)\n;; => (1 2)\n");
+    }
+
+    #[test]
+    fn a_quoted_symbol_and_a_backquoted_list_keep_their_prefix() {
+        let (ctx, env) = editor();
+        repl("(setq two 2)\n'two", &env, &ctx);
+        press_c_j(&env, &ctx);
+        assert_eq!(contents(&ctx), "(setq two 2)\n'two\n;; => two\n");
+
+        let (ctx, env) = editor();
+        repl("`(1 ,(+ 1 1))", &env, &ctx);
+        press_c_j(&env, &ctx);
+        assert_eq!(contents(&ctx), "`(1 ,(+ 1 1))\n;; => (1 2)\n");
+    }
+
+    #[test]
     fn a_block_is_evaluated_in_order_and_the_last_value_is_written() {
         let (ctx, env) = editor();
         repl(

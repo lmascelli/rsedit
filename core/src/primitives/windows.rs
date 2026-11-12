@@ -196,13 +196,19 @@ fn scrolled<B: BufferTrait>(ctx: &EditorState<B>, amount: isize, at_the_end: &st
 }
 
 pub const RECENTER_DOC: &str = "(recenter &optional WHERE): Scroll the window so that point's \
-         line is WHERE of the way down it: 0 the top, 0.5 the middle, which is the default, 1 the \
-         bottom. Point does not move.";
+         line is WHERE of the way down it: 0 the top, 0.5 the middle, 1 the bottom. Point does \
+         not move. With no WHERE the middle, and, run again straight after itself, the top, then \
+         the bottom, then the middle again.\n\n\
+         Example:\n\
+         (recenter 0)";
 
 primitive!(recenter, args, _env, ctx, {
     let where_to = match args.first() {
         Some(ELispExp::Number(n)) if n.is_finite() => *n,
-        _ => 0.5,
+        _ => {
+            let begins = !ctx.last_command_is("recenter");
+            ctx.runtime_mut(|runtime| runtime.next_recenter(begins))
+        }
     };
     ctx.recenter_focused_window(where_to);
     Ok(ELispExp::nil())

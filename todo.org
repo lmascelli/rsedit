@@ -71,9 +71,10 @@ Decisioni prese
 - I progetti noti si salvano nella sessione.
 
 Decisioni aperte (con la proposta)
-- D1 Dipendenze esterne per JSON e .gitignore, o codice a mano? (oggi: solo regex, unicode-width)
+- D1 JSON e .gitignore scritte a mano
 - D2 JSON in Lisp: simboli dedicati per null e false, distinti da nil.
-- D3 Uscita dei processi: a una funzione chiamata tra un comando e l'altro.
+- D3 Uscita dei processi: a una funzione chiamata tra un comando e l'altro con coda limitata
+    ed un meccanismo per assicurarsi che l'editor non venga bloccato.
 - D4 Posizione di una segnalazione: riga e colonna del produttore, più un marcatore
   quando il file è aperto; resta "vecchia" finché il produttore non la aggiorna.
 

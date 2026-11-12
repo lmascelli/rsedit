@@ -406,6 +406,64 @@ mod tests {
         );
     }
 
+    /// The row of the window that shows point's line.
+    fn row_of_point(ctx: &Ctx, env: &Arc<Env<Ctx>>) -> usize {
+        visible(ctx, env)
+            .iter()
+            .position(|line| line.contains("line 49"))
+            .expect("point's line is on screen")
+    }
+
+    fn press_c_l(ctx: &Ctx, env: &Arc<Env<Ctx>>) {
+        ctx.handle_key_event(
+            KeyEvent {
+                code: KeyCode::Char('l'),
+                modifiers: KeyModifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            },
+            env,
+        );
+    }
+
+    #[test]
+    fn c_l_pressed_again_goes_to_the_top_then_the_bottom_then_the_middle() {
+        let (ctx, env) = at_line_fifty();
+        run("(define-key nil \"C-l\" 'recenter)", &env, &ctx);
+        let rows = visible(&ctx, &env).len();
+
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            press_c_l(&ctx, &env);
+            seen.push(row_of_point(&ctx, &env));
+        }
+        assert_eq!(seen, vec![rows / 2, 0, rows - 1, rows / 2]);
+    }
+
+    #[test]
+    fn another_command_in_between_starts_from_the_middle_again() {
+        let (ctx, env) = at_line_fifty();
+        run("(define-key nil \"C-l\" 'recenter)", &env, &ctx);
+        let rows = visible(&ctx, &env).len();
+
+        press_c_l(&ctx, &env);
+        press_c_l(&ctx, &env);
+        assert_eq!(row_of_point(&ctx, &env), 0);
+        ctx.handle_key_event(KeyEvent::new(KeyCode::Right), &env);
+        press_c_l(&ctx, &env);
+        assert_eq!(row_of_point(&ctx, &env), rows / 2);
+    }
+
+    #[test]
+    fn recenter_called_from_lisp_twice_centres_twice() {
+        let (ctx, env) = at_line_fifty();
+        let rows = visible(&ctx, &env).len();
+
+        run("(recenter) (recenter)", &env, &ctx);
+        assert_eq!(row_of_point(&ctx, &env), rows / 2);
+    }
+
     #[test]
     fn recentring_accepts_where_to_put_the_line() {
         let (ctx, env) = at_line_fifty();

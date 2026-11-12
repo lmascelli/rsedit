@@ -30,10 +30,18 @@ pub fn render_to<W: Write>(
     let frame_w = frame.width as isize;
     let frame_h = frame.height as isize;
 
-    // Hidden while drawing, so that it is not seen moving.
+    // The page: the colours of the face `default`, which every cell has
+    // unless a face of its own says otherwise.
+    let base = page(&frame.theme);
+
+    // Hidden while drawing, so that it is not seen moving. The colours before
+    // the clear: a terminal erases in the background colour in force.
+    out.queue(cursor::Hide)?;
+    if !base.is_plain() {
+        reset(out, &base, depth)?;
+    }
     execute!(
         out,
-        cursor::Hide,
         terminal::Clear(terminal::ClearType::All),
         cursor::MoveTo(0, 0)
     )?;
@@ -56,7 +64,7 @@ pub fn render_to<W: Write>(
                 frame_h,
             )?;
         }
-        out.queue(SetAttribute(Attribute::Reset))?;
+        reset(out, &base, depth)?;
     }
 
     for view in &frame.views {
@@ -99,13 +107,22 @@ pub fn render_to<W: Write>(
                 frame_w,
                 frame_h,
             )?;
-            out.queue(SetAttribute(Attribute::Reset))?;
+            reset(out, &base, depth)?;
         }
 
         // The highlights, drawn again over the rows: a plain row is one
         // `Print`.
         for highlight in &view.highlights {
-            draw_highlight(out, view, highlight, &frame.theme, depth, frame_w, frame_h)?;
+            draw_highlight(
+                out,
+                view,
+                highlight,
+                &frame.theme,
+                &base,
+                depth,
+                frame_w,
+                frame_h,
+            )?;
         }
 
         // The status line, on the row below the rectangle.
@@ -129,7 +146,7 @@ pub fn render_to<W: Write>(
                 frame_w,
                 frame_h,
             )?;
-            out.queue(SetAttribute(Attribute::Reset))?;
+            reset(out, &base, depth)?;
         }
 
         if view.is_focused {
@@ -150,7 +167,12 @@ pub fn render_to<W: Write>(
     } else {
         &frame.prompt
     };
-    if !echo_line.is_empty() {
+    if base.bg.is_some() {
+        // Painted whole, where the page has a colour: a terminal that does
+        // not erase in the background colour would leave the row its own.
+        let row = fit(echo_line, frame.width);
+        draw_clipped_row(out, 0, frame_h - 1, &row, frame_w, frame_h)?;
+    } else if !echo_line.is_empty() {
         draw_clipped_row(out, 0, frame_h - 1, echo_line, frame_w, frame_h)?;
     }
 
@@ -218,6 +240,7 @@ fn draw_highlight<W: Write>(
     view: &RenderableWindowView,
     highlight: &Highlight,
     theme: &Theme,
+    base: &Style,
     depth: ColorDepth,
     frame_w: isize,
     frame_h: isize,
@@ -261,13 +284,37 @@ fn draw_highlight<W: Write>(
         frame_w,
         frame_h,
     )?;
-    // SGR 0 clears the colours as well as the attributes.
+    reset(out, base, depth)?;
+    Ok(())
+}
+
+/// Returns the colours of the page in THEME: those of the face `default`,
+/// without its attributes, which belong to no cell that does not ask.
+fn page(theme: &Theme) -> Style {
+    let default = theme.style(Face::DEFAULT);
+    Style {
+        fg: default.fg,
+        bg: default.bg,
+        ..Style::plain()
+    }
+}
+
+/// Ends a run drawn in a face: clears the attributes and the colours, SGR 0
+/// doing both, and puts back those of the page, BASE, for what is drawn next.
+fn reset<W: Write>(out: &mut W, base: &Style, depth: ColorDepth) -> std::io::Result<()> {
     out.queue(SetAttribute(Attribute::Reset))?;
+    if let Some(color) = base.fg {
+        out.queue(SetForegroundColor(resolve(color, depth)))?;
+    }
+    if let Some(color) = base.bg {
+        out.queue(SetBackgroundColor(resolve(color, depth)))?;
+    }
     Ok(())
 }
 
 /// Writes the escapes that draw in STYLE, its colours resolved for DEPTH: the
-/// one place the terminal learns what a face looks like.
+/// one place the terminal learns what a face looks like. A colour STYLE does
+/// not name stays the page's, which [`reset`] left in force.
 fn apply_style<W: Write>(out: &mut W, style: &Style, depth: ColorDepth) -> std::io::Result<()> {
     for (on, attribute) in [
         (style.reverse, Attribute::Reverse),

@@ -17,6 +17,9 @@ use std::sync::Arc;
 pub struct Runtime {
     /// Column that repeated vertical movement is aiming for.
     goal_column: Option<usize>,
+    /// How many times in a row `recenter` has been asked with no place of
+    /// its own: which of the middle, the top and the bottom is next.
+    recenter_turn: usize,
     /// The incremental search currently running, between one keystroke and the
     /// next.
     isearch: Option<Isearch>,
@@ -45,12 +48,25 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    /// Returns where a `recenter` that names no place puts point's line, and
+    /// counts it: the middle when it BEGINS a run of them, then the top, the
+    /// bottom, and the middle again.
+    pub fn next_recenter(&mut self, begins: bool) -> f64 {
+        if begins {
+            self.recenter_turn = 0;
+        }
+        let place = [0.5, 0.0, 1.0][self.recenter_turn % 3];
+        self.recenter_turn += 1;
+        place
+    }
+
     /// Creates the runtime, metering with FUEL and drawing faces as the editor
     /// ships them.
     pub fn new(fuel: Arc<FuelMeter>) -> Self {
         let shipped = Arc::new(Theme::default());
         Self {
             goal_column: None,
+            recenter_turn: 0,
             isearch: None,
             replace: None,
             fuel,

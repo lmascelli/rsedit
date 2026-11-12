@@ -46,7 +46,8 @@ THE LIST OF THEMES
     the theme away, and the faces look as the editor ships them.
 
 THE FACES
-        default              the text itself; no front end draws it yet
+        default              the page: the text and the background of
+                             every cell no other face colours
         region               the region, between point and the mark
         mode-line            the status line of the window you are in
         mode-line-inactive   the status line of the other windows
@@ -125,9 +126,9 @@ WRITING A THEME
     source tree the editor's themes are in themes/, which the build copies.
 
 LIMITS
-    The terminal front end does not draw the face default: the text and the
-    background keep the terminal's own colours, whatever the theme says.
-    Set the terminal's colours to the ones in the theme's default entry.
+    In a terminal the background of the face default fills the frame
+    because the terminal erases in the colour in force, as nearly all do.
+    One that does not leaves the cells no window covers in its own colour.
 
 EXAMPLES
     A theme from init.lisp:
