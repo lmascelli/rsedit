@@ -56,3 +56,163 @@ Lavorare su progetti
       nativo una volta che la feature è disponibile in Risp)
 - [ ] Popup dei tasti dopo un prefisso (come which-key), sopra il C-x C-h che c’è già.
 - [ ] Altri linguaggi: Markdown, JSON, YAML, Zig, MATLAB.
+
+
+* Progetti e basi per LSP
+
+Principio: ogni mattone è agnostico (non nomina né "progetto" né "LSP").
+Il progetto è una directory radice passata ai mattoni; project e lsp sono
+moduli Lisp orchestratori, sostituibili da plugin.
+
+Decisioni prese
+- Radici annidate: vince .git sul marcatore più vicino; radice dichiarabile a mano.
+- Comandi project-* separati, su un prefisso (C-x p); compile e grep restano come sono.
+- Le segnalazioni stanno in un deposito del nucleo, indicizzato per percorso.
+- I progetti noti si salvano nella sessione.
+
+Decisioni aperte (con la proposta)
+- D1 Dipendenze esterne per JSON e .gitignore, o codice a mano? (oggi: solo regex, unicode-width)
+- D2 JSON in Lisp: simboli dedicati per null e false, distinti da nil.
+- D3 Uscita dei processi: a una funzione chiamata tra un comando e l'altro.
+- D4 Posizione di una segnalazione: riga e colonna del produttore, più un marcatore
+  quando il file è aperto; resta "vecchia" finché il produttore non la aggiorna.
+
+Da verificare
+- V1 track-changes regge più osservatori insieme? (vim ne usa già uno)
+
+** risp
+- [ ] R1 Mappe e vettori: primitive per leggere e scrivere i tipi Map e Vector.
+- [ ] R2 Leggere dati senza valutarli: una read e una scrittura rileggibile.
+- [ ] R3 JSON: testo <-> mappe, vettori, stringhe, numeri. Dipende da R1, D1, D2.
+
+** rsedit, nucleo
+- [ ] C1 Risalita ai marcatori: la directory sopra questa che contiene uno di questi
+      nomi, con cache.
+- [ ] C2 Directory per un comando: eseguire una funzione come se la directory di lavoro
+      fosse un'altra.
+- [ ] C3 Dati dei moduli nella sessione: un modulo salva e rilegge un suo valore.
+      Dipende da R2.
+- [ ] C4 Indice dei file: visita di un albero in sfondo, con regole di esclusione, in
+      cache per directory. dired-find-recursive e grep ne diventano clienti. Dipende da D1.
+- [ ] C5 Deposito delle segnalazioni: per (produttore, file); interrogabile per file,
+      produttore, prefisso di directory. Dipende da D4.
+- [ ] C6 Segnalazioni sullo schermo: evidenziazione, margine, riga di stato, messaggio
+      al punto, lista di risultati generata dal deposito. Dipende da C5.
+- [ ] C7 Processi dialoganti: ingresso e uscita su thread propri; uscita a pezzi, a
+      righe, a messaggi incorniciati. Dipende da D3.
+- [ ] C8 Posizioni e modifiche: carattere <-> UTF-16/UTF-8; notifica delle modifiche
+      con il loro intervallo. Dipende da V1.
+
+** rsedit, moduli Lisp
+- [ ] M1 project: marcatori, progetti noti, comandi project-*. Dipende da C1, C2, C3;
+      project-find-file da C4.
+- [ ] M2 compile come produttore del deposito. Dipende da C5.
+- [ ] M3 lsp: segnalazioni, completamento, vai alla definizione, code action.
+      Dipende da R3, C5, C6, C7, C8.
+
+Ordine: R1 R2 | C1 C2 (in parallelo) -> C3 -> M1 -> C4 -> C5 C6 M2 -> R3 C7 C8 -> M3
+
+
+* Prompt
+
+Come usarli: un punto per sessione, sessione nuova ogni volta. Incolla prima il
+PREAMBOLO, poi il prompt del punto. Sostituisci le parti tra <>.
+
+** PREAMBOLO (rsedit)
+Lavora sul main attuale di lmascelli/rsedit. Non modificare GitHub: prepara una patch
+per git am, verificata su un checkout pulito con tutti i test. Segui
+doc/documentazione.typ per manpage, manuale, docstring e test. Non eseguire typst: il
+PDF lo rigenero io, non dirlo nel commit. Leggi solo i file che servono al punto. Niente
+riepiloghi intermedi; alla fine: percorso della patch, scelte fatte, cosa non hai
+verificato. Il mattone deve essere agnostico: nessun riferimento a progetti o LSP nel
+nucleo. Contesto: sezione "Progetti e basi per LSP" di todo.org.
+
+** PREAMBOLO (risp)
+Come sopra, ma sul main di lmascelli/risp e con le sue regole di documentazione.
+Nessuna dipendenza dall'editor.
+
+** R1
+Aggiungi a risp le primitive per i tipi Map e Vector che esistono già: creare, leggere,
+scrivere, chiavi, lunghezza, iterare. Prima proponi in dieci righe i nomi e le firme,
+allineati a Emacs Lisp dove ha senso, e aspetta il mio sì.
+
+** R2
+Aggiungi a risp una read che legge un dato senza valutarlo e una scrittura che lo
+rende rileggibile. Devono fare il giro completo per liste, stringhe, numeri, simboli,
+mappe e vettori. Di' cosa non è rileggibile e come viene rifiutato.
+
+** R3
+Aggiungi a risp JSON: da testo a valore e ritorno. Decisioni: <D1: a mano | crate X>;
+null e false sono <D2: i simboli ...>. Errori con posizione. Misura il tempo su un
+documento da 1 MB e riportalo.
+
+** C1
+Aggiungi a rsedit una primitiva che, data una directory e una lista di nomi, risale
+finché ne trova uno e risponde con la directory, con cache invalidabile. Deve poter
+dire anche "il più alto" oltre a "il più vicino". Non deve bloccare su un mount lento:
+di' come.
+
+** C2
+Aggiungi a rsedit il modo di eseguire una funzione con un'altra directory di lavoro,
+senza cambiare quella globale né quella del buffer, e che valga per i comandi avviati
+dentro (compile, shell, grep, percorsi relativi). Prima dimmi in cinque righe dove si
+innesta in default_directory e cosa succede con i lavori asincroni avviati dentro.
+
+** C3
+Aggiungi a rsedit il salvataggio nella sessione di valori dei moduli: una primitiva
+per scrivere e una per leggere, per nome. Usa la read di risp (R2). Leggi prima la
+sezione <memoria> del manuale e rispetta il formato a righe.
+
+** C4
+Aggiungi a rsedit un indice dei file: visita in sfondo di un albero con regole di
+esclusione, risultato in cache per directory, consultabile mentre cresce. Decisione:
+.gitignore <D1: a mano | crate X>. Fai diventare dired-find-recursive un cliente e
+togli la sua lettura di .gitignore in Lisp. Misura su un albero da 50.000 file.
+
+** C5
+Aggiungi a rsedit il deposito delle segnalazioni: file, intervallo, gravità, messaggio,
+codice, produttore. Un produttore sostituisce in blocco le sue segnalazioni di un file.
+Interrogazioni: per file, per produttore, per prefisso di directory. Posizioni: <D4>.
+Solo il deposito e le primitive Lisp: niente schermo. Prima proponi il compartimento e
+il suo posto nell'ordine dei lock, e aspetta il mio sì.
+
+** C6
+Mostra le segnalazioni del deposito (C5): evidenziazione nel testo calcolata nella
+fotografia come le altre evidenziazioni del momento, segno nel margine, conteggio nella
+riga di stato, messaggio al punto, e una lista di risultati generata dal deposito che
+M-g n percorre. Facce nuove nei temi.
+
+** C7
+Aggiungi a rsedit i processi dialoganti: avvio con ingresso e uscita, scrittura,
+chiusura, stato; thread dedicati; l'uscita consegnata <D3> a pezzi, a righe o a
+messaggi incorniciati da Content-Length, con la cornice in Rust. Riusa ciò che
+shell.rs fa per gruppi di processi e arresto. Prima dimmi cosa riusi e cosa no.
+
+** C8
+Verifica se track-changes regge più osservatori insieme; se no, proponi la modifica
+minima. Poi aggiungi le conversioni tra posizione in caratteri e riga/colonna in
+UTF-16 e in UTF-8, in Rust. Riporta prima l'esito della verifica.
+
+** M1
+Scrivi il modulo Lisp project sopra C1, C2, C3 (e C4 per project-find-file): marcatori
+configurabili con .git che vince, radice dichiarabile a mano, progetti noti nella
+sessione, comandi project-find-file, project-grep, project-compile,
+project-shell-command, project-switch su C-x p. Nessun Rust nuovo: se ti serve,
+fermati e dimmelo.
+
+** M2
+Fai di compile un produttore del deposito (C5): le voci lette dall'uscita diventano
+segnalazioni con gravità. La lista di compilation-mode resta com'è per l'utente.
+
+** M3
+Non implementare. Scrivi il progetto del modulo lsp sopra R3, C5, C6, C7, C8: ciclo di
+vita del server, configurazione per modo maggiore, sincronizzazione dei documenti,
+e per ciascuna di segnalazioni, completamento, definizione, code action quali mattoni
+usa e cosa manca ancora nel nucleo.
+
+** Prompt di servizio
+- Rifare una patch sul main nuovo: "Il main è avanzato. Riapplica la patch <file> sul
+  main attuale, risolvi i conflitti, rifai i test, dammi solo la patch nuova e cosa è
+  cambiato."
+- Sciogliere una decisione: "Per <D1..D4> dammi due opzioni, costo di ciascuna in
+  righe e in dipendenze, e la tua scelta. Massimo quindici righe."
