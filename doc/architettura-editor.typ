@@ -331,7 +331,7 @@ c'è.
   valore iniziale, così che `(setq ...)` in una configurazione modifichi un
   valore che esiste già: per esempio `mouse-mode` (`nil`),
   `echo-message-timeout` (5), `minibuffer-width` (60), `minibuffer-height` (3),
-  `window-separator` (`│`), `auto-save` e `watch-files` (`t`).
+  `window-separator` (`│`), `auto-save` (`t`) e `watch-file-interval` (3).
   `document_settings` dà a ognuna la documentazione che `C-h v` mostra.
   Vengono creati il modo `fundamental-mode` e il modo minore `read-only-mode`
   (@decisioni-buffer).
@@ -349,7 +349,7 @@ c'è.
   (@decisioni-avvio). Solo ciò che fallisce prima, nell'ambiente stesso, è un
   errore di `create_global_env`, e `main` esce con un codice diverso da 0.
 + Il WorkManager riceve `FileWatcher` e `AutoSaver`, che a ogni passo leggono
-  le loro impostazioni (`watch-files`, `watch-file-interval`, `auto-save`,
+  le loro impostazioni (`watch-file-interval`, `auto-save`,
   `auto-save-interval`).
 
 === Le directory dell'editor <directory>
@@ -2313,9 +2313,11 @@ eseguono Lisp e conservano il testo effettivo.
 )
 
 Il #emph[watcher] (`FileWatcher`, ogni `watch-file-interval` secondi, 3 per
-default, al massimo 2 controlli contemporanei; spento da `(setq watch-files nil)`)
+default, al massimo 2 controlli contemporanei) guarda i buffer che hanno
+`auto-revert-mode` acceso (`AUTO_REVERT_MODE`, @mod-auto-revert) e ne
 confronta i timbri: un buffer pulito il cui file è cambiato viene ricaricato con
-`adopt_text`, nella codifica che il file ha ora; uno modificato, o il cui file è sparito, viene marcato `stale`, e
+`adopt_text`, nella codifica che il file ha ora, e fa girare
+`after-revert-hook` (vedi sotto); uno modificato, o il cui file è sparito, viene marcato `stale`, e
 il salvataggio successivo chiede conferma. L'#emph[autosalvataggio]
 (`AutoSaver`, ogni `auto-save-interval`, 30 secondi per default, al massimo 4
 buffer per turno; spento da `(setq auto-save nil)`) scrive i buffer modificati
@@ -2326,6 +2328,28 @@ riprova al turno dopo, e il log lo sente una volta, quando le scritture
 cominciano a fallire (`auto_save_failing`). La copia è sempre in UTF-8, la
 codifica dell'editor:
 `recover-file` la legge così, e il buffer tiene la codifica del suo file.
+
+Quando un buffer ha ripreso il testo del suo file gira `after-revert-hook`
+(`AFTER_REVERT_HOOK`, in `primitives/files.rs`), con `run_buffer_hook`: il
+buffer corrente, gli hook del modo maggiore, dei modi minori accesi e poi i
+globali, senza lock. I percorsi sono tre, e ognuno lo chiama dopo `adopt_text`
+e solo se la lettura è riuscita: `reread`, per `revert-buffer` e per la
+risposta alla sua domanda; la callback di `start_revert`, per
+`revert-buffer-async`; e la callback del controllo del watcher, quando
+`store_file_check` risponde che il buffer è stato ricaricato. Le due callback
+girano in `run_file_io`, sul thread dei comandi e tra un comando e l'altro,
+con l'ambiente: `store_file_check` da sola non lo ha, e per questo risponde
+soltanto. `recover-file` non lo fa girare: mette nel buffer la copia di
+riserva, non il file. Due decisioni:
+
++ *Anche per la ricarica del watcher.* È il caso che lo hook serve di più: il
+  testo cambia senza un comando, e chi teneva qualcosa ancorato al testo
+  vecchio --- overlay, una tabella nei dati del buffer --- non ha altro modo di
+  saperlo. Lo hook gira nel buffer ricaricato, che di solito non è quello
+  corrente, e il buffer corrente torna com'era.
++ *Un errore non ferma nulla.* A differenza di `before-save-hook`, qui non c'è
+  niente da impedire: il testo è già quello del file. Una funzione che
+  fallisce va nel log e le altre girano, come per ogni hook di `run_hook`.
 
 I comandi interattivi usano le varianti asincrone in `primitives/file_io.rs`;
 la proprietà Lisp `interactive-function` cambia solo `call-interactively`,
@@ -3421,7 +3445,7 @@ copiata all'accensione (`ActiveMinor`).
   [Gli hook], [`before-save-hook` usa il percorso che interrompe il salvataggio al primo errore (@file-su-disco); gli altri passano da `run_hook`, che prende i modi minori del buffer corrente e chiama `run_hook_of`: prima gli hook del modo maggiore, poi quelli di ogni modo minore acceso, nell'ordine di accensione, poi i globali (`Modes::hooks_for`). `after-close-hook` riceve i modi minori del buffer chiuso, presi prima che se ne vada.],
   [L'accensione], [`minor_mode_on` e `minor_mode_off` cambiano la lista sotto il lock del buffer e poi, rilasciato, fanno girare `minor-mode-hook` del modo, e quelli globali con quel nome, con il buffer corrente (`run_minor_mode_hook`).],
   [Le regole], [`minor-mode-enable` registra in `Modes::minor_rules` una coppia (modo maggiore, o nessuno per tutti; modo minore). `apply_minor_rules` accende quelli che valgono per il modo del buffer, dopo `major-mode-hook` e prima di `after-change-major-mode-hook`, in `initialize_buffer` e in `change_major_mode`. `minor-mode-disable` toglie la coppia registrata con gli stessi due argomenti (`Modes::remove_minor_rule`), e lascia i buffer come sono.],
-  [Il Rust], [Dove l'effetto di un modo è in Rust, il codice chiede a `Buffer::minor_mode_enabled` un nome che conosce, sotto il lock del buffer che ha già: `visual_lines::MODE` (@righe-visive), `SHOW_PAREN_MODE`, `WHITESPACE_MODE` e `hl-line-mode` (@evidenziazioni), `subword-mode` (@movimento), `gutter::MODE` (@margine), `OVERWRITE_MODE` (@primitive-modifica). Il modo lo fa un modulo Lisp; il solo che fa il nucleo è `READ_ONLY_MODE` (@decisioni-buffer).],
+  [Il Rust], [Dove l'effetto di un modo è in Rust, il codice chiede a `Buffer::minor_mode_enabled` un nome che conosce, sotto il lock del buffer che ha già: `visual_lines::MODE` (@righe-visive), `SHOW_PAREN_MODE`, `WHITESPACE_MODE` e `hl-line-mode` (@evidenziazioni), `subword-mode` (@movimento), `gutter::MODE` (@margine), `OVERWRITE_MODE` (@primitive-modifica), `AUTO_REVERT_MODE` (@mod-auto-revert). Il modo lo fa un modulo Lisp; il solo che fa il nucleo è `READ_ONLY_MODE` (@decisioni-buffer).],
   [Il cambio di modo maggiore], [`change_major_mode` svuota la lista sotto lo stesso lock con cui cambia il modo, senza far girare hook, lasciandovi solo `read-only-mode`, e poi applica le regole del modo nuovo.],
   [La riga di stato], [`%n` scrive le etichette non vuote, ognuna dopo uno spazio, dalla lista del buffer: `expand_mode_line` non deve chiedere il registro.],
 )
@@ -3430,6 +3454,17 @@ In Lisp, `define-minor-mode` (modulo `commands`, @mod-commands) fa un modo
 minore e un comando con lo stesso nome e la specifica `"P"`, che legge il
 prefisso con `minor-mode-wanted-p` come in Emacs: niente per invertire, un
 numero positivo o `C-u` per accendere, zero, un negativo o `-` per spegnere.
+
+`define-globalized-minor-mode`, nello stesso modulo, fa di un modo minore un
+comando che lo accende in ogni buffer o lo spegne in tutti. L'espansione ha
+tre parti: una variabile con il nome del comando, che dice se è acceso; una
+funzione privata, `NOME--enter-buffer`, aggiunta a
+`after-change-major-mode-hook` di ogni modo, che accende il modo nel buffer
+corrente quando la variabile lo dice; e il comando, che cambia la variabile e
+passa tutti i buffer (`all-buffer-names`, `with-current-buffer`), accendendo
+o spegnendo. Dove accendere lo decide TURN-ON, una funzione chiamata con il
+buffer corrente; senza, è `minor-mode-on` in ogni buffer. Nulla di questo è
+in Rust: il registro non sa che un modo è globale.
 
 Le decisioni:
 
@@ -3464,6 +3499,17 @@ Le decisioni:
   una proprietà per modo maggiore, un secondo meccanismo per la stessa
   domanda, che non sa rispondere per un buffer solo. Lo dice il manpage
   `modes` nei limiti.
++ *Il modo globale è un comando e uno hook, non uno stato del registro.*
+  `define-globalized-minor-mode` non aggiunge un secondo genere di modo: il
+  modo resta acceso buffer per buffer, e ciò che è globale è la variabile che
+  dice allo hook se accenderlo nei buffer nuovi. Lo hook è
+  `after-change-major-mode-hook` e non una regola di `minor-mode-enable`
+  perché una regola vale per un modo maggiore o per tutti, e non può
+  chiedere a TURN-ON se un buffer visita un file; e gira dopo le regole, e di
+  nuovo a ogni cambio di modo maggiore, che i modi minori li toglie. Come in
+  Emacs, spegnere il comando spegne il modo in tutti i buffer, anche dove
+  era acceso a mano: ricordare chi lo aveva acceso vorrebbe dire uno stato
+  per buffer che nessun altro legge.
 + *Il Rust legge il nome nel buffer, non l'ambiente.* La fotografia e il
   movimento hanno già il buffer sotto lock: chiedergli se un modo è acceso
   non prende altri lock e non chiama l'interprete. La pulizia al salvataggio
@@ -4827,8 +4873,8 @@ Gli altri strumenti:
   bloccarsi, e l'esecutore che fa girare il controllo colora anche: un giro
   limitato mette tra l'utente e il suo colore al più `FILES_PER_TURN` attese.
   Non limita il danno di un solo file bloccato, su un mount di rete morto, e qui
-  niente può: i rimedi sono spegnere il controllo (`watch-files`) o dare ai file
-  un thread loro, che è un progetto diverso, da scegliere apposta.
+  niente può: i rimedi sono spegnere `auto-revert-mode` in quel buffer o dare
+  ai file un thread loro, che è un progetto diverso, da scegliere apposta.
 + *Il giro è un indice nei nomi.* Il cursore indica una posizione nell'elenco
   dei buffer com'è a ogni giro, quindi un buffer creato o chiuso sposta ciò che
   viene dopo. Basta a un giro la cui sola promessa è che nessuno resti indietro:
@@ -6768,8 +6814,9 @@ altro capitolo descrive già il meccanismo, la sottosezione vi rimanda.
 
 Il registro dei comandi, la raccolta degli argomenti e `M-x` sono in Rust
 (@comandi); il modulo aggiunge `defcommand`, `define-minor-mode` con
-`minor-mode-wanted-p` (@modi-minori), `string-prefix-p`, `string-suffix-p`,
-`save-match-data` e `with-eval-after-load`.
+`minor-mode-wanted-p` e `define-globalized-minor-mode` (@modi-minori),
+`string-prefix-p`, `string-suffix-p`, `save-match-data` e
+`with-eval-after-load`.
 
 + *Il necessario in Rust, lo zucchero qui.* Un comando che non sa raccogliere
   i suoi argomenti non è un comando, e un file di configurazione che non si
@@ -6780,6 +6827,10 @@ Il registro dei comandi, la raccolta degli argomenti e `M-x` sono in Rust
   una citazione (`',name`) è già un dato quando il backquote si espande.
 + *`save-match-data` senza gensym.* Il Lisp non ne ha: i dati salvati stanno
   sotto un nome che un corpo vedrebbe solo nominandolo.
++ *Nessun `()` in un'espansione.* La lista vuota che un backquote costruisce
+  è `nil`, che `defun` e `lambda` non accettano come lista dei parametri: le
+  funzioni senza argomenti che `define-globalized-minor-mode` e
+  `with-eval-after-load` espandono prendono un `&rest` che non leggono.
 
 === `debug` <mod-debug>
 
@@ -6857,6 +6908,28 @@ storia, perché `M-x` funzioni qualunque modulo non si carichi. Il modulo
 aggiunge `M-:`, che valuta l'espressione al livello più alto, perché ciò che
 definisce sopravviva al comando, e con l'errore catturato, perché un'espressione
 sbagliata si riferisca invece di chiudere il prompt.
+
+=== `auto-revert` <mod-auto-revert>
+
+`auto-revert-mode`: un modo minore (@modi-minori) senza etichetta, che il
+modulo chiede per ogni modo maggiore e accende nei buffer già aperti. Il
+controllo lo fa `FileWatcher` (@lavori-editor, @file-su-disco), che legge il
+modo nel buffer in due punti: `watch_files_async_turn` salta un buffer che
+non lo ha prima di avviare un thread per il suo file, e `file_check_for`
+risponde che non c'è nulla da fare.
+
++ *Spento, il buffer non si guarda affatto.* Né ricaricato né segnato
+  `stale`: chi spegne il modo in un buffer vuole che resti com'è mentre il
+  file cambia, un log che un altro processo riscrive o un file su un mount
+  che non risponde. La protezione non dipende dal watcher: il salvataggio
+  confronta da sé il timbro del file con quello letto (`write_checked`), e
+  si ferma se sono diversi.
++ *Nessun interruttore generale.* Il lavoro di sfondo gira sempre, e con
+  nessun buffer da guardare non avvia thread e torna a dormire. Una
+  variabile che lo fermasse sarebbe un secondo modo di dire la stessa cosa:
+  per non guardare nessun file si toglie la regola con `minor-mode-disable`.
++ *Senza etichetta.* Acceso ovunque, come `show-paren-mode`
+  (@mod-show-paren).
 
 === `buffer-list` <mod-buffer-list>
 
@@ -7427,7 +7500,7 @@ Le variabili che l'editor legge da Lisp:
   [`theme-path`], [vedi @percorsi-moduli], [Dove si cercano i temi.],
   [`help-key`], [`"C-h"`], [Il tasto che, dopo un prefisso, chiede che cosa lo segue.],
   [`worker-fuel`], [200.000], [Passi per turno di un worker.],
-  [`watch-files`, `watch-file-interval`], [`t`, 3], [Il watcher dei file.],
+  [`watch-file-interval`], [3], [I secondi tra un controllo dei file e il seguente (@mod-auto-revert).],
   [`auto-save`, `auto-save-interval`, `auto-save-directory`], [`t`, 30, cache/autosave], [L'autosalvataggio.],
   [`history-length`], [100], [Voci per storia di prompt.],
   [`save-history`, `recent-files-length`, `save-place`], [`t`, 50, `t`], [Che cosa la sessione tiene da un avvio all'altro (@memoria).],

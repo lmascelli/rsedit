@@ -53,10 +53,12 @@ mod tests {
         }
     }
 
+    /// An editor with `auto-revert-mode` on in every buffer, from its module.
     fn editor() -> (Ctx, Arc<Env<Ctx>>) {
         let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
         env.set_variable("frame-width".into(), LispExp::number(80.0));
         env.set_variable("frame-height".into(), LispExp::number(24.0));
+        crate::tests::shipped::load_auto_revert(&env, &ctx);
         (ctx, env)
     }
 
@@ -361,6 +363,151 @@ mod tests {
         run("(revert-buffer)", &env, &ctx);
         assert!(!ctx.minibuffer_is_open(), "nothing to lose, nothing to ask");
         assert_eq!(text(&ctx, &name), "after");
+    }
+
+    /// Counts the runs of `after-revert-hook`, and remembers the buffer that
+    /// was current and its text at the last one.
+    const COUNT_REVERTS: &str = r#"(setq reverts 0)
+        (defun note-revert ()
+          (setq reverts (+ reverts 1))
+          (setq reverted (list (current-buffer) (buffer-string))))
+        (add-hook nil "after-revert-hook" 'note-revert)"#;
+
+    #[test]
+    fn reverting_runs_after_revert_hook_with_the_buffer_current_and_its_new_text() {
+        let sandbox = Sandbox::new("revert-hook");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        run(COUNT_REVERTS, &env, &ctx);
+        sandbox.rewrite("a.txt", "after");
+
+        run("(revert-buffer)", &env, &ctx);
+        assert_eq!(run("reverts", &env, &ctx), LispExp::number(1.0));
+        assert_eq!(
+            run("reverted", &env, &ctx),
+            run(&format!("(list {name:?} \"after\")"), &env, &ctx)
+        );
+    }
+
+    #[test]
+    fn the_hooks_of_the_buffers_modes_run_before_those_of_every_mode() {
+        let sandbox = Sandbox::new("revert-hook-order");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        open(&path, &env, &ctx);
+        run(
+            r#"(setq order nil)
+               (make-minor-mode 'one-mode "One")
+               (minor-mode-on 'one-mode)
+               (defun in-major () (setq order (cons 'major order)))
+               (defun in-minor () (setq order (cons 'minor order)))
+               (defun in-every () (setq order (cons 'every order)))
+               (add-hook nil "after-revert-hook" 'in-every)
+               (add-hook 'one-mode "after-revert-hook" 'in-minor)
+               (add-hook 'fundamental-mode "after-revert-hook" 'in-major)
+               (revert-buffer)"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            run("(reverse order)", &env, &ctx),
+            run("'(major minor every)", &env, &ctx)
+        );
+    }
+
+    #[test]
+    fn a_revert_that_cannot_read_the_file_runs_no_hook() {
+        let sandbox = Sandbox::new("revert-hook-missing");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        open(&path, &env, &ctx);
+        run(COUNT_REVERTS, &env, &ctx);
+        sandbox.remove("a.txt");
+
+        run("(revert-buffer)", &env, &ctx);
+        assert_eq!(run("reverts", &env, &ctx), LispExp::number(0.0));
+    }
+
+    #[test]
+    fn a_revert_declined_runs_no_hook_and_one_accepted_runs_it() {
+        let sandbox = Sandbox::new("revert-hook-asked");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        open(&path, &env, &ctx);
+        run(COUNT_REVERTS, &env, &ctx);
+        run("(insert \"mine \")", &env, &ctx);
+
+        run("(revert-buffer)", &env, &ctx);
+        assert!(ctx.minibuffer_is_open());
+        assert_eq!(run("reverts", &env, &ctx), LispExp::number(0.0));
+        run("(minibuffer-cancel)", &env, &ctx);
+        assert_eq!(run("reverts", &env, &ctx), LispExp::number(0.0));
+
+        run("(revert-buffer)", &env, &ctx);
+        ctx.with_current_buffer_mut(|buf| {
+            for c in "yes".chars() {
+                buf.text.insert(c);
+            }
+        });
+        run("(minibuffer-confirm)", &env, &ctx);
+        assert_eq!(run("reverts", &env, &ctx), LispExp::number(1.0));
+    }
+
+    #[test]
+    fn a_revert_in_the_background_runs_the_hook_once_the_text_is_in() {
+        let sandbox = Sandbox::new("revert-hook-async");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        run(COUNT_REVERTS, &env, &ctx);
+        sandbox.rewrite("a.txt", "after");
+
+        run("(revert-buffer-async)", &env, &ctx);
+        crate::tests::file_io_tests::settle(&ctx, &env);
+        assert_eq!(text(&ctx, &name), "after");
+        assert_eq!(run("reverts", &env, &ctx), LispExp::number(1.0));
+    }
+
+    #[test]
+    fn a_file_reloaded_by_the_watcher_runs_the_hook_in_its_buffer() {
+        let sandbox = Sandbox::new("revert-hook-watcher");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        run(COUNT_REVERTS, &env, &ctx);
+        run(r#"(switch-to-buffer "*scratch*")"#, &env, &ctx);
+        sandbox.rewrite("a.txt", "after");
+
+        // Every buffer in turn, two a turn: *scratch* has no file to check.
+        for from in 0..2 {
+            ctx.watch_files_async_turn(from, None);
+            crate::tests::file_io_tests::settle(&ctx, &env);
+        }
+        assert_eq!(text(&ctx, &name), "after");
+        assert_eq!(run("reverts", &env, &ctx), LispExp::number(1.0));
+        assert_eq!(
+            run("reverted", &env, &ctx),
+            run(&format!("(list {name:?} \"after\")"), &env, &ctx)
+        );
+        assert_eq!(ctx.get_current_buffer_name(), "*scratch*");
+    }
+
+    #[test]
+    fn a_file_the_watcher_only_marks_stale_runs_no_hook() {
+        let sandbox = Sandbox::new("revert-hook-stale");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        open(&path, &env, &ctx);
+        run(COUNT_REVERTS, &env, &ctx);
+        run("(insert \"mine \")", &env, &ctx);
+        sandbox.rewrite("a.txt", "after");
+
+        for from in 0..2 {
+            ctx.watch_files_async_turn(from, None);
+            crate::tests::file_io_tests::settle(&ctx, &env);
+        }
+        assert_eq!(run("reverts", &env, &ctx), LispExp::number(0.0));
     }
 
     #[test]
@@ -670,27 +817,73 @@ mod tests {
     }
 
     #[test]
-    fn switched_off_it_is_parked_and_switched_on_it_carries_on() {
+    fn a_buffer_with_auto_revert_mode_off_is_left_alone_until_it_is_on_again() {
         let sandbox = Sandbox::new("parked");
         let path = sandbox.file("a.txt", "before");
         let (ctx, env) = editor();
         let name = open(&path, &env, &ctx);
-        run("(setq watch-files nil)", &env, &ctx);
+        run("(auto-revert-mode -1)", &env, &ctx);
         sandbox.rewrite("a.txt", "after");
 
         wait(&ctx, &env, Duration::from_secs(7));
         assert_eq!(
             text(&ctx, &name),
             "before",
-            "switched off, it looks at nothing"
+            "with the mode off, its file is not looked at"
         );
-        run("(setq watch-files t)", &env, &ctx);
+        run("(auto-revert-mode 1)", &env, &ctx);
         wait(&ctx, &env, Duration::from_secs(4));
+        assert_eq!(text(&ctx, &name), "after", "and with it on again, it is");
+    }
+
+    #[test]
+    fn auto_revert_mode_is_one_buffers() {
+        let sandbox = Sandbox::new("one-buffer");
+        let off = sandbox.file("off.txt", "before");
+        let on = sandbox.file("on.txt", "before");
+        let (ctx, env) = editor();
+        let off = open(&off, &env, &ctx);
+        run("(auto-revert-mode -1)", &env, &ctx);
+        let on = open(&on, &env, &ctx);
+        sandbox.rewrite("off.txt", "after");
+        sandbox.rewrite("on.txt", "after");
+
+        sweep(&ctx);
+        assert_eq!(text(&ctx, &off), "before");
+        assert!(!is_stale(&ctx, &off), "not even marked");
+        assert_eq!(text(&ctx, &on), "after");
+    }
+
+    #[test]
+    fn a_modified_buffer_with_the_mode_off_is_not_marked_and_its_save_still_stops() {
+        let sandbox = Sandbox::new("off-save");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = editor();
+        let name = open(&path, &env, &ctx);
+        run("(auto-revert-mode -1)", &env, &ctx);
+        dirty(&ctx, &name, "MINE ", &env);
+        sandbox.rewrite("a.txt", "theirs");
+
+        sweep(&ctx);
+        assert!(!is_stale(&ctx, &name));
+        run("(save-buffer)", &env, &ctx);
         assert_eq!(
-            text(&ctx, &name),
-            "after",
-            "and switched on, with no restart"
+            std::fs::read_to_string(&path).unwrap_or_default(),
+            "theirs",
+            "the save itself compares the file with what was read"
         );
+    }
+
+    #[test]
+    fn an_editor_without_the_module_watches_no_file() {
+        let sandbox = Sandbox::new("no-module");
+        let path = sandbox.file("a.txt", "before");
+        let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
+        let name = open(&path, &env, &ctx);
+        sandbox.rewrite("a.txt", "after");
+
+        sweep(&ctx);
+        assert_eq!(text(&ctx, &name), "before");
     }
 
     #[test]

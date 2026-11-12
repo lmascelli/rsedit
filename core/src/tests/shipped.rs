@@ -99,6 +99,23 @@ pub(crate) fn module_source(name: &str) -> String {
         .unwrap_or_else(|| panic!("{name}.lisp is in none of core/lisp/{MODULE_KINDS:?}"))
 }
 
+/// Loads the module that makes `auto-revert-mode`, and those it needs, into
+/// ENV: what a test of the file watcher starts from, since the watcher looks
+/// only at the buffers with the mode on.
+///
+/// # Panics
+///
+/// When one of them does not parse or fails to load, naming it.
+pub(crate) fn load_auto_revert(env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+    for name in ["commands", "debug", "auto-revert"] {
+        let source = module_source(name);
+        let ast = Parser::new(&format!("(progn {source})"))
+            .next()
+            .unwrap_or_else(|why| panic!("{name}.lisp must parse: {why:?}"));
+        eval(&ast, env.clone(), ctx).unwrap_or_else(|why| panic!("loading {name}.lisp: {why:?}"));
+    }
+}
+
 /// Loads every module the default init.lisp loads into ENV, in its order.
 ///
 /// # Panics

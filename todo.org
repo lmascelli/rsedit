@@ -4,20 +4,11 @@
 * Work in progress.
 
 Minor mode
-- auto-save-mode
 - auto-revert-mode
 - vim-mode
 - truncate-lines-mode (insieme a visual-line-mode)
-- display-fill-column-indicator-mode (accanto a auto-fill-mode)
-  Guida verticale alla colonna fill-column: ora che il riempimento
-  esiste è il complemento naturale, e si costruisce come le altre
-  evidenziazioni disegnate al momento.
 
 Da testare
-- Riempimento:
-  riempire i commenti /* */;
-  andare a capo con Invio quando auto-fill-mode è acceso;
-  riconoscere le voci di elenco come paragrafi separati.
 - Parentesi in vim mode: nel normal state accoppiare la ) sotto il cursore a blocco.
 
 Comandi di testo

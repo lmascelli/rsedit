@@ -555,9 +555,14 @@ primitive!(recover_file_adopt, _args, env, ctx, {
     Ok(ELispExp::t())
 });
 
+/// The hook run, with the buffer current, once a buffer has taken its file's
+/// text again: by `revert-buffer`, by its asynchronous counterpart, or by the
+/// file watcher on its own.
+pub(crate) const AFTER_REVERT_HOOK: &str = "after-revert-hook";
+
 pub const REVERT_BUFFER_DOC: &str = "(revert-buffer): Read the current buffer's file again, \
          asking first when there are unsaved changes to lose. The undo history, the mark and the \
-         overlays go with the old text.";
+         overlays go with the old text. Run \"after-revert-hook\" once the text is the file's.";
 
 primitive!(revert_buffer, _args, env, ctx, {
     let Some((path, modified)) =
@@ -567,7 +572,7 @@ primitive!(revert_buffer, _args, env, ctx, {
         return Ok(ELispExp::nil());
     };
     if !modified {
-        return Ok(ELispExp::boolean(reread(ctx, &path)));
+        return Ok(ELispExp::boolean(reread(ctx, &env, &path)));
     }
     // There is something to lose, so the answer has to be spelled out. The
     // read happens in the callback, not here -- a question does not return an
@@ -587,16 +592,22 @@ pub const REVERT_BUFFER_REREAD_DOC: &str = "(revert-buffer--reread): Read the cu
          file again with no questions. Not called directly -- it is what `revert-buffer' does \
          once its question has been answered.";
 
-primitive!(revert_buffer_reread, _args, _env, ctx, {
+primitive!(revert_buffer_reread, _args, env, ctx, {
     let Some(path) = ctx.with_current_buffer(|buf| buf.file_path.clone()) else {
         return Ok(ELispExp::nil());
     };
-    Ok(ELispExp::boolean(reread(ctx, &path)))
+    Ok(ELispExp::boolean(reread(ctx, &env, &path)))
 });
 
-/// Replaces the current buffer's text with what is in PATH, and answers
-/// false, saying why, when the file cannot be read.
-fn reread<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> bool {
+/// Replaces the current buffer's text with what is in PATH and runs
+/// [`AFTER_REVERT_HOOK`], with no lock held; answers false, saying why and
+/// running nothing, when the file cannot be read.
+fn reread<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: &Arc<Env<EditorState<B>>>,
+    path: &str,
+) -> bool {
+    let name = ctx.get_current_buffer_name();
     // Read with no lock held, for the reason every other file operation here
     // does it: a slow disk must not stop the threads walking the buffer.
     let (text, coding, stamp) = match coding::read_stable(path) {
@@ -623,6 +634,7 @@ fn reread<B: BufferTrait>(ctx: &EditorState<B>, path: &str) -> bool {
     } else {
         ctx.set_echo_message(&format!("Reverted to {path}"));
     }
+    ctx.run_buffer_hook(&name, AFTER_REVERT_HOOK, env);
     true
 }
 

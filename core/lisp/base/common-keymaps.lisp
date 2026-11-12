@@ -177,8 +177,8 @@
 ;; The mode line: `mode-line-format', documented where `C-h v' finds it, and
 ;; the `configuration' manual page.
 
-;; Watching files and auto-saving: `watch-files' and `auto-save', documented
-;; where `C-h v' finds them, and the `files' manual page.
+;; Auto-saving: `auto-save', documented where `C-h v' finds it, and the
+;; `files' manual page.
 
 ;; Background workers: the `background' manual page.
 (defun list-workers ()

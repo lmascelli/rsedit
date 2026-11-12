@@ -38,6 +38,7 @@ loaded anyway.")
     whitespace          ; the blanks at the ends of lines, drawn and cleaned
     overwrite           ; Insert, and what you type replaces what is there
     display-line-numbers ; M-x display-line-numbers-mode numbers the lines
+    auto-revert         ; a file changed on disk is read again
     fill                ; M-q fills a paragraph, M-x auto-fill-mode as you type
     visual-line         ; M-x visual-line-mode wraps words on screen only
     buffer-list         ; C-x b to switch, C-x C-b for the whole list

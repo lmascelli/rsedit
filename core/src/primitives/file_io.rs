@@ -437,7 +437,7 @@ fn start_revert<B: BufferTrait>(
         Some(handle.clone()),
         file_io::timeout(env),
         move || read(&target),
-        move |state, _, result| {
+        move |state, env, result| {
             let Some(name) = state.file_handle_name(&handle) else {
                 return;
             };
@@ -460,6 +460,7 @@ fn start_revert<B: BufferTrait>(
                         buf.forget_data(ERROR);
                     });
                     state.set_echo_message(&format!("Reverted to {path}"));
+                    state.run_buffer_hook(&name, super::files::AFTER_REVERT_HOOK, env);
                 }
                 other => {
                     let why = match other {
@@ -487,7 +488,8 @@ fn start_revert<B: BufferTrait>(
 
 pub const REVERT_ASYNC_DOC: &str = "(revert-buffer-async): Reread the visited file in the background, \
     asking before discarding unsaved changes. Edits made while the read is pending are preserved. \
-    Return t when a read or confirmation was accepted, nil otherwise.";
+    Run \"after-revert-hook\" once the text is the file's. Return t when a read or confirmation \
+    was accepted, nil otherwise.";
 primitive!(revert_buffer_async, _args, env, ctx, {
     let name = ctx.get_current_buffer_name();
     let Some(handle) = ctx.file_handle(&name) else {

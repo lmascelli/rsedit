@@ -532,6 +532,7 @@ mod tests {
     /// An editor whose host counts how often it is told to look.
     fn watched() -> (Ctx, Arc<Env<Ctx>>, Arc<AtomicUsize>) {
         let (ctx, env) = editor();
+        crate::tests::shipped::load_auto_revert(&env, &ctx);
         let told = Arc::new(AtomicUsize::new(0));
         ctx.on_background_change({
             let told = told.clone();

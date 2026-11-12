@@ -1,5 +1,6 @@
 //! The file watcher: the job that compares a few open files each turn with
-//! what was last read or written. A buffer without unsaved edits is reloaded;
+//! what was last read or written, in the buffers with `auto-revert-mode` on.
+//! A buffer without unsaved edits is reloaded;
 //! one with them, or one that changed while its file was being read, is only
 //! marked stale, and the next save asks.
 //!
@@ -25,8 +26,9 @@ pub const DEFAULT_WATCH_INTERVAL: Duration = Duration::from_secs(3);
 /// How many files one turn may look at.
 pub const FILES_PER_TURN: usize = 8;
 
-/// The name of the Lisp variable that turns the watcher off.
-pub const WATCH_FILES: &str = "watch-files";
+/// The name of the minor mode a buffer has on for the watcher to look at its
+/// file.
+pub(crate) const AUTO_REVERT_MODE: &str = "auto-revert-mode";
 
 /// The name of the Lisp variable holding how often it looks, in seconds.
 /// Read at every step, as the sleep that follows it, so that a change counts
@@ -47,16 +49,9 @@ pub fn watch_interval<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> Duratio
     }
 }
 
-/// Returns whether watching is on, as Lisp has it now; unset counts as on.
-/// Set to nil, the job is parked rather than ended, and it can be switched on
-/// again without a restart.
-pub fn watching<B: BufferTrait>(env: &Arc<Env<EditorState<B>>>) -> bool {
-    env.flag(WATCH_FILES, true)
-}
-
 /// Looks at a few open files each turn, in turn: its cursor is an index into
 /// the buffer names as they stand at each turn. It carries the environment,
-/// as a Lisp worker does, for the settings that switch it off and pace it.
+/// as a Lisp worker does, for the settings that pace it.
 pub struct FileWatcher<B: BufferTrait> {
     next: usize,
     env: Arc<Env<EditorState<B>>>,
@@ -79,15 +74,11 @@ impl<B: BufferTrait> FileWatcher<B> {
 
 impl<B: BufferTrait> Job<EditorState<B>> for FileWatcher<B> {
     fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
-        // Asked at every step, so that the setting means something after the
-        // editor has booted. Switched off, the job is parked, not ended.
-        if watching(&self.env) {
-            let (next, looked_at) = cx
-                .state
-                .watch_files_async_turn(self.next, crate::editor::file_io::timeout(&self.env));
-            self.next = next;
-            cx.worked(looked_at as u64, "open buffers");
-        }
+        let (next, looked_at) = cx
+            .state
+            .watch_files_async_turn(self.next, crate::editor::file_io::timeout(&self.env));
+        self.next = next;
+        cx.worked(looked_at as u64, "open buffers");
         // The interval too: `(setq watch-file-interval 10)` counts from the
         // next look.
         Ok(Step::Sleep(watch_interval(&self.env)))
@@ -150,12 +141,16 @@ impl<B: BufferTrait> EditorState<B> {
             let Some(handle) = self.file_handle(&name) else {
                 continue;
             };
-            let Some(path) = handle
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .file_path
-                .clone()
-            else {
+            // Before a thread is started for it: a buffer with the mode off
+            // costs nothing.
+            let Some(path) = ({
+                let buf = handle
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                buf.minor_mode_enabled(AUTO_REVERT_MODE)
+                    .then(|| buf.file_path.clone())
+                    .flatten()
+            }) else {
                 continue;
             };
             let worker = self.clone();
@@ -168,11 +163,16 @@ impl<B: BufferTrait> EditorState<B> {
                     Some(origin),
                     timeout,
                     move || worker.file_check_for(&name),
-                    move |state, _, check| {
-                        if state.file_handle_name(&handle).is_some()
+                    move |state, env, check| {
+                        if let Some(name) = state.file_handle_name(&handle)
                             && let Some(check) = check
+                            && state.store_file_check(check)
                         {
-                            state.store_file_check(check);
+                            state.run_buffer_hook(
+                                &name,
+                                crate::primitives::files::AFTER_REVERT_HOOK,
+                                env,
+                            );
                         }
                     },
                 )
@@ -204,13 +204,17 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Compares NAME with its file and returns what to do, touching nothing:
-    /// `None` when there is nothing to do, no file, nothing recorded to
-    /// compare with, or the file as it was left.
+    /// `None` when there is nothing to do, [`AUTO_REVERT_MODE`] off in the
+    /// buffer, no file, nothing recorded to compare with, or the file as it
+    /// was left.
     pub(crate) fn file_check_for(&self, name: &str) -> Option<FileCheck> {
         // Only what the question needs, under the lock: the lock is not held
         // across a `stat`, let alone a read.
         let (path, recorded, modified, version, unavailable) =
             self.with_buffer(name, |buf| {
+                if !buf.minor_mode_enabled(AUTO_REVERT_MODE) {
+                    return None;
+                }
                 buf.file_path.as_ref().map(|path| {
                     (
                         path.clone(),
@@ -263,8 +267,9 @@ impl<B: BufferTrait> EditorState<B> {
     /// Applies what CHECK decided, if the buffer has not changed since the
     /// check began. One that has, or that has unsaved edits, is marked stale
     /// and left alone, so that nothing typed while the file was being read is
-    /// lost.
-    pub(crate) fn store_file_check(&self, check: FileCheck) {
+    /// lost. Returns whether the buffer took the file's text: the caller then
+    /// runs `after-revert-hook`, which this does not, holding no environment.
+    pub(crate) fn store_file_check(&self, check: FileCheck) -> bool {
         let FileCheck {
             buffer,
             path,
@@ -345,5 +350,6 @@ impl<B: BufferTrait> EditorState<B> {
         if reverted == Some(true) {
             self.log_diagnostic(&format!("[INFO] {buffer} reloaded: {path} changed on disk"));
         }
+        reverted == Some(true)
     }
 }

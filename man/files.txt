@@ -28,7 +28,7 @@ SYNOPSIS
     auto-save
     auto-save-interval
     auto-save-directory
-    watch-files
+    (auto-revert-mode &optional ARG)
     watch-file-interval
     *open-directory-callback*
 
@@ -154,12 +154,28 @@ WHEN THE FILE CHANGES UNDER YOU
     there is something unsaved to lose. The undo history and the mark go
     with the old text.
 
-    `watch-files' turns the watching off, and `watch-file-interval' is how
-    many seconds pass between looks, 3 to begin with. Checks run on separate
-    workers, at most two at once, rotating through the buffers. An access
-    error is shown as File unavailable; the buffer is preserved. Checks
-    resume when the mount answers, and saving always checks the current
-    disk stamp even with watching disabled.
+    Each time a buffer has taken its file's text again -- with M-x
+    revert-buffer, or on its own because the file changed -- it runs
+    `after-revert-hook', with the buffer current and the new text in it:
+    the place to put back what went with the old text, or to say that
+    the file moved under you. A revert that could not read the file, or
+    that you declined, runs nothing, and neither does recover-file, which
+    reads the auto-save copy and not the file. Functions are added as for
+    any hook, on the `modes' page.
+
+    The watching is the minor mode `auto-revert-mode', on in every buffer:
+    M-x auto-revert-mode turns it off in the buffer you are in, and on
+    again. A buffer with it off is not looked at: it is neither read
+    again nor marked, whatever happens to its file. Saving it still
+    compares the file with what was read, and stops when they differ. The
+    `modes' page says how to keep a minor mode off in the buffers of one
+    major mode, or of every one.
+
+    `watch-file-interval' is how many seconds pass between looks, 3 to
+    begin with. Checks run on separate workers, at most two at once,
+    rotating through the buffers. An access error is shown as File
+    unavailable; the buffer is preserved. Checks resume when the mount
+    answers.
 
 AUTO SAVING
     Every half minute, each file buffer with changes not yet copied is
@@ -366,10 +382,24 @@ EXAMPLES
 
         (setq auto-save-directory "~/.cache/rsedit")
 
-    Look for changes on disk every second, or not at all:
+    Say in the echo area that a file changed under you and was read
+    again:
+
+        (defun my-reverted () (message "%s was read again" (current-buffer)))
+        (add-hook nil "after-revert-hook" 'my-reverted)
+
+    Look for changes on disk every second:
 
         (setq watch-file-interval 1)
-        (setq watch-files nil)
+
+    Or not at all, in the buffers opened from now on:
+
+        (minor-mode-disable 'auto-revert-mode)
+
+    Leave one buffer as it is while its file is rewritten under it, from
+    Lisp:
+
+        (minor-mode-off 'auto-revert-mode "build.log")
 
     Open a file from Lisp, in the home directory:
 

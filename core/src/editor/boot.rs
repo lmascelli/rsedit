@@ -351,7 +351,6 @@ pub fn create_global_env<B: BufferTrait>()
         },
     );
     env.set_variable(file_io::TIMEOUT.into(), ELispExp::number(10.0));
-    env.set_variable(crate::jobs::watcher::WATCH_FILES.into(), ELispExp::t());
     env.set_variable(
         crate::jobs::watcher::WATCH_FILE_INTERVAL.into(),
         ELispExp::number(crate::jobs::watcher::DEFAULT_WATCH_INTERVAL.as_secs_f64()),

@@ -12,7 +12,7 @@ use crate::editor::visits::{RECENT_FILES_LENGTH, SAVE_PLACE};
 use crate::feature::isearch::{CASE_FOLD, ISEARCH_LAZY_COUNT};
 use crate::feature::minibuffer::HISTORY_LENGTH;
 use crate::jobs::autosave::{AUTO_SAVE, AUTO_SAVE_DIRECTORY, AUTO_SAVE_INTERVAL};
-use crate::jobs::watcher::{WATCH_FILE_INTERVAL, WATCH_FILES};
+use crate::jobs::watcher::WATCH_FILE_INTERVAL;
 use crate::primitives::fill::{
     FILL_COLUMN, FILL_COMMENTS, FILL_SEPARATE_COMMENTS, FILL_SEPARATE_LIST_ITEMS,
 };
@@ -143,12 +143,6 @@ pub const SETTINGS: &[Setting] = &[
               pending save keeps its reservation until it finishes, preventing overlapping \
               writes; four saves, two reads, two watcher checks and one recovery job may run \
               at once. Synchronous Lisp calls remain synchronous.",
-    },
-    Setting {
-        name: WATCH_FILES,
-        doc: "Whether the editor notices files changing on disk: a buffer with no unsaved \
-              changes is read again, and one with unsaved changes is marked, so that saving it \
-              asks first. nil turns it off.",
     },
     Setting {
         name: WATCH_FILE_INTERVAL,

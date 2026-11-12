@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn a_buffer_that_turned_the_mode_off_is_saved_as_it_is() {
-        let sandbox = Sandbox::new("off");
+        let sandbox = Sandbox::new("turned-off");
         let path = sandbox.file("a  \n");
         let (ctx, env) = editor_with("", 0);
         with_whitespace_module(&env, &ctx);

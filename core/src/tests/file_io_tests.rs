@@ -58,6 +58,7 @@ impl Files {
             ELispExp::string(self.path("cache")),
         );
         env.set_variable("use-short-answers".into(), ELispExp::t());
+        crate::tests::shipped::load_auto_revert(&env, &ctx);
         (ctx, env)
     }
     fn copy(&self, path: &str) -> PathBuf {

@@ -364,6 +364,7 @@ mod tests {
         let sandbox = Sandbox::new("reload");
         let path = sandbox.file("file.txt", b"perch\xE9\n");
         let (ctx, env) = editor();
+        crate::tests::shipped::load_auto_revert(&env, &ctx);
         let name = open(&path, &env, &ctx);
         sandbox.rewrite("file.txt", "così\n".as_bytes());
 

@@ -6,6 +6,7 @@ SYNOPSIS
     (add-hook MODE HOOK FUNCTION)
     (remove-hook MODE HOOK FUNCTION)
     (define-minor-mode NAME LIGHTER DOC &rest BODY)
+    (define-globalized-minor-mode GLOBAL MODE TURN-ON DOC)
     (make-minor-mode NAME &optional LIGHTER)
     (minor-mode-on MODE &optional BUFFER)
     (minor-mode-off MODE &optional BUFFER)
@@ -112,6 +113,35 @@ MINOR MODES
     read. To keep a mode off in the buffers of one major mode only, turn
     it off from that mode's after-change-major-mode-hook, which runs once
     the minor modes asked for are on: the EXAMPLES have one.
+
+A MINOR MODE IN EVERY BUFFER
+    `define-globalized-minor-mode' makes a command that turns a minor
+    mode on in every buffer at once, those open and those to come, and
+    off in all of them:
+
+        (define-globalized-minor-mode global-auto-fill-mode
+          auto-fill-mode nil
+          "Break lines as you type in every buffer.")
+
+    M-x global-auto-fill-mode then turns auto-fill-mode on everywhere, and
+    off again when it is on already; C-u 1 and C-u -1 before it mean on
+    and off, as for a minor mode's own command. From Lisp,
+    (global-auto-fill-mode 1) in init.lisp does the same, and the
+    variable of the same name says whether it is on. DOC documents both.
+
+    TURN-ON, nil above, chooses the buffers. It names a function of no
+    arguments, which is called with each buffer current and turns the
+    mode on there, or leaves it off; the EXAMPLES have one that takes
+    only the buffers visiting a file. Write it with `minor-mode-on' and
+    not with the mode's own command, which says in the echo area what it
+    did, for every buffer made. It is the name of a function, as for a
+    hook: a lambda is refused.
+
+    Off means off everywhere: turning the global mode off turns the mode
+    off in the buffers that had it on by hand, or from `minor-mode-enable',
+    as well. While it is on, a buffer can still turn the mode off for
+    itself, and has it back with its next major mode, or the next time
+    the global mode is turned on.
 
 WHICH MODE A FILE GETS
         rust-mode           .rs
@@ -264,6 +294,9 @@ HOOKS
                                 after those three
         before-save-hook        before a manual save copies the text;
                                 a failure aborts it, as `files' describes
+        after-revert-hook       a buffer has read its file again: after
+                                M-x revert-buffer, or on its own when
+                                the file changed, as `files' describes
         after-set-visited-file-name-hook
                                 C-x C-w has written the buffer to a file
                                 it was not visiting
@@ -293,13 +326,15 @@ LIMITS
     Loading a mode's file again makes the mode again, empty: the keys and
     hooks other files gave it go, electric-pair's among them.
 
-    A minor mode is on in one buffer at a time: there are no global minor
-    modes. One that holds everywhere is asked for in every major mode with
-    `minor-mode-enable', and a buffer that turns it off gets it back with
-    its next major mode. A minor mode's command called from Lisp with no
-    argument turns the mode the other way, where Emacs would turn it on:
-    write (auto-fill-mode 1). A buffer losing its minor modes to a new
-    major mode runs none of their hooks.
+    A minor mode is on in one buffer at a time. One that holds everywhere,
+    asked for with `minor-mode-enable' or made global with
+    `define-globalized-minor-mode', is still turned on buffer by buffer:
+    a buffer that turns it off gets it back with its next major mode. A
+    global mode does not remember which buffers had the mode on before
+    it: turned off, it turns the mode off in all of them. A minor mode's
+    command called from Lisp with no argument turns the mode the other
+    way, where Emacs would turn it on: write (auto-fill-mode 1). A buffer
+    losing its minor modes to a new major mode runs none of their hooks.
 
     Colouring uses regular expressions, not a compiler or a full parser.
     Python f-strings and shell strings are coloured uniformly, including
@@ -336,6 +371,17 @@ EXAMPLES
 
         (defun my-no-parens () (minor-mode-off 'show-paren-mode))
         (add-hook 'help-mode "after-change-major-mode-hook" 'my-no-parens)
+
+    A command that numbers the lines of every buffer visiting a file,
+    and of no other, and that command run at startup:
+
+        (defun my-number-files ()
+          (if (buffer-file-name)
+              (minor-mode-on 'display-line-numbers-mode)))
+        (define-globalized-minor-mode global-display-line-numbers-mode
+          display-line-numbers-mode my-number-files
+          "Number the lines of every buffer visiting a file.")
+        (global-display-line-numbers-mode 1)
 
     A key only while auto-fill-mode is on:
 

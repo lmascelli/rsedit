@@ -1,8 +1,9 @@
 ;;; commands --- a shorter way to define a command, and a few macros.
 ;;;
-;;; `defcommand', `define-minor-mode', `string-prefix-p', `string-suffix-p',
-;;; `save-match-data' and `with-eval-after-load'. User manual: the
-;;; `writing-commands' page, and the `modes' page for the minor modes.
+;;; `defcommand', `define-minor-mode', `define-globalized-minor-mode',
+;;; `string-prefix-p', `string-suffix-p', `save-match-data' and
+;;; `with-eval-after-load'. User manual: the `writing-commands' page, and the
+;;; `modes' page for the minor modes.
 ;;; Design: `doc/architettura-editor.typ, <mod-commands>`.
 
 (defmacro defcommand (name params specs &rest body)
@@ -57,6 +58,52 @@ Example:
                 (if (minor-mode-p ,(list 'quote name)) "on" "off"))
        ,@body)
      (register-command ,(symbol-name name) (list "P"))))
+
+(defmacro define-globalized-minor-mode (global mode turn-on doc)
+  "Define GLOBAL as a command, documented by DOC, that turns the minor mode
+MODE on in every buffer, those open and those to come, or off in all of them:
+with no argument the other way from how it is, with a positive one on, with
+zero or a negative one off. TURN-ON names a function of no arguments, called
+with a buffer current, that turns MODE on there or leaves it off; nil is for
+every buffer. The variable GLOBAL says whether it is on.
+
+Example:
+  (define-globalized-minor-mode global-auto-fill-mode auto-fill-mode nil
+    \"Break lines as you type in every buffer.\")"
+  ;; No `()' in the expansion: the empty list a backquote builds is nil, which
+  ;; `defun' and `lambda' do not take for a parameter list.
+  (let ((enter (intern (concat (symbol-name global) "--enter-buffer")))
+        (turn (if turn-on
+                  (list 'funcall (list 'quote turn-on))
+                  (list 'minor-mode-on (list 'quote mode)))))
+    `(progn
+       ;; Through `list', so that the tests that read this file for the
+       ;; variables it defines do not take the unquote for a name.
+       ,(list 'defvar global nil doc)
+       (defun ,enter (&rest ignored)
+         ,(concat "Turn " (symbol-name mode) " on in the current buffer, where "
+                  (symbol-name global) " is on and wants it.")
+         (if ,global ,turn))
+       ;; Once the minor modes `minor-mode-enable' asks for are on, and again
+       ;; each time a buffer gets a new major mode, which takes them away.
+       (add-hook nil "after-change-major-mode-hook" ,(list 'quote enter))
+       (defun ,global (&optional arg)
+         ,doc
+         ;; ARG as `minor-mode-wanted-p' reads it, for a mode that is not one
+         ;; buffer's.
+         (setq ,global (cond ((null arg) (not ,global))
+                             ((numberp arg) (> arg 0))
+                             ((eq arg '-) nil)
+                             (t t)))
+         (dolist (name (all-buffer-names))
+           (with-current-buffer name
+             (lambda (&rest ignored)
+               (if ,global
+                   ,turn
+                   (minor-mode-off ,(list 'quote mode))))))
+         (message "%s %s" ,(symbol-name global) (if ,global "on" "off"))
+         ,global)
+       (register-command ,(symbol-name global) (list "P")))))
 
 (defun string-prefix-p (prefix s)
   "t if S begins with PREFIX, nil if it does not.
