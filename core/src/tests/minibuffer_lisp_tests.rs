@@ -23,9 +23,10 @@ mod tests {
         eval(&ast, env.clone(), ctx)
     }
 
-    /// A fresh editor with `debug.lisp` and `minibuffer.lisp` loaded (in
-    /// that order, matching the default init.lisp -- `minibuffer.lisp`'s
-    /// `eval-expression-confirm` calls `message`, from `debug.lisp`) and
+    /// A fresh editor with `debug.lisp`, `common-keymaps.lisp` and
+    /// `minibuffer.lisp` loaded (in that order, matching the default
+    /// init.lisp -- `eval-expression-confirm`, of the keymaps, calls
+    /// `message`, from `debug.lisp`) and
     /// `frame-width`/`frame-height` set (both needed by
     /// `default-minibuffer-prompt`, and otherwise only set by the real
     /// resize event from a UI frontend).
@@ -35,6 +36,12 @@ mod tests {
         env.set_variable("frame-height".into(), LispExp::number(24.0));
         eval_str(include_str!("../../lisp/base/debug.lisp"), &env, &ctx)
             .unwrap_or_else(|e| panic!("loading debug.lisp failed: {e:?}"));
+        eval_str(
+            include_str!("../../lisp/base/common-keymaps.lisp"),
+            &env,
+            &ctx,
+        )
+        .unwrap_or_else(|e| panic!("loading common-keymaps.lisp failed: {e:?}"));
         eval_str(include_str!("../../lisp/base/minibuffer.lisp"), &env, &ctx)
             .unwrap_or_else(|e| panic!("loading minibuffer.lisp failed: {e:?}"));
         (ctx, env)

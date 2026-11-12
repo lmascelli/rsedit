@@ -1,35 +1,14 @@
-;;; minibuffer --- M-:, an expression evaluated at a prompt, and the floating
-;;; prompt, for who prefers it to the split at the bottom of the frame.
+;;; minibuffer --- the floating prompt, for who prefers it to the split at
+;;; the bottom of the frame.
 ;;;
 ;;; The prompt itself is built in, so that M-x works whatever fails to load:
 ;;; `default-minibuffer-prompt', a window across the bottom of the frame, as
-;;; in Emacs. The floating one is here, all of it, and is not used until
-;;; `*minibuffer-read-function*' names it.
+;;; in Emacs. The floating one is here, all of it, with its two settings, and
+;;; is not used until `*minibuffer-read-function*' names it.
 ;;; User manual: the `minibuffer' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-minibuffer>`.
 
 (require 'debug)
-
-(defun eval-expression-confirm (input)
-  "Evaluate INPUT, a string, and show it in the echo area with its value, or
-with the error when it fails."
-  ;; At the top level, so that what INPUT defines outlives this function; and
-  ;; with the failure caught, so that a bad expression is reported rather than
-  ;; ending the confirm.
-  (let ((outcome (eval-string-top-level input)))
-    (if (car outcome)
-        (message "%s => %s" input (nth 1 outcome))
-        (message "%s !! %s" input (nth 1 outcome)))))
-
-(defun eval-expression-prompt ()
-  "Ask for a Lisp expression, and evaluate it in the running editor. M-:."
-  (minibuffer-read "Eval:" 'eval-expression-confirm nil nil))
-
-;; A `defun' and a `register-command', as in common-keymaps.lisp, so that
-;; this file loads without commands.lisp.
-(register-command "eval-expression-prompt" nil)
-
-(define-key nil "M-:" 'eval-expression-prompt)
 
 ;; ---------------------------------------------------------------------------
 ;; The floating prompt
@@ -40,6 +19,14 @@ with the error when it fails."
 ;; `minibuffer-confirm', `minibuffer-cancel', `minibuffer-complete', the
 ;; history and `minibuffer-cleanup' all read the variables set below, and
 ;; closing the buffer closes the window -- so only where it is drawn is here.
+
+(defvar minibuffer-width 60
+  "How many columns wide the floating prompt is, its border included. A frame
+too narrow for it gets one as wide as it can hold.")
+
+(defvar minibuffer-height 3
+  "How many rows tall the floating prompt is, its border included: 3 is one
+line of text between two of border.")
 
 (defconst floating-minibuffer--buffer-name "*Minibuffer*"
   "The buffer every prompt is read in, the floating one's too.")

@@ -64,10 +64,11 @@ WHERE THE FILES ARE
         %LOCALAPPDATA%\rsedit\state
 
     A variable that is set but empty counts as not set. The configuration,
-    the cache and the state are made when they are missing; deleting the
-    cache loses nothing that matters, and deleting the state loses only
-    what the `session' page says is kept there. The `plugins' page says
-    what goes in the data directory.
+    the data directory with its plugins folder, the cache and the state
+    are made when they are missing; deleting the cache loses nothing that
+    matters, and deleting the state loses only what the `session' page
+    says is kept there. The `plugins' page says what goes in the data
+    directory.
 
 THE FOUR THINGS YOU WILL WRITE
     A setting:

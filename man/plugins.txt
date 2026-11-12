@@ -26,8 +26,10 @@ WHERE THEY ARE
         ~/.local/share/rsedit/plugins/hello/themes/hello-dark.lisp
 
     $RSEDIT_DATA_DIR, $XDG_DATA_HOME and, on Windows, %LOCALAPPDATA% move
-    the data directory: the `configuration' page says how. The folders are
-    read once, when the editor starts.
+    the data directory: the `configuration' page says how. The editor
+    makes the folder plugins when it starts, if it is missing, so that
+    there is a place to put one. The folders in it are read once, when
+    the editor starts.
 
 A PLUGIN
     plugin.lisp says what the plugin is, in one form:

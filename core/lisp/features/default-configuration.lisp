@@ -19,7 +19,7 @@ loaded anyway.")
     debug
     common-keymaps
     indent              ; what Tab does; a mode plugs its own rule in
-    minibuffer          ; M-:, an expression evaluated at a prompt
+    minibuffer          ; the prompt in a floating window, for who prefers it
     rust-mode           ; colouring for Rust source
     risp-mode           ; colouring and indentation for this editor's own Lisp
     cc-mode             ; colouring and indentation for C/C++ source

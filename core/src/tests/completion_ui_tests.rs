@@ -1260,9 +1260,8 @@ mod tests {
                 .find(|view| view.buffer_name == "*Minibuffer*")
                 .unwrap_or_else(|| panic!("still openable after {setting}"));
 
-            let expected_width = width.unwrap_or(crate::editor::DEFAULT_MINIBUFFER_WIDTH as usize);
-            let expected_height =
-                height.unwrap_or(crate::editor::DEFAULT_MINIBUFFER_HEIGHT as usize);
+            let expected_width = width.unwrap_or(60);
+            let expected_height = height.unwrap_or(3);
             assert_eq!(prompt.rect.width, expected_width, "width after {setting}");
             assert_eq!(
                 prompt.rect.height, expected_height,
@@ -1293,19 +1292,29 @@ mod tests {
         );
     }
 
-    /// Both are set at boot, so a configuration adjusts a value that already
-    /// exists rather than bringing the setting into being.
+    /// The module declares both, so a configuration adjusts a value that
+    /// already exists rather than bringing the setting into being.
     #[test]
-    fn the_sizes_are_set_without_anyone_configuring_them() {
+    fn the_module_sets_the_sizes_without_anyone_configuring_them() {
         let (ctx, env) = with_module();
 
-        assert_eq!(
-            run("minibuffer-width", &env, &ctx),
-            LispExp::number(crate::editor::DEFAULT_MINIBUFFER_WIDTH)
-        );
-        assert_eq!(
-            run("minibuffer-height", &env, &ctx),
-            LispExp::number(crate::editor::DEFAULT_MINIBUFFER_HEIGHT)
-        );
+        assert_eq!(run("minibuffer-width", &env, &ctx), LispExp::number(60.0));
+        assert_eq!(run("minibuffer-height", &env, &ctx), LispExp::number(3.0));
+    }
+
+    /// Set before the module is loaded, a size is kept: `defvar` leaves a
+    /// variable that has a value as it is.
+    #[test]
+    fn a_size_set_before_the_module_is_loaded_is_kept() {
+        let (ctx, env) = create_global_env::<GapBuffer>().expect("global env");
+        run("(setq minibuffer-width 40)", &env, &ctx);
+        for source in [
+            include_str!("../../lisp/base/debug.lisp"),
+            include_str!("../../lisp/base/minibuffer.lisp"),
+        ] {
+            eval_str(source, &env, &ctx).expect("loading the shipped lisp");
+        }
+        assert_eq!(run("minibuffer-width", &env, &ctx), LispExp::number(40.0));
+        assert_eq!(run("minibuffer-height", &env, &ctx), LispExp::number(3.0));
     }
 }

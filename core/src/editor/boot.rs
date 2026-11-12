@@ -226,7 +226,8 @@ pub fn isolate_config_for_tests() {
 /// Sets `lisp-path` and `theme-path` in ENV, each in the order it is
 /// searched: the person's own folder under CONFIG, then each plugin's, then
 /// the editor's own. The plugins are those under `plugins` in the data
-/// directory; they are recorded, and nothing of theirs is loaded.
+/// directory, a folder made here when it is missing, so that there is a place
+/// to install one; they are recorded, and nothing of theirs is loaded.
 ///
 /// The editor's modules are looked for beside the executable only, unlike its
 /// themes and pages: a test binary has none there, and so every test starts
@@ -238,10 +239,24 @@ fn set_search_paths<B: BufferTrait>(
 ) {
     let plugins = match app_dir(DirOptions {
         dir: AppDir::Data,
-        create: false,
+        create: true,
     }) {
-        Ok(data) => editor_state.find_plugins(&data.join("plugins")),
-        Err(_) => Vec::new(),
+        Ok(data) => {
+            let root = data.join("plugins");
+            // The editor starts without it all the same: with no plugins.
+            if let Err(why) = std::fs::create_dir_all(&root) {
+                editor_state.log_diagnostic(&format!(
+                    "[ERROR] Failed to create the plugins directory {}: {why}",
+                    root.display()
+                ));
+            }
+            editor_state.find_plugins(&root)
+        }
+        Err(why) => {
+            editor_state
+                .log_diagnostic(&format!("[ERROR] No data directory for the plugins: {why}"));
+            Vec::new()
+        }
     };
     let mut lisp_path: Vec<PathBuf> = config.map(|dir| dir.join("lisp")).into_iter().collect();
     let mut theme_path: Vec<PathBuf> = config.map(|dir| dir.join("themes")).into_iter().collect();
@@ -374,19 +389,6 @@ pub fn create_global_env<B: BufferTrait>()
         ELispExp::number(DEFAULT_MINIBUFFER_LINES),
     );
 
-    // TODO(MIN-10)
-    // How large a prompt is. Set here so that `(setq minibuffer-width 40)` in a
-    // configuration is an adjustment to a value that already exists, rather
-    // than the thing that brings the setting into being.
-    env.set_variable(
-        MINIBUFFER_WIDTH.into(),
-        ELispExp::number(DEFAULT_MINIBUFFER_WIDTH),
-    );
-    // TODO(MIN-10)
-    env.set_variable(
-        MINIBUFFER_HEIGHT.into(),
-        ELispExp::number(DEFAULT_MINIBUFFER_HEIGHT),
-    );
     env.set_variable(
         crate::feature::minibuffer::HISTORY_LENGTH.into(),
         ELispExp::number(crate::managers::DEFAULT_HISTORY_LENGTH as f64),

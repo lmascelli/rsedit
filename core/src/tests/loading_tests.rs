@@ -325,6 +325,17 @@ mod tests {
     // -- plugins -------------------------------------------------------------
 
     #[test]
+    fn starting_the_editor_makes_the_plugins_folder_when_it_is_missing() {
+        let (_ctx, _env) = editor();
+        let data = crate::paths::app_dir(crate::paths::DirOptions {
+            dir: crate::paths::AppDir::Data,
+            create: false,
+        })
+        .expect("the data directory was made");
+        assert!(data.join("plugins").is_dir());
+    }
+
+    #[test]
     fn a_plugin_is_what_its_descriptor_says_and_nothing_of_it_runs() {
         let (ctx, env) = editor();
         let sandbox = Sandbox::new("plugins");

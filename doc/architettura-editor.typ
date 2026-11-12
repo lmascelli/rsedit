@@ -330,7 +330,7 @@ c'è.
 + Ogni impostazione che l'editor legge (`editor/settings.rs`) riceve il suo
   valore iniziale, così che `(setq ...)` in una configurazione modifichi un
   valore che esiste già: per esempio `mouse-mode` (`nil`),
-  `echo-message-timeout` (5), `minibuffer-width` (60), `minibuffer-height` (3),
+  `echo-message-timeout` (5), `minibuffer-lines` (1),
   `window-separator` (`│`), `auto-save` (`t`) e `watch-file-interval` (3).
   `document_settings` dà a ognuna la documentazione che `C-h v` mostra.
   Vengono creati il modo `fundamental-mode` e il modo minore `read-only-mode`
@@ -338,7 +338,8 @@ c'è.
 + `install_primitives`, `install_minibuffer` e `install_isearch` registrano le
   primitive, i comandi, il modo `minibuffer-mode` e il modo `isearch-mode`.
 + `rsedit-path` riceve il percorso dell'eseguibile.
-+ `set_search_paths` cerca i plugin nella directory dei dati, li registra in
++ `set_search_paths` crea, se manca, la cartella `plugins` nella directory dei
+  dati, vi cerca i plugin, li registra in
   `Loader` e dà il primo valore a `lisp-path` e a `theme-path`: la
   configurazione, poi i plugin, poi l'editor (@percorsi-moduli).
 + Se manca, `init.lisp` viene creato con `DEFAULT_INIT_LISP` (vedi sotto).
@@ -6868,6 +6869,12 @@ comincia con un commento che nomina la pagina che lo descrive. I tasti di un
 modo stanno nel suo modulo; Return sta in `indent`, accanto al comando che
 esegue.
 
++ *`M-:` è qui, con il suo comando.* Valutare un'espressione è un tasto di
+  base, che deve esserci anche senza il modulo `minibuffer`: il prompt che usa
+  è quello del nucleo. `eval-expression-confirm` valuta al livello più alto,
+  perché ciò che l'espressione definisce sopravviva al comando, e con l'errore
+  catturato, perché un'espressione sbagliata si riferisca invece di chiudere
+  il prompt.
 + *Un gruppo per pagina.* Il file fa da indice dei tasti: chi cerca dove un
   tasto è spiegato lo trova qui, e `guide_tests` controlla le sezioni KEYS
   delle pagine contro questi legami.
@@ -6921,9 +6928,11 @@ e, da una riga vuota, conserva il livello scelto dall'utente. Il modulo ha la re
 
 Il prompt è in Rust (@minibuffer): `minibuffer-read`, i suoi tasti e la sua
 storia, perché `M-x` funzioni qualunque modulo non si carichi. Il modulo
-aggiunge `M-:`, che valuta l'espressione al livello più alto, perché ciò che
-definisce sopravviva al comando, e con l'errore catturato, perché un'espressione
-sbagliata si riferisca invece di chiudere il prompt.
+aggiunge solo un altro modo di mostrarlo: `floating-minibuffer-prompt`, una
+finestra flottante al centro del frame, con le sue due impostazioni,
+`minibuffer-width` (60) e `minibuffer-height` (3), dichiarate qui con `defvar`
+perché solo questa funzione le legge. Nessun altro modulo lo chiede: tolto, si
+perde il prompt flottante e nient'altro.
 
 === `auto-revert` <mod-auto-revert>
 
@@ -7509,7 +7518,6 @@ Le variabili che l'editor legge da Lisp:
   columns: (4.6cm, 2.2cm, 1fr),
   header: ([Variabile], [Default], [Effetto]),
   [`echo-message-timeout`], [5], [Secondi di permanenza di un messaggio; `nil` per sempre.],
-  [`minibuffer-width`, `minibuffer-height`], [60, 3], [Dimensioni del prompt.],
   [`mode-line-format`], [vedi sopra], [Riga di stato.],
   [`window-separator`], [`"│"`], [Carattere tra finestre; `nil` per uno spazio.],
   [`display-line-numbers-type`], [`t`], [I numeri di `display-line-numbers-mode`: `'relative` per la distanza dal punto, ogni altro valore per il numero della riga (@margine).],
