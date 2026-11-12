@@ -4,11 +4,9 @@
 * Work in progress.
 
 Minor mode
-- auto-revert-mode
-- vim-mode
-- truncate-lines-mode (insieme a visual-line-mode)
 
-Da testare
+Vim mode
+- vim-mode
 - Parentesi in vim mode: nel normal state accoppiare la ) sotto il cursore a blocco.
 
 Comandi di testo
@@ -17,7 +15,6 @@ Comandi di testo
 - Narrowing (C-x n n).
 
 Hooks
-- Un after-revert-hook
 
 Lavorare su progetti
 
@@ -33,9 +30,10 @@ Lavorare su progetti
 - Macros are not listed in describe-function and not documented.
 - ~/.local/share/rsedit/plugins must be created when the plugin system is started
   if it doesn't exists.
+- in risp-eval non vengono valutate espressioni quoted se il ' è il primo carattere
+- recenter deve centrare il cursore alternatamente al centro, in alto ed in basso
 
 * Macro todo
-- [ ] multiple cursors
 - [ ] LSP integration: for the moment, just warning and compilation errors, completions,
       go to definition and code actions must be supported. The server for a given
       language can be configued and the configuration stored in the major mode variables
@@ -52,6 +50,9 @@ Lavorare su progetti
       should be evalued, if this makes the module too complex maybe consider adding some special
       syntax that consent distinguish between a lisp expression and a shell command.
 - [ ] Integrated terminal emulation
+- [ ] multiple cursors
 - [ ] gestione dei file molto grandi.
+- [ ] possibilità di connettersi via SSH e lavorare su file remoti (probabilmente un plugin
+      nativo una volta che la feature è disponibile in Risp)
 - [ ] Popup dei tasti dopo un prefisso (come which-key), sopra il C-x C-h che c’è già.
 - [ ] Altri linguaggi: Markdown, JSON, YAML, Zig, MATLAB.
