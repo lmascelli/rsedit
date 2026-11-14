@@ -15,6 +15,7 @@
      '(;; The page itself
        (default             "#657b83" "#fdf6e3" nil)
        (region              nil       "#eee8d5" nil)
+       (hl-line             nil       "#f5efdc" nil)
 
        ;; Furniture: the gutter, the status line, the rule between windows
        (line-number         "#93a1a1" nil       nil)

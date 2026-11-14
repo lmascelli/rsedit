@@ -17,8 +17,6 @@ Comandi di testo
 Hooks
 
 * Fixes todo
-- Sessione: scriverla anche a intervalli, non solo all’uscita, e fondere le sessioni di più
-  editor aperti insieme.
 - Macros are not listed in describe-function and not documented.
 
 

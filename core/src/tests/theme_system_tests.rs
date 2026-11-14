@@ -303,6 +303,45 @@ mod tests {
         );
     }
 
+    /// The current line is a face of every shipped theme: left out, it would
+    /// keep the colour the editor ships, which belongs to no theme's page.
+    /// And not the region's look, or a selection on point's line would not
+    /// show.
+    #[test]
+    fn every_shipped_theme_gives_the_current_line_a_look_that_is_not_the_regions() {
+        let (ctx, env) = editor_with_modules();
+        let themes: Vec<String> = run("(available-themes)", &env, &ctx)
+            .iter()
+            .map(|name| match name {
+                LispExp::String(name) => name.to_string(),
+                other => panic!("a theme's name, not {other:?}"),
+            })
+            .collect();
+        assert!(themes.len() > 1, "{themes:?}");
+        for theme in &themes {
+            run(&format!("(select-theme {theme:?})"), &env, &ctx);
+            let named = run(
+                &format!("(assq 'hl-line (theme--faces {theme:?}))"),
+                &env,
+                &ctx,
+            );
+            assert!(!named.is_nil(), "{theme} does not name hl-line");
+            let line = style("hl-line", &env, &ctx);
+            assert!(
+                line.1.is_some() || !line.2.is_empty(),
+                "{theme}: the current line should be distinguished somehow"
+            );
+            assert_ne!(line, style("region", &env, &ctx), "{theme}");
+            if line.1.is_some() {
+                assert_ne!(
+                    line.1,
+                    style("default", &env, &ctx).1,
+                    "{theme}: the line would not show on the page"
+                );
+            }
+        }
+    }
+
     // ----------------------------------------------------------------
     // The selector
     // ----------------------------------------------------------------

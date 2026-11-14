@@ -172,8 +172,10 @@ SEEING THE CURRENT LINE
     and status line do not. The mode is off initially and per buffer; the
     status line shows HL when it is on.
 
-    The face hl-line supplies a bright-black background by default.
-    Syntax colours remain visible; the region, search matches and other
+    The face hl-line supplies a bright-black background by default, and
+    each theme that ships gives it a colour of its own, between the page's
+    and the region's; monochrome, which has no colours, draws the line in
+    bold. Syntax colours remain visible; the region, search matches and other
     explicit backgrounds can cover it. The `themes' page explains faces.
     For example, to choose a different background:
 

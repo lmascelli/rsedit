@@ -18,6 +18,7 @@
 
        ;; Editor UI furniture
        (region           nil       "#444444" nil)
+       (hl-line          nil       "#2a2a2a" nil)
        (mode-line        "#ffffff" "#333333" ("bold"))
        (mode-line-inactive "#888888" "#222222" nil)
        (window-separator "#555555" nil       nil)

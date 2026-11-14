@@ -7224,7 +7224,10 @@ Fa `hl-line-mode` con `define-minor-mode`, etichetta `HL`, spento in partenza.
 Il modulo contiene il comando e la sua docstring; l'effetto è in
 `ui/compose.rs`, condiviso da finestre affiancate e flottanti
 (@evidenziazioni). Usa la faccia incorporata `hl-line`, con il solo fondo:
-non ha keymap né hook da aggiornare al movimento. Il punto e il layout del
+non ha keymap né hook da aggiornare al movimento. Ogni tema distribuito dà
+alla faccia un fondo suo, tra quello della pagina e quello della regione,
+perché una selezione sulla riga del punto si veda; `monochrome`, che non ha
+colori, usa il grassetto, e un test lo controlla per tutti i temi. Il punto e il layout del
 fotogramma bastano per l'intera riga logica, comprese le continuazioni.
 
 === `help` <mod-help>
