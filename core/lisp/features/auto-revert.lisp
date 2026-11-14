@@ -18,11 +18,8 @@ turned off.
 Example:
   (auto-revert-mode -1)")
 
-;; In every buffer from now on, whatever its major mode, and in those already
-;; open, which `minor-mode-enable' leaves as they are.
-(minor-mode-enable 'auto-revert-mode)
-(dolist (name (all-buffer-names))
-  (minor-mode-on 'auto-revert-mode name))
+(define-globalized-minor-mode global-auto-revert-mode auto-revert-mode nil
+                              "Enable auto-revert-mode in every buffer")
 
 (log "auto-revert loaded")
 (provide 'auto-revert)

@@ -16,11 +16,8 @@ turned off.
 Example:
   (show-paren-mode -1)")
 
-;; In every buffer from now on, whatever its major mode, and in those already
-;; open, which `minor-mode-enable' leaves as they are.
-(minor-mode-enable 'show-paren-mode)
-(dolist (name (all-buffer-names))
-  (minor-mode-on 'show-paren-mode name))
+(define-globalized-minor-mode global-show-paren-mode show-paren-mode nil
+                              "Enable show-paren-mode in every buffer")
 
 (log "show-paren loaded")
 (provide 'show-paren)

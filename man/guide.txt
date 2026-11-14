@@ -54,6 +54,7 @@ THE REFERENCE
         themes            how the colours are chosen
         plugins           modules written by others, and where they go
         compile           running a build, and jumping to its complaints
+        findings          what tools have said about files
         shell             running a command, and reading what it printed
         regexps           regular expressions, and matching them from Lisp
         background        work that goes on while you type

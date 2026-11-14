@@ -66,6 +66,10 @@ mod tests {
             include_str!("../managers/commands.rs"),
         ),
         (
+            "managers/findings.rs",
+            include_str!("../managers/findings.rs"),
+        ),
+        (
             "managers/history.rs",
             include_str!("../managers/history.rs"),
         ),

@@ -141,6 +141,7 @@ impl<B: BufferTrait> EditorState<B> {
             history: Arc::new(RwLock::new(History::default())),
             visits: Arc::new(RwLock::new(Visits::default())),
             kept_values: Arc::new(RwLock::new(KeptValues::default())),
+            findings: Arc::new(RwLock::new(Findings::default())),
             session_base: Arc::default(),
             loader: Arc::new(RwLock::new(Loader::default())),
             working_directory: Arc::new(RwLock::new(

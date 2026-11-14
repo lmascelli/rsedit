@@ -307,5 +307,9 @@ Example:
 (define-key nil "C-d" 'electric-pair-delete-forward)
 (define-key nil "<delete>" 'electric-pair-delete-forward)
 
+(define-globalized-minor-mode global-electric-pair-mode electric-pair-mode nil
+                              "Enable electric-pair-mode in every buffer")
+
+
 (log "electric-pair loaded")
 (provide 'electric-pair)

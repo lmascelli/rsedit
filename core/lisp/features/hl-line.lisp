@@ -10,4 +10,7 @@ wrapped rows and their padding. The face hl-line supplies its background.
 Example:
   (hl-line-mode 1)")
 
+(define-globalized-minor-mode global-hl-line-mode hl-line-mode nil
+                              "Enable hl-line-mode in every buffer")
+
 (provide 'hl-line)

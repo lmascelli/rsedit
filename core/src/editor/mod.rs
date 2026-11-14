@@ -21,7 +21,7 @@ use crate::{
     jobs::watcher::FileWatcher,
     managers::{
         Binding, BindingSource, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands,
-        History, Hit, KeptValues, KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime,
+        Findings, History, Hit, KeptValues, KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime,
         Scrolled, Visits, WindowRemoved, Windows,
     },
     modes::{Grammar, MajorMode, SyntaxTable},
@@ -58,6 +58,7 @@ mod commands;
 mod directory;
 pub(crate) mod file_index;
 pub(crate) mod file_io;
+pub(crate) mod findings;
 mod frame;
 pub(crate) mod ignore;
 mod keys;
@@ -260,6 +261,10 @@ pub struct EditorState<B: BufferTrait> {
     /// The values Lisp code keeps by name from one run to the next. See
     /// [`KeptValues`].
     kept_values: Arc<RwLock<KeptValues>>,
+
+    /// What producers have said about files, by producer and by file. See
+    /// [`Findings`].
+    findings: Arc<RwLock<Findings>>,
 
     /// The session file as this editor last read or wrote it: what a write
     /// compares the file with, to tell what another editor added from what
@@ -516,6 +521,22 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn kept_values_mut<R>(&self, f: impl FnOnce(&mut KeptValues) -> R) -> R {
         f(&mut self
             .kept_values
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Runs F on the findings, under their read lock.
+    pub(crate) fn findings<R>(&self, f: impl FnOnce(&Findings) -> R) -> R {
+        f(&self
+            .findings
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Runs F on the findings, under their write lock.
+    pub(crate) fn findings_mut<R>(&self, f: impl FnOnce(&mut Findings) -> R) -> R {
+        f(&mut self
+            .findings
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner))
     }

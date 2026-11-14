@@ -35,6 +35,7 @@ mod file_name_tests;
 mod fill_tests;
 mod find_file_recursive_tests;
 mod find_file_tests;
+mod findings_tests;
 mod frame_snapshot_tests;
 mod fuel_cost_tests;
 mod fuel_tests;

@@ -171,8 +171,8 @@ lì e nella mappa di `lib.rs`.
   [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`), il riempimento (`fill.rs`).],
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
-  [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Visits`, `KeptValues`, `Log`, `Runtime`, `Loader`.],
-  [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`, `loader.rs`, `visits.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `session.rs`, `work.rs`). Vedi @coppie.],
+  [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Visits`, `KeptValues`, `Findings`, `Log`, `Runtime`, `Loader`.],
+  [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`, `loader.rs`, `visits.rs`, `findings.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `session.rs`, `work.rs`). Vedi @coppie.],
   [`primitives/`], [Le 327 primitive dell'editor, in 43 moduli, e `install_primitives`.],
   [`modes/`], [`MajorMode` (`mod.rs`), la grammatica di colorazione (`grammar.rs`), la tabella sintattica (`syntax_table.rs`) e lo scanner delle espressioni, che la legge (`sexp.rs`) (@modi).],
   [`jobs/`], [I lavori di sfondo dell'editor: `Highlighter`, `Prescanner`, `FileWatcher` e `AutoSaver` (@lavori-editor).],
@@ -872,6 +872,7 @@ che li condivide.
   [`macros`], [`RwLock<Macros>`], [Macro in registrazione, ultima macro, profondità delle riproduzioni, contatore.],
   [`history`], [`RwLock<History>`], [Storia dei prompt per chiave (100 voci per chiave predefinite).],
   [`visits`], [`RwLock<Visits>`], [File visitati, dal più recente, e dove era il punto in ognuno (@memoria).],
+  [`findings`], [`RwLock<Findings>`], [Le segnalazioni dei produttori, per file e per produttore, e i loro marcatori (@segnalazioni).],
   [`log`], [`RwLock<Log>`], [Righe diagnostiche e file a cui sono copiate.],
   [`runtime`], [`RwLock<Runtime>`], [Colonna obiettivo, isearch e sostituzione in corso, `FuelMeter`, pila delle chiamate per i backtrace, tema in uso e tema di fabbrica, i lavori avviati da Lisp per nome.],
   [`echo_message`], [`RwLock<EchoMessage>`], [Testo dell'area messaggi con l'istante in cui è stato scritto.],
@@ -943,6 +944,7 @@ e tiene un'invariante che i suoi campi presi uno per uno non terrebbero.
   [`History`], [Un cammino nella storia vale solo nell'anello e nel prompt in cui è cominciato.],
   [`Visits`], [Un percorso compare al più una volta in ogni lista, i file recenti e le posizioni, e ogni lista va dal più recente e resta entro il suo limite.],
   [`KeptValues`], [Un nome ha al più un valore, tenuto come il testo che `prin1-to-string` ne scrive: ciò che vi entra si rilegge.],
+  [`Findings`], [Una coppia di produttore e file ha al più un insieme di segnalazioni, che una sostituzione cambia in un passo; un insieme sostituito non riceve i marcatori fatti per lui (@segnalazioni).],
   [`Log`], [Ogni riga arriva al file una volta e nell'ordine in cui è stata registrata, salvo le scritture che falliscono e le righe uscite dalla lista prima di essere scritte.],
   [`Runtime`], [Nessuna: raggruppa ciò che appartiene alla sessione e non a un documento (@decisioni-stato).],
   [`Loader`], [Una feature fallita non è mai in vigore, e ciò che è stato fornito durante un `require` fallito se ne va con lui; le funzioni in attesa di una feature si consegnano una volta sola, quando arriva (@moduli-lisp).],
@@ -998,7 +1000,10 @@ buffer che compone, attraverso la sola porta che apre due compartimenti,
 mentre legge il buffer corrente e poi interroga `modes`, e lo prende in
 scrittura per togliere una mappa `Release`. Ogni altro percorso copia fuori ciò
 che gli serve e rilascia prima di prendere il lock seguente; `echo_message` e
-gli altri compartimenti si prendono da soli.
+gli altri compartimenti si prendono da soli. `findings` è una foglia per
+costruzione: le sue operazioni che toccano un buffer lo rilasciano prima di
+bloccarlo, e riconoscono con una generazione ciò che è cambiato nel frattempo
+(@segnalazioni).
 
 #canvas(height: 3.4cm)[
   #node(1.4cm, 1.0cm, 2.4cm, 0.8cm, [ambiente Lisp\ (`Env`)], fill: paper)
@@ -6305,6 +6310,83 @@ allora; alla fine ordina tutto.
 - *Una radice che non si legge* dà un indice completo e vuoto, e una riga nel
   log.
 
+=== Le segnalazioni <segnalazioni>
+
+Un produttore --- una build, un linter, un correttore --- dice cose su un tratto
+di un file: un intervallo, una gravità, un messaggio, un codice. Il deposito le
+tiene tutte, per file e per produttore, e risponde per file, per produttore e
+per prefisso di directory. Non sa chi siano i produttori né che cosa ne faccia
+chi chiede: un produttore è un nome, un file un percorso assoluto, e il
+deposito non disegna nulla. Il compartimento è `Findings`
+(`managers/findings.rs`), la sua metà della facciata `editor/findings.rs`, le
+primitive `primitives/findings.rs`.
+
+#ref-table(
+  columns: (3.4cm, 1fr),
+  header: ([Struttura], [Contenuto]),
+  [`Finding`], [`start` e `end`, riga da 1 e colonna da 0 in caratteri, come il produttore li ha detti; `severity`, uno fra `Error`, `Warning`, `Info`, `Hint`; `message`; `code`, facoltativo, come testo.],
+  [`Set`], [Le segnalazioni di un produttore per un file, nell'ordine dato; `generation`, il numero della sostituzione che le ha fatte; `placed`, i marcatori, quando il file è aperto; `edited`, se il buffer è stato chiuso dopo una modifica.],
+  [`Placed`], [Una coppia di marcatori, inizio e fine, per segnalazione, e la `version` del buffer quando sono stati fatti.],
+  [`Findings`], [`by_file`, un `BTreeMap` dal file a un `BTreeMap` dal produttore al suo `Set`; `by_producer`, i file di ogni produttore; il prossimo numero di generazione.],
+)
+
+`Findings` garantisce che una coppia (produttore, file) abbia al più un `Set` e
+che una sostituzione lo cambi in un passo: chi chiede vede le segnalazioni di
+prima o quelle di dopo, mai un misto. Le tre domande leggono la stessa tabella.
+Per file è una chiave; per produttore, i file di `by_producer`; per directory,
+un intervallo di `by_file` che comincia alla directory seguita da un
+separatore, e finisce alla prima chiave che non comincia così: `/a/b` tiene
+`/a/b/c`, non `/a/bc`. Il percorso lo rende assoluto la primitiva, con
+`expand_path`, prima che entri.
+
+Le posizioni sono quelle del produttore, e, quando il file è aperto, una coppia
+di marcatori per segnalazione nella tabella `Markers` del buffer che lo visita
+--- la stessa delle liste di risultati (@risultati) ---, che le tre porte
+spostano con il testo. Una domanda risponde con il posto dei marcatori quando
+ci sono tutti, e con quello del produttore altrimenti, e con `:stale` vero
+quando la `version` del buffer non è più quella in cui i marcatori sono stati
+fatti: il testo è cambiato da quando il produttore ha parlato. Una sostituzione
+nuova fa marcatori nuovi, e la segnalazione torna fresca. I marcatori si fanno
+in due momenti: quando arriva una sostituzione e un buffer visita il file, e
+quando il file si apre (`new_buffer`, `new_file_buffer`, con `place_findings`
+prima degli hook). Quando il buffer si chiude, `unplace_findings` dimentica i
+marcatori, che se ne vanno con lui, e annota in `edited` se il testo era
+cambiato: la segnalazione torna al posto del produttore e resta vecchia. Il
+buffer che visita un file si cerca per percorso a ogni domanda, non si ricorda
+per nome: gli id dei marcatori sono unici in tutto l'editor, e un buffer
+rinominato, o chiuso e riaperto, non ha quelli di un altro.
+
+`findings` è una foglia dell'ordine dei lock (@ordine-lock): si prende da solo,
+e non lo si tiene mai insieme a un altro lock. Una sostituzione passa per tre
+acquisizioni, una dopo l'altra.
+
+#canvas(height: 5.2cm)[
+  #node(2.2cm, 0.8cm, 3.6cm, 0.9cm, [`finding-set`], fill: accent.lighten(85%))
+  #node(8.4cm, 0.8cm, 5.6cm, 0.9cm, [`findings_mut`: sostituisce, \ nuova generazione `g`, marcatori vecchi])
+  #node(14.8cm, 0.8cm, 3.6cm, 0.9cm, [nessun buffer visita \ il file: fine], fill: paper)
+  #node(8.4cm, 2.5cm, 5.6cm, 0.9cm, [`with_buffer_mut`, da solo: toglie \ i marcatori vecchi, fa i nuovi])
+  #node(8.4cm, 4.2cm, 5.6cm, 0.9cm, [`findings_mut`: `place(g)`])
+  #node(14.8cm, 3.7cm, 3.6cm, 0.7cm, [`g` è ancora quella: \ registrati], fill: paper)
+  #node(14.8cm, 4.7cm, 3.6cm, 0.7cm, [altrimenti: tolti \ dal buffer], fill: paper)
+  #carrow((4.0cm, 0.8cm), (5.6cm, 0.8cm))
+  #carrow((11.2cm, 0.8cm), (13.0cm, 0.8cm))
+  #carrow((8.4cm, 1.25cm), (8.4cm, 2.05cm))
+  #carrow((8.4cm, 2.95cm), (8.4cm, 3.75cm))
+  #carrow((11.2cm, 4.0cm), (13.0cm, 3.7cm))
+  #carrow((11.2cm, 4.4cm), (13.0cm, 4.7cm))
+  #note(0.2cm, 3.0cm)[tra un'acquisizione e l'altra \ può arrivare un'altra \ sostituzione: la generazione \ la riconosce]
+]
+
+Aprire un file fa lo stesso a rovescio: copia fuori i `Set` del file, fa i
+marcatori sotto il lock del buffer, e registra ognuno se la sua generazione è
+ancora quella; i rifiutati si tolgono. Una domanda copia fuori i `Set`, li
+rilascia, e legge i marcatori sotto il lock del buffer, uno alla volta.
+
+Le primitive sono `finding-set`, `finding-clear`, `findings-for-file`,
+`findings-of-producer` e `findings-under`; una segnalazione, in entrata e in
+uscita, è una lista di proprietà. Un elenco con una voce sbagliata si rifiuta
+intero, prima di toccare il deposito. L'uso è nella pagina `findings`.
+
 === L'ambiente <ambiente>
 
 `setenv` non cambia l'ambiente del processo: scrive in una tabella
@@ -6936,6 +7018,37 @@ dell'utente li descrive.
   una visita in sfondo in un'altra directory non deve ripeterla in ogni passo.
   Scartato: cambiare la directory del processo, che si vede da tutti i thread
   e da ogni comando già partito.
++ *Le segnalazioni stanno in un deposito del nucleo, che non sa chi lo usa.*
+  Un deposito per produttore farebbe scrivere a ogni cliente --- lo schermo,
+  una lista, un modulo che conta --- una domanda per ognuno, e due produttori
+  sullo stesso file non si vedrebbero. Uno solo risponde a tutte e tre le
+  domande con una tabella, e un produttore è un nome: il deposito non sa se è
+  una build o un server. Scartato: tenerle nei buffer, che non ci sono quando
+  il file è chiuso, ed è proprio allora che una build ha più da dire.
++ *Un produttore sostituisce, non aggiunge.* Chi ha guardato di nuovo un file
+  sa tutto ciò che vi trova; dire anche ciò che non trova più gli farebbe
+  tenere una copia di ciò che ha detto prima. La sostituzione in blocco toglie
+  le segnalazioni risolte senza che nessuno lo chieda, e non lascia vedere
+  metà di un aggiornamento.
++ *La posizione è del produttore, più un marcatore quando il file è aperto.*
+  Il produttore conta righe e colonne sul testo che ha letto; un marcatore
+  segue le modifiche fatte dopo, finché il buffer c'è. Una segnalazione su un
+  testo cambiato si dice vecchia (`:stale`), confrontando la `version` del
+  buffer, finché il produttore non la sostituisce: il deposito non prova a
+  indovinare se la modifica l'ha risolta. Scartati: gli offset soli, che per un
+  file chiuso il produttore non ha, e il ricalcolo dal contenuto, che costa una
+  lettura del file per una risposta che resta un'ipotesi.
++ *Il lock delle segnalazioni non si tiene mai con quello di un buffer.*
+  Prenderli insieme avrebbe messo `findings` nell'ordine dei lock, prima o dopo
+  i buffer, e ogni percorso futuro avrebbe dovuto rispettarlo. Le operazioni
+  li prendono uno dopo l'altro, e una generazione per sostituzione riconosce i
+  marcatori fatti per un insieme che nel frattempo è stato sostituito, che si
+  tolgono. Il costo è un marcatore fatto e tolto, di rado.
++ *Una segnalazione, in Lisp, è una lista di proprietà.* Un vettore o una
+  lista per posizione obbligherebbero chi legge a ricordare l'ordine, e una
+  proprietà in più, domani, a cambiarlo; una lista di proprietà si legge per
+  nome e si allarga senza rompere nessuno. risp non ha `plist-get`: si legge
+  con `memq` e `nth`, come mostra la pagina.
 
 // ===========================================================================
 = I moduli Lisp <moduli-lisp>

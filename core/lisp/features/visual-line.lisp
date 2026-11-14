@@ -21,4 +21,7 @@ Example:
 (define-key 'visual-line-mode "C-a" 'beginning-of-visual-line)
 (define-key 'visual-line-mode "C-e" 'end-of-visual-line)
 
+(define-globalized-minor-mode global-visual-line-mode visual-line-mode nil
+                              "Enable visual-line-mode in every buffer")
+
 (provide 'visual-line)

@@ -7,6 +7,7 @@
 //! Design: `doc/architettura-editor.typ, <regole-compartimenti>`.
 mod buffers;
 mod commands;
+mod findings;
 mod history;
 mod kept_values;
 mod kill_yank;
@@ -20,6 +21,7 @@ mod windows;
 
 pub use buffers::{BufferRemoved, BufferRenamed, Buffers};
 pub use commands::Commands;
+pub use findings::{Finding, Findings, Found, LineColumn, Placed, Severity};
 pub(crate) use commands::{prefix_from_raw, raw_prefix};
 pub use history::{DEFAULT_HISTORY_LENGTH, History, Recalled};
 pub use kept_values::KeptValues;

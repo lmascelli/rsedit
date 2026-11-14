@@ -67,7 +67,7 @@ Da verificare
       fosse un'altra.
 - [X] C3 Dati dei moduli nella sessione: un modulo salva e rilegge un suo valore.
       Dipende da R2.
-- [ ] C4 Indice dei file: visita di un albero in sfondo, con regole di esclusione, in
+- [X] C4 Indice dei file: visita di un albero in sfondo, con regole di esclusione, in
       cache per directory. dired-find-recursive e grep ne diventano clienti. Dipende da D1.
 - [ ] C5 Deposito delle segnalazioni: per (produttore, file); interrogabile per file,
       produttore, prefisso di directory. Dipende da D4.

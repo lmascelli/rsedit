@@ -28,7 +28,9 @@ bold
 close
 escape
 filename
+hint
 indent-function
+info
 invalid-regexp
 open
 overlay
@@ -38,5 +40,6 @@ reindent
 shift
 symbol
 underline
+warning
 
 # Emacs's names, where the text compares the two

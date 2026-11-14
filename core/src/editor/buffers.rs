@@ -40,6 +40,7 @@ impl<B: BufferTrait> EditorState<B> {
                     new_buf.file_stamp = Some(stamp);
 
                     self.buffers_mut(|buffers| buffers.insert(name, new_buf));
+                    self.place_findings(name);
                     self.show_in_focused_window(name);
                     self.initialize_buffer(name, true, env);
 
@@ -92,6 +93,7 @@ impl<B: BufferTrait> EditorState<B> {
             )),
         );
         self.buffers_mut(|buffers| buffers.insert(name, new_buf));
+        self.place_findings(name);
         self.show_in_focused_window(name);
         self.initialize_buffer(name, true, env);
         name.to_string()
@@ -314,6 +316,8 @@ impl<B: BufferTrait> EditorState<B> {
         // A listing that goes takes its markers with it, out of the buffers
         // its places are in: nothing will visit them again.
         crate::primitives::results::forget_markers(self, name);
+        // The findings about its file go back to where their producers said.
+        self.unplace_findings(name);
 
         // Found and removed in one acquisition: between the two, another
         // thread opening or closing a float would shift the indices. Every

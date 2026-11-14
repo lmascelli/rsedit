@@ -31,11 +31,6 @@ Example:
 
 (add-hook 'whitespace-cleanup-mode "before-save-hook" 'whitespace--cleanup)
 
-;; In every buffer from now on, whatever its major mode, and in those already
-;; open, which `minor-mode-enable' leaves as they are.
-(minor-mode-enable 'whitespace-mode)
-(dolist (name (all-buffer-names))
-  (minor-mode-on 'whitespace-mode name))
 
 (log "whitespace loaded")
 (provide 'whitespace)

@@ -1,0 +1,121 @@
+NAME
+    findings - what tools have said about files, kept by file and by tool
+
+SYNOPSIS
+    (finding-set PRODUCER FILE ENTRIES)
+    (finding-clear PRODUCER &optional FILE)
+    (findings-for-file FILE)
+    (findings-of-producer PRODUCER)
+    (findings-under DIRECTORY)
+
+DESCRIPTION
+    A build, a linter, a spelling checker: each is a producer of
+    findings, things it has to say about a span of a file -- an error on
+    line 12, a warning from column 4 to column 9. The editor keeps them
+    all in one place, by file and by producer, so that one piece of Lisp
+    can report them and any other can ask for them: everything said about
+    this file, everything this producer said, everything said about the
+    files under that directory.
+
+    Only the keeping is here. Nothing is drawn: a finding is not
+    highlighted, counted in the mode line or shown at point by being
+    kept. That is for the code that asks.
+
+A FINDING
+    Each finding is a property list:
+
+        :start      (LINE . COLUMN) where the span starts
+        :end        (LINE . COLUMN) where it ends; :start when not given
+        :severity   error, warning, info or hint
+        :message    a string
+        :code       a string, a symbol or a number, optional: the
+                    producer's name for the kind of finding, which
+                    comes back as a string
+
+    A property is read with memq and nth: (nth 1 (memq :message f)).
+
+    Lines count from 1 and columns from 0, in characters, as the producer
+    counted them. A producer is named by a symbol or a string: 'my-lint
+    and "my-lint" are the same producer. A file is named as C-x C-f names
+    one: a relative name is read in the current directory, and is kept as
+    an absolute one.
+
+REPLACING
+    A producer never adds or removes one finding: `finding-set' replaces
+    everything it said about a file with a new list, in one go, and
+    returns how many findings there are now. What other producers said
+    about the file, and what this one said about other files, stays. So
+    a producer that has looked at a file again reports all it found, and
+    what it no longer finds goes without being asked.
+
+    An empty list forgets what the producer said about the file.
+    `finding-clear' does the same, or, without a file, forgets every file
+    of the producer: what a build does before it starts again.
+
+    A list with an entry that is not a finding -- no :start, no :message,
+    a severity that is not one of the four, a negative line -- is refused
+    whole, with wrong-type-argument, and what was there before stays.
+
+ASKING
+    `findings-for-file' returns the findings about one file, producer by
+    producer, each in the order it was given. `findings-of-producer'
+    returns one producer's, file by file, and `findings-under' those about
+    the files in a directory and in every directory below it, file by
+    file. A directory is a whole name: /src/app holds /src/app/main.c,
+    not /src/application.c.
+
+    Each finding comes back as it went in, with three more properties:
+    :file, the absolute name of the file; :producer, as a symbol; and
+    :stale, described below.
+
+IN AN OPEN FILE
+    When the file is open, in a buffer, each finding follows its text: a
+    line added above it moves it down, as it moves the places of a list
+    of results (`compile'). This holds whether the file was opened before
+    the findings came or after: opening it places them. The places asked
+    for are then where the text is now, not where the producer said.
+
+    Once the buffer's text has changed since the producer spoke, every
+    finding of that producer about the file has :stale t: it was right
+    about a text that is no longer the one you have. It stays so until
+    the producer replaces its findings, which makes them fresh again.
+
+    Closing the buffer gives the findings back the places the producer
+    said, and a finding stale when it closed stays stale.
+
+LIMITS
+    A place past the end of its line stops at the end of the line, and a
+    line past the end of the file at the file's end.
+
+    A buffer that comes to visit a file by being saved under its name,
+    with C-x C-w, does not take that file's findings: they are placed the
+    next time the file is opened.
+
+    A finding is kept for as long as the editor runs, and not in the
+    session: what a producer said is the producer's to say again.
+
+EXAMPLES
+    A checker of your own that reports two findings about a file, one an
+    error over a span and one a hint at a point.
+
+        (finding-set 'my-lint "~/src/app/main.c"
+          '((:start (12 . 4) :end (12 . 9) :severity error
+             :message "undefined name" :code "E1")
+            (:start (30 . 0) :severity hint :message "line is long")))
+
+    The errors about the file in the current buffer, as messages.
+
+        (dolist (f (findings-for-file (buffer-file-name)))
+          (when (eq (nth 1 (memq :severity f)) 'error)
+            (message "%s" (nth 1 (memq :message f)))))
+
+    How many findings there are under a directory, all producers counted.
+
+        (length (findings-under "~/src/app"))
+
+    A build that starts over forgets everything it said last time.
+
+        (finding-clear 'my-build)
+
+SEE ALSO
+    compile, files, buffers
