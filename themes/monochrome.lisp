@@ -29,7 +29,7 @@
        (region             nil nil ("reverse"))
        ;; Bold, not reverse: the line point is on is where the text is read,
        ;; and the words coloured in it are drawn over it.
-       (hl-line            nil nil ("bold"))
+       (hl-line            nil nil ("underline"))
        (mode-line          nil nil ("reverse"))
        (mode-line-inactive nil nil ("bold"))
        (window-separator   nil nil ("bold"))

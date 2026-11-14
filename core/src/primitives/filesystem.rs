@@ -1,9 +1,11 @@
 //! Asking the disk and changing it: whether a path exists, deleting and
-//! renaming, walking a tree, reading a file whole. A failure is logged and
-//! answered with nil, and nothing here asks the user anything.
+//! renaming, walking a tree, looking upwards for a name, reading a file
+//! whole. A failure is logged and answered with nil, and nothing here asks
+//! the user anything.
 //!
 //! Design: `doc/architettura-editor.typ, <disco>`.
 use super::*;
+use crate::editor::locate::{self, Located, Question};
 
 /// Collects every file under ROOT, depth-first, as paths relative to it, and
 /// answers whether the walk stopped early.
@@ -419,6 +421,109 @@ primitive!(read_file_to_string, args, _env, ctx, {
     }
 });
 
+pub const LOCATE_DOMINATING_FILE_DOC: &str = "(locate-dominating-file DIRECTORY NAMES &optional \
+         WHICH): Return the nearest directory, from DIRECTORY upwards and DIRECTORY included, \
+         that holds one of NAMES, or nil when none does up to the root. NAMES is a file name or \
+         a list of them, and DIRECTORY the working directory when nil. WHICH 'topmost asks for \
+         the highest such directory instead. The answer ends in a separator and is remembered \
+         until `locate-dominating-file-forget'. A disk that does not answer within \
+         `locate-dominating-file-timeout' seconds gives 'timeout.\n\n\
+         Example:\n\
+         (locate-dominating-file \"~/src/app/lib\" '(\".git\" \"Makefile\"))";
+
+primitive!(locate_dominating_file, args, env, ctx, {
+    if args.is_empty() || args.len() > 3 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 2,
+            got: args.len(),
+        });
+    }
+    let start = match args.first() {
+        Some(exp) if exp.is_nil() => ctx.expand_path("."),
+        other => path_arg(ctx, other)?,
+    };
+    let mut names = Vec::new();
+    match args.get(1) {
+        Some(name @ ELispExp::String(_)) => names.push(marker_name(name)?),
+        Some(list) if list.is_nil() || matches!(list, ELispExp::Cons(..)) => {
+            for name in list.iter() {
+                names.push(marker_name(&name)?);
+            }
+        }
+        other => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "a String or a list of them".into(),
+                got: other.cloned().unwrap_or_else(ELispExp::nil),
+            });
+        }
+    }
+    let topmost = match args.get(2) {
+        None => false,
+        Some(exp) if exp.is_nil() => false,
+        Some(ELispExp::Symbol(which)) if &**which == "nearest" => false,
+        Some(ELispExp::Symbol(which)) if &**which == "topmost" => true,
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "nearest or topmost".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    if names.is_empty() {
+        return Ok(ELispExp::nil());
+    }
+    let question = Question {
+        start,
+        names,
+        topmost,
+    };
+    // `symlink_metadata`, so that a link that points nowhere counts as there.
+    let holds = |path: &std::path::Path| std::fs::symlink_metadata(path).is_ok();
+    Ok(match ctx.locate(question, locate::timeout(&env), holds) {
+        Located::Known(Some(directory)) => ELispExp::string(directory),
+        Located::Known(None) => ELispExp::nil(),
+        Located::Unanswered => ELispExp::symbol("timeout".into()),
+    })
+});
+
+/// Reads one of the names `locate-dominating-file' looks for: a string that
+/// is not empty and not absolute, since it is joined to each directory.
+fn marker_name<B: BufferTrait>(name: &ELispExp<B>) -> Result<String, EvalError<EditorState<B>>> {
+    match name {
+        ELispExp::String(name) if !name.is_empty() && !std::path::Path::new(&**name).has_root() => {
+            Ok(name.to_string())
+        }
+        other => Err(EvalError::WrongArgumentType {
+            expected: "a relative file name".into(),
+            got: other.clone(),
+        }),
+    }
+}
+
+pub const LOCATE_DOMINATING_FILE_FORGET_DOC: &str = "(locate-dominating-file-forget &optional \
+         DIRECTORY): Forget what `locate-dominating-file' remembers for the searches that \
+         started in DIRECTORY or under it, or for all of them when DIRECTORY is nil, and \
+         return how many answers were forgotten. To call after creating or deleting one of the \
+         names searched for.\n\n\
+         Example:\n\
+         (locate-dominating-file-forget \"~/src/app\")";
+
+primitive!(locate_dominating_file_forget, args, _env, ctx, {
+    if args.len() > 1 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let directory = match args.first() {
+        None => None,
+        Some(exp) if exp.is_nil() => None,
+        some => Some(path_arg(ctx, some)?),
+    };
+    let forgotten = ctx.forget_located(directory.as_deref());
+    Ok(ELispExp::number(forgotten as f64))
+});
+
 /// Registers the primitives that ask the disk and change it.
 ///
 /// Called by [`super::install_primitives`].
@@ -439,6 +544,16 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         "directory-files-recursive",
         directory_files_recursive,
         DIRECTORY_FILES_RECURSIVE_DOC,
+    );
+    into.function(
+        "locate-dominating-file",
+        locate_dominating_file,
+        LOCATE_DOMINATING_FILE_DOC,
+    );
+    into.function(
+        "locate-dominating-file-forget",
+        locate_dominating_file_forget,
+        LOCATE_DOMINATING_FILE_FORGET_DOC,
     );
     into.function(
         "read-file-to-string",

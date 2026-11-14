@@ -61,6 +61,7 @@ mod frame;
 mod keys;
 mod kill_yank;
 mod loader;
+pub(crate) mod locate;
 mod log;
 mod macros;
 mod modes;
@@ -134,6 +135,8 @@ impl EchoMessage {
 #[derive(Clone)]
 pub struct EditorState<B: BufferTrait> {
     file_io: Arc<file_io::FileIo<B>>,
+    /// The directories found by looking upwards, and the climbs still out.
+    locate: Arc<locate::Locate>,
     /// False once `quit` has been asked for.
     running: Arc<AtomicBool>,
 

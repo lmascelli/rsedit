@@ -39,6 +39,9 @@ SYNOPSIS
     (directory-files-recursive &optional DIRECTORY LIMIT PRUNE SUFFIXES)
     (directory-entry-count PATH)
     (match-list LIST PATTERN)
+    (locate-dominating-file DIRECTORY NAMES &optional WHICH)
+    (locate-dominating-file-forget &optional DIRECTORY)
+    locate-dominating-file-timeout
     (delete-file PATH &optional RECURSIVE)
     (rename-file FROM TO)
     (copy-file FROM TO &optional RECURSIVE)
@@ -251,7 +254,9 @@ SLOW OR DISCONNECTED MOUNTS
 
     Directory browsing, filename completion, filesystem Lisp primitives,
     user hooks and synchronous script calls can still block on their own
-    filesystem accesses. The timeout reports asynchronous operations only.
+    filesystem accesses. `locate-dominating-file' is the exception: it
+    waits a bounded time, as LOOKING UPWARDS FOR A FILE says.
+    The timeout reports asynchronous operations only.
     For an unresponsive mount, keep working in memory or save to a different
     local file; do not force quit while a remote write is pending unless
     you accept its uncertain outcome.
@@ -337,6 +342,40 @@ FILES FROM LISP
     A leading ~ is the home directory to all of these except
     directory-files-recursive, which takes its directory as it is given.
 
+LOOKING UPWARDS FOR A FILE
+    `locate-dominating-file' answers where, above a directory, a file of
+    a given name is: it looks in DIRECTORY, then in its parent, and so on
+    up to the root, and returns the first directory that holds one of
+    NAMES, ending in a separator, or nil when none does. NAMES is one
+    name or a list of them, each a file or a directory, and a name may
+    have directories in it, as ".git/config". DIRECTORY may also be a
+    file, whose directory is then the first looked in, and nil is the
+    working directory.
+
+    With 'topmost as WHICH the answer is the highest directory that holds
+    one of the names rather than the nearest. To prefer one name over the
+    others, ask for it alone first, as the first example below does.
+
+    The climb is by name: a symbolic link in DIRECTORY is not resolved,
+    so the answer is always the beginning of the path that was given.
+
+    An answer is remembered, nil included, and the next call with the
+    same DIRECTORY, NAMES and WHICH does not look at the disk. Nothing
+    watches the disk for you: after creating or deleting one of the
+    names, call `locate-dominating-file-forget', with a directory to
+    forget only the searches that started in it or under it, or with
+    nothing to forget them all.
+
+    The disk is asked on a thread of its own, and the call waits for it
+    `locate-dominating-file-timeout' seconds, a quarter of a second
+    unless you set it. When the disk has not answered by then, as a
+    network mount that went away does not, the call returns the symbol
+    timeout, which is neither a directory nor nil: test the answer with
+    stringp. The search goes on, and its answer is remembered when it
+    comes; until then the same question returns timeout at once, without
+    waiting again. At most four searches are out at a time, and while
+    they are any other question returns timeout at once too.
+
 THE WORKING DIRECTORY
     A relative path, typed at C-x C-f or given to a function, is read in
     the working directory: the directory the editor was started in, until
@@ -409,6 +448,26 @@ EXAMPLES
     and the lock files:
 
         (directory-files-recursive "." 1000 '("target" ".git") '(".lock"))
+
+    The directory of the repository a file is in, or failing that the
+    nearest directory with a Makefile, and nil while the disk is slow:
+
+        (defun my-root (file)
+          (let ((root (or (locate-dominating-file file ".git")
+                          (locate-dominating-file file "Makefile"))))
+            (if (stringp root) root nil)))
+
+    The outermost Cargo workspace above the working directory:
+
+        (locate-dominating-file nil "Cargo.toml" 'topmost)
+
+    Look again after making a repository in a directory:
+
+        (locate-dominating-file-forget "~/src/app")
+
+    Wait up to a second for a slow disk:
+
+        (setq locate-dominating-file-timeout 1)
 
     Ask before doing something that cannot be undone:
 

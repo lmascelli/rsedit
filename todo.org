@@ -19,7 +19,6 @@ Hooks
 * Fixes todo
 - Macros are not listed in describe-function and not documented.
 
-
 * Macro todo
 - [ ] An eshell like mode, where it is possible to both read from stdin/stderr associated
       to a shell process. A mark to the end of the buffer is kept so that commands can be
@@ -60,11 +59,6 @@ Decisioni aperte (con la proposta)
 
 Da verificare
 - V1 track-changes regge più osservatori insieme? (vim ne usa già uno)
-
-** risp
-- [ ] R1 Mappe e vettori: primitive per leggere e scrivere i tipi Map e Vector.
-- [ ] R2 Leggere dati senza valutarli: una read e una scrittura rileggibile.
-- [ ] R3 JSON: testo <-> mappe, vettori, stringhe, numeri. Dipende da R1, D1, D2.
 
 ** rsedit, nucleo
 - [ ] C1 Risalita ai marcatori: la directory sopra questa che contiene uno di questi
@@ -107,25 +101,6 @@ PDF lo rigenero io, non dirlo nel commit. Leggi solo i file che servono al punto
 riepiloghi intermedi; alla fine: percorso della patch, scelte fatte, cosa non hai
 verificato. Il mattone deve essere agnostico: nessun riferimento a progetti o LSP nel
 nucleo. Contesto: sezione "Progetti e basi per LSP" di todo.org.
-
-** PREAMBOLO (risp)
-Come sopra, ma sul main di lmascelli/risp e con le sue regole di documentazione.
-Nessuna dipendenza dall'editor.
-
-** R1
-Aggiungi a risp le primitive per i tipi Map e Vector che esistono già: creare, leggere,
-scrivere, chiavi, lunghezza, iterare. Prima proponi in dieci righe i nomi e le firme,
-allineati a Emacs Lisp dove ha senso, e aspetta il mio sì.
-
-** R2
-Aggiungi a risp una read che legge un dato senza valutarlo e una scrittura che lo
-rende rileggibile. Devono fare il giro completo per liste, stringhe, numeri, simboli,
-mappe e vettori. Di' cosa non è rileggibile e come viene rifiutato.
-
-** R3
-Aggiungi a risp JSON: da testo a valore e ritorno. Decisioni: <D1: a mano | crate X>;
-null e false sono <D2: i simboli ...>. Errori con posizione. Misura il tempo su un
-documento da 1 MB e riportalo.
 
 ** C1
 Aggiungi a rsedit una primitiva che, data una directory e una lista di nomi, risale

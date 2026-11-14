@@ -145,6 +145,14 @@ pub const SETTINGS: &[Setting] = &[
               at once. Synchronous Lisp calls remain synchronous.",
     },
     Setting {
+        name: crate::editor::locate::TIMEOUT,
+        doc: "How many seconds `locate-dominating-file' waits for the disk before it answers \
+              'timeout, a hundredth at least. The search goes on after that, and its answer is \
+              remembered for the next call.\n\n\
+              Example:\n\
+              \x20 (setq locate-dominating-file-timeout 1)",
+    },
+    Setting {
         name: WATCH_FILE_INTERVAL,
         doc: "How many seconds pass between looks at the open files, a tenth at least; each look \
               takes eight of the buffers, in turn. A change counts from the next look.",

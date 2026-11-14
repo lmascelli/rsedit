@@ -241,7 +241,7 @@ del ciclo (@ciclo-tui).
   #node(12.3cm, 3.35cm, 6.8cm, 0.6cm, [passi bloccati, thread finiti, file di log])
 
   #group(8.5cm, 4.4cm, 7.6cm, 1.5cm, [un thread dedicato per lavoro che si blocca])
-  #node(12.3cm, 5.1cm, 6.8cm, 0.6cm, [comandi di shell, ricerche nei file])
+  #node(12.3cm, 5.1cm, 6.8cm, 0.6cm, [comandi di shell, ricerche nei file, risalite])
   #carrow((7.3cm, 2.4cm), (8.9cm, 1.4cm), colour: accent)
 
   #group(0.1cm, 6.2cm, 7.6cm, 1.2cm, [lettore del terminale (`terminal input`)])
@@ -851,6 +851,7 @@ che li condivide.
   [`current_results`], [`RwLock<Option<String>>`], [Il buffer di risultati che `next-error` percorre.],
   [`grammar_epoch`], [`AtomicU64`], [Quante volte è cambiata una grammatica: il timbro di una colorazione.],
   [`syntax_changed`], [`Topic`], [L'argomento `syntax-changed`, risolto una volta (@argomenti).],
+  [`locate`], [`Locate`], [Le risposte delle risalite e le risalite ancora fuori, sotto un `Mutex` suo (@risalita).],
   [`work`], [`WorkManager<`\ `EditorState<B>>`], [Il lavoro asincrono: i lavori dell'esecutore e i thread dedicati (@sfondo).],
   [`background_change`], [`BackgroundChange`], [Se un lavoro ha cambiato lo schermo dall'ultima fotografia, e come dirlo al front-end (@utenti-sfondo).],
   [`running`], [`AtomicBool`], [Falso dopo `quit`.],
@@ -6044,7 +6045,7 @@ e i lavori Lisp sono nel capitolo sul lavoro in background (@comandi-shell,
   header: ([File], [Contenuto]),
   [`files.rs`], [Visitare un file e riscriverlo: `find-file`, `save-buffer`, `write-file`, `revert-buffer`, `recover-file`, con le metà che le loro domande chiamano una volta risposte; `write_buffer` (@file-su-disco).],
   [`file_names.rs`], [I nomi dei file dal Lisp: `list-dir`, `expand-file-name` e le funzioni che smontano un nome, sopra quelle di `paths.rs` (@nomi-file); la directory di lavoro, `working-directory`, `cd` e `pwd` (@directory-di-lavoro).],
-  [`filesystem.rs`], [Il disco: `file-exists-p`, `delete-file`, `rename-file`, `directory-files-recursive` con `walk_files`, `read-file-to-string`.],
+  [`filesystem.rs`], [Il disco: `file-exists-p`, `delete-file`, `rename-file`, `directory-files-recursive` con `walk_files`, `read-file-to-string` (@disco); `locate-dominating-file` e `locate-dominating-file-forget` (@risalita).],
   [`environment.rs`], [`getenv`, `setenv`, `path-separator`, `data-directory`.],
   [`quit.rs`], [`quit` e `save-some-buffers`, e `has_unsaved_work`, che dice se chiudere un buffer perderebbe qualcosa.],
   [`buffers.rs`], [Creare, cambiare, leggere e chiudere buffer; i valori Lisp appesi a un buffer; ciò che un buffer dice di sé.],
@@ -6119,6 +6120,65 @@ directory che PRUNE nomina, scarta i file che finiscono con uno dei suffissi,
 si ferma al limite, e prima di leggere una directory chiede se continuare. La
 usano `directory-files-recursive`, che paga un'unità di carburante per ogni
 percorso che restituisce, e la ricerca nei file, sul suo thread.
+
+=== La risalita <risalita>
+
+`locate-dominating-file` risponde con la directory che, da una directory in su,
+contiene uno dei nomi dati: la più vicina, o la più alta con `'topmost`. La
+domanda è un `Question` --- la directory di partenza già assoluta, i nomi, quale
+delle due --- e `dominating_directory` (`editor/locate.rs`) la risolve
+percorrendo gli antenati per nome, senza risolvere i collegamenti simbolici:
+la risposta è sempre un prefisso della partenza. La funzione non tocca il disco
+da sé: riceve `holds`, che dice se un percorso c'è, e `keep_going`, che chiede
+prima di ogni directory. La primitiva passa `symlink_metadata`; i test, un
+disco che non risponde finché non lo si lascia andare.
+
+`Locate`, un campo di `EditorState` con un `Mutex` suo, tiene tre cose: le
+risposte date, per domanda, nil compreso; le domande la cui risalita non è
+tornata; un contatore, `generation`. Il lock si prende da solo e non si tiene
+mai attraverso il disco. `EditorState::locate` fa tutto il resto.
+
+#canvas(height: 5.6cm)[
+  #node(2.2cm, 0.8cm, 3.6cm, 0.9cm, [`locate(domanda, attesa)`], fill: accent.lighten(85%))
+  #node(7.4cm, 0.8cm, 3.6cm, 0.9cm, [risposta ricordata?])
+  #node(13.4cm, 0.8cm, 4.6cm, 0.9cm, [`Known`: nessun disco], fill: paper)
+  #node(7.4cm, 2.4cm, 3.6cm, 0.9cm, [già fuori, o \ `CLIMBS` fuori?])
+  #node(13.4cm, 2.4cm, 4.6cm, 0.9cm, [`Unanswered`: subito], fill: paper)
+  #node(7.4cm, 4.2cm, 3.6cm, 1.1cm, [thread `locate` \ (`spawn_work`)])
+  #node(13.4cm, 3.8cm, 4.6cm, 0.7cm, [entro l'attesa: `Known`], fill: paper)
+  #node(13.4cm, 4.8cm, 4.6cm, 0.7cm, [oltre: `Unanswered`], fill: paper)
+  #node(2.2cm, 4.2cm, 3.6cm, 1.1cm, [al ritorno: registra \ se `generation` è la stessa], fill: paper)
+
+  #carrow((4.0cm, 0.8cm), (5.6cm, 0.8cm))
+  #carrow((9.2cm, 0.8cm), (11.1cm, 0.8cm), label: [sì], dy: -8pt)
+  #carrow((7.4cm, 1.25cm), (7.4cm, 1.95cm), label: [no], dx: 10pt)
+  #carrow((9.2cm, 2.4cm), (11.1cm, 2.4cm), label: [sì], dy: -8pt)
+  #carrow((7.4cm, 2.85cm), (7.4cm, 3.65cm), label: [no], dx: 10pt)
+  #carrow((9.2cm, 4.0cm), (11.1cm, 3.8cm))
+  #carrow((9.2cm, 4.4cm), (11.1cm, 4.8cm))
+  #carrow((5.6cm, 4.2cm), (4.0cm, 4.2cm))
+]
+
+- *Chi chiama aspetta al più `locate-dominating-file-timeout`.* La risalita
+  gira su un thread dedicato (@thread-dedicati), e chi chiama aspetta la sua
+  risposta su un canale per quel tempo, un quarto di secondo se
+  l'impostazione non dice altro. Scaduto, la primitiva risponde il simbolo
+  `timeout`, che non è né una directory né nil.
+- *Una risalita lenta si paga una volta.* Il thread continua e, quando torna,
+  registra la risposta. Finché è fuori, la stessa domanda risponde
+  `Unanswered` subito: nessun secondo thread, nessuna seconda attesa.
+- *I thread fermi sono al più `CLIMBS`, quattro.* Con quattro risalite fuori
+  ogni altra domanda è rifiutata subito, senza avviare nulla: un disco appeso
+  non accumula thread, per quante volte lo si interroghi. Un thread appeso su
+  una `stat` resta nel registro del WorkManager, che lo segnala dopo
+  `stuck-step` e lo abbandona allo `shutdown`; uno fermato con `cancel` esce
+  alla directory seguente e non registra nulla.
+- *Dimenticare è esplicito.* `forget_located` toglie le risposte delle domande
+  partite da una directory o da sotto --- creare o cancellare un nome in una
+  directory cambia la risposta solo per quelle ---, oppure tutte, e sposta
+  `generation`: una risalita partita prima consegna la sua risposta a chi la
+  aspetta, ma non la registra. Le risposte sono al più 4 096; alla successiva
+  si ricomincia da zero.
 
 === L'ambiente <ambiente>
 
@@ -6652,6 +6712,20 @@ dell'utente li descrive.
   c'è più, con posizioni che portano altrove. Un buffer salvato si lascia alla
   lettura del file, che dà lo stesso testo senza prendere il lock del buffer per
   ogni file.
++ *La risalita aspetta un tempo limitato, e risponde `timeout`.* Chi chiede la
+  directory che contiene un nome la vuole subito, come valore: per la riga di
+  stato, per decidere dove parte un comando. Ma ogni passo della risalita è una
+  `stat`, e su un mount di rete che non risponde una `stat` non torna. La
+  risalita gira quindi su un thread suo e chi chiama l'aspetta per un tempo
+  limitato; oltre, riceve un simbolo distinto da nil, perché «non c'è» e «non lo
+  so ancora» portano a scelte diverse, e la risposta arriva nella memoria da
+  sola. Comporta che chi chiama deve distinguere tre risposte, e che una
+  risposta ricordata non vede il disco cambiare finché non la si dimentica.
+  Scartate: una primitiva sincrona, che ferma l'editor quanto il mount; una
+  solo asincrona con callback, che obbliga ogni chiamante a spezzarsi in due
+  anche quando il disco è locale e la risposta è in memoria; una scadenza
+  sulle risposte ricordate, che su un disco lento rifarebbe l'attesa a
+  intervalli senza che nulla sia cambiato.
 + *Una ricerca nei file ha un thread suo, una nel buffer no.* Una ricerca in un
   albero dura quanto dura: qualche migliaio di file è un attimo, una home no, e
   non si sa prima di cominciare. Sul suo thread l'editor continua, e i risultati
