@@ -6,7 +6,7 @@ SYNOPSIS
     (add-hook MODE HOOK FUNCTION)
     (remove-hook MODE HOOK FUNCTION)
     (define-minor-mode NAME LIGHTER DOC &rest BODY)
-    (define-globalized-minor-mode GLOBAL MODE TURN-ON DOC)
+    (define-globalized-minor-mode GLOBAL MODE TURN-ON DOC &optional ON)
     (make-minor-mode NAME &optional LIGHTER)
     (minor-mode-on MODE &optional BUFFER)
     (minor-mode-off MODE &optional BUFFER)
@@ -101,8 +101,9 @@ MINOR MODES
     from then on, and with no major mode in every buffer. Buffers in that
     mode already are left as they are.
 
-    A module turns a minor mode on everywhere that way: show-paren-mode
-    and whitespace-mode are. `minor-mode-disable' takes back what
+    A module turns a minor mode on everywhere that way, through a global
+    mode that starts on: show-paren-mode and whitespace-mode are, as
+    A MINOR MODE IN EVERY BUFFER says. `minor-mode-disable' takes back what
     `minor-mode-enable' asked for with the same arguments, and leaves the
     buffers where the mode is on as they are:
 
@@ -129,19 +130,34 @@ A MINOR MODE IN EVERY BUFFER
     (global-auto-fill-mode 1) in init.lisp does the same, and the
     variable of the same name says whether it is on. DOC documents both.
 
-    TURN-ON, nil above, chooses the buffers. It names a function of no
+    ON, when it is not nil, starts the global mode on: the mode is on in
+    every buffer as soon as it is defined, without a word in the echo
+    area. show-paren, whitespace and auto-revert define their global
+    modes that way, global-show-paren-mode, global-whitespace-mode and
+    global-auto-revert-mode, and (global-show-paren-mode -1) in init.lisp,
+    after the modules, turns show-paren-mode off everywhere.
+
+    With TURN-ON nil, as above, the mode is asked for in every buffer with
+    `minor-mode-enable', and taken back with `minor-mode-disable' when the
+    global mode is turned off: it is on before a major mode's
+    after-change-major-mode-hook runs, which can still turn it off in the
+    buffers of that mode.
+
+    Otherwise TURN-ON chooses the buffers. It names a function of no
     arguments, which is called with each buffer current and turns the
     mode on there, or leaves it off; the EXAMPLES have one that takes
-    only the buffers visiting a file. Write it with `minor-mode-on' and
+    only the buffers visiting a file. It runs after the major mode's
+    hooks, for every buffer made. Write it with `minor-mode-on' and
     not with the mode's own command, which says in the echo area what it
     did, for every buffer made. It is the name of a function, as for a
     hook: a lambda is refused.
 
-    Off means off everywhere: turning the global mode off turns the mode
-    off in the buffers that had it on by hand, or from `minor-mode-enable',
-    as well. While it is on, a buffer can still turn the mode off for
-    itself, and has it back with its next major mode, or the next time
-    the global mode is turned on.
+    Off means off everywhere: turning the global mode off turns the mode off
+    in the buffers that had it on by hand, or from `minor-mode-enable', as
+    well. What `minor-mode-enable' asked for one major mode stays, for the
+    buffers of that mode made from then on. While it is on, a buffer can still
+    turn the mode off for itself, and has it back with its next major mode, or
+    the next time the global mode is turned on.
 
 WHICH MODE A FILE GETS
         rust-mode           .rs
@@ -378,10 +394,10 @@ EXAMPLES
         (defun my-number-files ()
           (if (buffer-file-name)
               (minor-mode-on 'display-line-numbers-mode)))
-        (define-globalized-minor-mode global-display-line-numbers-mode
+        (define-globalized-minor-mode my-number-files-mode
           display-line-numbers-mode my-number-files
           "Number the lines of every buffer visiting a file.")
-        (global-display-line-numbers-mode 1)
+        (my-number-files-mode 1)
 
     A key only while auto-fill-mode is on:
 

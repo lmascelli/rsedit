@@ -308,7 +308,8 @@ Example:
 (define-key nil "<delete>" 'electric-pair-delete-forward)
 
 (define-globalized-minor-mode global-electric-pair-mode electric-pair-mode nil
-                              "Enable electric-pair-mode in every buffer")
+  "Turn `electric-pair-mode' on in every buffer, or off in all of them.
+The buffers to come follow; with no argument, the other way from how it is.")
 
 
 (log "electric-pair loaded")

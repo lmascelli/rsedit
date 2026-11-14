@@ -418,6 +418,55 @@ mod tests {
         assert!(shouting("later", &env, &ctx));
     }
 
+    #[test]
+    fn a_global_mode_that_starts_on_is_on_everywhere_without_a_word() {
+        let (ctx, env) = editor_with_a_global_mode();
+        run(
+            r#"(define-globalized-minor-mode global-loud-mode shout-mode nil
+                 "Shout everywhere from the start." t)
+               (buffer-create "later")"#,
+            &env,
+            &ctx,
+        );
+        assert!(run("global-loud-mode", &env, &ctx).is_truthy());
+        for buffer in ["*scratch*", "open", "later"] {
+            assert!(shouting(buffer, &env, &ctx), "{buffer}");
+        }
+        assert!(!ctx.get_echo_message().contains("global-loud-mode"));
+    }
+
+    #[test]
+    fn a_major_modes_hook_keeps_a_global_mode_without_turn_on_off_in_its_buffers() {
+        // Without TURN-ON the mode comes from a rule, before the major mode's
+        // hooks: a global hook would run after them and turn it on again.
+        let (ctx, env) = editor_with_a_global_mode();
+        run(
+            r#"(global-shout-mode 1)
+               (defun quiet-prose () (minor-mode-off 'shout-mode))
+               (add-hook 'prose-mode "after-change-major-mode-hook" 'quiet-prose)
+               (buffer-create "prose" 'prose-mode)
+               (buffer-create "plain")"#,
+            &env,
+            &ctx,
+        );
+        assert!(!shouting("prose", &env, &ctx));
+        assert!(shouting("plain", &env, &ctx));
+    }
+
+    #[test]
+    fn minor_mode_disable_takes_back_a_global_mode_without_turn_on_for_the_buffers_to_come() {
+        let (ctx, env) = editor_with_a_global_mode();
+        run(
+            r#"(global-shout-mode 1)
+               (minor-mode-disable 'shout-mode)
+               (buffer-create "later")"#,
+            &env,
+            &ctx,
+        );
+        assert!(shouting("open", &env, &ctx), "an open buffer keeps it");
+        assert!(!shouting("later", &env, &ctx));
+    }
+
     // ----------------------------------------------------------------
     // The status line
     // ----------------------------------------------------------------

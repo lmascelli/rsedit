@@ -12,6 +12,7 @@ SYNOPSIS
     (with-eval-after-load FEATURE BODY...)
     (eval-file FILE)
     (display-line-numbers-mode &optional ARG)
+    (global-display-line-numbers-mode &optional ARG)
     default-configuration-modules
     default-configuration-skip
     lisp-path
@@ -185,14 +186,15 @@ SETTINGS
         display-line-numbers-width  the fewest digits the numbers take
         mode-line-format            what each window's status line shows
 
-    M-x display-line-numbers-mode numbers the lines of the buffer you are
-    in, in every window showing it, and takes the numbers away again. It
-    is a minor mode, off until you turn it on, since the numbers cost
-    columns; the `modes' page says how to turn one on in the buffers of a
-    major mode, or of every one. `display-line-numbers-type' says which
-    numbers: each line's own, or with 'relative how far each line is from
-    the one point is on, which shows its own. A window too narrow to
-    spare the columns shows none.
+    M-x display-line-numbers-mode numbers the lines of the buffer you are in,
+    in every window showing it, and takes the numbers away again. It is a
+    minor mode, off until you turn it on, since the numbers cost columns; M-x
+    global-display-line-numbers-mode numbers every buffer, those open and
+    those to come, and the `modes' page says how to turn a minor mode on in
+    the buffers of one major mode. `display-line-numbers-type' says which
+    numbers: each line's own, or with 'relative how far each line is from the
+    one point is on, which shows its own. A window too narrow to spare the
+    columns shows none.
 
     The numbers are drawn in the faces `line-number' and
     `line-number-current', and the status line in `mode-line' and

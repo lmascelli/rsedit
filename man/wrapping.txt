@@ -3,6 +3,7 @@ NAME
 
 SYNOPSIS
     (visual-line-mode &optional ARG)
+    (global-visual-line-mode &optional ARG)
     (next-visual-line &optional N)
     (previous-visual-line &optional N)
     (beginning-of-visual-line)
@@ -11,7 +12,8 @@ SYNOPSIS
 VISUAL LINE MODE
     M-x visual-line-mode turns word wrapping on in the current buffer; run it
     again to turn it off. It starts off in every buffer. The status line says
-    Wrap while it is on. From Lisp:
+    Wrap while it is on. M-x global-visual-line-mode turns it on in every
+    buffer, those open and those to come, and off again. From Lisp:
 
         (visual-line-mode 1)         on
         (visual-line-mode 0)         off

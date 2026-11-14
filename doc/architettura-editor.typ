@@ -3548,14 +3548,19 @@ numero positivo o `C-u` per accendere, zero, un negativo o `-` per spegnere.
 
 `define-globalized-minor-mode`, nello stesso modulo, fa di un modo minore un
 comando che lo accende in ogni buffer o lo spegne in tutti. L'espansione ha
-tre parti: una variabile con il nome del comando, che dice se è acceso; una
-funzione privata, `NOME--enter-buffer`, aggiunta a
-`after-change-major-mode-hook` di ogni modo, che accende il modo nel buffer
-corrente quando la variabile lo dice; e il comando, che cambia la variabile e
-passa tutti i buffer (`all-buffer-names`, `with-current-buffer`), accendendo
-o spegnendo. Dove accendere lo decide TURN-ON, una funzione chiamata con il
-buffer corrente; senza, è `minor-mode-on` in ogni buffer. Nulla di questo è
-in Rust: il registro non sa che un modo è globale.
+una variabile con il nome del comando, che dice se è acceso; una funzione
+privata, `NOME--apply`, che passa tutti i buffer (`all-buffer-names`,
+`with-current-buffer`), accendendo o spegnendo come dice la variabile; e il
+comando, che cambia la variabile e chiama `NOME--apply`. Dove accendere lo
+decide TURN-ON, una funzione chiamata con il buffer corrente, e allora una
+seconda funzione privata, `NOME--enter-buffer`, aggiunta a
+`after-change-major-mode-hook` di ogni modo, la chiama nei buffer nuovi. Senza
+TURN-ON il modo vale in ogni buffer, e `NOME--apply` lo chiede per tutti i
+modi maggiori con `minor-mode-enable`, o lo toglie con `minor-mode-disable`.
+ON, l'ultimo argomento, fa partire la variabile a `t` e accende il modo
+quando lo si definisce, senza messaggio: così `show-paren`, `whitespace` e
+`auto-revert` accendono il loro. Nulla di questo è in Rust: il registro non sa
+che un modo è globale.
 
 Le decisioni:
 
@@ -3583,21 +3588,27 @@ Le decisioni:
 + *Solo per buffer, e ovunque con una regola.* Non c'è un modo minore
   globale. Un modo che vale ovunque --- `show-paren-mode`, `whitespace-mode`,
   `electric-indent-mode` --- è un modo minore che il suo modulo chiede per
-  ogni modo maggiore con `minor-mode-enable`, e accende nei buffer già aperti.
+  ogni modo maggiore con `minor-mode-enable`, e accende nei buffer già aperti:
+  da sé, o con il suo modo globale acceso da ON.
   Un buffer che lo spegne da solo lo ritrova acceso quando cambia modo
   maggiore, come ogni modo chiesto da una regola; `minor-mode-disable` toglie
   la regola, per i buffer che verranno. Scartato: una variabile globale con
   una proprietà per modo maggiore, un secondo meccanismo per la stessa
   domanda, che non sa rispondere per un buffer solo. Lo dice il manpage
   `modes` nei limiti.
-+ *Il modo globale è un comando e uno hook, non uno stato del registro.*
++ *Il modo globale è un comando con una regola o uno hook, non uno stato del
+  registro.*
   `define-globalized-minor-mode` non aggiunge un secondo genere di modo: il
   modo resta acceso buffer per buffer, e ciò che è globale è la variabile che
-  dice allo hook se accenderlo nei buffer nuovi. Lo hook è
-  `after-change-major-mode-hook` e non una regola di `minor-mode-enable`
+  dice se accenderlo nei buffer nuovi. Con TURN-ON lo accende lo hook
+  `after-change-major-mode-hook` e non una regola di `minor-mode-enable`,
   perché una regola vale per un modo maggiore o per tutti, e non può
-  chiedere a TURN-ON se un buffer visita un file; e gira dopo le regole, e di
-  nuovo a ogni cambio di modo maggiore, che i modi minori li toglie. Come in
+  chiedere a TURN-ON se un buffer visita un file; lo hook gira dopo le regole,
+  e di nuovo a ogni cambio di modo maggiore, che i modi minori li toglie.
+  Senza TURN-ON basta la regola, ed è meglio: si applica prima degli hook del
+  modo maggiore, che lo possono ancora spegnere in un modo solo, mentre lo hook
+  globale, che gira dopo quelli dei modi, lo riaccenderebbe; e
+  `minor-mode-disable` la toglie come toglie ogni altra regola. Come in
   Emacs, spegnere il comando spegne il modo in tutti i buffer, anche dove
   era acceso a mano: ricordare chi lo aveva acceso vorrebbe dire uno stato
   per buffer che nessun altro legge.
@@ -7340,7 +7351,8 @@ perde il prompt flottante e nient'altro.
 === `auto-revert` <mod-auto-revert>
 
 `auto-revert-mode`: un modo minore (@modi-minori) senza etichetta, che il
-modulo chiede per ogni modo maggiore e accende nei buffer già aperti. Il
+modulo accende in ogni buffer con il suo modo globale,
+`global-auto-revert-mode`, acceso alla definizione. Il
 controllo lo fa `FileWatcher` (@lavori-editor, @file-su-disco), che legge il
 modo nel buffer in due punti: `watch_files_async_turn` salta un buffer che
 non lo ha prima di avviare un thread per il suo file, e `file_check_for`
@@ -7745,8 +7757,9 @@ modulo è il modo del buffer d'uscita, i suoi tasti e colori, e i comandi.
 === `show-paren` <mod-show-paren>
 
 `show-paren-mode`: un modo minore (@modi-minori) senza etichetta, senza tasti
-e senza hook. Il modulo lo fa con `define-minor-mode`, lo chiede per ogni modo
-maggiore con `minor-mode-enable` e lo accende nei buffer già aperti. La coppia
+e senza hook. Il modulo lo fa con `define-minor-mode` e lo accende in ogni
+buffer con `global-show-paren-mode`, un modo globale acceso alla definizione
+(@modi-minori). La coppia
 la cerca e la disegna `snapshot`, nella finestra con il focus, se il buffer ha
 il modo acceso (@evidenziazioni).
 
@@ -7826,7 +7839,7 @@ caratteri.
 === `whitespace` <mod-whitespace>
 
 Due modi minori (@modi-minori) per gli spazi a fine riga. `whitespace-mode`, senza etichetta e acceso in ogni buffer come
-`show-paren-mode` (@mod-show-paren), li fa disegnare a `trailing_highlights`
+`show-paren-mode` (@mod-show-paren), con `global-whitespace-mode`, li fa disegnare a `trailing_highlights`
 (@evidenziazioni). `whitespace-cleanup-mode`, con l'etichetta `Clean` e
 spento finché qualcuno non lo accende, registra `whitespace--cleanup` nel
 suo `before-save-hook`. Quel callback chiama `delete-trailing-whitespace`

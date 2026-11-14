@@ -17,7 +17,8 @@ Example:
   (minor-mode-enable 'display-line-numbers-mode 'rust-mode)")
 
 (define-globalized-minor-mode global-display-line-numbers-mode display-line-numbers-mode nil
-                              "Enable display-line-numbers-mode in every buffer")
+  "Turn `display-line-numbers-mode' on in every buffer, or off in all of them.
+The buffers to come follow; with no argument, the other way from how it is.")
 
 (log "display-line-numbers loaded")
 (provide 'display-line-numbers)

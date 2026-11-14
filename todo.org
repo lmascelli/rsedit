@@ -69,7 +69,7 @@ Da verificare
       Dipende da R2.
 - [X] C4 Indice dei file: visita di un albero in sfondo, con regole di esclusione, in
       cache per directory. dired-find-recursive e grep ne diventano clienti. Dipende da D1.
-- [ ] C5 Deposito delle segnalazioni: per (produttore, file); interrogabile per file,
+- [X] C5 Deposito delle segnalazioni: per (produttore, file); interrogabile per file,
       produttore, prefisso di directory. Dipende da D4.
 - [ ] C6 Segnalazioni sullo schermo: evidenziazione, margine, riga di stato, messaggio
       al punto, lista di risultati generata dal deposito. Dipende da C5.

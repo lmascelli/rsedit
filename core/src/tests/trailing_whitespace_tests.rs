@@ -147,6 +147,28 @@ mod tests {
     }
 
     #[test]
+    fn the_global_mode_turns_it_off_in_every_buffer_and_in_those_to_come() {
+        let (ctx, env) = editor_with("abc  \n", 0);
+        run(
+            r#"(buffer-create "open") (global-whitespace-mode -1) (buffer-create "later")"#,
+            &env,
+            &ctx,
+        );
+        for buffer in ["open", "later"] {
+            assert!(
+                run(
+                    &format!("(minor-mode-p 'whitespace-mode {buffer:?})"),
+                    &env,
+                    &ctx
+                )
+                .is_nil(),
+                "{buffer}"
+            );
+        }
+        assert!(drawn(&ctx, &env)[0].is_empty());
+    }
+
+    #[test]
     fn once_disabled_it_is_off_in_the_buffers_made_from_then_on() {
         let (ctx, env) = editor_with("abc  \n", 0);
         run(

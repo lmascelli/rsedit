@@ -59,13 +59,14 @@ Example:
        ,@body)
      (register-command ,(symbol-name name) (list "P"))))
 
-(defmacro define-globalized-minor-mode (global mode turn-on doc)
+(defmacro define-globalized-minor-mode (global mode turn-on doc &optional on)
   "Define GLOBAL as a command, documented by DOC, that turns the minor mode
 MODE on in every buffer, those open and those to come, or off in all of them:
 with no argument the other way from how it is, with a positive one on, with
 zero or a negative one off. TURN-ON names a function of no arguments, called
 with a buffer current, that turns MODE on there or leaves it off; nil is for
-every buffer. The variable GLOBAL says whether it is on.
+every buffer. The variable GLOBAL says whether it is on; ON non-nil starts it
+on, without a message.
 
 Example:
   (define-globalized-minor-mode global-auto-fill-mode auto-fill-mode nil
@@ -73,20 +74,43 @@ Example:
   ;; No `()' in the expansion: the empty list a backquote builds is nil, which
   ;; `defun' and `lambda' do not take for a parameter list.
   (let ((enter (intern (concat (symbol-name global) "--enter-buffer")))
+        (apply-all (intern (concat (symbol-name global) "--apply")))
+        (quoted (list 'quote mode))
         (turn (if turn-on
                   (list 'funcall (list 'quote turn-on))
                   (list 'minor-mode-on (list 'quote mode)))))
     `(progn
        ;; Through `list', so that the tests that read this file for the
        ;; variables it defines do not take the unquote for a name.
-       ,(list 'defvar global nil doc)
-       (defun ,enter (&rest ignored)
-         ,(concat "Turn " (symbol-name mode) " on in the current buffer, where "
-                  (symbol-name global) " is on and wants it.")
-         (if ,global ,turn))
-       ;; Once the minor modes `minor-mode-enable' asks for are on, and again
-       ;; each time a buffer gets a new major mode, which takes them away.
-       (add-hook nil "after-change-major-mode-hook" ,(list 'quote enter))
+       ,(list 'defvar global on doc)
+       ;; With TURN-ON, each buffer is asked once it has its major mode, and
+       ;; again at each new one, which takes the minor modes away. Without,
+       ;; MODE is asked for with `minor-mode-enable', which turns it on before
+       ;; the major mode's after-change-major-mode-hook: a hook there can still
+       ;; turn it off, and `minor-mode-disable' still takes it back.
+       ,(if turn-on
+            (list 'progn
+                  (list 'defun enter (list '&rest 'ignored)
+                        (concat "Turn " (symbol-name mode)
+                                " on in the current buffer, where "
+                                (symbol-name global) " is on and wants it.")
+                        (list 'if global turn))
+                  (list 'add-hook nil "after-change-major-mode-hook"
+                        (list 'quote enter))))
+       (defun ,apply-all (&rest ignored)
+         ,(concat "Turn " (symbol-name mode) " on or off in every buffer, as "
+                  (symbol-name global) " says.")
+         ,(if turn-on
+              nil
+              (list 'if global
+                    (list 'minor-mode-enable quoted)
+                    (list 'minor-mode-disable quoted)))
+         (dolist (name (all-buffer-names))
+           (with-current-buffer name
+             (lambda (&rest ignored)
+               (if ,global
+                   ,turn
+                   (minor-mode-off ,quoted))))))
        (defun ,global (&optional arg)
          ,doc
          ;; ARG as `minor-mode-wanted-p' reads it, for a mode that is not one
@@ -95,14 +119,12 @@ Example:
                              ((numberp arg) (> arg 0))
                              ((eq arg '-) nil)
                              (t t)))
-         (dolist (name (all-buffer-names))
-           (with-current-buffer name
-             (lambda (&rest ignored)
-               (if ,global
-                   ,turn
-                   (minor-mode-off ,(list 'quote mode))))))
+         (,apply-all)
          (message "%s %s" ,(symbol-name global) (if ,global "on" "off"))
          ,global)
+       ;; Defined again, as when its module is loaded again, a global mode
+       ;; that starts on is on again.
+       ,(if on (list 'if global (list apply-all)))
        (register-command ,(symbol-name global) (list "P")))))
 
 (defun string-prefix-p (prefix s)

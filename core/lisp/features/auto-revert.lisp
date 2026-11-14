@@ -19,7 +19,9 @@ Example:
   (auto-revert-mode -1)")
 
 (define-globalized-minor-mode global-auto-revert-mode auto-revert-mode nil
-                              "Enable auto-revert-mode in every buffer")
+  "Turn `auto-revert-mode' on in every buffer, or off in all of them.
+The buffers to come follow; with no argument, the other way from how it is. On
+unless turned off." t)
 
 (log "auto-revert loaded")
 (provide 'auto-revert)

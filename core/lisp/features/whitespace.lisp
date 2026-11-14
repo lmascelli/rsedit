@@ -31,6 +31,10 @@ Example:
 
 (add-hook 'whitespace-cleanup-mode "before-save-hook" 'whitespace--cleanup)
 
+(define-globalized-minor-mode global-whitespace-mode whitespace-mode nil
+  "Turn `whitespace-mode' on in every buffer, or off in all of them.
+The buffers to come follow; with no argument, the other way from how it is. On
+unless turned off." t)
 
 (log "whitespace loaded")
 (provide 'whitespace)

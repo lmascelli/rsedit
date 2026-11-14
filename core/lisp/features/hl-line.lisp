@@ -11,6 +11,7 @@ Example:
   (hl-line-mode 1)")
 
 (define-globalized-minor-mode global-hl-line-mode hl-line-mode nil
-                              "Enable hl-line-mode in every buffer")
+  "Turn `hl-line-mode' on in every buffer, or off in all of them.
+The buffers to come follow; with no argument, the other way from how it is.")
 
 (provide 'hl-line)

@@ -29,6 +29,7 @@ SYNOPSIS
     auto-save-interval
     auto-save-directory
     (auto-revert-mode &optional ARG)
+    (global-auto-revert-mode &optional ARG)
     watch-file-interval
     *open-directory-callback*
 
@@ -170,13 +171,14 @@ WHEN THE FILE CHANGES UNDER YOU
     reads the auto-save copy and not the file. Functions are added as for
     any hook, on the `modes' page.
 
-    The watching is the minor mode `auto-revert-mode', on in every buffer:
-    M-x auto-revert-mode turns it off in the buffer you are in, and on
-    again. A buffer with it off is not looked at: it is neither read
-    again nor marked, whatever happens to its file. Saving it still
+    The watching is the minor mode `auto-revert-mode', on in every buffer: M-x
+    auto-revert-mode turns it off in the buffer you are in, and on again, and
+    M-x global-auto-revert-mode off in every buffer, those open and those to
+    come, and on again. A buffer with it off is not looked at: it is neither
+    read again nor marked, whatever happens to its file. Saving it still
     compares the file with what was read, and stops when they differ. The
-    `modes' page says how to keep a minor mode off in the buffers of one
-    major mode, or of every one.
+    `modes' page says how to keep a minor mode off in the buffers of one major
+    mode, or of every one.
 
     `watch-file-interval' is how many seconds pass between looks, 3 to
     begin with. Checks run on separate workers, at most two at once,
@@ -505,9 +507,9 @@ EXAMPLES
 
         (setq watch-file-interval 1)
 
-    Or not at all, in the buffers opened from now on:
+    Or not at all, in any buffer:
 
-        (minor-mode-disable 'auto-revert-mode)
+        (global-auto-revert-mode -1)
 
     Leave one buffer as it is while its file is rewritten under it, from
     Lisp:

@@ -53,6 +53,7 @@ WHERE POINT IS
         line-number-at-point      the number of point's line, from 1
         current-line              the text of point's line
         hl-line-mode              highlight point's whole logical line
+        global-hl-line-mode       the same, in every buffer
 
     On the `indentation' page:
 
@@ -124,6 +125,7 @@ SEEING THE BLANKS
 
         whitespace-mode           draw the blanks at the ends of lines, in
                                   this buffer
+        global-whitespace-mode    the same, in every buffer
         whitespace-cleanup-mode   delete them at each save, in this buffer
 
     On the `buffers' page:
@@ -254,6 +256,7 @@ PAIRS
     On the `editing' page:
 
         electric-pair-mode        pair delimiters, in this buffer
+        global-electric-pair-mode pair delimiters, in every buffer
         electric-pair-enable      pair delimiters in the buffers of MODE
         electric-pair-delete-backward
                                   delete back, or the whole empty pair
@@ -263,6 +266,7 @@ PAIRS
                                   the hook that types the partner
         show-paren-mode           draw the bracket next to point with its
                                   partner, in this buffer
+        global-show-paren-mode    the same, in every buffer
 
 UNDOING AND REPEATING
     On the `editing' page:

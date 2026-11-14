@@ -18,7 +18,9 @@ SYNOPSIS
     (backward-up-list)
     (down-list)
     (show-paren-mode &optional ARG)
+    (global-show-paren-mode &optional ARG)
     (hl-line-mode &optional ARG)
+    (global-hl-line-mode &optional ARG)
     (beginning-of-line)
     (end-of-line)
     (beginning-of-buffer)
@@ -41,6 +43,7 @@ SYNOPSIS
     (delete-region FROM TO)
 
     (electric-pair-mode &optional ARG)
+    (global-electric-pair-mode &optional ARG)
     (electric-pair-enable MODE)
     (electric-pair-post-self-insert)
     (electric-pair-delete-backward)
@@ -63,6 +66,7 @@ SYNOPSIS
     (just-one-space)
     (delete-horizontal-space)
     (whitespace-mode &optional ARG)
+    (global-whitespace-mode &optional ARG)
     (delete-trailing-whitespace &optional START END)
     delete-trailing-lines
     (whitespace-cleanup-mode &optional ARG)
@@ -170,7 +174,8 @@ SEEING THE CURRENT LINE
     With visual-line-mode on, all its visible wrapped rows are highlighted.
     Only the selected window draws it; the minibuffer, line-number gutter
     and status line do not. The mode is off initially and per buffer; the
-    status line shows HL when it is on.
+    status line shows HL when it is on. M-x global-hl-line-mode turns it
+    on in every buffer, those open and those to come, and off again.
 
     The face hl-line supplies a bright-black background by default, and
     each theme that ships gives it a colour of its own, between the page's
@@ -195,10 +200,11 @@ SEEING WHICH BRACKETS PAIR
     Brackets are read as C-M-f reads them: one in a string or a comment
     is text, and is paired with nothing.
 
-    The drawing is the minor mode `show-paren-mode', on in every buffer:
-    M-x show-paren-mode turns it off in the buffer you are in, and on
-    again. The `modes' page says how to keep a minor mode off in the
-    buffers of one major mode, or of every one.
+    The drawing is the minor mode `show-paren-mode', on in every buffer: M-x
+    show-paren-mode turns it off in the buffer you are in, and on again, and
+    M-x global-show-paren-mode off in every buffer, those open and those to
+    come, and on again. The `modes' page says how to keep a minor mode off in
+    the buffers of one major mode, or of every one.
 
     The pair is looked for up to 100 kilobytes of text away from the
     cursor; a bracket whose partner is further than that is not drawn at
@@ -253,7 +259,10 @@ PAIRS
     another mode, those open and those to come. In rust-mode quotes are not
     paired, since 'a is a lifetime there. M-x electric-pair-mode turns all
     of it off in the buffer you are in, and on again, and setting
-    `electric-pair-skip-self' to nil stops only the stepping over.
+    `electric-pair-skip-self' to nil stops only the stepping over. M-x
+    global-electric-pair-mode turns it on in every buffer, whatever its
+    mode, and off in all of them; the buffers of fundamental-mode and
+    rust-mode made after that still get it.
 
     Return between the halves of an empty pair, as in {|}, opens a line
     between them for point and puts the closer on the line after, as in
@@ -299,10 +308,11 @@ SPACES AT THE ENDS OF LINES
     drawn: a space just typed before the next word is not a mistake. In
     another window showing the same buffer they are.
 
-    The drawing is the minor mode `whitespace-mode', on in every buffer:
-    M-x whitespace-mode turns it off in the buffer you are in, and on
-    again. In a buffer visiting no file the mode can be on, and draws
-    nothing. The `modes' page says how to keep a minor mode off in the
+    The drawing is the minor mode `whitespace-mode', on in every buffer: M-x
+    whitespace-mode turns it off in the buffer you are in, and on again, and
+    M-x global-whitespace-mode off in every buffer, those open and those to
+    come, and on again. In a buffer visiting no file the mode can be on, and
+    draws nothing. The `modes' page says how to keep a minor mode off in the
     buffers of one major mode, or of every one.
 
     M-x delete-trailing-whitespace takes them away: on the lines of the
@@ -419,10 +429,10 @@ EXAMPLES
 
         (setq electric-pair-skip-self nil)
 
-    Stop drawing the bracket paired with the one at the cursor, in the
-    buffers opened from now on:
+    Stop drawing the bracket paired with the one at the cursor, in every
+    buffer:
 
-        (minor-mode-disable 'show-paren-mode)
+        (global-show-paren-mode -1)
 
     Leave the spaces at the ends of lines undrawn in one mode, where they
     mean something:

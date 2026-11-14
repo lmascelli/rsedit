@@ -17,7 +17,9 @@ Example:
   (show-paren-mode -1)")
 
 (define-globalized-minor-mode global-show-paren-mode show-paren-mode nil
-                              "Enable show-paren-mode in every buffer")
+  "Turn `show-paren-mode' on in every buffer, or off in all of them.
+The buffers to come follow; with no argument, the other way from how it is. On
+unless turned off." t)
 
 (log "show-paren loaded")
 (provide 'show-paren)
