@@ -42,6 +42,9 @@ SYNOPSIS
     (locate-dominating-file DIRECTORY NAMES &optional WHICH)
     (locate-dominating-file-forget &optional DIRECTORY)
     locate-dominating-file-timeout
+    (file-index DIRECTORY &optional EXCLUDE IGNORE-FILES LIMIT)
+    (file-index-forget &optional DIRECTORY)
+    file-index-max-age
     (delete-file PATH &optional RECURSIVE)
     (rename-file FROM TO)
     (copy-file FROM TO &optional RECURSIVE)
@@ -255,8 +258,10 @@ SLOW OR DISCONNECTED MOUNTS
 
     Directory browsing, filename completion, filesystem Lisp primitives,
     user hooks and synchronous script calls can still block on their own
-    filesystem accesses. `locate-dominating-file' is the exception: it
-    waits a bounded time, as LOOKING UPWARDS FOR A FILE says.
+    filesystem accesses. `locate-dominating-file' and `file-index' are
+    the exceptions: the first waits a bounded time, as LOOKING UPWARDS FOR
+    A FILE says, and the second does not wait at all, as AN INDEX OF A
+    TREE says.
     The timeout reports asynchronous operations only.
     For an unresponsive mount, keep working in memory or save to a different
     local file; do not force quit while a remote write is pending unless
@@ -377,6 +382,51 @@ LOOKING UPWARDS FOR A FILE
     waiting again. At most four searches are out at a time, and while
     they are any other question returns timeout at once too.
 
+AN INDEX OF A TREE
+    `file-index' answers with the files under a directory, as paths
+    relative to it, without waiting for the disk: the first call starts a
+    walk in the background and returns at once with what it has found so
+    far, and each call after it returns more, until the walk ends.
+
+        (file-index "~/src/app" '(".git/" "*.o") '(".gitignore"))
+            => (walking ("README" "Makefile" "src/main.c" ...))
+        ... a moment later, the same call:
+            => (complete ("Makefile" "README" "doc/intro.txt" ...))
+
+    The answer is (STATE PATHS). STATE is walking while the walk is out,
+    and the paths come in the order it found them; complete once it has
+    ended, with the paths sorted; truncated when it stopped at LIMIT files,
+    100000 unless given.
+
+    What the walk leaves out is said in the syntax of a .gitignore file.
+    EXCLUDE is a list of such lines for the whole tree, and IGNORE-FILES
+    names the files, such as ".gitignore", whose lines count in their own
+    directory and under it. A line in a deeper file wins over one higher
+    up, and those over EXCLUDE, so a .gitignore can bring back with a !
+    line what EXCLUDE left out:
+
+        name        a file or a directory of that name, at any depth
+        name/       a directory only
+        /name       only in the directory of the line
+        a/b         a path from the directory of the line
+        *.log       * and ? within one part of a path, [a-z] a class
+        **/a  a/**  any number of directories, before or inside
+        !name       kept, though a line above left it out
+        # text      a comment; \# and \! begin a name with # or !
+
+    A directory left out is not entered, so a ! line cannot bring back a
+    file inside it. Symbolic links are listed, not followed, and a
+    directory that cannot be read is skipped; when DIRECTORY itself cannot
+    be read, the index is complete and empty, and the log says why.
+
+    The index is kept, one for each DIRECTORY and set of rules, at most
+    eight. Asked for again `file-index-max-age' seconds or more after its
+    walk began, 10 unless you set it, it is walked again in the
+    background, and until that walk ends the answer is the old list. nil
+    never walks again; `file-index-forget' drops the indexes of a
+    directory and of those under it, or all of them, so that the next
+    call walks from the start.
+
 THE WORKING DIRECTORY
     A relative path, typed at C-x C-f or given to a function, is read in
     the working directory: the directory the editor was started in, until
@@ -492,6 +542,20 @@ EXAMPLES
     Wait up to a second for a slow disk:
 
         (setq locate-dominating-file-timeout 1)
+
+    How many files there are under the working directory, leaving out
+    .git and what the .gitignore files say, and whether that is all:
+
+        (let ((index (file-index nil '(".git/") '(".gitignore"))))
+          (message "%s files, %s" (length (nth 1 index)) (car index)))
+
+    Keep an index for a minute before walking the tree again:
+
+        (setq file-index-max-age 60)
+
+    See the files made since the last walk under a directory:
+
+        (file-index-forget "~/src/app")
 
     Build in another directory without moving the editor there, and keep
     the output there, so that g builds there again:

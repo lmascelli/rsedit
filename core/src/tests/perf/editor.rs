@@ -118,6 +118,7 @@ pub(super) fn timing(report: &mut Report) {
     command_path(report);
     concurrency(report);
     budget(report);
+    file_index(report);
 }
 
 fn gap_buffer(report: &mut Report) {
@@ -729,5 +730,194 @@ fn budget(report: &mut Report) {
         true,
         "a runaway loop is stopped",
         "all ten measured attempts exhausted their budget and returned OutOfFuel",
+    );
+}
+
+/// A tree of 50,000 files kept, beside 2,000 that the rules leave out, under
+/// the temporary directory, removed when dropped.
+struct IndexTree(std::path::PathBuf);
+
+impl IndexTree {
+    const KEPT: usize = 50_000;
+
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!("rsedit-perf-index-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // 25 directories of 20 of 100 files: the shape of a source tree more
+        // than of a flat dump.
+        for top in 0..25 {
+            for sub in 0..20 {
+                let directory = root.join(format!("mod{top:02}/part{sub:02}"));
+                std::fs::create_dir_all(&directory).expect("perf tree");
+                for file in 0..100 {
+                    std::fs::write(directory.join(format!("file{file:03}.rs")), "")
+                        .expect("perf tree file");
+                }
+            }
+        }
+        for n in 0..2_000 {
+            let directory = root.join(format!("target/debug/d{:02}", n / 100));
+            std::fs::create_dir_all(&directory).expect("perf tree");
+            std::fs::write(directory.join(format!("o{n}.o")), "").expect("perf tree file");
+        }
+        let patterns: String = (0..40).map(|k| format!("*.ext{k}\n")).collect();
+        std::fs::write(root.join(".gitignore"), patterns).expect("perf .gitignore");
+        Self(root)
+    }
+
+    fn path(&self) -> String {
+        self.0.to_string_lossy().into()
+    }
+}
+
+impl Drop for IndexTree {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The index of a 50,000-file tree: the walk, how soon the first files can be
+/// had, and what handing the list to Lisp and narrowing it on a Tab costs.
+fn file_index(report: &mut Report) {
+    use crate::editor::file_index::{Rules, Walked, walk};
+
+    let tree = IndexTree::new();
+    let rules = Rules {
+        exclude: vec![".git/".into(), "target/".into()],
+        ignore_files: vec![".gitignore".into()],
+        limit: 100_000,
+    };
+    let kept = IndexTree::KEPT + 1;
+
+    let whole = repeat_elapsed(|| {
+        let start = Instant::now();
+        let (paths, walked) = walk(&tree.0, &rules, &|| true, &mut |_| {});
+        let elapsed = start.elapsed();
+        assert_eq!((paths.len(), walked), (kept, Walked::Complete));
+        elapsed
+    });
+    let first = repeat_elapsed(|| {
+        let start = Instant::now();
+        let mut first = None;
+        walk(&tree.0, &rules, &|| true, &mut |_| {
+            first.get_or_insert_with(|| start.elapsed());
+        });
+        first.expect("the walk showed nothing")
+    });
+    let prune: std::collections::HashSet<String> =
+        [".git", "target"].into_iter().map(String::from).collect();
+    let plain = repeat_elapsed(|| {
+        let start = Instant::now();
+        let (paths, _) =
+            crate::primitives::filesystem::walk_files(&tree.0, &prune, &[], 100_000, &|| true);
+        let elapsed = start.elapsed();
+        assert_eq!(paths.len(), kept);
+        elapsed
+    });
+
+    let (state, env) = create_global_env::<GapBuffer>().expect("global env must build");
+    let ask = format!(
+        "(file-index {:?} '(\".git/\" \"target/\") '(\".gitignore\"))",
+        tree.path()
+    );
+    let ask = Parser::new(&ask).next().expect("source must parse");
+    let deadline = Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let answer = eval(&ask, env.clone(), &state).expect("file-index must answer");
+        if answer.iter().next() == Some(crate::ELispExp::symbol("complete".into())) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the walk did not end");
+        thread::sleep(std::time::Duration::from_millis(5));
+    }
+    eval(
+        &Parser::new("(setq file-index-max-age nil)").next().unwrap(),
+        env.clone(),
+        &state,
+    )
+    .expect("setting must evaluate");
+    let (_, fuel) = measure(&state.fuel_meter(), || eval(&ask, env.clone(), &state));
+    let handed = repeat_elapsed(|| {
+        let start = Instant::now();
+        let answer = eval(&ask, env.clone(), &state).expect("file-index must answer");
+        let elapsed = start.elapsed();
+        assert_eq!(
+            answer.iter().nth(1).map(|paths| paths.iter().count()),
+            Some(kept)
+        );
+        elapsed
+    });
+    let tab = Parser::new(&format!(
+        "(fuzzy-filter \"part07file042\" (nth 1 {}))",
+        &format!(
+            "(file-index {:?} '(\".git/\" \"target/\") '(\".gitignore\"))",
+            tree.path()
+        )
+    ))
+    .next()
+    .expect("source must parse");
+    let narrowed = repeat_elapsed(|| {
+        let start = Instant::now();
+        let answer = eval(&tab, env.clone(), &state).expect("the narrowing must answer");
+        let elapsed = start.elapsed();
+        assert!(answer.iter().count() > 0, "the narrowing found nothing");
+        elapsed
+    });
+
+    report.section(
+        "FILE INDEX",
+        "A tree of 50,000 files kept and 2,000 left out, behind a .gitignore of 40\n\
+         lines. The walk with its rules, to the end and to its first batch, beside\n\
+         the plain walk of directory-files-recursive; then one file-index call on\n\
+         the complete index, and the same call narrowed as a Tab in C-x C-r does.",
+        vec![
+            Row::timed(
+                "index/walk-ms",
+                "walk 50,000 files with the rules",
+                whole.median.as_secs_f64() * 1e3,
+                whole.display_ms(),
+                "dedicated thread; median",
+            ),
+            Row::timed(
+                "index/first-batch-ms",
+                "until the first files are shown",
+                first.median.as_secs_f64() * 1e3,
+                first.display_ms(),
+                "what a prompt can offer this soon",
+            ),
+            Row::timed(
+                "index/plain-walk-ms",
+                "walk_files, names pruned, no patterns",
+                plain.median.as_secs_f64() * 1e3,
+                plain.display_ms(),
+                "for comparison",
+            ),
+            Row::timed(
+                "index/ask-ms",
+                "file-index on the complete index",
+                handed.median.as_secs_f64() * 1e3,
+                handed.display_ms(),
+                "50,001 paths handed to Lisp",
+            ),
+            Row::new(
+                "index/ask-fuel",
+                "fuel of that call",
+                fuel as f64,
+                format!("{fuel}"),
+                "one unit per path, and the call",
+            ),
+            Row::timed(
+                "index/tab-ms",
+                "the call, then fuzzy-filter",
+                narrowed.median.as_secs_f64() * 1e3,
+                narrowed.display_ms(),
+                "one Tab in C-x C-r",
+            ),
+        ],
+    );
+    report.verdict(
+        true,
+        "the index holds every file the rules keep",
+        format!("every walk found {kept} files and left out the 2,000 under target"),
     );
 }

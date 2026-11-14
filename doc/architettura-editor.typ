@@ -881,6 +881,7 @@ che li condivide.
   [`grammar_epoch`], [`AtomicU64`], [Quante volte è cambiata una grammatica: il timbro di una colorazione.],
   [`syntax_changed`], [`Topic`], [L'argomento `syntax-changed`, risolto una volta (@argomenti).],
   [`locate`], [`Locate`], [Le risposte delle risalite e le risalite ancora fuori, sotto un `Mutex` suo (@risalita).],
+  [`file_index`], [`FileIndex`], [Gli indici delle directory visitate e le visite ancora fuori, sotto un `Mutex` suo (@indice-file).],
   [`work`], [`WorkManager<`\ `EditorState<B>>`], [Il lavoro asincrono: i lavori dell'esecutore e i thread dedicati (@sfondo).],
   [`background_change`], [`BackgroundChange`], [Se un lavoro ha cambiato lo schermo dall'ultima fotografia, e come dirlo al front-end (@utenti-sfondo).],
   [`running`], [`AtomicBool`], [Falso dopo `quit`.],
@@ -6077,7 +6078,7 @@ e i lavori Lisp sono nel capitolo sul lavoro in background (@comandi-shell,
   header: ([File], [Contenuto]),
   [`files.rs`], [Visitare un file e riscriverlo: `find-file`, `save-buffer`, `write-file`, `revert-buffer`, `recover-file`, con le metà che le loro domande chiamano una volta risposte; `write_buffer` (@file-su-disco).],
   [`file_names.rs`], [I nomi dei file dal Lisp: `list-dir`, `expand-file-name` e le funzioni che smontano un nome, sopra quelle di `paths.rs` (@nomi-file); la directory di lavoro, `working-directory`, `cd` e `pwd` (@directory-di-lavoro).],
-  [`filesystem.rs`], [Il disco: `file-exists-p`, `delete-file`, `rename-file`, `directory-files-recursive` con `walk_files`, `read-file-to-string` (@disco); `locate-dominating-file` e `locate-dominating-file-forget` (@risalita).],
+  [`filesystem.rs`], [Il disco: `file-exists-p`, `delete-file`, `rename-file`, `directory-files-recursive` con `walk_files`, `read-file-to-string` (@disco); `locate-dominating-file` e `locate-dominating-file-forget` (@risalita); `file-index` e `file-index-forget` (@indice-file).],
   [`environment.rs`], [`getenv`, `setenv`, `path-separator`, `data-directory`.],
   [`quit.rs`], [`quit` e `save-some-buffers`, e `has_unsaved_work`, che dice se chiudere un buffer perderebbe qualcosa.],
   [`buffers.rs`], [Creare, cambiare, leggere e chiudere buffer; i valori Lisp appesi a un buffer; ciò che un buffer dice di sé.],
@@ -6172,7 +6173,8 @@ ricorsione, e restituisce i percorsi relativi alla radice. Non entra nelle
 directory che PRUNE nomina, scarta i file che finiscono con uno dei suffissi,
 si ferma al limite, e prima di leggere una directory chiede se continuare. La
 usano `directory-files-recursive`, che paga un'unità di carburante per ogni
-percorso che restituisce, e la ricerca nei file, sul suo thread.
+percorso che restituisce, e la ricerca nei file, sul suo thread. L'indice dei
+file ha una visita sua, con le regole di esclusione (@indice-file).
 
 === La risalita <risalita>
 
@@ -6232,6 +6234,76 @@ mai attraverso il disco. `EditorState::locate` fa tutto il resto.
   `generation`: una risalita partita prima consegna la sua risposta a chi la
   aspetta, ma non la registra. Le risposte sono al più 4 096; alla successiva
   si ricomincia da zero.
+
+=== L'indice dei file <indice-file>
+
+`file-index` risponde con i file che stanno sotto una directory, come percorsi
+relativi, senza aspettare il disco: ciò che sa finora, e a che punto è. Lo
+stato è in `FileIndex` (`editor/file_index.rs`), un campo di `EditorState` con
+un `Mutex` suo, come `Locate`; la sintassi dei pattern è in `editor/ignore.rs`,
+che non sa nulla dell'editor.
+
+Un indice vale per una coppia: la directory, già assoluta, e le `Rules` ---
+`exclude`, righe nella sintassi di un `.gitignore` che valgono dalla radice;
+`ignore_files`, i nomi dei file le cui righe valgono nella loro directory e
+sotto; `limit`. La stessa directory con altre regole è un altro indice. Il
+nucleo non sa che cosa sia un repository: `.gitignore` è un nome che il
+chiamante passa, e `dired-find-recursive` lo passa (@mod-dired).
+
+`walk` percorre l'albero in ampiezza, ogni directory in ordine di nome, e prima
+di leggerne una chiede `keep_going`. Letta una directory, ne legge i file di
+esclusione e, se ne ha, apre uno `Scope` --- la directory, i suoi pattern, lo
+scope di sopra --- che vale per ciò che contiene. Un percorso lo decide lo
+scope più vicino che lo nomina, e dentro lo scope l'ultima riga che lo nomina:
+l'ordine di git, in cui le righe date stanno sotto ogni file di esclusione,
+come un `core.excludesFile`. Una directory esclusa non si legge, e un `!` non
+riporta ciò che contiene. I collegamenti simbolici si elencano senza
+seguirli. Ogni 512 file o 20 ms la visita passa a `show` ciò che ha trovato da
+allora; alla fine ordina tutto.
+
+#canvas(height: 5.6cm)[
+  #node(2.2cm, 0.8cm, 3.6cm, 0.9cm, [`file_index(radice, regole)`], fill: accent.lighten(85%))
+  #node(7.4cm, 0.8cm, 3.6cm, 0.9cm, [visita dovuta? \ al più `WALKS` fuori])
+  #node(13.4cm, 0.8cm, 4.6cm, 0.9cm, [copia di `paths` e stato: subito], fill: paper)
+  #node(7.4cm, 2.8cm, 3.6cm, 1.1cm, [thread `file-index` \ (`spawn_work`)])
+  #node(13.4cm, 2.8cm, 4.6cm, 1.1cm, [prima visita: ogni blocco \ si aggiunge a `paths`], fill: paper)
+  #node(7.4cm, 4.7cm, 3.6cm, 0.9cm, [`walk` finita])
+  #node(13.4cm, 4.7cm, 4.6cm, 0.9cm, [la lista ordinata sostituisce \ `paths`, se il numero è lo stesso], fill: paper)
+
+  #carrow((4.0cm, 0.8cm), (5.6cm, 0.8cm))
+  #carrow((9.2cm, 0.8cm), (11.1cm, 0.8cm))
+  #carrow((7.4cm, 1.25cm), (7.4cm, 2.25cm), label: [sì], dx: 10pt)
+  #carrow((9.2cm, 2.8cm), (11.1cm, 2.8cm), label: [`show`], dy: -8pt)
+  #carrow((7.4cm, 3.35cm), (7.4cm, 4.25cm))
+  #carrow((9.2cm, 4.7cm), (11.1cm, 4.7cm))
+]
+
+- *Chi chiede non aspetta.* `EditorState::file_index` prende il lock, copia la
+  lista e lo stato e lo rilascia: i percorsi sono `Arc<str>`, e la copia costa
+  un contatore per percorso. Una visita dovuta parte dopo, su un thread
+  dedicato (@thread-dedicati). Il lock non si tiene mai attraverso il disco, e
+  la primitiva paga un'unità di carburante per ogni percorso che consegna.
+- *L'indice cresce mentre si visita.* La prima visita aggiunge a `paths` i
+  blocchi che `show` riceve, e dice al front-end di ridisegnare
+  (`changed_in_background`). Finché è fuori lo stato è `walking` e l'ordine è
+  quello della visita; quando finisce, la lista ordinata prende il suo posto,
+  con lo stato `complete`, o `truncated` se si è fermata al limite.
+- *Una visita di nuovo non si vede.* Alla domanda su un indice la cui visita è
+  cominciata da `file-index-max-age` secondi o più, 10 se l'impostazione non
+  dice altro, parte un'altra visita; fino alla sua fine la risposta è la lista
+  vecchia, e la nuova la sostituisce in un passo. nil non rivisita mai, 0 a
+  ogni domanda con nessuna visita fuori.
+- *I numeri sono limitati.* Al più `INDEXES` indici, otto: uno in più toglie
+  quello chiesto meno di recente. Al più `WALKS` visite fuori, quattro: un
+  indice che ne vorrebbe un'altra la riavrà alla domanda dopo, così un disco
+  appeso tiene quattro thread, per quante volte lo si interroghi.
+- *Una visita sa se serve ancora.* Porta un numero e un `wanted`, che
+  `file-index-forget` e l'uscita dalla cache abbassano: la visita esce alla
+  directory seguente, e una visita che non è più quella del suo indice non
+  registra nulla. Una fermata con `stop-worker` lascia l'indice senza visita,
+  e la domanda dopo ne avvia un'altra.
+- *Una radice che non si legge* dà un indice completo e vuoto, e una riga nel
+  log.
 
 === L'ambiente <ambiente>
 
@@ -6779,6 +6851,33 @@ dell'utente li descrive.
   anche quando il disco è locale e la risposta è in memoria; una scadenza
   sulle risposte ricordate, che su un disco lento rifarebbe l'attesa a
   intervalli senza che nulla sia cambiato.
++ *L'indice dei file risponde subito con ciò che ha.* Chi chiede i file di un
+  albero li vuole per offrirli, e un albero grande si visita in decimi di
+  secondo su un disco locale e in minuti su uno di rete. La visita gira quindi
+  sul suo thread, la risposta è ciò che ha trovato finora con uno stato che
+  dice se è tutto, e la domanda dopo vede di più. Comporta che chi chiede
+  distingue `walking` da `complete`, e che un indice ricordato non vede un file
+  nuovo finché non si rivisita: dopo `file-index-max-age`, o con
+  `file-index-forget`. Scartate: una visita sincrona come quella di
+  `directory-files-recursive`, che ferma l'editor per tutto l'albero e
+  obbliga a un limite basso; un'attesa limitata come quella della risalita,
+  che un albero grande supera sempre, e che non dà i primi file a chi li
+  potrebbe già usare; una callback alla fine sola, che lascerebbe vuoto il
+  prompt per tutta la visita.
++ *La sintassi di `.gitignore` è scritta a mano.* Serve una parte piccola di
+  ciò che un crate come `ignore` fa: leggere le righe, confrontarle con un
+  percorso, sapere quale vince. Scritta qui è `editor/ignore.rs`, senza
+  dipendenze, e la visita resta una, con il suo `keep_going` e i suoi blocchi.
+  Comporta che non si leggono `.git/info/exclude`, `core.excludesFile` e i
+  `.gitignore` sopra la radice, che maiuscole e minuscole contano sempre, e che
+  una riga con una classe `[:nome:]` non si capisce e si salta: può restare un
+  file che git nasconderebbe, mai sparirne uno che mostrerebbe. Scartato: il
+  crate `ignore`, che porta con sé `globset`, `walkdir` e una visita sua, che
+  non conosce lo `Stop` del WorkManager.
++ *Le regole sono parte della chiave.* Due chiamanti che visitano la stessa
+  directory con regole diverse hanno due indici, e nessuno dei due rifà la
+  visita dell'altro a ogni domanda. Costa che l'indice non si restringe: chi
+  vuole meno file con regole diverse ne visita un altro.
 + *Una ricerca nei file ha un thread suo, una nel buffer no.* Una ricerca in un
   albero dura quanto dura: qualche migliaio di file è un attimo, una home no, e
   non si sa prima di cominciare. Sul suo thread l'editor continua, e i risultati
@@ -7269,7 +7368,7 @@ riga dell'`init.lisp` predefinito (`DEFAULT_INIT_LISP`, in `editor/boot.rs`).
 Un file manager scritto come modulo: un modo, una keymap e pochi comandi, su
 primitive che non sanno di file manager --- `list-dir`, `delete-file`,
 `rename-file`. Cerca anche un file in tutto l'albero sotto la directory, con
-una lettura approssimata di `.gitignore`.
+l'indice dei file del nucleo (@indice-file).
 
 + *Il buffer è lo stato.* Nessuna variabile tiene la directory, nessuna
   tabella lega le righe ai nomi: la prima riga dice la directory, ogni riga
@@ -7290,12 +7389,14 @@ una lettura approssimata di `.gitignore`.
 + *Domande con risposta scritta.* Nulla nell'editor ridà un file cancellato.
   La risposta chiude sul percorso, in nessuna variabile, mentre l'utente fa
   altro; se la cancellazione è ricorsiva si decide insieme alla domanda.
-+ *Un walk primitivo che pota.* `directory-files-recursive` salta `.git` e i
-  modelli ignorati mentre cammina: `.git` da solo esaurirebbe il limite, e
-  filtrare dopo costerebbe una valutazione per file e per modello. Un walk per
-  prompt, ristretto a ogni tasto.
-+ *`.gitignore` approssimato di proposito.* Ciò che non capisce lo salta: può
-  offrire un file che git nasconderebbe, mai nascondere uno che mostrerebbe.
++ *Un cliente dell'indice.* `dired-find-recursive` passa a `file-index` le
+  directory di `find-file-recursive-ignore` come righe `nome/` e i file di
+  `find-file-recursive-ignore-files` come file di esclusione: `.git` da solo
+  esaurirebbe il limite, e filtrare in Lisp costerebbe una valutazione per file
+  e per riga. Il prompt si apre subito, anche mentre la visita è fuori.
++ *Ogni Tab chiede di nuovo l'indice.* Il modulo non tiene una lista sua, ma
+  la directory del prompt: i candidati sono quelli che l'indice ha in quel
+  momento, e una visita ancora fuori ne aggiunge a ogni Tab.
 
 === `display-line-numbers` <mod-display-line-numbers>
 

@@ -56,8 +56,10 @@ pub(crate) mod boot;
 mod buffers;
 mod commands;
 mod directory;
+pub(crate) mod file_index;
 pub(crate) mod file_io;
 mod frame;
+pub(crate) mod ignore;
 mod keys;
 mod kill_yank;
 mod loader;
@@ -138,6 +140,8 @@ pub struct EditorState<B: BufferTrait> {
     file_io: Arc<file_io::FileIo<B>>,
     /// The directories found by looking upwards, and the climbs still out.
     locate: Arc<locate::Locate>,
+    /// The files found under the directories walked, and the walks still out.
+    file_index: Arc<file_index::FileIndex>,
     /// False once `quit` has been asked for.
     running: Arc<AtomicBool>,
 

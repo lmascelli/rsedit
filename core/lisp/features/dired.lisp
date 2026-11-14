@@ -532,8 +532,9 @@ files go, and without one they go after it. What it prints is shown as by
 ;; Finding a file anywhere below here
 ;; ---------------------------------------------------------------------------
 ;;
-;; The walk is a primitive, `directory-files-recursive', which prunes as it
-;; goes: `.git' alone would exhaust its limit.
+;; The files come from `file-index', which walks the tree in the background
+;; and keeps what it found: the prompt opens at once, and each Tab asks the
+;; index again, so a walk still out adds to the candidates as it goes.
 
 (defvar find-file-recursive-ignore
   '(".git" ".hg" ".svn" ".jj"
@@ -542,136 +543,53 @@ files go, and without one they go after it. What it prints is shown as by
     ".cache" ".mypy_cache" ".pytest_cache" ".tox")
   "Directory names `dired-find-recursive' never goes into, at any depth.")
 
-(defvar find-file-recursive-limit 5000
-  "How many files `dired-find-recursive' collects before it stops, saying so.")
+(defvar find-file-recursive-ignore-files '(".gitignore")
+  "The files whose lines, in the syntax of a .gitignore, say what
+`dired-find-recursive' leaves out in their directory and under it.")
 
-;; ---------------------------------------------------------------------------
-;; .gitignore, approximately
-;; ---------------------------------------------------------------------------
-;;
-;; Approximate on purpose: a pattern not understood is skipped, so a file git
-;; would hide may be offered, but none it would show is hidden.
+(defvar find-file-recursive-limit 100000
+  "How many files `dired-find-recursive' offers before it stops, saying so.")
 
-(defun find-file-recursive--gitignore-lines (directory)
-  "The meaningful lines of DIRECTORY's .gitignore, or nil if it has none."
-  (let ((text (read-file-to-string (concat (file-name-as-directory directory)
-                                           ".gitignore"))))
-    (if (null text)
-        nil
-        ;; Blank lines and comments dropped; consed and reversed, since
-        ;; `append' would copy the list for every line.
-        (let ((kept nil))
-          (mapc (lambda (line)
-                  (let ((trimmed (find-file-recursive--trim line)))
-                    (if (and (not (string= trimmed ""))
-                             (not (string= (substring trimmed 0 1) "#")))
-                        (setq kept (cons trimmed kept)))))
-                (split-string text "\n"))
-          (reverse kept)))))
-
-(defun find-file-recursive--trim (text)
-  "TEXT without leading or trailing spaces, tabs or carriage returns."
-  ;; A .gitignore written on Windows ends every line with a carriage return.
-  (let ((start 0)
-        (end (length text)))
-    (while (and (< start end)
-                (member (substring text start (+ start 1)) '(" " "\t" "\r")))
-      (setq start (+ start 1)))
-    (while (and (< start end)
-                (member (substring text (- end 1) end) '(" " "\t" "\r")))
-      (setq end (- end 1)))
-    (substring text start end)))
-
-(defun find-file-recursive--ignored-directories (directory)
-  "Directory names DIRECTORY's .gitignore asks to leave out."
-  ;; A plain name is a file or a directory to git; read as a directory here.
-  (let ((names nil))
-    (mapc (lambda (pattern)
-            ;; Anchored and multi-segment patterns are the ones this does not
-            ;; understand. Skipped rather than guessed at.
-            (if (and (not (member "!" (list (substring pattern 0 1))))
-                     (null (member "/" (find-file-recursive--characters
-                                        (find-file-recursive--strip-trailing-slash pattern))))
-                     (null (member "*" (find-file-recursive--characters pattern))))
-                (setq names
-                      (append names
-                              (list (find-file-recursive--strip-trailing-slash pattern))))))
-          (find-file-recursive--gitignore-lines directory))
-    names))
-
-(defun find-file-recursive--characters (text)
-  "TEXT as a list of one-character strings."
-  (let ((out nil)
-        (n 0))
-    (while (< n (length text))
-      (setq out (cons (substring text n (+ n 1)) out))
-      (setq n (+ n 1)))
-    (reverse out)))
-
-(defun find-file-recursive--strip-trailing-slash (pattern)
-  "PATTERN without its trailing `/', if it has one."
-  (if (and (> (length pattern) 0)
-           (string= (substring pattern (- (length pattern) 1)) "/"))
-      (substring pattern 0 (- (length pattern) 1))
-      pattern))
-
-(defun find-file-recursive--ignored-suffixes (directory)
-  "The endings DIRECTORY's .gitignore asks to leave out, from its *.ending lines."
-  (let ((suffixes nil))
-    (mapc (lambda (pattern)
-            (if (and (> (length pattern) 2)
-                     (string= (substring pattern 0 2) "*.")
-                     (null (member "*" (find-file-recursive--characters
-                                        (substring pattern 1))))
-                     (null (member "/" (find-file-recursive--characters pattern))))
-                (setq suffixes (cons (substring pattern 1) suffixes))))
-          (find-file-recursive--gitignore-lines directory))
-    (reverse suffixes)))
-
-;; ---------------------------------------------------------------------------
-;; The command
-;; ---------------------------------------------------------------------------
-
-(defun find-file-recursive--candidates (directory)
-  "Every file under DIRECTORY worth offering, as (TRUNCATED PATHS)."
-  ;; Both exclusions go to the walk: filtering after would cost an evaluation
-  ;; per file per pattern.
-  (directory-files-recursive directory
-                             find-file-recursive-limit
-                             (append find-file-recursive-ignore
-                                     (find-file-recursive--ignored-directories directory))
-                             (find-file-recursive--ignored-suffixes directory)))
+(defun find-file-recursive--index (directory)
+  "The index of the files under DIRECTORY worth offering, as (STATE PATHS)."
+  (file-index directory
+              (mapcar (lambda (name) (concat name "/")) find-file-recursive-ignore)
+              find-file-recursive-ignore-files
+              find-file-recursive-limit))
 
 (defun dired-find-recursive--candidates (input)
-  "The paths found when the prompt opened that match INPUT, best first."
-  ;; One walk, narrowed on every key, not a walk per key.
-  (fuzzy-filter input dired--recursive-candidates))
+  "The files under the prompt's directory that match INPUT, best first."
+  (fuzzy-filter input
+                (nth 1 (find-file-recursive--index dired--recursive-directory))))
 
 (defcommand dired-find-recursive () nil
   "Open a file from anywhere under the working directory, choosing it by any
 part of its path."
-  (let* ((found (find-file-recursive--candidates "."))
-         (truncated (car found))
-         (paths (nth 1 found)))
+  (let* ((directory (expand-file-name "."))
+         (index (find-file-recursive--index directory))
+         (state (car index))
+         (found (length (nth 1 index))))
     (cond
-     ((null paths) (message "No files under %s" (expand-file-name ".")))
+     ((and (eq state 'complete) (= found 0))
+      (message "No files under %s" directory))
      (t (progn
-          ;; Held for the life of the prompt.
-          (setq dired--recursive-candidates paths)
-          (if truncated
-              (message "%s files (truncated at %s -- narrow the directory or raise find-file-recursive-limit)"
-                       (length paths) find-file-recursive-limit))
+          (setq dired--recursive-directory directory)
+          (cond
+           ((eq state 'truncated)
+            (message "%s files (truncated at %s -- narrow the directory or raise find-file-recursive-limit)"
+                     found find-file-recursive-limit))
+           ((eq state 'walking)
+            (message "Still listing the files under %s: %s so far" directory found)))
           (minibuffer-read "Find file recursively:"
                            (lambda (path)
-                             (setq dired--recursive-candidates nil)
                              (if (string= path "")
                                  nil
-                                 (find-file-async path)))
+                                 (find-file-async (expand-file-name path directory))))
                            'dired-find-recursive--candidates
                            nil))))))
 
-;; The list the prompt narrows, emptied when it is answered.
-(setq dired--recursive-candidates nil)
+;; The directory the open prompt finds files under.
+(setq dired--recursive-directory nil)
 
 (define-key nil "C-x d" 'dired)
 (define-key nil "C-x C-r" 'dired-find-recursive)

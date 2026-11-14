@@ -153,6 +153,14 @@ pub const SETTINGS: &[Setting] = &[
               \x20 (setq locate-dominating-file-timeout 1)",
     },
     Setting {
+        name: crate::editor::file_index::MAX_AGE,
+        doc: "How many seconds after its walk began `file-index' walks a directory again when \
+              asked for it; until the new walk ends, the old list is the answer. 0 walks again \
+              at every question, and nil never does.\n\n\
+              Example:\n\
+              \x20 (setq file-index-max-age 60)",
+    },
+    Setting {
         name: WATCH_FILE_INTERVAL,
         doc: "How many seconds pass between looks at the open files, a tenth at least; each look \
               takes eight of the buffers, in turn. A change counts from the next look.",

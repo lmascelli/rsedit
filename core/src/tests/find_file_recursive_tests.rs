@@ -1,7 +1,7 @@
-//! The recursive walk, and the .gitignore reading built on it in
-//! `dired.lisp`. `directory-files-recursive' knows how to walk and how not to
-//! descend; which files are worth offering is Lisp's, and the tests follow
-//! that split.
+//! The recursive walk of `directory-files-recursive', and what
+//! `dired-find-recursive' offers from the index of the tree: which directories
+//! and files it leaves out, which ignore files it reads, and that it asks the
+//! index again rather than keeping a list of its own.
 //!
 //! Design: `doc/architettura-editor.typ, <disco>`.
 #[cfg(test)]
@@ -251,8 +251,27 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // .gitignore, as far as it is understood
+    // What C-x C-r offers
     // -----------------------------------------------------------------------
+
+    /// The index `dired-find-recursive' offers for DIRECTORY, asked again
+    /// until its walk has ended, as (STATE PATHS).
+    fn offered(directory: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> (String, Vec<String>) {
+        let src = format!("(find-file-recursive--index {directory:?})");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let answer = run(&src, env, ctx);
+            let state = match answer.iter().next() {
+                Some(LispExp::Symbol(state)) => state.to_string(),
+                other => panic!("expected a state, got {other:?}"),
+            };
+            if state != "walking" && ctx.file_index_walks() == 0 {
+                return (state, paths(&answer));
+            }
+            assert!(std::time::Instant::now() < deadline, "the walk did not end");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
 
     #[test]
     fn a_directory_named_in_gitignore_is_not_descended_into() {
@@ -262,32 +281,27 @@ mod tests {
             .file("keep.txt", "")
             .file("build/gone.txt", "");
         let (ctx, env) = editor();
-        let answer = run(
-            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
-            &env,
-            &ctx,
-        );
-        let found = paths(&answer);
+        let found = offered(&sandbox.path(), &env, &ctx).1;
         assert!(found.contains(&"keep.txt".to_string()));
         assert!(!found.iter().any(|p| p.starts_with("build/")));
     }
 
     #[test]
-    fn a_bare_name_in_gitignore_is_treated_as_a_directory_too() {
+    fn a_bare_name_in_gitignore_leaves_out_a_directory_too() {
         let sandbox = Sandbox::new("gitignore-bare");
         sandbox
             .file(".gitignore", "coverage\n")
             .file("keep.txt", "")
             .file("coverage/gone.txt", "");
         let (ctx, env) = editor();
-        let answer = run(
-            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
-            &env,
-            &ctx,
+        // `.gitignore` is itself offered: it is a file people edit.
+        assert_eq!(
+            offered(&sandbox.path(), &env, &ctx),
+            (
+                "complete".into(),
+                vec![".gitignore".into(), "keep.txt".into()]
+            )
         );
-        // `.gitignore` is itself offered: it is a file people edit, and
-        // nothing about being read by this module makes it less so.
-        assert_eq!(paths(&answer), vec![".gitignore", "keep.txt"]);
     }
 
     #[test]
@@ -299,12 +313,10 @@ mod tests {
             .file("noise.log", "")
             .file("deep/also.log", "");
         let (ctx, env) = editor();
-        let answer = run(
-            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
-            &env,
-            &ctx,
+        assert_eq!(
+            offered(&sandbox.path(), &env, &ctx).1,
+            vec![".gitignore", "keep.txt"]
         );
-        assert_eq!(paths(&answer), vec![".gitignore", "keep.txt"]);
     }
 
     #[test]
@@ -315,14 +327,10 @@ mod tests {
             .file("keep.txt", "")
             .file("noise.log", "");
         let (ctx, env) = editor();
-        let answer = run(
-            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
-            &env,
-            &ctx,
+        assert_eq!(
+            offered(&sandbox.path(), &env, &ctx).1,
+            vec![".gitignore", "keep.txt"]
         );
-        // Were `#` taken as a name, nothing would break visibly -- which is
-        // exactly why this is pinned.
-        assert_eq!(paths(&answer), vec![".gitignore", "keep.txt"]);
     }
 
     #[test]
@@ -334,35 +342,40 @@ mod tests {
             .file("noise.log", "")
             .file("build/gone.txt", "");
         let (ctx, env) = editor();
-        let answer = run(
-            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
-            &env,
-            &ctx,
+        assert_eq!(
+            offered(&sandbox.path(), &env, &ctx).1,
+            vec![".gitignore", "keep.txt"]
         );
-        // `build\r` names no directory at all, which is a silent no-op rather
-        // than an error -- the search would simply keep offering the files.
-        assert_eq!(paths(&answer), vec![".gitignore", "keep.txt"]);
     }
 
     #[test]
-    fn a_pattern_that_is_not_understood_drops_nothing() {
-        let sandbox = Sandbox::new("gitignore-unknown");
+    fn a_negation_brings_a_file_back_and_a_pattern_not_understood_drops_nothing() {
+        let sandbox = Sandbox::new("gitignore-negation");
         sandbox
-            .file(".gitignore", "!keep-me.log\nsrc/**/generated\n")
+            .file(".gitignore", "*.log\n!keep-me.log\n[[:alpha:]]*\n")
             .file("keep-me.log", "")
+            .file("noise.log", "")
             .file("other.txt", "");
         let (ctx, env) = editor();
-        let answer = run(
-            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
-            &env,
-            &ctx,
+        assert_eq!(
+            offered(&sandbox.path(), &env, &ctx).1,
+            vec![".gitignore", "keep-me.log", "other.txt"]
         );
-        // Half-understanding a pattern and dropping files on the strength of
-        // it is how a search comes to not find a file that is there. Anything
-        // unrecognised is ignored, and the file stays.
-        let found = paths(&answer);
-        assert!(found.contains(&"keep-me.log".to_string()));
-        assert!(found.contains(&"other.txt".to_string()));
+    }
+
+    #[test]
+    fn a_gitignore_below_the_top_counts_under_its_own_directory() {
+        let sandbox = Sandbox::new("gitignore-nested");
+        sandbox
+            .file("top.tmp", "")
+            .file("sub/.gitignore", "*.tmp\n")
+            .file("sub/inner.tmp", "")
+            .file("sub/keep.rs", "");
+        let (ctx, env) = editor();
+        assert_eq!(
+            offered(&sandbox.path(), &env, &ctx).1,
+            vec!["sub/.gitignore", "sub/keep.rs", "top.tmp"]
+        );
     }
 
     #[test]
@@ -374,12 +387,68 @@ mod tests {
             .file("target/debug/thing", "")
             .file("node_modules/pkg/index.js", "");
         let (ctx, env) = editor();
-        let answer = run(
-            &format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path()),
+        assert_eq!(offered(&sandbox.path(), &env, &ctx).1, vec!["keep.txt"]);
+    }
+
+    #[test]
+    fn the_ignore_files_read_are_a_setting() {
+        let sandbox = Sandbox::new("ignore-files");
+        sandbox
+            .file(".gitignore", "*.log\n")
+            .file(".ignore", "*.tmp\n")
+            .file("a.log", "")
+            .file("b.tmp", "");
+        let (ctx, env) = editor();
+        run(
+            "(setq find-file-recursive-ignore-files '(\".ignore\"))",
             &env,
             &ctx,
         );
-        assert_eq!(paths(&answer), vec!["keep.txt"]);
+        assert_eq!(
+            offered(&sandbox.path(), &env, &ctx).1,
+            vec![".gitignore", ".ignore", "a.log"]
+        );
+    }
+
+    #[test]
+    fn the_candidates_are_asked_of_the_index_at_each_call() {
+        let sandbox = Sandbox::new("candidates");
+        sandbox.file("alpha.txt", "");
+        let (ctx, env) = editor();
+        offered(&sandbox.path(), &env, &ctx);
+        run(
+            &format!("(setq dired--recursive-directory {:?})", sandbox.path()),
+            &env,
+            &ctx,
+        );
+        let candidates = |ctx: &Ctx| -> Vec<String> {
+            run("(dired-find-recursive--candidates \"\")", &env, ctx)
+                .iter()
+                .map(|item| match item {
+                    LispExp::String(s) => s.to_string(),
+                    other => panic!("expected a path, got {other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(candidates(&ctx), vec!["alpha.txt"]);
+        sandbox.file("beta.txt", "");
+        ctx.forget_file_index(None);
+        offered(&sandbox.path(), &env, &ctx);
+        assert_eq!(candidates(&ctx), vec!["alpha.txt", "beta.txt"]);
+    }
+
+    #[test]
+    fn an_empty_tree_is_said_to_have_no_files_once_its_walk_has_ended() {
+        let sandbox = Sandbox::new("empty-tree");
+        let (ctx, env) = editor();
+        run(&format!("(cd {:?})", sandbox.path()), &env, &ctx);
+        offered(&sandbox.path(), &env, &ctx);
+        run("(dired-find-recursive)", &env, &ctx);
+        assert!(
+            ctx.get_echo_message().starts_with("No files under"),
+            "{}",
+            ctx.get_echo_message()
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -431,16 +500,15 @@ mod tests {
         assert!(!truncated(&answer), "three kept files is the whole of it");
     }
 
-    /// Gathering the candidates must not cost an evaluation per file per
-    /// .gitignore suffix: a real project -- a few thousand files, forty
+    /// Asking for the candidates must not cost an evaluation per file per
+    /// .gitignore pattern: a real project -- a few thousand files, forty
     /// `*.ext` patterns -- would spend a command's entire fuel before the
     /// prompt opened, and `C-x C-r` would answer with nothing at all, like a
     /// project with no files.
     ///
     /// Measured rather than merely run, because that failure is not a wrong
-    /// answer but the right one costing too much. A threshold catches it while
-    /// the tree here stays small enough to build quickly: at this size,
-    /// filtering in Lisp costs about 1.2 million units.
+    /// answer but the right one costing too much. At this size, applying the
+    /// patterns in Lisp would cost about 1.2 million units.
     #[test]
     fn gathering_candidates_is_cheap_against_a_long_gitignore() {
         let sandbox = Sandbox::new("fuel");
@@ -451,19 +519,22 @@ mod tests {
         sandbox.file(".gitignore", &patterns);
 
         let (ctx, env) = editor();
-        let src = format!(r#"(find-file-recursive--candidates "{}")"#, sandbox.path());
+        assert_eq!(
+            offered(&sandbox.path(), &env, &ctx).1.len(),
+            601,
+            "600 sources and the .gitignore"
+        );
+        let src = format!(r#"(find-file-recursive--index "{}")"#, sandbox.path());
         let (answer, spent) = measure(&ctx.fuel_meter(), || {
             let ast = Parser::new(&format!("(progn {src})"))
                 .next()
                 .expect("parse");
             eval(&ast, env.clone(), &ctx)
         });
-        let answer = answer.expect("the walk should succeed");
-        assert_eq!(paths(&answer).len(), 601, "600 sources and the .gitignore");
+        answer.expect("asking the index should succeed");
         assert!(
             spent < 200_000,
-            "gathering 600 candidates behind 40 patterns cost {spent} units; \
-             it is filtering in Lisp again"
+            "gathering 600 candidates behind 40 patterns cost {spent} units"
         );
     }
 }

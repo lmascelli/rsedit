@@ -67,12 +67,10 @@ mod tests {
 
     #[test]
     fn appending_one_element_at_a_time_is_quadratic_and_runs_out() {
-        // The shape `manpage-names` and `find-file-recursive--candidates` both
-        // had: `append` copies everything gathered so far, so building an
+        // `append` copies everything gathered so far, so building an
         // n-element list this way costs about n squared. It gives out at
-        // roughly 4,500 elements -- which is *under* the 5,000 that
-        // `find-file-recursive-limit` advertises, and far under the number of
-        // manual pages on a real system.
+        // roughly 4,500 elements, far under the number of manual pages on a
+        // real system.
         let (ctx, env) = editor();
         let outcome = eval_str(
             "(let ((out nil) (i 0)) (while (< i 6000) \

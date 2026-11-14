@@ -27,6 +27,7 @@ SYNOPSIS
     dired-marker-char
     dired-del-marker
     find-file-recursive-ignore
+    find-file-recursive-ignore-files
     find-file-recursive-limit
 
 DESCRIPTION
@@ -120,21 +121,30 @@ CHANGING FILES
     All of them read the directory again afterwards, and none touches .. .
 
 FINDING A FILE ANYWHERE
-    C-x C-r collects every file under the directory the editor was started
-    in, and asks for one, completing on any part of its path. It does not
-    go into the directories named in `find-file-recursive-ignore', such as
-    .git and target, nor into those the .gitignore there names, and leaves
-    out the files whose endings it names. It stops at
-    `find-file-recursive-limit' files and says so.
+    C-x C-r asks for a file anywhere under the working directory,
+    completing on any part of its path. It does not go into the
+    directories named in `find-file-recursive-ignore', such as .git and
+    target, and leaves out what the .gitignore files of the tree say, in
+    their directory and under it: `find-file-recursive-ignore-files' names
+    the files it reads. It stops at `find-file-recursive-limit' files and
+    says so.
 
-    The files are collected once, when the question opens, so a file made
-    while it is open is not among them.
+    The files come from an index of the tree, which the files page
+    describes under AN INDEX OF A TREE. The question opens at once, even
+    on a large tree: while the tree is still being walked the echo area
+    says how many files are known so far, and each Tab completes on the
+    files known by then. The index is kept, so the next C-x C-r in the
+    same directory is instant; it is walked again in the background when
+    it is older than `file-index-max-age' seconds, and a file made since
+    then is offered once that walk has ended.
 
 LIMITS
-    Of a .gitignore, only the top one is read, and only its plain names,
-    names ending in /, and *.ending lines are understood. Negations (!),
-    ** and paths are ignored rather than guessed at, so the search may
-    offer a file git would hide, but never hides one git would show.
+    Of the .gitignore syntax, everything but [:alpha:] and the other
+    named classes is understood; a line with one is skipped, so the search
+    may offer a file git would hide, but never hides one git would show.
+    The .gitignore files above the working directory, .git/info/exclude
+    and git's own global excludes file are not read, and upper and lower
+    case always differ.
 
 EXAMPLES
     Directories first, in every listing:
@@ -145,11 +155,15 @@ EXAMPLES
 
         (setq dired-window-width 60)
 
-    Look further before stopping, and leave out one more directory:
+    Stop sooner, and leave out one more directory:
 
         (setq find-file-recursive-limit 20000)
         (setq find-file-recursive-ignore
               (cons "third_party" find-file-recursive-ignore))
+
+    Read the .ignore files too, and not only .gitignore:
+
+        (setq find-file-recursive-ignore-files '(".gitignore" ".ignore"))
 
     List a directory from Lisp:
 

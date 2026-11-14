@@ -65,7 +65,7 @@ Da verificare
       nomi, con cache.
 - [X] C2 Directory per un comando: eseguire una funzione come se la directory di lavoro
       fosse un'altra.
-- [ ] C3 Dati dei moduli nella sessione: un modulo salva e rilegge un suo valore.
+- [X] C3 Dati dei moduli nella sessione: un modulo salva e rilegge un suo valore.
       Dipende da R2.
 - [ ] C4 Indice dei file: visita di un albero in sfondo, con regole di esclusione, in
       cache per directory. dired-find-recursive e grep ne diventano clienti. Dipende da D1.
@@ -95,22 +95,17 @@ PREAMBOLO, poi il prompt del punto. Sostituisci le parti tra <>.
 
 ** PREAMBOLO (rsedit)
 Lavora sul main attuale di lmascelli/rsedit. Non modificare GitHub: prepara una patch
-da scaricare per git am, verificata su un checkout pulito con tutti i test. Segui
+da scaricare in allegato per git am, verificata su un checkout pulito con tutti i test. Segui
 doc/documentazione.typ per manpage, manuale, docstring e test. Non eseguire typst: il
 PDF lo rigenero io, non dirlo nel commit. Leggi solo i file che servono al punto. Niente
 riepiloghi intermedi; alla fine: percorso della patch, scelte fatte, cosa non hai
 verificato. Il mattone deve essere agnostico: nessun riferimento a progetti o LSP nel
 nucleo. Contesto: sezione "Progetti e basi per LSP" di todo.org.
 
-** C3
-Aggiungi a rsedit il salvataggio nella sessione di valori dei moduli: una primitiva
-per scrivere e una per leggere, per nome. Usa la read di risp (R2). Leggi prima la
-sezione <memoria> del manuale e rispetta il formato a righe.
-
 ** C4
 Aggiungi a rsedit un indice dei file: visita in sfondo di un albero con regole di
 esclusione, risultato in cache per directory, consultabile mentre cresce. Decisione:
-.gitignore <D1: a mano | crate X>. Fai diventare dired-find-recursive un cliente e
+.gitignore <D1: a mano>. Fai diventare dired-find-recursive un cliente e
 togli la sua lettura di .gitignore in Lisp. Misura su un albero da 50.000 file.
 
 ** C5

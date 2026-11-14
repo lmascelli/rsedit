@@ -1,10 +1,11 @@
 //! Asking the disk and changing it: whether a path exists, deleting and
-//! renaming, walking a tree, looking upwards for a name, reading a file
-//! whole. A failure is logged and answered with nil, and nothing here asks
+//! renaming, walking a tree, keeping an index of one, looking upwards for a
+//! name, reading a file whole. A failure is logged and answered with nil, and nothing here asks
 //! the user anything.
 //!
 //! Design: `doc/architettura-editor.typ, <disco>`.
 use super::*;
+use crate::editor::file_index::{self, Progress, Rules};
 use crate::editor::locate::{self, Located, Question};
 
 /// Collects every file under ROOT, depth-first, as paths relative to it, and
@@ -524,6 +525,116 @@ primitive!(locate_dominating_file_forget, args, _env, ctx, {
     Ok(ELispExp::number(forgotten as f64))
 });
 
+pub const FILE_INDEX_DOC: &str = "(file-index DIRECTORY &optional EXCLUDE IGNORE-FILES LIMIT): \
+         Return (STATE PATHS), the files found so far under DIRECTORY, the working directory \
+         when nil, as paths relative to it, without waiting for the disk. The first call starts \
+         a walk in the background: STATE is walking until it ends, then complete, or truncated \
+         at LIMIT files, 100000 by default. EXCLUDE is a list of lines in the syntax of a \
+         .gitignore; IGNORE-FILES names the files whose lines count in their directory and \
+         below. The index is kept, and walked again after `file-index-max-age' seconds.\n\n\
+         Example:\n\
+         (file-index \"~/src\" '(\".git/\" \"*.o\") '(\".gitignore\"))";
+
+primitive!(file_index, args, env, ctx, {
+    if args.is_empty() || args.len() > 4 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let root = match args.first() {
+        Some(exp) if exp.is_nil() => ctx.expand_path("."),
+        other => path_arg(ctx, other)?,
+    };
+    let limit = match args.get(3) {
+        None => file_index::DEFAULT_LIMIT,
+        Some(exp) if exp.is_nil() => file_index::DEFAULT_LIMIT,
+        Some(ELispExp::Number(n)) if *n >= 0.0 => *n as usize,
+        Some(other) => {
+            return Err(EvalError::WrongArgumentType {
+                expected: "a non-negative Number".into(),
+                got: other.clone(),
+            });
+        }
+    };
+    let rules = Rules {
+        exclude: strings(args.get(1))?,
+        ignore_files: strings(args.get(2))?,
+        limit,
+    };
+    let indexed = ctx.file_index(&root, &rules, file_index::max_age(&env));
+    // Charged for what it hands over, as `directory-files-recursive' is.
+    ctx.consume_fuel(u32::try_from(indexed.paths.len()).unwrap_or(u32::MAX))?;
+    let state = match indexed.progress {
+        Progress::Walking => "walking",
+        Progress::Complete => "complete",
+        Progress::Truncated => "truncated",
+    };
+    Ok(ELispExp::proper_list(vec![
+        ELispExp::symbol(state.into()),
+        ELispExp::proper_list(
+            indexed
+                .paths
+                .iter()
+                .map(|path| ELispExp::string(path.to_string()))
+                .collect(),
+        ),
+    ]))
+});
+
+/// Reads a list of strings, nil or absent being the empty one.
+fn strings<B: BufferTrait>(
+    list: Option<&ELispExp<B>>,
+) -> Result<Vec<String>, EvalError<EditorState<B>>> {
+    let mut out = Vec::new();
+    if let Some(list) = list
+        && !list.is_nil()
+    {
+        if !matches!(list, ELispExp::Cons(..)) {
+            return Err(EvalError::WrongArgumentType {
+                expected: "a list of Strings".into(),
+                got: list.clone(),
+            });
+        }
+        for item in list.iter() {
+            match item {
+                ELispExp::String(s) => out.push(s.to_string()),
+                other => {
+                    return Err(EvalError::WrongArgumentType {
+                        expected: "String".into(),
+                        got: other,
+                    });
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+pub const FILE_INDEX_FORGET_DOC: &str = "(file-index-forget &optional DIRECTORY): Drop the \
+         indexes `file-index' keeps for DIRECTORY and the directories under it, or all of them \
+         when DIRECTORY is nil, stopping their walks, and return how many were dropped. The \
+         next `file-index' walks again from the start.\n\n\
+         Example:\n\
+         (file-index-forget \"~/src\")";
+
+primitive!(file_index_forget, args, _env, ctx, {
+    if args.len() > 1 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let directory = match args.first() {
+        None => None,
+        Some(exp) if exp.is_nil() => None,
+        some => Some(path_arg(ctx, some)?),
+    };
+    Ok(ELispExp::number(
+        ctx.forget_file_index(directory.as_deref()) as f64,
+    ))
+});
+
 /// Registers the primitives that ask the disk and change it.
 ///
 /// Called by [`super::install_primitives`].
@@ -544,6 +655,12 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         "directory-files-recursive",
         directory_files_recursive,
         DIRECTORY_FILES_RECURSIVE_DOC,
+    );
+    into.function("file-index", file_index, FILE_INDEX_DOC);
+    into.function(
+        "file-index-forget",
+        file_index_forget,
+        FILE_INDEX_FORGET_DOC,
     );
     into.function(
         "locate-dominating-file",

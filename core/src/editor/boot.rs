@@ -113,6 +113,7 @@ impl<B: BufferTrait> EditorState<B> {
         let editor_state = Self {
             file_io: Arc::new(file_io::FileIo::default()),
             locate: Arc::new(locate::Locate::default()),
+            file_index: Arc::new(file_index::FileIndex::default()),
             running: Arc::new(AtomicBool::new(true)),
             work,
             background_change,
@@ -372,6 +373,10 @@ pub fn create_global_env<B: BufferTrait>()
     env.set_variable(
         locate::TIMEOUT.into(),
         ELispExp::number(locate::DEFAULT_TIMEOUT.as_secs_f64()),
+    );
+    env.set_variable(
+        file_index::MAX_AGE.into(),
+        ELispExp::number(file_index::DEFAULT_MAX_AGE.as_secs_f64()),
     );
     env.set_variable(
         crate::jobs::watcher::WATCH_FILE_INTERVAL.into(),
