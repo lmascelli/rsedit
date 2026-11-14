@@ -65,6 +65,7 @@ mod region;
 mod replace;
 pub(crate) mod results;
 mod scan;
+mod session;
 mod sexp;
 pub(crate) mod shell;
 mod subword;
@@ -168,6 +169,7 @@ pub fn install_primitives<B: BufferTrait>(
     replace::install(&into);
     results::install(&into);
     scan::install(&into);
+    session::install(&into);
     sexp::install(&into);
     shell::install(&into);
     syntax_table::install(&into);

@@ -5,6 +5,8 @@ SYNOPSIS
     (recent-files)
     (clear-recent-files)
     (find-recent-file)
+    (session-value NAME &optional DEFAULT)
+    (set-session-value NAME VALUE)
     save-history
     recent-files-length
     save-place
@@ -21,6 +23,9 @@ DESCRIPTION
     So M-x then C-p offers the command you ran last time, C-x C-f then C-p
     the file you opened last, and a file you were reading opens on the line
     you left it at. Each of the three can be turned off on its own.
+
+    Lisp code -- your init.lisp, a module, a plugin -- can keep values of
+    its own there too, each under a name: see VALUES KEPT BY NAME.
 
     They are kept in one file, `session', in the state directory: the
     `configuration' page says where that is. The file is the editor's:
@@ -82,6 +87,37 @@ WHERE POINT WAS
     With `save-place' nil every file opens at its start, and nothing is
     written.
 
+VALUES KEPT BY NAME
+    (set-session-value NAME VALUE) keeps VALUE under NAME, a symbol or a
+    string, and (session-value NAME) gives it back, in this run and in the
+    next ones; with a second argument, that is what comes back when NAME
+    has no value. Setting nil forgets the name.
+
+    A value can be anything `read' reads back: numbers, strings, symbols,
+    and lists, vectors and maps of them. It is written as `prin1-to-string'
+    writes it, when you set it, so a value with a part that has no written
+    form -- a function, an atom, a thread -- is refused at once, with
+    wrong-type-argument. Reading it back never evaluates it: a list comes
+    back as a list, as if quoted.
+
+    Values are never changed in place: to add to a list kept under a name,
+    set the name again to the longer list. Names are shared by all the code
+    that runs in the editor, so start each with the name of your module, as
+    you would a variable's.
+
+    The session is read after init.lisp, so a module that init.lisp loads
+    finds the values of the last run only from the first command on. Read
+    them when you need them, in the command that uses them, rather than
+    when the module loads. A value set before the session is read is
+    replaced by the one the last run left under the same name, if it left
+    one.
+
+    With several editors open, a value one of them sets reaches the others
+    at their next write, unless they changed it themselves meanwhile: then
+    each keeps its own until the last one written reaches the others. A
+    name forgotten in one editor is still known to the others, and comes
+    back from them.
+
 EXAMPLES
     Keep a longer list of recent files:
 
@@ -108,6 +144,18 @@ EXAMPLES
 
         (define-key nil "C-c f" 'find-recent-file)
 
+    A function that remembers, from one run to the next, every directory
+    it was given, once each, the newest first:
+
+        (defun my-remember-directory (dir)
+          (let ((known (session-value 'my-directories)))
+            (unless (member dir known)
+              (set-session-value 'my-directories (cons dir known)))))
+
+    How many times a command has run, over every run:
+
+        (set-session-value 'my-count (+ 1 (session-value 'my-count 0)))
+
 LIMITS
     An editor that is killed, or that stops on an error inside the editor
     itself, does not write at that moment: the next start reads what was
@@ -125,6 +173,12 @@ LIMITS
     A place is a count of characters from the start of the file. A file
     changed by another program since it was left opens at the same count,
     which may no longer be the same line.
+
+    Every value kept by name is written in the session file each time it
+    is written, and read again each time: keep there what is worth keeping,
+    not a buffer's text. A value whose line in the file was damaged no
+    longer reads; `session-value' then gives the default, and the log says
+    so.
 
 KEYS
     M-g r                   find-recent-file

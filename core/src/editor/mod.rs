@@ -21,8 +21,8 @@ use crate::{
     jobs::watcher::FileWatcher,
     managers::{
         Binding, BindingSource, BufferRemoved, BufferRenamed, Buffers, ClickCount, Commands,
-        History, Hit, KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime, Scrolled, Visits,
-        WindowRemoved, Windows,
+        History, Hit, KeptValues, KillYank, Loader, Log, Macros, Modes, MouseDrag, Runtime,
+        Scrolled, Visits, WindowRemoved, Windows,
     },
     modes::{Grammar, MajorMode, SyntaxTable},
     primitives::{install_primitives, movement::goto_offset},
@@ -252,6 +252,10 @@ pub struct EditorState<B: BufferTrait> {
 
     /// The files visited, and where point was left in each. See [`Visits`].
     visits: Arc<RwLock<Visits>>,
+
+    /// The values Lisp code keeps by name from one run to the next. See
+    /// [`KeptValues`].
+    kept_values: Arc<RwLock<KeptValues>>,
 
     /// The session file as this editor last read or wrote it: what a write
     /// compares the file with, to tell what another editor added from what
@@ -492,6 +496,22 @@ impl<B: BufferTrait> EditorState<B> {
     pub(crate) fn visits_mut<R>(&self, f: impl FnOnce(&mut Visits) -> R) -> R {
         f(&mut self
             .visits
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Runs F on the values kept by name, under their read lock.
+    pub(crate) fn kept_values<R>(&self, f: impl FnOnce(&KeptValues) -> R) -> R {
+        f(&self
+            .kept_values
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Runs F on the values kept by name, under their write lock.
+    pub(crate) fn kept_values_mut<R>(&self, f: impl FnOnce(&mut KeptValues) -> R) -> R {
+        f(&mut self
+            .kept_values
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner))
     }

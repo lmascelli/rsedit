@@ -1,7 +1,7 @@
 //! What is kept from one run to the next: the session file's lines, read back
 //! as they were written; the recent files and the places, each path once and
-//! newest first; and two editors, one quitting and one starting, sharing a
-//! state directory.
+//! newest first; the values kept by name; and two editors, one quitting and
+//! one starting, sharing a state directory.
 //!
 //! Design: `doc/architettura-editor.typ, <memoria>`.
 #[cfg(test)]
@@ -123,12 +123,17 @@ mod tests {
             ],
             recent: vec!["/home/me/a file.txt".into(), "/tmp/b\\c".into()],
             places: vec![("/home/me/a file.txt".into(), 42)],
+            values: [
+                ("my-sort".into(), "date".into()),
+                ("my\tnotes".into(), "(\"a\\tb\" \"line\\none\")".into()),
+            ]
+            .into(),
         };
         let text = session.render();
         assert_eq!(
             text.lines().count(),
-            1 + 5 + 2 + 1,
-            "a header, then one line per answer, file and place:\n{text}"
+            1 + 5 + 2 + 1 + 2,
+            "a header, then one line per answer, file, place and value:\n{text}"
         );
         assert_eq!(Session::parse(&text), Some((session, 0)));
     }
@@ -148,12 +153,14 @@ mod tests {
                     something-newer\tx\n\
                     \n\
                     history\tM-x\n\
+                    value\tmy-sort\n\
                     place\t/a\t7\r\n";
         let (session, skipped) = Session::parse(text).expect("the header is right");
         assert_eq!(
-            skipped, 3,
-            "the bad place, the unknown kind, the short history"
+            skipped, 4,
+            "the bad place, the unknown kind, the short history, the value without one"
         );
+        assert!(session.values.is_empty());
         assert_eq!(session.recent, vec!["/a".to_string()]);
         assert_eq!(session.places, vec![("/a".to_string(), 7)]);
         assert!(session.history.is_empty());
@@ -239,9 +246,100 @@ mod tests {
         assert_eq!(visits.place("/old"), Some(3));
     }
 
+    #[test]
+    fn a_value_is_news_only_when_another_editor_changed_it_and_this_one_did_not() {
+        let session = |values: &[(&str, &str)]| Session {
+            values: values
+                .iter()
+                .map(|(name, text)| (name.to_string(), text.to_string()))
+                .collect(),
+            ..Session::default()
+        };
+        let base = session(&[("kept", "1"), ("changed-there", "1"), ("changed-both", "1")]);
+        let ours = session(&[("kept", "1"), ("changed-there", "1"), ("changed-both", "3")]);
+        let theirs = session(&[
+            ("kept", "1"),
+            ("changed-there", "2"),
+            ("changed-both", "2"),
+            ("added-there", "4"),
+        ]);
+        assert_eq!(
+            Session::news(&theirs, &base, &ours).values,
+            session(&[("added-there", "4"), ("changed-there", "2")]).values
+        );
+        let forgotten_here = session(&[]);
+        assert!(
+            Session::news(&base, &base, &forgotten_here).is_empty(),
+            "a value forgotten here does not come back from the file as it was"
+        );
+    }
+
     // ----------------------------------------------------------------
     // Within one run
     // ----------------------------------------------------------------
+
+    #[test]
+    fn a_value_kept_is_read_back_unevaluated() {
+        let (ctx, env) = editor();
+        let kept = run(
+            r#"(set-session-value 'my-list '(a (+ 1 2) "b\"c" [1 2.5]))"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(kept.iter().count(), 4, "the value itself comes back");
+        assert!(
+            run(
+                r#"(equal (session-value 'my-list) '(a (+ 1 2) "b\"c" [1 2.5]))"#,
+                &env,
+                &ctx
+            )
+            .is_truthy()
+        );
+        assert!(
+            run("(eq (car (session-value \"my-list\")) 'a)", &env, &ctx).is_truthy(),
+            "a string names what the symbol names"
+        );
+    }
+
+    #[test]
+    fn a_name_with_no_value_gives_the_default_and_nil_forgets_one() {
+        let (ctx, env) = editor();
+        assert!(run("(session-value 'my-missing)", &env, &ctx).is_nil());
+        assert!(run("(eq (session-value 'my-missing 'none) 'none)", &env, &ctx).is_truthy());
+        run("(set-session-value 'my-count 3)", &env, &ctx);
+        assert!(run("(= (session-value 'my-count 0) 3)", &env, &ctx).is_truthy());
+        assert!(run("(set-session-value 'my-count nil)", &env, &ctx).is_nil());
+        assert!(run("(eq (session-value 'my-count 'none) 'none)", &env, &ctx).is_truthy());
+    }
+
+    #[test]
+    fn a_value_with_no_read_syntax_is_refused_and_what_was_kept_stays() {
+        let (ctx, env) = editor();
+        run("(set-session-value 'my-hook 1)", &env, &ctx);
+        match try_run(
+            "(set-session-value 'my-hook (list 1 (lambda () 2)))",
+            &env,
+            &ctx,
+        ) {
+            Err(EvalError::Signal { symbol, data }) => {
+                assert!(matches!(symbol, LispExp::Symbol(name) if &*name == "wrong-type-argument"));
+                assert!(
+                    matches!(data.iter().next(), Some(LispExp::Symbol(name)) if &*name == "readablep")
+                );
+            }
+            other => panic!("expected wrong-type-argument, got {other:?}"),
+        }
+        assert!(run("(= (session-value 'my-hook) 1)", &env, &ctx).is_truthy());
+        assert!(
+            run(
+                "(condition-case nil (set-session-value 'my-hook (lambda () 2)) \
+                 (wrong-type-argument 'refused))",
+                &env,
+                &ctx
+            )
+            .is_truthy()
+        );
+    }
 
     #[test]
     fn recent_files_lists_what_was_opened_newest_first() {
@@ -391,6 +489,75 @@ mod tests {
             point(&ctx),
             8,
             "a buffer still open at exit has its place kept"
+        );
+    }
+
+    #[test]
+    fn the_next_run_has_the_values_kept() {
+        let sandbox = Sandbox::new("values");
+        {
+            let (ctx, env) = editor();
+            run(
+                r#"(set-session-value 'my-roots '("/a dir/with\ttab" "/b\nline" "q\"uote"))
+                   (set-session-value "my-sort" 'date)
+                   (set-session-value 'my-gone 1)
+                   (set-session-value 'my-gone nil)"#,
+                &env,
+                &ctx,
+            );
+            assert!(ctx.save_session(&env, sandbox.state()));
+        }
+        let written = std::fs::read_to_string(sandbox.session_file()).unwrap_or_default();
+        assert!(written.contains("value\tmy-sort\tdate\n"), "{written:?}");
+        assert!(!written.contains("my-gone"), "{written:?}");
+        let (ctx, env) = editor();
+        assert!(ctx.load_session(&env, sandbox.state()));
+        assert!(
+            run(
+                r#"(equal (session-value 'my-roots) '("/a dir/with\ttab" "/b\nline" "q\"uote"))"#,
+                &env,
+                &ctx
+            )
+            .is_truthy()
+        );
+        assert!(run("(eq (session-value 'my-sort) 'date)", &env, &ctx).is_truthy());
+    }
+
+    #[test]
+    fn a_value_the_file_keeps_replaces_one_given_before_the_session_is_read() {
+        let sandbox = Sandbox::new("values-before");
+        std::fs::write(
+            sandbox.session_file(),
+            "rsedit-session 1\nvalue\tmy-sort\tdate\n",
+        )
+        .expect("writing the session");
+        let (ctx, env) = editor();
+        run(
+            "(set-session-value 'my-sort 'name) (set-session-value 'my-new 1)",
+            &env,
+            &ctx,
+        );
+        assert!(ctx.load_session(&env, sandbox.state()));
+        assert!(run("(eq (session-value 'my-sort) 'date)", &env, &ctx).is_truthy());
+        assert!(run("(= (session-value 'my-new) 1)", &env, &ctx).is_truthy());
+    }
+
+    #[test]
+    fn a_value_that_does_not_read_gives_the_default_and_the_log_says_so() {
+        let sandbox = Sandbox::new("values-bad");
+        std::fs::write(
+            sandbox.session_file(),
+            "rsedit-session 1\nvalue\tmy-sort\t(date\nvalue\tmy-two\ta b\n",
+        )
+        .expect("writing the session");
+        let (ctx, env) = editor();
+        assert!(ctx.load_session(&env, sandbox.state()));
+        assert!(run("(eq (session-value 'my-sort 'name) 'name)", &env, &ctx).is_truthy());
+        assert!(run("(session-value 'my-two)", &env, &ctx).is_nil());
+        assert!(
+            logged(&ctx, "my-sort does not read"),
+            "{:?}",
+            ctx.get_logs()
         );
     }
 
@@ -568,6 +735,50 @@ mod tests {
         assert!(run("(recent-files)", &next_env, &next).is_nil());
         open(&a, &next_env, &next);
         assert_eq!(point(&next), 0, "a place given up stays given up");
+    }
+
+    #[test]
+    fn a_value_changed_in_one_editor_reaches_the_other_and_the_last_change_wins() {
+        let sandbox = Sandbox::new("values-two");
+        let (first, first_env) = editor();
+        let (second, second_env) = editor();
+        let value = |ctx: &Ctx, env: &Arc<Env<Ctx>>| match run("(session-value 'my-n)", env, ctx) {
+            LispExp::Number(n) => n,
+            other => panic!("expected a number, got {other:?}"),
+        };
+        run("(set-session-value 'my-n 1)", &first_env, &first);
+        first.save_session(&first_env, sandbox.state());
+        second.save_session(&second_env, sandbox.state());
+        assert_eq!(value(&second, &second_env), 1.0, "a value added there");
+
+        run("(set-session-value 'my-n 2)", &second_env, &second);
+        second.save_session(&second_env, sandbox.state());
+        first.save_session(&first_env, sandbox.state());
+        assert_eq!(
+            value(&first, &first_env),
+            2.0,
+            "changed there and not here: the other editor's"
+        );
+
+        run("(set-session-value 'my-n 3)", &first_env, &first);
+        run("(set-session-value 'my-n 4)", &second_env, &second);
+        second.save_session(&second_env, sandbox.state());
+        first.save_session(&first_env, sandbox.state());
+        assert_eq!(
+            value(&first, &first_env),
+            3.0,
+            "changed in both: this one's"
+        );
+        second.save_session(&second_env, sandbox.state());
+        assert_eq!(
+            value(&second, &second_env),
+            3.0,
+            "and then the last one written"
+        );
+
+        let (next, next_env) = editor();
+        next.load_session(&next_env, sandbox.state());
+        assert_eq!(value(&next, &next_env), 3.0);
     }
 
     #[test]

@@ -70,6 +70,10 @@ mod tests {
             include_str!("../managers/history.rs"),
         ),
         (
+            "managers/kept_values.rs",
+            include_str!("../managers/kept_values.rs"),
+        ),
+        (
             "managers/kill_yank.rs",
             include_str!("../managers/kill_yank.rs"),
         ),

@@ -1,6 +1,6 @@
 //! What the editor carries from one run to the next -- the answers given at
-//! the prompts, the files visited and where point was left in each -- in one
-//! file of the state directory, read by [`EditorState::load_session`] at start
+//! the prompts, the files visited, where point was left in each, and the
+//! values Lisp code keeps by name -- in one file of the state directory, read by [`EditorState::load_session`] at start
 //! and written by [`EditorState::save_session`] at exit and, in between, by
 //! the [`SessionSaver`](crate::jobs::session_saver::SessionSaver). Each write
 //! first takes in what another editor has added to the file.
@@ -11,6 +11,7 @@ use super::*;
 use crate::editor::visits::{recent_files_length, saving_places};
 use crate::feature::minibuffer::history_length;
 use crate::paths::DirError;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The session file's name, in the state directory.
@@ -45,13 +46,16 @@ pub(crate) struct Session {
     pub recent: Vec<String>,
     /// Absolute paths, each with point in characters.
     pub places: Vec<(String, usize)>,
+    /// Names, each with the text `read` turns back into its value.
+    pub values: BTreeMap<String, String>,
 }
 
 impl Session {
     /// Returns what THEIRS, the file as it is now, holds that neither BASE,
     /// the file as this editor last read or wrote it, nor OURS has: what
     /// another editor added meanwhile, in the file's order. What is in BASE
-    /// and not in OURS was forgotten here, and is not news.
+    /// and not in OURS was forgotten here, and is not news. A value is news
+    /// when THEIRS changed it and OURS did not: OURS holds what BASE holds.
     pub(crate) fn news(theirs: &Session, base: &Session, ours: &Session) -> Session {
         fn ring<'a>(session: &'a Session, key: &str) -> &'a [String] {
             session
@@ -84,16 +88,26 @@ impl Session {
                 news.places.push(place.clone());
             }
         }
+        for (name, text) in &theirs.values {
+            let known = base.values.get(name);
+            if known != Some(text) && ours.values.get(name) == known {
+                news.values.insert(name.clone(), text.clone());
+            }
+        }
         news
     }
 
     /// Returns whether it holds nothing.
     pub(crate) fn is_empty(&self) -> bool {
-        self.history.is_empty() && self.recent.is_empty() && self.places.is_empty()
+        self.history.is_empty()
+            && self.recent.is_empty()
+            && self.places.is_empty()
+            && self.values.is_empty()
     }
 
-    /// Returns the file's text: the header, then a line for each answer, file
-    /// and place, its fields apart by tabs and each field escaped.
+    /// Returns the file's text: the header, then a line for each answer,
+    /// file, place and value, its fields apart by tabs and each field
+    /// escaped.
     pub(crate) fn render(&self) -> String {
         let mut text = format!("{HEADER}\n");
         for (key, entries) in &self.history {
@@ -106,6 +120,9 @@ impl Session {
         }
         for (path, point) in &self.places {
             text.push_str(&format!("place\t{}\t{point}\n", escape(path)));
+        }
+        for (name, value) in &self.values {
+            text.push_str(&format!("value\t{}\t{}\n", escape(name), escape(value)));
         }
         text
     }
@@ -133,6 +150,9 @@ impl Session {
                     Ok(point) => session.places.push((path.clone(), point)),
                     Err(_) => skipped += 1,
                 },
+                [kind, name, value] if kind == "value" => {
+                    session.values.insert(name.clone(), value.clone());
+                }
                 [blank] if blank.is_empty() => {}
                 _ => skipped += 1,
             }
@@ -205,7 +225,8 @@ fn write_session_file(path: &Path, text: &str) -> std::io::Result<()> {
 impl<B: BufferTrait> EditorState<B> {
     /// Reads the session file in STATE, the state directory, and gives back
     /// what it holds -- the answers, the recent files, the places -- as
-    /// `save-history`, `recent-files-length` and `save-place` say now.
+    /// `save-history`, `recent-files-length` and `save-place` say now. A
+    /// value the file keeps under a name replaces what this run gave it.
     /// Returns whether a file was read.
     ///
     /// No directory, or no file, is the first run, and says nothing; any
@@ -275,14 +296,17 @@ impl<B: BufferTrait> EditorState<B> {
         };
         let limit = recent_files_length(env);
         self.visits_mut(|visits| visits.restore(session.recent, places, limit));
+        self.kept_values_mut(|kept| kept.restore(session.values));
     }
 
     /// Writes the session file in STATE, the state directory, with what the
     /// settings say to keep: the answers given at the prompts when
     /// `save-history` is on, the recent files, and, when `save-place` is on,
     /// where point is in each buffer visiting a file and was in those
-    /// closed. What another editor added to the file since this one last
-    /// read or wrote it is taken in first, behind what this one knows.
+    /// closed, and the values kept by name. What another editor added to the
+    /// file since this one last read or wrote it is taken in first, behind
+    /// what this one knows; a value another editor changed replaces this
+    /// one's only when this one has not changed it.
     /// Returns whether the file holds the session; when it does not, the log
     /// says why.
     pub fn save_session(
@@ -376,6 +400,7 @@ impl<B: BufferTrait> EditorState<B> {
             history,
             recent,
             places,
+            values: self.kept_values(|kept| kept.all()),
         }
     }
 }

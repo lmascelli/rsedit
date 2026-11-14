@@ -171,7 +171,7 @@ lì e nella mappa di `lib.rs`.
   [`text/`], [Ciò che si può calcolare sul testo conoscendo solo `BufferTrait`: la ricerca (`search.rs`), le sessioni di ricerca incrementale e di sostituzione (`isearch.rs`, `replace.rs`), il kill ring, i rettangoli, le liste di posizioni (`results.rs`), il riempimento (`fill.rs`).],
   [`input.rs`], [`KeyEvent`, `KeyCode`, `MouseEvent`, `Keymap`, `TransientKeymap`, la lettura e la scrittura dei nomi dei tasti (`parse_key_sequence`, `describe_keys`), i legami scritti in Rust (`fill_default_keymaps`).],
   [`commands.rs`], [`ArgSpec`, `PrefixArg`, `Invocation`, `PendingCommand`, `CommandRegistry`: il vocabolario dei comandi.],
-  [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Visits`, `Log`, `Runtime`, `Loader`.],
+  [`managers/`], [I compartimenti dello stato: `Buffers`, `Windows`, `Modes`, `Commands`, `KillYank`, `Macros`, `History`, `Visits`, `KeptValues`, `Log`, `Runtime`, `Loader`.],
   [`editor/`], [`EditorState` e le porte dei compartimenti (`mod.rs`); la metà della facciata di ogni compartimento, nel file con il suo nome (`buffers.rs`, `windows.rs`, `modes.rs`, `commands.rs`, `kill_yank.rs`, `macros.rs`, `log.rs`, `runtime.rs`, `loader.rs`, `visits.rs`); ciò che coordina più cose, nei file che portano il nome di ciò che coordinano (`keys.rs`, `mouse.rs`, `frame.rs`, `boot.rs`, `settings.rs`, `replace.rs`, `results.rs`, `background.rs`, `session.rs`, `work.rs`). Vedi @coppie.],
   [`primitives/`], [Le 327 primitive dell'editor, in 43 moduli, e `install_primitives`.],
   [`modes/`], [`MajorMode` (`mod.rs`), la grammatica di colorazione (`grammar.rs`), la tabella sintattica (`syntax_table.rs`) e lo scanner delle espressioni, che la legge (`sexp.rs`) (@modi).],
@@ -428,16 +428,17 @@ Cinque decisioni:
 
 === La memoria tra un avvio e l'altro <memoria>
 
-L'editor ricorda tre cose da un avvio al successivo: le risposte date a ogni
-prompt, i file visitati, dal più recente, e dove era il punto in ognuno.
-Stanno in due compartimenti --- le risposte in `History`, i file e le
-posizioni in `Visits` --- e su disco in un file solo, `session`, nella
+L'editor ricorda quattro cose da un avvio al successivo: le risposte date a
+ogni prompt, i file visitati, dal più recente, dove era il punto in ognuno, e
+i valori che il codice Lisp vi tiene per nome. Stanno in tre compartimenti
+--- le risposte in `History`, i file e le posizioni in `Visits`, i valori in
+`KeptValues` --- e su disco in un file solo, `session`, nella
 directory dello stato (@directory). `load_session` lo legge in `main.rs` dopo
 `create_global_env` e prima dei file della riga di comando; `save_session` lo
 scrive all'uscita, da `ShutDownOnExit`, e mentre l'editor gira lo scrive
 `SessionSaver` (`jobs/session_saver.rs`), ogni `session-save-interval`
 secondi. Lettura e scrittura stanno in `editor/session.rs`; ciò che registra una visita e una posizione, in
-`editor/visits.rs`.
+`editor/visits.rs`; le due primitive dei valori, in `primitives/session.rs`.
 
 #ref-table(
   columns: (2.6cm, 1.9cm, 1fr, 3.3cm),
@@ -445,6 +446,7 @@ secondi. Lettura e scrittura stanno in `editor/session.rs`; ciò che registra un
   [Le risposte ai prompt], [`History`], [`minibuffer-confirm`, con `History::remember`, come in ogni avvio (@minibuffer).], [`save-history`],
   [I file recenti], [`Visits`], [`find-file`, anche per un file già aperto o che non esiste, e `write-file` verso un percorso nuovo: `record_visit` mette il percorso in testa e taglia la lista a `recent-files-length`.], [`recent-files-length`],
   [Le posizioni], [`Visits`], [`close_buffer`, per il buffer che si chiude, e `save_session`, per ogni buffer aperto con un file: `record_place`. Un punto all'inizio toglie la voce invece di scriverla.], [`save-place`],
+  [I valori per nome], [`KeptValues`], [`set-session-value`, che scrive il valore con `write_readable` di risp e tiene il testo; `nil` toglie il nome. `session-value` rilegge il testo con `Parser::for_data`, senza valutarlo.], [---],
 )
 
 Una posizione torna in `new_buffer`: `place_for` dà il punto ricordato per il
@@ -461,15 +463,18 @@ history	M-x	find-file
 history	M-x	grep
 recent	/home/me/notes.txt
 place	/home/me/notes.txt	1842
+value	my-directories	("/home/me/src" "/home/me/notes")
 ```
 ]
 
 I campi sono separati da un tab; la barra rovesciata, il tab, l'a capo e il
 ritorno carrello dentro un campo si scrivono `\\`, `\t`, `\n` e `\r`, e una
 barra davanti a qualunque altra cosa vale per sé. Le voci di ogni lista
-vanno dalla più recente, e le chiavi della storia in ordine alfabetico
-(`History::rings`), così che due scritture dello stesso stato diano lo stesso
-file. `Session::parse` non legge un file la cui prima riga non sia
+vanno dalla più recente, e le chiavi della storia e i nomi dei valori in
+ordine alfabetico (`History::rings`, `KeptValues::all`), così che due
+scritture dello stesso stato diano lo stesso file. Il testo di un valore non
+si controlla alla lettura del file: un testo che non si rilegge fa rispondere
+a `session-value` il suo DEFAULT, e lo dice nel log. `Session::parse` non legge un file la cui prima riga non sia
 l'intestazione, e lo dice nel log; salta, contandole, le righe che non
 capisce, un tipo che non conosce compreso. Un file che manca, o una
 directory che manca, è il primo avvio, e non dice nulla.
@@ -480,17 +485,19 @@ scarta, con `save-place` a `nil` le posizioni. `History::restore` e
 `Visits::restore` mettono ciò che arriva dal file #emph[dietro] a ciò che
 l'avvio conosce già, e un percorso già noto tiene la voce più nuova; i limiti
 sono `history-length`, `recent-files-length` e `PLACES_LIMIT`, 400
-posizioni.
+posizioni. `KeptValues::restore`, invece, mette il valore del file al posto
+di quello che il nome aveva.
 
 Ogni scrittura passa da `write_session`, che fonde prima di scrivere. Tre
 sessioni entrano nel conto: la #emph[nostra], ciò che l'editor sa ora
 (`session_to_save`, che registra le posizioni dei buffer aperti e copia le
-tre liste uscendo da ogni lock); la #emph[loro], il file com'è adesso sul
+tre liste e i valori uscendo da ogni lock); la #emph[loro], il file com'è adesso sul
 disco; e la #emph[base], il file com'era l'ultima volta che questo editor lo
 ha letto o scritto, tenuta in `EditorState::session_base`. `Session::news` dà
 ciò che la loro ha e che né la base né la nostra hanno: è ciò che un altro
 editor ha aggiunto nel frattempo. Ciò che sta nella base e non nella nostra è
-stato dimenticato qui, e non torna. Le novità entrano nei compartimenti con
+stato dimenticato qui, e non torna. Un valore è una novità quando la loro lo
+ha diverso dalla base e la nostra lo ha uguale: è cambiato là e non qui. Le novità entrano nei compartimenti con
 `restore_session`, dietro a ciò che l'editor sa, come alla lettura; poi la
 sessione, rifatta, si scrive con `write_atomically` (@file-su-disco) e
 diventa la base. Se il testo da scrivere è quello che il file ha già, non si
@@ -510,12 +517,10 @@ messaggi da leggere.
 Le decisioni:
 
 + *In Rust, non in un modulo Lisp.* La storia sta già in un compartimento, e
-  risp non ha un modo di scrivere dati che si rileggano senza valutarli:
-  `format` con `%S` non mette le virgolette a una stringa, e l'unico lettore
-  è `eval-string`. Un percorso con una virgoletta romperebbe il file, e
-  rileggerlo vorrebbe dire eseguire all'avvio ciò che un altro processo ha
-  scritto. In Lisp resta ciò che è politica: `recent-files`, il modulo del
-  comando che riapre un file (@mod-recent-files).
+  la fusione con ciò che scrive un altro editor tocca le tre liste e i valori
+  insieme, sotto il lock della base. In Lisp resta ciò che è politica:
+  `recent-files`, il modulo del comando che riapre un file
+  (@mod-recent-files).
 + *Un formato a righe.* Si scrive e si rilegge senza interprete, una riga
   rovinata si perde da sola, e una riga di un tipo che una versione futura
   aggiunga si salta invece di fermare la lettura. Scartato: JSON o un formato
@@ -575,6 +580,30 @@ Le decisioni:
   nasce vuoto con i permessi `0600`, su Unix, prima della scrittura
   atomica, che dà al file nuovo i permessi di quello che sostituisce; uno che
   c'è già tiene i suoi.
++ *Un valore si scrive quando lo si dà.* `set-session-value` lo scrive
+  subito con `write_readable`, e il compartimento tiene testo. Così un valore
+  che non si può scrivere --- una funzione, un atomo --- si rifiuta a chi lo
+  dà, con lo stesso segnale di `prin1-to-string`, e non un minuto dopo nel
+  lavoro di sfondo, dove nessuno legge l'errore; nessun valore Lisp passa al
+  thread che scrive il file; e la fusione confronta stringhe. Si rilegge con
+  `Parser::for_data`, la `read` di risp, che non valuta: ciò che un altro
+  processo ha scritto non si esegue. Scartato: tenere il valore e scriverlo
+  a ogni salvataggio.
++ *I valori si fondono per nome, a tre vie.* Per le posizioni basta che la
+  nostra vinca quando ha il percorso, perché la nostra registra sempre il
+  punto di ora. Un valore, invece, un editor lo tiene anche senza toccarlo: se
+  la nostra vincesse sempre, un editor che non lo ha mai cambiato
+  riscriverebbe a ogni intervallo quello vecchio sopra quello nuovo
+  dell'altro. Con la base si vede chi lo ha cambiato: se l'ha cambiato solo
+  l'altro, si prende il suo; se l'hanno cambiato tutti e due, ognuno tiene il
+  proprio finché l'ultimo scritto non arriva all'altro. Un nome tolto con
+  `nil` non si propaga, come una voce dimenticata.
++ *Alla lettura vince il file.* La sessione si legge dopo `init.lisp`, e un
+  modulo che chiede il suo valore mentre si carica non lo trova ancora. Se
+  vincesse il valore di questo avvio, un modulo che in quel momento scrive un
+  valore iniziale cancellerebbe per sempre quello dell'avvio precedente. Il
+  manpage `session` dice di leggere i valori nel comando che li usa.
+  Scartato: un hook che giri dopo la lettura, che nessun modulo chiede ancora.
 + *Le posizioni hanno un tetto loro.* Una posizione serve anche per un file
   uscito dalla lista dei recenti, e `recent-files-length` a 0 non deve
   cancellarle: `PLACES_LIMIT` è fisso, come `save-place-limit` in Emacs.
@@ -912,6 +941,7 @@ e tiene un'invariante che i suoi campi presi uno per uno non terrebbero.
   [`Macros`], [I tasti di una registrazione diventano l'ultima macro in un passo solo, e nessun tasto riprodotto viene registrato, a qualunque profondità.],
   [`History`], [Un cammino nella storia vale solo nell'anello e nel prompt in cui è cominciato.],
   [`Visits`], [Un percorso compare al più una volta in ogni lista, i file recenti e le posizioni, e ogni lista va dal più recente e resta entro il suo limite.],
+  [`KeptValues`], [Un nome ha al più un valore, tenuto come il testo che `prin1-to-string` ne scrive: ciò che vi entra si rilegge.],
   [`Log`], [Ogni riga arriva al file una volta e nell'ordine in cui è stata registrata, salvo le scritture che falliscono e le righe uscite dalla lista prima di essere scritte.],
   [`Runtime`], [Nessuna: raggruppa ciò che appartiene alla sessione e non a un documento (@decisioni-stato).],
   [`Loader`], [Una feature fallita non è mai in vigore, e ciò che è stato fornito durante un `require` fallito se ne va con lui; le funzioni in attesa di una feature si consegnano una volta sola, quando arriva (@moduli-lisp).],

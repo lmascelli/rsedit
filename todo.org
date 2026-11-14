@@ -63,7 +63,7 @@ Da verificare
 ** rsedit, nucleo
 - [X] C1 Risalita ai marcatori: la directory sopra questa che contiene uno di questi
       nomi, con cache.
-- [ ] C2 Directory per un comando: eseguire una funzione come se la directory di lavoro
+- [X] C2 Directory per un comando: eseguire una funzione come se la directory di lavoro
       fosse un'altra.
 - [ ] C3 Dati dei moduli nella sessione: un modulo salva e rilegge un suo valore.
       Dipende da R2.
@@ -95,18 +95,12 @@ PREAMBOLO, poi il prompt del punto. Sostituisci le parti tra <>.
 
 ** PREAMBOLO (rsedit)
 Lavora sul main attuale di lmascelli/rsedit. Non modificare GitHub: prepara una patch
-per git am, verificata su un checkout pulito con tutti i test. Segui
+da scaricare per git am, verificata su un checkout pulito con tutti i test. Segui
 doc/documentazione.typ per manpage, manuale, docstring e test. Non eseguire typst: il
 PDF lo rigenero io, non dirlo nel commit. Leggi solo i file che servono al punto. Niente
 riepiloghi intermedi; alla fine: percorso della patch, scelte fatte, cosa non hai
 verificato. Il mattone deve essere agnostico: nessun riferimento a progetti o LSP nel
 nucleo. Contesto: sezione "Progetti e basi per LSP" di todo.org.
-
-** C2
-Aggiungi a rsedit il modo di eseguire una funzione con un'altra directory di lavoro,
-senza cambiare quella globale né quella del buffer, e che valga per i comandi avviati
-dentro (compile, shell, grep, percorsi relativi). Prima dimmi in cinque righe dove si
-innesta in default_directory e cosa succede con i lavori asincroni avviati dentro.
 
 ** C3
 Aggiungi a rsedit il salvataggio nella sessione di valori dei moduli: una primitiva
