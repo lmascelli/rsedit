@@ -849,6 +849,34 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_command_started_inside_with_directory_runs_there_and_its_output_keeps_it() {
+        let inside = Sandbox::new("within-inside");
+        let editor_wide = Sandbox::new("within-editor-wide");
+        let (ctx, env) = editor();
+        cd(&editor_wide.root(), &env, &ctx);
+
+        let name = started(
+            &format!(
+                r#"(with-directory "{}" (lambda () (shell-command-start "pwd -P")))"#,
+                inside.root()
+            ),
+            &env,
+            &ctx,
+        );
+        settle(&ctx);
+
+        assert!(
+            text_of(&ctx, &name).contains(&format!("\n{}\n", inside.physical())),
+            "the command should have run in {}: {:?}",
+            inside.physical(),
+            text_of(&ctx, &name)
+        );
+        assert_eq!(ctx.directory_of(&name), inside.root());
+        assert_eq!(ctx.working_directory(), editor_wide.root());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_running_command_stays_where_it_started() {
         let here = Sandbox::new("stays-here");
         let elsewhere = Sandbox::new("stays-elsewhere");

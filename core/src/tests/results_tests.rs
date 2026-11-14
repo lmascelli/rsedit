@@ -312,6 +312,27 @@ mod tests {
         assert!(listing.contains("--- 2 matches ---"), "{listing}");
     }
 
+    #[test]
+    fn grep_inside_with_directory_searches_the_tree_there() {
+        let sandbox = Sandbox::new("grep-within");
+        sandbox.file("one.txt", "a needle here\n");
+        let (ctx, env) = editor("");
+        let buffer = match run(
+            &format!(
+                r#"(with-directory "{}" (lambda () (grep--scan "needle")))"#,
+                sandbox.path()
+            ),
+            &env,
+            &ctx,
+        ) {
+            LispExp::String(name) => name.to_string(),
+            other => panic!("grep answered {other:?}"),
+        };
+        settle(&ctx, &env, &buffer);
+        let listing = text_of(&ctx, &buffer);
+        assert!(listing.contains("one.txt:1: a needle here"), "{listing}");
+    }
+
     /// A file that is not UTF-8 is searched in Windows-1252, as `find-file`
     /// reads it, and a binary file is still left out.
     #[test]

@@ -1,10 +1,11 @@
 //! File names from Lisp: `list-dir`, `expand-file-name` and the functions
 //! that take a name apart, over the helpers in [`crate::paths`]; and the
-//! working directory, `working-directory`, `cd` and `pwd`, over
-//! [`crate::editor::EditorState::working_directory`].
+//! working directory, `working-directory`, `cd`, `pwd` and `with-directory`,
+//! over [`crate::editor::EditorState::working_directory`].
 //!
 //! Design: `doc/architettura-editor.typ, <nomi-file>`.
 use super::*;
+use crate::editor::DirectoryScope;
 use crate::paths::{
     as_directory, directory_entries_ordered, directory_part, expand_path_in, last_component,
     without_trailing_separator,
@@ -178,12 +179,9 @@ fn path_string<B: BufferTrait>(
     }
 }
 
-/// Registers the primitives that shape a file name and list a directory.
-///
-/// Called by [`super::install_primitives`].
 pub const WORKING_DIRECTORY_DOC: &str = "(working-directory): Return the directory a relative \
-         file name is read in, from the current buffer: the editor's working directory, which \
-         `cd' changes, unless the buffer has a directory of its own.\n\n\
+         file name is read in: the one `with-directory' gives the call running, or else the current \
+         buffer's own, or else the editor's working directory, which `cd' changes.\n\n\
          Example:\n\
          (expand-file-name \"notes.txt\" (working-directory))";
 
@@ -208,15 +206,10 @@ pub const SET_BUFFER_DIRECTORY_DOC: &str = "(set-buffer-directory DIRECTORY): Gi
 primitive!(set_buffer_directory, args, _env, ctx, {
     let directory = match args.first() {
         Some(exp) if exp.is_nil() => None,
-        Some(ELispExp::String(path)) => {
-            let directory = ctx.expand_path(path);
-            if !std::path::Path::new(&directory).is_dir() {
-                return Err(EvalError::RuntimeMessage(format!(
-                    "{directory} is not a directory"
-                )));
-            }
-            Some(directory)
-        }
+        Some(ELispExp::String(path)) => Some(
+            ctx.existing_directory(path)
+                .map_err(EvalError::RuntimeMessage)?,
+        ),
         other => {
             return Err(EvalError::WrongArgumentType {
                 expected: "String naming a directory, or nil".into(),
@@ -235,7 +228,8 @@ primitive!(set_buffer_directory, args, _env, ctx, {
 pub const CD_DOC: &str = "(cd DIRECTORY): Make DIRECTORY, read in the working directory, the \
          editor's working directory, and return it; nil, and a message, when it is not a \
          directory. Relative file names are read in it from then on, and shell commands start in \
-         it; one already running stays where it started.\n\n\
+         it; one already running stays where it started. Inside `with-directory' it moves that \
+         call's directory instead, until the call returns.\n\n\
          Example:\n\
          (cd \"~/src/rsedit\")";
 
@@ -258,6 +252,26 @@ primitive!(cd, args, _env, ctx, {
     }
 });
 
+pub const WITH_DIRECTORY_DOC: &str = "(with-directory DIRECTORY FUNCTION): Call FUNCTION with \
+         no arguments with DIRECTORY, read in the working directory, as the one relative file \
+         names are read in and commands start in, and return what it returns. Neither the \
+         editor's working directory nor any buffer's changes, and the one before comes back \
+         when FUNCTION returns or fails. A job started inside keeps DIRECTORY. A DIRECTORY that \
+         is not one is an error.\n\n\
+         Example:\n\
+         (with-directory \"~/src/rsedit\" (lambda () (compile \"cargo test\")))";
+
+primitive!(with_directory, args, env, ctx, {
+    exact_arity(args, 2)?;
+    let directory = ctx
+        .existing_directory(&path_string(args.first())?)
+        .map_err(EvalError::RuntimeMessage)?;
+    // A guard rather than a reset after the call: an error, or a panic, must
+    // not leave the thread in DIRECTORY.
+    let _scope = DirectoryScope::enter(Some(directory));
+    risp::call_callable(&args[1], &[], env.clone(), ctx)
+});
+
 pub const PWD_DOC: &str = "(pwd): Say in the echo area which directory relative file names are \
          read in, the value of `working-directory', and return it.";
 
@@ -267,6 +281,9 @@ primitive!(pwd, _args, _env, ctx, {
     Ok(ELispExp::string(directory))
 });
 
+/// Registers the primitives that shape a file name and list a directory.
+///
+/// Called by [`super::install_primitives`].
 pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function(
         "working-directory",
@@ -280,6 +297,7 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         SET_BUFFER_DIRECTORY_DOC,
     );
     into.command("pwd", pwd, &[], PWD_DOC);
+    into.function("with-directory", with_directory, WITH_DIRECTORY_DOC);
     into.function("list-dir", list_dir, LIST_DIR_DOC);
     into.function("match-list", match_list, MATCH_LIST_DOC);
     into.function("expand-file-name", expand_file_name, EXPAND_FILE_NAME_DOC);

@@ -1,6 +1,6 @@
 //! The editor's working directory: where it starts, what `cd` moves and what
-//! it leaves alone, every way a relative name reaches the disk, and a buffer
-//! with a directory of its own.
+//! it leaves alone, every way a relative name reaches the disk, a buffer with
+//! a directory of its own, and a call given a directory by `with-directory`.
 //!
 //! Design: `doc/architettura-editor.typ, <directory-di-lavoro>`.
 #[cfg(test)]
@@ -273,5 +273,203 @@ mod tests {
         run(&format!(r#"(cd "{}")"#, elsewhere.root()), &env, &ctx);
         assert_eq!(ctx.working_directory(), elsewhere.root());
         assert_eq!(ctx.directory_of("*output*"), own.root());
+    }
+
+    // ---------------- a call with a directory of its own ----------------
+
+    /// The call `(with-directory DIRECTORY (lambda () BODY))`.
+    fn within(directory: &str, body: &str) -> String {
+        format!(r#"(with-directory "{directory}" (lambda () {body}))"#)
+    }
+
+    #[test]
+    fn with_directory_reads_names_there_and_moves_nothing() {
+        let inside = Sandbox::new("within-inside");
+        let editor_wide = Sandbox::new("within-editor-wide");
+        let (ctx, env) = editor_in(&editor_wide);
+
+        assert_eq!(
+            string(run(
+                &within(&inside.root(), r#"(expand-file-name "x")"#),
+                &env,
+                &ctx
+            )),
+            inside.path("x")
+        );
+        assert_eq!(
+            string(run(
+                &within(&inside.root(), "(working-directory)"),
+                &env,
+                &ctx
+            )),
+            inside.root()
+        );
+        assert_eq!(ctx.working_directory(), editor_wide.root());
+        assert_eq!(ctx.directory_of("*scratch*"), editor_wide.root());
+        assert_eq!(
+            string(run("(working-directory)", &env, &ctx)),
+            editor_wide.root()
+        );
+    }
+
+    #[test]
+    fn with_directory_returns_what_the_function_returns() {
+        let inside = Sandbox::new("within-returns");
+        let (ctx, env) = editor();
+
+        assert_eq!(
+            run(&within(&inside.root(), "(+ 1 2)"), &env, &ctx),
+            LispExp::number(3.0)
+        );
+    }
+
+    #[test]
+    fn with_directory_wins_over_a_buffer_with_a_directory_of_its_own() {
+        let own = Sandbox::new("within-own");
+        let inside = Sandbox::new("within-over-own");
+        let (ctx, env) = editor();
+        run(
+            r#"(buffer-create "*output*") (switch-to-buffer "*output*")"#,
+            &env,
+            &ctx,
+        );
+        ctx.with_buffer_mut("*output*", |buf| buf.directory = Some(own.root()));
+
+        assert_eq!(
+            string(run(
+                &within(&inside.root(), r#"(expand-file-name "x")"#),
+                &env,
+                &ctx
+            )),
+            inside.path("x")
+        );
+        // The buffer's own is the buffer's, and stays.
+        assert_eq!(ctx.directory_of("*output*"), own.root());
+        assert_eq!(ctx.default_directory(), own.root());
+    }
+
+    #[test]
+    fn with_directory_holds_across_a_change_of_buffer() {
+        let inside = Sandbox::new("within-switch");
+        let (ctx, env) = editor();
+        run(r#"(buffer-create "*other*")"#, &env, &ctx);
+
+        let body = r#"(with-current-buffer "*other*" (lambda () (working-directory)))"#;
+        assert_eq!(
+            string(run(&within(&inside.root(), body), &env, &ctx)),
+            inside.root()
+        );
+    }
+
+    #[test]
+    fn with_directory_reads_a_relative_directory_where_it_is_called_and_nests() {
+        let outer = Sandbox::new("within-nested");
+        std::fs::create_dir(outer.path("inner")).expect("making a directory");
+        let (ctx, env) = editor();
+
+        let body = r#"(list (with-directory "inner" (lambda () (working-directory))) (working-directory))"#;
+        assert_eq!(
+            run(&within(&outer.root(), body), &env, &ctx),
+            run(
+                &format!(r#"(list "{}" "{}")"#, outer.path("inner"), outer.root()),
+                &env,
+                &ctx
+            )
+        );
+    }
+
+    #[test]
+    fn with_directory_puts_the_directory_back_when_the_function_fails() {
+        let inside = Sandbox::new("within-fails");
+        let (ctx, env) = editor();
+        let before = ctx.default_directory();
+
+        assert!(try_run(&within(&inside.root(), "(error \"no\")"), &env, &ctx).is_err());
+        assert_eq!(ctx.default_directory(), before);
+    }
+
+    #[test]
+    fn with_directory_refuses_what_is_not_a_directory_without_calling() {
+        let sandbox = Sandbox::new("within-refused");
+        sandbox.file("plain", "");
+        let (ctx, env) = editor();
+        run("(setq called nil)", &env, &ctx);
+
+        for target in [sandbox.path("plain"), sandbox.path("missing")] {
+            let why = try_run(&within(&target, "(setq called t)"), &env, &ctx)
+                .expect_err("not a directory");
+            assert!(
+                format!("{why:?}").contains(&format!("{target} is not a directory")),
+                "{why:?}"
+            );
+        }
+        assert_eq!(run("called", &env, &ctx), LispExp::nil());
+    }
+
+    #[test]
+    fn cd_inside_with_directory_moves_the_call_s_directory_and_not_the_editor_s() {
+        let outer = Sandbox::new("within-cd");
+        std::fs::create_dir(outer.path("inner")).expect("making a directory");
+        let editor_wide = Sandbox::new("within-cd-editor-wide");
+        let (ctx, env) = editor_in(&editor_wide);
+
+        assert_eq!(
+            string(run(
+                &within(&outer.root(), r#"(cd "inner") (working-directory)"#),
+                &env,
+                &ctx
+            )),
+            outer.path("inner")
+        );
+        assert_eq!(ctx.working_directory(), editor_wide.root());
+    }
+
+    #[test]
+    fn a_job_started_inside_with_directory_steps_and_reports_there() {
+        let inside = Sandbox::new("within-job");
+        let editor_wide = Sandbox::new("within-job-editor-wide");
+        let (ctx, env) = editor_in(&editor_wide);
+        run(
+            "(setq stepped nil) (setq told nil)
+             (defun where-stepped () (setq stepped (working-directory)))
+             (defun where-told (name finished) (setq told (working-directory)))",
+            &env,
+            &ctx,
+        );
+        run(
+            &within(
+                &inside.root(),
+                "(background-call 'scoped 'where-stepped nil 'where-told)",
+            ),
+            &env,
+            &ctx,
+        );
+        // Out of the call: the step and the callback run after it returned.
+        ctx.work().run_until_idle(&ctx);
+        ctx.run_owed_callbacks(&env);
+
+        assert_eq!(string(run("stepped", &env, &ctx)), inside.root());
+        assert_eq!(string(run("told", &env, &ctx)), inside.root());
+        assert_eq!(ctx.working_directory(), editor_wide.root());
+    }
+
+    #[test]
+    fn a_job_started_outside_with_directory_goes_by_the_editor_s() {
+        let inside = Sandbox::new("within-job-outside");
+        let editor_wide = Sandbox::new("within-job-outside-editor-wide");
+        let (ctx, env) = editor_in(&editor_wide);
+        run(
+            "(setq stepped nil)
+             (defun where-stepped () (setq stepped (working-directory)))
+             (background-call 'unscoped 'where-stepped)",
+            &env,
+            &ctx,
+        );
+        // Its step taken on a thread that is inside a call: it does not
+        // take that call's directory.
+        let _scope = crate::editor::DirectoryScope::enter(Some(inside.root()));
+        ctx.work().run_until_idle(&ctx);
+
+        assert_eq!(string(run("stepped", &env, &ctx)), editor_wide.root());
     }
 }

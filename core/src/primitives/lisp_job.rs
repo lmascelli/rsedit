@@ -6,7 +6,7 @@
 //! Design: `doc/architettura-editor.typ, <lavori-lisp>`.
 use crate::{
     BufferTrait, ELispExp, EditorState,
-    editor::WorkerTurn,
+    editor::{DirectoryScope, WorkerTurn, scoped_directory},
     work::{Exit, Job, JobError, Spec, Step, StepContext, WorkId},
 };
 use risp::{Env, EvalError, FuelMeter, call_callable, eval, set_remaining};
@@ -52,6 +52,9 @@ pub(crate) struct LispJob<B: BufferTrait> {
     /// a new thread.
     env: Arc<Env<EditorState<B>>>,
     fuel: u32,
+    /// The directory of the `with-directory` it was started in, which each
+    /// step and each callback it owes run in; `None` outside one.
+    directory: Option<String>,
     /// Its number, learnt at its first step: what its callbacks are owed
     /// under. `None` for a job that never took one, which owes nothing.
     id: Option<WorkId>,
@@ -80,7 +83,8 @@ impl<B: BufferTrait> LispJob<B> {
         Self::call(name, Body::Fiber(fiber), pause, None, None, env, fuel)
     }
 
-    /// Makes what `background-call` starts.
+    /// Makes what `background-call` starts, scoped to the directory the
+    /// calling thread is scoped to.
     pub(crate) fn call(
         name: String,
         body: Body<B>,
@@ -98,6 +102,7 @@ impl<B: BufferTrait> LispJob<B> {
             on_done,
             env,
             fuel,
+            directory: scoped_directory(),
             id: None,
         }
     }
@@ -138,6 +143,8 @@ impl<B: BufferTrait> Job<EditorState<B>> for LispJob<B> {
     fn step(&mut self, cx: &mut StepContext<'_, EditorState<B>>) -> Result<Step, JobError> {
         let id = *self.id.get_or_insert(cx.id);
         let state = cx.state;
+        // Over the whole step, so that the callbacks it owes are owed in it.
+        let _scope = DirectoryScope::enter(self.directory.clone());
 
         // The allowance is set, not raised: the thread carries whatever the
         // last step, or its own work, left. And put back afterwards -- by a
@@ -206,6 +213,7 @@ impl<B: BufferTrait> Job<EditorState<B>> for LispJob<B> {
             // only be leaving because somebody stopped it.
             return;
         };
+        let _scope = DirectoryScope::enter(self.directory.clone());
         match why {
             // Told either way, because a mode that is never told stays
             // waiting for ever: t when it reached its end, nil when it failed.

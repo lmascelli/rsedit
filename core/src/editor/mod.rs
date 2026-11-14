@@ -77,6 +77,7 @@ mod windows;
 mod work;
 
 pub use boot::{create_global_env, isolate_config_for_tests};
+pub(crate) use directory::{DirectoryScope, scoped_directory};
 pub(crate) use frame::TURN_INTERVAL;
 pub use keys::KEY_CAPTURE_FUNCTION;
 pub(crate) use loader::MODULE_KINDS;

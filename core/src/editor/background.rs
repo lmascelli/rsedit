@@ -13,10 +13,14 @@ pub(crate) struct OwedCallback<B: BufferTrait> {
     id: WorkId,
     function: ELispExp<B>,
     args: Vec<ELispExp<B>>,
+    /// The directory the thread that owed it was scoped to: the call runs in
+    /// it.
+    directory: Option<String>,
 }
 
 impl<B: BufferTrait> EditorState<B> {
-    /// Records that the job ID, under NAME, wants FUNCTION called with ARGS.
+    /// Records that the job ID, under NAME, wants FUNCTION called with ARGS,
+    /// in the directory the calling thread is scoped to.
     ///
     /// Called from the executor. It calls nothing, takes no lock that is held
     /// for long, and wakes nobody: the step it is called from wakes the host
@@ -37,6 +41,7 @@ impl<B: BufferTrait> EditorState<B> {
                 id,
                 function,
                 args,
+                directory: super::scoped_directory(),
             });
     }
 
@@ -87,6 +92,7 @@ impl<B: BufferTrait> EditorState<B> {
             // A budget of its own, as for a hook: an entry into the
             // interpreter, where a loop is stopped as a command's is.
             let _command = self.begin_command();
+            let _scope = super::DirectoryScope::enter(callback.directory);
             if let Err(error) = call_callable(&callback.function, &callback.args, env.clone(), self)
             {
                 self.log_diagnostic(&format!(

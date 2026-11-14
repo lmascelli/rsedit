@@ -50,6 +50,7 @@ SYNOPSIS
     (cd DIRECTORY)
     (set-buffer-directory DIRECTORY)
     (pwd)
+    (with-directory DIRECTORY FUNCTION)
     (expand-file-name PATH &optional DIRECTORY)
     (file-name-directory PATH)
     (file-name-nondirectory PATH)
@@ -393,6 +394,29 @@ THE WORKING DIRECTORY
     running stays where it began, and the output of a command or a build
     keeps the directory it ran in, so g runs a build again there.
 
+A DIRECTORY FOR ONE CALL
+    `with-directory' calls a function as if the working directory were
+    another one, for as long as the function runs: relative paths are read
+    there, and shell commands, builds and M-x grep start there, even if
+    the function switches buffer. Nothing else moves: the editor's working
+    directory and every buffer's are as they were, and when the function
+    returns, or fails, relative paths go back to where they were read
+    before. A relative DIRECTORY is read in the working directory, so
+    calls nest, and `cd' inside moves the call's directory, not the
+    editor's.
+
+    What the function starts keeps the directory: a command or a build
+    started inside runs there to the end, and its output buffer keeps it,
+    so g runs the build again there. A job started with `background-call'
+    or `define-worker' takes each of its steps there, and its ON-PROGRESS
+    and ON-DONE run there too; the `background' page has the jobs.
+
+    What runs after the function has returned, without being a job it
+    started, does not: the answer to a question in the minibuffer, a hook,
+    a thread started from Lisp. A command that asks for something, such as
+    M-x compile, asks when it is called, and the answer comes after the
+    function is done: ask first, and call the function with the answer.
+
 PATHS
     `expand-file-name' makes a path absolute: ~ becomes the home
     directory, a relative path is taken from DIRECTORY or from the
@@ -468,6 +492,21 @@ EXAMPLES
     Wait up to a second for a slow disk:
 
         (setq locate-dominating-file-timeout 1)
+
+    Build in another directory without moving the editor there, and keep
+    the output there, so that g builds there again:
+
+        (with-directory "~/src/app"
+                        (lambda () (compile "make -k")))
+
+    Search the tree of the repository the current file is in, for a
+    pattern asked for first:
+
+        (defun my-grep-repository (pattern)
+          (let ((root (locate-dominating-file (buffer-file-name) ".git")))
+            (if (stringp root)
+                (with-directory root (lambda () (grep pattern)))
+                (message "Not in a repository"))))
 
     Ask before doing something that cannot be undone:
 

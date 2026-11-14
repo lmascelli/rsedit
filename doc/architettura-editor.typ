@@ -4688,7 +4688,9 @@ e il lavoro esce come fallito; altrimenti un `(while t)` senza `yield`
 fermerebbe l'esecutore, e la colorazione con lui. Durante il passo
 `WorkerTurn` segna il thread come «in background» (`in_worker`), e le
 primitive che hanno senso solo sul thread dei comandi lo controllano:
-`minibuffer-read` rifiuta di aprire un prompt.
+`minibuffer-read` rifiuta di aprire un prompt. Un lavoro nato dentro
+`with-directory` rimette la sua directory intorno a ogni passo, come il
+carburante, e le sue callback la ricevono (@directory-di-lavoro).
 
 `ON-PROGRESS` e `ON-DONE` non girano sull'esecutore: il lavoro le lascia come
 callback dovute. `ON-PROGRESS` riceve il nome dopo ogni passo tranne l'ultimo.
@@ -6106,6 +6108,27 @@ dell'output (@comandi-shell): ogni comando di shell parte nella directory del
 buffer corrente, e il suo output la tiene. La visita di una lista di risultati
 legge i suoi percorsi nella directory della lista (@risultati).
 
+Una chiamata può avere una directory sua, per quanto dura: `with-directory`
+mette in `SCOPED_DIRECTORY`, un `thread_local` di `editor/directory.rs`, la
+directory che riceve, chiama la funzione e rimette ciò che c'era con una
+guardia, `DirectoryScope`, anche dopo un errore o un panic; così le chiamate
+si annidano. `default_directory` guarda prima lì, poi il buffer corrente, poi
+l'editor: la directory di ambito vince anche su quella propria di un buffer, e
+resta se la funzione cambia buffer. `directory_of(nome)` non la guarda, perché
+risponde per un buffer preciso, come la visita di una lista. `cd` dentro una
+chiamata sposta la directory di ambito, e la directory dell'editor resta.
+
+Ciò che legge `default_directory` all'avvio --- `shell-command-start`, e quindi
+`compile`, la ricerca nei file, che si porta la radice già assoluta ---
+continua nella directory di ambito dopo il ritorno, senza saperne nulla. Un
+lavoro Lisp no, perché i suoi passi girano sull'esecutore: `LispJob` prende
+la directory di ambito quando nasce e la rimette intorno a ogni passo e a
+`exit`, e `owe_callback` registra quella del thread che la chiama, che
+`run_owed_callbacks` rimette intorno alla callback (@lavori-lisp). Un lavoro
+nato fuori ne rimette nessuna, e segue l'editor. Non la vede ciò che gira dopo
+il ritorno senza essere un lavoro: la risposta a un prompt, un hook, un thread
+di `spawn`, che è del linguaggio.
+
 === Il disco <disco>
 
 Le primitive del disco espandono il percorso che ricevono. `directory-entry-count`,
@@ -6774,6 +6797,16 @@ dell'utente li descrive.
   completa senza configurazione, come il minibuffer ha un prompt predefinito.
   Una vista con un'anteprima e due pulsanti lega `*replace-read-function*` e
   chiama gli stessi verbi; niente in `replace.rs` deve sapere che c'è.
++ *La directory di una chiamata è del thread, e un lavoro se la porta.* Un
+  campo di `EditorState` la farebbe vedere ai passi dei lavori che girano
+  intanto sull'esecutore, e una variabile Lisp legata con `let` non la
+  leggerebbe il Rust, che non ha l'ambiente. Per thread, come i dati di
+  corrispondenza e il carburante, un passo e un comando non si vedono. Un
+  lavoro la prende quando nasce, perché ciò che nasce dentro la chiamata sta
+  dove la chiamata lo ha messo, come un comando di shell: un modulo che avvia
+  una visita in sfondo in un'altra directory non deve ripeterla in ogni passo.
+  Scartato: cambiare la directory del processo, che si vede da tutti i thread
+  e da ogni comando già partito.
 
 // ===========================================================================
 = I moduli Lisp <moduli-lisp>

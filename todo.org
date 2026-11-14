@@ -61,7 +61,7 @@ Da verificare
 - V1 track-changes regge più osservatori insieme? (vim ne usa già uno)
 
 ** rsedit, nucleo
-- [ ] C1 Risalita ai marcatori: la directory sopra questa che contiene uno di questi
+- [X] C1 Risalita ai marcatori: la directory sopra questa che contiene uno di questi
       nomi, con cache.
 - [ ] C2 Directory per un comando: eseguire una funzione come se la directory di lavoro
       fosse un'altra.
@@ -101,12 +101,6 @@ PDF lo rigenero io, non dirlo nel commit. Leggi solo i file che servono al punto
 riepiloghi intermedi; alla fine: percorso della patch, scelte fatte, cosa non hai
 verificato. Il mattone deve essere agnostico: nessun riferimento a progetti o LSP nel
 nucleo. Contesto: sezione "Progetti e basi per LSP" di todo.org.
-
-** C1
-Aggiungi a rsedit una primitiva che, data una directory e una lista di nomi, risale
-finché ne trova uno e risponde con la directory, con cache invalidabile. Deve poter
-dire anche "il più alto" oltre a "il più vicino". Non deve bloccare su un mount lento:
-di' come.
 
 ** C2
 Aggiungi a rsedit il modo di eseguire una funzione con un'altra directory di lavoro,

@@ -115,6 +115,12 @@ WHERE THE CALLBACKS RUN
     ON-PROGRESS, with `completion-invalidate', so that a list of them on
     the screen is drawn again: the `completion' page has it.
 
+    A job started inside `with-directory' keeps its directory: its steps
+    and its callbacks read relative paths there, and start commands there,
+    after the call has returned. Any other job goes by the editor's working
+    directory as it is when the step runs. The `files' page has the
+    working directory.
+
 NAMES
     A name is a symbol or a string, and one name means one thing: the
     workers, the jobs and the editor's own work share them. Starting work
