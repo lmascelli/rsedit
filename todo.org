@@ -18,6 +18,8 @@ Hooks
 
 * Fixes todo
 - In the TUI C-_ is still seen as C-7
+- Now completion buffer separate entries with a newline and for example the history of
+  M-x does not present elements
 - Macros are not listed in describe-function and not documented.
 
 * Macro todo
@@ -74,13 +76,13 @@ Da verificare
       produttore, prefisso di directory. Dipende da D4.
 - [X] C6 Segnalazioni sullo schermo: evidenziazione, margine, riga di stato, messaggio
       al punto, lista di risultati generata dal deposito. Dipende da C5.
-- [ ] C7 Processi dialoganti: ingresso e uscita su thread propri; uscita a pezzi, a
+- [X] C7 Processi dialoganti: ingresso e uscita su thread propri; uscita a pezzi, a
       righe, a messaggi incorniciati. Dipende da D3.
-- [ ] C8 Posizioni e modifiche: carattere <-> UTF-16/UTF-8; notifica delle modifiche
+- [X] C8 Posizioni e modifiche: carattere <-> UTF-16/UTF-8; notifica delle modifiche
       con il loro intervallo. Dipende da V1.
 
 ** rsedit, moduli Lisp
-- [ ] M1 project: marcatori, progetti noti, comandi project-*. Dipende da C1, C2, C3;
+- [X] M1 project: marcatori, progetti noti, comandi project-*. Dipende da C1, C2, C3;
       project-find-file da C4.
 - [ ] M2 compile come produttore del deposito. Dipende da C5.
 - [ ] M3 lsp: segnalazioni, completamento, vai alla definizione, code action.

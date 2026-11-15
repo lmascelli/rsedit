@@ -7406,6 +7406,7 @@ dall'`init.lisp` predefinito, attraverso `default-configuration`.
   [`features`], [`risp-repl`], [`M-x risp-repl`: `C-j` valuta il blocco prima del punto.],
   [`features`], [`occur`], [`M-s o`, `M-s g`.],
   [`features`], [`compile`], [`C-c c` e `M-g n`.],
+  [`features`], [`project`], [`C-x p`: file, ricerca, compilazione e comandi alla radice di un progetto.],
   [`features`], [`theme`], [`C-c t`: scelta del tema.],
   [`features`], [`vim`], [L'editing modale.],
   [`features`], [`completion-at-point`], [Le cinque fonti di `C-M-i`.],
@@ -8015,6 +8016,62 @@ va quando il prompt si chiude. Oggi il comando è uno, `string-rectangle`.
   righe, e nulla che possa divergere; un prompt invariato costa un confronto.
 + *Un aspetto riconoscibile.* Attenuato e uguale in ogni modo: chi guarda non
   deve mai chiedersi se ciò che vede è nel file.
+
+=== `project` <mod-project>
+
+Un progetto è una directory radice e ciò che sta sotto. Il modulo trova la
+radice del file del buffer corrente, ricorda i progetti in cui si è lavorato e
+lega a `C-x p` i comandi che lavorano lì: `project-find-file`, `project-grep`,
+`project-compile`, `project-shell-command` e `project-switch`. È tutto in
+Lisp, sopra tre mattoni del nucleo che non sanno nulla di progetti: la
+risalita ai marcatori (@risalita), la directory per una chiamata
+(@directory-di-lavoro) e i valori tenuti nella sessione (@memoria); il quarto,
+l'indice dei file (@indice-file), dà i candidati di `project-find-file`.
+
+`project-root` cerca prima tra le radici dichiarate a mano --- `project-roots`
+e quelle che `project-declare-root` tiene nella sessione sotto
+`project-declared-roots` ---, per prefisso del percorso, senza disco; poi
+chiede a `locate-dominating-file` una voce di `project-markers` alla volta.
+La risposta è una directory, nil o `timeout`, come quella della primitiva.
+I progetti noti stanno nella sessione sotto `project-known`, il più recente
+per primo.
+
++ *Le voci dei marcatori in ordine, la più vicina dentro una voce.* Una voce è
+  un nome o una lista di nomi, e la prima voce che trova qualcosa decide:
+  `.git` in testa vince su un `Cargo.toml` più vicino, e il progetto di un
+  repository con più crate è il repository. Dentro una voce vince la
+  directory più vicina, che è la sola risposta che la risalita dà per più
+  nomi insieme. Scartato: una lista piatta con la più vicina che vince, che
+  fa di ogni crate un progetto; e due variabili, una per il controllo di
+  versione e una per il resto, che non dicono che cosa vince tra `.hg` e
+  `.git`.
++ *La radice dichiarata vince sui marcatori.* Dichiararla è la correzione
+  di una risposta sbagliata dei marcatori, e non correggerebbe nulla se un
+  `.git` più in alto la battesse. Tra due dichiarate vince la più vicina. Il
+  confronto è per prefisso di una directory che finisce con il separatore,
+  così `~/src/app/` non contiene `~/src/apple`.
++ *Un `timeout` non si scavalca.* Se il disco non ha risposto per una voce,
+  una voce dopo non può decidere: potrebbe battere una risposta che arriva.
+  Il comando lo dice e non fa nulla; la risalita resta in corso e la domanda
+  successiva trova la risposta ricordata.
++ *Prima si chiede, poi si entra in `with-directory`.* La risposta a un
+  prompt arriva dopo che la chiamata è tornata, e girerebbe nella directory
+  di lavoro (@directory-di-lavoro). `project--ask-and-run` apre il prompt e,
+  nella callback, chiama `grep`, `compile` o `shell-command` dentro
+  `with-directory`: ciò che fanno partire tiene la radice fino alla fine, e
+  l'uscita di una compilazione la tiene per `g` e per i percorsi relativi.
++ *`project-find-file` passa la radice, non una directory di ambito.* Il
+  completamento chiede l'indice a ogni Tab, dopo il ritorno: la radice sta in
+  `project--find-root`, come `dired-find-recursive` tiene la sua, e le regole
+  di esclusione sono le impostazioni di quel comando, perché i due offrano
+  gli stessi file.
++ *Noto per uso, non per apertura.* Un progetto diventa noto quando un
+  comando `C-x p` vi gira o quando lo si dichiara. Cercare la radice a ogni
+  `find-file` costerebbe una risalita per file aperto, anche fuori da ogni
+  progetto. `project-switch` apre `project-find-file` nella radice scelta.
++ *Nessun progetto corrente.* La radice si trova di nuovo a ogni comando,
+  dal buffer in cui si è, e le risposte ricordate della risalita la rendono
+  economica: non c'è uno stato da tenere allineato con il buffer.
 
 === `recent-files` <mod-recent-files>
 

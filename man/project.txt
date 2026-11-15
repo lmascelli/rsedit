@@ -1,0 +1,148 @@
+NAME
+    project - the tree a file belongs to, and working on all of it
+
+SYNOPSIS
+    (project-find-file)
+    (project-grep)
+    (project-compile)
+    (project-shell-command)
+    (project-switch)
+    (project-declare-root DIRECTORY)
+    (project-forget)
+    (project-root &optional DIRECTORY)
+    (project-known-projects)
+    project-markers
+    project-roots
+
+DESCRIPTION
+    A project is a directory and everything under it: a repository, a
+    crate, the tree a Makefile builds. Its top directory is its root. The
+    commands on C-x p work on the project of the file you are editing,
+    wherever in the tree the file is, as if you had gone to the root first:
+
+        C-x p f         open a file of the project, by any part of its path
+        C-x p g         search every file of the project for a text
+        C-x p c         build at the root
+        C-x p !         run a shell command at the root
+        C-x p p         go to another project you have worked in
+
+    Nothing moves: the working directory, and the directory of every
+    buffer, stay what they were. The `files' page says what a working
+    directory is.
+
+WHERE THE ROOT IS
+    The root is found by looking upwards from the file of the current
+    buffer -- or from the working directory, in a buffer with no file --
+    for one of the names of `project-markers'. Out of the box they are,
+    in this order:
+
+        .git                            a Git repository
+        .hg  .jj  .svn                  the other version control systems
+        Cargo.toml  package.json        a build, of any of these kinds
+        pyproject.toml  go.mod
+        CMakeLists.txt  Makefile
+        .project                        an empty file, to mark one by hand
+
+    The first line that finds something decides, and within a line the
+    nearest directory wins. So a .git wins over a nearer Cargo.toml: in a
+    repository holding several crates, the project is the repository, not
+    the crate. Outside any repository, the nearest build file is the root.
+
+    Each entry of `project-markers' is a name or a list of names; a name
+    may be a file or a directory. A .git that is a file, as in a worktree
+    or a submodule, is a root as a .git directory is.
+
+    The markers are looked for as `locate-dominating-file' looks for them,
+    remembering what it found: after making or deleting one, call
+    `locate-dominating-file-forget'. When the disk is slow to answer, the
+    command says so and does nothing; it works when asked again.
+
+A ROOT DECLARED BY HAND
+    Where the markers give the wrong answer, say which directory is a
+    root. M-x project-declare-root declares one for this run and the next
+    ones; `project-roots', set in init.lisp, declares them in your
+    configuration. A declared root wins over every marker for the files
+    under it, and the nearest declared root wins over one further up.
+
+    M-x project-forget takes a root declared with project-declare-root
+    back; one in `project-roots' stays until you take it out of the list.
+
+THE PROJECTS KNOWN
+    A project is known once a C-x p command has run in it, or once it has
+    been declared. The list is kept in the session, the newest first, so a
+    project you worked on yesterday is still offered today: C-x p p asks
+    for one, completing by any part of its path, and opens a file there as
+    C-x p f does. A directory that is not in the list can be typed too.
+    M-x project-forget takes a project out of the list, and
+    `project-known-projects' returns it.
+
+FINDING A FILE
+    C-x p f asks for a file, with the paths relative to the root to choose
+    from. It leaves out what C-x C-r leaves out: the directories of
+    `find-file-recursive-ignore', what the .gitignore files say, and the
+    files past `find-file-recursive-limit'. The `dired' page has them. The
+    list is the index of the tree (see the `files' page): the prompt opens
+    at once, and Tab offers more while the tree is still being walked.
+
+WORKING AT THE ROOT
+    C-x p g asks for a text and lists the lines that contain it, in every
+    file under the root, as M-s g does under the working directory; the
+    `searching' page has the list and M-g n.
+
+    C-x p c asks for a command and runs it at the root as C-c c would, and
+    C-x p ! asks for a shell command and runs it there as M-! would. The
+    output keeps the root as its directory, so g in a build's output
+    builds there again, and the places a build names are read from the
+    root. The `compile' and `shell' pages have the output.
+
+    Each of the three keeps its own history: C-p at the prompt gives back
+    what you asked for last, in any project.
+
+EXAMPLES
+    Make a directory with a WORKSPACE file a root, before the others:
+
+        (setq project-markers (cons "WORKSPACE" project-markers))
+
+    Let only version control mark a root, never a build file:
+
+        (setq project-markers '(".git" (".hg" ".jj" ".svn")))
+
+    A monorepo whose subdirectories are projects of their own, though the
+    whole is one repository:
+
+        (setq project-roots '("~/src/mono/server" "~/src/mono/client"))
+
+    The root of the current file, from Lisp, or nil:
+
+        (let ((root (project-root)))
+          (if (stringp root) root nil))
+
+    Build with make at the root of the project, from a key of your own:
+
+        (defcommand my-make () nil
+          "Run make -k at the root of the current project."
+          (let ((root (project-root)))
+            (if (stringp root)
+                (with-directory root (lambda () (compile "make -k")))
+                (message "Not in a project"))))
+        (define-key nil "C-c m" 'my-make)
+
+LIMITS
+    A repository around your home directory, as some keep for their
+    configuration files, is the project of every file under it that is in
+    no other repository: declare the roots you want with
+    project-declare-root, or take ".git" out of `project-markers'.
+
+    The root is found again, from the disk's remembered answers, each time
+    a command runs: it follows the buffer you are in, and there is no
+    current project apart from it.
+
+KEYS
+    C-x p f                 project-find-file
+    C-x p g                 project-grep
+    C-x p c                 project-compile
+    C-x p !                 project-shell-command
+    C-x p p                 project-switch
+
+SEE ALSO
+    files, dired, searching, compile, shell, session

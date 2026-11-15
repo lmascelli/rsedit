@@ -49,6 +49,7 @@ loaded anyway.")
     risp-repl           ; M-x risp-repl, a buffer where C-j evaluates Lisp
     occur               ; M-s o and M-s g, and the lists M-g n walks
     compile             ; C-c c, and M-g n to walk what it complained about
+    project             ; C-x p: find, search, build and run in a project
     findings            ; what tools said about a file, drawn, and M-g f
     theme               ; C-c t to choose how faces are drawn
     vim                 ; M-x vim-mode, modal editing in a buffer
