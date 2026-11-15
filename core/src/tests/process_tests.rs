@@ -438,11 +438,17 @@ mod tests {
                 &env,
                 &ctx,
             );
+            // Each output must exhaust its budget. Keep that work small so it
+            // finishes within settle's deadline even when the suite is busy.
+            ctx.set_fuel_budget(1_000);
             settle(&env, &ctx);
             assert_eq!(run("ended", &env, &ctx), exited(0));
             let logged = ctx.get_logs().join("\n");
-            assert!(
-                logged.contains("the function of process p failed"),
+            assert_eq!(
+                logged
+                    .matches("the function of process p failed: OutOfFuel")
+                    .count(),
+                2,
                 "{logged}"
             );
         }
