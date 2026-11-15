@@ -125,12 +125,16 @@ mod tests {
     #[test]
     fn nth_rejects_a_syntax_form_like_its_siblings() {
         let (ctx, env) = editor();
-        let err = eval_str(
-            "(defmacro m (p) (list 'quote (nth 0 p))) (m (a b))",
-            &env,
-            &ctx,
-        )
-        .expect_err("nth on a Form must be a type error, not nil");
+        // Macro arguments are list data now; inject a Form explicitly.
+        env.set_variable(
+            "syntax-form".into(),
+            LispExp::form(vec![
+                LispExp::symbol("a".into()),
+                LispExp::symbol("b".into()),
+            ]),
+        );
+        let err = eval_str("(nth 0 syntax-form)", &env, &ctx)
+            .expect_err("nth on a Form must be a type error, not nil");
         assert!(
             matches!(err, EvalError::WrongArgumentType { .. }),
             "expected WrongArgumentType, got {err:?}"
