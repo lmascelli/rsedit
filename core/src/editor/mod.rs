@@ -69,6 +69,7 @@ mod log;
 mod macros;
 mod modes;
 mod mouse;
+pub(crate) mod processes;
 mod replace;
 mod results;
 mod runtime;
@@ -85,7 +86,7 @@ pub(crate) use frame::TURN_INTERVAL;
 pub use keys::KEY_CAPTURE_FUNCTION;
 pub(crate) use loader::MODULE_KINDS;
 pub(crate) use replace::REPLACE_QUESTION;
-pub(crate) use runtime::ShellProcess;
+pub(crate) use runtime::ChildProcess;
 pub use settings::*;
 pub(crate) use work::{BUFFER_CHANGED, SYNTAX_CHANGED, WorkerTurn, in_worker};
 // For the tests, which count the restarts.
@@ -211,11 +212,16 @@ pub struct EditorState<B: BufferTrait> {
     /// after a panic, by what it is: see [`EditorState::restart_after_panic`].
     restarts: Arc<std::sync::Mutex<std::collections::HashMap<String, u32>>>,
 
-    /// The processes of this editor's shell commands, for as long as anything
-    /// holds them: what [`EditorState::shutdown`] kills once its wait is over,
-    /// so that a command that ignores `TERM` does not outlive the editor.
-    /// Weak, so that a command that has ended is not kept here.
-    shell_processes: Arc<runtime::ShellProcesses>,
+    /// The processes this editor started -- its shell commands and its
+    /// dialogues -- for as long as anything holds them: what
+    /// [`EditorState::shutdown`] kills once its wait is over, so that one that
+    /// ignores `TERM` does not outlive the editor. Weak, so that a process
+    /// that has ended is not kept here.
+    child_processes: Arc<runtime::ChildProcesses>,
+
+    /// The processes the editor talks with, by name, and the output each has
+    /// waiting. See [`processes`].
+    processes: Arc<processes::Processes<B>>,
 
     /// The buffer whose results `next-error` walks, if any.
     ///

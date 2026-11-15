@@ -3,29 +3,17 @@
 //! the buffer stops; or at once, for its output as a string.
 //!
 //! Design: `doc/architettura-editor.typ, <comandi-shell>`.
+use super::child_process::{
+    BATCH, Process, abandon, in_own_group, incomplete_tail, read_some, reap, stop_process,
+};
 use super::*;
 use crate::work::{Stop, WorkId};
-use std::io::{ErrorKind, PipeReader, Read};
-use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::io::PipeReader;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 /// The buffer the first shell command writes into.
 const OUTPUT_BUFFER: &str = "*Shell Output*";
-
-/// How long a command asked to stop is given to go before it is killed.
-///
-/// Long enough for a build to tidy up after `TERM` -- `git` removes its lock
-/// files, `make` its half-written targets -- and short enough that a command
-/// that ignores it is gone before anybody wonders why it has not stopped.
-/// Unix only: elsewhere there is no `TERM` to give it after.
-#[cfg(unix)]
-const GRACE: Duration = Duration::from_secs(2);
-
-/// The most output appended in one go. What is already waiting in the pipe is
-/// taken together, up to this, so that a command that prints fast fills its
-/// buffer in a few edits rather than one per line.
-const BATCH: usize = 64 * 1024;
 
 /// Builds the command that runs COMMAND through the platform's shell, so
 /// that what is typed means what it would at a prompt: pipes, redirection,
@@ -67,177 +55,13 @@ fn start<B: BufferTrait>(
     let (output, writer) = std::io::pipe()?;
     let mut invocation = shell_invocation(ctx, command, directory);
     invocation.stdout(writer.try_clone()?).stderr(writer);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // A group of its own, led by the shell: what stopping it reaches.
-        invocation.process_group(0);
-    }
+    // A group of its own, led by the shell: what stopping it reaches.
+    in_own_group(&mut invocation);
     let child = invocation.spawn()?;
     // The writing ends the command still holds go with it. Until they have,
     // the pipe never ends, however long ago the process did.
     drop(invocation);
     Ok((child, output))
-}
-
-/// The process, for as long as it has not been waited for: shared between the
-/// thread reading it and whoever asks it to stop.
-///
-/// Waited for under the same lock that a signal is sent under. Once a process
-/// has been waited for, its number is free to be given to another, and a
-/// signal sent to that number then would reach a stranger.
-type Process = crate::editor::ShellProcess;
-
-fn lock(process: &Process) -> std::sync::MutexGuard<'_, Option<Child>> {
-    // A poisoned lock still guards a process that has to be stopped.
-    process.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// Sends each of SIGNALS, in order, to every process in the group GROUP.
-///
-/// Through the shell's own `kill`, because the standard library can signal a
-/// process but not a group -- and the shell is what the command runs under
-/// anyway. In the form POSIX gives, `-s` and then `--` before the negative
-/// number: `dash`, the `/bin/sh` of Debian, takes `kill -TERM -- -123` for a
-/// number it cannot read, and signals nothing.
-#[cfg(unix)]
-fn signal_group(group: u32, signals: &[&str]) {
-    let script: Vec<String> = signals
-        .iter()
-        .map(|signal| format!("kill -s {signal} -- -{group}"))
-        .collect();
-    let _ = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(script.join("; "))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-/// Asks PROCESS to stop: `TERM` to its whole group at once, and `KILL` after
-/// [`GRACE`] to whatever of it is still there. `CONT` after the `TERM`, for
-/// whatever of it the system had stopped: until it is continued, a stopped
-/// process does not hear the `TERM`.
-///
-/// What [`Stop::on_cancel`] runs, on the thread that asked: so it waits for
-/// nothing. The `KILL` comes from a thread of its own, which finds nothing to
-/// do when the command went on the `TERM`. An editor that exits sooner than
-/// that takes the thread with it, and kills what is left itself: see
-/// [`kill_left_over`].
-fn stop_process(process: &Process) {
-    #[cfg(unix)]
-    {
-        {
-            // Under the lock: see [`Process`].
-            let guard = lock(process);
-            let Some(child) = guard.as_ref() else {
-                return;
-            };
-            signal_group(child.id(), &["TERM", "CONT"]);
-        }
-        let later = process.clone();
-        let finishing = std::thread::Builder::new()
-            .name("stop shell".into())
-            .spawn(move || {
-                std::thread::sleep(GRACE);
-                kill(&later);
-            });
-        if finishing.is_err() {
-            kill(process);
-        }
-    }
-    #[cfg(not(unix))]
-    kill(process);
-}
-
-/// Kills, with their groups, the shell commands of CTX that have not ended:
-/// at the end of [`EditorState::shutdown`], once the wait for them to go on
-/// their `TERM` is over. Without it, a command that ignored `TERM` outlived
-/// the editor, in a group no terminal was watching, since the `KILL` after
-/// [`GRACE`] comes later than an exit.
-pub(crate) fn kill_left_over<B: BufferTrait>(ctx: &EditorState<B>) {
-    for process in ctx.shell_processes() {
-        kill(&process);
-    }
-}
-
-/// Kills PROCESS, and its group with it, if it has not been waited for.
-fn kill(process: &Process) {
-    let mut guard = lock(process);
-    if let Some(child) = guard.as_mut() {
-        #[cfg(unix)]
-        signal_group(child.id(), &["KILL"]);
-        let _ = child.kill();
-    }
-}
-
-/// Waits for PROCESS to end, and takes it out: from here on, stopping it does
-/// nothing.
-///
-/// A short sleep between looks rather than a blocking wait, so that the lock
-/// is free for whoever wants to stop it meanwhile. By the time its output has
-/// ended a process has almost always ended too, and the first look finds it.
-fn reap(process: &Process) -> std::io::Result<ExitStatus> {
-    let mut pause = Duration::from_millis(1);
-    loop {
-        {
-            let mut guard = lock(process);
-            let Some(child) = guard.as_mut() else {
-                return Err(std::io::Error::other("it has already been waited for"));
-            };
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    guard.take();
-                    return Ok(status);
-                }
-                Ok(None) => {}
-                Err(why) => {
-                    guard.take();
-                    return Err(why);
-                }
-            }
-        }
-        std::thread::sleep(pause);
-        pause = (pause * 2).min(Duration::from_millis(50));
-    }
-}
-
-/// Returns how many bytes at the end of BYTES are the start of a character
-/// that has not arrived whole: what is kept for the next read, rather than
-/// show one character as two broken ones.
-fn incomplete_tail(bytes: &[u8]) -> usize {
-    for back in 1..=bytes.len().min(4) {
-        let byte = bytes[bytes.len() - back];
-        // Continuation bytes are 10xxxxxx: walk back over them to the first.
-        if byte & 0b1100_0000 != 0b1000_0000 {
-            let length = match byte {
-                0xc0..=0xdf => 2,
-                0xe0..=0xef => 3,
-                0xf0..=0xf7 => 4,
-                _ => 1,
-            };
-            return if length > back { back } else { 0 };
-        }
-    }
-    0
-}
-
-/// Reads what the command has written into INTO -- whatever is waiting in the
-/// pipe, as much as INTO holds, waiting only while nothing is -- and returns
-/// how many bytes, `0` at the end of the output.
-///
-/// Not a line at a time: what does not end a line -- a progress bar, a
-/// question asked before reading the empty input -- is shown as it comes,
-/// rather than when the line ends, which may be never.
-fn read_some(output: &mut PipeReader, into: &mut [u8]) -> std::io::Result<usize> {
-    loop {
-        match output.read(into) {
-            // A signal came while it waited, and nothing was read.
-            Err(why) if why.kind() == ErrorKind::Interrupted => {}
-            read => return read,
-        }
-    }
 }
 
 /// One command, and the buffer it writes into.
@@ -334,14 +158,6 @@ impl ShellCommand {
     }
 }
 
-/// Kills, and waits for, the process of a command whose thread never ran.
-fn abandon(process: &Process) {
-    kill(process);
-    if let Some(mut child) = lock(process).take() {
-        let _ = child.wait();
-    }
-}
-
 pub const SHELL_COMMAND_START_DOC: &str = "(shell-command-start COMMAND &optional MODE PRODUCER): Run \
          COMMAND, a string, with the shell in the background, and return at once the name of the \
          buffer its output goes into. It runs in `working-directory', which the buffer keeps as \
@@ -372,13 +188,17 @@ primitive!(shell_command_start, args, env, ctx, {
     let (child, output) = match start(ctx, command, &directory) {
         Ok(started) => started,
         Err(why) => {
-            ctx.set_echo_message(&cannot_run(&directory, &why));
+            ctx.set_echo_message(&super::child_process::cannot_run(
+                "the shell",
+                &directory,
+                &why,
+            ));
             return Ok(ELispExp::nil());
         }
     };
 
     let process: Process = Arc::new(Mutex::new(Some(child)));
-    ctx.remember_shell_process(&process);
+    ctx.remember_child_process(&process);
 
     let name = if let Some(producer) = producer {
         ctx.prepare_results_buffer(&producer, OUTPUT_BUFFER, &mode, None, &env)
@@ -490,23 +310,15 @@ primitive!(shell_command_to_string, args, _env, ctx, {
             String::from_utf8_lossy(&output.stdout).to_string(),
         )),
         Err(why) => {
-            ctx.set_echo_message(&cannot_run(&directory, &why));
+            ctx.set_echo_message(&super::child_process::cannot_run(
+                "the shell",
+                &directory,
+                &why,
+            ));
             Ok(ELispExp::nil())
         }
     }
 });
-
-/// Returns what to say when the shell could not be started in DIRECTORY,
-/// for WHY. A directory that has gone since `cd` is said as such: the
-/// system's own answer, "No such file or directory", would seem to be about
-/// the shell.
-fn cannot_run(directory: &str, why: &std::io::Error) -> String {
-    if std::path::Path::new(directory).is_dir() {
-        format!("Cannot run the shell: {why}")
-    } else {
-        format!("Cannot run the shell in {directory}: it is not a directory")
-    }
-}
 
 pub const PARSE_OVERSTRIKE_DOC: &str = "(parse-overstrike TEXT): Return TEXT without the \
          overstrike man prints for a terminal, and where it was, as (PLAIN SPANS). A character, a \

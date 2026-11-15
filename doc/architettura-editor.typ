@@ -241,7 +241,7 @@ del ciclo (@ciclo-tui).
   #node(12.3cm, 3.35cm, 6.8cm, 0.6cm, [passi bloccati, thread finiti, file di log])
 
   #group(8.5cm, 4.4cm, 7.6cm, 1.5cm, [un thread dedicato per lavoro che si blocca])
-  #node(12.3cm, 5.1cm, 6.8cm, 0.6cm, [comandi di shell, ricerche nei file, risalite])
+  #node(12.3cm, 5.1cm, 6.8cm, 0.6cm, [comandi di shell, processi dialoganti, ricerche, risalite])
   #carrow((7.3cm, 2.4cm), (8.9cm, 1.4cm), colour: accent)
 
   #group(0.1cm, 6.2cm, 7.6cm, 1.2cm, [lettore del terminale (`terminal input`)])
@@ -257,9 +257,11 @@ permesso di `yield`, il contrassegno del comando per l'undo, i dati di
 quando l'effetto deve toccare l'interfaccia: lasciano una #emph[callback
 dovuta], che il thread principale esegue tra un comando e l'altro
 (@utenti-sfondo). Fuori dal WorkManager restano i thread di `(spawn ...)`, che
-l'interprete avvia da sé, e il breve `stop shell` di un comando di shell
-fermato, che un'uscita non aspetta: a quel punto è `shutdown` a uccidere ciò
-che resta dei comandi (@comandi-shell).
+l'interprete avvia da sé, e il breve `stop process` di un processo fermato,
+che un'uscita non aspetta: a quel punto è `shutdown` a uccidere ciò che resta
+dei processi (@processi-figli). Un processo dialogante ha tre thread, ma il
+WorkManager ne conosce uno: gli altri due vivono dentro il suo
+(@processi-dialoganti).
 
 // ===========================================================================
 = Il ciclo di vita del programma <ciclo-vita>
@@ -1004,7 +1006,10 @@ gli altri compartimenti si prendono da soli. `findings` è una foglia per
 costruzione: le sue operazioni che toccano un buffer lo rilasciano prima di
 bloccarlo, e riconoscono con una generazione ciò che è cambiato nel frattempo
 (@segnalazioni). Anche `snapshot` lo prende da solo, prima di `windows`, per
-copiarne fuori ciò che il fotogramma disegna (@segnalazioni-schermo).
+copiarne fuori ciò che il fotogramma disegna (@segnalazioni-schermo). Sono
+foglie anche la tabella dei processi dialoganti e i lock di ogni loro
+`Exchange` --- la coda, l'ingresso, lo stato ---: nessuno si tiene mentre se ne
+prende un altro o mentre gira il Lisp (@processi-dialoganti).
 
 #canvas(height: 3.4cm)[
   #node(1.4cm, 1.0cm, 2.4cm, 0.8cm, [ambiente Lisp\ (`Env`)], fill: paper)
@@ -4690,14 +4695,16 @@ Lo ferma `stop-worker` con il nome del suo buffer, o la chiusura del buffer. Il
 comando gira in un gruppo di processi suo, e la richiesta raggiunge tutto ciò
 che ha avviato: su Unix l'azione di sblocco manda `TERM` e `CONT` al gruppo,
 con il `kill` della shell, perché la libreria standard segnala un processo e
-non un gruppo, e un thread breve, `stop shell`, avviato fuori dal WorkManager,
+non un gruppo, e un thread breve, `stop process`, avviato fuori dal WorkManager,
 manda `KILL` due secondi dopo a ciò che resta. All'uscita quel thread se ne va
 con l'editor prima del `KILL`, e per questo l'editor tiene, per riferimento
-debole, i processi dei suoi comandi (`remember_shell_process`): `shutdown`,
+debole, i processi dei suoi comandi (`remember_child_process`): `shutdown`,
 finita la sua attesa di mezzo secondo, manda `KILL` ai gruppi di quelli ancora
 vivi (`kill_left_over`), e un comando che ignora `TERM` non sopravvive
 all'editor. La lista è dell'editor e non del processo, così che un editor non
-uccida i comandi di un altro, come in un processo di test. Ciò che ha lasciato il gruppo, come un demone, non viene
+uccida i comandi di un altro, come in un processo di test. Tutto questo è in
+`primitives/child_process.rs`, comune ai processi dialoganti
+(@processi-figli). Ciò che ha lasciato il gruppo, come un demone, non viene
 raggiunto, e se tiene l'output che ha ricevuto la lettura resta aperta: la riga
 finale aspetta che lo lasci. `shell-command-to-string`, invece, aspetta il comando sul thread che
 lo chiama e ne restituisce lo stdout. Il buffer dell'output tiene come
@@ -4712,6 +4719,101 @@ dice che cosa vede chi li usa.
 Il conteggio delle corrispondenze di una ricerca in un buffer grande gira su
 un thread dedicato avviato con `spawn_work`, `isearch-count`, che non scrive
 in un buffer e consegna il risultato con una callback dovuta (@conteggio).
+
+=== I processi figli <processi-figli>
+
+Ciò che vale per ogni processo che l'editor avvia sta in
+`primitives/child_process.rs`, e due moduli ne sono clienti: i comandi di shell
+(@comandi-shell) e i processi dialoganti (@processi-dialoganti).
+
+- *Il processo* è un `ChildProcess`, `Arc<Mutex<Option<Child>>>`, condiviso
+  tra i thread che lo leggono e chi lo ferma. `reap` lo aspetta guardando a
+  intervalli sotto il lock, e lo toglie quando è finito; `stop_process` e
+  `kill` mandano i segnali sotto lo stesso lock, e non trovano niente dopo
+  `reap`: un numero di processo già aspettato può essere stato dato a un
+  altro.
+- *Il gruppo*: `in_own_group` fa partire il processo in un gruppo che guida
+  (`process_group(0)`); `stop_process` manda `TERM` e `CONT` al gruppo e,
+  dal thread `stop process`, `KILL` dopo due secondi. Fuori da Unix non ci
+  sono gruppi né `TERM`: il processo si uccide subito, da solo.
+- *L'uscita dell'editor*: ogni processo si registra con
+  `remember_child_process`, per riferimento debole, e `kill_left_over`, alla
+  fine di `shutdown`, uccide i gruppi di quelli ancora vivi.
+- *La lettura*: `read_some` legge ciò che c'è nella pipe, fino a `BATCH`
+  byte, e riprova dopo un'interruzione; `incomplete_tail` dice quanti byte in
+  fondo sono l'inizio di un carattere non ancora arrivato intero.
+
+=== I processi dialoganti <processi-dialoganti>
+
+Un processo dialogante è un programma che resta e risponde: un server di un
+linguaggio, una REPL, un filtro. `process-start` (`primitives/processes.rs`)
+lo avvia con i suoi argomenti, senza shell, nella directory di lavoro, con tre
+pipe; ciò che stampa arriva a una funzione Lisp, tra un comando e l'altro. Il
+mattone non sa chi parla con lui né in che lingua: cornice a parte, il
+contenuto dei messaggi è affare del chiamante. La pagina `processes` dice che
+cosa vede chi lo usa.
+
+#canvas(height: 6.6cm)[
+  #node(2.0cm, 1.0cm, 3.2cm, 0.9cm, [*programma* \ stdin, stdout, stderr], fill: paper)
+  #node(7.0cm, 0.6cm, 3.4cm, 0.7cm, [thread `NOME` (stdout)], fill: accent.lighten(85%))
+  #node(7.0cm, 1.6cm, 3.4cm, 0.7cm, [thread `NOME errors`], fill: accent.lighten(85%))
+  #node(7.0cm, 3.4cm, 3.4cm, 0.7cm, [thread `NOME input`], fill: accent.lighten(85%))
+  #node(11.9cm, 1.1cm, 2.6cm, 1.2cm, [`Exchange` \ coda limitata])
+  #node(16.0cm, 1.1cm, 2.6cm, 1.2cm, [`tick` \ `run_process_output`], fill: accent.lighten(85%))
+  #node(11.9cm, 3.4cm, 2.6cm, 0.7cm, [coda dell'ingresso])
+  #node(16.0cm, 3.4cm, 2.6cm, 0.7cm, [`process-send`], fill: accent.lighten(85%))
+  #carrow((3.6cm, 0.8cm), (5.3cm, 0.6cm))
+  #carrow((3.6cm, 1.2cm), (5.3cm, 1.6cm))
+  #carrow((5.3cm, 3.4cm), (2.6cm, 1.45cm))
+  #carrow((8.7cm, 0.6cm), (10.6cm, 1.0cm), label: [`push`], dy: -0.25cm)
+  #carrow((8.7cm, 1.6cm), (10.6cm, 1.3cm))
+  #carrow((13.2cm, 1.1cm), (14.7cm, 1.1cm), label: [`take`], dy: -0.25cm)
+  #carrow((14.7cm, 3.4cm), (13.2cm, 3.4cm), label: [`try_send`], dy: -0.25cm)
+  #carrow((10.6cm, 3.4cm), (8.7cm, 3.4cm))
+  #note(9.8cm, 2.35cm)[piena: il lettore aspetta, e il programma con lui]
+  #note(0.2cm, 4.6cm)[la consegna: al più `PASS_DELIVERIES` (64) per passata e per 10 ms, un processo alla volta a turno;\ ogni chiamata con il suo budget (`begin_command`); l'uscita `exit` sempre per ultima, oltre i limiti della coda.\ L'ingresso non aspetta mai: una coda piena fa rispondere `nil` a `process-send`.]
+]
+
+- *I thread.* `spawn_work` avvia un thread con il nome del processo, che
+  `stop-worker` e `work-list` conoscono. Dentro un `std::thread::scope` ne
+  avvia altri due, `NOME errors` e `NOME input`, che vivono quanto lui: così
+  `shutdown` aspetta uno solo, e niente resta indietro. Il primo legge lo
+  stdout e lo taglia secondo la forma: a pezzi, come arrivano; a righe
+  (`Lines`), senza `\n` né `\r\n`, con una riga oltre `MAX_LINE` consegnata a
+  pezzi; a messaggi (`Frames`). Il secondo legge lo stderr, sempre a righe.
+  Il terzo scrive ciò che `process-send` ha messo in coda. Quando lo stdout
+  finisce, il primo aspetta il secondo, poi il processo (`reap`), poi chiude
+  la coda dell'ingresso e aspetta il terzo; per ultimo mette in coda `exit`.
+- *La cornice.* `Frames` legge un'intestazione di campi fino alla riga
+  vuota, righe chiuse da `\r\n` o da `\n`, ne prende `Content-Length` senza
+  badare alle maiuscole e lascia passare gli altri campi; poi aspetta il corpo
+  di quella lunghezza in byte. Un'intestazione oltre `MAX_HEADER`, senza
+  lunghezza o con un campo illeggibile, o un corpo oltre `MAX_MESSAGE`, è un
+  errore: si consegna come `error` e il processo si ferma, perché dopo una
+  cornice rotta non si sa più dove comincia la seguente. In scrittura
+  `framed` mette l'intestazione davanti al testo, e l'insieme va in coda come
+  una scrittura sola.
+- *La coda.* L'`Exchange` di un processo tiene la coda delle consegne, al più
+  `QUEUE_ENTRIES` (256) e `QUEUE_BYTES` (4 MiB), ma una coda vuota ne prende
+  una di qualunque misura. Un lettore che la trova piena aspetta su una
+  `Condvar`, controllando lo `Stop` ogni 50 ms: aspetta lui, e con lui il
+  programma, che trova la pipe piena; l'editor no. `exit` entra oltre i
+  limiti, perché nessuno aspetta dietro di lei.
+- *La consegna.* `callbacks_owed` è vero finché una coda non è vuota, e
+  l'host chiama `tick`, che dopo le callback dovute e i file chiama
+  `run_process_output`. Una passata prende i processi con qualcosa in coda, a
+  partire da uno diverso ogni volta, e consegna una cosa per processo a turno
+  fino a 64 consegne o 10 ms; il resto aspetta la passata seguente. Ogni
+  consegna è una chiamata `(FUNCTION NOME TIPO VALORE)` con un budget suo e
+  nella directory di `with-directory` in cui il processo è partito, come una
+  callback dovuta (@callback-dovute); un errore va nel log. Dopo `exit` il
+  nome è libero.
+- *Lo stato.* `Exchange::status` è `Running` finché `reap` non dice come è
+  finito; un processo che qualcuno ha fermato (`mark_stopped`, nell'azione
+  dello `Stop`) è `Killed` comunque finisca, come un comando di shell.
+- *La tabella.* `EditorState::processes` tiene i processi per nome, anche
+  finiti, finché un altro non prende il nome: `process-status` risponde
+  ancora dopo la fine.
 
 === I lavori Lisp <lavori-lisp>
 
@@ -4819,7 +4921,7 @@ nell'area messaggi (`echo-message-timeout`, 5 s; `nil` non scade mai);
 sia passato un `TURN_INTERVAL` dall'ultima fotografia, se un lavoro ha cambiato
 qualcosa da allora (`BackgroundChange::due_in`), così un lavoro che fa un passo
 al millisecondo non ridisegna il terminale a ogni passo; zero se ci sono
-callback dovute. `None` vuol dire che nulla è in sospeso e il front-end può
+callback dovute o uscite di processi da consegnare. `None` vuol dire che nulla è in sospeso e il front-end può
 bloccarsi sull'input. `drag_scroll_in()` aggiunge i 60 ms dello scorrimento
 automatico mentre si trascina una selezione oltre il bordo di una finestra.
 
@@ -4948,6 +5050,41 @@ Gli altri strumenti:
   il terminale non appartiene: un comando che apre il terminale, come una
   richiesta di password, viene fermato dal sistema invece di prendere i tasti
   dell'editor, e il `CONT` dopo il `TERM` fa sì che lo senta.
++ *Un processo dialogante parte senza shell.* Un server si avvia come
+  programma e argomenti: senza shell non c'è niente da quotare, e il gruppo lo
+  guida il programma stesso. Scartato: passare da `/bin/sh -c` come
+  `shell-command-start`, che ha senso per ciò che l'utente scrive, non per ciò
+  che un modulo compone.
++ *Stdout e stderr separati, per un processo dialogante.* Sullo stdout
+  viaggiano le cornici, e una riga di errore in mezzo le romperebbe; lo stderr
+  arriva alla stessa funzione con il tipo `error`, sempre a righe. Scartato:
+  la pipe sola dei comandi di shell, giusta per chi legge, sbagliata per chi
+  interpreta.
++ *L'uscita di un processo passa da una coda limitata, consegnata a pezzi tra
+  un comando e l'altro.* La funzione gira sul thread dei comandi, come una
+  callback dovuta, e può fare ciò che fa un comando. Il limite della coda
+  ferma il lettore, e il programma con lui, invece dell'editor; il limite di
+  ogni passata, in consegne e in tempo, lascia passare il tasto seguente; il
+  budget di ogni chiamata ferma una funzione che non torna. Niente si perde.
+  Scartati: `owe_callback`, la cui lista non ha limiti e che lega le chiamate
+  all'ultimo lavoro con quel nome; una consegna sul thread del lettore, che
+  farebbe girare Lisp fuori dal thread dei comandi; scartare l'uscita quando
+  la coda è piena, che romperebbe un protocollo.
++ *La cornice è in Rust.* Leggere un'intestazione e contare byte è lavoro del
+  thread che legge, e così la coda tiene messaggi interi e non pezzi da
+  ricomporre in Lisp, dove i byte non si vedono: una stringa Lisp conta
+  caratteri, e `Content-Length` conta byte.
++ *Scrivere non aspetta.* `process-send` mette in una coda limitata, che un
+  thread suo svuota nella pipe; con la coda piena risponde `nil`. Scartato:
+  scrivere nella pipe dal thread dei comandi, che si bloccherebbe con un
+  programma che non legge.
++ *Un nome in uso si rifiuta.* Due processi con lo stesso nome si
+  confonderebbero nelle consegne e nello stato, e sostituire quello vivo, come
+  fa un lavoro, spegnerebbe un server per un errore di chi chiama. Il nome si
+  libera quando `exit` è stata consegnata, non prima: la funzione sa così che
+  un processo con quel nome dopo è un altro.
++ *Su Windows, nessuna finestra.* Un programma da console avviato
+  dall'editor grafico ne aprirebbe una sua: `CREATE_NO_WINDOW`.
 + *Un lavoro solo per la colorazione, svegliato dai cambiamenti.* Un lavoro per
   ogni modifica dovrebbe essere breve, o l'editor si inceppa, e «breve» è una
   speranza, perché dipende dal file. Un lavoro che a ogni passo fa una quantità

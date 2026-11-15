@@ -234,4 +234,4 @@ EXAMPLES
         (work-list)
 
 SEE ALSO
-    shell, writing-commands, completion, diagnostics
+    shell, processes, writing-commands, completion, diagnostics

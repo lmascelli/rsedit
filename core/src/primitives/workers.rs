@@ -214,7 +214,7 @@ primitive!(background_call, args, env, ctx, {
 /// callback above it is fine, and one that names a function it never defines
 /// finds out in the log. What is refused is a value that could never be a
 /// call however the environment changes -- a number, a string, nil.
-fn is_callable<B: BufferTrait>(value: &ELispExp<B>) -> bool {
+pub(crate) fn is_callable<B: BufferTrait>(value: &ELispExp<B>) -> bool {
     matches!(
         value,
         ELispExp::Symbol(_) | ELispExp::Lambda(_) | ELispExp::Primitive { .. }

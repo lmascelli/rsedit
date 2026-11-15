@@ -1,0 +1,142 @@
+NAME
+    processes - talking with a program that keeps running
+
+SYNOPSIS
+    (process-start NAME PROGRAM ARGS FUNCTION &optional FORM)
+    (process-send NAME STRING)
+    (process-close-input NAME)
+    (process-stop NAME)
+    (process-status NAME)
+
+DESCRIPTION
+    Some programs are not run for their output and done with: they stay,
+    read what they are told, and answer. A language server, a REPL, a
+    filter that turns each line it is given into another. These functions
+    start such a program, write to it, and hand each thing it prints to a
+    function of yours, while you go on working.
+
+    `process-start' runs PROGRAM with the strings of ARGS, as they are:
+    there is no shell between, so nothing in them is quoted, globbed or
+    split. It runs in the working directory, with the environment `setenv'
+    gave (see the files page), and under NAME, a symbol or a string, by
+    which every other function here finds it. It returns NAME at once.
+
+WHAT YOU ARE GIVEN
+    FUNCTION is called with three arguments: NAME, a kind, and a value.
+
+        output  STRING        something the program printed
+        error   STRING        a line of its standard error, or what went
+                              wrong reading its output
+        exit    STATUS        how it ended, as process-status says it
+
+    exit always comes, once, and last: after it nothing more is called for
+    that process, and its name is free again.
+
+    FORM says how what the program prints is cut before you are given it:
+
+        lines       a line at a time, without its newline, \r\n or \n;
+                    the default. A last line that the program never ended
+                    comes when it ends. A line longer than a megabyte
+                    comes in pieces of a megabyte.
+        chunks      as it is read, whether or not it ends a line: for a
+                    prompt, or a progress bar.
+        messages    a message at a time, each after a header that gives
+                    its length, as language servers write them:
+
+                        Content-Length: 17\r\n
+                        \r\n
+                        {"jsonrpc":"2.0"}
+
+                    You are given the body, without its header. Other
+                    fields of the header are let by. A header that cannot
+                    be read, or a message longer than 64 megabytes, is
+                    given to you as an error, and the program is stopped.
+
+    The standard error is always cut into lines, whatever FORM is. Bytes
+    that are not UTF-8 become a replacement character; a character cut in
+    two between two reads arrives whole.
+
+WHEN YOU ARE GIVEN IT
+    Never in the middle of a command: FUNCTION is called between one
+    command and the next, as the callbacks of background work are (see
+    the background page), and can do what a command can -- insert, open a
+    buffer, show a message. An error in it goes to the log, and the next
+    delivery is made all the same. A function that loops is stopped, as a
+    command that loops is.
+
+    A program that prints faster than its output can be handed over is
+    made to wait, not the editor: a few hundred deliveries wait for each
+    process, and the program is held back until there is room. They are
+    made a few at a time, so that the next key you press is not kept
+    behind a flood of them. Nothing is dropped: all of it arrives, in the
+    order it was printed.
+
+WRITING TO IT
+    `process-send' writes STRING to the program's input, and returns t.
+    When FORM is messages it adds the Content-Length header itself, the
+    length counted in bytes. It never waits for the program to read: when
+    so much is already waiting to be written that it would have to, it
+    writes nothing and returns nil. It returns nil too once the input is
+    closed or the program has ended.
+
+    `process-close-input' closes the input once what is waiting has been
+    written: the program reads the end of its input, as cat does at C-d,
+    and many end there.
+
+STOPPING IT AND ASKING HOW IT IS
+    `process-stop' stops the program, and what it started, as a shell
+    command is stopped (see the shell page): asked first, stopped outright
+    two seconds later. FUNCTION is still given exit, and killed. The
+    program is also in (work-list), under NAME, and (stop-worker NAME)
+    stops it the same way. Leaving the editor stops every program still
+    running.
+
+    `process-status' says how it is:
+
+        run             it is running
+        (exit CODE)     it ended by itself, with CODE
+        killed          it was stopped, or a signal ended it
+        nil             no process has that name
+
+    A NAME that a running process has, or that the exit of one is still
+    to be delivered for, cannot be given to another: `process-start'
+    signals an error. Nor can the name of other background work, such as
+    the buffer of a shell command still running.
+
+LIMITS
+    When the program cannot be started -- it is not found, or the working
+    directory has gone -- `process-start' says why and returns nil.
+
+    A daemon the program starts leaves its process group, and is not
+    stopped with it.
+
+    On Windows a program is stopped at once, without the two seconds, and
+    only the program is: what it started goes on.
+
+EXAMPLES
+    Count the words of each line given to wc, a line at a time:
+
+        (defun my-show (name kind value)
+          (message "%s: %s %s" name kind value))
+        (process-start 'words "sh"
+                       '("-c" "while read l; do echo $l | wc -w; done")
+                       'my-show)
+        (process-send 'words "one two three\n")
+        (process-close-input 'words)
+
+    Talk with a program that speaks in framed messages, here cat, which
+    gives each message back:
+
+        (defvar my-replies nil)
+        (defun my-reply (name kind value)
+          (if (eq kind 'output) (setq my-replies (cons value my-replies))))
+        (process-start 'echo "cat" nil 'my-reply 'messages)
+        (process-send 'echo "{\"jsonrpc\":\"2.0\",\"method\":\"ping\"}")
+
+    Stop it, and see that it was:
+
+        (process-stop 'echo)
+        (process-status 'echo)          ; killed, once it has gone
+
+SEE ALSO
+    shell, background, files

@@ -30,6 +30,7 @@ macro_rules! primitive {
 pub(crate) mod args;
 pub(crate) mod ask;
 mod buffers;
+pub(crate) mod child_process;
 mod commands;
 mod comments;
 mod completion;
@@ -60,6 +61,7 @@ pub(crate) mod mouse;
 pub(crate) mod movement;
 pub(crate) mod occur;
 mod overlays;
+pub(crate) mod processes;
 mod quit;
 mod rectangle;
 mod region;
@@ -173,6 +175,7 @@ pub fn install_primitives<B: BufferTrait>(
     scan::install(&into);
     session::install(&into);
     sexp::install(&into);
+    processes::install(&into);
     shell::install(&into);
     syntax_table::install(&into);
     theme::install(&into);

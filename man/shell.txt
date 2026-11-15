@@ -140,4 +140,4 @@ KEYS IN SHELL OUTPUT MODE
     C-c C-k                 shell-command-kill
 
 SEE ALSO
-    background, compile, writing-commands, buffers, windows
+    background, compile, processes, writing-commands, buffers, windows

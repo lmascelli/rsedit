@@ -45,13 +45,15 @@ impl<B: BufferTrait> EditorState<B> {
             });
     }
 
-    /// Returns whether a call is owed.
+    /// Returns whether a call is owed: a job's, a file operation's, or a
+    /// process's output waiting for its function.
     ///
     /// [`Self::next_redraw_in`] asks. A job that has owed its last call has
     /// finished, and nothing else would tell the host that something is still
     /// to be done for it.
     pub fn callbacks_owed(&self) -> bool {
         self.file_io_ready()
+            || self.process_output_waiting()
             || !self
                 .owed
                 .read()
@@ -105,8 +107,8 @@ impl<B: BufferTrait> EditorState<B> {
     }
 
     /// Does what the editor owes when the host's wait has run out: scrolls a
-    /// drag that has left its window, and makes the calls owed. Returns
-    /// whether the screen is now behind.
+    /// drag that has left its window, makes the calls owed, and delivers some
+    /// of the processes' output. Returns whether the screen is now behind.
     ///
     /// One call, so that a host need not know what the editor was waiting
     /// for, as [`Self::next_redraw_in`] answers with one duration.
@@ -116,6 +118,7 @@ impl<B: BufferTrait> EditorState<B> {
         let scrolled = self.drag_scroll_tick(env);
         let ran = self.run_owed_callbacks(env);
         let files = self.run_file_io(env);
-        scrolled || ran || files
+        let output = self.run_process_output(env);
+        scrolled || ran || files || output
     }
 }
