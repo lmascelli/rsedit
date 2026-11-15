@@ -21,8 +21,9 @@ fn editor() -> Core<'static, GapBuffer> {
     let state: &'static _ = Box::leak(Box::new(state));
     let core = Core { state, env };
     core.state.resize(core.env.clone(), 100, 32);
-    let exe = std::env::current_exe().unwrap();
-    let data = exe.parent().unwrap().parent().unwrap().join("data/lisp");
+    // Unit tests use the checked-in modules, independently of where Cargo
+    // places the test executable or whether build output has been copied.
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("core/lisp");
     core.env.set_variable(
         "lisp-path".into(),
         ELispExp::proper_list(
@@ -33,8 +34,15 @@ fn editor() -> Core<'static, GapBuffer> {
         ),
     );
     for module in ["common-keymaps", "minibuffer", "clipboard", "vim"] {
-        core.value("require", vec![Core::<GapBuffer>::quote(module)])
-            .expect("load module");
+        let loaded = core
+            .value("require", vec![Core::<GapBuffer>::quote(module)])
+            .unwrap_or_else(|why| panic!("load {module}: {why}"));
+        assert!(
+            !loaded.is_nil(),
+            "module {module} not found under {}: {:?}",
+            data.display(),
+            core.state.get_logs()
+        );
     }
     assert!(core.env.get_function("vim-mode").is_some());
     core
