@@ -150,7 +150,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             ELispExp::string(file.display().to_string()),
             ELispExp::form(vec![
                 ELispExp::symbol("lambda".into()),
-                ELispExp::proper_list(vec![ELispExp::symbol("opened".into())]),
+                ELispExp::form(vec![ELispExp::symbol("opened".into())]),
                 next_file,
             ]),
         ]);
