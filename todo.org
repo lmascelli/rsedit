@@ -17,6 +17,7 @@ Comandi di testo
 Hooks
 
 * Fixes todo
+- In the TUI C-_ is still seen as C-7
 - Macros are not listed in describe-function and not documented.
 
 * Macro todo
@@ -71,7 +72,7 @@ Da verificare
       cache per directory. dired-find-recursive e grep ne diventano clienti. Dipende da D1.
 - [X] C5 Deposito delle segnalazioni: per (produttore, file); interrogabile per file,
       produttore, prefisso di directory. Dipende da D4.
-- [ ] C6 Segnalazioni sullo schermo: evidenziazione, margine, riga di stato, messaggio
+- [X] C6 Segnalazioni sullo schermo: evidenziazione, margine, riga di stato, messaggio
       al punto, lista di risultati generata dal deposito. Dipende da C5.
 - [ ] C7 Processi dialoganti: ingresso e uscita su thread propri; uscita a pezzi, a
       righe, a messaggi incorniciati. Dipende da D3.

@@ -6,7 +6,8 @@ use crate::ELispExp;
 use crate::buffer::{Buffer, BufferTrait};
 
 /// Returns FORMAT with its escapes expanded against BUFFER, shown in a window
-/// of HEIGHT rows of text. The escapes are Emacs's:
+/// of HEIGHT rows of text, FINDINGS being what `%!` shows. The escapes are
+/// Emacs's, but for `%!`:
 ///
 /// | escape | shows                                        |
 /// |--------|----------------------------------------------|
@@ -19,11 +20,17 @@ use crate::buffer::{Buffer, BufferTrait};
 /// | `%l`   | line number, counting from one               |
 /// | `%c`   | column, counting from zero as Emacs does     |
 /// | `%p`   | all of it, or how far down the buffer point is |
+/// | `%!`   | the findings about the file, counted by severity |
 /// | `%*`   | `**` when modified, `--` when not            |
 /// | `%%`   | a literal per cent                           |
 ///
 /// An unknown escape is shown as it is written.
-pub fn expand_mode_line<B: BufferTrait>(format: &str, buffer: &Buffer<B>, height: usize) -> String {
+pub fn expand_mode_line<B: BufferTrait>(
+    format: &str,
+    buffer: &Buffer<B>,
+    height: usize,
+    findings: &str,
+) -> String {
     let (line, column) = buffer.text.cursor_pos();
     let lines = buffer.text.line_count().max(1);
     let mut out = String::with_capacity(format.len() + 16);
@@ -57,6 +64,7 @@ pub fn expand_mode_line<B: BufferTrait>(format: &str, buffer: &Buffer<B>, height
             Some('l') => out.push_str(&(line + 1).to_string()),
             Some('c') => out.push_str(&column.to_string()),
             Some('p') => out.push_str(&position_in_buffer(line, lines, height)),
+            Some('!') => out.push_str(findings),
             Some('*') => out.push_str(if buffer.is_modified { "**" } else { "--" }),
             Some('%') => out.push('%'),
             Some(other) => {

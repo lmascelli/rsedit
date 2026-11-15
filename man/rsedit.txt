@@ -53,6 +53,7 @@ MODULES
     risp-repl            M-x risp-repl, Lisp evaluated as you write it
     occur                M-s o, M-s g, and the lists M-g n walks
     compile              C-c c, and jumping to what it complained about
+    findings             what tools said about a file, drawn, and M-g f
     theme                C-c t, and how faces are drawn
     vim                  modal editing, off until M-x vim-mode
     completion-at-point  where completions come from

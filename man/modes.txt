@@ -132,10 +132,11 @@ A MINOR MODE IN EVERY BUFFER
 
     ON, when it is not nil, starts the global mode on: the mode is on in
     every buffer as soon as it is defined, without a word in the echo
-    area. show-paren, whitespace and auto-revert define their global
-    modes that way, global-show-paren-mode, global-whitespace-mode and
-    global-auto-revert-mode, and (global-show-paren-mode -1) in init.lisp,
-    after the modules, turns show-paren-mode off everywhere.
+    area. show-paren, whitespace, auto-revert and findings define their
+    global modes that way, global-show-paren-mode, global-whitespace-mode,
+    global-auto-revert-mode and global-findings-mode, and
+    (global-show-paren-mode -1) in init.lisp, after the modules, turns
+    show-paren-mode off everywhere.
 
     With TURN-ON nil, as above, the mode is asked for in every buffer with
     `minor-mode-enable', and taken back with `minor-mode-disable' when the

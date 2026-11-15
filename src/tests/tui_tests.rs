@@ -1402,6 +1402,7 @@ fn frame_with_gutter(mode_line: Option<&str>) -> String {
     let cell = |text: &str, face| GutterCell {
         text: text.into(),
         face,
+        sign: None,
     };
     let snapshot = FrameSnapshot {
         views: vec![rsedit_core::RenderableWindowView {
@@ -1433,6 +1434,44 @@ fn frame_with_gutter(mode_line: Option<&str>) -> String {
     let mut out: Vec<u8> = Vec::new();
     render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("render");
     String::from_utf8(out).expect("crossterm emits valid UTF-8")
+}
+
+#[test]
+fn a_sign_in_the_gutter_is_drawn_over_its_cell_in_its_own_face() {
+    use rsedit_core::{Face, GutterCell};
+    let snapshot = FrameSnapshot {
+        views: vec![rsedit_core::RenderableWindowView {
+            rect: Rect {
+                x: 4,
+                y: 0,
+                width: 16,
+                height: 1,
+            },
+            buffer_name: "*scratch*".into(),
+            lines: vec!["alpha".into()],
+            gutter: vec![GutterCell {
+                text: "E 1 ".into(),
+                face: Face::LINE_NUMBER,
+                sign: Some(Face::FINDING_ERROR_SIGN),
+            }],
+            gutter_width: 4,
+            ..Default::default()
+        }],
+        theme: Arc::new(Theme::default()),
+        width: COLS as usize,
+        height: ROWS as usize,
+        ..Default::default()
+    };
+    let mut out: Vec<u8> = Vec::new();
+    render_to(&mut out, &snapshot, ColorDepth::TrueColor).expect("render");
+    let rendered = String::from_utf8(out).expect("crossterm emits valid UTF-8");
+    let printed = printed(&rendered);
+    assert!(printed.contains(&(0, 0, "E 1 ".into())), "{printed:?}");
+    assert!(printed.contains(&(0, 0, "E".into())), "{printed:?}");
+    // `finding-error-sign' is bold in the default theme, `line-number' not.
+    let bold = styled_run(&rendered, "\u{1b}[1m");
+    assert!(bold.ends_with('E'), "the sign is the bold one: {bold:?}");
+    assert!(!bold.contains("1 "), "and the number is not: {bold:?}");
 }
 
 #[test]

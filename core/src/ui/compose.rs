@@ -7,7 +7,11 @@ use crate::managers::Buffers;
 use crate::text::rectangle::Rectangle;
 use crate::text::search::Pattern;
 use crate::ui::Face;
-use crate::ui::gutter::{self, GutterCell, GutterSpec, LineNumbers, gutter_cells, gutter_columns};
+use crate::ui::findings::{self, FindingMarks, SIGN_COLUMNS};
+use crate::ui::gutter::{
+    self, GutterCell, GutterSpec, LineNumbers, MIN_TEXT_WIDTH_FOR_GUTTER, gutter_cells,
+    gutter_columns,
+};
 use crate::ui::layout::{self, BufferHighlight, Layout, TabWidths};
 use crate::ui::mode_line::expand_mode_line;
 use crate::ui::visual_lines::{self, VisualLines, VisualPoint};
@@ -56,6 +60,8 @@ pub struct ComposeSettings<'a> {
     pub matches: Option<&'a SearchMarks>,
     /// The delimiters drawn in the focused window, if any.
     pub spots: Option<&'a SpotMarks>,
+    /// The findings drawn over the buffers shown, if any.
+    pub findings: Option<&'a FindingMarks>,
     /// How many lines a window scrolls to bring back a point that has left
     /// it, before it puts point's line in the middle instead: see
     /// [`follow_point`].
@@ -139,6 +145,11 @@ impl LayoutNode {
         match self {
             LayoutNode::Leaf(win) => {
                 let is_focused = win.id == focus.id;
+                // A prompt's gutter is its question: no signs there.
+                let findings = settings
+                    .findings
+                    .and_then(|marks| marks.of(&win.buffer_name))
+                    .filter(|_| !win.is_prompt());
                 // A window that changed shape follows point again, or a resize
                 // could leave the cursor off its bottom.
                 let resized = win.rect != rect;
@@ -158,6 +169,7 @@ impl LayoutNode {
                                 .read()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner),
                             rect.height - 1,
+                            findings.map_or("", |found| found.count.as_str()),
                         )
                     })
                 });
@@ -217,10 +229,20 @@ impl LayoutNode {
                 // The minibuffer's gutter is its question, in place of the
                 // line numbers: the answer starts after it, and a click is
                 // counted from there as from the numbers.
-                let gutter_width = match &win.prompt {
+                let numbers_width = match &win.prompt {
                     Some(prompt) => prompt_columns(&prompt.text, rect.width),
                     None => gutter_columns(gutter_spec, line_count, rect.width),
                 };
+                // The signs in front of the numbers, while the buffer has
+                // findings, and if the text keeps room enough.
+                let signs_width = if findings.is_some()
+                    && rect.width >= numbers_width + SIGN_COLUMNS + MIN_TEXT_WIDTH_FOR_GUTTER
+                {
+                    SIGN_COLUMNS
+                } else {
+                    0
+                };
+                let gutter_width = signs_width + numbers_width;
 
                 win.gutter_width = gutter_width;
                 let rect = Rect {
@@ -331,14 +353,14 @@ impl LayoutNode {
                     Some(prompt) => {
                         prompt_cells(&prompt.text, gutter_width, win.scroll_y, rect.height)
                     }
-                    None if wrapping && gutter_width > 0 => (0..rect.height)
+                    None if wrapping && numbers_width > 0 => (0..rect.height)
                         .map(|index| {
                             if let Some(row) = layout.row(index)
                                 && row.continuation == 0
                             {
                                 gutter_cells(
                                     gutter_spec,
-                                    gutter_width,
+                                    numbers_width,
                                     row.line,
                                     1,
                                     line_count,
@@ -347,20 +369,27 @@ impl LayoutNode {
                                 .remove(0)
                             } else {
                                 GutterCell {
-                                    text: " ".repeat(gutter_width),
+                                    text: " ".repeat(numbers_width),
                                     face: Face::LINE_NUMBER,
+                                    sign: None,
                                 }
                             }
                         })
                         .collect(),
                     None => gutter_cells(
                         gutter_spec,
-                        gutter_width,
+                        numbers_width,
                         win.scroll_y,
                         rect.height,
                         line_count,
                         point_line,
                     ),
+                };
+                let gutter_cells = match findings {
+                    Some(found) if signs_width > 0 => {
+                        sign_cells(win, &layout, buffers, found, gutter_cells, rect.height)
+                    }
+                    _ => gutter_cells,
                 };
 
                 out_views.push(RenderableWindowView {
@@ -483,6 +512,53 @@ fn reconcile_wrapped<B: BufferTrait>(
     layout
 }
 
+/// Returns the gutter of WIN, ROWS rows of it, with the signs of FOUND in
+/// front of NUMBERS, the cells of the line numbers, which may be none: the
+/// sign of a line on the row of its first continuation, blanks elsewhere.
+fn sign_cells<B: BufferTrait>(
+    win: &Window,
+    layout: &Layout,
+    buffers: &Buffers<B>,
+    found: &findings::BufferFindings,
+    numbers: Vec<GutterCell>,
+    rows: usize,
+) -> Vec<GutterCell> {
+    let signs = buffers
+        .handle(&win.buffer_name)
+        .map(|buf| {
+            let buf = buf
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            findings::line_signs(&buf, found, (win.scroll_y, win.scroll_y + rows))
+        })
+        .unwrap_or_default();
+    let mut numbers = numbers.into_iter();
+    (0..rows)
+        .map(|index| {
+            let number = numbers.next().unwrap_or(GutterCell {
+                text: String::new(),
+                face: Face::LINE_NUMBER,
+                sign: None,
+            });
+            let sign = layout
+                .row(index)
+                .filter(|row| row.continuation == 0)
+                .and_then(|row| signs.get(&row.line));
+            match sign {
+                Some(&(sign, face)) => GutterCell {
+                    text: format!("{sign}{}{}", " ".repeat(SIGN_COLUMNS - 1), number.text),
+                    sign: Some(face),
+                    ..number
+                },
+                None => GutterCell {
+                    text: format!("{}{}", " ".repeat(SIGN_COLUMNS), number.text),
+                    ..number
+                },
+            }
+        })
+        .collect()
+}
+
 /// Returns how many columns the question PROMPT takes in front of the answer
 /// in a minibuffer window WIDTH columns wide: all of it, and one column more
 /// when it does not end in a blank, but never so many that no column is left
@@ -511,6 +587,7 @@ fn prompt_cells(prompt: &str, width: usize, first_line: usize, rows: usize) -> V
             GutterCell {
                 text,
                 face: Face::MINIBUFFER_PROMPT,
+                sign: None,
             }
         })
         .collect()
@@ -560,8 +637,8 @@ pub fn follow_point(
 
 /// Returns what is drawn over WIN's text in RECT, in buffer columns, in the
 /// order it is drawn, each over the one before: the colouring, the blanks at
-/// the ends of lines, the matches of a search, the overlays, the region, and
-/// the delimiters paired. A buffer looks the same whichever kind of window
+/// the ends of lines, the findings, the matches of a search, the overlays,
+/// the region, and the delimiters paired. A buffer looks the same whichever kind of window
 /// shows it, tiled or floating; FOCUSED says whether WIN has the keyboard.
 pub fn window_highlights<B: BufferTrait>(
     win: &Window,
@@ -572,6 +649,12 @@ pub fn window_highlights<B: BufferTrait>(
 ) -> Vec<BufferHighlight> {
     let mut in_buffer = syntax_highlights(win, rect, buffers);
     in_buffer.extend(trailing_highlights(win, rect, buffers, focused));
+    in_buffer.extend(findings::finding_highlights(
+        win,
+        rect,
+        buffers,
+        settings.findings,
+    ));
     in_buffer.extend(match_highlights(win, rect, buffers, settings.matches));
     in_buffer.extend(overlay_highlights(win, rect, buffers));
     in_buffer.extend(region_highlights(win, rect, buffers));
@@ -661,7 +744,7 @@ pub fn trailing_highlights<B: BufferTrait>(
 /// Returns the spans from START to END of TEXT on the lines FIRST_LINE to
 /// LAST_LINE, the last excluded: one per line, a line the span crosses taken
 /// up to its newline, included.
-fn span_highlights<B: BufferTrait>(
+pub(crate) fn span_highlights<B: BufferTrait>(
     text: &B,
     (start, end): (usize, usize),
     (first_line, last_line): (usize, usize),

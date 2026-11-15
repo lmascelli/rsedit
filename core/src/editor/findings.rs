@@ -1,11 +1,83 @@
 //! The findings' half of the facade: the markers that make a finding follow
 //! the text of an open file, made when a producer replaces its findings or
-//! when the file is opened, and read when the findings are asked for.
+//! when the file is opened, and read when the findings are asked for or
+//! drawn.
 //!
-//! Design: `doc/architettura-editor.typ, <segnalazioni>`.
+//! Design: `doc/architettura-editor.typ, <segnalazioni>`, and
+//! `doc/architettura-editor.typ, <segnalazioni-schermo>` for what a frame
+//! draws of them.
 
 use super::*;
-use crate::managers::{Finding, Found, LineColumn, Placed};
+use crate::managers::{Finding, Found, LineColumn, Placed, Severity};
+use crate::ui::{BufferFindings, FindingMark, FindingMarks};
+
+/// The name of the minor mode that draws the findings about a buffer's file,
+/// in the buffers where it is on.
+pub(crate) const FINDINGS_MODE: &str = "findings-mode";
+
+/// Returns how SEVERITY is drawn: its rank, 0 the most severe, the face of
+/// its span, the face of its sign, and the sign, which is also its letter in
+/// the status line.
+fn look(severity: Severity) -> (u8, Face, Face, char) {
+    match severity {
+        Severity::Error => (0, Face::FINDING_ERROR, Face::FINDING_ERROR_SIGN, 'E'),
+        Severity::Warning => (1, Face::FINDING_WARNING, Face::FINDING_WARNING_SIGN, 'W'),
+        Severity::Info => (2, Face::FINDING_INFO, Face::FINDING_INFO_SIGN, 'I'),
+        Severity::Hint => (3, Face::FINDING_HINT, Face::FINDING_HINT_SIGN, 'H'),
+    }
+}
+
+/// Returns what the echo area says of FINDING, made by PRODUCER: its
+/// severity, the first line of its message, its code and its producer.
+fn echo_line(finding: &Finding, producer: &str) -> String {
+    let message = finding.message.lines().next().unwrap_or("");
+    let code = finding
+        .code
+        .as_ref()
+        .map(|code| format!(" [{code}]"))
+        .unwrap_or_default();
+    format!("{}: {message}{code} ({producer})", finding.severity.name())
+}
+
+/// Returns SETS, the findings about one file, as a frame draws them over a
+/// buffer, and their count by severity for the status line: each severity
+/// there is, after a space, as ` E2 W1`.
+fn buffer_findings(sets: Vec<Found>) -> BufferFindings {
+    let mut counts = [0usize; Severity::ALL.len()];
+    let mut marks = Vec::new();
+    for found in sets {
+        // Markers made for these findings, one pair each, or none of them.
+        let ids = found
+            .set
+            .placed
+            .filter(|placed| placed.markers.len() == found.set.findings.len())
+            .map(|placed| placed.markers);
+        for (at, finding) in found.set.findings.iter().enumerate() {
+            let (rank, face, sign_face, sign) = look(finding.severity);
+            counts[usize::from(rank)] += 1;
+            let line_column = |(line, column): LineColumn| (line.saturating_sub(1), column);
+            marks.push(FindingMark {
+                markers: ids.as_ref().map(|ids| ids[at]),
+                start: line_column(finding.start),
+                end: line_column(finding.end),
+                rank,
+                face,
+                sign,
+                sign_face,
+                message: echo_line(finding, &found.producer),
+            });
+        }
+    }
+    // Stable: those that matter as much keep the order they were given in.
+    marks.sort_by_key(|mark| std::cmp::Reverse(mark.rank));
+    let count = Severity::ALL
+        .into_iter()
+        .zip(counts)
+        .filter(|&(_, count)| count > 0)
+        .map(|(severity, count)| format!(" {}{count}", look(severity).3))
+        .collect();
+    BufferFindings { marks, count }
+}
 
 /// A finding as it is asked for: where it is now, and whether its file's
 /// text has changed since its producer spoke.
@@ -51,6 +123,58 @@ fn make_markers<B: BufferTrait>(buf: &mut Buffer<B>, findings: &[Finding]) -> Pl
 }
 
 impl<B: BufferTrait> EditorState<B> {
+    /// Returns the findings a frame draws: those about the file of each
+    /// buffer a window shows, where the buffer has [`FINDINGS_MODE`] on;
+    /// `None` when there are none. Read one lock at a time, before the
+    /// frame's: the findings' lock is never held with another.
+    pub(crate) fn finding_marks(&self) -> Option<FindingMarks> {
+        let shown: std::collections::BTreeSet<String> = self.windows(|windows| {
+            let root = windows.root();
+            root.window_ids()
+                .into_iter()
+                .filter_map(|id| root.window(id).map(|window| window.buffer_name.clone()))
+                .chain(
+                    windows
+                        .floating()
+                        .iter()
+                        .map(|float| float.window.buffer_name.clone()),
+                )
+                .collect()
+        });
+        let files: Vec<(String, String)> = shown
+            .into_iter()
+            .filter_map(|name| {
+                let file = self
+                    .with_buffer(&name, |buf| {
+                        buf.minor_mode_enabled(FINDINGS_MODE)
+                            .then(|| buf.file_path.clone())
+                            .flatten()
+                    })
+                    .flatten()?;
+                Some((name, file))
+            })
+            .collect();
+        if files.is_empty() {
+            return None;
+        }
+        let sets: Vec<(String, Vec<Found>)> = self.findings(|all| {
+            files
+                .into_iter()
+                .map(|(name, file)| (name, all.for_file(&file)))
+                .filter(|(_, sets)| !sets.is_empty())
+                .collect()
+        });
+        if sets.is_empty() {
+            return None;
+        }
+        Some(FindingMarks {
+            buffers: sets
+                .into_iter()
+                .map(|(name, sets)| (name, buffer_findings(sets)))
+                .collect(),
+        })
+    }
+
     /// Returns the buffer visiting the file at PATH, if one is.
     pub(crate) fn buffer_visiting(&self, path: &str) -> Option<String> {
         self.buffer_names().into_iter().find(|name| {

@@ -501,6 +501,7 @@ fn layout(report: &mut Report) {
                         fill_guide: None,
                         matches: None,
                         spots: None,
+                        findings: None,
                         scroll_conservatively: 1,
                     },
                     &mut views,

@@ -45,6 +45,15 @@
        (trailing-whitespace nil       "#ff5555" nil)
        (results-here        nil       "#44475a" nil)
        (results-target      nil       "#343746" nil)
+       ;; Findings: the spans a tool reported, and their signs in the gutter
+       (finding-error       "#ff5555" nil       ("underline"))
+       (finding-error-sign  "#ff5555" nil       ("bold"))
+       (finding-warning     "#ffb86c" nil       ("underline"))
+       (finding-warning-sign "#ffb86c" nil       ("bold"))
+       (finding-info        "#8be9fd" nil       ("underline"))
+       (finding-info-sign   "#8be9fd" nil       ("bold"))
+       (finding-hint        "#6272a4" nil       ("underline"))
+       (finding-hint-sign   "#6272a4" nil       ("bold"))
        (preview             "#6272a4" nil       ("italic"))
 
        ;; `man' pages, which have no grammar -- only emphasis

@@ -303,6 +303,37 @@ mod tests {
         );
     }
 
+    /// The findings' faces are faces of every shipped theme: left out, a
+    /// finding would be drawn as the editor ships it, in colours that belong
+    /// to no theme's page.
+    #[test]
+    fn every_shipped_theme_names_the_faces_of_the_findings() {
+        let (ctx, env) = editor_with_modules();
+        let themes: Vec<String> = run("(available-themes)", &env, &ctx)
+            .iter()
+            .map(|name| match name {
+                LispExp::String(name) => name.to_string(),
+                other => panic!("a theme's name, not {other:?}"),
+            })
+            .collect();
+        assert!(themes.len() > 1, "{themes:?}");
+        for theme in &themes {
+            for severity in ["error", "warning", "info", "hint"] {
+                for face in [
+                    format!("finding-{severity}"),
+                    format!("finding-{severity}-sign"),
+                ] {
+                    let named = run(
+                        &format!("(assq '{face} (theme--faces {theme:?}))"),
+                        &env,
+                        &ctx,
+                    );
+                    assert!(!named.is_nil(), "{theme} does not name {face}");
+                }
+            }
+        }
+    }
+
     /// The current line is a face of every shipped theme: left out, it would
     /// keep the colour the editor ships, which belongs to no theme's page.
     /// And not the region's look, or a selection on point's line would not

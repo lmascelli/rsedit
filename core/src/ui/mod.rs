@@ -1,11 +1,12 @@
 //! What the screen shows, apart from any front end: the windows and how they
 //! share the frame, how one is composed into rows, highlights, a gutter and a
-//! status line, the faces and the theme, and the frame a front end draws.
+//! status line, the findings drawn over a buffer, the faces and the theme, and the frame a front end draws.
 //!
 //! Design: `doc/architettura-editor.typ, <frame>`.
 mod compose;
 mod faces;
 pub(crate) mod fill_column;
+mod findings;
 mod frame;
 mod gutter;
 pub mod layout;
@@ -23,6 +24,7 @@ pub use compose::{
 };
 pub use faces::{Color, Face, NAMED_COLORS, Style, Theme};
 pub use fill_column::FillColumnGuide;
+pub use findings::{BufferFindings, FindingMark, FindingMarks, finding_message_at};
 // For the tests, which try a registry of their own.
 #[cfg(test)]
 pub(crate) use faces::Registry as FaceRegistry;

@@ -49,6 +49,7 @@ pub const SETTINGS: &[Setting] = &[
               \x20 %p  All when the whole buffer is in the window, or where point is:\n\
               \x20     Top, Bot or a percentage\n\
               \x20 %i  pending I/O, error cause and last auto-save outcome/time (UTC)\n\
+              \x20 %!  the findings about the file, by severity, each after a space, as \" E2 W1\"\n\
               \x20 %*  ** when modified, -- when not    %%  a per cent sign\n\n\
               An unknown escape is shown as written; anything but a string shows the \
               default.\n\n\
@@ -451,7 +452,7 @@ pub const COMMAND_ARG_COMPLETION_FUNCTION: &str = "*command-arg-completion-funct
 pub const MODE_LINE_FORMAT: &str = "mode-line-format";
 
 /// What a window's status line says when nothing sets [`MODE_LINE_FORMAT`].
-pub const DEFAULT_MODE_LINE_FORMAT: &str = " %*%i %b   %m%n %s  L%l C%c   %p ";
+pub const DEFAULT_MODE_LINE_FORMAT: &str = " %*%i %b   %m%n %s%!  L%l C%c   %p ";
 
 /// The name of the Lisp variable that turns the mouse on.
 pub const MOUSE_MODE: &str = "mouse-mode";

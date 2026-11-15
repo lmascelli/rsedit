@@ -1,5 +1,5 @@
 NAME
-    findings - what tools have said about files, kept by file and by tool
+    findings - what tools have said about files, kept, drawn and listed
 
 SYNOPSIS
     (finding-set PRODUCER FILE ENTRIES)
@@ -7,6 +7,15 @@ SYNOPSIS
     (findings-for-file FILE)
     (findings-of-producer PRODUCER)
     (findings-under DIRECTORY)
+    (findings-mode &optional ARG)
+    (global-findings-mode &optional ARG)
+    (findings-list)
+    (findings-list-under DIRECTORY)
+    (findings-list-goto)
+    (findings-list-show)
+    (findings-list-refresh)
+    findings-window-height
+    findings-list-buffer-name
 
 DESCRIPTION
     A build, a linter, a spelling checker: each is a producer of
@@ -17,9 +26,12 @@ DESCRIPTION
     this file, everything this producer said, everything said about the
     files under that directory.
 
-    Only the keeping is here. Nothing is drawn: a finding is not
-    highlighted, counted in the mode line or shown at point by being
-    kept. That is for the code that asks.
+    Where `findings-mode' is on, the findings about the file a buffer
+    visits are drawn: the text they are about is underlined in the colour
+    of their severity, the line each starts on has a sign in the gutter,
+    the status line counts them, and the echo area says the one the
+    cursor is on. M-g f lists them, and M-g n walks the list. The mode is
+    on in every buffer unless turned off.
 
 A FINDING
     Each finding is a property list:
@@ -83,6 +95,61 @@ IN AN OPEN FILE
     Closing the buffer gives the findings back the places the producer
     said, and a finding stale when it closed stays stale.
 
+ON THE SCREEN
+    Each finding is drawn over its span in a face of its severity:
+    finding-error, finding-warning, finding-info or finding-hint, which
+    the editor ships underlined, the first three in red, yellow and cyan.
+    A finding with no span, whose :end is its :start, takes the character
+    at its start, or the cell after the line when it is at the line's end.
+    Where two findings cover the same text the more severe is drawn over
+    the other. The search's matches, the overlays and the region are drawn
+    over them all.
+
+    While the buffer's file has findings, the gutter has two columns more,
+    in front of the line numbers if they are on: a sign on the line each
+    finding starts on -- E, W, I or H, in finding-error-sign,
+    finding-warning-sign, finding-info-sign or finding-hint-sign -- and the
+    sign of the most severe when several start there. The columns go when
+    the last finding does, and a window too narrow to spare them has none.
+
+    %! in `mode-line-format' is the count of the findings, by severity,
+    each after a space: " E2 W1", and nothing when there are none. The
+    status line as the editor comes has it after the mode's state.
+
+    With the cursor on a finding, from its first character to the one
+    before its end, and the echo area having nothing else to say, the
+    echo area says it: its severity, the first line of its message, its
+    code and its producer, as
+
+        error: undefined name [E1] (my-lint)
+
+    When the cursor is on several, the most severe is said, and how many
+    more there are. A message of the editor's own takes its place, and the
+    finding is said again once that message has gone.
+
+    All of it is worked out each time the screen is drawn, from the
+    findings as they are then: a producer that replaces its findings
+    changes the screen with no further step.
+
+THE LIST
+    M-g f lists the findings about the file of the current buffer in a
+    buffer of its own, *Findings*, one to a line:
+
+        main.c:12:5: error: undefined name [E1] (my-lint)
+
+    the file named from its directory, the line from 1 and the column
+    from 1, as a compiler writes them, then what the echo area says, and
+    (stale) for a finding whose file has changed since its producer spoke.
+    M-x findings-list-under lists those about the files in a directory and
+    below it, named from that directory. The findings come in the order
+    `findings-for-file' and `findings-under' give them.
+
+    The list is the one M-g n and M-g p walk (see searching), and Return
+    goes to the finding on the cursor's line. Before each step of M-g n
+    the list is asked of the findings again, so that it says what the
+    producers say now; g does the same at once. Its entries are counted by
+    the line they are on, one to a line after the first.
+
 LIMITS
     A place past the end of its line stops at the end of the line, and a
     line past the end of the file at the file's end.
@@ -93,6 +160,13 @@ LIMITS
 
     A finding is kept for as long as the editor runs, and not in the
     session: what a producer said is the producer's to say again.
+
+    Only the findings about the file a buffer visits are drawn, and only
+    in its windows: a buffer that visits no file has none. A float, such
+    as a strip of choices, draws the spans but has no gutter, and so no
+    signs. A list rebuilt by M-g n keeps its place by number: when the
+    findings before it have changed, the next step may skip one or show
+    one again.
 
 EXAMPLES
     A checker of your own that reports two findings about a file, one an
@@ -117,5 +191,32 @@ EXAMPLES
 
         (finding-clear 'my-build)
 
+    The findings drawn, but not in the status line: a format without %!.
+
+        (setq mode-line-format " %* %b   %m%n  L%l C%c ")
+
+    No findings drawn in the buffers of one mode.
+
+        (defun my-quiet-setup () (minor-mode-off 'findings-mode))
+        (add-hook 'python-mode "after-change-major-mode-hook"
+                  'my-quiet-setup)
+
+    Errors in a softer colour, as a theme would set them.
+
+        (set-face 'finding-error "#cc6666" nil '("underline"))
+
+KEYS
+    M-g f                   findings-list
+    M-g n                   next-error
+    M-g p                   previous-error
+
+KEYS IN FINDINGS LIST MODE
+    <ret>                   findings-list-goto
+    o                       findings-list-show
+    g                       findings-list-refresh
+    n                       next-line
+    p                       previous-line
+    q                       results-quit
+
 SEE ALSO
-    compile, files, buffers
+    compile, searching, themes, modes, files, buffers

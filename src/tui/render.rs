@@ -94,20 +94,20 @@ pub fn render_to<W: Write>(
         }
 
         // The gutter, left of the rectangle, cell by cell: point's line has a
-        // face of its own.
+        // face of its own, and a sign in front of it one more.
         for (offset_y, cell) in view.gutter.iter().enumerate() {
             let style = frame.theme.style(cell.face);
             apply_style(out, &style, depth)?;
             let text = fit(&cell.text, view.gutter_width);
-            draw_clipped_row(
-                out,
-                view.rect.x - view.gutter_width as isize,
-                view.rect.y + offset_y as isize,
-                &text,
-                frame_w,
-                frame_h,
-            )?;
+            let x = view.rect.x - view.gutter_width as isize;
+            let y = view.rect.y + offset_y as isize;
+            draw_clipped_row(out, x, y, &text, frame_w, frame_h)?;
             reset(out, &base, depth)?;
+            if let (Some(face), Some(sign)) = (cell.sign, text.chars().next()) {
+                apply_style(out, &frame.theme.style(face), depth)?;
+                draw_clipped_row(out, x, y, &sign.to_string(), frame_w, frame_h)?;
+                reset(out, &base, depth)?;
+            }
         }
 
         // The highlights, drawn again over the rows: a plain row is one

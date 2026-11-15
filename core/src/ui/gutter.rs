@@ -1,5 +1,6 @@
 //! The gutter: the line numbers left of a window's text, how many columns
-//! they take, and what each row of them says.
+//! they take, and what each row of them says; the signs of the findings go
+//! in front of them (`ui/findings.rs`).
 //!
 //! Design: `doc/architettura-editor.typ, <margine>`.
 use crate::ui::Face;
@@ -14,6 +15,9 @@ pub struct GutterCell {
     /// crate::ui::RenderableWindowView::gutter_width
     pub text: String,
     pub face: Face,
+    /// The face of the sign that starts `text`, its first character, when it
+    /// starts with one: a finding's, drawn over the line it is on.
+    pub sign: Option<Face>,
 }
 
 /// The name of the minor mode that gives the windows showing a buffer their
@@ -100,6 +104,7 @@ pub fn gutter_cells(
                 return GutterCell {
                     text: " ".repeat(width),
                     face: Face::LINE_NUMBER,
+                    sign: None,
                 };
             }
             let current = line == point_line;
@@ -121,6 +126,7 @@ pub fn gutter_cells(
                 } else {
                     Face::LINE_NUMBER
                 },
+                sign: None,
             }
         })
         .collect()

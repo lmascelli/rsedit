@@ -108,11 +108,24 @@ impl Face {
     /// The vertical guide at the buffer's effective fill column.
     pub const FILL_COLUMN_INDICATOR: Face = Face(20);
 
+    /// The span of a finding of severity `error`, `warning`, `info` or
+    /// `hint`, where `findings-mode` is on.
+    pub const FINDING_ERROR: Face = Face(21);
+    pub const FINDING_WARNING: Face = Face(22);
+    pub const FINDING_INFO: Face = Face(23);
+    pub const FINDING_HINT: Face = Face(24);
+    /// The sign in the gutter on the line where a finding of that severity
+    /// starts.
+    pub const FINDING_ERROR_SIGN: Face = Face(25);
+    pub const FINDING_WARNING_SIGN: Face = Face(26);
+    pub const FINDING_INFO_SIGN: Face = Face(27);
+    pub const FINDING_HINT_SIGN: Face = Face(28);
+
     /// The faces the editor names itself, with their ids: the first entries
     /// of the registry, so that Rust names them as constants. The order and
     /// the constants above agree, as
     /// `built_in_faces_are_interned_at_their_own_ids` checks.
-    pub const BUILT_IN: [(Face, &'static str); 21] = [
+    pub const BUILT_IN: [(Face, &'static str); 29] = [
         (Face::DEFAULT, "default"),
         (Face::REGION, "region"),
         (Face::MODE_LINE, "mode-line"),
@@ -134,6 +147,14 @@ impl Face {
         (Face::MINIBUFFER_PROMPT, "minibuffer-prompt"),
         (Face::HL_LINE, "hl-line"),
         (Face::FILL_COLUMN_INDICATOR, "fill-column-indicator"),
+        (Face::FINDING_ERROR, "finding-error"),
+        (Face::FINDING_WARNING, "finding-warning"),
+        (Face::FINDING_INFO, "finding-info"),
+        (Face::FINDING_HINT, "finding-hint"),
+        (Face::FINDING_ERROR_SIGN, "finding-error-sign"),
+        (Face::FINDING_WARNING_SIGN, "finding-warning-sign"),
+        (Face::FINDING_INFO_SIGN, "finding-info-sign"),
+        (Face::FINDING_HINT_SIGN, "finding-hint-sign"),
     ];
 
     /// Returns the face called NAME, defining it if nothing has named it yet.
@@ -479,6 +500,42 @@ impl Default for Theme {
                 ..Style::fg(Color::CYAN)
             },
         );
+        // Underlined, so that the text keeps a colour to read it by.
+        for (face, sign, color) in [
+            (
+                Face::FINDING_ERROR,
+                Face::FINDING_ERROR_SIGN,
+                Some(Color::BRIGHT_RED),
+            ),
+            (
+                Face::FINDING_WARNING,
+                Face::FINDING_WARNING_SIGN,
+                Some(Color::YELLOW),
+            ),
+            (
+                Face::FINDING_INFO,
+                Face::FINDING_INFO_SIGN,
+                Some(Color::CYAN),
+            ),
+            (Face::FINDING_HINT, Face::FINDING_HINT_SIGN, None),
+        ] {
+            theme.set(
+                face,
+                Style {
+                    fg: color,
+                    underline: true,
+                    ..Style::plain()
+                },
+            );
+            theme.set(
+                sign,
+                Style {
+                    fg: color.or(Some(Color::BRIGHT_BLACK)),
+                    bold: true,
+                    ..Style::plain()
+                },
+            );
+        }
         theme.set(
             Face::SHOW_PAREN_MISMATCH,
             Style {

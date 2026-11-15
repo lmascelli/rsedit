@@ -249,7 +249,11 @@ pub(super) fn paint_view(
         );
     }
     for (line, cell) in view.gutter.iter().enumerate() {
-        let style = frame.theme.style(cell.face);
+        let mut styles = vec![frame.theme.style(cell.face); view.gutter_width];
+        // A sign starts the cell, in a face of its own.
+        if let (Some(face), Some(first)) = (cell.sign, styles.first_mut()) {
+            *first = frame.theme.style(face);
+        }
         row(
             painter,
             grid,
@@ -257,7 +261,7 @@ pub(super) fn paint_view(
             rect.y + line as isize,
             view.gutter_width,
             &cell.text,
-            &vec![style; view.gutter_width],
+            &styles,
             font,
             default,
         );

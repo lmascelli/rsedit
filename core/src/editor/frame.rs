@@ -1,7 +1,7 @@
 //! What the host is told: the snapshot of a frame, the echo area, the size of
 //! the screen, and how long the host may wait before it draws again; and what
-//! a frame draws for the moment, the delimiters paired at point and the
-//! matches of a search.
+//! a frame draws for the moment, the delimiters paired at point, the matches
+//! of a search and the findings.
 //!
 //! Design: `doc/architettura-editor.typ, <snapshot>`, and
 //! `doc/architettura-editor.typ, <evidenziazioni>` for what a frame draws for
@@ -136,10 +136,12 @@ impl<B: BufferTrait> EditorState<B> {
         let matches = highlighting_matches(env)
             .then(|| self.search_marks())
             .flatten();
+        // The findings and the windows, then the buffers: one at a time.
+        let findings = self.finding_marks();
 
         // A message that has expired is not reported. The state keeps it, and
         // the view forgets it: nothing runs on a timer to tidy up.
-        let echo_message = {
+        let stored_message = {
             let echo = self
                 .echo_message
                 .read()
@@ -152,7 +154,7 @@ impl<B: BufferTrait> EditorState<B> {
 
         // The tiled tree, the floats and the focus in one acquisition, with
         // the buffers they show.
-        let (views, separators, focused_window_id) =
+        let (views, separators, focused_window_id, at_point) =
             self.windows_mut_with_buffers(|windows, buffers| {
                 let focused_window_id = windows.focused();
                 let mut views = Vec::new();
@@ -180,8 +182,14 @@ impl<B: BufferTrait> EditorState<B> {
                     fill_guide: fill_guide.as_ref(),
                     matches: matches.as_ref(),
                     spots: spots.as_ref(),
+                    findings: findings.as_ref(),
                     scroll_conservatively,
                 };
+                // The focused tiled window's: a prompt or a float has the
+                // keyboard for something else.
+                let at_point = windows.focused_buffer().and_then(|buffer| {
+                    crate::ui::finding_message_at(buffers, &buffer, findings.as_ref())
+                });
                 windows.root_mut().compute_tiled_views(
                     Rect {
                         x: 0,
@@ -277,8 +285,16 @@ impl<B: BufferTrait> EditorState<B> {
                     });
                 }
 
-                (views, separators, focused_window_id)
+                (views, separators, focused_window_id, at_point)
             });
+
+        // The finding at point is said when the echo area has nothing else
+        // to say, and stops being said when point leaves it.
+        let echo_message = if stored_message.is_empty() {
+            at_point.unwrap_or_default()
+        } else {
+            stored_message
+        };
 
         FrameSnapshot {
             views,

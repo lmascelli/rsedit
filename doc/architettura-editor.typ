@@ -178,7 +178,7 @@ lì e nella mappa di `lib.rs`.
   [`jobs/`], [I lavori di sfondo dell'editor: `Highlighter`, `Prescanner`, `FileWatcher` e `AutoSaver` (@lavori-editor).],
   [`feature/`], [Le due funzionalità che non possono dipendere da un file Lisp: il minibuffer e la ricerca incrementale (@minibuffer).],
   [`work/`], [Il WorkManager: il nucleo dello scheduler, l'esecutore, il registro, i thread dedicati, il watchdog, gli argomenti e le opzioni (@sfondo).],
-  [`ui/`], [La descrizione dello schermo: l'albero delle finestre e le flottanti (`windows.rs`), la composizione di una finestra (`compose.rs`), le righe e le loro colonne (`layout.rs`), il margine dei numeri (`gutter.rs`), la riga di stato (`mode_line.rs`), facce e temi (`faces.rs`), `FrameSnapshot` (`frame.rs`) (@frame).],
+  [`ui/`], [La descrizione dello schermo: l'albero delle finestre e le flottanti (`windows.rs`), la composizione di una finestra (`compose.rs`), le righe e le loro colonne (`layout.rs`), il margine dei numeri (`gutter.rs`), le segnalazioni sullo schermo (`findings.rs`), la riga di stato (`mode_line.rs`), facce e temi (`faces.rs`), `FrameSnapshot` (`frame.rs`) (@frame).],
   [`tests/`], [Circa cento file di test dell'editor, più `perf/` (@test).],
   [`../lisp/`], [I venticinque moduli Lisp distribuiti con l'editor, in tre cartelle: `base/`, `features/`, `languages/` (@moduli-lisp).],
   [`../build.rs`], [Copia ogni cartella dei moduli in `target/<profilo>/data/lisp`, accanto all'eseguibile, e con loro i temi e le pagine del manuale.],
@@ -1003,7 +1003,8 @@ che gli serve e rilascia prima di prendere il lock seguente; `echo_message` e
 gli altri compartimenti si prendono da soli. `findings` è una foglia per
 costruzione: le sue operazioni che toccano un buffer lo rilasciano prima di
 bloccarlo, e riconoscono con una generazione ciò che è cambiato nel frattempo
-(@segnalazioni).
+(@segnalazioni). Anche `snapshot` lo prende da solo, prima di `windows`, per
+copiarne fuori ciò che il fotogramma disegna (@segnalazioni-schermo).
 
 #canvas(height: 3.4cm)[
   #node(1.4cm, 1.0cm, 2.4cm, 0.8cm, [ambiente Lisp\ (`Env`)], fill: paper)
@@ -1017,7 +1018,7 @@ bloccarlo, e riconoscono con una generazione ciò che è cambiato nel frattempo
   #carrow((12.9cm, 1.0cm), (14.05cm, 1.0cm))
   #node(15.0cm, 2.6cm, 1.9cm, 0.7cm, [`modes`])
   #carrow((15.0cm, 1.4cm), (15.0cm, 2.25cm))
-  #note(0.2cm, 2.15cm)[le variabili si leggono #emph[prima] di ogni altro lock e mai con uno preso: `snapshot` legge le impostazioni,\ poi l'area messaggi, poi `windows` e `buffers` insieme; la risoluzione di un tasto tiene `pending_keys`,\ legge il modo del buffer corrente e solo dopo prende `modes`.]
+  #note(0.2cm, 2.15cm)[le variabili si leggono #emph[prima] di ogni altro lock e mai con uno preso: `snapshot` legge le impostazioni,\ poi le segnalazioni, poi l'area messaggi, poi `windows` e `buffers` insieme; la risoluzione di un tasto tiene `pending_keys`,\ legge il modo del buffer corrente e solo dopo prende `modes`.]
 ]
 
 `buffers` ha una particolarità: nel percorso comune non viene tenuto mentre si
@@ -3830,12 +3831,14 @@ con `electric-pair`, e `scan_cache_tests` prova le fotografie.
 
 == Facce e temi <facce>
 
-Una faccia è un `Face(u32)`: un indice in un registro globale. Le prime 18 sono
-predefinite (`default`, `region`, `mode-line`, `mode-line-inactive`,
-`window-separator`, `keyword`, `type`, `string`, `comment`, `function`,
-`builtin`, `line-number`, `line-number-current`, `replace-match`,
-`lazy-highlight`, `show-paren-match`, `show-paren-mismatch`,
-`trailing-whitespace`); un modulo
+Una faccia è un `Face(u32)`: un indice in un registro globale. Le prime 29 sono
+predefinite, nell'ordine di `Face::BUILT_IN` (`default`, `region`, `mode-line`,
+`mode-line-inactive`, `window-separator`, `keyword`, `type`, `string`,
+`comment`, `function`, `builtin`, `line-number`, `line-number-current`,
+`replace-match`, `lazy-highlight`, `show-paren-match`, `show-paren-mismatch`,
+`trailing-whitespace`, `minibuffer-prompt`, `hl-line`,
+`fill-column-indicator`, e le otto delle segnalazioni, da `finding-error` a
+`finding-hint-sign`); un modulo
 crea una faccia nuova semplicemente nominandola (`'doc-comment` in
 `rust-mode.lisp`) e le dà un aspetto con `set-face`. Il `Theme` in `Runtime`
 associa a ogni faccia uno `Style` (colori di primo piano e sfondo, grassetto,
@@ -3850,7 +3853,8 @@ deve vedersi su ogni sfondo (la regione, la riga di stato, `replace-match`),
 numeri di riga attenuati e una riga di stato inattiva grigia; le
 corrispondenze di una ricerca su fondo ciano, le parentesi su fondo blu, o
 magenta quando non corrispondono, gli spazi a fine riga su fondo rosso
-(@evidenziazioni). Tutto questo sta
+(@evidenziazioni), le segnalazioni sottolineate, in rosso, giallo e ciano, con
+i segni in grassetto (@segnalazioni-schermo). Tutto questo sta
 in `ui/faces.rs`; le primitive sono in `primitives/theme.rs`.
 
 == Le decisioni <decisioni-modi>
@@ -5090,12 +5094,16 @@ lock in un ordine fisso e non fa I/O; il disegno avviene dopo, senza lock.
   sintattica della finestra con il focus, se il suo buffer ha
   `show-paren-mode` acceso, e il modello della ricerca o della sostituzione
   in corso, se `highlight-all-matches` lo chiede (@evidenziazioni).
++ Copia fuori dal deposito le segnalazioni dei file che le finestre mostrano
+  (`finding_marks`), un lock alla volta (@segnalazioni-schermo).
 + Legge l'area messaggi, vuota se il messaggio è scaduto.
 + Con `windows` in scrittura (lo scorrimento può dover seguire il punto) e
   `buffers` in lettura, attraverso `windows_mut_with_buffers`, cerca la
   coppia di parentesi della finestra con il focus, compone ogni foglia
   dell'albero nel rettangolo del frame meno l'ultima riga, raccogliendo i
-  separatori; poi compone le flottanti.
+  separatori; poi compone le flottanti, e cerca la segnalazione al punto
+  della finestra con il focus.
++ Se l'area messaggi è vuota, vi mette il messaggio di quella segnalazione.
 + Consuma il testo destinato agli appunti (`take_pending_clipboard`).
 
 Ogni foglia si compone come dice @composizione. Le finestre flottanti si
@@ -5106,7 +5114,7 @@ compongono dopo, ognuna nel suo rettangolo, senza margine né riga di stato.
   header: ([Campo di `FrameSnapshot`], [Contenuto]),
   [`views`], [Un `RenderableWindowView` per finestra: rettangolo, nome del buffer, titolo, focus, cursore relativo, righe di testo, evidenziazioni (riga, colonne, faccia), riga di stato, bordo, margine e sua larghezza.],
   [`separators`], [Rettangoli e carattere delle linee tra finestre affiancate.],
-  [`echo_message`, `prompt`], [Il messaggio e l'eventuale offerta della keymap transitoria, che lo sostituisce.],
+  [`echo_message`, `prompt`], [Il messaggio, o quello della segnalazione al punto quando non ce n'è, e l'eventuale offerta della keymap transitoria, che lo sostituisce.],
   [`pending_input`], [`C-u 4 C-x-`: ciò che l'editor sta leggendo.],
   [`theme`], [Gli stili delle facce (`Arc<Theme>`).],
   [`focused_window_id`, `width`, `height`], [Come dice il nome.],
@@ -5130,7 +5138,8 @@ quest'ordine:
   ha almeno due, e registra le righe che restano (`text_height`);
 + legge il punto e il numero di righe del buffer sotto un'acquisizione sola del
   suo lock;
-+ calcola il margine (@margine) e lo toglie dal rettangolo, a sinistra: da qui
++ calcola il margine (@margine), con le colonne dei segni se il buffer ha
+  segnalazioni (@segnalazioni-schermo), e lo toglie dal rettangolo, a sinistra: da qui
   in poi scorrimento, cursore ed evidenziazioni conoscono solo le colonne del
   testo;
 + compone le righe visibili (@righe), segue il punto se si è mosso o se la
@@ -5139,8 +5148,9 @@ quest'ordine:
   restare visibile è la colonna del cursore sullo schermo, che il testo
   virtuale può spostare;
 + raccoglie le evidenziazioni in colonne del buffer con `window_highlights`,
-  nell'ordine #emph[sintassi → corrispondenze → overlay → regione →
-  parentesi], e le porta sullo schermo con `place`; aggiunge per
+  nell'ordine #emph[sintassi → spazi a fine riga → segnalazioni →
+  corrispondenze → overlay → regione → parentesi], e le porta sullo schermo
+  con `place`; aggiunge per
   ultime le facce del testo virtuale, perché le ultime vincono;
 + dopo lo scorrimento, che decide quali righe si numerano, calcola le celle del
   margine.
@@ -5210,8 +5220,8 @@ buffer, il modello e i caratteri entro cui una corrispondenza conta (tutto il
 buffer per una ricerca, `from..limit` per una sostituzione, cioè ciò che resta
 da offrire), e `spots`, una `SpotMarks` con l'id della finestra e le
 posizioni. `window_highlights` mette tutto insieme
-nell'ordine di disegno --- colorazione, spazi a fine riga, corrispondenze,
-overlay, regione, parentesi --- per le foglie e per le flottanti allo stesso
+nell'ordine di disegno --- colorazione, spazi a fine riga, segnalazioni
+(@segnalazioni-schermo), corrispondenze, overlay, regione, parentesi --- per le foglie e per le flottanti allo stesso
 modo, e riceve se la finestra ha il focus.
 
 `pairing` (@scanner) guarda prima il carattere dopo il punto, se è
@@ -5282,6 +5292,114 @@ Le decisioni:
   avere.
 + *Una regexp vuota non si disegna.* Una corrispondenza vuota, come quella di
   `x*` tra due caratteri, non ha un carattere su cui stare.
+
+== Le segnalazioni sullo schermo <segnalazioni-schermo>
+
+Le segnalazioni del deposito (@segnalazioni) si disegnano come le
+evidenziazioni del momento: ricalcolate a ogni `snapshot`, mai conservate nel
+buffer. Dove un buffer che visita un file ha `findings-mode` acceso
+(`FINDINGS_MODE`, in `editor/findings.rs`), ogni segnalazione sul suo file ha
+quattro forme: il suo intervallo nella faccia della sua gravità, un segno nel
+margine sulla riga dove comincia, un posto nel conteggio della riga di stato,
+e il suo messaggio nell'area messaggi quando il punto ci sta sopra e l'area
+non ha altro da dire. Il modo è del modulo `findings` (@mod-findings), che fa
+anche la lista che `M-g n` percorre; il disegno è in `ui/findings.rs`.
+
+Il deposito non si tiene mai con un altro lock, e la fotografia deve essere
+uno stato in cui l'editor è stato: le due cose si conciliano dividendo il
+lavoro in due tempi. Prima dei lock del fotogramma, `finding_marks` legge i
+buffer che le finestre mostrano, da `windows`; per ognuno, da solo, se ha il
+modo acceso e quale file visita; poi, dal deposito, da solo, i `Set` di quei
+file. Ne fa un `FindingMarks`: per buffer, un `FindingMark` per segnalazione,
+con gli id dei suoi marcatori, il posto del produttore, il rango della
+gravità, le due facce, il segno e il messaggio già scritto, e il testo di
+`%!`. Sotto i lock del fotogramma resta da leggere solo dove i marcatori sono
+ora, nel buffer che si compone: ciò che si vede è il testo di quel momento,
+modifiche comprese.
+
+#canvas(height: 5.0cm)[
+  #node(2.2cm, 0.8cm, 3.6cm, 0.9cm, [`windows`: \ i buffer mostrati])
+  #node(6.8cm, 0.8cm, 4.0cm, 0.9cm, [ogni buffer, da solo: \ il modo, il file])
+  #node(11.6cm, 0.8cm, 4.0cm, 0.9cm, [`findings`, da solo: \ `for_file`])
+  #node(15.8cm, 0.8cm, 3.0cm, 0.9cm, [`FindingMarks`], fill: paper)
+  #carrow((4.0cm, 0.8cm), (4.8cm, 0.8cm))
+  #carrow((8.8cm, 0.8cm), (9.6cm, 0.8cm))
+  #carrow((13.6cm, 0.8cm), (14.3cm, 0.8cm))
+  #node(15.8cm, 2.8cm, 3.0cm, 0.9cm, [i marcatori, \ in offset], fill: accent.lighten(85%))
+  #carrow((15.8cm, 1.25cm), (15.8cm, 2.35cm))
+  #segment((14.3cm, 2.8cm), (3.0cm, 2.8cm))
+  #carrow((3.0cm, 2.8cm), (3.0cm, 3.95cm))
+  #carrow((7.4cm, 2.8cm), (7.4cm, 3.95cm))
+  #carrow((11.4cm, 2.8cm), (11.4cm, 3.95cm))
+  #carrow((15.8cm, 3.25cm), (15.8cm, 3.95cm))
+  #node(3.0cm, 4.4cm, 3.6cm, 0.9cm, [`finding_highlights`: \ gli intervalli])
+  #node(7.4cm, 4.4cm, 3.6cm, 0.9cm, [`line_signs`: \ i segni nel margine])
+  #node(11.4cm, 4.4cm, 3.6cm, 0.9cm, [`%!` nella \ riga di stato])
+  #node(15.8cm, 4.4cm, 3.4cm, 0.9cm, [`finding_message_at`: \ l'area messaggi])
+  #note(0.2cm, 1.75cm)[prima dei lock del fotogramma, un lock alla volta]
+  #note(3.3cm, 3.35cm)[sotto i lock del fotogramma]
+]
+
+#ref-table(
+  columns: (3.0cm, 1fr),
+  header: ([Forma], [Come]),
+  [Intervallo], [`finding_highlights`, in `window_highlights` dopo gli spazi a fine riga e prima delle corrispondenze, per foglie e flottanti: `span_highlights` sulle righe visibili, nella faccia `finding-error`, `finding-warning`, `finding-info` o `finding-hint`. Le segnalazioni sono in ordine di gravità crescente, così la più grave, disegnata per ultima, vince su quelle che copre. Una senza intervallo prende una cella, quella dopo la riga se cade alla sua fine.],
+  [Segno], [`line_signs` dà a ogni linea visibile su cui comincia una segnalazione il segno della più grave, `E`, `W`, `I` o `H`, nella faccia `finding-…-sign`; `sign_cells` lo mette nelle colonne dei segni (@margine). Le colonne ci sono finché il buffer ha segnalazioni, non nelle flottanti e non nel minibuffer.],
+  [Conteggio], [`%!` (@riga-di-stato): le gravità che ci sono, ciascuna con la sua lettera e dopo uno spazio, ` E2 W1`, contate in `finding_marks`; nulla senza segnalazioni.],
+  [Messaggio], [`finding_message_at`, per il buffer della finestra affiancata con il focus: fra le segnalazioni su cui sta il punto, dal loro inizio al carattere prima della fine, la più grave, la prima data se più d'una lo sono, e quante altre ci sono. `snapshot` la mette nell'area messaggi solo se questa è vuota.],
+)
+
+Il posto di una segnalazione è quello dei suoi marcatori quando il buffer li
+ha entrambi, e quello del produttore altrimenti, tenuto dentro il testo come
+fanno le domande al deposito. Fra la copia e i lock può arrivare una
+sostituzione, che toglie i marcatori vecchi: per un fotogramma l'insieme di
+prima si disegna al posto che il produttore aveva detto, e il successivo
+disegna il nuovo.
+
+La lista è del modulo: `findings-list` e `findings-list-under` chiedono le
+segnalazioni con `findings-for-file` e `findings-under`, ne fanno un buffer
+`*Findings*` e lo attaccano come lista di risultati con `results-put`
+(@risultati), con `findings--draw` come `results-refresh`, che le chiede di
+nuovo prima di ogni passo di `M-g n`.
+
+Le decisioni:
+
++ *Come le evidenziazioni del momento, non come overlay.* Un overlay per
+  segnalazione andrebbe rifatto a ogni sostituzione e tolto a ogni
+  `finding-clear`, e due copie del posto, l'overlay e il marcatore, si
+  dovrebbero tenere d'accordo. Calcolate nella fotografia, non c'è nulla da
+  togliere, e un produttore che sostituisce le sue segnalazioni cambia lo
+  schermo senza un passo in più. Scartato: gli overlay di Flymake in Emacs,
+  che servono a un ridisegno incrementale che qui non c'è.
++ *Copiate prima, posizionate sotto i lock.* Il deposito è una foglia
+  dell'ordine dei lock (@ordine-lock), e metterlo dentro
+  `windows_mut_with_buffers` gli darebbe un posto nell'ordine. Le facce, i
+  segni e i messaggi non dipendono dal testo e si preparano prima; solo i
+  marcatori, che le modifiche spostano, si leggono con il buffer che si
+  compone. Il costo è una copia, a ogni fotogramma, delle segnalazioni dei
+  file mostrati, che si paga anche quando non si vedono tutte.
++ *Le colonne dei segni solo finché ci sono segnalazioni.* Due colonne
+  sempre, in ogni file, si pagherebbero anche dove nessun produttore ha mai
+  parlato; il prezzo di toglierle è che il testo si sposta di due colonne
+  quando arriva la prima segnalazione e quando se ne va l'ultima, come con
+  `signcolumn=auto` di vim. Scartato: la frangia di Emacs, che in un
+  terminale non c'è.
++ *Una lettera per segno.* Una cella larga uno, che ogni terminale disegna e
+  che si legge anche senza colori, come nel tema `monochrome`.
++ *Il messaggio al punto non scrive nell'area messaggi.* Scritto con
+  `message` andrebbe tolto quando il punto se ne va, e coprirebbe un messaggio
+  dell'editor; detto dalla fotografia quando l'area è vuota, sparisce da sé e
+  cede il posto a ogni altro messaggio. Scartato: un `post-command-hook` in
+  Lisp, che farebbe lo stesso lavoro dopo ogni comando, anche dove non si
+  vede.
++ *La lista si chiede di nuovo prima di ogni passo.* Una lista fatta una volta
+  direbbe ciò che i produttori dicevano allora; rifatta prima di ogni passo,
+  come quella di una compilazione, segue il deposito. Il passo si conta per
+  numero, come in ogni lista che si rifà (@risultati): se cambiano le
+  segnalazioni prima di quella corrente, il passo può saltarne una.
++ *Nulla senza il modulo.* `findings-mode` si accende con il modulo, in ogni
+  buffer; un editor senza moduli conserva le segnalazioni e non le disegna,
+  come per le parentesi e gli spazi (@evidenziazioni).
 
 == Le righe e le loro colonne <righe>
 
@@ -5397,6 +5515,14 @@ punto. Un numero troppo largo per il margine perde le cifre di sinistra. Il
 tipo e la larghezza si leggono in un `GutterSpec` prima che la composizione
 prenda un lock; se il margine c'è lo decide ogni finestra, dal suo buffer.
 
+Davanti ai numeri, o da sole se i numeri sono spenti, stanno le
+`SIGN_COLUMNS` (2) colonne dei segni delle segnalazioni, finché il buffer ne
+ha e se al testo restano almeno `MIN_TEXT_WIDTH_FOR_GUTTER` colonne
+(@segnalazioni-schermo). `sign_cells` le mette in testa a ogni cella: il segno
+e uno spazio sulla riga della prima continuazione di una linea, due spazi
+altrove; `GutterCell::sign` dice la faccia del primo carattere, che i
+front-end ridisegnano sopra la cella.
+
 == La riga di stato <riga-di-stato>
 
 La riga di stato prende l'ultima riga del rettangolo di una finestra affiancata
@@ -5406,12 +5532,14 @@ margine, ed è larga quanto la finestra, margine compreso.
 
 `expand_mode_line` (`ui/mode_line.rs`) la scrive seguendo `mode-line-format`
 (predefinito
-`" %* %b   %m%n %s  L%l C%c   %p "`): `%b` nome del buffer, `%f` file (o
+`" %*%i %b   %m%n %s%!  L%l C%c   %p "`): `%b` nome del buffer, `%i` lo stato
+dell'I/O del file, `%f` file (o
 nome), `%m` modo, `%n` le etichette dei modi minori accesi, ognuna dopo uno
 spazio (@modi-minori), `%s` lo stato che il modo tiene nel buffer (`mode-line-state`, come
 il `NORMAL` di vim), `%l` riga (da 1), `%c` colonna (da 0), `%p` posizione
-(`All`, `Top`, `Bot` o percentuale), `%*` `**` se modificato e `--`
-altrimenti, `%%`. `%p` dice `All` quando tutto il buffer sta nella finestra,
+(`All`, `Top`, `Bot` o percentuale), `%!` il conteggio delle segnalazioni,
+che la composizione le passa già scritto (@segnalazioni-schermo), `%*` `**` se
+modificato e `--` altrimenti, `%%`. `%p` dice `All` quando tutto il buffer sta nella finestra,
 le cui righe di testo `expand_mode_line` riceve, come in Emacs; altrimenti
 dice dove è il punto. Una sequenza `%` che non conosce
 resta com'è scritta, e un formato che non è una stringa ricade su quello
@@ -6396,7 +6524,8 @@ rilascia, e legge i marcatori sotto il lock del buffer, uno alla volta.
 Le primitive sono `finding-set`, `finding-clear`, `findings-for-file`,
 `findings-of-producer` e `findings-under`; una segnalazione, in entrata e in
 uscita, è una lista di proprietà. Un elenco con una voce sbagliata si rifiuta
-intero, prima di toccare il deposito. L'uso è nella pagina `findings`.
+intero, prima di toccare il deposito. L'uso è nella pagina `findings`. Ciò che
+lo schermo ne mostra è in @segnalazioni-schermo.
 
 === L'ambiente <ambiente>
 
@@ -7580,6 +7709,25 @@ modo maggiore.
 + *Lo spazio, e non Invio.* Il gancio è `post-self-insert-hook`, che Invio non
   fa scattare: `newline` è di `indent`, e spezzare lì vorrebbe dire legare i
   due moduli. Una riga andata oltre la colonna si spezza al prossimo spazio.
+
+=== `findings` <mod-findings>
+
+`findings-mode`, senza etichetta e acceso in ogni buffer con
+`global-findings-mode` come `show-paren-mode` (@mod-show-paren), fa disegnare
+le segnalazioni del deposito (@segnalazioni-schermo); `M-g f` le elenca in
+`*Findings*`, in `findings-list-mode`, e `M-x findings-list-under` elenca
+quelle sotto una directory.
+
++ *Il modulo è solo la vista della lista.* Il disegno è in Rust; qui si
+  chiedono le segnalazioni, si scrive una riga per ciascuna e le si attacca
+  come lista di risultati (@risultati), che `next-error` percorre senza sapere
+  da dove venga.
++ *Una riga nella forma di un compilatore.* `file:riga:colonna:`, con la
+  colonna da 1, si legge come l'uscita di `compile` e si copia in un altro
+  strumento; il file si nomina dalla directory della lista, perché la riga
+  resti corta.
++ *La riga si conta, non si legge.* Come in `occur` (@mod-occur): un percorso
+  con i due punti si legge in due modi, e la voce sa già dov'è.
 
 === `hl-line` <mod-hl-line>
 
