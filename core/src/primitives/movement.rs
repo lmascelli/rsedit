@@ -6,6 +6,7 @@
 //! Design: `doc/architettura-editor.typ, <movimento>`.
 use super::*;
 use crate::primitives::args::movement_count;
+use crate::text::positions::{self, Unit};
 
 /// Moves point to OFFSET, clamped to the text.
 pub(crate) fn goto_offset<B: BufferTrait>(text: &mut B, offset: usize) {
@@ -455,6 +456,75 @@ primitive!(current_column, _args, _env, ctx, {
     ctx.with_current_buffer(|buf| Ok(ELispExp::number(buf.text.cursor_pos().1 as f64)))
 });
 
+// ---------------------------------------------------------------------------
+// Lines and columns in other units
+// ---------------------------------------------------------------------------
+
+/// Returns ARG as a position, a line or a column: rounded down, 0 when
+/// negative, and as large as a `usize` goes when it is larger.
+fn whole_number<B: BufferTrait>(
+    arg: Option<&ELispExp<B>>,
+) -> Result<usize, EvalError<EditorState<B>>> {
+    match arg {
+        // `as` saturates, and takes NaN to 0.
+        Some(ELispExp::Number(n)) => Ok(n.max(0.0).floor() as usize),
+        other => Err(EvalError::WrongArgumentType {
+            expected: "Number".into(),
+            got: other.cloned().unwrap_or_else(ELispExp::nil),
+        }),
+    }
+}
+
+/// Returns ARG as what a column counts: characters when it is absent or nil.
+fn column_unit<B: BufferTrait>(
+    arg: Option<&ELispExp<B>>,
+) -> Result<Unit, EvalError<EditorState<B>>> {
+    let expected = "char, utf-16 or utf-8";
+    match args::optional_name(arg, expected)?.as_deref() {
+        None | Some("char") => Ok(Unit::Char),
+        Some("utf-16") => Ok(Unit::Utf16),
+        Some("utf-8") => Ok(Unit::Utf8),
+        Some(_) => Err(EvalError::WrongArgumentType {
+            expected: expected.into(),
+            got: arg.cloned().unwrap_or_else(ELispExp::nil),
+        }),
+    }
+}
+
+pub const POSITION_TO_LINE_COLUMN_DOC: &str = "(position-to-line-column POSITION &optional \
+         UNIT): Return (LINE COLUMN) for POSITION in the current buffer: LINE counted from 1, as \
+         `goto-line' does, and COLUMN from 0, in UNIT: char, the default, utf-16 for UTF-16 code \
+         units, or utf-8 for bytes. A position past the end is the end.\n\n\
+         Example:\n\
+         (position-to-line-column (point) 'utf-16)";
+
+primitive!(position_to_line_column, args, _env, ctx, {
+    let pos = whole_number(args.first())?;
+    let unit = column_unit(args.get(1))?;
+    let (line, column) =
+        ctx.with_current_buffer(|buf| positions::line_column(&buf.text, pos, unit));
+    Ok(ELispExp::proper_list(vec![
+        ELispExp::number(line as f64 + 1.0),
+        ELispExp::number(column as f64),
+    ]))
+});
+
+pub const LINE_COLUMN_TO_POSITION_DOC: &str = "(line-column-to-position LINE COLUMN &optional \
+         UNIT): Return the position in the current buffer at LINE, counted from 1, and COLUMN, \
+         counted from 0 in UNIT as `position-to-line-column' counts it. A column past the end of \
+         its line is the line's end, one inside a character the position before it, and a line \
+         past the last the end of the buffer.\n\n\
+         Example:\n\
+         (goto-char (line-column-to-position 3 10 'utf-8))";
+
+primitive!(line_column_to_position, args, _env, ctx, {
+    let line = whole_number(args.first())?.max(1) - 1;
+    let column = whole_number(args.get(1))?;
+    let unit = column_unit(args.get(2))?;
+    let pos = ctx.with_current_buffer(|buf| positions::position(&buf.text, line, column, unit));
+    Ok(ELispExp::number(pos as f64))
+});
+
 /// Registers the primitives that move point and say where it is.
 ///
 /// Called by [`super::install_primitives`].
@@ -505,4 +575,14 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     );
     into.function("current-line", current_line, CURRENT_LINE_DOC);
     into.function("current-column", current_column, CURRENT_COLUMN_DOC);
+    into.function(
+        "position-to-line-column",
+        position_to_line_column,
+        POSITION_TO_LINE_COLUMN_DOC,
+    );
+    into.function(
+        "line-column-to-position",
+        line_column_to_position,
+        LINE_COLUMN_TO_POSITION_DOC,
+    );
 }

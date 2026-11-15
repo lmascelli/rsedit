@@ -2716,6 +2716,7 @@ mark, undo, lock o finestre.
   [`rectangle.rs`], [`Rectangle` e `Span`: l'aritmetica di due angoli e delle righe tra loro.], [`primitives/rectangle.rs`, `ui/compose.rs`],
   [`results.rs`], [`Entry` e `Results`: una lista di posti e un cursore che la percorre.], [`primitives/occur.rs`, `primitives/results.rs`, `primitives/scan.rs`, `editor/results.rs`],
   [`fill.rs`], [Il riempimento: `Measure`, `lay_out`, `comment_prefix`, `break_at` (@riempimento).], [`primitives/fill.rs`],
+  [`positions.rs`], [Riga e colonna di una posizione, con la colonna in caratteri, in unità UTF-16 o in byte UTF-8: `Unit`, `line_column`, `position` (@posizioni-unita).], [`primitives/movement.rs`],
 )
 
 Le sessioni (`Isearch`, `Replace`) tengono lo #emph[stato] di una ricerca o di
@@ -2741,6 +2742,31 @@ primo carattere accentato, per questo non è ripetuta nei chiamanti.
   #arrow((9.6cm, 0.85cm), (9.6cm, 2.05cm), label: [`char_to_byte`], label-dx: -62pt, label-dy: -4pt)
   #arrow((12.4cm, 2.05cm), (12.4cm, 0.85cm), label: [`to_match`], label-dx: 6pt, label-dy: -4pt)
 ]
+
+== Righe e colonne in altre unità <posizioni-unita>
+
+Un programma fuori dall'editor può contare le colonne in un'altra unità: in
+byte UTF-8, o in unità UTF-16, dove un carattere fuori dal piano multilingue di
+base ne occupa due. `text/positions.rs` converte in un posto solo, come
+`char_to_byte` fa per le espressioni: `line_column` dà riga e colonna di una
+posizione, con la colonna nell'unità chiesta (`Unit::Char`, `Unit::Utf16`,
+`Unit::Utf8`), e `position` fa il contrario. Le righe contano da 0, come in
+`BufferTrait`; le primitive `position-to-line-column` e
+`line-column-to-position` le contano da 1, come `goto-line`.
+
+La riga viene dall'indice delle righe del testo (`cursor_1d_to_2d`,
+`cursor_2d_to_1d`): una conversione costa la lunghezza della riga fino alla
+colonna, non quella del testo. Per `Unit::Char` non c'è niente da misurare, e
+la conversione è quella di `BufferTrait`.
+
+#ref-table(
+  columns: (5.2cm, 1fr, 1fr, 1fr),
+  header: ([Carattere], [`Unit::Char`], [`Unit::Utf16`], [`Unit::Utf8`]),
+  [`a`, U+0061], [1], [1], [1],
+  [`è`, U+00E8], [1], [1], [2],
+  [`€`, U+20AC], [1], [1], [3],
+  [una faccina, U+1F600], [1], [2], [4],
+)
 
 == `Pattern`: che cosa cercare <ricerca>
 
@@ -3468,6 +3494,19 @@ Le decisioni:
 + *Un anello solo per tutto l'editor.* Uccidere in un buffer e incollare in un
   altro è lo scopo del kill ring: l'anello sta sull'editor, in `KillYank`, e
   non sul buffer, così il testo passa da uno all'altro.
++ *Una colonna dentro un carattere è la posizione prima di esso.* Una
+  colonna UTF-16 che cade tra le due metà di una coppia surrogata, o una
+  colonna UTF-8 tra i byte di un carattere, non indica un carattere: chi la
+  manda ha contato male, o in un'altra unità. `position` la porta all'inizio
+  del carattere, così il risultato è sempre una posizione vera e la
+  conversione all'indietro dà una colonna che si può rimandare. L'alternativa,
+  un errore, lascerebbe al chiamante una correzione che farebbe comunque in
+  uno dei due modi.
++ *Una riga finisce solo a un a capo.* Un ritorno a capo prima dell'a capo è
+  un carattere della riga e si conta nella colonna, come lo conta
+  `BufferTrait`. Chi conta le righe anche ai ritorni a capo soli vede un'altra
+  divisione in righe, che la conversione non prova a imitare: il testo che
+  l'editor tiene ha una sola idea di riga.
 + *Una riga corta resta nel rettangolo.* Una riga che finisce prima del bordo
   sinistro è comunque una delle righe del rettangolo, con uno span vuoto e il
   suo `padding`. Toglierla farebbe dipendere l'altezza del blocco da ciò che

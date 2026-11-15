@@ -24,6 +24,7 @@ mod tests {
         ("text/fill.rs", include_str!("../text/fill.rs")),
         ("text/isearch.rs", include_str!("../text/isearch.rs")),
         ("text/kill_ring.rs", include_str!("../text/kill_ring.rs")),
+        ("text/positions.rs", include_str!("../text/positions.rs")),
         ("text/rectangle.rs", include_str!("../text/rectangle.rs")),
         ("text/replace.rs", include_str!("../text/replace.rs")),
         ("text/results.rs", include_str!("../text/results.rs")),
