@@ -8,6 +8,8 @@ SYNOPSIS
     (compilation-next)
     (compilation-previous)
     compilation-patterns
+    compilation-severity-patterns
+    compilation-default-severity
     compilation-window-height
 
 DESCRIPTION
@@ -16,6 +18,11 @@ DESCRIPTION
     output that names a file and a line, such as src/main.rs:12:5, is a
     place: M-g n and M-g p go from one place to the next, from the window
     you are working in, and Return on one in the output opens it too.
+
+    Each place is also a finding of the producer compile, with how bad
+    the compiler says it is: the file it names shows it where the text
+    is, in the gutter and in the status line, as the findings page
+    describes, and M-g f lists it with what other tools have said.
 
 RUNNING A BUILD
     The command runs through the shell, in the directory the editor was
@@ -64,6 +71,52 @@ WHICH LINES NAME A PLACE
         --> path:line:col       rustc's second line
         File "path", line N     Python's tracebacks
 
+THE PLACES AS FINDINGS
+    Each place is reported as a finding about the file it names, under
+    the producer compile, as the output comes: about four times a second
+    while the build runs, and once more when it ends. The finding is at
+    the line and the column the compiler gave, at the start of the line
+    when it gave no column, and says:
+
+        :severity   what the line says, or else what the line before it
+                    says, or else `compilation-default-severity'
+        :message    the rest of the line after the word that said the
+                    severity, or else the whole line
+        :code       the code in brackets after the word, when there is
+                    one, as rustc writes error[E0425]
+
+    A line says a severity when one of `compilation-severity-patterns'
+    matches it. Each entry is a list (REGEXP SEVERITY MESSAGE-GROUP
+    CODE-GROUP): SEVERITY is error, warning, info or hint, and the groups
+    are numbered as `match-string' numbers them, nil for a format that has
+    no message or no code. The first entry that matches decides. Out of
+    the box:
+
+        error: ...  fatal error: ...    error
+        warning: ...                    warning
+        note: ...                       info
+        help: ...                       hint
+
+    with a code in brackets allowed after error and warning. gcc and clang
+    write the word on the line of the place; rustc writes it on the line
+    before, as in
+
+        error[E0425]: cannot find value `x` in this scope
+         --> src/main.rs:2:5
+
+    and only the line right before a place speaks for it, when it names no
+    place itself.
+
+    A relative path is taken from the directory the build ran in, as for
+    M-g n. Each build starts over: when it starts, what the build before
+    said is forgotten, even when its output buffer is still open. Closing
+    the output stops the reporting, and what has been reported stays until
+    the next build. Only the newest build reports: one still running in
+    another output buffer no longer does.
+
+    The output, and the places M-g n walks in it, are the same as without
+    the findings: they are two ways of showing what the compiler said.
+
 EXAMPLES
     Build with cargo from a key of its own:
 
@@ -79,6 +132,26 @@ EXAMPLES
 
         (setq compilation-window-height 20)
 
+    Read a tool that writes "SEVERE: message" and "MINOR: message" after
+    the place:
+
+        (setq compilation-severity-patterns
+              (append '(("SEVERE: (.*)" error 1 nil)
+                        ("MINOR: (.*)" warning 1 nil))
+                      compilation-severity-patterns))
+
+    Take a place no line qualifies as a warning rather than an error:
+
+        (setq compilation-default-severity 'warning)
+
+    Say how many errors the last build reported:
+
+        (let ((n 0))
+          (dolist (f (findings-of-producer 'compile))
+            (when (eq (nth 1 (memq :severity f)) 'error)
+              (setq n (+ n 1))))
+          (message "%d errors" n))
+
 KEYS
     C-c c                   compile
     M-g n                   next-error
@@ -93,4 +166,4 @@ KEYS IN COMPILATION MODE
     q                       results-quit
 
 SEE ALSO
-    searching, shell, regexps, windows, buffers
+    findings, searching, shell, regexps, windows, buffers

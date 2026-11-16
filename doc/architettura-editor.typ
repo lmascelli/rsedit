@@ -7709,8 +7709,10 @@ Il modulo è una variabile, `clipboard-sync`, e un comando che la inverte.
 === `compile` <mod-compile>
 
 `C-c c` esegue un comando e ne mostra l'uscita in una striscia; `M-g n` e
-`M-g p` percorrono i posti che nomina. L'esecuzione è `shell-command-start`
-(@comandi-shell); il modulo è il modo del buffer d'uscita e la navigazione.
+`M-g p` percorrono i posti che nomina, e ogni posto diventa una segnalazione
+del produttore `compile` nel deposito (@segnalazioni). L'esecuzione è
+`shell-command-start` (@comandi-shell); il modulo è il modo del buffer
+d'uscita, la navigazione e il resoconto.
 
 + *Lo stato nel buffer.* La prima riga, `$ cargo build`, è il comando che `g`
   riesegue. Fuori dal buffer c'è solo quale buffer `M-g n` percorre, perché
@@ -7727,6 +7729,35 @@ Il modulo è una variabile, `clipboard-sync`, e un comando che la inverte.
 + *`M-g n` sta in `common-keymaps`.* Percorre l'ultima lista fatta, da
   chiunque: legato qui, ogni produttore di liste dipenderebbe da questo modulo.
 + *I segni come sfondi.* Il testo sotto ha già i suoi colori.
++ *Due viste, una lettura.* La lista di `M-g n` e le segnalazioni leggono le
+  righe con lo stesso `compilation--parse`, e nominano gli stessi posti; la
+  lista non cambia per le segnalazioni. Restano due cose: la lista è l'uscita
+  di quella build, nell'ordine in cui il compilatore l'ha scritta; le
+  segnalazioni sono ciò che il deposito sa dei file, e lo schermo le disegna
+  dove il testo è.
++ *La gravità dalla riga, o da quella prima.* gcc e clang scrivono `error:`
+  sulla riga del posto, rustc sulla riga prima della `-->`; parla per un posto
+  solo la riga subito sopra, e solo se non nomina un posto. Una gravità che
+  valesse fino al posto successivo darebbe a una riga `file:riga:` qualunque
+  quella di un messaggio lontano. Le forme sono `compilation-severity-patterns`,
+  come i posti sono `compilation-patterns`.
++ *Un produttore per tutte le build, sostituito a ogni build.* `compile` avvia
+  con `finding-clear` e poi dice di nuovo, per file, ciò che la build nuova
+  trova: ciò che non trova più se ne va senza chiederlo. Parla solo la build
+  più recente, la stessa che `M-g n` percorre.
++ *Il resoconto cresce con l'uscita.* Un lavoro `background-call` tiene solo il
+  tempo, un quarto di secondo per passo; il lavoro vero è nel suo ON-PROGRESS,
+  tra un comando e l'altro (@sfondo), perché leggere il buffer d'uscita sposta
+  il suo punto. Ogni resoconto legge le righe intere arrivate dall'ultimo,
+  al più `compilation--report-lines`, e richiama `finding-set` solo per i file
+  che nominano: rileggere tutta l'uscita a ogni passo costerebbe una build
+  lunga al quadrato. Il lavoro si ferma quando l'uscita è stata letta tutta e
+  dice come il comando è finito, o quando il buffer non c'è più; che sia
+  finita si chiede prima di leggere, perché l'ultima lettura contenga la riga
+  che lo dice.
++ *Il file come chiave.* I file si nominano da `expand-file-name`, nella
+  directory del buffer d'uscita: `a.c` e `./a.c` sono un file solo, e due
+  insiemi per lo stesso file si sostituirebbero a vicenda.
 
 === `completion-at-point` <mod-completion-at-point>
 

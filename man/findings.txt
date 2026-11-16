@@ -24,7 +24,8 @@ DESCRIPTION
     all in one place, by file and by producer, so that one piece of Lisp
     can report them and any other can ask for them: everything said about
     this file, everything this producer said, everything said about the
-    files under that directory.
+    files under that directory. The builds C-c c runs are one of them,
+    the producer called compile (see compile).
 
     Where `findings-mode' is on, the findings about the file a buffer
     visits are drawn: the text they are about is underlined in the colour

@@ -635,4 +635,391 @@ mod tests {
         );
         assert_eq!(line_number(&env, &ctx), 2.0);
     }
+
+    // ----------------------------------------------------------------
+    // The places as findings
+    // ----------------------------------------------------------------
+
+    /// What `compile` has reported, one string per finding: file, start,
+    /// severity, message and code.
+    fn reported(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> Vec<String> {
+        run(
+            r#"(mapcar (lambda (f)
+                         (let ((at (nth 1 (memq :start f)))
+                               (code (nth 1 (memq :code f))))
+                           (concat (nth 1 (memq :file f))
+                                   " " (number-to-string (car at))
+                                   "." (number-to-string (cdr at))
+                                   " " (symbol-name (nth 1 (memq :severity f)))
+                                   " " (nth 1 (memq :message f))
+                                   " [" (or code "") "]")))
+                       (findings-of-producer 'compile))"#,
+            env,
+            ctx,
+        )
+        .iter()
+        .map(|exp| text_of(&exp).expect("a string"))
+        .collect()
+    }
+
+    /// A compilation buffer holding `output`, read in `directory`, reported.
+    fn report(output: &str, directory: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> Vec<String> {
+        compilation_with(output, env, ctx);
+        run(
+            &format!(
+                r#"(set-buffer-directory "{directory}")
+                   (compilation--report-anew)
+                   (compilation--report "*compile*")"#
+            ),
+            env,
+            ctx,
+        );
+        reported(env, ctx)
+    }
+
+    #[test]
+    fn each_place_is_reported_with_the_severity_its_line_says() {
+        let sandbox = Sandbox::new("severity");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        let found = report(
+            "$ make\n\
+             a.c:3:5: error: expected ';'\n\
+             a.c:7:1: warning: unused variable 'x'\n\
+             a.c:2:10: note: declared here\n\
+             a.c:9: fatal error: stdio.h: no such file\n\
+             a.c:4:2: help: add a semicolon\n",
+            &dir,
+            &env,
+            &ctx,
+        );
+        let file = format!("{dir}/a.c");
+        assert_eq!(
+            found,
+            vec![
+                format!("{file} 3.4 error expected ';' []"),
+                format!("{file} 7.0 warning unused variable 'x' []"),
+                format!("{file} 2.9 info declared here []"),
+                format!("{file} 9.0 error stdio.h: no such file []"),
+                format!("{file} 4.1 hint add a semicolon []"),
+            ]
+        );
+    }
+
+    #[test]
+    fn rustcs_header_gives_the_place_after_it_its_severity_message_and_code() {
+        let sandbox = Sandbox::new("rustc");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        let found = report(
+            "$ cargo build\n\
+             error[E0425]: cannot find value `x` in this scope\n\
+             \x20--> src/main.rs:2:5\n\
+             \x20 |\n\
+             2 |     x\n\
+             \x20 |     ^ not found in this scope\n\
+             \n\
+             warning: unused variable: `y`\n\
+             \x20--> src/lib.rs:4:9\n\
+             \x20 |\n\
+             \x20 = note: `#[warn(unused_variables)]` on by default\n\
+             \n\
+             error: could not compile `app`\n",
+            &dir,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            found,
+            vec![
+                format!("{dir}/src/lib.rs 4.8 warning unused variable: `y` []"),
+                format!("{dir}/src/main.rs 2.4 error cannot find value `x` in this scope [E0425]"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_header_speaks_only_for_the_place_right_after_it() {
+        let sandbox = Sandbox::new("header-once");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        let found = report(
+            "$ cargo build\n\
+             warning: unused import\n\
+             \x20--> a.rs:1:5\n\
+             \x20--> b.rs:2:1\n",
+            &dir,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            found,
+            vec![
+                format!("{dir}/a.rs 1.4 warning unused import []"),
+                format!("{dir}/b.rs 2.0 error --> b.rs:2:1 []"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_place_nothing_qualifies_takes_the_default_severity_and_its_line() {
+        let sandbox = Sandbox::new("default");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        run("(setq compilation-default-severity 'warning)", &env, &ctx);
+        let found = report(
+            "$ python3 t.py\n\
+             Traceback (most recent call last):\n\
+             \x20 File \"t.py\", line 3, in <module>\n",
+            &dir,
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            found,
+            vec![format!(
+                "{dir}/t.py 3.0 warning File \"t.py\", line 3, in <module> []"
+            )]
+        );
+    }
+
+    #[test]
+    fn the_severity_patterns_are_a_variable_anyone_can_add_to() {
+        let sandbox = Sandbox::new("severity-pattern");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        run(
+            r#"(setq compilation-severity-patterns
+                     (cons '("LINT-([0-9]+) (.*)" hint 2 1)
+                           compilation-severity-patterns))"#,
+            &env,
+            &ctx,
+        );
+        let found = report("$ lint\nx.c:1:1: LINT-7 tabs\n", &dir, &env, &ctx);
+        assert_eq!(found, vec![format!("{dir}/x.c 1.0 hint tabs [7]")]);
+    }
+
+    #[test]
+    fn two_names_for_one_file_are_one_set_of_findings() {
+        let sandbox = Sandbox::new("one-file");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        // Reported file by file, `finding-set' replaces: were ./a.c another
+        // file, its finding would have replaced the first.
+        let found = report(
+            &format!(
+                "$ make\na.c:1:1: error: one\n./a.c:2:1: error: two\n{dir}/a.c:3:1: error: three\n"
+            ),
+            &dir,
+            &env,
+            &ctx,
+        );
+        assert_eq!(found.len(), 3, "got {found:?}");
+    }
+
+    #[test]
+    fn the_walk_and_the_findings_name_the_same_places() {
+        let sandbox = Sandbox::new("same-places");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        report(
+            "$ make\nnoise\na.c:3:5: error: one\nb.c:4: warning: two\n",
+            &dir,
+            &env,
+            &ctx,
+        );
+        let shape: Vec<String> = run(
+            r#"(mapcar (lambda (e)
+                         (concat (nth 1 e) " " (number-to-string (nth 2 e))
+                                 " " (number-to-string (nth 3 e))
+                                 " " (number-to-string (nth 8 e))))
+                       (with-current-buffer "*compile*"
+                                            (lambda () (compilation--entries))))"#,
+            &env,
+            &ctx,
+        )
+        .iter()
+        .map(|exp| text_of(&exp).expect("a string"))
+        .collect();
+        assert_eq!(shape, vec!["a.c 3 4 3", "b.c 4 0 4"]);
+    }
+
+    /// Run the background and its callbacks until `done` holds, or fail.
+    fn drive_until(
+        what: &str,
+        env: &Arc<Env<Ctx>>,
+        ctx: &Ctx,
+        mut done: impl FnMut(&Arc<Env<Ctx>>, &Ctx) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done(env, ctx) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what}: not within ten seconds"
+            );
+            // The tests' scheduler keeps time by hand: a quarter of a second,
+            // the watch's sleep, at each turn.
+            ctx.work()
+                .run_for(ctx, std::time::Duration::from_millis(250));
+            ctx.tick(env);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn watching(env: &Arc<Env<Ctx>>, ctx: &Ctx) -> bool {
+        !run(r#"(member "compile-findings" (running-workers))"#, env, ctx).is_nil()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_build_reports_its_places_read_where_it_ran_and_then_stops_watching() {
+        let built_in = Sandbox::new("report-here");
+        let moved_to = Sandbox::new("report-elsewhere");
+        let file = built_in.file("broken.c", "int a\nint b\n");
+        let (ctx, env) = editor();
+        run(&format!(r#"(cd "{}")"#, built_in.0.display()), &env, &ctx);
+        run(
+            r#"(compile "printf 'broken.c:2:3: warning: no semicolon\n'")"#,
+            &env,
+            &ctx,
+        );
+        run(&format!(r#"(cd "{}")"#, moved_to.0.display()), &env, &ctx);
+        assert!(watching(&env, &ctx), "a build is watched while it runs");
+
+        drive_until("the watch ending", &env, &ctx, |env, ctx| {
+            !watching(env, ctx)
+        });
+
+        assert_eq!(
+            reported(&env, &ctx),
+            vec![format!("{file} 2.2 warning no semicolon []")]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_build_forgets_what_the_last_one_reported() {
+        let sandbox = Sandbox::new("forget");
+        let (ctx, env) = editor();
+        run(&format!(r#"(cd "{}")"#, sandbox.0.display()), &env, &ctx);
+        run(r#"(compile "printf 'a.c:1:1: error: old\n'")"#, &env, &ctx);
+        drive_until("the first build", &env, &ctx, |env, ctx| {
+            !watching(env, ctx)
+        });
+        assert_eq!(reported(&env, &ctx).len(), 1);
+
+        run(r#"(compile "true")"#, &env, &ctx);
+
+        assert_eq!(reported(&env, &ctx), Vec::<String>::new());
+        drive_until("the second build", &env, &ctx, |env, ctx| {
+            !watching(env, ctx)
+        });
+        assert_eq!(reported(&env, &ctx), Vec::<String>::new());
+    }
+
+    #[test]
+    fn closing_the_output_stops_the_watch_and_keeps_the_findings() {
+        let sandbox = Sandbox::new("closed");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        report("$ make\na.c:1:1: error: kept\n", &dir, &env, &ctx);
+        run(
+            r#"(compilation--watch) (kill-buffer "*compile*")"#,
+            &env,
+            &ctx,
+        );
+
+        drive_until("the watch ending", &env, &ctx, |env, ctx| {
+            !watching(env, ctx)
+        });
+
+        assert_eq!(reported(&env, &ctx).len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_build_still_running_has_already_reported_what_it_printed() {
+        let sandbox = Sandbox::new("running");
+        let (ctx, env) = editor();
+        run(&format!(r#"(cd "{}")"#, sandbox.0.display()), &env, &ctx);
+        run(
+            r#"(compile "printf 'a.c:1:1: error: early\n'; sleep 5")"#,
+            &env,
+            &ctx,
+        );
+
+        drive_until("the first finding", &env, &ctx, |env, ctx| {
+            !reported(env, ctx).is_empty()
+        });
+
+        assert!(watching(&env, &ctx), "the build has not ended");
+        let build = latest_build(&env, &ctx);
+        run(&format!(r#"(kill-buffer "{build}")"#), &env, &ctx);
+        settle(&ctx);
+    }
+
+    fn append(text: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        run(
+            &format!(
+                r#"(with-current-buffer "*compile*"
+                     (lambda () (goto-char (point-max)) (insert "{text}")))
+                   (compilation--report "*compile*")"#
+            ),
+            env,
+            ctx,
+        );
+    }
+
+    #[test]
+    fn a_report_reads_only_whole_lines_and_keeps_what_came_before() {
+        let sandbox = Sandbox::new("growing");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        report("$ make\na.c:1:1: error: one\n", &dir, &env, &ctx);
+
+        append("warning: unused\n --> b.rs:2:1\na.c:2:1: err", &env, &ctx);
+        assert_eq!(
+            reported(&env, &ctx),
+            vec![
+                format!("{dir}/a.c 1.0 error one []"),
+                format!("{dir}/b.rs 2.0 warning unused []"),
+            ],
+            "a line not yet whole waits"
+        );
+
+        append("or: two\nnote: here\n", &env, &ctx);
+        append(" --> c.rs:3:1\n", &env, &ctx);
+        assert_eq!(
+            reported(&env, &ctx),
+            vec![
+                format!("{dir}/a.c 1.0 error one []"),
+                format!("{dir}/a.c 2.0 error two []"),
+                format!("{dir}/b.rs 2.0 warning unused []"),
+                format!("{dir}/c.rs 3.0 info here []"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_long_output_is_reported_a_part_at_a_time() {
+        let sandbox = Sandbox::new("parts");
+        let dir = sandbox.0.display().to_string();
+        let (ctx, env) = editor();
+        run("(setq compilation--report-lines 2)", &env, &ctx);
+        let found = report(
+            "$ make\na.c:1:1: error: naïve ü\nnoise ü\nb.c:2:1: error: two\n",
+            &dir,
+            &env,
+            &ctx,
+        );
+        assert_eq!(found, vec![format!("{dir}/a.c 1.0 error naïve ü []")]);
+        assert!(!run(r#"(compilation--report "*compile*")"#, &env, &ctx).is_nil());
+        assert_eq!(
+            reported(&env, &ctx),
+            vec![
+                format!("{dir}/a.c 1.0 error naïve ü []"),
+                format!("{dir}/b.c 2.0 error two []"),
+            ]
+        );
+    }
 }

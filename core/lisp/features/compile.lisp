@@ -1,7 +1,8 @@
 ;;; compile --- run a build, and jump to what it complained about.
 ;;;
 ;;; C-c c runs a command and shows its output in a strip along the bottom;
-;;; M-g n and M-g p walk the places it names. User manual: the `compile' page.
+;;; M-g n and M-g p walk the places it names, which are also reported as the
+;;; findings of `compile'. User manual: the `compile' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-compile>`.
 
 (require 'commands)
@@ -29,9 +30,33 @@ FILE-GROUP LINE-GROUP COLUMN-GROUP), the groups numbered as `match-string'
 numbers them, COLUMN-GROUP nil for a format with no column. The first that
 matches a line decides.")
 
+;; What a line says of itself, apart from where: gcc and clang say it after
+;; the place, rustc on the line before the place.
+(defvar compilation-severity-patterns
+  '(("(^|[ :])(fatal error|error)(\\[([A-Za-z0-9_-]+)\\])?: *(.*)" error 5 4)
+    ("(^|[ :])warning(\\[([A-Za-z0-9_-]+)\\])?: *(.*)" warning 4 3)
+    ("(^|[ :])note: *(.*)" info 2 nil)
+    ("(^|[ :])help: *(.*)" hint 2 nil))
+  "How a line of output says how bad it is: a list of (REGEXP SEVERITY
+MESSAGE-GROUP CODE-GROUP), SEVERITY one of `error', `warning', `info', `hint',
+the groups nil when the format has none. The first that matches decides.")
+
+(defvar compilation-default-severity 'error
+  "The severity of a place that no line before it, nor its own, says.")
+
 ;; Which buffer `M-g n' walks. Asked from another buffer, so it cannot be read
 ;; off the screen the way the command can.
 (setq compilation--buffer nil)
+
+;; How far the newest build's output has been reported: the position after
+;; the last line read, nil before the first; the line before it when it named
+;; no place; and the findings so far, by file.
+(setq compilation--read nil)
+(setq compilation--before nil)
+(setq compilation--found nil)
+;; At most this many lines a report: a burst of output is read over several,
+;; rather than holding up the keys for all of it at once.
+(setq compilation--report-lines 500)
 
 ;; ---------------------------------------------------------------------------
 ;; Reading a line as a location
@@ -163,6 +188,122 @@ names none."
        (goto-char here)))))
 
 ;; ---------------------------------------------------------------------------
+;; Reporting the places as findings
+;; ---------------------------------------------------------------------------
+;;
+;; The output only grows, so each report reads the lines that have come whole
+;; since the last, and sets again only the files they name.
+
+(defun compilation--severity (line)
+  "(SEVERITY MESSAGE CODE) for what LINE says of how bad it is, or nil."
+  (let ((found nil))
+    (mapc (lambda (pattern)
+            (if (and (null found) (string-match (nth 0 pattern) line))
+                (setq found
+                      (list (nth 1 pattern)
+                            (compilation--group line (nth 2 pattern))
+                            (compilation--group line (nth 3 pattern))))))
+          compilation-severity-patterns)
+    found))
+
+(defun compilation--trim (text)
+  "TEXT without the blanks around it."
+  (if (string-match "^[ \t]*(.*?)[ \t\r]*$" text) (match-string 1 text) text))
+
+(defun compilation--finding (location text before)
+  "The finding the line TEXT naming LOCATION makes, BEFORE the line above."
+  (let ((said (or (compilation--severity text)
+                  (and before (compilation--severity before))))
+        (line (if (nth 1 location) (string-to-number (nth 1 location)) 1))
+        (column (if (nth 2 location) (string-to-number (nth 2 location)) 1)))
+    (list :start (cons (max 1 line) (max 0 (- column 1)))
+          :severity (if said (nth 0 said) compilation-default-severity)
+          :message (or (nth 1 said) (compilation--trim text))
+          :code (nth 2 said))))
+
+(defun compilation--report (buffer)
+  "t when BUFFER's whole lines are all reported, after reporting some more."
+  (with-current-buffer
+   buffer
+   (lambda ()
+     (let* ((here (point))
+            (end (progn (goto-char (point-max)) (beginning-of-line) (point)))
+            (from (or compilation--read (point-min)))
+            (first (= from (point-min)))
+            (lines (if (> end from)
+                       (split-string (buffer-substring from end) "\n")
+                       nil))
+            ;; The text ends with a newline, so the last piece is empty.
+            (left (min (- (length lines) 1) compilation--report-lines))
+            (touched nil))
+       (goto-char here)
+       (while (> left 0)
+         (let* ((text (car lines))
+                (location (if (and first (compilation--command-here))
+                              nil
+                              (compilation--parse text))))
+           (setq lines (cdr lines))
+           (setq left (- left 1))
+           (setq first nil)
+           (setq from (+ from (length text) 1))
+           (if location
+               ;; Named from the directory the build ran in: a.c and ./a.c
+               ;; are one file, not two whose findings replace each other.
+               (let ((file (expand-file-name (nth 0 location))))
+                 (setq compilation--found
+                       (map-insert compilation--found file
+                                   (cons (compilation--finding
+                                          location text compilation--before)
+                                         (map-elt compilation--found file))))
+                 (if (not (member file touched))
+                     (setq touched (cons file touched)))
+                 (setq compilation--before nil))
+               (setq compilation--before text))))
+       (setq compilation--read from)
+       (dolist (file touched)
+         (finding-set 'compile file (reverse (map-elt compilation--found file))))
+       (>= from end)))))
+
+(defun compilation--ended-p (buffer)
+  "t when the output in BUFFER ends with the line saying how its command ended."
+  (with-current-buffer
+   buffer
+   (lambda ()
+     (let ((here (point)))
+       (goto-char (point-max))
+       (if (and (= (current-column) 0) (> (line-number-at-point) 1))
+           (previous-line))
+       (let ((line (current-line)))
+         (goto-char here)
+         (if (string-match "^--- (exited|killed|could not be waited for)" line) t nil))))))
+
+(defun compilation--follow (job)
+  "Report more of the newest build; stop JOB once it is all reported and ended."
+  (let ((buffer compilation--buffer))
+    (if (or (null buffer) (not (member buffer (all-buffer-names))))
+        (stop-worker job)
+        ;; Whether it has ended asked first: the output still arrives, and
+        ;; what is reported after must hold the line that said so.
+        (let ((ended (compilation--ended-p buffer)))
+          (if (and (compilation--report buffer) ended) (stop-worker job))))))
+
+(defun compilation--report-anew ()
+  "nil, after making the next report read the output from its start."
+  (setq compilation--read nil)
+  (setq compilation--before nil)
+  (setq compilation--found (make-map))
+  nil)
+
+(defun compilation--watch ()
+  "Start reporting the newest build's findings as its output comes."
+  (compilation--report-anew)
+  ;; The job only keeps time; the work is in its ON-PROGRESS, between commands,
+  ;; where reading a buffer cannot move the point of a command running.
+  (background-call 'compile-findings
+                   (fiber (while t (yield '(sleep 250))))
+                   'compilation--follow))
+
+;; ---------------------------------------------------------------------------
 ;; Running it
 ;; ---------------------------------------------------------------------------
 
@@ -182,12 +323,15 @@ names none."
 
 (defcommand compile (command) ("sCompile command: ")
   "Run COMMAND, showing its output as it comes; `next-error' walks the places
-it names."
+it names, and they replace the findings of `compile'."
   (let ((name (shell-command-start command 'compilation-mode 'compile)))
     (if (null name)
         nil
         (progn
           (setq compilation--buffer name)
+          ;; A build starts over: what the last one said goes.
+          (finding-clear 'compile)
+          (compilation--watch)
           (remove-overlays 'results-here)
           ;; Attached empty now, with its refresher, so that `M-g n' walks
           ;; what has arrived by then.
