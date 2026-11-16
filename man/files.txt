@@ -138,6 +138,20 @@ BEFORE SAVING
     `whitespace-cleanup-mode' registers its cleanup on this hook, scoped
     to the buffers where the minor mode is on.
 
+AFTER SAVING
+    Once a manual save has written the file -- the saves that run
+    `before-save-hook', C-x C-w included -- it runs `after-save-hook',
+    with the buffer current: the place to start something on the saved
+    file. Local auto-save copies do not run it, and neither does a save
+    that wrote nothing: one refused, aborted by before-save-hook or that
+    failed to write.
+
+    Functions are added as for any hook, on the `modes' page. One that
+    fails is reported in the log, and the others still run: the file
+    stays written, and an asynchronous save calls its AFTER with t once
+    the hook is done. While the hook runs, a save of the same buffer is
+    refused as a recursive one; other buffers can be saved.
+
 SAVING MORE THAN ONE BUFFER
 
     M-x save-some-buffers offers each buffer with unsaved changes that is
@@ -502,6 +516,11 @@ EXAMPLES
 
         (defun my-reverted () (message "%s was read again" (current-buffer)))
         (add-hook nil "after-revert-hook" 'my-reverted)
+
+    Say in the echo area which file each manual save wrote:
+
+        (defun my-saved () (message "Saved %s" (buffer-file-name)))
+        (add-hook nil "after-save-hook" 'my-saved)
 
     Look for changes on disk every second:
 

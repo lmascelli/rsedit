@@ -13,6 +13,7 @@ yield
 
 # Hooks, which add-hook takes by name
 after-revert-hook
+after-save-hook
 before-save-hook
 find-file-hook
 post-command-hook

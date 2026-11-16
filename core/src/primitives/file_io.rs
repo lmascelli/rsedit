@@ -274,6 +274,7 @@ fn start_save<B: BufferTrait>(
                     let message = format!("Wrote {}{}", save.path, if all { "" } else { "; newer edits remain unsaved" });
                     state.set_echo_message(&message);
                     state.log_diagnostic(&message);
+                    super::files::after_save(state, env, &new_name);
                     after(state, env, &callback, &[ELispExp::t()]);
                 }
                 Err(WriteFailure::Conflict(found)) => {

@@ -16,7 +16,8 @@ use std::sync::Arc;
 /// it: a failed save that only the log heard about is work the user believes
 /// is safe. What `save-buffer` and `save-some-buffers` save with.
 ///
-/// Runs before-save-hook before taking the text snapshot.
+/// Runs before-save-hook before taking the text snapshot, and
+/// [`AFTER_SAVE_HOOK`] once the file is written, through [`after_save`].
 pub(super) fn write_buffer<B: BufferTrait>(
     ctx: &EditorState<B>,
     env: &Arc<Env<EditorState<B>>>,
@@ -82,6 +83,7 @@ fn write_buffer_expected<B: BufferTrait>(
                 );
             }
             say_written(ctx, &path, all);
+            after_save(ctx, env, name);
             true
         }
         Err(why) => {
@@ -124,6 +126,31 @@ fn report_write_failure<B: BufferTrait>(
 }
 
 const PREPARING_SAVE: &str = "file-io:before-save";
+
+/// The hook run, with the buffer current, once a manual save has written the
+/// buffer's file: by `save-buffer`, `write-file`, their asynchronous
+/// counterparts and the saves offered when leaving, never by an auto-save.
+/// A failing function is logged; the save stands.
+const AFTER_SAVE_HOOK: &str = "after-save-hook";
+
+/// Runs NAME's after-save-hook, once its file is written. While it runs a
+/// save of NAME is refused as a recursive one, so that a hook that saves
+/// cannot write the file again and again.
+pub(crate) fn after_save<B: BufferTrait>(
+    ctx: &EditorState<B>,
+    env: &Arc<Env<EditorState<B>>>,
+    name: &str,
+) {
+    let Some(handle) = ctx.file_handle(name) else {
+        return;
+    };
+    handle
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .put_data(PREPARING_SAVE, true);
+    let _saving = SaveHookGuard(handle);
+    ctx.run_buffer_hook(name, AFTER_SAVE_HOOK, env);
+}
 
 struct SaveHookGuard<B: BufferTrait>(crate::editor::file_io::Handle<B>);
 impl<B: BufferTrait> Drop for SaveHookGuard<B> {
@@ -739,6 +766,7 @@ primitive!(write_file, args, env, ctx, {
         ctx.run_buffer_hook(&new_name, "after-set-visited-file-name-hook", &env);
     }
     say_written(ctx, &path, all_of_it);
+    after_save(ctx, &env, &new_name);
     Ok(ELispExp::string(path))
 });
 

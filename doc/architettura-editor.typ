@@ -2394,6 +2394,23 @@ Gli hook si eseguono prima dello snapshot, così anche la pulizia degli spazi
 è una modifica visibile e annullabile. Le copie periodiche di recupero non
 eseguono Lisp e conservano il testo effettivo.
 
+Scritto il file, gli stessi percorsi chiamano `files::after_save`:
+`write_buffer_expected` e `write-file` dopo il messaggio «Wrote», la callback
+di `start_save` prima di chiamare AFTER. Fa girare `after-save-hook`
+(`AFTER_SAVE_HOOK`) con `run_buffer_hook`, nel buffer salvato e con il nome
+che ha dopo `C-x C-w`. Un salvataggio rifiutato, interrotto da
+`before-save-hook` o fallito non lo raggiunge, e le copie di recupero non
+passano di qui. Due decisioni:
+
++ *Un errore non annulla nulla.* Il file è già scritto: una funzione che
+  fallisce va nel log, le altre girano e AFTER riceve comunque t.
++ *Niente salvataggi dello stesso buffer dall'hook.* Mentre gira, `after_save`
+  mette l'attachment `file-io:before-save`, e `before_save` rifiuta il
+  salvataggio come ricorsivo. Senza, il percorso sincrono lo rifiuterebbe
+  già per la prenotazione ancora presa, ma quello asincrono l'ha resa: un
+  hook che salva riscriverebbe il file senza fine. Gli altri buffer si
+  salvano.
+
 #figure(
   canvas(height: 2.7cm)[
     #node(1.5cm, 0.75cm, 2.8cm, 1.1cm, [Comando di salvataggio])

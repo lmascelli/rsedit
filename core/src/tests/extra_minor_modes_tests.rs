@@ -270,6 +270,132 @@ fn all_manual_save_paths_run_hooks_before_their_snapshot() {
 }
 
 #[test]
+fn every_manual_save_runs_after_save_hook_once_the_file_is_written() {
+    let files = Files::new();
+    let (ctx, env, _) = files.editor("body");
+    run(
+        &ctx,
+        &env,
+        r#"
+        (setq afters 0 saved-in nil wrong nil)
+        (defun note-save ()
+          (setq afters (+ afters 1) saved-in (current-buffer))
+          (if (buffer-modified-p) (setq wrong t))
+          (if (file-exists-p (buffer-file-name)) nil (setq wrong t)))
+        (add-hook nil "after-save-hook" 'note-save)
+        (insert "x")
+        (save-buffer)
+    "#,
+    );
+    assert_eq!(run(&ctx, &env, "afters"), ELispExp::number(1.));
+    run(&ctx, &env, "(insert \"y\") (save-buffer-async)");
+    settle(&ctx, &env);
+    assert_eq!(run(&ctx, &env, "afters"), ELispExp::number(2.));
+    let other = files.path("other.txt");
+    run(&ctx, &env, &format!("(write-file {other:?})"));
+    assert_eq!(
+        run(&ctx, &env, "saved-in"),
+        ELispExp::string("other.txt".into())
+    );
+    let last = files.path("last.txt");
+    run(&ctx, &env, &format!("(write-file-async {last:?})"));
+    settle(&ctx, &env);
+    assert_eq!(run(&ctx, &env, "afters"), ELispExp::number(4.));
+    assert_eq!(
+        run(&ctx, &env, "saved-in"),
+        ELispExp::string("last.txt".into())
+    );
+    assert!(run(&ctx, &env, "wrong").is_nil());
+}
+
+#[test]
+fn a_failing_after_save_hook_is_logged_and_the_save_stands() {
+    let files = Files::new();
+    let (ctx, env, path) = files.editor("original");
+    run(
+        &ctx,
+        &env,
+        r#"
+        (setq afters 0 done nil)
+        (defun broken-after () (error "after"))
+        (defun counted-after () (setq afters (+ afters 1)))
+        (defun save-done (ok) (setq done ok))
+        (add-hook 'fundamental-mode "after-save-hook" 'broken-after)
+        (add-hook nil "after-save-hook" 'counted-after)
+        (insert "mine")
+        (save-buffer)
+    "#,
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "mineoriginal");
+    assert!(run(&ctx, &env, "(buffer-modified-p)").is_nil());
+    assert_eq!(run(&ctx, &env, "afters"), ELispExp::number(1.));
+    assert!(
+        ctx.get_logs()
+            .iter()
+            .any(|line| line.contains("after-save-hook"))
+    );
+    run(
+        &ctx,
+        &env,
+        "(insert \"more \") (save-buffer-async 'save-done)",
+    );
+    settle(&ctx, &env);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "minemore original");
+    assert!(run(&ctx, &env, "(buffer-modified-p)").is_nil());
+    assert_eq!(run(&ctx, &env, "afters"), ELispExp::number(2.));
+    assert_eq!(run(&ctx, &env, "done"), ELispExp::t());
+}
+
+#[test]
+fn an_after_save_hook_cannot_save_its_own_buffer_again() {
+    let files = Files::new();
+    let (ctx, env, path) = files.editor("original");
+    run(
+        &ctx,
+        &env,
+        r#"
+        (setq afters 0)
+        (defun save-again () (setq afters (+ afters 1)) (insert "+") (save-buffer-async))
+        (add-hook nil "after-save-hook" 'save-again)
+        (save-buffer-async)
+    "#,
+    );
+    settle(&ctx, &env);
+    assert_eq!(run(&ctx, &env, "afters"), ELispExp::number(1.));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original");
+    run(&ctx, &env, "(save-buffer)");
+    settle(&ctx, &env);
+    assert_eq!(run(&ctx, &env, "afters"), ELispExp::number(2.));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "+original");
+}
+
+#[test]
+fn a_save_that_writes_nothing_runs_no_after_save_hook() {
+    let files = Files::new();
+    let (ctx, env, path) = files.editor("original");
+    run(
+        &ctx,
+        &env,
+        r#"
+        (setq afters 0)
+        (defun counted-after () (setq afters (+ afters 1)))
+        (defun reject-save () (error "reject"))
+        (add-hook nil "after-save-hook" 'counted-after)
+        (add-hook nil "before-save-hook" 'reject-save)
+        (insert "mine")
+        (save-buffer)
+        (save-buffer-async)
+        (remove-hook nil "before-save-hook" 'reject-save)
+    "#,
+    );
+    settle(&ctx, &env);
+    let nowhere = files.path("missing/dir/file.txt");
+    run(&ctx, &env, &format!("(write-file {nowhere:?})"));
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
+    assert_eq!(run(&ctx, &env, "afters"), ELispExp::number(0.));
+}
+
+#[test]
 fn cleanup_uses_the_minor_hook_and_cleans_whole_buffer_with_active_region() {
     let files = Files::new();
     let (ctx, env, path) = files.editor("one  \ntwo \n\n");
@@ -391,7 +517,7 @@ fn local_auto_save_keeps_original_text_and_never_runs_save_hooks() {
     run(
         &ctx,
         &env,
-        "(whitespace-cleanup-mode 1) (defun reject-save () (error \"manual only\")) (add-hook nil \"before-save-hook\" 'reject-save) (insert \"two \n\")",
+        "(whitespace-cleanup-mode 1) (defun reject-save () (error \"manual only\")) (add-hook nil \"before-save-hook\" 'reject-save) (setq afters 0) (defun counted-after () (setq afters (+ afters 1))) (add-hook nil \"after-save-hook\" 'counted-after) (insert \"two \n\")",
     );
     let original = text(&ctx);
     ctx.auto_save_async_turn(0, crate::jobs::autosave::auto_save_directory(&env), None);
@@ -400,4 +526,5 @@ fn local_auto_save_keeps_original_text_and_never_runs_save_hooks() {
     assert_eq!(std::fs::read_to_string(copy).unwrap(), original);
     assert_eq!(text(&ctx), original);
     assert_eq!(std::fs::read_to_string(path).unwrap(), "one  \n");
+    assert_eq!(run(&ctx, &env, "afters"), ELispExp::number(0.));
 }

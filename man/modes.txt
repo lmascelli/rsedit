@@ -311,6 +311,8 @@ HOOKS
                                 after those three
         before-save-hook        before a manual save copies the text;
                                 a failure aborts it, as `files' describes
+        after-save-hook         a manual save has written the file,
+                                C-x C-w included, as `files' describes
         after-revert-hook       a buffer has read its file again: after
                                 M-x revert-buffer, or on its own when
                                 the file changed, as `files' describes
