@@ -85,6 +85,7 @@ applicate.
   [Il contratto di un elemento Rust: che cosa fa, errori, panic], [il suo rustdoc], [---],
   [La storia: che cosa c'era prima e perché è cambiato], [il messaggio di commit], [ciò che ne resta valido è una decisione del manuale],
   [I difetti noti e il lavoro rimandato], [una scheda di `rapporto-problemi.typ`], [`TODO(ID)` nel codice, finché la scheda è aperta],
+  [Il progetto di un modulo non ancora scritto: i mattoni che usa, ciò che manca al nucleo], [un documento di progetto in `doc/`, `progetto-NOME.typ`], [niente nel codice; scritto il modulo, ciò che resta valido passa nel manuale e il documento si toglie],
   [Il comportamento atteso, caso per caso], [i test: il nome dice il comportamento], [---],
   [Come si misurano le prestazioni], [`PERFORMANCE.md`], [---],
   [Che cos'è rsedit, come si compila, quali documenti ci sono e per chi], [`README.md`], [per tutto il resto rimanda ai manpage e ai documenti],
@@ -99,7 +100,11 @@ applicate.
 - `man/README.md` dice com'è fatta una pagina, con il modello di @regole-man.
 - In `doc/` stanno i documenti per chi sviluppa, in italiano e in Typst: il
   manuale (`architettura-editor.typ`), il rapporto sui problemi
-  (`rapporto-problemi.typ`) e queste regole. Gli aiuti grafici comuni sono in
+  (`rapporto-problemi.typ`), queste regole e i progetti dei moduli non ancora
+  scritti (`progetto-lsp.typ`). Il manuale descrive il codice che c'è, un
+  progetto quello che verrà: quando il modulo è scritto, il suo capitolo e le
+  sue decisioni prendono dal progetto ciò che resta valido, e il progetto si
+  toglie. Gli aiuti grafici comuni sono in
   `style.typ`. Accanto a ogni documento c'è il suo PDF, in git, rigenerato nello
   stesso commit della sorgente.
 - Il linguaggio ha il suo manuale e il suo rapporto nel repository `risp`.
