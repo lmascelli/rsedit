@@ -415,8 +415,9 @@ primitive!(set_major_mode, args, env, ctx, {
 /// current one when it is omitted.
 ///
 /// Every per-buffer accessor takes its argument the same way -- `major-mode`,
-/// `buffer-modified-p`, `buffer-file-name` -- so that a listing can ask all of
-/// them about the same name without any of them being the odd one out.
+/// `buffer-modified-p`, `buffer-modified-tick`, `buffer-file-name` -- so that
+/// a listing can ask all of them about the same name without any of them being
+/// the odd one out.
 ///
 /// A *name* rather than a handle. Whether a buffer by that name exists is then
 /// answered by the accessor that goes looking, one lock later, instead of
@@ -455,6 +456,23 @@ primitive!(buffer_modified_p, args, _env, ctx, {
         ELispExp::t()
     } else {
         ELispExp::nil()
+    })
+});
+
+pub const BUFFER_MODIFIED_TICK_DOC: &str = "(buffer-modified-tick &optional BUFFER): Return \
+         a number that changes at every change to the text of BUFFER, the current one by \
+         default, or nil when it does not exist.\n\n\
+         Saving does not change it, nor does `set-buffer-modified-p'. Keep the number beside \
+         something computed from the text: while the number is the same, so is the text.\n\n\
+         Example:\n\
+         (setq seen (buffer-modified-tick))";
+
+primitive!(buffer_modified_tick, args, _env, ctx, {
+    let name = buffer_argument(args, ctx)?;
+    // A float holds every integer up to 2^53: more changes than a buffer sees.
+    Ok(match ctx.with_buffer(&name, |buf| buf.version) {
+        Some(version) => ELispExp::number(version as f64),
+        None => ELispExp::nil(),
     })
 });
 
@@ -523,6 +541,11 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
         "buffer-modified-p",
         buffer_modified_p,
         BUFFER_MODIFIED_P_DOC,
+    );
+    into.function(
+        "buffer-modified-tick",
+        buffer_modified_tick,
+        BUFFER_MODIFIED_TICK_DOC,
     );
     into.function(
         "set-buffer-modified-p",

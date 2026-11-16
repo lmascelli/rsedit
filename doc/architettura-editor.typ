@@ -6750,8 +6750,12 @@ e `close-buffer` la stessa funzione sotto un altro nome: un buffer con lavoro da
 salvare chiede prima, con `yes-or-no`, e la risposta lo chiude con
 `kill-buffer-without-saving`. `buffer-put` e `buffer-get` appendono a un buffer
 un valore Lisp, nella tabella dei dati del buffer, sotto il nome `lisp:CHIAVE`.
-`major-mode`, `buffer-modified-p` e `buffer-file-name` leggono il nome del
-buffer allo stesso modo, quello corrente se manca.
+`major-mode`, `buffer-modified-p`, `buffer-modified-tick` e `buffer-file-name`
+leggono il nome del buffer allo stesso modo, quello corrente se manca.
+`buffer-modified-tick` dà `Buffer::version`, il numero che le porte, l'undo e
+`adopt_text` incrementano (@due-porte), come numero Lisp: un `f64` tiene esatti
+gli interi fino a 2#super[53]. Salvare e `set-buffer-modified-p` toccano
+`is_modified`, non la versione.
 
 === Le finestre <primitive-finestre>
 

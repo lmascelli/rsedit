@@ -18,6 +18,7 @@ SYNOPSIS
     (set-buffer-read-only FLAG)
     (buffer-read-only-p)
     (buffer-modified-p &optional BUFFER)
+    (buffer-modified-tick &optional BUFFER)
     (set-buffer-modified-p FLAG)
     (buffer-file-name &optional BUFFER)
     (major-mode &optional BUFFER)
@@ -128,6 +129,14 @@ BUFFERS FROM LISP
     keeps it from looking modified, with no ** in its status line and no *
     in the buffer list.
 
+    `buffer-modified-tick' is a number that changes at every change to
+    the text, undo and redo included, and at nothing else: saving and
+    `set-buffer-modified-p' leave it alone. `buffer-modified-p' says
+    whether there is anything to save; the tick says whether the text is
+    still the one you last looked at. A module that keeps something
+    computed from the text, an index or a cache, keeps the tick beside it
+    and computes again when the tick has moved.
+
     `buffer-put' and `buffer-get' keep values with a buffer, which go when
     the buffer goes. `set-major-mode' changes the mode, and the hooks that
     follow are in the `modes' page.
@@ -141,6 +150,19 @@ EXAMPLES
                       (setq unsaved (cons name unsaved))))
                 (all-buffer-names))
           unsaved)
+
+    Count the words of the current buffer again only when its text has
+    changed since the last count:
+
+        (defvar word-count--tick nil)
+        (defvar word-count--value 0)
+        (defun word-count ()
+          (if (not (equal word-count--tick (buffer-modified-tick)))
+              (progn
+                (setq word-count--value
+                      (length (split-string (buffer-string))))
+                (setq word-count--tick (buffer-modified-tick))))
+          word-count--value)
 
     Write a report into a buffer of its own, and show it:
 

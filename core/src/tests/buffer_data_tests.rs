@@ -1,7 +1,8 @@
 //! Things hung on a buffer: that an attachment lives exactly as long as its
 //! buffer -- its `Drop` runs when the buffer is killed -- and that it survives
 //! what a global keyed by the buffer's name would not, a rename and a new
-//! buffer taking the old name.
+//! buffer taking the old name. And the tick that says whether the text an
+//! attachment was computed from is still the buffer's.
 //!
 //! Design: `doc/architettura-editor.typ, <buffer>`.
 #[cfg(test)]
@@ -303,5 +304,85 @@ mod tests {
             buf.adopt_text("something else entirely");
         });
         ctx.with_current_buffer(|buf| assert_eq!(buf.data::<usize>("test:count"), Some(&5)));
+    }
+
+    // ----------------------------------------------------------------
+    // buffer-modified-tick: whether the text is still the one looked at
+    // ----------------------------------------------------------------
+
+    fn tick(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> f64 {
+        match run(src, env, ctx) {
+            LispExp::Number(n) => n,
+            other => panic!("{src} gave {other:?}, not a number"),
+        }
+    }
+
+    #[test]
+    fn the_tick_moves_at_every_insertion() {
+        let (ctx, env) = editor();
+        let before = tick("(buffer-modified-tick)", &env, &ctx);
+        let once = tick(r#"(insert "a") (buffer-modified-tick)"#, &env, &ctx);
+        let twice = tick(r#"(insert "b") (buffer-modified-tick)"#, &env, &ctx);
+        assert_ne!(before, once);
+        assert_ne!(once, twice, "a second change must move it again");
+    }
+
+    #[test]
+    fn the_tick_stays_when_only_the_modified_flag_changes() {
+        // Where `buffer-modified-p' falls short: clearing the flag, as saving
+        // does, says nothing about the text.
+        let (ctx, env) = editor();
+        let before = tick(r#"(insert "a") (buffer-modified-tick)"#, &env, &ctx);
+        let after = tick(
+            "(set-buffer-modified-p nil) (buffer-string) (buffer-modified-tick)",
+            &env,
+            &ctx,
+        );
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn the_tick_moves_on_undo() {
+        let (ctx, env) = editor();
+        let before = tick(
+            r#"(insert "a") (undo-boundary) (buffer-modified-tick)"#,
+            &env,
+            &ctx,
+        );
+        let after = tick("(undo) (buffer-modified-tick)", &env, &ctx);
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn the_tick_moves_when_the_text_is_read_again_from_disk() {
+        let (ctx, env) = editor();
+        let before = tick("(buffer-modified-tick)", &env, &ctx);
+        ctx.with_current_buffer_mut(|buf| buf.adopt_text("from the file"));
+        assert_ne!(before, tick("(buffer-modified-tick)", &env, &ctx));
+    }
+
+    #[test]
+    fn the_tick_of_another_buffer_is_asked_by_name() {
+        let (ctx, env) = editor();
+        let other = tick(
+            r#"(buffer-create "*other*") (buffer-modified-tick "*other*")"#,
+            &env,
+            &ctx,
+        );
+        run(r#"(insert "only here")"#, &env, &ctx);
+        assert_eq!(
+            other,
+            tick(r#"(buffer-modified-tick "*other*")"#, &env, &ctx),
+            "a change to the current buffer is not a change to *other*"
+        );
+    }
+
+    #[test]
+    fn the_tick_of_a_buffer_that_does_not_exist_is_nil() {
+        let (ctx, env) = editor();
+        assert_eq!(
+            run(r#"(buffer-modified-tick "*no-such*")"#, &env, &ctx),
+            LispExp::nil()
+        );
     }
 }
