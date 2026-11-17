@@ -1,0 +1,958 @@
+;;; lsp --- language servers: what they say about the files being edited.
+;;;
+;;; lsp-mode, on in a buffer visiting a file, starts the server `lsp-servers'
+;;; gives for its major mode at the file's root, keeps the server's copy of
+;;; the text in step with the buffer, and reports what the server says as
+;;; findings. User manual: the `lsp' page.
+;;; Design: `doc/architettura-editor.typ, <mod-lsp>`.
+
+(require 'commands)
+(require 'debug)
+(require 'project)
+
+;; ---------------------------------------------------------------------------
+;; Settings
+;; ---------------------------------------------------------------------------
+
+(defvar lsp-servers
+  '((rust-mode "rust-analyzer" ("rust-analyzer"))
+    (c-mode "clangd" ("clangd"))
+    (cpp-mode "clangd" ("clangd"))
+    (python-mode "pylsp" ("pylsp")))
+  "The language servers, an entry for each major mode:
+(MODE NAME (PROGRAM ARGS...) . PROPERTIES). PROPERTIES may give :language, the
+language's name for the server, by default MODE without -mode;
+:initialization-options, a map sent as it is when the server starts;
+:settings, a map from sections to the settings the server asks for; and
+:root, a function used for this entry in place of `lsp-root-function'. Of two
+entries for one mode the first wins.")
+
+(defvar lsp-root-function 'project-root
+  "The function that gives the directory a server runs in, called with the
+file of the buffer: a directory, nil for the file's own, or the symbol timeout
+to be asked again after the next command.")
+
+(defvar lsp-request-timeout 10
+  "How many seconds a question to a server waits for its answer before it is
+dropped, with a message.")
+
+(defvar lsp-restart-limit 3
+  "How many times in three minutes a server that falls is started again by
+itself. Past that it stays down until `lsp-restart'.")
+
+(defvar lsp-log-limit 200000
+  "How many characters the log buffer of a server keeps; past that it is cut
+from its start.")
+
+;; ---------------------------------------------------------------------------
+;; State
+;; ---------------------------------------------------------------------------
+;;
+;; A server is its process name, "lsp NAME ROOT", which is also the producer of
+;; its findings; its fields are properties of that name, read with `get' and
+;; written with `put'. A document is a buffer: its version and the tick it was
+;; last sent at are kept with the buffer, and the server lists its documents
+;; as (BUFFER URI FILE).
+
+(defvar lsp--servers nil
+  "The names of the servers started in this run, running or not.")
+
+(defvar lsp--waiting nil
+  "The buffers whose root has not been found yet, the disk being slow.")
+
+(defvar lsp--refused nil
+  "Why lsp-mode last turned itself off, to be said again once its command has
+spoken; nil when it did not.")
+
+(defvar lsp--now 0
+  "The milliseconds the clock has counted, while it ran.")
+
+(defvar lsp--clock-running nil
+  "t while the clock job runs.")
+
+(defvar lsp--queue-limit 5000
+  "How many messages may wait for a server to read them before it is taken for
+one that no longer reads, and stopped.")
+
+(defvar lsp--stop-wait 2000
+  "How many milliseconds a server asked to stop has before it is stopped.")
+
+(defvar lsp--restart-window 180000
+  "The milliseconds within which falls count against `lsp-restart-limit'.")
+
+;; ---------------------------------------------------------------------------
+;; Small helpers
+;; ---------------------------------------------------------------------------
+
+(defun lsp--prop (plist key)
+  "The value after KEY in the property list PLIST, or nil."
+  (let ((found nil))
+    (while (and plist (not found))
+      (if (eq (car plist) key)
+          (setq found (cdr plist))
+          (setq plist (cdr (cdr plist)))))
+    (car found)))
+
+(defun lsp--true-p (value)
+  "t when the JSON VALUE is neither absent, false nor null."
+  (and value (not (eq value 'false)) (not (eq value 'null))))
+
+(defun lsp--list (vector)
+  "The elements of the JSON array VECTOR as a list; nil for anything else."
+  (let ((items nil) (i (if (vectorp vector) (length vector) 0)))
+    (while (> i 0)
+      (setq i (- i 1))
+      (setq items (cons (aref vector i) items)))
+    items))
+
+(defun lsp--without (item list)
+  "LIST without the elements `equal' to ITEM."
+  (let ((kept nil))
+    (dolist (each list)
+      (unless (equal each item) (setq kept (cons each kept))))
+    (reverse kept)))
+
+(defun lsp--label (server)
+  "The name SERVER's entry gives it, for messages."
+  (nth 1 (get server 'entry)))
+
+(defun lsp--option (server key)
+  "The value of the property KEY in SERVER's entry of `lsp-servers'."
+  (lsp--prop (nthcdr 3 (get server 'entry)) key))
+
+(defun lsp--entry (mode)
+  "The first entry of `lsp-servers' for the major mode MODE, or nil."
+  (let ((found nil) (entries lsp-servers))
+    (while (and entries (not found))
+      (if (eq (car (car entries)) mode)
+          (setq found (car entries)))
+      (setq entries (cdr entries)))
+    found))
+
+(defun lsp--language (entry)
+  "The language ENTRY names for its mode's files."
+  (or (lsp--prop (nthcdr 3 entry) :language)
+      (let ((mode (symbol-name (car entry))))
+        (if (string-suffix-p "-mode" mode)
+            (substring mode 0 (- (length mode) 5))
+            mode))))
+
+;; ---------------------------------------------------------------------------
+;; File names and URIs
+;; ---------------------------------------------------------------------------
+
+(defvar lsp--uri-escapes
+  '((" " . "%20") ("%" . "%25") ("#" . "%23") ("?" . "%3F") ("\"" . "%22")
+    ("<" . "%3C") (">" . "%3E") ("[" . "%5B") ("]" . "%5D") ("{" . "%7B")
+    ("}" . "%7D") ("|" . "%7C") ("^" . "%5E") ("`" . "%60") ("\\" . "%5C"))
+  "The characters of a file name a URI writes escaped, with their escapes.")
+
+(defun lsp--uri (file)
+  "The file URI of the absolute FILE."
+  (let* ((pieces nil) (i 0) (count (length file))
+         ;; C:\x is file:///C:/x.
+         (drive (and (> count 1) (string= (substring file 1 2) ":"))))
+    (while (< i count)
+      (let* ((char (substring file i (+ i 1)))
+             (escape (assoc char lsp--uri-escapes)))
+        (setq pieces (cons (cond ((and drive (string= char "\\")) "/")
+                                 (escape (cdr escape))
+                                 (t char))
+                           pieces)))
+      (setq i (+ i 1)))
+    (concat "file://" (if (string-prefix-p "/" file) "" "/")
+            (apply 'concat (reverse pieces)))))
+
+(defun lsp--hex-digit (char)
+  "The value of the hexadecimal digit CHAR, or nil."
+  (let ((digits "0123456789abcdef") (char (downcase char)) (i 0) (found nil))
+    (while (and (< i 16) (not found))
+      (if (string= (substring digits i (+ i 1)) char) (setq found i))
+      (setq i (+ i 1)))
+    found))
+
+(defun lsp--hex4 (number)
+  "NUMBER, below 65536, as four hexadecimal digits."
+  (let ((digits "0123456789abcdef") (out "") (left 4))
+    (while (> left 0)
+      (let ((digit (mod number 16)))
+        (setq out (concat (substring digits digit (+ digit 1)) out))
+        (setq number (floor (/ number 16)))
+        (setq left (- left 1))))
+    out))
+
+(defun lsp--escape (code)
+  "The JSON escape of the character whose code is CODE."
+  (if (< code 65536)
+      (concat "\\u" (lsp--hex4 code))
+      (let ((above (- code 65536)))
+        (concat "\\u" (lsp--hex4 (+ 55296 (floor (/ above 1024))))
+                "\\u" (lsp--hex4 (+ 56320 (mod above 1024)))))))
+
+(defun lsp--utf-8 (bytes)
+  "The string the UTF-8 BYTES, a list of numbers, spell."
+  (let ((escapes nil))
+    (while bytes
+      (let* ((byte (car bytes))
+             (more (cond ((< byte 128) 0) ((< byte 224) 1) ((< byte 240) 2) (t 3)))
+             (code (cond ((< byte 128) byte) ((< byte 224) (- byte 192))
+                         ((< byte 240) (- byte 224)) (t (- byte 240)))))
+        (setq bytes (cdr bytes))
+        (while (and (> more 0) bytes)
+          (setq code (+ (* code 64) (- (car bytes) 128)))
+          (setq bytes (cdr bytes))
+          (setq more (- more 1)))
+        (setq escapes (cons (lsp--escape (max code 0)) escapes))))
+    ;; The interpreter has no function from a code to a character; JSON does.
+    (json-parse-string (concat "\"" (apply 'concat (reverse escapes)) "\""))))
+
+(defun lsp--file (uri)
+  "The file the file URI names, its escapes read; nil for another URI."
+  (when (and (stringp uri) (string-prefix-p "file://" uri))
+    (let* ((path (substring uri 7)) (count (length path)) (i 0)
+           (pieces nil) (bytes nil))
+      (while (< i count)
+        (let* ((char (substring path i (+ i 1)))
+               (high (and (string= char "%") (< (+ i 2) count)
+                          (lsp--hex-digit (substring path (+ i 1) (+ i 2)))))
+               (low (and high (lsp--hex-digit (substring path (+ i 2) (+ i 3))))))
+          (if low
+              (progn (setq bytes (cons (+ (* high 16) low) bytes))
+                     (setq i (+ i 3)))
+              (progn (when bytes
+                       (setq pieces (cons (lsp--utf-8 (reverse bytes)) pieces))
+                       (setq bytes nil))
+                     (setq pieces (cons char pieces))
+                     (setq i (+ i 1))))))
+      (if bytes (setq pieces (cons (lsp--utf-8 (reverse bytes)) pieces)))
+      (let ((file (apply 'concat (reverse pieces))))
+        ;; file:///C:/x names C:/x, not /C:/x.
+        (if (and (> (length file) 2) (string= (substring file 2 3) ":")
+                 (string-prefix-p "/" file))
+            (substring file 1)
+            file)))))
+
+;; ---------------------------------------------------------------------------
+;; The log of a server
+;; ---------------------------------------------------------------------------
+
+;; A mode of its own, so that lsp-mode asked for in fundamental-mode does not
+;; come on, and refuse, in every log.
+(make-mode 'lsp--log-mode)
+
+(defun lsp--log-buffer (server)
+  "The name of SERVER's log buffer."
+  (concat "*" server "*"))
+
+(defun lsp--log (server text)
+  "nil, after adding TEXT as a line to SERVER's log buffer, cut from its start
+past `lsp-log-limit'."
+  (let ((name (lsp--log-buffer server)))
+    (buffer-create name 'lsp--log-mode)
+    (with-current-buffer
+     name
+     (lambda ()
+       (goto-char (point-max))
+       (insert text "\n")
+       (if (> (point-max) lsp-log-limit)
+           (delete-region (point-min) (- (point-max) lsp-log-limit)))))
+    nil))
+
+(defun lsp--say (server text)
+  "nil, after showing TEXT from SERVER in the echo area and its log."
+  (lsp--log server text)
+  (message "%s: %s" (lsp--label server) text)
+  nil)
+
+;; ---------------------------------------------------------------------------
+;; Messages going out
+;; ---------------------------------------------------------------------------
+;;
+;; Nothing is ever dropped or sent out of order: a didChange lost would leave
+;; the server with another text, and nobody would notice.
+
+(defun lsp--drain (server)
+  "t when nothing waits to be written to SERVER, after writing what it takes."
+  (let ((queue (get server 'queue)))
+    (while (and queue (process-send server (car queue)))
+      (setq queue (cdr queue)))
+    (put server 'queue queue)
+    (when (> (length queue) lsp--queue-limit)
+      (put server 'queue nil)
+      (lsp--log server "it no longer reads what it is sent: stopped")
+      (process-stop server))
+    (null queue)))
+
+(defun lsp--send (server message)
+  "t when MESSAGE, a map, has been written to SERVER; nil when it waits its
+turn, or SERVER is not running."
+  (when (memq (get server 'state) '(starting ready stopping))
+    (put server 'queue (append (get server 'queue) (list (json-serialize message))))
+    (lsp--drain server)))
+
+(defun lsp--notify (server method &optional params)
+  "What `lsp--send' says, after sending SERVER the notification METHOD."
+  (let ((message (make-map "jsonrpc" "2.0" "method" method)))
+    (lsp--send server (if params (map-insert message "params" params) message))))
+
+(defun lsp--reply (server id result)
+  "What `lsp--send' says, after answering SERVER's request ID with RESULT."
+  (lsp--send server (make-map "jsonrpc" "2.0" "id" id "result" result)))
+
+(defun lsp--request (server method params callback &rest options)
+  "The id of the request METHOD with PARAMS sent to SERVER, whose result goes to
+CALLBACK with SERVER. OPTIONS: :buffer, the result is wanted only while that
+buffer has the same text; :timed, it is dropped after `lsp-request-timeout';
+:replace, it takes the place of one of the same METHOD for the same buffer."
+  (lsp--flush server)
+  (let ((id (+ 1 (or (get server 'last-id) 0)))
+        (buffer (lsp--prop options :buffer)))
+    (when (lsp--prop options :replace)
+      (dolist (old (get server 'requests))
+        (when (and (string= (nth 1 old) method) (equal (nth 3 old) buffer))
+          (lsp--drop-request server (car old))
+          (lsp--notify server "$/cancelRequest" (make-map "id" (car old))))))
+    (put server 'last-id id)
+    (put server 'requests
+         (cons (list id method callback buffer
+                     (and buffer (buffer-get 'lsp-version buffer))
+                     (and (lsp--prop options :timed) lsp--now))
+               (get server 'requests)))
+    (let ((message (make-map "jsonrpc" "2.0" "id" id "method" method)))
+      (lsp--send server (if params (map-insert message "params" params) message)))
+    (if (lsp--prop options :timed) (lsp--clock-start))
+    id))
+
+(defun lsp--drop-request (server id)
+  "The request ID of SERVER, after taking it from those waiting; nil if none."
+  (let ((request (assoc id (get server 'requests))))
+    (if request (put server 'requests (lsp--without request (get server 'requests))))
+    request))
+
+;; ---------------------------------------------------------------------------
+;; Starting and stopping a server
+;; ---------------------------------------------------------------------------
+
+(defvar lsp--client-capabilities
+  (make-map
+   "general" (make-map "positionEncodings" (vector "utf-32" "utf-16"))
+   "textDocument" (make-map
+                   "synchronization" (make-map "dynamicRegistration" 'false
+                                               "willSave" 'false
+                                               "willSaveWaitUntil" 'false
+                                               "didSave" t)
+                   "publishDiagnostics" (make-map "versionSupport" t))
+   "workspace" (make-map "configuration" t "workspaceFolders" t
+                         "applyEdit" 'false)
+   "window" (make-map "workDoneProgress" t))
+  "What the client tells a server it can do: only what this module does.")
+
+(defun lsp--initialize-params (server)
+  "The parameters of SERVER's initialize request."
+  (let* ((root (directory-file-name (get server 'root)))
+         (uri (lsp--uri root))
+         (options (lsp--option server :initialization-options))
+         (params (make-map
+                  "processId" 'null
+                  "clientInfo" (make-map "name" "rsedit")
+                  "rootUri" uri
+                  "workspaceFolders"
+                  (vector (make-map "uri" uri "name" (file-name-nondirectory root)))
+                  "capabilities" lsp--client-capabilities)))
+    (if options (map-insert params "initializationOptions" options) params)))
+
+(defun lsp--start (server)
+  "t when SERVER's program has started and been asked to initialize; nil,
+with SERVER down, when it could not start."
+  (let* ((command (nth 2 (get server 'entry)))
+         (started (condition-case why
+                      (with-directory
+                       (get server 'root)
+                       (lambda ()
+                         (process-start server (car command) (cdr command)
+                                        'lsp--deliver 'messages)))
+                    (error (lsp--say server (format "cannot start: %s" why)) nil))))
+    (put server 'queue nil)
+    (put server 'requests nil)
+    (if (null started)
+        (progn (put server 'state 'dead) nil)
+        (progn
+          (put server 'state 'starting)
+          (lsp--log server (format "started in %s" (get server 'root)))
+          (lsp--request server "initialize" (lsp--initialize-params server)
+                        'lsp--initialized)
+          t))))
+
+(defun lsp--unit (encoding)
+  "The unit of `position-to-line-column' for the position ENCODING a server chose."
+  (cond ((equal encoding "utf-32") 'char)
+        ((equal encoding "utf-8") 'utf-8)
+        (t 'utf-16)))
+
+(defun lsp--initialized (server result)
+  "nil, after making SERVER ready from RESULT, its answer to initialize, and
+opening its documents there."
+  (let ((capabilities (if (mapp result) (map-elt result "capabilities") nil)))
+    (put server 'capabilities (if (mapp capabilities) capabilities (make-map)))
+    (put server 'unit (lsp--unit (map-elt (get server 'capabilities) "positionEncoding")))
+    (lsp--notify server "initialized" (make-map))
+    (put server 'state 'ready)
+    (lsp--log server (format "ready, columns in %s" (get server 'unit)))
+    (dolist (document (get server 'documents))
+      (lsp--open server (car document)))
+    nil))
+
+(defun lsp--stop (server)
+  "nil, after asking SERVER to stop: shutdown, then exit, then the process
+stopped if it has not ended within two seconds."
+  (let ((state (get server 'state)))
+    (cond ((eq state 'ready)
+           (put server 'asked-stop t)
+           (put server 'state 'stopping)
+           (lsp--request server "shutdown" nil 'lsp--shut)
+           (lsp--arm server))
+          ((memq state '(starting stopping))
+           (put server 'asked-stop t)
+           (process-stop server))))
+  nil)
+
+(defun lsp--arm (server)
+  "nil, after giving SERVER `lsp--stop-wait' milliseconds from now to end."
+  (put server 'deadline (+ lsp--now lsp--stop-wait))
+  (lsp--clock-start)
+  nil)
+
+(defun lsp--shut (server result)
+  "nil, after telling SERVER, which has answered shutdown, to exit."
+  (lsp--notify server "exit")
+  (process-close-input server)
+  (lsp--arm server))
+
+(defun lsp--recent (times)
+  "The TIMES of falls still within `lsp--restart-window'."
+  (let ((kept nil))
+    (dolist (time times)
+      (if (< (- lsp--now time) lsp--restart-window) (setq kept (cons time kept))))
+    (reverse kept)))
+
+(defun lsp--forget (server)
+  "nil, after forgetting what SERVER's process had: its findings, requests,
+raw diagnostics and queue. Its documents wait for the next process."
+  (finding-clear server)
+  (put server 'requests nil)
+  (put server 'queue nil)
+  (put server 'raw (make-map))
+  (put server 'progress nil)
+  (put server 'deadline nil)
+  (put server 'capabilities nil)
+  nil)
+
+(defun lsp--exited (server status)
+  "nil, after SERVER's process has ended as STATUS says: started again when
+that was asked, or when it fell and has not fallen too often."
+  (let ((asked (get server 'asked-stop)) (again (get server 'restart)))
+    (lsp--forget server)
+    (put server 'asked-stop nil)
+    (put server 'restart nil)
+    (put server 'state 'dead)
+    (cond (again
+           (put server 'crashes nil)
+           (lsp--start server))
+          (asked
+           (lsp--log server (format "stopped: %s" status)))
+          (t
+           (let ((crashes (cons lsp--now (lsp--recent (get server 'crashes)))))
+             (put server 'crashes crashes)
+             (lsp--clock-start)
+             (if (> (length crashes) lsp-restart-limit)
+                 (lsp--say server
+                           (format "fell %d times in three minutes, and stays down: M-x lsp-restart"
+                                   (length crashes)))
+                 (progn
+                   (lsp--say server (format "fell (%s), starting it again" status))
+                   (lsp--start server)))))))
+  nil)
+
+;; ---------------------------------------------------------------------------
+;; The clock
+;; ---------------------------------------------------------------------------
+;;
+;; The interpreter has no clock: a `background-call' job that only sleeps
+;; counts time while something waits for it -- an answer, a stop, a fall that
+;; still counts -- and stops itself when nothing does.
+
+(defun lsp--clock-start ()
+  "nil, after starting the clock unless it runs."
+  (unless lsp--clock-running
+    (setq lsp--clock-running t)
+    (background-call 'lsp-clock (fiber (while t (yield '(sleep 250))))
+                     'lsp--clock-step))
+  nil)
+
+(defun lsp--clock-needed-p ()
+  "t while a server waits for the clock."
+  (let ((needed nil))
+    (dolist (server lsp--servers)
+      (if (or (get server 'deadline) (get server 'crashes)
+              (let ((timed nil))
+                (dolist (request (get server 'requests))
+                  (if (nth 5 request) (setq timed t)))
+                timed))
+          (setq needed t)))
+    needed))
+
+(defun lsp--clock-step (job)
+  "nil, after a quarter of a second more of the clock JOB: a server past its
+time to stop is stopped, a question past `lsp-request-timeout' dropped."
+  (setq lsp--now (+ lsp--now 250))
+  (dolist (server lsp--servers)
+    (let ((deadline (get server 'deadline)))
+      (when (and deadline (>= lsp--now deadline))
+        (put server 'deadline nil)
+        (process-stop server)))
+    (dolist (request (get server 'requests))
+      (when (and (nth 5 request)
+                 (> (- lsp--now (nth 5 request)) (* 1000 lsp-request-timeout)))
+        (lsp--drop-request server (car request))
+        (lsp--say server (format "no answer to %s" (nth 1 request)))))
+    (put server 'crashes (lsp--recent (get server 'crashes))))
+  (unless (lsp--clock-needed-p)
+    (setq lsp--clock-running nil)
+    (stop-worker job))
+  nil)
+
+;; ---------------------------------------------------------------------------
+;; What the server says
+;; ---------------------------------------------------------------------------
+
+(defun lsp--deliver (server kind value)
+  "nil, after handling what SERVER's process gave as KIND: a message, a line of
+its standard error, or its exit."
+  (let ((server (if (symbolp server) (symbol-name server) server)))
+    (cond ((eq kind 'output)
+           ;; A callback of another module may have written in a document
+           ;; since the last command.
+           (lsp--flush-all)
+           (lsp--handle server value))
+          ((eq kind 'error) (lsp--log server value))
+          (t (lsp--exited server value))))
+  nil)
+
+(defun lsp--handle (server body)
+  "nil, after handling BODY, a message from SERVER: an answer, a request or a
+notification."
+  (let ((message (condition-case nil (json-parse-string body) (error nil))))
+    (if (not (mapp message))
+        (lsp--log server (concat "unreadable: " body))
+        (let ((method (map-elt message "method"))
+              (id (map-elt message "id")))
+          (if (eq id 'null) (setq id nil))
+          (cond ((and method id)
+                 (lsp--answer server id method (map-elt message "params")))
+                (method (lsp--notified server method (map-elt message "params")))
+                (id (lsp--answered server id message))))))
+  nil)
+
+(defun lsp--still-asked-p (request)
+  "t when what REQUEST was asked on is still there: its buffer lives, with the
+text of then."
+  (let ((buffer (nth 3 request)))
+    (or (null buffer)
+        (and (member buffer (all-buffer-names))
+             (equal (buffer-get 'lsp-version buffer) (nth 4 request))))))
+
+(defun lsp--answered (server id message)
+  "nil, after giving the answer MESSAGE to the request ID of SERVER waits for."
+  (let ((request (lsp--drop-request server id)))
+    (when request
+      (let ((failure (map-elt message "error")))
+        (cond ((mapp failure)
+               (lsp--log server (format "%s failed: %s" (nth 1 request)
+                                        (map-elt failure "message")))
+               (if (string= (nth 1 request) "initialize")
+                   (progn (lsp--say server "refused to start")
+                          (put server 'asked-stop t)
+                          (process-stop server))
+                   (if (nth 3 request)
+                       (message "%s: %s" (lsp--label server) (map-elt failure "message")))))
+              ((lsp--still-asked-p request)
+               (funcall (nth 2 request) server (map-elt message "result")))))))
+  nil)
+
+(defun lsp--setting (settings section)
+  "The part of SETTINGS SECTION names, dots going down; null when none."
+  (let ((value settings))
+    (dolist (part (if (stringp section) (split-string section ".") nil))
+      (setq value (if (mapp value) (map-elt value part 'null) 'null)))
+    (if (null value) 'null value)))
+
+(defun lsp--answer (server id method params)
+  "nil, after answering the request ID of SERVER, for METHOD with PARAMS."
+  (cond ((string= method "workspace/configuration")
+         (let ((settings (lsp--option server :settings)))
+           (lsp--reply server id
+                       (apply 'vector
+                              (mapcar (lambda (item)
+                                        (lsp--setting settings
+                                                      (if (mapp item) (map-elt item "section") nil)))
+                                      (lsp--list (map-elt params "items")))))))
+        ((string= method "workspace/applyEdit")
+         (lsp--reply server id (make-map "applied" 'false)))
+        ((member method '("client/registerCapability" "client/unregisterCapability"
+                          "window/workDoneProgress/create"))
+         (lsp--reply server id 'null))
+        ((string= method "window/showMessageRequest")
+         (lsp--say server (map-elt params "message"))
+         (lsp--reply server id 'null))
+        (t
+         (lsp--send server (make-map "jsonrpc" "2.0" "id" id
+                                     "error" (make-map "code" -32601
+                                                       "message" (concat "unknown method " method))))))
+  nil)
+
+(defun lsp--progress (server params)
+  "nil, after logging the progress PARAMS of SERVER; its end is also said."
+  (let* ((token (map-elt params "token"))
+         (value (map-elt params "value"))
+         (kind (if (mapp value) (map-elt value "kind") nil))
+         (text (if (mapp value) (map-elt value "message") nil))
+         (known (assoc token (get server 'progress))))
+    (cond ((equal kind "begin")
+           (put server 'progress (cons (cons token (map-elt value "title"))
+                                       (get server 'progress)))
+           (lsp--log server (format "%s..." (map-elt value "title"))))
+          ((equal kind "report")
+           (if (stringp text) (lsp--log server text)))
+          ((equal kind "end")
+           (put server 'progress (lsp--without known (get server 'progress)))
+           (lsp--say server (format "%s done" (if known (cdr known) "work"))))))
+  nil)
+
+(defun lsp--notified (server method params)
+  "nil, after handling SERVER's notification METHOD with PARAMS; those not
+known are let by."
+  (cond ((string= method "textDocument/publishDiagnostics")
+         (lsp--diagnostics server params))
+        ((string= method "window/showMessage")
+         (lsp--say server (map-elt params "message")))
+        ((string= method "window/logMessage")
+         (lsp--log server (map-elt params "message")))
+        ((string= method "$/progress")
+         (lsp--progress server params)))
+  nil)
+
+;; ---------------------------------------------------------------------------
+;; The findings
+;; ---------------------------------------------------------------------------
+
+(defun lsp--severity (number)
+  "The severity of a finding for a diagnostic's NUMBER; error when it has none."
+  (cond ((equal number 2) 'warning)
+        ((equal number 3) 'info)
+        ((equal number 4) 'hint)
+        (t 'error)))
+
+(defun lsp--position (position unit)
+  "The offset in the current buffer of the LSP POSITION, its columns in UNIT."
+  (line-column-to-position (+ 1 (map-elt position "line"))
+                           (map-elt position "character") unit))
+
+(defun lsp--place (position unit here)
+  "The (LINE . COLUMN) of the LSP POSITION for a finding: read in the current
+buffer when HERE, else with the server's columns as they are."
+  (if here
+      (let ((place (position-to-line-column (lsp--position position unit))))
+        (cons (car place) (nth 1 place)))
+      (cons (+ 1 (map-elt position "line")) (map-elt position "character"))))
+
+(defun lsp--finding (diagnostic unit here)
+  "The finding DIAGNOSTIC makes, its places read as `lsp--place' reads them."
+  (let* ((range (map-elt diagnostic "range"))
+         (code (map-elt diagnostic "code"))
+         (message (map-elt diagnostic "message"))
+         (finding (list :start (lsp--place (map-elt range "start") unit here)
+                        :end (lsp--place (map-elt range "end") unit here)
+                        :severity (lsp--severity (map-elt diagnostic "severity"))
+                        :message (if (stringp message) message ""))))
+    (if (or (stringp code) (numberp code))
+        (append finding (list :code (if (stringp code) code (number-to-string code))))
+        finding)))
+
+(defun lsp--document (server file)
+  "SERVER's document (BUFFER URI FILE) for FILE, or nil."
+  (let ((found nil))
+    (dolist (document (get server 'documents))
+      (if (equal (nth 2 document) file) (setq found document)))
+    found))
+
+(defun lsp--diagnostics (server params)
+  "nil, after making SERVER's findings in a file what PARAMS, a
+publishDiagnostics, says; one about a text that is no longer there is dropped."
+  (let* ((file (lsp--file (map-elt params "uri")))
+         (version (map-elt params "version"))
+         (document (and file (lsp--document server file)))
+         (buffer (car document))
+         (items (lsp--list (map-elt params "diagnostics")))
+         (unit (get server 'unit)))
+    (cond ((null file) nil)
+          ((and (numberp version) buffer
+                (not (equal version (buffer-get 'lsp-version buffer))))
+           (lsp--log server (format "dropped the findings of version %d of %s"
+                                    version file)))
+          (t
+           (put server 'raw (if items
+                                (map-insert (or (get server 'raw) (make-map)) file
+                                            (map-elt params "diagnostics"))
+                                (map-delete (or (get server 'raw) (make-map)) file)))
+           (let ((entries
+                  (if (and buffer (not (eq unit 'char)))
+                      (with-current-buffer
+                       buffer
+                       (lambda () (mapcar (lambda (item) (lsp--finding item unit t)) items)))
+                      (mapcar (lambda (item) (lsp--finding item unit nil)) items))))
+             (condition-case why
+                 (finding-set server file entries)
+               (error (lsp--log server (format "findings refused: %s" why))))))))
+  nil)
+
+;; ---------------------------------------------------------------------------
+;; The documents
+;; ---------------------------------------------------------------------------
+
+(defun lsp--sync-kind (server)
+  "How SERVER wants changes: 0 not at all, 1 or 2 as text."
+  (let ((sync (map-elt (or (get server 'capabilities) (make-map)) "textDocumentSync")))
+    (cond ((numberp sync) sync)
+          ((mapp sync) (map-elt sync "change" 0))
+          (t 0))))
+
+(defun lsp--open (server buffer)
+  "nil, after sending SERVER the whole text of BUFFER as version 1."
+  (let* ((document (assoc buffer (get server 'documents)))
+         (read (with-current-buffer
+                buffer
+                (lambda () (list (buffer-string) (buffer-modified-tick))))))
+    (buffer-put 'lsp-version 1 buffer)
+    (buffer-put 'lsp-tick (nth 1 read) buffer)
+    (lsp--notify server "textDocument/didOpen"
+                 (make-map "textDocument"
+                           (make-map "uri" (nth 1 document)
+                                     "languageId" (buffer-get 'lsp-language buffer)
+                                     "version" 1
+                                     "text" (car read)))))
+  nil)
+
+(defun lsp--changed (server buffer tick)
+  "nil, after sending SERVER the whole text of BUFFER, changed at TICK, as its
+next version."
+  (buffer-put 'lsp-tick tick buffer)
+  (when (> (lsp--sync-kind server) 0)
+    (let ((version (+ 1 (buffer-get 'lsp-version buffer))))
+      (buffer-put 'lsp-version version buffer)
+      (lsp--notify server "textDocument/didChange"
+                   (make-map "textDocument"
+                             (make-map "uri" (buffer-get 'lsp-uri buffer)
+                                       "version" version)
+                             "contentChanges"
+                             (vector (make-map "text"
+                                               (with-current-buffer
+                                                buffer
+                                                (lambda () (buffer-string)))))))))
+  nil)
+
+(defun lsp--flush (server)
+  "nil, after sending SERVER every change its documents have had since it last
+heard of them."
+  (lsp--drain server)
+  (when (eq (get server 'state) 'ready)
+    (dolist (document (get server 'documents))
+      (let* ((buffer (car document))
+             (tick (buffer-modified-tick buffer)))
+        (if (and tick (not (equal tick (buffer-get 'lsp-tick buffer))))
+            (lsp--changed server buffer tick)))))
+  nil)
+
+(defun lsp--flush-all ()
+  "nil, after `lsp--flush' for every server."
+  (dolist (server lsp--servers) (lsp--flush server))
+  nil)
+
+(defun lsp--server-for (file entry)
+  "The server for FILE under ENTRY, made and started if need be; timeout when
+its root is not known yet."
+  (let* ((function (or (lsp--prop (nthcdr 3 entry) :root) lsp-root-function))
+         (root (funcall function file)))
+    (cond ((eq root 'timeout) 'timeout)
+          (t
+           (let* ((root (if (stringp root) root (file-name-directory file)))
+                  (server (concat "lsp " (nth 1 entry) " " root)))
+             (unless (member server lsp--servers)
+               (setq lsp--servers (append lsp--servers (list server)))
+               (put server 'entry entry)
+               (put server 'root root)
+               (put server 'documents nil)
+               (put server 'crashes nil)
+               (lsp--forget server)
+               (lsp--start server))
+             server)))))
+
+(defun lsp--attach ()
+  "nil, after making the current buffer a document of its server; or after
+turning lsp-mode off where it cannot be one."
+  (let* ((buffer (current-buffer))
+         (file (buffer-file-name))
+         (entry (lsp--entry (major-mode))))
+    (lsp--detach buffer)
+    (cond ((null file)
+           (setq lsp--refused (format "lsp-mode: %s visits no file" buffer))
+           (minor-mode-off 'lsp-mode)
+           (message "%s" lsp--refused))
+          ((null entry)
+           (setq lsp--refused (format "lsp-mode: no server for %s in lsp-servers"
+                                      (major-mode)))
+           (minor-mode-off 'lsp-mode)
+           (message "%s" lsp--refused))
+          (t
+           (let ((server (lsp--server-for file entry)))
+             (if (eq server 'timeout)
+                 (unless (member buffer lsp--waiting)
+                   (setq lsp--waiting (cons buffer lsp--waiting)))
+                 (let ((uri (lsp--uri file)))
+                   (buffer-put 'lsp-server server)
+                   (buffer-put 'lsp-uri uri)
+                   (buffer-put 'lsp-language (lsp--language entry))
+                   (buffer-put 'lsp-version 0)
+                   (put server 'documents
+                        (append (get server 'documents) (list (list buffer uri file))))
+                   (cond ((eq (get server 'state) 'ready) (lsp--open server buffer))
+                         ((eq (get server 'state) 'dead)
+                          (message "%s is down: M-x lsp-restart" (lsp--label server))))))))))
+  nil)
+
+(defun lsp--close (server document)
+  "nil, after taking DOCUMENT from SERVER's, and telling SERVER when it has it."
+  (put server 'documents (lsp--without document (get server 'documents)))
+  (if (eq (get server 'state) 'ready)
+      (lsp--notify server "textDocument/didClose"
+                   (make-map "textDocument" (make-map "uri" (nth 1 document)))))
+  nil)
+
+(defun lsp--detach (buffer)
+  "nil, after BUFFER is no longer a document, nor waiting to be one."
+  (setq lsp--waiting (lsp--without buffer lsp--waiting))
+  (let* ((server (buffer-get 'lsp-server buffer))
+         (document (and server (assoc buffer (get server 'documents)))))
+    (when server
+      (lsp--flush server)
+      (if document (lsp--close server document))
+      (dolist (key '(lsp-server lsp-uri lsp-language lsp-version lsp-tick))
+        (buffer-put key nil buffer))))
+  nil)
+
+(defun lsp--toggled ()
+  "nil, after making the current buffer a document, or not, as lsp-mode is now."
+  (setq lsp--refused nil)
+  (if (minor-mode-p 'lsp-mode)
+      (lsp--attach)
+      (lsp--detach (current-buffer)))
+  nil)
+
+(defun lsp--renamed ()
+  "nil, after the current buffer, written to another file, has left the
+server of its old one, and opened the new one where lsp-mode is on."
+  (when (or (buffer-get 'lsp-server) (member (current-buffer) lsp--waiting))
+    (lsp--detach (current-buffer))
+    (if (minor-mode-p 'lsp-mode) (lsp--attach)))
+  nil)
+
+(defun lsp--saved ()
+  "nil, after telling the server of the current buffer that its file was
+saved, when the server wants to know."
+  (let* ((server (buffer-get 'lsp-server))
+         (sync (and server (eq (get server 'state) 'ready)
+                    (map-elt (get server 'capabilities) "textDocumentSync")))
+         (save (and (mapp sync) (map-elt sync "save"))))
+    (when (lsp--true-p save)
+      (lsp--flush server)
+      (let ((document (make-map "textDocument"
+                                (make-map "uri" (buffer-get 'lsp-uri)))))
+        (lsp--notify server "textDocument/didSave"
+                     (if (and (mapp save) (lsp--true-p (map-elt save "includeText")))
+                         (map-insert document "text" (buffer-string))
+                         document)))))
+  nil)
+
+(defun lsp--closed ()
+  "nil, after closing the documents whose buffer has gone."
+  (when lsp--servers
+    (let ((live (all-buffer-names)))
+      (setq lsp--waiting
+            (let ((kept nil))
+              (dolist (buffer lsp--waiting)
+                (if (member buffer live) (setq kept (cons buffer kept))))
+              kept))
+      (dolist (server lsp--servers)
+        (dolist (document (get server 'documents))
+          (unless (member (car document) live)
+            (lsp--close server document))))))
+  nil)
+
+(defun lsp--after-command ()
+  "nil, after what the last command did has reached the servers: changes sent,
+buffers waiting for a root asked for it again, documents whose buffer lost
+lsp-mode with its major mode closed."
+  (dolist (buffer lsp--waiting)
+    (if (member buffer (all-buffer-names))
+        (with-current-buffer buffer (lambda () (lsp--attach)))
+        (setq lsp--waiting (lsp--without buffer lsp--waiting))))
+  (dolist (server lsp--servers)
+    (dolist (document (get server 'documents))
+      (unless (minor-mode-p 'lsp-mode (car document))
+        (lsp--detach (car document)))))
+  (lsp--flush-all))
+
+;; ---------------------------------------------------------------------------
+;; The mode and the commands
+;; ---------------------------------------------------------------------------
+
+(define-minor-mode lsp-mode "LSP"
+  "Keep the file of this buffer open in the language server `lsp-servers'
+gives for its major mode, and show what the server says about it as findings."
+  ;; Said again: the command's own message has just covered the reason.
+  (when lsp--refused
+    (message "%s" lsp--refused)
+    (setq lsp--refused nil)))
+
+(defun lsp--server-here ()
+  "The server of the current buffer, or nil."
+  (buffer-get 'lsp-server))
+
+(defcommand lsp-shutdown () nil
+  "Stop the language server of this buffer, asking it first. Its findings go,
+and its buffers wait for `lsp-restart'."
+  (let ((server (lsp--server-here)))
+    (cond ((null server) (message "No language server for this buffer"))
+          ((eq (get server 'state) 'dead) (message "%s is not running" (lsp--label server)))
+          (t (lsp--stop server)
+             (message "Stopping %s" (lsp--label server))))))
+
+(defcommand lsp-restart () nil
+  "Start the language server of this buffer again: stopped first when it runs,
+started at once when it is down, however often it fell."
+  (let ((server (lsp--server-here)))
+    (cond ((null server) (message "No language server for this buffer"))
+          ((eq (get server 'state) 'dead)
+           (put server 'crashes nil)
+           (if (lsp--start server) (message "Starting %s" (lsp--label server))))
+          (t (put server 'restart t)
+             (lsp--stop server)
+             (message "Restarting %s" (lsp--label server))))))
+
+(add-hook 'lsp-mode "minor-mode-hook" 'lsp--toggled)
+(add-hook 'lsp-mode "after-save-hook" 'lsp--saved)
+(add-hook nil "after-set-visited-file-name-hook" 'lsp--renamed)
+(add-hook nil "after-close-hook" 'lsp--closed)
+(add-hook nil "post-command-hook" 'lsp--after-command)
+
+(log "lsp loaded")
+(provide 'lsp)

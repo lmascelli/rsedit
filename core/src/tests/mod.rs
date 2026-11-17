@@ -61,6 +61,7 @@ mod listing_modified_tests;
 mod loading_tests;
 mod locate_tests;
 mod log_tests;
+mod lsp_tests;
 mod macro_tests;
 mod manpage_tests;
 mod match_data_tests;

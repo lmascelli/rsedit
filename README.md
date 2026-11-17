@@ -71,7 +71,7 @@ directory is and what to put in the file.
 | Developer manual | Rust developers: architecture, threads, locks and design decisions | [`doc/architettura-editor.typ`](doc/architettura-editor.typ) |
 | Documentation rules | contributors: where each kind of information goes, how it is written and how it is checked | [`doc/documentazione.typ`](doc/documentazione.typ) |
 | Problem report | maintainers: the known defects, each with an ID | [`doc/rapporto-problemi.typ`](doc/rapporto-problemi.typ) |
-| Module designs | developers: modules not yet written, the core pieces they use and those still missing | [`doc/progetto-lsp.typ`](doc/progetto-lsp.typ) |
+| Module designs | developers: what is still to be written of a module, the core pieces it uses and those still missing | [`doc/progetto-lsp.typ`](doc/progetto-lsp.typ) |
 | Performance checks | developers: running the performance suite | [`PERFORMANCE.md`](PERFORMANCE.md) |
 | The Lisp | the interpreter itself, in its own repository | [lmascelli/risp](https://github.com/lmascelli/risp) |
 

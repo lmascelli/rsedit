@@ -7995,6 +7995,226 @@ legami per la keymap da cui vengono, i modi minori compresi, e quella del modo
 + *Documentata e non legata è uno stato.* Una variabile documentata prima che
   qualcosa la imposti non vale nil, e la pagina lo dice.
 
+=== `lsp` <mod-lsp>
+
+Un server di un linguaggio resta acceso accanto all'editor, legge i file di un
+progetto e dice che cosa non va, con messaggi JSON-RPC preceduti da
+un'intestazione `Content-Length` (LSP). Il modulo è tutto Lisp, sopra mattoni
+del nucleo che non sanno nulla di LSP: i processi dialoganti nella forma
+`messages` (@processi-dialoganti), il JSON dell'interprete
+(`json-parse-string`, `json-serialize`), il deposito delle segnalazioni
+(@segnalazioni) e il loro disegno (@segnalazioni-schermo), le righe e colonne
+in altre unità (@posizioni-unita), `buffer-modified-tick` (@due-porte), i modi
+minori (@modi-minori) e `project-root` (@mod-project). Il nucleo non lo nomina,
+e un plugin può sostituirlo. Questa prima versione fa le segnalazioni; il
+completamento, la definizione e le code action, con ciò che manca ancora al
+nucleo, sono in `doc/progetto-lsp.typ`.
+
+`lsp-mode`, acceso in un buffer che visita un file, cerca in `lsp-servers` la
+voce del suo modo maggiore, `(MODE NOME (PROGRAMMA ARGOMENTI...) . PROPRIETÀ)`,
+e la radice con `lsp-root-function`. Un server è la coppia (nome della voce,
+radice), e il suo nome è la stringa `lsp NOME RADICE`: è il nome del processo,
+il produttore delle segnalazioni e la chiave delle proprietà in cui il modulo
+tiene il suo stato (`put`, `get`).
+
+#ref-table(
+  columns: (3.0cm, 1fr),
+  header: ([Proprietà], [Contenuto]),
+  [`state`], [`starting`, `ready`, `stopping` o `dead`.],
+  [`entry`, `root`], [la voce di `lsp-servers` e la radice.],
+  [`unit`], [l'unità delle colonne che il server ha scelto, in quella di `position-to-line-column`: `char`, `utf-16`, `utf-8`.],
+  [`capabilities`], [la mappa della risposta a `initialize`, così com'è.],
+  [`requests`], [le richieste in corso: `(ID METODO CALLBACK BUFFER VERSIONE ORA)`, con BUFFER e VERSIONE quando la risposta vale solo per quel testo, e ORA quando ha una scadenza.],
+  [`queue`], [i messaggi già scritti in JSON che `process-send` non ha ancora preso, nell'ordine.],
+  [`documents`], [`(BUFFER URI FILE)` per ogni buffer del server, aperto presso di lui o in attesa che sia pronto.],
+  [`raw`], [per file, l'ultimo elenco di `publishDiagnostics` così come è arrivato.],
+  [`crashes`], [le ore delle cadute che contano ancora per `lsp-restart-limit`.],
+  [`deadline`, `asked-stop`, `restart`], [l'arresto in corso: l'ora oltre la quale si ferma il processo, se l'arresto è stato chiesto, se dopo si riparte.],
+)
+
+Del documento il buffer tiene, con `buffer-put`, il server, l'URI, il
+`languageId`, la versione --- 1 all'apertura, uno in più a ogni `didChange`
+--- e il `buffer-modified-tick` dell'ultimo invio.
+
+#figure(
+  canvas(height: 8.4cm)[
+    #lane(1.5cm, 0cm, 8.2cm, [buffer, comandi], w: 2.8cm)
+    #lane(5.6cm, 0cm, 8.2cm, [modulo `lsp`])
+    #lane(9.8cm, 0cm, 8.2cm, [processo], fill: accent.lighten(85%))
+    #lane(14.2cm, 0cm, 8.2cm, [server], fill: accent.lighten(85%))
+
+    #msg(1.5cm, 5.6cm, 1.2cm, [`lsp-mode` acceso: file, radice])
+    #msg(5.6cm, 9.8cm, 1.7cm, [`process-start` … `'messages`])
+    #msg(5.6cm, 14.2cm, 2.2cm, [`initialize`, `positionEncodings`])
+    #msg(14.2cm, 5.6cm, 2.75cm, [risposta: capacità, unità], dash: "dashed")
+    #msg(5.6cm, 14.2cm, 3.3cm, [`initialized`; `didOpen` di chi attende])
+    #self-msg(1.5cm, 3.9cm, [un comando scrive])
+    #msg(1.5cm, 5.6cm, 4.75cm, [`post-command-hook`])
+    #msg(5.6cm, 14.2cm, 5.25cm, [`didChange`, versione + 1])
+    #msg(14.2cm, 5.6cm, 5.8cm, [`publishDiagnostics`, tra due comandi], dash: "dashed")
+    #self-msg(5.6cm, 6.15cm, [`finding-set`])
+    #msg(5.6cm, 14.2cm, 7.2cm, [`shutdown`, poi `exit`])
+    #msg(9.8cm, 5.6cm, 7.75cm, [consegna `exit`], dash: "dashed")
+  ],
+  caption: [
+    La vita di un server, dall'avvio all'arresto. Ciò che arriva dal server
+    arriva tra un comando e l'altro, come le callback del lavoro di sfondo; il
+    modulo non aspetta mai una risposta dentro un comando.
+  ],
+)
+
+*L'avvio.* Il primo documento di una coppia (voce, radice) fa partire il
+server: `process-start` dentro `with-directory` sulla radice
+(@directory-di-lavoro), senza shell, nella forma `messages`. `initialize` porta
+`processId` null, `rootUri` e un solo `workspaceFolders`, la radice, le
+`initializationOptions` della voce e le capacità del client. Finché la
+risposta non arriva il server è `starting` e i documenti aspettano; alla
+risposta il modulo legge l'unità e le capacità, manda `initialized`, poi
+`didOpen` per ogni documento, e il server è `ready`. Una radice che risponde
+`timeout` mette il buffer in `lsp--waiting`, e la domanda si rifà dopo il
+comando seguente, quando la risalita ha la sua risposta ricordata.
+
+*Le consegne.* Ogni consegna `output` è un corpo intero. Con `id` e senza
+`method` è una risposta: si toglie dalle richieste in corso e va alla sua
+callback solo se ciò su cui era stata chiesta c'è ancora --- il buffer vive, e
+con la versione dell'invio ---; un `error` va nel registro, e nell'area
+messaggi se la richiesta era per un buffer. Con `method` e `id` è una
+richiesta del server, e ha sempre una risposta, perché un server che ne
+aspetta una può fermarsi; con `method` e senza `id` una notifica, e quelle che
+il modulo non conosce si ignorano.
+
+#ref-table(
+  columns: (5.6cm, 1fr),
+  header: ([Dal server], [Risposta]),
+  [`workspace/configuration`], [per ogni voce, la sezione chiesta di `:settings`, scesa per i punti del nome, o null.],
+  [`workspace/applyEdit`], [`applied` falso: il client non dichiara `applyEdit`.],
+  [`client/registerCapability`, `client/unregisterCapability`, `window/workDoneProgress/create`], [null.],
+  [`window/showMessageRequest`], [il messaggio si mostra, senza le scelte; null.],
+  [ogni altra richiesta], [l'errore `-32601`, metodo sconosciuto.],
+  [`window/showMessage`, `window/logMessage`, `$/progress`], [notifiche: l'area messaggi e il registro; di un lavoro `$/progress` il registro ha l'inizio e i passi, l'area messaggi la fine.],
+  [`textDocument/publishDiagnostics`], [un `finding-set` per quel file, sotto.],
+)
+
+*Lo svuotamento.* Un documento il cui `buffer-modified-tick` non è quello
+dell'ultimo invio manda `didChange` con il testo intero, versione più uno, se
+il server vuole le modifiche (`textDocumentSync` diverso da 0). Si svuota in
+tre momenti: dopo ogni comando (`post-command-hook` per ogni modo), all'inizio
+di ogni consegna del server, prima di ogni richiesta. `didSave` segue
+`after-save-hook`, dopo uno svuotamento, per i server che dichiarano `save`;
+`didClose` segue lo spegnimento di `lsp-mode`, la chiusura del buffer
+(`after-close-hook`, che confronta i documenti con `all-buffer-names`), un
+cambio di modo maggiore che ha tolto `lsp-mode` (controllato dopo ogni
+comando), e `C-x C-w`, seguito da un `didOpen` del nome nuovo.
+
+*Le segnalazioni.* Una voce per diagnostica: `:start` e `:end` dalla `range`,
+`:severity` da 1--4 in `error`, `warning`, `info`, `hint` (assente: `error`),
+`:message`, `:code` se c'è, in stringa. Il deposito vuole righe da 1 e colonne
+in caratteri: con `char` è la riga più uno; con un'altra unità, in un file
+aperto, `lsp--position` traduce la posizione LSP in un offset del buffer con
+`line-column-to-position`, e `position-to-line-column` la rilegge in
+caratteri; in un file non aperto la colonna resta quella del server. Un
+elenco vuoto toglie le segnalazioni del file. L'elenco arrivato si tiene anche
+com'è, in `raw`, per le code action che verranno.
+
+*L'arresto.* `lsp-shutdown` manda `shutdown`; alla risposta `exit`, e chiude
+l'ingresso. Se dopo due secondi la consegna `exit` non è arrivata,
+`process-stop`. Alla consegna `exit` il modulo toglie le segnalazioni del
+server (`finding-clear` del produttore), dimentica richieste, coda e
+segnalazioni grezze, e il server è `dead`; i documenti restano suoi, in
+attesa. Una consegna `exit` non chiesta è una caduta: il server riparte da sé,
+e i documenti si riaprono presso il nuovo come versione 1, al più
+`lsp-restart-limit` volte in tre minuti; oltre, resta `dead` finché
+`lsp-restart` non lo riavvia.
+
++ *Lo stato del protocollo nel modulo, non nel nucleo.* Le richieste in
+  corso, le versioni, le segnalazioni grezze, le capacità sono di LSP; il
+  nucleo ne avrebbe bisogno solo se un altro modulo le volesse uguali, e
+  allora non sarebbero più di LSP. Il costo è una copia delle segnalazioni,
+  nel deposito e nel modulo. Scartato: un campo opaco `:data` nel deposito,
+  che darebbe al nucleo un dato che non sa leggere.
++ *Il nome del server come chiave di tutto.* Processo, produttore e proprietà
+  hanno lo stesso nome, così `work-list`, `process-status` e
+  `findings-of-producer` parlano dello stesso server, e lo stato si legge con
+  `get` senza una tabella da tenere allineata. Le proprietà sono globali, e
+  il nome contiene la radice: due server non si confondono.
++ *Un server per radice e configurazione, avviato dal primo buffer che lo
+  chiede.* Un progetto con più crate ha un server, perché la radice è quella
+  di `project`, con `.git` che vince; `c-mode` e `cpp-mode` con la stessa voce
+  `clangd` ne hanno uno. Scartato: un server per tutto l'editor con più
+  `workspaceFolders`, che non tutti i server reggono.
++ *Niente acceso da sé, ma caricato.* Le voci di `lsp-servers` ci sono,
+  l'accensione è dell'utente con `minor-mode-enable`: un server mancante
+  sarebbe un errore a ogni file aperto. Il modulo è tra quelli di
+  `default-configuration` perché, spento, costa un `post-command-hook` che
+  senza server non fa niente.
++ *Si svuota prima di chiedere, non a tempo.* Un'attesa dopo l'ultimo tasto
+  risparmia messaggi ma lascia un intervallo in cui il server non ha il testo
+  su cui gli si chiede; svuotare dopo ogni comando, all'inizio di ogni
+  consegna e prima di ogni richiesta rende quell'intervallo vuoto: il server
+  ha sempre ricevuto il testo su cui gli si chiede qualcosa, e il confronto
+  delle versioni basta a scartare le risposte vecchie. Il costo è un
+  `didChange` per comando che scrive.
++ *Il testo intero.* Un intervallo sbagliato è un difetto silenzioso: il
+  server lavora su un testo che non è quello del buffer. Il testo intero è
+  giusto per costruzione e chiede al nucleo solo `buffer-modified-tick`; costa
+  la misura del file a ogni comando che scrive. I tratti vengono quando il
+  nucleo saprà dire anche il testo tolto (`doc/progetto-lsp.typ`).
++ *`utf-32` prima di `utf-16`, `utf-8` mai.* Il client offre in
+  `general.positionEncodings` `utf-32`, che conta i caratteri come l'editor:
+  nessuna conversione, e le colonne dei file non aperti sono giuste anche
+  senza il loro testo. `utf-16` è l'obbligo del protocollo, e sbaglia solo
+  dopo un carattere fuori dal piano di base. Scartato: offrire `utf-8`, che
+  sbaglia ogni colonna dopo una lettera accentata dove il testo non c'è. Le
+  posizioni entrano da una funzione sola, `lsp--position`.
++ *Le segnalazioni di una versione vecchia si scartano.* Il deposito prende
+  le posizioni del produttore come vere per il testo di adesso; una
+  `publishDiagnostics` con una `version` diversa da quella del documento lo
+  smentirebbe in silenzio. Il server, che ha la versione nuova, ne manda
+  altre. Senza `version` si prende.
++ *Le capacità dichiarate sono quelle onorate.* Un server che crede il
+  client capace di qualcosa glielo manda: il client dichiara le unità,
+  `didSave`, `publishDiagnostics.versionSupport`, `workspace.configuration`,
+  `workspaceFolders` e `window.workDoneProgress`, e niente registrazione
+  dinamica né `applyEdit`. Ogni funzione nuova aggiunge le sue.
++ *Un messaggio non si scavalca.* `process-send` non aspetta mai; ciò che non
+  prende resta nella coda del server, che si svuota nell'ordine a ogni invio e
+  a ogni consegna. Un `didChange` perso lascerebbe il server con un altro
+  testo, e nessuno se ne accorgerebbe. Una coda oltre `lsp--queue-limit` vuol
+  dire un server che non legge più: lo si ferma, come una caduta.
++ *Il tempo da un lavoro che dorme.* L'interprete non ha un orologio: un
+  lavoro `background-call` che dorme un quarto di secondo per passo, come il
+  resoconto di `compile` (@mod-compile), conta il tempo in `lsp--now` mentre
+  qualcosa lo aspetta --- una richiesta con scadenza, un arresto, una caduta
+  che conta ancora --- e si ferma quando niente lo aspetta. Le scadenze sono
+  quindi almeno quelle dette. Scartato: una primitiva dell'ora, che il modulo
+  non chiede per sé solo.
++ *`initialize` senza scadenza.* Un server che legge un progetto grande può
+  metterci; togliere la richiesta lo lascerebbe `starting` per sempre, e un
+  errore lo ferma comunque. `lsp-shutdown` e `lsp-restart` restano a chi
+  vuole smettere di aspettare.
++ *La caduta ricomincia da capo.* Il server nuovo non sa niente: le
+  segnalazioni del vecchio si tolgono, e i documenti si riaprono come versione
+  1 con il testo di adesso.
++ *Chiudere l'ultimo buffer non ferma il server.* Riaprire un file del
+  progetto costerebbe di nuovo l'indicizzazione. All'uscita dell'editor non
+  c'è un hook: i processi ancora vivi si fermano con il loro gruppo
+  (@processi-figli), e il server riceve `TERM` senza `shutdown`, come quando
+  un editor cade.
++ *Il registro in un modo suo.* `*lsp NOME RADICE*` ha lo stderr e i messaggi
+  del server, troncato dall'inizio oltre `lsp-log-limit`. Il nome porta la
+  radice perché due server della stessa voce non si mescolino; il modo
+  maggiore `lsp--log-mode` evita che `lsp-mode`, chiesto per
+  `fundamental-mode`, si accenda nel registro e lo rifiuti a ogni riga.
++ *Gli URI in Lisp.* All'uscita si scrivono in `%XX` solo i caratteri ASCII che
+  un URI non tiene, gli altri restano come sono, e i server li accettano.
+  All'entrata si leggono anche le sequenze UTF-8 in `%XX`: l'interprete non ha
+  una funzione dal codice al carattere, e il modulo le fa diventare escape
+  `\u` che `json-parse-string` legge.
++ *`lsp-mode` dice perché si spegne.* In un buffer senza file, o in un modo
+  senza voce, il modo si spegne da sé dal suo `minor-mode-hook`; il messaggio
+  del comando, che arriva dopo, coprirebbe il motivo, che il corpo del comando
+  ridice.
+
 === `manpage` <mod-manpage>
 
 `C-h m` chiede una pagina, completando su tutte quelle installate, e `K` apre

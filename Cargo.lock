@@ -1921,7 +1921,7 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 [[package]]
 name = "risp"
 version = "0.1.0"
-source = "git+https://github.com/lmascelli/risp.git?branch=main#08d7ddae70d54608192cde754cfd0f24e5a48b4d"
+source = "git+https://github.com/lmascelli/risp.git?branch=main#5d2cd788d5ecd37102a963c23193c03eed315099"
 
 [[package]]
 name = "rsedit"

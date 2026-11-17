@@ -1,0 +1,170 @@
+NAME
+    lsp - language servers, and what they say about the code
+
+SYNOPSIS
+    (lsp-mode &optional ARG)
+    (lsp-shutdown)
+    (lsp-restart)
+    lsp-servers
+    lsp-root-function
+    lsp-request-timeout
+    lsp-restart-limit
+    lsp-log-limit
+
+DESCRIPTION
+    A language server is a program that stays running beside the editor,
+    reads the files of a project and tells what is wrong with them: the
+    errors and warnings a compiler would give, as you type rather than
+    when you build. rust-analyzer, clangd and pylsp are language servers.
+    They all speak one protocol, LSP, and this module speaks it for the
+    editor.
+
+    `lsp-mode' is a minor mode. On in a buffer that visits a file, it
+    starts the server `lsp-servers' gives for the buffer's major mode,
+    unless one is running for that project already, and keeps the server's
+    copy of the file in step with the buffer. What the server finds is
+    shown as the findings of any tool are: underlined in the text, counted
+    in the status line, listed by M-g f (see the findings page).
+
+    Nothing is on until you turn it on: a server is a program you must
+    have installed, and the module cannot know which ones you have.
+
+TURNING IT ON
+    M-x lsp-mode turns it on in the current buffer, or off. To have it in
+    every file of a language, ask for it in that major mode, in init.lisp:
+
+        (minor-mode-enable 'lsp-mode 'rust-mode)
+
+    A buffer that visits no file, or whose major mode has no entry in
+    `lsp-servers', cannot be a server's document: lsp-mode turns itself
+    off there, and says why.
+
+    The first buffer of a project starts its server, and the others of the
+    same project and language share it. A project is what the project page
+    says: the directory `project-root' finds above the file, where a .git
+    wins over a nearer Cargo.toml, so every crate of a repository has one
+    server. A file in no project has a server for its own directory.
+    `lsp-root-function' is the function asked; set it to another to find
+    roots another way.
+
+    The findings come once the server is ready, and a server can take
+    long to read a big project the first time: what it is doing goes to
+    its log, and the end of each piece of work to the echo area.
+
+THE SERVERS
+    `lsp-servers' has an entry for each major mode:
+
+        (MODE NAME (PROGRAM ARGS...) . PROPERTIES)
+
+    PROGRAM is run with ARGS as they are, with no shell, in the project's
+    root. NAME names the server in messages, and one NAME in one root is
+    one server: c-mode and cpp-mode both name clangd, so a project's C and
+    C++ files share a clangd. The PROPERTIES, all optional:
+
+        :language                the language's name for the server; the
+                                 mode's name without -mode by default:
+                                 rust, c, cpp, python
+        :initialization-options  a map, sent as it is when the server
+                                 starts
+        :settings                a map from sections to settings, for the
+                                 server that asks for its settings
+        :root                    a function used in place of
+                                 lsp-root-function for this entry
+
+    The entries that come with the module are rust-analyzer for rust-mode,
+    clangd for c-mode and cpp-mode, and pylsp for python-mode. Of two
+    entries for one mode the first wins, so an entry put in front replaces
+    the one that came. A mode has one server: a second one, a linter beside
+    the language's server, is not run.
+
+WHAT THE SERVER HEARS
+    When lsp-mode comes on the server is sent the whole text of the
+    buffer, and after every command that changed it the whole text again.
+    A save, C-x C-s or C-x C-w, is told to the servers that ask for it, and
+    closing the buffer or turning lsp-mode off closes the file there. What
+    is sent is always the text of now: a change made between two commands,
+    by a module's callback, is sent before anything else is.
+
+THE FINDINGS
+    Each server is a producer of findings, named "lsp NAME ROOT", and what
+    it says about a file replaces what it said before: when the file is
+    fixed, its findings go. The severity is the server's: error, warning,
+    info or hint, and error when it gives none.
+
+    A server that answers late, about a text you have changed since, is
+    not believed: its findings would be in the wrong places. It sends them
+    again for the text of now.
+
+    Columns are counted in characters when the server agrees to, which
+    the common servers do. With a server that counts in UTF-16, as the
+    protocol has it by default, the columns of an open file are read in its
+    text, and those of a file not open are right but after a character
+    outside the basic plane, such as an emoji.
+
+WHEN A SERVER STOPS
+    `lsp-shutdown' stops the server of the current buffer, asking it to
+    first; one that has not gone two seconds later is stopped outright.
+    Its findings go with it, and its buffers wait for `lsp-restart', which
+    starts it again, or stops and starts it when it is running.
+
+    A server that falls is started again by itself, and given its files
+    again, up to `lsp-restart-limit' times in three minutes. Past that it
+    stays down, with a message, until `lsp-restart'. Closing its last
+    buffer does not stop a server: the next file of the project would wait
+    for it to read the project again. Leaving the editor stops every server
+    still running.
+
+    A question to a server that has no answer within `lsp-request-timeout'
+    seconds is dropped, with a message.
+
+THE LOG
+    Each server has a buffer, *lsp NAME ROOT*, with what it wrote to its
+    standard error, its messages, and when it started, fell and stopped.
+    It keeps the last `lsp-log-limit' characters. C-x b goes to it.
+
+LIMITS
+    Only findings, for now: no completion, no going to a definition, no
+    fixes offered by the server.
+
+    The whole text is sent after every change, which costs the size of the
+    file at each command that writes; on a file of some megabytes that
+    can be felt.
+
+    The time a question waits and the three minutes of the restarts are
+    counted by the editor's background work, a quarter of a second at a
+    time: they are at least what they say, and may be a little more.
+
+EXAMPLES
+    rust-analyzer in every Rust file:
+
+        (minor-mode-enable 'lsp-mode 'rust-mode)
+
+    Another server for Python, put before the one that comes, and turned
+    on there:
+
+        (setq lsp-servers
+              (cons '(python-mode "pyright" ("pyright-langserver" "--stdio"))
+                    lsp-servers))
+        (minor-mode-enable 'lsp-mode 'python-mode)
+
+    Settings that rust-analyzer asks for, here clippy for its checks:
+
+        (setq lsp-servers
+              (cons (list 'rust-mode "rust-analyzer" '("rust-analyzer")
+                          :settings
+                          (make-map "rust-analyzer"
+                                    (make-map "check"
+                                              (make-map "command" "clippy"))))
+                    lsp-servers))
+
+    Every server's root in the file's own directory, whatever the project:
+
+        (defun my-lsp-root (file) nil)
+        (setq lsp-root-function 'my-lsp-root)
+
+    Start the server of this buffer again after updating it:
+
+        (lsp-restart)
+
+SEE ALSO
+    findings, project, processes, modes, configuration

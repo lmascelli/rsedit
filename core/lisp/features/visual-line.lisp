@@ -21,8 +21,15 @@ Example:
 (define-key 'visual-line-mode "C-a" 'beginning-of-visual-line)
 (define-key 'visual-line-mode "C-e" 'end-of-visual-line)
 
-(define-globalized-minor-mode global-visual-line-mode visual-line-mode nil
-  "Turn `visual-line-mode' on in every buffer, or off in all of them.
+(defun visual-line-turn-on ()
+  (unless (eq (major-mode) 'completion-mode)
+    (minor-mode-on 'visual-line-mode)))
+
+(define-globalized-minor-mode
+ global-visual-line-mode
+ visual-line-mode
+ visual-line-turn-on
+ "Turn `visual-line-mode' on in every buffer, or off in all of them.
 The buffers to come follow; with no argument, the other way from how it is.")
 
 (provide 'visual-line)

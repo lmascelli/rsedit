@@ -55,6 +55,7 @@ MODULES
     compile              C-c c, and jumping to what it complained about
     project              C-x p, finding, searching and building in a project
     findings             what tools said about a file, drawn, and M-g f
+    lsp                  language servers, off until lsp-mode is on
     theme                C-c t, and how faces are drawn
     vim                  modal editing, off until M-x vim-mode
     completion-at-point  where completions come from

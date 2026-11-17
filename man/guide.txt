@@ -56,6 +56,7 @@ THE REFERENCE
         compile           running a build, and jumping to its complaints
         project           the tree a file belongs to, and working on all of it
         findings          what tools have said about files
+        lsp               language servers, and what they say about the code
         shell             running a command, and reading what it printed
         processes         talking with a program that keeps running
         regexps           regular expressions, and matching them from Lisp
