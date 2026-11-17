@@ -3,7 +3,8 @@
 //! reports one finding for each version of a document it hears of, falls
 //! when a change brings the word "fall", and gives places in `target.txt`:
 //! the definition at line 0 in a Location, at line 1 in a LocationLink, none
-//! below; two references.
+//! below; two references; code actions that change `a.fake` and `b.fake`,
+//! one to be resolved, one a command that it carries out with applyEdit.
 //!
 //! Design: `doc/architettura-editor.typ, <mod-lsp>`.
 #[cfg(all(test, unix))]
@@ -22,6 +23,7 @@ mod tests {
     const SERVER: &str = r#"log="$1"
 encoding="$2"
 send() { printf 'Content-Length: %s\r\n\r\n%s' "${#1}" "$1"; }
+at() { printf '{"end":{"character":0,"line":%s},"start":{"character":0,"line":%s}}' "$1" "$1"; }
 len=0
 while IFS= read -r line; do
   line=$(printf '%s' "$line" | tr -d '\r')
@@ -33,7 +35,7 @@ while IFS= read -r line; do
       id=$(printf '%s' "$body" | sed -n 's/^{"id":\([0-9]*\),.*/\1/p')
       case "$body" in
         *'"method":"initialize"'*)
-          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"definitionProvider\":true,\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":1,\"openClose\":true,\"save\":true},\"referencesProvider\":true}}}" ;;
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"codeActionProvider\":{\"resolveProvider\":true},\"definitionProvider\":true,\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":1,\"openClose\":true,\"save\":true},\"referencesProvider\":true}}}" ;;
         *'"method":"shutdown"'*)
           send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":null}" ;;
         *'"method":"exit"'*)
@@ -51,6 +53,17 @@ while IFS= read -r line; do
         *'"method":"textDocument/references"'*)
           target="file://${log%/*}/target.txt"
           send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":[{\"range\":{\"end\":{\"character\":2,\"line\":0},\"start\":{\"character\":1,\"line\":0}},\"uri\":\"$target\"},{\"range\":{\"end\":{\"character\":4,\"line\":2},\"start\":{\"character\":3,\"line\":2}},\"uri\":\"$target\"}]}" ;;
+        *'"method":"textDocument/codeAction"'*)
+          a="file://${log%/*}/a.fake"
+          b="file://${log%/*}/b.fake"
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":[{\"disabled\":{\"reason\":\"no\"},\"title\":\"Off\"},{\"edit\":{\"changes\":{\"$a\":[{\"newText\":\"// \",\"range\":$(at 1)},{\"newText\":\"// \",\"range\":$(at 0)}],\"$b\":[{\"newText\":\"// \",\"range\":$(at 0)}]}},\"title\":\"Comment\"},{\"data\":7,\"title\":\"Later\"},{\"arguments\":[\"x\",1],\"command\":\"fake.run\",\"title\":\"Run\"},{\"isPreferred\":true,\"title\":\"Best\"}]}" ;;
+        *'"method":"codeAction/resolve"'*)
+          a="file://${log%/*}/a.fake"
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"edit\":{\"documentChanges\":[{\"edits\":[{\"newText\":\"later \",\"range\":$(at 0)}],\"textDocument\":{\"uri\":\"$a\",\"version\":null}}]},\"title\":\"Later\"}}" ;;
+        *'"method":"workspace/executeCommand"'*)
+          a="file://${log%/*}/a.fake"
+          send "{\"id\":900,\"jsonrpc\":\"2.0\",\"method\":\"workspace/applyEdit\",\"params\":{\"edit\":{\"changes\":{\"$a\":[{\"newText\":\"run \",\"range\":$(at 0)}]}}}}"
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":null}" ;;
         *'"method":"textDocument/didOpen"'*|*'"method":"textDocument/didChange"'*)
           uri=$(printf '%s' "$body" | sed -n 's/.*"uri":"\([^"]*\)".*/\1/p')
           version=$(printf '%s' "$body" | sed -n 's/.*"version":\([0-9]*\).*/\1/p')
@@ -752,5 +765,189 @@ done
             );
         }
         assert!(run(r#"(lsp--file "untitled:1")"#, &env, &ctx).is_nil());
+    }
+
+    /// The text of the buffer NAME.
+    fn contents(name: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> String {
+        text(&run(
+            &format!(r#"(with-current-buffer "{name}" (lambda () (buffer-string)))"#),
+            env,
+            ctx,
+        ))
+    }
+
+    /// Asks for the code actions at point, and answers the prompt with
+    /// TITLE once it is open.
+    fn take_action(title: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        run("(lsp-code-action)", env, ctx);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ctx.minibuffer_is_open() {
+            assert!(Instant::now() < deadline, "no prompt within ten seconds");
+            step(env, ctx);
+        }
+        for c in title.chars() {
+            run(&format!(r#"(self-insert "{c}")"#), env, ctx);
+        }
+        run("(minibuffer-confirm)", env, ctx);
+    }
+
+    /// Runs the host's ticks until the buffer NAME holds WANTED.
+    fn holds(name: &str, wanted: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) {
+        tick_until(
+            &format!(
+                r#"(equal (with-current-buffer "{name}" (lambda () (buffer-string))) {wanted:?})"#
+            ),
+            env,
+            ctx,
+        );
+    }
+
+    #[test]
+    fn a_code_action_is_asked_with_the_diagnostics_that_touch_point() {
+        let sandbox = Sandbox::new("action-context");
+        let file = sandbox.file("a.fake", "one two\nthree\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        finding_says(&file, "version 1", &env, &ctx);
+        run("(goto-char (point-min)) (forward-char 4)", &env, &ctx);
+        run("(lsp-code-action)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[
+                r#""method":"textDocument/codeAction""#,
+                r#""diagnostics":[{"code":7,"message":"version 1","#,
+                r#""range":{"end":{"character":4,"line":0},"start":{"character":4,"line":0}}"#,
+            ],
+            &env,
+            &ctx,
+        );
+        let touching = |at: usize| {
+            run(
+                &format!("(length (lsp--touching {} (cons {at} {at})))", server(&sandbox)),
+                &env,
+                &ctx,
+            )
+        };
+        assert_eq!(touching(5), LispExp::number(1.0));
+        assert_eq!(touching(10), LispExp::number(0.0));
+    }
+
+    #[test]
+    fn the_actions_offered_put_the_preferred_first_and_leave_out_the_disabled() {
+        let sandbox = Sandbox::new("action-list");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let answer = r#"[{"title":"Off","disabled":{"reason":"no"}},{"title":"Fix"},{"title":"Best","isPreferred":true},{"title":"Fix"}]"#;
+        let titles = run(
+            &format!("(mapcar 'car (lsp--actions (json-parse-string {answer:?})))"),
+            &env,
+            &ctx,
+        );
+        assert_eq!(
+            titles,
+            run(r#"(list "Best" "Fix" "Fix <2>")"#, &env, &ctx)
+        );
+    }
+
+    #[test]
+    fn a_code_action_is_undone_with_one_undo_in_each_buffer_it_changes() {
+        let sandbox = Sandbox::new("action-undo");
+        let a = sandbox.file("a.fake", "one\ntwo\n");
+        sandbox.file("b.fake", "three\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&a, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        type_at_end(&name, "x", &env, &ctx);
+        run("(goto-line 2)", &env, &ctx);
+        take_action("Comment", &env, &ctx);
+        holds(&name, "// one\n// two\nx", &env, &ctx);
+        // b.fake was not open: it is opened for the change, behind a.fake.
+        holds("b.fake", "// three\n", &env, &ctx);
+        assert_eq!(text(&run("(current-buffer)", &env, &ctx)), name);
+        assert_eq!(
+            text(&run("(buffer-substring (point) (+ (point) 3))", &env, &ctx)),
+            "two"
+        );
+        for (buffer, before) in [(name.as_str(), "one\ntwo\nx"), ("b.fake", "three\n")] {
+            run(
+                &format!(r#"(with-current-buffer "{buffer}" (lambda () (undo)))"#),
+                &env,
+                &ctx,
+            );
+            assert_eq!(contents(buffer, &env, &ctx), before);
+        }
+    }
+
+    #[test]
+    fn an_action_without_its_changes_is_resolved_and_a_command_runs_on_the_server() {
+        let sandbox = Sandbox::new("action-resolve");
+        let a = sandbox.file("a.fake", "one\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&a, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        take_action("Later", &env, &ctx);
+        logged(
+            &sandbox,
+            &[r#""method":"codeAction/resolve""#, r#""data":7"#],
+            &env,
+            &ctx,
+        );
+        holds(&name, "later one\n", &env, &ctx);
+        take_action("Run", &env, &ctx);
+        logged(
+            &sandbox,
+            &[
+                r#""method":"workspace/executeCommand""#,
+                r#""arguments":["x",1],"command":"fake.run""#,
+            ],
+            &env,
+            &ctx,
+        );
+        holds(&name, "run later one\n", &env, &ctx);
+        logged(
+            &sandbox,
+            &[r#""id":900"#, r#""result":{"applied":true}"#],
+            &env,
+            &ctx,
+        );
+    }
+
+    #[test]
+    fn an_edit_for_another_version_or_with_changes_that_overlap_is_refused_whole() {
+        let sandbox = Sandbox::new("action-refused");
+        let a = sandbox.file("a.fake", "one\n");
+        let b = sandbox.file("b.fake", "two\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&a, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        let at = |line: u32, from: u32, to: u32| {
+            format!(r#"{{"end":{{"character":{to},"line":{line}}},"start":{{"character":{from},"line":{line}}}}}"#)
+        };
+        let old_version = format!(
+            r#"{{"documentChanges":[{{"edits":[{{"newText":"x","range":{}}}],"textDocument":{{"uri":"file://{b}","version":null}}}},{{"edits":[{{"newText":"x","range":{}}}],"textDocument":{{"uri":"file://{a}","version":99}}}}]}}"#,
+            at(0, 0, 0),
+            at(0, 0, 0)
+        );
+        let overlapping = format!(
+            r#"{{"changes":{{"file://{a}":[{{"newText":"x","range":{}}},{{"newText":"y","range":{}}}]}}}}"#,
+            at(0, 0, 2),
+            at(0, 1, 3)
+        );
+        for (edit, why) in [
+            (old_version, "has changed since"),
+            (overlapping, "overlap"),
+        ] {
+            let said = text(&run(
+                &format!(
+                    "(lsp--apply-edit {} (json-parse-string {edit:?}))",
+                    server(&sandbox)
+                ),
+                &env,
+                &ctx,
+            ));
+            assert!(said.contains(why), "{said}");
+            assert_eq!(contents(&name, &env, &ctx), "one\n");
+            assert_eq!(contents("b.fake", &env, &ctx), "two\n");
+        }
     }
 }

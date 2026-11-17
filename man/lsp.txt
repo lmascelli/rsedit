@@ -8,6 +8,7 @@ SYNOPSIS
     (lsp-find-definition)
     (lsp-find-references)
     (lsp-go-back)
+    (lsp-code-action)
     (lsp-locations-goto)
     lsp-servers
     lsp-root-function
@@ -122,6 +123,27 @@ GOING TO A DEFINITION
     message says so. An answer that comes after the buffer has changed is
     not believed: ask again.
 
+TAKING A CODE ACTION
+    C-c a asks the server what it can do at point, or on the region when
+    it is active: fix the error there, add a missing import, extract a
+    function. What the server found under point or in the region is sent
+    with the question, so that the fixes for it come back. The actions
+    are offered in a prompt, the server's preferred first; <tab> lists
+    them, and <ret> on an empty prompt takes the first. Those the server
+    says cannot be taken now are left out.
+
+    An action changes the files it names, open or not: one that is not
+    open is opened, behind the current buffer. Each buffer it changes
+    takes the whole change as one step of undo, C-/ takes it back, and is
+    left to be saved. Point stays on the text it was on. An action may
+    also run a command on the server, which then sends its own changes,
+    made in the same way.
+
+    A change is made whole or not at all. It is refused, with a message,
+    when it was worked out on a text you have changed since, when two of
+    its parts overlap, when a file it changes cannot be opened or is
+    read-only, and when it creates, renames or deletes files.
+
 WHEN A SERVER STOPS
     `lsp-shutdown' stops the server of the current buffer, asking it to
     first; one that has not gone two seconds later is stopped outright.
@@ -145,8 +167,10 @@ THE LOG
     It keeps the last `lsp-log-limit' characters. C-x b goes to it.
 
 LIMITS
-    Findings and definitions, for now: no completion, no fixes offered by
-    the server.
+    No completion, for now.
+
+    A code action that creates, renames or deletes files is refused
+    whole, and so is one that changes a file not on this machine.
 
     In the list of places, the column in a file that was not open when
     the list was made is the server's: with a server that counts in
@@ -197,10 +221,15 @@ EXAMPLES
 
         (define-key 'lsp-mode "C-c r" 'lsp-find-references)
 
+    The code actions on M-RET as well, where lsp-mode is on:
+
+        (define-key 'lsp-mode "M-<ret>" 'lsp-code-action)
+
 KEYS IN LSP MODE
     M-.                     lsp-find-definition
     M-,                     lsp-go-back
     M-?                     lsp-find-references
+    C-c a                   lsp-code-action
 
 KEYS IN LSP LOCATIONS MODE
     <ret>                   lsp-locations-goto

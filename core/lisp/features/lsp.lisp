@@ -3,8 +3,8 @@
 ;;; lsp-mode, on in a buffer visiting a file, starts the server `lsp-servers'
 ;;; gives for its major mode at the file's root, keeps the server's copy of
 ;;; the text in step with the buffer, reports what the server says as
-;;; findings, and goes to the definitions it gives. User manual: the `lsp'
-;;; page.
+;;; findings, goes to the definitions it gives, and takes the code actions it
+;;; offers. User manual: the `lsp' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-lsp>`.
 
 (require 'commands)
@@ -344,9 +344,22 @@ buffer has the same text; :timed, it is dropped after `lsp-request-timeout';
                                                "didSave" t)
                    "publishDiagnostics" (make-map "versionSupport" t)
                    "definition" (make-map "linkSupport" t)
-                   "references" (make-map))
+                   "references" (make-map)
+                   "codeAction"
+                   (make-map "codeActionLiteralSupport"
+                             (make-map "codeActionKind"
+                                       (make-map "valueSet"
+                                                 (vector "" "quickfix" "refactor"
+                                                         "refactor.extract" "refactor.inline"
+                                                         "refactor.rewrite" "source"
+                                                         "source.organizeImports")))
+                             "isPreferredSupport" t
+                             "disabledSupport" t
+                             "dataSupport" t
+                             "resolveSupport" (make-map "properties" (vector "edit"))))
    "workspace" (make-map "configuration" t "workspaceFolders" t
-                         "applyEdit" 'false)
+                         "applyEdit" t
+                         "workspaceEdit" (make-map "documentChanges" t))
    "window" (make-map "workDoneProgress" t))
   "What the client tells a server it can do: only what this module does.")
 
@@ -613,7 +626,11 @@ text of then."
                                                       (if (mapp item) (map-elt item "section") nil)))
                                       (lsp--list (map-elt params "items")))))))
         ((string= method "workspace/applyEdit")
-         (lsp--reply server id (make-map "applied" 'false)))
+         (let ((why (lsp--apply-edit server (map-elt params "edit"))))
+           (if why (message "%s: %s" (lsp--label server) why))
+           (lsp--reply server id (if why
+                                     (make-map "applied" 'false "failureReason" why)
+                                     (make-map "applied" t)))))
         ((member method '("client/registerCapability" "client/unregisterCapability"
                           "window/workDoneProgress/create"))
          (lsp--reply server id 'null))
@@ -1038,6 +1055,243 @@ them, CONTEXT is the request's context, if any."
   nil)
 
 ;; ---------------------------------------------------------------------------
+;; Code actions
+;; ---------------------------------------------------------------------------
+
+(defun lsp--offset (place unit)
+  "The offset in the current buffer of PLACE, (LINE . COLUMN), its column in
+UNIT."
+  (line-column-to-position (car place) (cdr place) unit))
+
+(defun lsp--range-here ()
+  "(START . END): the region when it is active, point otherwise."
+  (if (use-region-p)
+      (cons (region-beginning) (region-end))
+      (cons (point) (point))))
+
+(defun lsp--touching (server range)
+  "A vector of the diagnostics SERVER sent about the current buffer's file,
+as they came, whose findings now touch RANGE, (START . END)."
+  (let* ((file (buffer-file-name))
+         (raw (lsp--list (map-elt (or (get server 'raw) (make-map)) file)))
+         (at 0)
+         (chosen nil))
+    ;; The store keeps a producer's findings in the order they came: the
+    ;; place of one among the server's is the place of its diagnostic.
+    (dolist (finding (findings-for-file file))
+      (when (equal (symbol-name (lsp--prop finding :producer)) server)
+        (let ((unit (lsp--prop finding :unit))
+              (diagnostic (nth at raw)))
+          (if (and diagnostic
+                   (<= (lsp--offset (lsp--prop finding :start) unit) (cdr range))
+                   (>= (lsp--offset (lsp--prop finding :end) unit) (car range)))
+              (setq chosen (cons diagnostic chosen))))
+        (setq at (+ at 1))))
+    (apply 'vector (reverse chosen))))
+
+(defun lsp--actions (result)
+  "(TITLE . ACTION) for each action of RESULT, an answer to codeAction, that
+can be taken: the preferred first, a title met again numbered."
+  (let ((preferred nil) (others nil) (titled nil))
+    (dolist (item (lsp--list result))
+      (when (and (mapp item) (stringp (map-elt item "title"))
+                 (not (mapp (map-elt item "disabled"))))
+        (if (lsp--true-p (map-elt item "isPreferred"))
+            (setq preferred (cons item preferred))
+            (setq others (cons item others)))))
+    (dolist (item (append (reverse preferred) (reverse others)))
+      (let* ((title (map-elt item "title"))
+             (count 1))
+        (while (assoc (if (= count 1) title (format "%s <%d>" title count)) titled)
+          (setq count (+ count 1)))
+        (setq titled (cons (cons (if (= count 1) title (format "%s <%d>" title count)) item)
+                           titled))))
+    (reverse titled)))
+
+(defun lsp--buffer-for (file)
+  "The buffer visiting FILE, opened if need be without leaving the current
+one; nil when it cannot be opened."
+  (let ((found nil))
+    (dolist (name (all-buffer-names))
+      (if (equal (buffer-file-name name) file) (setq found name)))
+    (or found
+        (let* ((here (current-buffer))
+               (opened (condition-case nil (find-file file) (error nil))))
+          (if (member here (all-buffer-names)) (switch-to-buffer here))
+          opened))))
+
+(defun lsp--text-edits (document)
+  "(FILE VERSION EDITS) for DOCUMENT, an entry of documentChanges, or a string
+saying why it cannot be made."
+  (let ((target (map-elt document "textDocument")))
+    (if (or (stringp (map-elt document "kind")) (not (mapp target)))
+        "it creates, renames or deletes files"
+        (list (lsp--file (map-elt target "uri"))
+              (map-elt target "version")
+              (lsp--list (map-elt document "edits"))))))
+
+(defun lsp--workspace-files (edit)
+  "(FILE VERSION EDITS) for each file the WorkspaceEdit EDIT changes, or a
+string saying why it cannot be made."
+  (let ((changes (map-elt edit "documentChanges"))
+        (files nil)
+        (why nil))
+    (if (vectorp changes)
+        (dolist (document (lsp--list changes))
+          (unless why
+            (let ((made (lsp--text-edits document)))
+              (if (stringp made) (setq why made) (setq files (cons made files))))))
+        (when (mapp (map-elt edit "changes"))
+          (dolist (pair (map-pairs (map-elt edit "changes")))
+            (setq files (cons (list (lsp--file (car pair)) 'null (lsp--list (cdr pair)))
+                              files)))))
+    (or why
+        (let ((unknown nil))
+          (dolist (each files) (if (null (car each)) (setq unknown t)))
+          (if unknown "it names a file that is not local" (reverse files))))))
+
+(defun lsp--insert-sorted (edit edits)
+  "EDITS, sorted by start, with EDIT, (START END TEXT), after those that start
+where it does or before."
+  (if (or (null edits) (< (car edit) (car (car edits))))
+      (cons edit edits)
+      (cons (car edits) (lsp--insert-sorted edit (cdr edits)))))
+
+(defun lsp--replacements (server edits)
+  "(START END TEXT) for each TextEdit of EDITS from SERVER, in the current
+buffer, sorted by start; a string when two overlap."
+  (let ((sorted nil) (unit (get server 'unit)) (why nil) (previous nil))
+    (dolist (edit edits)
+      (let ((range (map-elt edit "range")))
+        (setq sorted (lsp--insert-sorted
+                      (list (lsp--position (map-elt range "start") unit)
+                            (lsp--position (map-elt range "end") unit)
+                            (or (map-elt edit "newText") ""))
+                      sorted))))
+    (dolist (edit sorted)
+      (if (and previous (< (car edit) (nth 1 previous))) (setq why t))
+      (setq previous edit))
+    (if why (format "two of its changes to %s overlap" (buffer-file-name)) sorted)))
+
+(defun lsp--replace-all (replacements)
+  "nil, after making REPLACEMENTS, (START END TEXT) sorted by start, in the
+current buffer, the last first, as one step of undo, point kept in its place."
+  (let ((point (point)))
+    (undo-boundary)
+    (dolist (edit (reverse replacements))
+      (let ((start (car edit)) (end (nth 1 edit)) (text (nth 2 edit)))
+        (delete-region start end)
+        (goto-char start)
+        (insert text)
+        (cond ((>= point end) (setq point (+ point (- (length text) (- end start)))))
+              ((> point start) (setq point start)))))
+    (undo-boundary)
+    (goto-char point))
+  nil)
+
+(defun lsp--add-edits (buffer edits buffers)
+  "BUFFERS, a list of (BUFFER . EDITS), with EDITS added to those of BUFFER."
+  (if (assoc buffer buffers)
+      (mapcar (lambda (each)
+                (if (equal (car each) buffer) (cons buffer (append (cdr each) edits)) each))
+              buffers)
+      (append buffers (list (cons buffer edits)))))
+
+(defun lsp--apply-edit (server edit)
+  "nil, after making in their buffers the changes of EDIT, a WorkspaceEdit of
+SERVER's, all or none; a string saying why none was made."
+  (lsp--flush server)
+  (let ((files (if (mapp edit) (lsp--workspace-files edit) "it is not an edit"))
+        (buffers nil)
+        (why nil))
+    (if (stringp files) (setq why files))
+    ;; Every change is placed on the text as it is before the first is made.
+    (dolist (each (if why nil files))
+      (unless why
+        (let* ((file (car each))
+               (version (nth 1 each))
+               (buffer (lsp--buffer-for file)))
+          (cond ((null buffer) (setq why (format "cannot open %s" file)))
+                ((and (numberp version)
+                      (not (equal version (buffer-get 'lsp-version buffer))))
+                 (setq why (format "%s has changed since" file)))
+                ((with-current-buffer buffer (lambda () (buffer-read-only-p)))
+                 (setq why (format "%s is read-only" file)))
+                (t (setq buffers (lsp--add-edits buffer (nth 2 each) buffers)))))))
+    (let ((made nil))
+      (dolist (each (if why nil buffers))
+        (unless why
+          (let ((replacements (with-current-buffer
+                               (car each)
+                               (lambda () (lsp--replacements server (cdr each))))))
+            (if (stringp replacements)
+                (setq why replacements)
+                (setq made (cons (cons (car each) replacements) made))))))
+      (unless why
+        (dolist (each (reverse made))
+          (with-current-buffer (car each) (lambda () (lsp--replace-all (cdr each)))))
+        (lsp--flush-all)))
+    why))
+
+(defun lsp--execute (server command buffer)
+  "nil, after asking SERVER to run COMMAND, a Command, its arguments as they
+came; BUFFER is where it was chosen."
+  (let ((params (make-map "command" (map-elt command "command")))
+        (arguments (map-elt command "arguments")))
+    (lsp--request server "workspace/executeCommand"
+                  (if (lsp--true-p arguments) (map-insert params "arguments" arguments) params)
+                  (lambda (server result) nil)
+                  :buffer buffer :timed t))
+  nil)
+
+(defun lsp--perform (server action buffer)
+  "nil, after making the changes of ACTION, a CodeAction of SERVER's, then
+running its command; BUFFER is where it was chosen."
+  (let ((edit (map-elt action "edit"))
+        (command (map-elt action "command"))
+        (why nil))
+    (if (mapp edit) (setq why (lsp--apply-edit server edit)))
+    (cond (why (message "%s: %s not made: %s" (lsp--label server)
+                        (map-elt action "title") why))
+          ((mapp command) (lsp--execute server command buffer))
+          ((not (mapp edit))
+           (message "%s: %s does nothing" (lsp--label server) (map-elt action "title")))))
+  nil)
+
+(defun lsp--take (server action buffer)
+  "nil, after taking ACTION, one SERVER offered in BUFFER: asked whole first
+when it comes without its changes and SERVER resolves."
+  (let ((provider (map-elt (get server 'capabilities) "codeActionProvider")))
+    (cond ((stringp (map-elt action "command")) (lsp--execute server action buffer))
+          ((and (not (mapp (map-elt action "edit")))
+                (mapp provider) (lsp--true-p (map-elt provider "resolveProvider")))
+           (lsp--request server "codeAction/resolve" action
+                         (lambda (server result)
+                           (lsp--perform server (if (mapp result) result action) buffer))
+                         :buffer buffer :timed t))
+          (t (lsp--perform server action buffer))))
+  nil)
+
+(defun lsp--offer (server result buffer)
+  "nil, after asking which of the actions of RESULT, SERVER's answer for
+BUFFER, to take, and taking it; an empty answer takes the first."
+  (let ((actions (lsp--actions result)))
+    (if (null actions)
+        (message "No code actions here")
+        (minibuffer-read "Code action:"
+                         (lambda (answer)
+                           (let* ((title (if (assoc answer actions)
+                                             answer
+                                             (car (fuzzy-filter answer (mapcar 'car actions)))))
+                                  (action (cdr (assoc title actions))))
+                             (if action
+                                 (lsp--take server action buffer)
+                                 (message "No code action matches %s" answer))))
+                         (lambda (input) (fuzzy-filter input (mapcar 'car actions)))
+                         nil nil "lsp-code-action")))
+  nil)
+
+;; ---------------------------------------------------------------------------
 ;; The mode and the commands
 ;; ---------------------------------------------------------------------------
 
@@ -1095,6 +1349,29 @@ the language server of this buffer says, for M-g n to walk."
           (t (switch-to-buffer (car from))
              (goto-char (cdr from))))))
 
+(defcommand lsp-code-action () nil
+  "Ask the language server of this buffer what it offers to do at point, or
+on the region when it is active, and take the action chosen: its changes
+made, one undo for each buffer they touch, and its command run."
+  (let ((server (lsp--server-here)))
+    (cond ((null server) (message "No language server for this buffer"))
+          ((not (eq (get server 'state) 'ready))
+           (message "%s is not ready" (lsp--label server)))
+          ((not (lsp--true-p (map-elt (get server 'capabilities) "codeActionProvider")))
+           (message "%s does not give code actions" (lsp--label server)))
+          (t
+           (let* ((range (lsp--range-here))
+                  (unit (get server 'unit))
+                  (buffer (current-buffer)))
+             (lsp--request server "textDocument/codeAction"
+                           (make-map "textDocument" (make-map "uri" (buffer-get 'lsp-uri))
+                                     "range" (make-map "start" (lsp--position-at (car range) unit)
+                                                       "end" (lsp--position-at (cdr range) unit))
+                                     "context" (make-map "diagnostics"
+                                                         (lsp--touching server range)))
+                           (lambda (server result) (lsp--offer server result buffer))
+                           :buffer buffer :timed t :replace t))))))
+
 (defcommand lsp-locations-goto () nil
   "Go to the place on the cursor's line of a list the language server gave."
   ;; Counted, not parsed: a path with a colon reads two ways.
@@ -1106,6 +1383,7 @@ the language server of this buffer says, for M-g n to walk."
 (define-key 'lsp-mode "M-." 'lsp-find-definition)
 (define-key 'lsp-mode "M-?" 'lsp-find-references)
 (define-key 'lsp-mode "M-," 'lsp-go-back)
+(define-key 'lsp-mode "C-c a" 'lsp-code-action)
 
 (define-key 'lsp-locations-mode "<ret>" 'lsp-locations-goto)
 (define-key 'lsp-locations-mode "n" 'next-line)

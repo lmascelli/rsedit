@@ -8043,8 +8043,8 @@ del nucleo che non sanno nulla di LSP: i processi dialoganti nella forma
 in altre unità (@posizioni-unita), `buffer-modified-tick` (@due-porte), i modi
 minori (@modi-minori), `project-root` (@mod-project), `find-file` e le liste
 di risultati (@risultati). Il nucleo non lo nomina, e un plugin può
-sostituirlo. Fa le segnalazioni e la definizione; il completamento e le code
-action, con ciò che manca ancora al nucleo, sono in `doc/progetto-lsp.typ`.
+sostituirlo. Fa le segnalazioni, la definizione e le code action; il
+completamento, con ciò che manca ancora al nucleo, è in `doc/progetto-lsp.typ`.
 
 `lsp-mode`, acceso in un buffer che visita un file, cerca in `lsp-servers` la
 voce del suo modo maggiore, `(MODE NOME (PROGRAMMA ARGOMENTI...) . PROPRIETÀ)`,
@@ -8148,7 +8148,7 @@ comando), e `C-x C-w`, seguito da un `didOpen` del nome nuovo.
 colonna quella del server, e `finding-set` riceve l'unità del server: le
 converte il deposito, nel file aperto ora o più tardi (@segnalazioni). Un
 elenco vuoto toglie le segnalazioni del file. L'elenco arrivato si tiene anche
-com'è, in `raw`, per le code action che verranno.
+com'è, in `raw`, per il contesto delle code action.
 
 *La definizione.* `lsp--find` chiede al server del buffer, se la sua capacità
 lo dichiara, un metodo che risponde posti --- `textDocument/definition` per
@@ -8165,6 +8165,38 @@ toglie dalla cima e torna, se il buffer c'è ancora. Più d'uno: il buffer
 posto, e `results-put` gli dà una voce `("file" FILE RIGA COLONNA)` per riga,
 che `M-g n` percorre. La colonna è in caratteri per un file che è un documento
 del server, letta nel suo buffer; altrimenti è quella del server.
+
+*Le code action.* `lsp-code-action` chiede `textDocument/codeAction` per la
+regione attiva o per il punto, con scadenza e solo per il testo di adesso. Il
+contesto è il vettore delle diagnostiche grezze che toccano l'intervallo:
+`lsp--touching` scorre `findings-for-file`, che dà le segnalazioni nel testo di
+adesso, conta il posto di ciascuna tra quelle del server e prende da `raw` la
+diagnostica allo stesso posto. `lsp--actions` fa della risposta un elenco
+`(TITOLO . AZIONE)`: le `isPreferred` prima, le `disabled` fuori, un titolo
+ripetuto con `<2>`. `lsp--offer` apre `minibuffer-read`, con `fuzzy-filter`
+sui titoli per i candidati; la risposta è il titolo esatto o il primo che
+`fuzzy-filter` trova, e vuota è la prima azione. `lsp--take` manda un
+`Command` a `workspace/executeCommand`, con i suoi argomenti come sono
+arrivati; un'azione senza `edit` a un server con `resolveProvider` passa prima
+da `codeAction/resolve`; poi `lsp--perform` applica la modifica e, se è
+riuscita, esegue il comando dell'azione. Una richiesta `workspace/applyEdit`
+del server passa dalla stessa `lsp--apply-edit` e ha per risposta `applied`,
+con `failureReason` se rifiutata.
+
+`lsp--apply-edit` svuota prima i documenti, così la versione di ciascuno è
+quella del suo testo. Poi, tutto prima di cambiare qualcosa: da
+`documentChanges` o da `changes`, un `(FILE VERSIONE MODIFICHE)` per file;
+il buffer che visita il file, o `find-file` e il ritorno al buffer di prima;
+il rifiuto se la versione c'è e non è quella del documento, se il buffer è di
+sola lettura, se una voce crea, rinomina o cancella un file. Le `TextEdit` di
+un buffer diventano `(INIZIO FINE TESTO)` con `lsp--position`, nell'unità del
+server, ordinate per inizio senza scambiare quelle che cominciano nello stesso
+punto, e due che si sovrappongono rifiutano tutto. Solo allora
+`lsp--replace-all`, buffer per buffer, fa `undo-boundary`, applica
+dall'ultima alla prima con `delete-region` e `insert` (@modifiche-multiple),
+sposta il punto quanto il testo cambiato davanti a lui, e chiude con un
+altro `undo-boundary`: un passo di undo per buffer. I buffer restano da
+salvare; `lsp--flush-all` manda subito il testo nuovo ai server.
 
 *L'arresto.* `lsp-shutdown` manda `shutdown`; alla risposta `exit`, e chiude
 l'ingresso. Se dopo due secondi la consegna `exit` non è arrivata,
@@ -8226,9 +8258,11 @@ e i documenti si riaprono presso il nuovo come versione 1, al più
 + *Le capacità dichiarate sono quelle onorate.* Un server che crede il
   client capace di qualcosa glielo manda: il client dichiara le unità,
   `didSave`, `publishDiagnostics.versionSupport`, `workspace.configuration`,
-  `workspaceFolders`, `window.workDoneProgress`, `definition.linkSupport` e
-  `references`, e niente registrazione dinamica né `applyEdit`. Ogni funzione
-  nuova aggiunge le sue.
+  `workspaceFolders`, `window.workDoneProgress`, `definition.linkSupport`,
+  `references`, `codeAction` con i letterali, `isPreferred`, `disabled`,
+  `data` e la risoluzione di `edit`, `applyEdit` e
+  `workspaceEdit.documentChanges`; niente registrazione dinamica né
+  `resourceOperations`. Ogni funzione nuova aggiunge le sue.
 + *Un messaggio non si scavalca.* `process-send` non aspetta mai; ciò che non
   prende resta nella coda del server, che si svuota nell'ordine a ogni invio e
   a ogni consegna. Un `didChange` perso lascerebbe il server con un altro
@@ -8281,6 +8315,27 @@ e i documenti si riaprono presso il nuovo come versione 1, al più
   posti --- `definition`, `declaration`, `typeDefinition`, `implementation`,
   `references` --- passano da `lsp--find`: le altre si aggiungono con un
   comando di una riga e la loro capacità.
++ *Il contesto dal posto nell'elenco.* Le diagnostiche grezze hanno le
+  posizioni del testo di quando sono arrivate; dopo una modifica non dicono
+  più che cosa tocca il punto. Le segnalazioni del deposito sì, perché le
+  seguono i marcatori, e il deposito le tiene nell'ordine in cui il server le
+  ha mandate: il posto di una tra quelle del server è il posto della sua
+  diagnostica in `raw`. Scartato: confrontare l'intervallo con le posizioni
+  grezze, giusto solo finché nessuno scrive.
++ *Una modifica tutta o niente.* Un `WorkspaceEdit` fatto a metà lascia i file
+  in uno stato che nessuno ha calcolato, e il server crede l'opposto di ciò
+  che è. Ogni controllo --- i file, le versioni, la sola lettura, le
+  sovrapposizioni --- precede la prima modifica, e gli offset si calcolano
+  tutti sul testo di prima. Scartato: applicare i file che si possono e dire
+  gli altri.
++ *Le sostituzioni in Lisp.* Applicarle dall'ultima alla prima tenendo il
+  punto al suo posto è ciò che i commenti fanno in Rust; una primitiva
+  agnostica che lo facesse servirebbe anche ad altri moduli, ma oggi
+  `lsp--replace-all` è il solo a chiederlo, in poche righe. Quando un secondo
+  modulo applicherà liste di sostituzioni, il pezzo passa al nucleo.
++ *Una risposta vuota prende la prima.* Le azioni arrivano con la preferita
+  in testa; `C-c a` e `<ret>` la prendono senza scriverne il titolo, come
+  `M-.` va a una definizione sola.
 + *`lsp-mode` dice perché si spegne.* In un buffer senza file, o in un modo
   senza voce, il modo si spegne da sé dal suo `minor-mode-hook`; il messaggio
   del comando, che arriva dopo, coprirebbe il motivo, che il corpo del comando
