@@ -181,6 +181,8 @@ CHANGING TEXT IN PLACE
         capitalize-word           capitalize the word, or the region
         join-line                 join this line to the one above
         zap-to-char               kill up to and including a character
+        replace-regions           make a list of replacements in one
+                                  step, point kept in its place
 
 COMMENTS
     On the `editing' page:

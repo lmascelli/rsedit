@@ -10,7 +10,7 @@ use crate::primitives::edits::{delete_range, insert_text};
 use crate::primitives::movement::{goto_offset, line_bounds};
 
 /// One change to make, in offsets taken before any of them were made.
-enum Edit {
+pub(super) enum Edit {
     Insert { at: usize, text: String },
     Delete { from: usize, to: usize },
 }
@@ -32,7 +32,7 @@ impl Edit {
 /// Returns false when there was nothing to do, or when the buffer refused:
 /// then nothing was done, since a read-only buffer refuses the first edit,
 /// and the refusal is said at the end of the command.
-fn apply<B: BufferTrait>(buf: &mut Buffer<B>, edits: &[Edit]) -> bool {
+pub(super) fn apply<B: BufferTrait>(buf: &mut Buffer<B>, edits: &[Edit]) -> bool {
     if edits.is_empty() {
         return false;
     }
@@ -40,7 +40,7 @@ fn apply<B: BufferTrait>(buf: &mut Buffer<B>, edits: &[Edit]) -> bool {
     // than described: a list out of order comes out subtly wrong.
     debug_assert!(
         edits.windows(2).all(|pair| pair[0].at() <= pair[1].at()),
-        "comment edits must be in ascending order"
+        "edits must be in ascending order"
     );
     let point = buf.text.cursor_pos_1d();
     for edit in edits.iter().rev() {

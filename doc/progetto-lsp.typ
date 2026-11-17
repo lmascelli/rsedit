@@ -224,21 +224,19 @@ server, o azioni con una modifica (`edit`), un comando, o tutti e due.
   `find-file`; se la versione c'è e non è quella del documento, si rifiuta
   tutta la modifica, perché è stata calcolata su un altro testo. Le
   sostituzioni si traducono in offset tutte prima di cominciare, sul testo
-  com'è; si ordinano, si rifiuta la modifica se due si sovrappongono, e si
-  applicano dall'ultima alla prima, con `delete-region` e `insert`, come fanno i
-  commenti e i rettangoli (manuale, `<modifiche-multiple>`); un
-  `undo-boundary` prima e dopo fa di ogni buffer un passo di undo. I file
+  com'è; si ordinano, si rifiuta la modifica se due si sovrappongono, e
+  `replace-regions` (N7) le applica dall'ultima alla prima, come fanno i
+  commenti (manuale, `<modifiche-multiple>`), in un passo di undo per buffer. I file
   toccati restano da salvare. Poi lo svuotamento manda al server ciò che ha
   scritto.
 - *Il comando.* `workspace/executeCommand` con il comando e i suoi argomenti,
   così come sono arrivati. Il server, di solito, risponde con una richiesta
   `workspace/applyEdit`, che passa dalla modifica appena descritta.
 
-Usa C7, R3, C8, C5 per il contesto, `minibuffer-read`. Al nucleo non manca
-niente. Applicare dall'ultima alla prima una lista di sostituzioni, tenendo il
-punto al suo posto, è ciò che i commenti fanno già in Rust: una primitiva
-agnostica che lo facesse (N7, facoltativa) toglierebbe a questo modulo il
-pezzo più delicato e servirebbe ai prossimi.
+Usa C7, R3, C8, C5 per il contesto, `minibuffer-read`, e N7,
+`replace-regions`, che applica dall'ultima alla prima una lista di
+sostituzioni tenendo il punto al suo posto, con lo stesso `apply` dei
+commenti. Al nucleo non manca niente.
 
 // ===========================================================================
 = Che cosa manca nel nucleo <mancano>
@@ -260,7 +258,6 @@ subito, un cliente che non è `lsp`.
 #ref-table(
   columns: (0.9cm, 4.2cm, 1fr),
   header: ([], [Facoltativo], [Perché non ora]),
-  [N7], [applicare una lista di sostituzioni in un passo], [Il modulo lo fa in Lisp, dall'ultima alla prima. Diventa utile quando un secondo cliente lo vorrà.],
   [N10], [`after-close-hook` che dice quale buffer], [Il modulo confronta con `all-buffer-names`.],
 )
 

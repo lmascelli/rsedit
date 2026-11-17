@@ -1,7 +1,8 @@
 //! Commenting out, and the arithmetic that makes it come out straight: each
 //! command makes several edits, each moving the ones after it, so the region
 //! cases use enough lines for a drift to show. The spelling comes from the
-//! mode, which may have said nothing, or have only block comments.
+//! mode, which may have said nothing, or have only block comments. Then
+//! `replace-regions`, the same arithmetic offered to Lisp.
 //!
 //! Design: `doc/architettura-editor.typ, <modifiche-multiple>`.
 #[cfg(test)]
@@ -43,6 +44,14 @@ mod tests {
             .next()
             .expect("the test must parse");
         eval(&ast, env.clone(), ctx).unwrap_or_else(|why| panic!("evaluating {src}: {why:?}"))
+    }
+
+    /// Returns whether SRC signals an error.
+    fn fails(src: &str, env: &Arc<Env<Ctx>>, ctx: &Ctx) -> bool {
+        let ast = Parser::new(&format!("(progn {src})"))
+            .next()
+            .expect("the test must parse");
+        eval(&ast, env.clone(), ctx).is_err()
     }
 
     fn text(ctx: &Ctx) -> String {
@@ -345,5 +354,136 @@ mod tests {
         assert_eq!(text(&ctx), "abc");
         assert!(!run("(delete-region 3 1)", &env, &ctx).is_nil());
         assert_eq!(text(&ctx), "a");
+    }
+
+    // ----------------------------------------------------------------
+    // Several replacements in one step
+    // ----------------------------------------------------------------
+
+    /// The buffer "let a = 1;\nlet b = 2;\n" with `a' renamed to `alpha' and
+    /// `2' made `20', point at AT, and where point is afterwards.
+    fn renamed_with_point_at(at: usize) -> (String, usize) {
+        let (ctx, env) = editor("let a = 1;\nlet b = 2;\n");
+        run_at(&ctx, at);
+        run(
+            r#"(replace-regions '((19 20 "20") (4 5 "alpha")))"#,
+            &env,
+            &ctx,
+        );
+        (text(&ctx), point(&ctx))
+    }
+
+    #[test]
+    fn replace_regions_makes_every_replacement_given_in_any_order() {
+        let (text, _) = renamed_with_point_at(0);
+        assert_eq!(text, "let alpha = 1;\nlet b = 20;\n");
+    }
+
+    #[test]
+    fn point_before_the_replacements_stays_where_it_was() {
+        assert_eq!(renamed_with_point_at(2).1, 2);
+        // On the start of one: what is replaced comes after it.
+        assert_eq!(renamed_with_point_at(4).1, 4);
+    }
+
+    #[test]
+    fn point_inside_a_replacement_goes_to_its_start() {
+        // Inside "2", between the two replacements' effects: the first one
+        // grew the text by four.
+        let (ctx, env) = editor("let a = 1;\nlet b = 23;\n");
+        run_at(&ctx, 20);
+        run(
+            r#"(replace-regions '((4 5 "alpha") (19 21 "7")))"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(text(&ctx), "let alpha = 1;\nlet b = 7;\n");
+        assert_eq!(point(&ctx), 23);
+    }
+
+    #[test]
+    fn point_after_the_replacements_moves_with_its_text() {
+        // On the `;' after "2", and at the end of the buffer.
+        assert_eq!(renamed_with_point_at(20).1, 25);
+        assert_eq!(renamed_with_point_at(22).1, 27);
+        // Between the two: only the first one counts.
+        assert_eq!(renamed_with_point_at(11).1, 15);
+    }
+
+    #[test]
+    fn an_insertion_at_point_leaves_point_after_it() {
+        let (ctx, env) = editor("ab");
+        run_at(&ctx, 1);
+        run(r#"(replace-regions '((1 1 "xy")))"#, &env, &ctx);
+        assert_eq!(text(&ctx), "axyb");
+        assert_eq!(point(&ctx), 3);
+    }
+
+    #[test]
+    fn replacements_that_only_touch_are_both_made_in_the_order_given() {
+        let (ctx, env) = editor("abcd");
+        run(
+            r#"(replace-regions '((2 4 "Z") (0 2 "X") (2 2 "y")))"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(text(&ctx), "XyZ");
+    }
+
+    #[test]
+    fn overlapping_replacements_are_refused_before_anything_changes() {
+        let (ctx, env) = editor("abcdef");
+        assert!(fails(
+            r#"(replace-regions '((0 1 "x") (2 4 "y") (3 5 "z")))"#,
+            &env,
+            &ctx
+        ));
+        assert_eq!(text(&ctx), "abcdef");
+    }
+
+    #[test]
+    fn a_replacement_outside_the_buffer_is_refused_before_anything_changes() {
+        let (ctx, env) = editor("abc");
+        assert!(fails(
+            r#"(replace-regions '((0 1 "x") (2 9 "y")))"#,
+            &env,
+            &ctx
+        ));
+        assert!(fails(r#"(replace-regions '((2 1 "y")))"#, &env, &ctx));
+        assert!(fails(r#"(replace-regions '((0 1 x)))"#, &env, &ctx));
+        assert_eq!(text(&ctx), "abc");
+    }
+
+    #[test]
+    fn a_read_only_buffer_refuses_replace_regions() {
+        let (ctx, env) = editor("abc");
+        run("(set-buffer-read-only t)", &env, &ctx);
+        assert!(fails(r#"(replace-regions '((0 1 "x")))"#, &env, &ctx));
+        assert_eq!(text(&ctx), "abc");
+    }
+
+    #[test]
+    fn replace_regions_with_nothing_to_do_returns_nil() {
+        let (ctx, env) = editor("abc");
+        assert_eq!(run("(replace-regions nil)", &env, &ctx), LispExp::nil());
+        assert_eq!(
+            run(r#"(replace-regions '((1 1 "")))"#, &env, &ctx),
+            LispExp::nil()
+        );
+        assert_eq!(text(&ctx), "abc");
+    }
+
+    #[test]
+    fn replace_regions_is_one_undo_step_of_its_own() {
+        let (ctx, env) = editor("one two three");
+        run(r#"(insert "> ")"#, &env, &ctx);
+        run(
+            r#"(replace-regions '((2 5 "1") (6 9 "2") (10 15 "3")))"#,
+            &env,
+            &ctx,
+        );
+        assert_eq!(text(&ctx), "> 1 2 3");
+        run("(undo)", &env, &ctx);
+        assert_eq!(text(&ctx), "> one two three");
     }
 }

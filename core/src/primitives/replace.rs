@@ -1,13 +1,16 @@
 //! Replacing from Lisp: the four commands that start a replace, the verbs a
 //! view answers each match with, and the view used when
 //! `*replace-read-function*` names none, a transient keymap of five keys.
-//! What is replaced, and where, is decided in `editor/replace.rs`.
+//! What is replaced, and where, is decided in `editor/replace.rs`. And
+//! `replace-regions`, a list of replacements made in one step, the way the
+//! comments make theirs (`<modifiche-multiple>`).
 //!
 //! Design: `doc/architettura-editor.typ, <sostituzione>`.
 use super::*;
 use crate::editor::{CASE_REPLACE, REPLACE_QUESTION, REPLACE_READ_FUNCTION};
 use crate::input::{Keymap, OnUnbound, TransientKeymap};
 use crate::primitives::args;
+use crate::primitives::comments::{Edit, apply};
 use risp::call_callable;
 
 fn flag<B: BufferTrait>(
@@ -256,6 +259,91 @@ primitive!(replace_count, _args, _env, ctx, {
     Ok(ELispExp::number(ctx.replace_count() as f64))
 });
 
+pub const REPLACE_REGIONS_DOC: &str = "(replace-regions REPLACEMENTS): Replace each (START END TEXT) \
+         of REPLACEMENTS, offsets in the current buffer as it is now, with TEXT, as one step of \
+         undo, and return t if the buffer changed. Point stays where it was in the text; inside \
+         a replaced span it goes to its start. Two that overlap, a span outside the buffer or a \
+         read-only buffer are refused before anything changes.\n\n\
+         Example:\n\
+         (replace-regions '((0 3 \"let\") (8 8 \";\")))";
+
+/// Returns the (START END TEXT) of ITEM, checked against a buffer of LENGTH
+/// characters.
+fn replacement<B: BufferTrait>(
+    item: &ELispExp<B>,
+    length: usize,
+) -> Result<(usize, usize, String), EvalError<EditorState<B>>> {
+    let parts = args::list(item);
+    let offset = |part: Option<&ELispExp<B>>| match part {
+        Some(ELispExp::Number(n)) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 => {
+            Some(*n as usize)
+        }
+        _ => None,
+    };
+    match (offset(parts.first()), offset(parts.get(1)), parts.get(2)) {
+        (Some(start), Some(end), Some(ELispExp::String(text))) if parts.len() == 3 => {
+            if start > end || end > length {
+                return Err(args::out_of_range(std::slice::from_ref(item)));
+            }
+            Ok((start, end, text.to_string()))
+        }
+        _ => Err(EvalError::WrongArgumentType {
+            expected: "(START END TEXT)".into(),
+            got: item.clone(),
+        }),
+    }
+}
+
+primitive!(replace_regions, args, _env, ctx, {
+    if args.len() != 1 {
+        return Err(EvalError::WrongNumberOfArguments {
+            expected: 1,
+            got: args.len(),
+        });
+    }
+    let items = args::list(&args[0]);
+    if ctx.with_current_buffer(|buf| buf.read_only()) {
+        return Err(EvalError::RuntimeMessage("Buffer is read-only".into()));
+    }
+    let length = ctx.with_current_buffer(|buf| buf.text.len());
+    let mut replacements = items
+        .iter()
+        .map(|item| replacement(item, length))
+        .collect::<Result<Vec<_>, _>>()?;
+    // By end as well, so that an insertion at the start of a replacement goes
+    // before it rather than overlapping it; stable, so that insertions at one
+    // place come out in the order given.
+    replacements.sort_by_key(|(start, end, _)| (*start, *end));
+    if let Some(pair) = replacements.windows(2).find(|pair| pair[1].0 < pair[0].1) {
+        return Err(EvalError::RuntimeMessage(format!(
+            "Replacements {}..{} and {}..{} overlap",
+            pair[0].0, pair[0].1, pair[1].0, pair[1].1
+        )));
+    }
+    // Each replacement is a deletion and an insertion at its end: at its end,
+    // so that point at the end moves past the new text and point inside comes
+    // back to the start, by `apply`'s own rules.
+    let mut edits = Vec::new();
+    for (start, end, text) in replacements {
+        if start < end {
+            edits.push(Edit::Delete {
+                from: start,
+                to: end,
+            });
+        }
+        if !text.is_empty() {
+            edits.push(Edit::Insert { at: end, text });
+        }
+    }
+    let changed = ctx.with_current_buffer_mut(|buf| {
+        buf.undo.boundary();
+        let changed = apply(buf, &edits);
+        buf.undo.boundary();
+        changed
+    });
+    Ok(ELispExp::boolean(changed))
+});
+
 /// Registers the primitives of replacing.
 ///
 /// Called by [`super::install_primitives`].
@@ -294,4 +382,5 @@ pub(super) fn install<B: BufferTrait>(into: &Registry<B>) {
     into.function("replace-abandon", replace_abandon, REPLACE_ABANDON_DOC);
     into.function("replace-match", replace_match, REPLACE_MATCH_DOC);
     into.function("replace-count", replace_count, REPLACE_COUNT_DOC);
+    into.function("replace-regions", replace_regions, REPLACE_REGIONS_DOC);
 }

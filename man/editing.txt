@@ -43,6 +43,7 @@ SYNOPSIS
     (delete-char &optional N)
     (delete-backward-char)
     (delete-region FROM TO)
+    (replace-regions REPLACEMENTS)
 
     (electric-pair-mode &optional ARG)
     (global-electric-pair-mode &optional ARG)
@@ -390,6 +391,24 @@ UNDOING
     C-g abandons a key sequence typed halfway, a count, and the region. It
     does not stop a command that is already running.
 
+SEVERAL REPLACEMENTS AT ONCE
+    `replace-regions' takes a list of (START END TEXT) and puts each TEXT
+    in place of the text from START to END. Every offset is read in the
+    buffer as it is before the first replacement, so a list worked out
+    against the text can be handed over as it is, in any order: there is
+    no need to correct the later offsets for the earlier changes.
+
+    Point stays where it was in the text. Before a replacement, or on its
+    start, it does not move; inside one it goes to the start; at its end
+    or after, it moves with the text, so it stays on the same character.
+    An insertion, START equal to END, at point leaves point after the new
+    text. Insertions at one place come out in the order given, and before
+    a replacement that starts there.
+
+    The whole list is one step of undo. Two replacements that overlap, one
+    that reaches outside the buffer, or a read-only buffer are an error,
+    and then nothing has changed. Two that only touch are fine.
+
 WATCHING EDITS
     `track-changes-begin' starts watching the edits to the buffer, and
     `track-changes-end' stops and says what they changed, as
@@ -487,6 +506,11 @@ EXAMPLES
 
         (let ((at (position-to-line-column (point) 'utf-16)))
           (goto-char (line-column-to-position (car at) (nth 1 at) 'utf-16)))
+
+    Rename a variable in two places and fix a number, with offsets found
+    on the text as it is:
+
+        (replace-regions '((4 5 "total") (20 21 "total") (12 13 "0")))
 
     Comment out a whole buffer from Lisp:
 

@@ -6356,7 +6356,20 @@ dall'alto le aperture calcolate all'inizio le mette tutte sulla prima:
 I commenti mettono le loro modifiche in un elenco ordinato, che `apply`
 applica al contrario; poi rimette il punto dove l'utente stava, calcolandolo
 dallo stesso elenco, perché il buffer non sa che i caratteri cresciuti davanti
-al punto vanno contati. La grafia viene dal modo (`set-comment-syntax`), che la
+al punto vanno contati.
+
+`replace-regions` (in `primitives/replace.rs`) offre lo stesso `apply` al
+Lisp: una lista di `(START END TEXT)` nel testo di adesso, in qualunque
+ordine. La primitiva le ordina per inizio e poi per fine, senza scambiare
+quelle uguali, così un inserimento all'inizio di una sostituzione le va
+davanti, e gli inserimenti in uno stesso punto restano nell'ordine dato.
+Rifiuta prima di toccare il testo un intervallo fuori dal buffer, due che si
+sovrappongono e il buffer in sola lettura. Ogni sostituzione diventa un
+`Edit::Delete` dell'intervallo e un `Edit::Insert` alla sua fine: alla fine,
+così le regole del punto di `apply` sono già quelle giuste. Il punto davanti
+resta dov'è, quello dentro va all'inizio, quello alla fine o dopo si sposta
+con il testo. Un `boundary` dell'undo prima e uno dopo fanno della lista un
+passo suo, anche nel mezzo di un comando. La grafia viene dal modo (`set-comment-syntax`), che la
 colorazione, `forward-sexp` e lo scanner leggono dallo stesso posto: un modo
 che non ha detto nulla riceve un messaggio, e un linguaggio con soli commenti
 a blocco riceve le righe avvolte in uno. Decommentare toglie l'apertura e lo
@@ -6855,7 +6868,7 @@ rimanda; le sezioni che seguono dicono ciò che non è scritto altrove.
   [`completion.rs`], [Il completamento nel buffer: le fonti e chi le interroga (@completamento).],
   [`fuzzy.rs`], [`fuzzy-filter`, la corrispondenza approssimata (@completamento).],
   [`isearch.rs`], [La ricerca incrementale (@ricerca-incrementale).],
-  [`replace.rs`], [La sostituzione, i suoi verbi e la vista predefinita (@sostituzione).],
+  [`replace.rs`], [La sostituzione, i suoi verbi e la vista predefinita (@sostituzione); `replace-regions`, una lista di sostituzioni in un passo (@modifiche-multiple).],
   [`occur.rs`], [Le ricerche di occur e di grep, che producono una lista (@ricerche).],
   [`results.rs`], [Le liste di posti: leggerle, percorrerle con `next-error`, attaccarne una da Lisp, mostrarle (@risultati).],
   [`modes.rs`], [`make-mode`, gli hook, `add-auto-mode`, i modi minori e le loro regole (@modi, @modi-minori).],
@@ -8192,10 +8205,11 @@ sola lettura, se una voce crea, rinomina o cancella un file. Le `TextEdit` di
 un buffer diventano `(INIZIO FINE TESTO)` con `lsp--position`, nell'unità del
 server, ordinate per inizio senza scambiare quelle che cominciano nello stesso
 punto, e due che si sovrappongono rifiutano tutto. Solo allora
-`lsp--replace-all`, buffer per buffer, fa `undo-boundary`, applica
-dall'ultima alla prima con `delete-region` e `insert` (@modifiche-multiple),
-sposta il punto quanto il testo cambiato davanti a lui, e chiude con un
-altro `undo-boundary`: un passo di undo per buffer. I buffer restano da
+`replace-regions` (@modifiche-multiple), buffer per buffer, le applica
+dall'ultima alla prima tenendo il punto al suo posto: un passo di undo per
+buffer. La primitiva cerca le sovrapposizioni anche da sé, ma in un buffer
+solo; il modulo le cerca prima in tutti, perché un rifiuto non ne cambi
+nessuno. I buffer restano da
 salvare; `lsp--flush-all` manda subito il testo nuovo ai server.
 
 *L'arresto.* `lsp-shutdown` manda `shutdown`; alla risposta `exit`, e chiude
@@ -8328,11 +8342,13 @@ e i documenti si riaprono presso il nuovo come versione 1, al più
   sovrapposizioni --- precede la prima modifica, e gli offset si calcolano
   tutti sul testo di prima. Scartato: applicare i file che si possono e dire
   gli altri.
-+ *Le sostituzioni in Lisp.* Applicarle dall'ultima alla prima tenendo il
-  punto al suo posto è ciò che i commenti fanno in Rust; una primitiva
-  agnostica che lo facesse servirebbe anche ad altri moduli, ma oggi
-  `lsp--replace-all` è il solo a chiederlo, in poche righe. Quando un secondo
-  modulo applicherà liste di sostituzioni, il pezzo passa al nucleo.
++ *Le sostituzioni nel nucleo.* Applicarle dall'ultima alla prima tenendo il
+  punto al suo posto è ciò che i commenti fanno in Rust, ed è il pezzo più
+  delicato: `replace-regions` lo fa con lo stesso `apply`, e parla di
+  intervalli e testo, non di server. Il modulo tiene la traduzione delle
+  `TextEdit` e il controllo delle sovrapposizioni in tutti i buffer prima del
+  primo. Scartato: il giro in Lisp, con `delete-region`, `insert` e il punto
+  ricalcolato a mano, una seconda copia della stessa aritmetica.
 + *Una risposta vuota prende la prima.* Le azioni arrivano con la preferita
   in testa; `C-c a` e `<ret>` la prendono senza scriverne il titolo, come
   `M-.` va a una definizione sola.

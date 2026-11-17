@@ -1173,22 +1173,6 @@ buffer, sorted by start; a string when two overlap."
       (setq previous edit))
     (if why (format "two of its changes to %s overlap" (buffer-file-name)) sorted)))
 
-(defun lsp--replace-all (replacements)
-  "nil, after making REPLACEMENTS, (START END TEXT) sorted by start, in the
-current buffer, the last first, as one step of undo, point kept in its place."
-  (let ((point (point)))
-    (undo-boundary)
-    (dolist (edit (reverse replacements))
-      (let ((start (car edit)) (end (nth 1 edit)) (text (nth 2 edit)))
-        (delete-region start end)
-        (goto-char start)
-        (insert text)
-        (cond ((>= point end) (setq point (+ point (- (length text) (- end start)))))
-              ((> point start) (setq point start)))))
-    (undo-boundary)
-    (goto-char point))
-  nil)
-
 (defun lsp--add-edits (buffer edits buffers)
   "BUFFERS, a list of (BUFFER . EDITS), with EDITS added to those of BUFFER."
   (if (assoc buffer buffers)
@@ -1227,9 +1211,11 @@ SERVER's, all or none; a string saying why none was made."
             (if (stringp replacements)
                 (setq why replacements)
                 (setq made (cons (cons (car each) replacements) made))))))
+      ;; `replace-regions' refuses overlaps too, but in one buffer: they are
+      ;; looked for here, in every buffer first, so that a refusal changes none.
       (unless why
         (dolist (each (reverse made))
-          (with-current-buffer (car each) (lambda () (lsp--replace-all (cdr each)))))
+          (with-current-buffer (car each) (lambda () (replace-regions (cdr each)))))
         (lsp--flush-all)))
     why))
 
