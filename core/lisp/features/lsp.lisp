@@ -3,8 +3,8 @@
 ;;; lsp-mode, on in a buffer visiting a file, starts the server `lsp-servers'
 ;;; gives for its major mode at the file's root, keeps the server's copy of
 ;;; the text in step with the buffer, reports what the server says as
-;;; findings, goes to the definitions it gives, and takes the code actions it
-;;; offers. User manual: the `lsp' page.
+;;; findings, goes to the definitions it gives, takes the code actions it
+;;; offers, and completes with its candidates. User manual: the `lsp' page.
 ;;; Design: `doc/architettura-editor.typ, <mod-lsp>`.
 
 (require 'commands)
@@ -345,6 +345,8 @@ buffer has the same text; :timed, it is dropped after `lsp-request-timeout';
                    "publishDiagnostics" (make-map "versionSupport" t)
                    "definition" (make-map "linkSupport" t)
                    "references" (make-map)
+                   "completion" (make-map "completionItem"
+                                          (make-map "snippetSupport" 'false))
                    "codeAction"
                    (make-map "codeActionLiteralSupport"
                              (make-map "codeActionKind"
@@ -1278,6 +1280,83 @@ BUFFER, to take, and taking it; an empty answer takes the first."
   nil)
 
 ;; ---------------------------------------------------------------------------
+;; Completion
+;; ---------------------------------------------------------------------------
+
+(defun lsp--items (result)
+  "The CompletionItems of RESULT, an answer to textDocument/completion: a
+list of them or a CompletionList."
+  (lsp--list (if (mapp result) (map-elt result "items") result)))
+
+(defun lsp--completion-text (item)
+  "The text the CompletionItem ITEM puts in place."
+  (let ((edit (map-elt item "textEdit")))
+    (cond ((and (mapp edit) (stringp (map-elt edit "newText"))) (map-elt edit "newText"))
+          ((stringp (map-elt item "insertText")) (map-elt item "insertText"))
+          (t (map-elt item "label")))))
+
+(defun lsp--completion-span (server items)
+  "(START END) of the text ITEMS, SERVER's completions at point, take the
+place of: the range of the first that has one, else the symbol at point."
+  (let ((range nil) (unit (get server 'unit)))
+    (dolist (item items)
+      (let ((edit (map-elt item "textEdit")))
+        (if (and (null range) (mapp edit) (mapp (map-elt edit "range")))
+            (setq range (map-elt edit "range")))))
+    (if range
+        (list (lsp--position (map-elt range "start") unit)
+              (lsp--position (map-elt range "end") unit))
+        (or (bounds-of-thing-at-point 'symbol) (list (point) (point))))))
+
+(defun lsp--completions (server items)
+  "(TEXT . EXTRA) for each text ITEMS, SERVER's completions, put in place, the
+first item of each kept; EXTRA is what `lsp--replacements' gives for its
+additionalTextEdits, nil when it has none."
+  (let ((entries nil))
+    (dolist (item items)
+      (let ((text (lsp--completion-text item))
+            (edits (lsp--list (map-elt item "additionalTextEdits"))))
+        (unless (or (not (stringp text)) (assoc text entries))
+          (setq entries (cons (cons text (if edits (lsp--replacements server edits)))
+                              entries)))))
+    (reverse entries)))
+
+(defun lsp--complete-extra (server extra span size buffer)
+  "nil, after making in BUFFER EXTRA, the (START END TEXT) a chosen completion
+brings, worked out when BUFFER had SIZE characters and the completion was to
+take the place of SPAN, (START END); a string in EXTRA says why not."
+  (let ((why (if (stringp extra) extra))
+        (shift (- (with-current-buffer buffer (lambda () (point-max))) size))
+        (moved nil))
+    ;; Only the text of SPAN has changed since: what follows it has moved.
+    (dolist (edit (if why nil extra))
+      (cond ((<= (nth 1 edit) (car span)) (setq moved (cons edit moved)))
+            ((>= (car edit) (nth 1 span))
+             (setq moved (cons (list (+ (car edit) shift) (+ (nth 1 edit) shift) (nth 2 edit))
+                               moved)))
+            (t (setq why "they overlap the completion"))))
+    (cond (why (message "%s: the changes that go with the completion not made: %s"
+                        (lsp--label server) why))
+          (moved (with-current-buffer buffer (lambda () (replace-regions (reverse moved))))
+                 (lsp--flush-all))))
+  nil)
+
+(defun lsp--completed (server result buffer at)
+  "nil, after offering the completions of RESULT, SERVER's answer for AT in
+BUFFER, while point is still there."
+  (when (and (equal (current-buffer) buffer) (= (point) at))
+    (let ((entries (lsp--completions server (lsp--items result))))
+      (if (null entries)
+          (message "No completions here")
+          (let ((span (lsp--completion-span server (lsp--items result)))
+                (size (point-max)))
+            (completion-offer (car span) (nth 1 span) (mapcar 'car entries)
+                              (lambda (chosen)
+                                (lsp--complete-extra server (cdr (assoc chosen entries))
+                                                     span size buffer)))))))
+  nil)
+
+;; ---------------------------------------------------------------------------
 ;; The mode and the commands
 ;; ---------------------------------------------------------------------------
 
@@ -1358,6 +1437,25 @@ made, one undo for each buffer they touch, and its command run."
                            (lambda (server result) (lsp--offer server result buffer))
                            :buffer buffer :timed t :replace t))))))
 
+(defcommand lsp-complete () nil
+  "Complete the text at point with the candidates the language server of
+this buffer gives: one is put in place, more are offered to choose from,
+and the changes elsewhere that go with the one chosen, an import, are made."
+  (let ((server (lsp--server-here)))
+    (cond ((null server) (message "No language server for this buffer"))
+          ((not (eq (get server 'state) 'ready))
+           (message "%s is not ready" (lsp--label server)))
+          ((not (lsp--true-p (map-elt (get server 'capabilities) "completionProvider")))
+           (message "%s does not complete" (lsp--label server)))
+          (t
+           (let ((buffer (current-buffer))
+                 (at (point)))
+             (lsp--request server "textDocument/completion"
+                           (make-map "textDocument" (make-map "uri" (buffer-get 'lsp-uri))
+                                     "position" (lsp--position-at at (get server 'unit)))
+                           (lambda (server result) (lsp--completed server result buffer at))
+                           :buffer buffer :timed t :replace t))))))
+
 (defcommand lsp-locations-goto () nil
   "Go to the place on the cursor's line of a list the language server gave."
   ;; Counted, not parsed: a path with a colon reads two ways.
@@ -1370,6 +1468,8 @@ made, one undo for each buffer they touch, and its command run."
 (define-key 'lsp-mode "M-?" 'lsp-find-references)
 (define-key 'lsp-mode "M-," 'lsp-go-back)
 (define-key 'lsp-mode "C-c a" 'lsp-code-action)
+(define-key 'lsp-mode "C-M-i" 'lsp-complete)
+(define-key 'lsp-mode "M-tab" 'lsp-complete)
 
 (define-key 'lsp-locations-mode "<ret>" 'lsp-locations-goto)
 (define-key 'lsp-locations-mode "n" 'next-line)

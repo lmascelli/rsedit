@@ -4,7 +4,8 @@
 //! when a change brings the word "fall", and gives places in `target.txt`:
 //! the definition at line 0 in a Location, at line 1 in a LocationLink, none
 //! below; two references; code actions that change `a.fake` and `b.fake`,
-//! one to be resolved, one a command that it carries out with applyEdit.
+//! one to be resolved, one a command that it carries out with applyEdit;
+//! completions, on line 1 with changes elsewhere, on line 2 with a range.
 //!
 //! Design: `doc/architettura-editor.typ, <mod-lsp>`.
 #[cfg(all(test, unix))]
@@ -35,7 +36,7 @@ while IFS= read -r line; do
       id=$(printf '%s' "$body" | sed -n 's/^{"id":\([0-9]*\),.*/\1/p')
       case "$body" in
         *'"method":"initialize"'*)
-          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"codeActionProvider\":{\"resolveProvider\":true},\"definitionProvider\":true,\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":1,\"openClose\":true,\"save\":true},\"referencesProvider\":true}}}" ;;
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":{\"capabilities\":{\"codeActionProvider\":{\"resolveProvider\":true},\"completionProvider\":{},\"definitionProvider\":true,\"positionEncoding\":\"$encoding\",\"textDocumentSync\":{\"change\":1,\"openClose\":true,\"save\":true},\"referencesProvider\":true}}}" ;;
         *'"method":"shutdown"'*)
           send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":null}" ;;
         *'"method":"exit"'*)
@@ -64,6 +65,13 @@ while IFS= read -r line; do
           a="file://${log%/*}/a.fake"
           send "{\"id\":900,\"jsonrpc\":\"2.0\",\"method\":\"workspace/applyEdit\",\"params\":{\"edit\":{\"changes\":{\"$a\":[{\"newText\":\"run \",\"range\":$(at 0)}]}}}}"
           send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":null}" ;;
+        *'"method":"textDocument/completion"'*)
+          case $(printf '%s' "$body" | sed -n 's/.*"line":\([0-9]*\).*/\1/p') in
+            1) result="[{\"additionalTextEdits\":[{\"newText\":\"use foo;\\n\",\"range\":$(at 0)},{\"newText\":\"// end\",\"range\":$(at 2)}],\"detail\":\"fn foo()\",\"label\":\"foo\"},{\"label\":\"bar\"}]" ;;
+            2) result="{\"isIncomplete\":false,\"items\":[{\"insertText\":\"ignored\",\"label\":\"self\",\"textEdit\":{\"newText\":\"a self\",\"range\":{\"end\":{\"character\":4,\"line\":2},\"start\":{\"character\":0,\"line\":2}}}}]}" ;;
+            *) result="[]" ;;
+          esac
+          send "{\"id\":$id,\"jsonrpc\":\"2.0\",\"result\":$result}" ;;
         *'"method":"textDocument/didOpen"'*|*'"method":"textDocument/didChange"'*)
           uri=$(printf '%s' "$body" | sed -n 's/.*"uri":"\([^"]*\)".*/\1/p')
           version=$(printf '%s' "$body" | sed -n 's/.*"version":\([0-9]*\).*/\1/p')
@@ -949,5 +957,60 @@ done
             assert_eq!(contents(&name, &env, &ctx), "one\n");
             assert_eq!(contents("b.fake", &env, &ctx), "two\n");
         }
+    }
+
+    #[test]
+    fn a_completion_left_alone_is_put_in_place_with_the_changes_that_go_with_it() {
+        let sandbox = Sandbox::new("complete");
+        let file = sandbox.file("a.fake", "x\nfo\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run("(goto-line 2) (forward-char 2) (lsp-complete)", &env, &ctx);
+        logged(
+            &sandbox,
+            &[
+                r#""method":"textDocument/completion""#,
+                r#""position":{"character":2,"line":1}"#,
+            ],
+            &env,
+            &ctx,
+        );
+        // "bar" does not go on from "fo"; the change after the completion
+        // has moved with it.
+        holds(&name, "use foo;\nx\nfoo\n// end", &env, &ctx);
+        assert_eq!(
+            text(&run("(buffer-substring (point) (+ (point) 1))", &env, &ctx)),
+            "\n"
+        );
+    }
+
+    #[test]
+    fn a_completion_takes_the_place_of_the_range_the_server_gives() {
+        let sandbox = Sandbox::new("complete-range");
+        let file = sandbox.file("a.fake", "x\n\na se\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        run("(goto-line 3) (forward-char 4) (lsp-complete)", &env, &ctx);
+        holds(&name, "x\n\na self\n", &env, &ctx);
+    }
+
+    #[test]
+    fn a_completion_answered_after_point_has_moved_is_not_offered() {
+        let sandbox = Sandbox::new("complete-moved");
+        let file = sandbox.file("a.fake", "x\nfo\n");
+        let (ctx, env) = editor(&sandbox, "utf-32");
+        let name = open(&file, &env, &ctx);
+        ready(&sandbox, &env, &ctx);
+        // The answer is read between two commands: point moves first.
+        run("(goto-line 2) (forward-char 2) (lsp-complete) (backward-char 1)", &env, &ctx);
+        logged(&sandbox, &[r#""method":"textDocument/completion""#], &env, &ctx);
+        tick_until(
+            &format!("(null (get {} 'requests))", server(&sandbox)),
+            &env,
+            &ctx,
+        );
+        assert_eq!(contents(&name, &env, &ctx), "x\nfo\n");
     }
 }

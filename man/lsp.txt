@@ -9,6 +9,7 @@ SYNOPSIS
     (lsp-find-references)
     (lsp-go-back)
     (lsp-code-action)
+    (lsp-complete)
     (lsp-locations-goto)
     lsp-servers
     lsp-root-function
@@ -144,6 +145,24 @@ TAKING A CODE ACTION
     its parts overlap, when a file it changes cannot be opened or is
     read-only, and when it creates, renames or deletes files.
 
+COMPLETING
+    C-M-i, or M-tab, asks the server how the text at point goes on. Its
+    candidates take the place of the text the server says, or else of the
+    symbol at point, and are filtered by that text, as those of
+    `completion-at-point' are (see the completion page): one left is put
+    in place at once, more are offered to choose from. The candidate is
+    the text the server would put, which may be more than its name.
+
+    Some candidates bring changes elsewhere in the file, such as the
+    import of what they name: these are made when the candidate is put in
+    place. They are refused, with a message, when they overlap the
+    completed text.
+
+    The answer comes a moment later. It is not offered if by then point
+    has moved, or the buffer has changed; a new C-M-i takes the place of
+    the one waiting. With a server that does not complete, the message
+    says so.
+
 WHEN A SERVER STOPS
     `lsp-shutdown' stops the server of the current buffer, asking it to
     first; one that has not gone two seconds later is stopped outright.
@@ -167,7 +186,11 @@ THE LOG
     It keeps the last `lsp-log-limit' characters. C-x b goes to it.
 
 LIMITS
-    No completion, for now.
+    Completion is only asked for: there is none as you type. The
+    candidates are offered by their text alone, without the server's
+    description, in the order it gives them, and a server that leaves out
+    the changes elsewhere until asked about the candidate chosen does not
+    make them.
 
     A code action that creates, renames or deletes files is refused
     whole, and so is one that changes a file not on this machine.
@@ -225,11 +248,17 @@ EXAMPLES
 
         (define-key 'lsp-mode "M-<ret>" 'lsp-code-action)
 
+    Completion from the server on C-c c too, where lsp-mode is on:
+
+        (define-key 'lsp-mode "C-c c" 'lsp-complete)
+
 KEYS IN LSP MODE
     M-.                     lsp-find-definition
     M-,                     lsp-go-back
     M-?                     lsp-find-references
     C-c a                   lsp-code-action
+    C-M-i                   lsp-complete
+    M-tab                   lsp-complete
 
 KEYS IN LSP LOCATIONS MODE
     <ret>                   lsp-locations-goto
@@ -238,4 +267,5 @@ KEYS IN LSP LOCATIONS MODE
     q                       results-quit
 
 SEE ALSO
-    searching, findings, project, processes, modes, configuration
+    searching, findings, completion, project, processes, modes,
+    configuration
